@@ -31,8 +31,7 @@ use smallvec::SmallVec;
 use crate::heap::InlineObjectHeader;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::*;
-use crate::bytecode::index as opc;
-use crate::bytecode::{Class, RegisterList, Traits};
+use crate::bytecode::{RegisterList, Traits};
 use crate::staged::wasm_float::{Float, float_binary, is_float_comparison};
 use crate::staged::ConcreteWasm;
 use crate::bytecode::{
@@ -4301,7 +4300,7 @@ fn lane_set_index_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Regist
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
     let instruction = decoded_instruction(body, body.code[pc]);
-    if !instruction.op().is_set_index() {
+    if !crate::staged::writes_element(instruction.op()) {
         return Resumed::Exit(exit(ip));
     }
     let strict = body.strict || instruction.boolean_flag().unwrap_or(false);
@@ -7368,8 +7367,8 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
         body.code.get(pc as usize).and_then(|packed| {
             let op = decoded_instruction(body, *packed).op();
             super::compiled::base_region::leave(site.function(), pc, op);
-            (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
-                || crate::staged::miss(op) == crate::staged::Miss::WalkScopes).then(|| op.is_get_index())
+            (crate::staged::computes_numeric_binary(op) || crate::staged::reads_element(op) || op.stores_element()
+                || crate::staged::miss(op) == crate::staged::Miss::WalkScopes).then(|| crate::staged::reads_element(op))
         })
     });
     if let Some(read) = counted { site.tier.borrow_mut().left_at(site.tiers, pc as usize, read); }
@@ -7687,7 +7686,7 @@ fn lane_loop_trace_exit<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &L
             let body = unsafe { &*(*cx).code }.function_get(site.function as usize);
             if let Some((body, packed)) = body.and_then(|body| body.code.get(pc as usize).map(|packed| (body, *packed))) {
                 let instruction = decoded_instruction(body, packed);
-                if instruction.op().is_set_index() {
+                if crate::staged::writes_element(instruction.op()) {
                     let key = r.get(instruction.register_c());
                     let base = r.get(instruction.register_b());
                     if let Some(array) = unsafe { vm(cx) }.heap.record_array(base) {
@@ -8090,8 +8089,8 @@ const FLOAT_ARITHMETIC: usize = 10;
 
 /// The arithmetic index of a float binary selector, when it has one.
 fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
-    Some(match op.class() {
-        Class::WasmFloatBinary64 => match F64BinaryOperator::from_tag(selector)? {
+    Some(match op {
+        _ if crate::staged::float_binary64_family(op) => match F64BinaryOperator::from_tag(selector)? {
             F64BinaryOperator::Add => FLOAT_ADD,
             F64BinaryOperator::Subtract => FLOAT_SUBTRACT,
             F64BinaryOperator::Multiply => FLOAT_MULTIPLY,
@@ -8104,7 +8103,7 @@ fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
             F64BinaryOperator::GreaterEqual => FLOAT_GREATER_EQUAL,
             _ => return None,
         },
-        Class::WasmFloatBinary32 => match F32BinaryOperator::from_tag(selector)? {
+        _ if crate::staged::float_binary32_family(op) => match F32BinaryOperator::from_tag(selector)? {
             F32BinaryOperator::Add => FLOAT_ADD,
             F32BinaryOperator::Subtract => FLOAT_SUBTRACT,
             F32BinaryOperator::Multiply => FLOAT_MULTIPLY,
@@ -8536,7 +8535,7 @@ fn lane_safepoint_writing<H: Host>(
 /// The head record of a move pair followed by a jump (`(Move, Move, Jump)`, a `FUSED_CHAINS`
 /// entry) in direction `backward`. The pair's two moves and the jump run as one record.
 fn move_pair_jump_handler<H: Host>(backward: bool) -> Handler {
-    lane_frame::chain_row::<H, { opc::Move }, { opc::Move }, { opc::Jump }, { crate::staged::NO_LINK }, { crate::staged::FUSED_PLAIN }>(backward)
+    lane_frame::chain_row::<H, { crate::staged::MOVE_ROW }, { crate::staged::MOVE_ROW }, { crate::staged::JUMP_ROW }, { crate::staged::NO_LINK }, { crate::staged::FUSED_PLAIN }>(backward)
 }
 
 
@@ -9240,7 +9239,7 @@ impl<H: Host> Vm<H> {
                 && body
                     .code
                     .iter()
-                    .any(|packed| decoded_instruction(body, *packed).op().is_construct())
+                    .any(|packed| crate::staged::constructs(decoded_instruction(body, *packed).op()))
         {
             None
         } else {
@@ -12978,10 +12977,10 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, body
     let tail_calls = vm.host.proper_tail_calls() && body.strict;
     body.code.iter().enumerate().map(|(pc, packed)| {
         let instruction = decoded_instruction(body, *packed);
-        let direct = instruction.op().is_call() && !instruction.direct_eval() && !instruction.parameter_eval()
+        let direct = crate::staged::calls(instruction.op()) && !instruction.direct_eval() && !instruction.parameter_eval()
             && !(tail_calls && instruction.returns_from_frame());
         let mut callees = super::compiled::DirectCandidates::new();
-        if instruction.op().class().eq(Class::Construct) {
+        if crate::staged::construction_family(instruction.op()) {
             callees.extend(lane_construct_callee(vm, view, function, pc, ImmediateLayout::argument_count(instruction.imm())));
             return callees;
         }
@@ -14309,9 +14308,9 @@ fn wasm_lane_handler<H: Host>(op: Op) -> Option<Option<LaneHandler>> {
         // A value row reads the receiver and the captures from the context, which a Wasm view lacks.
         return Some(None);
     }
-    match op.class() {
-        Class::Call => Some(Some(call)),
-        Class::Return => Some(Some(ret)),
+    match op {
+        _ if crate::staged::call_family(op) => Some(Some(call)),
+        _ if crate::staged::return_family(op) => Some(Some(ret)),
         _ => None,
     }
 }
@@ -15763,7 +15762,7 @@ fn frame_entry_census<H: Host>(vm: &Vm<H>, program: ProgramId, function: u32) ->
             body.self_binding_slot.is_some(), plan.plain, plan.in_loop, plan.legacy_reflection, plan.live_parameters,
             plan.addresses_locals, body.initial_register,
             body.code.iter().map(|packed| decoded_instruction(body, *packed)).filter(|instruction|
-                instruction.op().is_name_operation())
+                crate::staged::names_binding(instruction.op()))
                 .map(|instruction| format!("{:?}:{}", instruction.op(), { let atom = instruction.atom_index() as usize; if atom < callee_code.atoms.len() { callee_code.atoms[atom].replace('\0', "~") } else { "?".into() } }))
                 .collect::<Vec<_>>(),
             body.local_atoms.iter().enumerate()
@@ -16428,11 +16427,11 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
 /// The handlers of a class's private elements, none of which runs guest code: a field's
 /// definition, a method's brand, and the brand checks of a read and of `#x in`.
 const fn private_element_handler<H: Host>(opcode: Op) -> Option<Handler> {
-    match opcode.class() {
-        Class::DefinePrivateField => Some(lane_define_private_field::<H>),
-        Class::MarkPrivateName => Some(lane_mark_private_name::<H>),
-        Class::CheckPrivate => Some(lane_check_private::<H>),
-        Class::PrivateIn => Some(lane_private_in::<H>),
+    match opcode {
+        _ if crate::staged::private_field_definition_family(opcode) => Some(lane_define_private_field::<H>),
+        _ if crate::staged::private_name_family(opcode) => Some(lane_mark_private_name::<H>),
+        _ if crate::staged::private_check_family(opcode) => Some(lane_check_private::<H>),
+        _ if crate::staged::private_in_family(opcode) => Some(lane_private_in::<H>),
         _ => None,
     }
 }
@@ -16440,25 +16439,25 @@ const fn private_element_handler<H: Host>(opcode: Op) -> Option<Handler> {
 /// Handlers that neither produce nor read the accumulator, apart from the
 /// branch tests, which read it.
 const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
-    match opcode.class() {
-        Class::GetField => Some(lane_get_field_first::<H>),
+    match opcode {
+        _ if crate::staged::field_read_family(opcode) => Some(lane_get_field_first::<H>),
         _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::Register, .. })) => Some(lane_set_object_field_own::<H, false>),
         _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::This, .. })) => Some(lane_set_this_field_own::<H, false>),
-        Class::DefinePropertyRecord => Some(lane_define_property_record::<H>),
-        Class::DefineField => Some(lane_define_field::<H>),
+        _ if crate::staged::property_record_family(opcode) => Some(lane_define_property_record::<H>),
+        _ if crate::staged::field_definition_family(opcode) => Some(lane_define_field::<H>),
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
-        Class::CopyDataProperties => Some(lane_copy_data_properties::<H>),
+        _ if crate::staged::copy_properties_family(opcode) => Some(lane_copy_data_properties::<H>),
         _ if opcode.steps_in_lane() => Some(lane_general_step::<H>),
-        Class::GetIndex => Some(lane_get_index::<H>),
-        Class::SetIndex => Some(lane_set_index::<H>),
-        Class::CallKnown => Some(known_call_handler::<H>()),
-        Class::Call => Some(lane_script_call::<H, ANY_ARGC, false>),
-        Class::CallArray => Some(lane_call_array::<H>),
-        Class::CallSpread => Some(lane_call_spread::<H>),
-        Class::Delete => Some(lane_delete::<H>),
-        Class::Construct => Some(lane_script_construct::<H>),
-        Class::CallForwardingArguments => Some(lane_forward_call::<H>),
-        Class::Return => Some(lane_return::<H, NOT_LEAF>),
+        _ if crate::staged::element_read_family(opcode) => Some(lane_get_index::<H>),
+        _ if crate::staged::element_write_family(opcode) => Some(lane_set_index::<H>),
+        _ if crate::staged::known_call_family(opcode) => Some(known_call_handler::<H>()),
+        _ if crate::staged::call_family(opcode) => Some(lane_script_call::<H, ANY_ARGC, false>),
+        _ if crate::staged::call_array_family(opcode) => Some(lane_call_array::<H>),
+        _ if crate::staged::call_spread_family(opcode) => Some(lane_call_spread::<H>),
+        _ if crate::staged::delete_family(opcode) => Some(lane_delete::<H>),
+        _ if crate::staged::construction_family(opcode) => Some(lane_script_construct::<H>),
+        _ if crate::staged::forwarded_call_family(opcode) => Some(lane_forward_call::<H>),
+        _ if crate::staged::return_family(opcode) => Some(lane_return::<H, NOT_LEAF>),
         _ => wasm_gc_handler::<H>(opcode),
     }
 }
@@ -16578,7 +16577,7 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
             FieldLayout::ResultRegister
                 if field == InstructionField::A
                     && (op.traits().has(crate::bytecode::Traits::FRAME_RETURNABLE)
-                        || (op.is_binary() && instruction.returns_from_frame())) =>
+                        || (crate::staged::computes_binary(op) && instruction.returns_from_frame())) =>
             {
                 instruction.result_register() < registers
             }
@@ -16625,7 +16624,7 @@ fn lane_operand(
         // A case selector reads its run of constants from the context by index, as a constant
         // array reads its elements' (the `MakeConstArray` row).
         ImmediateRole::ConstantIndex
-            if instruction.op().is_string_case_index() || instruction.op().class() == Class::MakeConstArray =>
+            if crate::staged::selects_string_case(instruction.op()) || crate::staged::const_array_family(instruction.op()) =>
         {
             let start = instruction.imm() as usize;
             constants.get(start..start.checked_add(usize::from(instruction.b()))?)?;
@@ -16651,23 +16650,25 @@ fn lane_operand(
 /// result from the frame (`lane_returns`, `lane_returning`); a returning record runs no
 /// other result flag.
 fn lane_call_fits(instruction: WideInstruction) -> bool {
-    match instruction.op().class() {
-        Class::Call | Class::CallArray | Class::CallSpread => {
+    match instruction.op() {
+        _ if crate::staged::call_family(instruction.op()) || crate::staged::call_array_family(instruction.op())
+            || crate::staged::call_spread_family(instruction.op()) => {
             lane_returns(instruction)
                 && !instruction.direct_eval()
                 && !instruction.parameter_eval()
         }
-        Class::CallForwardingArguments => lane_returns(instruction),
-        Class::Construct => {
+        _ if crate::staged::forwarded_call_family(instruction.op()) => lane_returns(instruction),
+        _ if crate::staged::construction_family(instruction.op()) => {
             lane_returns(instruction)
                 && !instruction.is_super_construct()
                 && !ImmediateLayout::construct_array_arguments(instruction.imm())
         }
-        Class::GetField => lane_returns(instruction) || lane_sinks_field(instruction),
-        Class::Unary | Class::MakeObject2 | Class::SuperConstArrayObject2 | Class::MakeObjectLiteral => {
+        _ if crate::staged::field_read_family(instruction.op()) => lane_returns(instruction) || lane_sinks_field(instruction),
+        _ if crate::staged::unary_family(instruction.op()) || crate::staged::object_pair_family(instruction.op())
+            || crate::staged::super_const_array_family(instruction.op()) || crate::staged::object_literal_family(instruction.op()) => {
             lane_returns(instruction)
         }
-        Class::Binary if instruction.returns_from_frame() => lane_returns(instruction),
+        _ if crate::staged::binary_family(instruction.op()) && instruction.returns_from_frame() => lane_returns(instruction),
         _ => true,
     }
 }
@@ -16688,7 +16689,7 @@ fn lane_call_awaited_marked<'live>(
     let Some(&awaited) = decoded.get(pc + 1) else {
         return operand;
     };
-    if !call.op().is_call() || call.result_flags() != 0 || !awaited.op().is_await() {
+    if !crate::staged::calls(call.op()) || call.result_flags() != 0 || !crate::staged::awaits(awaited.op()) {
         return operand;
     }
     let result = call.result_register();
@@ -16714,7 +16715,7 @@ fn lane_call_result_marked(
     function: &Function,
     pc: usize,
 ) -> LaneOperand {
-    if !instruction.op().is_call() || !function.register_roots.call_result_dead(pc) {
+    if !crate::staged::calls(instruction.op()) || !function.register_roots.call_result_dead(pc) {
         return operand;
     }
     // SAFETY: a `Call`'s operand is its immediate (`lane_operand`).
@@ -16731,7 +16732,7 @@ fn lane_iteration_step(decoded: &[WideInstruction], pc: usize) -> bool {
     call.result_flags() == 0
         && ImmediateLayout::argument_count(call.imm()) == 0
         && decoded.get(pc + 1).is_some_and(|next| {
-            next.op().is_require_iterator_result() && next.register_b() == call.result_register()
+            crate::staged::requires_iterator_result(next.op()) && next.register_b() == call.result_register()
         })
 }
 
@@ -16781,7 +16782,7 @@ fn lane_for_of_step(decoded: &[WideInstruction], pc: usize) -> Option<ForOfTest>
     let result = decoded[pc].result_register();
     let record = |offset: usize| decoded.get(pc + offset).copied();
     let reads_result = |offset: usize| {
-        record(offset).is_some_and(|read| read.op().is_get_field() && read.result_flags() == 0 && read.b() == result)
+        record(offset).is_some_and(|read| crate::staged::reads_named_field(read.op()) && read.result_flags() == 0 && read.b() == result)
     };
     let done = record(FOR_OF_DONE_READ).filter(|_| reads_result(FOR_OF_DONE_READ))?.result_register();
     let test = record(FOR_OF_DONE_TEST).filter(|test| test.a() == done)?;
@@ -16790,7 +16791,7 @@ fn lane_for_of_step(decoded: &[WideInstruction], pc: usize) -> Option<ForOfTest>
         true => ForOfTest::Threaded,
     };
     let exit = record(form.exit())?;
-    let leaves = (if form == ForOfTest::Emitted { exit.op().class().eq(Class::Jump) } else { crate::staged::truth_jump(exit.op()) == Some(true) })
+    let leaves = (if form == ForOfTest::Emitted { crate::staged::jump_family(exit.op()) } else { crate::staged::truth_jump(exit.op()) == Some(true) })
         && exit.jump_target() as usize > pc + form.value_read();
     let enters = form == ForOfTest::Threaded || test.jump_target() as usize == pc + form.value_read();
     (leaves && enters && reads_result(form.value_read())).then_some(form)
@@ -16813,7 +16814,7 @@ fn lane_binding_step(decoded: &[WideInstruction], pc: usize) -> bool {
     let result = decoded[pc].result_register();
     let record = |offset: usize| decoded.get(pc + offset).copied();
     let reads_result = |offset: usize| {
-        record(offset).is_some_and(|read| read.op().is_get_field() && read.result_flags() == 0 && read.b() == result)
+        record(offset).is_some_and(|read| crate::staged::reads_named_field(read.op()) && read.result_flags() == 0 && read.b() == result)
     };
     let (Some(done), Some(flag), Some(test), Some(value)) =
         (record(BINDING_DONE_READ), record(BINDING_DONE_MOVE), record(BINDING_DONE_TEST), record(BINDING_VALUE_READ))
@@ -16823,7 +16824,7 @@ fn lane_binding_step(decoded: &[WideInstruction], pc: usize) -> bool {
     let done = done.result_register();
     reads_result(BINDING_DONE_READ)
         && reads_result(BINDING_VALUE_READ)
-        && flag.op().is_move()
+        && crate::staged::copies_register(flag.op())
         && flag.result_flags() == 0
         && flag.b() == done
         && flag.a() != done
@@ -16857,19 +16858,19 @@ pub(super) fn memory_register(function: &Function) -> Option<u16> {
     let direct = instructions().filter_map(|instruction| match instruction.op() {
         op if MemoryLoad::from_direct_op(op).is_some()
             || MemoryStore::from_direct_op(op).is_some() => Some(instruction.b()),
-        op if op.is_wasm_memory_size() => Some(instruction.b()),
-        op if op.is_wasm_memory_fill() => Some(instruction.a()),
+        op if crate::staged::wasm_memory_size(op) => Some(instruction.b()),
+        op if crate::staged::wasm_memory_fill(op) => Some(instruction.a()),
         _ => None,
     });
     single_register(direct).or_else(|| {
         let vector = single_register(
-            instructions().filter(|instruction| instruction.op().is_wasm_memory_address()).map(|instruction| instruction.c()),
+            instructions().filter(|instruction| crate::staged::wasm_memory_address(instruction.op())).map(|instruction| instruction.c()),
         )?;
         instructions()
             .take_while(|instruction| {
-                matches!(instruction.op().class(), Class::WasmFillRegisters | Class::WasmInstanceBinding)
+                crate::staged::wasm_setup_family(instruction.op())
             })
-            .any(|instruction| instruction.op().is_wasm_instance_binding() && instruction.a() == vector)
+            .any(|instruction| crate::staged::wasm_instance_binding(instruction.op()) && instruction.a() == vector)
             .then_some(vector)
     })
 }
@@ -16892,7 +16893,7 @@ fn lane_writes(instruction: WideInstruction, register: u16) -> bool {
             .b()
             .checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS)
             == Some(register);
-    let filled = op.is_wasm_fill_registers()
+    let filled = crate::staged::wasm_fill_registers(op)
         && (instruction.b()..instruction.b().saturating_add(instruction.c())).contains(&register);
     result || optional || filled
 }
@@ -16985,7 +16986,7 @@ fn derive_lane_view<'live, H: Host>(
             let instruction = decoded[pc];
             let op = instruction.op();
             let binds_memory =
-                op.is_wasm_instance_binding() && Some(instruction.a()) == memory_register;
+                crate::staged::wasm_instance_binding(op) && Some(instruction.a()) == memory_register;
             let memory_access = MemoryLoad::from_direct_op(op).is_some()
                 || MemoryStore::from_direct_op(op).is_some();
             let keeps_view = if memory_access {
@@ -17008,7 +17009,7 @@ fn derive_lane_view<'live, H: Host>(
                 accumulator_field(instruction, register)
             });
             // A table is backward when one of its entries jumps back.
-            let backward_jump = if op.is_wasm_branch_table() {
+            let backward_jump = if crate::staged::wasm_branch_table(op) {
                     crate::bytecode::branch_table_entries(pc, instruction).any(|entry| {
                         decoded[entry].imm() as usize <= pc
                     })
@@ -17022,7 +17023,7 @@ fn derive_lane_view<'live, H: Host>(
                     handler: lane_instance_binding_memory::<H> as Handler,
                     produces: false,
                 })
-            } else if op.is_wasm_f64_unary()
+            } else if crate::staged::wasm_f64_unary(op)
                 && F64UnaryOperator::from_tag(instruction.imm())
                     == Some(F64UnaryOperator::SquareRoot)
             {
@@ -17043,14 +17044,14 @@ fn derive_lane_view<'live, H: Host>(
                 // The count of the function's kept arguments: its row with that fact (`row_near`).
                 let row = tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten();
                 row.map(|row| LaneHandler { handler: row_near::<H, ARGUMENTS_COUNT>(row.handler as *const ()).unwrap_or(row.handler), ..row })
-            } else if matches!(op.class(), Class::LoadLocal | Class::LoadLocalPlain)
+            } else if crate::staged::local_read_family(op)
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
                 && kept_arguments.get_or_init(|| function.kept_arguments()).is_some()
             {
                 // The binding a keeping activation may leave unmaterialized is read by the local read's
                 // binding rules (`Miss::LocalLoad`), which materialize it or forward its marker.
                 Some(LaneHandler { handler: lane_frame::checked_local_hand::<H>(op) as Handler, produces: false })
-            } else if op.is_call() && lane_iteration_step(&decoded, pc) {
+            } else if crate::staged::calls(op) && lane_iteration_step(&decoded, pc) {
                 Some(LaneHandler {
                     handler: match lane_for_of_step(&decoded, pc) {
                         Some(ForOfTest::Emitted) => lane_iterator_step_reads::<H, false> as Handler,
@@ -17060,7 +17061,7 @@ fn derive_lane_view<'live, H: Host>(
                     },
                     produces: false,
                 })
-            } else if op.is_store_env_local() && resolves_names {
+            } else if crate::staged::writes_environment_slot(op) && resolves_names {
                 None
             } else if crate::staged::checked_local(op)
                 && !plain_frame_local(function, instruction.local_slot())
@@ -17068,7 +17069,7 @@ fn derive_lane_view<'live, H: Host>(
                 // A slot an environment, a mapped `arguments` or the self binding holds keeps its hand
                 // handler; `specialize_frame_locals` then gives it the handler of its binding facts.
                 Some(LaneHandler { handler: lane_frame::checked_local_hand::<H>(op) as Handler, produces: false })
-            } else if op.is_get_field() && lane_sinks_field(instruction) {
+            } else if crate::staged::reads_named_field(op) && lane_sinks_field(instruction) {
                 Some(LaneHandler {
                     handler: lane_get_field_sink_first::<H> as Handler,
                     produces: false,
@@ -17175,7 +17176,7 @@ fn derive_lane_view<'live, H: Host>(
         // A table follows its selected entry's jump, so every entry must run in
         // the lane.
         for (pc, &instruction) in decoded.iter().enumerate() {
-            if instruction.op().is_wasm_branch_table()
+            if crate::staged::wasm_branch_table(instruction.op())
                 && crate::bytecode::branch_table_entries(pc, instruction).any(|entry| exits[entry])
             {
                 records[pc].handler = lane_exit::<H> as Handler as *const ();
@@ -17188,7 +17189,7 @@ fn derive_lane_view<'live, H: Host>(
     // A record's plain jump, with its direction.
     let jump_direction = |handler: *const ()| {
         [false, true].into_iter().find(|&backward| {
-            tables[usize::from(backward)][usize::from(ACC_NONE)][opc::Jump as usize]
+            tables[usize::from(backward)][usize::from(ACC_NONE)][crate::staged::JUMP_ROW as usize]
                 .is_some_and(|jump| handler == jump.handler as *const ())
         })
     };
@@ -17198,7 +17199,7 @@ fn derive_lane_view<'live, H: Host>(
     // visible to `install_loop_sites`, which runs before the fusion pass.
     let _then_fuses = |records: &[LaneInstruction], pc: usize| {
         pc + 1 < records.len()
-            && (serves(records[pc].handler, opc::Move, ACC_NONE) || serves(records[pc].handler, opc::WasmI32AddImmediate, ACC_NONE))
+            && (serves(records[pc].handler, crate::staged::MOVE_ROW, ACC_NONE) || serves(records[pc].handler, crate::staged::WASM_I32_ADD_IMMEDIATE_ROW, ACC_NONE))
             && jump_direction(records[pc + 1].handler).is_some_and(|backward| !(loop_tier && backward))
     };
     if wasm {
@@ -17210,7 +17211,7 @@ fn derive_lane_view<'live, H: Host>(
             let instruction = decoded[pc];
             let next = decoded[pc + 1];
             let pair = (|| {
-                if !next.op().is_wasm_f64_binary() {
+                if !crate::staged::wasm_f64_binary(next.op()) {
                     return None;
                 }
                 let second = float_arithmetic(next.op(), next.imm())?;
@@ -17220,8 +17221,8 @@ fn derive_lane_view<'live, H: Host>(
                         .find(|acc| serves(records[pc + 1].handler, next.op() as u16, *acc))
                         .map(|acc| acc == ACC_B)
                 };
-                if instruction.op().is_wasm_f64_load() {
-                    let plain = tables[0][usize::from(ACC_NONE)][opc::WasmF64Load as usize]?;
+                if crate::staged::wasm_f64_load(instruction.op()) {
+                    let plain = tables[0][usize::from(ACC_NONE)][crate::staged::WASM_F64_LOAD_ROW as usize]?;
                     if records[pc].handler != plain.handler as *const () {
                         return None;
                     }
@@ -17231,11 +17232,11 @@ fn derive_lane_view<'live, H: Host>(
                     let updates =
                         pc + 2 < records.len() && usize::from(second) < FLOAT_PAIR_FIRSTS && {
                             let store = decoded[pc + 2];
-                            store.op().is_wasm_f64_store()
+                            crate::staged::wasm_f64_store(store.op())
                                 && store.a() == next.a()
                                 && [ACC_NONE, ACC_A]
                                     .into_iter()
-                                    .any(|acc| serves(records[pc + 2].handler, opc::WasmF64Store, acc))
+                                    .any(|acc| serves(records[pc + 2].handler, crate::staged::WASM_F64_STORE_ROW, acc))
                         };
                     if updates {
                         return Some((
@@ -17248,7 +17249,7 @@ fn derive_lane_view<'live, H: Host>(
                         2,
                     ));
                 }
-                if !instruction.op().is_wasm_f64_binary() {
+                if !crate::staged::wasm_f64_binary(instruction.op()) {
                     return None;
                 }
                 let first = float_arithmetic(instruction.op(), instruction.imm())?;
@@ -17273,10 +17274,10 @@ fn derive_lane_view<'live, H: Host>(
                 // store may read it plainly or through the accumulator.
                 let store_runs = [ACC_NONE, ACC_A]
                     .into_iter()
-                    .any(|acc| serves(records[pc + 1].handler, opc::WasmF64Store, acc));
-                if !instruction.op().is_wasm_f64_binary()
+                    .any(|acc| serves(records[pc + 1].handler, crate::staged::WASM_F64_STORE_ROW, acc));
+                if !crate::staged::wasm_f64_binary(instruction.op())
                     || usize::from(first) >= FLOAT_PAIR_FIRSTS
-                    || !next.op().is_wasm_f64_store()
+                    || !crate::staged::wasm_f64_store(next.op())
                     || next.a() != instruction.a()
                     || entries.contains(pc + 1)
                     || !store_runs
@@ -17421,7 +17422,7 @@ fn derive_lane_view<'live, H: Host>(
         plain_backward_jump_sites: decoded
             .iter()
             .enumerate()
-            .filter(|(pc, instruction)| instruction.op().is_jump() && instruction.jump_target() <= *pc as u32)
+            .filter(|(pc, instruction)| crate::staged::jumps(instruction.op()) && instruction.jump_target() <= *pc as u32)
             .count(),
         osr_rejections: (!osr_rejections.is_empty())
             .then(|| osr_rejections.into_boxed_slice()),
@@ -17434,7 +17435,7 @@ fn derive_lane_view<'live, H: Host>(
 /// operand: every field read or store's of its receiver, and a global name access's or top-level
 /// `var` capture read's of the global object (`name_row`, `lane_load_root_var`).
 fn holds_field_hint(op: Op) -> bool {
-    op.is_field_store() || op.is_get_field() || op.is_load_capture() || is_global_name_access(op)
+    crate::staged::stores_field(op) || crate::staged::reads_named_field(op) || crate::staged::reads_capture(op) || is_global_name_access(op)
 }
 
 /// Whether an instruction is a by-name load (`LOAD_NAME`) or store, whose hint a global
@@ -17619,7 +17620,7 @@ fn specialize_returning_binaries<H: Host>(decoded: &[WideInstruction], constants
 /// (`lane_return_constant`). The `Return` record stays for jumps that reach it, and the
 /// fused record's general return continues there.
 fn specialize_constant_returns<H: Host>(records: &mut [LaneInstruction]) {
-    let load = lane_row::<H, { opc::LoadConst }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
+    let load = lane_row::<H, { crate::staged::LOAD_CONST_ROW }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
     let ret = lane_return::<H, NOT_LEAF> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         if records[pc].handler == load && records[pc + 1].handler == ret && records[pc + 1].a == records[pc].a {
@@ -17728,13 +17729,13 @@ fn update_fusion<H: Host>(update: &LaneInstruction, jump: &LaneInstruction) -> O
         plain if plain == jump_row::<H, JUMP>(false) as *const () => false,
         _ => return None,
     };
-    Some(lane_frame::fused_row::<H, { opc::IncDec }, { opc::Jump }, { crate::staged::FUSED_PLAIN }>(backward))
+    Some(lane_frame::fused_row::<H, { crate::staged::INC_DEC_ROW }, { crate::staged::JUMP_ROW }, { crate::staged::FUSED_PLAIN }>(backward))
 }
 
 /// Whether `record`, an `IncDec` running its row (`lane_row`), decrements (its immediate flag);
 /// `None` for any other record.
 fn update_direction<H: Host>(record: &LaneInstruction) -> Option<bool> {
-    is_row::<H, { opc::IncDec }>(record.handler).then(|| record.imm() != 0)
+    is_row::<H, { crate::staged::INC_DEC_ROW }>(record.handler).then(|| record.imm() != 0)
 }
 
 /// An environment-window record's immediate: its own (a local slot or closure function, at
@@ -17803,12 +17804,12 @@ fn specialize_environment_window<H: Host>(
 const ARGUMENTS_COUNT: u16 = crate::staged::ARGUMENTS_COUNT_ROW;
 
 /// The jump rows the jump passes fuse and requicken to (`jump_row`).
-const JUMP: u16 = opc::Jump;
+const JUMP: u16 = crate::staged::JUMP_ROW;
 
 /// The capture rows the capture passes fuse (`specialize_captures`, `specialize_capture_updates`,
 /// `specialize_load_branch_pairs`) and whose read a fused update falls back to.
-const CAPTURE_READ: u16 = opc::LoadCapture;
-const CAPTURE_WRITE: u16 = opc::StoreCapture;
+const CAPTURE_READ: u16 = crate::staged::LOAD_CAPTURE_ROW;
+const CAPTURE_WRITE: u16 = crate::staged::STORE_CAPTURE_ROW;
 
 /// Gives each capture record its handler by the capture's depth, which the bytecode fixes. A
 /// record past the function's own scope keeps its row: an outer `LoadCapture` reads through the
@@ -17910,7 +17911,7 @@ fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constant
 fn may_loop(function: &Function) -> bool {
     function.code.iter().enumerate().any(|(pc, packed)| {
         let instruction = decoded_instruction(function, *packed);
-        instruction.op().is_wasm_branch_table()
+        crate::staged::wasm_branch_table(instruction.op())
             || (instruction.op().immediate_role() == ImmediateRole::JumpTarget
                 && instruction.imm() as usize <= pc)
     })
@@ -17923,15 +17924,15 @@ fn may_loop(function: &Function) -> bool {
 /// An `Await` counts as `cap`: a resumed async frame's lane run that stops there suspends
 /// without the general loop (`Vm::lane_stop_awaits`), so a short run to it repays its entry.
 fn lane_runs_ahead(decoded: &[WideInstruction], exits: &[bool], cap: usize, follows_jumps: bool) -> Vec<usize> {
-    let next = |pc: usize| match decoded[pc].op().class() {
-        Class::Jump if follows_jumps => decoded[pc].imm() as usize,
+    let next = |pc: usize| match decoded[pc].op() {
+        _ if follows_jumps && crate::staged::jump_family(decoded[pc].op()) => decoded[pc].imm() as usize,
         _ => pc + 1,
     };
     let mut runs = vec![0usize; exits.len()];
     for _ in 0..cap {
         let mut changed = false;
         for pc in (0..exits.len()).rev() {
-            let run = if decoded[pc].op().is_await() {
+            let run = if crate::staged::awaits(decoded[pc].op()) {
                 cap
             } else if exits[pc] {
                 0
@@ -17956,9 +17957,9 @@ fn entry_run_returns(decoded: &[WideInstruction], exits: &[bool]) -> bool {
         if exits.get(pc).is_none_or(|exits| *exits) {
             return false;
         }
-        match decoded[pc].op().class() {
-            Class::Return => return true, _ if decoded[pc].returns_from_frame() => return true, // fused with its return
-            Class::Jump => pc = decoded[pc].imm() as usize,
+        match decoded[pc].op() {
+            _ if crate::staged::return_family(decoded[pc].op()) => return true, _ if decoded[pc].returns_from_frame() => return true, // fused with its return
+            _ if crate::staged::jump_family(decoded[pc].op()) => pc = decoded[pc].imm() as usize,
             _ => pc += 1,
         }
     }
@@ -18019,7 +18020,7 @@ impl InstructionSet {
 fn branch_table_entry_records(instructions: &[WideInstruction]) -> InstructionSet {
     let mut entries = InstructionSet::new(instructions.len());
     for (pc, &instruction) in instructions.iter().enumerate() {
-        if instruction.op().is_wasm_branch_table() {
+        if crate::staged::wasm_branch_table(instruction.op()) {
             for entry in crate::bytecode::branch_table_entries(pc, instruction) {
                 entries.insert(entry);
             }
