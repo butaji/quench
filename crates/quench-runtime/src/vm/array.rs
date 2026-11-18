@@ -53,6 +53,17 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         this: Value,
     ) -> Result<Value, JsError> {
+        // A direct array whose elements are ordinary and all present: every HasProperty, Get
+        // and Set below reads or writes an own data element and observes nothing, so the
+        // steps reduce to reversing the backing. Moving values within one array stores no
+        // new reference, which the write barrier passes.
+        if self.heap.record_array(this).is_some_and(|array| {
+            array.holds_ordinary_elements() && !array.elements().iter().any(|value| value.is_deleted())
+        }) && let Some(array) = self.heap.record_array_store_mut(this, Value::UNDEFINED)
+        {
+            super::index::mutable_array_elements(array.elements_mut()).reverse();
+            return Ok(this);
+        }
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         let (mut lower, mut upper) = (0, length.saturating_sub(1));
