@@ -135,6 +135,9 @@ pub(crate) enum Miss {
     /// A conditional jump on a heap value whose cell decides its truthiness, jumping where the
     /// truthiness is `taken`.
     CellTruth { taken: bool },
+    /// An `arguments` count the frame does not hold: the binding's own count, read from the
+    /// frame or window that holds it.
+    ArgumentsBinding,
 }
 
 /// The row of `op`'s miss route (`Miss`).
@@ -142,11 +145,22 @@ pub(crate) const fn miss(op: Op) -> Miss {
     match op {
         Op::LoadCapture => Miss::WalkScopes,
         Op::StoreCapture => Miss::StoreThroughScopes,
+        Op::ArgumentsLength => Miss::ArgumentsBinding,
         _ => match truth_jump(op) {
             Some(taken) => Miss::CellTruth { taken },
             None => Miss::General,
         },
     }
+}
+
+/// The opcode whose row answers an arguments binding's count (`Miss::ArgumentsBinding`), which a
+/// tier names to give the row a fact it proved at view time.
+pub(crate) const ARGUMENTS_COUNT_ROW: u16 = Op::ArgumentsLength as u16;
+
+/// Whether `op`'s row writes its result register itself when it answers a value. A keyed for-in
+/// read (`EnumeratedGet`) answers the word it read and leaves the write to the tier.
+pub(crate) const fn row_writes_result(op: Op) -> bool {
+    !matches!(op, Op::GetEnumerated)
 }
 
 /// The truthiness on which `op` jumps, for a jump on its register's truthiness

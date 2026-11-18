@@ -125,6 +125,9 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The running frame's `this` where the lane's context word does not hold it (`lane_this`),
     /// read only by a row that asks for `this`.
     frame_this: Option<(*mut (), unsafe fn(*mut ()) -> Option<Value>)>,
+    /// The running function's `arguments` count in a local slot (`arguments_count`), read only
+    /// by the row that asks for it.
+    arguments: Option<(*mut (), unsafe fn(*mut (), u16) -> Option<Value>)>,
     /// The constants, local slots and outer captures the staged row's operands name.
     reads: Reads,
 }
@@ -134,7 +137,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, reads: Reads::NONE }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -158,7 +161,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, reads: Reads::NONE }
     }
 }
 
@@ -275,6 +278,13 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         let Decisions { context, decide, .. } = self.decisions?;
         let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
         decide(context, operator, left, right).map(|holds| (Value::boolean(holds).to_bits(), Boxing::Value))
+    }
+
+    #[inline(always)]
+    fn arguments_length(&mut self, _stage: &mut Concrete, slot: u16) -> Option<(u64, Boxing)> {
+        let (context, count) = self.arguments?;
+        // SAFETY: the running lane's context, live for the row's step.
+        Some((unsafe { count(context, slot) }?.to_bits(), Boxing::Value))
     }
 
     #[inline(always)]
@@ -470,8 +480,9 @@ impl<const OP: u16, const FLAG: u8> crate::staged::Fields for LaneFields<'_, OP,
 /// `lane_row`'s `FLAG`: a row whose immediate is a boolean flag (`ImmediateRole::BooleanFlag`) reads it
 /// from the record until its first run, which requickens the record to the instantiation of its flag
 /// (`FLAG_CLEAR`, `FLAG_SET`), so the flag is a static operand the row folds (an increment and a
-/// decrement are two handlers of one row). For any other row, `FLAG_SET` states a fact the view
-/// proved of the record's immediate: its high half is zero (`row_near`).
+/// decrement are two handlers of one row). For any other row, `FLAG_SET` states the fact the view
+/// proved of the record (`row_near`): a capture's immediate has a zero high half (its own scope),
+/// an `arguments` count reads its function's kept arguments.
 pub(in crate::vm::dispatch_fast) const FLAG_UNREAD: u8 = 0;
 pub(in crate::vm::dispatch_fast) const FLAG_CLEAR: u8 = 1;
 pub(in crate::vm::dispatch_fast) const FLAG_SET: u8 = 2;
@@ -498,11 +509,18 @@ pub(in crate::vm::dispatch_fast) const fn lane_runs_row(op: Op) -> bool {
 /// The frame `lane_row` steps opcode `OP`'s row over: the register file and the carried view, and
 /// the running frame's local slots where the row is a local one (`Decoder::Local`).
 #[inline(always)]
-fn row_frame<H: Host, const OP: u16, const ACC: u8>(cx: *mut LaneContext<H>, r: Registers, view: Carried) -> LaneFrame<ACC> {
+fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneContext<H>, r: Registers, view: Carried) -> LaneFrame<ACC> {
     let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Local)) };
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
         let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
-        return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::new(r, view) };
+        // A count the view proved to read its function's kept arguments (`FLAG_SET`) takes a
+        // keeping activation's count without finding the function.
+        let count: unsafe fn(*mut (), u16) -> Option<Value> = if FLAG == FLAG_SET {
+            |context, slot| unsafe { super::arguments_count::<H, true>(context.cast(), slot) }
+        } else {
+            |context, slot| unsafe { super::arguments_count::<H, false>(context.cast(), slot) }
+        };
+        return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Value)) } {
         // A value row may read `this`: the context word, else the frame's (`lane_this`), read lazily.
@@ -532,13 +550,14 @@ const fn row_miss<H: Host>(op: Op) -> Handler {
     match crate::staged::miss(op) {
         crate::staged::Miss::WalkScopes => super::lane_load_capture_walk::<H>,
         crate::staged::Miss::StoreThroughScopes => super::lane_store_outer_capture::<H>,
+        crate::staged::Miss::ArgumentsBinding => super::lane_frame_arguments::<H, false>,
         crate::staged::Miss::General | crate::staged::Miss::CellTruth { .. } => lane_general_step::<H>,
     }
 }
 
-/// Opcode `OP`'s row handler for a record whose immediate the view proved to fit its low half
-/// (`FLAG_SET`), where `handler` is the plain row (`FLAG_UNREAD`, no accumulator field): a
-/// capture access at depth 0 then reads its slot without testing the depth.
+/// Opcode `OP`'s row handler for a record of which the view proved its row's fact (`FLAG_SET`),
+/// where `handler` is the plain row (`FLAG_UNREAD`, no accumulator field): a capture access at
+/// depth 0 then reads its slot without testing the depth.
 pub(in crate::vm::dispatch_fast) fn row_near<H: Host, const OP: u16>(handler: *const ()) -> Option<Handler> {
     (handler == lane_row::<H, OP, ACC_NONE, FLAG_UNREAD> as Handler as *const ())
         .then_some(lane_row::<H, OP, ACC_NONE, FLAG_SET> as Handler)
@@ -626,12 +645,12 @@ lane_handler! {
             unsafe { vm(cx) }.heap.arena_values_base()
         } else { std::ptr::null() };
         let mut stage = Concrete::new(property_values);
-        let mut frame = row_frame::<H, OP, ACC>(cx, r, view);
+        let mut frame = row_frame::<H, OP, ACC, FLAG>(cx, r, view);
         match crate::staged::step(&mut stage, &mut frame, operation) {
             Step::Value(value) => {
-                // A names row answers its value without defining its register (its call-out defines it):
+                // A row that answers its value without writing its register (`row_writes_result`):
                 // the register is written here, as every producer writes it beside the carried value.
-                if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
+                if const { !crate::staged::row_writes_result(LaneFields::<OP, FLAG>::OPCODE) } {
                     r.set(i.a, Value::from_bits(value));
                 }
                 if const { row_produces(LaneFields::<OP, FLAG>::OPCODE) } {

@@ -1114,7 +1114,7 @@ opcodes!($;
     // an unmaterialized binding answers from the values its activation kept
     // (`Function::kept_arguments`); any other value is read as `GetField` and
     // `GetIndex` read it.
-    ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot; class ArgumentsLength; staged Names, @ Register, @ fields(ResultRegister, Unused, Unused),
+    ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot; class ArgumentsLength; staged Names; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Unused, Unused),
     ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot; class ArgumentGet, @ Register, @ fields(ResultRegister, Register, Unused),
     // A first-call stub's body: calls its chunk with its arguments and `new.target` (`Vm::call_first_chunk`).
     CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
