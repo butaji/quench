@@ -164,6 +164,8 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
                 function.local_atoms.get(usize::from(entry.local)) == Some(&instruction.imm())
             })
         });
+    let makes_closures = function.code.iter().any(|instruction| instruction.op() == Op::MakeClosure)
+        || function.wide.iter().any(|instruction| instruction.op() == Op::MakeClosure);
     let eligible_function = function.parent.is_some()
         // An async body that never suspends runs to completion as an ordinary one does
         // (`Compiler::promoted_local_plan`'s `async_body`).
@@ -181,14 +183,16 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
         && !function.inherited_with_scope
         && function.binding_sites.is_empty()
         && !has_dynamic_local_resolution
+        // A function that makes closures promotes only parameters, under a selective capture
+        // layout that captures none of them (checked per entry below): its closures reach
+        // its environment's slots alone (`Compiler::promoted_local_plan`'s `parameters_only`).
+        && (!makes_closures || function.selective_capture_slots.is_some() && promoted.iter().all(|entry| entry.local < function.params))
         && !function.code.iter().any(|instruction| {
-            instruction.op() == Op::MakeClosure
-                || instruction.op().is_call_with_eval_flags() && instruction.direct_eval()
+            instruction.op().is_call_with_eval_flags() && instruction.direct_eval()
         })
         && !function.wide.iter().any(|instruction| {
-            instruction.op() == Op::MakeClosure
-                || instruction.op().is_call_with_eval_flags()
-                    && ImmediateLayout::direct_eval(instruction.imm())
+            instruction.op().is_call_with_eval_flags()
+                && ImmediateLayout::direct_eval(instruction.imm())
         });
     eligible_function
         && promoted.iter().enumerate().all(|(index, entry)| {

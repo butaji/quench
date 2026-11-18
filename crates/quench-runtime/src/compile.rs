@@ -3962,9 +3962,18 @@ impl<'a> Compiler<'a> {
         // An async body that may suspend keeps its locals in frame slots; one that never
         // awaits runs to completion as an ordinary body does (`CallPlan::settles_in_loop`).
         let suspends = async_body && register_local_facts.suspends;
-        if !eligible || suspends || !register_local_facts.safe || !arguments_allow_promotion {
+        // A body that makes functions keeps its locals for the capture layout to split
+        // (`capture_layout`, `frame_registers`), but a parameter none of them names is the
+        // body's alone: it arrives in a register as in a body that makes none, where the
+        // later passes, which leave parameters in their slots, would keep it in the frame.
+        // An async body keeps its whole frame for its closures (`capture_layout` splits none).
+        let parameters_only = !async_body && register_local_facts.makes_closures_only()
+            && own_arguments.is_some_and(|(_, parameters)| register_local_facts.closures_spare(
+                parameters.iter().map(|atom| &self.atoms[*atom as usize])));
+        if !eligible || suspends || !(register_local_facts.safe || parameters_only) || !arguments_allow_promotion {
             return PromotedLocalPlan { unaliased_arguments, ..Default::default() };
         }
+        let parameter_count = own_arguments.map_or(0, |(_, parameters)| parameters.len());
         let arguments_atom = self.atom("arguments");
         let mut latest_local_slot = FxHashMap::default();
         for (slot, atom) in locals.iter().copied().enumerate() {
@@ -3978,6 +3987,11 @@ impl<'a> Compiler<'a> {
                 let promotable = if let Some(arguments) = arguments_only {
                     // The hidden argument slots lead the locals, one per parameter.
                     usize::from(slot) < arguments
+                } else if parameters_only {
+                    usize::from(slot) < parameter_count
+                        && own_arguments.is_some_and(|(_, parameters)| parameters.contains(&atom))
+                        && atom != arguments_atom
+                        && self_binding_slot != Some(slot)
                 } else {
                     function_scope.contains(&atom)
                         && !lexical_atoms.contains(&atom)
