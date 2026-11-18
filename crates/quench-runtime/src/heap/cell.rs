@@ -3409,6 +3409,15 @@ pub(crate) struct EnvironmentRecord {
     pub(crate) scope: EnvironmentScopeRef,
 }
 
+// Size pins. The record is 32 bytes: parent, slots and scope are one word each, and the u32
+// `function` leaves 4 bytes of padding to the 8-byte alignment. Dropping `function` from the
+// record would make it 24 bytes. A dense slot storage of `n` slots is `24 + 8n` bytes: a
+// 16-byte prefix, the 8-byte header, then the slots. A change to any of these is a deliberate
+// memory-layout change.
+const _: () = assert!(std::mem::size_of::<EnvironmentRecord>() == 32);
+const _: () = assert!(std::mem::size_of::<EnvironmentSlots>() == std::mem::size_of::<usize>());
+const _: () = assert!(std::mem::size_of::<EnvironmentScopeRef>() == std::mem::size_of::<usize>());
+
 /// An environment's provenance and dynamic-scope state: consulted for eval, `with` and
 /// name resolution, while slot reads only need `parent`, `function` and `slots`.
 #[derive(Debug, Clone)]
