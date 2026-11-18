@@ -78,8 +78,7 @@ impl Lowering<'_, '_> {
     pub(super) fn call_out_stop(&mut self) -> ir::Block {
         let builder = &mut self.builder;
         *self.call_out_stop.get_or_insert_with(|| {
-            let block = builder.create_block();
-            builder.set_cold_block(block);
+            let block = super::cold_block(builder);
             builder.append_block_param(block, types::I64);
             block
         })

@@ -31,6 +31,19 @@ fn thread_cpu_nanos() -> u64 {
     u64::try_from(BASE.get_or_init(std::time::Instant::now).elapsed().as_nanos()).unwrap_or(u64::MAX)
 }
 
+thread_local! {
+    /// The view whose audit runs now (its address), or 0: audits run one at a time, so no
+    /// audit's epochs hold another's alternation. Two bodies audited at once confound each
+    /// other: a mutually recursive pair's audits interleaved, and the one whose body epochs
+    /// fell on the other's interpreted epochs retired (f's body 172 us against 80 us
+    /// interpreted, though both bodies together ran faster).
+    static AUDITOR: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The entries other bodies made, uncounted, since the auditor last counted one: past
+    /// `AUDIT_LEASE_ENTRIES`, an auditor no longer entered (retired, or its program gone)
+    /// gives way.
+    static WAITED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 /// The most epochs a side keeps (`audit_samples` is capped by it).
 const MAX_EPOCHS: usize = 32;
 
@@ -71,6 +84,21 @@ impl LaneView {
         if history.audit.done {
             return false;
         }
+        // Another body's audit runs: this entry runs the body, uncounted, until it ends.
+        let me = std::ptr::from_ref(self) as usize;
+        if AUDITOR.get() != me {
+            let waited = WAITED.get();
+            if AUDITOR.get() != 0 && waited < super::super::compiled::tier_policy::AUDIT_LEASE_ENTRIES {
+                WAITED.set(waited + 1);
+                return false;
+            }
+            // Taking the audit starts it afresh: epochs counted under another's ran beside it.
+            AUDITOR.set(me);
+            history.audit = Audit::default();
+            self.tier().history.set(history);
+            self.tier().audit_epochs.set(Epochs::default());
+        }
+        WAITED.set(0);
         let period = self.tiers.lane_body.audit_period;
         let seen = history.audit.seen;
         let interpreted = (seen / period) % SIDES as u32 == INTERPRETER as u32;
@@ -115,6 +143,9 @@ impl LaneView {
         let mut history = self.tier().history.get();
         history.audit.done = true;
         self.tier().history.set(history);
+        if AUDITOR.get() == std::ptr::from_ref(self) as usize {
+            AUDITOR.set(0);
+        }
         let median = |side: usize| {
             let mut nanos = epochs.nanos[side][..samples].to_vec();
             nanos.sort_unstable();

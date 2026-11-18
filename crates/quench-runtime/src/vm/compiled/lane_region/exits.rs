@@ -53,8 +53,7 @@ impl Lowering<'_, '_> {
     /// The block that stores `stored` and leaves at `pc`, made at its first leave.
     pub(super) fn exit_block(&mut self, pc: usize, stored: ExitStores) -> ir::Block {
         if let Some(held) = self.exits[pc].iter().find(|held| held.stored == stored) { return held.block; }
-        let block = self.builder.create_block();
-        self.builder.set_cold_block(block);
+        let block = cold_block(&mut self.builder);
         self.exits[pc].push(ExitBlock { stored, block });
         block
     }
@@ -63,9 +62,8 @@ impl Lowering<'_, '_> {
     /// caller-frame leave of a body that stores the same registers.
     pub(super) fn shared_exit_block(&mut self, stored: ExitStores) -> ir::Block {
         if let Some(held) = self.shared_exits.iter().find(|held| held.stored == stored) { return held.block; }
-        let block = self.builder.create_block();
+        let block = cold_block(&mut self.builder);
         self.builder.append_block_param(block, ir::types::I64);
-        self.builder.set_cold_block(block);
         self.shared_exits.push(ExitBlock { stored, block });
         block
     }

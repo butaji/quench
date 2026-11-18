@@ -19,15 +19,7 @@ pub(super) enum LoopBody {
     Declined,
 }
 
-/// The bodies a loop site plans, each from its predecessors' leaves.
-const ATTEMPTS: u8 = 4;
-/// The runs of a loop's body that leave inside the loop before the next body plans around them.
-const REOPTIMIZE: u16 = 16;
-/// The share of a loop body's runs, in percent, that may leave inside the loop for it to stay.
-const KEEP_SHARE: u64 = 10;
-/// The backedges between looks for a loop body's compiling code.
-const POLL: u16 = 16;
-
+use crate::vm::compiled::tier_policy::{LOOP_BODY_ATTEMPTS, LOOP_BODY_REOPTIMIZE, LOOP_BODY_KEEP_SHARE, LOOP_BODY_POLL};
 impl LoopBody {
     pub(super) const IDLE: Self = Self::Idle { stuck: LaneLeaves::NONE, attempts: 0 };
 
@@ -44,17 +36,17 @@ impl LoopBody {
         let Self::Ready { runs, exits, leaves, stuck, attempts, .. } = self else { return };
         *leaves = leaves.with(exit);
         *exits += 1;
-        if *exits < REOPTIMIZE { return; }
+        if *exits < LOOP_BODY_REOPTIMIZE { return; }
         let next = stuck.union(*leaves);
         // Leaves only where the bodies before it left, those places already generic, would
         // plan the same body again: it stays while most of its runs complete, and its loop
         // has no body otherwise.
         if next == *stuck && next != LaneLeaves::Scattered {
-            if u64::from(*exits) * PERCENT > u64::from(*runs) * KEEP_SHARE { *self = Self::Declined; }
+            if u64::from(*exits) * PERCENT > u64::from(*runs) * LOOP_BODY_KEEP_SHARE { *self = Self::Declined; }
             else { (*exits, *leaves) = (0, LaneLeaves::NONE); }
             return;
         }
-        *self = if *attempts + 1 >= ATTEMPTS || next == LaneLeaves::Scattered { Self::Declined }
+        *self = if *attempts + 1 >= LOOP_BODY_ATTEMPTS || next == LaneLeaves::Scattered { Self::Declined }
             else { Self::Idle { stuck: next, attempts: *attempts + 1 } };
     }
 
@@ -75,7 +67,7 @@ impl LoopBody {
     /// The state after the work for the body (`outcome`), which `stuck` and `attempts` planned.
     fn after(outcome: LaneBodyOutcome, stuck: LaneLeaves, attempts: u8) -> Self {
         match outcome {
-            LaneBodyOutcome::Compiling(pending) => Self::Compiling { pending, wait: POLL, stuck, attempts },
+            LaneBodyOutcome::Compiling(pending) => Self::Compiling { pending, wait: LOOP_BODY_POLL, stuck, attempts },
             LaneBodyOutcome::Published(method) => Self::Ready { method, runs: 0, exits: 0, leaves: LaneLeaves::NONE, stuck, attempts },
             LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred | LaneBodyOutcome::Unpaid => Self::Idle { stuck, attempts },
             LaneBodyOutcome::Declined | LaneBodyOutcome::Short => Self::Declined,

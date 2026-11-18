@@ -71,22 +71,7 @@ impl HotLoop {
     }
 }
 
-/// The backward jumps a JavaScript activation takes in the general path before its function's
-/// lane view is derived and the lane runs its loop (`Vm::note_back_edge`). Deriving a view
-/// costs some hundreds of instructions per instruction of the function; a module body that
-/// loops a few times (over its exports, say) ran faster without one.
-const HOT_LOOP_BACK_EDGES: u16 = 16;
-
-/// The loop work, in instructions its back edges span per instruction of the function, after
-/// which a view-less activation derives its function's lane view (`HotLoop`). A view costs
-/// some hundreds of instructions per instruction of the whole function, so a short loop in a
-/// large body that runs once (a module body filling a table) ran
-/// faster without one. Measured in instructions, warm compile cache, against deriving at
-/// `HOT_LOOP_BACK_EDGES` alone (x86_64 VM, 2026-10-26): @babel/core -11.0% (one: +0.9%,
-/// four: -9.9%), and within 0.2% on schema-utils, axios, semver, ajv, eslint, jiti, undici
-/// and source-map.
-const LANE_VIEW_LOOP_PAYBACK: u32 = 8;
-
+use crate::vm::compiled::tier_policy::{HOT_LOOP_BACK_EDGES, LANE_VIEW_LOOP_PAYBACK};
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
 pub(super) struct PendingGeneralCall {
     pub(super) caller: usize,

@@ -138,7 +138,7 @@ impl JsJitCallOutcome {
     }
 }
 
-const JS_JIT_MAX_FUNCTIONS: usize = 64;
+use crate::vm::compiled::tier_policy::{JS_JIT_MAX_FUNCTIONS, JS_JIT_MAX_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS, WASM_JIT_MODULE_CLOCK_INTERVAL, WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_BASELINE_MAPPED_BYTES, JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, WASM_MODULE_MIN_COVERAGE, WASM_MODULE_WEIGHED_FUNCTIONS, LANE_VIEW_DEFERRED_RUNS};
 // Tier observations include dynamically generated functions across all retained
 // programs. Web-SSR exposes more than 1,300 functions in one VM; keep a fixed
 // metadata bound large enough to observe that workload without changing the
@@ -147,11 +147,6 @@ const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 2048;
 const JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS: usize = 4096;
 const JS_JIT_MAX_REJECTED_FUNCTIONS: usize = 4096;
 const JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES: u64 = 32;
-// Executable mappings were once page-rounded. A 64 KiB cap then admitted only
-// sixteen tiny JS artifacts on 4 KiB systems, starving later high-frequency
-// helpers; the function-count cap still bounds artifact proliferation.
-const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
-const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
 /// When a Wasm module running under `--jit` compiles whole (`WasmModuleTier`). It starts in
 /// the interpreter with its hot roots promoted, so a module used briefly pays only for them;
 /// one that runs long gets the code eager compilation would have made at its first entry.
@@ -185,24 +180,8 @@ impl WasmModuleCompile {
     }
 }
 
-/// How often, in work, a selective module reads the clock for `WasmModuleCompile::after`:
-/// often enough that a 20 ms bound lands within a few interpreted calls, rarely enough that
-/// the clock stays off an interpreted call's path.
-const WASM_JIT_MODULE_CLOCK_INTERVAL: u32 = 16;
-const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
-/// The eager artifacts of Wasm modules together. A module's eager artifact is all of its code
-/// at once, compiled before its first call: held to the shared ceiling, a module larger than
-/// it compiled and was then discarded, leaving every function interpreted and promoting hot
-/// roots one by one into a tier budget that filled (sqlite3-wasm, a 5.2 MiB artifact: Score
-/// 0.61 against 12.29 kept, first iteration 17.3 s against 3.3 s; max RSS unchanged at 100
-/// MiB, JetStream 3 `--jit`, Linux x86_64, 2026-10-24). This bounds a VM's eager Wasm code
-/// to a few large modules.
-const WASM_JIT_MAX_BASELINE_MAPPED_BYTES: usize = 32 * 1024 * 1024;
 /// The least an artifact holds in the code zone.
 const JIT_MIN_ARTIFACT_BYTES: usize = super::compiled::CODE_GRANULE;
-/// One VM-local admission ceiling shared by JS and Wasm artifacts.
-const JIT_MAX_ARTIFACTS: usize = JS_JIT_MAX_FUNCTIONS + WASM_JIT_MAX_TIER_ROOTS;
-const JIT_MAX_MAPPED_BYTES: usize = WASM_JIT_MAX_TIER_MAPPED_BYTES;
 
 #[derive(Clone, Copy)]
 enum JitArtifactKind {
@@ -390,17 +369,6 @@ enum WasmModuleTier {
     /// lookups and its functions compile no roots (K-TIER T4a).
     Declined,
 }
-
-/// The share of a module's bytecodes, in per mille, its whole compile must hold code for to be
-/// kept. Below it most calls cross between native code and the interpreter, and each crossing
-/// (a general-path activation, a callout) costs more than the native function saves: the Wasm
-/// GC modules of JetStream 3 (j2cl-box2d, Dart-flute) compile a few tiny leaves and run 10-40%
-/// slower than with no JIT.
-const WASM_MODULE_MIN_COVERAGE: usize = 500;
-
-/// The fewest functions a module has for its whole compile's coverage to be weighed: a smaller
-/// module compiles in microseconds and makes few crossings, whatever it holds.
-const WASM_MODULE_WEIGHED_FUNCTIONS: usize = 64;
 
 impl Default for WasmModuleTier {
     fn default() -> Self {
@@ -1861,7 +1829,7 @@ impl ProgramStore {
             .residual
             .function_get(function as usize)
             .is_some_and(|function| {
-                function.code.len() <= super::compiled::MAX_JIT_TIER_BYTECODES_PER_FUNCTION
+                function.code.len() <= crate::vm::compiled::tier_policy::MAX_JIT_TIER_BYTECODES_PER_FUNCTION
             })
         {
             return false;
@@ -2933,13 +2901,6 @@ fn census_label(entry: &ProgramEntry, function: u32) -> String {
         body.and_then(|body| body.source_span).map(|span| span.start),
     )
 }
-
-/// The runs a function makes on the general path before it derives its lane view, which costs
-/// about a thousand instructions per bytecode instruction, so a function that runs fewer times
-/// costs no view. Measured in instructions against deriving at the second run: four takes 3.3%
-/// from the jiti npm scenario (Babel's many functions that run a few times) and 0.1-0.6% from
-/// semver, ajv, Babel, color-convert and typescript-eslint; eight adds at most 0.3%.
-const LANE_VIEW_DEFERRED_RUNS: u8 = 4;
 
 /// Count one view-less run of a function; true once its deferred runs are complete.
 fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {

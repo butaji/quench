@@ -12,7 +12,7 @@ use cranelift_codegen::{
     ir::{self, MemFlagsData},
     isa::TargetIsa,
 };
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+use cranelift_frontend::FunctionBuilder;
 use std::{num::NonZeroUsize, ops::Range};
 
 #[path = "native_graph/object_parts.rs"]
@@ -22,9 +22,7 @@ mod dispatch;
 pub(super) use dispatch::{lower_body, lower_region_dispatch, region_call_arguments};
 use object_parts::{entry_table_data, import_operations, lower_lane_bodies, lower_object_entry, lower_object_regions};
 
-// Bounds the working CFG, not the source function. Large unpartitioned native
-// graphs exhausted 14 GiB on a 50 KiB input; callers may choose any nonzero budget.
-const DEFAULT_REGION_INSTRUCTION_BUDGET: NonZeroUsize = NonZeroUsize::new(1024).unwrap();
+use crate::vm::compiled::tier_policy::DEFAULT_REGION_INSTRUCTION_BUDGET;
 /// The image's ABI header import is its first function symbol.
 const ABI_SYMBOL_INDEX: u32 = 0;
 /// Data records an image publishes between its functions' operands and the fallback tables: the narrow table, then the atom table.
@@ -425,7 +423,7 @@ fn lower_object_fallback(
 ) -> Result<ir::Function, String> {
     let count = u32::try_from(function.code.len()).map_err(|_| "native instruction count exceeds u32")?;
     let mut native = native_function(function_id, super::compiled::native_js_operation_signature(isa));
-    let mut context = FunctionBuilderContext::new();
+    let mut context = crate::vm::jit_backend::builder::take_context();
     let mut builder = FunctionBuilder::new(&mut native, &mut context);
     let params = enter_native_entry(&mut builder);
     let pc = params[1];
@@ -449,6 +447,7 @@ fn lower_object_fallback(
     builder.leave(&[status]);
     builder.seal_all();
     builder.finalize(isa.frontend_config());
+    crate::vm::jit_backend::builder::keep_context(context);
     Ok(native)
 }
 

@@ -219,12 +219,7 @@ impl Unit {
     }
 }
 
-/// The callee instructions one unit inlines in all, the region's budget: what a lane body's
-/// code-size budget holds (`lane_region::LANE_BODY_MAX_CODE_BYTES`), TurboFan's cumulative
-/// inlining budget (`max_inlined_bytecode_size_cumulative`). The planner spends it on the call
-/// sites by weight per instruction (`weights::select`).
-pub(super) const MAX_UNIT_INLINED_INSTRUCTIONS: usize =
-    super::lane_region::LANE_BODY_MAX_CODE_BYTES / super::lane_region::LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
+pub(super) use crate::vm::compiled::tier_policy::MAX_UNIT_INLINED_INSTRUCTIONS;
 /// How deep calls nest inside a unit: JSC's inlining depth (`maximumInliningDepth`).
 const MAX_INLINING_DEPTH: usize = 5;
 

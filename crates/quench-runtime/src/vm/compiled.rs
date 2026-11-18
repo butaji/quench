@@ -41,7 +41,9 @@ use crate::staged::ConcreteWasm;
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName, types};
 #[cfg(test)]
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use cranelift_frontend::{FunctionBuilder, Variable};
+#[cfg(test)]
+use cranelift_frontend::FunctionBuilderContext;
 use cranelift_codegen::entity::{SecondaryMap, packed_option::PackedOption};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
@@ -69,6 +71,7 @@ pub(in crate::vm) fn performed(instruction: impl std::borrow::Borrow<crate::byte
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
+pub(in crate::vm) mod call_signature;
 mod exit_protocol;
 mod region_lend;
 pub(super) use exit_protocol::{ExitTable, RegionRun};
@@ -1268,9 +1271,7 @@ pub fn native_js_lane_helpers<H: Host>() -> *const () {
 
 #[cfg(feature = "aot")]
 pub(super) fn native_lane_helpers_signature(isa: &dyn cranelift_codegen::isa::TargetIsa) -> ir::Signature {
-    let mut signature = Signature::new(isa.default_call_conv());
-    signature.returns.push(AbiParam::new(isa.pointer_type()));
-    signature
+    call_signature::word_signature(isa.default_call_conv(), 0, 1, isa.pointer_type())
 }
 
 #[derive(Clone, Copy)]
@@ -1694,14 +1695,7 @@ impl AnalysisState {
 use crate::wasm::trap::COMPILED_TRAPS as TRAPS;
 
 const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
-const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
-const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
-const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
-/// A selective root may include a few hot callees learned from earlier
-/// indirect-call executions. Keep the profile-guided closure bounded so one
-/// polymorphic module cannot turn a tier promotion into eager compilation.
-const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
-pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
+use crate::vm::compiled::tier_policy::{MAX_JIT_ROOT_FUNCTIONS, MAX_JIT_ROOT_BYTECODES_PER_FUNCTION, MAX_JIT_ROOT_CODE_BYTES, MAX_JIT_PROFILED_INDIRECT_TARGETS, MAX_JIT_TIER_BYTECODES_PER_FUNCTION, THREAD_BUDGET, UNROLL_BUDGET, MAX_UNROLL_FACTOR, WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT, JS_TIER_LANE_ENTRY_RECORDS};
 
 fn jit_root_override() -> Result<Option<usize>, ()> {
     #[cfg(test)]
@@ -2686,12 +2680,7 @@ pub(super) fn native_entry_signature(
     pointer: ir::Type,
     call_conv: cranelift_codegen::isa::CallConv,
 ) -> Signature {
-    let mut signature = Signature::new(call_conv);
-    for parameter in [pointer, types::I64, types::I64, pointer, pointer] {
-        signature.params.push(AbiParam::new(parameter));
-    }
-    signature.returns.push(AbiParam::new(types::I32));
-    signature
+    call_signature::typed_signature(call_conv, &[pointer, types::I64, types::I64, pointer, pointer], &[types::I32])
 }
 
 /// The verified Number result's machine view in the common native result word.
@@ -4722,12 +4711,7 @@ pub(super) fn native_js_operation_signature(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
 ) -> Signature {
     let pointer = isa.pointer_type();
-    let mut signature = Signature::new(isa.default_call_conv());
-    for parameter in [pointer, types::I64, pointer, pointer] {
-        signature.params.push(AbiParam::new(parameter));
-    }
-    signature.returns.push(AbiParam::new(types::I64));
-    signature
+    call_signature::typed_signature(isa.default_call_conv(), &[pointer, types::I64, pointer, pointer], &[types::I64])
 }
 
 pub(super) use quench_bjit::call_record::NATIVE_JS_STOPPED;
@@ -5856,31 +5840,15 @@ fn internal_signature(
     result: Option<crate::WasmType>,
     call_conv: cranelift_codegen::isa::CallConv,
 ) -> Signature {
-    let mut signature = Signature::new(call_conv);
-    for _ in 0..1 + memory.count() {
-        signature.params.push(AbiParam::new(types::I64));
-    }
-    for ty in plan_params {
-        signature
-            .params
-            .push(AbiParam::new(Kind::of(*ty).expect("planned").ir()));
-    }
-    signature.returns.push(AbiParam::new(types::I64));
-    if let Some(ty) = result {
-        signature
-            .returns
-            .push(AbiParam::new(Kind::of(ty).expect("planned").ir()));
-    }
-    signature
+    let params = (0..1 + memory.count())
+        .map(|_| types::I64)
+        .chain(plan_params.iter().map(|ty| Kind::of(*ty).expect("planned").ir()))
+        .collect::<Vec<_>>();
+    let returns = std::iter::once(types::I64)
+        .chain(result.map(|ty| Kind::of(ty).expect("planned").ir()))
+        .collect::<Vec<_>>();
+    call_signature::typed_signature(call_conv, &params, &returns)
 }
-
-/// Instructions a threaded copy may repeat between a constant's jump and the
-/// branch table the constant decides; bounds the code each copy adds. A
-/// dispatch copy repeats its table too, which counts as its edges: TSF's
-/// 290-way state table, copied at each of its 503 jumps, compiled one
-/// function to 10.6 MB of edge moves (3.5 s, 220 MiB peak); charged by its
-/// edges it compiles in 0.1 s.
-const THREAD_BUDGET: usize = 16;
 
 /// Where a threaded copy continues once its path is done.
 #[derive(Clone, Copy)]
@@ -5894,14 +5862,6 @@ enum ThreadEnd {
     /// case's back edge predicts its own successor.
     Dispatch,
 }
-
-/// Instructions all copies of an unrolled loop body may hold together, and the most copies.
-/// A body of up to a fourth of the budget runs as four copies: one interrupt check, one back
-/// edge and one set of loop-carried moves per four iterations (V8's optimizing tier unrolls
-/// small innermost Wasm loops for the same reasons); a body of more than half of it is not
-/// unrolled.
-const UNROLL_BUDGET: usize = 48;
-const MAX_UNROLL_FACTOR: usize = 4;
 
 /// Bytecodes up to which a compiled Wasm program unrolls its innermost loops. Every function
 /// compiles eagerly, and each copy is compiled whether its loop runs or not: in programs of
@@ -6659,11 +6619,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let callout_signature = match self.callout_signature {
             Some(signature) => signature,
             None => {
-                let mut callout = Signature::new(self.call_conv);
-                for _ in 0..4 {
-                    callout.params.push(AbiParam::new(types::I64));
-                }
-                callout.returns.push(AbiParam::new(types::I64));
+                let callout = call_signature::word_signature(self.call_conv, 4, 1, types::I64);
                 let callout = self.body.core.builder.import_signature(callout);
                 self.callout_signature = Some(callout);
                 callout
@@ -6935,20 +6891,6 @@ fn compile_built(
 /// alive at once (each holds its whole body's IR) to a few per worker.
 const BUILT_FUNCTIONS_QUEUED_PER_WORKER: usize = 2;
 
-/// The Cranelift IR instructions the compile workers may hold at once, queued and compiling,
-/// under each memory policy (`MemoryPolicy`). Every worker holds its function's whole IR and
-/// Cranelift's working set grows with it, so the parallel compile of a whole module peaks
-/// with the functions in flight; a function heavier than the bound compiles alone. A bound
-/// on the count of queued functions did not move the peak (one queued per worker instead
-/// of two, memory-first `--jit`, tsf-wasm 43.5-44.5 MB either way).
-/// Memory-first bounds them at 50,000, about a third of tsf-wasm's 157k (its largest function
-/// 53.6k). JetStream `--jit`, memory-first, unpinned x86_64, 4 cores, median of 6,
-/// 2026-10-27: tsf-wasm max RSS 46.6 -> 42.0 MB, Score 23.2 -> 22.1, First 11.2 -> 10.0;
-/// sqlite3-wasm 73.6 -> 58.4 MB, Score 16.7 -> 16.2, First 2.96 -> 2.80. Throughput keeps
-/// every worker fed (unbounded; the same rows, median of 8, were unchanged).
-const WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT: [Option<usize>; crate::MemoryPolicy::ALL.len()] =
-    [None, Some(50_000)];
-
 /// A function's compiled body with its calls, and its compiled entry (`build_entry`).
 type CompiledBody = (Vec<u8>, Vec<Call>, Vec<u8>);
 
@@ -7069,7 +7011,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             internal_signature(memory, &plan.params, plan.result, call_conv),
         );
         use crate::staged::machine::{Lane, Relation};
-        let mut builder_context = FunctionBuilderContext::new();
+        let mut builder_context = crate::vm::jit_backend::builder::take_context();
         let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
         let entry = builder.create_block();
         builder.append_block_params_for_function_params(entry);
@@ -7231,6 +7173,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         emitter.finish_traps();
         emitter.body.core.builder.seal_all_blocks();
         emitter.body.into_builder().finalize(isa.frontend_config());
+        crate::vm::jit_backend::builder::keep_context(builder_context);
         #[cfg(test)]
         BUILT_BODIES.with(|built| built.borrow_mut().push((index, func.display().to_string())));
         Some(func)
@@ -7255,13 +7198,10 @@ impl<'a, H: Host> Analysis<'a, H> {
             UserFuncName::user(ENTRY_NAMESPACE, index as u32),
             signature,
         );
-        let mut builder_context = FunctionBuilderContext::new();
+        let mut builder_context = crate::vm::jit_backend::builder::take_context();
         let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
-        let block = builder.create_block();
-        builder.append_block_params_for_function_params(block);
-        builder.switch_to_block(block);
+        let (block, parameters) = crate::vm::jit_backend::builder::enter(&mut builder);
         builder.seal_block(block);
-        let parameters = builder.block_params(block).to_vec();
         let (context, base, length, args, out) = (
             parameters[0],
             parameters[1],
@@ -7304,6 +7244,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         let status = stage.raw_unary(Unary::Narrow(Lane::I32), results[0]);
         stage.leave(&[status]);
         builder.finalize(isa.frontend_config());
+        crate::vm::jit_backend::builder::keep_context(builder_context);
         func
     }
 }
@@ -9250,15 +9191,6 @@ impl<H: Host> Vm<H> {
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
 
-/// `compiled`'s body run directly on `arguments`, its parameters, when each is a Number
-/// its guards admit: the call a known callee makes without a frame (`js_jit_compiled_call`).
-/// The lane records a loop-free body runs below which a frameless activation is cheaper than
-/// the JavaScript tier's native entry of it. A direct native entry (`lane_tier_prologue`,
-/// `direct_call`, the shared entry) costs about 380 machine instructions past the
-/// activation, and a lane record about 20 (callgrind, typescript-lib under `--jit`,
-/// 2026-10-28: 9.7M native entries of 3- to 12-instruction predicates such as
-/// `isLineBreak`), so a body shorter than this cannot recoup its entries.
-const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 /// Whether a lane body for `body` could amortize an entry (`lane_facts::amortizes_entry`): a
 /// loop, a call (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.

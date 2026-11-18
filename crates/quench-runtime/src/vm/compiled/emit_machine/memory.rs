@@ -4,7 +4,7 @@
 use super::{Builds, lane_of, machine_type};
 use crate::staged::machine::{Extend, Lane, MachineAccess};
 use crate::staged::wasm_memory::Access;
-use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, Signature, types};
+use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, types};
 use cranelift_frontend::FunctionBuilder;
 use super::super::{Kind, scalar_ir};
 
@@ -100,9 +100,8 @@ impl<'b, B: Builds<'b>> MachineAccess for B {
 
     fn call_lanes(&mut self, target: ir::Value, (parameters, result): (&[Lane], Lane), arguments: &[ir::Value]) -> ir::Value {
         let builder = self.function_builder();
-        let mut signature = Signature::new(builder.func.signature.call_conv);
-        signature.params.extend(parameters.iter().map(|lane| AbiParam::new(machine_type(*lane))));
-        signature.returns.push(AbiParam::new(machine_type(result)));
+        let parameters: Vec<ir::Type> = parameters.iter().map(|lane| machine_type(*lane)).collect();
+        let signature = crate::vm::compiled::call_signature::typed_signature(builder.func.signature.call_conv, &parameters, &[machine_type(result)]);
         let signature = crate::vm::jit_backend::signature_ref(builder.func, signature);
         self.call_signature(signature, target, arguments)[0]
     }

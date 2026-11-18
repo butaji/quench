@@ -45,6 +45,7 @@ pub use vm::NativeFaultHandler;
 mod bigint;
 mod bitset;
 mod dataflow;
+mod webs;
 mod dense_map;
 mod bytecode;
 mod compile;

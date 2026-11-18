@@ -33,7 +33,6 @@ use crate::bytecode::{
     OperandKind, Register, WideInstruction,
 };
 use crate::compile::liveness::RegisterSet;
-use crate::dataflow::{solve, Dataflow};
 use crate::value::Value;
 use super::super::operations::{NumberArithmetic, NumberBitwise, NumberUnary};
 
@@ -42,17 +41,7 @@ use crate::typed_ir::Representation;
 use super::NativeFieldLoad;
 use oxc_ast::ast::UnaryOperator;
 
-/// The most instructions a region spans. Native code polls termination only at backward
-/// jumps, so the bound keeps compile time and code size proportional to small loop bodies.
-const MAX_REGION_INSTRUCTIONS: usize = 512;
-/// The most registers, captures and arrays a region names, bounding entry guards and the
-/// entry record.
-const MAX_REGION_REGISTERS: usize = 128;
-const MAX_REGION_ARRAYS: usize = 8;
-const MAX_REGION_CAPTURES: usize = 16;
-const MAX_REGION_FIELDS: usize = 16;
-const MAX_REGION_FIELD_STORES: usize = 16;
-pub(crate) use crate::vm::js_compiled::MAX_CODE_BYTES;
+use crate::vm::compiled::tier_policy::{MAX_REGION_INSTRUCTIONS, MAX_REGION_REGISTERS, MAX_REGION_ARRAYS, MAX_REGION_CAPTURES, MAX_REGION_FIELDS, MAX_REGION_FIELD_STORES};
 
 #[path = "osr_loop/inlining.rs"]
 mod inlining;
@@ -2291,14 +2280,16 @@ type Definition = usize;
 /// The region's values as webs: the definitions that reach a common read (an operand, or a
 /// register written back where native code leaves) form one web, which native code holds in
 /// one SSA variable with one representation. A register reused for unrelated values (an
-/// index, then an element) gets a web for each, so one does not widen the other.
+/// index, then an element) gets a web for each, so one does not widen the other. Definitions
+/// are bits of one state (`crate::webs`): the entry values first, then one per instruction.
 struct Webs {
-    /// Instructions reachable from the header before an exact-PC VM exit.
-    reachable: Vec<bool>,
-    /// Union-find parents over definitions.
-    parent: Vec<Definition>,
-    /// The definitions reaching each instruction, by PC offset and register.
-    reaching: Vec<std::collections::BTreeMap<Register, std::collections::BTreeSet<Definition>>>,
+    /// The definitions reaching each instruction, by PC offset (`Reaching::reached`: those
+    /// reachable from the header before an exact-PC VM exit).
+    flow: crate::webs::Reaching,
+    /// Per register, the definitions that write it, as a state's bits.
+    written: std::collections::BTreeMap<Register, Vec<u64>>,
+    /// Union-find over definitions.
+    sets: crate::webs::DefSets,
     /// Per leave PC and live register, a definition of the web written back there.
     leaves: std::collections::BTreeMap<(u32, Register), Definition>,
     /// Whether the value a register holds at entry is read (its web reaches a read).
@@ -2306,28 +2297,36 @@ struct Webs {
 }
 
 impl Webs {
-    fn find(&self, mut definition: Definition) -> Definition {
-        while self.parent[definition] != definition {
-            definition = self.parent[definition];
-        }
-        definition
+    fn find(&self, definition: Definition) -> Definition {
+        self.sets.find(definition)
     }
 
     fn union(&mut self, left: Definition, right: Definition) {
-        let (left, right) = (self.find(left), self.find(right));
-        if left != right {
-            self.parent[right] = left;
-        }
+        self.sets.union(left, right);
+    }
+
+    /// The definitions there are.
+    fn definitions(&self) -> usize {
+        self.sets.len()
+    }
+
+    /// Whether control from the header reaches the instruction at `offset`.
+    fn reachable(&self, offset: usize) -> bool {
+        self.flow.reached[offset]
+    }
+
+    /// The definitions of `register` reaching the instruction at `offset`, ascending.
+    fn reaching(&self, offset: usize, register: Register) -> Vec<Definition> {
+        let Some(written) = self.written.get(&register) else { return Vec::new() };
+        let row = self.flow.row(offset);
+        crate::webs::members(written).filter(|definition| crate::webs::has(row, *definition)).collect()
     }
 
     /// The web `register` holds before the instruction at `pc`; a PC no path from the header
     /// reaches reads the entry value.
     fn read(&self, region: &LoopRegion, pc: u32, register: Register) -> Definition {
         let entry = || region.entry_registers().position(|number| number == register).unwrap_or(0);
-        let definition = self.reaching[(pc - region.header) as usize]
-            .get(&register)
-            .and_then(|definitions| definitions.first().copied())
-            .unwrap_or_else(entry);
+        let definition = self.reaching((pc - region.header) as usize, register).first().copied().unwrap_or_else(entry);
         self.find(definition)
     }
 
@@ -2445,118 +2444,63 @@ fn successors(region: &LoopRegion, pc: u32) -> Vec<u32> {
     successors
 }
 
-/// Forward reaching definitions over a region's instructions: a block's input is the definitions
-/// reaching it, and its output replaces the register its instruction writes with that write.
-struct Reaching<'a> {
-    region: &'a LoopRegion,
-    /// Each definition of an entry register or a write is its index, `entries` plus the offset.
-    entries: usize,
-    /// The offsets reachable from the header inside the region.
-    reachable: Vec<bool>,
-    /// The offsets each instruction's control flows to inside the region.
-    edges: Vec<Vec<usize>>,
-}
-
-impl Dataflow for Reaching<'_> {
-    type State = std::collections::BTreeMap<Register, std::collections::BTreeSet<Definition>>;
-    fn blocks(&self) -> usize { self.edges.len() }
-    fn edges(&self, block: usize) -> &[usize] { &self.edges[block] }
-    fn entry_state(&self, block: usize) -> Option<Self::State> {
-        if !self.reachable[block] {
-            return None;
-        }
-        let mut state = std::collections::BTreeMap::new();
-        if block == 0 {
-            for (index, register) in self.region.entry_registers().enumerate() {
-                state.entry(register).or_insert_with(std::collections::BTreeSet::new).insert(index);
-            }
-        }
-        Some(state)
-    }
-    fn join(&self, into: &mut Self::State, incoming: &Self::State) -> bool {
-        let mut changed = false;
-        for (register, definitions) in incoming {
-            let set = into.entry(*register).or_default();
-            let before = set.len();
-            set.extend(definitions.iter().copied());
-            changed |= set.len() != before;
-        }
-        changed
-    }
-    fn transfer(&mut self, block: usize, state: &Self::State) -> Self::State {
-        let mut out = state.clone();
-        if let Some(register) = number_definition(self.region.instructions[block]) {
-            out.insert(register, std::collections::BTreeSet::from([self.entries + block]));
-        }
-        out
-    }
-}
-
 fn webs(region: &LoopRegion) -> Webs {
     use std::collections::{BTreeMap, BTreeSet};
     let count = region.instructions.len();
     let entries = region.entry_count();
+    let bits = entries + count;
+    let words = bits.div_ceil(crate::bitset::WORD_BITS);
     let inside = |pc: u32| (region.header..=region.backedge).contains(&pc);
-    let edges: Vec<Vec<usize>> = (0..count).map(|offset| {
-        let pc = region.header + offset as u32;
-        successors(region, pc).into_iter().filter(|pc| inside(*pc)).map(|pc| (pc - region.header) as usize).collect()
-    }).collect();
-    let mut reachable = vec![false; count];
-    let mut pending = vec![0usize];
-    while let Some(offset) = pending.pop() {
-        if std::mem::replace(&mut reachable[offset], true) {
-            continue;
-        }
-        pending.extend(edges[offset].iter().copied());
+    let mut written: BTreeMap<Register, Vec<u64>> = BTreeMap::new();
+    let mut seed = vec![0; words];
+    for (index, register) in region.entry_registers().enumerate() {
+        crate::webs::set(written.entry(register).or_insert_with(|| vec![0; words]), index);
+        crate::webs::set(&mut seed, index);
     }
-    // Forward reaching definitions to a fixpoint; regions are small.
-    let mut analysis = Reaching { region, entries, reachable, edges };
-    let reaching: Vec<BTreeMap<Register, BTreeSet<Definition>>> = solve(&mut analysis).into_iter().map(Option::unwrap_or_default).collect();
-    let Reaching { reachable, .. } = analysis;
-    let mut webs = Webs {
-        reachable,
-        parent: (0..entries + count).collect(),
-        reaching,
-        leaves: BTreeMap::new(),
-        entry_read: vec![false; entries],
-    };
-    let mut reads: Vec<Definition> = Vec::new();
-    fn unify(
-        webs: &mut Webs,
-        definitions: &std::collections::BTreeSet<Definition>,
-        reads: &mut Vec<Definition>,
-    ) -> Option<Definition> {
-        let mut definitions = definitions.iter().copied();
-        let first = definitions.next()?;
-        for other in definitions {
-            webs.union(first, other);
+    for (offset, instruction) in region.instructions.iter().enumerate() {
+        if let Some(register) = number_definition(*instruction) {
+            crate::webs::set(written.entry(register).or_insert_with(|| vec![0; words]), entries + offset);
         }
+    }
+    // An instruction's definition replaces every other of its register.
+    let transfer = |offset: usize, out: &mut [u64]| if let Some(register) = number_definition(region.instructions[offset]) {
+        for (word, kill) in out.iter_mut().zip(&written[&register]) { *word &= !kill; }
+        crate::webs::set(out, entries + offset);
+    };
+    let next = |offset: usize, deliver: &mut dyn FnMut(crate::webs::Next)| for pc in successors(region, region.header + offset as u32) {
+        deliver(if inside(pc) { crate::webs::Next::Row((pc - region.header) as usize) } else { crate::webs::Next::Leave(pc) });
+    };
+    let flow = crate::webs::solve(count, bits, &seed, &transfer, &next, false);
+    let mut webs = Webs { flow, written, sets: crate::webs::DefSets::new(bits), leaves: BTreeMap::new(), entry_read: vec![false; entries] };
+    let mut reads: Vec<Definition> = Vec::new();
+    let unify = |webs: &mut Webs, definitions: Vec<Definition>, reads: &mut Vec<Definition>| -> Option<Definition> {
+        let first = webs.sets.join_all(definitions)?;
         reads.push(first);
         Some(first)
-    }
+    };
     for offset in 0..count {
-        if !webs.reachable[offset] {
+        if !webs.reachable(offset) {
             continue;
         }
         let pc = region.header + offset as u32;
         let instruction = region.instructions[offset];
         for (register, _) in value_reads(region, offset) {
-            let definitions = webs.reaching[offset].get(&register).cloned().unwrap_or_default();
-            unify(&mut webs, &definitions, &mut reads);
+            let definitions = webs.reaching(offset, register);
+            unify(&mut webs, definitions, &mut reads);
         }
         // Native code may leave at any instruction of the region, before its effects, and
         // resumes the lane where a jump leaves the region; each writes back what is live.
         let leave = |webs: &mut Webs, at: u32, after: bool, reads: &mut Vec<Definition>| {
             for register in region.entry_registers().filter(|register| region.is_live(at, *register)) {
-                let mut definitions = if after && number_definition(instruction) == Some(register) {
+                let mut definitions: BTreeSet<Definition> = if after && number_definition(instruction) == Some(register) {
                     BTreeSet::from([entries + offset])
                 } else {
-                    webs.reaching[offset].get(&register).cloned().unwrap_or_default()
+                    webs.reaching(offset, register).into_iter().collect()
                 };
                 if let Some(previous) = webs.leaves.get(&(at, register)) {
                     definitions.insert(*previous);
                 }
-                if let Some(first) = unify(webs, &definitions, reads) {
+                if let Some(first) = unify(webs, definitions.into_iter().collect(), reads) {
                     webs.leaves.insert((at, register), first);
                 }
             }
