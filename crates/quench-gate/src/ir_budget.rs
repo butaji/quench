@@ -12,6 +12,10 @@
 //! split in `ir_budget_handlers.txt`; an op that grows is reported with the handlers that grew
 //! against that record, and the report ranks handlers by their instructions summed over all ops.
 //!
+//! `QUENCH_IR_BUDGET_MODE=tiers` measures every op under `--no-jit`, `--b-jit` and `--u-jit`
+//! and reports the tier order the design asks for, no-jit >= b-jit >= u-jit, with u-jit within
+//! 5x of the C twin, naming each op that breaks it (report only).
+//!
 //! Alone: `quench-gate --only ir-budget`. `QUENCH_IR_BUDGET_OPS=a,b` measures only those ops,
 //! `QUENCH_IR_BUDGET_MODE=b-jit` (or `u-jit`) measures a JIT tier against the same budgets
 //! without touching the ceilings, which hold for the interpreter.
@@ -30,8 +34,14 @@ const RUNNER: &str = "quench-bench/primitives/ir_budget.cjs";
 /// Iterations of the shorter measured run; the longer runs twice as many.
 const ITERATIONS: u64 = 20_000;
 const MARK: &str = "quench_ir_mark";
-/// Marks per op: before op(n), between op(n) and op(2n), after op(2n).
-const MARKS_PER_OP: usize = 3;
+/// Marks per op: around op(n), then around op(2n), each run after a collection (`gc()`).
+const MARKS_PER_OP: usize = 4;
+/// Whether each measured run starts from a collected heap (`--expose-gc`, the runner's
+/// `collect`). Off while `gc()` corrupts a closure's captured value on v2-merged (a read of
+/// `k` in `call_closure` yields a Symbol after field_store, call_direct, call_closure each
+/// ran around `gc()`; repro in Linear TOD-1807); the unmeasured run before each mark keeps
+/// the heap state comparable meanwhile.
+const COLLECT: bool = false;
 const OPS_VARIABLE: &str = "QUENCH_IR_BUDGET_OPS";
 const MODE_VARIABLE: &str = "QUENCH_IR_BUDGET_MODE";
 const LINE_PREFIX: &str = "IRBUDGET ";
@@ -188,8 +198,11 @@ fn measure(config: &Config, mode: &str, ops: &[String]) -> Result<Vec<(String, f
     let mut command = config.command("valgrind");
     command.arg("--tool=callgrind").arg(format!("--dump-before={MARK}")).arg("--dump-instr=no")
         .arg(format!("--callgrind-out-file={}", scratch.join("cg.out").display()))
-        .arg(host).arg(mode).arg(RUNNER).arg(ITERATIONS.to_string()).args(ops)
+        // JIT tiers patch the code they emitted (call links, stubs): valgrind must see each write.
+        .args((mode != INTERPRETER).then_some("--smc-check=all"))
+        .arg(host).arg(mode).args(COLLECT.then_some("--expose-gc")).arg(RUNNER).arg(ITERATIONS.to_string()).args(ops)
         .env("QUENCH_DEV", if mode == INTERPRETER { "ir-mark" } else { "ir-mark,sync-compile" })
+        .env("IRBUDGET_WARMUP", if mode == INTERPRETER { "3" } else { "12" })
         .env("QUENCH_COMPILE_CACHE", "").env("QUENCH_STARTUP_SNAPSHOT", "off").env("XDG_CACHE_HOME", &scratch);
     let run = process::run(&mut command)?;
     let names: Vec<String> = run.stdout.lines().filter_map(|line| line.strip_prefix(LINE_PREFIX)).map(str::to_owned).collect();
@@ -201,9 +214,9 @@ fn measure(config: &Config, mode: &str, ops: &[String]) -> Result<Vec<(String, f
     if totals.len() < names.len() * MARKS_PER_OP {
         return Err(format!("{} callgrind dumps for {} ops; expected {} marks each", totals.len(), names.len(), MARKS_PER_OP));
     }
-    // Dump k holds the counts from mark k-1 to mark k: per op, op(n) then op(2n).
     let measured = |index: usize| {
-        let (shorter, longer) = (&totals[index * MARKS_PER_OP + 1], &totals[index * MARKS_PER_OP + 2]);
+        // Dump k holds the counts from mark k-1 to mark k: per op, op(n) then op(2n).
+        let (shorter, longer) = (&totals[index * MARKS_PER_OP + 1], &totals[index * MARKS_PER_OP + 3]);
         ((longer.total as f64 - shorter.total as f64) / ITERATIONS as f64, split(shorter, longer))
     };
     Ok(names.into_iter().enumerate().map(|(index, name)| { let (count, split) = measured(index); (name, count, split) }).collect())
@@ -241,6 +254,21 @@ fn ranking(measured: &[Measured]) -> String {
     ranked.sort_by(|a, b| b.1.0.total_cmp(&a.1.0));
     let lines = ranked.iter().take(RANKED).map(|(handler, (sum, ops))| format!("{sum:>8.1}{ops:>5}  {handler}"));
     std::iter::once(format!("{:>8}{:>5}  handler (Ir/iter summed over ops, ops it runs in)", "Ir", "ops")).chain(lines).collect::<Vec<_>>().join("\n")
+}
+
+/// Name parts of the lane handlers that run only where a fast form missed: in steady state each
+/// is waste (a site that never settles, a cache that never fills), whose budget is zero.
+const SLOW_PATHS: [&str; 6] = ["_miss", "_refresh", "_slow", "deopt", "bail", "_general"];
+
+/// The slow-path handlers (`SLOW_PATHS`) each op runs in steady state, largest first.
+fn waste(measured: &[Measured]) -> String {
+    let mut rows: Vec<(f64, String)> = measured.iter().flat_map(|(op, _, split)| {
+        split.iter().filter(|(handler, share)| *share >= 1.0 && handler.starts_with("lane_") && SLOW_PATHS.iter().any(|part| handler.contains(part)))
+            .map(move |(handler, share)| (*share, format!("{share:>8.1}  {op:<16}{handler}")))
+    }).collect();
+    rows.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let head = format!("{:>8}  {:<16}{}", "Ir", "op", "slow path run in steady state (zero budget)");
+    std::iter::once(head).chain(rows.into_iter().map(|(_, row)| row)).collect::<Vec<_>>().join("\n")
 }
 
 /// The recorded split: op, handler, share, one per line.
@@ -294,6 +322,35 @@ fn ratchet(config: &Config, measured: &[Measured], rows: &mut BTreeMap<String, R
     grown
 }
 
+/// u-jit's allowance over the C twin.
+const UJIT_OVER_C: f64 = 5.0;
+
+/// The tier report: each op's count per tier, worst u-jit-to-C ratio first, with the order it
+/// breaks.
+fn tiers(config: &Config, ops: &[String], rows: &BTreeMap<String, Row>) -> Verdict {
+    let mut counts: BTreeMap<String, [f64; 3]> = BTreeMap::new();
+    for (index, mode) in [INTERPRETER, "--b-jit", "--u-jit"].into_iter().enumerate() {
+        for (name, count, _) in measure(config, mode, ops)? {
+            counts.entry(name).or_insert([f64::NAN; 3])[index] = count;
+        }
+    }
+    let mut lines: Vec<(f64, String)> = Vec::new();
+    let (mut broken, mut over_c) = (0, 0);
+    for (name, [interpreter, baseline, optimized]) in &counts {
+        let c = rows.get(name).map_or(f64::NAN, |row| row.c);
+        let mut faults = Vec::new();
+        if *baseline > interpreter + tolerance(*interpreter) { faults.push("b-jit>no-jit") }
+        if *optimized > baseline + tolerance(*baseline) { faults.push("u-jit>b-jit") }
+        if !faults.is_empty() { broken += 1 }
+        if *optimized > UJIT_OVER_C * c { faults.push("u-jit>5C"); over_c += 1 }
+        lines.push((optimized / c.max(1.0), format!("{name:<16}{interpreter:>10.1}{baseline:>10.1}{optimized:>10.1}{c:>7.1}{:>7.1}x  {}", optimized / c.max(1.0), faults.join(" "))));
+    }
+    lines.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let head = format!("{:<16}{:>10}{:>10}{:>10}{:>7}{:>8}  {}", "op", "no-jit", "b-jit", "u-jit", "C", "u/C", "breaks");
+    let table = std::iter::once(head).chain(lines.into_iter().map(|(_, line)| line)).collect::<Vec<_>>().join("\n");
+    Ok(format!("tiers: {broken} of {} ops out of order, {over_c} with u-jit past 5x C (report only)\n{table}", counts.len()))
+}
+
 pub fn run(config: &Config) -> Verdict {
     let path = config.root.join(BUDGETS);
     let before = fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -302,20 +359,24 @@ pub fn run(config: &Config) -> Verdict {
     let handlers_before = fs::read_to_string(&handlers_path).unwrap_or_default();
     let mut recorded = parse_splits(&handlers_before);
     let ops: Vec<String> = env::var(OPS_VARIABLE).unwrap_or_default().split(',').filter(|op| !op.is_empty()).map(str::to_owned).collect();
+    if env::var(MODE_VARIABLE).as_deref() == Ok("tiers") {
+        return tiers(config, &ops, &rows);
+    }
     let mode = env::var(MODE_VARIABLE).map_or_else(|_| INTERPRETER.to_owned(), |mode| format!("--{mode}"));
     let measured = measure(config, &mode, &ops)?;
-    let report = format!("{}\n\n{}", table(&measured, &rows), ranking(&measured));
+    let report = format!("{}\n\n{}\n\n{}", table(&measured, &rows), ranking(&measured), waste(&measured));
     let over = measured.iter().filter(|(name, count, _)| rows.get(name).is_some_and(|row| *count > row.budget + SAME_COUNT)).count();
     if mode != INTERPRETER {
         return Ok(format!("{mode}: {over} of {} ops over budget (ceilings hold for --no-jit only)\n{report}", measured.len()));
     }
     let grown = ratchet(config, &measured, &mut rows, &recorded, ops.is_empty());
+    // A failing run records nothing: a ceiling it lowered would hide the trade it made.
+    if !grown.is_empty() {
+        return Err(format!("{}\n\n{report}", grown.join("\n")));
+    }
     let after = render(&header(&before), &rows);
     if after != before {
         fs::write(&path, &after).map_err(|error| format!("{}: {error}", path.display()))?;
-    }
-    if !grown.is_empty() {
-        return Err(format!("{}\n\n{report}", grown.join("\n")));
     }
     if !ops.is_empty() {
         return Ok(format!("{} ops within their Ir ceilings; {over} over budget (a subset: ceilings and the split are recorded by a run of every op)\n{report}", measured.len()));

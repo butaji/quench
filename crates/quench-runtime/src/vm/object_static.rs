@@ -753,10 +753,7 @@ impl<H: Host> Vm<H> {
         }
         entries.sort_by(|(left, _), (right, _)| {
             if data.is_module_namespace() {
-                return self
-                    .atom_value(*left)
-                    .units()
-                    .cmp(&self.atom_value(*right).units());
+                return self.atom_value(*left).order(&self.atom_value(*right));
             }
             match (
                 array_index(self.atom_name(*left)),
