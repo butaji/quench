@@ -25,6 +25,31 @@ builtin_rows!(
     12 => JsonStringify, 13 => DateNow, 14 => RegExpTest, 15 => RegExpExec,
 );
 
+/// The natives whose in-place body a `Call` site makes under its own handler, one instantiation
+/// of `lane_call_in_place` per row. The native is a constant of the handler, so the site tests the
+/// callee's identity and calls the body directly (`in_place_row_value`), not through the family
+/// table of `Vm::in_place_native_value`. A native in no row keeps `lane_native_call`.
+macro_rules! in_place_rows {
+    ($($row:literal => $native:ident),* $(,)?) => {
+        const fn in_place_row_native(row: u8) -> Native {
+            match row { $($row => Native::$native,)* _ => unreachable!() }
+        }
+        fn in_place_row(native: Native) -> Option<u8> {
+            match native { $(Native::$native => Some($row),)* _ => None }
+        }
+        fn in_place_handler<H: Host>(row: u8) -> Handler {
+            match row { $($row => lane_call_in_place::<H, $row>,)* _ => lane_native_call::<H> }
+        }
+    };
+}
+in_place_rows!(
+    0 => ArraySlice, 1 => ArrayConcat, 2 => ArrayIndexOf, 3 => ArrayIncludes, 4 => ArrayJoin,
+    5 => ArrayAt, 6 => ArrayFill, 7 => ObjectKeys, 8 => ObjectAssign,
+    9 => StringTrim, 10 => StringIndexOf, 11 => StringSlice, 12 => StringSplit,
+    13 => StringToUpperCase, 14 => StringToLowerCase, 15 => StringPadStart,
+    16 => StringStartsWith, 17 => StringIncludes,
+);
+
 /// The Math functions whose call a site makes under its own handler, one instantiation of
 /// `lane_call_math_native` per row: the native is a constant, so the site tests the callee's
 /// identity and runs the operation inline (`number::math_inline_call` folds to it) with no
@@ -199,6 +224,54 @@ script_handler! {
     }
 }
 
+/// The in-place body of an `in_place_rows` native, called directly with its receiver and
+/// arguments. Each arm is the body `Vm::in_place_native_value` reaches for that native, with
+/// the same arguments and the same preconditions. `None` leaves the call to the native.
+#[inline(always)]
+fn in_place_row_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value,
+    args: &[Value]) -> Option<Value> {
+    let first = args.first().copied().unwrap_or(Value::UNDEFINED);
+    match native {
+        Native::ArraySlice => vm.plain_array_slice(receiver, args),
+        Native::ArrayConcat => vm.array_concat_dense(receiver, args),
+        Native::ArrayIndexOf | Native::ArrayIncludes => vm.dense_search_call(native, receiver, args),
+        Native::ArrayJoin => vm.plain_array_join(receiver, args),
+        Native::ArrayAt => vm.plain_array_at(receiver, args),
+        Native::ArrayFill => vm.plain_array_fill(receiver, args),
+        Native::ObjectKeys => vm.plain_enumerable_own_properties(first, crate::vm::object_keys::EnumerableOwnPropertyKind::Key),
+        Native::ObjectAssign => vm.plain_object_assign(args),
+        Native::StringTrim | Native::StringIndexOf | Native::StringSlice | Native::StringSplit
+        | Native::StringToUpperCase | Native::StringToLowerCase | Native::StringPadStart
+        | Native::StringStartsWith | Native::StringIncludes => vm.pure_string_method_call(code, native, receiver, args),
+        _ => None,
+    }
+}
+
+script_handler! {
+    /// A `Call` site whose callee was the native of in-place row `ROW` (`native_call_handler`): that
+    /// native's in-place body (`in_place_row_value`) on its receiver and arguments. Any other callee
+    /// or case takes `lane_native_call`.
+    fn lane_call_in_place<ROW: u8>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let native = const { in_place_row_native(ROW) };
+        let value = if callee_is_native(vm, r.get(i.b), native) {
+            // SAFETY: the context's program outlives the lane run.
+            let code = unsafe { &*(*cx).code };
+            // SAFETY: the call's window is registers of the running function.
+            in_place_row_value(vm, code, native, r.get(i.c), unsafe { lane_call_window(r, i) })
+        } else {
+            None
+        };
+        let Some(value) = value else {
+            sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
+        };
+        // An in-place case may allocate; a due collection runs at the lane's next safepoint.
+        note_allocation(vm);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
 /// The handler a `Call` site whose callee resolved to `native` takes from then on
 /// (`lane_script_call_resolve`): a native whose common case the lane makes in place has its
 /// own handler, which tests the callee's identity once and hands any other call to
@@ -212,6 +285,7 @@ pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, 
     }
     match native {
         native if let Some(row) = builtin_row(native) => builtin_handler::<H>(row),
+        native if let Some(row) = in_place_row(native) => in_place_handler::<H>(row),
         native if let Some(handler) = math_handler::<H>(native) => handler,
         native if super::number::math_numbers_inline(native) => lane_call_math::<H>,
         native if native.is_array_callback() && result_dead() => lane_call_array_callback::<H, true>,

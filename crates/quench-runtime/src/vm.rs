@@ -137,6 +137,7 @@ mod array_group;
 mod array_indexed;
 mod array_view;
 mod array_modern;
+mod array_fresh;
 mod atom_keys;
 mod atomics;
 mod bigint;

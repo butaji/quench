@@ -11,6 +11,8 @@ mod heap_builder;
 mod error_message;
 mod plain_write;
 mod parse_stacks;
+mod byte_class;
+use byte_class::{byte_class, exponent_mark, JsonByteClass};
 use error_message::json_syntax_message;
 use heap_builder::{short_run_ends, JsonBuildError, JsonHeapBuilder};
 use parse_stacks::{JsonFrame, JsonStacks};
@@ -21,8 +23,6 @@ const JSON_TRUE_INITIAL: u16 = b't' as u16;
 const JSON_FALSE_INITIAL: u16 = b'f' as u16;
 const JSON_QUOTE: u16 = b'"' as u16;
 const JSON_ESCAPE: u16 = b'\\' as u16;
-const JSON_ARRAY_START: u16 = b'[' as u16;
-const JSON_OBJECT_START: u16 = b'{' as u16;
 const JSON_OBJECT_END: u16 = b'}' as u16;
 const JSON_ARRAY_END: u16 = b']' as u16;
 const JSON_COMMA: u16 = b',' as u16;
@@ -35,19 +35,6 @@ const JSON_HEX_ESCAPE_DIGITS: usize = 4;
 const JSON_HEX_LETTER_VALUE_START: u16 = 10;
 const JSON_BACKSPACE: u16 = b'\x08' as u16;
 const JSON_FORM_FEED: u16 = b'\x0C' as u16;
-const JSON_WHITESPACE: [u16; 4] = [b' ' as u16, b'\t' as u16, b'\n' as u16, b'\r' as u16];
-/// `JSON_WHITESPACE` as a bit per unit value, every one of which is below `u64::BITS`.
-const JSON_WHITESPACE_MASK: u64 = {
-    let mut mask = 0;
-    let mut index = 0;
-    while index < JSON_WHITESPACE.len() {
-        assert!((JSON_WHITESPACE[index] as u32) < u64::BITS);
-        mask |= 1 << JSON_WHITESPACE[index];
-        index += 1;
-    }
-    mask
-};
-
 /// Whether byte runs `a` and `b` are equal, compared inline a word at a time: the runs a
 /// parse compares, keys and repeated strings, are mostly a few words long.
 #[inline(always)]
@@ -102,12 +89,6 @@ fn sse2_run_blocks(units: &[u8]) -> Result<usize, usize> {
         }
     }
     Err(offset)
-}
-
-/// Whether `unit` is one of `JSON_WHITESPACE`.
-#[inline(always)]
-fn is_json_whitespace(unit: u16) -> bool {
-    u32::from(unit) < u64::BITS && JSON_WHITESPACE_MASK >> unit & 1 != 0
 }
 
 enum JsonValue {
@@ -766,6 +747,18 @@ fn parse_json_text<B: JsonBuilder>(text: &JsString, builder: &mut B) -> Result<B
     }
 }
 
+/// What opening a value leads to: a container opened on the frames, or a complete value.
+enum JsonOpened<V> {
+    Container,
+    Value(V),
+}
+
+/// What completing a value leads to: the root's value, or the next member of a container.
+enum JsonCompleted<V> {
+    Root(V),
+    Member,
+}
+
 /// What a parse makes of each JSON value: the source-bearing `JsonValue` tree a reviver
 /// walks, or heap values directly when nothing reads the source afterwards.
 trait JsonBuilder {
@@ -957,96 +950,139 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         value
     }
 
-    /// `root_value`, gathering containers on `frames`.
+    /// `root_value`, gathering containers on `frames`: each value opened is completed, and the
+    /// completed value that is the root's ends the parse.
     fn value(&mut self, frames: &mut Vec<JsonFrame<B::Layout>>) -> Result<B::Value, JsonParseError> {
-        'value: loop {
-            let token = self.token();
-            let start = self.index;
-            let mut value = match token {
-                Some(JSON_QUOTE) => {
-                    let text = self.string()?;
-                    self.builder.string(text)
-                }
-                Some(JSON_MINUS | JSON_DIGIT_START..=JSON_DIGIT_END) => match self.number()? {
-                    JsonNumber::Integer(value) => self.builder.integer(value),
-                    JsonNumber::Float(value) => self.builder.number(value),
-                },
-                Some(JSON_OBJECT_START) => {
-                    self.index += 1;
-                    let parent = frames.iter().rev().find_map(|frame| match frame {
-                        JsonFrame::Object { layout, .. } => Some(layout),
-                        JsonFrame::Array { .. } => None,
-                    });
-                    let layout = self.builder.layout(parent);
-                    let (values, keys) = (self.values.len(), self.keys.len());
-                    if self.token() == Some(JSON_OBJECT_END) {
-                        self.index += 1;
-                        self.builder.object(layout, self.keys.drain(keys..), self.values.drain(values..))
-                    } else {
-                        // The frame holds the layout its keys advance in place: a copy made
-                        // right after their stores would read them back through memory.
-                        frames.push(JsonFrame::Object { values, keys, layout });
-                        let Some(JsonFrame::Object { layout, .. }) = frames.last_mut() else {
-                            unreachable!("the frame is an object's")
-                        };
-                        self.member_key(layout, JsonSyntax::ExpectedPropertyNameOrBrace)?;
-                        continue 'value;
-                    }
-                }
-                Some(JSON_ARRAY_START) => {
-                    self.index += 1;
-                    let values = self.values.len();
-                    if self.token() == Some(JSON_ARRAY_END) {
-                        self.index += 1;
-                        self.builder.array(self.values.drain(values..))
-                    } else {
-                        frames.push(JsonFrame::Array { values });
-                        continue 'value;
-                    }
-                }
-                Some(JSON_NULL_INITIAL) => self.literal(b"null", JsonLiteral::Null)?,
-                Some(JSON_TRUE_INITIAL) => self.literal(b"true", JsonLiteral::True)?,
-                Some(JSON_FALSE_INITIAL) => self.literal(b"false", JsonLiteral::False)?,
-                _ => return Err(self.error(JsonSyntax::Unexpected)),
+        loop {
+            let value = match self.open(frames)? {
+                JsonOpened::Container => continue,
+                JsonOpened::Value(value) => value,
             };
-            if B::KEEPS_SOURCE && !matches!(token, Some(JSON_OBJECT_START | JSON_ARRAY_START)) {
-                value = self.builder.primitive(value, T::run(&self.units[start..self.index]).units());
-            }
-            // Each container the value completes is the value its parent takes next.
-            loop {
-                let Some(frame) = frames.last_mut() else {
-                    return Ok(value);
-                };
-                let token = self.token();
-                self.values.push(value);
-                value = match (frame, token) {
-                    (JsonFrame::Array { .. }, Some(JSON_COMMA)) => {
-                        self.index += 1;
-                        continue 'value;
-                    }
-                    (JsonFrame::Array { values }, Some(JSON_ARRAY_END)) => {
-                        self.index += 1;
-                        let values = *values;
-                        frames.pop();
-                        self.builder.array(self.values.drain(values..))
-                    }
-                    (JsonFrame::Array { .. }, _) => return Err(self.error(JsonSyntax::ExpectedCommaOrBracket)),
-                    (JsonFrame::Object { layout, .. }, Some(JSON_COMMA)) => {
-                        self.index += 1;
-                        self.member_key(layout, JsonSyntax::ExpectedDoubleQuotedPropertyName)?;
-                        continue 'value;
-                    }
-                    (JsonFrame::Object { .. }, Some(JSON_OBJECT_END)) => {
-                        self.index += 1;
-                        let Some(JsonFrame::Object { values, keys, layout }) = frames.pop() else {
-                            unreachable!("the frame is an object's")
-                        };
-                        self.builder.object(layout, self.keys.drain(keys..), self.values.drain(values..))
-                    }
-                    (JsonFrame::Object { .. }, _) => return Err(self.error(JsonSyntax::ExpectedCommaOrBrace)),
-                };
+            if let JsonCompleted::Root(value) = self.complete(frames, value)? {
+                return Ok(value);
             }
         }
+    }
+
+    /// Starts the value at the current unit, which the parse moves past: a primitive or an
+    /// empty container is complete, and a container with members is opened on `frames`.
+    fn open(&mut self, frames: &mut Vec<JsonFrame<B::Layout>>) -> Result<JsonOpened<B::Value>, JsonParseError> {
+        let class = self.token().map(byte_class);
+        let start = self.index;
+        let value = match class {
+            Some(JsonByteClass::ObjectStart) => return self.open_object(frames),
+            Some(JsonByteClass::ArrayStart) => return self.open_array(frames),
+            Some(JsonByteClass::Quote) => {
+                let text = self.string()?;
+                self.builder.string(text)
+            }
+            Some(JsonByteClass::Minus | JsonByteClass::Digit) => match self.number()? {
+                JsonNumber::Integer(value) => self.builder.integer(value),
+                JsonNumber::Float(value) => self.builder.number(value),
+            },
+            Some(JsonByteClass::Null) => self.literal(b"null", JsonLiteral::Null)?,
+            Some(JsonByteClass::True) => self.literal(b"true", JsonLiteral::True)?,
+            Some(JsonByteClass::False) => self.literal(b"false", JsonLiteral::False)?,
+            _ => return Err(self.error(JsonSyntax::Unexpected)),
+        };
+        Ok(JsonOpened::Value(self.with_source(value, start)))
+    }
+
+    /// `value` of the primitive that starts at unit `start`, with its source text when the
+    /// builder keeps source text.
+    #[inline(always)]
+    fn with_source(&mut self, value: B::Value, start: usize) -> B::Value {
+        if B::KEEPS_SOURCE {
+            self.builder.primitive(value, T::run(&self.units[start..self.index]).units())
+        } else {
+            value
+        }
+    }
+
+    /// Opens the object at the current unit: an empty object is complete, and an object with
+    /// members is opened on `frames`, its first key read.
+    fn open_object(&mut self, frames: &mut Vec<JsonFrame<B::Layout>>) -> Result<JsonOpened<B::Value>, JsonParseError> {
+        self.index += 1;
+        let parent = frames.iter().rev().find_map(|frame| match frame {
+            JsonFrame::Object { layout, .. } => Some(layout),
+            JsonFrame::Array { .. } => None,
+        });
+        let layout = self.builder.layout(parent);
+        let (values, keys) = (self.values.len(), self.keys.len());
+        if self.token() == Some(JSON_OBJECT_END) {
+            self.index += 1;
+            let value = self.builder.object(layout, self.keys.drain(keys..), self.values.drain(values..));
+            return Ok(JsonOpened::Value(value));
+        }
+        // The frame holds the layout its keys advance in place: a copy made right after
+        // their stores would read them back through memory.
+        frames.push(JsonFrame::Object { values, keys, layout });
+        let Some(JsonFrame::Object { layout, .. }) = frames.last_mut() else {
+            unreachable!("the frame is an object's")
+        };
+        self.member_key(layout, JsonSyntax::ExpectedPropertyNameOrBrace)?;
+        Ok(JsonOpened::Container)
+    }
+
+    /// Opens the array at the current unit: an empty array is complete, and an array with
+    /// members is opened on `frames`.
+    fn open_array(&mut self, frames: &mut Vec<JsonFrame<B::Layout>>) -> Result<JsonOpened<B::Value>, JsonParseError> {
+        self.index += 1;
+        let values = self.values.len();
+        if self.token() == Some(JSON_ARRAY_END) {
+            self.index += 1;
+            let value = self.builder.array(self.values.drain(values..));
+            return Ok(JsonOpened::Value(value));
+        }
+        frames.push(JsonFrame::Array { values });
+        Ok(JsonOpened::Container)
+    }
+
+    /// Hands the completed `value` to the innermost container on `frames`, which takes it as
+    /// its next member. A container the value closes is complete in turn, so the value moves
+    /// up the frames until a comma leaves a container for its next member, or no frame is left.
+    fn complete(
+        &mut self,
+        frames: &mut Vec<JsonFrame<B::Layout>>,
+        mut value: B::Value,
+    ) -> Result<JsonCompleted<B::Value>, JsonParseError> {
+        loop {
+            let Some(frame) = frames.last_mut() else {
+                return Ok(JsonCompleted::Root(value));
+            };
+            let token = self.token();
+            self.values.push(value);
+            value = match (frame, token) {
+                (JsonFrame::Array { .. }, Some(JSON_COMMA)) => {
+                    self.index += 1;
+                    return Ok(JsonCompleted::Member);
+                }
+                (JsonFrame::Array { values }, Some(JSON_ARRAY_END)) => {
+                    self.index += 1;
+                    let values = *values;
+                    frames.pop();
+                    self.builder.array(self.values.drain(values..))
+                }
+                (JsonFrame::Array { .. }, _) => return Err(self.error(JsonSyntax::ExpectedCommaOrBracket)),
+                (JsonFrame::Object { layout, .. }, Some(JSON_COMMA)) => {
+                    self.index += 1;
+                    self.member_key(layout, JsonSyntax::ExpectedDoubleQuotedPropertyName)?;
+                    return Ok(JsonCompleted::Member);
+                }
+                (JsonFrame::Object { .. }, Some(JSON_OBJECT_END)) => self.close_object(frames),
+                (JsonFrame::Object { .. }, _) => return Err(self.error(JsonSyntax::ExpectedCommaOrBrace)),
+            };
+        }
+    }
+
+    /// Closes the object on top of `frames` at its `}`, which the parse moves past: the
+    /// object of its gathered keys and values.
+    fn close_object(&mut self, frames: &mut Vec<JsonFrame<B::Layout>>) -> B::Value {
+        self.index += 1;
+        let Some(JsonFrame::Object { values, keys, layout }) = frames.pop() else {
+            unreachable!("the frame is an object's")
+        };
+        self.builder.object(layout, self.keys.drain(keys..), self.values.drain(values..))
     }
 
     /// `syntax` at the current unit.
@@ -1177,31 +1213,62 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
     fn number(&mut self) -> Result<JsonNumber, JsonParseError> {
         let start = self.index;
         let negative = self.take_if(b'-');
+        let (mantissa, digits) = self.integer_part()?;
+        if let Some(integer) = self.exact_integer(mantissa, digits, negative) {
+            return Ok(integer);
+        }
+        let (mantissa, digits, scale) = self.decimal_part(mantissa, digits)?;
+        let power = EXACT_POWERS_OF_TEN.get(scale.unsigned_abs() as usize);
+        if digits <= JSON_MANTISSA_DIGITS
+            && mantissa <= EXACT_DOUBLE_INTEGER
+            && let Some(&power) = power
+        {
+            let magnitude = if scale < 0 { mantissa as f64 / power } else { mantissa as f64 * power };
+            return Ok(JsonNumber::Float(if negative { -magnitude } else { magnitude }));
+        }
+        Ok(JsonNumber::Float(self.convert_literal(start)))
+    }
+
+    /// The integer part of a number from the current unit: its digits' value, and how many
+    /// digits it has. A leading zero ends the part, so a digit after it is an error.
+    #[inline(always)]
+    fn integer_part(&mut self) -> Result<(u64, usize), JsonParseError> {
         let integer_start = self.index;
-        let mut mantissa = 0_u64;
-        match self.peek() {
+        let mantissa = match self.peek() {
             Some(JSON_DIGIT_START) => {
                 self.index += 1;
                 if self.digit_value().is_some() {
                     return Err(self.error(JsonSyntax::Unexpected));
                 }
+                0
             }
-            Some(JSON_DIGIT_START..=JSON_DIGIT_END) => mantissa = self.accumulate_digits(mantissa),
+            Some(JSON_DIGIT_START..=JSON_DIGIT_END) => self.accumulate_digits(0),
             _ => return Err(self.error(JsonSyntax::NoNumberAfterMinus)),
+        };
+        Ok((mantissa, self.index - integer_start))
+    }
+
+    /// The integer of `digits` digits and value `mantissa`, when no fraction or exponent
+    /// continues it and it is short enough to be exact: an `i32` when it fits, else a double.
+    #[inline(always)]
+    fn exact_integer(&self, mantissa: u64, digits: usize, negative: bool) -> Option<JsonNumber> {
+        let continued = self.peek() == Some(u16::from(b'.')) || exponent_mark(self.peek());
+        if continued || digits > JSON_EXACT_INTEGER_DIGITS {
+            return None;
         }
-        let exponent_mark = |unit: Option<u16>| unit.is_some_and(|unit| unit == b'e' as u16 || unit == b'E' as u16);
-        let mut digits = self.index - integer_start;
-        let fraction = self.peek() == Some(u16::from(b'.'));
-        if !fraction && !exponent_mark(self.peek()) && digits <= JSON_EXACT_INTEGER_DIGITS {
-            return Ok(match i32::try_from(mantissa) {
-                Ok(magnitude) if !negative => JsonNumber::Integer(magnitude),
-                Ok(magnitude) if magnitude != 0 => JsonNumber::Integer(-magnitude),
-                _ => JsonNumber::Float(if negative { -(mantissa as f64) } else { mantissa as f64 }),
-            });
-        }
+        Some(match i32::try_from(mantissa) {
+            Ok(magnitude) if !negative => JsonNumber::Integer(magnitude),
+            Ok(magnitude) if magnitude != 0 => JsonNumber::Integer(-magnitude),
+            _ => JsonNumber::Float(if negative { -(mantissa as f64) } else { mantissa as f64 }),
+        })
+    }
+
+    /// The fraction and exponent after an integer part of `mantissa` and `digits`: the
+    /// mantissa with the fraction's digits, the digits in all, and the power of ten the
+    /// mantissa is scaled by.
+    fn decimal_part(&mut self, mut mantissa: u64, mut digits: usize) -> Result<(u64, usize, i32), JsonParseError> {
         let mut scale = 0_i32;
-        if fraction {
-            self.index += 1;
+        if self.take_if(b'.') {
             if self.digit_value().is_none() {
                 return Err(self.error(JsonSyntax::UnterminatedFraction));
             }
@@ -1213,29 +1280,31 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         }
         if exponent_mark(self.peek()) {
             self.index += 1;
-            let exponent_negative = self.take_if(b'-');
-            if !exponent_negative {
-                self.take_if(b'+');
-            }
-            if self.digit_value().is_none() {
-                return Err(self.error(JsonSyntax::ExponentMissingNumber));
-            }
-            let mut exponent = 0_i32;
-            while let Some(digit) = self.digit_value() {
-                exponent = exponent.saturating_mul(10).saturating_add(digit as i32);
-                self.index += 1;
-            }
-            scale = scale.saturating_add(if exponent_negative { -exponent } else { exponent });
+            scale = scale.saturating_add(self.exponent()?);
         }
-        let power = EXACT_POWERS_OF_TEN.get(scale.unsigned_abs() as usize);
-        if digits <= JSON_MANTISSA_DIGITS
-            && mantissa <= EXACT_DOUBLE_INTEGER
-            && let Some(&power) = power
-        {
-            let magnitude = if scale < 0 { mantissa as f64 / power } else { mantissa as f64 * power };
-            return Ok(JsonNumber::Float(if negative { -magnitude } else { magnitude }));
+        Ok((mantissa, digits, scale))
+    }
+
+    /// The signed exponent after an exponent mark, which the parse moves past.
+    fn exponent(&mut self) -> Result<i32, JsonParseError> {
+        const DECIMAL_BASE: i32 = 10;
+        let negative = self.take_if(b'-');
+        if !negative {
+            self.take_if(b'+');
         }
-        // SAFETY: the literal is ASCII by construction.
+        if self.digit_value().is_none() {
+            return Err(self.error(JsonSyntax::ExponentMissingNumber));
+        }
+        let mut exponent = 0_i32;
+        while let Some(digit) = self.digit_value() {
+            exponent = exponent.saturating_mul(DECIMAL_BASE).saturating_add(digit as i32);
+            self.index += 1;
+        }
+        Ok(if negative { -exponent } else { exponent })
+    }
+
+    /// The literal from unit `start` to the current one, converted to a double in full.
+    fn convert_literal(&self, start: usize) -> f64 {
         let literal = &self.units[start..self.index];
         let mut inline = [0_u8; JSON_INLINE_NUMBER_LENGTH];
         let long;
@@ -1248,8 +1317,9 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
             long = literal.iter().map(|unit| unit.unit() as u8).collect::<Vec<_>>();
             &long
         };
+        // SAFETY: the literal is ASCII by construction.
         let text = unsafe { std::str::from_utf8_unchecked(bytes) };
-        Ok(JsonNumber::Float(text.parse::<f64>().expect("the grammar admits only decimal literals")))
+        text.parse::<f64>().expect("the grammar admits only decimal literals")
     }
 
     /// `mantissa` followed by the decimal digits from the current unit, which the parse moves
@@ -1281,14 +1351,15 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
     #[inline(always)]
     fn token(&mut self) -> Option<u16> {
         match self.peek() {
-            Some(unit) if is_json_whitespace(unit) => self.token_after_whitespace(),
+            Some(unit) if byte_class(unit) == JsonByteClass::Whitespace => self.token_after_whitespace(),
             unit => unit,
         }
     }
 
+    /// The next unit after a run of whitespace, which the parse moves past.
     #[cold]
     fn token_after_whitespace(&mut self) -> Option<u16> {
-        while self.peek().is_some_and(is_json_whitespace) {
+        while self.peek().is_some_and(|unit| byte_class(unit) == JsonByteClass::Whitespace) {
             self.index += 1;
         }
         self.peek()

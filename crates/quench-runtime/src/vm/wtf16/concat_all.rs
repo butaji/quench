@@ -142,6 +142,17 @@ impl JsString {
         Self::from_flat(FlatUnits::ascii_with(length, fill))
     }
 
+    /// `from_ascii_filled` for a `fill` that takes initialized bytes: the storage is zeroed
+    /// before `fill` sees it, so `fill` overwrites bytes it can read, and no uninitialized
+    /// byte is ever viewed as `u8`.
+    pub(crate) fn from_ascii_zeroed_with(length: usize, fill: impl FnOnce(&mut [u8])) -> Self {
+        Self::from_ascii_filled(length, |output| {
+            output.fill(MaybeUninit::new(0));
+            // SAFETY: every byte was just initialized, and `MaybeUninit<u8>` has `u8`'s layout.
+            fill(unsafe { &mut *(output as *mut [MaybeUninit<u8>] as *mut [u8]) });
+        })
+    }
+
     /// Whether `length` units are copied whole into a joined string (`concat_all`).
     pub(in crate::vm) fn copies_whole(length: usize) -> bool {
         length <= ROPE_LEAF_MAX_UNITS

@@ -314,7 +314,13 @@ fn lane_apply_array_step<H: Host>(cx: *mut LaneContext<H>, mapped: Value) -> Opt
     let vm = unsafe { vm(cx) };
     let step: *mut LaneArrayStep = vm.lane_stack.steps.last_mut().expect("each array step activation has its entry");
     // SAFETY: the entry stays in place while the step, which reads no lane stack, runs.
-    let step = unsafe { &mut *step };
+    lane_apply_step_value(vm, unsafe { &mut *step }, mapped)
+}
+
+/// `lane_apply_array_step` of the innermost entry `step` already holds, so the in-place step
+/// does not look the entry up again: the step applied to the callback's `mapped`.
+#[inline(always)]
+fn lane_apply_step_value<H: Host>(vm: &mut Vm<H>, step: &mut LaneArrayStep, mapped: Value) -> Option<Value> {
     let applied = vm.fresh_array_step(&mut step.iteration, step.index, step.element, mapped);
     note_allocation(vm);
     applied
@@ -338,7 +344,7 @@ pub(super) fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H
     let applied = if step.iteration.native == Native::ArrayForEach {
         None
     } else {
-        lane_apply_array_step(cx, mapped)
+        lane_apply_step_value(vm, step, mapped)
     };
     let depth = vm.lane_stack.activation_count() - 1;
     if applied.is_none()
