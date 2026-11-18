@@ -1,5 +1,28 @@
 # Each op's Ir/iter split by handler (callgrind self cost), recorded by a passing `quench-gate --only ir-budget`.
 # op share handler; the gate names the handlers that grew against these. Not edited by hand.
+arr_includes 843.5 Vm::search_dense
+arr_includes 70.0 Vm::dense_search_call
+arr_includes 64.0 lane_native_call
+arr_includes 53.0 Vm::in_place_native_value
+arr_includes 51.0 lane_native_value
+arr_includes 41.0 lane_get_field_holder_cell_register
+arr_includes 30.0 array_value
+arr_includes 25.0 lane_inc_dec_loop<false, 4, true>
+arr_includes 15.0 lane_jump_false<false>
+arr_includes 12.0 lane_operator_integer_constant<19>
+arr_includes 7.5 lane_inc_dec<false>
+arr_includes 7.0 lane_move<0>
+arr_indexof 843.5 Vm::search_dense
+arr_indexof 78.5 Vm::dense_search_call
+arr_indexof 64.0 lane_native_call
+arr_indexof 53.0 Vm::in_place_native_value
+arr_indexof 51.0 lane_native_value
+arr_indexof 41.0 lane_get_field_holder_cell_register
+arr_indexof 30.0 array_value
+arr_indexof 25.0 lane_inc_dec_loop<false, 4, true>
+arr_indexof 15.0 lane_operator_int32<8, false>
+arr_indexof 12.0 lane_operator_integer_constant<19>
+arr_indexof 7.0 lane_move<0>
 arr_length 32.0 lane_get_length
 arr_length 25.0 lane_inc_dec_loop<false, 4, true>
 arr_length 19.0 lane_operator<8>
@@ -70,6 +93,37 @@ cmp_int 25.0 lane_inc_dec_loop<false, 4, true>
 cmp_int 12.0 lane_operator_integer_constant<19>
 cmp_int 9.5 lane_jump_binary_false_small<false, 6, false>
 cmp_int 7.5 lane_inc_dec<false>
+date_now 135.0 lane_call_native
+date_now 115.0 Vm::as_native_activation<quench_runtime::value::Value, <quench_runtime::vm::Vm>::call_native_guarded::{closure#0}>
+date_now 86.0 Vm::call_native
+date_now 63.0 lane_native_call
+date_now 59.0 lane_get_field_own_cell
+date_now 57.0 Vm::call_native_table
+date_now 55.0 lane_native_value
+date_now 36.0 Timespec::sub_timespec
+date_now 35.0 lane_operator_integer_constant_numbers<19>
+date_now 34.0 unix_millis
+date_now 28.0 Vm::call_native_dispatch
+date_now 28.0 lane_load_name_bound<0, 2>
+date_now 27.0 CallArguments::from_slice
+date_now 25.0 lane_inc_dec_loop<false, 4, true>
+date_now 23.0 Vm::in_place_native_value
+date_now 21.0 Vm::materialize_lane_activations
+date_now 19.0 SystemTime::duration_since
+date_now 16.0 Timespec::now
+date_now 15.0 lane_operator_int32<8, false>
+date_now 15.0 trunc
+date_now 13.0 Native::is_host_control_native
+date_now 13.0 Vm::string_method_receiver
+date_now 13.0 __memcpy_avx_unaligned_erms
+date_now 11.0 Native::runs_from_lane
+date_now 11.0 clock_gettime@@GLIBC_2.17
+date_now 7.0 Native::is_math_function
+date_now 7.0 StackGuard::drop
+date_now 5.0 CallArguments::as_slice
+date_now 5.0 LaneRoot::frame
+date_now 2.0 SystemTime::now
+date_now 1.0 SystemHost::clock_millis
 dbl_add 25.0 lane_inc_dec_loop<false, 4, true>
 dbl_add 21.2 lane_operator_double_constant<8>
 dbl_div 44.0 lane_operator_constant_left<11>
@@ -125,6 +179,346 @@ int_mul_ovf 17.2 lane_operator_integer_constant<10>
 int_mul_ovf 9.0 NumberBitwise::from_operator
 int_sub 25.0 lane_inc_dec_loop<false, 4, true>
 int_sub 15.0 lane_operator_int32<9, false>
+k01_sum_or 25.0 lane_inc_dec_loop<false, 4, true>
+k01_sum_or 15.0 lane_operator_int32<8, false>
+k02_fib 18939.0 lane_script_call<1, true>
+k02_fib 8319.0 lane_load_root_binding
+k02_fib 5016.0 lane_returning_operator<17, true, 0>
+k02_fib 4005.0 lane_return<0>
+k02_fib 2816.0 lane_operator_integer_constant<9>
+k02_fib 1681.0 lane_jump_binary_false_small<false, 4, false>
+k02_fib 1672.0 lane_operator<8>
+k02_fib 25.0 lane_inc_dec_loop<false, 4, true>
+k02_fib 15.0 lane_operator_int32<8, false>
+k02_fib 6.0 lane_load_const
+k03_call_add 73.0 lane_script_call_leaf<1, 2>
+k03_call_add 47.0 lane_load_root_binding
+k03_call_add 39.0 lane_returning_operator<17, true, 1>
+k03_call_add 25.0 lane_inc_dec_loop<false, 4, true>
+k03_call_add 19.0 lane_operator<8>
+k03_call_add 11.0 lane_move_pair<false, false>
+k04_dot 128.0 lane_get_field_own_bound<false, 0>
+k04_dot 42.0 lane_operator_pair<10, 8, true, true>
+k04_dot 25.0 lane_inc_dec_loop<false, 4, true>
+k04_dot 24.6 lane_operator_numbers<8>
+k04_dot 18.0 lane_operator_numbers_raw<10>
+k05_field_add 43.0 lane_set_object_field_own<false>
+k05_field_add 32.0 lane_get_field_own_bound<false, 0>
+k05_field_add 26.5 lane_operator_numbers<8>
+k05_field_add 25.0 lane_inc_dec_loop<false, 4, true>
+k06_list 992.0 lane_get_field_own_bound<false, 536870912>
+k06_list 383.0 lane_jump_false<false>
+k06_list 240.0 lane_operator_int32<8, false>
+k06_list 208.0 lane_then_jump<false, true>
+k06_list 25.0 lane_inc_dec_loop<false, 4, true>
+k06_list 7.0 lane_move<0>
+k07_area 70.0 lane_script_call_leaf<4, 0>
+k07_area 58.0 lane_get_field_own_bound<true, 536870912>
+k07_area 44.0 lane_returning_operator<10, false, 4>
+k07_area 31.0 lane_get_field_holder<false>
+k07_area 25.0 lane_inc_dec_loop<false, 4, true>
+k07_area 15.0 lane_operator_int32<8, false>
+k07_area 7.0 lane_move<0>
+k08_escape 192.0 lane_get_field_own_bound<false, 0>
+k08_escape 147.8 lane_allocation
+k08_escape 94.0 InlineObjectHeader::of_storage
+k08_escape 53.8 lane_operator_pair<10, 8, true, false>
+k08_escape 34.1 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
+k08_escape 32.7 RecordSpace::sweep_disposing<<quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#7}::{closure#0}, <quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#7}::{closure#1}>
+k08_escape 25.0 lane_inc_dec_loop<false, 4, true>
+k08_escape 24.0 lane_operator_numbers<8>
+k08_escape 23.0 lane_make_object2
+k08_escape 19.0 lane_operator<8>
+k08_escape 11.1 Vec::spec_extend
+k08_escape 4.8 active_shape_attributes
+k08_escape 4.7 Vm::collect_inner
+k08_escape 4.2 {closure#2}
+k08_escape 3.9 ValueArena::append_held_heap_references
+k08_escape 3.8 RecordSpace::sweep<<quench_runtime::heap::StoppedStringSweep>::run::{closure#0}>
+k08_escape 3.7 ParallelShapeTrace::append_shape_edges
+k08_escape 3.0 InlineObjectHeader::of_run
+k08_escape 2.4 Heap::children<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
+k08_escape 1.9 trace_parts
+k08_escape 1.9 ParallelShapeTrace::append_visit
+k08_escape 1.7 EnvironmentTrace::closure
+k08_escape 1.7 Object::set_properties
+k08_escape 1.5 ValueArena::compact_vector
+k08_escape 1.4 Heap::sweep_serial
+k08_escape 1.4 RecordSpace::sweep<<quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#7}::{closure#2}>
+k08_escape 1.2 Heap::compact_property_arena
+k08_escape 1.1 Heap::prune_weak_entries
+k08_escape 1.1 RecordSpace::load_free_word
+k08_escape 1.1 {closure#1}
+k08_escape 1.0 Vec::from_iter
+k08_escape 0.9 EnvironmentTrace::whole
+k08_escape 0.9 quicksort<(usize, quench_runtime::value::Value), <[(usize, quench_runtime::value::Value)]>::sort_unstable_by_key<usize, <quench_runtime::heap::Heap>::compact_property_arena::{closure#1}>::{closure#0}>
+k08_escape 0.9 MarkBits::is_marked
+k08_escape 0.9 RecordSpace::claim_slow
+k08_escape 0.7 Heap::trace_environment_edges
+k08_escape 0.7 ValueVec::has_compact_range
+k08_escape 0.6 ParallelShapeTrace::live_shapes
+k08_escape 0.6 small_sort_general<(usize, quench_runtime::value::Value), <[(usize, quench_runtime::value::Value)]>::sort_unstable_by_key<usize, <quench_runtime::heap::Heap>::compact_property_arena::{closure#1}>::{closure#0}>
+k08_escape 0.6 __rust_dealloc
+k08_escape 0.5 ValueArena::capacity
+k09_reduce 3183.8 lane_return_value_general
+k09_reduce 896.0 lane_returning_operator<8, false, 1>
+k09_reduce 591.0 lane_begin_array_iteration
+k09_reduce 336.0 Vm::fresh_array_step
+k09_reduce 246.0 ArrayIteration::advance
+k09_reduce 170.0 Vm::resolve_script_call_target
+k09_reduce 120.0 bool::then<quench_runtime::value::Value, <quench_runtime::heap::array_elements::ArrayElements>::get::{closure#0}>
+k09_reduce 112.0 lane_retire_array_step
+k09_reduce 99.0 Vm::closure_of_template
+k09_reduce 98.0 lane_closure_value_of
+k09_reduce 74.8 Vm::target_capture
+k09_reduce 74.3 ScriptTargets::remember
+k09_reduce 72.0 Native::is_array_reducer
+k09_reduce 65.5 {closure#2}
+k09_reduce 61.8 Heap::alloc_function_under_flagged_prototype
+k09_reduce 60.0 lane_call_array_callback<false>
+k09_reduce 58.0 Vm::closure_in_realm
+k09_reduce 51.0 lane_load_window_local_general<false>
+k09_reduce 41.0 lane_get_field_holder_cell_register
+k09_reduce 38.1 Heap::environment_bindings
+k09_reduce 33.5 RecordSpace::sweep<<quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#7}::{closure#2}>
+k09_reduce 30.0 LaneStack::function_target
+k09_reduce 29.0 direct_store_owner
+k09_reduce 26.0 Vm::promote_frame_environment
+k09_reduce 23.0 lane_inc_dec_jump<false, true>
+k09_reduce 21.0 lane_make_window_closure
+k09_reduce 19.7 Object::drop
+k09_reduce 15.0 ArrayIteration::new
+k09_reduce 15.0 lane_operator_int32<8, false>
+k09_reduce 14.0 lane_move<0>
+k09_reduce 12.0 lane_jump_binary_false_registers<false, 4>
+k09_reduce 10.0 LaneRoot::frame
+k09_reduce 10.0 lane_load_window_local<false>
+k09_reduce 7.0 Native::is_array_callback
+k09_reduce 6.0 array_callback_argument_count
+k09_reduce 6.0 lane_load_const
+k09_reduce 6.0 LaneStack::remember_script_target
+k09_reduce 4.0 finished_closure_slots
+k09_reduce 4.0 mapped_arguments_slot
+k09_reduce 4.0 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
+k09_reduce 1.7 Vm::collect_inner
+k09_reduce 1.1 RecordSpace::load_free_word
+k09_reduce 0.9 RecordSpace::claim_slow
+k09_reduce 0.8 Heap::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>
+k09_reduce 0.7 Vm::run_user_frame
+k09_reduce 0.6 Vec::spec_extend
+k09_reduce 0.5 RecordSpace::prepare_minor
+k10_f64_sum 661.0 __memcpy_avx_unaligned_erms
+k10_f64_sum 397.0 lane_loop_kernel
+k10_f64_sum 239.0 trip_count
+k10_f64_sum 222.0 Vm::typed_array_getter_value
+k10_f64_sum 214.0 Vm::typed_array_geometry_read
+k10_f64_sum 194.0 LoopKernel::columns
+k10_f64_sum 144.0 LoopKernel::write_back
+k10_f64_sum 101.0 Fold::run
+k10_f64_sum 93.0 Vm::typed_array_span
+k10_f64_sum 63.0 LoopKernel::finals
+k10_f64_sum 62.0 LoopKernel::limit
+k10_f64_sum 44.0 Vm::pure_native_value
+k10_f64_sum 35.0 Recurrence::run
+k10_f64_sum 25.0 lane_inc_dec_loop<false, 4, true>
+k10_f64_sum 22.0 BufferBytes::len
+k10_f64_sum 21.0 NativeView::kind
+k10_f64_sum 20.0 Heap::array_storage_span
+k10_f64_sum 20.0 LoopKernel::chunk_length
+k10_f64_sum 19.0 LoopKernel::stores_present
+k10_f64_sum 17.0 lane_get_length_typed
+k10_f64_sum 16.0 Vm::own_array_length_general
+k10_f64_sum 14.0 Recurrence::columns
+k10_f64_sum 14.0 floor
+k10_f64_sum 13.0 lane_jump_binary_false_registers<false, 4>
+k10_f64_sum 6.0 geometry_slot
+k10_f64_sum 6.0 lane_load_const
+k10_f64_sum 6.0 stride
+k10_f64_sum 3.0 Recurrence::side
+k10_f64_sum 2.0 charge_work
+k11_saxpy 2040.0 Vm::typed_array_geometry_read
+k11_saxpy 1260.0 lane_get_index_typed_kind<11>
+k11_saxpy 658.0 lane_operator_constant_left<10>
+k11_saxpy 588.0 lane_set_index_typed_kind<11>
+k11_saxpy 528.0 lane_operator_numbers<8>
+k11_saxpy 368.0 lane_inc_dec_jump<false, true>
+k11_saxpy 289.0 lane_get_length_typed
+k11_saxpy 205.0 lane_jump_binary_false_registers<false, 4>
+k11_saxpy 176.0 lane_move_pair<false, false>
+k11_saxpy 176.0 lane_require_object_coercible
+k11_saxpy 51.0 geometry_slot
+k11_saxpy 25.0 lane_inc_dec_loop<false, 4, true>
+k11_saxpy 6.0 lane_load_const
+k12_copy 894.0 lane_loop_kernel
+k12_copy 661.0 __memcpy_avx_unaligned_erms
+k12_copy 240.0 Vm::typed_array_geometry_read
+k12_copy 239.0 trip_count
+k12_copy 186.0 Vm::typed_array_span
+k12_copy 176.0 LoopKernel::columns
+k12_copy 172.0 LoopKernel::chunk_length
+k12_copy 125.0 LoopKernel::write_back
+k12_copy 96.0 LoopKernel::limit
+k12_copy 59.0 LoopKernel::finals
+k12_copy 52.0 LoopKernel::stores_present
+k12_copy 40.0 Heap::array_storage_span
+k12_copy 35.0 lane_set_index_typed_kind<6>
+k12_copy 31.0 lane_get_index_typed_kind<6>
+k12_copy 29.0 Recurrence::run
+k12_copy 25.0 lane_inc_dec_loop<false, 4, true>
+k12_copy 24.0 lane_operator_integer_constant<19>
+k12_copy 17.0 lane_get_length_typed
+k12_copy 16.0 Vm::own_array_length_general
+k12_copy 15.0 lane_operator_int32<8, false>
+k12_copy 14.0 NativeView::kind
+k12_copy 14.0 Recurrence::columns
+k12_copy 14.0 floor
+k12_copy 13.0 lane_jump_binary_false_registers<false, 4>
+k12_copy 6.0 geometry_slot
+k12_copy 6.0 lane_load_const
+k12_copy 6.0 stride
+k12_copy 3.0 Recurrence::side
+k12_copy 2.0 charge_work
+k13_matmul 4472.0 lane_get_index_typed_kind<11>
+k13_matmul 3266.0 lane_operator_pair<10, 8, true, false>
+k13_matmul 3168.0 lane_operator_integer_constant<10>
+k13_matmul 2736.0 lane_operator<8>
+k13_matmul 2204.8 lane_inc_dec_small_loop<false, 4>
+k13_matmul 662.6 lane_set_index_typed_kind<11>
+k13_matmul 448.0 lane_move<0>
+k13_matmul 222.0 lane_load_const
+k13_matmul 189.2 lane_jump_binary_false_small<false, 4, false>
+k13_matmul 25.0 lane_inc_dec_loop<false, 4, true>
+k13_matmul 24.0 lane_operator_integer_constant<19>
+k13_matmul 23.0 lane_operator_double_constant<10>
+k13_matmul 0.8 lane_safepoint
+k14_bsearch 186.7 lane_get_index_typed_kind<6>
+k14_bsearch 160.6 lane_jump_binary_false_registers<false, 4>
+k14_bsearch 120.0 Vm::typed_array_geometry_read
+k14_bsearch 114.4 lane_operator<8>
+k14_bsearch 96.4 lane_operator_integer_constant<16>
+k14_bsearch 47.5 lane_operator_integer_constant<8>
+k14_bsearch 39.7 lane_then_jump<false, true>
+k14_bsearch 26.7 lane_jump_always<true>
+k14_bsearch 25.0 lane_inc_dec_loop<false, 4, true>
+k14_bsearch 22.0 lane_operator_integer_constant<10>
+k14_bsearch 17.0 lane_get_length_typed
+k14_bsearch 15.0 lane_operator_int32<8, false>
+k14_bsearch 12.0 lane_operator_integer_constant<19>
+k14_bsearch 6.0 lane_load_const
+k14_bsearch 3.0 geometry_slot
+k15_isort 1309.8 lane_get_index_typed_kind<6>
+k15_isort 960.0 Vm::typed_array_geometry_read
+k15_isort 787.5 lane_set_index_typed_kind<6>
+k15_isort 392.7 lane_inc_dec_small_loop<true, 7>
+k15_isort 352.0 lane_operator_integer_constant<10>
+k15_isort 329.0 lane_typed_address_set<false, 6>
+k15_isort 242.2 lane_jump_binary_false_registers<false, 6>
+k15_isort 232.0 lane_operator_integer_constant<8>
+k15_isort 209.0 lane_inc_dec_small_loop<false, 4>
+k15_isort 161.0 lane_inc_dec_jump<false, true>
+k15_isort 152.0 lane_operator<8>
+k15_isort 136.0 lane_get_length_typed
+k15_isort 112.0 lane_operator_integer_constant<9>
+k15_isort 108.0 lane_operator_integer_constant<19>
+k15_isort 97.0 lane_jump_binary_false_registers<false, 4>
+k15_isort 63.0 lane_jump_binary_false_small<false, 7, false>
+k15_isort 49.0 lane_move<0>
+k15_isort 25.0 lane_inc_dec_loop<false, 4, true>
+k15_isort 24.0 geometry_slot
+k15_isort 15.0 lane_operator_int32<8, false>
+k15_isort 12.0 lane_load_const
+k15_isort 9.0 lane_jump_binary_false_small<false, 4, false>
+k16_sieve 2100.0 lane_set_index_typed_kind<0>
+k16_sieve 1842.0 lane_loop_kernel
+k16_sieve 1140.0 lane_operator<8>
+k16_sieve 661.0 __memcpy_avx_unaligned_erms
+k16_sieve 654.0 lane_jump_binary_false_small<false, 4, false>
+k16_sieve 540.0 lane_jump_always<true>
+k16_sieve 372.0 lane_load_const
+k16_sieve 239.0 trip_count
+k16_sieve 231.0 lane_operator<10>
+k16_sieve 217.0 lane_get_index_typed_kind<0>
+k16_sieve 140.0 LoopKernel::chunk_length
+k16_sieve 138.0 lane_inc_dec_jump<false, true>
+k16_sieve 99.0 LoopKernel::write_back
+k16_sieve 93.0 Vm::typed_array_span
+k16_sieve 56.0 lane_jump_binary_false_small<false, 2, false>
+k16_sieve 53.0 LoopKernel::limit
+k16_sieve 52.0 LoopKernel::stores_present
+k16_sieve 40.0 LoopKernel::finals
+k16_sieve 29.0 Recurrence::run
+k16_sieve 25.0 lane_inc_dec_loop<false, 4, true>
+k16_sieve 23.0 LoopKernel::columns
+k16_sieve 20.0 Heap::array_storage_span
+k16_sieve 15.0 lane_operator_int32<8, false>
+k16_sieve 14.0 Recurrence::columns
+k16_sieve 14.0 floor
+k16_sieve 12.0 lane_operator_integer_constant<19>
+k16_sieve 7.0 NativeView::kind
+k16_sieve 6.0 stride
+k16_sieve 3.0 Recurrence::side
+k16_sieve 2.0 charge_work
+k16_sieve 0.6 lane_safepoint
+k17_hash 1552.0 lane_call_builtin<9>
+k17_hash 1264.0 lane_get_field_math_call2<8, true>
+k17_hash 680.0 lane_get_length_string
+k17_hash 448.0 lane_load_name_bound<0, 2>
+k17_hash 432.0 lane_get_field_string_register
+k17_hash 368.0 lane_inc_dec_jump<false, true>
+k17_hash 240.0 lane_operator_int32<8, false>
+k17_hash 224.0 lane_move<0>
+k17_hash 205.0 lane_jump_binary_false_registers<false, 4>
+k17_hash 80.0 shared_units_offset
+k17_hash 48.0 UnitWidth::bytes
+k17_hash 25.0 lane_inc_dec_loop<false, 4, true>
+k17_hash 6.0 lane_load_const
+k18_math 112.0 lane_load_name_bound<0, 2>
+k18_math 96.0 lane_get_field_math_call<2>
+k18_math 73.0 lane_call_math
+k18_math 73.0 lane_get_field_math_call<0>
+k18_math 64.0 lane_get_field_own_bound<false, 0>
+k18_math 54.0 lane_operator_numbers<8>
+k18_math 53.0 lane_call_math_native<1>
+k18_math 51.0 lane_operator_pair<8, 8, true, false>
+k18_math 34.0 lane_operator_integer_constant_numbers<9>
+k18_math 25.0 lane_operator_double_constant<10>
+k18_math 25.0 lane_inc_dec_loop<false, 4, true>
+k18_math 24.0 lane_operator_numbers_raw<8>
+k18_math 20.5 lane_operator_double_constant<8>
+k18_math 16.0 lane_operator_integer_constant<16>
+k18_math 14.0 lane_move<0>
+k18_math 10.0 {closure#7}::call_once
+k19_gcd 145.2 lane_operator<12>
+k19_gcd 107.0 lane_script_call<2, true>
+k19_gcd 88.1 lane_move_pair<true, true>
+k19_gcd 56.7 lane_jump_binary_false_small<false, 3, false>
+k19_gcd 49.7 lane_operator_integer_constant_numbers<11>
+k19_gcd 47.0 lane_load_root_binding
+k19_gcd 45.0 lane_return<0>
+k19_gcd 34.1 lane_operator_integer_constant_numbers<17>
+k19_gcd 25.0 lane_inc_dec_loop<false, 4, true>
+k19_gcd 19.0 lane_operator_raw<8>
+k19_gcd 16.0 lane_operator_integer_constant<8>
+k19_gcd 15.0 lane_operator_int32<8, false>
+k19_gcd 12.0 lane_operator_integer_constant<19>
+k19_gcd 7.0 lane_move<0>
+k19_gcd 6.0 lane_load_const
+k20_switch 2040.0 Vm::typed_array_geometry_read
+k20_switch 496.0 lane_get_index_typed_kind<0>
+k20_switch 376.0 lane_jump_binary_false_small<false, 3, false>
+k20_switch 368.0 lane_inc_dec_jump<false, true>
+k20_switch 289.0 lane_get_length_typed
+k20_switch 205.0 lane_jump_binary_false_registers<false, 4>
+k20_switch 134.3 lane_operator_integer_constant_numbers<17>
+k20_switch 112.0 lane_move<0>
+k20_switch 72.7 lane_operator_integer_constant<10>
+k20_switch 64.0 lane_jump_always<false>
+k20_switch 52.0 lane_operator_integer_constant<15>
+k20_switch 51.0 geometry_slot
+k20_switch 48.0 lane_operator_int32<8, true>
+k20_switch 48.0 lane_operator_integer_constant<18>
+k20_switch 25.0 lane_inc_dec_loop<false, 4, true>
+k20_switch 6.0 lane_load_const
 k_dispatch 101.0 lane_script_call_leaf<4, 1>
 k_dispatch 91.5 lane_get_field_polymorphic<false, false>
 k_dispatch 39.0 lane_returning_operator<17, true, 4>
@@ -140,8 +534,8 @@ k_json 305.9 __memcpy_avx_unaligned_erms
 k_json 268.0 lane_field_value
 k_json 174.8 Heap::alloc_object_with_properties
 k_json 162.0 lane_get_field_miss
-k_json 160.3 __rust_dealloc
-k_json 158.3 QuenchAlloc::alloc_enabled
+k_json 160.2 __rust_dealloc
+k_json 158.2 QuenchAlloc::alloc_enabled
 k_json 133.8 lane_call_native
 k_json 120.0 Vm::json_parse
 k_json 119.0 Vm::as_native_activation<quench_runtime::value::Value, <quench_runtime::vm::Vm>::call_native_guarded::{closure#0}>
@@ -161,7 +555,7 @@ k_json 59.0 ValueArena::with_values
 k_json 56.0 lane_load_name_bound<0, 2>
 k_json 55.0 lane_native_value
 k_json 54.0 Vm::json_plain_members
-k_json 48.6 RecordSpace::sweep<<quench_runtime::heap::StoppedStringSweep>::run::{closure#0}>
+k_json 48.7 RecordSpace::sweep<<quench_runtime::heap::StoppedStringSweep>::run::{closure#0}>
 k_json 48.0 lane_call_builtin<12>
 k_json 48.0 Vm::call_native_table
 k_json 46.0 {closure#0}
@@ -169,10 +563,10 @@ k_json 43.0 lane_set_object_field_own<false>
 k_json 42.0 JsonHeapBuilder::object
 k_json 40.0 lane_get_length_string
 k_json 38.0 Rc::new_uninit_slice
+k_json 36.0 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 k_json 36.0 JsString::units
 k_json 36.0 lane_get_field_own_bound<false, 4294967295>
 k_json 36.0 local_field_handler
-k_json 35.3 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 k_json 35.2 ValueArena::release_held
 k_json 35.0 FlatUnits::ascii_with<<quench_runtime::vm::wtf16::FlatUnits>::ascii::{closure#0}>
 k_json 35.0 write_json_integer
@@ -199,7 +593,7 @@ k_json 13.0 Vm::string_method_receiver
 k_json 12.0 Object::drop
 k_json 12.0 Object::is_raw_json
 k_json 12.0 lane_operator_integer_constant<19>
-k_json 11.5 Vec::spec_extend
+k_json 11.4 Vec::spec_extend
 k_json 11.0 Native::runs_from_lane
 k_json 9.8 Rc::drop_slow
 k_json 8.1 __rust_alloc
@@ -214,11 +608,11 @@ k_json 4.8 LaneRoot::frame
 k_json 4.8 active_shape_attributes
 k_json 4.0 __rust_no_alloc_shim_is_unstable_v2
 k_json 4.0 JsString::unflattened_host
-k_json 3.7 ParallelShapeTrace::append_shape_edges
-k_json 3.7 ValueArena::append_held_heap_references
+k_json 3.9 ValueArena::append_held_heap_references
+k_json 3.8 ParallelShapeTrace::append_shape_edges
 k_json 3.0 json_text_str
+k_json 2.9 {closure#2}
 k_json 2.9 JsString::prefetch_allocation
-k_json 2.8 {closure#2}
 k_json 2.4 Heap::children<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 k_json 2.1 RecordSpace::load_free_word
 k_json 1.9 trace_parts
@@ -226,15 +620,16 @@ k_json 1.9 ParallelShapeTrace::append_visit
 k_json 1.8 RecordSpace::claim_slow
 k_json 1.7 EnvironmentTrace::closure
 k_json 1.4 Heap::sweep_serial
-k_json 1.3 RecordSpace::sweep<<quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#7}::{closure#2}>
+k_json 1.4 RecordSpace::sweep<<quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#7}::{closure#2}>
 k_json 1.1 Heap::prune_weak_entries
 k_json 1.0 Vec::from_iter
+k_json 0.9 EnvironmentTrace::whole
 k_json 0.9 Native::runs_beside_activations
 k_json 0.9 MarkBits::is_marked
-k_json 0.9 EnvironmentTrace::whole
 k_json 0.8 Heap::allocate_slow
 k_json 0.8 Heap::file_page
 k_json 0.8 Heap::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>
+k_json 0.7 Heap::trace_environment_edges
 k_json 0.7 ParallelShapeTrace::live_shapes
 k_nbody_pair 448.0 lane_get_field_own_bound<false, 0>
 k_nbody_pair 258.0 lane_set_object_field_own<false>
@@ -328,8 +723,8 @@ k_str_build 1.7 Vm::collect_inner
 k_str_build 0.8 Heap::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 k_str_build 0.8 JsString::units
 k_str_build 0.7 Vm::string_length_general
-k_str_build 0.6 Vec::spec_extend
 k_str_build 0.5 RecordSpace::prepare_minor
+k_str_build 0.5 Vec::spec_extend
 k_str_build 0.5 lane_get_length_string
 k_struct_sum 60.0 lane_get_field_own_bound<false, 536870912>
 k_struct_sum 42.0 lane_operator_pair<10, 8, true, false>
@@ -384,7 +779,7 @@ num_to_str 196.0 Vm::concatenate
 num_to_str 87.7 Heap::alloc_string_record
 num_to_str 77.0 lane_binary
 num_to_str 63.9 RecordSpace::sweep<<quench_runtime::heap::StoppedStringSweep>::run::{closure#0}>
-num_to_str 44.7 HashTable::find<<quench_runtime::vm::Vm>::find_atom<<quench_runtime::vm::Vm>::short_ascii_concat::{closure#0}>::{closure#0}>
+num_to_str 44.8 HashTable::find<<quench_runtime::vm::Vm>::find_atom<<quench_runtime::vm::Vm>::short_ascii_concat::{closure#0}>::{closure#0}>
 num_to_str 44.0 Short::try_extend
 num_to_str 43.1 __memcpy_avx_unaligned_erms
 num_to_str 40.0 lane_get_length_string
@@ -405,7 +800,7 @@ num_to_str 8.2 drop_glue<quench_runtime::vm::wtf16::FlatUnits>
 num_to_str 6.0 Short::new
 num_to_str 5.0 table_hash
 num_to_str 3.9 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
-num_to_str 2.0 Vm::atom_units_equal_str
+num_to_str 2.1 Vm::atom_units_equal_str
 num_to_str 1.7 Vm::collect_inner
 num_to_str 1.4 JsString::units
 num_to_str 1.2 RecordSpace::load_free_word
@@ -461,9 +856,9 @@ str_compare 15.0 lane_inc_dec<false>
 str_compare 8.0 NumberRelation::of_ordering
 str_compare 6.0 lane_jump_binary_false_registers<false, 4>
 str_concat 196.0 Vm::concatenate
-str_concat 87.8 Heap::alloc_string_record
+str_concat 87.7 Heap::alloc_string_record
 str_concat 77.0 lane_binary
-str_concat 51.4 __memcpy_avx_unaligned_erms
+str_concat 51.3 __memcpy_avx_unaligned_erms
 str_concat 44.0 Short::try_extend
 str_concat 43.0 HashTable::find<<quench_runtime::vm::Vm>::find_atom<<quench_runtime::vm::Vm>::short_ascii_concat::{closure#0}>::{closure#0}>
 str_concat 40.0 lane_get_length_string
@@ -475,7 +870,7 @@ str_concat 28.0 Vm::primitive_concatenation
 str_concat 25.0 lane_inc_dec_loop<false, 4, true>
 str_concat 23.0 short_hash
 str_concat 22.0 Buffer::format<i32>
-str_concat 21.3 RecordSpace::sweep<<quench_runtime::heap::StoppedStringSweep>::run::{closure#0}>
+str_concat 21.2 RecordSpace::sweep<<quench_runtime::heap::StoppedStringSweep>::run::{closure#0}>
 str_concat 19.0 lane_operator<8>
 str_concat 18.0 Short::deref
 str_concat 17.4 u32::fmt
@@ -488,19 +883,21 @@ str_concat 5.0 table_hash
 str_concat 1.1 RecordSpace::load_free_word
 str_concat 0.9 RecordSpace::claim_slow
 str_concat 0.6 RecordSpace::prepare_minor
+str_concat -0.5 __rust_dealloc
+str_concat -0.6 Stealer::steal
 str_concat -0.6 ParallelShapeTrace::live_shapes
 str_concat -0.7 EnvironmentTrace::whole
-str_concat -0.9 Vec::from_iter
+str_concat -1.0 Vec::from_iter
 str_concat -1.1 Heap::prune_weak_entries
 str_concat -1.3 RecordSpace::sweep<<quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#7}::{closure#2}>
 str_concat -1.4 Heap::sweep_serial
-str_concat -2.9 Vm::collect_inner
-str_concat -10.5 Vec::spec_extend
-str_concat -29.3 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
+str_concat -3.0 Vm::collect_inner
+str_concat -10.6 Vec::spec_extend
+str_concat -30.0 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 str_concat_acc 113.0 Vm::intern_dynamic_concat
 str_concat_acc 101.0 lane_operator_constant_other<8>
 str_concat_acc 89.8 Heap::alloc_string_record
-str_concat_acc 70.1 RecordSpace::sweep<<quench_runtime::heap::StoppedStringSweep>::run::{closure#0}>
+str_concat_acc 70.0 RecordSpace::sweep<<quench_runtime::heap::StoppedStringSweep>::run::{closure#0}>
 str_concat_acc 38.0 Vm::concatenate
 str_concat_acc 25.0 lane_inc_dec_loop<false, 4, true>
 str_concat_acc 24.0 Vm::primitive_concatenation

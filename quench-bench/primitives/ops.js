@@ -89,6 +89,11 @@ ops.k_dispatch = function (n) { const tasks = [new KernelTaskA(3), new KernelTas
 ops.k_json = function (n) { const o = { id: 0, name: "ab", ok: true }; let a = 0; for (let i = 0; i < n; i++) { o.id = i & 1023; const t = JSON.stringify(o); a = (a + JSON.parse(t).id + t.length) | 0; } return a; };
 ops.k_regexp = function (n) { const r = /o+x/, words = ["foox", "bar", "ox", "zoooox"]; let a = 0; for (let i = 0; i < n; i++) { if (r.test(words[i & 3])) a++; } return a; };
 ops.k_str_build = function (n) { let a = 0, s = ""; for (let i = 0; i < n; i++) { s += "k" + (i & 7); if ((i & 63) === 63) { a += s.length; s = ""; } } return a + s.length; };
+// Builtins that run no user code: one call's fixed cost (Date.now) and a dense search's cost
+// per element (includes / indexOf over 64 int32, about 40 elements read per call).
+ops.date_now = function (n) { let a = 0; for (let i = 0; i < n; i++) { a = (a + (Date.now() & 1)) | 0; } return a > -1 ? 1 : 0; };
+ops.arr_includes = function (n) { const arr = []; for (let j = 0; j < 64; j++) arr.push(j * 2); let a = 0; for (let i = 0; i < n; i++) { if (arr.includes(i & 127)) a++; } return a; };
+ops.arr_indexof = function (n) { const arr = []; for (let j = 0; j < 64; j++) arr.push(j * 2); let a = 0; for (let i = 0; i < n; i++) { a = (a + arr.indexOf(i & 127)) | 0; } return a; };
 // The twenty C-parity kernels (TOD-1807, scoreboard in crates/quench-tier-corpus/ir_budget.txt):
 // each isolates one mechanism, with a C twin in ops.c of the same work per iteration. Inner
 // loops run over 16 elements unless noted, so an iteration is a fixed amount of work.

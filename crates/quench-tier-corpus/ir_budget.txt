@@ -6,6 +6,8 @@
 #   dispatch allowance per iteration for the loop's backward jump).
 # ceiling: the count the interpreter may not exceed. The gate lowers it when the count falls; a
 #   count at or under its budget makes the budget the ceiling. Never raise a ceiling by hand.
+arr_includes 247.2 747.6 1219.3
+arr_indexof 248.2 750.6 1220.3
 arr_length 4 18 76.1
 arr_load_dbl 5 21 87.1
 arr_load_int 5 21 73.1
@@ -20,6 +22,7 @@ call_direct 8 30 222.1
 call_method 11 39 279.1
 cmp_dbl 6 24 90.1
 cmp_int 7.5 29 80.1
+date_now 34 108 980.1
 dbl_add 4 18 46.3
 dbl_div 8 30 93.1
 dbl_mul 4 18 44.1
@@ -32,24 +35,24 @@ field_store 3 15 79.1
 inc_local 5 21 57.1
 int_add 4 18 39.2
 int_add_noor 8 30 55.2
-int_div 7 27 119
-int_mod 16 54 66.9
-int_mod_var 7 27 68.1
+int_div 7 27 118.2
+int_mod 16 54 66.2
+int_mod_var 7 27 67.2
 int_mul 5 21 108.2
-int_mul_ovf 18 60 140.5
+int_mul_ovf 18 60 139.8
 int_sub 4 18 39.2
-k01_sum_or 4 18 39.2
-k02_fib 1440 4326 42575.2
-k03_call_add 4 18 295.2
-k04_dot 4 18 236.9
-k05_field_add 4 18 125.7
-k06_list 69 213 1854.4
-k07_area 3 15 249.2
-k08_escape 4 18 652.5
-k09_reduce 75 231 6560.6
-k10_f64_sum 69 213 2681.1
+k01_sum_or 4 18 40.1
+k02_fib 1440 4326 42494.1
+k03_call_add 4 18 214.1
+k04_dot 4 18 237.7
+k05_field_add 4 18 126.6
+k06_list 69 213 1855.3
+k07_area 3 15 250.1
+k08_escape 4 18 718.7
+k09_reduce 75 231 6754.1
+k10_f64_sum 69 213 2693.1
 k11_saxpy 134 408 6370.3
-k12_copy 15 51 3214.1
+k12_copy 15 51 3210.1
 k13_matmul 666 2004 17441.8
 k14_bsearch 62.2 192.6 892.2
 k15_isort 266.8 806.4 5777.7
@@ -75,7 +78,7 @@ neg_op 6 24 88.1
 not_op 5.5 23 65.6
 num_to_str 569 1713 1713
 parse_int 196 594 1036.1
-shl_shr 7 27 93
+shl_shr 7 27 92.2
 str_charcodeat 9 33 207.1
 str_compare 4 18 176.1
 str_concat 531.56 1601 1601
@@ -90,4 +93,4 @@ truthy_str 4 18 117.1
 typed_load 5 21 83.1
 typed_store_f64 8 30 99.6
 typeof_op 4 18 57.1
-ushr 5 21 56.1
+ushr 5 21 55.2

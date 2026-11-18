@@ -728,6 +728,34 @@ static double NOINL op_k_str_build(long n) {
   return a + (double)len;
 }
 
+/* ---------------- builtins that run no user code ---------------- */
+#include <time.h>
+static double NOINL op_date_now(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct timespec t; clock_gettime(CLOCK_REALTIME, &t);
+    double ms = (double)t.tv_sec * 1000.0 + (double)(t.tv_nsec / 1000000);
+    a = (int32_t)((uint32_t)a + ((uint32_t)(int64_t)ms & 1u));
+  }
+  return a > -1 ? 1 : 0;
+}
+static int32_t kv_find(const int32_t *arr, int32_t len, int32_t key) { for (int32_t j = 0; j < len; j++) if (arr[j] == key) return j; return -1; }
+static double NOINL op_arr_includes(long n) {
+  int32_t N = (int32_t)n, a = 0, arr[64];
+  for (int32_t j = 0; j < 64; j++) arr[j] = j * 2;
+  ESCAPE(arr);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); if (kv_find(arr, 64, i & 127) >= 0) a++; }
+  return a;
+}
+static double NOINL op_arr_indexof(long n) {
+  int32_t N = (int32_t)n, a = 0, arr[64];
+  for (int32_t j = 0; j < 64; j++) arr[j] = j * 2;
+  ESCAPE(arr);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); a = (int32_t)((uint32_t)a + (uint32_t)kv_find(arr, 64, i & 127)); }
+  return a;
+}
+
 /* ---------------- the twenty C-parity kernels (k01..k20) ---------------- */
 
 static int32_t NOINL kv_fib(int32_t n) { return n < 2 ? n : (int32_t)((uint32_t)kv_fib(n - 1) + (uint32_t)kv_fib(n - 2)); }
@@ -930,6 +958,7 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"typed_load", op_typed_load}, {"typed_store_f64", op_typed_store_f64},
   {"k_nbody_pair", op_k_nbody_pair}, {"k_struct_sum", op_k_struct_sum}, {"k_dispatch", op_k_dispatch},
   {"k_json", op_k_json}, {"k_regexp", op_k_regexp}, {"k_str_build", op_k_str_build},
+  {"date_now", op_date_now}, {"arr_includes", op_arr_includes}, {"arr_indexof", op_arr_indexof},
   {"k01_sum_or", op_k01_sum_or},
   {"k02_fib", op_k02_fib},
   {"k03_call_add", op_k03_call_add},
