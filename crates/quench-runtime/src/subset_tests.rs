@@ -791,7 +791,7 @@ print(out.join(","));
 fn iteration_copies_run_in_environment_activations() {
     // A loop whose block bindings a closure captures copies its environment each iteration
     // (`CloneEnv`); an arrow making such closures still runs as an environment activation
-    // (`lane_clone_window_env`), each closure keeping its iteration's bindings while all
+    // (`clone_environment_of`), each closure keeping its iteration's bindings while all
     // share the function-level ones, as a frame's copies do.
     let source = r#"
 const out = [];

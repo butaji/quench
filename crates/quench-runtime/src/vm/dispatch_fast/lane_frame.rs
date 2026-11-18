@@ -54,6 +54,15 @@ struct LaneHost {
     name: Option<NameBinding>,
 }
 
+/// The lane's environment clone for a `CloneEnv` row (`clone_environment_of`): the lane context, the
+/// register count of the environment window the record names (0 where it names none), and the clone.
+#[derive(Clone, Copy)]
+struct EnvironmentClones {
+    context: *mut (),
+    window: u16,
+    run: unsafe fn(*mut (), Registers, u16, u32) -> bool,
+}
+
 /// The lane context's capture stores, erased of its host so the frame names no `H`
 /// (`lane_capture_store`).
 #[derive(Clone, Copy)]
@@ -143,6 +152,10 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The lane context and the fast answers of an iteration or for-in call-out (`fast_names_step`), for
     /// the row that makes one (`Decoder::Names`).
     names: Option<(*mut (), NamesStep)>,
+    /// The environment clone a `CloneEnv` row makes (`clone_environment_of`).
+    clones: Option<EnvironmentClones>,
+    /// The running function, which a `LoadCallee` row reads (`running_callee`), where the row is one.
+    callee: Option<(*mut (), unsafe fn(*mut ()) -> Option<Value>)>,
     /// The constants, local slots and outer captures the staged row's operands name.
     reads: Reads,
 }
@@ -170,7 +183,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, callee: None, reads: Reads::NONE }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -194,7 +207,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, callee: None, reads: Reads::NONE }
     }
 }
 
@@ -338,6 +351,12 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
                 // SAFETY: the running lane's context, live for the row's step.
                 unsafe { step(context, operation, operands) }.map(|value| (value.to_bits(), Boxing::Value))
             }
+            // The clone defines no register; its word is a placeholder the row does not write.
+            CallOut::CloneEnv { plan } => {
+                let EnvironmentClones { context, window, run } = self.clones?;
+                // SAFETY: the running lane's context and register file, live for the row's step.
+                unsafe { run(context, self.registers, window, plan) }.then_some((Value::UNDEFINED.to_bits(), Boxing::Value))
+            }
             _ => None,
         }
     }
@@ -347,6 +366,13 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         let (context, count) = self.arguments?;
         // SAFETY: the running lane's context, live for the row's step.
         Some((unsafe { count(context, slot) }?.to_bits(), Boxing::Value))
+    }
+
+    #[inline(always)]
+    fn callee(&mut self, _stage: &mut Concrete) -> Option<(u64, Boxing)> {
+        let (context, read) = self.callee?;
+        // SAFETY: the running lane's context, live for the row's step.
+        Some((unsafe { read(context) }?.to_bits(), Boxing::Value))
     }
 
     #[inline(always)]
@@ -707,8 +733,15 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
             None
         };
         let names: NamesStep = fast_names_step::<H>;
+        // A clone names the window its record carries above its plan (`specialize_environment_window`).
+        let clones = if const { OP == crate::staged::CLONE_ENV_ROW } {
+            Some(EnvironmentClones { context: cx.cast(), window: (i.imm() >> super::ENVIRONMENT_WINDOW_SHIFT) as u16,
+                run: super::clone_environment_of::<H> })
+        } else {
+            None
+        };
         return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), environment: Some(environment), global_store, names: Some((cx.cast(), names)),
-            ..LaneFrame::<ACC>::new(r, view) };
+            clones, ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Value)) } {
         // A value row may read `this`: the context word, else the frame's (`lane_this`), read lazily.
@@ -719,7 +752,14 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         // A capture row reads the running function's dense slots (its miss walks: `row_miss`) and
         // stores through the lane's own store.
         let (capture_slots, captures) = (Some(capture_reads(r.capture())), Some(CaptureStores::own(r)));
-        return LaneFrame::<ACC> { this: r.this(), frame_this: Some((cx.cast(), read)), capture_slots, captures,
+        // A `LoadCallee` row reads the running function (`running_callee`).
+        let callee: Option<(*mut (), unsafe fn(*mut ()) -> Option<Value>)> = if const { OP == crate::staged::LOAD_CALLEE_ROW } {
+            let read: unsafe fn(*mut ()) -> Option<Value> = super::running_callee::<H>;
+            Some((cx.cast(), read))
+        } else {
+            None
+        };
+        return LaneFrame::<ACC> { this: r.this(), frame_this: Some((cx.cast(), read)), capture_slots, captures, callee,
             ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {

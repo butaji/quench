@@ -110,8 +110,8 @@ impl<W, P> Operation<W, P> {
             Self::Jump => SmallVec::from_slice(&[("target", BYTECODE)]),
             Self::JumpIf { .. } => SmallVec::from_slice(&[("register", REGISTER), ("taken", BYTECODE),
                 ("target", BYTECODE)]),
-            Self::LoadThis { .. } => SmallVec::from_slice(&[("destination", REGISTER)]),
-            Self::RequireObjectCoercible { .. } => SmallVec::from_slice(&[("register", REGISTER)]),
+            Self::LoadThis { .. } | Self::LoadCallee { .. } => SmallVec::from_slice(&[("destination", REGISTER)]),
+            Self::RequireObjectCoercible { .. } | Self::RequireIteratorResult { .. } => SmallVec::from_slice(&[("register", REGISTER)]),
             _ => self.heap_operand_times(),
         }
     }
@@ -156,6 +156,7 @@ impl<W, P> Operation<W, P> {
             Self::Allocate { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("allocation", BYTECODE),
                 ("proof", PROOF)]),
             Self::Safepoint { .. } => SmallVec::from_slice(&[("proof", PROOF)]),
+            Self::CloneEnv { .. } => SmallVec::from_slice(&[("plan", BYTECODE)]),
             _ => unreachable!("`operand_times` answers every other operation"),
         }
     }

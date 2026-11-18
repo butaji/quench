@@ -3316,7 +3316,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, NameBinding, NameRead, staged_require_iterator_result, staged_typeof_index, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, staged_property_key};
+use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, NameBinding, NameRead, staged_typeof_index, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED};
 
 
 lane_handler! {
@@ -3695,21 +3695,6 @@ lane_handler! {
 }
 
 script_handler! {
-    /// `RequireIteratorResult` of an object, which passes (the staged fast arm for a record, the
-    /// VM's `is_object_like` for any other object kind); any other value takes the general
-    /// path, which throws.
-    fn lane_require_iterator_result<>(cx, r, ip, i, view) {
-        if !staged_require_iterator_result(r, Carried::script(cx), i.b)
-            && !(unsafe { vm(cx) }).is_object_like(r.get(i.b))
-        {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-
-script_handler! {
     /// `InitializeTdz`: opens the binding's dead zone wherever the frame keeps it, as the
     /// general path does (`Vm::owner_binding_mut`).
     fn lane_initialize_tdz<>(cx, r, ip, i, view) {
@@ -3726,91 +3711,75 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// `CloneEnv` in the lane's own frame, as the general path makes it
-    /// (`Vm::clone_frame_environment`): nothing to copy while the frame holds no captured
-    /// environment, else the frame's environment replaced by its copy (a `for (let ...)`
-    /// iteration's, which a closure in the body captures), after which the run's capture
-    /// caches name the old environment and are dropped. An activation's environment is its
-    /// window's, which an environment view's records copy (`lane_clone_window_env`); any
-    /// other activation's clone takes the general path.
-    fn lane_clone_env<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
+/// The environment clone of plan `plan` a `CloneEnv` row makes in the lane context `cx` over its
+/// register file `r` (`Vm::clone_frame_environment`, `Vm::iteration_environment`). `window` is the
+/// register count of the environment window the record names, 0 where it names none. In a frame's own
+/// run, nothing is copied while the frame holds no captured environment, else the frame's environment
+/// is replaced by its copy (a `for (let ...)` iteration's, which a closure in the body captures), after
+/// which the run's capture caches name the old environment and are dropped. In an environment
+/// activation, nothing is copied while its window has made no environment; else the window's
+/// environment is replaced by its iteration copy. Closures made earlier keep the old environment, whose
+/// function-level slots the copy shares. Where the general path must make the clone (an error, or a
+/// shape the lane does not take), it returns `false` and writes nothing.
+///
+/// # Safety
+/// `cx` is the running lane's context and `r` its register file.
+unsafe fn clone_environment_of<H: Host>(cx: *mut (), r: Registers, window: u16, plan: u32) -> bool {
+    let cx = cx.cast::<LaneContext<H>>();
+    let vm = unsafe { vm(cx) };
+    let env_set = !unsafe { (*cx).registers }.env().is_deleted();
+    if window == 0 || !env_set {
+        // A frame's own clone; an activation's environment is its window's, so none is cloned here.
         if !vm.lane_stack.activations.is_empty() {
-            return exit(ip);
+            return false;
         }
         let frame = unsafe { (*cx).frame() };
         if vm.frames[frame].captured {
-            // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
-            // running function's view.
-            let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
+            // SAFETY: the context's program outlives the lane run.
+            let code = unsafe { &*(*cx).code };
             let body = code.function(vm.frames[frame].function as usize);
-            let Some(plan) = body.environment_clones.get(decoded_instruction(body, body.code[pc]).environment_clone_index())
-            else {
-                return exit(ip);
-            };
-            // It checks the environment before it allocates the copy, so an error leaves the
-            // frame for the general path to raise it from.
-            if vm.clone_frame_environment(frame, &plan.fresh, body.environment_clones.resets(plan)).is_err() {
-                return exit(ip);
+            let Some(clone) = body.environment_clones.get(plan as usize) else { return false };
+            // It checks the environment before it allocates the copy, so an error leaves the frame
+            // for the general path to raise it from.
+            if vm.clone_frame_environment(frame, &clone.fresh, body.environment_clones.resets(clone)).is_err() {
+                return false;
             }
             note_allocation(vm);
             handler_edges::drop_environment_caches(cx);
         }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
+        return true;
     }
-}
-
-script_handler! {
-    /// `CloneEnv` of a function an environment activation may run: in a frame's run, as
-    /// `lane_clone_env`; in an environment activation, nothing to copy while its window has
-    /// made no environment (no closure captured its bindings yet: they all live among the
-    /// window's locals), else the window's environment replaced by its iteration copy, as a
-    /// frame's (`Vm::iteration_environment`). Closures made earlier keep the old environment,
-    /// whose function-level slots the copy shares.
-    fn lane_clone_window_env<>(cx, r, ip, i, view) {
-        if unsafe { (*cx).registers }.env().is_deleted() {
-            sibling!(lane_clone_env::<H>, r, ip, Carried::script_in(cx, view))
-        }
-        let (_, registers) = environment_window_fields(i);
-        // SAFETY: the running environment activation's window starts at `registers`.
-        let entries = unsafe { r.0.add(usize::from(registers)) };
-        let source = unsafe { *entries.add(usize::from(WINDOW_ENVIRONMENT)) };
-        if source.is_deleted() {
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
-        }
-        let vm = unsafe { vm(cx) };
-        let Some(function) = vm.lane_stack.activations.last().map(|activation| activation.function) else {
-            return exit(ip);
-        };
-        // SAFETY: the context's program outlives the lane run, and `ip` is a record of the
-        // running function's view.
-        let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
-        let body = code.function(function as usize);
-        let Some(plan) = body.environment_clones.get(decoded_instruction(body, body.code[pc]).environment_clone_index())
-        else {
-            return exit(ip);
-        };
-        // It checks the environment before it allocates the copy, so an error leaves the
-        // activation for the general path to raise it from.
-        let Ok(environment) = vm.iteration_environment(source, unsafe { (*cx).program }, function, &plan.fresh, body.environment_clones.resets(plan))
-        else {
-            return exit(ip);
-        };
-        note_allocation(vm);
-        let Some(crate::heap::Cell::Environment { slots, .. }) = vm.heap.get(environment) else {
-            unreachable!("an iteration copy is an environment");
-        };
-        let storage = std::ptr::from_ref(slots);
-        // SAFETY: as above; the copy's slot storage never moves while it lives.
-        unsafe {
-            entries.add(usize::from(WINDOW_ENVIRONMENT)).write(environment);
-            entries
-                .add(usize::from(WINDOW_SLOTS))
-                .write(std::mem::transmute::<u64, Value>(storage as u64));
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    // An environment activation's window, which starts `window` registers into the file.
+    // SAFETY: the running environment activation's window starts at `r + window`.
+    let entries = unsafe { r.0.add(usize::from(window)) };
+    let source = unsafe { *entries.add(usize::from(WINDOW_ENVIRONMENT)) };
+    if source.is_deleted() {
+        return true;
     }
+    let Some(function) = vm.lane_stack.activations.last().map(|activation| activation.function) else {
+        return false;
+    };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let body = code.function(function as usize);
+    let Some(clone) = body.environment_clones.get(plan as usize) else { return false };
+    // It checks the environment before it allocates the copy, so an error leaves the activation for
+    // the general path to raise it from.
+    let Ok(environment) = vm.iteration_environment(source, unsafe { (*cx).program }, function, &clone.fresh, body.environment_clones.resets(clone))
+    else {
+        return false;
+    };
+    note_allocation(vm);
+    let Some(crate::heap::Cell::Environment { slots, .. }) = vm.heap.get(environment) else {
+        unreachable!("an iteration copy is an environment");
+    };
+    let storage = std::ptr::from_ref(slots);
+    // SAFETY: as above; the copy's slot storage never moves while it lives.
+    unsafe {
+        entries.add(usize::from(WINDOW_ENVIRONMENT)).write(environment);
+        entries.add(usize::from(WINDOW_SLOTS)).write(std::mem::transmute::<u64, Value>(storage as u64));
+    }
+    true
 }
 
 script_handler! {
@@ -4960,19 +4929,20 @@ lane_handler! {
 }
 
 
-script_handler! {
-    /// `LoadCallee`: the function the innermost script activation runs, or the frame's when
-    /// none does, as its activation filled its self binding (`Vm::initialize_frame_locals`).
-    fn lane_load_callee<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let callee = match vm.lane_stack.activations.last() {
-            // A windowed activation names the owner of its frame, which is the record's.
-            Some(Activation { kind: ActivationKind::Script(script), .. }) if !script.completion.is_windowed() => script.callee,
-            Some(_) => return exit(ip),
-            None => vm.frames[unsafe { (*cx).frame() }].context.callee().unwrap_or(Value::UNDEFINED),
-        };
-        r.set(i.a, callee);
-        next!(cx, r, following(ip), view)
+/// The function `LoadCallee` reads (`Frame::callee`): the innermost script activation's, or the
+/// frame's when none runs, as its activation filled its self binding (`Vm::initialize_frame_locals`).
+/// `None` where the innermost activation is not a script or is windowed, which the general step reads.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+unsafe fn running_callee<H: Host>(cx: *mut ()) -> Option<Value> {
+    let cx = cx.cast::<LaneContext<H>>();
+    let vm = unsafe { vm(cx) };
+    match vm.lane_stack.activations.last() {
+        // A windowed activation names the owner of its frame, which is the record's.
+        Some(Activation { kind: ActivationKind::Script(script), .. }) if !script.completion.is_windowed() => Some(script.callee),
+        Some(_) => None,
+        None => Some(vm.frames[unsafe { (*cx).frame() }].context.callee().unwrap_or(Value::UNDEFINED)),
     }
 }
 
@@ -21084,7 +21054,6 @@ const fn private_element_handler<H: Host>(opcode: Op) -> Option<Handler> {
 const fn iterator_handler<H: Host>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
         Class::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
-        Class::RequireIteratorResult => Some(lane_require_iterator_result::<H>),
         Class::IteratorCleanupPop => Some(lane_iterator_cleanup_pop::<H>),
         _ => None,
     }
@@ -21095,8 +21064,6 @@ const fn iterator_handler<H: Host>(opcode: Op) -> Option<Handler> {
 const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
         Class::DefineArrayElement => Some(lane_define_array_element::<H>),
-        Class::LoadCallee => Some(lane_load_callee::<H>),
-        Class::CloneEnv => Some(lane_clone_env::<H>),
         Class::GetField => Some(lane_get_field_first::<H>),
         _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::Register, .. })) => Some(lane_set_object_field_own::<H, false>),
         _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::This, .. })) => Some(lane_set_this_field_own::<H, false>),
@@ -23870,7 +23837,9 @@ fn specialize_environment_window<H: Host>(
                 let row = is_row::<H, { opc::LoadLocalPlain }>(handler) || is_row::<H, { opc::StoreLocalPlain }>(handler)
                     || is_row::<H, { crate::staged::LOCAL_LOAD_ROW }>(handler)
                     || is_row::<H, { crate::staged::LOCAL_STORE_ROW }>(handler)
-                    || is_row::<H, { crate::staged::LOCAL_INITIALIZE_ROW }>(handler);
+                    || is_row::<H, { crate::staged::LOCAL_INITIALIZE_ROW }>(handler)
+
+                    || is_row::<H, { crate::staged::CLONE_ENV_ROW }>(handler);
                 if own > ENVIRONMENT_WINDOW_FIELD || !(row || plain.iter().any(|plain| *plain as *const () == handler)) {
                     return None;
                 }

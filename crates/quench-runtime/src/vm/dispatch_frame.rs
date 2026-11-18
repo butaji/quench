@@ -1333,7 +1333,7 @@ impl<H: Host> Vm<H> {
     /// current values, its `reset` slots own `undefined`, and every other slot stays shared
     /// with the binding's owner, so closures of earlier iterations and the activation keep
     /// seeing one binding (`EnvironmentSlots::iteration_copy`). A frame's and an environment
-    /// activation's window's clones (`lane_clone_window_env`) are this one copy.
+    /// activation's window's clones (`clone_environment_of`) are this one copy.
     pub(super) fn iteration_environment(
         &mut self,
         source: Value,

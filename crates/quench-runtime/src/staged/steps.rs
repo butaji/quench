@@ -21,7 +21,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::LoadName { .. } | Operation::Protocol { .. }
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } | Operation::SpreadCall { .. } | Operation::SuperCall { .. }
-            | Operation::LoadCapture { .. } | Operation::StoreCapture { .. } => super::names::step(stage, frame, operation),
+            | Operation::LoadCapture { .. } | Operation::StoreCapture { .. } | Operation::CloneEnv { .. } => super::names::step(stage, frame, operation),
         value => value_step(stage, frame, value),
     }
 }
@@ -52,6 +52,7 @@ fn value_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     match operation {
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination, frame.miss()),
+        Operation::LoadCallee { destination } => load_callee(stage, frame, destination),
         Operation::RequireIteratorResult { register } => super::iteration::require_iterator_result(stage, frame, register, frame.miss()),
         Operation::TypeofIndex { destination, source } => super::control::typeof_index(stage, frame, destination, source),
         Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
@@ -59,6 +60,16 @@ fn value_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } => super::names::step(stage, frame, operation),
         heap => super::heap::heap_step(stage, frame, heap),
     }
+}
+
+/// LoadCallee of `destination`: the frame's function word and fact; where the frame does not hold
+/// it, leave at the miss edge, where the VM reads it.
+#[inline(always)]
+fn load_callee<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register) -> Step<S::Word, F::Control> {
+    let Some((value, fact)) = frame.callee(stage) else { return Step::Unresolved };
+    frame.write(stage, destination, value, fact);
+    Step::Value(value)
 }
 
 /// The operations that only move values between registers, locals and the stage.
@@ -183,7 +194,7 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
         Some(Decoder::Value) => match op {
             Op::LoadCapture | Op::StoreCapture => RowStep::Names,
             Op::IncDec | Op::ToNumeric => RowStep::Number,
-            Op::LoadThis | Op::RequireObjectCoercible => RowStep::Value,
+            Op::LoadThis | Op::LoadCallee | Op::RequireObjectCoercible | Op::RequireIteratorResult => RowStep::Value,
             _ => RowStep::Full,
         },
         _ => RowStep::Full,
@@ -222,6 +233,8 @@ pub(crate) fn step_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fra
     match operation {
         Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
         Operation::LoadThis { destination } => load_this(stage, frame, destination, frame.miss()),
+        Operation::LoadCallee { destination } => load_callee(stage, frame, destination),
+        Operation::RequireIteratorResult { register } => super::iteration::require_iterator_result(stage, frame, register, frame.miss()),
         _ => Step::Unresolved,
     }
 }

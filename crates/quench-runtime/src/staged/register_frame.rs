@@ -120,6 +120,12 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn arguments_length(&mut self, _stage: &mut S, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
 
+    /// The function the running activation runs (its self binding's value), as a word and the fact
+    /// the frame keeps of it; `None` where the frame does not hold it, leaving the read to the
+    /// interpreter.
+    #[inline(always)]
+    fn callee(&mut self, _stage: &mut S) -> Option<(S::Word, Self::Fact)> { None }
+
     /// The VM's own operation `operation` (`CallOut`), run in place where a row's words do not
     /// decide it, defining `result` where the operation has one: the word it defined with the
     /// fact the frame keeps of it, or a placeholder word where it defines none. `None` where the

@@ -222,6 +222,12 @@ pub(crate) const UNARY_ROW: u16 = Op::Unary as u16;
 /// The opcode whose row stores a global name (`GlobalFrame::global_write`), which a tier names to
 /// give the row its record's hint.
 pub(crate) const GLOBAL_WRITE_ROW: u16 = Op::StoreName as u16;
+/// The opcode whose row reads the running function (`Frame::callee`), which a tier names to give
+/// the row the function it runs.
+pub(crate) const LOAD_CALLEE_ROW: u16 = Op::LoadCallee as u16;
+/// The opcode whose row clones the running activation's environment (`Operation::CloneEnv`), which
+/// a tier names to give the row its environment window.
+pub(crate) const CLONE_ENV_ROW: u16 = Op::CloneEnv as u16;
 
 /// The opcode whose row answers a plain `Binary` record (`specialize_register_operands` recognizes
 /// it by this, the hand handler being the fallback for the operands the row does not decode).
@@ -299,6 +305,9 @@ pub(crate) enum Operation<W, P> {
     /// Define `destination` with the activation's `this`; where the activation does not
     /// hold it, leave at the frame's miss edge.
     LoadThis { destination: Register },
+    /// Define `destination` with the function the running activation runs (`Frame::callee`); where
+    /// the frame does not hold it, leave at the frame's miss edge.
+    LoadCallee { destination: Register },
     /// A Number operation (`numeric`).
     Number(NumberOperation),
     /// Continue where register `register` is neither `null` nor `undefined`; those leave at
@@ -351,6 +360,9 @@ pub(crate) enum Operation<W, P> {
     StoreEnvLocal { source: Register, slot: u16, result: Option<Register>, initialize: bool },
     /// Define `destination` with the length of the arguments binding in local `slot`.
     ArgumentsLength { destination: Register, slot: u16 },
+    /// Clone the running activation's environment by environment clone plan `plan`: a frame's own
+    /// environment, or an environment window's (`CallOut::CloneEnv`). Defines no register.
+    CloneEnv { plan: u32 },
     /// Define `destination` with the `typeof` name of the global `atom` through cache `site`
     /// (the lane's own read); an unresolvable name is `undefined`, not an error.
     GlobalTypeof { destination: Register, atom: u32, site: u16 },
@@ -502,7 +514,11 @@ impl<W, P> Operation<W, P> {
         Some(match instruction.op() {
             Op::LoadThis => Self::LoadThis {
                 destination: instruction.result_register() },
+            Op::LoadCallee => Self::LoadCallee {
+                destination: instruction.result_register() },
             Op::RequireObjectCoercible => Self::RequireObjectCoercible {
+                register: instruction.register_b() },
+            Op::RequireIteratorResult => Self::RequireIteratorResult {
                 register: instruction.register_b() },
             Op::ToNumeric => Self::Number(NumberOperation::ToNumeric {
                 destination: instruction.result_register(), source: instruction.register_b() }),

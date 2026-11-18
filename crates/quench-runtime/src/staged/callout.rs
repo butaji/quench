@@ -23,6 +23,7 @@ pub(crate) const TAG_LOAD_NAME: u8 = 12;
 pub(crate) const TAG_SUPER_CALL: u8 = 13;
 pub(crate) const TAG_DECIDE: u8 = 14;
 pub(crate) const TAG_ENUMERATED_GET: u8 = 15;
+pub(crate) const TAG_CLONE_ENV: u8 = 16;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -72,6 +73,9 @@ pub(crate) enum CallOut {
     Decide { left: Register, right: Register, operator: u32 } = TAG_DECIDE,
     /// `base[key]` of a for-in's enumerated read whose state's memo did not answer: the element read.
     EnumeratedGet { base: Register, key: Register } = TAG_ENUMERATED_GET,
+    /// The running activation's environment cloned by environment clone plan `plan`, the copy a
+    /// `for (let ...)` iteration's closures capture. It defines no register.
+    CloneEnv { plan: u32 } = TAG_CLONE_ENV,
 }
 
 /// The registers the VM reads for a `CallOut`: up to two of fixed place, and a list a call
@@ -127,7 +131,8 @@ impl CallOut {
                 | Self::Decide { left, right, .. } | Self::EnumeratedGet { base: left, key: right } => [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
             Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
-            Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. } => [None, None],
+            Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. }
+                | Self::CloneEnv { .. } => [None, None],
             Self::Protocol { operands, .. } => operands,
             Self::Spread { callee, receiver, arguments, .. } =>
                 return Operands { fixed: [Some(callee), Some(receiver)], list: Some(arguments) },
@@ -160,6 +165,7 @@ impl<W, P> Operation<W, P> {
             Self::StoreEnvLocal { source, slot, result, initialize } =>
                 (CallOut::StoreEnvLocal { source, slot, initialize }, result),
             Self::ArgumentsLength { destination, slot } => (CallOut::ArgumentsLength { slot }, Some(destination)),
+            Self::CloneEnv { plan } => (CallOut::CloneEnv { plan }, None),
             Self::GlobalWrite { source, atom, site, initialize } =>
                 (CallOut::GlobalWrite { source, atom, site, initialize }, None),
             Self::GlobalTypeof { destination, atom, site } => (CallOut::GlobalTypeof { atom, site }, Some(destination)),

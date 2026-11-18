@@ -203,7 +203,7 @@ unsafe fn lane_owner_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, rec
 /// then. Where the body has no frame of its own (a native callee's activation) a step that needs
 /// one makes the activations frames and leaves past it (`lane_frames_step_in`, `LANE_CALL_LEFT`). The step may have
 /// replaced the frame's environment, so the lane's capture caches, which name the old one, are
-/// dropped after it (`lane_clone_env`).
+/// dropped after it (`clone_environment_of`).
 /// `lane_body_step_record`, then the heap bases the body's rows read through the payload reloaded
 /// (`Vm::refresh_body_bases`): the step may have allocated or run guest code.
 ///

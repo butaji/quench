@@ -4,9 +4,8 @@ use super::*;
 
 /// The handlers derivation gives the records an environment window specializes, which no other
 /// pass changed, beside the local rows' generated handlers (`is_row`).
-pub(super) fn plain_window_handlers<H: Host>() -> [Handler; 10] {
+pub(super) fn plain_window_handlers<H: Host>() -> [Handler; 9] {
     [
-        lane_clone_env::<H>,
         lane_load_local::<H>,
         lane_load_frame_local::<H, true>,
         lane_load_frame_local::<H, false>,
@@ -36,7 +35,8 @@ pub(super) fn window_record(function: &Function, instruction: WideInstruction) -
     }
     WindowRecord::Local(match op.class() {
         Class::MakeClosure => instruction.imm(),
-        Class::CloneEnv => 0,
+        // A clone's own immediate is its plan, which the row reads (`staged::Operation::CloneEnv`).
+        Class::CloneEnv => instruction.imm(),
         Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal | Class::StoreLocal | Class::StoreLocalPlain
         | Class::StoreEnvLocal | Class::InitializeTdz => instruction.local_slot() as u32,
         // A function's Annex B store to its `var` binding is a store to the slot
@@ -50,6 +50,10 @@ pub(super) fn window_record(function: &Function, instruction: WideInstruction) -
 /// root's, one that leaves for a store to the function's own name, the scoped one of a function
 /// that resolves names at run time (`scoped`), else the plain window's.
 pub(super) fn window_local_handler<H: Host>(function: &Function, op: Op, own: usize, scoped: bool) -> Handler {
+    // A clone is its generated row, which clones the window's environment (`CallOut::CloneEnv`).
+    if op as u16 == crate::staged::CLONE_ENV_ROW {
+        return lane_row::<H, { crate::staged::CLONE_ENV_ROW }, ACC_NONE, FLAG_UNREAD> as Handler;
+    }
     let class = op.class();
     let environment = !op.captures_environment() && function.local_slot_uses_environment(own);
     if let Some(mapped) = mapped_windows::mapped_parameter_handler::<H>(function, class, own) {
@@ -85,7 +89,6 @@ fn scoped_window_handler<H: Host>(class: Class, environment: bool) -> Option<Han
 fn plain_window_handler<H: Host>(class: Class, environment: bool) -> Handler {
     match class {
         Class::MakeClosure => lane_make_window_closure::<H>,
-        Class::CloneEnv => lane_clone_window_env::<H>,
         Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal if environment => lane_load_window_local::<H, true>,
         Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal => lane_load_window_local::<H, false>,
         Class::InitializeTdz if environment => lane_initialize_window_tdz::<H, true>,

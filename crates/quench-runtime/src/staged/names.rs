@@ -25,6 +25,10 @@ pub(crate) enum Protocol {
     AppendArray { length: usize, spread: bool },
 }
 
+/// The bits of a `CloneEnv`'s immediate that name its clone plan: an environment window's record
+/// (`dispatch_fast::specialize_environment_window`) carries its register count above them.
+pub(crate) const ENVIRONMENT_CLONE_PLAN_MASK: u32 = u16::MAX as u32;
+
 /// The staged operation `instruction` denotes among the name, environment and iteration
 /// opcodes; `None` for any other opcode.
 #[inline(always)]
@@ -32,6 +36,7 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
     let destination = || instruction.result_register();
     let slot = || u16::try_from(instruction.local_slot()).ok();
     Some(match instruction.op() {
+        Op::CloneEnv => Operation::CloneEnv { plan: instruction.imm() & ENVIRONMENT_CLONE_PLAN_MASK },
         Op::LoadEnvLocal => Operation::LoadEnvLocal { destination: destination(), slot: slot()? },
         Op::StoreEnvLocal => Operation::StoreEnvLocal { source: instruction.register_a(),
             slot: slot()?, result: instruction.optional_register_b(),
@@ -95,6 +100,7 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             calling(stage, frame, CallOut::Protocol { step, operands }, destination),
         Operation::ForInNext { destination, state } => for_in_next(stage, frame, destination, state),
         Operation::EnumeratedGet { destination, state, base, key } => enumerated_get(stage, frame, destination, [state, base, key]),
+        Operation::CloneEnv { plan } => calling(stage, frame, CallOut::CloneEnv { plan }, None),
         _ => delegated_step(stage, frame, operation),
     }
 }

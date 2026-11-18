@@ -25,13 +25,6 @@ pub(in crate::vm::dispatch_fast) fn staged_typeof_index(r: Registers, view: Carr
     }
 }
 
-/// Whether the staged RequireIteratorResult accepts `register` as it is (a direct object or
-/// array record); false where the full operation decides.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_require_iterator_result(r: Registers, view: Carried, register: u16) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    matches!(crate::staged::step(&mut stage, &mut frame, Operation::RequireIteratorResult { register }), Step::Value(_))
 }
 
 /// `StoreCapture` of `source` to the capture at `depth` and `slot` past the running function's
