@@ -262,7 +262,7 @@ pub(super) fn parse_integer(text: &str, mut radix: i32) -> f64 {
 }
 
 /// The digits `Number.prototype.toString(radix)` spells, after their sign.
-const RADIX_DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+pub(super) const RADIX_DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
 
 /// `Number::toString(number, radix)` for a finite `number` and a radix in 2..=36 other than
 /// 10, which the caller spells in decimal: V8's `DoubleToRadixCString`, which Node's output

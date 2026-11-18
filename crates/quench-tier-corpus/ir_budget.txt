@@ -143,3 +143,14 @@ bi_split 433 463 2474.7
 bi_sslice 140 170 762
 bi_trim 240 270 739
 bi_upper 186 216 844
+bi_arr_at 6 36 407.1
+bi_arr_lastindexof 36 66 661.1
+bi_arr_reverse 17 47 978.1
+bi_f64_indexof 59 89 1727.3
+bi_getproto 7 37 705.1
+bi_num_radix 29.9 59.9 645.7
+bi_num_tofixed 2334.7 2364.7 2364.7
+bi_obj_keys2 143 173 708.4
+bi_regexp_exec 195 225 2990.7
+bi_regexp_test 50 80 1266.1
+bi_u8_fill 14 44 2131.1

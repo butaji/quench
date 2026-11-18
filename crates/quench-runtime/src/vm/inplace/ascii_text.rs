@@ -2,7 +2,7 @@
 //! exactly as the spec says with no guest code and no error, or answers `None` so the general
 //! native runs.
 use super::super::*;
-use super::super::wtf16::{JsString, Units};
+use super::super::wtf16::Units;
 use smallvec::SmallVec;
 
 /// The longest result a fast path builds; past it the general native decides.
@@ -17,7 +17,7 @@ const DEFAULT_PAD: &[u8] = b" ";
 /// What a fast path decided: the receiver itself, or a new string to allocate.
 enum AsciiOutcome {
     Unchanged,
-    New(JsString),
+    New(SmallVec<[u8; FAST_TEXT_INLINE_BYTES]>),
 }
 
 impl<H: Host> Vm<H> {
@@ -26,7 +26,7 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn ascii_text_method(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         match self.ascii_text_outcome(native, receiver, args)? {
             AsciiOutcome::Unchanged => Some(receiver),
-            AsciiOutcome::New(string) => Some(self.heap.alloc_string(string)),
+            AsciiOutcome::New(bytes) => Some(self.heap.alloc_ascii_run(&bytes)),
         }
     }
 
@@ -78,7 +78,7 @@ fn ascii_case(bytes: &[u8], needs_change: fn(&u8) -> bool, map: fn(&u8) -> u8) -
         return AsciiOutcome::Unchanged;
     }
     let mapped: SmallVec<[u8; FAST_TEXT_INLINE_BYTES]> = bytes.iter().map(map).collect();
-    AsciiOutcome::New(JsString::from_ascii_bytes(&mapped))
+    AsciiOutcome::New(mapped)
 }
 
 /// `trim`, `trimStart` or `trimEnd` of ASCII `bytes`: the whitespace stripped from the chosen
@@ -98,7 +98,7 @@ fn ascii_trim(bytes: &[u8], from_start: bool, from_end: bool) -> AsciiOutcome {
     if start == 0 && end == bytes.len() {
         return AsciiOutcome::Unchanged;
     }
-    AsciiOutcome::New(JsString::from_ascii_bytes(&bytes[start..end]))
+    AsciiOutcome::New(SmallVec::from_slice(&bytes[start..end]))
 }
 
 /// `text` padded to `target` units with repeats of `fill`, in place at the end or the start.
@@ -118,7 +118,7 @@ fn pad_with(native: Native, text: &[u8], target: usize, fill: &[u8]) -> Option<A
         bytes.extend(padding);
         bytes.extend_from_slice(text);
     }
-    Some(AsciiOutcome::New(JsString::from_ascii_bytes(&bytes)))
+    Some(AsciiOutcome::New(bytes))
 }
 
 /// `repeat` of ASCII `bytes` by the non-negative int32 count in `args`; `None` for a negative
@@ -129,12 +129,12 @@ fn ascii_repeat(bytes: &[u8], args: &[Value]) -> Option<AsciiOutcome> {
         return Some(AsciiOutcome::Unchanged);
     }
     if count == 0 {
-        return Some(AsciiOutcome::New(JsString::from_ascii_bytes(&[])));
+        return Some(AsciiOutcome::New(SmallVec::new()));
     }
     let size = bytes.len().checked_mul(count)?;
     if size > FAST_TEXT_MAX_BYTES {
         return None;
     }
     let repeated: SmallVec<[u8; FAST_TEXT_INLINE_BYTES]> = bytes.iter().copied().cycle().take(size).collect();
-    Some(AsciiOutcome::New(JsString::from_ascii_bytes(&repeated)))
+    Some(AsciiOutcome::New(repeated))
 }

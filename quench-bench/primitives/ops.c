@@ -1353,11 +1353,13 @@ static double NOINL op_bi_pad(long n) {
 }
 
 static double NOINL op_bi_sindex(long n) {
-  static const char s[] = "alpha,beta,gamma,delta";
+  /* Writable text and an escaped needle: strstr of two constants folds away at compile time. */
+  static char s[] = "alpha,beta,gamma,delta";
+  static char needle[] = "gam";
   int32_t N = (int32_t)n; uint32_t a = 0;
   for (int32_t i = 0; i < N; i++) {
-    BODY_BARRIER(); ESCAPE(s);
-    const char *hit = strstr(s, "gam");
+    BODY_BARRIER(); ESCAPE(s); ESCAPE(needle);
+    const char *hit = strstr(s, needle);
     a += (uint32_t)(hit ? (int32_t)(hit - s) : -1);
   }
   return (double)(int32_t)a;
@@ -1518,6 +1520,144 @@ static double NOINL op_bi_assign(long n) {
   return (double)(int32_t)a;
 }
 
+
+/* bi_* twins, batch 3: the eleven builtins added to ops.js. Writable statics, not static const. */
+static int bi3_match_abc(const char *t, size_t n, size_t *start) {
+  for (size_t s = 0; s < n; s++) {
+    if (t[s] != 'a') continue;
+    size_t p = s + 1;
+    if (p >= n || t[p] != 'b') continue;
+    while (p < n && t[p] == 'b') p++;
+    if (p < n && t[p] == 'c') { *start = s; return 1; }
+  }
+  return 0;
+}
+
+static double NOINL op_bi_arr_at(long n) {
+  static int32_t arr16[16] = {11, 48, 85, 21, 58, 95, 31, 68, 4, 42, 79, 15, 52, 89, 25, 62};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); ESCAPE(arr16); a = a + (uint32_t)arr16[i & 15]; }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_arr_lastindexof(long n) {
+  static int32_t arr16[16] = {11, 48, 85, 21, 58, 95, 31, 68, 4, 42, 79, 15, 52, 89, 25, 62};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(arr16);
+    int32_t idx = -1;
+    for (int j = 15; j >= 0; j--) if (arr16[j] == 4) { idx = j; break; }
+    a = a + (uint32_t)idx;
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_arr_reverse(long n) {
+  static int32_t arr16[16] = {11, 48, 85, 21, 58, 95, 31, 68, 4, 42, 79, 15, 52, 89, 25, 62};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(arr16);
+    for (int j = 0; j < 8; j++) { int32_t t = arr16[j]; arr16[j] = arr16[15 - j]; arr16[15 - j] = t; }
+    a = a + (uint32_t)arr16[0];
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_num_tofixed(long n) {
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    char buf[32]; double x = (double)i * 0.5;
+    int len = snprintf(buf, sizeof buf, "%.2f", x);
+    ESCAPE(buf); a += (uint32_t)len;
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_num_radix(long n) {
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  static char hex[] = "0123456789abcdef";
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(hex);
+    char digs[8]; int nd = 0; uint32_t v = (uint32_t)(i & 1023);
+    do { digs[nd++] = hex[v & 15]; v >>= 4; } while (v);
+    ESCAPE(digs); a += (uint32_t)nd;
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_getproto(long n) {
+  static struct { const void *proto; } object_proto, o;
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  o.proto = &object_proto;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(&o);
+    a = a + (uint32_t)(o.proto == &object_proto);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_u8_fill(long n) {
+  static uint8_t buf[64];
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  ESCAPE(buf);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    memset(buf, (int)(i & 255), sizeof buf); ESCAPE(buf);
+    a += buf[0];
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_f64_indexof(long n) {
+  static double f64[16];
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int j = 0; j < 16; j++) f64[j] = j * 0.5;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(f64);
+    double needle = (double)(i & 15) * 0.5;
+    int idx = -1;
+    for (int j = 0; j < 16; j++) if (f64[j] == needle) { idx = j; break; }
+    a += (uint32_t)idx;
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_regexp_test(long n) {
+  static char text[] = "xxabbbc";
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(text);
+    size_t start = 0;
+    a += (uint32_t)bi3_match_abc(text, sizeof text - 1, &start);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_regexp_exec(long n) {
+  static char text[] = "xxabbbc";
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(text);
+    size_t *res = malloc(sizeof *res); /* the match array exec allocates */
+    size_t start = 0;
+    if (bi3_match_abc(text, sizeof text - 1, &start)) res[0] = start; else res[0] = 0;
+    ESCAPE(res); a += (uint32_t)res[0]; free(res);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_obj_keys2(long n) {
+  static const char *names[2] = {"a", "b"};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    const char **out = malloc(2 * sizeof *out);
+    for (int k = 0; k < 2; k++) out[k] = names[k];
+    ESCAPE(out); a += 2; free(out);
+  }
+  return (double)(int32_t)a;
+}
 
 typedef double (*opfn)(long);
 static const struct { const char *name; opfn fn; } TABLE[] = {

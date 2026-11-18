@@ -5117,13 +5117,13 @@ macro_rules! lane_return_value {
 fn lane_return_value_general<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Resumed {
     // Another program's activation, which a program that calls across programs returns from
     // as often as the common return, completes without the frame the other completions need.
+    if let Some(resumed) = lane_complete_native_step(cx, value) {
+        return resumed;
+    }
     if let Some(resumed) = lane_complete_wasm_activation(cx, value) {
         return resumed;
     }
     if let Some(resumed) = lane_complete_cross_activation(cx, value) {
-        return resumed;
-    }
-    if let Some(resumed) = lane_complete_array_step(cx, value) {
         return resumed;
     }
     if let Some(resumed) = lane_complete_returning_chain(cx, value) {
@@ -5132,14 +5132,18 @@ fn lane_return_value_general<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Va
     lane_return_value_other(cx, ip, value)
 }
 
-/// The return of an array callback's activation (`Completion::ArrayStep`), one per element:
-/// the step of its iteration, tested before the other completions `lane_complete_returning`
-/// tests it after. `None` for any other activation.
+/// The return of a native's callback activation, one per element or comparison: an array
+/// callback's (`Completion::ArrayStep`) takes the step of its iteration, any other native's
+/// (`Completion::ReturnsToNative`, a sort's comparator, a prepared callback) ends the run with
+/// the value. Tested first among the returns past the common one, since neither is a Wasm,
+/// cross-program or chained activation, so a callback loop pays none of their tests. `None`
+/// for any other activation.
 #[inline(always)]
-fn lane_complete_array_step<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+fn lane_complete_native_step<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     match vm.lane_stack.activations().last().map(|activation| activation.kind()) {
         Some(ActivationKind::Script(script)) if script.completion == Completion::ArrayStep => lane_step_array_iteration_in_place(cx, value),
+        Some(ActivationKind::Script(script)) if script.completion == Completion::ReturnsToNative => lane_complete_native_callback(cx, value),
         _ => None,
     }
 }
@@ -20103,13 +20107,13 @@ lane_handler! {
     #[inline(never)]
     fn lane_return_general<>(cx, r, ip, i, view) {
         let value = r.get(i.a);
+        if let Some(resumed) = lane_complete_native_step(cx, value) {
+            resume!(cx, resumed)
+        }
         if let Some(resumed) = lane_complete_wasm_activation(cx, value) {
             resume!(cx, resumed)
         }
         if let Some(resumed) = lane_complete_cross_activation(cx, value) {
-            resume!(cx, resumed)
-        }
-        if let Some(resumed) = lane_complete_array_step(cx, value) {
             resume!(cx, resumed)
         }
         if let Some(resumed) = lane_complete_returning_chain(cx, value) {

@@ -136,8 +136,7 @@ impl<H: Host> Vm<H> {
         if needle.is_empty() || with.contains(&b'$') {
             return None;
         }
-        let mut found = memchr::memmem::find_iter(text, needle);
-        let Some(first) = found.next() else {
+        let Some(first) = crate::vm::wtf16::find_ascii(text, needle) else {
             return Some(receiver);
         };
         let mut bytes = smallvec::SmallVec::<[u8; 64]>::new();
@@ -146,15 +145,14 @@ impl<H: Host> Vm<H> {
         let mut cursor = first + needle.len();
         if native == Native::StringReplaceAll {
             // Occurrences do not overlap: each search starts past the previous match.
-            while let Some(at) = memchr::memmem::find(&text[cursor..], needle) {
+            while let Some(at) = crate::vm::wtf16::find_ascii(&text[cursor..], needle) {
                 bytes.extend_from_slice(&text[cursor..cursor + at]);
                 bytes.extend_from_slice(with);
                 cursor += at + needle.len();
             }
         }
         bytes.extend_from_slice(&text[cursor..]);
-        let result = crate::vm::wtf16::JsString::from_ascii_bytes(&bytes);
-        Some(self.heap.alloc_string(result))
+        Some(self.heap.alloc_ascii_run(&bytes))
     }
 }
 
