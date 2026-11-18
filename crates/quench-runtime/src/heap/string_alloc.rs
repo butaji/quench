@@ -46,6 +46,21 @@ impl Heap {
         }
     }
 
+    /// `alloc_ascii_run` of the `len` ASCII bytes that `fill` writes, each of them, with no
+    /// staging buffer of the result: a short string is filled on the stack and written into
+    /// its inline record (`alloc_ascii_run`); a longer one is filled straight into its flat
+    /// payload, which becomes the record's (`alloc_string_record`). Both charge as they do.
+    #[inline]
+    pub(crate) fn alloc_ascii_filled(&mut self, len: usize, fill: impl FnOnce(&mut [u8])) -> Value {
+        debug_assert!(len <= crate::vm::wtf16::MAX_STRING_UNITS);
+        if len <= crate::vm::wtf16::SHORT_ASCII_CAPACITY {
+            let mut bytes = [0u8; crate::vm::wtf16::SHORT_ASCII_CAPACITY];
+            fill(&mut bytes[..len]);
+            return self.alloc_ascii_run(&bytes[..len]);
+        }
+        self.alloc_string_record(JsString::from_ascii_zeroed_with(len, fill))
+    }
+
     /// The string of the one Latin-1 code unit `unit` past ASCII, one record per unit while
     /// no collection empties the table (`ascii_unit_strings`); `None` for any other unit.
     pub(crate) fn latin1_unit_string(&mut self, unit: u16) -> Option<Value> {

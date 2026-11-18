@@ -792,8 +792,6 @@ complexity crates/quench-runtime/src/vm/jit_backend/select.rs::tests::conditiona
 complexity crates/quench-runtime/src/vm/jit_backend/select.rs::tests::diamonds_require_total_integer_operations_and_preserve_verified_ssa 16
 complexity crates/quench-runtime/src/vm/js_compiled.rs::eligible 17
 complexity crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::escape 11
-complexity crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::number 25
-complexity crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::value 21
 complexity crates/quench-runtime/src/vm/json.rs::JsonSyntax::positioned_message 14
 complexity crates/quench-runtime/src/vm/json.rs::Vm<H>::json_serialize_value 16
 complexity crates/quench-runtime/src/vm/native_object.rs::emit_native_module 27
@@ -2659,8 +2657,6 @@ function-lines crates/quench-runtime/src/vm/array_indexed.rs::Vm<H>::array_copy_
 function-lines crates/quench-runtime/src/vm/array_indexed.rs::Vm<H>::array_iteration_run 61
 function-lines crates/quench-runtime/src/vm/array_modern.rs::Vm<H>::array_from_async_start 71
 function-lines crates/quench-runtime/src/vm/array_modern.rs::Vm<H>::array_from_native 126
-function-lines crates/quench-runtime/src/vm/array_modern.rs::Vm<H>::array_sort_rooted 43
-function-lines crates/quench-runtime/src/vm/array_modern.rs::Vm<H>::store_sorted 42
 function-lines crates/quench-runtime/src/vm/array_modern.rs::Vm<H>::typed_array_from_iterable 50
 function-lines crates/quench-runtime/src/vm/atomics.rs::Vm<H>::atomic_bigint 60
 function-lines crates/quench-runtime/src/vm/atomics.rs::Vm<H>::atomic_number 81
@@ -3050,8 +3046,6 @@ function-lines crates/quench-runtime/src/vm/jit_backend/select.rs::tests::condit
 function-lines crates/quench-runtime/src/vm/jit_backend/select.rs::tests::diamonds_require_total_integer_operations_and_preserve_verified_ssa 116
 function-lines crates/quench-runtime/src/vm/jit_backend/select.rs::tests::integer_compare_width_is_checked_even_when_its_result_is_i8 42
 function-lines crates/quench-runtime/src/vm/jit_backend/select.rs::tests::predicated_integer_comparisons_preserve_canonical_results 53
-function-lines crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::number 81
-function-lines crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::value 92
 function-lines crates/quench-runtime/src/vm/json.rs::Vm<H>::json_enumerable_keys 55
 function-lines crates/quench-runtime/src/vm/json.rs::Vm<H>::json_internalize 99
 function-lines crates/quench-runtime/src/vm/json.rs::Vm<H>::json_raw_json 61
@@ -3264,7 +3258,6 @@ function-lines crates/quench-runtime/src/vm/shadow_realm.rs::Vm<H>::wrap_shadow_
 function-lines crates/quench-runtime/src/vm/snapshot.rs::Vm<H>::read_atoms 45
 function-lines crates/quench-runtime/src/vm/snapshot.rs::Vm<H>::restore_snapshot_state 69
 function-lines crates/quench-runtime/src/vm/snapshot.rs::Vm<H>::write_snapshot 250
-function-lines crates/quench-runtime/src/vm/sort.rs::try_stable_sort_by 42
 function-lines crates/quench-runtime/src/vm/startup_intrinsics.rs::Vm<H>::leave_startup_intrinsics 43
 function-lines crates/quench-runtime/src/vm/string.rs::Vm<H>::install_string_prototype 72
 function-lines crates/quench-runtime/src/vm/string.rs::Vm<H>::string_basic_native 105
@@ -4817,7 +4810,6 @@ magic crates/quench-runtime/src/vm/jit_backend/select.rs::arm 2
 magic crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::accumulate_digits 1
 magic crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::hex_escape 1
 magic crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::member_key 1
-magic crates/quench-runtime/src/vm/json.rs::JsonParser<'a,'b,T,B>::number 1
 magic crates/quench-runtime/src/vm/json.rs::Vm<H>::json_gap 2
 magic crates/quench-runtime/src/vm/json.rs::Vm<H>::json_stringify 1
 magic crates/quench-runtime/src/vm/json.rs::write_json_string 1
@@ -4865,7 +4857,7 @@ magic crates/quench-runtime/src/vm/shadow_realm.rs::Vm<H>::install_shadow_realm_
 magic crates/quench-runtime/src/vm/shape_lookup.rs::ShapeLookupIndex::remove 1
 magic crates/quench-runtime/src/vm/site_table.rs::SiteTable<T>::grow 1
 magic crates/quench-runtime/src/vm/sort.rs::binary_insertion 1
-magic crates/quench-runtime/src/vm/sort.rs::try_stable_sort_by 2
+magic crates/quench-runtime/src/vm/sort.rs::try_stable_sort_by 1
 magic crates/quench-runtime/src/vm/string.rs::Vm<H>::string_basic_native 1
 magic crates/quench-runtime/src/vm/string.rs::map_case 1
 magic crates/quench-runtime/src/vm/string_cache.rs::Vm<H>::intern_dynamic_concat 1

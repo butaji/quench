@@ -52,36 +52,6 @@ impl<H: Host> Vm<H> {
         self.new_array_with_prototype(values, self.array_prototype_for_realm(self.realm.globals))
     }
 
-    /// Append an own data element to an unexposed dense array. No guest code runs.
-    pub(super) fn append_fresh_array_element(&mut self, array: Value, value: Value) -> usize {
-        let Some(length) = self.heap.grow_array_elements(array, |elements| {
-            elements.push(value);
-            elements.len()
-        }) else {
-            unreachable!("fresh array owner remains an array");
-        };
-        length
-    }
-
-    /// Store element `index` of a dense array no guest code reaches, at most one past its
-    /// end: its own data property, every element a default one. The store passes the write
-    /// barrier, since the array may have been promoted while guest code ran.
-    pub(super) fn store_fresh_array_element(&mut self, array: Value, index: usize, value: Value) {
-        let Some(object) = self.heap.array_store_mut(array, value) else {
-            unreachable!("fresh array owner remains an array");
-        };
-        let elements = super::index::mutable_array_elements(object.elements_mut());
-        if index < elements.len() {
-            elements.set(index, value);
-            return;
-        }
-        debug_assert_eq!(index, elements.len(), "a fresh array grows by one element at a time");
-        let capacity = elements.capacity();
-        elements.push(value);
-        let grown = elements.capacity() - capacity;
-        self.heap.charge_payload_growth(grown * size_of::<Value>());
-    }
-
     pub(super) fn new_array_with_prototype(
         &mut self,
         values: Vec<Value>,
@@ -851,24 +821,13 @@ impl<H: Host> Vm<H> {
             return Err(self.range_error(p, "invalid array length".into()));
         }
         let roots = self.active_call_roots.len();
-        let mut undefined_count = 0;
-        if let Some(elements) = self.present_dense_elements(object, 0..length).map(|values| values.into_owned()) {
-            // SortIndexedProperties reads each present own data element, observing nothing.
-            let present = elements.into_iter().filter(|value| !value.is_undefined());
-            self.active_call_roots.extend(present);
-            undefined_count = length - (self.active_call_roots.len() - roots);
-        } else {
-            for index in 0..length {
-                let key = Value::number(index as f64);
-                if !mutate || self.has_property(p, object, key)? {
-                    match self.get_index(p, object, key)? {
-                        Value::UNDEFINED => undefined_count += 1,
-                        value => self.active_call_roots.push(value),
-                    }
-                }
+        let (mut values, undefined_count) = match self.dense_sort_values(object, length) {
+            Some((values, undefined_count)) => {
+                self.active_call_roots.extend_from_slice(&values);
+                (values, undefined_count)
             }
-        }
-        let mut values = self.active_call_roots[roots..].to_vec();
+            None => self.read_sort_values(p, object, length, mutate)?,
+        };
         let sorted = match comparator {
             Some(comparator) => self.with_prepared_callback(comparator, Value::UNDEFINED, |vm, prepared| {
                 super::sort::try_stable_sort_by(&mut values, |left, right| {
@@ -900,10 +859,7 @@ impl<H: Host> Vm<H> {
         }
         let sorted_count = values.len();
         // Each Set of a dense array's present element writes an own writable data element.
-        if sorted_count == length
-            && self.dense_array_length(object) == Some(length)
-            && self.present_dense_elements(object, 0..length).is_some()
-        {
+        if sorted_count == length && self.can_copy_back(object, length) {
             let Some(array) = self.heap.array_mut(object) else {
                 unreachable!("matched an array above");
             };

@@ -1,36 +1,56 @@
 //! In-place ASCII fast paths for String builtins: each reads a flat ASCII receiver once, completes
 //! exactly as the spec says with no guest code and no error, or answers `None` so the general
-//! native runs.
+//! native runs. A result is written once, into its string record.
 use super::super::*;
-use super::super::wtf16::Units;
-use smallvec::SmallVec;
+use super::super::wtf16::{JsString, Units};
+use std::ops::Range;
 
 /// The longest result a fast path builds; past it the general native decides.
 const FAST_TEXT_MAX_BYTES: usize = 1 << 20;
-/// Result bytes held on the stack before their one copy into the string.
-const FAST_TEXT_INLINE_BYTES: usize = 64;
 /// ECMAScript WhiteSpace and LineTerminator restricted to ASCII.
 const ASCII_WHITESPACE: [u8; 6] = [b'\t', b'\n', b'\x0B', b'\x0C', b'\r', b' '];
 /// The filler of `padStart` and `padEnd` when none is given.
 const DEFAULT_PAD: &[u8] = b" ";
 
-/// What a fast path decided: the receiver itself, or a new string to allocate.
+/// What a fast path decided, from the receiver's bytes read in place.
 enum AsciiOutcome {
+    /// The receiver itself.
     Unchanged,
-    New(SmallVec<[u8; FAST_TEXT_INLINE_BYTES]>),
+    /// The receiver's bytes in `range`, as a new string.
+    Slice(Range<usize>),
+    /// The receiver's bytes, each mapped by `map`, as a new string of the same length.
+    Mapped(fn(&u8) -> u8),
+    /// The receiver padded to `length` bytes with repeats of `fill`, at its end or its start.
+    Padded { length: usize, fill: JsString, at_end: bool },
+    /// The receiver repeated to `length` bytes.
+    Repeated { length: usize },
 }
 
 impl<H: Host> Vm<H> {
     /// The String builtin `native` on `receiver` with `args`, when it completes in place over a
     /// flat ASCII receiver; `None` for any other receiver, argument or result size.
     pub(in crate::vm) fn ascii_text_method(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
-        match self.ascii_text_outcome(native, receiver, args)? {
-            AsciiOutcome::Unchanged => Some(receiver),
-            AsciiOutcome::New(bytes) => Some(self.heap.alloc_ascii_run(&bytes)),
+        let outcome = self.ascii_text_outcome(native, receiver, args)?;
+        if matches!(outcome, AsciiOutcome::Unchanged) {
+            return Some(receiver);
         }
+        // The heap is written while the result is made, so the receiver's text is held as an
+        // owned string rather than borrowed from the heap.
+        let text = owned_flat_ascii(&self.heap, receiver)?;
+        let bytes = ascii_bytes(&text)?;
+        Some(match outcome {
+            AsciiOutcome::Unchanged => receiver,
+            AsciiOutcome::Slice(range) => self.heap.alloc_ascii_run(&bytes[range]),
+            AsciiOutcome::Mapped(map) => self.heap.alloc_ascii_filled(bytes.len(), |out| map_into(out, bytes, map)),
+            AsciiOutcome::Padded { length, fill, at_end } => {
+                let fill_bytes = ascii_bytes(&fill)?;
+                self.heap.alloc_ascii_filled(length, |out| pad_into(out, bytes, fill_bytes, at_end))
+            }
+            AsciiOutcome::Repeated { length } => self.heap.alloc_ascii_filled(length, |out| repeat_into(out, bytes)),
+        })
     }
 
-    /// The outcome of `native` over the receiver's flat ASCII bytes, read once.
+    /// The outcome of `native` over the receiver's flat ASCII bytes, read in place.
     fn ascii_text_outcome(&self, native: Native, receiver: Value, args: &[Value]) -> Option<AsciiOutcome> {
         let text = self.heap.flat_text(receiver)?;
         let Units::Ascii(bytes) = text.units() else {
@@ -58,27 +78,43 @@ impl<H: Host> Vm<H> {
         if target <= text.len() {
             return Some(AsciiOutcome::Unchanged);
         }
-        match args.get(1).copied() {
-            None | Some(Value::UNDEFINED) => pad_with(native, text, target, DEFAULT_PAD),
-            Some(value) => {
-                let fill = self.heap.flat_text(value)?;
-                let Units::Ascii(fill_bytes) = fill.units() else {
-                    return None;
-                };
-                pad_with(native, text, target, fill_bytes)
-            }
-        }
+        let fill = match args.get(1).copied() {
+            None | Some(Value::UNDEFINED) => JsString::short_ascii(DEFAULT_PAD),
+            Some(value) => owned_flat_ascii(&self.heap, value)?,
+        };
+        pad_outcome(native == Native::StringPadEnd, target, fill)
+    }
+}
+
+/// The flat ASCII text of `value` as a string owned apart from the heap, so a result can be
+/// written into the heap while its text is read: a clone of the record (sharing its storage),
+/// or of a small string's text. `None` for a wide or non-flat string.
+pub(super) fn owned_flat_ascii(heap: &crate::heap::Heap, value: Value) -> Option<JsString> {
+    let text = match heap.flat_text(value)? {
+        crate::heap::FlatText::Record(Units::Ascii(_)) => heap.string(value)?.clone(),
+        crate::heap::FlatText::Record(Units::Wide(_)) => return None,
+        crate::heap::FlatText::Small(text) => JsString::from_shared_text(&text),
+    };
+    let ascii = matches!(text.units(), Units::Ascii(_));
+    ascii.then_some(text)
+}
+
+/// The bytes of `string` when it is ASCII.
+pub(super) fn ascii_bytes(string: &JsString) -> Option<&[u8]> {
+    match string.units() {
+        Units::Ascii(bytes) => Some(bytes),
+        Units::Wide(_) => None,
     }
 }
 
 /// The ASCII case map of `bytes`, where `needs_change` names the bytes it changes; the receiver
 /// itself when none does.
 fn ascii_case(bytes: &[u8], needs_change: fn(&u8) -> bool, map: fn(&u8) -> u8) -> AsciiOutcome {
-    if !bytes.iter().any(needs_change) {
-        return AsciiOutcome::Unchanged;
+    if bytes.iter().any(needs_change) {
+        AsciiOutcome::Mapped(map)
+    } else {
+        AsciiOutcome::Unchanged
     }
-    let mapped: SmallVec<[u8; FAST_TEXT_INLINE_BYTES]> = bytes.iter().map(map).collect();
-    AsciiOutcome::New(mapped)
 }
 
 /// `trim`, `trimStart` or `trimEnd` of ASCII `bytes`: the whitespace stripped from the chosen
@@ -98,27 +134,19 @@ fn ascii_trim(bytes: &[u8], from_start: bool, from_end: bool) -> AsciiOutcome {
     if start == 0 && end == bytes.len() {
         return AsciiOutcome::Unchanged;
     }
-    AsciiOutcome::New(SmallVec::from_slice(&bytes[start..end]))
+    AsciiOutcome::Slice(start..end)
 }
 
-/// `text` padded to `target` units with repeats of `fill`, in place at the end or the start.
-fn pad_with(native: Native, text: &[u8], target: usize, fill: &[u8]) -> Option<AsciiOutcome> {
-    if fill.is_empty() {
+/// The outcome of padding to `target` bytes with `fill`: the receiver itself when `fill` is
+/// empty, `None` past the longest result.
+fn pad_outcome(at_end: bool, target: usize, fill: JsString) -> Option<AsciiOutcome> {
+    if ascii_bytes(&fill)?.is_empty() {
         return Some(AsciiOutcome::Unchanged);
     }
     if target > FAST_TEXT_MAX_BYTES {
         return None;
     }
-    let padding = fill.iter().copied().cycle().take(target - text.len());
-    let mut bytes: SmallVec<[u8; FAST_TEXT_INLINE_BYTES]> = SmallVec::with_capacity(target);
-    if native == Native::StringPadEnd {
-        bytes.extend_from_slice(text);
-        bytes.extend(padding);
-    } else {
-        bytes.extend(padding);
-        bytes.extend_from_slice(text);
-    }
-    Some(AsciiOutcome::New(bytes))
+    Some(AsciiOutcome::Padded { length: target, fill, at_end })
 }
 
 /// `repeat` of ASCII `bytes` by the non-negative int32 count in `args`; `None` for a negative
@@ -129,12 +157,42 @@ fn ascii_repeat(bytes: &[u8], args: &[Value]) -> Option<AsciiOutcome> {
         return Some(AsciiOutcome::Unchanged);
     }
     if count == 0 {
-        return Some(AsciiOutcome::New(SmallVec::new()));
+        return Some(AsciiOutcome::Slice(0..0));
     }
-    let size = bytes.len().checked_mul(count)?;
-    if size > FAST_TEXT_MAX_BYTES {
+    let length = bytes.len().checked_mul(count)?;
+    if length > FAST_TEXT_MAX_BYTES {
         return None;
     }
-    let repeated: SmallVec<[u8; FAST_TEXT_INLINE_BYTES]> = bytes.iter().copied().cycle().take(size).collect();
-    Some(AsciiOutcome::New(repeated))
+    Some(AsciiOutcome::Repeated { length })
+}
+
+/// Writes `bytes` mapped by `map` into `out`, which is as long as `bytes`.
+fn map_into(out: &mut [u8], bytes: &[u8], map: fn(&u8) -> u8) {
+    for (slot, byte) in out.iter_mut().zip(bytes) {
+        *slot = map(byte);
+    }
+}
+
+/// Writes `text` into `out`, the rest of `out` filled with repeats of `fill` (non-empty): at
+/// its end when `at_end`, else at its start.
+fn pad_into(out: &mut [u8], text: &[u8], fill: &[u8], at_end: bool) {
+    let pad_len = out.len() - text.len();
+    let (text_out, pad_out) = if at_end {
+        let (left, right) = out.split_at_mut(text.len());
+        (left, right)
+    } else {
+        let (left, right) = out.split_at_mut(pad_len);
+        (right, left)
+    };
+    text_out.copy_from_slice(text);
+    for (slot, byte) in pad_out.iter_mut().zip(fill.iter().copied().cycle()) {
+        *slot = byte;
+    }
+}
+
+/// Writes `bytes` repeated through `out`, whose length is a multiple of the non-empty `bytes`.
+fn repeat_into(out: &mut [u8], bytes: &[u8]) {
+    for chunk in out.chunks_exact_mut(bytes.len()) {
+        chunk.copy_from_slice(bytes);
+    }
 }

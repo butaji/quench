@@ -12,7 +12,7 @@ pub(super) enum PropertyCopyKind {
 
 /// Properties a plain copy (`Vm::copy_plain_properties`) gathers before it writes any, without
 /// allocating their list.
-const PLAIN_COPY_INLINE_PROPERTIES: usize = 16;
+pub(super) const PLAIN_COPY_INLINE_PROPERTIES: usize = 16;
 
 /// Where a plain copy writes one property of its target: a new property, or the slot of the
 /// target's own property of that key.
@@ -508,7 +508,7 @@ impl<H: Host> Vm<H> {
 
     /// Gives an empty `target` the properties `values` of `atoms` under `shape`, the shape their
     /// adds in order reach (`plain_copy_shapes`).
-    fn initialize_plain_copy(&mut self, target: Value, shape: u32, values: &[Value], atoms: impl Iterator<Item = Atom>) {
+    pub(super) fn initialize_plain_copy(&mut self, target: Value, shape: u32, values: &[Value], atoms: impl Iterator<Item = Atom>) {
         self.heap.initialize_object_properties(target, shape, values);
         for atom in atoms {
             if self.method_caches_may_name(atom) {

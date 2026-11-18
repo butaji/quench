@@ -86,7 +86,7 @@ impl<H: Host> Vm<H> {
             (Units::Ascii(text), Units::Ascii(&[byte])) => {
                 let mut start = 0;
                 let mut cut = |end: usize, parts: &mut crate::vm::wtf16::split::SplitParts<Value>| {
-                    parts.push(self.heap.alloc_unit_run(Units::Ascii(&text[start..end])));
+                    parts.push(self.heap.alloc_ascii_run(&text[start..end]));
                     start = end + 1;
                 };
                 if text.len() <= 32 {
