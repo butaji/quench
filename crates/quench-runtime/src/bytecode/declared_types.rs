@@ -90,6 +90,32 @@ pub(crate) struct DeclaredLocal {
     pub(crate) languages: u16,
 }
 
+/// A property a parameter's type literal declares (`function f(p: {x: number}) {}` declares
+/// `x` of parameter 0 of `f`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DeclaredMember {
+    /// The function's source span start (as `DeclaredSignature::start`).
+    pub(crate) function: u32,
+    /// The parameter's index.
+    pub(crate) parameter: u16,
+    /// The property's name: a non-computed identifier key.
+    pub(crate) name: Box<str>,
+    /// Language bits the property's annotation admits.
+    pub(crate) languages: u16,
+}
+
+/// A parameter whose annotation names a class declared at the top level of the program: the
+/// parameter is an instance of that class, whose declared fields (`DeclaredField`) describe it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DeclaredParameterClass {
+    /// The function's source span start (as `DeclaredSignature::start`).
+    pub(crate) function: u32,
+    /// The parameter's index.
+    pub(crate) parameter: u16,
+    /// The class's source span start (as `DeclaredField::class_start`).
+    pub(crate) class: u32,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct DeclaredTypes {
     pub(crate) declared: Vec<Declared>,
@@ -101,6 +127,10 @@ pub(crate) struct DeclaredTypes {
     pub(crate) signatures: Vec<DeclaredSignature>,
     /// The declared local bindings, in source order.
     pub(crate) locals: Vec<DeclaredLocal>,
+    /// The declared properties of parameters' type literals, in source order.
+    pub(crate) members: Vec<DeclaredMember>,
+    /// The parameters whose annotation names a top-level class, in source order.
+    pub(crate) parameter_classes: Vec<DeclaredParameterClass>,
 }
 
 impl DeclaredTypes {
@@ -120,9 +150,18 @@ impl DeclaredTypes {
         self.locals.push(DeclaredLocal { function, name: Box::from(name), languages });
     }
 
+    pub(crate) fn declare_member(&mut self, function: u32, parameter: u16, name: &str, languages: u16) {
+        self.members.push(DeclaredMember { function, parameter, name: Box::from(name), languages });
+    }
+
+    pub(crate) fn declare_parameter_class(&mut self, function: u32, parameter: u16, class: u32) {
+        self.parameter_classes.push(DeclaredParameterClass { function, parameter, class });
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.declared.is_empty() && self.enum_constants.is_empty() && self.fields.is_empty()
-            && self.signatures.is_empty() && self.locals.is_empty()
+            && self.signatures.is_empty() && self.locals.is_empty() && self.members.is_empty()
+            && self.parameter_classes.is_empty()
     }
 
     /// The folded value of `enumeration.member`, when the program declares one.
@@ -152,5 +191,24 @@ impl DeclaredTypes {
         self.fields.iter().rev()
             .find(|field| !field.is_static && field.class_start == class_start && &*field.name == name)
             .map(|field| field.languages)
+    }
+
+    /// The declared language types of property `name` of parameter `parameter` of the function
+    /// starting at `function`, from its type literal, when the program declares one (the last
+    /// declaration wins).
+    #[cfg_attr(not(test), allow(dead_code, reason = "the fact store reads parameter members next"))]
+    pub(crate) fn declared_member(&self, function: u32, parameter: u16, name: &str) -> Option<u16> {
+        self.members.iter().rev()
+            .find(|member| member.function == function && member.parameter == parameter && &*member.name == name)
+            .map(|member| member.languages)
+    }
+
+    /// The class (its span start) that parameter `parameter` of the function starting at
+    /// `function` is declared an instance of, when the program declares one (the last declaration wins).
+    #[cfg_attr(not(test), allow(dead_code, reason = "the fact store reads parameter classes next"))]
+    pub(crate) fn declared_parameter_class(&self, function: u32, parameter: u16) -> Option<u32> {
+        self.parameter_classes.iter().rev()
+            .find(|entry| entry.function == function && entry.parameter == parameter)
+            .map(|entry| entry.class)
     }
 }

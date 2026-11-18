@@ -1779,7 +1779,8 @@ fn read_module_requests(input: &mut BinaryReader<'_>) -> Result<Vec<ModuleReques
     })
 }
 
-/// The declared environment: none (0), or its declarations, enum constants and class fields (1).
+/// The declared environment: none (0), or its declarations, enum constants, class fields, signatures,
+/// locals, parameter members and parameter classes (1).
 fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::DeclaredTypes>) {
     let Some(declared) = declared else {
         out.u8(0);
@@ -1829,6 +1830,19 @@ fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::Declare
         out.string(&local.name);
         out.u16(local.languages);
     }
+    out.u32(declared.members.len() as u32);
+    for member in &declared.members {
+        out.u32(member.function);
+        out.u16(member.parameter);
+        out.string(&member.name);
+        out.u16(member.languages);
+    }
+    out.u32(declared.parameter_classes.len() as u32);
+    for parameter in &declared.parameter_classes {
+        out.u32(parameter.function);
+        out.u16(parameter.parameter);
+        out.u32(parameter.class);
+    }
 }
 
 fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super::DeclaredTypes>>, String> {
@@ -1871,7 +1885,20 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
     let locals = input.list(|input| {
         Ok(super::DeclaredLocal { function: input.u32()?, name: input.string()?.into_boxed_str(), languages: input.u16()? })
     })?;
-    Ok(Some(Box::new(super::DeclaredTypes { declared, enum_constants, fields, signatures, locals })))
+    let members = input.list(|input| {
+        Ok(super::DeclaredMember {
+            function: input.u32()?,
+            parameter: input.u16()?,
+            name: input.string()?.into_boxed_str(),
+            languages: input.u16()?,
+        })
+    })?;
+    let parameter_classes = input.list(|input| {
+        Ok(super::DeclaredParameterClass { function: input.u32()?, parameter: input.u16()?, class: input.u32()? })
+    })?;
+    Ok(Some(Box::new(super::DeclaredTypes {
+        declared, enum_constants, fields, signatures, locals, members, parameter_classes,
+    })))
 }
 
 fn write_module_link_plan(out: &mut BinaryWriter, plan: Option<&ModuleLinkPlan>) {
