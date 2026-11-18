@@ -1318,7 +1318,7 @@ impl<H: Host> Vm<H> {
             Native::NumberPrecision => self.number_format(p, this, args, native),
             Native::String => {
                 let argument = self.string_constructor_argument(args);
-                let text = if let Some(Cell::Symbol(description)) = self.heap.get(argument) {
+                let text = if let Some(description) = self.heap.symbol_data(argument) {
                     JsString::from(format!("Symbol({})", description.as_deref().unwrap_or("")))
                 } else {
                     self.coerce_js_string(p, argument)?
@@ -2166,8 +2166,8 @@ impl<H: Host> Vm<H> {
                     // Operands of one type compare as `===` does.
                     _ if let (Some(l), Some(r)) = (self.heap.string(left), self.heap.string(right)) => l == r,
                     (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) => left == right,
+                    _ if self.heap.is_symbol(left) && self.heap.is_symbol(right) => false,
                     // Two distinct Symbols, as a kind tag (`x.kind == Kind.A`) compares.
-                    (Some(Cell::Symbol(_)), Some(Cell::Symbol(_))) => false,
                     _ if self.is_object_like(left) && self.is_object_like(right) => false,
                     _ => return None,
                 },
@@ -2216,7 +2216,7 @@ impl<H: Host> Vm<H> {
         if let Some(values) = self.dense_apply_arguments(list)
             && (matches!(element_kind, ArrayLikeElementKind::Any)
                 || values.iter().all(|value| {
-                    self.heap.is_string(*value) || matches!(self.heap.get(*value), Some(Cell::Symbol(_)))
+                    self.heap.is_string(*value) || self.heap.is_symbol(*value)
                 }))
         {
             return Ok(values);
@@ -2240,7 +2240,7 @@ impl<H: Host> Vm<H> {
                 let element = self.get_property(p, self.heap.root_value(object).unwrap(), atom)?;
                 if matches!(element_kind, ArrayLikeElementKind::PropertyKey)
                     && !self.heap.is_string(element)
-                    && !matches!(self.heap.get(element), Some(Cell::Symbol(_)))
+                    && !self.heap.is_symbol(element)
                 {
                     return Err(self
                         .type_error(p, "array-like list contains an invalid property key".into()));
