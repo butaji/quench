@@ -10884,7 +10884,17 @@ fn lane_frame_holds_window<H: Host>(cx: *mut LaneContext<H>, calls: &super::comp
     if vm.lane_stack.activations.last().is_some() {
         return true;
     }
-    vm.frames.get(unsafe { (*cx).frame() }).is_some_and(|frame| frame.registers.capacity() >= usize::from(calls.caller_registers()) + calls.window())
+    lane_frame_reaches(cx, calls.caller_registers(), calls.window())
+}
+
+/// Whether the running VM frame's register file holds `reach` words past its `registers`, where code
+/// writes past them (`base_region::function::inline_base`); a lane activation's storage, at the top of
+/// the value stack, is proved by its room instead (`lane_room_admits`).
+#[inline(always)]
+fn lane_frame_reaches<H: Host>(cx: *mut LaneContext<H>, registers: u16, reach: usize) -> bool {
+    let vm = unsafe { vm(cx) };
+    reach == 0 || vm.lane_stack.activations.last().is_some()
+        || vm.frames.get(unsafe { (*cx).frame() }).is_some_and(|frame| frame.registers.capacity() >= usize::from(registers) + reach)
 }
 
 
@@ -17952,8 +17962,11 @@ script_handler! {
             own.settle_retired_body();
             next!(cx, r, base, Carried::script_in(cx, view))
         };
-        if !lane_body_admits(cx, &method, NO_PENDING_ACTIVATIONS) {
-            if lane_body_prepare_recovery(cx, &method) { return exit(base); }
+        // A body whose rows write past the frame's registers (its scratch, its inlined windows, past the
+        // environment window) runs where the frame's storage reaches them; a lane activation's room is the stack's.
+        let reaches = lane_frame_reaches(cx, method.caller_registers(), method.frame_reach());
+        if !reaches || !lane_body_admits(cx, &method, NO_PENDING_ACTIVATIONS) {
+            if reaches && lane_body_prepare_recovery(cx, &method) { return exit(base); }
             drop(method);
             lane_body_refused(vm, own);
             next!(cx, r, base, Carried::script_in(cx, view))
@@ -18284,7 +18297,9 @@ fn lane_body_admits<H: Host>(cx: *mut LaneContext<H>, method: &super::compiled::
 #[inline(always)]
 fn lane_room_admits<H: Host>(cx: *mut LaneContext<H>, room: LaneRecoverySpace, pending: usize) -> bool {
     let vm = unsafe { vm(cx) };
-    room.activations == 0
+    // The values past the stack's top hold the frame slots the rows write past a lane activation's
+    // registers (`LaneRecoverySpace::reaching`), whether or not the code inlines an activation.
+    (room.activations == 0 && (vm.lane_stack.activations.is_empty() || vm.lane_stack.values.room() >= room.values))
         || (vm.lane_stack.activation_limit.get().saturating_sub(vm.lane_stack.activations.len() + pending) >= room.activations
             && vm.lane_stack.values.room() >= room.values
             && unsafe { (*cx).script_calls }

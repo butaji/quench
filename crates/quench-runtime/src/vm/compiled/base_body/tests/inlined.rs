@@ -168,3 +168,21 @@ fn a_returning_call_completes_with_the_inlined_callees_pinned_result() {
     assert_eq!(interpreted, compiled);
     assert!(runs > 100, "the bodies ran {runs} times");
 }
+
+/// A call of `Math.sqrt` runs as its row: the callee's identity guarded (a replaced `Math.sqrt` runs as
+/// itself), then the staged Math operation of a Number argument (any other argument leaves for the
+/// interpreter's call). `-0`, negatives, infinities and coercing arguments print what the interpreter prints.
+#[test]
+fn a_math_sqrt_call_runs_as_its_row_under_an_identity_guard() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function f(xs) { let s = 0; for (let i = 0; i < xs.length; i++) s += Math.sqrt(xs[i]); return s; }
+         function g(x) { return Math.sqrt(x); }
+         let t = 0; for (let k = 0; k < 300; k++) t += f([k, k + 1, 4]) + g(k);
+         print(t); print(f([4, 9, -1, 0, -0, 2.25, Infinity, '16', null, undefined, { valueOf() { return 25; } }]));
+         print(Object.is(g(-0), -0)); print(g('x')); print(g(2));
+         const old = Math.sqrt; Math.sqrt = (x) => x * 10; print(f([1, 2, 3])); print(g(5));
+         Math.sqrt = old; print(f([1, 4, 9])); print(g(16));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+}

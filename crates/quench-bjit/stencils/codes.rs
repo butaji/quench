@@ -50,6 +50,10 @@ pub const NOT: u8 = 27;
 pub const NEG: u8 = 28;
 /// `%`: the staged Number remainder (`NumberOperation::Remainder`).
 pub const REM: u8 = 29;
+/// `Math.sqrt` of a Number: the staged `NumberOperation::Math`, a double, the one definition the
+/// native runs (`staged::math::float_unary`), one `sqrtsd`. `Math.abs` is a sign mask LLVM loads from
+/// a constant pool and the rounding functions are libm calls in the stencil build: no stencil holds either.
+pub const SQRT: u8 = 30;
 
 pub const CAPTURE_ROW: u8 = 0;
 pub const INDEX_ROW: u8 = 1;
