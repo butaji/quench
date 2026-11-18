@@ -3757,10 +3757,6 @@ fn lane_after_nested_collection<H: Host>(cx: *mut LaneContext<H>) {
     }
 }
 
-
-
-}
-
 /// The index a proved element record (`specialize_proved_arrays`) reads at: a non-negative
 /// integer key, as `Vm::direct_dense_element` takes one.
 #[cfg(all(test, feature = "bench-primitives"))]
@@ -17450,82 +17446,7 @@ fn derive_lane_view<'live, H: Host>(
                 None => pc += 1,
             }
         }
-        // A dispatch head (an add of a constant fused with the load and table
-        // after it) reads the register both take from the accumulator when every
-        // edge into it carries that register there, as an interpreter's latches
-        // carry its program counter.
-        let unfused = |records: &[LaneInstruction], from: usize, to: usize| {
-            (from..=to).all(|pc| records[pc].handler == selected[pc])
-        };
-        // The register the record at `pc` carries as the accumulator when it
-        // falls through, if it runs only itself and nothing fused runs into it.
-        let carried_through = |records: &[LaneInstruction], pc: usize| {
-            unfused(records, pc.saturating_sub(FUSION_REACH), pc)
-                .then_some(produced[pc])
-                .flatten()
-        };
-        // The register an edge into `target` carries, per edge; `None` when an
-        // edge carries none (or one this analysis does not follow).
-        let edges_carry = |records: &[LaneInstruction], target: usize| -> Option<u16> {
-            let mut carried: Option<u16> = None;
-            let mut agree = |register: Option<u16>| match (register, carried) {
-                (None, _) => false,
-                (Some(register), None) => {
-                    carried = Some(register);
-                    true
-                }
-                (Some(register), Some(known)) => register == known,
-            };
-            if target > 0 && !exits[target - 1] {
-                use crate::bytecode::ControlFlowLayout as Flow;
-                match decoded[target - 1]
-                    .op()
-                    .control_flow_layout()
-                {
-                    Flow::Fallthrough => {
-                        if !agree(carried_through(records, target - 1)) {
-                            return None;
-                        }
-                    }
-                    Flow::Jump | Flow::BranchTable | Flow::Terminal => {}
-                    // A call's return or a branch not taken carries no register.
-                    Flow::Call | Flow::ConditionalJump => return None,
-                }
-            }
-            for (pc, packed) in function.code.iter().enumerate() {
-                let instruction = decoded_instruction(function, *packed);
-                if instruction.op().immediate_role() != ImmediateRole::JumpTarget {
-                    continue;
-                }
-                let jump = instruction.imm() as usize;
-                if jump != target {
-                    continue;
-                }
-                if !instruction.op().is_jump() || entry_jumps.contains(pc) || entries.contains(pc) || pc == 0 {
-                    return None;
-                }
-                let then = then_fuses(&records, pc - 1);
-                let pair = pc >= 2
-                    && [true, false].into_iter().any(|backward| {
-                        records[pc - 2].handler == move_pair_jump_handler::<H>(backward) as *const ()
-                    });
-                // Entering a pair's second move runs that move's own record.
-                if pair && !then && entries.contains(pc - 1) && carried_through(records, pc - 1).is_none() {
-                    return None;
-                }
-                let register = if then || pair {
-                    Some(decoded[pc - 1].a())
-                } else if jump_direction(records[pc].handler).is_some() {
-                    carried_through(records, pc - 1)
-                } else {
-                    None
-                };
-                if !agree(register) {
-                    return None;
-                }
-            }
-            carried
-        };
+    }
     specialize_returning_binaries::<H>(&decoded, constants, &mut records);
     specialize_frame_locals::<H>(function, &mut records);
     specialize_captures::<H>(&mut records);

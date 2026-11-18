@@ -1664,7 +1664,7 @@ impl<H: Host> Vm<H> {
             self.read(f, i.register_a()),
             p.function(self.frames[f].function as usize).strict
                 || i.boolean_flag().expect("validated boolean immediate"),
-        )?
+        )?;
         Ok(StepResult::Continue)
     }
 
