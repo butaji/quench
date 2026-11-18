@@ -104,7 +104,9 @@ impl<H: Host> Vm<H> {
     /// does (a named binding of the activation or its closures, its own local, an outer static
     /// owner, an active global lexical binding) or the global read is not decided in place.
     pub(super) fn read_past_scopes(&mut self, p: &ResidualProgram, caller: &dyn CallerView, atom: Atom, site: u16) -> Option<Value> {
-        if self.binds_before_global_object(p, &NameLookup::new(caller, atom), caller.function(), atom) {
+        // Once a `with` was entered, a scope the window does not hold may bind the name: the chain
+        // eval code's environment captured (`captured_with_objects_for_function`).
+        if self.with_scope_entered || self.binds_before_global_object(p, &NameLookup::new(caller, atom), caller.function(), atom) {
             return None;
         }
         match self.global_name_read(p, atom, site) {

@@ -13111,11 +13111,12 @@ impl<H: Host> Vm<H> {
             })
     }
 
-    /// Whether a lane activation runs over a suspended frame's record (a generator's or an
-    /// async function's window, or one a direct eval gave a record): leaving the lane boxes
-    /// that record's state as a frame, which a call waiting for its callee's view would do.
+    /// Whether the innermost lane activation runs over a suspended frame's record (a generator's
+    /// or an async function's window, or one a direct eval gave a record): leaving the lane boxes
+    /// that record's state as a frame, which a call waiting for its callee's view would do. The
+    /// innermost is the caller deciding; a window further out only tunes when a callee lowers.
     pub(in crate::vm) fn lane_runs_windows(&self) -> bool {
-        self.lane_stack.activations.iter().any(|activation| activation.script().is_some_and(|script| !script.record.is_null()))
+        self.lane_stack.activations.last().and_then(Activation::script).is_some_and(|script| !script.record.is_null())
     }
 
     /// Whether `callee` is a native that runs beside a lane's activations
@@ -13684,8 +13685,7 @@ impl<H: Host> Vm<H> {
         // A settling call is a plain call of the running program, under a host that observes no
         // promise lifecycle; an async body whose locals and closures ride a window settles from
         // an environment activation (`settles_in_environment`).
-        let may_settle = !cross && !numeric && !self.host.observes_promise_lifecycle();
-        let settles_in_environment = may_settle && closure_targets::settles_in_environment(body, &plan);
+        let (may_settle, settles_in_environment) = self.settling_calls(body, &plan, cross || numeric);
         let environment = !plan.registers_only
             && (plan.environment_activation || settles_in_environment)
             && !numeric

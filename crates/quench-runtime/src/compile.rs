@@ -4006,7 +4006,7 @@ impl<'a> Compiler<'a> {
         let id = self.functions.reserve();
         let body_lexicals = self.collect_body_lexical_bindings(body);
         let lexical_atoms: Vec<_> = body_lexicals.iter().map(|(atom, _)| *atom).collect();
-        let rest_alias = rest_alias::rest_alias(&options, [parent.is_none(), streamed.is_some(), expression_body.is_some()], body);
+        let rest_alias = rest_alias::rest_alias(&options, (parent.is_none(), streamed.is_some(), expression_body.is_some()), body);
         let params: Vec<Atom> = params[..params.len().saturating_sub(usize::from(rest_alias.is_some()))].iter().map(|name| self.atom(name)).collect();
         let mut locals = params.clone();
         if let Some(formal) = options.defaults {

@@ -12,7 +12,7 @@ use super::early::{ARGUMENTS, is_direct_eval_call};
 use oxc_ast::ast::{
     Argument, ArrowFunctionExpression, BindingIdentifier, BindingPattern, CallExpression, Class,
     Expression, ForInStatement, ForOfStatement, ForStatement, Function, IdentifierReference,
-    NewExpression, Statement, TaggedTemplateExpression, TryStatement, UnaryExpression,
+    NewExpression, Statement, TaggedTemplateExpression, TryStatement,
     VariableDeclaration, WhileStatement, DoWhileStatement, WithStatement,
 };
 use oxc_ast_visit::{Visit, walk};
@@ -21,20 +21,10 @@ use oxc_syntax::scope::ScopeFlags;
 /// The rest parameter's name, where a function compiled with `options` from `body` may read it
 /// as its `arguments` binding: an ordinary function or method, not a constructor, arrow,
 /// initializer or suspending body, outside `with`. `unseen` states whether the function is a
-/// program's root, streams its body, or has an expression body, which `body` does not hold.
-pub(super) fn rest_alias<'a>(options: &FunctionOptions<'_>, unseen: [bool; 3], body: &[Statement<'a>]) -> Option<String> {
-    let excluded = [
-        options.rest_override,
-        options.implicit_body.is_some(),
-        options.class_constructor,
-        options.derived_constructor,
-        options.class_initializer,
-        options.instance_fields.is_some(),
-        options.async_function,
-        options.generator,
-        options.with_depth != 0,
-    ];
-    let admitted = !excluded.contains(&true) && !unseen.contains(&true);
+/// program's root, streams its body or has an expression body, which `body` does not hold.
+pub(super) fn rest_alias<'a>(options: &FunctionOptions<'_>, unseen: (bool, bool, bool), body: &[Statement<'a>]) -> Option<String> {
+    let (root, streamed, expression_body) = unseen;
+    let admitted = !(root || streamed || expression_body || excluded(options));
     let params = options.defaults.filter(|params| admitted && params.items.is_empty())?;
     let BindingPattern::BindingIdentifier(name) = &params.rest.as_ref()?.rest.argument else {
         return None;
@@ -48,6 +38,20 @@ pub(super) fn rest_alias<'a>(options: &FunctionOptions<'_>, unseen: [bool; 3], b
         uses.visit_statement(statement);
     }
     uses.admits().then(|| alias.to_owned())
+}
+
+/// Whether a function compiled with `options` never aliases its rest list: a body that
+/// overrides it, or a constructor's, initializer's, suspending function's or `with`'s.
+fn excluded(options: &FunctionOptions<'_>) -> bool {
+    options.rest_override
+        || options.implicit_body.is_some()
+        || options.class_constructor
+        || options.derived_constructor
+        || options.class_initializer
+        || options.instance_fields.is_some()
+        || options.async_function
+        || options.generator
+        || options.with_depth != 0
 }
 
 /// What a body does with the rest parameter `alias`.
@@ -120,9 +124,15 @@ impl<'s> RestUses<'s> {
 }
 
 impl<'a> Visit<'a> for RestUses<'_> {
+    // A `delete alias[key]` writes the array.
     fn visit_expression(&mut self, expression: &Expression<'a>) {
         if self.alias_read(expression) {
             self.reads += 1;
+        }
+        if let Expression::UnaryExpression(unary) = expression
+            && unary.operator == oxc_syntax::operator::UnaryOperator::Delete
+        {
+            self.safe &= !self.alias_read(&unary.argument);
         }
         walk::walk_expression(self, expression);
     }
@@ -161,11 +171,6 @@ impl<'a> Visit<'a> for RestUses<'_> {
     fn visit_tagged_template_expression(&mut self, tagged: &TaggedTemplateExpression<'a>) {
         self.safe &= !self.alias_read(&tagged.tag);
         walk::walk_tagged_template_expression(self, tagged);
-    }
-
-    fn visit_unary_expression(&mut self, unary: &UnaryExpression<'a>) {
-        self.safe &= unary.operator != oxc_syntax::operator::UnaryOperator::Delete || !self.alias_read(&unary.argument);
-        walk::walk_unary_expression(self, unary);
     }
 
     fn visit_try_statement(&mut self, statement: &TryStatement<'a>) {
@@ -214,5 +219,13 @@ impl<'a> Visit<'a> for RestUses<'_> {
 
     fn visit_class(&mut self, _: &Class<'a>) {
         self.safe = false;
+    }
+}
+
+impl super::ast::FunctionCompiler<'_, '_> {
+    /// Whether `name` reads the activation's `arguments` binding: `arguments`, or the rest list
+    /// aliasing it (`rest_alias`).
+    pub(super) fn names_arguments(&self, name: &str) -> bool {
+        name == ARGUMENTS || self.arguments_alias.as_deref() == Some(name)
     }
 }

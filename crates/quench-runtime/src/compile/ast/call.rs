@@ -315,16 +315,14 @@ impl FunctionCompiler<'_, '_> {
         dst
     }
 
-    /// `f.apply(receiver, arguments)`, or of a rest alias (`compile::rest_alias`): the call passes
-    /// the activation's `arguments` binding on, which the activation may then never materialize
-    /// (`CallPlan::forwards_arguments`).
+    /// `f.apply(receiver, arguments)`, or of a rest alias (`compile::rest_alias`): passes the
+    /// `arguments` binding on, never materialized then (`CallPlan::forwards_arguments`).
     fn forwards_arguments(&self, value: &CallExpression<'_>) -> bool {
         matches!(&value.callee, Expression::StaticMemberExpression(member)
             if !member.optional && member.property.name == "apply")
             && matches!(
                 value.arguments.as_slice(),
-                [_, Argument::Identifier(arguments)] if arguments.name == "arguments"
-                    || self.arguments_alias.as_deref() == Some(arguments.name.as_str())
+                [_, Argument::Identifier(arguments)] if self.names_arguments(arguments.name.as_str())
             )
     }
 

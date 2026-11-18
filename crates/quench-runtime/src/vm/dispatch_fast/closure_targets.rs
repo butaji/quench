@@ -3,6 +3,15 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    /// Whether plain calls of `body` (`plan`) may settle in the caller's lane: of the running
+    /// program, unless `framed` (across programs, or numeric), under a host that observes no
+    /// promise lifecycle; and whether they would settle from an environment activation
+    /// (`settles_in_environment`).
+    pub(super) fn settling_calls(&self, body: &crate::bytecode::Function, plan: &crate::bytecode::CallPlan, framed: bool) -> (bool, bool) {
+        let may_settle = !framed && !self.host.observes_promise_lifecycle();
+        (may_settle, may_settle && settles_in_environment(body, plan))
+    }
+
     /// `same_realm_user_target` of a callee the lane may resolve a target for: not a function of
     /// eval code once a `with` statement was entered, whose frame takes the chain its environment
     /// captured (`Vm::captured_with_objects_for_function`), which a lane activation does not
