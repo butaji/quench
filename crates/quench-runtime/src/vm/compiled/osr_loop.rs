@@ -798,7 +798,7 @@ fn inlined_set_this(instruction: WideInstruction, sites: &[FieldSite]) -> Option
 /// the computation and the `Return` it makes.
 pub(super) fn inlined_returning(instruction: WideInstruction) -> bool {
     instruction.result_flags() == crate::bytecode::RETURN_REGISTER
-        && !instruction.op().is_return()
+        && !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. }))
         && instruction.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister
         && instruction.defined_register().is_some()
 }
@@ -2072,7 +2072,7 @@ fn admit(
             admission.source(instruction.operand_b())?;
             admission.source(instruction.operand_c())?;
         }
-        opcode if opcode.is_to_numeric() => {
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Number(crate::staged::NumberOperation::ToNumeric { .. }))) => {
             admission.result(instruction)?;
             admission.number(instruction.register_b())?;
         }
@@ -2093,7 +2093,7 @@ fn admit(
             }
         }
         // An array the entry guard proved is an object passes.
-        opcode if opcode.is_require_object_coercible() => {
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::RequireObjectCoercible { .. })) => {
             if !dynamic_arrays.contains(&instruction.register_b()) {
                 admission.array(instruction.register_b(), false)?;
             }
@@ -2165,7 +2165,7 @@ fn admit(
         _ if exits_before_effects(instruction) => {}
         // A return leaves the loop: the lane resumes at it with the state written back, and
         // runs it.
-        opcode if opcode.is_return() || opcode.is_jump() => {}
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump)) => {}
         opcode if opcode.is_jump_binary_false() => {
             if let Some(branch) = identity_branch(instruction, constants) {
                 admission.tagged(branch.register)?;

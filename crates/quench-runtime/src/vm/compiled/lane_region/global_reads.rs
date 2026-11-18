@@ -81,7 +81,7 @@ impl Lowering<'_, '_> {
     /// The last backedge of the loop at `header`, if one closes there.
     pub(super) fn loop_end(&self, header: usize) -> Option<usize> {
         self.unit.instructions.iter().rposition(|instruction|
-            instruction.op().is_jump() && instruction.jump_target() as usize == header).filter(|end| *end >= header)
+            matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump)) && instruction.jump_target() as usize == header).filter(|end| *end >= header)
     }
 
     /// The realm a Stable global read in `header..=end` was compiled against, if any.

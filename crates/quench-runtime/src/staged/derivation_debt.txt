@@ -1,7 +1,7 @@
 # Derivation debt: each place a tier decides an opcode's meaning outside its staged row
 # (`staged/coverage_tests.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are
 # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.
-# total 2023
+# total 1991
 <catalog> unstaged:ArgumentGet 1
 <catalog> unstaged:Await 1
 <catalog> unstaged:CacheTemplateObject 1
@@ -192,7 +192,6 @@ vm/compiled/facts/lengths.rs Class:Move 1
 vm/compiled/facts/lengths.rs Class:Nop 1
 vm/compiled/facts/lengths.rs Class:SetIndex 1
 vm/compiled/facts/lengths.rs JsDenotation:NumericBinary 1
-vm/compiled/facts/lengths.rs is:is_move 1
 vm/compiled/facts/ranges.rs Class:IncDec 1
 vm/compiled/facts/ranges.rs JsDenotation:NumericBinary 2
 vm/compiled/facts/ranges.rs is:is_load_const 1
@@ -218,19 +217,14 @@ vm/compiled/lane_region.rs is:is_field_store 5
 vm/compiled/lane_region.rs is:is_get_field 13
 vm/compiled/lane_region.rs is:is_get_index 1
 vm/compiled/lane_region.rs is:is_inc_dec 1
-vm/compiled/lane_region.rs is:is_jump 3
+vm/compiled/lane_region.rs is:is_jump 1
 vm/compiled/lane_region.rs is:is_jump_binary_false 2
-vm/compiled/lane_region.rs is:is_jump_true 1
 vm/compiled/lane_region.rs is:is_load_capture 9
 vm/compiled/lane_region.rs is:is_load_const 2
 vm/compiled/lane_region.rs is:is_load_name 1
 vm/compiled/lane_region.rs is:is_load_name_call 1
-vm/compiled/lane_region.rs is:is_load_this 1
-vm/compiled/lane_region.rs is:is_require_object_coercible 1
-vm/compiled/lane_region.rs is:is_return 2
 vm/compiled/lane_region.rs is:is_set_index 2
 vm/compiled/lane_region.rs is:is_throw 1
-vm/compiled/lane_region.rs is:is_to_numeric 1
 vm/compiled/lane_region.rs is:is_unary 2
 vm/compiled/lane_region/call_outs.rs Class:ForInNext 1
 vm/compiled/lane_region/catches.rs Class:Call 1
@@ -244,9 +238,7 @@ vm/compiled/lane_region/demand.rs is:is_get_index 1
 vm/compiled/lane_region/edges.rs is:is_js_conditional_jump 1
 vm/compiled/lane_region/field_reads.rs Class:GetField 1
 vm/compiled/lane_region/field_reads.rs is:is_named_field_access 1
-vm/compiled/lane_region/fixed_arrays.rs is:is_return 1
 vm/compiled/lane_region/global_reads.rs is:is_get_field 1
-vm/compiled/lane_region/global_reads.rs is:is_jump 1
 vm/compiled/lane_region/hoisted_reads.rs is:is_get_field 1
 vm/compiled/lane_region/hoisted_reads.rs is:is_load_capture 1
 vm/compiled/lane_region/int_inputs.rs JsDenotation:NumericBinary 1
@@ -257,7 +249,6 @@ vm/compiled/lane_region/loop_arrays.rs Class:GetIndex 1
 vm/compiled/lane_region/loop_arrays.rs Class:SetIndex 1
 vm/compiled/lane_region/loop_arrays.rs is:is_get_index 1
 vm/compiled/lane_region/loop_arrays.rs is:is_load_capture 2
-vm/compiled/lane_region/loop_arrays.rs is:is_move 1
 vm/compiled/lane_region/loop_arrays.rs is:is_set_index 1
 vm/compiled/lane_region/loop_receivers.rs is:is_field_store 1
 vm/compiled/lane_region/loop_receivers.rs is:is_get_field 1
@@ -267,7 +258,6 @@ vm/compiled/lane_region/loop_versions/plan.rs is:is_get_index 1
 vm/compiled/lane_region/loop_versions/plan.rs is:is_set_index 1
 vm/compiled/lane_region/native_calls.rs is:is_call 1
 vm/compiled/lane_region/packed_ranges.rs is:is_jump_binary_false 1
-vm/compiled/lane_region/packed_ranges.rs is:is_move 1
 vm/compiled/lane_region/scalar.rs JsDenotation:NumericBinary 1
 vm/compiled/lane_region/scalar.rs is:is_call 1
 vm/compiled/lane_region/scalar.rs is:is_jump_binary_false 1
@@ -291,8 +281,6 @@ vm/compiled/lane_unit.rs is:is_call 4
 vm/compiled/lane_unit.rs is:is_construct 1
 vm/compiled/lane_unit.rs is:is_get_field 3
 vm/compiled/lane_unit.rs is:is_load_name 1
-vm/compiled/lane_unit.rs is:is_load_this 1
-vm/compiled/lane_unit.rs is:is_return 4
 vm/compiled/lane_unit.rs is:is_throw 1
 vm/compiled/lane_unit.rs is:is_unit_rewritten 1
 vm/compiled/lane_unit.rs op:Call 1
@@ -307,10 +295,7 @@ vm/compiled/lane_unit/admission.rs is:is_construct 1
 vm/compiled/lane_unit/admission.rs is:is_field_store 2
 vm/compiled/lane_unit/admission.rs is:is_get_field 1
 vm/compiled/lane_unit/admission.rs is:is_inc_dec 1
-vm/compiled/lane_unit/admission.rs is:is_jump 1
 vm/compiled/lane_unit/admission.rs is:is_jump_binary_false 1
-vm/compiled/lane_unit/admission.rs is:is_jump_false 1
-vm/compiled/lane_unit/admission.rs is:is_jump_true 1
 vm/compiled/lane_unit/admission.rs is:is_load_capture 1
 vm/compiled/lane_unit/admission.rs is:is_load_name 1
 vm/compiled/lane_unit/admission.rs is:is_set_index 1
@@ -336,18 +321,14 @@ vm/compiled/osr_loop.rs is:is_get_field 14
 vm/compiled/osr_loop.rs is:is_get_index 4
 vm/compiled/osr_loop.rs is:is_inc_dec 1
 vm/compiled/osr_loop.rs is:is_indexed_access 6
-vm/compiled/osr_loop.rs is:is_jump 1
 vm/compiled/osr_loop.rs is:is_jump_binary_false 6
 vm/compiled/osr_loop.rs is:is_load_capture 2
 vm/compiled/osr_loop.rs is:is_load_const 4
 vm/compiled/osr_loop.rs is:is_load_env_local 1
 vm/compiled/osr_loop.rs is:is_load_name 1
 vm/compiled/osr_loop.rs is:is_ordinary_call 4
-vm/compiled/osr_loop.rs is:is_require_object_coercible 1
-vm/compiled/osr_loop.rs is:is_return 2
 vm/compiled/osr_loop.rs is:is_set_index 1
 vm/compiled/osr_loop.rs is:is_store_capture 2
-vm/compiled/osr_loop.rs is:is_to_numeric 1
 vm/compiled/osr_loop.rs is:is_unary 4
 vm/compiled/osr_loop.rs op:Call 1
 vm/compiled/osr_loop.rs op:GetField 4
@@ -355,8 +336,6 @@ vm/compiled/osr_loop.rs op:SetThisField 1
 vm/compiled/osr_loop/inlining.rs Class:GetField 1
 vm/compiled/osr_loop/inlining.rs is:is_get_field 1
 vm/compiled/osr_loop/inlining.rs is:is_load_capture 1
-vm/compiled/osr_loop/inlining.rs is:is_move 1
-vm/compiled/osr_loop/inlining.rs is:is_return 2
 vm/compiled/osr_loop/inlining.rs is:is_set_this_field 1
 vm/compiled/osr_loop/inlining.rs op:Jump 1
 vm/compiled/osr_loop/inlining.rs op:LoadCapture 1
@@ -365,15 +344,12 @@ vm/compiled/osr_loop/inlining.rs op:SetField 2
 vm/compiled/osr_loop/iteration.rs is:is_ordinary_call 1
 vm/compiled/osr_loop/lifetime.rs is:is_get_index 3
 vm/compiled/osr_loop/lifetime.rs is:is_indexed_access 1
-vm/compiled/osr_loop/lifetime.rs is:is_move 1
 vm/compiled/residuals.rs is:is_call 1
 vm/compiled/static_loops.rs Class:IncDec 2
 vm/compiled/static_loops.rs Class:LoadConst 2
 vm/compiled/static_loops.rs Class:Move 2
 vm/compiled/static_loops.rs JsDenotation:NumericBinary 2
-vm/compiled/static_loops.rs is:is_jump 1
 vm/compiled/static_loops.rs is:is_jump_binary_false 1
-vm/compiled/static_loops.rs is:is_nop 1
 vm/compiled/static_loops.rs op:Jump 1
 vm/compiled/static_loops.rs op:Nop 1
 vm/compiled/tier_policy.rs Class:Binary 1

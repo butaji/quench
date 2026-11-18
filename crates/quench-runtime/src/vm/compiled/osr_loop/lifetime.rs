@@ -97,7 +97,7 @@ fn definition_root(flow: &LoopRegion, values: &Webs, definition: Definition, vis
     }
     let offset = definition.checked_sub(flow.entry_count())?;
     let instruction = *flow.instructions.get(offset)?;
-    if !instruction.op().is_move() || instruction.result_flags() != 0 {
+    if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Move { .. })) || instruction.result_flags() != 0 {
         return None;
     }
     array_root(flow, values, flow.header + offset as u32, instruction.register_b(), visiting)
