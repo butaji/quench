@@ -119,3 +119,11 @@ rx_dotstar 377 1137 2765.9
 rx_email 181 549 4255.9
 rx_lit 323 975 1061.7
 rx_word2 54 168 1621
+bi_arr_concat 149 179 1878.2
+bi_arr_slice 149 179 1809.2
+bi_dv_get_f64 6 36 562.8
+bi_dv_get_u32 8 38 655.1
+bi_dv_set_f64 8 38 567.1
+bi_map_get 19 49 339.3
+bi_set_has 16 46 320.1
+bi_tmpl 253.2 283.2 1174.7

@@ -13,6 +13,7 @@ use oxc::regular_expression::{ast, LiteralParser, Options};
 
 pub mod backtrack;
 mod ascii_search;
+mod emoji_zwj;
 mod range_search;
 pub use range_search::{LiteralMatches, RangeSearcher};
 mod stack;
@@ -1688,16 +1689,12 @@ fn is_tag_units(units: &[Unit]) -> bool {
             .all(|unit| (0xE0020..=0xE007E).contains(&unit.value))
 }
 
+/// Whether `units` (code points) are one RGI emoji ZWJ sequence: a lookup in Unicode's list
+/// (`emoji_zwj`), not any ZWJ-joined run of emoji, which would admit sequences Unicode never
+/// recommended.
 fn is_zwj_units(units: &[Unit]) -> bool {
     units.iter().any(|unit| unit.value == 0x200D)
-        && units.split(|unit| unit.value == 0x200D).all(|part| {
-            !part.is_empty()
-                && part.iter().all(|unit| {
-                    unit.value == 0xFE0F
-                        || (0x1F3FB..=0x1F3FF).contains(&unit.value)
-                        || is_basic_emoji_code_point(unit.value)
-                })
-        })
+        && emoji_zwj::is_rgi_zwj_sequence(units.iter().map(|unit| unit.value))
 }
 
 fn is_basic_emoji_units(units: &[Unit]) -> bool {

@@ -2,11 +2,15 @@ use super::*;
 use super::array_view::{Match, Search};
 
 /// An array shape `Vm::array_species_is_array_create` found without an own `constructor`, for
-/// arrays of `prototype`. Shape compaction renumbers shapes and clears it with the field caches.
+/// arrays of `prototype`, and the `constructor` that prototype held when proved. While the
+/// `ArrayConstructor` fuse holds for `prototype` its slot still holds that constructor, so a
+/// repeat check reads two fuse records and no slot. Shape compaction renumbers shapes and
+/// clears it with the field caches.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct ArraySpeciesProof {
     shape: u32,
     prototype: Value,
+    constructor: Option<Value>,
 }
 
 impl<H: Host> Vm<H> {
@@ -954,7 +958,7 @@ impl<H: Host> Vm<H> {
         // present own data element: the result is a new array of those values, made at once
         // instead of holes that each CreateDataPropertyOrThrow fills.
         let mut values = smallvec::SmallVec::<[Value; 16]>::new();
-        if self.array_species_is_array_create(object) && self.extend_present_dense(object, start..end, &mut values) {
+        if self.array_species_is_array_create(object) && self.extend_present_dense(object, start..end.max(start), &mut values) {
             return Ok(self.array_of(&values));
         }
         let result = self.array_species_create(p, object, count)?;
@@ -1043,7 +1047,25 @@ impl<H: Host> Vm<H> {
             return false;
         }
         let shape = array.shape();
-        if self.array_species_proof != Some(ArraySpeciesProof { shape, prototype }) && !self.array_shape_lacks_constructor(shape, prototype) {
+        if let Some(ArraySpeciesProof { shape: proved, prototype: holder, constructor: Some(constructor) }) = self.array_species_proof
+            && proved == shape
+            && holder == prototype
+        {
+            let fuses = self.heap.dependencies().fuses();
+            if fuses.intact(IntactFuse::ArrayConstructor, prototype) == Some(true) && fuses.intact(IntactFuse::ArraySpecies, constructor) == Some(true) {
+                return true;
+            }
+        }
+        self.array_species_is_array_create_slow(shape, prototype)
+    }
+
+    /// `array_species_is_array_create` past its recorded proof: the shape's lack of an own
+    /// `constructor`, then both fuses, proved where unproved, and the proof recorded.
+    #[inline(never)]
+    fn array_species_is_array_create_slow(&mut self, shape: u32, prototype: Value) -> bool {
+        use crate::code_dependencies::IntactFuse;
+        let proved = matches!(self.array_species_proof, Some(proof) if proof.shape == shape && proof.prototype == prototype);
+        if !proved && !self.array_shape_lacks_constructor(shape, prototype) {
             return false;
         }
         if !self.fuse_intact_at(IntactFuse::ArrayConstructor, prototype) {
@@ -1053,7 +1075,13 @@ impl<H: Host> Vm<H> {
         let Some(constructor) = self.object_data(prototype).and_then(|data| self.heap.property_get(data, slot)) else {
             return false;
         };
-        self.fuse_intact_at(IntactFuse::ArraySpecies, constructor)
+        if !self.fuse_intact_at(IntactFuse::ArraySpecies, constructor) {
+            return false;
+        }
+        if let Some(proof) = self.array_species_proof.as_mut().filter(|proof| proof.shape == shape && proof.prototype == prototype) {
+            proof.constructor = Some(constructor);
+        }
+        true
     }
 
     /// Whether array shape `shape` has no own `constructor`, remembered for a shape that keeps
@@ -1063,7 +1091,7 @@ impl<H: Host> Vm<H> {
     fn array_shape_lacks_constructor(&mut self, shape: u32, prototype: Value) -> bool {
         let lacks = self.property_shape_slot(shape, PropertyKey::string(self.runtime_atoms.constructor)).is_none();
         if lacks && !self.shape_is_dictionary(shape) {
-            self.array_species_proof = Some(ArraySpeciesProof { shape, prototype });
+            self.array_species_proof = Some(ArraySpeciesProof { shape, prototype, constructor: None });
         }
         lacks
     }

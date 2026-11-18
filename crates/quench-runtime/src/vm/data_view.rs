@@ -218,6 +218,45 @@ impl<H: Host> Vm<H> {
     /// with its byte swap. `None` leaves the call to `data_view_native`, which raises what this
     /// declines.
     pub(super) fn plain_data_view_access(&mut self, native: Native, this: Value, args: &[Value]) -> Option<Value> {
+        // One arm per element type, so each inlined copy folds its width and conversion.
+        if data_view_setter(native) { self.plain_data_view_set(native, this, args) } else { self.plain_data_view_get(native, this, args) }
+    }
+
+    fn plain_data_view_get(&mut self, native: Native, this: Value, args: &[Value]) -> Option<Value> {
+        match native {
+            Native::DataViewGetUint8 => self.data_view_access_of(Native::DataViewGetUint8, this, args),
+            Native::DataViewGetInt8 => self.data_view_access_of(Native::DataViewGetInt8, this, args),
+            Native::DataViewGetUint16 => self.data_view_access_of(Native::DataViewGetUint16, this, args),
+            Native::DataViewGetInt16 => self.data_view_access_of(Native::DataViewGetInt16, this, args),
+            Native::DataViewGetUint32 => self.data_view_access_of(Native::DataViewGetUint32, this, args),
+            Native::DataViewGetInt32 => self.data_view_access_of(Native::DataViewGetInt32, this, args),
+            Native::DataViewGetFloat16 => self.data_view_access_of(Native::DataViewGetFloat16, this, args),
+            Native::DataViewGetFloat32 => self.data_view_access_of(Native::DataViewGetFloat32, this, args),
+            Native::DataViewGetFloat64 => self.data_view_access_of(Native::DataViewGetFloat64, this, args),
+            _ => None,
+        }
+    }
+
+    fn plain_data_view_set(&mut self, native: Native, this: Value, args: &[Value]) -> Option<Value> {
+        match native {
+            Native::DataViewSetUint8 => self.data_view_access_of(Native::DataViewSetUint8, this, args),
+            Native::DataViewSetInt8 => self.data_view_access_of(Native::DataViewSetInt8, this, args),
+            Native::DataViewSetUint16 => self.data_view_access_of(Native::DataViewSetUint16, this, args),
+            Native::DataViewSetInt16 => self.data_view_access_of(Native::DataViewSetInt16, this, args),
+            Native::DataViewSetUint32 => self.data_view_access_of(Native::DataViewSetUint32, this, args),
+            Native::DataViewSetInt32 => self.data_view_access_of(Native::DataViewSetInt32, this, args),
+            Native::DataViewSetFloat16 => self.data_view_access_of(Native::DataViewSetFloat16, this, args),
+            Native::DataViewSetFloat32 => self.data_view_access_of(Native::DataViewSetFloat32, this, args),
+            Native::DataViewSetFloat64 => self.data_view_access_of(Native::DataViewSetFloat64, this, args),
+            _ => None,
+        }
+    }
+
+    /// `plain_data_view_access` inlined into a caller that knows `native`: the width, the
+    /// direction and the element conversion fold to constants, leaving the view read, the
+    /// bounds check and the load or store.
+    #[inline(always)]
+    pub(super) fn data_view_access_of(&mut self, native: Native, this: Value, args: &[Value]) -> Option<Value> {
         let width = data_view_plain_width(native)?;
         let Some(Cell::DataView { buffer, object, length }) = self.heap.get(this) else {
             return None;
@@ -450,7 +489,7 @@ impl<H: Host> Vm<H> {
 }
 
 /// The Number a non-BigInt DataView get reads: the field's bits as its element type.
-#[inline]
+#[inline(always)]
 fn data_view_number_of_bits(native: Native, bits: u64) -> f64 {
     match native {
         Native::DataViewGetInt8 => f64::from(bits as u8 as i8),
@@ -465,7 +504,7 @@ fn data_view_number_of_bits(native: Native, bits: u64) -> f64 {
 
 /// The bits a non-BigInt DataView set writes for `value`: its float encoding, or for an
 /// integer type ToUint32, whose low bytes (`data_view_write`) are ToUint8 and ToUint16 too.
-#[inline]
+#[inline(always)]
 fn data_view_bits_of_number(native: Native, value: f64) -> u64 {
     match native {
         Native::DataViewSetFloat16 => u64::from(super::number::f64_to_half(value)),
@@ -476,6 +515,7 @@ fn data_view_bits_of_number(native: Native, value: f64) -> u64 {
 }
 
 /// Whether `native` is a DataView element `get` or `set` method.
+#[inline(always)]
 pub(super) const fn data_view_element(native: Native) -> bool {
     data_view_setter(native)
         || matches!(
@@ -495,7 +535,7 @@ pub(super) const fn data_view_element(native: Native) -> bool {
 }
 
 /// Whether `native` is a DataView `set` method.
-#[inline]
+#[inline(always)]
 const fn data_view_setter(native: Native) -> bool {
     matches!(
         native,
@@ -514,7 +554,7 @@ const fn data_view_setter(native: Native) -> bool {
 }
 
 /// The bytes the DataView element `native` gets or sets.
-#[inline]
+#[inline(always)]
 fn data_view_width(native: Native) -> usize {
     match native {
         Native::DataViewGetUint16
@@ -551,7 +591,7 @@ fn data_view_plain_index(index: Value) -> Option<usize> {
 
 /// The bytes a DataView element `native` other than the BigInt ones gets or sets; `None` for
 /// any other native.
-#[inline]
+#[inline(always)]
 fn data_view_plain_width(native: Native) -> Option<usize> {
     let bigint = matches!(
         native,

@@ -1201,6 +1201,69 @@ static double NOINL op_k20_switch(long n) {
   return acc;
 }
 
+/* Builtin twins (bi_*): what the builtin's body is in C, nothing more. */
+static double NOINL op_bi_dv_get_f64(long n) {
+  int32_t N = (int32_t)n; unsigned char buf[64]; double s = 0;
+  for (int j = 0; j < 8; j++) { double v = j + 0.5; memcpy(buf + j * 8, &v, 8); }
+  ESCAPE(buf);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); size_t at = (size_t)(i & 7) * 8; if (at + 8 > sizeof buf) abort(); double v; memcpy(&v, buf + at, 8); s += v; }
+  return s;
+}
+static double NOINL op_bi_dv_set_f64(long n) {
+  int32_t N = (int32_t)n; unsigned char buf[64] = {0};
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); size_t at = (size_t)(i & 7) * 8; if (at + 8 > sizeof buf) abort(); double v = i; memcpy(buf + at, &v, 8); ESCAPE(buf); }
+  double v; memcpy(&v, buf, 8); return v;
+}
+static double NOINL op_bi_dv_get_u32(long n) {
+  int32_t N = (int32_t)n; unsigned char buf[64]; int32_t a = 0;
+  for (int j = 0; j < 16; j++) { uint32_t v = __builtin_bswap32((uint32_t)(j * 7)); memcpy(buf + j * 4, &v, 4); }
+  ESCAPE(buf);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); size_t at = (size_t)(i & 15) * 4; if (at + 4 > sizeof buf) abort(); uint32_t v; memcpy(&v, buf + at, 4); a = (int32_t)((uint32_t)a + __builtin_bswap32(v)); }
+  return a;
+}
+static double NOINL op_bi_arr_slice(long n) {
+  int32_t N = (int32_t)n, a = 0; double arr[16];
+  for (int j = 0; j < 16; j++) arr[j] = j;
+  ESCAPE(arr);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); size_t len = 12 - 4; double *out = malloc(len * sizeof *out); memcpy(out, arr + 4, len * sizeof *out); ESCAPE(out); a += (int32_t)len; free(out); }
+  return a;
+}
+static double NOINL op_bi_arr_concat(long n) {
+  int32_t N = (int32_t)n, a = 0; double x[4] = {1, 2, 3, 4}, y[4] = {5, 6, 7, 8};
+  ESCAPE(x); ESCAPE(y);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); double *out = malloc(8 * sizeof *out); memcpy(out, x, sizeof x); memcpy(out + 4, y, sizeof y); ESCAPE(out); a += 8; free(out); }
+  return a;
+}
+static double NOINL op_bi_tmpl(long n) {
+  int32_t N = (int32_t)n, a = 0; const char *p = "ab", *q = "xyz";
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    char *out = malloc(16), digits[12]; size_t len = 0; int d = 0; uint32_t v = (uint32_t)(i & 1023);
+    do { digits[d++] = (char)('0' + v % 10); v /= 10; } while (v);
+    memcpy(out, p, 2); len = 2; out[len++] = '-';
+    while (d) out[len++] = digits[--d];
+    out[len++] = '-'; memcpy(out + len, q, 3); len += 3;
+    ESCAPE(out); a += (int32_t)len; free(out);
+  }
+  return a;
+}
+static int32_t bi_keys[128], bi_vals[128];
+static int bi_probe(int32_t key) { uint32_t h = (uint32_t)key * 2654435769u >> 25; while (bi_keys[h] != key && bi_keys[h] != -1) h = (h + 1) & 127; return (int)h; }
+static double NOINL op_bi_map_get(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  for (int j = 0; j < 128; j++) bi_keys[j] = -1;
+  for (int j = 0; j < 64; j++) { int h = bi_probe(j); bi_keys[h] = j; bi_vals[h] = j * 3; }
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); int h = bi_probe(i & 63); a = (int32_t)((uint32_t)a + (uint32_t)(bi_keys[h] == -1 ? 0 : bi_vals[h])); }
+  return a;
+}
+static double NOINL op_bi_set_has(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  for (int j = 0; j < 128; j++) bi_keys[j] = -1;
+  for (int j = 0; j < 64; j += 2) bi_keys[bi_probe(j)] = j;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); if (bi_keys[bi_probe(i & 63)] != -1) a++; }
+  return a;
+}
+
 typedef double (*opfn)(long);
 static const struct { const char *name; opfn fn; } TABLE[] = {
   {"field_read", op_field_read}, {"field_name", op_field_read}, {"field_length", op_field_read}, {"field_store", op_field_store}, {"call_direct", op_call_direct},
@@ -1235,6 +1298,8 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"obj_spread", op_obj_spread}, {"alloc_literal", op_alloc_literal}, {"alloc_literal1", op_alloc_literal1}, {"alloc_ctor", op_alloc_ctor}, {"alloc_class", op_alloc_class},
   {"k_json", op_k_json}, {"k_regexp", op_k_regexp}, {"k_str_build", op_k_str_build},
   {"date_now", op_date_now}, {"arr_includes", op_arr_includes}, {"arr_indexof", op_arr_indexof},
+  {"bi_dv_get_f64", op_bi_dv_get_f64}, {"bi_dv_set_f64", op_bi_dv_set_f64}, {"bi_dv_get_u32", op_bi_dv_get_u32},
+  {"bi_arr_slice", op_bi_arr_slice}, {"bi_arr_concat", op_bi_arr_concat}, {"bi_tmpl", op_bi_tmpl}, {"bi_map_get", op_bi_map_get}, {"bi_set_has", op_bi_set_has},
   {"k01_sum_or", op_k01_sum_or},
   {"k02_fib", op_k02_fib},
   {"k03_call_add", op_k03_call_add},

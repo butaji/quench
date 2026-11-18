@@ -100,7 +100,7 @@ const fn in_place_families(native: Native) -> u16 {
         families |= COLLECTION;
     }
     if matches!(native, Native::ArrayIndexOf | Native::ArrayIncludes | Native::ArraySplice | Native::ArrayUnshift
-        | Native::ArrayShift | Native::ArrayIteratorNext)
+        | Native::ArrayShift | Native::ArrayIteratorNext | Native::ArraySlice | Native::ArrayConcat)
     {
         families |= ARRAY;
     }
@@ -286,7 +286,7 @@ fn internal_slot_value<H: Host>(vm: &mut Vm<H>, native: Native, callee: Value, r
     matches!(vm.heap.get(receiver), Some(Cell::Map { .. })).then(|| vm.collection_iterator(receiver, kind).ok()).flatten()
 }
 
-/// A dense array's `indexOf`, `includes`, `splice`, `unshift` and `shift`, and an array iterator's step
+/// A dense array's `indexOf`, `includes`, `splice`, `unshift`, `shift`, `slice` and `concat`, and an array iterator's step
 /// over a plain array.
 fn array_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, callee: Value, receiver: Value,
     args: &[Value]) -> Option<Value> {
@@ -296,6 +296,8 @@ fn array_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, 
         Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
         Native::ArrayShift => vm.plain_array_shift(receiver),
         Native::ArrayIteratorNext => vm.plain_array_iterator_next(callee, receiver),
+        Native::ArraySlice => vm.plain_array_slice(receiver, args),
+        Native::ArrayConcat => vm.array_concat_dense(receiver, args),
         _ => None,
     }
 }
