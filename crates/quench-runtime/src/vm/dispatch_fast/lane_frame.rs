@@ -56,7 +56,7 @@ struct LaneHost {
     delete: PropertyDeleter,
     read_name: NameReader,
     /// The `typeof` kind of a heap value, as the VM names it (`typeof_kind`), for a staged `typeof` row.
-    type_of: unsafe fn(*mut (), Value) -> Option<TypeofKind>,
+    type_of: unsafe fn(*mut (), Value) -> Option<crate::staged::value::TypeofKind>,
     /// The interned `typeof` result string of a name index in `TYPEOF_NAMES` (`typeof_names`).
     typeof_name: unsafe fn(*mut (), u64) -> Option<Value>,
     /// SetFunctionName of a function to a program atom through a cache site (`Vm::set_function_name`).
