@@ -4,7 +4,6 @@
 
 use super::flow::FlowStage;
 use super::region::Region;
-use super::Stage;
 
 /// Polls the interrupt flag that `attention` addresses (the call context's pointer to the flag
 /// byte): one byte load, zero-extended, and one guard that continues where the flag is clear and
