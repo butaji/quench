@@ -6460,9 +6460,9 @@ script_handler! {
 const NUMBER_NAME_INDEX: usize = 3;
 
 /// The handler of a `Unary` record whose operator the view decides once
-/// (`specialize_register_operands`): a `typeof` test (`lane_typeof_test`), a Number operator
-/// (`lane_unary_number`) or logical not (`lane_logical_not`), so the record dispatches on no
-/// operator at run time; `None` keeps the general `lane_unary`.
+/// (`specialize_register_operands`): a `typeof` test (`lane_typeof_test`) or a Number operator
+/// (`lane_unary_number`), so the record dispatches on no operator at run time; `None` keeps the
+/// plain `Unary` row, which answers logical not (`LogicalNot`) itself.
 fn unary_operator_handler<H: Host>(operator: u32) -> Option<Handler> {
     use oxc_ast::ast::UnaryOperator as U;
     if let Some((index, negated)) = crate::bytecode::typeof_test(operator) {
@@ -6482,7 +6482,6 @@ fn unary_operator_handler<H: Host>(operator: u32) -> Option<Handler> {
     match operator {
         NEGATION => Some(lane_unary_number::<H, NEGATION> as Handler),
         PLUS => Some(lane_unary_number::<H, PLUS> as Handler),
-        super::coercion::LOGICAL_NOT => Some(lane_logical_not::<H> as Handler),
         // The row decodes only the index form of `typeof`; a value's `typeof` stays in the lane.
         super::coercion::TYPEOF => Some(lane_unary::<H> as Handler),
         _ => None,
@@ -6591,19 +6590,6 @@ script_handler! {
             sibling!(lane_unary::<H>, r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, Value::number(result));
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `Unary` logical not, chosen when the view was derived: a value that decides its own
-    /// truthiness (`Value::truthiness`) here; a heap value whose cell decides it takes the
-    /// general `lane_unary`.
-    fn lane_logical_not<>(cx, r, ip, i, view) {
-        let Some(truthy) = r.get(i.b).truthiness() else {
-            sibling!(lane_unary::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, if truthy { Value::FALSE } else { Value::TRUE });
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
