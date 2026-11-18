@@ -113,11 +113,15 @@ pub(super) struct Decoded {
     /// The step a store row's instruction runs as where the row declines its operand (`declines`):
     /// the instruction's own (`steps::lowering`).
     pub(super) declined: Option<Step>,
+    /// The exact shape of the holder whose own native function the row stands on (`math_call`'s
+    /// identity guard): a Stable fact the code takes (`held_holders`), so the function's identity is
+    /// not recycled while the code runs.
+    pub(super) holder: Option<u32>,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, declined: None }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, declined: None, holder: None }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {

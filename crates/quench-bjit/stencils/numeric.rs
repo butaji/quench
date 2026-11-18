@@ -12,6 +12,7 @@
 
 use crate::bytecode::Operand;
 use crate::places::{DEST, LEFT, Places, RIGHT, Rep};
+use crate::staged::math::FloatUnary;
 use crate::staged::{Concrete, Domain, Frame, NegativeZero, NumberOperation, NumericFrame, Overflow, Step, jump_if as branch_on_truth, logical_not, numeric};
 use crate::vm::operations::{I32BitwiseStage, NumberArithmetic, NumberBitwise, NumberRelation, NumberUnary, number_bitwise_f64_result};
 pub(crate) use crate::words::*;
@@ -240,6 +241,14 @@ fn neg_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) ->
     finish(frame, done)
 }
 
+/// `Math.sqrt` of the first operand, a double: the staged `NumberOperation::Math`.
+#[inline(always)]
+fn math_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    let operation = FloatUnary::Sqrt;
+    let done = staged(&mut frame, NumberOperation::Math { destination: DEST, source: Operand::register(LEFT), operation }).is_some();
+    finish(frame, done)
+}
+
 /// The tag of a fresh int slot: the upper half of its word.
 #[inline(always)]
 fn tag_init(s: S) -> Out {
@@ -305,6 +314,7 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
         JUMP_FALSE => truth_row::<false, D, A, B>(frame),
         NOT | NEG => unary_row::<K, D, A, B>(frame),
         REM => remainder_row::<D, A, B, SPEC>(frame),
+        SQRT => math_row::<D, A, B>(frame),
         _ => tag_init(frame.s),
     }
 }

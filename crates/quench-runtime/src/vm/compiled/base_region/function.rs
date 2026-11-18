@@ -140,12 +140,39 @@ fn returned(register: Register) -> Decoded {
 fn call(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstruction) -> Vec<What> {
     let (plain, returning) = instruction.split_return();
     let shape = CallShape { returning, ..CallShape::of(pc, plain, CallForm::Plain) };
-    let first = match sites.callees.inlined_call(sites.facts, region, &mut sites.context, &shape) {
-        Some(site) => What::Site(site),
-        None => What::Row(Decoded::step(Step::Call(shape), Some(shape.result))),
+    let first = match math_call(region, sites, &shape) {
+        Some(rows) => rows.into_iter().map(What::Row).collect(),
+        None => match sites.callees.inlined_call(sites.facts, region, &mut sites.context, &shape) {
+            Some(site) => vec![What::Site(site)],
+            None => vec![What::Row(Decoded::step(Step::Call(shape), Some(shape.result)))],
+        },
     };
     let completion = shape.returning.then(|| What::Row(returned(shape.result)));
-    std::iter::once(first).chain(completion).collect()
+    first.into_iter().chain(completion).collect()
+}
+
+/// A call of a native Math function a row computes (`Math.sqrt(x)`): its callee
+/// register was defined by a field read of a Stable global's member that was that native when the
+/// code was built (`GlobalRead::NativeMember`), and the call passes one argument. The rows: the
+/// callee's identity guarded (any other callee leaves at the call, for the interpreter to call it),
+/// then the staged Math operation of the argument into the result, which leaves where it is no
+/// Number. The holder's exact shape is held, so the identity is not recycled while the code runs.
+/// The interpreter's call protocol, the native's dispatch and its argument copy fold away: partial
+/// evaluation of the call on the callee the site proves.
+fn math_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -> Option<Vec<Decoded>> {
+    use crate::vm::global_facts::GlobalRead;
+    use crate::vm::Native;
+    (shape.form == CallForm::Plain && shape.argc == 1).then_some(())?;
+    let local = (shape.call_pc - region.header) as usize;
+    let defined = (0..local).rev().find(|at| region.instructions()[*at].written_registers().any(|register| register == shape.callee))?;
+    let GlobalRead::NativeMember { value, native, holder } = *sites.known.globals?.get(&(region.header as usize + defined))? else { return None };
+    let kind = match native {
+        Native::MathSqrt => Kind::Sqrt,
+        _ => return None,
+    };
+    let guard = Decoded { hole: value.to_bits(), holder: Some(holder), ..Decoded::heap(Heap::Identity, None, Some(Source::Register(shape.callee)), None) };
+    let operation = Decoded::number(kind, Some(shape.result), Some(Source::Register(shape.window)), None, None);
+    Some(vec![guard, operation])
 }
 
 /// The rows of an instruction a body makes in the scratch registers past the function's own (`scratch`): the comparison and the jump on it
