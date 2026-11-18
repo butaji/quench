@@ -89,19 +89,23 @@ scalar_stage!(
 );
 
 impl WasmTable for ConcreteTable<'_> {
+    #[inline(always)]
     fn table_range_exceeds(&mut self, index: u64, extent: u64) -> u64 {
         range_past(self.elements.len(), index, extent)
     }
 
+    #[inline(always)]
     fn element_signature(&mut self, index: u64) -> u64 {
         self.targets[index as usize].signature.word()
     }
 
+    #[inline(always)]
     fn table_element(&mut self, index: u64) -> u64 {
         self.elements[index as usize].to_bits()
     }
 
     /// Equal ids are equivalent types; the closure knows the expected type, which it closes over.
+    #[inline(always)]
     fn signature_accepts(&mut self, reference: u64, signature: u64, expected: u64) -> u64 {
         u64::from(signature == expected || (self.related)(Value::from_bits(reference)))
     }

@@ -136,7 +136,7 @@ impl<H: Host> Vm<H> {
         self.wasm_index_operand(value, ty)
     }
 
-    #[inline]
+    #[inline(always)]
     pub(super) fn wasm_index_operand(
         &self,
         value: Value,
