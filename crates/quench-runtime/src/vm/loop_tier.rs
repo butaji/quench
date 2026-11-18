@@ -208,15 +208,26 @@ fn count_compilation(tier: &mut LoopTier, site: &LoopSite) {
     }
 }
 
-/// The region's entry registers holding Ints and those holding other Numbers, in the running
-/// activation's registers `r`.
-fn entry_number_registers(region: &super::super::compiled::LoopRegion, r: Registers) -> (Vec<crate::bytecode::Register>, Vec<crate::bytecode::Register>) {
-    let ints = region.registers_where(|register| r.get(register).as_int().is_some());
-    let doubles = region.registers_where(|register| {
+/// The type each of the region's entry registers holds in the running activation's registers `r`, by
+/// register: `Type::INT32` for an int32, `Type::NUMBER` for another Number, `Type::ANY` otherwise.
+fn entry_types(region: &super::super::compiled::LoopRegion, r: Registers) -> Vec<crate::typed_ir::Type> {
+    let entries: Vec<(crate::bytecode::Register, crate::typed_ir::Type)> = region.entry_registers().map(|register| {
         let value = r.get(register);
-        value.as_number().is_some() && value.as_int().is_none()
-    });
-    (ints, doubles)
+        let ty = if value.as_int().is_some() {
+            crate::typed_ir::Type::INT32
+        } else if value.as_number().is_some() {
+            crate::typed_ir::Type::NUMBER
+        } else {
+            crate::typed_ir::Type::ANY
+        };
+        (register, ty)
+    }).collect();
+    let len = entries.iter().map(|(register, _)| usize::from(*register) + 1).max().unwrap_or(0);
+    let mut types = vec![crate::typed_ir::Type::ANY; len];
+    for (register, ty) in entries {
+        types[usize::from(register)] = ty;
+    }
+    types
 }
 
 /// Starts compiling `site`'s region over the tier's element views from the running activation,
@@ -242,7 +253,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
     let (native_field_loads, store_loads) = (native_field_loads(machine, own, region), native_store_loads(machine, region));
-    let (ints, doubles) = entry_number_registers(region, r);
+    let types = entry_types(region, r);
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let frame_captures: Vec<(usize, usize)> = region.inlining.as_deref()
         .map(|inlining| inlining.frames.iter().map(|frame| machine.lane_callee_captures(frame.callee)).collect()).unwrap_or_default();
@@ -250,7 +261,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     let construct_plans = |function: u32, pc: u32| super::lane_unit_targets(cx, function, pc).first().and_then(|target| target.identity())
         .and_then(|callee| super::scalar_construct_plan(unsafe { vm(cx) }, callee));
     let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
-        int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
+        entry_types: &types, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
         construct_plans: Some(&construct_plans) };
     let policy = machine.heap.memory_policy();
     // A BaseJIT region inlines the calls its sites recorded.

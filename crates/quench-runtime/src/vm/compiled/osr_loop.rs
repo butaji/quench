@@ -130,10 +130,6 @@ impl LoopRegion {
     pub(crate) fn instructions(&self) -> &[WideInstruction] { &self.instructions }
     /// The Number constant the region reads at pool index `index`.
     pub(super) fn number_constant(&self, index: usize) -> Option<f64> { self.constants.get(&index).copied() }
-    /// The registers of the region for which `is_int` holds.
-    pub(crate) fn registers_where(&self, is_int: impl Fn(Register) -> bool) -> Vec<Register> {
-        self.entry_registers().filter(|register| is_int(*register)).collect()
-    }
     /// The registers the region treats as Numbers.
     pub(super) fn number_registers(&self) -> &[Register] { &self.numbers }
     /// The cached field reads, by offset from the header: the lane specializer's field
@@ -2276,10 +2272,9 @@ pub(crate) struct Observation<'a> {
     /// The depth-zero capture slots holding typed arrays when compiled: a loop's array read
     /// through such a capture is viewed as a typed array (`LoopArray::views`).
     pub(crate) typed_captures: &'a [u16],
-    /// The registers of the region that held an int32 where the compile began.
-    pub(crate) int_registers: &'a [Register],
-    /// The registers that held a Number that is no int32.
-    pub(crate) double_registers: &'a [Register],
+    /// The type each register held where the compile began, by register (`Type::INT32` for an int32,
+    /// `Type::NUMBER` for another Number, `Type::ANY` otherwise); a register past the slice is `Type::ANY`.
+    pub(crate) entry_types: &'a [Type],
     /// What each instruction of the region, from its header, met where its int32 handler
     /// declined (`Vm::region_operand_kinds`): the feedback the representations start from,
     /// which the sample of the live registers above completes.

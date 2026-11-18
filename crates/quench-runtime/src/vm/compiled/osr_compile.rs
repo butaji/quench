@@ -428,7 +428,58 @@ pub(super) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, 
     reads
 }
 
-use crate::vm::compiled::tier_policy::REGION_CODE_BUDGET;
+/// What lowers a loop's unit: the region specializer, the same plan a lane body and a static
+/// typed region use. A region it declines stays in the interpreter; there is no second
+/// lowering with its own facts, widenings and entry record.
+struct LoopPlanner<'a> {
+    observation: &'a Observation<'a>,
+    fields: &'a super::lane_region::FieldSites,
+    isa: &'a dyn cranelift_codegen::isa::TargetIsa,
+    program: &'a ResidualProgram,
+    function_id: u32,
+    helpers: LaneHelpers,
+    views: super::ElementViews,
+    tiers: &'static Tiers,
+    /// The names method caches hold now, in a specialized run (`VmFacts::held_atoms`).
+    stores: Option<super::HeldAtoms<'a>>,
+    /// By function PC, the callees each call site reached: the lowered unit calls them by their
+    /// entries (`unit_direct_calls`).
+    unit_calls: &'a [DirectCandidates],
+}
+
+impl LoopPlanner<'_> {
+    /// The function's own unit run over the loop is the general plan: a call inside it leaves
+    /// at the call's exact PC, with no callee inlined. The inlined unit is an optimization over
+    /// that plan, used only where the general plan declines; an inlined callee the region
+    /// cannot prove exactly then costs the region nothing but the inlining.
+    fn plan(&self, global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> crate::vm::global_facts::GlobalReads,
+        unit: &lane_unit::Unit, entry_fields: &super::lane_region::EntryWords, (header, backedge): (usize, usize),
+        generic: &[usize], direct: &super::lane_region::DirectSites) -> Option<super::lane_region::LoweredRegion> {
+        let number_reads = observed_reads(self.program, unit, self.observation.number_arrays, self.observation.abandoned, generic);
+        // The entry registers that held a Number that is no int32: the ones the observed type says are `Type::NUMBER`.
+        let number_entries: Vec<crate::bytecode::Register> = self.observation.entry_types.iter().enumerate()
+            .filter(|(_, ty)| **ty == crate::typed_ir::Type::NUMBER)
+            .filter_map(|(register, _)| crate::bytecode::Register::try_from(register).ok()).collect();
+        super::lane_region::RegionSpecializer {
+            number_reads: &number_reads, int_entries: self.observation.int_entries, number_entries: &number_entries, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
+            function_id: self.function_id, unit, helpers: self.helpers, fields: self.fields,
+            global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts { tiers: self.tiers, held_atoms: self.stores, construct_plans: self.observation.construct_plans, ..VmFacts::STATIC }, generic,
+            direct, frame_captures: self.observation.frame_captures, isa: self.isa,
+            entry_fields,
+            plan: super::lane_region::RegionPlan { entry_bounds: self.observation.entry_bounds,
+                coverage: super::lane_region::Coverage::Loop { header, backedge, poll: true },
+                completion: super::lane_region::Completion::Body, views: self.views,
+            },
+        }.specialize(self.program).ok().filter(|lowered| self.views == super::ElementViews::Dense || lowered.hoists_arrays)
+    }
+}
+
+/// A lane region carries each inlined callee's full body and its guards, so a loop
+/// that inlines two calls may legitimately exceed one function's code budget. The code
+/// is published once per hot loop and retires with its site, so the larger per-site
+/// bound stays bounded by the lane plan's own admission.
+const REGION_CODE_BUDGET: usize = 2 * osr_loop::MAX_CODE_BYTES;
+
 /// The BaseJIT tier's answer for `region`: `Some(code)` where it builds or (under `--b-jit`) declines the
 /// region, `None` where Cranelift compiles it. A region BaseJIT builds skips Cranelift: every instruction has a lowering (`base_region::steps`).
 /// Its small monomorphic calls run as their callees' rows (`calls`, the function's and the realm's they were found in).
@@ -439,8 +490,7 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::b
         return base_only.then_some(None);
     }
     let registers = known.program.function(function as usize).registers;
-    let seen = super::base_region::observed_types(registers, observation.int_registers, observation.double_registers);
-    let spec = BodySpec { function, registers, known, realm: calls.realm, widened, seen: &seen, kinds: observation.operand_kinds };
+    let spec = BodySpec { function, registers, known, realm: calls.realm, widened, seen: observation.entry_types, kinds: observation.operand_kinds };
     // SAFETY: `calls` was made of the call sites' records this compile (`Vm::region_calls`), whose entry cells are live.
     let built = unsafe { build_region(region, &spec, views, &calls.callees, helpers) };
     let Ok(Body { code, bare, frames, records, stable, atoms, holders, layouts, slot_types, resumes, .. }) = built else { return base_only.then_some(None) };
