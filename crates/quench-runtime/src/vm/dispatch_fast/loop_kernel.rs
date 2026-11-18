@@ -152,7 +152,7 @@ pub(super) fn install_loop_kernels<H: Host>(
     let mut kernels = Vec::new();
     for backedge in 0..decoded.len() {
         let jump = decoded[backedge];
-        if jump.op().class() != Class::Jump {
+        if !matches!(crate::staged::Operation::<(), ()>::decode(jump, crate::staged::DecodeContext::EMPTY), Some(crate::staged::Operation::Jump)) {
             continue;
         }
         let header = jump.jump_target() as usize;
