@@ -19,6 +19,8 @@ use crate::typed_ir::Type;
 
 mod concrete;
 pub(crate) mod numeric;
+/// The stencil layout numbers, one source for the stencils (`#[path]`) and the runtime's const checks.
+pub(crate) mod layout_offsets;
 pub(crate) mod flow;
 pub(crate) mod machine;
 #[cfg_attr(not(feature = "jit"), allow(dead_code))] // a specializer's composition
