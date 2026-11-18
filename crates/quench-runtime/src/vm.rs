@@ -2138,10 +2138,10 @@ pub(crate) struct Vm<H> {
     /// The field slots of the descriptor shape `ToPropertyDescriptor` last read
     /// (`object_descriptors::DescriptorLayout`); derived from shapes.
     descriptor_layout: Option<object_descriptors::DescriptorLayout>,
-    /// The shape a new RegExp object starts in and the one its own `lastIndex` moves it to
-    /// (`Vm::regexp_from_matcher`), as the first one recorded; derived from shapes, so
-    /// field-cache invalidation clears it.
-    regexp_object_shapes: Option<(u32, u32)>,
+    /// The header of a new RegExp object of the paired prototype: inline storage in the shape
+    /// its own `lastIndex` gives an empty object, as the first one recorded
+    /// (`Vm::regexp_from_meta`); derived from shapes, so field-cache invalidation clears it.
+    regexp_object_header: Option<(Value, crate::heap::InlineObjectHeader)>,
     /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
     /// slot; derived from shapes, so field-cache invalidation clears it.
     regexp_last_index_layouts: Vec<(u32, u32)>,
@@ -3124,7 +3124,7 @@ impl<H: Host> Vm<H> {
         self.reused_iterator_result = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
-        self.regexp_object_shapes = None;
+        self.regexp_object_header = None;
         self.regexp_last_index_layouts.clear();
         self.regexp_builtin_layouts.clear();
         self.regexp_symbol_layouts.clear();

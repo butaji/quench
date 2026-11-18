@@ -2157,45 +2157,45 @@ impl<H: Host> Vm<H> {
         self.regexp_from_meta(prototype, meta)
     }
 
+    /// The header of a new RegExp object of `prototype` once one was recorded: another
+    /// prototype's (another realm's) shares its shape.
+    #[inline(always)]
+    fn regexp_object_header(&mut self, prototype: Value) -> Option<crate::heap::InlineObjectHeader> {
+        let (derived_for, header) = self.regexp_object_header?;
+        if derived_for == prototype {
+            return Some(header);
+        }
+        let header = crate::heap::InlineObjectHeader::of(prototype, header.shape());
+        self.regexp_object_header = Some((prototype, header));
+        Some(header)
+    }
+
     /// A new RegExp object of `prototype` with the record `meta`.
     pub(super) fn regexp_from_meta(
         &mut self,
         prototype: Value,
         meta: Rc<crate::heap::RegExpMeta>,
     ) -> Result<Value, JsError> {
-        let object = self.heap.alloc(Cell::RegExp {
-            object: Self::empty_object(prototype),
-            meta,
-        });
-        // Every new RegExp object starts in the same shape, so the `lastIndex` definition the
-        // first one recorded applies again.
-        let start = self.object_data(object).map(Object::shape);
-        if let Some((source, target)) = self.regexp_object_shapes
-            && start == Some(source)
+        // Every new RegExp object has the same header (`regexp_object_header`), so it is built
+        // whole in one allocation: the shape its own `lastIndex` gives it, holding 0.
+        const _: () = assert!(crate::value_vec::INLINE_PROPERTY_COUNT == 2);
+        let last_index = [Value::number(0.0), Value::UNDEFINED];
+        if let Some(header) = self.regexp_object_header(prototype)
+            && let Some(object) = Object::from_inline_header(header, last_index)
         {
-            self.heap.property_add(object, Value::number(0.0), target);
-            return Ok(object);
+            return Ok(self.heap.alloc_regexp(object, meta));
         }
+        let empty = Self::empty_object(prototype);
+        let source = empty.shape();
+        let object = self.heap.alloc_regexp(empty, meta);
         let last_index_atom = self.intern_atom("lastIndex");
-        self.set_property_with_attributes(
-            object,
-            last_index_atom,
-            Value::number(0.0),
-            PropertyAttributes {
-                writable: true,
-                enumerable: false,
-                configurable: false,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        )?;
-        if let Some(source) = start
-            && let Some(target) = self.object_data(object).map(Object::shape)
+        let attributes = PropertyAttributes { writable: true, enumerable: false, configurable: false, accessor: false, getter: None, setter: None };
+        self.set_property_with_attributes(object, last_index_atom, Value::number(0.0), attributes)?;
+        if let Some(target) = self.object_data(object).map(Object::shape)
             && !self.shape_is_dictionary(source)
             && !self.shape_is_dictionary(target)
         {
-            self.regexp_object_shapes = Some((source, target));
+            self.regexp_object_header = Some((prototype, crate::heap::InlineObjectHeader::of(prototype, target)));
         }
         Ok(object)
     }
