@@ -3454,6 +3454,9 @@ pub(super) struct LaneMethod {
     /// one adopts them from the file (`Vm::lane_adopt_window`).
     framed: bool,
     caller_registers: u16,
+    /// The frame slots past `caller_registers` the code writes in the activation's own storage (a b-jit
+    /// body's scratch and inlined windows, past the environment window); 0 where it writes none there.
+    frame_reach: usize,
     /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
     amortizes: bool,
     /// The callees it calls by their compiled entries, which its code names.
@@ -3470,6 +3473,7 @@ pub(super) struct LaneMethod {
 }
 
 impl LaneMethod {
+    pub(super) fn frame_reach(&self) -> usize { self.frame_reach }
     pub(super) fn recovery_space(&self) -> super::dispatch_fast::LaneRecoverySpace { self.recovery_space }
     /// The registers of the function it runs, which an inlined callee's follow.
     pub(super) fn caller_registers(&self) -> u16 {

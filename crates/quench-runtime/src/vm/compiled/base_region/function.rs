@@ -75,6 +75,8 @@ struct Sites<'a> {
     facts: &'a [Option<DirectFacts>],
     context: Context,
     registers: u16,
+    /// The first register the rows may write past the function's own (`inline_base`).
+    scratch: Register,
     known: Known<'a>,
     ending: Ending,
     views: Views,
@@ -178,8 +180,8 @@ fn math_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -> Option<Ve
 /// The rows of an instruction a body makes in the scratch registers past the function's own (`scratch`): the comparison and the jump on it
 /// of an `instanceof` or `in` jump (`sites::compare_jump`). A region reads its entry record, and leaves it to `cover`.
 fn expanded(sites: &Sites, pc: u32, instruction: WideInstruction) -> Option<Vec<What>> {
-    (sites.ending == Ending::Body).then_some(())?;
-    let rows = compare_jump(sites.known, pc, instruction, sites.registers)?;
+    (sites.ending == Ending::Body && sites.scratch < crate::bytecode::REGISTER_MASK).then_some(())?;
+    let rows = compare_jump(sites.known, pc, instruction, sites.scratch)?;
     #[cfg(test)]
     note_fast(instruction.op() as u16);
     Some(rows.into_iter().map(What::Row).collect())
@@ -441,23 +443,22 @@ unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, 
     // SAFETY: the caller's contract.
     let facts = unsafe { callees.facts() };
     let function = spec.known.program.function(spec.function as usize);
-    let sites = Sites { function, id: spec.function, callees, facts: &facts, context: Context::root(spec.function, inline_base(function, spec.registers, ending), spec.known.stitch), registers: spec.registers, known: spec.known, ending, views };
+    let sites = Sites { function, id: spec.function, callees, facts: &facts, context: Context::root(spec.function, inline_base(function, spec.registers), spec.known.stitch), registers: spec.registers, scratch: inline_base(function, spec.registers), known: spec.known, ending, views };
     let built = assemble(region, spec, sites, helpers);
     tally(&built, ending, (u64::from(region.backedge - region.header) + 1, started.elapsed().as_nanos() as u64));
     built
 }
 
-/// The first register an inlined callee's window takes in a stitch of `function`, which has `registers`
-/// registers. A region runs over the activation it entered, which may keep its environment window (its
-/// header words and its locals) right past its registers, in a lane activation's value stack or a VM
-/// frame's register file (`lane_context_locals_in_window`); the windows start past it, so they never
-/// overlap it whatever the activation, and the run is admitted only where the storage reaches them
-/// (`dispatch_fast::lane_frame_holds_window`). A body is its own activation, its window its own.
-fn inline_base(function: &crate::bytecode::Function, registers: u16, ending: Ending) -> u16 {
-    match ending {
-        Ending::Region => registers.saturating_add(crate::vm::dispatch_fast::WINDOW_LOCALS).saturating_add(function.locals),
-        Ending::Body => registers,
-    }
+/// The first register past `function`'s own (`registers`) that the code's rows may write: an inlined
+/// callee's window and a body's scratch (`expanded`). A region and a body alike run over an activation
+/// that may keep its environment window (its header words, the environment among them, and its
+/// locals) right past its registers, in a lane activation's value stack or a VM frame's register file
+/// (`lane_context_locals_in_window`); the rows' registers start past it, so they never overlap it
+/// whatever the activation, and the run is admitted only where the storage reaches them
+/// (`dispatch_fast::lane_frame_holds_window`, `lane_body_admits`). A body's scratch written at
+/// `registers` overwrote the environment word (JetStream earley-boyer's "invalid local environment").
+fn inline_base(function: &crate::bytecode::Function, registers: u16) -> u16 {
+    registers.saturating_add(crate::vm::dispatch_fast::WINDOW_LOCALS).saturating_add(function.locals)
 }
 
 /// The bit of a widened key that says the instruction is an inlined callee's (`inlined_exit_key`).
