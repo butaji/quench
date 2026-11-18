@@ -13,9 +13,12 @@ use crate::staged::wasm::{Width, integer_binary};
 use crate::staged::wasm_concrete::{ConcreteWasm, scalar_stage};
 use crate::staged::wasm_memory::{Access, WasmMemory, WasmMemoryWrite, load, store};
 use crate::wasm::WasmType;
+use crate::staged::wasm_float::{Float, convert, float_binary};
+use crate::wasm::conversion::ScalarConversionOperator;
+use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::WasmTrap;
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
-use crate::words::{HOLE_A, HOLE_B, Out, S, hole, hole64, slot};
+use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S, hole, hole64, slot};
 
 pub(crate) use crate::wasm_codes::*;
 
@@ -33,6 +36,31 @@ pub(crate) unsafe fn run<const K: u8, const OP: u32, const W: u8, const SHAPE: u
             }
             LOAD => memory_load::<OP>(s),
             CALL => call(s),
+            FLOAT_BINARY => {
+                let operator = const { float_binary_operator(OP) };
+                let word = float_binary(&mut ConcreteWasm, operator, const { float_of(W) }, read::<HOLE_A>(&s), read::<HOLE_B>(&s));
+                write::<0>(&s, word);
+                Out::Next(s)
+            }
+            FLOAT_UNARY => {
+                let operator = const { float_unary_operator(OP) };
+                let word = ConcreteWasm.operate_float_unary(operator, const { float_of(W) }, read::<HOLE_A>(&s));
+                write::<0>(&s, word);
+                Out::Next(s)
+            }
+            CONVERT => match convert(&mut ConcreteWasm, const { conversion(OP) }, read::<HOLE_A>(&s)) {
+                Ok(word) => {
+                    write::<0>(&s, word);
+                    Out::Next(s)
+                }
+                Err(error) => trap(s, error),
+            },
+            SELECT => {
+                let taken = read::<HOLE_FOURTH>(&s) as u32 != 0;
+                write::<0>(&s, if taken { read::<HOLE_A>(&s) } else { read::<HOLE_B>(&s) });
+                Out::Next(s)
+            }
+            TRAP => trap(s, WasmTrap::Unreachable),
             STORE => memory_store::<OP>(s),
             CONSTANT => {
                 write::<0>(&s, hole64::<HOLE_B>());
@@ -50,6 +78,34 @@ const fn binary_operator(tag: u32) -> Binary {
         Some(operator) => operator,
         None => Binary::Add,
     }
+}
+
+const fn float_binary_operator(tag: u32) -> FloatBinary {
+    match FloatBinary::from_tag(tag) {
+        Some(operator) => operator,
+        None => FloatBinary::Add,
+    }
+}
+
+const fn float_unary_operator(tag: u32) -> FloatUnary {
+    match FloatUnary::from_tag(tag) {
+        Some(operator) => operator,
+        None => FloatUnary::Absolute,
+    }
+}
+
+const fn conversion(tag: u32) -> ScalarConversionOperator {
+    match ScalarConversionOperator::from_tag(tag) {
+        Some(operator) => operator,
+        None => match ScalarConversionOperator::from_tag(0) {
+            Some(operator) => operator,
+            None => unreachable!(),
+        },
+    }
+}
+
+const fn float_of(width: u8) -> Float {
+    if width == W32 { Float::F32 } else { Float::F64 }
 }
 
 const fn unary_operator(tag: u32) -> Unary {

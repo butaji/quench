@@ -33,6 +33,13 @@ const fn word(width: Width, value: i64) -> u64 {
     }
 }
 
+const fn float_code(float: crate::staged::wasm_float::Float) -> u8 {
+    match float {
+        crate::staged::wasm_float::Float::F32 => codes::W32,
+        crate::staged::wasm_float::Float::F64 => codes::W64,
+    }
+}
+
 const fn width_code(width: Width) -> u8 {
     match width {
         Width::I32 => codes::W32,
@@ -151,7 +158,15 @@ fn numeric(instruction: WideInstruction, operation: WasmOperation) -> Option<Vec
             binary(Binary::ShiftRightUnsigned, Width::I32, Operand::Constant(i64::from(instruction.c() as i16)), a, b),
             binary(Binary::And, Width::I32, Operand::Constant(i64::from(instruction.imm() as i32)), a, a),
         ],
-        WasmOperation::FloatBinary { .. } | WasmOperation::FloatUnary { .. } | WasmOperation::Convert { .. } => return None,
+        WasmOperation::FloatBinary { operator, float } => {
+            vec![row((codes::FLOAT_BINARY, operator as u32, float_code(float), codes::REGISTER), [slot(a), slot(b), slot(instruction.c())], None)]
+        }
+        WasmOperation::FloatUnary { operator, float } => {
+            vec![row((codes::FLOAT_UNARY, operator as u32, float_code(float), codes::REGISTER), [slot(a), slot(b), 0], None)]
+        }
+        WasmOperation::Convert { operator } => {
+            vec![row((codes::CONVERT, operator as u32, codes::W64, codes::REGISTER), [slot(a), slot(b), 0], None)]
+        }
     })
 }
 
@@ -214,6 +229,13 @@ fn plan(
         }
         Step::Memory(step) => memory(instruction, step),
         Step::Flow(Flow::Jump) => Some(vec![row((codes::GOTO, 0, codes::W64, codes::REGISTER), [0; 3], Some(instruction.jump_target() as usize))]),
+        Step::Flow(Flow::Select) => {
+            let (condition, _) = instruction.register_pair();
+            let mut select = row((codes::SELECT, 0, codes::W64, codes::REGISTER), [slot(a), slot(b), slot(instruction.c())], None);
+            select.holes[3] = slot(condition);
+            Some(vec![select])
+        }
+        Step::Flow(Flow::Unreachable) => Some(vec![row((codes::TRAP, 0, codes::W64, codes::REGISTER), [0; 3], None)]),
         Step::Flow(Flow::Table) => {
             let entries = crate::bytecode::branch_table_entries(pc, instruction);
             let targets: Vec<usize> = entries.map(|entry| instructions.get(entry).map(|jump| jump.jump_target() as usize)).collect::<Option<_>>()?;
