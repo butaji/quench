@@ -478,6 +478,108 @@ pub(crate) const fn wasm_branch_table(op: Op) -> bool {
     matches!(op, Op::WasmBranchTable)
 }
 
+/// The Wasm record forms module validation checks against the module's declarations, one per
+/// record meaning (`vm::program_store`'s admission of a module's functions).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum WasmRecordCheck {
+    /// A function reference (`ref.func`), which names a declared signature.
+    RefFunc,
+    /// An indirect call target, which names a type signature.
+    IndirectTarget,
+    /// A GC descriptor read (`ref.get_desc`), which names a descriptor type.
+    RefGetDesc,
+    /// An array segment construction (`array.new_data`, `array.new_elem`).
+    ArraySegment,
+    /// An array construction (`array.new`, its defaulted and fixed forms).
+    ArrayNew,
+    /// A descriptor test or cast, which names a reference target's descriptor.
+    DescriptorReference,
+    /// A reference test or cast, which names a reference target's reference type.
+    ReferenceTest,
+    /// Any other record: nothing module validation checks.
+    Other,
+}
+
+/// The validation form of `op` (`WasmRecordCheck`): the Wasm GC and reference records whose
+/// immediate and registers the module's declarations must admit.
+pub(crate) const fn wasm_record_check(op: Op) -> WasmRecordCheck {
+    match op {
+        Op::WasmRefFunc => WasmRecordCheck::RefFunc,
+        Op::WasmIndirectTarget => WasmRecordCheck::IndirectTarget,
+        Op::WasmRefGetDesc => WasmRecordCheck::RefGetDesc,
+        Op::WasmArrayNewData | Op::WasmArrayNewElem => WasmRecordCheck::ArraySegment,
+        Op::WasmArrayNew | Op::WasmArrayNewDefault | Op::WasmArrayNewFixed => WasmRecordCheck::ArrayNew,
+        Op::WasmDescriptorTest | Op::WasmDescriptorCast => WasmRecordCheck::DescriptorReference,
+        Op::WasmRefTest | Op::WasmRefCast => WasmRecordCheck::ReferenceTest,
+        _ => WasmRecordCheck::Other,
+    }
+}
+
+/// Whether `op` builds a defaulted Wasm array (`array.new_default`), whose element type must be
+/// defaultable.
+pub(crate) const fn wasm_array_new_defaulted(op: Op) -> bool {
+    matches!(op, Op::WasmArrayNewDefault)
+}
+
+/// Whether `op` builds a fixed-length Wasm array (`array.new_fixed`), whose elements are a
+/// register window of the function.
+pub(crate) const fn wasm_array_new_fixed(op: Op) -> bool {
+    matches!(op, Op::WasmArrayNewFixed)
+}
+
+/// Whether `instruction` makes a constant array (`Allocation::ConstArray`), which a superinstruction
+/// fuses at its head.
+pub(crate) fn makes_const_array(instruction: WideInstruction) -> bool {
+    matches!(Allocation::decode(instruction, &[]), Some((_, Allocation::ConstArray { .. })))
+}
+
+/// Whether `instruction` makes an object of two fields (`Allocation::ObjectPair`), which a
+/// superinstruction fuses at its tail.
+pub(crate) fn makes_object_pair(instruction: WideInstruction) -> bool {
+    matches!(Allocation::decode(instruction, &[]), Some((_, Allocation::ObjectPair { .. })))
+}
+
+/// Whether `op` is a generic binary operation (`Binary`), the record a fused pair is built from.
+pub(crate) const fn binary(op: Op) -> bool {
+    matches!(op, Op::Binary)
+}
+
+/// Whether `op` is a conditional jump on a truthy or falsy value (`JumpTrue`, `JumpFalse`) or on a
+/// comparison (`JumpBinaryFalse`): the guards a function's census counts.
+pub(crate) const fn conditional_jump(op: Op) -> bool {
+    matches!(op, Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
+}
+
+/// Whether `op` copies a register (`Move`).
+pub(crate) const fn copies_register(op: Op) -> bool {
+    matches!(op, Op::Move)
+}
+
+/// Whether `op` is a Wasm SIMD operator (`WasmSimd`) on the lane's vector registers.
+pub(crate) const fn wasm_simd(op: Op) -> bool {
+    matches!(op, Op::WasmSimd)
+}
+
+/// Whether `op` is a Wasm `i8x16.shuffle` (`WasmSimdShuffle`), whose lane indices are its constant.
+pub(crate) const fn wasm_simd_shuffle(op: Op) -> bool {
+    matches!(op, Op::WasmSimdShuffle)
+}
+
+/// Whether `op` is a Wasm effective address (`WasmMemoryAddress`) of the function's memory.
+pub(crate) const fn wasm_memory_address(op: Op) -> bool {
+    matches!(op, Op::WasmMemoryAddress)
+}
+
+/// Whether `op` is a generic Wasm memory load (`WasmMemoryLoad`) of the function's memory.
+pub(crate) const fn wasm_memory_load(op: Op) -> bool {
+    matches!(op, Op::WasmMemoryLoad)
+}
+
+/// Whether `op` is a generic Wasm memory store (`WasmMemoryStore`) of the function's memory.
+pub(crate) const fn wasm_memory_store(op: Op) -> bool {
+    matches!(op, Op::WasmMemoryStore)
+}
+
 /// The opcodes of the Wasm i32 zero tests, which the lane names to give a zero test's row the
 /// handler of its direction (`jump_row`).
 pub(crate) const WASM_JUMP_ZERO_ROW: u16 = Op::WasmJumpI32Zero as u16;

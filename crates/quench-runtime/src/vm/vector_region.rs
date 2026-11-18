@@ -15,6 +15,7 @@
 
 use super::*;
 use crate::compile::liveness::{RegisterMasks, RegisterSet, register_in};
+use crate::staged;
 use crate::wasm::simd::{BitKernel, BitShift, ShuffleForm, SimdKernel};
 
 /// The registers a bank names: liveness' width, which every region register lies within.
@@ -353,40 +354,38 @@ fn admit(
     if let Some(operator) = I32BinaryOperator::from_immediate_op(op) {
         return Some(Admitted::I32(operator, Some(instruction.imm() as i32)));
     }
-    Some(match op.class() {
-        Class::WasmSimd => {
-            let (kernel, lane) = SimdKernel::of(instruction.imm())?;
-            (admitted_type(kernel.left)
-                && kernel.right.is_none_or(admitted_type)
-                && admitted_type(kernel.result_type(lane)))
-            .then_some(Admitted::Simd { kernel, lane })?
+    let admitted = if staged::wasm_simd(op) {
+        let (kernel, lane) = SimdKernel::of(instruction.imm())?;
+        (admitted_type(kernel.left)
+            && kernel.right.is_none_or(admitted_type)
+            && admitted_type(kernel.result_type(lane)))
+        .then_some(Admitted::Simd { kernel, lane })?
+    } else if staged::wasm_simd_shuffle(op) {
+        Admitted::Shuffle(ShuffleForm::of(heap.v128(constant()?)?))
+    } else if staged::copies_register(op) {
+        Admitted::Move
+    } else if staged::loads_constant(op) {
+        let value = constant()?;
+        match heap.v128(value) {
+            Some(bytes) => Admitted::VectorConstant(u128::from_le_bytes(bytes)),
+            None => Admitted::Constant(value),
         }
-        Class::WasmSimdShuffle => Admitted::Shuffle(ShuffleForm::of(heap.v128(constant()?)?)),
-        Class::Move => Admitted::Move,
-        Class::LoadConst => {
-            let value = constant()?;
-            match heap.v128(value) {
-                Some(bytes) => Admitted::VectorConstant(u128::from_le_bytes(bytes)),
-                None => Admitted::Constant(value),
-            }
-        }
-        Class::WasmMemoryAddress if Some(instruction.c()) == memory => {
-            Admitted::Address(constant()?.bits64()?)
-        }
-        Class::WasmMemoryLoad
-            if Some(instruction.b()) == memory
-                && MemoryLoad::from_tag(instruction.imm()) == Some(MemoryLoad::V128Load) =>
-        {
-            Admitted::Load
-        }
-        Class::WasmMemoryStore
-            if Some(instruction.b()) == memory
-                && MemoryStore::from_tag(instruction.imm()) == Some(MemoryStore::V128Store) =>
-        {
-            Admitted::Store
-        }
-        _ => return None,
-    })
+    } else if staged::wasm_memory_address(op) && Some(instruction.c()) == memory {
+        Admitted::Address(constant()?.bits64()?)
+    } else if staged::wasm_memory_load(op)
+        && Some(instruction.b()) == memory
+        && MemoryLoad::from_tag(instruction.imm()) == Some(MemoryLoad::V128Load)
+    {
+        Admitted::Load
+    } else if staged::wasm_memory_store(op)
+        && Some(instruction.b()) == memory
+        && MemoryStore::from_tag(instruction.imm()) == Some(MemoryStore::V128Store)
+    {
+        Admitted::Store
+    } else {
+        return None;
+    };
+    Some(admitted)
 }
 
 /// A run under construction: the registers its bank holds after the steps so far, the

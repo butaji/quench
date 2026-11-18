@@ -1361,11 +1361,11 @@ impl ProgramStore {
                 } else {
                     instruction.as_wide()
                 };
-                let valid = match instruction.op().class() {
-                    crate::bytecode::Class::WasmRefFunc => {
+                let valid = match crate::staged::wasm_record_check(instruction.op()) {
+                    crate::staged::WasmRecordCheck::RefFunc => {
                         signatures.get(instruction.imm() as usize).is_some()
                     }
-                    crate::bytecode::Class::WasmIndirectTarget => {
+                    crate::staged::WasmRecordCheck::IndirectTarget => {
                         signatures.type_signature(instruction.imm()).is_some()
                     }
                     _ if crate::wasm::gc::StructConstruction::from_op(instruction.op()).is_some() => {
@@ -1399,12 +1399,11 @@ impl ProgramStore {
                                             })
                             })
                     }
-                    crate::bytecode::Class::WasmRefGetDesc => signatures
+                    crate::staged::WasmRecordCheck::RefGetDesc => signatures
                         .declarations
                         .descriptor_type(instruction.imm())
                         .is_some(),
-                    crate::bytecode::Class::WasmArrayNewData
-                    | crate::bytecode::Class::WasmArrayNewElem => {
+                    crate::staged::WasmRecordCheck::ArraySegment => {
                         use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind};
                         instruction.register_window().count == ArraySegmentInput::COUNT
                             && signatures
@@ -1423,9 +1422,7 @@ impl ProgramStore {
                                         }
                                 })
                     }
-                    crate::bytecode::Class::WasmArrayNew
-                    | crate::bytecode::Class::WasmArrayNewDefault
-                    | crate::bytecode::Class::WasmArrayNewFixed => signatures
+                    crate::staged::WasmRecordCheck::ArrayNew => signatures
                         .declarations
                         .array_field(instruction.imm())
                         .is_some_and(|field| {
@@ -1433,25 +1430,24 @@ impl ProgramStore {
                                 wasmparser::StorageType::I8 | wasmparser::StorageType::I16 => true,
                                 wasmparser::StorageType::Val(ty) => {
                                     signatures.declarations.callable_value_type(ty).is_some()
-                                        && (!instruction.op().class().eq(crate::bytecode::Class::WasmArrayNewDefault)
+                                        && (!crate::staged::wasm_array_new_defaulted(instruction.op())
                                             || ty.is_defaultable())
                                 }
                             };
                             valid
-                                && (!instruction.op().class().eq(crate::bytecode::Class::WasmArrayNewFixed)
+                                && (!crate::staged::wasm_array_new_fixed(instruction.op())
                                     || usize::from(instruction.register_b())
                                         .checked_add(usize::from(
                                             instruction.register_window().count,
                                         ))
                                         .is_some_and(|end| end <= usize::from(function.registers)))
                         }),
-                    crate::bytecode::Class::WasmDescriptorTest
-                    | crate::bytecode::Class::WasmDescriptorCast => {
+                    crate::staged::WasmRecordCheck::DescriptorReference => {
                         crate::wasm::reference::ReferenceTarget::from_tag(instruction.imm())
                             .and_then(|target| target.descriptor_type(&signatures.declarations))
                             .is_some()
                     }
-                    crate::bytecode::Class::WasmRefTest | crate::bytecode::Class::WasmRefCast => {
+                    crate::staged::WasmRecordCheck::ReferenceTest => {
                         crate::wasm::reference::ReferenceTarget::from_tag(instruction.imm())
                             .and_then(|target| target.reference_type())
                             .and_then(|ty| {
@@ -2190,25 +2186,18 @@ impl ProgramStore {
                 if let Some(function) = function_code {
                     for instruction in &function.code {
                         let instruction = instruction.as_wide();
-                        match instruction.op().class() {
-                            crate::bytecode::Class::JumpFalse
-                            | crate::bytecode::Class::JumpTrue
-                            | crate::bytecode::Class::JumpBinaryFalse => {
-                                guard_census.0 = guard_census.0.saturating_add(1);
-                                if instruction.op().is_jump_binary_false() {
-                                    count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
-                                }
+                        let op = instruction.op();
+                        if crate::staged::conditional_jump(op) {
+                            guard_census.0 = guard_census.0.saturating_add(1);
+                            if crate::staged::compare_jump(op) {
+                                count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
                             }
-                            crate::bytecode::Class::Unary
-                                if instruction.unary_operator()
-                                    == oxc_ast::ast::UnaryOperator::Typeof as u32 =>
-                            {
-                                guard_census.1 = guard_census.1.saturating_add(1);
-                            }
-                            crate::bytecode::Class::Binary => {
-                                count_comparison_guard(&mut guard_census, instruction.binary_operator())
-                            }
-                            _ => {}
+                        } else if crate::staged::computes_unary(op)
+                            && instruction.unary_operator() == oxc_ast::ast::UnaryOperator::Typeof as u32
+                        {
+                            guard_census.1 = guard_census.1.saturating_add(1);
+                        } else if crate::staged::binary(op) {
+                            count_comparison_guard(&mut guard_census, instruction.binary_operator())
                         }
                     }
                 }
