@@ -80,6 +80,13 @@ struct SharedUndefined {
     used: bool,
 }
 
+/// A for-in loop whose body is being compiled (`FunctionCompiler::enumerations`).
+pub(super) struct Enumeration {
+    pub(super) object: String,
+    pub(super) key: String,
+    pub(super) state: Atom,
+}
+
 pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) owner: &'a mut Compiler<'b>,
     pub(super) locals: Vec<Atom>,
@@ -95,6 +102,11 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     /// enclosing operation holds while evaluating later operands takes a copy, since those
     /// operands may write the register first.
     clobbered_locals: Vec<bool>,
+    /// The for-in loops whose bodies are being compiled, innermost last: the identifier each
+    /// lists (`for (k in o)`), its key binding's and its state's hidden local, so a read `o[k]` in
+    /// the body is the enumerated read (`Op::GetEnumerated`), whose row guards that `o` and `k` are
+    /// still the loop's.
+    pub(super) enumerations: Vec<Enumeration>,
     /// The expression being compiled is the last operand its consumer evaluates, which
     /// then executes at once; a clobbered local read there may alias its register.
     pub(super) last_operand: bool,
@@ -220,6 +232,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             local_slots,
             local_registers,
             clobbered_locals,
+            enumerations: Vec::new(),
             last_operand: false,
             temporary_floor: local_register_count,
             shared_undefined: SharedUndefined { register: shared_undefined, used: false },

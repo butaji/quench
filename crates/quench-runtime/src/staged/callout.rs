@@ -22,6 +22,7 @@ pub(crate) const TAG_DELETE: u8 = 11;
 pub(crate) const TAG_LOAD_NAME: u8 = 12;
 pub(crate) const TAG_SUPER_CALL: u8 = 13;
 pub(crate) const TAG_DECIDE: u8 = 14;
+pub(crate) const TAG_ENUMERATED_GET: u8 = 15;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -69,6 +70,8 @@ pub(crate) enum CallOut {
     /// case. It defines no register; its answer is a canonical boolean, which a lane's helper
     /// reports as its status (`LANE_CALL_HOLDS`).
     Decide { left: Register, right: Register, operator: u32 } = TAG_DECIDE,
+    /// `base[key]` of a for-in's enumerated read whose state's memo did not answer: the element read.
+    EnumeratedGet { base: Register, key: Register } = TAG_ENUMERATED_GET,
 }
 
 /// The registers the VM reads for a `CallOut`: up to two of fixed place, and a list a call
@@ -121,7 +124,7 @@ impl CallOut {
     pub(crate) fn operands(self) -> Operands {
         Operands::of_fixed(match self {
             Self::Equality { left, right, .. } | Self::Binary { left, right, .. } | Self::Delete { base: left, key: right, .. }
-                | Self::Decide { left, right, .. } => [Some(left), Some(right)],
+                | Self::Decide { left, right, .. } | Self::EnumeratedGet { base: left, key: right } => [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
             Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
             Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. } => [None, None],
@@ -145,6 +148,7 @@ impl<W, P> Operation<W, P> {
                 (CallOut::Binary { left, right, operator }, Some(destination)),
             Self::Protocol { step, destination, operands } => (CallOut::Protocol { step, operands }, destination),
             Self::ForInNext { destination, state } => (CallOut::ForInNext { state }, Some(destination)),
+            Self::EnumeratedGet { destination, base, key, .. } => (CallOut::EnumeratedGet { base, key }, Some(destination)),
             _ => return self.binding_call_out(),
         })
     }

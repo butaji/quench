@@ -106,6 +106,9 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     decisions: Option<Decisions>,
     /// The slots the running function's captures read from (`capture_reads`), for a staged capture read.
     capture_slots: Option<*const usize>,
+    /// The heap whose records a row reads in place (`Frame::heap_records`), where the row is one
+    /// that does (`Decoder::Names`).
+    heap: Option<*const crate::heap::Heap>,
     /// The constants, local slots and outer captures the staged row's operands name.
     reads: Reads,
 }
@@ -115,7 +118,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, reads: Reads::NONE }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -139,7 +142,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, reads: Reads::NONE }
     }
 }
 
@@ -161,6 +164,9 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 
     #[inline(always)]
     fn read(&mut self, _stage: &mut Concrete, register: Register) -> u64 {
+        // The carried accumulator stands for field B, the one register a single-operand row reads;
+        // a row that reads several (one with heap records) reads the file, which every producer writes.
+        if self.heap.is_some() { return self.registers.get(register).to_bits(); }
         read::<ACC, ACC_B>(self.registers, register, self.view).to_bits()
     }
 
@@ -234,6 +240,13 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         // SAFETY: `slot` is inside the activation's live local slots.
         unsafe { *locals.add(usize::from(slot)) = Value::from_bits(value) };
         true
+    }
+
+    #[inline(always)]
+    fn heap_records(&mut self, _stage: &mut Concrete) -> Option<(u64, u64, u64)> {
+        // SAFETY: the running lane's heap, live for the row's step.
+        let heap = unsafe { &*self.heap? };
+        Some((heap.array_record_base()? as u64, heap.object_record_base()? as u64, heap.collection_epoch()))
     }
 
     #[inline(always)]
@@ -443,6 +456,10 @@ pub(in crate::vm::dispatch_fast) const fn lane_runs_row(op: Op) -> bool {
 #[inline(always)]
 fn row_frame<H: Host, const OP: u16, const ACC: u8>(cx: *mut LaneContext<H>, r: Registers, view: Carried) -> LaneFrame<ACC> {
     let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Local)) };
+    if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
+        let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
+        return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::new(r, view) };
+    }
     if !locals {
         return LaneFrame::<ACC>::new(r, view);
     }
@@ -484,13 +501,25 @@ lane_handler! {
             Some(crate::bytecode::Decoder::Flow) => Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY),
             Some(crate::bytecode::Decoder::Local) => Operation::decode_local(crate::staged::Fields::wide(fields)),
             Some(crate::bytecode::Decoder::Value) => Operation::decode_value(crate::staged::Fields::wide(fields)),
+            Some(crate::bytecode::Decoder::Names) => Operation::decode_names(crate::staged::Fields::wide(fields)),
             _ => None,
         };
         let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, ip, view) };
-        let mut stage = Concrete::new(std::ptr::null());
+        // A row that reads records in place (`Decoder::Names`) may read a slot of the property arena.
+        let property_values = if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
+            unsafe { vm(cx) }.heap.arena_values_base()
+        } else { std::ptr::null() };
+        let mut stage = Concrete::new(property_values);
         let mut frame = row_frame::<H, OP, ACC>(cx, r, view);
         match crate::staged::step(&mut stage, &mut frame, operation) {
-            Step::Value(value) => next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view }),
+            Step::Value(value) => {
+                // A names row answers its value without defining its register (its call-out defines it):
+                // the register is written here, as every producer writes it beside the carried value.
+                if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
+                    r.set(i.a, Value::from_bits(value));
+                }
+                next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view })
+            }
             Step::Control(_) | Step::Unresolved => sibling!(lane_general_step::<H>, r, ip, view),
         }
     }
