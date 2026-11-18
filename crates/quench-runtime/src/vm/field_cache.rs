@@ -153,7 +153,6 @@ impl<H: Host> Vm<H> {
         let kind = match cell {
             Cell::Promise(_) => ReceiverKind::Ordinary,
             Cell::Proxy { .. } => return None,
-            Cell::Array { .. } if class.contains(AtomClass::ARRAY_INDEX) => return None,
             Cell::TypedArray { .. } if class.contains(AtomClass::TYPED_ARRAY_INDEX) => {
                 return None;
             }

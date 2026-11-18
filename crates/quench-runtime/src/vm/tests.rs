@@ -2216,12 +2216,10 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     use crate::heap::Cell;
     let program = Engine::specialize("", "descriptor-owner.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
-    let owner = vm.heap.alloc(Cell::Array {
-        object: crate::heap::ArrayObject::new(
+    let owner = vm.heap.alloc_array(crate::heap::ArrayObject::new(
             Vm::<TestHost>::empty_object(Value::NULL),
             Vec::new(),
-        ),
-    });
+        ));
     let setter = vm.native_with_env(Native::Object, owner);
     let owner_weak = vm.heap.weak_handle(owner).unwrap();
     let setter_weak = vm.heap.weak_handle(setter).unwrap();

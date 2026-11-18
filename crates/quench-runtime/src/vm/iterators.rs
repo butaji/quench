@@ -2772,8 +2772,7 @@ impl<H: Host> Vm<H> {
                 return self.async_from_sync_reject(p, iterator, error, close_on_rejection);
             }
         };
-        let env = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let env = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 vec![
                     if done { Value::TRUE } else { Value::FALSE },
@@ -2784,8 +2783,7 @@ impl<H: Host> Vm<H> {
                         Value::FALSE
                     },
                 ],
-            ),
-        });
+            ));
         let fulfilled = self.native_with_env(Native::AsyncFromSyncValue, env);
         let rejected = self.native_with_env(Native::AsyncFromSyncValueRejected, env);
         self.promise_then_intrinsic(p, value_promise, fulfilled, rejected)
@@ -3239,12 +3237,10 @@ impl<H: Host> Vm<H> {
             Ok(match kind {
                 IteratorKind::ArrayValues | IteratorKind::Array => Some((value, None)),
                 IteratorKind::ArrayEntries => {
-                    let entry = vm.heap.alloc(Cell::Array {
-                        object: crate::heap::ArrayObject::new(
+                    let entry = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                             Self::empty_object(vm.array_proto),
                             vec![Value::number(index as f64), value],
-                        ),
-                    });
+                        ));
                     Some((entry, None))
                 }
                 _ => None,

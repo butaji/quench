@@ -109,9 +109,7 @@ impl<H: Host> Vm<H> {
             _ => input.split_runs(separator.units(), u32::MAX as usize, |run| parts.push(self.heap.alloc_unit_run(run))),
         }
         let values = crate::heap::ArrayElements::from_slice(&parts);
-        Some(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), values),
-        }))
+        Some(self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), values)))
     }
 }
 

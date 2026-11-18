@@ -1491,12 +1491,10 @@ impl<H: Host> Vm<H> {
                     .into_iter()
                     .map(|value| self.encode_wasm_value(value))
                     .collect::<Vec<_>>();
-                Ok(self.heap.alloc(Cell::Array {
-                    object: crate::heap::ArrayObject::new(
+                Ok(self.heap.alloc_array(crate::heap::ArrayObject::new(
                         Self::empty_object(Value::NULL),
                         encoded,
-                    ),
-                }))
+                    )))
             }
         }
     }

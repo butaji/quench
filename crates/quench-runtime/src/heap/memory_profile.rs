@@ -660,17 +660,7 @@ impl Heap {
             total.0 += array.elements().len();
             total.1 += array.elements().capacity();
         });
-        self.slots
-            .iter()
-            .filter_map(|slot| match slot.cell.as_ref()? {
-                Cell::Array { object } => {
-                    Some((object.elements().len(), object.elements().capacity()))
-                }
-                _ => None,
-            })
-            .fold(total, |(len, capacity), value| {
-                (len + value.0, capacity + value.1)
-            })
+        total
     }
 
     pub(crate) fn dense_array_element_narrow_stats(&self) -> (usize, usize) {
@@ -681,15 +671,6 @@ impl Heap {
                 stats.1 += usize::from(value.to_narrow().is_some());
             }
         });
-        for object in self.slots.iter().filter_map(|slot| match slot.cell.as_ref()? {
-            Cell::Array { object } => Some(object),
-            _ => None,
-        }) {
-            for value in object.elements().as_slice().iter() {
-                stats.0 += 1;
-                stats.1 += usize::from(value.to_narrow().is_some());
-            }
-        }
         stats
     }
 }
@@ -734,7 +715,6 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
             Cell::WasmTable { elements, .. } => elements.external_bytes(),
             Cell::WasmGc { fields, .. } => fields.allocated_bytes(),
-            Cell::Array { object } => object.elements().capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
             Cell::WasmMemory { bytes, .. } => bytes.capacity(),
             Cell::WeakMap { entries, .. } => entries.allocated_bytes(),

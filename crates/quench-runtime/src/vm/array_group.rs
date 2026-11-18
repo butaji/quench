@@ -50,12 +50,10 @@ impl<H: Host> Vm<H> {
                 }
                 continue;
             }
-            let bucket = self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            let bucket = self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
                     vec![value],
-                ),
-            });
+                ));
             if let Some(atom) = key_atom {
                 self.set_property(grouped, atom, bucket)?;
             } else {

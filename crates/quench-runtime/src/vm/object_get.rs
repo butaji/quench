@@ -946,7 +946,6 @@ impl<H: Host> Vm<H> {
                     | Some(Cell::TemporalPlainYearMonth { object: x, .. })
                     | Some(Cell::TemporalZonedDateTime { object: x, .. })
                     | Some(Cell::TemporalInstant { object: x, .. }) => object = x.proto(),
-                    Some(Cell::Array { object: x, .. }) => object = x.proto(),
                     Some(Cell::ShadowRealm { object: x, .. }) => object = x.proto(),
                     Some(Cell::RegExp { object: x, .. }) => object = x.proto(),
                     Some(Cell::WeakMap { object: x, .. })

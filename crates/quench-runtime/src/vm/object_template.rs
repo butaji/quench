@@ -312,9 +312,7 @@ impl<H: Host> Vm<H> {
     /// Whether `value` is an object a template copies as its record: an extensible plain
     /// object or array, never a prototype, whose shape describes every own property.
     fn template_record(&self, value: Value) -> bool {
-        let is_record = matches!(self.heap.get(value), Some(Cell::Array { .. }))
-            || value.direct_object_index().is_some()
-            || value.direct_array_index().is_some();
+        let is_record = value.direct_object_index().is_some() || value.direct_array_index().is_some();
         is_record
             && self.heap.object(value).is_some_and(|object| {
                 object.is_extensible()

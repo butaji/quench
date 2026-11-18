@@ -87,9 +87,7 @@ impl<H: Host> Vm<H> {
         values: Vec<Value>,
         prototype: Value,
     ) -> Value {
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), values),
-        })
+        self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(prototype), values))
     }
 
     fn array_to_string_native(
@@ -209,12 +207,10 @@ impl<H: Host> Vm<H> {
             return Err(self.range_error(p, "invalid array length".into()));
         }
         let prototype = self.array_prototype_for_realm(self.realm.globals);
-        let array = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let array = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(prototype),
                 Vec::new(),
-            ),
-        });
+            ));
         self.heap.sparse_set_length(array, length);
         Ok(array)
     }

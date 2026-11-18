@@ -657,12 +657,10 @@ impl<H: Host> Vm<H> {
                 input.split_runs(separator_string.units(), limit, |run| parts.push(vm.heap.alloc_unit_run(run)));
             }
             let values = crate::heap::ArrayElements::from_slice(&parts);
-            Ok(vm.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            Ok(vm.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(vm.array_proto),
                     values,
-                ),
-            }))
+                )))
         })
     }
 

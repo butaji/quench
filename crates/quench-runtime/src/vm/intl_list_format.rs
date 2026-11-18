@@ -153,12 +153,10 @@ impl<H: Host> Vm<H> {
             self.set_property(object, atom, value)?;
             values.push(object);
         }
-        Ok(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        Ok(self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
                 values,
-            ),
-        }))
+            )))
     }
 
     fn list_format_parts(

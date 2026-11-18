@@ -14,7 +14,6 @@ impl Cell {
             // The hot object kinds keep their object inline; the rest box it so the
             // cell stays small.
             Self::Object(object) => Some(object),
-            Self::Array { object } => Some(object),
             Self::RegExp { object, .. } => Some(object),
             Self::ArrayBuffer { object, .. }
             | Self::ShadowRealm { object, .. }
@@ -48,7 +47,6 @@ impl Cell {
             // The hot object kinds keep their object inline; the rest box it so the
             // cell stays small.
             Self::Object(object) => Some(object),
-            Self::Array { object } => Some(object),
             Self::RegExp { object, .. } => Some(object),
             Self::ArrayBuffer { object, .. }
             | Self::ShadowRealm { object, .. }

@@ -411,12 +411,10 @@ impl<H: Host> Vm<H> {
                     .set_stack_data(StackData::CallSite(record.clone()));
                 sites.push(self.heap.root_value(root).unwrap());
             }
-            Ok(self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            Ok(self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
                     sites,
-                ),
-            }))
+                )))
         };
         for root in roots {
             self.heap.release_root(root);
@@ -1962,12 +1960,10 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let array_prototype = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let array_prototype = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(object_prototype),
                 Vec::new(),
-            ),
-        });
+            ));
         self.install_array_for_realm(program, global, array_prototype)?;
         let map = self.native_with_realm(Native::Map, global, global);
         let map_prototype = self

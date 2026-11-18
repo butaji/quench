@@ -7281,9 +7281,7 @@ unsafe fn lane_literal_value<H: Host>(
         start,
         usize::from(array.element_count()),
     )?;
-    let array_value = vm.heap.alloc(Cell::Array {
-        object: crate::heap::ArrayObject::new(Vm::<H>::empty_object(vm.array_proto), elements),
-    });
+    let array_value = vm.heap.alloc_array(crate::heap::ArrayObject::new(Vm::<H>::empty_object(vm.array_proto), elements));
     r.set(array.result_register(), array_value);
     for part in [first, second] {
         let left = lane_operand_value(cx, r, part.operand_b().0)?;

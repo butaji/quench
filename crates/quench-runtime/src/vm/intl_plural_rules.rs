@@ -578,12 +578,10 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .map(|category| self.heap.alloc_string(category.into()))
             .collect::<Vec<_>>();
-        let categories = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let categories = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 categories,
-            ),
-        });
+            ));
         self.set_plural_result_property(result, "pluralCategories", categories)?;
         self.set_plural_result_property(
             result,

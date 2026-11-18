@@ -74,7 +74,7 @@ fn pair<const FORWARD: bool, const LIVE: bool>(proofs: &ArrayStorageProofs, r: R
 }
 
 fn array(heap: &mut Heap, values: &[Value]) -> Value {
-    heap.alloc(Cell::Array { object: ArrayObject::new(Object::new(Value::NULL), values.to_vec()) })
+    heap.alloc_array(ArrayObject::new(Object::new(Value::NULL), values.to_vec()))
 }
 
 fn compare(proofs: &ArrayStorageProofs, initial: [Value; REGISTER_COUNT]) -> Stop {

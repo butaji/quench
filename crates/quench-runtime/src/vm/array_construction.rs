@@ -25,9 +25,7 @@ impl<H: Host> Vm<H> {
         if !length.is_finite() || length < 0.0 || length.fract() != 0.0 || length > f64::from(u32::MAX) {
             return None;
         }
-        let array = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()),
-        });
+        let array = self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()));
         self.heap.sparse_set_length(array, length as usize);
         Some(array)
     }
@@ -79,8 +77,6 @@ impl<H: Host> Vm<H> {
     /// own frame, not its caller's.
     #[inline(never)]
     fn array_of_values(&mut self, prototype: Value, values: &[Value]) -> Value {
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), values.to_vec()),
-        })
+        self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(prototype), values.to_vec()))
     }
 }

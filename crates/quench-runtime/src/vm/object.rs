@@ -1265,12 +1265,10 @@ impl<H: Host> Vm<H> {
                 crate::bytecode::LiteralStep::Int(value) => Value::integer(value),
                 crate::bytecode::LiteralStep::Array(count) => {
                     let elements = values.split_off(values.len() - count as usize);
-                    self.heap.alloc(Cell::Array {
-                        object: crate::heap::ArrayObject::new(
+                    self.heap.alloc_array(crate::heap::ArrayObject::new(
                             Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
                             elements,
-                        ),
-                    })
+                        ))
                 }
                 crate::bytecode::LiteralStep::Object(site) => {
                     let shape = self.object_site_shape(program, site as usize);

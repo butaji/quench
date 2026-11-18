@@ -599,15 +599,10 @@ impl Heap {
         true
     }
 
+    /// An array, in its array record (`ArrayObject`).
     #[inline]
     pub(crate) fn array(&self, value: Value) -> Option<&ArrayObject> {
-        if let Some(object) = self.record_array(value) {
-            return Some(object);
-        }
-        match self.get(value)? {
-            Cell::Array { object } => Some(object),
-            _ => None,
-        }
+        self.record_array(value)
     }
 
     /// The object part of an array, function or ordinary builtin, whose own layout a held
@@ -739,14 +734,9 @@ impl Heap {
         Some(unsafe { self.array_records.get_live_mut(record_id, &self.properties) })
     }
 
+    /// An array, mutably, in its array record.
     pub(crate) fn array_mut(&mut self, value: Value) -> Option<&mut ArrayObject> {
-        if value.direct_array_index().is_some() {
-            return self.record_array_mut(value);
-        }
-        match self.get_mut(value)? {
-            Cell::Array { object } => Some(object),
-            _ => None,
-        }
+        self.record_array_mut(value)
     }
 
     /// An ordinary object (an object record, or a promise, whose internal slots change no

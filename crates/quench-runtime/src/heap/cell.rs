@@ -4473,9 +4473,6 @@ impl std::ops::Deref for SymbolData {
 #[rustfmt::skip]
 pub(crate) enum Cell {
     Object(Object),
-    Array {
-        object: ArrayObject,
-    },
     ArrayBuffer {
         object: Box<Object>,
         bytes: super::BufferBytes,
@@ -4669,7 +4666,6 @@ impl Cell {
         match self {
             Self::Object(_) => "object",
             Self::WasmObject { .. } => "wasm_object",
-            Self::Array { .. } => "array",
             Self::ArrayBuffer { .. } => "array_buffer",
             Self::TypedArray { .. } => "typed_array",
             Self::DataView { .. } => "data_view",

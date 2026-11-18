@@ -426,9 +426,6 @@ impl<'heap> ParallelMarkView<'heap> {
                     return;
                 }
                 Heap::children(value, cell, properties, work, &mut object_roots, trace_kind, last_proto);
-                if matches!(cell, Cell::Array { .. }) {
-                    self.sparse_elements(value, work);
-                }
                 if matches!(cell, Cell::WeakMap { .. }) {
                     batch.ephemeron_owners.push(value);
                 } else {

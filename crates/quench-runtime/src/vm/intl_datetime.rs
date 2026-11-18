@@ -1467,12 +1467,10 @@ impl<H: Host> Vm<H> {
             }
             entries.push(entry);
         }
-        Ok(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        Ok(self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 entries,
-            ),
-        }))
+            )))
     }
 
     fn date_time_resolved_options(

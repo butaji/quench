@@ -381,9 +381,6 @@ impl<'slots> ParallelSweepSlab<'slots> {
             if let Some(object) = cell.object() {
                 result.released_properties.push(object.properties());
             }
-            if matches!(cell, Cell::Array { .. }) {
-                result.sparse_arrays.push(index as u32);
-            }
             result.free_slots.insert(offset);
             let dead = StoppedCellDrop(Some(cell));
             if cell_rc_drop_lock(dead.0.as_ref().expect("dead sweep cell")).is_some() {
@@ -403,7 +400,6 @@ struct ParallelSweepResult {
     property_owners: Vec<u64>,
     free_slots: FreeSlotBitmap,
     released_properties: Vec<ValueVec>,
-    sparse_arrays: Vec<u32>,
     rc_cells: Vec<StoppedCellDrop>,
     external_bytes: usize,
     live_payload_bytes: usize,
@@ -1230,42 +1226,31 @@ impl Heap {
         }
     }
 
-    /// Allocates `cell`. An array, whose kind a call site's literal cell fixes, takes its
-    /// record directly (`alloc_array`) without the dispatch on the cell's kind.
+    /// Allocates `cell`. A cell is never an array: an array takes its record (`alloc_array`).
     #[inline(always)]
     pub fn alloc(&mut self, cell: Cell) -> Value {
-        match cell {
-            Cell::Array { object } if !cfg!(feature = "profile-aggregate") => self.alloc_array(object),
-            cell => self.alloc_cell(cell),
-        }
+        self.alloc_cell(cell)
     }
 
-    /// `alloc(Cell::Array { object })` of a fresh array (`ArrayObject::fresh`) of `prototype`
-    /// and `elements`, with the prototype as given rather than decoded back from the header.
+    /// A new array record of `object`, admitted and charged as any allocation (its element
+    /// storage through `charge_payload_allocation`). The array space holds as many records as
+    /// `RECORD_SPACE_CAPACITY`, so a full space is a panic, as for functions.
     #[inline(always)]
-    pub(crate) fn alloc_fresh_array(&mut self, prototype: Value, elements: ArrayElements) -> Value {
-        let object = ArrayObject::fresh(prototype, elements);
-        if cfg!(feature = "profile-aggregate") {
-            return self.alloc(Cell::Array { object });
-        }
-        self.alloc_slotless_array_of(object, prototype)
-    }
-
-    /// `alloc(Cell::Array { object })`: an array record while one is free, charged as any
-    /// allocation (`charge_allocation`) for its element storage.
-    fn alloc_array(&mut self, object: ArrayObject) -> Value {
+    pub(crate) fn alloc_array(&mut self, object: ArrayObject) -> Value {
         let prototype = object.proto();
-        self.alloc_array_of(object, prototype)
-    }
-
-    /// `alloc_array` of `object`, whose prototype is `prototype`.
-    #[inline(always)]
-    fn alloc_array_of(&mut self, object: ArrayObject, prototype: Value) -> Value {
         self.admit_object_contents(&object);
         self.alloc_slotless_array_of(object, prototype)
     }
 
-    /// `alloc_array_of` of an array with no named property (`ArrayObject::fresh`: the empty
+    /// `alloc_array` of a fresh array (`ArrayObject::fresh`) of `prototype` and `elements`,
+    /// with the prototype as given rather than decoded back from the header.
+    #[inline(always)]
+    pub(crate) fn alloc_fresh_array(&mut self, prototype: Value, elements: ArrayElements) -> Value {
+        let object = ArrayObject::fresh(prototype, elements);
+        self.alloc_slotless_array_of(object, prototype)
+    }
+
+    /// `alloc_array` of an array with no named property (`ArrayObject::fresh`: the empty
     /// shape, no property store), whose admission to the slot-type ledger
     /// (`admit_object_contents`) has no slot to note or recode.
     #[inline(always)]
@@ -1273,19 +1258,17 @@ impl Heap {
         debug_assert!(object.shape() == 0);
         self.mark_prototype(prototype);
         self.charge_payload_allocation(array_payload_bytes(&object));
-        match self.array_records.try_insert(object) {
-            Ok(record_id) => {
-                let value = Value::direct_array(record_id);
-                #[cfg(feature = "profile-memory")]
-                self.profile_allocation(value);
-                value
-            }
-            // Only a record's sweep shows a young run's survival (`ArrayElements::young`).
-            Err(mut object) => {
-                object.leave_nursery();
-                self.alloc_in_slot(Cell::Array { object }, self.tracks_young_cells())
-            }
-        }
+        #[cfg(feature = "profile-aggregate")]
+        let bytes = object.allocated_extra_bytes() + object.elements().capacity() * size_of::<Value>();
+        let Ok(record_id) = self.array_records.try_insert(object) else {
+            panic!("array records exhausted");
+        };
+        let value = Value::direct_array(record_id);
+        #[cfg(feature = "profile-aggregate")]
+        self.profile_record_allocation(CellKind::Array, "array", bytes);
+        #[cfg(feature = "profile-memory")]
+        self.profile_allocation(value);
+        value
     }
 
     /// A young run for the `len` elements of an array record the caller makes before any
@@ -1305,9 +1288,6 @@ impl Heap {
             None => ArrayElements::from_fn(len, element),
         };
         let object = ArrayObject::fresh(prototype, elements);
-        if cfg!(feature = "profile-aggregate") {
-            return self.alloc(Cell::Array { object });
-        }
         self.alloc_slotless_array_of(object, prototype)
     }
 
@@ -1357,18 +1337,6 @@ impl Heap {
                 self.profile_allocation(value);
                 return value;
             }
-            Cell::Array { object } => match self.array_records.try_insert(object) {
-                Ok(record_id) => {
-                    let value = Value::direct_array(record_id);
-                    #[cfg(feature = "profile-memory")]
-                    self.profile_allocation(value);
-                    return value;
-                }
-                Err(mut object) => {
-                    object.leave_nursery();
-                    Cell::Array { object }
-                }
-            },
             Cell::Promise(promise) => match self.promise_records.try_insert(*promise) {
                 Ok(record_id) => {
                     let value = Value::direct_promise(record_id);
@@ -1950,7 +1918,7 @@ impl Heap {
             [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
         ))
     }
-    /// `alloc(Cell::Array { object: array })` of a fresh array, given its first named
+    /// `alloc_array` of a fresh array, given its first named
     /// properties `values` under `shape` first: the storage steps
     /// `initialize_object_properties` takes on the published cell (arena storage, as an
     /// array keeps its element backing in the payload; the replaced storage's integrity
@@ -1966,7 +1934,7 @@ impl Heap {
         let (properties, inline_properties) = self.initial_object_storage(shape, values, false);
         let previous = array.replace_property_storage(properties, inline_properties, &mut self.properties);
         self.properties.release(previous);
-        let value = self.alloc(Cell::Array { object: array });
+        let value = self.alloc_array(array);
         #[cfg(feature = "profile-memory")]
         self.note_object_slots(value, values.len());
         value
@@ -2670,11 +2638,6 @@ impl Heap {
                             GcTraceKind::Collection,
                             &mut last_proto,
                         );
-                        if let Some(arrays) = &self.sparse_arrays
-                            && let Some(elements) = arrays.get(&Value::heap(index))
-                        {
-                            work.extend(elements.values.values().copied());
-                        }
                         let mark_bits = mark_bits!(self);
                         ephemerons.remembered(
                             value,
@@ -3271,7 +3234,6 @@ impl Heap {
                     property_owners,
                     free_slots,
                     released_properties,
-                    sparse_arrays,
                     rc_cells,
                     external_bytes,
                     live_payload_bytes,
@@ -3289,11 +3251,6 @@ impl Heap {
                     self.free_slots += freed_cells;
                     for properties in released_properties {
                         self.properties.release(properties);
-                    }
-                    if let Some(arrays) = &mut self.sparse_arrays {
-                        for index in sparse_arrays {
-                            arrays.remove(&Value::heap(index));
-                        }
                     }
                     self.external_bytes = self.external_bytes.saturating_sub(external_bytes);
                 }
@@ -3338,7 +3295,6 @@ impl Heap {
             let free_by_slab = &mut self.free_by_slab;
             let free_slabs = &mut self.free_slabs;
             let free_slot_count = &mut self.free_slots;
-            let sparse_arrays = &mut self.sparse_arrays;
             #[cfg(feature = "profile-memory")]
             let memory_profile = &mut self.memory_profile;
             // Frees `slot`'s cell, if it has one. A BigInt, the cell most often freed where
@@ -3373,12 +3329,6 @@ impl Heap {
                         }
                         if let Some(object) = cell.object() {
                             properties.release(object.properties());
-                        }
-                        // Only an array has sparse elements, as the parallel sweep finds.
-                        if let Some(arrays) = sparse_arrays
-                            && matches!(cell, Cell::Array { .. })
-                        {
-                            arrays.remove(&Value::heap(index as u32));
                         }
                     }
                 }
@@ -3959,12 +3909,6 @@ impl Heap {
                 &mut ctx.last_proto,
             );
             ephemeron_tail!(self, ctx, value, Some(cell));
-            if let Some(arrays) = self.sparse_arrays.as_ref()
-                && matches!(cell, Cell::Array { .. })
-                && let Some(elements) = arrays.get(&Value::heap(index as u32))
-            {
-                ctx.work.extend(elements.values.values().copied());
-            }
         }
     }
 
@@ -4764,16 +4708,6 @@ impl Heap {
         }
         match cell {
             Cell::Object(value) => object(value),
-            Cell::Array { object: value } => {
-                object(value);
-                work.extend(
-                    value
-                        .elements()
-                        .iter()
-                        
-                        .filter(|value| value.is_heap()),
-                );
-            }
             Cell::ArrayBuffer { object: value, .. } => object(value),
             Cell::RegExp {
                 object: value,
@@ -4894,8 +4828,7 @@ impl Heap {
         }
     }
 
-    /// A direct Array record traces exactly as a legacy `Cell::Array`: its object part, then
-    /// its heap-valued elements.
+    /// A direct Array record traces its object part, then its heap-valued elements.
     // Inlined into each mark visit, as the serial mark had it: left to its heuristics, LLVM
     // calls it from `collect_with_object_roots`, which cachegrind measured at more instructions.
     #[inline(always)]
@@ -5066,7 +4999,6 @@ impl Heap {
             | Cell::Proxy { .. }
             | Cell::PromiseResolvingState { .. }
             | Cell::Promise(_) => CellKind::Object,
-            Cell::Array { .. } => CellKind::Array,
             Cell::WeakMap { .. } => CellKind::WeakMap,
             Cell::WeakSet { .. } => CellKind::WeakSet,
             Cell::WeakRef { .. } | Cell::FinalizationRegistry { .. } => CellKind::WeakRef,
@@ -5149,7 +5081,6 @@ impl Heap {
                     instant, calendar, ..
                 } => instant.time_zone.capacity() + calendar.capacity(),
                 Cell::RegExp { meta, .. } => meta.source.capacity(),
-                Cell::Array { object } => object.elements().capacity() * size_of::<Value>(),
                 Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
                 Cell::WasmMemory { bytes, .. } => bytes.capacity(),
                 Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
@@ -5510,7 +5441,7 @@ impl Heap {
         for slot in self.slots.iter() {
             let Some(cell) = slot.cell.as_ref() else { continue };
             let kind = match cell {
-                Cell::Object(_) => "object", Cell::Array { .. } => "array",
+                Cell::Object(_) => "object",
                 Cell::Proxy { .. } => "proxy", Cell::WeakMap { .. } => "weakmap",
                 Cell::AccessorPair { .. } => "accessor", Cell::BindingReference { .. } => "binding",
                 _ => "other",

@@ -75,7 +75,7 @@ fn record_chain(heap: &mut Heap, keys: [Value; 2]) -> (Value, Vec<Value>) {
         heap.object_mut(object).unwrap().set_inline_property(1, property);
         strings.push(property);
         elements.push(object);
-        link = heap.alloc(Cell::Array { object: ArrayObject::new(plain_object(), elements) });
+        link = heap.alloc_array(ArrayObject::new(plain_object(), elements));
     }
     (link, strings)
 }
@@ -90,7 +90,7 @@ struct Ephemerons {
 
 fn ephemerons(heap: &mut Heap) -> Ephemerons {
     let object_key = heap.alloc_object(plain_object());
-    let array_key = heap.alloc(Cell::Array { object: ArrayObject::new(plain_object(), Vec::new()) });
+    let array_key = heap.alloc_array(ArrayObject::new(plain_object(), Vec::new()));
     let lost_key = heap.alloc_object(plain_object());
     let [object_value, array_value, lost_value] = [(); 3].map(|()| heap.alloc_object(plain_object()));
     let nested_value = heap.alloc(Cell::Error("nested".into()));
@@ -144,9 +144,7 @@ fn parallel_sweep_releases_shared_array_payloads() {
     let elements = ArrayElements::from(vec![Value::UNDEFINED]);
     let arrays = (0..PARALLEL_MARK_MINIMUM_CELLS)
         .map(|_| {
-            heap.alloc(Cell::Array {
-                object: ArrayObject::new(plain_object(), elements.clone()),
-            })
+            heap.alloc_array(ArrayObject::new(plain_object(), elements.clone()))
         })
         .collect::<Vec<_>>();
     drop(elements);

@@ -1570,9 +1570,7 @@ impl<H: Host> Vm<H> {
 
     fn new_wire_array(&mut self) -> Value {
         let prototype = self.array_prototype_for_realm(self.realm.globals);
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()),
-        })
+        self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()))
     }
 
     fn wire_read_array_trailer(&mut self, deserializer: &mut ValueDeserializer, count: u32, length: u32) -> Read<()> {

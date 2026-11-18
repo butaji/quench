@@ -228,12 +228,10 @@ impl<H: Host> Vm<H> {
                 .chain(frame.original_arguments.iter().copied())
                 .collect::<Vec<_>>(),
         );
-        let arguments = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let arguments = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.realm_object_prototype(self.realm.globals)),
                 args.clone(),
-            ),
-        });
+            ));
         self.with_call_roots([arguments], |vm| {
             vm.initialize_arguments_object(arguments, Some(function), &args.values_cow(), expose_callee)?;
             Ok(arguments)
@@ -258,12 +256,10 @@ impl<H: Host> Vm<H> {
         self.heap.release_root(target_root);
         let (prototype, length, name) = metadata?;
         let this = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let bound_args = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let bound_args = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 args.get(1..).unwrap_or_default().to_vec(),
-            ),
-        });
+            ));
         // `name` is "bound " and the target's name, interned as a builtin's name is.
         let name_atom = self.intern_atom(&format!("bound {name}"));
         let name = self.heap.alloc_string(self.atom_value(name_atom));

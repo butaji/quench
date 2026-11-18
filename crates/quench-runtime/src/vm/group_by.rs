@@ -142,12 +142,10 @@ impl<H: Host> Vm<H> {
                 unreachable!("groupBy owns array groups")
             }
         } else {
-            let group = self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            let group = self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
                     vec![value],
-                ),
-            });
+                ));
             match kind {
                 GroupByKind::Object => {
                     if self.heap.is_symbol(key) {

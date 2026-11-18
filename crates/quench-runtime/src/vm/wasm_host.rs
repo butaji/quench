@@ -299,12 +299,10 @@ impl<H: Host> Vm<H> {
             Ok(match values.as_slice() {
                 [] => Value::UNDEFINED,
                 [value] => *value,
-                _ => self.heap.alloc(Cell::Array {
-                    object: crate::heap::ArrayObject::new(
+                _ => self.heap.alloc_array(crate::heap::ArrayObject::new(
                         Self::empty_object(Value::NULL),
                         values,
-                    ),
-                }),
+                    )),
             })
         })();
         for root in roots {
