@@ -61,7 +61,7 @@ pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };
     Some(match lane_activate_kept::<H, false>(cx, r, ip, &target, stored, this) {
         Ok((registers, next)) => {
-            if let Some(Activation { kind: ActivationKind::Script(script), .. }) = vm.lane_stack.activations.last_mut() {
+            if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations.last_mut().map(|activation| activation.kind_mut()) {
                 script.completion = Completion::Assigns;
             }
             Resumed::At(registers, next, Carried::script(cx))
@@ -79,7 +79,7 @@ pub(super) fn completed_value<H: Host>(vm: &Vm<H>, activation: &Activation, comp
     match completion {
         completion if completion.constructs() && !vm.is_object_like(value) => this,
         // SAFETY: the call record belongs to the caller's live view.
-        Completion::Assigns | Completion::AssignsTrapped => activation.caller_registers.get(unsafe { (*activation.call).a }),
+        Completion::Assigns | Completion::AssignsTrapped => activation.caller_registers().get(unsafe { (*activation.call()).a }),
         _ => value,
     }
 }

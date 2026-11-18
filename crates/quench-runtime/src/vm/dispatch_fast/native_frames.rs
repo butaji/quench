@@ -76,14 +76,14 @@ pub(super) fn link_on_observe<H: Host>(cx: *mut LaneContext<H>, depth: usize) {
     let completion = if callee.forwarder.is_some() { Completion::Forwarder } else { Completion::Plain };
     // SAFETY: the slot lies within the activations' capacity, below the top.
     unsafe {
-        slot.write(Activation {
-            native: frame,
-            function: callee.target.function,
-            call: callee.call as Ip,
-            caller_base: caller.base,
-            caller_registers: caller.registers,
-            caller_program: caller.program,
-            kind: ActivationKind::Script(ScriptActivation {
+        slot.write(Activation::of_parts(
+            frame,
+            callee.target.function,
+            callee.call as Ip,
+            caller.base,
+            caller.registers,
+            caller.program,
+            ActivationKind::Script(ScriptActivation {
                 callee: callee.target.callee,
                 argc,
                 completion,
@@ -92,7 +92,7 @@ pub(super) fn link_on_observe<H: Host>(cx: *mut LaneContext<H>, depth: usize) {
                 environment: false,
                 record: std::ptr::null_mut(),
             }),
-        });
+        ));
     }
     // The frame's window takes the context words its call would have written (`lane_enter_window`).
     let window = Registers(frame.window as *mut Value);

@@ -26,10 +26,10 @@ fn handler_home<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>) -> (u32, HandlerHo
             let home = HandlerHome::Window(WindowHome {
                 depth: vm.lane_stack.activations.len() - 1,
                 program: unsafe { (*cx).program },
-                function: activation.function,
+                function: activation.function(),
                 window: activation.window_ptr(),
             });
-            (activation.function, home, activation.script().is_some_and(|script| script.environment))
+            (activation.function(), home, activation.script().is_some_and(|script| script.environment))
         }
         None => {
             let frame = unsafe { (*cx).frame() };

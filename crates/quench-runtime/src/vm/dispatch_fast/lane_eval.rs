@@ -19,7 +19,7 @@ impl LaneStack {
     fn own_record(&mut self, depth: usize, record: Box<FrameRecord>) -> *mut FrameRecord {
         self.records.push((depth, record));
         let record: *mut FrameRecord = &mut *self.records.last_mut().expect("the record just pushed").1;
-        if let Some(Activation { kind: ActivationKind::Script(script), .. }) = self.activations.get_mut(depth) {
+        if let Some(ActivationKind::Script(script)) = self.activations.get_mut(depth).map(|activation| activation.kind_mut()) {
             script.record = record;
         }
         record

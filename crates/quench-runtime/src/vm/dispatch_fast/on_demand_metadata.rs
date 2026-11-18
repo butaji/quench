@@ -60,7 +60,7 @@ pub(super) fn lane_note_late_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, targ
     let vm = unsafe { vm(cx) };
     // The innermost frame's function: a native callee's frame is linked, so it is the activation's.
     let function = match vm.lane_stack.activations.last() {
-        Some(activation) => activation.function,
+        Some(activation) => activation.function(),
         None => { let Some(frame) = vm.frames.get(unsafe { (*cx).frame() }) else { return }; frame.function }
     };
     let Some(caller) = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view) else { return };

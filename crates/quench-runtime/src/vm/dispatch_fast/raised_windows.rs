@@ -25,7 +25,7 @@ pub(super) fn settle_raised_window<H: Host>(cx: *mut LaneContext<H>, record: Ip)
     // SAFETY: the context's program outlives the lane run, and `record` is one of the running
     // function's records.
     let (code, call_pc) = unsafe { (&*(*cx).code, record.offset_from((*cx).base) as u32) };
-    if code.function(activation.function as usize).handler_at(call_pc).is_some() {
+    if code.function(activation.function() as usize).handler_at(call_pc).is_some() {
         return None;
     }
     let owner = unsafe { (*cx).root };
@@ -38,7 +38,7 @@ pub(super) fn settle_raised_window<H: Host>(cx: *mut LaneContext<H>, record: Ip)
         }
         _ => {
             vm.finish_generator_window(script.callee);
-            lane_raised_exit(cx, activation.call)
+            lane_raised_exit(cx, activation.call())
         }
     })
 }

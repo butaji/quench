@@ -263,7 +263,7 @@ impl<H: Host> Vm<H> {
         // SAFETY: the context's program outlives the run; `ip` is a record of
         // the innermost activation's view.
         let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
-        let Some(body) = code.function_get(activation.function as usize) else {
+        let Some(body) = code.function_get(activation.function() as usize) else {
             return;
         };
         let instruction = body.instructions().nth(pc);
@@ -480,14 +480,14 @@ fn job_activation(
     environment: bool,
     record: *mut FrameRecord,
 ) -> Activation {
-    Activation {
-        native: prefix,
-        function: entry.function,
-        call: base,
-        caller_base: base,
-        caller_registers: Registers(window),
-        caller_program: entry.program,
-        kind: ActivationKind::Script(ScriptActivation {
+    Activation::of_parts(
+        prefix,
+        entry.function,
+        base,
+        base,
+        Registers(window),
+        entry.program,
+        ActivationKind::Script(ScriptActivation {
             callee: job.object,
             argc: 0,
             completion: Completion::ResumesJob,
@@ -496,5 +496,5 @@ fn job_activation(
             environment,
             record,
         }),
-    }
+    )
 }

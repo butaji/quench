@@ -63,7 +63,7 @@ fn lane_array_callback_activation<H: Host>(
     let this = lane_call_this(unsafe { vm(cx) }, target, this_arg)?;
     // SAFETY: the running lane's context, which nothing else accesses.
     let mut shape = PreparedShape::of(unsafe { &*cx }, ip, target, array_callback_argument_count(native))?;
-    if let ActivationKind::Script(script) = &mut shape.activation.kind {
+    if let ActivationKind::Script(script) = shape.activation.kind_mut() {
         script.completion = completion;
     }
     let entry = shape.entry(target, this);
@@ -382,8 +382,8 @@ fn lane_finish_array_step<H: Host>(cx: *mut LaneContext<H>, activation: &Activat
     let LaneArrayStep { iteration, to_body, .. } = vm.lane_stack.steps[depth];
     vm.lane_stack.steps.truncate(depth);
     match applied {
-        None => lane_resume_array_iteration(cx, activation.call, iteration, to_body),
-        value => lane_array_complete(cx, activation.call, to_body, value),
+        None => lane_resume_array_iteration(cx, activation.call(), iteration, to_body),
+        value => lane_array_complete(cx, activation.call(), to_body, value),
     }
 }
 
