@@ -8268,7 +8268,7 @@ const FLOAT_ARITHMETIC: usize = 10;
 /// The arithmetic index of a float binary selector, when it has one.
 fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
     Some(match op {
-        _ if crate::staged::float_binary64_family(op) => match F64BinaryOperator::from_tag(selector)? {
+        _ if f64_binary_row(op) => match F64BinaryOperator::from_tag(selector)? {
             F64BinaryOperator::Add => FLOAT_ADD,
             F64BinaryOperator::Subtract => FLOAT_SUBTRACT,
             F64BinaryOperator::Multiply => FLOAT_MULTIPLY,
@@ -8330,13 +8330,13 @@ fn f64_operation(arith: u8, left: f64, right: f64) -> Result<f64, bool> {
     }
 }
 
-/// The width index of float binary `op` in `FloatArithmetic::HANDLERS`.
-fn float_width_index(op: Op) -> usize {
-    match op.class() {
-        Class::WasmFloatBinary64Raw => 2,
-        Class::WasmFloatBinary64 => 1,
-        _ => 0,
-    }
+/// Whether `op` is an f64 binary operator in either representation: the boxed `WasmF64Binary`, or
+/// its raw form (`staged::raw_representation`), whose immediate is the same f64 binary operator.
+/// The operator tags are shared, so one selector reads either.
+const fn f64_binary_row(op: Op) -> bool {
+    crate::staged::wasm_f64_binary(op)
+        || (crate::staged::raw_representation(op)
+            && matches!(op.immediate_role(), crate::bytecode::ImmediateRole::WasmF64BinaryOperator))
 }
 
 /// Which operand of the second fused float record the first one's result
@@ -8565,12 +8565,10 @@ const FLOAT_PAIR_FIRSTS: usize = 4;
 
 impl<H: Host> FloatPairs<H> {
     /// By first operator, second operator, whether the first result is the
-    /// second's left operand, and the first's accumulator field.
-    const HANDLERS: [[[[Handler; FUSED_ACC_FIELDS.len()]; 2]; FLOAT_ARITHMETIC];
-        FLOAT_PAIR_FIRSTS] = float_pair_handlers!(H, false);
-    /// The same over raw registers (`Class::WasmFloatBinary64Raw`).
-    const RAW_HANDLERS: [[[[Handler; FUSED_ACC_FIELDS.len()]; 2]; FLOAT_ARITHMETIC];
-        FLOAT_PAIR_FIRSTS] = float_pair_handlers!(H, true);
+    /// second's left operand, and the first's accumulator field. The outer index is the pair's
+    /// representation (`staged::raw_representation`: boxed, then raw); both records share it.
+    const HANDLERS: [[[[[Handler; FUSED_ACC_FIELDS.len()]; 2]; FLOAT_ARITHMETIC];
+        FLOAT_PAIR_FIRSTS]; 2] = [float_pair_handlers!(H, false), float_pair_handlers!(H, true)];
     /// An f64 load fused with the operator taking its value, by second
     /// operator and whether the value is its left operand.
     /// An f64 arithmetic fused with the store of its result, by operator.
@@ -17798,10 +17796,12 @@ fn derive_lane_view<'live, H: Host>(
             let instruction = decoded[pc];
             let next = decoded[pc + 1];
             let pair = (|| {
-                if !crate::staged::wasm_f64_binary(next.op()) {
+                if !f64_binary_row(next.op()) {
                     return None;
                 }
                 let second = float_arithmetic(next.op(), next.imm())?;
+                // A pair's records share one representation: a raw operator's words are not a load's boxes.
+                let raw = crate::staged::raw_representation(next.op());
                 let left_of = |records: &[LaneInstruction]| {
                     [ACC_B, ACC_C]
                         .into_iter()
@@ -17809,6 +17809,9 @@ fn derive_lane_view<'live, H: Host>(
                         .map(|acc| acc == ACC_B)
                 };
                 if crate::staged::wasm_f64_load(instruction.op()) {
+                    if raw {
+                        return None;
+                    }
                     let plain = tables[0][usize::from(ACC_NONE)][crate::staged::WASM_F64_LOAD_ROW as usize]?;
                     if records[pc].handler != plain.handler as *const () {
                         return None;
@@ -17836,7 +17839,9 @@ fn derive_lane_view<'live, H: Host>(
                         2,
                     ));
                 }
-                if !crate::staged::wasm_f64_binary(instruction.op()) {
+                if !f64_binary_row(instruction.op())
+                    || crate::staged::raw_representation(instruction.op()) != raw
+                {
                     return None;
                 }
                 let first = float_arithmetic(instruction.op(), instruction.imm())?;
@@ -17848,7 +17853,7 @@ fn derive_lane_view<'live, H: Host>(
                 })?;
                 let left = left_of(&records)?;
                 Some((
-                    FloatPairs::<H>::HANDLERS[usize::from(first)][usize::from(second)]
+                    FloatPairs::<H>::HANDLERS[usize::from(raw)][usize::from(first)][usize::from(second)]
                         [usize::from(left)][field],
                     2,
                 ))
@@ -17862,7 +17867,9 @@ fn derive_lane_view<'live, H: Host>(
                 let store_runs = [ACC_NONE, ACC_A]
                     .into_iter()
                     .any(|acc| serves(records[pc + 1].handler, crate::staged::WASM_F64_STORE_ROW, acc));
-                if !crate::staged::wasm_f64_binary(instruction.op())
+                // The store takes a boxed result only (raw results feed raw operators).
+                if !f64_binary_row(instruction.op())
+                    || crate::staged::raw_representation(instruction.op())
                     || usize::from(first) >= FLOAT_PAIR_FIRSTS
                     || !crate::staged::wasm_f64_store(next.op())
                     || next.a() != instruction.a()
