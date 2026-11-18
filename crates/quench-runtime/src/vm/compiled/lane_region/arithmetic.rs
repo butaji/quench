@@ -50,7 +50,10 @@ impl Lowering<'_, '_> {
     fn int32_arithmetic(&mut self, state: &mut State, pc: usize, operands: Operands,
         (operation, exit): (NumberArithmetic, ir::Block)) {
         let wrapping = self.ranges.overflow_free(pc)
-            || (operation.int32_projection_is_wrapping() && self.truncated(pc, operands.0));
+            || (operation.int32_projection_is_wrapping() && self.truncated(pc, operands.0))
+            // A product the unit's ranges do not bound is still exact modulo 2^32 when the sum
+            // it feeds is truncated: `(a * 3 + i) | 0` never observes the product untruncated.
+            || (operation == NumberArithmetic::Multiply && self.truncated_through_int32_sum(state, pc, operands.0));
         let overflow = if wrapping { Overflow::Wrap } else { Overflow::Exit };
         let zero = if self.ranges.ignores_negative_zero(pc) { NegativeZero::Ignore } else { NegativeZero::Exit };
         self.arithmetic_step(state, (operands, operation), (Domain::Int32, overflow, zero), exit);

@@ -32,7 +32,7 @@ int_add_noor - 8 30 -
 int_div - 7 27 -
 int_mod - 16 54 -
 int_mod_var - 7 27 -
-int_mul 52 5 21 0
+int_mul - 5 21 -
 int_mul_ovf 2 18 60 0
 int_sub - 4 18 -
 math_abs - 8 30 -

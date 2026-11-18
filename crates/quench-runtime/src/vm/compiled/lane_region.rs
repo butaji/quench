@@ -1932,6 +1932,26 @@ impl Lowering<'_, '_> {
         false
     }
 
+    /// Whether only an int32 sum's ToInt32 is read of `register`, written at `pc`: its one
+    /// reader is an addition or subtraction whose other operand is int32 too and whose own
+    /// result a bitwise operator truncates (`truncated`). The chain is then int32 modular
+    /// arithmetic — `(a * 3 + i) | 0` — so the product wraps exactly as its truncated sum does,
+    /// and needs no overflow exit. A non-integer operand would break the commutation the
+    /// next-step truncation relies on, so only int32 sums qualify (`truncated`'s rule).
+    fn truncated_through_int32_sum(&self, state: &State, pc: usize, register: Register) -> bool {
+        let (at, register) = self.reader(pc + 1, register);
+        let Some(next) = self.unit.instructions.get(at).copied() else { return false };
+        if next.returns_from_frame() || next.writes_current_this() { return false; }
+        if !next.op().is_binary() { return false; }
+        let Some(operation) = super::operations::NumberArithmetic::from_js_instruction(next.op(), next.binary_operator()) else { return false };
+        if !matches!(operation, super::operations::NumberArithmetic::Add | super::operations::NumberArithmetic::Subtract) { return false; }
+        let reads = [next.operand_b(), next.operand_c()].iter().filter(|operand| operand.register_index() == Some(register)).count();
+        if reads != 1 || !(next.result_register() == register || !self.is_live(at + 1, register)) { return false; }
+        let other = [next.operand_b(), next.operand_c()].into_iter().find(|operand| operand.register_index() != Some(register));
+        let Some(other) = other else { return false };
+        self.proved_int(state, [other; 2]) && self.truncated(at, next.result_register())
+    }
+
     /// Where `register` at `at` is next read, past an inlined completion's move and jump (`lane_unit`).
     fn reader(&self, at: usize, register: Register) -> (usize, Register) {
         let instruction = |at: usize| self.unit.instructions.get(at).copied();

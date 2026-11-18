@@ -145,6 +145,11 @@ fn hottest(directory: &Path, stderr: &str, hot: Option<Hot>) -> Result<Measured,
     if let Some(measured) = loop_of(directory, &dumps, |site| matches!(site, Site::Loop { .. }))? {
         return Ok(measured);
     }
+    // A loop the tier compiled inside a whole-function body reports no site of its own: the
+    // body's hottest loop is what runs it.
+    if let Some(measured) = loop_of(directory, &dumps, |site| matches!(site, Site::Body { .. }))? {
+        return Ok(measured);
+    }
     Ok(scalar_call(directory, &dumps)?.unwrap_or(Measured::Nothing))
 }
 
