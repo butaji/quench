@@ -133,7 +133,7 @@ impl Lowering<'_, '_> {
         let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),
             signless: &signless };
         let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
-            native_calls: self.native_calls };
+            native_calls: self.native_calls, raises: &self.raises };
         let facts = facts::analyze_text(&text, initial, seeds);
         let Some(header) = facts.at(entry) else { return self.entering.clone() };
         self.entering.iter().copied().filter(|&(register, _)| header.get(usize::from(register))

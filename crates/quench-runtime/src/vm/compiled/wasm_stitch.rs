@@ -156,7 +156,7 @@ fn stencil(name: &str) -> Option<Stencil> {
 /// jumps only within itself.
 pub(super) fn stitch(function: &Function, params: usize, returns: bool, constant: &dyn Fn(usize) -> Option<u64>) -> Option<Vec<u8>> {
     let instructions: Vec<WideInstruction> =
-        function.code.iter().map(|packed| super::super::dispatch_fast::decoded_instruction(function, *packed)).collect();
+        function.code.iter().map(|packed| function.widened(*packed)).collect();
     let mut planned = Vec::with_capacity(instructions.len());
     for instruction in &instructions {
         planned.push(plan(*instruction, returns, constant)?);
