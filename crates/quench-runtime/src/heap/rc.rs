@@ -31,6 +31,8 @@ fn locate(value: Value) -> Option<(usize, RecordId)> {
         Some((4, id))
     } else if let Some(id) = value.direct_iterator_index() {
         Some((5, id))
+    } else if let Some(id) = value.direct_collection_index() {
+        Some((9, id))
     } else if let Some(id) = value.direct_string_index() {
         Some(match small_strings::small_string_local(id) {
             Some(local) => (7, local),
@@ -53,6 +55,7 @@ macro_rules! with_space {
             5 => { let $space = &$heap.iterator_records; $body }
             6 => { let $space = &$heap.string_records; $body }
             7 => { let $space = &$heap.small_strings; $body }
+            9 => { let $space = &$heap.collection_records; $body }
             _ => { let $space = &$heap.v128_records; $body }
         }
     };
@@ -70,6 +73,7 @@ macro_rules! with_space_mut {
             5 => { let $space = &mut $heap.iterator_records; $body }
             6 => { let $space = &mut $heap.string_records; $body }
             7 => { let $space = &mut $heap.small_strings; $body }
+            9 => { let $space = &mut $heap.collection_records; $body }
             _ => { let $space = &mut $heap.v128_records; $body }
         }
     };
@@ -96,6 +100,7 @@ macro_rules! for_each_space_mut {
         { let $space = &mut $heap.promise_records; let $handle: fn(RecordId) -> Value = Value::direct_promise; $body }
         { let $space = &mut $heap.await_records; let $handle: fn(RecordId) -> Value = Value::direct_await; $body }
         { let $space = &mut $heap.iterator_records; let $handle: fn(RecordId) -> Value = Value::direct_iterator; $body }
+        { let $space = &mut $heap.collection_records; let $handle: fn(RecordId) -> Value = Value::direct_collection; $body }
         { let $space = &mut $heap.string_records; let $handle: fn(RecordId) -> Value = Value::direct_string; $body }
         { let $space = &mut $heap.small_strings; let $handle: fn(RecordId) -> Value = small_strings::small_string_value; $body }
         { let $space = &mut $heap.v128_records; let $handle: fn(RecordId) -> Value = Value::direct_v128; $body }
@@ -158,6 +163,8 @@ impl Heap {
                 self.await_records.get_live(id).children(properties, out);
             } else if let Some(id) = value.direct_iterator_index() {
                 self.iterator_records.get_live(id).children(properties, out);
+            } else if let Some(id) = value.direct_collection_index() {
+                self.collection_records.get_live(id).children(properties, out);
             } else if let Some(id) = value.direct_string_index() {
                 match small_strings::small_string_local(id) {
                     Some(local) => self.small_strings.get_live(local).for_each_text(|part| out.push(Value::direct_string(part))),
@@ -334,14 +341,14 @@ impl Heap {
     /// at the next minor collection.
     pub(super) fn rc_epoch(&mut self) {
         // The object, array and string survivors counted their children in the mark
-        // (`rc_counted`); functions, promises, awaits and iterators (with the candidates the
-        // mark re-marked, aged) count theirs here, and vectors hold none.
+        // (`rc_counted`); functions, promises, awaits, iterators and collections (with the
+        // candidates the mark re-marked, aged) count theirs here, and vectors hold none.
         let counted = std::mem::take(&mut self.rc_counted);
         let mut survivors = Vec::new();
         let mut family = 0..;
         for_each_space_mut!(self, |space, handle| {
             space.rc_ensure();
-            if family.next().is_some_and(|family| (2..6).contains(&family)) {
+            if family.next().is_some_and(|family| (2..7).contains(&family)) {
                 space.for_each_young_survivor(|id| survivors.push(handle(id)));
             }
         });

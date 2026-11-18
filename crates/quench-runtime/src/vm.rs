@@ -49,7 +49,7 @@ use crate::staged::add_plan::{AddSite, Transition, concrete_add_property, concre
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
-    CallSiteLocation, CallSiteName, CallSiteRecord, Cell, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer,
+    CallSiteLocation, CallSiteName, CallSiteRecord, Cell, CollectionStorage, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer,
     IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind,
     WeakHandle,
 };

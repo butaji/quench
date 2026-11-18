@@ -6993,13 +6993,7 @@ script_handler! {
     fn lane_load_root_lexical<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let hint = i.field_hint();
-        let value = vm
-            .realm
-            .global_lexical_bindings
-            .get_index(usize::from(hint.slot))
-            .filter(|(atom, value)| **atom == hint.receiver && !value.is_deleted())
-            .map(|(_, value)| *value);
-        let Some(value) = value else {
+        let Some(value) = vm.global_lexical_at(hint.receiver, hint.slot) else {
             sibling!(lane_load_capture_walk::<H>, r, ip, view)
         };
         r.set(i.a, value);
@@ -15867,6 +15861,25 @@ script_handler! {
 }
 
 script_handler! {
+    /// A by-name load of a declared global lexical name (`lane_load_global_name_refresh`): the
+    /// binding its record's hint names, read as `lane_load_root_lexical` reads one
+    /// (`Vm::global_lexical_at`). The index only locates the binding, which is taken only while it
+    /// is the name's, so a stale hint, or a binding in its temporal dead zone, takes the refresh,
+    /// which settles the read.
+    fn lane_load_name_lexical<KIND: u8>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some(value) = vm.global_lexical_at(i.imm(), i.field_hint().slot) else {
+            sibling!(lane_load_global_name_refresh::<H, KIND, false>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, value);
+        if KIND == LOAD_NAME_CALL {
+            r.set(i.b, Value::UNDEFINED);
+        }
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
     /// `lane_load_name_bound` of a global, or `lane_load_global_name`, past its record's hint: an
     /// initialized global lexical binding of
     /// the name, which the general path's search finds first there; else the global object's
@@ -15888,7 +15901,18 @@ script_handler! {
         }
         let value = match vm.global_name_read(code, atom, i.c) {
             super::field_cache::GlobalNameRead::Value(value, hint) => {
-                if let Some(hint) = hint { set_field_hint(ip, hint); }
+                if let Some(hint) = hint {
+                    set_field_hint(ip, hint);
+                } else if !SCOPED
+                    && let Some(index) = vm.realm.global_lexical_bindings.get_index_of(&atom)
+                    && let Ok(index) = u16::try_from(index)
+                    && index != NO_CALL_LINK
+                {
+                    // A declared name's read names its binding by index (`lane_load_name_lexical`),
+                    // which the global lexical bindings never move.
+                    set_field_hint(ip, super::FieldCache::own(atom, index));
+                    requicken::<H>(ip, lane_load_name_lexical::<H, KIND>);
+                }
                 value
             }
             super::field_cache::GlobalNameRead::Uninitialized => return exit(ip),
@@ -19572,12 +19596,12 @@ fn lane_activate_environment<H: Host>(
     // before the length covers it, and no activation's window moves.
     let callee_registers = unsafe {
         let registers = stack.values.top();
-        // Every register live at entry (`ScriptCallTarget::fill`) and every local starts
-        // `undefined` within the target's reserved room (`ScriptCallTarget::room`); the
-        // metadata entries are then written, and parameter `k` local `k` with its argument
-        // where one was passed. The environment is made when one is needed.
+        // Every register live at entry (`ScriptCallTarget::fill`) starts `undefined`. The
+        // metadata entries are written outright, so they need no fill, and the storage's
+        // words are laid out after them; the locals then start `undefined` within the
+        // target's reserved room (`ScriptCallTarget::room`), and parameter `k` takes local `k`
+        // with its argument where one was passed. The environment is made when one is needed.
         fill_window(registers, target.entry_registers(), Value::UNDEFINED);
-        fill_window(registers.add(count), held - count + locals, Value::UNDEFINED);
         let entries = registers.add(count);
         entries.add(usize::from(WINDOW_ENVIRONMENT)).write(Value::DELETED);
         entries
@@ -19588,6 +19612,7 @@ fn lane_activate_environment<H: Host>(
             .add(usize::from(WINDOW_SLOTS))
             .write(std::mem::transmute::<u64, Value>(storage as u64));
         let local = registers.add(held);
+        fill_window(local, locals, Value::UNDEFINED);
         // The few values a call passes are copied in place: one pass writes each as its
         // parameter's local and, after the locals, as the value a frame keeps for legacy
         // reflection, with no library copy per run.

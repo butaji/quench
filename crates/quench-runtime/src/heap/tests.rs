@@ -64,6 +64,22 @@ fn direct_array_record_base_resolves_the_current_live_array_value() {
 }
 
 #[test]
+fn symbol_records_live_while_named_and_free_their_descriptions() {
+    for_each_promotion_age(|heap, _age| {
+        let kept = heap.alloc_symbol(SymbolData::public(Some("kept".to_owned())));
+        let dead = heap.alloc_symbol(SymbolData::public(Some("dead".to_owned())));
+        assert!(heap.is_symbol(kept) && heap.is_symbol(dead));
+        assert!(!heap.is_symbol(Value::heap(0)), "a legacy cell is never a symbol record");
+        collect_minor(heap, [kept]);
+        assert!(heap.is_live(kept) && !heap.is_live(dead));
+        heap.collect([kept]);
+        assert!(heap.is_live(kept) && !heap.is_live(dead));
+        assert_eq!(heap.symbol_data(kept).and_then(|symbol| symbol.description.as_deref()), Some("kept"));
+        assert!(heap.symbol_data(dead).is_none());
+    });
+}
+
+#[test]
 fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
     for_each_promotion_age(|heap, _| minor_collection_traces_remembered_edges(heap));
 }
@@ -1052,14 +1068,11 @@ fn promoted_owner_remembers_its_young_child(
 fn promoted_cells_remember_their_young_children() {
     promoted_owner_remembers_its_young_child(
         |heap| {
-            heap.alloc(Cell::Set {
-                object: plain_object(),
-                entries: Default::default(),
-            })
+            heap.alloc_set(plain_object(), Default::default())
         },
         |heap| heap.alloc(Cell::Error("young child".into())),
         |heap, owner, child| {
-            if let Some(Cell::Set { entries, .. }) = heap.get_mut(owner) {
+            if let Some(entries) = heap.set_entries_mut(owner) {
                 // The set is only traced, never searched, so the key hash is immaterial.
                 entries.push(child, 0);
             }

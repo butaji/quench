@@ -10,12 +10,10 @@ fn parallel_mark_matches_serial_verifier(heap: &mut Heap) {
     let children = (0..PARALLEL_MARK_MINIMUM_CELLS)
         .map(|_| heap.alloc(Cell::Error("parallel survivor".into())))
         .collect::<Vec<_>>();
-    // Only a heap without records sweeps, and marks a minor collection, in parallel. Keep
-    // this root in the legacy space so those paths remain covered.
-    let root = heap.alloc(Cell::Set {
-        object: plain_object(),
-        entries: CollectionEntries::from_hashed(children.iter().map(|&child| (child, 0))).into(),
-    });
+    let root = heap.alloc_set(
+        plain_object(),
+        CollectionEntries::from_hashed(children.iter().map(|&child| (child, 0))).into(),
+    );
 
     heap.collect([root]);
     assert!(children.iter().all(|child| heap.get(*child).is_some()));
@@ -23,14 +21,14 @@ fn parallel_mark_matches_serial_verifier(heap: &mut Heap) {
     let young = (0..128)
         .map(|_| heap.alloc(Cell::Error("remembered young survivor".into())))
         .collect::<Vec<_>>();
-    if let Some(Cell::Set { entries, .. }) = heap.get_mut(root) {
+    if let Some(entries) = heap.set_entries_mut(root) {
         // The set is only traced, never searched, so the key hash is immaterial.
         young.iter().for_each(|child| entries.push(*child, 0));
     }
     collect_minor(heap, [root]);
     assert!(young.iter().all(|child| heap.get(*child).is_some()));
 
-    if let Some(Cell::Set { entries, .. }) = heap.get_mut(root) {
+    if let Some(entries) = heap.set_entries_mut(root) {
         entries.clear();
     }
     heap.collect([root]);
