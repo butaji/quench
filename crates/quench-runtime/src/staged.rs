@@ -368,6 +368,76 @@ pub(crate) const fn truth_jump(op: Op) -> Option<bool> {
     }
 }
 
+/// The `Op` of the `*_ROW` constant `row`, the bridge from a row constant to the opcode a record is
+/// built with (`WideInstruction::new`). Panics on a constant no opcode carries.
+pub(crate) const fn row_op(row: u16) -> Op {
+    match Op::from_index(row as usize) {
+        Some(op) => op,
+        None => panic!("a staged row constant names no opcode"),
+    }
+}
+
+/// The `*_ROW` constants of the records a tier builds: a call, a move, a named field read and its
+/// stores. `row_op` gives the record's `Op`.
+pub(crate) const CALL_ROW: u16 = Op::Call as u16;
+pub(crate) const MOVE_ROW: u16 = Op::Move as u16;
+pub(crate) const GET_FIELD_ROW: u16 = Op::GetField as u16;
+pub(crate) const SET_FIELD_ROW: u16 = Op::SetField as u16;
+pub(crate) const SET_THIS_FIELD_ROW: u16 = Op::SetThisField as u16;
+
+// Meaning queries: what the staged rows say `op` does, one query per meaning a tier lowers. A
+// tier asks the query instead of naming opcodes; each answers exactly its row family.
+
+/// Reads a named field (`GetField`).
+pub(crate) const fn reads_named_field(op: Op) -> bool { matches!(op, Op::GetField) }
+/// Reads an element by index (`GetIndex`).
+pub(crate) const fn reads_element(op: Op) -> bool { matches!(op, Op::GetIndex) }
+/// Stores an element by index (`SetIndex`).
+pub(crate) const fn writes_element(op: Op) -> bool { matches!(op, Op::SetIndex) }
+/// Accesses an element through its object register as an indexed receiver (`GetIndex`,
+/// `SetIndex`, `RequireObjectCoercible`).
+pub(crate) const fn indexes_receiver(op: Op) -> bool { matches!(op, Op::GetIndex | Op::SetIndex | Op::RequireObjectCoercible) }
+/// Computes a binary operator of two registers (`Binary`).
+pub(crate) const fn computes_binary(op: Op) -> bool { matches!(op, Op::Binary) }
+/// Computes an arithmetic binary operator (`Binary`, `NumericAdd`, `NumericMultiply`).
+pub(crate) const fn computes_arithmetic(op: Op) -> bool { matches!(op, Op::Binary | Op::NumericAdd | Op::NumericMultiply) }
+/// Computes a unary operator (`Unary`).
+pub(crate) const fn computes_unary(op: Op) -> bool { matches!(op, Op::Unary) }
+/// Defines a register from a constant (`LoadConst`).
+pub(crate) const fn loads_constant(op: Op) -> bool { matches!(op, Op::LoadConst) }
+/// Converts a value to a Number (`ToNumeric`).
+pub(crate) const fn converts_numeric(op: Op) -> bool { matches!(op, Op::ToNumeric) }
+/// Increments or decrements a Number (`IncDec`).
+pub(crate) const fn increments(op: Op) -> bool { matches!(op, Op::IncDec) }
+/// Makes a call (`Call`).
+pub(crate) const fn calls(op: Op) -> bool { matches!(op, Op::Call) }
+/// Makes a call of an argument array (`CallArray`).
+pub(crate) const fn calls_array(op: Op) -> bool { matches!(op, Op::CallArray) }
+/// Makes an ordinary call (`Call`, `CallArray`).
+pub(crate) const fn calls_ordinary(op: Op) -> bool { matches!(op, Op::Call | Op::CallArray) }
+/// Continues at the jump target (`Jump`).
+pub(crate) const fn jumps(op: Op) -> bool { matches!(op, Op::Jump) }
+/// Completes the activation (`Return`).
+pub(crate) const fn returns(op: Op) -> bool { matches!(op, Op::Return) }
+/// Reads a captured slot (`LoadCapture`).
+pub(crate) const fn reads_capture(op: Op) -> bool { matches!(op, Op::LoadCapture) }
+/// Writes a captured slot (`StoreCapture`).
+pub(crate) const fn writes_capture(op: Op) -> bool { matches!(op, Op::StoreCapture) }
+/// Reads a binding by name (`LoadName`).
+pub(crate) const fn reads_name(op: Op) -> bool { matches!(op, Op::LoadName) }
+/// Reads an environment slot (`LoadEnvLocal`).
+pub(crate) const fn reads_environment_slot(op: Op) -> bool { matches!(op, Op::LoadEnvLocal) }
+/// Defines an element of an array literal (`DefineArrayElement`).
+pub(crate) const fn defines_array_element(op: Op) -> bool { matches!(op, Op::DefineArrayElement) }
+/// Refuses `null` and `undefined` (`RequireObjectCoercible`).
+pub(crate) const fn requires_object_coercible(op: Op) -> bool { matches!(op, Op::RequireObjectCoercible) }
+/// Copies a register into another (`Move`).
+pub(crate) const fn moves(op: Op) -> bool { matches!(op, Op::Move) }
+/// Jumps on a register's truthiness (`JumpFalse`, `JumpTrue`).
+pub(crate) const fn tests_truthiness(op: Op) -> bool { matches!(op, Op::JumpFalse | Op::JumpTrue) }
+/// Writes `this` as a field (`SetThisField`).
+pub(crate) const fn writes_this_field(op: Op) -> bool { matches!(op, Op::SetThisField) }
+
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]
 pub(crate) enum Operation<W, P> {
