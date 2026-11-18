@@ -205,13 +205,15 @@ fn is_parameter(function: &crate::bytecode::Function, register: Register) -> boo
 }
 
 /// The language bits entry conformance checks exactly (`conform_language`): a Boolean,
-/// `undefined`, `null`, a direct object and a direct function. A set with any other bit (Number,
-/// String, BigInt, Symbol) is not checkable here.
+/// `undefined`, `null`, a direct object, a direct function, and a string (a direct string by its
+/// tag, any other string by the VM's `typeof`). A set with any other bit (Number, BigInt, Symbol)
+/// is not checkable here.
 const CHECKABLE: u16 = crate::typed_ir::language_bit(crate::ValueType::Boolean)
     | crate::typed_ir::language_bit(crate::ValueType::Undefined)
     | crate::typed_ir::language_bit(crate::ValueType::Null)
     | crate::typed_ir::language_bit(crate::ValueType::Object)
-    | crate::typed_ir::language_bit(crate::ValueType::Function);
+    | crate::typed_ir::language_bit(crate::ValueType::Function)
+    | crate::typed_ir::language_bit(crate::ValueType::String);
 
 /// Whether the non-empty language set `bits` is one entry conformance tests exactly.
 pub(super) fn checkable(bits: u16) -> bool {
@@ -237,7 +239,7 @@ pub(super) fn declared_entry_types(function: &crate::bytecode::Function, written
 }
 
 /// The register parameter `index` enters in.
-fn parameter_register(function: &crate::bytecode::Function, index: usize) -> Option<Register> {
+pub(super) fn parameter_register(function: &crate::bytecode::Function, index: usize) -> Option<Register> {
     let index = u16::try_from(index).ok().filter(|index| *index < function.params)?;
     match function.parameter_registers {
         Some(base) => base.checked_add(index),

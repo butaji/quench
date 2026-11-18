@@ -53,6 +53,8 @@ impl Type {
             Self::language(ValueType::Undefined)
         } else if value.direct_object_index().is_some() {
             Self::DIRECT_OBJECT_FAMILY
+        } else if value.direct_string_index().is_some() {
+            Self::language(ValueType::String)
         } else if value.is_record() {
             Self::language(ValueType::Object)
         } else {

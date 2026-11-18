@@ -469,6 +469,10 @@ struct Lowering<'a, 'f> {
     /// The entry function's annotated locals: the register each lives in and the language type its
     /// annotation seeds (`declared::declared_local_types`).
     declared_definitions: Vec<(Register, Type)>,
+    /// The entry function's declared `this` type, which its `LoadThis` checks where it enters the destination.
+    declared_this: Option<Type>,
+    /// The entry function's unwritten rest parameter register and its declared element type (`declared::declared_rest_read`).
+    declared_rest: Option<(Register, Type)>,
     helpers: LaneHelpers,
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a FieldSites,
@@ -1047,23 +1051,25 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     /// A language fact of the target the edge has not proved, when `ty` is exactly a set
     /// `scalar::checkable` names: one guard that the register holds a member, then the set as its
-    /// fact. A Number, String, BigInt or Symbol set is not tested here and leaves to `proves`.
+    /// fact. A String member is proved by its direct tag, and any other string by the VM's `typeof`
+    /// helper on a slow path only. A Number, BigInt or Symbol set is not tested here and leaves to `proves`.
     fn conform_language(&mut self, state: &mut State, target: usize, register: Register, ty: Type) {
-        use crate::ValueType::{Boolean, Function, Null, Object, Undefined};
+        use crate::ValueType::{Boolean, Function, Null, Object, String as Text, Undefined};
         use crate::staged::Stage;
         use crate::typed_ir::Languages;
-        use crate::staged::value::{is_boolean, is_direct_function, is_direct_object, is_null, is_undefined};
+        use crate::staged::value::{is_boolean, is_direct_function, is_direct_object, is_direct_string, is_null, is_undefined};
         let index = usize::from(register);
-        let kinds = [Boolean, Undefined, Null, Object, Function];
+        let kinds = [Boolean, Undefined, Null, Object, Function, Text];
         let bits = kinds.into_iter().filter(|kind| Type::language(*kind).is_subtype(ty))
             .fold(Languages::EMPTY, |set, kind| set | Languages::of(kind)).bits();
         if !scalar::checkable(bits) || Type::languages(bits) != ty || state.values[index].value.ty.is_subtype(ty) { return; }
         let value = self.tagged(state, register);
         let exit = self.guard_exit(state, target as u32);
-        let member = {
+        // The one-word tests of the set's members other than String, any of which proves the value.
+        let others = {
             let stage = &mut super::object_slots::emit(&mut self.builder);
             let mut member: Option<ir::Value> = None;
-            for kind in kinds.into_iter().filter(|kind| Languages::from_bits(bits).contains(*kind)) {
+            for kind in kinds.into_iter().filter(|kind| *kind != Text && Languages::from_bits(bits).contains(*kind)) {
                 let test = match kind {
                     Boolean => is_boolean(stage, value),
                     Undefined => is_undefined(stage, value),
@@ -1075,9 +1081,30 @@ impl<'a, 'f> Lowering<'a, 'f> {
                 };
                 member = Some(match member { Some(any) => stage.any(any, test), None => test });
             }
-            member.expect("a checkable set names a member")
+            member
         };
-        emit_js_guard(&mut self.builder, member, exit);
+        if Languages::from_bits(bits).contains(Text) {
+            // A direct string is accepted by its tag; any other value falls to the VM's `typeof`
+            // test, which only that slow path pays for.
+            let direct = is_direct_string(&mut super::object_slots::emit(&mut self.builder), value);
+            let accepted = match others {
+                Some(others) => super::object_slots::emit(&mut self.builder).any(others, direct),
+                None => direct,
+            };
+            let slow = self.builder.create_block();
+            let done = self.builder.create_block();
+            emit(&mut self.builder).branch_if(accepted, (done, &[]), (slow, &[]));
+            self.builder.switch_to_block(slow);
+            let name = self.raw_const(Lane::I64, crate::bytecode::typeof_name_index("string").expect("a typeof name") as i64);
+            let named = self.helper_call(LaneHelper::TypeofIs, &[value, name]);
+            let holds = self.raw_compare_imm(Relation::NotEqual, named, 0);
+            emit_js_guard(&mut self.builder, holds, exit);
+            self.goto(done, &[]);
+            self.builder.switch_to_block(done);
+        } else {
+            let member = others.expect("a checkable set names a member");
+            emit_js_guard(&mut self.builder, member, exit);
+        }
         state.values[index] = RegisterFact { tagged: state.values[index].tagged,
             ..RegisterFact::definition(ty, Representation::Tagged) };
     }
@@ -1744,6 +1771,8 @@ pub(super) fn lower(
         entry_words: (entry_this, entry_captures),
         callee_slots: Vec::new(),
         declared_definitions: Vec::new(),
+        declared_this: None,
+        declared_rest: None,
         registers,
         written: CompoundBitSet::with_capacity(count),
         consumed: CompoundBitSet::with_capacity(unit.instructions.len()),
@@ -1803,6 +1832,8 @@ pub(super) fn lower(
         scalar::require_entry_types(program, function, &instructions, |pc| generic.contains(&entry_leave(unit)) || heap.contains(pc), &lowering.written, &mut initial);
         scalar::declared_entry_types(function, &lowering.written, &mut initial);
         lowering.declared_definitions = declared::declared_local_types(program, function);
+        lowering.declared_this = declared::declared_this(program, function);
+        lowering.declared_rest = declared::declared_rest_read(program, function, &lowering.written);
     }
     let own_shape = |pc: usize| {
         let instruction = instructions[pc];

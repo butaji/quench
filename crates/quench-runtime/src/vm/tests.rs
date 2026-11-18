@@ -24221,3 +24221,34 @@ fn declared_number_fields_seed_their_slot_type_at_the_first_add() {
     assert_eq!(global(&mut vm, "ok"), Value::TRUE);
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::ANY);
 }
+
+#[test]
+fn declared_null_fields_seed_their_slot_type_at_the_first_add() {
+    let program = Engine::specialize_typescript(
+        "class N { next: null = null; n: number = 0; }\nvar v = new N();\n",
+        "declared-null-fields.ts",
+    )
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.heap.track_slot_representations(&vm.shape_layouts());
+    vm.execute(&program).unwrap();
+    let global = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        vm.own_property(vm.realm.globals, atom).unwrap()
+    };
+    let v = global(&mut vm, "v");
+    let next = vm.intern_atom("next");
+    let shape = vm.heap.object(v).unwrap().shape();
+    let slot = vm.shape_slot(shape, next).unwrap();
+    assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::language(crate::ValueType::Null));
+
+    // The declared null is a seed, not a proof: a number store widens the slot through the join.
+    let widen = Engine::specialize_typescript(
+        "v.next = 1;\nvar ok = v.next === 1 && v.n === 0;\n",
+        "declared-null-fields-widen.ts",
+    )
+    .unwrap();
+    vm.execute(&widen).unwrap();
+    assert_eq!(global(&mut vm, "ok"), Value::TRUE);
+    assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::ANY);
+}

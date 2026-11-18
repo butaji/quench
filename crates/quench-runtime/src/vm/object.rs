@@ -4730,8 +4730,8 @@ impl<H: Host> Vm<H> {
         {
             // Once per transition: the add that creates `target_shape` seeds its slot from the
             // class's declared type; later adds of the shape reuse this entry and its seed.
-            if declared_number_field(p, function, atom) {
-                self.heap.seed_declared_slot(target_shape, usize::from(slot), crate::typed_ir::Type::NUMBER);
+            if let Some(ty) = declared_field_type(p, function, atom) {
+                self.heap.seed_declared_slot(target_shape, usize::from(slot), ty);
             }
             self.record_field_add_cache(
                 site,
@@ -5264,13 +5264,18 @@ impl<H> Vm<H> {
     }
 }
 
-/// Whether `atom`, added to an instance of the class whose constructor is `function` of `p`, is a
-/// field declared `number` (`DeclaredTypes::declared_field`): the class's constructor carries the
-/// class's source span, whose start names the class.
-fn declared_number_field(p: &ResidualProgram, function: u32, atom: Atom) -> bool {
-    let Some(declared) = p.declared_types.as_deref() else { return false };
-    let Some(class_start) = p.function_get(function as usize).and_then(|body| body.source_span).map(|span| span.start) else {
-        return false;
-    };
-    declared.declared_field(class_start, &p.atoms[atom as usize]) == Some(crate::typed_ir::Languages::of(crate::ValueType::Number).bits())
+/// The slot type seed of `atom`, added to an instance of the class whose constructor is `function`
+/// of `p`, from its declared field type (`DeclaredTypes::declared_field`): the class's constructor
+/// carries the class's source span, whose start names the class. `None` where the declaration
+/// holds no fact: no declaration, an open set (`ANY_LANGUAGES`), an empty set, or a set whose
+/// slot class is `SlotType::Tagged` (exactly `Type::ANY`, which a seed would only widen to).
+fn declared_field_type(p: &ResidualProgram, function: u32, atom: Atom) -> Option<crate::typed_ir::Type> {
+    let declared = p.declared_types.as_deref()?;
+    let class_start = p.function_get(function as usize).and_then(|body| body.source_span).map(|span| span.start)?;
+    let bits = declared.declared_field(class_start, &p.atoms[atom as usize])?;
+    if bits == crate::typed_ir::ANY_LANGUAGES || bits == crate::typed_ir::Languages::EMPTY.bits() {
+        return None;
+    }
+    let ty = crate::typed_ir::Type::languages(bits);
+    (crate::typed_ir::SlotType::from_type(ty) != crate::typed_ir::SlotType::Tagged).then_some(ty)
 }

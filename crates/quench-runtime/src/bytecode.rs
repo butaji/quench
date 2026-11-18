@@ -2396,7 +2396,7 @@ impl Function {
     /// Whether a closure environment may hold local `slot`: the selective layout names it or,
     /// without one, the function captures its whole frame by creating closures or reaching its
     /// environment.
-    fn local_slot_captured(&self, slot: usize) -> bool {
+    pub(crate) fn local_slot_captured(&self, slot: usize) -> bool {
         match &self.selective_capture_slots {
             Some(captured) => {
                 u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())

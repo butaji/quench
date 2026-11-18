@@ -20,6 +20,11 @@ pub(crate) trait Dataflow {
     fn join(&self, into: &mut Self::State, incoming: &Self::State) -> bool;
     /// The output of `block` for the input `state`. May record per-instruction states.
     fn transfer(&mut self, block: usize, state: &Self::State) -> Self::State;
+    /// The state `block` sends to its edge `target`, given its output `out`. Analyses that refine
+    /// a state per edge (a branch's taken side) override this; the default passes `out` as is.
+    fn transfer_edge(&self, _block: usize, _target: usize, out: &Self::State) -> Self::State {
+        out.clone()
+    }
 }
 
 /// Solves `analysis` to its fixpoint and returns each block's input state, `None` where no
@@ -36,11 +41,13 @@ pub(crate) fn solve<D: Dataflow>(analysis: &mut D) -> Vec<Option<D::State>> {
         work.remove(block);
         let Some(state) = states[block].as_ref() else { continue };
         let out = analysis.transfer(block, state);
-        for &target in analysis.edges(block) {
+        for index in 0..analysis.edges(block).len() {
+            let target = analysis.edges(block)[index];
+            let edge = analysis.transfer_edge(block, target, &out);
             let changed = match &mut states[target] {
-                Some(known) => analysis.join(known, &out),
+                Some(known) => analysis.join(known, &edge),
                 slot => {
-                    *slot = Some(out.clone());
+                    *slot = Some(edge);
                     true
                 }
             };
