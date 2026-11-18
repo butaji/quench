@@ -148,11 +148,42 @@ impl Emit<'_, '_> {
 
     /// A greedy repeat gives back a unit: the frame goes back down to the floor.
     fn greedy_resume(&mut self, pc: u32, floor: ir::Value, end: ir::Value) {
+        if let Some(NativeInst::Unit(follower)) = self.plan.insts.get(pc as usize + 1) {
+            return self.greedy_resume_to(pc, *follower, floor, end);
+        }
         let at = self.b.raw_binary_imm(Binary::Add, end, -1);
         let more = self.compare(Relation::UnsignedGreater, at, floor);
         self.push_resume_if(more, Resume::Greedy(pc), floor, at);
         self.set_position(at);
         self.next(pc);
+    }
+
+    /// `greedy_resume` where the repeat's next instruction takes one unit by `follower`: the
+    /// units given back that `follower` refuses fail at once, so one loop gives back down to
+    /// the last unit it takes, which it takes, as a resume per unit followed by the `Unit`
+    /// would, and fails where none down to the floor does.
+    fn greedy_resume_to(&mut self, pc: u32, follower: NativeTest, floor: ir::Value, end: ir::Value) {
+        let (look, step, found) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
+        let at = self.b.block_parameter(look, Lane::I64);
+        let first = self.b.raw_binary_imm(Binary::Add, end, -1);
+        self.b.goto(look, &[first]);
+        self.b.enter_open(look);
+        let unit = self.unit_at(at);
+        let takes = self.passes(unit, follower);
+        self.branch(takes, found, step);
+        self.b.enter_open(step);
+        let more = self.compare(Relation::UnsignedGreater, at, floor);
+        let lower = self.b.new_block();
+        self.branch(more, lower, self.backtrack);
+        self.b.enter_open(lower);
+        let below = self.b.raw_binary_imm(Binary::Add, at, -1);
+        self.b.goto(look, &[below]);
+        self.b.enter_open(found);
+        let more = self.compare(Relation::UnsignedGreater, at, floor);
+        self.push_resume_if(more, Resume::Greedy(pc), floor, at);
+        let after = self.b.raw_binary_imm(Binary::Add, at, 1);
+        self.set_position(after);
+        self.goto(pc + 2);
     }
 
     /// A lazy repeat takes a unit where its test passes, and keeps the frame below the ceiling.

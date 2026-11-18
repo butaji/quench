@@ -10,8 +10,8 @@ use cranelift_codegen::ir::{self, types, MemFlagsData};
 use cranelift_codegen::isa::TargetIsa;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use quench_regexp::backtrack::CAPTURE_REGISTERS;
-use quench_regexp::backtrack::matcher::{admits, assertion_holds, takes_unit, Admission, AssertionTest};
-use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativeInst, NativePlan, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
+use quench_regexp::backtrack::matcher::{admits, ascii_units_are_words, assertion_holds, takes_unit, word_assertion_given, Admission, AssertionTest};
+use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativeInst, NativePlan, NativeRestarts, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
 
 mod repeats;
 mod stage;
@@ -28,7 +28,7 @@ const FIRST_RESUME: i64 = 2;
 const FIRST_OPERAND: i32 = WORD;
 const SECOND_OPERAND: i32 = 2 * WORD;
 /// The parameters of a native search (`NativeFn`).
-const PARAMETERS: usize = 6;
+const PARAMETERS: usize = 8;
 /// An address of register `n` is `n << REGISTER_SHIFT` bytes on.
 const REGISTER_SHIFT: i64 = 3;
 
@@ -95,8 +95,14 @@ struct Emit<'a, 'f> {
     length: ir::Value,
     registers: ir::Value,
     stack_end: ir::Value,
+    /// The last start a search that moves on by itself tries, and where it writes the start
+    /// of its match (`NativeFn`).
+    last: ir::Value,
+    found: ir::Value,
     position: Variable,
     top: Variable,
+    /// The start of the run, for a search that moves on by itself.
+    start: Variable,
     instructions: Vec<ir::Block>,
     backtrack: ir::Block,
     overflow: ir::Block,
@@ -132,13 +138,15 @@ impl<'a, 'f> Emit<'a, 'f> {
         b.append_block_params_for_function_params(entry);
         b.enter_open(entry);
         let parameters = b.block_params(entry).to_vec();
-        let [bytes, length, position_in, registers, stack, stack_end] = parameters[..] else { unreachable!("`PARAMETERS` parameters") };
-        let (position, top) = (b.declare_var(types::I64), b.declare_var(types::I64));
+        let [bytes, length, position_in, registers, stack, stack_end, last, found] = parameters[..] else { unreachable!("`PARAMETERS` parameters") };
+        let (position, top, start) = (b.declare_var(types::I64), b.declare_var(types::I64), b.declare_var(types::I64));
         let instructions: Vec<_> = plan.insts.iter().map(|_| b.new_block()).collect();
         let (backtrack, overflow) = (b.new_block(), b.new_block());
         b.def_var(position, position_in);
         b.def_var(top, stack);
-        let mut emit = Self { b, plan, bytes, length, registers, stack_end, position, top, instructions, backtrack, overflow, resumes: Vec::new() };
+        // A search that moves on by itself has no entry offset (`Program::native_restarts`).
+        b.def_var(start, position_in);
+        let mut emit = Self { b, plan, bytes, length, registers, stack_end, last, found, position, top, start, instructions, backtrack, overflow, resumes: Vec::new() };
         let barrier = emit.constant(BARRIER);
         let zero = emit.constant(0);
         emit.push_frame(barrier, zero, zero);
@@ -353,8 +361,7 @@ impl<'a, 'f> Emit<'a, 'f> {
         self.b.enter_open(restore);
         self.restore_frame(top);
         self.b.enter_open(barrier);
-        let failed = self.constant(NATIVE_FAIL as i64);
-        self.b.leave(&[failed]);
+        self.restart();
         // The resume blocks stay listed: a resume pushes frames of its own kind, which name
         // their ids from the list (`resume_id`), so it never grows here.
         let listed = self.resumes.len();
@@ -364,6 +371,67 @@ impl<'a, 'f> Emit<'a, 'f> {
             self.resume(resume);
         }
         debug_assert_eq!(self.resumes.len(), listed, "no resume made another");
+    }
+
+    /// The barrier: the run from this start failed. The caller finds the next start, or the
+    /// code moves to the next position past it that the start set admits (`Program::next_start`)
+    /// and runs from there, failing past `last`.
+    fn restart(&mut self) {
+        let admission = match self.plan.restarts {
+            NativeRestarts::Caller => None,
+            NativeRestarts::Every => Some(None),
+            NativeRestarts::Admitted(admission) => Some(Some(admission)),
+        };
+        let Some(admission) = admission else {
+            let failed = self.constant(NATIVE_FAIL as i64);
+            self.b.leave(&[failed]);
+            return;
+        };
+        let (next, exhausted, run) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
+        self.b.goto(next, &[]);
+        self.b.enter_open(next);
+        let start = self.b.use_var(self.start);
+        let start = self.b.raw_binary_imm(Binary::Add, start, 1);
+        self.b.def_var(self.start, start);
+        let past = self.compare(Relation::UnsignedGreater, start, self.last);
+        let candidate = self.b.new_block();
+        self.branch(past, exhausted, candidate);
+        self.b.enter_open(candidate);
+        match admission {
+            None => self.b.goto(run, &[]),
+            Some(admission) => {
+                let admitted = admits(self, admission, start);
+                self.branch(admitted, run, next);
+            }
+        }
+        self.b.enter_open(exhausted);
+        let failed = self.constant(NATIVE_FAIL as i64);
+        self.b.leave(&[failed]);
+        self.b.enter_open(run);
+        let start = self.b.use_var(self.start);
+        // A leading assertion that fails fails the run with no frame of its own to undo: it
+        // is decided here, before the run's barrier.
+        // The start set may say whether the unit at the start is a word unit, which leaves
+        // `\b` and `\B` only the unit before it to read.
+        let word = match admission {
+            Some(Admission { units: NativeTest::Mask(mask), at_end, .. }) => ascii_units_are_words(mask).filter(|word| !(*word && at_end)),
+            _ => None,
+        };
+        let mut entry = self.plan.entry;
+        while let Some(NativeInst::Assert(test)) = self.plan.insts.get(entry as usize) {
+            let given = word.and_then(|word| word_assertion_given(self, *test, start, word));
+            let holds = given.unwrap_or_else(|| assertion_holds(self, *test, start));
+            let held = self.b.new_block();
+            self.branch(holds, held, next);
+            self.b.enter_open(held);
+            entry += 1;
+        }
+        self.b.raw_store(Lane::I64, MemFlagsData::trusted(), (start, false), self.found, 0);
+        self.set_position(start);
+        let barrier = self.constant(BARRIER);
+        let zero = self.constant(0);
+        self.push_frame(barrier, zero, zero);
+        self.goto(entry);
     }
 
     /// Jumps by `id` to the restore block, the barrier block or a resume block.

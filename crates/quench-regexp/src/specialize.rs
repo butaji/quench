@@ -106,6 +106,8 @@ pub(super) trait Stage: MatchStage<Pos = usize, Unit = u32, Flag = bool, Test = 
     fn dispatch(&mut self, table: u32, position: usize) -> Option<u32>;
     /// The `index`th entry of `Program::lists`.
     fn listed(&self, index: u32) -> u32;
+    /// The test of the instruction at `pc` where it takes one unit (`Inst::Unit`).
+    fn unit_follower(&self, pc: u32) -> Option<UnitTest>;
     /// The positions a match of string class `class` at `position` ends at, longest first
     /// (read backward: where the matches ending at `position` start).
     fn class_ends(&mut self, class: u32, position: usize, backward: bool) -> Vec<usize>;
@@ -177,7 +179,17 @@ pub(super) fn replay<S: Stage>(stage: &mut S) -> Replay {
         }
         Some(Frame::Choice { pc, position }) => Replay::Resume(Cursor::at(pc, position)),
         Some(Frame::Greedy { pc, floor, position }) => {
-            let at = position - 1;
+            let mut at = position - 1;
+            // A unit the next instruction refuses fails at once: give back down to the last
+            // one it takes, or past the floor, where the frame is spent.
+            if let Some(test) = stage.unit_follower(pc) {
+                while !{ let unit = stage.unit_at(at); stage.passes(unit, test) } {
+                    if at == floor {
+                        return Replay::Undone;
+                    }
+                    at -= 1;
+                }
+            }
             if at > floor {
                 stage.keep(Frame::Greedy { pc, floor, position: at });
             }

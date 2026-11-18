@@ -147,6 +147,14 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
     }
 
     #[inline(always)]
+    fn unit_follower(&self, pc: u32) -> Option<UnitTest> {
+        match self.program.instructions[pc as usize] {
+            Inst::Unit(test) => Some(test),
+            _ => None,
+        }
+    }
+
+    #[inline(always)]
     fn listed(&self, index: u32) -> u32 {
         self.program.lists[index as usize]
     }

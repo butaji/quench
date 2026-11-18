@@ -75,6 +75,16 @@ impl MatchStage for Emit<'_, '_> {
 
     /// The ranges' ASCII part: an ASCII subject holds no other unit.
     fn in_ranges(&mut self, unit: ir::Value, ranges: &[(u32, u32)]) -> ir::Value {
+        // Two or more ranges (`\w`, which `\b` reads twice) are one test of their mask.
+        if ranges.len() > 1 {
+            let mut mask = [0u64; 2];
+            for &(first, last) in ranges.iter().filter(|(first, _)| *first < NATIVE_ASCII_UNITS) {
+                for unit in first..=last.min(NATIVE_ASCII_UNITS - 1) {
+                    mask[(unit as i64 / WORD_BITS) as usize] |= 1 << (unit as i64 & WORD_SHIFT_MASK);
+                }
+            }
+            return self.in_mask(mask, unit);
+        }
         let mut found = self.b.raw_const(Lane::I8, 0);
         for &(first, last) in ranges.iter().filter(|(first, _)| *first < NATIVE_ASCII_UNITS) {
             let hit = self.in_range(unit, (first, last.min(NATIVE_ASCII_UNITS - 1)));
