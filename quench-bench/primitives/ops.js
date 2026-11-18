@@ -65,4 +65,14 @@ ops.field_store = function (n) { const o = { x: 0, y: 0 }; for (let i = 0; i < n
 ops.call_direct = function (n) { let a = 0; for (let i = 0; i < n; i++) { a = (a + addOne(i)) | 0; } return a; };
 ops.call_closure = function (n) { const k = 5, f = (x) => (x + k) | 0; let a = 0; for (let i = 0; i < n; i++) { a = (a + f(i)) | 0; } return a; };
 ops.call_method = function (n) { const o = { k: 1, m(x) { return (x + this.k) | 0; } }; let a = 0; for (let i = 0; i < n; i++) { a = (a + o.m(i)) | 0; } return a; };
+// RegExp.prototype.test of typical patterns over one text (the regexp kit's subject); the C
+// twins in ops.c are the matcher a C programmer writes for each pattern.
+const RS = "The quick brown fox jumps over the lazy dog; contact: john.doe+tag@example.com, price $1234.56, date 2026-11-18, running jumping";
+function rxLoop(n, re) { let c = 0; for (let i = 0; i < n; i++) { if (re.test(RS)) c++; } return c; }
+ops.rx_lit = function (n) { return rxLoop(n, /lazy/); };
+ops.rx_digits = function (n) { return rxLoop(n, /\d+/); };
+ops.rx_word2 = function (n) { return rxLoop(n, /(\w+)\s(\w+)/); };
+ops.rx_email = function (n) { return rxLoop(n, /[\w.+-]+@[\w-]+\.[\w.]+/); };
+ops.rx_dotstar = function (n) { return rxLoop(n, /q.*z/); };
+ops.rx_ahead = function (n) { return rxLoop(n, /\w+(?=@)/); };
 globalThis.PRIMITIVE_OPS = ops;
