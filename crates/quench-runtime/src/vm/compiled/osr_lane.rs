@@ -12,7 +12,7 @@ pub(super) fn bind_loop<H: Host>(
     native.dispatch.bind_native_storage(vm);
     native.dispatch.lane_context = lane_context;
     // A region's `THIS`-based reads take the running activation's receiver, as a lane
-    // body's do (`lane_loop_body`); `with` leaves it `DELETED`. A frameless activation's
+    // body's do (`run_loop_body`); `with` leaves it `DELETED`. A frameless activation's
     // receiver is the lane context's: `frame` is then the VM frame beneath it, its caller's.
     // SAFETY: `lane_context` is the running lane's context for `H`.
     native.dispatch.receiver = unsafe { super::dispatch_fast::lane_context_this::<H>(lane_context) }.to_bits();

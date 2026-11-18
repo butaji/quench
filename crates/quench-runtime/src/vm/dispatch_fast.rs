@@ -294,7 +294,7 @@ pub(super) struct LoopSite {
     lane_backedge_count: std::cell::Cell<u64>,
     native_entry_attempts: std::cell::Cell<u64>,
     native_region_runs: std::cell::Cell<u64>,
-    /// Bodies published for this loop (`plan_loop_body`) and runs of them (`lane_loop_body`).
+    /// Bodies published for this loop (`plan_loop_body`) and runs of them (`run_loop_body`).
     tier_ups: std::cell::Cell<u64>,
     body_runs: std::cell::Cell<u64>,
     entry_guard_misses: std::cell::Cell<u64>,
@@ -303,7 +303,7 @@ pub(super) struct LoopSite {
     compile_attempts: std::cell::Cell<u64>,
     compile_successes: std::cell::Cell<u64>,
     tier: std::cell::RefCell<LoopTier>,
-    /// The function's lane body planned to start at this loop's header (`lane_loop_body`).
+    /// The function's lane body planned to start at this loop's header (`run_loop_body`).
     body: std::cell::RefCell<LoopBody>,
     /// The header dispatches that found the body idle (`plan_loop_body`), each an iteration
     /// of the interpreter's or a region's entry, and the iterations the loop takes before its
@@ -638,7 +638,7 @@ use super::lane_values::{self, LaneValues, HEAP_WINDOW};
 use super::lane_activations::LaneActivations;
 mod this_binding;
 use this_binding::ThisBinding;
-mod loop_fields; use loop_fields::lane_loop_field_stores;
+mod loop_fields; use loop_fields::loop_field_stores;
 mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters; mod proxy_traps; mod completions; use completions::*;
 use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_initialize_stores, lane_add_stores, lane_return_constructed, lane_planned_construction, planned_construction, lane_planned_inline_quick, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_body_receiver, lane_context_constructs};
@@ -7196,8 +7196,8 @@ script_handler! {
         if site.interprets() {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
-        // The header rule (`lane_loop_enter_body`): a ready body first, then the region.
-        if let Some(attempt) = loop_body::lane_loop_enter_body::<H>(cx, r, ip, site) {
+        // The header rule (`enter_loop_body`): a ready body first, then the region.
+        if let Some(attempt) = loop_body::enter_loop_body::<H>(cx, r, ip, site) {
             lane_attempt!(cx, r, attempt);
         }
         // A loop whose body is still to come keeps its backward jump, which a loop no region
@@ -7410,7 +7410,7 @@ script_handler! {
         // SAFETY: a record runs this handler only while a site holds it.
         let site = unsafe { &*lane_header_site(ip) };
         if !script_below_floor(cx)
-            && let Some(attempt) = loop_body::lane_loop_enter_body::<H>(cx, r, ip, site)
+            && let Some(attempt) = loop_body::enter_loop_body::<H>(cx, r, ip, site)
         {
             lane_attempt!(cx, r, attempt);
         }
@@ -7869,7 +7869,7 @@ fn lane_loop_entry<H: Host>(
         entry.push_field(value, field.tagged)?;
     }
     let views = loop_tier::lane_loop_arrays(vm, r, region, entry)?;
-    lane_loop_field_stores(cx, r, region, entry)?;
+    loop_field_stores(cx, r, region, entry)?;
     if region.reads_heap_natively() {
         let object_base = vm.heap.object_record_base().unwrap_or(std::ptr::null());
         let (properties_base, properties_len) = vm.heap.native_property_values();
@@ -13497,7 +13497,7 @@ fn lane_raised_exit<H: Host>(cx: *mut LaneContext<H>, record: Ip) -> Ip {
 /// else at the record, with the accumulator that record reads.
 fn lane_body_resume_at<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView, pc: usize) -> LaneBodyLeft {
     let accumulator = own.accumulator_registers.get(pc).copied().filter(|&register| register != NO_ACCUMULATOR);
-    if accumulator.is_none() && let Some(left) = loop_resume::lane_loop_resume(cx, r, own, pc) {
+    if accumulator.is_none() && let Some(left) = loop_resume::resume_loop(cx, r, own, pc) {
         return left;
     }
     let mut carried = Carried::script(cx);
@@ -16217,7 +16217,7 @@ fn lane_return_script_frame<H: Host>(
     loop {
         // An async callee's promise settles on the general path (`PendingGeneralCall::completion`);
         // a generator whose activation became a frame finishes here as there (`PendingGeneralCall::completion`).
-        let returns_here = pending.last().is_some_and(|call| lane_completes_return(cx, call, frame, retired));
+        let returns_here = pending.last().is_some_and(|call| completes_return(cx, call, frame, retired));
         if !returns_here {
             // A record that has not run yet runs again on the general path; one that ran (a
             // call made, `retired`) completes the loop's own frame with the value there.
@@ -18959,7 +18959,7 @@ mod call_site_history_tests;
 #[cfg(test)]
 mod update_fusion_tests;
 mod on_demand_metadata;
-use on_demand_metadata::{lane_completes_return, lane_note_late_call};
+use on_demand_metadata::{completes_return, record_late_call};
 
 #[cfg(test)]
 mod numeric_pair_tests;

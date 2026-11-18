@@ -143,7 +143,7 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
 }
 
 /// The running regions leave at their next backward jump (`left_for_tier_up`), and the header
-/// dispatch (`lane_loop_enter_body`) takes the body that published.
+/// dispatch (`enter_loop_body`) takes the body that published.
 fn raise_tier_up<H: Host>(vm: &Vm<H>, site: &LoopSite) {
     vm.execution_interrupt.request_tier_up();
     if site.diagnostics { site.tier_ups.set(site.tier_ups.get().saturating_add(1)); }
@@ -191,20 +191,20 @@ pub(super) fn header_for_tier_up<H: Host>(cx: *mut LaneContext<H>, own: &LaneVie
 /// interpreter. A body is planned once the loop is hot, where function tiers run and no region
 /// has published: a body over a published region replaces native code with native code, the
 /// same work at its own plan, compile and entry cost (navier-stokes: twice the region's time).
-pub(super) fn lane_loop_enter_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
+pub(super) fn enter_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
     let vm = unsafe { vm(cx) };
     vm.execution_interrupt.clear_tier_up();
     if !vm.programs.js_jit_lane_methods_enabled() || !site.is_hot() || site.tier.borrow().is_published() {
         return None;
     }
-    lane_loop_body::<H>(cx, r, ip, site)
+    run_loop_body::<H>(cx, r, ip, site)
 }
 
 /// Runs the lane body planned to start at `site`'s header, on the activation's registers
 /// `r`: a hot loop reaching its backward jump enters native code that inlines its calls as
 /// a lane body does, and the lane resumes where the body leaves. `None` where no body runs
 /// (still planning or compiling, or declined): the loop's other tiers take it.
-fn lane_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
+fn run_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)?;

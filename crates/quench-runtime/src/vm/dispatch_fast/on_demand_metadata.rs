@@ -20,7 +20,7 @@ impl<H: Host> Vm<H> {
 /// (`ProgramStore::entry_lane_view` deferred it) resumes there unless a return already
 /// retired (`retired`), rather than deriving a view of every instruction of a function that
 /// may run once (mandreel's `global_init`: 614K records, 14 MB).
-pub(super) fn lane_completes_return<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall, frame: usize, retired: bool) -> bool {
+pub(super) fn completes_return<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall, frame: usize, retired: bool) -> bool {
     let vm = unsafe { vm(cx) };
     call.caller + 1 == frame
         && frame + 1 == vm.frames.len()
@@ -44,7 +44,7 @@ fn caller_runs_general<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCa
 /// entry: its site first ran after the body compiled, so the compile knew no callee for it.
 /// Past `TIERS.lane_body.late_call_calls` of them the body specializes again, which finds
 /// the callee in the site's history (`LaneView::respecialize`).
-pub(super) fn lane_note_late_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, target: &ScriptCallTarget, argc: u16) {
+pub(super) fn record_late_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, target: &ScriptCallTarget, argc: u16) {
     let vm = unsafe { vm(cx) };
     // The innermost frame's function: a native callee's frame is linked, so it is the activation's.
     let function = match vm.lane_stack.activations.last() {
