@@ -1,6 +1,6 @@
 use quench_runtime::{Engine, Runtime, SystemHost};
 
-const USAGE: &str = "usage: quench [--generic] [-e CODE|SCRIPT]\n       quench compile ENTRY -o BINARY (quench compile --help for options)";
+const USAGE: &str = "usage: quench [--generic] [-e CODE|SCRIPT]\n       quench build ENTRY -o BINARY (quench compile does the same; --help for options)";
 
 fn main() {
     if std::env::args_os()
@@ -12,7 +12,7 @@ fn main() {
     }
     if std::env::args_os()
         .nth(1)
-        .is_some_and(|argument| argument == "compile")
+        .is_some_and(|argument| argument == "compile" || argument == "build")
     {
         let result: Result<std::process::ExitStatus, String> = std::env::current_exe().map_err(|error| error.to_string()).and_then(|executable| {
             let compiler = executable.with_file_name(if cfg!(windows) { "quench-node.exe" } else { "quench-node" });

@@ -14,7 +14,7 @@ const BOOTSTRAP_WORKER_OPTION: &str = "--bootstrap-worker";
 #[cfg(unix)]
 const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
-const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile release|iteration] [--sdk-report FILE] [--strict-aot] [--dynamic-source|--static-source]";
+const USAGE: &str = "quench build ENTRY -o BINARY [--report FILE] [--profile release|iteration] [--sdk-report FILE] [--strict-aot] [--dynamic-source|--static-source] (compile is the same command)";
 const RETAINED_SUPPORT: &[&str] = &[
     "unpruned Wasm frontend dependencies",
     "unpruned Node host support",
