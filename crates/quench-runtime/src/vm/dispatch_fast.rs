@@ -10827,6 +10827,7 @@ fn lane_region_admits<H: Host>(cx: *mut LaneContext<H>, code: &super::compiled::
     room.activations == 0 || (lane_room_admits(cx, room, NO_PENDING_ACTIVATIONS) && !unsafe { lane_context_locals_in_window::<H>(cx as usize) })
 }
 
+
 /// Whether the running activation keeps its locals in the window past its registers, as
 /// `lane_body_locals` finds them: an environment activation does, and so does a VM frame whose
 /// own storage does not cover the function.
@@ -18068,9 +18069,11 @@ fn lane_construct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, pc
 /// The `compiled::DirectCallee` of `target`, the callee the call at `pc` of `view` passes
 /// `argc` arguments, where the lane would activate it in place.
 pub(in crate::vm) fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, pc: usize, argc: u16, target: ScriptCallTarget) -> Option<super::compiled::DirectCallee> {
-    let sloppy = match target.this_binding {
-        ThisBinding::Sloppy => Some(vm.realm.globals),
-        ThisBinding::Strict => None,
+    // An arrow's body reads its environment's `this`: BaseJIT's direct row passes it none.
+    let (sloppy, lexical) = match target.this_binding {
+        ThisBinding::Sloppy => (Some(vm.realm.globals), false),
+        ThisBinding::Strict => (None, false),
+        ThisBinding::Lexical if crate::jit_mode::base_only() => (None, true),
         _ => return None,
     };
     (target.generation() == vm.lane_stack.generation && target.program() == vm.active_program
@@ -18084,7 +18087,7 @@ pub(in crate::vm) fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, fu
         .unwrap_or((std::ptr::null(), 0));
     Some(super::compiled::DirectCallee {
         target, method, body, call: view.records().wrapping_add(pc).addr(), cell: view_of.entry_cell(),
-        callee: target.callee, registers: target.registers, sloppy, capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None,
+        callee: target.callee, registers: target.registers, sloppy, lexical, capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None,
     })
 }
 

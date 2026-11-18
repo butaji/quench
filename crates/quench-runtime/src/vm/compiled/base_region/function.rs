@@ -381,7 +381,8 @@ unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, 
     let started = std::time::Instant::now();
     // SAFETY: the caller's contract.
     let facts = unsafe { callees.facts() };
-    let sites = Sites { function: spec.known.program.function(spec.function as usize), id: spec.function, callees, facts: &facts, context: Context::root(spec.function, spec.registers, spec.known.stitch), registers: spec.registers, known: spec.known, ending, views };
+    let function = spec.known.program.function(spec.function as usize);
+    let sites = Sites { function, id: spec.function, callees, facts: &facts, context: Context::root(spec.function, spec.registers, spec.known.stitch), registers: spec.registers, known: spec.known, ending, views };
     let built = assemble(region, spec, sites, helpers);
     tally(&built, ending, (u64::from(region.backedge - region.header) + 1, started.elapsed().as_nanos() as u64));
     built
@@ -451,7 +452,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
     let (reprs, homes, webs, decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), spec.seen);
     if ending == Ending::Region && let Some(generic) = decoded.iter().enumerate().find(|(k, row)| reached.contains(*k) && interprets(row)) {
-        return Err(format!("interprets in the loop: {:?}", generic.1.step));
+        return Err(format!("interprets in the loop: row {} {:?}", generic.0, generic.1.step));
     }
     let invalidation = spec.known.invalidation.filter(|_| decoded.iter().any(Decoded::holds_stable) && decoded.iter().any(Decoded::makes_calls));
     let realm = (!stitched.frames.is_empty()).then_some(spec.realm).or_else(|| held_realm(&decoded));
