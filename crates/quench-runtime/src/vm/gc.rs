@@ -832,8 +832,11 @@ impl<H: Host> Vm<H> {
             roots.extend(frame.original_arguments.iter().copied());
             roots.extend(frame.locals.iter().copied());
             roots.extend(frame.dynamic_bindings.iter().map(|(_, value)| *value));
-            match self.programs.residual(frame.program).and_then(|program| crate::compile::liveness::RegisterMasks::for_collection(program, frame.function)) {
-                Some(masks) => masks.extend_live(frame.pc as usize, &frame.registers, &mut roots),
+            let program = self.programs.residual(frame.program);
+            // A Wasm function's raw registers hold machine words, not `Value`s (`raw_webs`).
+            let raw = self.programs.raw_register_masks(frame.program, frame.function);
+            match program.and_then(|program| crate::compile::liveness::RegisterMasks::for_collection(program, frame.function)) {
+                Some(masks) => masks.extend_live_except(frame.pc as usize, raw.as_deref(), &frame.registers, &mut roots),
                 None => roots.extend(frame.registers.iter().copied()),
             }
         }

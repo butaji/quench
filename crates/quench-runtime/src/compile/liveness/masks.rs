@@ -97,22 +97,27 @@ impl RegisterMasks {
         }
     }
 
+    /// The 64 registers from `chunk * 64` set in the mask at `pc`, `None` where it has no
+    /// entry there.
+    fn word_at(&self, pc: usize, chunk: usize) -> Option<u64> {
+        const WORD: usize = u64::BITS as usize;
+        let per_set = RegisterSet::BITS as usize / WORD;
+        match self {
+            Self::Narrow(masks) => masks.get(pc).map(|&mask| if chunk == 0 { mask } else { 0 }),
+            Self::Half(masks) => masks.get(pc).map(|&mask| if chunk < 2 { (mask >> (WORD * chunk)) as u64 } else { 0 }),
+            Self::Wide(masks) => masks.get(pc).map(|set| set.word(chunk)),
+            Self::Windowed { windows, masks } => masks.get(pc * usize::from(*windows) + chunk / per_set).map(|set| set.word(chunk % per_set)),
+        }
+    }
+
     /// Appends to `roots` the values of `registers` live at `pc` (`live_at`), each one with no
     /// mask entry there conservatively: each 64 registers' mask word is read once and its set
     /// bits walked, where a collection's root scan asked every register in turn.
-    pub(crate) fn extend_live(&self, pc: usize, registers: &[crate::Value], roots: &mut Vec<crate::Value>) {
+    /// Past the registers `raw` holds at `pc`: those whose words are not `Value`s.
+    pub(crate) fn extend_live_except(&self, pc: usize, raw: Option<&Self>, registers: &[crate::Value], roots: &mut Vec<crate::Value>) {
         const WORD: usize = u64::BITS as usize;
-        let per_set = RegisterSet::BITS as usize / WORD;
         for chunk in 0..registers.len().div_ceil(WORD) {
-            let word = match self {
-                Self::Narrow(masks) => masks.get(pc).map(|&mask| if chunk == 0 { mask } else { 0 }),
-                Self::Half(masks) => masks.get(pc).map(|&mask| if chunk < 2 { (mask >> (WORD * chunk)) as u64 } else { 0 }),
-                Self::Wide(masks) => masks.get(pc).map(|set| set.word(chunk)),
-                Self::Windowed { windows, masks } => {
-                    masks.get(pc * usize::from(*windows) + chunk / per_set).map(|set| set.word(chunk % per_set))
-                }
-            }
-            .unwrap_or(u64::MAX);
+            let word = self.word_at(pc, chunk).unwrap_or(u64::MAX) & !raw.and_then(|raw| raw.word_at(pc, chunk)).unwrap_or(0);
             let base = chunk * WORD;
             let count = (registers.len() - base).min(WORD);
             let mut word = if count < WORD { word & ((1u64 << count) - 1) } else { word };

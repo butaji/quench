@@ -73,10 +73,13 @@ enum Roles {
 /// The roles of `instruction`, or `None` where it touches every register boxed. `constant_neutral`
 /// says a constant-pool entry's `Value` is its own word (`Value::from_bits64`); `returns_wide`
 /// that the function's result is an i64.
-fn roles(instruction: WideInstruction, constant_neutral: &dyn Fn(usize) -> bool, returns_wide: bool) -> Option<Roles> {
+/// With `rewritten`, of code the lowering already switched: only raw forms are wide (an op
+/// it left boxed is boxed), and every constant load and fill is neutral, since a web holding a
+/// constant whose `Value` is not its word was boxed when the lowering decided.
+fn roles(instruction: WideInstruction, constant_neutral: &dyn Fn(usize) -> bool, returns_wide: bool, rewritten: bool) -> Option<Roles> {
     let op = instruction.op();
     let (a, b) = (instruction.a(), instruction.b());
-    if (raw_form(op).is_some() || is_raw(op))
+    if (if rewritten { is_raw(op) } else { raw_form(op).is_some() || is_raw(op) })
         && let Some(operation) = WasmOperation::of(op, instruction.imm())
     {
         let operand_wide = wide(operation.operand_type());
@@ -109,8 +112,8 @@ fn roles(instruction: WideInstruction, constant_neutral: &dyn Fn(usize) -> bool,
     match op.class() {
         Class::Move => Some(Roles::Copy { destination: a, sources: vec![b] }),
         Class::WasmSelect => Some(Roles::Copy { destination: a, sources: vec![b, instruction.c()] }),
-        Class::LoadConst | Class::WasmFillRegisters if constant_neutral(instruction.constant_index()) => Some(Roles::Neutral),
-        Class::Return if returns_wide && op == Op::Return => Some(Roles::Wide { uses: vec![a], definitions: vec![] }),
+        Class::LoadConst | Class::WasmFillRegisters if rewritten || constant_neutral(instruction.constant_index()) => Some(Roles::Neutral),
+        Class::Return if returns_wide && !rewritten && op == Op::Return => Some(Roles::Wide { uses: vec![a], definitions: vec![] }),
         Class::WasmReturn64 => Some(Roles::Wide { uses: vec![a], definitions: vec![] }),
         _ => None,
     }
@@ -171,6 +174,29 @@ pub(crate) fn raw_webs(
     constant_neutral: &dyn Fn(usize) -> bool,
     returns_wide: bool,
 ) -> RawWebs {
+    webs(function, live, transfers, constant_neutral, returns_wide, false)
+}
+
+/// The registers live before each pc of the lowered Wasm function `function` that hold raw
+/// words there, which a collection must not read as `Value`s; `None` where it has no raw op.
+pub(crate) fn raw_live(function: &Function) -> Option<Vec<RegisterSet>> {
+    if !function.instructions().any(|instruction| is_raw(instruction.op())) {
+        return None;
+    }
+    let no_method_sites: &[MethodSite] = &[];
+    let transfers = super::transfers(function, no_method_sites, &[], &[])?;
+    let live = super::solve::analyze_wide(function, &transfers, &Successors::of_code(function));
+    Some(webs(function, &live, &transfers, &|_| true, false, true).raw_live)
+}
+
+fn webs(
+    function: &Function,
+    live: &[RegisterSet],
+    transfers: &[(RegisterSet, RegisterSet)],
+    constant_neutral: &dyn Fn(usize) -> bool,
+    returns_wide: bool,
+    rewritten: bool,
+) -> RawWebs {
     let instructions: Vec<WideInstruction> = function.instructions().collect();
     let count = instructions.len();
     let registers = usize::from(function.registers);
@@ -197,7 +223,7 @@ pub(crate) fn raw_webs(
     let mut wide_group: Vec<Option<u32>> = vec![None; count];
     for (pc, instruction) in instructions.iter().enumerate() {
         let (uses, definitions) = transfers[pc];
-        let roles = roles(*instruction, constant_neutral, returns_wide);
+        let roles = roles(*instruction, constant_neutral, returns_wide, rewritten);
         // Each definition is a node, flowing into the successors where its register is live.
         let mut defined = vec![None; registers];
         for register in (0..registers).filter(|register| definitions.contains(*register)) {

@@ -60,10 +60,12 @@ impl LaneStack {
     /// has no liveness. Its registers hold Wasm values the collector reads as it reads a frame's.
     fn extend_wasm_roots(&self, programs: &ProgramStore, depth: usize, window: &[Value], out: &mut Vec<Value>) {
         let activation = &self.activations[depth];
-        let masks = programs.residual(activation.caller_program).and_then(|program| program.register_root_masks(activation.function));
+        let program = programs.residual(activation.caller_program);
+        let masks = program.and_then(|program| program.register_root_masks(activation.function));
+        let raw = programs.raw_register_masks(activation.caller_program, activation.function);
         let call_pc = self.activations.get(depth + 1).and_then(Activation::caller_pc);
         match masks.zip(call_pc) {
-            Some((masks, pc)) => masks.extend_live(pc, window, out),
+            Some((masks, pc)) => masks.extend_live_except(pc, raw.as_deref(), window, out),
             None => out.extend_from_slice(window),
         }
     }
