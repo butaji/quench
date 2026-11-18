@@ -314,7 +314,8 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The property operations of `decode`: a plain named read, a named store and `delete`.
-    fn decode_property(instruction: WideInstruction) -> Option<Self> {
+    #[inline(always)]
+    pub(crate) fn decode_property(instruction: WideInstruction) -> Option<Self> {
         match instruction.op() {
             Op::GetField => Self::decode_get_field(instruction),
             Op::Delete => Some(Self::Delete { destination: instruction.result_register(), base: instruction.register_b(),
@@ -328,6 +329,7 @@ impl<W, P> Operation<W, P> {
 
     /// A named read that completes no frame and writes no `this`; a nested lookup's base is the
     /// tier's own (`FieldBase::NESTED`).
+    #[inline(always)]
     fn decode_get_field(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0 { return None; }
         let lookup = instruction.field_lookup()?;

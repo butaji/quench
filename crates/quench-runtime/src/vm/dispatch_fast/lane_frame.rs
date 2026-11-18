@@ -111,6 +111,45 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     heap: Option<*const crate::heap::Heap>,
     /// The constants, local slots and outer captures the staged row's operands name.
     reads: Reads,
+    /// The plan of the named read the frame runs, as its record holds it (`RecordPlan`).
+    plan: Option<RecordPlan>,
+}
+
+/// A named read's plan as a lane record holds it: the ops the record's own-field hint proves
+/// (`staged::ic`), over the object record table the lane bound. The generated row reads it as a
+/// specializer reads the plan its site proved (`PlanSource`), so the record's quickened state is
+/// data the one staged row runs, not a handler written for it.
+#[derive(Clone, Copy)]
+pub(in crate::vm::dispatch_fast) struct RecordPlan {
+    ops: [crate::staged::ic::IcOp<'static>; 2],
+    records: u64,
+}
+
+impl RecordPlan {
+    /// The own-slot read of the hint `(word, slot)`, whose storage form is `form` where the site
+    /// fixed one (`field_site`), else the hint word's own bits.
+    #[inline(always)]
+    pub(in crate::vm::dispatch_fast) fn own(word: u32, slot: u16, form: Option<u32>, records: u64) -> Self {
+        use crate::staged::ic::{IcOp, FORM_BITS};
+        // A fixed form is the hint's (the site's contract), stated so the guard's proved bits fold.
+        let word = match form { Some(form) => (word & !FORM_BITS) | form, None => word };
+        let load = IcOp::LoadSlot { slot, form: crate::staged::Form::Either, storage_len: usize::from(slot) + 1,
+            rep: crate::staged::object::Rep::Tagged };
+        Self { ops: [IcOp::GuardFormed(word), load], records }
+    }
+}
+
+/// The plans a lane frame holds: the record's own, or none.
+#[derive(Clone, Copy)]
+pub(in crate::vm::dispatch_fast) struct LanePlans(Option<[crate::staged::ic::IcOp<'static>; 2]>);
+
+impl crate::staged::property::PlanSource for LanePlans {
+    #[inline(always)]
+    fn field_plan(&self, _lookup: crate::bytecode::FieldLookup) -> Option<crate::staged::property::FieldPlan<'_>> {
+        self.0.as_ref().map(|ops| crate::staged::property::FieldPlan::Ops(ops))
+    }
+    #[inline(always)]
+    fn store_plan(&self, _site: u16) -> Option<crate::staged::property::StorePlan<'_>> { None }
 }
 
 impl<const ACC: u8> LaneFrame<ACC> {
@@ -118,7 +157,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, reads: Reads::NONE, plan: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -142,7 +181,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, reads: Reads::NONE, plan: None }
     }
 }
 
@@ -305,9 +344,15 @@ impl<const ACC: u8> crate::staged::GlobalFrame<Concrete> for LaneFrame<ACC> {
 impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {}
 
 impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
-    type Plans = crate::staged::NoPlans;
+    type Plans = LanePlans;
 
-    fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
+    #[inline(always)]
+    fn plans(&self) -> LanePlans { LanePlans(self.plan.map(|plan| plan.ops)) }
+
+    /// The activation's `this` as the lane holds it: an unbound one (`Value::DELETED`) is no
+    /// direct object, so the receiver's record test refuses it with no test of its own.
+    #[inline(always)]
+    fn field_this(&mut self, _stage: &mut Concrete, _miss: ()) -> Option<u64> { Some(self.this.to_bits()) }
 
     #[inline(always)]
     fn delete_property(&mut self, _stage: &mut Concrete, base: u64, key: u64, _strict: bool, _miss: ()) -> Option<(u64, Boxing)> {
@@ -317,8 +362,10 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
         Some((deleted.to_bits(), Boxing::Value))
     }
 
-    /// The live object record table, which an `instanceof` walk addresses.
+    /// The live object record table, which an `instanceof` walk and a planned read address.
+    #[inline(always)]
     fn object_records(&mut self, _stage: &mut Concrete) -> Option<u64> {
+        if let Some(plan) = self.plan { return Some(plan.records); }
         let Decisions { context, records, .. } = self.decisions?;
         records(context)
     }
@@ -495,6 +542,28 @@ lane_handler! {
             requicken::<H>(ip, flagged);
             sibling!(flagged, r, ip, view)
         }
+        // Where a planned named read misses: the own read past its record's hint, which reads
+        // through the site's cache and rebinds the hint.
+        macro_rules! property_miss { () => {{
+            let script: *mut LaneContext<H> = view.memory.bytes.cast();
+            if const { super::own_site_this(FLAG) } {
+                sibling!(lane_get_field_own_refresh::<H, true, true>, r, ip, Carried::script_in(script, view))
+            }
+            sibling!(lane_get_field_own_refresh::<H, false, true>, r, ip, Carried::script_in(script, view))
+        }} }
+        let property = const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Property)) };
+        if property {
+            // The site fact names the base (`own_site`), `this` or a register, and the lane admits
+            // the record only without result flags: stated so the decode's tests fold.
+            unsafe {
+                std::hint::assert_unchecked(i.a <= crate::bytecode::REGISTER_MASK);
+                if const { super::own_site_this(FLAG) } {
+                    std::hint::assert_unchecked(i.b == crate::bytecode::FieldBase::THIS.0);
+                } else {
+                    std::hint::assert_unchecked(i.b <= crate::bytecode::REGISTER_MASK);
+                }
+            }
+        }
         // The row family's decoder, a constant of the instantiation, so only its arm is compiled.
         let fields = LaneFields::<OP, FLAG>(i);
         let decoded = match const { LaneFields::<OP, FLAG>::OPCODE.staged() } {
@@ -502,16 +571,42 @@ lane_handler! {
             Some(crate::bytecode::Decoder::Local) => Operation::decode_local(crate::staged::Fields::wide(fields)),
             Some(crate::bytecode::Decoder::Value) => Operation::decode_value(crate::staged::Fields::wide(fields)),
             Some(crate::bytecode::Decoder::Names) => Operation::decode_names(crate::staged::Fields::wide(fields)),
+            Some(crate::bytecode::Decoder::Property) => Operation::decode_property(crate::staged::Fields::wide(fields)),
             _ => None,
         };
         let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, ip, view) };
-        // A row that reads records in place (`Decoder::Names`) may read a slot of the property arena.
-        let property_values = if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
+        // A row that reads records in place (`Decoder::Names`) or a planned named read may read a slot of the property arena.
+        let property_values = if property || const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
             unsafe { vm(cx) }.heap.arena_values_base()
         } else { std::ptr::null() };
         let mut stage = Concrete::new(property_values);
         let mut frame = row_frame::<H, OP, ACC>(cx, r, view);
+        if property {
+            // The record's plan: its own-field hint over the object records the lane bound; an
+            // unbound table is the miss's to bind.
+            // A JavaScript view carries its context (`script_handler!`); an own-field row is
+            // installed only once the lane bound the object records (`lane_get_field_own_refresh`).
+            let script: *mut LaneContext<H> = view.memory.bytes.cast();
+            debug_assert_eq!(script, cx, "a JavaScript view carries its context");
+            let records = unsafe { (*script).binding.object_base } as u64;
+            debug_assert_ne!(records, 0, "an own-field row runs over bound object records");
+            if const { super::own_site_this(FLAG) } { frame.this = r.this(); }
+            let hint = i.field_hint();
+            let form = const { super::own_site_form(FLAG) };
+            let fixed = (form != HINTED_FORM).then_some(form & !crate::staged::TAGGED_SLOTS);
+            // A fixed form is the hint's own (`own_formed_handler` chose the row by it).
+            if let Some(form) = fixed { unsafe { std::hint::assert_unchecked(hint.receiver & crate::staged::ic::FORM_BITS == form) } }
+            frame.plan = Some(RecordPlan::own(hint.receiver, hint.slot, fixed, records));
+        }
         match crate::staged::step(&mut stage, &mut frame, operation) {
+            Step::Value(value) if property => {
+                // The register takes the read's value, a slot word decoded where the form may hold a raw double.
+                let value = if const { super::own_site_decodes(FLAG) } { crate::value_vec::decode_staged_word(value) } else { Value::from_bits(value) };
+                r.set(i.a, value);
+                let script: *mut LaneContext<H> = view.memory.bytes.cast();
+                next!(script, r, following(ip), Carried::script_in(script, view))
+            }
+            Step::Unresolved if property => property_miss!(),
             Step::Value(value) => {
                 // A names row answers its value without defining its register (its call-out defines it):
                 // the register is written here, as every producer writes it beside the carried value.

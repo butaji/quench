@@ -7374,12 +7374,12 @@ script_handler! {
         if unsafe { (*cx).binding.object_base.is_null() } {
             sibling!(lane_get_field_own_refresh::<H, THIS, false>, r, ip, Carried::script_in(cx, view))
         }
-        requicken::<H>(ip, lane_get_field_own_bound::<H, THIS, HINTED_FORM>);
-        sibling!(lane_get_field_own_bound::<H, THIS, HINTED_FORM>, r, ip, Carried::script_in(cx, view))
+        requicken::<H>(ip, own_formed_handler::<H, THIS>(None));
+        sibling!(own_formed_handler::<H, THIS>(None), r, ip, Carried::script_in(cx, view))
     }
 }
 
-/// The value the bound own-field read of record `i` answers (`lane_get_field_own_bound`), `None`
+/// The value the bound own-field read of record `i` answers (the own-field read the math call fusions make, `own_formed_handler`), `None`
 /// where its hint misses.
 #[inline(always)]
 fn own_bound_value<H: Host, const THIS: bool, const FORM: u32>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Option<Value> {
@@ -7422,19 +7422,6 @@ fn own_bound_value<H: Host, const THIS: bool, const FORM: u32>(cx: *mut LaneCont
 }
 
 script_handler! {
-    /// The record range is fixed for the owning heap's lifetime; only this value's type
-    /// and shape vary. Each resolved record borrow ends before the next instruction.
-    fn lane_get_field_own_bound<THIS: bool, FORM: u32>(cx, r, ip, i, view) {
-        let value = own_bound_value::<H, THIS, FORM>(cx, r, i);
-        let Some(value) = value else {
-            sibling!(lane_get_field_own_refresh::<H, THIS, true>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
     /// `lane_get_field_own` past its record's hint: the site's primary own entry, whose hit
     /// becomes the hint; any other read goes through `lane_get_field_miss`.
     #[inline(never)]
@@ -7454,7 +7441,7 @@ script_handler! {
         // The hit proved the entry an own one of the receiver's shape.
         let hint = vm.form_hint(vm.field_cache_entry(i.c), object);
         set_field_hint(ip, hint);
-        requicken::<H>(ip, own_formed_handler::<H, THIS>(hint.receiver));
+        requicken::<H>(ip, own_formed_handler::<H, THIS>(Some(hint.receiver)));
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -7478,28 +7465,85 @@ fn own_entry_hit<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, object: Value,
     vm.own_field_hint_hit::<HINTED_FORM>(vm.form_hint(entry, object), receiver)
 }
 
-/// The bound own-field read (`lane_get_field_own_bound`) for the storage form the hint word
-/// `hint`'s bits name: an arena run, extras or packed inline values, whose layout it then
-/// reads untested.
-fn own_formed_handler<H: Host, const THIS: bool>(hint: u32) -> Handler {
+/// The opcode of the catalog's field leaf read (`Traits::FIELD_LEAF`), whose generated row
+/// (`lane_row`) an own-field read's record runs once its hint is bound (`own_formed_handler`).
+const FIELD_LEAF_READ: u16 = {
+    let mut index = 0;
+    loop {
+        match Op::from_index(index) {
+            Some(op) if op.traits().has(crate::bytecode::Traits::FIELD_LEAF) => break index as u16,
+            Some(_) => index += 1,
+            None => panic!("the catalog names a field leaf read"),
+        }
+    }
+};
+
+/// The storage forms an own-field read's hint fixes, by index: the generated row's site fact
+/// (`own_site`) names one, so the row folds the layout it reads (`concrete_hinted_own_field_hit`).
+/// `HINTED_FORM` reads the hint word's own bits.
+const OWN_FORMS: [u32; 9] = {
     use crate::staged::TAGGED_SLOTS;
+    use crate::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
+    [HINTED_FORM, 0, EXTRAS_FORM, INLINE_FORM, EXTRAS_FORM | INLINE_FORM, NARROW_FORM,
+        TAGGED_SLOTS, EXTRAS_FORM | TAGGED_SLOTS, EXTRAS_FORM | INLINE_FORM | TAGGED_SLOTS]
+};
+
+/// The site fact (`lane_row`'s `FLAG`) of an own-field read of `this` (else of a register) whose
+/// hint fixes form `OWN_FORMS[form]`. Zero is no site: the row reads it as unread.
+const fn own_site(this: bool, form: usize) -> u8 { 1 + (form as u8) * 2 + this as u8 }
+
+/// Whether own-field site `site` reads `this`.
+pub(super) const fn own_site_this(site: u8) -> bool { site.wrapping_sub(1) & 1 == 1 }
+
+/// The storage form own-field site `site` fixes (`OWN_FORMS`); `HINTED_FORM` for none.
+pub(super) const fn own_site_form(site: u8) -> u32 {
+    let index = (site.wrapping_sub(1) / 2) as usize;
+    if index < OWN_FORMS.len() { OWN_FORMS[index] } else { HINTED_FORM }
+}
+
+/// Whether the word own-field site `site` reads is a slot word to decode (`decode_staged_word`):
+/// every form but a fixed tagged one and packed or narrow values, which hold no raw double.
+pub(super) const fn own_site_decodes(site: u8) -> bool {
+    let form = own_site_form(site);
+    form == HINTED_FORM || (form & crate::staged::TAGGED_SLOTS == 0 && form != crate::value_vec::INLINE_FORM
+        && form != crate::value_vec::NARROW_FORM)
+}
+
+/// Every generated own-field read: `$each!(site)` for each site, `this` and register alike.
+macro_rules! own_sites {
+    ($each:ident) => {
+        [$each!(own_site(true, 0)), $each!(own_site(false, 0)), $each!(own_site(true, 1)), $each!(own_site(false, 1)),
+            $each!(own_site(true, 2)), $each!(own_site(false, 2)), $each!(own_site(true, 3)), $each!(own_site(false, 3)),
+            $each!(own_site(true, 4)), $each!(own_site(false, 4)), $each!(own_site(true, 5)), $each!(own_site(false, 5)),
+            $each!(own_site(true, 6)), $each!(own_site(false, 6)), $each!(own_site(true, 7)), $each!(own_site(false, 7)),
+            $each!(own_site(true, 8)), $each!(own_site(false, 8))]
+    };
+}
+
+/// The generated own-field read (`lane_row` at an `own_site`) for the base `THIS` names and the
+/// storage form the hint word `hint`'s bits name: an arena run, extras or packed inline values,
+/// whose layout it then reads untested; `None` for the form of no particular hint.
+fn own_formed_handler<H: Host, const THIS: bool>(hint: Option<u32>) -> Handler {
     use crate::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
     // A narrow run's hint names neither inline values nor extras: those tests fold away and
     // the read takes the run's halves. Packed and narrow slots never hold a raw double; the
     // other forms skip the decode where float slots are off for the process.
-    if hint & NARROW_FORM != 0 {
-        return lane_get_field_own_bound::<H, THIS, NARROW_FORM>;
-    }
     let tagged = !crate::vm::switches::float_slots();
-    match (hint & (INLINE_FORM | EXTRAS_FORM), tagged) {
-        (0, true) => lane_get_field_own_bound::<H, THIS, TAGGED_SLOTS>,
-        (0, false) => lane_get_field_own_bound::<H, THIS, 0>,
-        (EXTRAS_FORM, true) => lane_get_field_own_bound::<H, THIS, { EXTRAS_FORM | TAGGED_SLOTS }>,
-        (EXTRAS_FORM, false) => lane_get_field_own_bound::<H, THIS, EXTRAS_FORM>,
-        (INLINE_FORM, _) => lane_get_field_own_bound::<H, THIS, INLINE_FORM>,
-        (_, true) => lane_get_field_own_bound::<H, THIS, { EXTRAS_FORM | INLINE_FORM | TAGGED_SLOTS }>,
-        (_, false) => lane_get_field_own_bound::<H, THIS, { EXTRAS_FORM | INLINE_FORM }>,
-    }
+    let form = match hint {
+        None => 0,
+        Some(hint) if hint & NARROW_FORM != 0 => 5,
+        Some(hint) => match (hint & (INLINE_FORM | EXTRAS_FORM), tagged) {
+            (0, true) => 6,
+            (0, false) => 1,
+            (EXTRAS_FORM, true) => 7,
+            (EXTRAS_FORM, false) => 2,
+            (INLINE_FORM, _) => 3,
+            (_, true) => 8,
+            (_, false) => 4,
+        },
+    };
+    macro_rules! row { ($site:expr) => { lane_row::<H, FIELD_LEAF_READ, ACC_NONE, { $site }> as Handler } }
+    own_sites!(row)[form * 2 + usize::from(!THIS)]
 }
 
 /// Makes the own field entry `entry` the hint of the field read/store record at `ip`
@@ -7939,7 +7983,7 @@ script_handler! {
         let (this, register): (Handler, Handler) = if unsafe { (*cx).binding.object_base.is_null() } {
             (lane_get_field_own::<H, true>, lane_get_field_own::<H, false>)
         } else {
-            (lane_get_field_own_bound::<H, true, HINTED_FORM>, lane_get_field_own_bound::<H, false, HINTED_FORM>)
+            (own_formed_handler::<H, true>(None), own_formed_handler::<H, false>(None))
         };
         let own = single_base_handler(i.b, this, register, lane_get_field_miss::<H>);
         requicken::<H>(ip, own);
@@ -8019,7 +8063,7 @@ script_handler! {
                     let own: Handler = if unsafe { (*cx).binding.object_base.is_null() } {
                         lane_get_field_own::<H, false>
                     } else {
-                        lane_get_field_own_bound::<H, false, HINTED_FORM>
+                        own_formed_handler::<H, false>(None)
                     };
                     requicken::<H>(ip, own);
                 }
@@ -19992,15 +20036,8 @@ enum FieldHit {
 
 /// Every bound own-field read (`own_formed_handler`), of `this` and of a register.
 fn own_bound_handlers<H: Host>() -> [*const (); 18] {
-    use crate::staged::TAGGED_SLOTS;
-    use crate::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
-    macro_rules! forms {
-        ($($form:expr),*) => {
-            [$(lane_get_field_own_bound::<H, true, { $form }> as *const (), lane_get_field_own_bound::<H, false, { $form }> as *const ()),*]
-        };
-    }
-    forms!(HINTED_FORM, 0, EXTRAS_FORM, INLINE_FORM, EXTRAS_FORM | INLINE_FORM, NARROW_FORM,
-        TAGGED_SLOTS, EXTRAS_FORM | TAGGED_SLOTS, EXTRAS_FORM | INLINE_FORM | TAGGED_SLOTS)
+    macro_rules! row { ($site:expr) => { lane_row::<H, FIELD_LEAF_READ, ACC_NONE, { $site }> as *const () } }
+    own_sites!(row)
 }
 
 impl FieldHit {

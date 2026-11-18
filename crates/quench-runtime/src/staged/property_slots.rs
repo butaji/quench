@@ -42,6 +42,7 @@ pub(super) fn kept_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
 /// The value at `slot` of `owner`'s object whose whole auxiliary word is `word`: through the
 /// layout the frame kept for its shape, else one compare of the word proves the shape and the
 /// storage form, whose layout the read keeps, testing no form bit.
+#[inline(always)]
 pub(super) fn word_formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
     at: &Reached<S::Word, S::Cond>, word: u32, (slot, storage_len): (u16, usize), miss: S::Miss) -> Option<S::Word> {
     let shape = word & !ic::FORM_BITS;
