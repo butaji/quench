@@ -5,7 +5,7 @@ use crate::heap::{AwaitKind, AwaitRole, AwaitState};
 
 /// What an await reaction resumes with, read from its `AwaitState`.
 #[derive(Clone, Copy, Debug)]
-struct AwaitResume {
+pub(in crate::vm) struct AwaitResume {
     /// The spent state itself, whose reaction is running: the activation's next await
     /// suspends into it again (`Vm::await_again`). `None` for the run of an async generator's
     /// request, which awaits in a state of its own.
@@ -86,37 +86,13 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    /// Settles `promise`, the result of an async call, by the outcome of its first run: a return
-    /// resolves it, an await suspends the frame into a continuation resumed when the awaited value
+    /// Settles `promise`, the result of an async call, by the outcome of its first run, as any
+    /// async activation's stop settles (`Vm::settle_stop`): a return resolves it, an await
+    /// suspends the frame its outcome carries into a continuation resumed when the awaited value
     /// settles.
     fn settle_async_call(&mut self, p: &ResidualProgram, promise: Value, outcome: super::FrameOutcome) -> Result<(), JsError> {
-        match outcome {
-            super::FrameOutcome::Complete(value)
-            | super::FrameOutcome::ConstructComplete { value, .. } => {
-                self.promise_resolve_value(p, promise, value)?
-            }
-            super::FrameOutcome::Suspend(super::Suspended::Await { value, destination }, Some(frame)) => {
-                let continuation = self.suspend_activation(
-                    frame,
-                    Completion::Await(value),
-                    Some(destination),
-                    promise,
-                );
-                self.enqueue_async_resume(p, AwaitKind::function(continuation), promise, value)?;
-            }
-            super::FrameOutcome::Suspend(super::Suspended::Await { .. }, None) => {
-                return Err(JsError("async frame lost at suspension".into()));
-            }
-            super::FrameOutcome::Suspend(super::Suspended::Yield { .. }, _) => {
-                return Err(JsError("yield is not valid in an async function".into()));
-            }
-            super::FrameOutcome::ParameterInitializationComplete => {
-                return Err(JsError(
-                    "unexpected generator parameter initialization boundary".into(),
-                ));
-            }
-        }
-        Ok(())
+        let resume = AwaitResume { state: None, promise, role: AwaitRole::AsyncFunction, rejected: false };
+        self.settle_stop(p, StopOwner::Async(resume), None, Ok(outcome)).map(drop)
     }
 
     /// Starts the body of an async root, a module with a top-level `await`, as a job over its
@@ -343,3 +319,4 @@ impl<H: Host> Vm<H> {
 mod job_resume;
 mod requests;
 mod settle;
+pub(in crate::vm) use settle::StopOwner;

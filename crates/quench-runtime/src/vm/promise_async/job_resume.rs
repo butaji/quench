@@ -6,7 +6,6 @@
 //! activation awaits again.
 use super::*;
 use super::super::activation::{FrameRecord, JobResume, JobRoot, SuspendKind};
-use super::super::dispatch_fast::JobEnd;
 
 impl<H: Host> Vm<H> {
     /// An await's reaction: `state` is the `AwaitState` both its handlers name, and `value` what
@@ -48,7 +47,7 @@ impl<H: Host> Vm<H> {
         let job = role.job(state);
         let frame = self.job_frame(job).map(std::ptr::from_ref).ok_or_else(|| JsError("stale async continuation".into()))?;
         let end = self.run_job(p, job, frame, JobResume::Sends(Value::UNDEFINED));
-        self.settle_job_end(p, resume, end)
+        self.settle_job_end(p, StopOwner::Async(resume), end).map(drop)
     }
 
     /// The activation of `resume`, whose await `state` its reaction runs, resumes with `value`
@@ -127,30 +126,8 @@ impl<H: Host> Vm<H> {
         {
             self.spend_await(state);
         }
-        let settled = self.settle_job_end(code, resume, end);
+        let settled = self.settle_job_end(code, StopOwner::Async(resume), end);
         self.restore_active_program(previous_program);
-        settled
-    }
-
-    /// What a job's run did: its promise or request settles, it awaits again, or the frames its
-    /// activations became finished, as `settle_resumed_frame` settles them. `code` is the
-    /// program of its function.
-    fn settle_job_end(&mut self, code: &ResidualProgram, resume: AwaitResume, end: JobEnd) -> Result<(), JsError> {
-        match end {
-            JobEnd::Returned(value) => self.complete_resumed(code, resume, value),
-            JobEnd::Suspended(value) => match (resume.role.generator(), resume.state) {
-                (Some(generator), _) => self.await_again(code, resume, AwaitKind::generator_await(generator), value),
-                (None, Some(state)) => {
-                    self.with_call_roots([state, value], |vm| vm.attach_await_reactions(code, state, resume.promise, None, value))
-                }
-                (None, None) => unreachable!("an async function resumes from the reaction of its await"),
-            },
-            JobEnd::Yielded(value) => match resume.role.generator() {
-                Some(generator) => self.await_again(code, resume, AwaitKind::AsyncGeneratorYield { generator }, value),
-                None => unreachable!("only an async generator's activation yields from a job"),
-            },
-            JobEnd::Threw(error) => self.fail_resumed(code, resume, error),
-            JobEnd::Frames(result) => self.settle_resumed_frame(code, resume, result),
-        }
+        settled.map(drop)
     }
 }

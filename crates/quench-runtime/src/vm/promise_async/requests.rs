@@ -99,8 +99,7 @@ impl<H: Host> Vm<H> {
         };
         let result = Ok(outcome);
         self.deactivate_frame(&mut frame, &result);
-        let Ok(outcome) = result else { unreachable!("a stop is no error") };
-        self.settle_outcome(p, resume, frame, outcome)?;
+        self.settle_stop(p, StopOwner::Async(resume), Some(frame), result)?;
         self.resume_async_generator_queue(p, generator)?;
         Ok(promise)
     }

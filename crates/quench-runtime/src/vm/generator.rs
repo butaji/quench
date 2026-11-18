@@ -2,7 +2,7 @@ use super::activation::{
     AsyncGeneratorOperation, AsyncGeneratorRequest, Completion, Continuation, GeneratorRecord, JobResume, JobRoot,
     SuspendKind,
 };
-use super::dispatch_fast::JobEnd;
+use super::promise_async::StopOwner;
 use crate::heap::AwaitKind;
 use super::promise::{PromiseState, ThenCapability};
 use super::*;
@@ -1323,7 +1323,8 @@ impl<H: Host> Vm<H> {
         let end = self.run_job(&code, job, frame, how);
         self.restore_active_program(previous_program);
         self.switch_realm_global(previous_global);
-        self.finish_generator_step(generator, end)
+        let step = self.settle_job_end(&code, StopOwner::Generator(generator), end)?;
+        Ok(step.expect("a sync generator's stop is its step"))
     }
 
     /// What a resumption of `generator` finds: its realm, whether it has completed and whether
@@ -1352,69 +1353,10 @@ impl<H: Host> Vm<H> {
         Err(error)
     }
 
-    /// How `generator`'s step ended, which its lane run did (`Vm::run_job`): the record already
-    /// suspended or completed where the lane ran it to a `yield`, a return or an uncaught raise,
-    /// and the frame its activation became is the general loop's to settle.
-    fn finish_generator_step(&mut self, generator: Value, end: JobEnd) -> Result<GeneratorStep, JsError> {
-        match end {
-            JobEnd::Returned(value) => Ok(GeneratorStep::Done(value)),
-            JobEnd::Suspended(value) | JobEnd::Yielded(value) => Ok(GeneratorStep::Yielded(value)),
-            JobEnd::Threw(error) => Err(error),
-            JobEnd::Frames(result) => self.finish_generator_frame(generator, result),
-        }
-    }
-
-    /// The step of `generator` whose activation became the frame on top of the stack, which
-    /// ended with `result`: a yield parks the frame in the record, a return completes it.
-    fn finish_generator_frame(
-        &mut self,
-        generator: Value,
-        result: Result<FrameOutcome, JsError>,
-    ) -> Result<GeneratorStep, JsError> {
-        let mut frame = self.frames.pop().expect("generator frame exists");
-        self.deactivate_frame(&mut frame, &result);
-        let outcome = match result {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                self.pool_frame(frame);
-                self.complete_generator(generator);
-                return Err(error);
-            }
-        };
-        self.generator_step_of(generator, frame, outcome)
-    }
-
-    /// The step of `generator` whose popped `frame` ended with `outcome`.
-    fn generator_step_of(&mut self, generator: Value, frame: Box<Frame>, outcome: FrameOutcome) -> Result<GeneratorStep, JsError> {
-        match outcome {
-            FrameOutcome::Suspend(Suspended::Yield { value, destination, delegated_result }, None) => {
-                Ok(self.park_generator_frame(generator, frame, (value, destination), delegated_result))
-            }
-            FrameOutcome::Complete(value) | FrameOutcome::ConstructComplete { value, .. } => {
-                self.pool_frame(frame);
-                self.complete_generator(generator);
-                Ok(GeneratorStep::Done(value))
-            }
-            FrameOutcome::Suspend(Suspended::Await { .. }, _) => {
-                self.pool_frame(frame);
-                self.complete_generator(generator);
-                Err(JsError("await is not supported in a synchronous generator".into()))
-            }
-            FrameOutcome::ParameterInitializationComplete => {
-                self.pool_frame(frame);
-                Err(JsError("unexpected generator parameter initialization boundary".into()))
-            }
-            FrameOutcome::Suspend(Suspended::Yield { .. }, Some(frame)) => {
-                self.pool_frame(frame);
-                Err(JsError("generator frame retained unexpectedly".into()))
-            }
-        }
-    }
-
     /// The step of `generator` whose frame yielded a value, `(value, destination)`, the register its
     /// next sent value goes to: the frame is the generator's continuation, and a `yield*` passes its
-    /// delegate's own result on.
-    fn park_generator_frame(
+    /// delegate's own result on (`Vm::settle_stop`).
+    pub(super) fn park_generator_frame(
         &mut self,
         generator: Value,
         frame: Box<Frame>,
@@ -1431,7 +1373,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn complete_generator(&mut self, generator: Value) {
+    pub(super) fn complete_generator(&mut self, generator: Value) {
         if let Some(record) = self.generator_record_mut(generator) {
             record.complete();
         }
