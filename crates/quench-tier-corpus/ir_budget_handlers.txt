@@ -1,10 +1,9 @@
 # Each op's Ir/iter split by handler (callgrind self cost), recorded by a passing `quench-gate --only ir-budget`.
 # op share handler; the gate names the handlers that grew against these. Not edited by hand.
 arr_includes 843.5 Vm::search_dense
+arr_includes 80.0 lane_native_value
 arr_includes 70.0 Vm::dense_search_call
 arr_includes 64.0 lane_native_call
-arr_includes 53.0 Vm::in_place_native_value
-arr_includes 51.0 lane_native_value
 arr_includes 41.0 lane_get_field_holder_cell_register
 arr_includes 30.0 array_value
 arr_includes 25.0 lane_inc_dec_loop<false, 4, true>
@@ -13,10 +12,9 @@ arr_includes 12.0 lane_operator_integer_constant<19>
 arr_includes 7.5 lane_inc_dec<false>
 arr_includes 7.0 lane_move<0>
 arr_indexof 843.5 Vm::search_dense
+arr_indexof 80.0 lane_native_value
 arr_indexof 78.5 Vm::dense_search_call
 arr_indexof 64.0 lane_native_call
-arr_indexof 53.0 Vm::in_place_native_value
-arr_indexof 51.0 lane_native_value
 arr_indexof 41.0 lane_get_field_holder_cell_register
 arr_indexof 30.0 array_value
 arr_indexof 25.0 lane_inc_dec_loop<false, 4, true>
@@ -493,7 +491,6 @@ k_json 65.1 JsString::from_str
 k_json 64.0 lane_native_call
 k_json 59.0 ValueArena::with_values
 k_json 56.0 lane_load_name_bound<0, 2>
-k_json 55.0 lane_native_value
 k_json 54.0 Vm::json_plain_members
 k_json 52.8 ValueArena::release_held
 k_json 51.1 RecordSpace::sweep<<quench_runtime::heap::StoppedStringSweep>::run::{closure#0}>
@@ -501,6 +498,7 @@ k_json 48.8 RecordSpace::release<<quench_runtime::heap::Heap>::collect_with_obje
 k_json 48.0 lane_call_builtin<12>
 k_json 48.0 Vm::call_native_table
 k_json 46.0 {closure#0}
+k_json 45.0 lane_native_value
 k_json 43.0 lane_set_object_field_own<false>
 k_json 42.0 JsonHeapBuilder::object
 k_json 40.0 lane_get_length_string
@@ -522,7 +520,6 @@ k_json 24.6 u32::fmt
 k_json 24.0 JsonParseCache::prepared
 k_json 24.0 FlatUnits::shared_ascii
 k_json 23.0 Vm::empty_object
-k_json 23.0 Vm::in_place_native_value
 k_json 21.0 Vm::materialize_lane_activations
 k_json 19.0 lane_operator_raw<8>
 k_json 15.0 lane_operator_int32<8, false>
@@ -736,12 +733,11 @@ num_to_str 0.5 quicksort<u32, <u32 as core::cmp::PartialOrd>::lt>
 parse_int 123.0 parse_integer
 parse_int 107.0 primitive_leaf_value
 parse_int 101.0 integer_digits_value
+parse_int 84.0 lane_native_value
 parse_int 82.0 Vm::call_primitive_native
 parse_int 63.0 lane_native_call
 parse_int 57.0 Vm::to_string
-parse_int 54.0 Vm::in_place_native_value
 parse_int 50.0 str::trim_start_matches<quench_runtime::vm::primitives::whitespace::is_ecma_whitespace_character>
-parse_int 48.0 lane_native_value
 parse_int 42.0 lane_load_name_bound<1, 2>
 parse_int 41.0 __rust_dealloc
 parse_int 38.0 JsString::to_host_owned

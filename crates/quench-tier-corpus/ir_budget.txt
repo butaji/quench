@@ -7,8 +7,8 @@
 #   are held to their ceilings; the tier report (QUENCH_IR_BUDGET_MODE=tiers) checks u-jit here.
 # ceiling: the count the interpreter may not exceed. The gate lowers it when the count falls; a
 #   count at or under its budget makes the budget the ceiling. Never raise a ceiling by hand.
-arr_includes 247.2 747.6 1219.3
-arr_indexof 248.2 750.6 1220.3
+arr_includes 247.2 747.6 1195.3
+arr_indexof 248.2 750.6 1196.3
 arr_length 4 18 76.1
 arr_load_dbl 5 21 87.1
 arr_load_int 5 21 73.1
@@ -63,7 +63,7 @@ k18_math 44 138 744.6
 k19_gcd 47.1 147.3 672.9
 k20_switch 169 513 3945.3
 k_dispatch 14 48 354.6
-k_json 812 2442 5694.2
+k_json 812 2442 5661.2
 k_nbody_pair 21.1 70 1452.1
 k_regexp 40.2 127 1240.6
 k_str_build 14.1 49 1464.5
@@ -78,7 +78,7 @@ mixed_int_dbl 7 27 72.1
 neg_op 6 24 88.1
 not_op 5.5 23 42.6
 num_to_str 569 1713 1713
-parse_int 196 594 1036.1
+parse_int 196 594 1018.1
 shl_shr 7 27 93.1
 str_charcodeat 9 33 187.1
 str_compare 4 18 176.1
