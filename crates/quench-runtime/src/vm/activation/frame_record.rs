@@ -60,6 +60,10 @@ pub(crate) struct FrameRecord {
     /// The resume pc of the binding site the direct eval the activation is running was called
     /// at (`CallerView::binding_site`).
     pub(in crate::vm) binding_site_pc: Option<u32>,
+    /// The frame's own `this` is authoritative (`Frame::fixed_this`), as its call decided
+    /// (`Vm::initialize_activation_bindings`): an activation that pushed no lexical `this`
+    /// binding has no other place to read it from when it runs again.
+    fixed_this: bool,
 }
 
 #[cfg(test)]
@@ -201,6 +205,7 @@ impl FrameRecord {
             js_jit_skip_entry_once: false,
             environment_window: false,
             binding_site_pc: None,
+            fixed_this: false,
         };
         record.bind_window();
         Box::new(record)
@@ -239,21 +244,21 @@ impl FrameRecord {
 
     /// `frame`'s suspended state, moved: its register file and buffers keep their storage. What
     /// a run derives for itself (the operation's field and binding site, the capture cache,
-    /// a fixed `this`, the `with` base) is not kept.
+    /// the `with` base) is not kept.
     pub(in crate::vm) fn capture(frame: Box<Frame>) -> Box<Self> {
         let Frame {
             context, reflected_parameters, original_arguments, program, function, pc, env, this,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
             pc_is_resume: _, source_field: _, binding_site_pc: _,
             initialized_registers: _, capture_cache: _, with_base: _, js_jit_interpreter_started: _,
-            fixed_this: _, js_jit_skip_entry_once,
+            fixed_this, js_jit_skip_entry_once,
         } = *frame;
         let prefix = ShadowFrame { this: this.to_bits(), ..ShadowFrame::EMPTY };
         let mut record = Self {
             prefix, context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
             live_registers: None, suspended_epoch: 0, window_plan: None, js_jit_skip_entry_once, environment_window: false,
-            binding_site_pc: None,
+            binding_site_pc: None, fixed_this,
         };
         record.bind_window();
         Box::new(record)
@@ -276,6 +281,7 @@ impl FrameRecord {
             prefix: _, context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
             live_registers: _, suspended_epoch: _, window_plan: _, js_jit_skip_entry_once, environment_window: _, binding_site_pc: _,
+            fixed_this,
         } = *self;
         Box::new(Frame {
             context, reflected_parameters, original_arguments, program, function, pc,
@@ -289,7 +295,7 @@ impl FrameRecord {
             capture_cache: CaptureCache::default(),
             active_iterators, with_objects, with_base,
             js_jit_interpreter_started: None,
-            fixed_this: false,
+            fixed_this,
         })
     }
 
@@ -345,6 +351,7 @@ impl Clone for FrameRecord {
             js_jit_skip_entry_once: self.js_jit_skip_entry_once,
             environment_window: false,
             binding_site_pc: None,
+            fixed_this: self.fixed_this,
         };
         copy.bind_window();
         copy
@@ -400,6 +407,7 @@ impl Snap for FrameRecord {
             js_jit_skip_entry_once: false,
             environment_window: false,
             binding_site_pc: None,
+            fixed_this: false,
         };
         record.bind_window();
         Ok(record)

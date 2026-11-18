@@ -4018,7 +4018,7 @@ script_handler! {
             let key = vm.heap.alloc_string(crate::vm::wtf16::JsString::from_str(&integer.to_string()));
             note_allocation(vm);
             key
-        } else if matches!(vm.heap.get(value), Some(Cell::Symbol(_))) {
+        } else if vm.heap.is_symbol(value) {
             value
         } else {
             sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
@@ -4634,7 +4634,9 @@ script_handler! {
         };
         r.set(i.a, value);
         r.set(i.c, updated);
-        next!(cx, r, following(following(ip)), Carried::script_in(cx, view))
+        // The skipped `IncDec` is an accumulator producer (its row): the record after it may read
+        // the update from the accumulator, so it carries it as the `IncDec` would.
+        next!(cx, r, following(following(ip)), Carried { acc: Slot::of(updated), ..Carried::script_in(cx, view) })
     }
 }
 
@@ -24065,8 +24067,8 @@ fn specialize_constant_returns<H: Host>(records: &mut [LaneInstruction]) {
 
 /// Gives each `IncDec` record the handler of its direction, and runs each `ToNumeric` whose
 /// result the next record, an `IncDec`, reads as one record (`lane_postfix_update`). The
-/// `IncDec` record stays for jumps that reach it; it reads no accumulator, and neither does
-/// its successor, since it produces none.
+/// `IncDec` record stays for jumps that reach it. The record after it may read the update as
+/// its accumulator (the `IncDec` row produces one), which the fused record carries.
 fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
     for pc in 0..records.len().saturating_sub(1) {
         let (conversion, update) = (&records[pc], &records[pc + 1]);

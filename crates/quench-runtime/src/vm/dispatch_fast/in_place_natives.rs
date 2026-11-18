@@ -283,7 +283,7 @@ fn internal_slot_value<H: Host>(vm: &mut Vm<H>, native: Native, callee: Value, r
         Native::RegExpLegacyGetter => return vm.regexp_legacy_getter_in_place(callee, receiver),
         _ => return None,
     };
-    matches!(vm.heap.get(receiver), Some(Cell::Map { .. })).then(|| vm.collection_iterator(receiver, kind).ok()).flatten()
+    vm.heap.is_map(receiver).then(|| vm.collection_iterator(receiver, kind).ok()).flatten()
 }
 
 /// A dense array's `indexOf`, `includes`, `splice`, `unshift`, `shift`, `slice` and `concat`, and an array iterator's step

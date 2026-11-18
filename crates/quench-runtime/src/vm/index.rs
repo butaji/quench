@@ -20,7 +20,7 @@ impl<H: Host> Vm<H> {
             return Some(self.string_proto);
         }
         let native = match self.heap.get(value) {
-            Some(Cell::Symbol(_)) => Native::Symbol,
+            _ if self.heap.is_symbol(value) => Native::Symbol,
             Some(Cell::BigInt(_)) => Native::BigInt,
             _ if value.as_bool().is_some() => Native::Boolean,
             _ if value.as_number().is_some() => Native::Number,
@@ -113,19 +113,19 @@ impl<H: Host> Vm<H> {
             // A rejected base never invokes a property-key object's conversion hooks.
             let property = if self.is_object_like(key) {
                 None
-            } else if let Some(Cell::Symbol(description)) = self.heap.get(key) {
+            } else if let Some(description) = self.heap.symbol_data(key) {
                 Some(format!("Symbol({})", description.as_deref().unwrap_or("")))
             } else {
                 Some(self.to_string(p, key)?)
             };
             return Err(self.nullish_property_error(p, object, property.as_deref()));
         }
-        let key = if self.heap.is_string(key) || matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+        let key = if self.heap.is_string(key) || self.heap.is_symbol(key) {
             key
         } else {
             self.to_property_key(p, key)?
         };
-        if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+        if self.heap.is_symbol(key) {
             return self.get_symbol_property_with_receiver(p, object, key, object);
         }
         if let Some((target, handler)) = self.proxy_parts(object) {
@@ -477,12 +477,12 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<(), JsError> {
-        let key = if self.heap.is_string(key) || matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+        let key = if self.heap.is_string(key) || self.heap.is_symbol(key) {
             key
         } else {
             self.to_property_key(p, key)?
         };
-        if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+        if self.heap.is_symbol(key) {
             let succeeded =
                 self.set_symbol_property_with_receiver(p, object, key, value, object)?;
             return if succeeded || !strict {

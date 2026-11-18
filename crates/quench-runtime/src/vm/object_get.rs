@@ -417,9 +417,9 @@ impl<H: Host> Vm<H> {
         if self.heap.string(key).is_some() {
             return None;
         }
-        match self.heap.get(key)? {
+        match self.heap.symbol_data(key) {
             // A host-private symbol names only an own property, which the general path reads.
-            Cell::Symbol(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate => {
+            Some(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate => {
                 match self.heap.array(object) {
                     // No proof records an array's shape; the walk reads it as ordinary.
                     Some(_) => self.plain_property_get(object, PropertyKey::symbol(key)),
@@ -453,7 +453,7 @@ impl<H: Host> Vm<H> {
                 Some(atom) => PropertyKey::string(atom),
                 None => return,
             },
-            None if matches!(self.heap.get(key), Some(Cell::Symbol(_))) => PropertyKey::symbol(key),
+            None if self.heap.is_symbol(key) => PropertyKey::symbol(key),
             None => return,
         };
         if let Some(data) = self.heap.ordinary_object(object) {

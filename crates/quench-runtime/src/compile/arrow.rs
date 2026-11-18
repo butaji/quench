@@ -22,6 +22,7 @@ impl Compiler<'_> {
             return id;
         }
         let id = self.functions.reserve();
+        let call_only = self.prototype_unobservable.contains(&value.span.start);
         let source_span = self.source_span(value.span);
         let body_lexicals = if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &value.body
         {
@@ -183,7 +184,8 @@ impl Compiler<'_> {
             class_initializer,
             parameter_eval_arguments_error: false,
             unaliased_arguments: false,
-            prototype_unobservable: false,
+            // A call-only arrow (`call_only`) closes as a `Value::known_closure`, with no function object.
+            prototype_unobservable: call_only,
             arguments_slot: None,
             simple_parameters,
             strict,
