@@ -2194,11 +2194,12 @@ impl ProgramStore {
                             ) => {
                                 guard_census.0 = guard_census.0.saturating_add(1);
                             }
-                            crate::bytecode::Class::JumpBinaryFalse => {
+                            _ if matches!(
+                                crate::vm::compiled::decoded(instruction),
+                                Some(crate::staged::Operation::CompareJump { .. })
+                            ) => {
                                 guard_census.0 = guard_census.0.saturating_add(1);
-                                if instruction.op().is_jump_binary_false() {
-                                    count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
-                                }
+                                count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
                             }
                             crate::bytecode::Class::Unary
                                 if instruction.unary_operator()

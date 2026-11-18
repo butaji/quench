@@ -95,7 +95,7 @@ fn moves_parameters(body: &Function, moves: &[crate::bytecode::Instr], window: u
 
 /// The call of `method` on `field` with every parameter, returning its completion.
 fn calls_method(call: WideInstruction, method: WideInstruction, field: WideInstruction, body: &Function) -> bool {
-    call.op().is_call()
+    crate::staged::meaning_dispatch::plain_call(call)
         && call.result_flags() == crate::bytecode::RETURN_REGISTER
         && call.b() == method.a()
         && call.c() == field.a()

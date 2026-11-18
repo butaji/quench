@@ -59,7 +59,7 @@ impl<H: Host> Vm<H> {
         // Hosts permitting proper tail calls leave strict terminal calls to `step`. Wasm programs run in
         // the loop (as in-loop Wasm frames), and their calls keep Wasm's own activation and
         // exhaustion accounting, so they are never inlined as user calls.
-        if !i.op().is_ordinary_call()
+        if !crate::staged::meaning_dispatch::ordinary_call(i)
             || i.direct_eval()
             || self.direct_eval
             || self.parameter_eval
@@ -78,7 +78,7 @@ impl<H: Host> Vm<H> {
         if entry.push == super::InLoopPush::Settles {
             // Settling calls consume the ordinary register window and cannot take
             // CallArray's materialized argument vector through this continuation.
-            if i.op() == Op::CallArray {
+            if crate::staged::meaning_dispatch::array_call(i) {
                 return None;
             }
             return self.try_settling_call(p, f, i, pc, callee, target);
@@ -97,7 +97,7 @@ impl<H: Host> Vm<H> {
         // indexed values before pushing the frame, just as `Vm::step` does. The
         // copied Values are rooted through activation setup below because the
         // caller resumes past the temporary array register before its frame is pushed.
-        let array_arguments = if i.op() == Op::CallArray {
+        let array_arguments = if crate::staged::meaning_dispatch::array_call(i) {
             match self.array_values(self.read(f, window.base)) {
                 Ok(arguments) => Some(arguments),
                 Err(error) => return Some(Err(error)),
@@ -372,7 +372,7 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         pc: usize,
     ) -> Option<Result<StepResult, JsError>> {
-        if !matches!(i.op(), Op::Call | Op::CallForwardingArguments)
+        if !crate::staged::meaning_dispatch::call_or_forwarding(i)
             || self.direct_eval
             || self.parameter_eval
             || p.kind == crate::bytecode::ProgramKind::Wasm
@@ -395,7 +395,7 @@ impl<H: Host> Vm<H> {
         // `f.call(...)`, a bound function without bound arguments, or an uncurried builtin
         // (`Vm::forwarded_call`). A forwarded `arguments` reaches here unmaterialized, which
         // only `apply` takes as its list.
-        let forwarded = if i.op() == Op::Call { self.forwarded_call(callee, target, window) } else { None };
+        let forwarded = if crate::staged::meaning_dispatch::plain_call(i) { self.forwarded_call(callee, target, window) } else { None };
         let arguments = match forwarded {
             Some(super::function::Forwarded { callee: forwarded_target, receiver: forwarded_this, args: forwarded_arguments, .. }) => {
                 (target, this) = (forwarded_target, forwarded_this);
@@ -411,7 +411,7 @@ impl<H: Host> Vm<H> {
                 }) => {
                     // A forwarded `arguments` reaches here unmaterialized, which only `apply`
                     // takes as its list.
-                    if i.op() != Op::Call {
+                    if !crate::staged::meaning_dispatch::plain_call(i) {
                         return None;
                     }
                     let (bound_target, bound_this, bound) = self.bound_function_parts(*env)?;
@@ -426,7 +426,7 @@ impl<H: Host> Vm<H> {
                     ..
                 }) => {
                     let list = window.get(2).copied().unwrap_or(Value::UNDEFINED);
-                    if i.op() != Op::Call || self.heap.array(list).is_none() {
+                    if !crate::staged::meaning_dispatch::plain_call(i) || self.heap.array(list).is_none() {
                         return None;
                     }
                     target = window.first().copied().unwrap_or(Value::UNDEFINED);
@@ -470,7 +470,7 @@ impl<H: Host> Vm<H> {
         pc: usize,
     ) -> Option<Result<StepResult, JsError>> {
         let callee = self.read(f, i.register_b());
-        if i.op() != Op::Call
+        if !crate::staged::meaning_dispatch::plain_call(i)
             || !matches!(
                 self.heap.function(callee),
                 Some(FunctionRecord { kind: FunctionKind::Native(Native::ReflectApply), .. })
@@ -1635,7 +1635,7 @@ impl<H: Host> Vm<H> {
         -> (Value, crate::bytecode::RegisterWindow, Value, CallCompletion) {
         let decoded = crate::vm::compiled::decoded_completed(i);
         match i.op() {
-            Op::Construct => {
+            _ if crate::staged::meaning_dispatch::construction(i) => {
                 let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else {
                     unreachable!("a pushed construction passes registers")
                 };

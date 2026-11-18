@@ -1888,7 +1888,7 @@ impl<H: Host> Vm<H> {
                     .and_then(|function| function.instructions().nth(pc))
                 {
                     super::lane_exits::record(instruction.op());
-                    if matches!(instruction.op() as u16, index::Call | index::Construct) {
+                    if crate::staged::meaning_dispatch::plain_call(instruction) || crate::staged::meaning_dispatch::construction(instruction) {
                         let callee = self.frames[frame].registers.get(usize::from(instruction.register_b())).copied();
                         let detail = match callee.and_then(|callee| self.heap.function(callee)) {
                             Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native @ (crate::heap::Native::FunctionBoundCall | crate::heap::Native::FunctionCall)), .. }) => {
@@ -2145,6 +2145,7 @@ impl<H: Host> Vm<H> {
             self.profile.opcode(ins.op() as usize);
             // Register/local moves and field cache hits cannot allocate, collect or throw, so they
             // need neither the published root-map PC nor the general step result.
+            let decoded_op = crate::vm::compiled::decoded(ins);
             match ins.op()  as u16 {
                 index::LoadLocalPlain => {
                     // SAFETY: validated bytecode bounds the slot by Function.locals.
@@ -2161,7 +2162,7 @@ impl<H: Host> Vm<H> {
                     }
                     continue;
                 }
-                index::Move => {
+                _ if matches!(decoded_op, Some(crate::staged::Operation::Move { .. })) => {
                     self.write(
                         frame,
                         ins.result_register(),
@@ -2169,7 +2170,7 @@ impl<H: Host> Vm<H> {
                     );
                     continue;
                 }
-                index::LoadConst => {
+                _ if crate::staged::Operation::<(), ()>::decode_constant_load(ins).is_some() => {
                     if let Some(value) = self.active_constant(ins.constant_index()) {
                         self.write(frame, ins.result_register(), value);
                         continue;
@@ -2183,7 +2184,7 @@ impl<H: Host> Vm<H> {
                         continue;
                     }
                 }
-                index::JumpFalse | index::JumpTrue => {
+                _ if matches!(decoded_op, Some(crate::staged::Operation::JumpIf { .. })) => {
                     // ToBoolean runs no guest code.
                     let value = self.read(frame, ins.register_a());
                     let truthy = self.truthy(value);
@@ -2198,7 +2199,7 @@ impl<H: Host> Vm<H> {
                     }
                     continue;
                 }
-                index::JumpBinaryFalse => {
+                _ if matches!(decoded_op, Some(crate::staged::Operation::CompareJump { .. })) => {
                     let operator = ins.binary_operator_field();
                     if let (Some(left), Some(right)) = (
                         self.inert_operand(frame, ins.operand_b()),
@@ -2224,8 +2225,8 @@ impl<H: Host> Vm<H> {
                 }
                 // A cached own-data store writes a slot in place: it neither allocates nor throws.
                 // `this.x = v` is the same cached write with an authoritative `this`.
-                crate::bytecode::field_store_op!()
-                    if let Some(receiver) = ins.field_store_register().map(|register| self.read(frame, register))
+                _ if matches!(decoded_op, Some(crate::staged::Operation::SetField { .. }))
+                    && let Some(receiver) = ins.field_store_register().map(|register| self.read(frame, register))
                         .or_else(|| self.frames[frame].fixed_this.then(|| self.frames[frame].this)) => {
                     if self.cached_field_write_hit(
                         p,
@@ -2353,7 +2354,8 @@ impl<H: Host> Vm<H> {
                     self.write(frame, ins.result_register(), value);
                     continue;
                 }
-                index::ToNumeric if self.read(frame, ins.register_b()).as_number().is_some() => {
+                _ if matches!(decoded_op, Some(crate::staged::Operation::Number(crate::staged::NumberOperation::ToNumeric { .. })))
+                    && self.read(frame, ins.register_b()).as_number().is_some() => {
                     self.write(
                         frame,
                         ins.result_register(),
@@ -2362,7 +2364,7 @@ impl<H: Host> Vm<H> {
                     continue;
                 }
                 // A back edge collects only once the allocation threshold is reached.
-                index::Jump if !self.heap.should_collect() => {
+                _ if matches!(decoded_op, Some(crate::staged::Operation::Jump)) && !self.heap.should_collect() => {
                     pc = ins.jump_target() as usize;
                     if pc <= instruction_pc {
                         self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
@@ -2382,8 +2384,8 @@ impl<H: Host> Vm<H> {
             match ins.op()  as u16 {
                 // A call the lane made returned its callee's completion from this frame.
                 _ if let Some(value) = lane_returned.take() => Ok(StepResult::Return(value)),
-                index::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
-                index::Call if allow_inline_calls => {
+                _ if matches!(decoded_op, Some(crate::staged::Operation::Return { .. })) => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
+                _ if allow_inline_calls && crate::staged::meaning_dispatch::plain_call(ins) => {
                     match self.try_inline_reflect_apply(p, frame, ins, pc) {
                         Some(result) => result,
                         None => match self.try_inline_user_call(p, frame, ins, pc) {

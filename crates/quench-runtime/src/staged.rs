@@ -43,6 +43,7 @@ mod delete;
 mod decode;
 mod captures;
 pub(crate) mod compare;
+pub(crate) mod meaning_dispatch;
 pub(crate) use global::{lexical_read, GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::{CallOut, OperandValues};
