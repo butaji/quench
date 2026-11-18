@@ -20,7 +20,7 @@ pub(super) mod relocatable_code;
 pub(super) mod symbol_words;
 mod worker;
 pub(super) mod builder;
-pub(super) use worker::{Pending, run_in_background};
+pub(super) use worker::{Done, Pending, run_in_background, run_in_background_guarded};
 
 type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 

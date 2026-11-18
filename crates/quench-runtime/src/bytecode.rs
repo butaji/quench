@@ -4479,6 +4479,8 @@ impl ResidualProgram {
 }
 mod binary;
 mod tier0;
+mod detached;
+pub(crate) use detached::DetachedProgram;
 #[cfg(feature = "native-execution")]
 mod native_metadata;
 #[cfg(feature = "native-execution")]

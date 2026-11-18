@@ -82,7 +82,7 @@ pub(crate) enum GlobalTable {
 
 /// What each by-name global access of a function or unit takes, by PC: a flat table, empty at
 /// a PC that is no such access (`Vm::lane_global_reads`).
-#[derive(Default)]
+#[derive(Clone, Default, PartialEq)]
 pub(crate) struct GlobalReads(Box<[Option<GlobalRead>]>);
 
 impl GlobalReads {
