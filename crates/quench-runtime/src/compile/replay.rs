@@ -425,12 +425,30 @@ pub(crate) enum Rewrite {
 /// The rewrites a program's load left to its functions' first reads.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RewriteRanges {
-    /// Every record the load kept unlowered still awaits its rewrites, which its first read runs
-    /// (`compile::settle_deferred_rewrite`): a program that keeps its records but compiled few.
+    /// Some kept record still awaits its rewrites, which its first read runs
+    /// (`compile::settle_deferred_rewrite`). A program's chunks append only to such a program
+    /// (`ResidualProgram::has_room_for`).
     pub(crate) kept_pending: bool,
+    /// The functions whose rewrites wait for their first read, ascending. Each is kept
+    /// unlowered and unrewritten, so its encoding says so (`binary::encode_program`) and its
+    /// first read settles it; every other kept record was rewritten at load.
+    pub(crate) deferred: Box<[u32]>,
     /// Per function id: where a replay or first read put its rewrites' sites (`Some(Some)`), or
     /// that they stayed unrun (`Some(None)`); `None` before either.
     pub(crate) settled: std::cell::RefCell<Vec<Option<Option<crate::compile::replay::RewriteStart>>>>,
+}
+
+impl RewriteRanges {
+    /// The ranges of a program whose functions `deferred` lists in any order.
+    pub(crate) fn new(kept_pending: bool, mut deferred: Vec<u32>) -> Self {
+        deferred.sort_unstable();
+        Self { kept_pending, deferred: deferred.into_boxed_slice(), settled: Default::default() }
+    }
+
+    /// Whether function `id`'s rewrites wait for its first read.
+    pub(crate) fn defers(&self, id: usize) -> bool {
+        self.deferred.binary_search(&(id as u32)).is_ok()
+    }
 }
 
 /// Lazily derived views of a finished program that its replays share.

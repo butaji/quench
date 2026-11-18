@@ -13,9 +13,12 @@ use super::{
 
 /// The encoded kinds of `Handler::slot`: none, a frame local, or a register.
 const THROWN_VALUE_DISCARDED: u8 = 0;
-/// A function entry's flag for a deferred record encoded unlowered (0: the record in place,
-/// 1: deferred and lowered).
+/// A function entry's flag for a deferred record encoded unlowered, its rewrites run (flag 0 is
+/// the record in place, 1 a deferred record lowered).
 const DEFERRED_UNLOWERED: u8 = 2;
+/// A function entry's flag for a deferred record encoded unlowered and unrewritten: its rewrites
+/// wait for its first read (`RewriteRanges::deferred`), which settles them before it lowers.
+const DEFERRED_UNREWRITTEN: u8 = 3;
 const THROWN_VALUE_IN_LOCAL: u8 = 1;
 const THROWN_VALUE_IN_REGISTER: u8 = 2;
 
@@ -309,19 +312,21 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         // A record still unlowered is encoded so, and lowered at its first read as the
         // program would have lowered it (`ResidualProgram::lower_unlowered`): most functions
         // of a loaded script never run, and lowering each only to encode it cost about a
-        // tenth of a cold load (babel: 3.7K records, 200M instructions). A deferred rewrite
-        // (`RewriteRanges::kept_pending`) settles against the load's own state, so those lower now.
+        // tenth of a cold load (babel: 3.7K records, 200M instructions). A record whose rewrites
+        // the load deferred is encoded unrewritten too, and its first read runs them first,
+        // against the room the entry restores (`RewriteRanges::deferred`, the rewrite room below).
         let unlowered = (deferred
             && crate::DYNAMIC_EXECUTION_ENABLED
-            && !program.rewrite_ranges.kept_pending
             && !load_records.contains_key(&(index as u32))
             && function.record.get().is_none())
         .then(|| function.unlowered.borrow().as_ref().map(|unlowered| unlowered.function(function.header())))
         .flatten();
-        out.u8(match (deferred, unlowered.is_some()) {
-            (false, _) => 0,
-            (true, false) => 1,
-            (true, true) => DEFERRED_UNLOWERED,
+        let rewrites_pending = program.rewrite_ranges.defers(index);
+        out.u8(match (deferred, unlowered.is_some(), rewrites_pending) {
+            (false, _, _) => 0,
+            (true, false, _) => 1,
+            (true, true, false) => DEFERRED_UNLOWERED,
+            (true, true, true) => DEFERRED_UNREWRITTEN,
         });
         write_function_header(&mut out, &function.header());
         if let Some(record) = unlowered {
@@ -448,6 +453,16 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
             }
         }
         None => out.bool(false),
+    }
+    // The room that deferred rewrites append their sites into: the program's table headroom at
+    // the end of its load (`ResidualProgram::finish`), which a decoder restores, so a first read
+    // of a deferred record appends as the load's own would have had room to. Only a program that
+    // defers any keeps it; its flag says whether the decoder restores the room.
+    out.bool(program.rewrite_ranges.kept_pending);
+    if program.rewrite_ranges.kept_pending {
+        for spare in [program.field_sites.spare(), program.superinstructions.spare()] {
+            out.u32(u32::try_from(spare).expect("table headroom fits u32"));
+        }
     }
     let order = match out.atoms {
         AtomEncoding::Program => {
@@ -691,10 +706,14 @@ fn decode_program(
     let function_count = input.u32()? as usize;
     let mut functions = Vec::with_capacity(function_count);
     let mut ranges = Vec::with_capacity(function_count);
-    for _ in 0..function_count {
+    let mut deferred_rewrites = Vec::new();
+    for index in 0..function_count {
         let entry = input.u8()?;
-        if entry > DEFERRED_UNLOWERED {
+        if entry > DEFERRED_UNREWRITTEN {
             return Err("invalid residual deferred record flag".into());
+        }
+        if entry == DEFERRED_UNREWRITTEN {
+            deferred_rewrites.push(index as u32);
         }
         let encoded_deferred = entry != 0;
         let header = read_function_header(&mut input)?;
@@ -706,7 +725,13 @@ fn decode_program(
                 return Err("deferred record outside its region".into());
             }
             let start = u32::try_from(region + offset).map_err(|_| "residual records exceed u32")?;
-            ranges.push(Some(super::DeferredRecord { start, length, checksum, unlowered: entry == DEFERRED_UNLOWERED }));
+            ranges.push(Some(super::DeferredRecord {
+                start,
+                length,
+                checksum,
+                unlowered: entry >= DEFERRED_UNLOWERED,
+                rewrites_pending: entry == DEFERRED_UNREWRITTEN,
+            }));
             functions.push(FunctionSlot::released(header));
             continue;
         }
@@ -811,6 +836,8 @@ fn decode_program(
     } else {
         None
     };
+    // The rewrite room of `encode_program`, present when the program defers rewrites.
+    let rewrite_room = if input.bool()? { Some([input.u32()? as usize, input.u32()? as usize]) } else { None };
     input.finish()?;
     let mut program = super::ResidualProgram {
         specialized,
@@ -831,7 +858,8 @@ fn decode_program(
         object_sites: object_sites.into(),
         regexp_literal_sites: regexp_literal_sites.into(),
         literal_templates: literal_templates.into(),
-        superinstructions: superinstructions.into(), rewrite_ranges: Default::default(),
+        superinstructions: superinstructions.into(),
+        rewrite_ranges: crate::compile::replay::RewriteRanges::new(rewrite_room.is_some(), deferred_rewrites),
         replay: None, first_call_scopes,
         encoded_records,
         validated: Default::default(),
@@ -840,6 +868,11 @@ fn decode_program(
         closure_reads,
         wasm_lazy: None,
     };
+    if let Some([fields, supers]) = rewrite_room {
+        // The deferred rewrites append into this room, as they would have into the load's.
+        program.field_sites.reserve_unshared(fields);
+        program.superinstructions.reserve_unshared(supers);
+    }
     if let Some(room) = &chunk_room {
         program.restore_chunk_room(room);
     }

@@ -4072,6 +4072,9 @@ pub(crate) struct DeferredRecord {
     pub(crate) checksum: u64,
     /// Whether the record is encoded unlowered, which its first read lowers.
     pub(crate) unlowered: bool,
+    /// Whether its rewrites wait for that first read too (`RewriteRanges::deferred`), so the
+    /// read settles them before it lowers the record.
+    pub(crate) rewrites_pending: bool,
 }
 
 /// Bytes a host kept for a compiled program (`Host::kept_compiled_program`), which the program
@@ -4186,7 +4189,8 @@ impl ResidualProgram {
             if !crate::DYNAMIC_EXECUTION_ENABLED {
                 panic!("native function {index} of {} was not lowered before linking", self.source_name);
             }
-            let function = self.lower_unlowered(index, unlowered);
+            let rewrites_pending = self.rewrite_ranges.defers(index);
+            let function = self.lower_unlowered(index, unlowered, rewrites_pending);
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
         }
@@ -4201,10 +4205,11 @@ impl ResidualProgram {
                 let function = decoded.unwrap_or_else(|error| {
                     panic!("function {index} of {} does not decode: {error}", self.source_name)
                 });
-                let unlowered = self.encoded_records.as_deref()
-                    .and_then(|records| records.ranges.get(index).copied().flatten())
-                    .is_some_and(|record| record.unlowered);
-                let function = if unlowered { self.lower_unlowered(index, function) } else { function };
+                let entry = self.encoded_records.as_deref().and_then(|records| records.ranges.get(index).copied().flatten());
+                let function = match entry {
+                    Some(record) if record.unlowered => self.lower_unlowered(index, function, record.rewrites_pending),
+                    _ => function,
+                };
                 if let (Some(action), Some(bytes)) = (
                     RECORD_READ.get(),
                     self.encoded_records.as_deref().and_then(|records| binary::deferred_record_bytes(records, index)),
@@ -4230,11 +4235,14 @@ impl ResidualProgram {
     }
 
     /// An unlowered record lowered against the finished program's tables, as its load
-    /// would have lowered it (`compile::lower_settled`), with its register roots.
+    /// would have lowered it (`compile::lower_settled`), with its register roots. Where
+    /// `rewrites_pending`, the record's rewrites run first, as the load deferred them
+    /// (`compile::settle_deferred_rewrite`): the rewrites come before lowering, as the load's
+    /// own order has them.
     #[cold]
     #[inline(never)]
-    fn lower_unlowered(&self, index: usize, mut function: Function) -> Function {
-        if self.rewrite_ranges.kept_pending { crate::compile::settle_deferred_rewrite(self, index as u32, &mut function); }
+    fn lower_unlowered(&self, index: usize, mut function: Function, rewrites_pending: bool) -> Function {
+        if rewrites_pending { crate::compile::settle_deferred_rewrite(self, index as u32, &mut function); }
         let undefined_constant = *self.undefined_constant.get_or_init(|| {
             let index = self.constants.iter().position(|constant| matches!(constant, Constant::Undefined))
                 .expect("a program with an unlowered record holds the `undefined` constant");

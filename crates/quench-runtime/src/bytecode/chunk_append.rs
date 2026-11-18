@@ -151,7 +151,11 @@ impl ResidualProgram {
         self.literal_templates.reserve_unshared(literal_templates);
         self.superinstructions.reserve_unshared(superinstructions);
         self.cache_sites = SiteCount::with_capacity(self.cache_sites.get(), room.site_capacity);
-        *self.rewrite_ranges.settled.borrow_mut() = vec![Some(None); self.functions.len()];
+        // The load ran every decoded record's rewrites, except those it deferred: their first
+        // reads settle them against the room restored above, so they stay unsettled here.
+        *self.rewrite_ranges.settled.borrow_mut() = (0..self.functions.len())
+            .map(|id| (!self.rewrite_ranges.defers(id)).then_some(None))
+            .collect();
         self.rewrite_ranges.kept_pending = true;
         self.replay = Some(std::rc::Rc::new(crate::compile::replay::ProgramReplay::for_chunks(
             self.specialized, room.direct_stubs, room.next_site, &room.name_shared,
