@@ -237,6 +237,14 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 9] = [
     (Op::StoreCapture as u16, Op::LoadCapture as u16, FUSED_PLAIN),
 ];
 
+/// Runs of three or four generated rows the lane runs as one record (`chain_rows`): each
+/// entry's links in record order, `NO_LINK` padding a three-link chain. Only the last link may
+/// be a jump. A chain at a record wins over a `FUSED_ROWS` pair there.
+pub(crate) const FUSED_CHAINS: [[u16; 4]; 0] = [];
+
+/// The absent fourth link of a three-link `FUSED_CHAINS` entry.
+pub(crate) const NO_LINK: u16 = u16::MAX;
+
 /// `FUSED_ROWS` mode: both rows run in full, `A`'s result is written to its register.
 pub(crate) const FUSED_PLAIN: u8 = 0;
 /// `FUSED_ROWS` mode: `A`'s result register is dead after the pair, and `B` does not name it, so

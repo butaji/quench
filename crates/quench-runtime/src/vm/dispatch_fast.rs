@@ -22170,6 +22170,7 @@ fn derive_lane_view<'live, H: Host>(
     };
     // Adjacent generated rows the staged pair list names run as one generated record.
     if !wasm {
+        lane_frame::fuse_chains::<H>(&mut records);
         lane_frame::fuse_rows::<H>(&mut records, live().map(|masks| &**masks));
     }
     // A record reads the accumulator its predecessor produced only when control reaches it
