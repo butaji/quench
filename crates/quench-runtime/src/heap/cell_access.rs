@@ -37,7 +37,6 @@ impl Cell {
             Self::Promise(promise) => Some(&promise.object),
             Self::WasmGlobal { header, .. } => Some(&header.object),
             Self::WasmMemory { header, .. } => Some(&header.object),
-            Self::Function(function) => Some(&function.object),
             Self::TypedArray { object, .. } | Self::DataView { object, .. } => Some(&object.object),
             _ => None,
         }
@@ -72,7 +71,6 @@ impl Cell {
             Self::Promise(promise) => Some(&mut promise.object),
             Self::WasmGlobal { header, .. } => Some(&mut header.object),
             Self::WasmMemory { header, .. } => Some(&mut header.object),
-            Self::Function(function) => Some(&mut function.object),
             Self::TypedArray { object, .. } | Self::DataView { object, .. } => {
                 Some(&mut object.object)
             }

@@ -913,7 +913,6 @@ impl<H: Host> Vm<H> {
             Cell::DataView { .. } => "DataView",
             Cell::Date { .. } => "Date",
             Cell::RegExp { .. } => "RegExp",
-            Cell::Function(_) => "Function",
             Cell::Error(_) => "Error",
             _ => "Object",
         }

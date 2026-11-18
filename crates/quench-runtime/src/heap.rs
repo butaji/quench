@@ -1362,15 +1362,6 @@ impl Heap {
                 Ok(record_id) => return Value::direct_await(record_id),
                 Err(state) => Cell::AwaitState(Box::new(state)),
             },
-            Cell::Function(function) => match self.function_records.try_insert(*function) {
-                Ok(record_id) => {
-                    let value = Value::direct_function(record_id);
-                    #[cfg(feature = "profile-memory")]
-                    self.profile_allocation(value);
-                    return value;
-                }
-                Err(function) => Cell::Function(Box::new(function)),
-            },
             cell => cell,
         };
         self.alloc_slotted(cell, track_young)
@@ -1655,12 +1646,10 @@ impl Heap {
         self.alloc_in_slot_with(self.tracks_young_cells(), false, || Cell::RegExp { object, meta })
     }
 
-    /// `alloc(Cell::Function(..))` without boxing the function first: a function record
-    /// while one is free.
+    /// A new function record of `function`, with no payload or external bytes. The function
+    /// space holds as many records as `RECORD_SPACE_CAPACITY`, so a full space is a panic, as
+    /// for symbols.
     pub(crate) fn alloc_function(&mut self, function: FunctionRecord) -> Value {
-        if cfg!(feature = "profile-aggregate") {
-            return self.alloc(Cell::Function(Box::new(function)));
-        }
         self.mark_prototype(function.object.proto());
         self.insert_function_record(function)
     }
@@ -1669,35 +1658,26 @@ impl Heap {
     /// `alloc_unfilled_object_under_flagged_prototype` allocates an object.
     pub(crate) fn alloc_function_under_flagged_prototype(&mut self, function: FunctionRecord) -> Value {
         debug_assert!(self.prototype_flagged(function.object.proto()));
-        if cfg!(feature = "profile-aggregate") {
-            return self.alloc(Cell::Function(Box::new(function)));
-        }
         self.insert_function_record(function)
     }
 
-    /// A function record of `function`, else a slot: one allocation, with no payload or
-    /// external bytes.
+    /// A function record of `function`: one allocation, admitted and charged as an object
+    /// record is (`alloc_object_record`).
     #[inline(always)]
     fn insert_function_record(&mut self, function: FunctionRecord) -> Value {
+        #[cfg(feature = "profile-aggregate")]
+        let bytes = function.object.allocated_extra_bytes() + size_of::<FunctionRecord>();
         self.admit_object_contents(&function.object);
         self.allocated += 1;
-        match self.function_records.try_insert(function) {
-            Ok(record_id) => {
-                let value = Value::direct_function(record_id);
-                #[cfg(feature = "profile-memory")]
-                self.profile_allocation(value);
-                value
-            }
-            Err(mut function) => {
-                // A young run's owner is a record (`YoungOwner`): a function that takes a
-                // legacy slot takes an ordinary run first.
-                if self.properties.holds_young_run(function.object.properties()) {
-                    let storage = self.properties.duplicate(function.object.properties());
-                    function.object.replace_property_storage(storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], &mut self.properties);
-                }
-                self.alloc_in_slot(Cell::Function(Box::new(function)), self.tracks_young_cells())
-            }
-        }
+        let Ok(record_id) = self.function_records.try_insert(function) else {
+            panic!("function records exhausted");
+        };
+        let value = Value::direct_function(record_id);
+        #[cfg(feature = "profile-aggregate")]
+        self.profile_record_allocation(CellKind::Function, "function", bytes);
+        #[cfg(feature = "profile-memory")]
+        self.profile_allocation(value);
+        value
     }
 
     /// `alloc(Cell::Promise(..))` without boxing the promise first: a promise record while
@@ -4828,13 +4808,6 @@ impl Heap {
                 object(value);
                 work.extend([*target, *handler]);
             }
-            Cell::Function(function) => {
-                object(&function.object);
-                work.push(function.env);
-                if last_proto.first_shared(function.realm) {
-                    work.push(function.realm);
-                }
-            }
             Cell::WasmGlobal { header, bits, ty, .. } => {
                 object(&header.object);
                 work.extend((WasmStorage::of(*ty) == WasmStorage::Handle).then(|| Value::from_bits(*bits)));
@@ -5079,7 +5052,6 @@ impl Heap {
             Cell::WeakMap { .. } => CellKind::WeakMap,
             Cell::WeakSet { .. } => CellKind::WeakSet,
             Cell::WeakRef { .. } | Cell::FinalizationRegistry { .. } => CellKind::WeakRef,
-            Cell::Function(_) => CellKind::Function,
             Cell::BindingReference { .. } => CellKind::Environment,
             Cell::BigInt(_) => CellKind::BigInt,
             Cell::WasmElements(_) | Cell::WasmInstance(_) => CellKind::WasmElements,
@@ -5164,7 +5136,6 @@ impl Heap {
                 Cell::WasmMemory { bytes, .. } => bytes.capacity(),
                 Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
                 Cell::WeakSet { entries, .. } => entries.allocated_bytes(),
-                Cell::Function(_) => size_of::<FunctionRecord>(),
                 Cell::BigInt(value) => value.spilled_bytes(),
                 Cell::Error(value) => value.capacity(),
             }
@@ -5521,7 +5492,7 @@ impl Heap {
         for slot in self.slots.iter() {
             let Some(cell) = slot.cell.as_ref() else { continue };
             let kind = match cell {
-                Cell::Object(_) => "object", Cell::Array { .. } => "array", Cell::Function(_) => "function",
+                Cell::Object(_) => "object", Cell::Array { .. } => "array",
                 Cell::Proxy { .. } => "proxy", Cell::WeakMap { .. } => "weakmap",
                 Cell::AccessorPair { .. } => "accessor", Cell::BindingReference { .. } => "binding",
                 _ => "other",

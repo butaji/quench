@@ -157,7 +157,6 @@ impl<H: Host> Vm<H> {
             Cell::TypedArray { .. } if class.contains(AtomClass::TYPED_ARRAY_INDEX) => {
                 return None;
             }
-            Cell::Function(function) => return self.shape_property_lookup_function(function, atom),
             _ => ReceiverKind::Exotic,
         };
         self.shape_answers(cell.object()?, atom, kind)
