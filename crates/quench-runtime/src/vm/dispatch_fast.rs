@@ -16856,7 +16856,7 @@ pub(in crate::vm) use vm_steps::{lane_body_step, lane_decide, lane_vm_step};
 mod handler_edges;
 pub(in crate::vm) use handler_edges::lane_handler_edge;
 use array_steps::*;
-use native_calls::{math_field_call_handlers, native_call_handler, reflect_get_call_handler, string_char_at_ascii, string_char_code_at};
+use native_calls::{math_field_call_handlers, native_call_handler, reflect_get_call_handler};
 mod wasm_gc;
 use wasm_gc::wasm_gc_handler;
 
@@ -16869,20 +16869,15 @@ impl<H: Host> Vm<H> {
     fn steady_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         let first = args.first().copied();
         match native {
-            // One value appended in the handler itself; other pushes take the dense path out
-            // of line.
-            Native::ArrayPush => match *args {
-                [value] => self.array_push_one(receiver, value).or_else(|| self.array_push_dense(receiver, args)),
-                _ => self.array_push_dense(receiver, args),
-            },
+            Native::ArrayPush => self.array_push_dense(receiver, args),
             Native::ArrayPop => self.array_pop_dense(receiver),
-            Native::StringCharCodeAt => string_char_code_at(self, receiver, first?),
-            Native::StringCharAt => string_char_at_ascii(self, receiver, first?),
+            Native::StringCharCodeAt => self.string_char_code_at_core(receiver, first?),
+            Native::StringCharAt => self.string_char_at_core(receiver, first?),
             Native::MapGet | Native::MapHas | Native::SetHas | Native::WeakMapGet | Native::WeakMapHas
             | Native::WeakSetHas => self.pure_collection_lookup(native, receiver, first.unwrap_or(Value::UNDEFINED)),
             Native::MapSet if self.map_set(receiver, args) => Some(receiver),
             Native::ArrayIsArray => self.steady_is_array(first.unwrap_or(Value::UNDEFINED)).map(Value::boolean),
-            Native::JsonStringify => self.json_stringify_plain_call(args),
+            Native::JsonStringify => self.json_stringify_steady(args),
             Native::DateNow => Some(self.date_now()),
             _ => None,
         }
@@ -26536,11 +26531,18 @@ impl<H: Host> Vm<H> {
             Some(shape) => lane_push_prepared(cx, &shape.activation, shape.room, &shape.entry(&prepared.target, prepared.this), args),
             None => None,
         };
-        let Some(start) = pushed.or_else(|| {
-            lane_push_callback(cx, site.call, &prepared.target, args, prepared.this, false)
-        }) else {
-            restore_pending(cx, &prepared.caller);
-            return None;
+        // A match, not `Option::or_else`: the closure's six captured words were spilled and its
+        // out-of-line call made on every call of the loop, though the prepared push nearly
+        // always succeeds.
+        let start = match pushed {
+            Some(start) => start,
+            None => match lane_push_callback(cx, site.call, &prepared.target, args, prepared.this, false) {
+                Some(start) => start,
+                None => {
+                    restore_pending(cx, &prepared.caller);
+                    return None;
+                }
+            },
         };
         unsafe { (*cx).memory = MemoryView::script(cx) };
         let exit = lane_dispatch(cx, start);

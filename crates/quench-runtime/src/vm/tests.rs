@@ -1911,7 +1911,7 @@ fn lane_math_sites_keep_math_semantics() {
 fn lane_array_push_pop_sites_keep_array_semantics() {
     // A call site of Array.prototype.push or pop appends or removes in place where the receiver's
     // elements are ordinary and dense and no prototype holds an index (`Vm::array_push_one`,
-    // `Vm::array_pop_one`): holes, indexed accessors and values added to Array.prototype and
+    // `Vm::array_pop_dense`): holes, indexed accessors and values added to Array.prototype and
     // Object.prototype after the sites warm, frozen, sealed and non-extensible arrays, a
     // non-writable length, zero and many values, redefined and shadowed methods, and array-like
     // and primitive receivers each keep the generic steps. Expected value is Node's.

@@ -2072,12 +2072,17 @@ impl<H: Host> Vm<H> {
                 .unwrap()
                 .set_proto(realm_error_constructor);
         }
-        for (name, native) in [
-            ("parseFloat", Native::NumberParseFloat),
-            ("parseInt", Native::ParseInt),
-        ] {
-            let intrinsic = self.native_with_realm(native, global, global);
-            self.set_builtin_function_name(intrinsic, name)?;
+        // The realm's Number constructor installs parseFloat/parseInt once (install_number_for_realm);
+        // the global bindings reuse those function objects, since Number.parseInt === parseInt.
+        let number_atom = self.intern_atom("Number");
+        let number = self
+            .own_property(global, number_atom)
+            .expect("realm Number constructor");
+        for name in ["parseFloat", "parseInt"] {
+            let atom = self.intern_atom(name);
+            let intrinsic = self
+                .own_property(number, atom)
+                .expect("realm Number parse function");
             self.set_builtin_value_named(global, name, intrinsic)?;
         }
         self.install_realm_default_bindings(program, global)?;

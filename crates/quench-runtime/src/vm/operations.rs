@@ -1179,17 +1179,17 @@ impl<H: Host> Vm<H> {
                 let number = self.to_number(p, value)?;
                 Ok(Value::boolean(super::number::global_number_predicate(native, number).unwrap_or_default()))
             }
-            Native::MathLog => {
-                let v = args.first().copied().unwrap_or(Value::UNDEFINED);
-                Ok(Value::number(self.to_number(p, v)?.ln()))
-            }
-            Native::MathPow => {
+            // Each argument converted in order, then the one numeric body (`number::math_numbers`).
+            Native::MathLog | Native::MathPow => {
                 let a = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let b = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                Ok(Value::number(exponentiate(
-                    self.to_number(p, a)?,
-                    self.to_number(p, b)?,
-                )))
+                let x = self.to_number(p, a)?;
+                let y = if native == Native::MathPow {
+                    self.to_number(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?
+                } else {
+                    f64::NAN
+                };
+                let result = super::number::math_numbers(native, &[x, y]).or_else(|| super::number::math_unary(native, x));
+                Ok(Value::number(result.unwrap_or(f64::NAN)))
             }
             Native::ArrayPush => self.array_push_native(p, this, args),
             Native::ArrayIsArray => {
