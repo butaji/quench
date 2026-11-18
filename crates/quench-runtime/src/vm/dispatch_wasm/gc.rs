@@ -6,6 +6,8 @@ use super::super::*;
 use super::super::wasm_gc::{ArrayInitialization, GcFieldIndex};
 use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind, GcField, GcFieldAccess, StructConstruction};
 use crate::wasm::reference::ReferenceTarget;
+use crate::staged::wasm_gc::{Aggregate, WasmGc, array_copy, array_fill, array_length, field_read, field_write, non_null, reference_cast};
+use super::super::wasm_gc::stage::HeapStage;
 
 /// Applies `$then!` to the opcodes `Vm::wasm_gc_value_step` makes: the one list that
 /// `wasm_gc_value_op` and the lane's handler of each opcode derive from.
@@ -178,56 +180,82 @@ impl<H: Host> Vm<H> {
         access: GcFieldAccess,
         value: Option<Value>,
     ) -> Option<Option<Value>> {
-        let (GcFieldIndex::Struct(index) | GcFieldIndex::Array(index)) = location;
-        let index = index as usize;
-        // A read takes the cell without the write barrier, which would remember every old
-        // object a read touches for the next young collection to scan.
-        let Some(value) = value else {
-            let Some(Cell::WasmGc { fields, .. }) = self.heap.get(reference) else { return None };
-            return fields.get(index).map(|slot| Some(field.load(access, *slot)));
-        };
-        let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(reference) else { return None };
-        fields.get_mut(index).map(|slot| {
-            *slot = field.store(value);
-            None
-        })
+        self.wasm_field_rule(reference, location, field, access, value).ok()
     }
 
-    /// `wasm_gc_field_hit`, raising the trap a miss makes. Validation proved the field's
-    /// storage and access for the reference's static type, which every subtype shares, so
-    /// only null and the element bound remain to check.
+    /// The field access the GC rules make on the heap (`staged::wasm_gc`): the value it reads, or
+    /// the trap or validation error a miss raises.
+    #[inline(always)]
+    fn wasm_field_rule(
+        &mut self,
+        reference: Value,
+        location: GcFieldIndex,
+        field: GcField,
+        access: GcFieldAccess,
+        value: Option<Value>,
+    ) -> Result<Option<Value>, JsError> {
+        let (aggregate, index) = match location {
+            GcFieldIndex::Struct(index) => (Aggregate::Struct, index),
+            GcFieldIndex::Array(index) => (Aggregate::Array, index),
+        };
+        let (reference, index) = (reference.to_bits(), u64::from(index));
+        let mut stage = HeapStage { vm: self };
+        match value {
+            Some(value) => field_write(&mut stage, aggregate, reference, index, field, value.to_bits()).map(|()| None),
+            None => {
+                let word = field_read(&mut stage, aggregate, reference, index, field, access)?;
+                Ok(Some(match access {
+                    GcFieldAccess::Read => Value::from_bits(word),
+                    _ => Value::integer(word as i32),
+                }))
+            }
+        }
+    }
+
+    /// `wasm_gc_field_hit`, raising the trap a miss makes.
     #[inline(always)]
     fn wasm_field_step(
         &mut self,
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value + Copy,
     ) -> Result<Option<Value>, JsError> {
-        self.wasm_gc_field_hit(i, read)?.ok_or_else(|| {
-            let operands = self.wasm_field_operands(i, read).expect("a field access that read its operands");
-            Self::wasm_gc_field_trap(operands.reference, operands.location)
-        })
+        let FieldOperands { reference, location, field, access, value } = self.wasm_field_operands(i, read)?;
+        self.wasm_field_rule(reference, location, field, access, value)
     }
 
+    /// The bulk operations of an array: `array.len`, `array.fill` and `array.copy`, whose operands
+    /// are decoded from their registers before the rule runs on the heap.
     fn wasm_array_bulk_step(
         &mut self,
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value,
     ) -> Result<Option<Value>, JsError> {
-        if i.op() == Op::WasmArrayLen {
-            let length = self.wasm_array_len(read(self, i.register_b()))?;
-            return Ok(Some(Value::integer(length as i32)));
+        match i.op() {
+            Op::WasmArrayLen => {
+                let reference = read(self, i.register_b()).to_bits();
+                let length = array_length(&mut HeapStage { vm: self }, reference)?;
+                Ok(Some(Value::integer(length as i32)))
+            }
+            Op::WasmArrayFill => {
+                let (destination, source) = (read(self, i.register_a()), read(self, i.register_b()));
+                let count = u64::from(Self::wasm_u32_operand(read(self, i.register_c()))?);
+                let (output, _) = i.register_pair();
+                let output = u64::from(Self::wasm_u32_operand(read(self, output))?);
+                let stage = &mut HeapStage { vm: self };
+                array_fill(stage, destination.to_bits(), output, source.to_bits(), count)?;
+                Ok(None)
+            }
+            _ => {
+                let (destination, source) = (read(self, i.register_a()), read(self, i.register_b()));
+                let count = u64::from(Self::wasm_u32_operand(read(self, i.register_c()))?);
+                let (output, input) = i.register_pair();
+                let output = u64::from(Self::wasm_u32_operand(read(self, output))?);
+                let input = u64::from(Self::wasm_u32_operand(read(self, input))?);
+                let stage = &mut HeapStage { vm: self };
+                array_copy(stage, destination.to_bits(), output, source.to_bits(), input, count)?;
+                Ok(None)
+            }
         }
-        let (destination, source) = (read(self, i.register_a()), read(self, i.register_b()));
-        let count = Self::wasm_u32_operand(read(self, i.register_c()))?;
-        let (output, input) = i.register_pair();
-        let output = Self::wasm_u32_operand(read(self, output))?;
-        if i.op() == Op::WasmArrayFill {
-            self.wasm_array_fill(destination, output, source, count)?;
-        } else {
-            let input = Self::wasm_u32_operand(read(self, input))?;
-            self.wasm_array_copy(destination, source, output, input, count)?;
-        }
-        Ok(None)
     }
 
     fn wasm_array_new_step(
@@ -297,94 +325,51 @@ impl<H: Host> Vm<H> {
         self.wasm_struct_new(&declarations, i.imm(), values, descriptor).map(Some)
     }
 
+    /// `ref.test` and `ref.cast` of a GC or i31 reference, and the descriptor forms.
     #[inline(always)]
     fn wasm_cast_step(
         &mut self,
         program: ProgramId,
         i: WideInstruction,
-        read: impl Fn(&Self, u16) -> Value,
+        read: impl Fn(&Self, u16) -> Value + Copy,
     ) -> Result<Option<Value>, JsError> {
         let target = ReferenceTarget::validated(i.imm());
         let reference = read(self, i.register_b());
-        let fast = (i.op() == Op::WasmRefTest || i.op() == Op::WasmRefCast)
-            .then(|| self.wasm_gc_object_cast(program, target, reference))
-            .flatten();
-        let (valid, failure) = match fast {
-            Some(valid) => (valid, crate::WasmTrap::CastFailure),
-            None => self.wasm_cast_checked(program, i, target, reference, read)?,
-        };
-        match i.op() {
-            Op::WasmRefTest | Op::WasmDescriptorTest => Ok(Some(Value::integer(i32::from(valid)))),
-            _ if valid => Ok(Some(reference)),
-            _ => Err(JsError::wasm_trap_error(failure)),
+        if matches!(i.op(), Op::WasmDescriptorTest | Op::WasmDescriptorCast) {
+            return self.wasm_descriptor_cast_step(program, i, target, reference, read);
         }
+        let declarations = self.wasm_module_declarations(program)?;
+        let reference = reference.to_bits();
+        let stage = &mut HeapStage { vm: self };
+        if i.op() == Op::WasmRefTest {
+            return Ok(Some(Value::integer(stage.admits(reference, target, &declarations) as i32)));
+        }
+        Ok(Some(Value::from_bits(reference_cast(stage, reference, target, &declarations)?)))
     }
 
-    /// Whether `reference` passes the cast `i` to `target`, and the trap it raises if not: a
-    /// descriptor cast, which reads its descriptor operand, or a reference the object display
-    /// does not decide.
+    /// A descriptor test or cast: the reference's descriptor is the operand's, which its
+    /// declarations check.
     #[inline(never)]
-    fn wasm_cast_checked(
-        &self,
+    fn wasm_descriptor_cast_step(
+        &mut self,
         program: ProgramId,
         i: WideInstruction,
         target: ReferenceTarget,
         reference: Value,
         read: impl Fn(&Self, u16) -> Value,
-    ) -> Result<(bool, crate::WasmTrap), JsError> {
+    ) -> Result<Option<Value>, JsError> {
         let declarations = self.wasm_module_declarations(program)?;
-        if matches!(i.op(), Op::WasmDescriptorTest | Op::WasmDescriptorCast) {
-            let valid = self.wasm_descriptor_matches(&declarations, target, reference, read(self, i.register_c()))?;
-            return Ok((valid, crate::WasmTrap::DescriptorCastFailure));
-        }
-        let target = target.reference_type().expect("validated reference target");
-        let ty = declarations.callable_value_type(wasmparser::ValType::Ref(target))
-            .ok_or_else(|| JsError::validation("invalid reference cast declaration".into()))?;
-        Ok((self.wasm_reference_valid_in(reference, ty, Some(&declarations)), crate::WasmTrap::CastFailure))
-    }
-
-    /// Whether a cast to `target` admits `reference` when that is null, an i31 or a GC
-    /// object, read from the object's supertype display or kind; `None` otherwise.
-    #[inline(always)]
-    fn wasm_gc_object_cast(&self, program: ProgramId, target: ReferenceTarget, reference: Value) -> Option<bool> {
-        use crate::wasm::reference::TargetHeap;
-        let heap = target.heap()?;
-        if reference.is_null() {
-            return Some(target.is_nullable());
-        }
-        let object = match self.heap.get(reference) {
-            Some(Cell::WasmGc { declarations: owner, ty, .. }) => Some((owner, *ty)),
-            _ if crate::wasm::i31::bits(reference).is_some() => None,
-            _ => return None,
-        };
-        match (heap, object) {
-            (TargetHeap::Module { index, exact }, Some((owner, ty))) => {
-                let declarations = &self.programs.wasm_signatures(program)?.declarations;
-                Some(if exact {
-                    owner.equivalent(ty as usize, declarations, index as usize)
-                } else {
-                    owner.is_subtype(ty as usize, declarations, index as usize)
-                })
-            }
-            (TargetHeap::Module { .. }, None) => Some(false),
-            (TargetHeap::Abstract(abstract_type), object) => Self::wasm_abstract_cast(abstract_type, object),
+        let valid = self.wasm_descriptor_matches(&declarations, target, reference, read(self, i.register_c()))?;
+        match i.op() {
+            Op::WasmDescriptorTest => Ok(Some(Value::integer(i32::from(valid)))),
+            _ if valid => Ok(Some(reference)),
+            _ => Err(JsError::wasm_trap_error(crate::WasmTrap::DescriptorCastFailure)),
         }
     }
 
-    /// Whether an abstract cast target admits a GC object of `object`'s type, or an i31 when
-    /// `object` is `None`; `None` for a target outside the internal hierarchy.
-    fn wasm_abstract_cast(target: wasmparser::AbstractHeapType, object: Option<(&crate::WasmTypes, u32)>) -> Option<bool> {
-        use wasmparser::AbstractHeapType as Abstract;
-        Some(match (target, object) {
-            (Abstract::Any | Abstract::Eq, _) => true,
-            (Abstract::Struct, Some((owner, ty))) => owner.struct_fields(ty).is_some(),
-            (Abstract::Array, Some((owner, ty))) => owner.array_field(ty).is_some(),
-            (Abstract::I31, object) => object.is_none(),
-            (Abstract::Struct | Abstract::Array | Abstract::None, _) => false,
-            _ => return None,
-        })
-    }
-
+    /// The reference operations the GC rules make: `ref.is_null`, `ref.as_non_null`, and the
+    /// operations that stay with the general reference step (`ref.eq`, `i31`, external
+    /// conversions).
     fn wasm_reference_step(
         &mut self,
         i: WideInstruction,
@@ -392,13 +377,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<Value>, JsError> {
         let value = read(self, i.register_b());
         Ok(Some(match i.op() {
-            Op::WasmRefIsNull => Value::integer(i32::from(value.is_null())),
+            Op::WasmRefIsNull => Value::integer(HeapStage { vm: self }.is_null(value.to_bits()) as i32),
             Op::WasmRefEq => Value::integer(i32::from(value == read(self, i.register_c()))),
-            Op::WasmRefAsNonNull if value.is_null() => {
+            Op::WasmRefAsNonNull => {
                 let check = crate::wasm::reference::NonNullCheck::from_tag(i.imm()).expect("validated non-null check");
-                return Err(JsError::wasm_trap_error(check.trap()));
+                Value::from_bits(non_null(&mut HeapStage { vm: self }, value.to_bits(), check.trap())?)
             }
-            Op::WasmRefAsNonNull => value,
             Op::WasmI31 => {
                 let operator = crate::wasm::i31::I31Operator::from_tag(i.imm()).expect("validated i31 operator");
                 let value = self.decode_wasm_value(value, operator.input_type())?;

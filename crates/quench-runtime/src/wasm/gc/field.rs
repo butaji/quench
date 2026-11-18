@@ -43,6 +43,12 @@ impl GcField {
         (self.0 & STORAGE_MASK).checked_sub(1).map(|at| PACKED[at as usize].1)
     }
 
+    /// The number of bits a packed field keeps; `None` for a value field.
+    #[inline(always)]
+    pub(crate) fn packed_bits(self) -> Option<u32> {
+        self.mask().map(i32::count_ones)
+    }
+
     /// What the field stores for `value`: a packed field keeps its low bits, so an unsigned
     /// read returns what is stored.
     #[inline(always)]
