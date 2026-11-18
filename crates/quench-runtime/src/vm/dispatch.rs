@@ -569,20 +569,6 @@ impl<H: Host> Vm<H> {
         allow_inline_calls: bool,
     ) -> Result<StepResult, JsError> {
         match i.op() {
-            // The register moves, local slot accesses and jumps run as their staged rows on the
-            // running frame (`InterpreterFrame`).
-            Op::Move | Op::LoadLocalPlain | Op::StoreLocalPlain => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    unreachable!("validated bytecode bounds the registers and slots of a register row");
-                }
-            }
-            Op::Jump => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    unreachable!("a jump row always takes its edge");
-                }
-            }
-            Op::JumpFalse => self.step_jump_if(p, f, i, pc, false),
-            Op::JumpTrue => self.step_jump_if(p, f, i, pc, true),
             Op::Nop => {}
             Op::CloneEnv => {
                 let clones = &p.function(self.frames[f].function as usize).environment_clones;
@@ -1498,16 +1484,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// `JumpFalse` or `JumpTrue` of register `a`: its staged row, else the VM's truthiness of a
-    /// heap value, which runs no guest code.
-    #[inline(always)]
-    fn step_jump_if(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, taken: bool) {
-        let operation = crate::staged::Operation::<u64, ()>::JumpIf { register: i.register_a(), taken };
-        if !self.step_staged(p, f, i, pc, operation) && self.truthy(self.read(f, i.register_a())) == taken {
-            *pc = i.jump_target() as usize;
-        }
-    }
-
     #[inline(never)]
     fn load_const_miss(&mut self, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
         debug_assert_eq!(self.frames[f].program, self.active_program);
@@ -1715,6 +1691,24 @@ impl<H: Host> Vm<H> {
     /// (`staged_value_step`); any other is a Wasm step.
     #[inline(never)]
     fn step_unlisted(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize) -> Result<StepResult, JsError> {
+        // The register moves, local slot accesses and jumps no arm names run as their staged rows
+        // on the running frame (`InterpreterFrame`). A jump on a heap value's truthiness is the
+        // VM's, which runs no guest code; any other row that leaves is unreachable on validated bytecode.
+        if let Some(operation @ (crate::staged::Operation::Move { .. } | crate::staged::Operation::LoadLocalPlain { .. }
+            | crate::staged::Operation::StoreLocalPlain { .. } | crate::staged::Operation::Jump | crate::staged::Operation::JumpIf { .. })) =
+            crate::staged::Operation::<u64, ()>::of(i)
+        {
+            if self.step_staged(p, f, i, pc, operation) {
+                return Ok(StepResult::Continue);
+            }
+            let crate::staged::Operation::JumpIf { register, taken } = operation else {
+                unreachable!("validated bytecode bounds the registers and slots of a register row");
+            };
+            if self.truthy(self.read(f, register)) == taken {
+                *pc = i.jump_target() as usize;
+            }
+            return Ok(StepResult::Continue);
+        }
         if !matches!(i.op().staged(), Some(crate::bytecode::Decoder::Names)) {
             return self.step_wasm(p, f, i, pc);
         }
