@@ -67,7 +67,7 @@ fn forwarding_read_body(body: &Function) -> bool {
 /// A `GetField` of `this` or a parameter, into a register past the parameters that the
 /// call's copies leave.
 fn reads_receiver_field(field: WideInstruction, body: &Function, survives_copies: impl Fn(u16) -> bool) -> bool {
-    field.op().is_get_field()
+    crate::staged::reads_named_field(field.op())
         && field.result_flags() == 0
         && field.result_register() >= body.params
         && survives_copies(field.result_register())
@@ -77,7 +77,7 @@ fn reads_receiver_field(field: WideInstruction, body: &Function, survives_copies
 /// A `GetField` of `field`'s value, into another register past the parameters that the
 /// call's copies leave.
 fn reads_method(method: WideInstruction, field: WideInstruction, body: &Function, survives_copies: impl Fn(u16) -> bool) -> bool {
-    method.op().is_get_field()
+    crate::staged::reads_named_field(method.op())
         && method.result_flags() == 0
         && method.result_register() >= body.params
         && method.result_register() != field.result_register()
@@ -89,13 +89,13 @@ fn reads_method(method: WideInstruction, field: WideInstruction, body: &Function
 fn moves_parameters(body: &Function, moves: &[crate::bytecode::Instr], window: u16) -> bool {
     moves.iter().zip(0..body.params).all(|(&packed, parameter)| {
         let moved = decoded_instruction(body, packed);
-        moved.op().is_move() && moved.b() == parameter && moved.a() == window + parameter
+        crate::staged::copies_register(moved.op()) && moved.b() == parameter && moved.a() == window + parameter
     })
 }
 
 /// The call of `method` on `field` with every parameter, returning its completion.
 fn calls_method(call: WideInstruction, method: WideInstruction, field: WideInstruction, body: &Function) -> bool {
-    call.op().is_call()
+    crate::staged::calls(call.op())
         && call.result_flags() == crate::bytecode::RETURN_REGISTER
         && call.b() == method.a()
         && call.c() == field.a()
@@ -110,13 +110,13 @@ fn element_read_body(body: &Function) -> bool {
         return false;
     };
     let [field, element, done] = [field, element, done].map(|packed| decoded_instruction(body, *packed));
-    field.op().is_get_field()
+    crate::staged::reads_named_field(field.op())
         && !field.returns_from_frame()
         && reads_this_or_parameter(FieldBase(field.b()), body)
-        && element.op().is_get_index()
+        && crate::staged::reads_element(element.op())
         && element.b() == field.a()
         && element.c() < body.params
-        && done.op().is_return()
+        && crate::staged::returns(done.op())
         && done.a() == element.a()
 }
 
@@ -132,7 +132,7 @@ fn leading_pair(body: &Function) -> Option<[WideInstruction; 2]> {
 /// `() => binding` compiles.
 fn capture_read_body(body: &Function) -> bool {
     leading_pair(body).is_some_and(|[load, done]| {
-        load.op().is_load_capture() && !load.returns_from_frame() && done.op().is_return() && done.a() == load.a()
+        crate::staged::reads_capture(load.op()) && !load.returns_from_frame() && crate::staged::returns(done.op()) && done.a() == load.a()
     })
 }
 
@@ -142,7 +142,7 @@ fn this_read_body(body: &Function) -> bool {
     !body.is_arrow
         && !body.is_class_constructor
         && leading_pair(body).is_some_and(|[load, done]| {
-            load.op().is_load_this() && !load.returns_from_frame() && done.op().is_return() && done.a() == load.a()
+            crate::staged::loads_this(load.op()) && !load.returns_from_frame() && crate::staged::returns(done.op()) && done.a() == load.a()
         })
 }
 
@@ -197,14 +197,14 @@ pub(super) fn leaf_body(body: &Function, code: &ResidualProgram, private: impl F
 fn leaf_reads(instruction: WideInstruction, body: &Function, code: &ResidualProgram,
     private: &impl Fn(crate::bytecode::Atom) -> bool) -> Option<LeafForm> {
     Some(match instruction.op() {
-        op if op.is_leaf_value() || op.is_leaf_jump() => PLAIN_LEAF,
-        op if op.is_leaf_binary() => return binary_leaf(instruction),
+        op if crate::staged::leaf_value_or_jump(op) => PLAIN_LEAF,
+        op if crate::staged::leaf_binary_operation(op) => return binary_leaf(instruction),
         op if op.traits().has(Traits::THIS_LEAF) => CONTEXT_LEAF,
         op if op.addresses_capture() => CAPTURE_LEAF,
         // A store past its caches (a setter, a proxy's trap, a frozen target) runs in
         // place (`lane_set_field_in_place`) or on the general path, either of which makes
         // the leaf an activation first.
-        op if op.is_field_store() => return store_leaf(instruction, private),
+        _ if crate::staged::Operation::<u64, ()>::is_field_store(instruction) => return store_leaf(instruction, private),
         // A global name's first load finds the running function (`lane_name_resolution`),
         // which makes the leaf an activation first; its later loads read the realm alone.
         op if op.traits().has(Traits::NAME_LEAF) && body.names_resolve_statically(code) => PLAIN_LEAF,

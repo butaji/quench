@@ -12,7 +12,7 @@ use oxc_parser::{ParseOptions, Parser, Token, Kind, config::TokensParserConfig};
 use oxc_span::SourceType;
 
 use super::{Host, Vm};
-use crate::bytecode::{Class, ResidualProgram, WideInstruction};
+use crate::bytecode::{ResidualProgram, WideInstruction};
 use crate::heap::Cell;
 use crate::value::Value;
 use std::collections::BTreeMap;
@@ -92,12 +92,13 @@ impl<H: Host> Vm<H> {
     fn call_instruction_callee(&self, program: &ResidualProgram, frame: usize, instruction: WideInstruction, construct: bool) -> Option<Callee> {
         let register = |index: u16| self.frames.get(frame)?.registers.get(usize::from(index)).copied();
         if call_kind(instruction)? != construct { return None; }
-        Some(match instruction.op().class() {
-            Class::CallMethod => Callee::Method {
+        Some(if crate::staged::calls_method_site(instruction.op()) {
+            Callee::Method {
                 receiver: register(instruction.register_b())?,
                 atom: program.method_sites.get(instruction.method_site_index())?.atom,
-            },
-            _ => Callee::Value(register(instruction.register_b())?),
+            }
+        } else {
+            Callee::Value(register(instruction.register_b())?)
         })
     }
 
@@ -143,10 +144,12 @@ impl<H: Host> Vm<H> {
 }
 
 fn call_kind(instruction: WideInstruction) -> Option<bool> {
-    match instruction.op().class() {
-        Class::Construct if !instruction.is_super_construct() => Some(true),
-        Class::Call | Class::CallArray | Class::CallSpread | Class::CallForwardingArguments | Class::CallMethod => Some(false),
-        _ => None,
+    if crate::staged::Operation::<u64, ()>::is_construction(instruction) && !instruction.is_super_construct() {
+        Some(true)
+    } else if crate::staged::makes_call(instruction.op()) {
+        Some(false)
+    } else {
+        None
     }
 }
 
