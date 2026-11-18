@@ -31,7 +31,7 @@ impl Engine {
         let header = program.functions.get(function as usize)?.header();
         let span = header.source_span?;
         let chunk = ChunkText::of(source, span, super::stub_is_method(&header))?;
-        let (line_starts, utf16_excess) = replay.views.layout(&source.text);
+        let (line_starts, utf16_excess) = source_layout(source);
         let stubs = &program.first_call_scopes;
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
         let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, line_starts, utf16_excess, run: None };

@@ -33,6 +33,16 @@ impl ReplayViews {
     }
 }
 
+/// The line starts and UTF-16 excess table of `source`'s text, which its first-call chunks
+/// compile with: made once per source and shared by its copies (`ProgramSource::layout`).
+pub(super) fn source_layout(source: &crate::bytecode::ProgramSource) -> (&[usize], &[(usize, usize)]) {
+    let layout = source.layout.get_or_init(|| std::sync::Arc::new(crate::bytecode::SourceLayout {
+        line_starts: crate::bytecode::source_line_starts(&source.text).collect(),
+        utf16_excess: super::source_utf16_excess(&source.text).into(),
+    }));
+    (&layout.line_starts, &layout.utf16_excess)
+}
+
 /// A body the compiler makes for a function whose source gives it none to run.
 #[derive(Clone, Copy)]
 pub(super) enum ImplicitBody {
@@ -187,8 +197,7 @@ impl Engine {
         let Some((source, chunk)) = source.and_then(|source| Some((source, chunk_text(source, span, run, method)?))) else {
             return Err(vec![Diagnostic::unsupported(name, "a first-call stub keeps no source")]);
         };
-        let views = ReplayViews::default();
-        let (line_starts, utf16_excess) = program.replay.as_deref().map_or(&views, |replay| &replay.views).layout(&source.text);
+        let (line_starts, utf16_excess) = source_layout(source);
         let stubs = &program.first_call_scopes;
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
         let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, line_starts, utf16_excess, run };

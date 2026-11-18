@@ -3557,6 +3557,7 @@ impl<'a> Compiler<'a> {
                 column_offset: 0,
                 line_starts: Default::default(),
                 call_sites: Default::default(),
+                layout: Default::default(),
             })),
             atoms,
             constants: crate::bytecode::append_vec::AppendVec::with_headroom(constants, room.constants()),

@@ -3700,6 +3700,13 @@ pub(crate) struct CallSiteDescription {
     pub(crate) expression: Option<SourceSpan>,
 }
 
+/// A source text's line starts and UTF-16 excess table (`compile::source_utf16_excess`).
+#[derive(Debug)]
+pub(crate) struct SourceLayout {
+    pub(crate) line_starts: Box<[usize]>,
+    pub(crate) utf16_excess: Box<[(usize, usize)]>,
+}
+
 /// Compiler source snapshot and wrapper origin, retained for diagnostics.
 #[derive(Clone, Debug)]
 pub(crate) struct ProgramSource {
@@ -3715,6 +3722,11 @@ pub(crate) struct ProgramSource {
     /// read a line per throw, which a scan from the top would make linear in the source.
     /// Shared, so a copy of the source (an error's captured call sites) copies no index.
     pub(crate) line_starts: std::cell::OnceCell<std::sync::Arc<[u32]>>,
+    /// The layout tables first-call chunks compile with (`compile::first_call::source_layout`),
+    /// made on the first chunk's compile and shared by every copy of the source, the chunk
+    /// programs' included: a chunk program made its own, so each of babel-wtb's 34 scanned
+    /// the 5.6 MB text again (528M Ir of a 5.9G first iteration).
+    pub(crate) layout: std::cell::OnceCell<std::sync::Arc<SourceLayout>>,
     /// Complete static call-printing facts for native images. An unset cell
     /// leaves the dynamic error-path renderer in charge; an empty table is final.
     pub(crate) call_sites: std::cell::OnceCell<std::sync::Arc<[CallSiteDescription]>>,
@@ -3727,6 +3739,7 @@ impl ProgramSource {
         self.text = text;
         self.base = base;
         self.line_starts.take();
+        self.layout.take();
         if let Some(sites) = self.call_sites.take() {
             self.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites.iter().filter_map(|site| {
                 let offset = site.offset.checked_sub(base)?;
@@ -3742,7 +3755,7 @@ impl ProgramSource {
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // `line_starts` is a memo of `text`, made again on the first line read.
         crate::vm::freeze_source_call_sites(self);
-        let Self { text, typescript, base, line_offset, column_offset, line_starts: _, call_sites } = self;
+        let Self { text, typescript, base, line_offset, column_offset, line_starts: _, layout: _, call_sites } = self;
         text.write_snapshot(writer);
         writer.bool(*typescript);
         writer.u32(*base);
@@ -3773,6 +3786,7 @@ impl ProgramSource {
             column_offset: reader.u32()?,
             line_starts: std::cell::OnceCell::new(),
             call_sites: Default::default(),
+            layout: Default::default(),
         };
         if reader.bool()? {
             let count = reader.len()?;

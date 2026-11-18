@@ -564,6 +564,7 @@ fn decode_program(
             } else {
                 Default::default()
             },
+            layout: Default::default(),
         }),
         None => None,
     };
