@@ -8,26 +8,39 @@ use oxc_ast_visit::{Visit, walk};
 use oxc_span::Span;
 
 mod admit;
+mod checked;
 mod enums;
 mod imports;
 pub(super) use imports::{elide as elide_type_only_imports, type_only_imports};
 pub(super) use admit::admit;
+pub(super) use checked::{lookup as checked_parameters, parameter_sites};
+pub use checked::{CheckedParameters, ParameterSite};
+pub(super) use checked::register as register_checked_parameters;
 
 /// The language types (`crate::typed_ir::Type::language` bits) each formal parameter of
 /// `formals` declares, by argument index; empty where none declares one. An undeclared or
 /// structural type (an interface, a type literal, a generic) is `DECLARED_ANY`, as a
 /// structural type admits primitives too. An optional parameter or one with a default may
-/// enter as `undefined`.
-pub(super) fn declared_parameters(formals: &FormalParameters<'_>) -> Vec<u16> {
-    if formals.items.iter().all(|item| item.type_annotation.is_none()) {
+/// enter as `undefined`. A checker's answer for the same parameters (`checked`) narrows each
+/// set further: both are seeds of the same fact, so a value must fit both.
+pub(super) fn declared_parameters(formals: &FormalParameters<'_>, checked: Option<&CheckedParameters>) -> Vec<u16> {
+    let checked = checked.and_then(|checked| checked.get(formals.span.start))
+        .filter(|languages| languages.len() == formals.items.len());
+    if checked.is_none() && formals.items.iter().all(|item| item.type_annotation.is_none()) {
         return Vec::new();
     }
-    formals.items.iter().map(|item| match &item.type_annotation {
-        Some(annotation) if item.optional || item.initializer.is_some() =>
-            declared_language(&annotation.type_annotation) | language(crate::ValueType::Undefined),
-        Some(annotation) => declared_language(&annotation.type_annotation),
-        None => DECLARED_ANY,
-    }).collect()
+    let parameters: Vec<u16> = formals.items.iter().enumerate().map(|(index, item)| {
+        let declared = item.type_annotation.as_ref()
+            .map_or(DECLARED_ANY, |annotation| declared_language(&annotation.type_annotation));
+        let checked = checked.map_or(DECLARED_ANY, |languages| languages[index]);
+        let set = if declared & checked == 0 { DECLARED_ANY } else { declared & checked };
+        if set != DECLARED_ANY && (item.optional || item.initializer.is_some()) {
+            set | language(crate::ValueType::Undefined)
+        } else {
+            set
+        }
+    }).collect();
+    if parameters.iter().all(|&set| set == DECLARED_ANY) { Vec::new() } else { parameters }
 }
 
 /// No declared fact: every language type.
@@ -156,6 +169,39 @@ mod tests {
         assert_eq!(declared("add").unwrap(), vec![bit(V::Number), super::DECLARED_ANY,
             bit(V::Number) | bit(V::BigInt), super::DECLARED_ANY, bit(V::String) | bit(V::Undefined)]);
         assert_eq!(declared("g").unwrap(), Vec::<u16>::new());
+    }
+
+    #[test]
+    fn checked_parameter_types_narrow_the_declared_facts() {
+        let source = "type Meters = number;\nfunction move(by: Meters, label: string, extra) { return by; }\nconst twice = [1, 2].map(x => x * 2);\nfunction plain(p) { return p; }";
+        let sites = Engine::typescript_parameter_sites(source).unwrap();
+        let start = |needle: &str| source.find(needle).unwrap() as u32;
+        assert_eq!(sites, vec![
+            super::ParameterSite { formals_start: start("(by"), parameters: vec![start("by"), start("label"), start("extra")] },
+            super::ParameterSite { formals_start: start("x =>"), parameters: vec![start("x =>")] },
+            super::ParameterSite { formals_start: start("(p)"), parameters: vec![start("p)")] },
+        ]);
+        use crate::ValueType as V;
+        let bit = |kind: V| 1_u16 << kind as u16;
+        // What a checker answers: the alias is a number, the callback parameter is a number,
+        // and its `string` answer for `label` agrees with the annotation.
+        let mut checked = super::CheckedParameters::default();
+        checked.insert(start("(by"), vec![bit(V::Number), bit(V::String), super::DECLARED_ANY].into());
+        checked.insert(start("x =>"), vec![bit(V::Number)].into());
+        checked.insert(start("(p)"), vec![bit(V::Object) | bit(V::Function)].into());
+        Engine::register_checked_typescript_parameters(source, checked);
+        let program = Engine::specialize_typescript(source, "checked.cts").unwrap();
+        let declared = |name: Option<&str>| (0..program.functions.len()).filter_map(|index| program.function_get(index))
+            .find(|function| function.name.map(|atom| program.atoms.get(atom as usize).map(|text| &*text)) == name.map(Some)
+                && (name.is_some() || function.is_arrow))
+            .map(|function| function.declared_parameters.to_vec());
+        assert_eq!(declared(Some("move")).unwrap(), vec![bit(V::Number), bit(V::String), super::DECLARED_ANY]);
+        assert_eq!(declared(Some("plain")).unwrap(), vec![bit(V::Object) | bit(V::Function)]);
+        assert_eq!(declared(None).unwrap(), vec![bit(V::Number)]);
+        // Another text compiles without them.
+        let other = Engine::specialize_typescript(&format!("{source}\n"), "checked.cts").unwrap();
+        assert!(other.functions.iter().enumerate().filter_map(|(index, _)| other.function_get(index))
+            .filter(|function| function.is_arrow).all(|function| function.declared_parameters.is_empty()));
     }
 
     #[test]

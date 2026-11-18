@@ -3111,6 +3111,7 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                     // briefly resident beside it. Its byte-order mark and `#!` line are
                     // what the prefix replaces.
                     let body_start = file_text.len() - text.len();
+                    let disk_offset_utf16 = file_text[..body_start].encode_utf16().count() as u32;
                     let mut wrapper_source = file_text.into_owned();
                     wrapper_source.reserve_exact(prefix.len() + suffix.len());
                     wrapper_source.replace_range(..body_start, prefix);
@@ -3119,6 +3120,11 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                         filename.extension().and_then(|extension| extension.to_str()),
                         Some("cts" | "ts"),
                     );
+                    if typescript {
+                        crate::host::ts_checker::prepare(
+                            filename, &wrapper_source, prefix.len()..wrapper_source.len() - suffix.len(), disk_offset_utf16,
+                        );
+                    }
                     let wrapper = match evaluate_wrapper(context, prefix, &wrapper_source, key, is_main, typescript) {
                         Ok(wrapper) => wrapper,
                         Err(_) if !quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY && declared.is_none()

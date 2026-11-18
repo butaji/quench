@@ -87,6 +87,7 @@ pub(crate) mod statement_stream;
 mod string;
 mod template;
 mod typescript;
+pub use typescript::{CheckedParameters, ParameterSite};
 use ast::{FunctionCompiler, StatementCompletion};
 use atoms::CompilerAtoms;
 pub(crate) use atoms::{AtomPrefix, NoAtomPrefix};
@@ -548,6 +549,21 @@ impl Engine {
         if !parsed.diagnostics.is_empty() || stack::validate_parsed(&parsed).is_err() { return None; }
         Self::admit_typescript(&allocator, &mut parsed.program);
         Some(parsed.program.body.iter().any(Statement::is_module_declaration))
+    }
+
+    /// The functions of TypeScript `source` a checker can give parameter types for, as UTF-8
+    /// offsets into `source`; `None` when it does not parse.
+    pub fn typescript_parameter_sites(source: &str) -> Option<Vec<typescript::ParameterSite>> {
+        let allocator = Allocator::with_capacity(source.len().saturating_mul(4));
+        let parsed = Parser::new(&allocator, source, SourceType::unambiguous().with_typescript(true))
+            .with_options(oxc_parser::ParseOptions { allow_return_outside_function: true, ..Default::default() }).parse();
+        parsed.diagnostics.is_empty().then(|| typescript::parameter_sites(&parsed.program))
+    }
+
+    /// Install a checker's parameter types for `text`, the exact source a later compile
+    /// receives; they narrow its declared parameter facts (`typescript::checked`).
+    pub fn register_checked_typescript_parameters(text: &str, checked: typescript::CheckedParameters) {
+        typescript::register_checked_parameters(text, checked);
     }
 
     /// Runtime requests of an admitted tree (type-only module syntax is declarations).
@@ -1846,6 +1862,8 @@ struct Compiler<'a> {
     source_comments: Vec<Span>,
     /// The TypeScript declared environment its parse admitted (`typescript::admit`).
     declared_types: crate::bytecode::DeclaredTypes,
+    /// A TypeScript checker's parameter types for this text (`typescript::checked`).
+    checked_parameters: Option<std::sync::Arc<typescript::CheckedParameters>>,
     /// Byte offset of each non-ASCII character with the running excess of
     /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
     source_utf16_excess: std::borrow::Cow<'a, [(usize, usize)]>,
@@ -2438,6 +2456,7 @@ impl<'a> Compiler<'a> {
             last_utf16_excess: Default::default(),
             source_comments: Vec::new(),
             declared_types: crate::bytecode::DeclaredTypes::default(),
+            checked_parameters: typescript::checked_parameters(text),
             source_utf16_excess,
             mode,
             root_strict: false,
@@ -4128,6 +4147,8 @@ impl<'a> Compiler<'a> {
         let binds_dynamically =
             dynamic_eval || early::body_may_bind_dynamically(body, expression_body);
         self.dynamic_binding_scopes += u32::from(binds_dynamically);
+        let declared_parameters = options.defaults
+            .map_or_else(Vec::new, |formals| typescript::declared_parameters(formals, self.checked_parameters.as_deref()));
         let mut function = FunctionCompiler::new(
             self,
             locals,
@@ -4277,7 +4298,7 @@ impl<'a> Compiler<'a> {
                 0
             },
             parameter_atoms: parameter_atoms.into(),
-            declared_parameters: options.defaults.map_or_else(Vec::new, typescript::declared_parameters).into(),
+            declared_parameters: declared_parameters.into(),
             rest: options.rest_override
                 || options.defaults.is_some_and(|value| value.rest.is_some()),
             is_async: options.async_function,
