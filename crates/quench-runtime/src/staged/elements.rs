@@ -66,8 +66,7 @@ pub(crate) struct DenseView<W> {
 #[inline(always)]
 pub(crate) fn prove_view<S: Stage>(stage: &mut S, records: S::Word, base: S::Word, writable: bool,
     miss: S::Miss) -> Option<DenseView<S::Word>> {
-    let backing = array_backing(stage, records, base, miss)?;
-    if writable { writable_backing(stage, backing, miss)?; }
+    let backing = if writable { writable_array_backing(stage, records, base, miss)? } else { array_backing(stage, records, base, miss)? };
     Some(DenseView { values: backing.values, length: backing.length, packed: false, within: false })
 }
 
@@ -166,6 +165,37 @@ pub(crate) fn array_header<S: Stage>(stage: &mut S, record: S::Word) -> S::Word 
         let extras = super::object::extras_pointer(stage, word);
         stage.load_u64(Region::Payload.mutable(), extras, (ARRAY.extras_elements_offset + ARRAY.elements_header_offset) as i32)
     }, |_| word)
+}
+
+/// `array_backing` and `writable_backing` in one: the array's payload word is proved plain (no
+/// extras) first, so it is the backing's header with no choice between the two words
+/// (`array_header`), and the plain test is made once.
+#[inline(always)]
+fn writable_array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<Backing<S::Word>> {
+    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
+    let is_array = super::value::is_direct_array(stage, base);
+    stage.guard(is_array, miss)?;
+    let present = stage.ne_imm(record_base, 0u32);
+    stage.guard(present, miss)?;
+    let record = array_record(stage, record_base, base);
+    // Without extras, the object's payload word is the backing's header (`array_header`).
+    let header = stage.load_u64(Region::Payload.mutable(), record, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32);
+    let plain = super::object::plain_payload(stage, header);
+    stage.guard(plain, miss)?;
+    let length = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_length_offset as i32);
+    let encoded = stage.ugt_imm(length, u64::from(!crate::heap::ENCODED_LEN));
+    let wide = stage.not(encoded);
+    stage.guard(wide, miss)?;
+    let owners = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_owners_offset as i32);
+    let unique = stage.eq_imm(owners, 1u32);
+    stage.guard(unique, miss)?;
+    let object = stage.add_imm(record, ARRAY.object_offset as u64);
+    let meta = super::object::header_u32(stage, Region::Records.mutable(), object, OBJECT.meta_offset);
+    let held = stage.and_imm(meta, u64::from(ARRAY.frozen_mask));
+    let clear = stage.eq_imm(held, 0u32);
+    stage.guard(clear, miss)?;
+    let values = stage.add_imm(header, ARRAY.header_values_offset as u64);
+    Some(Backing { record, header, values, length })
 }
 
 /// `backing` as an in-place replacement needs it: its elements owned by this array alone, the
