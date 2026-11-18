@@ -293,17 +293,18 @@ mod numeric_instruction_tests {
             NumberArithmetic::from_js_instruction(Op::Binary, BinaryOperator::Addition as u32),
             Some(NumberArithmetic::Add)
         );
-        // The specialized opcodes have no staged decoder, so the decoded operation denotes none.
+        // The specialized opcodes decode to the Number operation of their own operator (`NumericAdd`
+        // is `+`, `NumericMultiply` is `*`); any other operator is none.
         assert_eq!(
             NumberArithmetic::from_js_instruction(Op::NumericAdd, BinaryOperator::Addition as u32),
-            None
+            Some(NumberArithmetic::Add)
         );
         assert_eq!(
             NumberArithmetic::from_js_instruction(
                 Op::NumericMultiply,
                 BinaryOperator::Multiplication as u32
             ),
-            None
+            Some(NumberArithmetic::Multiply)
         );
         assert_eq!(
             NumberArithmetic::from_js_instruction(

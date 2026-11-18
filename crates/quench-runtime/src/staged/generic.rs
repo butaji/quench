@@ -25,9 +25,22 @@ impl<W, P> Operation<W, P> {
             Op::ToPropertyKey => Self::PropertyKey {
                 destination: instruction.result_register(), source: instruction.register_b() },
             Op::Binary => return Self::decode_binary(instruction),
+            Op::NumericAdd | Op::NumericMultiply => return Self::decode_numeric_arithmetic(instruction),
             Op::JumpBinaryFalse => Self::decode_compare(instruction),
             _ => return None,
         })
+    }
+
+    /// `NumericAdd` and `NumericMultiply`: the Number arithmetic of their own operator (`+` or `*`)
+    /// over their two operands, which `Binary` decodes to the same operation (`decode_binary`). A record
+    /// whose operator field names another operator is none.
+    fn decode_numeric_arithmetic(instruction: WideInstruction) -> Option<Self> {
+        let own = match instruction.op() {
+            Op::NumericAdd => oxc_ast::ast::BinaryOperator::Addition,
+            _ => oxc_ast::ast::BinaryOperator::Multiplication,
+        } as u32;
+        if instruction.binary_operator() != own { return None; }
+        Self::decode_binary(instruction)
     }
 
     /// `Binary`: an arithmetic, bitwise or relation operator as its Number operation
