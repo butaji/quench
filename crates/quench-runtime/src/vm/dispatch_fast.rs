@@ -2441,6 +2441,17 @@ impl LaneStack {
         unsafe { (*self.activation_records.get()).len() + self.plain.depth.get() }
     }
 
+    /// The innermost activation's function, read from its header where it is plain, so the
+    /// read makes no record.
+    #[inline(always)]
+    pub(in crate::vm) fn innermost_function(&self) -> Option<u32> {
+        if self.plain.depth.get() != 0 {
+            return Some(Registers(self.plain.registers.get()).plain_callee().0);
+        }
+        // SAFETY: no plain activation remains, so the records are every activation.
+        unsafe { &*self.activation_records.get() }.last().map(|activation| activation.function())
+    }
+
     /// The address of the plain activations' words (`PlainFrames`).
     #[inline(always)]
     pub(in crate::vm) fn plain_frames_word(&self) -> usize { (&raw const self.plain).addr() }
@@ -15588,7 +15599,7 @@ script_handler! {
 #[inline(always)]
 fn lane_running_function<H: Host>(cx: *mut LaneContext<H>) -> u32 {
     let vm = unsafe { vm(cx) };
-    vm.lane_stack.activations().last().map_or_else(|| vm.frames[unsafe { (*cx).frame() }].function, |activation| activation.function())
+    vm.lane_stack.innermost_function().unwrap_or_else(|| vm.frames[unsafe { (*cx).frame() }].function)
 }
 
 /// The global value property `lane_name_resolution` answers without a lookup.
