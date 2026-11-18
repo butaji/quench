@@ -23303,6 +23303,25 @@ fn derive_lane_view<'live, H: Host>(
     } else {
         Box::default()
     };
+    // A record reads the accumulator its predecessor produced only when control reaches it
+    // from that predecessor running its own handler. A fusion replaces a record's handler, or
+    // runs records ahead of it and lands past them, without carrying what the replaced or
+    // skipped producers wrote (a fused postfix update skips its `IncDec` row), so a plain
+    // accumulator reader within reach of any fused record reads its operand from the register.
+    if !wasm {
+        const FUSED_REACH: usize = 6;
+        let changed: Vec<bool> = records.iter().zip(&selected).map(|(record, &selected)| record.handler != selected).collect();
+        for pc in 1..records.len() {
+            if !changed[pc.saturating_sub(FUSED_REACH)..pc].iter().any(|&changed| changed) {
+                continue;
+            }
+            let op = decoded[pc].op() as u16;
+            let Some((backward, _)) = plain_served(records[pc].handler, op, &[ACC_A, ACC_B, ACC_C, ACC_PAIR]) else { continue };
+            if let Some(plain) = tables[usize::from(backward)][usize::from(ACC_NONE)].get(usize::from(op)).copied().flatten() {
+                records[pc].handler = plain.handler as *const ();
+            }
+        }
+    }
     let min_run = if closes_loop(&decoded, &exits) {
         LANE_ENTRY_MIN_RUN
     } else {
