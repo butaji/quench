@@ -21095,9 +21095,7 @@ const fn iterator_handler<H: Host>(opcode: Op) -> Option<Handler> {
 const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
         Class::DefineArrayElement => Some(lane_define_array_element::<H>),
-        Class::StoreLocal => Some(lane_store_local::<H>),
         Class::LoadCallee => Some(lane_load_callee::<H>),
-        Class::InitializeTdz => Some(lane_initialize_tdz::<H>),
         Class::CloneEnv => Some(lane_clone_env::<H>),
         Class::GetField => Some(lane_get_field_first::<H>),
         _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::Register, .. })) => Some(lane_set_object_field_own::<H, false>),
@@ -21113,7 +21111,6 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::SetIndex => Some(lane_set_index::<H>),
         Class::MakeConstArray => Some(lane_make_const_array::<H>),
         Class::StringCaseIndex => Some(lane_string_case_index::<H>),
-        Class::LoadLocal => Some(lane_load_local::<H>),
         Class::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
         Class::WasmGlobalGet => Some(lane_global_get::<H>),
         Class::WasmSimd => Some(lane_wasm_simd::<H>),
@@ -21606,6 +21603,15 @@ fn returning_handler<H: Host>(kind: u8) -> Handler {
     }
 }
 
+/// Whether local `slot` of `function` is a plain frame local: no environment holds it, no mapped
+/// `arguments` aliases it and it is no self binding. A checked local row reads and writes such a slot
+/// in its frame's locals (`lane_frame::row_frame`); any other slot takes its hand handler.
+fn plain_frame_local(function: &Function, slot: usize) -> bool {
+    !function.local_slot_uses_environment(slot)
+        && super::arguments::mapped_arguments_slot(function, slot).is_none()
+        && !function.is_self_binding_slot(slot)
+}
+
 /// Derive a function's lane view from its bytecode and its program's
 /// constants.
 fn derive_lane_view<'live, H: Host>(
@@ -21752,6 +21758,12 @@ fn derive_lane_view<'live, H: Host>(
                 })
             } else if op.is_store_env_local() && resolves_names {
                 None
+            } else if crate::staged::checked_local(op)
+                && !plain_frame_local(function, instruction.local_slot())
+            {
+                // A slot an environment, a mapped `arguments` or the self binding holds keeps its hand
+                // handler; `specialize_frame_locals` then gives it the handler of its binding facts.
+                Some(LaneHandler { handler: lane_frame::checked_local_hand::<H>(op) as Handler, produces: false })
             } else if op.is_get_field() && lane_sinks_field(instruction) {
                 Some(LaneHandler {
                     handler: lane_get_field_sink_first::<H> as Handler,
@@ -23855,7 +23867,10 @@ fn specialize_environment_window<H: Host>(
             WindowRecord::Eval => replacements.push((pc, lane_eval::direct_eval::<H>(), instruction.imm())),
             WindowRecord::Local(own) => {
                 let handler = records[pc].handler;
-                let row = is_row::<H, { opc::LoadLocalPlain }>(handler) || is_row::<H, { opc::StoreLocalPlain }>(handler);
+                let row = is_row::<H, { opc::LoadLocalPlain }>(handler) || is_row::<H, { opc::StoreLocalPlain }>(handler)
+                    || is_row::<H, { crate::staged::LOCAL_LOAD_ROW }>(handler)
+                    || is_row::<H, { crate::staged::LOCAL_STORE_ROW }>(handler)
+                    || is_row::<H, { crate::staged::LOCAL_INITIALIZE_ROW }>(handler);
                 if own > ENVIRONMENT_WINDOW_FIELD || !(row || plain.iter().any(|plain| *plain as *const () == handler)) {
                     return None;
                 }

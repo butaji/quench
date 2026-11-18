@@ -16,6 +16,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
         call @ (Operation::Call(_) | Operation::Return { .. }) => call_step(stage, frame, call),
         Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
+            | Operation::LoadLocalChecked { .. } | Operation::StoreLocalChecked { .. } | Operation::InitializeLocal { .. }
             | Operation::LogicalNot { .. } | Operation::Safepoint { .. } => register_step(stage, frame, operation),
         Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::LoadName { .. } | Operation::Protocol { .. }
@@ -70,7 +71,8 @@ fn register_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
             frame.write(stage, destination, value, fact);
             Step::Value(value)
         }
-        Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. } => local_step(stage, frame, operation),
+        Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. } | Operation::LoadLocalChecked { .. }
+            | Operation::StoreLocalChecked { .. } | Operation::InitializeLocal { .. } => local_step(stage, frame, operation),
         Operation::LogicalNot { destination, source } => logical_not(stage, frame, destination, source),
         Operation::Safepoint { proof } => match frame.safepoint(stage, proof) {
             Some(()) => Step::Value(stage.constant(0)),
@@ -95,6 +97,34 @@ fn local_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
                 frame.write(stage, result, value, fact);
             }
             Step::Value(value)
+        }
+        Operation::LoadLocalChecked { destination, slot, numeric } => {
+            if numeric {
+                return Step::Unresolved;
+            }
+            match read_initialized_local(stage, frame, destination, slot, frame.miss()) {
+                Some(value) => Step::Value(value),
+                None => Step::Unresolved,
+            }
+        }
+        Operation::StoreLocalChecked { source, slot, result, initializing } => {
+            let miss = frame.miss();
+            let stored = if initializing {
+                write_local(stage, frame, source, slot, Some(miss))
+            } else {
+                write_initialized_local(stage, frame, source, slot, miss)
+            };
+            let Some(value) = stored else { return Step::Unresolved };
+            if let Some(result) = result {
+                let fact = frame.fact(source);
+                frame.write(stage, result, value, fact);
+            }
+            Step::Value(value)
+        }
+        Operation::InitializeLocal { slot } => {
+            let hole = stage.constant(crate::Value::DELETED.to_bits());
+            let miss = frame.local_miss();
+            if frame.store_local(stage, slot, hole, miss) { Step::Value(hole) } else { Step::Unresolved }
         }
         _ => Step::Unresolved,
     }

@@ -132,6 +132,8 @@ impl<W, P> Operation<W, P> {
             Self::Move { .. } | Self::LoadConst { .. } | Self::LoadThis { .. } => Effects::NONE,
             Self::LoadLocalPlain { .. } => Effects::reads(Region::Frame),
             Self::StoreLocalPlain { .. } => Effects::writes(Region::Frame),
+            Self::LoadLocalChecked { .. } => Effects::reads(Region::Frame),
+            Self::StoreLocalChecked { .. } | Self::InitializeLocal { .. } => Effects::writes(Region::Frame),
             Self::Jump | Self::JumpIf { .. } | Self::LogicalNot { .. } | Self::Number(_) | Self::Return { .. } => Effects::NONE,
             Self::CompareJump { comparison, .. } if !comparison.runs_guest_code() => Effects::NONE,
             Self::RequireObjectCoercible { .. } | Self::RequireIteratorResult { .. } => Effects { may_throw: true, ..Effects::NONE },

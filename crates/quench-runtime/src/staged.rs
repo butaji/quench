@@ -153,6 +153,16 @@ pub(crate) enum Miss {
     /// `ToPropertyKey` of a value the frame leaves (an integer's decimal key, a symbol): the
     /// lane's own answer for it, else the general step.
     PropertyKeyValue,
+    /// A checked local read the frame does not hold in its own locals (a temporal dead zone, a
+    /// numeric target, a root body, an environment, a mapped `arguments`): the lane's local read
+    /// (`lane_load_local`), which takes the binding rules.
+    LocalLoad,
+    /// A checked local store the frame does not hold in its own locals: the lane's local store
+    /// (`lane_store_local`).
+    LocalStore,
+    /// An InitializeTdz the frame does not hold in its own locals: the lane's dead-zone opening
+    /// (`lane_initialize_tdz`), which finds the binding wherever the frame keeps it.
+    LocalInitialize,
     /// A by-name load the frame does not answer: its first run resolves the name, and a later
     /// run whose binding misses takes that binding's residual (`NameLoad`).
     NameLoad(NameLoad),
@@ -189,6 +199,9 @@ pub(crate) const fn miss(op: Op) -> Miss {
         Op::StoreName => Miss::StoreNameFirst,
         Op::JumpBinaryFalse => Miss::CompareChain,
         Op::ToPropertyKey => Miss::PropertyKeyValue,
+        Op::LoadLocal => Miss::LocalLoad,
+        Op::StoreLocal => Miss::LocalStore,
+        Op::InitializeTdz => Miss::LocalInitialize,
         _ => match name_load(op) {
             Some(load) => Miss::NameLoad(load),
             None => match truth_jump(op) {
@@ -227,12 +240,24 @@ pub(crate) const fn compare_jump(op: Op) -> bool {
 pub(crate) const LOAD_NAME_ROW: u16 = Op::LoadName as u16;
 pub(crate) const LOAD_NAME_CALL_ROW: u16 = Op::LoadNameCall as u16;
 pub(crate) const LOAD_NAME_TYPEOF_ROW: u16 = Op::LoadNameTypeof as u16;
+/// The opcodes whose rows are the checked local accesses (`checked_local`), which a window's
+/// specialization recognizes by their row.
+pub(crate) const LOCAL_LOAD_ROW: u16 = Op::LoadLocal as u16;
+pub(crate) const LOCAL_STORE_ROW: u16 = Op::StoreLocal as u16;
+pub(crate) const LOCAL_INITIALIZE_ROW: u16 = Op::InitializeTdz as u16;
+
+/// Whether `op` is a checked local access: its row reads and writes the frame's own locals in
+/// place, and leaves to its hand handler (`Miss`) for any slot those locals do not hold.
+pub(crate) const fn checked_local(op: Op) -> bool {
+    matches!(op, Op::LoadLocal | Op::StoreLocal | Op::InitializeTdz)
+}
 
 /// Whether `op`'s row writes its result register itself when it answers a value. A keyed for-in
 /// read (`EnumeratedGet`) answers the word it read and leaves the write to the tier; a global
-/// store has no result register, and answers the source word it stored.
+/// store has no result register, and answers the source word it stored; a store's result is its
+/// `b` register and an InitializeTdz has none.
 pub(crate) const fn row_writes_result(op: Op) -> bool {
-    !matches!(op, Op::GetEnumerated | Op::StoreName)
+    !matches!(op, Op::GetEnumerated | Op::StoreName | Op::StoreLocal | Op::InitializeTdz)
 }
 
 /// The truthiness on which `op` jumps, for a jump on its register's truthiness
@@ -256,6 +281,16 @@ pub(crate) enum Operation<W, P> {
     LoadLocalPlain { destination: Register, slot: u16 },
     /// Write `source` to local slot `slot`, and to `result` where the instruction has one.
     StoreLocalPlain { source: Register, slot: u16, result: Option<Register> },
+    /// Define `destination` from local slot `slot` where its binding is initialized (LoadLocal): a
+    /// binding in its temporal dead zone, or a numeric local target (`numeric`), leaves at the
+    /// frame's miss edge.
+    LoadLocalChecked { destination: Register, slot: u16, numeric: bool },
+    /// Write `source` to local slot `slot` where its binding is initialized, or whatever its state
+    /// where `initializing` (a declaration's own store), and to `result` where the instruction has
+    /// one (StoreLocal). An assignment to a binding in its temporal dead zone leaves at the miss edge.
+    StoreLocalChecked { source: Register, slot: u16, result: Option<Register>, initializing: bool },
+    /// Open the temporal dead zone of local slot `slot` by writing the deleted marker (InitializeTdz).
+    InitializeLocal { slot: u16 },
     /// Continue at the jump target.
     Jump,
     /// Continue at the jump target when register `register` is truthy, or when it is falsy
@@ -511,6 +546,17 @@ impl<W, P> Operation<W, P> {
                 source: instruction.register_a(),
                 slot: u16::try_from(instruction.local_slot()).ok()?,
                 result: instruction.optional_register_b() },
+            Op::LoadLocal => Self::LoadLocalChecked {
+                destination: instruction.result_register(),
+                slot: u16::try_from(instruction.local_slot()).ok()?,
+                numeric: instruction.result_flags() & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 },
+            Op::StoreLocal => Self::StoreLocalChecked {
+                source: instruction.register_a(),
+                slot: u16::try_from(instruction.local_slot()).ok()?,
+                result: instruction.optional_register_b(),
+                initializing: instruction.c() != 0 },
+            Op::InitializeTdz => Self::InitializeLocal {
+                slot: u16::try_from(instruction.local_slot()).ok()? },
             _ => return None,
         })
     }

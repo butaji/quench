@@ -154,6 +154,8 @@ struct EnvironmentReads {
     context: *mut (),
     read: unsafe fn(*mut ()) -> Option<*mut crate::heap::EnvironmentSlots>,
     write: unsafe fn(*mut (), u16) -> Option<*mut crate::heap::EnvironmentSlots>,
+}
+
 /// A row's global-name store: the lane context and the record's own hint, which the store
 /// writes through (`global_name_store`).
 #[derive(Clone, Copy)]
@@ -732,10 +734,26 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
     if !locals {
         return LaneFrame::<ACC>::new(r, view);
     }
+    // A checked local access holds the frame's locals only where its hand handler would read them
+    // directly: an activation without its own environment (`lane_load_local`'s guard), and not a
+    // root body's frame. Any other leaves to that handler (`row_miss`).
+    let environment_free = unsafe { (*cx).registers }.env().is_deleted();
     let vm = unsafe { vm(cx) };
     let frame = &mut vm.frames[unsafe { (*cx).frame() }];
+    if const { crate::staged::checked_local(LaneFields::<OP>::OPCODE) }
+        && (!environment_free || frame.function == super::ROOT_FUNCTION_ID)
+    {
+        return LaneFrame::<ACC>::new(r, view);
+    }
     let (slots, len) = (frame.locals.as_mut_ptr(), frame.locals.len());
     LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, slots, len)
+}
+
+/// The hand handler of checked local access `op` (`row_miss`), which the lane takes for a record
+/// whose slot its frame's locals do not hold (an environment's, a mapped `arguments`' or a self
+/// binding's), as the row would only leave there.
+pub(in crate::vm::dispatch_fast) fn checked_local_hand<H: Host>(op: Op) -> Handler {
+    row_miss::<H>(op)
 }
 
 /// Where opcode `op`'s row leaves when its words do not decide it: the VM's general step, or for
@@ -751,6 +769,9 @@ const fn row_miss<H: Host, const FLAG: u8>(op: Op) -> Handler {
         crate::staged::Miss::EnvironmentStore => super::lane_store_local::<H>,
         crate::staged::Miss::StoreNameFirst => super::lane_store_name_first::<H>,
         crate::staged::Miss::PropertyKeyValue => super::lane_to_property_key::<H>,
+        crate::staged::Miss::LocalLoad => super::lane_load_local::<H>,
+        crate::staged::Miss::LocalStore => super::lane_store_local::<H>,
+        crate::staged::Miss::LocalInitialize => super::lane_initialize_tdz::<H>,
         crate::staged::Miss::NameLoad(load) => name_load_miss::<H, FLAG>(load),
         crate::staged::Miss::General | crate::staged::Miss::CellTruth { .. }
             | crate::staged::Miss::CompareChain => lane_general_step::<H>,

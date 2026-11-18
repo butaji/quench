@@ -95,6 +95,10 @@ impl<W, P> Operation<W, P> {
             Self::LoadLocalPlain { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("slot", REGISTER)]),
             Self::StoreLocalPlain { .. } => SmallVec::from_slice(&[("source", REGISTER), ("slot", REGISTER),
                 ("result", REGISTER)]),
+            Self::LoadLocalChecked { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("slot", REGISTER)]),
+            Self::StoreLocalChecked { .. } => SmallVec::from_slice(&[("source", REGISTER), ("slot", REGISTER),
+                ("result", REGISTER)]),
+            Self::InitializeLocal { .. } => SmallVec::from_slice(&[("slot", REGISTER)]),
             Self::Number(operation) => number(operation),
             _ => self.control_operand_times(),
         }
