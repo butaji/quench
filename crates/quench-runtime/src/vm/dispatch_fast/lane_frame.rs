@@ -960,7 +960,6 @@ const fn row_miss<H: Host, const FLAG: u8>(op: Op) -> Handler {
         crate::staged::Miss::LocalLoad => super::lane_load_local::<H>,
         crate::staged::Miss::LocalStore => super::lane_store_local::<H>,
         crate::staged::Miss::LocalInitialize => super::lane_initialize_tdz::<H>,
-        crate::staged::Miss::Binary => super::lane_binary_general::<H>,
         crate::staged::Miss::Unary => super::denoted::lane_unary::<H>,
         crate::staged::Miss::NameLoad(load) => name_load_miss::<H, FLAG>(load),
         crate::staged::Miss::General | crate::staged::Miss::CellTruth { .. }

@@ -182,9 +182,6 @@ pub(crate) enum Miss {
     WasmMemoryStore,
     /// A generic Wasm effective address the row leaves: the lane's hand handler of the address.
     WasmMemoryAddress,
-    /// A plain `Binary` the frame leaves (an operand its words do not decide): the lane's binary
-    /// arm (`lane_binary_general`), which makes the operation in place.
-    Binary,
     /// A `Unary` the frame leaves (an operand its value declines): the lane's unary arm
     /// (`lane_unary`), which answers the pure operators and otherwise makes the operation in place.
     Unary,
@@ -228,7 +225,6 @@ pub(crate) const fn miss(op: Op) -> Miss {
         Op::WasmMemoryLoad => Miss::WasmMemoryLoad,
         Op::WasmMemoryStore => Miss::WasmMemoryStore,
         Op::WasmMemoryAddress => Miss::WasmMemoryAddress,
-        Op::Binary => Miss::Binary,
         Op::Unary => Miss::Unary,
         _ => match name_load(op) {
             Some(load) => Miss::NameLoad(load),
