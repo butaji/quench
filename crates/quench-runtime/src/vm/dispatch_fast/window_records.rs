@@ -51,7 +51,7 @@ pub(super) fn window_local_handler<H: Host>(function: &Function, op: Op, own: us
         return Some(lane_exit::<H>);
     }
     // A function that resolves names at run time may store to a `with` object's binding instead of the
-    // local: its environment store takes the scope first (`scoped_names::lane_store_scoped_local_miss`).
+    // local: its environment store takes the scope first (`scoped_names::scoped_local_store_miss`).
     let environment = !op.captures_environment() && function.local_slot_uses_environment(own);
     if scoped && crate::staged::stores_environment_slot(op) {
         return Some(if environment { super::lane_frame::scoped_local_row::<H, { super::lane_frame::FLAG_SCOPE_ENVIRONMENT }>() } else { super::lane_frame::scoped_local_row::<H, { super::lane_frame::FLAG_SCOPE }>() });

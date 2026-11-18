@@ -3346,7 +3346,7 @@ lane_handler! {
     /// `lane_frame::staged_store_local_checked` completes; any other store takes the general
     /// path. A `StoreEnvLocal` of a function that resolves names at run time, which may
     /// write a `with` object's binding instead, has no record (`derive_lane_view`) but the
-    /// scoped window's (`scoped_names::lane_store_scoped_local_miss`).
+    /// scoped window's (`scoped_names::scoped_local_store_miss`).
     fn store_local_miss<>(cx, r, ip, i, view) {
         let value = r.get(i.a);
         let stored = unsafe { (*cx).registers }.env().is_deleted()
@@ -10307,7 +10307,7 @@ script_handler! {
                     sibling!(scoped, r, ip, Carried::script_in(cx, view))
                 }
                 // Any other name's scope is a runtime fact, which the general path's read settles
-                // (`lane_load_name_probe`).
+                // (`name_probe_miss`).
                 if !unsafe { vm(cx) }.atom_class(i.imm()).contains(AtomClass::INTERNAL) {
                     // The probe is the row's miss at `FLAG_PROBE` (`name_probe`), which settles the record after.
                     let probing = name_row::<H, { lane_frame::FLAG_PROBE }>(load);

@@ -9,7 +9,7 @@ script_handler! {
     /// decides whether the name lands on the global object and quickens the record
     /// accordingly (`Vm::settle_name_probe`).
     #[inline(never)]
-    fn lane_load_name_probe<KIND: u8>(cx, r, ip, i, view) {
+    fn name_probe_miss<KIND: u8>(cx, r, ip, i, view) {
         lane_materialize_running_leaf(cx);
         let vm = unsafe { vm(cx) };
         vm.scope_names.probe = Some(crate::vm::name_scope::NameProbe {
@@ -35,5 +35,5 @@ pub(in crate::vm) fn settle_name_record<H: Host>(view: &LaneView, pc: usize, op:
 
 /// The miss arm of a by-name read of kind `KIND` at `FLAG_PROBE`: its scope is left to the general path's read.
 pub(super) const fn probe_handler<H: Host, const KIND: u8>() -> Handler {
-    lane_load_name_probe::<H, KIND>
+    name_probe_miss::<H, KIND>
 }

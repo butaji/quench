@@ -121,7 +121,7 @@ script_handler! {
     /// the store (`scoped_store`), else the window's own, which the general path stores. A frame's
     /// run takes the general path, as it did for every function that resolves names at run time.
     #[inline(never)]
-    fn lane_store_scoped_local_miss<ENVIRONMENT: bool>(cx, r, ip, i, view) {
+    fn scoped_local_store_miss<ENVIRONMENT: bool>(cx, r, ip, i, view) {
         let (slot, _) = environment_window_fields(i);
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
@@ -153,7 +153,7 @@ script_handler! {
 /// (`Vm::site_environment`), and capturing the `with` objects it entered
 /// (`Vm::closure_over_scope`). Out of line, as `lane_window_closure_value`.
 #[inline(never)]
-fn lane_scoped_closure_value<H: Host>(
+fn scoped_closure_value<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
@@ -180,10 +180,10 @@ fn lane_scoped_closure_value<H: Host>(
     value
 }
 
-/// The window's environment-local store miss (`lane_store_scoped_local_miss`), `ENVIRONMENT` where the
+/// The window's environment-local store miss (`scoped_local_store_miss`), `ENVIRONMENT` where the
 /// window's environment holds the local. The row makes the store its scope takes (`Frame::scoped_local_store`).
 pub(super) const fn scoped_store_local<H: Host, const ENVIRONMENT: bool>() -> Handler {
-    lane_store_scoped_local_miss::<H, ENVIRONMENT>
+    scoped_local_store_miss::<H, ENVIRONMENT>
 }
 
 /// `ScopeReads::name` of the lane: the by-name read of `atom` through the window's scope into
@@ -244,5 +244,5 @@ pub(super) unsafe fn scoped_closure_into<H: Host>(cx: *mut (), r: Registers, ip:
     if unsafe { (*cx).registers }.env().is_deleted() {
         return lane_closure_value_of(cx, function);
     }
-    lane_scoped_closure_value(cx, r, ip, function, window)
+    scoped_closure_value(cx, r, ip, function, window)
 }
