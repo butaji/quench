@@ -81,9 +81,6 @@ pub(crate) struct JsonParseCache {
     /// holds copies of the distinct runs, so the builder borrows nothing of the text.
     strings: hashbrown::HashTable<(Range<u32>, Value)>,
     string_bytes: Vec<u8>,
-    /// The emptied member stacks of the last whole parse (`JsonBuilder::keep_stacks`). They
-    /// hold no values between parses.
-    stacks: Option<super::JsonStacks<Value, Atom, JsonObjectLayout>>,
 }
 
 /// Bytes of keys and strings past which the cache is dropped rather than kept: a large text
@@ -405,12 +402,6 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
     }
     fn primitive(&mut self, value: Value, _source: Units<'_>) -> Value {
         value
-    }
-    fn take_stacks(&mut self) -> super::JsonStacks<Value, Atom, JsonObjectLayout> {
-        self.cache.stacks.take().unwrap_or_default()
-    }
-    fn keep_stacks(&mut self, stacks: super::JsonStacks<Value, Atom, JsonObjectLayout>) {
-        self.cache.stacks = Some(stacks);
     }
 }
 

@@ -658,31 +658,6 @@ trait JsonBuilder {
     ) -> Self::Value;
     /// A primitive parsed from `source`, the text a reviver's context exposes.
     fn primitive(&mut self, value: Self::Value, source: Units<'_>) -> Self::Value;
-    /// The empty stacks a parse gathers members on: kept from an earlier parse where the
-    /// builder keeps them (`keep_stacks`), so a parse allocates none of its own.
-    fn take_stacks(&mut self) -> JsonStacks<Self::Value, Self::Key, Self::Layout> {
-        JsonStacks::default()
-    }
-    /// Takes back a finished parse's stacks, emptied.
-    fn keep_stacks(&mut self, _stacks: JsonStacks<Self::Value, Self::Key, Self::Layout>) {}
-}
-
-/// A parse's member stacks and container frames (`JsonParser`), which a builder may keep
-/// between parses.
-pub(super) struct JsonStacks<V, K, L> {
-    values: Vec<V>,
-    keys: Vec<K>,
-    frames: Vec<JsonFrame<L>>,
-}
-
-impl<V, K, L> Default for JsonStacks<V, K, L> {
-    fn default() -> Self {
-        Self {
-            values: Vec::with_capacity(JSON_STACK_START),
-            keys: Vec::with_capacity(JSON_STACK_START),
-            frames: Vec::with_capacity(JSON_STACK_START),
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -798,7 +773,6 @@ struct JsonParser<'a, 'b, T, B: JsonBuilder> {
     builder: &'b mut B,
     values: Vec<B::Value>,
     keys: Vec<B::Key>,
-    frames: Vec<JsonFrame<B::Layout>>,
 }
 
 /// The members a parse's stacks start with room for, which most texts' containers fit.
@@ -806,24 +780,20 @@ const JSON_STACK_START: usize = 16;
 
 impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
     fn new(units: &'a [T], builder: &'b mut B) -> Self {
-        let JsonStacks { values, keys, frames } = builder.take_stacks();
-        Self { units, index: 0, builder, values, keys, frames }
+        Self {
+            units,
+            index: 0,
+            builder,
+            values: Vec::with_capacity(JSON_STACK_START),
+            keys: Vec::with_capacity(JSON_STACK_START),
+        }
     }
 
     /// The JSON text that is all of the units.
     fn parse(mut self) -> Result<B::Value, JsonParseError> {
         let value = self.value()?;
         match self.token() {
-            None => {
-                // A whole parse leaves its stacks empty: each container drained its members.
-                let (mut values, mut keys, mut frames) =
-                    (std::mem::take(&mut self.values), std::mem::take(&mut self.keys), std::mem::take(&mut self.frames));
-                values.clear();
-                keys.clear();
-                frames.clear();
-                self.builder.keep_stacks(JsonStacks { values, keys, frames });
-                Ok(value)
-            }
+            None => Ok(value),
             Some(_) => Err(self.error(JsonSyntax::NonWhitespaceAfter)),
         }
     }
@@ -836,7 +806,7 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
 
     /// The JSON value at the current unit, which the parse moves past.
     fn value(&mut self) -> Result<B::Value, JsonParseError> {
-        let mut frames = std::mem::take(&mut self.frames);
+        let mut frames: Vec<JsonFrame<B::Layout>> = Vec::with_capacity(JSON_STACK_START);
         'value: loop {
             let token = self.token();
             let start = self.index;
@@ -893,7 +863,6 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
             // Each container the value completes is the value its parent takes next.
             loop {
                 let Some(frame) = frames.last_mut() else {
-                    self.frames = frames;
                     return Ok(value);
                 };
                 let token = self.token();
