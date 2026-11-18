@@ -177,9 +177,10 @@ fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
             return Some(Heap::Object),
         _ => {}
     }
-    match instruction.op().class() {
-        Class::Unary => typeof_arm(instruction.unary_operator()),
-        _ => None,
+    if super::super::meaning_compiled::is_unary(instruction) {
+        typeof_arm(instruction.unary_operator())
+    } else {
+        None
     }
 }
 

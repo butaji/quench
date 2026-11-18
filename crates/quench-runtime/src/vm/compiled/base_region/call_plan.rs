@@ -38,7 +38,7 @@ pub(super) mod inline;
 use super::{Exit, SLOT};
 use super::super::direct_callee::DirectCallee;
 use super::super::{FRAME_BYTES, LaneHelper, LaneHelpers};
-use crate::bytecode::{Class, ImmediateLayout, Register, WideInstruction};
+use crate::bytecode::{ImmediateLayout, Register, WideInstruction};
 use crate::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
 use quench_bjit::call::{self, CallRow, ThisRow};
 use quench_bjit::call_record::{CallRecord, MAX_DIRECT_ARGC};
@@ -72,17 +72,20 @@ impl CallForm {
     pub(super) fn of(instruction: WideInstruction) -> Option<Self> {
         let bound_this = if instruction.writes_current_this() { crate::bytecode::SET_THIS_REGISTER } else { 0 };
         let op = instruction.op();
-        let calls = op.makes_script_call() && op.class() != Class::CallKnown && instruction.result_flags() & !bound_this == 0;
+        let calls = op.makes_script_call() && !crate::vm::compiled::meaning_compiled::is_call_known(instruction) && instruction.result_flags() & !bound_this == 0;
         calls.then(|| Self::shaped(instruction))
     }
 
     /// The form of a script call `instruction` (`of`).
     fn shaped(instruction: WideInstruction) -> Self {
         let in_place = instruction.writes_current_this() || instruction.resolves_dynamic_scope();
-        match instruction.op().class() {
-            Class::Call if !in_place => Self::Plain,
-            Class::Construct if !in_place && !instruction.is_super_construct() && !ImmediateLayout::construct_array_arguments(instruction.imm()) => Self::Construct,
-            _ => Self::Stepped,
+        if crate::vm::compiled::meaning_compiled::is_call(instruction) && !in_place {
+            Self::Plain
+        } else if crate::vm::compiled::meaning_compiled::is_construct(instruction) && !in_place && !instruction.is_super_construct()
+            && !ImmediateLayout::construct_array_arguments(instruction.imm()) {
+            Self::Construct
+        } else {
+            Self::Stepped
         }
     }
 

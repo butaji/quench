@@ -355,10 +355,12 @@ fn named_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instructi
         Some(Operation::SetField { .. }) => return field_store_row(known, instruction),
         _ => {}
     }
-    match instruction.op().class() {
-        Class::Binary => membership_row(known, pc, instruction, instruction.result_register()),
-        _ if instruction.op().traits().has(crate::bytecode::Traits::GLOBAL_NAME_ACCESS) => global_row(known, pc, instruction),
-        _ => None,
+    if super::super::meaning_compiled::is_binary(instruction) {
+        membership_row(known, pc, instruction, instruction.result_register())
+    } else if instruction.op().traits().has(crate::bytecode::Traits::GLOBAL_NAME_ACCESS) {
+        global_row(known, pc, instruction)
+    } else {
+        None
     }
 }
 
@@ -425,10 +427,10 @@ pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
     if let Some((destination, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
         return Some(load_const(numbers, destination, index).ok().filter(|_| plain));
     }
-    Some(match instruction.op().class() {
-        Class::Binary | Class::NumericAdd | Class::NumericMultiply => binary(numbers, instruction).ok().filter(|_| plain),
-        _ => return None,
-    })
+    if !super::super::meaning_compiled::is_binary_arithmetic(instruction) {
+        return None;
+    }
+    Some(binary(numbers, instruction).ok().filter(|_| plain))
 }
 
 /// A jump on `register`'s truthiness: taken where it is truthy (`taken`, `JumpTrue`) or falsy.

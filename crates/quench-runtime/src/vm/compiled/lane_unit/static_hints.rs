@@ -103,9 +103,7 @@ impl Hints {
         let Some(Definition::Closure(target)) = definitions.get(usize::from(instruction.register_a())).copied().flatten() else { return };
         self.note_method(instruction, target, definitions);
         if let Some(slot) = function.stored_slot(instruction).and_then(|slot| self.captured[start..].get_mut(slot)) { observe(slot, target); }
-        let decoded = crate::vm::compiled::decoded(instruction);
-        if matches!(decoded, Some(crate::staged::Operation::GlobalWrite { .. }))
-            || (instruction.op().stores_name() && decoded.is_none()) {
+        if super::super::meaning_compiled::stores_name(instruction) {
             observe(&mut self.named[instruction.atom_index() as usize], target);
         }
     }
@@ -168,7 +166,7 @@ impl Hints {
         function.instructions().map(|instruction| {
             let decoded = crate::vm::compiled::decoded(instruction);
             let completed = crate::vm::compiled::decoded_completed(instruction);
-            let target = (instruction.op().is_call()).then(|| methods_by_register[usize::from(instruction.register_b())].as_deref()
+            let target = (super::super::meaning_compiled::is_call(instruction)).then(|| methods_by_register[usize::from(instruction.register_b())].as_deref()
                 .map(|candidates| self.narrow(candidates, instruction.call_window().count))).flatten().unwrap_or_default();
             let method = match () {
                 _ if matches!(decoded, Some(crate::staged::Operation::Protocol {

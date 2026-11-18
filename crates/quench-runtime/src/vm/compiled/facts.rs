@@ -11,7 +11,7 @@
 //! one that cannot leaves at the target, so a fact the analysis gets wrong costs an exit,
 //! never the body. Constants, definitions and joins use the one `crate::typed_ir` lattice.
 
-use crate::bytecode::{Class, Constant, ControlFlowLayout, Operand, OperandKind, Register, WideInstruction};
+use crate::bytecode::{Constant, ControlFlowLayout, Operand, OperandKind, Register, WideInstruction};
 use crate::typed_ir::{Type, WIDENING_ROUNDS};
 use cranelift_codegen::bitset::CompoundBitSet;
 use std::num::NonZeroUsize;
@@ -349,7 +349,7 @@ fn forget_shapes(types: &mut [Type], forget: bool) -> Flow {
 fn unary_transfer(types: &mut [Type], instruction: WideInstruction) -> Option<Flow> {
     let op = instruction.op();
     let decoded = crate::vm::compiled::decoded(instruction);
-    match op.class() {
+    match () {
         // A Number is its own ToNumeric; an untyped operand is taken for an int32 and tested once.
         _ if matches!(decoded, Some(crate::staged::Operation::Number(crate::staged::NumberOperation::ToNumeric { .. })))
             && !instruction.returns_from_frame() => {
@@ -359,7 +359,7 @@ fn unary_transfer(types: &mut [Type], instruction: WideInstruction) -> Option<Fl
             set(types, instruction.result_register(), ty);
             Some(Flow::Next)
         }
-        Class::Unary if instruction.result_flags() == 0 && !instruction.writes_current_this()
+        _ if super::meaning_compiled::is_unary(instruction) && instruction.result_flags() == 0 && !instruction.writes_current_this()
             && op.js_denotation() == crate::bytecode::JsDenotation::NumericUnary
             && super::super::operations::NumberUnary::from_js_instruction(op, instruction.unary_operator()).is_some() => {
             let source = instruction.register_b();

@@ -162,8 +162,10 @@ fn admit(shape: &CallShape, facts: &DirectFacts, callee: &Callee, context: &Cont
     if let Some((_, why)) = refusals.into_iter().find(|(refused, _)| *refused) {
         return Err(why);
     }
-    match callee.code.iter().map(|instruction| instruction.op().class()).find(|class| !policy.classes.contains(class)) {
-        Some(class) => Err(Refused::Opcode(class)),
+    // The opcode a callee body may hold: the numeric rows of the stencil library, its jumps (the
+    // site's own rows), and the `Return` that becomes a move and a jump to the continuation.
+    match callee.code.iter().find(|instruction| !crate::vm::compiled::meaning_compiled::stitchable(**instruction)) {
+        Some(instruction) => Err(Refused::Opcode(instruction.op().class())),
         None => Ok(()),
     }
 }

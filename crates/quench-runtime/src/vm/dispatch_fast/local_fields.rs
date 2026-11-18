@@ -25,7 +25,7 @@ pub(super) fn local_field_handler<H: Host>(cx: *mut LaneContext<H>, i: &LaneInst
 
 script_handler! {
     /// `GetField` of a local slot whose site's `KIND` entry answers it
-    /// (`local_field_handler`); any other read goes through `lane_get_field_miss`, which may
+    /// (`local_field_handler`); any other read goes through `row_get_field_miss`, which may
     /// move the record to a fitting handler and makes the general read.
     fn lane_get_field_local<KIND: u8>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
@@ -35,7 +35,7 @@ script_handler! {
             .and_then(|slot| lane_plain_local_operand(cx, slot))
             .and_then(|object| returning_field_hit::<H, KIND>(unsafe { vm(cx) }, code, object, i.c));
         let Some(value) = value else {
-            sibling!(lane_get_field_miss::<H>, r, ip, Carried::script(cx))
+            sibling!(row_get_field_miss::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
