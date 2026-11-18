@@ -3966,6 +3966,65 @@ impl EnvironmentSlots {
     /// owner. The copy's default owner is the one most slots share, so a copy of a copy
     /// stays sparse, and a sparse source is copied through the slots it lists and the
     /// fresh and reset ones alone. `fresh` and `reset` are sorted.
+    /// `iteration_copy` of this dense storage as sparse storage around `environment`: `None`
+    /// when the listed slots would not save words (the caller then copies densely), and
+    /// `Some(None)` when a fresh slot's owner has no value.
+    fn sparse_copy_of_dense(
+        &self,
+        environment: Value,
+        fresh: &[u16],
+        reset: crate::bytecode::Resets<'_>,
+        owned_value: &impl Fn(Value, usize) -> Option<Value>,
+    ) -> Option<Option<Self>> {
+        let len = self.0.len();
+        let default = Value::shared_environment_slot(environment);
+        let fits = |listed: usize| SPARSE_ENTRIES_START + listed * SPARSE_ENTRY_WORDS < len;
+        let mut resets = reset.iter().peekable();
+        let mut fresh = fresh.iter().copied().peekable();
+        let mut listed: smallvec::SmallVec<[(u32, EnvironmentSlot); 8]> = smallvec::SmallVec::new();
+        for (index, word) in self.0.iter().enumerate() {
+            let slot = u16::try_from(index).ok()?;
+            let is_reset = resets.next_if_eq(&slot).is_some();
+            let is_fresh = fresh.next_if_eq(&slot).is_some();
+            let copied = if is_reset {
+                EnvironmentSlot::owned(Value::UNDEFINED)
+            } else if is_fresh {
+                EnvironmentSlot::owned(match word.state() {
+                    EnvironmentSlotState::Owned(value) => value,
+                    EnvironmentSlotState::Shared(owner) => match owned_value(owner, index) {
+                        Some(value) => value,
+                        None => return Some(None),
+                    },
+                })
+            } else if word.0.is_shared_environment_slot() && word.0 != default {
+                *word
+            } else {
+                continue;
+            };
+            listed.push((u32::from(slot), copied));
+            if !fits(listed.len()) {
+                return None;
+            }
+        }
+        let header = Value::environment_index(u32::try_from(len).ok()?);
+        let mut storage = super::thin_slice::ThinBoxSlice::try_from_fn(
+            SPARSE_ENTRIES_START + listed.len() * SPARSE_ENTRY_WORDS,
+            |word| {
+                Some(match word {
+                    0 => EnvironmentSlot(header),
+                    1 => EnvironmentSlot(default),
+                    _ => {
+                        let entry = word - SPARSE_ENTRIES_START;
+                        let (index, slot) = listed[entry / SPARSE_ENTRY_WORDS];
+                        if entry % SPARSE_ENTRY_WORDS == 0 { EnvironmentSlot(Value::environment_index(index)) } else { slot }
+                    }
+                })
+            },
+        )?;
+        storage.mark();
+        Some(Some(Self(storage)))
+    }
+
     pub(crate) fn iteration_copy(
         &self,
         environment: Value,
@@ -3990,6 +4049,18 @@ impl EnvironmentSlots {
             })
         };
         let Some((_, owner)) = self.sparse() else {
+            // A wide dense source (a function's environment, copied for each iteration of a
+            // loop whose closures escape) is copied sparsely around `environment` in one pass:
+            // its own slots become shared with it, the copy's default owner, so only the
+            // fresh, reset and otherwise-shared slots are listed. The copy then costs a scan of
+            // the words and one allocation of its listed slots, not a dense copy, a select per
+            // word, an owner census and a second allocation (a 66-binding function's loop:
+            // the copy was most of 7,000 instructions per iteration).
+            if len >= SPARSE_CLONE_MIN_SLOTS
+                && let Some(copy) = self.sparse_copy_of_dense(environment, fresh, reset, &owned_value)
+            {
+                return copy;
+            }
             // Every slot shares with its current owner, then the fresh and reset ones own: one
             // copy of the words, then a select per word (a shared word names its owner already).
             let shared = EnvironmentSlot::shared(environment);
@@ -4027,24 +4098,33 @@ impl EnvironmentSlots {
         );
         indexes.truncate(indexes.partition_point(|&index| index < len));
         let shared = Value::shared_environment_slot(owner);
-        let mut listed = Vec::with_capacity(indexes.len());
+        let mut listed: smallvec::SmallVec<[(u32, EnvironmentSlot); 16]> = smallvec::SmallVec::new();
         for index in indexes {
             let slot = copy_slot(index)?;
             if slot.0 != shared {
-                listed.push((index, slot));
+                listed.push((u32::try_from(index).ok()?, slot));
             }
         }
         if SPARSE_ENTRIES_START + listed.len() * SPARSE_ENTRY_WORDS >= len {
             return super::thin_slice::ThinBoxSlice::try_from_fn(len, copy_slot).map(Self);
         }
-        let mut words = Vec::with_capacity(SPARSE_ENTRIES_START + listed.len() * SPARSE_ENTRY_WORDS);
-        words.push(EnvironmentSlot(Value::environment_index(u32::try_from(len).ok()?)));
-        words.push(EnvironmentSlot(shared));
-        for (index, slot) in listed {
-            words.push(EnvironmentSlot(Value::environment_index(u32::try_from(index).ok()?)));
-            words.push(slot);
-        }
-        let mut storage = super::thin_slice::ThinBoxSlice::from_exact_iter(words.into_iter());
+        // Written straight into the copy's one allocation: the length, the default owner, then
+        // each listed index and slot.
+        let header = Value::environment_index(u32::try_from(len).ok()?);
+        let mut storage = super::thin_slice::ThinBoxSlice::try_from_fn(
+            SPARSE_ENTRIES_START + listed.len() * SPARSE_ENTRY_WORDS,
+            |word| {
+                Some(match word {
+                    0 => EnvironmentSlot(header),
+                    1 => EnvironmentSlot(shared),
+                    _ => {
+                        let entry = word - SPARSE_ENTRIES_START;
+                        let (index, slot) = listed[entry / SPARSE_ENTRY_WORDS];
+                        if entry % SPARSE_ENTRY_WORDS == 0 { EnvironmentSlot(Value::environment_index(index)) } else { slot }
+                    }
+                })
+            },
+        )?;
         storage.mark();
         Some(Self(storage))
     }
@@ -4647,9 +4727,10 @@ impl Cell {
 fn merge_ascending(
     left: impl Iterator<Item = usize>,
     right: impl Iterator<Item = usize>,
-) -> Vec<usize> {
+) -> smallvec::SmallVec<[usize; 16]> {
+    // Inline for the few slots a per-iteration copy lists: no allocation per copy.
     let (mut left, mut right) = (left.peekable(), right.peekable());
-    let mut merged = Vec::with_capacity(left.size_hint().0 + right.size_hint().0);
+    let mut merged = smallvec::SmallVec::new();
     loop {
         let next = match (left.peek().copied(), right.peek().copied()) {
             (Some(l), Some(r)) if l <= r => {

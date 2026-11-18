@@ -213,19 +213,18 @@ impl FunctionCompiler<'_, '_> {
         let key = self.reg();
         let end_edge = self.emit(Op::ForInNext, key, state, 0, 0);
         self.push_control(ControlKind::Loop, label);
-        if clone_environment
+        let cloned = (clone_environment
             && matches!(left, ForStatementLeft::VariableDeclaration(declaration)
-                if declaration.kind != VariableDeclarationKind::Var)
-        {
-            self.clone_lexical_environment();
-        }
+                if declaration.kind != VariableDeclarationKind::Var))
+            .then(|| self.clone_lexical_environment())
+            .flatten();
         self.bind_iteration_left(left, key);
         // `o[k]` in the body of `for (k in o)` reads through the loop's state (`Op::GetEnumerated`).
         let enumeration = listed.zip(iteration_key_name(left)).map(|(object, key)| super::Enumeration {
             object: object.to_owned(), key: key.to_owned(), state: state_atom });
         let enumerated = enumeration.is_some();
         self.enumerations.extend(enumeration);
-        self.statement(body);
+        self.iteration_body(body, cloned);
         if enumerated {
             self.enumerations.pop();
         }
@@ -351,19 +350,18 @@ impl FunctionCompiler<'_, '_> {
             self.push_disposal_context();
             self.hidden_local("\0quench:for-of-using-error")
         });
-        if clone_environment
+        let cloned = (clone_environment
             && matches!(
                 left,
                 ForStatementLeft::VariableDeclaration(declaration)
                     if declaration.kind != VariableDeclarationKind::Var
-            )
-        {
-            self.clone_lexical_environment();
-        }
+            ))
+            .then(|| self.clone_lexical_environment())
+            .flatten();
         // The iterator cleanup record reads `iterator` and `done` until the body ends.
         self.with_registers_held(|compiler| {
             compiler.bind_iteration_left(left, value);
-            compiler.statement(body);
+            compiler.iteration_body(body, cloned);
         });
         if let Some(error) = disposal_error {
             let end = self.code.len() as u32;

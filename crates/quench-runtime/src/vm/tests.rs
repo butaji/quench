@@ -677,6 +677,39 @@ fn whole_read_per_iteration_copies_keep_their_owners_slots() {
 }
 
 #[test]
+fn per_iteration_copies_of_a_wide_environment_keep_loop_and_shared_bindings_apart() {
+    // A function past SPARSE_CLONE_MIN_SLOTS bindings copies its environment sparsely for each
+    // iteration: loop bindings per iteration, every other binding shared (Node's output).
+    let source = "function wide(){ var v0=0,v1=1,v2=2,v3=3,v4=4,v5=5,v6=6,v7=7,v8=8,v9=9,v10=10,v11=11,v12=12,v13=13,v14=14,v15=15,v16=16,v17=17,v18=18,v19=19,v20=20,v21=21,v22=22,v23=23,v24=24,v25=25,v26=26,v27=27,v28=28,v29=29,v30=30,v31=31,v32=32,v33=33,v34=34,v35=35,v36=36,v37=37,v38=38,v39=39,v40=40,v41=41,v42=42,v43=43,v44=44,v45=45,v46=46,v47=47,v48=48,v49=49,v50=50,v51=51,v52=52,v53=53,v54=54,v55=55,v56=56,v57=57,v58=58,v59=59,v60=60,v61=61,v62=62,v63=63,v64=64,v65=65,v66=66,v67=67,v68=68,v69=69; const fs=[];\n\
+         for (let i=0;i<3;i++){ let j=i*10; for (let k=0;k<2;k++){ const m=k+j; fs.push(()=>[i,j,k,m,v0,v69].join('.')); if(k==1) v0++; } fs.push(()=>i+':'+j); j++; }\n\
+         for (const x of ['a','b']) { let y=x+x; fs.push(()=>x+y+v5); } v69=-1; return fs.map(f=>f()).join(' '); }\n\
+         var result = wide();";
+    assert_eq!(
+        global_text(source, "result"),
+        "0.1.0.0.3.-1 0.1.1.1.3.-1 0:1 1.11.0.10.3.-1 1.11.1.11.3.-1 1:11 2.21.0.20.3.-1 2.21.1.21.3.-1 2:21 aaa5 bbb5"
+    );
+}
+
+#[test]
+fn loop_body_bindings_live_in_the_iteration_copy() {
+    // A loop body block's bindings join the loop's per-iteration copy (no copy of their own):
+    // closures still see one binding per iteration, even when the head binding is not captured,
+    // through inner loops, `continue outer`, and before initialization (Node's output).
+    let source = "function f(){ const fs=[];\n\
+         for (let i=0;i<2;i++){ let w; fs.push(()=>w); w=i+100; }\n\
+         for (let i=0;i<2;i++){ let w=i; let j=0; while(j<2){ let u=j*10+i; fs.push(()=>u+':'+w); j++; } }\n\
+         outer: for (let i=0;i<2;i++){ let a=i; for (let j=0;j<3;j++){ let b=j; fs.push(()=>a+'.'+b); if(j==1) continue outer; } }\n\
+         for (let i=0;i<3;i++){ fs.push(()=>{ try { return w } catch(e) { return 'tdz' } }); let w=i; if(i==1) break; }\n\
+         for (const k of ['a','b']){ let w; fs.push(()=>k+w); w=k+k; }\n\
+         return fs.map(f=>f()).join(' '); }\n\
+         var result = f();";
+    assert_eq!(
+        global_text(source, "result"),
+        "100 101 0:0 10:0 1:1 11:1 0.0 0.1 1.0 1.1 0 1 aaa bbb"
+    );
+}
+
+#[test]
 fn closures_that_die_with_their_iteration_share_the_loop_environment() {
     // A call-only closure declared in a loop's body that makes no closure needs no copy of the
     // environment per iteration (`IterationClosureFinder`); every other closure keeps its own.
