@@ -26,8 +26,8 @@
 use tier_policy::Tiers;
 use super::dispatch_fast::Activation;
 use super::*;
-use crate::bytecode::{Class, Traits,
-    ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
+use crate::bytecode::{Traits,
+    ControlFlowLayout, FieldLookup, Function, Operand, OperandKind, ResidualProgram,
     WideInstruction,
 };
 use crate::staged::wasm_call::Call as WasmCall;
@@ -1206,7 +1206,7 @@ struct NullishComparison {
 /// Resolve the constant operand and equality denotation before execution.
 fn nullish_comparison(constants: &[crate::bytecode::Constant], instruction: WideInstruction,
     register_type: impl Fn(Register) -> typed_ir::Type) -> Option<NullishComparison> {
-    if !instruction.op().class().eq(Class::JumpBinaryFalse) { return None; }
+    if !matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::CompareJump { .. })) { return None; }
     let nullish = |operand: Operand| {
         let ty = facts::operand_type(constants, operand, &register_type);
         if ty == typed_ir::Type::language(crate::ValueType::Null) { Some(Value::NULL) }
@@ -3899,18 +3899,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn instruction_field_sites(program: &ResidualProgram, instruction: &WideInstruction) -> Vec<(u16, bool)> {
-        match instruction.op().class() {
-            Class::GetField => match instruction.field_lookup() {
-                Some(FieldLookup::Atom { cache_site, .. }) => vec![(cache_site, true)],
-                Some(FieldLookup::Site(index)) => program.field_sites.get(index).map_or_else(Vec::new, |site| {
-                    let reads = [Some(site.first), site.second].into_iter().flatten().map(|(_, cache)| (cache, true));
-                    reads.chain(site.sink.map(|(_, cache)| (cache, false))).collect()
-                }),
-                None => Vec::new(),
-            },
-            _ if instruction.op().is_field_store() => vec![(instruction.cache_site_index(), false)],
-            _ => Vec::new(),
-        }
+        crate::staged::Operation::<u64, ()>::field_cache_sites(*instruction, &program.field_sites)
     }
 
     /// The proved shapes and slots of `unit`'s field sites, but those of the instructions at
@@ -4472,7 +4461,7 @@ const JS_NO_STOP_PC: usize = usize::MAX;
 
 #[cfg(feature = "profile-native-ops")]
 fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction: WideInstruction) -> &'static str {
-    if instruction.op().class().eq(Class::JumpBinaryFalse) {
+    if matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::CompareJump { .. })) {
         let Some((strict, _)) = super::operations::equality_operator(instruction.binary_operator_field()) else {
             return "branch-relation";
         };
@@ -4496,7 +4485,7 @@ fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction
             "branch-other-equality"
         };
     }
-    if instruction.op().class().eq(Class::LoadCapture) {
+    if crate::staged::Operation::<u64, ()>::is_capture_read(instruction) {
         if instruction.capture_depth() != 0 {
             return "capture-outer-depth";
         }
@@ -4520,7 +4509,7 @@ fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction
             None => "capture-slot-miss",
         };
     }
-    if !instruction.op().class().eq(Class::GetField) {
+    if !crate::staged::Operation::<u64, ()>::is_field_read(instruction) {
         return "other";
     }
     if vm.frames[frame].function == 0 {
@@ -4732,7 +4721,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             }));
         }
 
-        if !SINGLE_OPERATION && instruction.op().class().eq(Class::GetField)
+        if !SINGLE_OPERATION && crate::staged::Operation::<u64, ()>::is_field_read(instruction)
             && (instruction.result_flags() == 0
                 || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
             && !instruction.writes_current_this()
@@ -4781,7 +4770,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             }
         }
 
-        if !SINGLE_OPERATION && instruction.op().js_denotation() == JsDenotation::FieldStore
+        if !SINGLE_OPERATION && crate::staged::Operation::<u64, ()>::is_set_field(instruction)
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
             && next_pc < body.code.len()
@@ -4825,7 +4814,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         let mut next = next_pc;
         loop {
             let layout = current_instruction.op().control_flow_layout();
-            let is_call = current_instruction.op().is_ordinary_call();
+            let is_call = crate::staged::Operation::<u64, ()>::is_ordinary_call(current_instruction);
             let diagnostics_enabled = is_call && vm.programs.js_jit_diagnostics_enabled();
             let direct_call_target = if diagnostics_enabled && is_call {
                 vm.frames[dispatch.frame]
@@ -4851,7 +4840,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                     current_instruction.op(),
                 );
             let call_sample_started = sample_call.then(std::time::Instant::now);
-            let capture = if current_instruction.op().class().eq(Class::LoadCapture) {
+            let capture = if crate::staged::Operation::<u64, ()>::is_capture_read(current_instruction) {
                 vm.cached_direct_capture(
                     dispatch.frame,
                     current_instruction.capture_depth(),
@@ -4897,7 +4886,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 )
             };
             // A construction the operation pushed completes as a pushed call does.
-            let step = if current_instruction.op().class().eq(Class::Construct) && dispatch.allow_inline_calls {
+            let step = if crate::staged::Operation::<u64, ()>::is_construction(current_instruction) && dispatch.allow_inline_calls {
                 vm.complete_pushed_call(program, dispatch.frame, current_instruction, step)
             } else { step };
             if is_call && diagnostics_enabled {
@@ -7567,7 +7556,7 @@ impl<H: Host> Vm<H> {
             let body = program.function_get(function as usize)?;
             let last_pc = body.code.len().checked_sub(1)?;
             let terminal = body.code.get(last_pc)?.as_wide();
-            if terminal.op().class().eq(Class::Return) {
+            if matches!(crate::staged::Operation::<u64, ()>::of(terminal), Some(crate::staged::Operation::Return { .. })) {
                 return Some((last_pc, terminal.register_a(), value));
             }
         }
@@ -7777,7 +7766,7 @@ impl<H: Host> Vm<H> {
         let value = compiled.call(arguments, &self.execution_interrupt, poll_page)?;
         let last_pc = function.code.len().checked_sub(1)?;
         let terminal = function.code.get(last_pc)?.as_wide();
-        (terminal.op().class().eq(Class::Return)).then_some((last_pc, terminal.register_a(), value))
+        (matches!(crate::staged::Operation::<u64, ()>::of(terminal), Some(crate::staged::Operation::Return { .. }))).then_some((last_pc, terminal.register_a(), value))
     }
 
     /// Compiles and installs `function`'s numeric body (`js_compiled::compile`); `None` where
@@ -7902,7 +7891,7 @@ impl<H: Host> Vm<H> {
         (compiled.params() == params).then_some(())?;
         let return_pc = body.code.len().checked_sub(1)?;
         let terminal = body.code.get(return_pc)?.as_wide();
-        (terminal.op().class().eq(Class::Return)).then_some(())?;
+        (matches!(crate::staged::Operation::<u64, ()>::of(terminal), Some(crate::staged::Operation::Return { .. }))).then_some(())?;
         Some(DirectTierEntry {
             compiled: Rc::downgrade(compiled),
             return_pc,
@@ -8984,7 +8973,7 @@ const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
 pub(super) fn lane_body_may_amortize(tiers: &Tiers, body: &crate::bytecode::Function) -> bool {
     body.loops() || body.code.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
-        || body.code.iter().any(|packed| super::dispatch_fast::decoded_instruction(body, *packed).op().is_call())
+        || body.code.iter().any(|packed| crate::staged::Operation::<u64, ()>::is_plain_call(super::dispatch_fast::decoded_instruction(body, *packed)))
 }
 
 /// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
@@ -10118,7 +10107,7 @@ mod tests {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
             let writer = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "write")).unwrap();
-            let store = program.function(writer).instructions().find(|i| i.op().is_set_field()).unwrap();
+            let store = program.function(writer).instructions().find(|i| crate::staged::Operation::<u64, ()>::is_set_field(*i)).unwrap();
             let method = vm.compile_lane_method(&program, reader as u32,
                 &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
             assert!(!method.dependencies.slots.is_empty());
@@ -11453,7 +11442,7 @@ mod tests {
     fn static_semantic_entry_admits_wide_opcodes_without_decoding_source_operands() {
         let mut program = crate::Engine::specialize("throw 7;", "wide-semantic-entry.js").unwrap();
         let body = &mut program.functions[0];
-        let pc = body.instructions().position(|instruction| instruction.op().is_throw()).unwrap();
+        let pc = body.instructions().position(|instruction| crate::staged::Operation::<u64, ()>::is_throw(instruction)).unwrap();
         let instruction = super::super::dispatch_fast::decoded_instruction(body, body.code[pc]);
         let wide_index = body.wide.len();
         body.wide.push(instruction);
