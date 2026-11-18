@@ -90,18 +90,8 @@ impl<H: Host> Vm<H> {
         let completion = Completion::Await(value);
         match job.kind {
             SuspendKind::AsyncFunction => self.suspend_async_function_job(job, (pc, destination, depth), completion),
-            SuspendKind::AsyncGenerator => {
-                let continuation = self.park_generator_job(job, pc, destination, completion, depth);
-                if let Some(record) = self.generator_record_mut(job.object) {
-                    record.await_with(continuation);
-                }
-            }
-            SuspendKind::Generator => {
-                let continuation = self.park_generator_job(job, pc, destination, Completion::Yield(value), depth);
-                if let Some(record) = self.generator_record_mut(job.object) {
-                    record.suspend(continuation);
-                }
-            }
+            SuspendKind::AsyncGenerator => self.park_generator_job(job, (pc, destination, depth), completion, true),
+            SuspendKind::Generator => self.park_generator_job(job, (pc, destination, depth), Completion::Yield(value), false),
         }
     }
 
@@ -109,10 +99,7 @@ impl<H: Host> Vm<H> {
     /// resumes at `pc`, the value it is sent next going to `destination`: the frame parks in its
     /// record, which awaits the yielded value (`Vm::async_generator_yield`; `JobEnd::Yielded`).
     pub(in crate::vm) fn suspend_async_generator_yield(&mut self, job: JobRoot, pc: usize, destination: crate::bytecode::Register, value: Value, depth: usize) {
-        let continuation = self.park_generator_job(job, pc, destination, Completion::Yield(value), depth);
-        if let Some(record) = self.generator_record_mut(job.object) {
-            record.await_with(continuation);
-        }
+        self.park_generator_job(job, (pc, destination, depth), Completion::Yield(value), true);
     }
 
     /// Whether the lane run of `job` ended at an async generator's `yield`
@@ -142,22 +129,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// The continuation of a windowed generator `job`'s frame, parked at `pc` with its result
-    /// going to `destination`.
-    fn park_generator_job(
-        &mut self,
-        job: JobRoot,
-        pc: usize,
-        destination: crate::bytecode::Register,
-        completion: Completion,
-        depth: usize,
-    ) -> Continuation {
-        let mut frame = self
-            .generator_record_mut(job.object)
-            .and_then(GeneratorRecord::take_windowed)
-            .expect("a windowed generator keeps its frame in its record");
-        self.park_frame(&mut frame, pc, depth);
-        Continuation { frame, completion, resume_register: Some(destination), promise: Value::UNDEFINED }
+    /// Parks a windowed generator `job`'s frame in place in its record, stopped at `stop`'s pc
+    /// with its result going to `stop`'s destination: suspended, or busy (`busy`) awaiting.
+    fn park_generator_job(&mut self, job: JobRoot, stop: (usize, crate::bytecode::Register, usize), completion: Completion, busy: bool) {
+        let record = std::ptr::from_mut(self.generator_record_mut(job.object).expect("a windowed generator keeps its frame in its record"));
+        self.park_windowed_record(record, stop, completion, busy);
     }
 
     /// Ends the lane run of `job`'s activation at its return: the owner drops the frame, the
