@@ -44,6 +44,8 @@ fn dense_captures(region: &LoopRegion, entry: &LoopEntry) -> Vec<crate::Value> {
 pub(super) unsafe fn bind_captures<H: Host>(
     native: &mut JsNativeActivation, region: &LoopRegion, entry: &LoopEntry, lane_context: usize,
 ) -> Vec<crate::Value> {
+    // A region that reads and stores no capture binds no view.
+    if region.captures.is_empty() && region.stored_captures.is_empty() { return Vec::new(); }
     // A region that calls reads its captures live too where the lane has them: a callee may
     // store one, which a copy would not see. Where it has none, the copy as before.
     let calls = region.instructions().iter().any(|instruction| instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call);
