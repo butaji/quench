@@ -374,3 +374,16 @@ fn a_word_no_register_names_stores_through_the_sites_plan_with_the_fact_it_is_gi
     let (_, log) = store_step(&mut heap, StorePlan::Host, vec![0, object.to_bits()], operation);
     assert_eq!(log, ["field_store_host"]);
 }
+
+#[test]
+fn a_layout_plan_stores_in_place_under_its_layout_id_and_leaves_any_other_receiver_to_its_join() {
+    let mut heap = heap_of(2);
+    let (object, shape) = object_of(&mut heap, &[Value::integer(7)]);
+    let (other, _) = object_of(&mut heap, &[Value::integer(1), Value::integer(2)]);
+    let id = heap.record_object_value(object).expect("record").hint_shape();
+    let plan = StorePlan::Layout { id, slot: 0, join: StoreJoin::Host };
+    assert_eq!(store(&mut heap, plan, object, Value::integer(9)), (Some(Value::integer(9)), Vec::new()));
+    assert_eq!(read(&heap, own(shape, 0, 1), object), Some(Value::integer(9)));
+    assert_eq!(store(&mut heap, plan, other, Value::integer(3)).1, ["field_store_host"], "another layout");
+    assert_eq!(read(&heap, own(shape, 0, 1), object), Some(Value::integer(9)));
+}

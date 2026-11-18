@@ -132,6 +132,11 @@ pub(crate) enum StorePlan<'a> {
     /// The first of `arms` whose exact shape the receiver has stores in place where the
     /// value, the barrier and the storage admit it; every other store runs through `join`.
     Own { arms: &'a [StoreArm], join: StoreJoin },
+    /// A receiver whose layout id is `id` (a site's layout hint, `Object::hint_shape`) stores
+    /// at `slot` in place: one compare of the record's own word proves its shape, form and
+    /// flags, and the form the id's entry names picks the store with no test
+    /// (`store::own_store`, hinted). Every other store runs through `join`.
+    Layout { id: u32, slot: u16, join: StoreJoin },
     /// The slot a loop's entry projected for this store, which the frame addresses
     /// (`PropertyFrame::entry_slot_store`).
     Entry,

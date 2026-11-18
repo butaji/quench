@@ -69,6 +69,23 @@ impl ValueArena {
         (widened, ty)
     }
 
+    /// The type a store of `value` encodes as at `slot` of the live exact `shape`
+    /// (`note_exact_slot_word`), where the slot's owner already holds `value`'s class; `None`
+    /// where the store would widen it, for the joining store to take. One owner lookup and one
+    /// class test (`SlotType::admits`), no join.
+    ///
+    /// # Safety
+    /// `shape` is a shape of this arena that holds `slot`.
+    #[inline(always)] pub(crate) unsafe fn held_slot_word(&self, shape: u32, slot: usize, value: Value) -> Option<SlotType> {
+        if !self.tracking { return Some(SlotType::Tagged); }
+        // SAFETY: the caller's contract; a shape's chain holds an owner per slot.
+        let owner = unsafe { *self.chain_owners.get_unchecked(*self.shape_chains.get_unchecked(shape as usize) as usize + slot) };
+        // SAFETY: owners name `owner_types` entries (`slot_owner`).
+        let held = unsafe { *self.owner_types.get_unchecked(owner as usize) };
+        if !held.admits(value) { return None; }
+        Some(if self.float { held } else { SlotType::Tagged })
+    }
+
     /// Joins `value`'s class into the representation `owner` names (`slot_owner`, valid while
     /// the shapes are); whether it widened.
     #[inline(always)] pub(crate) fn join_slot_owner(&mut self, owner: u32, value: Value) -> bool {

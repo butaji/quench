@@ -4303,6 +4303,54 @@ impl Heap {
         stored
     }
 
+    /// A tracked arena's store through a lane record's hint, the layout id `hint`
+    /// (`Object::hint_shape`) at `slot`: where the record's layout is the hint, its form the
+    /// arena's (the payload is the run's start), the barrier logs nothing and the slot's owner
+    /// already holds `value`'s class (`ValueArena::held_slot_word`), one owner lookup and one
+    /// class test, no join and no settling. Otherwise `record_property_set_flat::<false>` as
+    /// before; false leaves the logged or widening store to the caller.
+    ///
+    /// # Safety
+    /// `record_id` names a live object record; the hint's slot is one its shape holds.
+    #[inline(always)]
+    pub(crate) unsafe fn hinted_tracked_store(&mut self, record_id: u32, hint: u32, slot: u16, value: Value) -> bool {
+        // SAFETY: the caller's contract.
+        let record = unsafe { &*self.unlogged_object_record(record_id) };
+        if record.layout_id() != hint {
+            return false;
+        }
+        if crate::staged::ic::layout_form(hint) == 0
+            // SAFETY: the matched layout's shape holds `slot`, in the arena form.
+            && unsafe { self.held_arena_store(record_id, crate::staged::ic::layout_shape(hint), slot, value) } {
+            return true;
+        }
+        // SAFETY: as above.
+        unsafe { self.record_property_set_flat::<false>(record_id, usize::from(slot), value, PropertyStoreLayout::Preserve) }
+    }
+
+    /// The store of `value` at `slot` of the arena-form record `record_id` of exact `shape`
+    /// where the barrier logs nothing and the slot's owner holds `value`'s class: one owner
+    /// lookup, one class test, the encoded write. False changes nothing, for the joining store.
+    ///
+    /// # Safety
+    /// `record_id` names a live object record of exact `shape` whose values are a plain arena
+    /// run (`Object::plain_arena_start`), and `shape` holds `slot`.
+    #[inline(always)]
+    pub(crate) unsafe fn held_arena_store(&mut self, record_id: u32, shape: u32, slot: u16, value: Value) -> bool {
+        if self.object_records.store_logs(record_id, value) {
+            return false;
+        }
+        // SAFETY: the caller's contract.
+        let Some(ty) = (unsafe { self.properties.held_slot_word(shape, usize::from(slot), value) }) else {
+            return false;
+        };
+        // SAFETY: as above; the barrier admitted the write.
+        let start = unsafe { (*self.unlogged_object_record(record_id)).proved_arena_start() };
+        // SAFETY: the run holds the shape's slots.
+        unsafe { self.properties.set_flat_at(start, usize::from(slot), value, ty) };
+        true
+    }
+
     /// Whether the arena keeps slot representations, which observe every store (`ValueArena::tracks`).
     pub(crate) fn tracks_slot_representations(&self) -> bool {
         self.properties.tracks()

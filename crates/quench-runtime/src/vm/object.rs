@@ -1924,6 +1924,12 @@ impl<H: Host> Vm<H> {
         if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
             return false;
         }
+        // A plain arena run whose slot already holds the value's class: no join, no settling.
+        if receiver.plain_arena_start().is_some()
+            // SAFETY: the exact shape holds the slot; the record's values are a plain arena run.
+            && unsafe { self.heap.held_arena_store(record_id, cache.receiver, cache.slot, value) } {
+            return true;
+        }
         // SAFETY: this exact own-data shape proves the slot outside dictionary storage.
         unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, usize::from(cache.slot), value, layout) }
     }
@@ -1947,8 +1953,7 @@ impl<H: Host> Vm<H> {
         // SAFETY: a direct object Value names a live record; the hint's slot is one its shape covers.
         let stored = unsafe {
             if TRACKED {
-                hint.receiver == self.heap.object_record_by_id(record_id).hint_shape()
-                    && self.heap.record_property_set_flat::<false>(record_id, usize::from(hint.slot), value, crate::heap::PropertyStoreLayout::Preserve)
+                self.heap.hinted_tracked_store(record_id, hint.receiver, hint.slot, value)
             } else {
                 crate::staged::store::concrete_own_store(&mut self.heap, record_id, hint.receiver, true, hint.slot, value)
             }
