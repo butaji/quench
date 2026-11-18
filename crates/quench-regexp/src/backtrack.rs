@@ -926,6 +926,19 @@ struct Starts {
     only_at_start: bool,
 }
 
+/// The haystack length below which a byte scan beats `memchr`'s vector setup.
+const SHORT_SCAN_BYTES: usize = 16;
+
+/// The offset of the first `byte` in `haystack`: a plain loop over a short haystack, whose
+/// few compares cost less than `memchr`'s dispatch and vector setup, else `memchr`.
+#[inline(always)]
+fn find_byte(byte: u8, haystack: &[u8]) -> Option<usize> {
+    if haystack.len() < SHORT_SCAN_BYTES {
+        return haystack.iter().position(|&unit| unit == byte);
+    }
+    memchr::memchr(byte, haystack)
+}
+
 /// The most start units a scan finds with `memchr`, `memchr2` or `memchr3`.
 const START_SCAN_BYTES: usize = 3;
 /// The most runs of consecutive ASCII start units a scan tests a block of units against at
@@ -1038,7 +1051,7 @@ impl StartBytes {
     fn find(self, haystack: &[u8]) -> Option<usize> {
         let [first, second, third] = self.bytes;
         match self.count {
-            1 => memchr::memchr(first, haystack),
+            1 => find_byte(first, haystack),
             2 => memchr::memchr2(first, second, haystack),
             _ => memchr::memchr3(first, second, third, haystack),
         }
@@ -1619,7 +1632,7 @@ impl Program {
     fn inner_literal_start(&self, bytes: &[u8], (run, literal): (UnitTest, u8), from: usize, last: usize) -> Option<usize> {
         let mut at = from;
         loop {
-            let found = at + memchr::memchr(literal, bytes.get(at..)?)?;
+            let found = at + find_byte(literal, bytes.get(at..)?)?;
             let start = self.run_start_back(run, bytes, found, from);
             if start < found {
                 return (start <= last).then_some(start);
