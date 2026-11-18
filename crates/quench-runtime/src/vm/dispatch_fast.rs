@@ -5186,18 +5186,44 @@ script_handler! {
     }
 }
 
+/// `lane_value_jump`'s `OP` of a comparison record (`lane_relation_value`), whose operator
+/// the record carries.
+const RELATION_VALUE: u32 = u32::MAX;
+
 script_handler! {
-    /// `lane_relation_value` whose next record branches on the boolean it writes
-    /// (`lane_jump_false`, or `lane_jump_true` where `WHEN`; `specialize_relation_jumps`), a
-    /// comparison kept as a value and also tested, as `return (s & HELD) != 0 || ...`: the
-    /// comparison, its value and the branch as one record. Any other pair takes the value's
-    /// own path, which continues at the jump record.
-    fn lane_relation_value_jump<CONSTANT: bool, BACKWARD: bool, WHEN: bool>(cx, r, ip, i, view) {
-        let (operator, left, right) = lane_relation_operands::<CONSTANT>(r, i);
-        let Some(holds) = super::operations::integer_relation(operator, left, right) else {
-            sibling!(lane_relation_value_other::<H, CONSTANT>, r, ip, Carried::script_in(cx, view))
+    /// A value record whose next record branches on the value it writes (`lane_jump_false`, or
+    /// `lane_jump_true` where `WHEN`; `specialize_value_jumps`): the value, its register write
+    /// and the branch as one record. `OP` is `RELATION_VALUE` for an integer comparison kept as
+    /// a value and also tested (`lane_relation_value`, as `return (s & HELD) != 0 || ...`), else
+    /// the integer bitwise or remainder operator of a `lane_operator_integer_constant` record
+    /// (`if (i & 3)`, whose canonical bytecode keeps the operator and the test apart). Any other
+    /// operand takes the value's own path, which continues at the jump record. Without `WRITE`
+    /// the value's register is dead past the jump (`specialize_value_jumps`), so only the branch
+    /// reads the value.
+    fn lane_value_jump<CONSTANT: bool, BACKWARD: bool, WHEN: bool, OP: u32, WRITE: bool>(cx, r, ip, i, view) {
+        let holds = if OP == RELATION_VALUE {
+            let (operator, left, right) = lane_relation_operands::<CONSTANT>(r, i);
+            let Some(holds) = super::operations::integer_relation(operator, left, right) else {
+                sibling!(lane_relation_value_other::<H, CONSTANT>, r, ip, Carried::script_in(cx, view))
+            };
+            if WRITE {
+                r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
+            }
+            holds
+        } else {
+            let Some(value) = r.int(i.b).and_then(|left| super::operations::integer_pair_operator::<OP>(left, i.imm() as i32))
+            else {
+                sibling!(lane_operator_integer_constant_first_miss::<H, OP>, r, ip, Carried::script_in(cx, view))
+            };
+            if WRITE {
+                r.set(i.a, value);
+            }
+            // A bitwise result of two integers is an integer; a remainder may be -0 (`-8 % 4`).
+            match value.as_int() {
+                Some(integer) => integer != 0,
+                None => value.as_number().is_some_and(|number| number != 0.0 && !number.is_nan()),
+            }
         };
-        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
         let jump_ip = following(ip);
         if holds == WHEN {
             resume!(cx, lane_jump::<H>(r, jump_ip, BACKWARD, Carried::script_in(cx, view), None));
@@ -22949,7 +22975,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_script_calls::<H>(&mut records, function.undefined_register);
         specialize_proved_arrays::<H>(&decoded, &mut records, &raw_results::raw_result_triples(&decoded, &function.handlers, || live().map(|masks| &**masks)));
         specialize_moved_index_reads::<H>(&mut records);
-        specialize_relation_jumps::<H>(&mut records);
+        specialize_value_jumps::<H>(&decoded, &mut records, live().map(|masks| &**masks));
         specialize_array_literals::<H>(&decoded, &mut records);
     }
     // Loop kernels take their test records last, keeping each record's final handler.
@@ -23879,30 +23905,66 @@ fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut 
     }
 }
 
-/// Gives each integer comparison kept as a value (`lane_relation_value`) whose next record
-/// branches on that value (`lane_jump_false`, `lane_jump_true`) the fused comparison and branch
-/// (`lane_relation_value_jump`). The jump record stays, for jumps that enter it and for the
-/// comparisons the fused record leaves to the value's own path.
-fn specialize_relation_jumps<H: Host>(records: &mut [LaneInstruction]) {
+/// Gives each integer comparison kept as a value (`lane_relation_value`), and each integer
+/// bitwise or remainder operator with an integer constant (`lane_operator_integer_constant`),
+/// whose next record branches on that value (`lane_jump_false`, `lane_jump_true`) the fused
+/// value and branch (`lane_value_jump`). The jump record stays, for jumps that enter it and for
+/// the operands the fused record leaves to the value's own path.
+fn specialize_value_jumps<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>) {
+    use super::operations::{BITWISE_AND, BITWISE_OR, BITWISE_XOR, REMAINDER, SHIFT_LEFT, SHIFT_RIGHT};
+    macro_rules! fused {
+        ($constant:literal, $op:expr, $write:literal) => {
+            [
+                lane_value_jump::<H, $constant, false, false, { $op }, $write> as Handler,
+                lane_value_jump::<H, $constant, true, false, { $op }, $write>,
+                lane_value_jump::<H, $constant, false, true, { $op }, $write>,
+                lane_value_jump::<H, $constant, true, true, { $op }, $write>,
+            ]
+        };
+    }
+    macro_rules! integer_constant {
+        ($($op:ident),*) => {
+            [$((lane_operator_integer_constant::<H, $op> as Handler as *const (), fused!(true, $op, true), fused!(true, $op, false)),)*]
+        };
+    }
+    // Per value handler: the fused records that write the value, and those that may not.
+    let values: [(*const (), [Handler; 4], [Handler; 4]); 8] = {
+        let [a, b, c, d, e, f] = integer_constant!(BITWISE_AND, BITWISE_OR, BITWISE_XOR, REMAINDER, SHIFT_LEFT, SHIFT_RIGHT);
+        let relation = |constant: bool| -> (*const (), [Handler; 4], [Handler; 4]) {
+            if constant {
+                (lane_relation_value::<H, true> as Handler as *const (), fused!(true, RELATION_VALUE, true), fused!(true, RELATION_VALUE, false))
+            } else {
+                (lane_relation_value::<H, false> as Handler as *const (), fused!(false, RELATION_VALUE, true), fused!(false, RELATION_VALUE, false))
+            }
+        };
+        [relation(false), relation(true), a, b, c, d, e, f]
+    };
+    let jumps: [*const (); 4] = [
+        lane_jump_false::<H, false> as Handler as *const (),
+        lane_jump_false::<H, true> as Handler as *const (),
+        lane_jump_true::<H, false> as Handler as *const (),
+        lane_jump_true::<H, true> as Handler as *const (),
+    ];
     for pc in 0..records.len().saturating_sub(1) {
         let (value, jump) = (&records[pc], &records[pc + 1]);
-        let Some(constant) = [false, true].into_iter().find(|&constant| {
-            value.handler == if constant { lane_relation_value::<H, true> as Handler } else { lane_relation_value::<H, false> as Handler } as *const ()
-        }) else {
-            continue;
-        };
         if jump.a != value.a {
             continue;
         }
-        let tests: [(*const (), Handler); 4] = [
-            (lane_jump_false::<H, false> as Handler as *const (), if constant { lane_relation_value_jump::<H, true, false, false> } else { lane_relation_value_jump::<H, false, false, false> }),
-            (lane_jump_false::<H, true> as Handler as *const (), if constant { lane_relation_value_jump::<H, true, true, false> } else { lane_relation_value_jump::<H, false, true, false> }),
-            (lane_jump_true::<H, false> as Handler as *const (), if constant { lane_relation_value_jump::<H, true, false, true> } else { lane_relation_value_jump::<H, false, false, true> }),
-            (lane_jump_true::<H, true> as Handler as *const (), if constant { lane_relation_value_jump::<H, true, true, true> } else { lane_relation_value_jump::<H, false, true, true> }),
-        ];
-        if let Some(&(_, fused)) = tests.iter().find(|(handler, _)| *handler == jump.handler) {
-            records[pc].handler = fused as *const ();
-        }
+        let Some(&(_, writes, reads)) = values.iter().find(|(handler, _, _)| *handler == value.handler) else {
+            continue;
+        };
+        let Some(index) = jumps.iter().position(|&handler| handler == jump.handler) else {
+            continue;
+        };
+        // Dead past the jump: neither successor of the jump record (the next record, the jump's
+        // target) has the value live before it.
+        let dead_before = |at: usize| {
+            live.and_then(|masks| masks.get(at))
+                .is_some_and(|before| crate::compile::liveness::register_dead(before, usize::from(value.a)))
+        };
+        let target = decoded[pc + 1].imm() as usize;
+        let dead = dead_before(pc + 2) && dead_before(target);
+        records[pc].handler = if dead { reads[index] } else { writes[index] } as *const ();
     }
 }
 

@@ -88,9 +88,9 @@ cmp_dbl 24.0 lane_jump_binary_false_numbers<false, 4, true, true>
 cmp_dbl 19.0 lane_operator_double_constant<8>
 cmp_dbl 15.0 lane_inc_dec<false>
 cmp_dbl 7.0 lane_move<0>
-cmp_int 26.0 lane_relation_value_jump<true, false, true>
 cmp_int 25.0 lane_inc_dec_loop<false, 4, true>
 cmp_int 12.0 lane_operator_integer_constant<19>
+cmp_int 10.0 lane_jump_binary_false_small<false, 4, false>
 cmp_int 9.5 lane_jump_binary_false_small<false, 6, false>
 cmp_int 7.5 lane_inc_dec<false>
 date_now 59.0 lane_get_field_own_cell
@@ -699,8 +699,7 @@ neg_op 25.0 lane_inc_dec_loop<false, 4, true>
 neg_op 14.0 lane_unary_number<1>
 neg_op 12.0 lane_operator_integer_constant<17>
 not_op 25.0 lane_inc_dec_loop<false, 4, true>
-not_op 21.0 lane_jump_true<false>
-not_op 12.0 lane_operator_integer_constant<19>
+not_op 10.0 lane_value_jump<true, false, true, 19, false>
 not_op 7.5 lane_inc_dec<false>
 num_to_str 196.0 Vm::concatenate
 num_to_str 87.8 Heap::alloc_string_record
@@ -862,7 +861,7 @@ to_uint32 22.0 lane_operator_double_constant<10>
 to_uint32 9.0 NumberBitwise::from_operator
 truthy_int 25.0 lane_inc_dec_loop<false, 4, true>
 truthy_int 11.2 lane_inc_dec<false>
-truthy_int 9.2 lane_jump_binary_false_small<false, 19, false>
+truthy_int 9.5 lane_value_jump<true, false, false, 19, false>
 truthy_obj 25.0 lane_inc_dec_loop<false, 4, true>
 truthy_obj 22.0 lane_jump_false<false>
 truthy_obj 15.0 lane_inc_dec<false>

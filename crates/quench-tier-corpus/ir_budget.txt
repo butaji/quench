@@ -22,7 +22,7 @@ call_closure 11 39 231.1
 call_direct 8 30 222.1
 call_method 11 39 279.1
 cmp_dbl 6 24 90.1
-cmp_int 7.5 29 80.1
+cmp_int 7.5 29 64.1
 date_now 34 108 260.1
 dbl_add 4 18 46.3
 dbl_div 8 30 93.1
@@ -76,7 +76,7 @@ math_round 23 75 212.7
 math_sqrt 9 33 154.1
 mixed_int_dbl 7 27 72.1
 neg_op 6 24 88.1
-not_op 5.5 23 65.6
+not_op 5.5 23 42.6
 num_to_str 569 1713 1713
 parse_int 196 594 1036.1
 shl_shr 7 27 93.1
