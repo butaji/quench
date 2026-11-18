@@ -295,7 +295,7 @@ impl<H: Host> Vm<H> {
             super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::NativeOrWrongRealmOrNonCallable);
             return;
         };
-        if record.realm != self.realm.globals {
+        if self.record_realm(record) != self.realm.globals {
             super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::NativeOrWrongRealmOrNonCallable);
             return;
         }
@@ -624,7 +624,41 @@ impl<H: Host> Vm<H> {
             Op::CallFirstChunk => self.call_first_chunk(p, f, i, *pc)?,
             Op::LoadImportMeta => {
                 let program = self.frames[f].program;
-                let import_meta = self.load_import_meta(program)?;
+                let import_meta = if let Some(value) = self.programs.import_meta(program) {
+                    value
+                } else {
+                    let value = self
+                        .heap
+                        .alloc_object(Self::empty_object(Value::NULL));
+                    if let Some(source_name) = self.programs.source_name(program).map(str::to_owned)
+                    {
+                        let url = self.host.import_meta_url(&source_name);
+                        let url = self.heap.alloc_string(url.into());
+                        let url_atom = self.intern_atom("url");
+                        self.set_property(value, url_atom, url)?;
+                        if let Some(filename) = self.host.import_meta_filename(&source_name) {
+                            let filename_value = self.heap.alloc_string(filename.as_str().into());
+                            let filename_atom = self.intern_atom("filename");
+                            self.set_property(value, filename_atom, filename_value)?;
+                            let dirname = std::path::Path::new(&filename)
+                                .parent()
+                                .and_then(|path| path.to_str());
+                            if let Some(dirname) = dirname {
+                                let dirname_value = self.heap.alloc_string(dirname.into());
+                                let dirname_atom = self.intern_atom("dirname");
+                                self.set_property(value, dirname_atom, dirname_value)?;
+                            }
+                        }
+                        if self.host.initializes_import_meta() {
+                            let mut context = crate::NativeContext::new(self);
+                            let import_meta = context.scoped_value(value);
+                            H::initialize_import_meta(&mut context, &source_name, import_meta)
+                                .map_err(|error| context.finish_error(error))?;
+                        }
+                    }
+                    self.programs.set_import_meta(program, value);
+                    value
+                };
                 self.write(f, i.result_register(), import_meta);
             }
             Op::InitializeThis => {
@@ -1087,7 +1121,7 @@ impl<H: Host> Vm<H> {
                     let realm = self
                         .heap
                         .function(callee)
-                        .map_or(self.realm.globals, |function| function.realm);
+                        .map_or(self.realm.globals, |function| self.record_realm(function));
                     let result = self.with_call_roots(
                         [callee, this].into_iter().chain(args.iter().copied()),
                         |vm| {

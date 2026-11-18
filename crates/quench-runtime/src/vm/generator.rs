@@ -171,24 +171,20 @@ impl<H: Host> Vm<H> {
             frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
         }
         if function.rest {
-            frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            frame.locals[fixed] = self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
                     args.get(fixed..).unwrap_or_default().to_vec(),
-                ),
-            });
+                ));
         }
         if let Some(slot) = function.self_binding_slot {
             frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
         }
         if let Some(slot) = function.arguments_slot {
             let mapped = function.arguments_are_mapped();
-            let arguments = self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            let arguments = self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.object_proto),
                     args.to_vec(),
-                ),
-            });
+                ));
             frame.locals[usize::from(slot)] = arguments;
             self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
             if function.arguments_alias_parameters()
@@ -372,16 +368,14 @@ impl<H: Host> Vm<H> {
                         return Ok(());
                     }
                 };
-                let environment = vm.heap.alloc(Cell::Array {
-                    object: crate::heap::ArrayObject::new(
+                let environment = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                         Self::empty_object(vm.array_proto),
                         vec![
                             generator,
                             iterator,
                             Value::number(f64::from(destination)),
                         ],
-                    ),
-                });
+                    ));
                 let start =
                     vm.native_with_env(Native::AsyncGeneratorDelegateReturnStart, environment);
                 let completion = vm.promise_then(p, awaited, start, Value::UNDEFINED)?;
@@ -419,12 +413,10 @@ impl<H: Host> Vm<H> {
                     return Ok(());
                 }
             };
-            let environment = vm.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            let environment = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(vm.array_proto),
                     vec![generator, promise],
-                ),
-            });
+                ));
             let fulfilled = vm.native_with_env(Native::AsyncGeneratorReturnFulfilled, environment);
             let rejected = vm.native_with_env(Native::AsyncGeneratorReturnRejected, environment);
             vm.promise_then_intrinsic(p, awaited, fulfilled, rejected)?;
@@ -794,8 +786,7 @@ impl<H: Host> Vm<H> {
             return Ok(promise);
         }
         let unwrapped = self.async_from_sync_result(p, adapter, result, false)?;
-        let env = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let env = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 vec![
                     generator,
@@ -804,8 +795,7 @@ impl<H: Host> Vm<H> {
                     Value::FALSE,
                     Value::TRUE,
                 ],
-            ),
-        });
+            ));
         let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
         let rejected = self.native_with_env(Native::AsyncGeneratorDelegateRejected, env);
         self.promise_then(p, unwrapped, fulfilled, rejected)
@@ -985,8 +975,7 @@ impl<H: Host> Vm<H> {
                 (result, false)
             };
             let promise = self.promise_for_value(p, result)?;
-            let env = self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            let env = self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
                     vec![
                         generator,
@@ -999,8 +988,7 @@ impl<H: Host> Vm<H> {
                             Value::FALSE
                         },
                     ],
-                ),
-            });
+                ));
             let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
             let rejected = self.native_with_env(Native::AsyncGeneratorDelegateRejected, env);
             self.promise_then(p, promise, fulfilled, rejected)

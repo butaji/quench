@@ -277,7 +277,7 @@ mod tests {
     #[test]
     fn a_strict_callee_takes_any_receiver_and_a_sloppy_one_binds_by_the_value() {
         let mut heap = crate::heap::Heap::new();
-        let object = heap.alloc(crate::heap::Cell::Object(crate::heap::Object::new(Value::NULL)));
+        let object = heap.alloc_object(crate::heap::Object::new(Value::NULL));
         let text = heap.alloc_string("x".into());
         let global = Value::integer(99).to_bits();
         let bind = |receiver: Value, sloppy: Option<u64>| run(CallOperation::BindThis { receiver: receiver.to_bits(), sloppy });
@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn the_object_family_is_the_values_own() {
         let mut heap = crate::heap::Heap::new();
-        let object = heap.alloc(crate::heap::Cell::Object(crate::heap::Object::new(Value::NULL)));
+        let object = heap.alloc_object(crate::heap::Object::new(Value::NULL));
         let text = heap.alloc_string("x".into());
         let mut stage = Concrete::new(std::ptr::null());
         for value in [object, text, Value::UNDEFINED, Value::NULL, Value::integer(1), Value::number(1.5), Value::TRUE] {

@@ -2474,7 +2474,7 @@ impl<H: Host> Vm<H> {
                     &properties.values(index, input_value, groups),
                 ),
                 None => {
-                    let result = vm.heap.alloc(Cell::Array { object: array });
+                    let result = vm.heap.alloc_array(array);
                     vm.initialize_regexp_result(result, index, input_value, groups)?;
                     result
                 }
@@ -2634,7 +2634,7 @@ impl<H: Host> Vm<H> {
         }
         let groups = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         for (name, range) in named {
             let atom = self.intern_atom(name);
             let value = range.as_ref().map_or(Value::UNDEFINED, |range| {
@@ -2657,16 +2657,14 @@ impl<H: Host> Vm<H> {
             .chain(matched.captures.iter().cloned())
             .map(|range| self.regexp_index_pair(range))
             .collect::<Vec<_>>();
-        let indices = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let indices = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 entries,
-            ),
-        });
+            ));
         let groups = if !named.is_empty() {
             let groups = self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+                .alloc_object(Self::empty_object(Value::NULL));
             for (name, range) in named {
                 let atom = self.intern_atom(name);
                 let pair = self.regexp_index_pair(range.clone());
@@ -2689,12 +2687,10 @@ impl<H: Host> Vm<H> {
             Value::number(range.start as f64),
             Value::number(range.end as f64),
         ];
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 pair,
-            ),
-        })
+            ))
     }
 
     /// `meta`'s matcher, compiled now if it has none (`RegExpMatcher`): the pattern compiled

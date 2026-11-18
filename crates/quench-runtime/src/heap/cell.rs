@@ -2093,6 +2093,9 @@ struct RareExtras {
     brand: ObjectBrand,
     external_address: Option<usize>,
     boxed_primitive: Option<Value>,
+    /// A function's creation realm when it differs from the VM's main realm (`FunctionRecord`
+    /// keeps no realm of its own); `Some(Value::NULL)` is an explicit null realm.
+    function_realm: Option<Value>,
     structured_serialization: StructuredSerialization,
     structured_transfer_forbidden: bool,
     module_bindings: Vec<(Atom, ProgramId, u16)>,
@@ -3011,6 +3014,15 @@ impl Object {
         self.extras_mut().rare_mut().boxed_primitive = Some(value);
     }
 
+    /// A function's creation realm when it is not the main realm (`FunctionRecord::realm_override`).
+    pub(crate) fn function_realm_override(&self) -> Option<Value> {
+        self.extras()?.rare()?.function_realm
+    }
+
+    pub(crate) fn set_function_realm_override(&mut self, realm: Value) {
+        self.extras_mut().rare_mut().function_realm = Some(realm);
+    }
+
     pub(crate) fn stack_data(&self) -> Option<&StackData> {
         self.extras()?.rare()?.stack_data.as_ref()
     }
@@ -3026,6 +3038,9 @@ impl Object {
         let Some(extras) = self.extras().and_then(ObjectExtras::rare) else { return };
         if let Some(value) = extras.boxed_primitive {
             visit(value);
+        }
+        if let Some(realm) = extras.function_realm {
+            visit(realm);
         }
         match extras.stack_data.as_ref() {
             Some(StackData::Captured { records, .. }) => {
@@ -3434,6 +3449,15 @@ pub(crate) struct EnvironmentRecord {
     pub(crate) slots: EnvironmentSlots,
     pub(crate) scope: EnvironmentScopeRef,
 }
+
+// Size pins. The record is 32 bytes: parent, slots and scope are one word each, and the u32
+// `function` leaves 4 bytes of padding to the 8-byte alignment. Dropping `function` from the
+// record would make it 24 bytes. A dense slot storage of `n` slots is `24 + 8n` bytes: a
+// 16-byte prefix, the 8-byte header, then the slots. A change to any of these is a deliberate
+// memory-layout change.
+const _: () = assert!(std::mem::size_of::<EnvironmentRecord>() == 32);
+const _: () = assert!(std::mem::size_of::<EnvironmentSlots>() == std::mem::size_of::<usize>());
+const _: () = assert!(std::mem::size_of::<EnvironmentScopeRef>() == std::mem::size_of::<usize>());
 
 /// An environment's provenance and dynamic-scope state: consulted for eval, `with` and
 /// name resolution, while slot reads only need `parent`, `function` and `slots`.
@@ -4241,9 +4265,11 @@ impl IteratorRecord {
     }
 }
 
-/// A function: its ordinary object, creation realm, code and closure environment. The
-/// heap keeps it in the function record family (`Heap::function`), where a dead closure
-/// costs its occupancy bit.
+/// A function: its ordinary object, code and closure environment. The heap keeps it in the
+/// function record family (`Heap::function`), where a dead closure costs its occupancy bit.
+///
+/// The creation realm is not a field: it is the VM's main realm unless the object's rare
+/// extras carry an override (`realm_override`), so a closure of the main realm costs no word.
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub(crate) struct FunctionRecord {
@@ -4251,11 +4277,10 @@ pub(crate) struct FunctionRecord {
     /// Beside the object, whose 12 bytes it fills to the words after: after them, its 12
     /// bytes and two of padding made the record 48 bytes (jsdom-d3: 114K records at its peak).
     pub(crate) kind: FunctionKind,
-    pub(crate) realm: Value,
     pub(crate) env: Value,
 }
 
-const _: () = assert!(size_of::<FunctionRecord>() == 40);
+const _: () = assert!(size_of::<FunctionRecord>() == 32);
 
 impl FunctionRecord {
     /// The program whose code this function runs, which keeps that program alive.
@@ -4264,6 +4289,19 @@ impl FunctionRecord {
             FunctionKind::User(program, _) => Some(program),
             FunctionKind::Native(_) => None,
         }
+    }
+
+    /// The creation realm this function carries when it is not the VM's main realm; `None`
+    /// means the main realm (`Vm::record_realm`).
+    pub(crate) fn realm_override(&self) -> Option<Value> {
+        self.object.function_realm_override()
+    }
+
+    /// The record with `realm` stored as its creation realm, whatever `realm` is (`Value::NULL`
+    /// included). `Vm::alloc_function_in` stores one only off the main realm.
+    pub(crate) fn with_realm(mut self, realm: Value) -> Self {
+        self.object.set_function_realm_override(realm);
+        self
     }
 }
 
@@ -4394,13 +4432,31 @@ impl std::ops::Deref for SymbolData {
     }
 }
 
+/// A legacy heap slot's cell. Kinds with a typed record family (`for_each_record_space!` in
+/// `heap.rs`) are allocated in that family. A variant such as `Promise` or `AwaitState`
+/// remains here only as the fallback for a full record space, and a variant with no family
+/// (for example `Proxy`) lives here by design.
+///
+/// The variant for ordinary objects is gone. Every ordinary object lives only in the object record
+/// space: `Heap::alloc_object` (and the `alloc_object_*` family) insert it through
+/// `Heap::insert_object_record`, and a full space panics ("object records exhausted"), as functions
+/// and iterators do. Snapshot restore reads object records directly (`Heap::read_snapshot`); the
+/// snapshot cell tag for objects is gone too, and its number is not reused.
+///
+/// Brands are not kinds. Arguments, module namespace, raw JSON, Error and boxed primitives are
+/// `ObjectBrand` values (or the `Object` payload) on an ordinary object record, so they need no
+/// cell of their own.
+///
+/// Still needed, and what blocks each:
+///
+/// - Exotic kinds that carry an `Object` next to their own payload keep a legacy cell because the
+///   payload does not fit an object record: `Proxy` (target and handler), `TypedArray`,
+///   `DataView`, `ArrayBuffer` (bytes), `Date`, `RegExp` (shared meta), `ShadowRealm`, `WeakMap`,
+///   `WeakSet`, `WeakRef`, `FinalizationRegistry` (entries), `Temporal*` (fields), `Wasm*`
+///   (handles and headers), `Error(String)`. Each needs its own record family before it can move.
 #[derive(Clone, Debug)]
 #[rustfmt::skip]
 pub(crate) enum Cell {
-    Object(Object),
-    Array {
-        object: ArrayObject,
-    },
     ArrayBuffer {
         object: Box<Object>,
         bytes: super::BufferBytes,
@@ -4592,9 +4648,7 @@ impl Cell {
 
     pub(crate) fn profile_variant_name(&self) -> &'static str {
         match self {
-            Self::Object(_) => "object",
             Self::WasmObject { .. } => "wasm_object",
-            Self::Array { .. } => "array",
             Self::ArrayBuffer { .. } => "array_buffer",
             Self::TypedArray { .. } => "typed_array",
             Self::DataView { .. } => "data_view",

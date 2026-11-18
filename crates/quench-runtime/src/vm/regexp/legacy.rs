@@ -154,8 +154,9 @@ impl<H: Host> Vm<H> {
     /// realm's constructor and the match state is available; `None` leaves any throw to the
     /// native.
     pub(in crate::vm) fn regexp_legacy_getter_in_place(&mut self, callee: Value, receiver: Value) -> Option<Value> {
-        let FunctionRecord { env, realm, .. } = self.heap.function(callee)?;
-        if *realm != self.realm.globals || !self.same_value(receiver, self.regexp_intrinsic_constructor()) {
+        let record = self.heap.function(callee)?;
+        let env = record.env;
+        if self.record_realm(record) != self.realm.globals || !self.same_value(receiver, self.regexp_intrinsic_constructor()) {
             return None;
         }
         let selector = env.as_number()? as Atom;

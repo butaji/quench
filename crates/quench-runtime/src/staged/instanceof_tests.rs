@@ -1,6 +1,6 @@
 //! `instanceof` by the words of a value's prototype chain (`object::instanceof_by_words`), over a real heap.
 use super::{Concrete, object};
-use crate::heap::{Cell, Heap, Object, ProtoLink};
+use crate::heap::{Heap, Object, ProtoLink};
 use crate::value::ValueLayout;
 use crate::Value;
 
@@ -16,10 +16,10 @@ fn words(heap: &Heap, value: Value, prototype: Value) -> Option<bool> {
 #[test]
 fn a_chain_of_object_records_is_walked_and_a_primitive_is_no_instance() {
     let mut heap = Heap::new();
-    let root = heap.alloc(Cell::Object(Object::new(Value::NULL)));
-    let middle = heap.alloc(Cell::Object(Object::new(root)));
-    let leaf = heap.alloc(Cell::Object(Object::new(middle)));
-    let other = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+    let root = heap.alloc_object(Object::new(Value::NULL));
+    let middle = heap.alloc_object(Object::new(root));
+    let leaf = heap.alloc_object(Object::new(middle));
+    let other = heap.alloc_object(Object::new(Value::NULL));
     for (value, prototype, holds) in [(leaf, middle, true), (leaf, root, true), (middle, middle, false), (other, root, false),
         (leaf, other, false), (Value::integer(1), root, false), (Value::UNDEFINED, root, false), (Value::TRUE, root, false)] {
         assert_eq!(words(&heap, value, prototype), Some(holds), "{value:?} {prototype:?}");

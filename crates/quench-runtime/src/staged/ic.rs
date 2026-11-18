@@ -490,7 +490,7 @@ pub(crate) unsafe fn concrete_site_store(heap: &crate::heap::Heap, (entries, rec
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::heap::{Cell, Heap, Object};
+    use crate::heap::{Heap, Object};
     use crate::staged::Concrete;
     use crate::Value;
 
@@ -510,10 +510,10 @@ mod tests {
         for shape in 1..=2_u32 {
             heap.register_property_shape(shape, shape as usize, None);
         }
-        let prototype = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let prototype = heap.alloc_object(Object::new(Value::NULL));
         heap.property_add(prototype, Value::number(1.5), 1);
         heap.object_record_mut(prototype).unwrap().mark_as_prototype();
-        let object = heap.alloc(Cell::Object(Object::new(prototype)));
+        let object = heap.alloc_object(Object::new(prototype));
         heap.property_add(object, Value::number(7.0), 1);
         heap.property_add(object, Value::number(8.0), 2);
         let (own, holder) = (heap.object(object).unwrap().exact_shape(), heap.object(prototype).unwrap().exact_shape());
@@ -532,9 +532,9 @@ mod tests {
     #[test]
     fn a_prototype_constant_is_selected_by_the_receivers_link() {
         let mut heap = Heap::new();
-        let prototype = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let prototype = heap.alloc_object(Object::new(Value::NULL));
         heap.object_record_mut(prototype).unwrap().mark_as_prototype();
-        let object = heap.alloc(Cell::Object(Object::new(prototype)));
+        let object = heap.alloc_object(Object::new(prototype));
         let link = heap.object(object).unwrap().proto_link().bits();
         let (one, two) = (Value::number(1.5).to_bits(), Value::number(2.5).to_bits());
         assert_eq!(concrete(&heap, &[IcOp::PrototypeConstants(&[(link ^ 1, one), (link, two)])], object), Some(Value::number(2.5)));
@@ -552,12 +552,12 @@ mod tests {
             heap.register_property_shape(shape, shape as usize, None);
         }
         for len in [1, wide] {
-            let prototype = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+            let prototype = heap.alloc_object(Object::new(Value::NULL));
             for slot in 0..len {
                 heap.property_add(prototype, Value::number(slot as f64 + 0.5), slot as u32 + 1);
             }
             heap.object_record_mut(prototype).unwrap().mark_as_prototype();
-            let object = heap.alloc(Cell::Object(Object::new(prototype)));
+            let object = heap.alloc_object(Object::new(prototype));
             let holder = heap.object(prototype).unwrap();
             for slot in 0..len {
                 // SAFETY: the prototype's exact shape holds `slot` outside dictionary storage.

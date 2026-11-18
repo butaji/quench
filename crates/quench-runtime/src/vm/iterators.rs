@@ -272,7 +272,7 @@ impl<H: Host> Vm<H> {
         self.iterator_proto = self.object();
         self.string_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc_object(Self::empty_object(self.iterator_proto));
         self.set_builtin_named(
             program,
             self.string_iterator_proto,
@@ -281,7 +281,7 @@ impl<H: Host> Vm<H> {
         )?;
         self.regexp_string_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc_object(Self::empty_object(self.iterator_proto));
         self.set_builtin_named(
             program,
             self.regexp_string_iterator_proto,
@@ -290,23 +290,23 @@ impl<H: Host> Vm<H> {
         )?;
         self.generator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc_object(Self::empty_object(self.iterator_proto));
         self.async_iterator_proto = self.object();
         self.async_generator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.async_iterator_proto)));
+            .alloc_object(Self::empty_object(self.async_iterator_proto));
         self.async_from_sync_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.async_iterator_proto)));
+            .alloc_object(Self::empty_object(self.async_iterator_proto));
         let generator_function_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.function_proto)));
+            .alloc_object(Self::empty_object(self.function_proto));
         let async_generator_function_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.function_proto)));
+            .alloc_object(Self::empty_object(self.function_proto));
         let async_function_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.function_proto)));
+            .alloc_object(Self::empty_object(self.function_proto));
         self.set_named(
             program,
             generator_function_proto,
@@ -450,10 +450,10 @@ impl<H: Host> Vm<H> {
         )?;
         self.iterator_helper_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc_object(Self::empty_object(self.iterator_proto));
         self.wrap_for_valid_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc_object(Self::empty_object(self.iterator_proto));
         self.install_iterator_helper_prototype(self.iterator_helper_proto, None)?;
         self.install_wrap_for_valid_iterator_prototype(self.wrap_for_valid_iterator_proto, None)?;
         self.realm.intrinsics.iterator_prototypes.insert(
@@ -496,7 +496,7 @@ impl<H: Host> Vm<H> {
         )?;
         self.array_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc_object(Self::empty_object(self.iterator_proto));
         self.set_builtin_named(
             p,
             self.array_iterator_proto,
@@ -2398,7 +2398,7 @@ impl<H: Host> Vm<H> {
             let result = if let Some(keys) = keys {
                 let object = self
                     .heap
-                    .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+                    .alloc_object(Self::empty_object(Value::NULL));
                 for (key, value) in keys.into_iter().zip(values) {
                     self.set_index(p, object, key, value)?;
                 }
@@ -2772,8 +2772,7 @@ impl<H: Host> Vm<H> {
                 return self.async_from_sync_reject(p, iterator, error, close_on_rejection);
             }
         };
-        let env = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let env = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 vec![
                     if done { Value::TRUE } else { Value::FALSE },
@@ -2784,8 +2783,7 @@ impl<H: Host> Vm<H> {
                         Value::FALSE
                     },
                 ],
-            ),
-        });
+            ));
         let fulfilled = self.native_with_env(Native::AsyncFromSyncValue, env);
         let rejected = self.native_with_env(Native::AsyncFromSyncValueRejected, env);
         self.promise_then_intrinsic(p, value_promise, fulfilled, rejected)
@@ -3045,12 +3043,11 @@ impl<H: Host> Vm<H> {
     pub(super) fn is_current_realm_native(&self, value: Value, native: Native) -> bool {
         matches!(
             self.heap.function(value),
-            Some(FunctionRecord {
+            Some(record @ FunctionRecord {
                 kind: FunctionKind::Native(kind),
-                realm,
                 ..
             }) if *kind == native
-                && (*realm == self.realm.globals || self.is_shared_native(value))
+                && (self.record_realm(record) == self.realm.globals || self.is_shared_native(value))
         )
     }
 
@@ -3240,12 +3237,10 @@ impl<H: Host> Vm<H> {
             Ok(match kind {
                 IteratorKind::ArrayValues | IteratorKind::Array => Some((value, None)),
                 IteratorKind::ArrayEntries => {
-                    let entry = vm.heap.alloc(Cell::Array {
-                        object: crate::heap::ArrayObject::new(
+                    let entry = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                             Self::empty_object(vm.array_proto),
                             vec![Value::number(index as f64), value],
-                        ),
-                    });
+                        ));
                     Some((entry, None))
                 }
                 _ => None,

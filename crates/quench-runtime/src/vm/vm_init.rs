@@ -69,6 +69,7 @@ impl<H: Host> Vm<H> {
             temporal_plain_time_proto: Value::NULL, temporal_plain_month_day_proto: Value::NULL,
             temporal_plain_year_month_proto: Value::NULL,
             natives: Default::default(),
+            main_realm: Value::NULL,
             frames: vec![],
             native_stack_frames: vec![],
             native_root_lists: vec![],

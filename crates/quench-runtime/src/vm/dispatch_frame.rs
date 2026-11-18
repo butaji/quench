@@ -1040,7 +1040,7 @@ impl<H: Host> Vm<H> {
         if let Some((shape, properties)) = self.arguments_template_properties(context.callee(), args, mapped)? {
             return Ok(self.heap.alloc_array_with_properties(array, shape, &properties));
         }
-        let arguments = self.heap.alloc(Cell::Array { object: array });
+        let arguments = self.heap.alloc_array(array);
         self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
         Ok(arguments)
     }

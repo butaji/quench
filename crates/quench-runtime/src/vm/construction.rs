@@ -85,6 +85,27 @@ fn finished_closure_slots(
 }
 
 impl<H: Host> Vm<H> {
+    /// The creation realm of a function record: its override, else the main realm.
+    #[inline(always)]
+    pub(super) fn record_realm(&self, record: &FunctionRecord) -> Value {
+        record.realm_override().unwrap_or(self.main_realm)
+    }
+
+    /// `record` as a function created in `realm`: only a realm other than the main one (and an
+    /// explicit `Value::NULL`) is stored, as an override.
+    pub(super) fn in_realm_record(&mut self, mut record: FunctionRecord, realm: Value) -> FunctionRecord {
+        if realm != self.main_realm {
+            self.heap.set_function_realm_override(&mut record, realm);
+        }
+        record
+    }
+
+    /// Allocates `record` as a function created in `realm` (`in_realm_record`).
+    pub(super) fn alloc_function_in(&mut self, record: FunctionRecord, realm: Value) -> Value {
+        let record = self.in_realm_record(record, realm);
+        self.heap.alloc_function(record)
+    }
+
     pub(super) fn function_realm(
         &mut self,
         p: &ResidualProgram,
@@ -107,7 +128,7 @@ impl<H: Host> Vm<H> {
                 }),
                 _,
             ) => Origin::Bound(*env),
-            (Some(FunctionRecord { realm, .. }), _) => Origin::Own(*realm),
+            (Some(record), _) => Origin::Own(self.record_realm(record)),
             (None, Some(Cell::Proxy { handler, .. })) if handler.is_null() => Origin::Revoked,
             (None, Some(Cell::Proxy { target, .. })) => Origin::Proxied(*target),
             _ => Origin::Current,
@@ -430,9 +451,10 @@ impl<H: Host> Vm<H> {
     }
 
     /// A closure's object allocated finished: its own `length`, `name` and `prototype` under
-    /// `shape`, as the recorded adds would leave them, inline where they fit, else in the
-    /// property arena. Inline: a closure's making is mostly this, and its object returns
-    /// through no temporary.
+    /// `shape`, as the recorded adds would leave them, inline where they fit and have narrow
+    /// forms, else in the property arena. Inline: a closure's making is mostly this, and its
+    /// object returns through no temporary. A wide value takes the arena rather than boxing
+    /// `ObjectExtras` (`with_property_storage` has no arena of its own to widen into).
     #[inline(always)]
     pub(super) fn finished_closure_object(
         &mut self,
@@ -442,11 +464,14 @@ impl<H: Host> Vm<H> {
         prototype: Option<Value>,
     ) -> crate::heap::Object {
         if finished_closure_fits(prototype) {
-            return crate::heap::Object::with_property_storage(
-                function_prototype,
-                crate::value_vec::ValueVec::inline_property_storage(shape),
-                finished_closure_slots(&named, prototype),
-            );
+            let slots = finished_closure_slots(&named, prototype);
+            if crate::heap::Object::inline_values_narrow(&slots) {
+                return crate::heap::Object::with_property_storage(
+                    function_prototype,
+                    crate::value_vec::ValueVec::inline_property_storage(shape),
+                    slots,
+                );
+            }
         }
         let [length, name] = named;
         let values: [Value; FINISHED_CLOSURE_SLOTS] = [length, name, prototype.unwrap_or(Value::UNDEFINED)];
@@ -484,7 +509,7 @@ impl<H: Host> Vm<H> {
         let object = object.unwrap_or_else(|| {
             self.finished_closure_object(template.function_prototype, template.header.shape(), named, prototype)
         });
-        let record = FunctionRecord { object, realm: template.realm, kind: template.kind, env };
+        let record = self.in_realm_record(FunctionRecord { object, kind: template.kind, env }, template.realm);
         let function = match claimed {
             Some(function) => {
                 self.heap.fill_claimed_function_record(function, record);
@@ -735,7 +760,7 @@ impl<H: Host> Vm<H> {
                     let proto = vm.prototype_from_constructor(p, new_target)?;
                     let mut object = Self::empty_object(proto);
                     vm.capture_constructed_name(&mut object, callee, callee == new_target);
-                    vm.heap.alloc(Cell::Object(object))
+                    vm.heap.alloc_object(object)
                 };
                 let previous_target = vm.construct_target;
                 vm.set_construct_target(Some(ConstructionTarget { callee, new_target }));
@@ -798,17 +823,14 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let Some(FunctionRecord {
-            kind: FunctionKind::User(program_id, id),
-            env,
-            realm,
-            ..
-        }) = self.heap.function(callee)
-        else {
+        let Some(record) = self.heap.function(callee) else {
             return None;
         };
-        let (program_id, id, env) = (*program_id, *id, *env);
-        if *realm != self.realm.globals || id == super::ROOT_FUNCTION_ID {
+        let FunctionKind::User(program_id, id) = record.kind else {
+            return None;
+        };
+        let env = record.env;
+        if self.record_realm(record) != self.realm.globals || id == super::ROOT_FUNCTION_ID {
             return None;
         }
         // A constructor of another program is pushed in its own, which the pushing loop

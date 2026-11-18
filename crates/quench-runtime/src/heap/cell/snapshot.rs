@@ -25,8 +25,6 @@ snapshot_enum!(lexical_binding_kind: crate::bytecode::LexicalBindingKind { Mutab
 
 /// The cell tags, in the order `Cell` declares its variants.
 mod tag {
-    pub(super) const OBJECT: u8 = 0;
-    pub(super) const ARRAY: u8 = 1;
     pub(super) const ARRAY_BUFFER: u8 = 2;
     pub(super) const TYPED_ARRAY: u8 = 3;
     pub(super) const DATA_VIEW: u8 = 4;
@@ -177,6 +175,7 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         brand,
         external_address,
         boxed_primitive,
+        function_realm,
         structured_serialization: serialization,
         structured_transfer_forbidden,
         module_bindings,
@@ -200,6 +199,11 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
     writer.bool(*structured_transfer_forbidden);
     writer.u8(element_facts.0);
     writer.option_value(*boxed_primitive);
+    // Written only for a function of another realm than the main one.
+    writer.bool(function_realm.is_some());
+    if let Some(realm) = function_realm {
+        writer.value(*realm);
+    }
     structured_serialization::write(writer, *serialization);
     writer.len(module_bindings.len());
     for (atom, program, slot) in module_bindings {
@@ -234,6 +238,7 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
     }
     let element_facts = ElementFacts(element_facts);
     let boxed_primitive = reader.option_value()?;
+    let function_realm = if reader.bool()? { Some(reader.value()?) } else { None };
     let structured_serialization = structured_serialization::read(reader)?;
     let module_bindings = read_list(reader, |reader| Ok((reader.u32()?, ProgramId::from_raw(reader.u32()?), reader.u16()?)))?;
     let deferred_module = if reader.bool()? { Some(read_module_source(reader)?) } else { None };
@@ -243,6 +248,7 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
         brand,
         external_address: None,
         boxed_primitive,
+        function_realm,
         structured_serialization,
         structured_transfer_forbidden,
         module_bindings,
@@ -411,9 +417,9 @@ impl Object {
 
 impl FunctionRecord {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        let Self { object, realm, env, kind } = self;
+        let Self { object, env, kind } = self;
+        // The creation realm, when overridden, is written with the object's extras.
         write_object(writer, object)?;
-        writer.value(*realm);
         writer.value(*env);
         kind.write_snapshot(writer);
         Ok(())
@@ -422,7 +428,6 @@ impl FunctionRecord {
     pub(crate) fn read_snapshot(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
         Ok(Self {
             object: read_object(reader)?,
-            realm: reader.value()?,
             env: reader.value()?,
             kind: FunctionKind::read_snapshot(reader)?,
         })
@@ -617,14 +622,6 @@ impl Cell {
     /// Writes this cell, or refuses one a snapshot cannot hold.
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
         match self {
-            Self::Object(object) => {
-                writer.u8(tag::OBJECT);
-                write_object(writer, object)?;
-            }
-            Self::Array { object } => {
-                writer.u8(tag::ARRAY);
-                object.write_snapshot(writer)?;
-            }
             Self::ArrayBuffer { object, bytes, shared, detached, max_byte_length, resizable, immutable } => {
                 let Some((contents, pinned_residue)) = bytes.snapshot_contents() else {
                     return Err(SnapshotError::unsupported("a buffer over Wasm or atomically shared memory"));
@@ -779,8 +776,6 @@ impl Cell {
     pub(crate) fn read_snapshot(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
         let boxed_object = |reader: &mut Reader<'_>| read_object(reader).map(Box::new);
         Ok(match reader.u8()? {
-            tag::OBJECT => Self::Object(read_object(reader)?),
-            tag::ARRAY => Self::Array { object: ArrayObject::read_snapshot(reader)? },
             tag::ARRAY_BUFFER => Self::ArrayBuffer {
                 object: boxed_object(reader)?,
                 bytes: {

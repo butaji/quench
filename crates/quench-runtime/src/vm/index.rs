@@ -697,12 +697,10 @@ mod tests {
     #[test]
     fn high_array_index_stays_out_of_dense_storage() {
         let mut vm = Vm::new(TestHost::default());
-        let array = vm.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let array = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                 Vm::<TestHost>::empty_object(Value::NULL),
                 vec![],
-            ),
-        });
+            ));
         assert!(vm.set_array_element(array, 1_000_000, Value::TRUE));
         let Some(array_object) = vm.heap.array(array) else {
             panic!("array cell")
@@ -739,12 +737,10 @@ mod tests {
     #[test]
     fn bounded_sparse_write_promotes_to_dense_storage() {
         let mut vm = Vm::new(TestHost::default());
-        let array = vm.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let array = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                 Vm::<TestHost>::empty_object(Value::NULL),
                 Vec::new(),
-            ),
-        });
+            ));
 
         assert!(vm.set_array_element(array, 2_048, Value::TRUE));
 
@@ -761,12 +757,10 @@ mod tests {
     #[test]
     fn shrinking_large_sparse_array_promotes_and_preserves_values() {
         let mut vm = Vm::new(TestHost::default());
-        let array = vm.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let array = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                 Vm::<TestHost>::empty_object(Value::NULL),
                 Vec::new(),
-            ),
-        });
+            ));
         vm.heap.sparse_set_length(array, 1_000_000);
         vm.heap.sparse_set(array, 3, Value::TRUE);
         vm.heap.sparse_set(array, 999_999, Value::FALSE);
@@ -787,12 +781,10 @@ mod tests {
     fn ordinary_indexed_writes_do_not_intern_property_names() {
         let program = crate::Engine::specialize("", "array-index-atoms.js").unwrap();
         let mut vm = Vm::new(TestHost::default());
-        let array = vm.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let array = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                 Vm::<TestHost>::empty_object(Value::NULL),
                 Vec::new(),
-            ),
-        });
+            ));
         let atom_count = vm.atom_sequence.len();
         vm.heap.retain_allocations_for_test();
         let cell_count = vm.heap.occupied_cell_count_for_test();
@@ -815,12 +807,10 @@ mod tests {
     #[test]
     fn deleting_an_uninterned_present_index_does_not_create_an_atom() {
         let mut vm = Vm::new(TestHost::default());
-        let array = vm.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let array = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                 Vm::<TestHost>::empty_object(Value::NULL),
                 vec![Value::FALSE; 1024],
-            ),
-        });
+            ));
         let atom_count = vm.atom_sequence.len();
 
         assert_eq!(vm.delete_array_index(array, 1023), Value::TRUE);

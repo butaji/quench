@@ -599,15 +599,10 @@ impl Heap {
         true
     }
 
+    /// An array, in its array record (`ArrayObject`).
     #[inline]
     pub(crate) fn array(&self, value: Value) -> Option<&ArrayObject> {
-        if let Some(object) = self.record_array(value) {
-            return Some(object);
-        }
-        match self.get(value)? {
-            Cell::Array { object } => Some(object),
-            _ => None,
-        }
+        self.record_array(value)
     }
 
     /// The object part of an array, function or ordinary builtin, whose own layout a held
@@ -739,27 +734,19 @@ impl Heap {
         Some(unsafe { self.array_records.get_live_mut(record_id, &self.properties) })
     }
 
+    /// An array, mutably, in its array record.
     pub(crate) fn array_mut(&mut self, value: Value) -> Option<&mut ArrayObject> {
-        if value.direct_array_index().is_some() {
-            return self.record_array_mut(value);
-        }
-        match self.get_mut(value)? {
-            Cell::Array { object } => Some(object),
-            _ => None,
-        }
+        self.record_array_mut(value)
     }
 
-    /// An ordinary object (`Cell::Object`, or a promise, whose internal slots change no
-    /// object operation), whether it lives in the object record space or a legacy slot.
+    /// An ordinary object (an object record, or a promise, whose internal slots change no
+    /// object operation). Ordinary objects are always records, so there is no legacy-slot fallback.
     #[inline] pub(crate) fn ordinary_object(&self, value: Value) -> Option<&Object> {
         match self.object_record(value) {
             Some(object) => Some(object),
             None => match self.promise(value) {
                 Some(promise) => Some(&promise.object),
-                None => match self.get(value)? {
-                    Cell::Object(object) => Some(object),
-                    _ => None,
-                },
+                None => None,
             },
         }
     }

@@ -1326,7 +1326,7 @@ fn hex_digit(unit: u16) -> Option<u16> {
 impl<H: Host> Vm<H> {
     fn json_object(&mut self) -> Value {
         let prototype = self.realm_object_prototype(self.realm.globals);
-        self.heap.alloc(Cell::Object(Self::empty_object(prototype)))
+        self.heap.alloc_object(Self::empty_object(prototype))
     }
 
     pub(super) fn json_raw_json(
@@ -1838,14 +1838,11 @@ impl<H: Host> Vm<H> {
                 Err(self.type_error(p, "Do not know how to serialize a BigInt".into()))
             }
             None => Ok(false),
-            Some(Cell::Array { .. } | Cell::Promise(_)) => {
+            Some(Cell::Promise(_)) => {
                 unreachable!("heap.array, heap.promise and the collection accessors classify their values before this match")
             }
             _ if self.is_array(p, value)? => {
                 self.json_serialize_array(p, value, state).map(|()| true)
-            }
-            Some(Cell::Object(_)) => {
-                self.json_serialize_object(p, value, state).map(|()| true)
             }
             Some(Cell::Proxy { .. })
             | Some(Cell::Date { .. })

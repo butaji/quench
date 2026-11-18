@@ -42,7 +42,7 @@ impl<H: Host> Vm<H> {
         let array_buffer = self.realm_native_value(Native::ArrayBuffer, global, current_realm);
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -107,7 +107,7 @@ impl<H: Host> Vm<H> {
         }
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .builtin_prototypes

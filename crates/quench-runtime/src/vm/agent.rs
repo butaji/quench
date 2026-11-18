@@ -48,12 +48,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let agent = self.object();
         for (method, name, length) in AGENT_METHODS {
-            let state = self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            let state = self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
                     vec![Value::number(*method as u8 as f64)],
-                ),
-            });
+                ));
             let function = self.native_with_env(Native::Test262Agent, state);
             self.set_builtin_function_name(function, name)?;
             self.set_agent_function_length(function, *length);

@@ -2236,12 +2236,10 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     use crate::heap::Cell;
     let program = Engine::specialize("", "descriptor-owner.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
-    let owner = vm.heap.alloc(Cell::Array {
-        object: crate::heap::ArrayObject::new(
+    let owner = vm.heap.alloc_array(crate::heap::ArrayObject::new(
             Vm::<TestHost>::empty_object(Value::NULL),
             Vec::new(),
-        ),
-    });
+        ));
     let setter = vm.native_with_env(Native::Object, owner);
     let owner_weak = vm.heap.weak_handle(owner).unwrap();
     let setter_weak = vm.heap.weak_handle(setter).unwrap();
@@ -6856,10 +6854,9 @@ fn closure_identity_cache_rejects_reused_function_slots() {
     for _ in 0..allocation_bound {
         let replacement = vm.heap.alloc_function(crate::heap::FunctionRecord {
             object: Vm::<TestHost>::empty_object(Value::NULL),
-            realm: Value::NULL,
             kind: crate::heap::FunctionKind::User(key.0, key.1),
             env: Value::NULL,
-        });
+        }.with_realm(Value::NULL));
         if replacement == old {
             reused = true;
             break;
@@ -6881,14 +6878,14 @@ fn finalization_unregister_does_not_match_a_reused_dead_token_slot() {
     let program = Engine::specialize("", "finalization-token-reuse.js").unwrap();
     let target = vm
         .heap
-        .alloc(crate::heap::Cell::Object(Vm::<TestHost>::empty_object(
+        .alloc_object(Vm::<TestHost>::empty_object(
             Value::NULL,
-        )));
+        ));
     let token = vm
         .heap
-        .alloc(crate::heap::Cell::Object(Vm::<TestHost>::empty_object(
+        .alloc_object(Vm::<TestHost>::empty_object(
             Value::NULL,
-        )));
+        ));
     let target_handle = vm.heap.weak_handle(target).unwrap();
     let token_handle = vm.heap.weak_handle(token).unwrap();
     let registry = vm.heap.alloc(crate::heap::Cell::FinalizationRegistry {
@@ -6918,9 +6915,9 @@ fn finalization_unregister_does_not_match_a_reused_dead_token_slot() {
     let replacement = (0..allocation_bound)
         .map(|_| {
             vm.heap
-                .alloc(crate::heap::Cell::Object(Vm::<TestHost>::empty_object(
+                .alloc_object(Vm::<TestHost>::empty_object(
                     Value::NULL,
-                )))
+                ))
         })
         .find(|value| *value == token)
         .expect("freed token slot is reused");
@@ -7352,7 +7349,7 @@ fn error_data_survives_collection_without_retaining_dead_errors() {
             ));
             let clone = vm
                 .heap
-                .alloc(super::Cell::Object(vm.object_data(error).unwrap().clone()));
+                .alloc_object(vm.object_data(error).unwrap().clone());
             assert!(vm.error_is_error(clone));
             vm.heap.release_root(root);
             vm.collect_now(&program);
@@ -12489,9 +12486,9 @@ fn private_host_weak_roots_clear_before_slot_reuse_without_kept_objects() {
         vm.execute(&program).unwrap();
         let target = vm
             .heap
-            .alloc(super::Cell::Object(Vm::<TestHost>::empty_object(
+            .alloc_object(Vm::<TestHost>::empty_object(
                 Value::NULL,
-            )));
+            ));
         let strong = vm.heap.root(target);
         let weak = vm.embedding_host_weak_root(strong).unwrap();
         vm.collect_now(&program);
@@ -12504,9 +12501,9 @@ fn private_host_weak_roots_clear_before_slot_reuse_without_kept_objects() {
         assert!(vm.embedding_host_weak_value(weak).is_none());
         let replacement = vm
             .heap
-            .alloc(super::Cell::Object(Vm::<TestHost>::empty_object(
+            .alloc_object(Vm::<TestHost>::empty_object(
                 Value::NULL,
-            )));
+            ));
         assert!(vm.heap.is_live(replacement));
         assert!(vm.embedding_host_weak_value(weak).is_none());
         let other = Vm::new(TestHost::default());

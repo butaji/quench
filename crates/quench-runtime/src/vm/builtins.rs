@@ -955,13 +955,12 @@ impl<H: Host> Vm<H> {
     fn install_prototypes(&mut self) {
         self.object_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
-        self.function_proto = self.heap.alloc_function(FunctionRecord {
+            .alloc_object(Self::empty_object(Value::NULL));
+        self.function_proto = self.alloc_function_in(FunctionRecord {
             object: Self::empty_object(self.object_proto),
-            realm: self.realm.globals,
             kind: FunctionKind::Native(Native::FunctionPrototype),
             env: Value::NULL,
-        });
+        }, self.realm.globals);
         for (native, prototype) in [
             (Native::Object, self.object_proto),
             (Native::Function, self.function_proto),
@@ -988,7 +987,7 @@ impl<H: Host> Vm<H> {
         global: Value,
     ) -> Result<(), JsError> {
         let prototype = self.realm_object_prototype(global);
-        let json = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let json = self.heap.alloc_object(Self::empty_object(prototype));
         self.install_builtin_to_string_tag(json, "JSON")?;
         let realm = (global != self.realm.globals).then_some(global);
         for (name, native) in [

@@ -9,12 +9,10 @@ const ARRAY_STATIC_METHODS: &[(&str, Native)] = super::native_rows::ARRAY_STATIC
 impl<H: Host> Vm<H> {
     pub(super) fn install_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let array = self.native_value(Native::Array);
-        self.array_proto = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        self.array_proto = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.object_proto),
                 Vec::new(),
-            ),
-        });
+            ));
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -135,7 +133,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_array_unscopables(&mut self, array_proto: Value) -> Result<(), JsError> {
         let unscopables = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         for name in [
             "at",
             "copyWithin",

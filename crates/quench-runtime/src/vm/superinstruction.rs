@@ -23,9 +23,7 @@ impl<H: Host> Vm<H> {
             .programs
             .const_array(self.frames[frame].program, start, end - start)
             .ok_or_else(|| JsError::validation("constant array is outside program".into()))?;
-        let array_value = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), elements),
-        });
+        let array_value = self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), elements));
         self.write(frame, array.result_register(), array_value);
 
         self.execute_super_binary(program, frame, *first)?;

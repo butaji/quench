@@ -322,7 +322,7 @@ fn concrete_read_entry(heap: &crate::heap::Heap, object: crate::Value, entry: &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::heap::{Cell, Heap, Object};
+    use crate::heap::{Heap, Object};
     use crate::vm::NATIVE_FIELD_CACHE_LAYOUT as ENTRY;
     use crate::Value;
 
@@ -339,7 +339,7 @@ mod tests {
         for shape in 1..=count as u32 {
             heap.register_property_shape(shape, shape as usize, None);
         }
-        let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let object = heap.alloc_object(Object::new(Value::NULL));
         for shape in 1..=count as u32 {
             heap.property_add(object, Value::integer(shape as i32 * 10), shape);
         }
@@ -378,14 +378,14 @@ mod tests {
             heap.register_property_shape(shape, shape as usize, None);
         }
         let shape_of = |heap: &Heap, object: Value| heap.object(object).unwrap().exact_shape();
-        let stray = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let stray = heap.alloc_object(Object::new(Value::NULL));
         for count in [crate::value_vec::INLINE_PROPERTY_COUNT, wide] {
-            let prototype = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+            let prototype = heap.alloc_object(Object::new(Value::NULL));
             for shape in 1..=count as u32 {
                 heap.property_add(prototype, Value::integer(70 + shape as i32), shape);
             }
             heap.object_record_mut(prototype).unwrap().mark_as_prototype();
-            let receiver = heap.alloc(Cell::Object(Object::new(prototype)));
+            let receiver = heap.alloc_object(Object::new(prototype));
             let (holder_shape, receiver_shape) = (shape_of(&heap, prototype), shape_of(&heap, receiver));
             let records = heap.object_record_base().expect("object records exist") as u64;
             let read = |object: Value, entry: [u32; 3]| {
@@ -408,9 +408,9 @@ mod tests {
     fn a_site_chain_reads_the_second_field_of_the_first_value() {
         let mut heap = Heap::new();
         heap.register_property_shape(1, 1, None);
-        let leaf = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let leaf = heap.alloc_object(Object::new(Value::NULL));
         heap.property_add(leaf, Value::integer(9), 1);
-        let (outer, plain) = (heap.alloc(Cell::Object(Object::new(Value::NULL))), heap.alloc(Cell::Object(Object::new(Value::NULL))));
+        let (outer, plain) = (heap.alloc_object(Object::new(Value::NULL)), heap.alloc_object(Object::new(Value::NULL)));
         heap.property_add(outer, leaf, 1);
         heap.property_add(plain, Value::integer(4), 1);
         let shape = heap.object(leaf).unwrap().exact_shape();

@@ -315,12 +315,10 @@ impl Drop for LaneProofScope {
 #[cfg(all(test, not(feature = "profile-aggregate")))]
 mod tests {
     use super::*;
-    use crate::heap::{Cell, Object};
+    use crate::heap::Object;
 
     fn array(heap: &mut Heap) -> Value {
-        heap.alloc(Cell::Array {
-            object: ArrayObject::new(Object::new(Value::NULL), [Value::integer(1), Value::integer(2)]),
-        })
+        heap.alloc_array(ArrayObject::new(Object::new(Value::NULL), [Value::integer(1), Value::integer(2)]))
     }
 
     #[test]

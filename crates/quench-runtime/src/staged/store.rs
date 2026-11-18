@@ -311,7 +311,7 @@ pub(crate) unsafe fn concrete_narrow_store(heap: &mut crate::heap::Heap, record_
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::heap::{Cell, Heap, Object};
+    use crate::heap::{Heap, Object};
     use crate::Value;
 
     /// An object of `count` int32 properties, in packed inline storage where they fit.
@@ -319,7 +319,7 @@ mod tests {
         for shape in 1..=count as u32 {
             heap.register_property_shape(shape, shape as usize, None);
         }
-        let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let object = heap.alloc_object(Object::new(Value::NULL));
         for shape in 1..=count as u32 {
             heap.property_add(object, Value::integer(0), shape);
         }
@@ -342,7 +342,7 @@ mod tests {
     fn a_packed_store_takes_integers_references_and_constants_and_leaves_the_rest() {
         let mut heap = Heap::new();
         let (object, shape) = object_of(&mut heap, 2);
-        let other = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let other = heap.alloc_object(Object::new(Value::NULL));
         for value in [Value::integer(-7), Value::integer(1 << 20), other, Value::NULL, Value::UNDEFINED, Value::TRUE, Value::FALSE] {
             assert!(store(&mut heap, object, shape, 1, value), "{value:?}");
             assert_eq!(read(&heap, object, shape, 1), Some(value));

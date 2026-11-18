@@ -393,12 +393,11 @@ impl<H: Host> Vm<H> {
                 })
             ),
             B::ModuleNamespaceObject => {
-                (value.direct_object_index().is_some()
+                value.direct_object_index().is_some()
                     && self
                         .heap
                         .object(value)
-                        .is_some_and(Object::is_module_namespace))
-                    || matches!(cell, Some(Cell::Object(object)) if object.is_module_namespace())
+                        .is_some_and(Object::is_module_namespace)
             }
             B::BooleanObject
             | B::NumberObject
@@ -679,11 +678,6 @@ impl<H: Host> Vm<H> {
             Some(Cell::RegExp { .. }) => D::RegExp,
             Some(Cell::WeakMap { .. } | Cell::WeakSet { .. }) => D::Opaque,
             Some(Cell::Error(_)) => D::Error,
-            Some(Cell::Object(_)) => {
-                return Ok(self
-                    .boxed_primitive_data(value)
-                    .map(|(brand, value)| D::Primitive { brand, value }));
-            }
             _ => return Ok(None),
         };
         Ok(Some(data))
@@ -863,6 +857,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Error(message)) => format!("Error: {message}"),
             _ if self.heap.is_map(value) => "#<Map>".into(),
             _ if self.heap.is_set(value) => "#<Set>".into(),
+            _ if self.heap.array(value).is_some() => "[object Array]".into(),
             Some(cell) => format!("[object {}]", Self::diagnostic_class_name(cell)),
             None if self.heap.is_function_value(value) => "[object Function]".into(),
             None => "[object Unknown]".into(),
@@ -906,7 +901,6 @@ impl<H: Host> Vm<H> {
 
     fn diagnostic_class_name(cell: &Cell) -> &'static str {
         match cell {
-            Cell::Array { .. } => "Array",
             Cell::ArrayBuffer { shared: true, .. } => "SharedArrayBuffer",
             Cell::ArrayBuffer { .. } => "ArrayBuffer",
             Cell::TypedArray { object, .. } => object.native.kind().name(),
@@ -1209,12 +1203,10 @@ impl<H: Host> Vm<H> {
     pub(crate) fn create_embedding_array(&mut self, values: &[RootId]) -> Result<Value, JsError> {
         self.embedding_program()?;
         let elements = self.embedding_arguments(values)?;
-        Ok(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        Ok(self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 elements,
-            ),
-        }))
+            )))
     }
 
     pub(crate) fn create_embedding_exception(
