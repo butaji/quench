@@ -21273,7 +21273,6 @@ const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) 
         Class::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
         Class::JumpTrue => Some(lane_jump_true::<H, BACKWARD>),
         Class::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
-        _ if opcode.traits().has(crate::bytecode::Traits::LANE_LOOP_EXIT) => Some(for_in_steps::for_in_next_handler::<H, BACKWARD>()),
         Class::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
         Class::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
         _ => wasm_gc_handler::<H>(opcode),
@@ -21330,6 +21329,9 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::CopyDataProperties => Some(lane_copy_data_properties::<H>),
         _ if iterator_handler::<H>(opcode).is_some() => iterator_handler::<H>(opcode),
         Class::ForInStart => Some(for_in_steps::for_in_start_handler::<H>()),
+        // A loop exit's own step before the general one its catalog row also names: an
+        // earlier arm here shadowed it, so every `ForInNext` key took the general step.
+        _ if opcode.traits().has(crate::bytecode::Traits::LANE_LOOP_EXIT) => Some(for_in_steps::for_in_next_handler::<H, BACKWARD>()),
         _ if opcode.steps_in_lane() => Some(lane_general_step::<H>),
         Class::IncDec => Some(lane_inc_dec::<H, false>),
         _ if denoted_handler::<H>(opcode).is_some() => denoted_handler::<H>(opcode),
