@@ -39,7 +39,7 @@ fn frame_owned(function: &Function, id: u32, slot: usize) -> bool {
 /// Whether `slot` of `function` (index `id`) lives in the storage of an activation's environment window, as the
 /// window handlers' `ENVIRONMENT` flavor reads it (`specialize_environment_window`): the function resolves no names at
 /// run time and no mapped `arguments` aliases the slot.
-pub(in crate::vm::compiled) fn env_owned(function: &Function, id: u32, slot: usize) -> bool {
+pub(in crate::vm) fn env_owned(function: &Function, id: u32, slot: usize) -> bool {
     id != crate::vm::ROOT_FUNCTION_ID && function.local_slot_uses_environment(slot) && !function.has_dynamic_scope_access()
         && crate::vm::arguments::mapped_arguments_slot(function, slot).is_none()
 }

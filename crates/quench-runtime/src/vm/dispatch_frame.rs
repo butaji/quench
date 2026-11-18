@@ -1282,6 +1282,55 @@ impl<H: Host> Vm<H> {
         env
     }
 
+    /// The slot storage of `frame`'s environment, promoted if it is not yet: what a native
+    /// body's environment rows read and store through the payload's storage word
+    /// (`window_locals`). `None` where the function owns no local in an environment, which
+    /// every such row misses at without promoting.
+    #[cfg(feature = "native-execution")]
+    pub(super) fn frame_environment_storage(&mut self, frame: usize) -> Option<u64> {
+        let (program, function) = (self.frames[frame].program, self.frames[frame].function);
+        let code = self.programs.get(program)?;
+        // A frame below a run may name a function of the program it was entered from, which the
+        // program this frame records is not always (`Vm::execute_native_with_scripts`): the
+        // rows miss instead of reading another program's function.
+        if function as usize >= code.function_count() {
+            return None;
+        }
+        let body = code.function_get(function as usize)?;
+        // A promotion without a selective capture set takes every local into the environment and
+        // empties the buffer the native rows read; only a selective one leaves it sized.
+        if body.selective_capture_slots.is_none() {
+            return None;
+        }
+        let owns = (0..usize::from(body.locals))
+            .any(|slot| super::compiled::base_region::env_owned(body, function, slot));
+        if !owns {
+            return None;
+        }
+        let (_, slots) = self.promoted_environment_value(frame);
+        Some(slots as u64)
+    }
+
+    /// `promote_frame_environment`'s environment and its slot storage.
+    #[cfg(feature = "native-execution")]
+    fn promoted_environment_value(&mut self, frame: usize) -> (Value, *const crate::heap::EnvironmentSlots) {
+        if self.frames[frame].captured {
+            // SAFETY: the frame's environment is a `Cell::Environment`, whose slots live as long
+            // as the cell does; the caller holds no other borrow of the slot storage.
+            let env = self.frames[frame].env;
+            return (env, self.heap.environment_slots(env));
+        }
+        let state = &mut *self.frames[frame];
+        let (mut locals, bindings) = (std::mem::take(&mut state.locals), std::mem::take(&mut state.dynamic_bindings));
+        let (program, function, parent) = (state.program, state.function, state.env);
+        let (env, slots) = self.promoted_environment(parent, program, function, &mut locals, bindings);
+        let state = &mut *self.frames[frame];
+        state.locals = locals;
+        state.env = env;
+        state.captured = true;
+        (env, slots)
+    }
+
     /// The environment under `parent` an activation of `function` of `program` makes of its
     /// `locals` when a closure first captures them, with its slot storage: it copies the slots it
     /// captures out of the locals, which read as deleted from now on, and takes over the

@@ -123,6 +123,8 @@ pub(super) unsafe extern "C" fn lane_new_closure<H: Host>(vm: u64, residual: u64
     }
     let captured = vm.frames[frame].captured;
     let env = vm.promote_frame_environment(frame);
+    // The lane's captures are its own (`JsStepDispatch::bind_captures`, native execution).
+    #[cfg(feature = "native-execution")]
     if dispatch.lane_context != 0 { dispatch.bind_captures(vm); }
     let closure = vm.closure(program, id as u32, env).unwrap_or(Value::DELETED);
     super::dispatch_fast::note_allocation(vm);

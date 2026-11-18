@@ -2458,9 +2458,11 @@ impl Lowering<'_, '_> {
             _ if self.scalar_call_admitted(state, pc, instruction) => Some(self.scalar_call(state, pc, instruction)),
             _ if plain && self.is_scalar_callee_load(pc, instruction) => Some(self.scalar_callee_load(state, pc, instruction)),
             _ if self.is_call_row(instruction) => self.call_row_step(state, pc, instruction),
+            // A store to the body's own environment-owned slot is the staged window row, not
+            // the generic callout (`staged::environment`), so it runs in place.
+            _ if self.is_window_row(pc, instruction) => Some(self.window_step(state, pc, instruction)),
             _ if self.is_call_out(instruction) => Some(self.call_out_step(state, pc, instruction)),
             _ if self.is_register_row(instruction) => Some(self.register_step(state, pc, instruction)),
-            _ if self.is_window_row(pc, instruction) => Some(self.window_step(state, pc, instruction)),
             opcode if (opcode.is_load_name() || opcode.is_load_name_call()) && plain && self.global_reads.contains_key(&pc) => Some(self.global_read(state, pc, instruction)),
             opcode if opcode.is_nop() && plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
                 Some(frame) => Some(self.inline_call(state, pc, frame)),

@@ -1403,6 +1403,16 @@ impl Heap {
         (environment, storage)
     }
 
+    /// The address of an environment's slot storage, the one `alloc_environment` returned:
+    /// it stays put while the environment lives.
+    #[cfg(feature = "native-execution")]
+    pub(crate) fn environment_slots(&self, environment: Value) -> *const EnvironmentSlots {
+        match self.get(environment) {
+            Some(Cell::Environment { slots, .. }) => slots as *const EnvironmentSlots,
+            _ => std::ptr::null(),
+        }
+    }
+
     /// `alloc(Cell::Object(object))` without the dispatch on the cell's kind, which an
     /// ordinary object's construction knows: a direct record while one is free.
     #[inline(always)]

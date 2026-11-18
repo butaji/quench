@@ -9103,6 +9103,10 @@ impl<H: Host> Vm<H> {
         let failure = |message: String| JsNativeStep {
             instruction_pc: start_pc, next_pc: start_pc, result: Err(JsError::validation(message)),
         };
+        // The body's own environment rows store through the payload's storage word, which holds
+        // the activation's environment record (`Vm::frame_environment_storage`); fill it once,
+        // before the code runs, where promoting keeps the local slots native rows read.
+        let environment_storage = self.frame_environment_storage(frame);
         JsNativeActivation::with(self, program, frame, start_pc, allow_inline_calls, true, |activation, vm| {
             // SAFETY: the activation owns the immutable function admitted above.
             let instruction_count = unsafe { (*activation.dispatch.body).code.len() };
@@ -9111,6 +9115,9 @@ impl<H: Host> Vm<H> {
             };
             let dispatch = &mut activation.dispatch;
             dispatch.bind_captures(vm);
+            if let Some(storage) = environment_storage {
+                dispatch.environment_storage = storage;
+            }
             dispatch.stop_pc = stop_pc.unwrap_or(JS_NO_STOP_PC);
             vm.frames[frame].pc = start_pc;
             vm.frames[frame].pc_is_resume = false;

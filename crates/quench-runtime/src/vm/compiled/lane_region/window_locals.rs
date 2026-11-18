@@ -43,11 +43,18 @@ impl Lowering<'_, '_> {
         let slot = u16::try_from(instruction.local_slot()).ok()
             .filter(|slot| super::super::base_region::env_owned(function, self.function_id, usize::from(*slot)))?;
         let caller = matches!(self.unit.origins.get(pc), Some(Origin::Caller(_)));
-        if !(caller && self.body_entry() && self.completion.status_and_pc() && instruction.result_flags() == 0) { return None; }
+        // The body's own environment rows are the activation's: the storage word is the body's
+        // own record, promoted on first use (`LaneHelper::EnvironmentStorage`, native execution).
+        #[cfg(feature = "native-execution")]
+        let own = matches!(instruction.op().class(), Class::StoreEnvLocal | Class::LoadEnvLocal);
+        #[cfg(not(feature = "native-execution"))]
+        let own = false;
+        if !((caller || own) && self.body_entry() && self.completion.status_and_pc() && instruction.result_flags() == 0) { return None; }
         let held = |register: Register| (register < self.unit.registers).then_some(register);
         let access = match instruction.op().class() {
             Class::LoadLocal if !instruction.writes_numeric_local() => Access::Read(held(instruction.result_register())?),
-            Class::StoreLocal | Class::StoreVarBinding => self.store_access(function, instruction)?,
+            Class::StoreLocal | Class::StoreVarBinding | Class::StoreEnvLocal => self.store_access(function, instruction)?,
+            Class::LoadEnvLocal => Access::Read(held(instruction.result_register())?),
             Class::InitializeTdz => Access::Open,
             _ => return None,
         };
@@ -80,6 +87,8 @@ impl Lowering<'_, '_> {
     pub(super) fn window_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let (slot, access) = self.window_access(pc, instruction).expect("a window row decodes");
         let miss = self.guard_exit(state, pc as u32);
+        // The body's own rows store through its activation's environment, which the helper
+        // promotes on first use; a caller window's rows use the window the entry named.
         let storage = self.builder.use_var(self.entry.as_ref().expect("entry facts").environment);
         let written = match access {
             Access::Write { source, .. } => Some(self.tagged(state, source)),
