@@ -7493,6 +7493,10 @@ pub(super) const HELD_SITE_REGISTER: u8 = own_site(false, OWN_FORMS.len());
 pub(super) const HELD_OTHER_THIS: u8 = own_site(true, OWN_FORMS.len() + 1);
 pub(super) const HELD_OTHER_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 1);
 
+/// The site fact of a string register's read through a `String.prototype` hint
+/// (`IcOp::HeldString`), as `s.charCodeAt`.
+pub(super) const STRING_SITE: u8 = own_site(false, OWN_FORMS.len() + 2);
+
 /// Whether site `site` is a read through a prototype hint.
 pub(super) const fn held_site(site: u8) -> bool {
     site == HELD_SITE_THIS || site == HELD_SITE_REGISTER || held_other_site(site)
@@ -7513,7 +7517,7 @@ pub(super) const fn own_site_form(site: u8) -> u32 {
 /// Whether the word own-field site `site` reads is a slot word to decode (`decode_staged_word`):
 /// every form but a fixed tagged one and packed or narrow values, which hold no raw double.
 pub(super) const fn own_site_decodes(site: u8) -> bool {
-    if held_site(site) { return false; }
+    if held_site(site) || site == STRING_SITE { return false; }
     let form = own_site_form(site);
     form == HINTED_FORM || (form & crate::staged::TAGGED_SLOTS == 0 && form != crate::value_vec::INLINE_FORM
         && form != crate::value_vec::NARROW_FORM)
@@ -7811,22 +7815,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_get_field_string` of a register base whose read the record's hint answers
-    /// (`Vm::string_hint_hit`): one tag test and the hint's name, prototype and epoch. Any
-    /// other read takes `lane_get_field_string_refresh` out of line.
-    fn lane_get_field_string_register<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let base = r.get(i.b);
-        let Some(value) = vm.heap.is_string(base).then(|| vm.string_hint_hit(i.call_link.get(), i.imm())).flatten() else {
-            sibling!(lane_get_field_string_refresh::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_get_field_string_register` past its hint: the site's `String.prototype` entry
+    /// The generated string read (`lane_row` at `STRING_SITE`) past its hint: the site's `String.prototype` entry
     /// (`Vm::string_prototype_field_hit`), whose answer becomes the hint. Any other read
     /// takes `lane_get_field_string`.
     #[inline(never)]
@@ -8100,7 +8089,7 @@ script_handler! {
                 Some(single_base_handler(
                     i.b,
                     lane_get_field_string::<H>,
-                    lane_get_field_string_register::<H>,
+                    lane_row::<H, FIELD_LEAF_READ, ACC_NONE, STRING_SITE>,
                     lane_get_field_string::<H>,
                 ))
             }

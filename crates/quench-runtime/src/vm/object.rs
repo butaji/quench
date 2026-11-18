@@ -2435,16 +2435,13 @@ impl<H: Host> Vm<H> {
         self.holder_hints.holder.get(usize::from(index)).is_some_and(|hint| hint.watch.is_published())
     }
 
-    /// `holder_hint_hit` for a string primitive, whose read `String.prototype` answers
-    /// (`hold_string_hint`): the realm's `String.prototype` still, under the hint's watch
-    /// was read in.
+    /// The operands of string hint `index` for a read of `atom` (`IcOp::HeldString`): its watch's
+    /// address and its value's bits; `None` where no `String.prototype` hint of that atom is held.
     #[inline(always)]
-    pub(super) fn string_hint_hit(&self, index: u16, atom: Atom) -> Option<Value> {
+    pub(super) fn string_hint_operands(&self, index: u16, atom: Atom) -> Option<(u64, u64)> {
         let hint = self.holder_hints.holder.get(usize::from(index))?;
-        (hint.atom == atom
-            && hint.holder == self.string_proto
-            && hint.watch.is_published())
-        .then_some(hint.value)
+        (hint.atom == atom && hint.holder == self.string_proto)
+            .then(|| (std::rc::Rc::as_ptr(&hint.watch) as u64, hint.value.to_bits()))
     }
 
     /// The object part of a direct object, array, function or ordinary builtin, whose own

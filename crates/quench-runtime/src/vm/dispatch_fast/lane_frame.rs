@@ -135,6 +135,9 @@ pub(in crate::vm::dispatch_fast) struct RecordPlan {
     /// builtin), out of line, for a plan any of them runs (`IcOp::Held`): its resolver and the
     /// machine it reads; `None` where the plan runs over direct objects alone.
     other: Option<(OtherRecord, *const ())>,
+    /// Whether the plan starts from the receiver's word rather than its object record
+    /// (`IcOp::HeldString`).
+    word: bool,
 }
 
 /// Resolves the object part of a receiver other than a direct object (`Vm::hinted_receiver`):
@@ -149,7 +152,7 @@ impl RecordPlan {
         use crate::staged::ic::IcOp;
         let load = IcOp::LoadSlot { slot, form: crate::staged::Form::Either, storage_len: usize::from(slot) + 1,
             rep: crate::staged::object::Rep::Tagged };
-        Self { ops: [IcOp::GuardLayout(layout), load], len: 2, records, other: None }
+        Self { ops: [IcOp::GuardLayout(layout), load], len: 2, records, other: None, word: false }
     }
 
     /// The read through a prototype hint whose operands are `guard`, `watch` and `value`
@@ -159,7 +162,18 @@ impl RecordPlan {
         other: Option<(OtherRecord, *const ())>) -> Self {
         use crate::staged::ic::IcOp;
         let held = IcOp::Held { guard, watch, value };
-        Self { ops: [held, held], len: 1, records, other }
+        Self { ops: [held, held], len: 1, records, other, word: false }
+    }
+}
+
+impl RecordPlan {
+    /// The read of a string receiver through a `String.prototype` hint whose operands are
+    /// `watch` and `value` (`IcOp::HeldString`), from the receiver's word.
+    #[inline(always)]
+    pub(in crate::vm::dispatch_fast) fn held_string(watch: u64, value: u64) -> Self {
+        use crate::staged::ic::IcOp;
+        let held = IcOp::HeldString { watch, value };
+        Self { ops: [held, held], len: 1, records: 0, other: None, word: true }
     }
 }
 
@@ -401,6 +415,9 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     #[inline(always)]
     fn receiver_record(&mut self, stage: &mut Concrete, _owner: crate::staged::property::Owner, object: u64, _readable: bool,
         miss: ()) -> Option<crate::staged::ic::Reached<u64, bool>> {
+        if let Some(RecordPlan { word: true, .. }) = self.plan {
+            return Some(crate::staged::ic::Reached::bare(object));
+        }
         let Some(RecordPlan { records, other: Some((resolve, machine)), .. }) = self.plan else {
             return crate::staged::property::receiver(stage, self, object, miss);
         };
@@ -611,6 +628,9 @@ lane_handler! {
                 }
                 sibling!(lane_row::<H, OP, ACC, { super::HELD_OTHER_REGISTER }>, r, ip, Carried::script_in(script, view))
             }
+            if const { FLAG == super::STRING_SITE } {
+                sibling!(lane_get_field_string_refresh::<H>, r, ip, Carried::script_in(script, view))
+            }
             if const { super::held_other_site(FLAG) } {
                 if const { super::own_site_this(FLAG) } {
                     sibling!(lane_get_field_holder_refresh::<H, true>, r, ip, Carried::script_in(script, view))
@@ -662,7 +682,12 @@ lane_handler! {
             // installed only once the lane bound the object records (`lane_get_field_own_refresh`).
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
             debug_assert_eq!(script, cx, "a JavaScript view carries its context");
-            if const { super::held_site(FLAG) } {
+            if const { FLAG == super::STRING_SITE } {
+                // A string receiver's read through the record's `String.prototype` hint.
+                let machine = unsafe { vm(script) };
+                let Some((watch, value)) = machine.string_hint_operands(i.call_link.get(), i.imm()) else { property_miss!() };
+                frame.plan = Some(RecordPlan::held_string(watch, value));
+            } else if const { super::held_site(FLAG) } {
                 // A read through the record's prototype hint (`IcOp::Held`): the hint's operands,
                 // where the lane bound its records and the hint is the read's; else the hint's own
                 // read of any receiver, which refreshes it.
