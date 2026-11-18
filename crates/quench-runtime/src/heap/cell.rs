@@ -662,6 +662,61 @@ pub(crate) enum Native {
     MathInitialize,
 }
 
+/// A native's traits, each derived once at compile time from its defining predicate
+/// (`Native::derive_*`) and read with one load: the call protocol asks several per call.
+mod native_traits {
+    pub(super) const RUNS_FROM_LANE: u8 = 1;
+    pub(super) const RUNS_BESIDE_ACTIVATIONS: u8 = 2;
+    pub(super) const HOST_CONTROL: u8 = 4;
+    pub(super) const MATH_FUNCTION: u8 = 8;
+    pub(super) const INTRINSIC_SPECIES_GETTER: u8 = 16;
+}
+
+const NATIVE_TRAITS: [u8; Native::COUNT as usize] = {
+    use native_traits::*;
+    let mut table = [0u8; Native::COUNT as usize];
+    let mut index = 0;
+    while index < Native::COUNT {
+        let Some(native) = Native::from_discriminant(index) else { panic!("discriminants are dense") };
+        let mut traits = 0;
+        if native.derive_runs_from_lane() { traits |= RUNS_FROM_LANE; }
+        if native.derive_runs_beside_activations() { traits |= RUNS_BESIDE_ACTIVATIONS; }
+        if native.derive_host_control_native() { traits |= HOST_CONTROL; }
+        if native.derive_math_function() { traits |= MATH_FUNCTION; }
+        if native.derive_intrinsic_species_getter() { traits |= INTRINSIC_SPECIES_GETTER; }
+        table[index as usize] = traits;
+        index += 1;
+    }
+    table
+};
+
+impl Native {
+    #[inline(always)]
+    const fn has_trait(self, bit: u8) -> bool {
+        NATIVE_TRAITS[self as usize] & bit != 0
+    }
+
+    /// `derive_runs_from_lane`, read from the derived table.
+    #[inline(always)]
+    pub(crate) const fn runs_from_lane(self) -> bool { self.has_trait(native_traits::RUNS_FROM_LANE) }
+
+    /// `derive_runs_beside_activations`, read from the derived table.
+    #[inline(always)]
+    pub(crate) const fn runs_beside_activations(self) -> bool { self.has_trait(native_traits::RUNS_BESIDE_ACTIVATIONS) }
+
+    /// `derive_host_control_native`, read from the derived table.
+    #[inline(always)]
+    pub(crate) const fn is_host_control_native(self) -> bool { self.has_trait(native_traits::HOST_CONTROL) }
+
+    /// `derive_math_function`, read from the derived table.
+    #[inline(always)]
+    pub(crate) const fn is_math_function(self) -> bool { self.has_trait(native_traits::MATH_FUNCTION) }
+
+    /// `derive_intrinsic_species_getter`, read from the derived table.
+    #[inline(always)]
+    pub(crate) const fn is_intrinsic_species_getter(self) -> bool { self.has_trait(native_traits::INTRINSIC_SPECIES_GETTER) }
+}
+
 /// A global's cold facts, boxed with its object part so the cell stays compact.
 #[derive(Clone, Debug)]
 pub(crate) struct WasmGlobalHeader {
@@ -746,7 +801,7 @@ impl Native {
     }
 
     /// The `get [Symbol.species]` accessors, each of which returns its receiver.
-    pub(crate) fn is_intrinsic_species_getter(self) -> bool {
+    const fn derive_intrinsic_species_getter(self) -> bool {
         matches!(
             self,
             Self::ArraySpecies
@@ -757,7 +812,7 @@ impl Native {
         )
     }
 
-    pub(crate) fn is_function_native(self) -> bool {
+    pub(crate) const fn is_function_native(self) -> bool {
         matches!(
             self,
             Self::Function
@@ -801,7 +856,7 @@ impl Native {
     }
 
     /// The functions of the `Math` object (`MATH_FUNCTIONS`, which its test keeps equal).
-    pub(crate) const fn is_math_function(self) -> bool {
+    const fn derive_math_function(self) -> bool {
         matches!(
             self,
             Self::MathAbs
@@ -863,7 +918,7 @@ impl Native {
 
     /// The `Reflect` functions that run an internal method of their target (`Reflect.apply`,
     /// `construct` and the like call functions, and take frames).
-    fn is_reflect_operation(self) -> bool {
+    const fn is_reflect_operation(self) -> bool {
         matches!(
             self,
             Self::ReflectGetPrototypeOf
@@ -912,7 +967,7 @@ impl Native {
     /// iteration from a frameless activation). A keyed collection's or array's iterator
     /// creation, `%IteratorPrototype%[@@iterator]`, `concat`, `Array.from` and `Object.isExtensible` belong
     /// too (MobX's observable set reads `values()` 4,087 times per three proxy-mobx iterations).
-    pub(crate) fn runs_beside_activations(self) -> bool {
+    const fn derive_runs_beside_activations(self) -> bool {
         self.is_reflect_operation() || matches!(
             self,
             Self::ObjectLiteralPrototype
@@ -995,7 +1050,7 @@ impl Native {
     /// call-forwarding natives push their target as a frame there (and run under a
     /// forwarding boundary), direct `eval` reads the calling instruction, and `with` entry
     /// and exit change the running frame's object environment.
-    pub(crate) fn runs_from_lane(self) -> bool {
+    const fn derive_runs_from_lane(self) -> bool {
         !matches!(
             self,
             Self::FunctionCall
@@ -1009,7 +1064,7 @@ impl Native {
         )
     }
 
-    pub(crate) fn is_host_control_native(self) -> bool {
+    const fn derive_host_control_native(self) -> bool {
         matches!(
             self,
             Self::HostDone | Self::CreateRealm | Self::Boolean | Self::BigInt
@@ -3435,11 +3490,6 @@ impl EnvironmentScopeRef {
             dynamic_bindings: EnvironmentBindings::Owned(Vec::new()),
             with_objects: Box::default(),
         })
-    }
-
-    #[cfg(feature = "profile-memory")]
-    pub(crate) fn boxed_bytes(&self) -> usize {
-        self.scope().map_or(0, |_| size_of::<EnvironmentScope>())
     }
 }
 

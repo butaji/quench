@@ -90,7 +90,8 @@ pub(super) fn distinct<T: Ord>(facts: impl Iterator<Item = T>) -> Box<[T]> {
 /// takes, which a change of a value a prototype of that shape holds, or of any prototype's layout, retires it.
 pub(super) fn held_holders(decoded: &[Decoded]) -> Box<[u32]> {
     let chained = decoded.iter().filter_map(|row| row.add.and_then(adds::Add::chain_owner));
-    distinct(decoded.iter().filter_map(|row| row.folded.map(|folded| folded.holder)).chain(chained))
+    let natives = decoded.iter().filter_map(|row| row.holder);
+    distinct(decoded.iter().filter_map(|row| row.folded.map(|folded| folded.holder)).chain(chained).chain(natives))
 }
 
 /// The atoms the rows hold unnamed by method caches (`Decoded::atom`): the Stable facts the code

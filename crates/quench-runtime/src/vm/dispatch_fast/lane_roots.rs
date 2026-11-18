@@ -211,6 +211,7 @@ impl<H: Host> Vm<H> {
             callee_warming: false,
             leaf: NO_LEAF_CALL,
             outer: NO_OUTER_WALK,
+            root_walk: NO_OUTER_WALK,
             frame_storage: NO_FRAME_STORAGE,
             proofs: crate::heap::ArrayStorageProofs::new(),
             region_payload: 0,

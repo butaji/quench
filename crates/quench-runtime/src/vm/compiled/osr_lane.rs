@@ -46,7 +46,7 @@ pub(super) unsafe fn bind_captures<H: Host>(
 ) -> Vec<crate::Value> {
     // A region that calls reads its captures live too where the lane has them: a callee may
     // store one, which a copy would not see. Where it has none, the copy as before.
-    let calls = region.instructions().iter().any(|instruction| instruction.op().is_call());
+    let calls = region.instructions().iter().any(|instruction| instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call);
     let live = (calls || !region.stored_captures.is_empty())
         // SAFETY: the caller's contract.
         .then(|| unsafe { super::dispatch_fast::lane_context_captures::<H>(lane_context) }).flatten();

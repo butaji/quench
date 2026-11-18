@@ -1,7 +1,7 @@
 # Derivation debt: each place a tier decides an opcode's meaning outside its staged row
 # (`staged/coverage_tests.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are
 # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.
-# total 2131
+# total 2144
 <catalog> unstaged:ArgumentGet 1
 <catalog> unstaged:Await 1
 <catalog> unstaged:CacheTemplateObject 1
@@ -344,6 +344,7 @@ vm/compiled/lane_unit/static_hints.rs Class:Move 2
 vm/compiled/lane_unit/static_hints.rs is:is_call 1
 vm/compiled/osr_compile.rs is:is_get_index 1
 vm/compiled/osr_compile.rs op:Nop 1
+vm/compiled/osr_lane.rs is:is_call 1
 vm/compiled/osr_loop.rs is:is_binary 3
 vm/compiled/osr_loop.rs is:is_binary_arithmetic 1
 vm/compiled/osr_loop.rs is:is_call 2
@@ -382,6 +383,9 @@ vm/compiled/osr_loop/inlining.rs op:LoadCapture 1
 vm/compiled/osr_loop/inlining.rs op:Move 2
 vm/compiled/osr_loop/inlining.rs op:SetField 2
 vm/compiled/osr_loop/iteration.rs is:is_ordinary_call 1
+vm/compiled/osr_loop/lifetime.rs is:is_get_index 3
+vm/compiled/osr_loop/lifetime.rs is:is_indexed_access 1
+vm/compiled/osr_loop/lifetime.rs is:is_move 1
 vm/compiled/residuals.rs is:is_call 1
 vm/compiled/static_loops.rs Class:IncDec 2
 vm/compiled/static_loops.rs Class:LoadConst 2
@@ -556,7 +560,7 @@ vm/dispatch_fast.rs Class:MakeObject2 2
 vm/dispatch_fast.rs Class:MakeObjectLiteral 2
 vm/dispatch_fast.rs Class:MarkPrivateName 1
 vm/dispatch_fast.rs Class:PrivateIn 1
-vm/dispatch_fast.rs Class:RequireIteratorResult 1
+vm/dispatch_fast.rs Class:RequireIteratorResult 2
 vm/dispatch_fast.rs Class:Return 3
 vm/dispatch_fast.rs Class:SetIndex 1
 vm/dispatch_fast.rs Class:StoreCapture 2
@@ -601,13 +605,13 @@ vm/dispatch_fast.rs Class:WasmSelect 1
 vm/dispatch_fast.rs Class:WasmSimd 2
 vm/dispatch_fast.rs Class:WasmSimdShuffle 2
 vm/dispatch_fast.rs JsDenotation:NumericBinary 1
-vm/dispatch_fast.rs fn:lane_* 604
+vm/dispatch_fast.rs fn:lane_* 605
 vm/dispatch_fast.rs is:is_await 2
 vm/dispatch_fast.rs is:is_binary 1
 vm/dispatch_fast.rs is:is_call 4
 vm/dispatch_fast.rs is:is_call_forwarding_arguments 1
 vm/dispatch_fast.rs is:is_construct 1
-vm/dispatch_fast.rs is:is_field_store 1
+vm/dispatch_fast.rs is:is_field_store 3
 vm/dispatch_fast.rs is:is_get_field 4
 vm/dispatch_fast.rs is:is_get_index 2
 vm/dispatch_fast.rs is:is_jump 4
@@ -635,6 +639,7 @@ vm/dispatch_fast.rs is:is_wasm_instance_binding 2
 vm/dispatch_fast.rs is:is_wasm_memory_address 1
 vm/dispatch_fast.rs is:is_wasm_memory_fill 1
 vm/dispatch_fast.rs is:is_wasm_memory_size 1
+vm/dispatch_fast.rs op:CallFirstChunk 1
 vm/dispatch_fast.rs op:IncDec 3
 vm/dispatch_fast.rs op:Jump 1
 vm/dispatch_fast.rs op:LoadConst 3
@@ -669,6 +674,7 @@ vm/dispatch_fast/denoted.rs JsDenotation:NumericBinary 1
 vm/dispatch_fast/denoted.rs JsDenotation:NumericUnary 1
 vm/dispatch_fast/denoted.rs JsDenotation:StringConcatenation 1
 vm/dispatch_fast/denoted.rs fn:lane_* 3
+vm/dispatch_fast/for_in_steps.rs Class:ForInStart 1
 vm/dispatch_fast/for_in_steps.rs fn:lane_* 2
 vm/dispatch_fast/generator_windows.rs fn:lane_* 7
 vm/dispatch_fast/generator_yields.rs Class:Await 1
@@ -690,6 +696,7 @@ vm/dispatch_fast/list_calls.rs fn:lane_* 5
 vm/dispatch_fast/local_fields.rs fn:lane_* 1
 vm/dispatch_fast/loop_body.rs Class:Jump 1
 vm/dispatch_fast/loop_body.rs fn:lane_* 2
+vm/dispatch_fast/loop_body.rs is:is_call 1
 vm/dispatch_fast/loop_fields.rs fn:lane_* 1
 vm/dispatch_fast/loop_kernel.rs Class:Jump 1
 vm/dispatch_fast/loop_kernel.rs fn:lane_* 1

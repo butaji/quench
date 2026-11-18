@@ -162,6 +162,11 @@ pub(crate) enum NumberOperation {
     BitwiseNot { destination: Register, source: Operand },
     /// ToNumeric of a Number `source` into `destination`; any other value leaves.
     ToNumeric { destination: Register, source: Register },
+    /// The Math function `operation` (`Math.sqrt`, `Math.abs`, ...) of a Number `source`, a
+    /// double: `staged::math::float_unary`, the one definition the natives run. Any other value leaves.
+    /// The b-jit's stencils run it; the runtime's natives call `float_unary` itself.
+    #[cfg_attr(not(stencil_build), allow(dead_code))]
+    Math { destination: Register, source: Operand, operation: super::math::FloatUnary },
 }
 
 /// Run the Number `operation` on `frame`; its word, or `Unresolved` where it left.
@@ -181,7 +186,21 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         NumberOperation::ToNumeric { destination, source } => to_numeric(stage, frame, destination, source),
         NumberOperation::Unary { destination, source, operation, domain } =>
             unary(stage, frame, destination, source, operation, domain),
+        NumberOperation::Math { destination, source, operation } => math(stage, frame, destination, source, operation),
     }
+}
+
+/// The Math function `operation` of one Number `source`, as a double.
+#[inline(always)]
+fn math<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, source: Operand, operation: super::math::FloatUnary,
+) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    let Some(value) = frame.number_operand(stage, source, miss) else { return Step::Unresolved };
+    let result = super::math::unary(stage, operation, value);
+    let fact = frame.number_fact();
+    frame.write(stage, destination, result, fact);
+    Step::Value(result)
 }
 
 /// `operation` of one Number `source` in `domain`; a negation of `i32::MIN` widens and

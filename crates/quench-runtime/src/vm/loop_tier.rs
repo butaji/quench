@@ -55,8 +55,8 @@ impl LoopTier {
         if let Some(code) = self.code.take() { code.retire(); }
     }
 
-    pub(super) fn weigh_decline(&mut self) {
-        self.declined = self.declined.saturating_add(1);
+    pub(super) fn weigh_declines(&mut self, declines: u32) {
+        self.declined = self.declined.saturating_add(declines);
     }
 
     /// The entries made, native runs and declined ones, and the iterations the runs took.

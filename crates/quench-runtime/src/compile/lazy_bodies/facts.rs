@@ -280,6 +280,7 @@ pub(in crate::compile) fn parse_collecting<'a>(
     allocator: &'a Allocator,
     source: &'a str,
     source_type: SourceType,
+    declared: &mut crate::bytecode::DeclaredTypes,
     lazy: Option<u32>,
     facts: &RefCell<BodyFacts>,
     inherited_strict: bool,
@@ -291,5 +292,5 @@ pub(in crate::compile) fn parse_collecting<'a>(
     let mut skim = |body: oxc_parser::SkimmedBody<'_>| facts.borrow_mut().skim(body, source);
     // SAFETY: `check` and `skim` live through the parse, which alone calls them.
     let (check, skim) = unsafe { ((lazy.is_some() && !direct).then(|| oxc_parser::LazyBodyCheck::new(&mut check)), direct.then(|| oxc_parser::LazyBodySkim::new(&mut skim))) };
-    super::parse(allocator, source, source_type, lazy, check, skim, inherited_strict, true, recognize, None)
+    super::parse(allocator, source, source_type, lazy, check, skim, inherited_strict, true, recognize, None, Some(declared))
 }

@@ -13,6 +13,7 @@ use crate::bytecode::{Function, WideInstruction};
 use crate::staged::wasm::Width;
 use crate::staged::wasm_flow::Flow;
 use crate::staged::wasm_instance::Instance;
+use crate::staged::wasm_memory::{Access, Memory};
 use crate::staged::wasm_operation::{Operand, WasmOperation};
 use crate::staged::wasm_step::Step;
 use crate::wasm::integer::I64BinaryOperator as Binary;
@@ -109,12 +110,42 @@ fn numeric(instruction: WideInstruction, operation: WasmOperation) -> Option<Vec
     })
 }
 
+/// The code of a scalar access in the row library (`ACCESSES`).
+fn access_code(access: Access) -> Option<u32> {
+    let ty = match access.ty {
+        crate::WasmType::I32 => codes::T_I32,
+        crate::WasmType::I64 => codes::T_I64,
+        crate::WasmType::F32 => codes::T_F32,
+        crate::WasmType::F64 => codes::T_F64,
+        _ => return None,
+    };
+    codes::ACCESSES.iter().position(|&code| code == (ty, access.bytes, access.signed)).map(|index| index as u32)
+}
+
+/// The rows of a load or store of the memory the frame runs over: `a = load[b][c + imm]`,
+/// `store[b][c + imm] = a`, `b` naming that memory (`plan` admits no other binding). An offset
+/// past 31 bits, which the row's 32-bit hole cannot hold, has none.
+fn memory(instruction: WideInstruction, memory: Memory) -> Option<Vec<Planned>> {
+    let (kind, access) = match memory {
+        Memory::Load(access) => (codes::LOAD, access),
+        Memory::Store(access) => (codes::STORE, access),
+        _ => return None,
+    };
+    let offset = instruction.imm();
+    (offset <= i32::MAX as u32).then_some(())?;
+    let holes = [slot(instruction.a()), slot(instruction.c()), u64::from(offset)];
+    Some(vec![row((kind, access_code(access)?, codes::W64, codes::REGISTER), holes, None)])
+}
+
 /// The rows of the instruction at `pc`, or `None` where one has no rows yet. `constant` gives a
-/// constant's frame word, `None` for one a row cannot hold (a vector).
+/// constant's frame word, `None` for one a row cannot hold (a vector); `memory_slot` is the
+/// instance binding of the memory the entry passes (`WasmEntry`'s base and length), whose
+/// binding instruction then places nothing.
 fn plan(
     instruction: WideInstruction,
     returns: bool,
     constant: &dyn Fn(usize) -> Option<u64>,
+    memory_slot: Option<u32>,
 ) -> Option<Vec<Planned>> {
     let (a, b) = (instruction.a(), instruction.b());
     match Step::of(instruction.op(), instruction.imm())? {
@@ -128,8 +159,13 @@ fn plan(
                         .collect(),
                 );
             }
-            (step == Instance::Move).then(|| vec![row((codes::MOVE, 0, codes::W64, codes::REGISTER), [slot(a), slot(b), 0], None)])
+            match step {
+                Instance::Move => Some(vec![row((codes::MOVE, 0, codes::W64, codes::REGISTER), [slot(a), slot(b), 0], None)]),
+                Instance::Binding if memory_slot == Some(instruction.imm()) => Some(vec![]),
+                _ => None,
+            }
         }
+        Step::Memory(step) => memory(instruction, step),
         Step::Flow(Flow::Jump) => Some(vec![row((codes::GOTO, 0, codes::W64, codes::REGISTER), [0; 3], Some(instruction.jump_target() as usize))]),
         Step::Flow(Flow::Return) => Some(vec![if returns {
             Planned { stencil: "leave_wasm_word", holes: padded_holes([slot(a)]), taken: None }
@@ -154,12 +190,18 @@ fn stencil(name: &str) -> Option<Stencil> {
 /// The code of `function`: the entry, the trap routine, then the rows, every successor patched;
 /// `None` where an instruction has no rows yet. The code is position independent: it calls and
 /// jumps only within itself.
-pub(super) fn stitch(function: &Function, params: usize, returns: bool, constant: &dyn Fn(usize) -> Option<u64>) -> Option<Vec<u8>> {
+pub(super) fn stitch(
+    function: &Function,
+    params: usize,
+    returns: bool,
+    constant: &dyn Fn(usize) -> Option<u64>,
+    memory_slot: Option<u32>,
+) -> Option<Vec<u8>> {
     let instructions: Vec<WideInstruction> =
         function.code.iter().map(|packed| function.widened(*packed)).collect();
     let mut planned = Vec::with_capacity(instructions.len());
     for instruction in &instructions {
-        planned.push(plan(*instruction, returns, constant)?);
+        planned.push(plan(*instruction, returns, constant, memory_slot)?);
     }
     // The first row of each instruction, and past the last.
     let mut first = Vec::with_capacity(planned.len() + 1);
@@ -193,8 +235,10 @@ pub(super) fn stitch(function: &Function, params: usize, returns: bool, constant
     let trap = stencil("leave_wasm_trap")?;
     let rows_at = entry.code.len() + trap.code.len();
     let mut code = vec![0u8; rows_at + stencils.iter().map(|stencil| stencil.code.len()).sum::<usize>()];
-    let rest = u64::from(function.registers).checked_sub(params as u64)?;
-    let entry_holes = padded_holes([frame_bytes(function.registers), params as u64, rest]);
+    // The parameters follow the instance bindings (`Function::parameter_registers`).
+    let first_parameter = function.parameter_registers?;
+    let rest = u64::from(function.registers).checked_sub(u64::from(first_parameter) + params as u64)?;
+    let entry_holes = padded_holes([frame_bytes(function.registers), params as u64, rest, slot(first_parameter)]);
     patch_routine(&entry, &mut code[..entry.code.len()], &entry_holes, rows_at)?;
     code[entry.code.len()..rows_at].copy_from_slice(&trap.code);
     let trap_at = code.as_ptr() as usize + entry.code.len();

@@ -3,28 +3,9 @@
 //! value the hint recorded. The guard word and value are per-site operands; the watch is an
 //! assumption, tested by the interpreter and proved once by a specializer.
 
-use super::Stage;
 
-/// The value the hint `(guard, watch, value)` records for the object part at `record`: `None`
-/// (leaving at `miss`) where the record's layout (`Object::guard_word`: the interned pair of
-/// its whole auxiliary word, the exact shape with its storage form, and its prototype link and
-/// flags) differs, or the watch no longer holds. One compare of the layout id proves the shape
-/// and the prototype together.
-#[inline(always)]
-pub(crate) fn holder_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, watch: u64, value: u64,
-    miss: S::Miss) -> Option<S::Word> {
-    let words = stage.load_u32(super::region::Region::ShapeWord.mutable(), record,
-        crate::heap::NATIVE_OBJECT_LAYOUT.layout_offset as i32);
-    let guard = stage.site(guard);
-    let same = stage.eq_imm(words, guard);
-    stage.guard(same, miss)?;
-    let watch = stage.site(watch);
-    let holds = stage.assumption(watch);
-    stage.guard(holds, miss)?;
-    let zero = stage.constant(0);
-    let value = stage.site(value);
-    Some(stage.add_imm(zero, value))
-}
+/// The row is defined with the inline caches' ops (`IcOp::Held`), whose home is `ic`.
+pub(crate) use super::ic::holder_read;
 
 /// The value a method read of a string receiver finds on `String.prototype`: every direct string
 /// has the one prototype, so the family test replaces the shape and link guards, and the watch on
@@ -47,6 +28,7 @@ pub(crate) unsafe fn concrete_holder_read(record: &crate::heap::Object, guard: u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::staged::stage::Stage;
     use crate::heap::{Cell, Heap, Object, ProtoLink};
     use crate::code_dependencies::PublishedCode;
     use crate::Value;

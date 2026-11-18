@@ -25,6 +25,8 @@ pub(crate) enum Class {
     WasmI32ShiftRightUnsignedAnd,
     WasmI32Unary,
     WasmI64Binary,
+    /// `a = b op c` on i64, `c` a signed 16-bit constant and the operator the selector.
+    WasmI64BinaryImmediate,
     WasmI64Unary,
     WasmScalarConvert,
     WasmSelect,

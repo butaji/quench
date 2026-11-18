@@ -103,6 +103,17 @@ fn definition_root(flow: &LoopRegion, values: &Webs, definition: Definition, vis
     array_root(flow, values, flow.header + offset as u32, instruction.register_b(), visiting)
 }
 
+/// The array access `instruction` is, by its staged row: `Some(true)` for an element read, `Some(false)`
+/// for an element write or the object-coercible check before one, `None` for any other.
+fn element_access(instruction: WideInstruction) -> Option<bool> {
+    use crate::staged::Operation;
+    match Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::EMPTY)? {
+        Operation::ElementRead { .. } => Some(true),
+        Operation::ElementWrite { .. } | Operation::RequireObjectCoercible { .. } => Some(false),
+        _ => None,
+    }
+}
+
 /// Whether every definition of `receiver` reaching `offset` is an element read: a nested array
 /// read, which reads through no entry root.
 fn reads_element_value(flow: &LoopRegion, values: &Webs, offset: usize, receiver: Register) -> bool {
@@ -110,7 +121,7 @@ fn reads_element_value(flow: &LoopRegion, values: &Webs, offset: usize, receiver
         !definitions.is_empty() && definitions.iter().all(|definition| {
             definition.checked_sub(flow.entry_count())
                 .and_then(|index| flow.instructions.get(index))
-                .is_some_and(|definition| definition.op().is_get_index())
+                .is_some_and(|definition| element_access(*definition) == Some(true))
         })
     })
 }
@@ -120,13 +131,14 @@ fn reads_element_value(flow: &LoopRegion, values: &Webs, offset: usize, receiver
 fn canonical_arrays(flow: &LoopRegion, values: &Webs) -> Option<Vec<WideInstruction>> {
     let mut canonical = flow.instructions.clone();
     for (offset, instruction) in canonical.iter_mut().enumerate() {
-        let Some(receiver) = object_reads(*instruction).filter(|_| instruction.op().is_indexed_access()) else { continue };
+        let Some(reads) = element_access(*instruction) else { continue };
+        let Some(receiver) = object_reads(*instruction) else { continue };
         let root = match array_root(flow, values, flow.header + offset as u32, receiver, &mut BTreeSet::new()) {
             Some(root) => root,
-            None if instruction.op().is_get_index() && reads_element_value(flow, values, offset, receiver) => continue,
+            None if reads && reads_element_value(flow, values, offset, receiver) => continue,
             None => return None,
         };
-        let base = if instruction.op().is_get_index() { Operand::register(root).0 } else { root };
+        let base = if reads { Operand::register(root).0 } else { root };
         *instruction = WideInstruction::new(instruction.op(), instruction.a(), base, instruction.c(), instruction.imm());
     }
     Some(canonical)

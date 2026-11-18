@@ -110,9 +110,8 @@ mod wasm_call_stage;
 mod wasm_table_stage;
 mod wasm_instance_switch;
 mod wasm_simd_stage;
-// The driver places stitched functions once they take memory and calls; until then the tests do.
+// `--b-jit` enters a module's functions through their stitched rows (`stitched_entry`).
 #[cfg(target_arch = "x86_64")]
-#[cfg_attr(not(test), allow(dead_code))]
 mod wasm_stitch;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(all(test, feature = "aot"))]
@@ -2686,6 +2685,33 @@ enum CompiledArgs<'a> {
     },
 }
 
+/// Function `index`'s entry stitched from the b-jit's rows, under `--b-jit` where it has rows
+/// for every instruction: the `WasmEntry` ABI the compiled entry has.
+#[cfg(target_arch = "x86_64")]
+fn stitched_entry<H: Host>(
+    vm: &Vm<H>,
+    program: ProgramId,
+    code: &crate::bytecode::ResidualProgram,
+    index: usize,
+    plan: &Plan,
+    memory_slot: Option<u32>,
+) -> Option<Vec<u8>> {
+    if !crate::jit_mode::base_only() {
+        return None;
+    }
+    let function = code.function_get(index)?;
+    let constant = |at: usize| {
+        let value = vm.programs.constant(program, at)?;
+        Some(vm.decode_bits64(value).unwrap_or(u64::from(value.wasm_bits32())))
+    };
+    wasm_stitch::stitch(function, usize::from(function.params), plan.result.is_some(), &constant, memory_slot)
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn stitched_entry<H: Host>(_: &Vm<H>, _: ProgramId, _: &crate::bytecode::ResidualProgram, _: usize, _: &Plan, _: Option<u32>) -> Option<Vec<u8>> {
+    None
+}
+
 /// The `CompiledProgram::positions` entry of a function an artifact does not hold.
 const NOT_COMPILED: u32 = u32::MAX;
 
@@ -3536,6 +3562,9 @@ pub(super) struct LaneMethod {
     /// one adopts them from the file (`Vm::lane_adopt_window`).
     framed: bool,
     caller_registers: u16,
+    /// The frame slots past `caller_registers` the code writes in the activation's own storage (a b-jit
+    /// body's scratch and inlined windows, past the environment window); 0 where it writes none there.
+    frame_reach: usize,
     /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
     amortizes: bool,
     /// The callees it calls by their compiled entries, which its code names.
@@ -3549,9 +3578,14 @@ pub(super) struct LaneMethod {
     /// The constructors its `instanceof` rows guard their operands against by identity: a collection that frees one
     /// retires it (`ProgramStore::retire_dead_native_calls`), so a word they name is never a reused one.
     pub(super) constructors: Box<[Value]>,
+    /// Whether it runs only in the realm it was compiled in: its entry proves that realm active
+    /// (`Heap::Realm`) and every callee it names is that realm's, so a switch to another realm
+    /// changes nothing it relies on (`ProgramStore::retire_native_calls_across_realms`).
+    pub(in crate::vm) realm_bound: bool,
 }
 
 impl LaneMethod {
+    pub(super) fn frame_reach(&self) -> usize { self.frame_reach }
     pub(super) fn recovery_space(&self) -> super::dispatch_fast::LaneRecoverySpace { self.recovery_space }
     /// The registers of the function it runs, which an inlined callee's follow.
     pub(super) fn caller_registers(&self) -> u16 {
@@ -4101,12 +4135,12 @@ impl<H: Host> Vm<H> {
     /// Copies the registers that follow the first `from` of the activation at `registers`, where a
     /// stitched body kept its inlined callees' (`LaneMethod::framed`), into the scratch window a
     /// leave inside one reads (`lane_scratch`), before the activations it makes overwrite them.
-    pub(super) fn lane_adopt_window(registers: *const Value, from: usize) {
+    pub(super) fn lane_adopt_window(registers: *const Value, from: usize, width: usize) {
         let frame = lane_frame();
         // SAFETY: as `lane_stack_words`; the body's admission proved the room past the
         // activation's registers (`LaneRecoverySpace`), and no lane body runs while the lane reads it.
         unsafe {
-            for (at, slot) in (*frame).scratch.iter_mut().enumerate() {
+            for (at, slot) in (*frame).scratch.iter_mut().take(width).enumerate() {
                 *slot = registers.add(from + at).read();
             }
         }
@@ -8402,6 +8436,13 @@ impl<H: Host> Vm<H> {
                 }
                 return None;
             }
+            // `--b-jit` enters a function through its stitched rows where every instruction has
+            // one (`wasm_stitch`): the interpreter's staged rules, copied and patched. Its
+            // compiled body stays for the calls of the other functions until the rows take calls.
+            let entry = match stitched_entry(self, program, &code, index, plans[index].as_ref()?, memory_slot) {
+                Some(stitched) => stitched,
+                None => entry,
+            };
             entries[index] = Some(place(&mut bytes, entry));
         }
         for (offset, call) in calls {
