@@ -1236,12 +1236,12 @@ impl<H: Host> Vm<H> {
         }
         let mut environment = start;
         let mut homes = Vec::with_capacity(home_atoms.len());
-        while let Some(Cell::Environment {
+        while let Some(crate::heap::EnvironmentRecord {
             parent,
             function,
             slots,
             scope,
-        }) = self.heap.get(environment)
+        }) = self.heap.environment(environment)
         {
             let program = &scope.program();
             let dynamic_bindings = self.heap.environment_bindings(environment)?;

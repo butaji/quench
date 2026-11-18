@@ -1344,7 +1344,7 @@ fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
         let Some(crate::heap::FunctionRecord { env, .. }) = vm.heap.function(closure) else {
             panic!("{name} is a closure");
         };
-        let Some(Cell::Environment { scope, .. }) = vm.heap.get(*env) else {
+        let Some(crate::heap::EnvironmentRecord { scope, .. }) = vm.heap.environment(*env) else {
             panic!("{name} captured its creator's environment");
         };
         match scope.dynamic_bindings() {

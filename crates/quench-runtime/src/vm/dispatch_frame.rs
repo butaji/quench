@@ -1368,31 +1368,27 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| JsError("invalid environment clone owner".into()))?,
             )
         };
-        let Some(Cell::Environment {
+        let Some(crate::heap::EnvironmentRecord {
             parent,
             function,
             scope,
             ..
-        }) = self.heap.get(source)
+        }) = self.heap.environment(source)
         else {
             return Err(JsError("invalid environment clone".into()));
         };
-        let environment = Cell::Environment {
-            parent: *parent,
-            function: *function,
-            slots,
-            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
-                program: scope.program(),
-                root_eval_scope: scope.root_eval_scope(),
-                binding_site_pc: scope.binding_site_pc(),
-                dynamic_bindings: owner.map_or_else(
-                    || crate::heap::EnvironmentBindings::Owned(Vec::new()),
-                    crate::heap::EnvironmentBindings::Shared,
-                ),
-                with_objects: scope.with_objects().into(),
-            }),
-        };
-        Ok(self.heap.alloc(environment))
+        let (parent, function) = (*parent, *function);
+        let scope_ref = crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+            program: scope.program(),
+            root_eval_scope: scope.root_eval_scope(),
+            binding_site_pc: scope.binding_site_pc(),
+            dynamic_bindings: owner.map_or_else(
+                || crate::heap::EnvironmentBindings::Owned(Vec::new()),
+                crate::heap::EnvironmentBindings::Shared,
+            ),
+            with_objects: scope.with_objects().into(),
+        });
+        Ok(self.heap.alloc_environment(parent, function, slots, scope_ref).0)
     }
 
     pub(super) fn activate_frame(&mut self, frame: &mut Frame) {
@@ -2795,7 +2791,7 @@ impl<H: Host> Vm<H> {
             return Vec::new();
         }
         let mut layers = Vec::new();
-        while let Some(Cell::Environment { parent, scope, .. }) = self.heap.get(env) {
+        while let Some(crate::heap::EnvironmentRecord { parent, scope, .. }) = self.heap.environment(env) {
             if !scope.with_objects().is_empty() {
                 layers.push(scope.with_objects().to_vec());
             }

@@ -69,7 +69,7 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             let stores = entry.capture.addr() & CAPTURE_STORES;
-            let Some(Cell::Environment { slots, .. }) = self.heap.get(env) else {
+            let Some(crate::heap::EnvironmentRecord { slots, .. }) = self.heap.environment(env) else {
                 return None;
             };
             let storage = slots.dense_storage()?;
@@ -122,11 +122,11 @@ impl<H: Host> Vm<H> {
         if entry.capture.is_null() {
             return None;
         }
-        let Some(Cell::Environment { function: old, scope: old_scope, .. }) = self.heap.get(entry.env) else {
+        let Some(crate::heap::EnvironmentRecord { function: old, scope: old_scope, .. }) = self.heap.environment(entry.env) else {
             return None;
         };
         let (old, old_program) = (*old, old_scope.program());
-        let Some(Cell::Environment { function, slots, scope, .. }) = self.heap.get(env) else {
+        let Some(crate::heap::EnvironmentRecord { function, slots, scope, .. }) = self.heap.environment(env) else {
             return None;
         };
         if *function != old || scope.program() != old_program {

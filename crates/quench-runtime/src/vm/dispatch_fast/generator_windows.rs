@@ -107,7 +107,7 @@ pub(super) fn window_environments<H: Host>(
     environment: bool,
 ) -> Option<(Value, Option<WindowLocals>)> {
     let own = if captured {
-        let Some(Cell::Environment { parent, slots, .. }) = vm.heap.get(env) else {
+        let Some(crate::heap::EnvironmentRecord { parent, slots, .. }) = vm.heap.environment(env) else {
             return None;
         };
         Some((*parent, std::ptr::from_ref(slots)))

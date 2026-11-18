@@ -67,6 +67,7 @@ struct ParallelMarkView<'heap> {
     strings: ParallelRecordMarks<'heap, JsString>,
     small_strings: ParallelRecordMarks<'heap, super::SmallParts>,
     v128s: ParallelRecordMarks<'heap, [u8; crate::wasm::V128_BYTES]>,
+    environments: ParallelRecordMarks<'heap, super::EnvironmentRecord>,
     /// The keys weak map values wait for, which change only between rounds.
     ephemerons: &'heap weak::EphemeronWork,
     /// `EnvironmentTrace::reads_closures` for this collection.
@@ -173,6 +174,7 @@ impl<'heap> ParallelMarkView<'heap> {
             strings: heap.string_records.parallel_marks(),
             small_strings: heap.small_strings.parallel_marks(),
             v128s: heap.v128_records.parallel_marks(),
+            environments: heap.environment_records.parallel_marks(),
             ephemerons,
             reads_closures,
             projection_function,
@@ -386,17 +388,28 @@ impl<'heap> ParallelMarkView<'heap> {
                 }
                 CellKind::WasmV128
             }
+            HeapReference::EnvironmentRecord(id) => {
+                if !self.environments.occupied(id) {
+                    return;
+                }
+                // SAFETY: occupied, and no record is written or freed while the view lives.
+                let environment = unsafe { self.environments.get(id) };
+                // Environments read by what their readers read are traced serially after the round.
+                if self.reads_closures || self.projection_function == Some(environment.function) {
+                    batch.environments.push(value);
+                    return;
+                }
+                if !self.environments.mark_if_new(id) {
+                    return;
+                }
+                Heap::environment_children(environment, work, last_proto);
+                CellKind::Environment
+            }
             HeapReference::LegacySlot(index) => {
                 let index = index as usize;
                 let Some(cell) = self.cell(index) else {
                     return;
                 };
-                if let Cell::Environment { function, .. } = cell
-                    && (self.reads_closures || self.projection_function == Some(*function))
-                {
-                    batch.environments.push(value);
-                    return;
-                }
                 if !self.mark_slot_if_new(index) {
                     return;
                 }

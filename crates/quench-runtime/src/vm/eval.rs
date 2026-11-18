@@ -949,18 +949,20 @@ impl<H: Host> Vm<H> {
                 } else {
                     Vec::new()
                 };
-                self.heap.alloc(Cell::Environment {
-                    parent,
-                    function: u32::MAX,
-                    slots: Vec::<Value>::new().into_boxed_slice().into(),
-                    scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
-                        program: None,
-                        root_eval_scope: root_scope,
-                        binding_site_pc: None,
-                        dynamic_bindings: dynamic_bindings.into(),
-                        with_objects: Box::default(),
-                    }),
-                })
+                self.heap
+                    .alloc_environment(
+                        parent,
+                        u32::MAX,
+                        Vec::<Value>::new().into_boxed_slice().into(),
+                        crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+                            program: None,
+                            root_eval_scope: root_scope,
+                            binding_site_pc: None,
+                            dynamic_bindings: dynamic_bindings.into(),
+                            with_objects: Box::default(),
+                        }),
+                    )
+                    .0
             } else {
                 parent
             };
@@ -1014,12 +1016,13 @@ impl<H: Host> Vm<H> {
         let Some(binding_site_pc) = site else {
             return Ok(environment);
         };
-        let scope = self.binding_site_environment_cell(environment, binding_site_pc)?;
-        Ok(self.heap.alloc(scope))
+        let crate::heap::EnvironmentRecord { parent, function, slots, scope } =
+            self.binding_site_environment_cell(environment, binding_site_pc)?;
+        Ok(self.heap.alloc_environment(parent, function, slots, scope).0)
     }
 
-    /// The environment cell `site_environment` allocates for a site at `binding_site_pc`.
-    fn binding_site_environment_cell(&mut self, environment: Value, binding_site_pc: u32) -> Result<Cell, JsError> {
+    /// The environment record `site_environment` allocates for a site at `binding_site_pc`.
+    fn binding_site_environment_cell(&mut self, environment: Value, binding_site_pc: u32) -> Result<crate::heap::EnvironmentRecord, JsError> {
         let slots = self
             .heap
             .clone_environment_slots(environment, &[], crate::bytecode::Resets::listed(&[]))
@@ -1028,16 +1031,16 @@ impl<H: Host> Vm<H> {
             .heap
             .environment_binding_owner(environment)
             .ok_or_else(|| JsError("invalid eval scope owner".into()))?;
-        let Some(Cell::Environment {
+        let Some(crate::heap::EnvironmentRecord {
             parent,
             function,
             scope,
             ..
-        }) = self.heap.get(environment)
+        }) = self.heap.environment(environment)
         else {
             return Err(JsError("invalid eval scope environment".into()));
         };
-        let scope = Cell::Environment {
+        let record = crate::heap::EnvironmentRecord {
             parent: *parent,
             function: *function,
             slots,
@@ -1049,7 +1052,7 @@ impl<H: Host> Vm<H> {
                 with_objects: scope.with_objects().into(),
             }),
         };
-        Ok(scope)
+        Ok(record)
     }
 
     fn validate_eval_arguments_context(

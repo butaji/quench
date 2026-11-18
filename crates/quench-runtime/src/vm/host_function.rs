@@ -23,18 +23,18 @@ const HOST_CALL_INLINE_ARGUMENTS: usize = 6;
 impl<H: Host> Vm<H> {
     /// A native function's private environment: traced slots outside any scope chain.
     pub(super) fn native_environment(&mut self, slots: &[Value]) -> Value {
-        self.heap.alloc(Cell::Environment {
-            parent: Value::NULL,
-            function: NATIVE_ENVIRONMENT_FUNCTION,
-            slots: crate::heap::EnvironmentSlots::from_values(slots.iter().copied()),
-            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+        self.heap.alloc_environment(
+            Value::NULL,
+            NATIVE_ENVIRONMENT_FUNCTION,
+            crate::heap::EnvironmentSlots::from_values(slots.iter().copied()),
+            crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: None,
                 root_eval_scope: false,
                 binding_site_pc: None,
                 dynamic_bindings: Vec::new().into(),
                 with_objects: Box::default(),
             }),
-        })
+        ).0
     }
 
     pub(crate) fn create_host_function(&mut self, id: HostFunctionId) -> Result<Value, JsError> {

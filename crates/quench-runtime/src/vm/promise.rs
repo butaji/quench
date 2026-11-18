@@ -2264,18 +2264,18 @@ impl<H: Host> Vm<H> {
                 slots[slot] = Value::DELETED;
             }
         }
-        let environment = self.heap.alloc(Cell::Environment {
-            parent: Value::NULL,
-            function: super::ROOT_FUNCTION_ID,
-            slots: slots.into(),
-            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+        let environment = self.heap.alloc_environment(
+            Value::NULL,
+            super::ROOT_FUNCTION_ID,
+            slots.into(),
+            crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(program.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
                 dynamic_bindings: Vec::new().into(),
                 with_objects: Box::default(),
             }),
-        });
+        ).0;
         self.programs.set_module_environment(program, environment);
 
         // Each name's first function declared directly in the module body.

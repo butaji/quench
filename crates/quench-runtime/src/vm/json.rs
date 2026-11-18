@@ -1834,8 +1834,7 @@ impl<H: Host> Vm<H> {
             | Some(Cell::WasmTable { .. }) => {
                 self.json_serialize_object(p, value, state).map(|()| true)
             }
-            Some(Cell::Environment { .. })
-            | Some(Cell::Iterator(_))
+            Some(Cell::Iterator(_))
             | Some(Cell::ArrayFromAsyncState(_))
             | Some(Cell::AwaitState(_))
             | Some(Cell::PromiseResolvingState { .. })

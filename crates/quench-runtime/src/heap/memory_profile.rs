@@ -702,11 +702,6 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
             Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
             Cell::WeakSet { entries, .. } => entries.allocated_bytes(),
-            Cell::Environment { slots, scope, .. } => {
-                slots.len() * size_of::<super::EnvironmentSlot>()
-                    + scope.boxed_bytes()
-                    + std::mem::size_of_val(scope.with_objects())
-            }
             Cell::BigInt(value) => value.spilled_bytes(),
             Cell::Error(value) => value.capacity(),
             Cell::Promise(promise) => size_of::<super::PromiseCell>() + promise.record.reaction_heap_bytes(),
