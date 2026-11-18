@@ -134,14 +134,12 @@ impl DeclaredTypes {
     }
 
     /// The declared signature of the function whose source span starts at `start`, when declared.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the declared-fact seeding reads it next"))]
     pub(crate) fn declared_signature(&self, start: u32) -> Option<&DeclaredSignature> {
         self.signatures.iter().rev().find(|signature| signature.start == start)
     }
 
     /// The declared language types of local `name` of the function starting at `function`
     /// (`u32::MAX` for the top level), when the program declares one (the last declaration wins).
-    #[cfg_attr(not(test), expect(dead_code, reason = "the declared-fact seeding reads it next"))]
     pub(crate) fn declared_local(&self, function: u32, name: &str) -> Option<u16> {
         self.locals.iter().rev()
             .find(|local| local.function == function && &*local.name == name)
