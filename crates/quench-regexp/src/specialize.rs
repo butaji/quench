@@ -139,10 +139,7 @@ pub(super) fn step<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
         }
         Inst::Dispatch { table } => dispatch(stage, table, at),
         Inst::Jump(target) => Step::Continue(at.jump(target)),
-        Inst::Look { negative, end } => {
-            let holds = stage.look(at.next(), negative);
-            if holds { Step::Continue(at.jump(end)) } else { Step::Fail }
-        }
+        Inst::Look { negative, end } => look(stage, (negative, end), at),
         Inst::LookSucceed | Inst::Match => Step::Accept,
         inst => registers(stage, inst, at),
     }
@@ -154,13 +151,7 @@ fn registers<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
     match inst {
         Inst::CaptureOpen { temporary, count, restores } => m::capture_open(stage, (temporary, count, restores), at),
         Inst::CaptureClose { capture, temporary } => m::capture_close(stage, (capture, temporary), at),
-        Inst::ResetCaptures { first, count } => {
-            for index in first..first + count {
-                let capture = stage.listed(index);
-                m::reset_capture(stage, capture);
-            }
-            Step::Continue(at.next())
-        }
+        Inst::ResetCaptures { first, count } => reset_captures(stage, (first, count), at),
         Inst::LoopInit { counter } => m::loop_init(stage, counter, at),
         Inst::LoopHead { counter, min, max, greedy, exit } => m::loop_head(stage, (counter, min, max), (greedy, exit), at),
         Inst::LoopIterate { start } => m::loop_iterate(stage, start, at),
@@ -169,6 +160,23 @@ fn registers<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
         Inst::Backreference { first, count, ignore_case, unicode } => backreference(stage, (first, count, ignore_case, unicode), at),
         inst => backward::step(stage, inst, at),
     }
+}
+
+/// A lookahead: its body runs as a nested run, and matching goes on at `end` where it holds.
+#[inline(always)]
+fn look<S: Stage>(stage: &mut S, (negative, end): (bool, u32), at: Cursor) -> Step {
+    let holds = stage.look(at.next(), negative);
+    if holds { Step::Continue(at.jump(end)) } else { Step::Fail }
+}
+
+/// Unsets the captures listed in `Program::lists[first..first + count]`.
+#[inline(always)]
+fn reset_captures<S: Stage>(stage: &mut S, (first, count): (u32, u32), at: Cursor) -> Step {
+    for index in first..first + count {
+        let capture = stage.listed(index);
+        m::reset_capture(stage, capture);
+    }
+    Step::Continue(at.next())
 }
 
 #[inline(always)]

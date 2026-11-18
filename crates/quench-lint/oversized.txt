@@ -4853,7 +4853,7 @@ magic crates/quench-runtime/src/vm/regexp.rs::Vm<H>::replacement_substitution 10
 magic crates/quench-runtime/src/vm/regexp.rs::advance_string_index_units 1
 magic crates/quench-runtime/src/vm/regexp.rs::escape_regexp_character 1
 magic crates/quench-runtime/src/vm/regexp.rs::escape_regexp_string 3
-magic crates/quench-runtime/src/vm/regexp/steady.rs::Vm<H>::steady_string_replace 2
+magic crates/quench-runtime/src/vm/regexp/steady_strings.rs::Vm<H>::steady_string_replace 2
 magic crates/quench-runtime/src/vm/shadow_realm.rs::Vm<H>::install_shadow_realm_for_realm 1
 magic crates/quench-runtime/src/vm/shape_lookup.rs::ShapeLookupIndex::remove 1
 magic crates/quench-runtime/src/vm/site_table.rs::SiteTable<T>::grow 1
