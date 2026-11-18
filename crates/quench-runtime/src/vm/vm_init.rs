@@ -13,6 +13,7 @@ impl<H: Host> Vm<H> {
             host,
             typed_views: Default::default(),
             native_microtask_running: false,
+            queue_resumed: Value::UNDEFINED,
             unobserved_jobs_entered: false,
             specialized: true,
             heap: Heap::new(),

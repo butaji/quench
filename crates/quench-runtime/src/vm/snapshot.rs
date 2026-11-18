@@ -48,6 +48,7 @@ impl<H: Host> Vm<H> {
         let Self {
             typed_views: _,
             native_microtask_running: _,
+            queue_resumed: _,
             unobserved_jobs_entered: _,
             host,
             specialized,

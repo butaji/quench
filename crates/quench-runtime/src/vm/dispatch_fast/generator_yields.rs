@@ -4,7 +4,7 @@
 //! frame's, takes the general path, which suspends the frame back into its generator.
 use super::*;
 use super::generator_windows::{lane_yield_in_window, lane_yield_star_in_window, running_generator};
-use super::super::activation::SuspendKind;
+use super::super::activation::{JobRoot, SuspendKind};
 
 script_handler! {
     /// `yield` of the generator activation the lane runs over its record (`running_generator`):
@@ -69,6 +69,22 @@ impl<H: Host> Vm<H> {
         }
         Some(awaited)
     }
+
+    /// What an `await` of `source` (`lane_await_source`) by the activation of `job` evaluates
+    /// to without suspending: its reaction would be the only queued job, so suspending, queueing
+    /// it and resuming observes nothing more. Only an async function a microtask drain resumed
+    /// (`queue_resumed`), with no other job queued and no host watching promises, awaiting a
+    /// non-object or a fulfilled promise.
+    fn settled_await(&self, job: JobRoot, source: Value) -> Option<Value> {
+        if self.queue_resumed != job.object || !self.realm.jobs.is_empty() || self.host.observes_promise_lifecycle() {
+            return None;
+        }
+        if !self.is_object_like(source) {
+            return Some(source);
+        }
+        let record = self.promise_record(source)?;
+        (record.state() == crate::heap::PromiseState::Fulfilled).then(|| record.result())
+    }
 }
 
 script_handler! {
@@ -90,6 +106,12 @@ script_handler! {
         };
         // The source may be a fresh promise, which the safepoints after the run collect.
         note_allocation(vm);
+        if let Some(settled) = vm.settled_await(job, value)
+            && !script_fuel_out(cx)
+        {
+            r.set(i.a & crate::bytecode::REGISTER_MASK, settled);
+            next!(cx, r, following(ip), Carried::script(cx))
+        }
         // SAFETY: the record lies in the running view.
         let pc = unsafe { ip.offset_from((*cx).base) } as usize;
         vm.suspend_job_window(job, pc + 1, i.a & crate::bytecode::REGISTER_MASK, value, 0);
