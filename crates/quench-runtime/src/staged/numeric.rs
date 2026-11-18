@@ -2,6 +2,7 @@
 
 use super::{Frame, Stage, Step};
 use crate::bytecode::{Operand, Register};
+#[cfg(not(stencil_build))]
 use oxc_ast::ast::BinaryOperator;
 use crate::vm::operations::{
     int32_bitwise_bits, CheckedInt32Stage, NumberArithmetic, NumberArithmeticStage, NumberBitwise, NumberF64Stage,
@@ -308,6 +309,7 @@ fn bitwise_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
 /// operands' representations, so it names the widest domain (`Float64`; a bitwise is int32 by its
 /// operator). `None` for any other operator (equality, `in`, `instanceof`): the VM's. The operator
 /// tables are the operations' own (`NumberArithmetic::from_operator` and its siblings).
+#[cfg(not(stencil_build))]
 pub(crate) fn binary_operation(operator: u32, destination: Register, left: Operand, right: Operand) -> Option<NumberOperation> {
     if let Some(operation) = NumberArithmetic::from_operator(operator) {
         return Some(NumberOperation::Arithmetic { destination, left, right, operation, domain: Domain::Float64,

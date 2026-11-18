@@ -198,16 +198,16 @@ pub(crate) trait Frame<S: Stage> {
 
     /// The 16 bytes of the vector `register` holds; `None` where it holds no vector.
     #[inline(always)]
-    fn vector(&mut self, _stage: &mut S, _register: Register) -> Option<[u8; crate::wasm::V128_BYTES]> { None }
+    fn vector(&mut self, _stage: &mut S, _register: Register) -> Option<[u8; VECTOR_BYTES]> { None }
 
     /// The 16 bytes of the vector constant `constant` names; `None` where it names none.
     #[inline(always)]
-    fn vector_constant(&mut self, _stage: &mut S, _constant: Constant) -> Option<[u8; crate::wasm::V128_BYTES]> { None }
+    fn vector_constant(&mut self, _stage: &mut S, _constant: Constant) -> Option<[u8; VECTOR_BYTES]> { None }
 
     /// Define `register` with the vector `bytes` in a fresh cell, returning its tagged word; `None`
     /// where the frame cannot make it, which leaves the row to its miss.
     #[inline(always)]
-    fn set_vector(&mut self, _stage: &mut S, _register: Register, _bytes: [u8; crate::wasm::V128_BYTES]) -> Option<S::Word> { None }
+    fn set_vector(&mut self, _stage: &mut S, _register: Register, _bytes: [u8; VECTOR_BYTES]) -> Option<S::Word> { None }
 
     /// The bytes of the linear memory a direct access addresses (the function's memory, which the
     /// frame resolved); `None` where the frame holds none, which leaves the row to its miss.
@@ -406,3 +406,6 @@ pub(crate) enum Step<W, C> {
     /// its truthiness: the interpreter must take its fallback path.
     Unresolved,
 }
+
+/// The bytes of a Wasm `v128` (`wasm::V128_BYTES`; the stencil build has no `wasm` module).
+pub(crate) const VECTOR_BYTES: usize = 16;
