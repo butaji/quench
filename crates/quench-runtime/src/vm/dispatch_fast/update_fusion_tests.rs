@@ -40,6 +40,6 @@ fn an_update_fuses_with_the_jump_after_it() {
     let update = record(lane_row::<TestHost, { opc::IncDec }, ACC_NONE, FLAG_UNREAD> as Handler as *const (), 0);
     let jump = record(jump_row::<TestHost, { opc::Jump }>(true) as *const (), 0);
     let fused = update_fusion::<TestHost>(&update, &jump).map(|handler| handler as *const ());
-    assert_eq!(fused, Some(fused_row::<TestHost, { opc::IncDec }, { opc::Jump }, { crate::staged::FUSED_PLAIN }>(true) as *const ()));
+    assert_eq!(fused, Some(lane_frame::fused_row::<TestHost, { opc::IncDec }, { opc::Jump }, { crate::staged::FUSED_PLAIN }>(true) as *const ()));
     assert!(update_fusion::<TestHost>(&jump, &jump).is_none(), "only an `IncDec` fuses with the jump after it");
 }

@@ -90,6 +90,14 @@ impl NumberArithmetic {
     }
 }
 
+#[cfg(test)]
+/// Whether swapping two already-evaluated operands preserves the canonical Number
+/// result. This is not a law for evaluating/coercing guest operands or string addition.
+#[inline(always)]
+pub(super) fn number_result_is_commutative(operator: u32) -> bool {
+    matches!(NumberArithmetic::from_operator(operator), Some(NumberArithmetic::Add | NumberArithmetic::Multiply))
+}
+
 /// Sign of a non-overflowing zero product: at least one factor is zero, so
 /// the result is -0 exactly when either factor is negative. The caller must
 /// establish zero before interpreting this predicate; views supply primitives.
@@ -173,6 +181,28 @@ impl NumberBitwise {
     pub(super) fn result_is_int32(self, right: Option<f64>) -> bool {
         self != Self::ShiftRightUnsigned || right.is_some_and(|right|
             crate::value::number_to_u32(right) & crate::value::WORD32_SHIFT_MASK != 0)
+    }
+}
+
+#[cfg(test)]
+/// `OP` on two int32 operands when its Number result is again an int32 (no overflow, no
+/// -0, no `>>>` past 2^31): the raw i32, so a fused second operator reads it without a tag
+/// test. `None` leaves the case to `integer_operator`.
+#[inline(always)]
+pub(super) fn int32_operator<const OP: u32>(left: i32, right: i32) -> Option<i32> {
+    match numeric_binary_operator(OP)? {
+        BinaryOperator::Addition => left.checked_add(right),
+        BinaryOperator::Subtraction => left.checked_sub(right),
+        BinaryOperator::Multiplication => {
+            let product = left.checked_mul(right)?;
+            // 0 from a negative factor is -0, not an int32.
+            (product != 0 || (left | right) >= 0).then_some(product)
+        }
+        operator => {
+            let operation = NumberBitwise::from_binary_operator(operator)?;
+            let bits = operation.apply(&mut I32BitwiseStage, left, right);
+            (operation != NumberBitwise::ShiftRightUnsigned || bits >= 0).then_some(bits)
+        }
     }
 }
 

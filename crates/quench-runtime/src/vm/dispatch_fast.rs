@@ -3453,6 +3453,22 @@ pub(super) fn lane_body_locals<H: Host>(lane_context: *mut (), registers: *mut V
     }
 }
 
+#[cfg(test)]
+/// The integer `IncDec` of `value`, the update `dispatch::number_increment` makes of an
+/// integer that does not overflow; `None` for any other value.
+#[inline(always)]
+pub(super) fn integer_increment<const DECREMENT: bool>(value: Value) -> Option<i32> {
+    // As `dispatch::integer_increment`: a non-negative step by one word-range compare.
+    let offset = value.int_key_offset();
+    let stepped = if DECREMENT { offset.wrapping_sub(1) } else { offset.wrapping_add(1) };
+    // A decrement of the least int32 (offset 2^31) would land at 2^31 - 1: its bound is one less.
+    if stepped < (1 << 31) - usize::from(DECREMENT) {
+        return Some(stepped as i32);
+    }
+    let integer = value.as_int()?;
+    if DECREMENT { integer.checked_sub(1) } else { integer.checked_add(1) }
+}
+
 script_handler! {
     /// `InitializeTdz`: opens the binding's dead zone wherever the frame keeps it, as the
     /// general path does (`Vm::owner_binding_mut`).
@@ -3705,6 +3721,20 @@ fn lane_after_nested_collection<H: Host>(cx: *mut LaneContext<H>) {
         (*cx).outer = NO_OUTER_WALK;
         (*cx).frame_storage = NO_FRAME_STORAGE;
         (*cx).instance_slots = (Value::DELETED, std::ptr::null());
+    }
+}
+
+#[cfg(test)]
+/// A read's value may occupy either side of canonical commutative Number arithmetic.
+/// Its register was already written, so reading the other register preserves aliases.
+/// Ordered operations retain both original operands. A non-Number still declines through
+/// the shared Number operation; its original record owns evaluation/coercion order.
+#[inline(always)]
+fn read_number_operands<const OP: u32>(r: Registers, operator: &LaneInstruction, other: u16, element: Value) -> (Value, Value) {
+    if super::operations::number_result_is_commutative(OP) {
+        (element, r.get(other))
+    } else {
+        (r.get(operator.b), r.get(operator.c))
     }
 }
 

@@ -947,31 +947,31 @@ pub(crate) enum Operation<W, P> {
     /// (`add::site_add`). The tier names the object word and the site's words: a register's or the
     /// activation's receiver, so one variant serves the register and `this` add rows. No opcode
     /// decodes to it; a stencil row builds it. Leaves at the miss edge where the add declines.
-    #[cfg_attr(not(test), allow(dead_code))] // no opcode decodes to it: a stencil row builds it
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
     AddSite { records: W, object: W, edge: add::Edge<W>, link: Option<W>, form: Form, value: W },
     /// A function's inferred name `name` written to the function word `function`'s empty name slot
     /// through a site's naming edge (`naming::site_name`, the `(edge, empty)` pair). No opcode decodes
     /// to it; a stencil row builds it. Leaves at the miss edge where the naming declines.
-    #[cfg_attr(not(test), allow(dead_code))] // no opcode decodes to it: a stencil row builds it
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
     NamingSite { records: W, function: W, naming: (add::Edge<W>, W), form: Form, name: W },
     /// `value instanceof constructor` into `destination`, decided by the frame's words of the value
     /// and the constructor (`Frame::instance_of`, the walk `object::instanceof_by_words`); the frame's
     /// default leaves it to the VM's `Binary` callout. Leaves at the miss edge where the walk declines.
-    #[cfg_attr(not(test), allow(dead_code))] // no opcode decodes to it: a stencil row builds it
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
     InstanceOf { destination: Register, value: Register, constructor: Register },
     /// Continue where register `source` holds a direct array (the array identity test, `Frame::direct_array`);
     /// any other value leaves at the miss edge.
-    #[cfg_attr(not(test), allow(dead_code))] // no opcode decodes to it: a stencil row builds it
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
     DirectArray { source: Register },
     /// Define `destination` with the `length` of the direct array in register `source` (`Frame::array_length`).
-    #[cfg_attr(not(test), allow(dead_code))] // no opcode decodes to it: a stencil row builds it
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
     ArrayLength { destination: Register, source: Register },
     /// Define `destination` with the `length` of the typed array in register `source` (`Frame::typed_length`).
-    #[cfg_attr(not(test), allow(dead_code))] // no opcode decodes to it: a stencil row builds it
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
     TypedLength { destination: Register, source: Register },
     /// Append the value in register `value` to the array in register `array`, where its backing has
     /// room and is writable (`Frame::array_append`); a value the frame does not append leaves at the miss edge.
-    #[cfg_attr(not(test), allow(dead_code))] // no opcode decodes to it: a stencil row builds it
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
     ArrayAppend { array: Register, value: Register },
 }
 impl<W, P> Operation<W, P> {
@@ -1209,6 +1209,12 @@ impl Operation<u64, ()> {
             Op::YieldStar => Self::YieldStar { iterable: instruction.register_c() },
             _ => return None,
         })
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    /// Whether `instruction` is the named store `SetField` itself (not a store to `this`).
+    pub(crate) fn is_set_field(instruction: WideInstruction) -> bool {
+        instruction.op() == Op::SetField
     }
 
     /// Whether `instruction` does nothing: a marker that defines and writes nothing.

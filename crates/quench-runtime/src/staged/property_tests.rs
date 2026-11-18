@@ -248,7 +248,7 @@ fn the_property_instructions_decode_to_their_operations() {
     assert!(matches!(delete, Operation::Delete { destination: 1, base: 2, key: 3, strict: true }));
     let has = decode(WideInstruction::new(Op::Binary, 1, Operand(2).0, Operand(3).0,
         oxc_ast::ast::BinaryOperator::In as u32)).expect("`in` of registers decodes");
-    assert!(matches!(has, Operation::Binary { left: Operand::register(2), right: Operand::register(3), .. }), "`in` is the VM's Binary call-out row");
+    assert!(matches!(has, Operation::Binary { left, right, .. } if left == Operand::register(2) && right == Operand::register(3)), "`in` is the VM's Binary call-out row");
 }
 
 /// `plan` read from `object` as register 1's owner, by a frame claiming `proven`; the word read
