@@ -15,6 +15,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::Void { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. } | Operation::Binary { .. }
             | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
         call @ (Operation::Call(_) | Operation::Return { .. }) => call_step(stage, frame, call),
+        Operation::Suspend { kind, destination, value } => super::suspend::suspend(stage, frame, kind, destination, value),
         Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
             | Operation::LogicalNot { .. } | Operation::Safepoint { .. } => register_step(stage, frame, operation),
         Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }

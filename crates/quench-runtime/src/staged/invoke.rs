@@ -109,6 +109,14 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
+    /// Suspend the activation at `kind` with the value of `value`, resuming into `destination`;
+    /// `None` where the frame cannot, leaving the suspension to the interpreter
+    /// (`dispatch_fast::generator_yields`, `Vm::step`).
+    #[inline(always)]
+    fn suspend(&mut self, _stage: &mut S, _kind: super::Suspension, _destination: Register, _value: Register) -> Option<Self::Control> {
+        None
+    }
+
     /// Make the lane's activations frames, as a native that observes the frame stack needs
     /// (`Native::runs_beside_activations` is false): a native that runs beside them is entered
     /// without. The caller's registers stay where they are.

@@ -149,7 +149,7 @@ impl Class {
 /// decoder is the interpreter's hand path alone (a tier leaves at its exact PC).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Decoder {
-    /// A register move, a constant, a jump or a return.
+    /// A register move, a constant, a jump, a return or a suspension (`await`, `yield`, `yield*`).
     Flow,
     /// A frame local's load or store.
     Local,
