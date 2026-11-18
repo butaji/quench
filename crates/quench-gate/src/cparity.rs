@@ -19,7 +19,7 @@ pub(crate) mod asm;
 #[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
 mod classes;
 pub(crate) mod flow;
-mod stats;
+pub(crate) mod stats;
 mod table;
 
 use std::{

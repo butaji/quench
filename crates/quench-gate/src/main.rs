@@ -13,6 +13,7 @@ mod config;
 mod conformance;
 mod cparity;
 mod c_instructions;
+mod primitive_instructions;
 mod debug;
 mod ir_budget;
 mod lint;
@@ -34,7 +35,7 @@ use step::{Outcome, Step};
 /// The exit status of a run that was asked for something it cannot do.
 const USAGE_ERROR: u8 = 2;
 
-const STEPS: [Step; 10] = [
+const STEPS: [Step; 11] = [
     Step { name: "build", quick: false, blocking: true, run: build::run },
     Step { name: "lint", quick: true, blocking: false, run: lint::run },
     Step { name: "census", quick: true, blocking: false, run: census::run },
@@ -42,6 +43,7 @@ const STEPS: [Step; 10] = [
     Step { name: "debug", quick: false, blocking: false, run: debug::run },
     Step { name: "c-parity", quick: true, blocking: false, run: cparity::run },
     Step { name: "c-instructions", quick: true, blocking: false, run: c_instructions::run },
+    Step { name: "primitive-instructions", quick: true, blocking: false, run: primitive_instructions::run },
     Step { name: "no-jit-ir", quick: false, blocking: false, run: no_jit_ir::run },
     Step { name: "ir-budget", quick: true, blocking: false, run: ir_budget::run },
     Step { name: "conformance", quick: false, blocking: false, run: conformance::run },
