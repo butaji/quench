@@ -548,7 +548,7 @@ impl<H: Host> Vm<H> {
         if !lane_runs
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || !self.lane_admits(p)
-            || !self.programs.lane_call_may_derive(program, id)
+            || !self.programs.lane_call_may_derive(program, id, false)
         {
             return std::ptr::null();
         }
