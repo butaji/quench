@@ -159,6 +159,8 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     names: Option<(*mut (), NamesStep)>,
     /// The environment clone a `CloneEnv` row makes (`clone_environment_of`).
     clones: Option<EnvironmentClones>,
+    /// The iterator cleanup stack an `IteratorCleanupPush`/`Pop` row keeps (`iterator_push_in_lane`).
+    cleanups: Option<IteratorCleanups>,
     /// The running function, which a `LoadCallee` row reads (`running_callee`), where the row is one.
     callee: Option<(*mut (), unsafe fn(*mut ()) -> Option<Value>)>,
     /// The lane context and the VM's Wasm global load and store, for a staged instance-state row
@@ -212,6 +214,15 @@ struct EnvironmentReads {
     write: unsafe fn(*mut (), u16) -> Option<*mut crate::heap::EnvironmentSlots>,
 }
 
+/// The lane context's iterator cleanup stack for an `IteratorCleanupPush`/`Pop` row (`iterator_push_in_lane`,
+/// `iterator_pop_in_lane`), erased of its host so the frame names no `H`.
+#[derive(Clone, Copy)]
+struct IteratorCleanups {
+    context: *mut (),
+    push: unsafe fn(*mut (), Register, Register),
+    pop: unsafe fn(*mut ()) -> bool,
+}
+
 /// A row's global-name store: the lane context and the record's own hint, which the store
 /// writes through (`global_name_store`).
 #[derive(Clone, Copy)]
@@ -226,7 +237,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, callee: None, globals: None, memory: None, memories: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, callee: None, globals: None, memory: None, memories: None, reads: Reads::NONE }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -250,7 +261,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, callee: None, globals: None, memory: None, memories: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, callee: None, globals: None, memory: None, memories: None, reads: Reads::NONE }
     }
 }
 
@@ -380,6 +391,21 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         let host = self.host?;
         // SAFETY: the definer was made for the lane context this frame runs in.
         unsafe { (host.define)(host.cx, array, index, value) }.then_some(())
+    }
+
+    #[inline(always)]
+    fn iterator_push(&mut self, _stage: &mut Concrete, iterator: Register, done: Register) -> Option<()> {
+        let cleanups = self.cleanups?;
+        // SAFETY: the context the cleanup stack was made for is the running lane's.
+        unsafe { (cleanups.push)(cleanups.context, iterator, done) };
+        Some(())
+    }
+
+    #[inline(always)]
+    fn iterator_pop(&mut self, _stage: &mut Concrete) -> Option<()> {
+        let cleanups = self.cleanups?;
+        // SAFETY: as `iterator_push`.
+        unsafe { (cleanups.pop)(cleanups.context) }.then_some(())
     }
 
     #[inline(always)]
@@ -886,8 +912,10 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         } else {
             None
         };
+        // The iterator cleanup stack of the running lane (`iterator_push_in_lane`, `iterator_pop_in_lane`).
+        let cleanups = IteratorCleanups { context: cx.cast(), push: iterator_push_in_lane::<H>, pop: iterator_pop_in_lane::<H> };
         return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), environment: Some(environment), global_store, names: Some((cx.cast(), names)),
-            clones, ..LaneFrame::<ACC>::new(r, view) };
+            clones, cleanups: Some(cleanups), ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Value)) } {
         // A value row may read `this`: the context word, else the frame's (`lane_this`), read lazily.
@@ -991,7 +1019,7 @@ const fn row_miss<H: Host, const FLAG: u8>(op: Op) -> Handler {
         crate::staged::Miss::LocalStore => super::lane_store_local::<H>,
         crate::staged::Miss::LocalInitialize => super::lane_initialize_tdz::<H>,
         crate::staged::Miss::Unary => super::denoted::lane_unary::<H>,
-        crate::staged::Miss::Concat => super::denoted::lane_string_concat_miss::<H>,
+        crate::staged::Miss::Concat => super::denoted::string_concat_miss::<H>,
         crate::staged::Miss::NameLoad(load) => name_load_miss::<H, FLAG>(load),
         crate::staged::Miss::General | crate::staged::Miss::CellTruth { .. }
             | crate::staged::Miss::CompareChain => lane_general_step::<H>,
@@ -1575,6 +1603,41 @@ unsafe fn lane_name_value<H: Host>(cx: *mut (), read: NameRead, atom: u32) -> Op
         }
         NameRead::Intrinsic => vm.intrinsic_name_value(atom),
         NameRead::Field(hint) => vm.record_field_entry_hit(hint, vm.realm.globals),
+    }
+}
+
+/// `IteratorCleanupPush` in the running VM frame, as the general loop runs it: the iterator to close if
+/// the loop exits abruptly. A frameless activation keeps it on the lane stack (`LaneStack::iterators`),
+/// which its frame takes if it materializes.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+unsafe fn iterator_push_in_lane<H: Host>(cx: *mut (), iterator: Register, done: Register) {
+    let cx = cx.cast::<LaneContext<H>>();
+    let vm = unsafe { vm(cx) };
+    let iterator = crate::vm::ActiveIterator { iterator, done };
+    if let Some(depth) = vm.lane_stack.activations.len().checked_sub(1) {
+        vm.lane_stack.iterators.push((depth, iterator));
+    } else {
+        let frame = unsafe { (*cx).frame() };
+        vm.frames[frame].active_iterators.push(iterator);
+    }
+}
+
+/// `IteratorCleanupPop` in the running VM frame: the running activation's own entry, the last. `false`
+/// where there is none, which the general path raises for.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+unsafe fn iterator_pop_in_lane<H: Host>(cx: *mut ()) -> bool {
+    let cx = cx.cast::<LaneContext<H>>();
+    let vm = unsafe { vm(cx) };
+    match vm.lane_stack.activations.len().checked_sub(1) {
+        Some(depth) => vm.lane_stack.iterators.pop_if(|(owner, _)| *owner == depth).is_some(),
+        None => {
+            let frame = unsafe { (*cx).frame() };
+            vm.frames[frame].active_iterators.pop().is_some()
+        }
     }
 }
 

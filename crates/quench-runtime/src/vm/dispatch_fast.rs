@@ -3646,42 +3646,6 @@ pub(super) fn lane_body_locals<H: Host>(lane_context: *mut (), registers: *mut V
 }
 
 script_handler! {
-    /// `IteratorCleanupPush` in the running VM frame, as the general loop runs it: the frame's
-    /// iterator to close if the loop exits abruptly. A frameless activation keeps it on the
-    /// lane stack (`LaneStack::iterators`), which its frame takes if it materializes.
-    fn lane_iterator_cleanup_push<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let iterator = super::ActiveIterator { iterator: i.a, done: i.b };
-        if let Some(depth) = vm.lane_stack.activations.len().checked_sub(1) {
-            vm.lane_stack.iterators.push((depth, iterator));
-        } else {
-            let frame = unsafe { (*cx).frame() };
-            vm.frames[frame].active_iterators.push(iterator);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `IteratorCleanupPop` in the running VM frame (`lane_iterator_cleanup_push`).
-    fn lane_iterator_cleanup_pop<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let popped = match vm.lane_stack.activations.len().checked_sub(1) {
-            // The running activation's own entry, the last.
-            Some(depth) => vm.lane_stack.iterators.pop_if(|(owner, _)| *owner == depth).is_some(),
-            None => {
-                let frame = unsafe { (*cx).frame() };
-                vm.frames[frame].active_iterators.pop().is_some()
-            }
-        };
-        if !popped {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
     /// `InitializeTdz`: opens the binding's dead zone wherever the frame keeps it, as the
     /// general path does (`Vm::owner_binding_mut`).
     fn lane_initialize_tdz<>(cx, r, ip, i, view) {
@@ -17945,16 +17909,6 @@ const fn private_element_handler<H: Host>(opcode: Op) -> Option<Handler> {
     }
 }
 
-/// The handlers of the iterator protocol's bookkeeping: the iterators a frame must close. The
-/// protocol's steps (`GetIterator`, `IteratorClose`, `AppendArray`) are their staged rows.
-const fn iterator_handler<H: Host>(opcode: Op) -> Option<Handler> {
-    match opcode.class() {
-        Class::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
-        Class::IteratorCleanupPop => Some(lane_iterator_cleanup_pop::<H>),
-        _ => None,
-    }
-}
-
 /// Handlers that neither produce nor read the accumulator, apart from the
 /// branch tests, which read it.
 const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
@@ -17966,7 +17920,6 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
         Class::DefineField => Some(lane_define_field::<H>),
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
         Class::CopyDataProperties => Some(lane_copy_data_properties::<H>),
-        _ if iterator_handler::<H>(opcode).is_some() => iterator_handler::<H>(opcode),
         _ if opcode.steps_in_lane() => Some(lane_general_step::<H>),
         Class::GetIndex => Some(lane_get_index::<H>),
         Class::SetIndex => Some(lane_set_index::<H>),

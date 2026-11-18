@@ -49,6 +49,8 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
         Op::ForInNext => Operation::ForInNext { destination: destination(), state: instruction.register_b() },
         Op::GetEnumerated => Operation::EnumeratedGet { destination: destination(), base: instruction.register_b(),
             key: instruction.register_c(), state: crate::bytecode::ImmediateLayout::register_pair(instruction.imm()).0 },
+        Op::IteratorCleanupPush => Operation::IteratorCleanupPush { iterator: instruction.register_a(), done: instruction.register_b() },
+        Op::IteratorCleanupPop => Operation::IteratorCleanupPop,
         _ => return decode_protocol(instruction),
     })
 }
@@ -101,6 +103,8 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::ForInNext { destination, state } => for_in_next(stage, frame, destination, state),
         Operation::EnumeratedGet { destination, state, base, key } => enumerated_get(stage, frame, destination, [state, base, key]),
         Operation::CloneEnv { plan } => calling(stage, frame, CallOut::CloneEnv { plan }, None),
+        Operation::IteratorCleanupPush { iterator, done } => iterator_cleanup_push(stage, frame, iterator, done),
+        Operation::IteratorCleanupPop => iterator_cleanup_pop(stage, frame),
         _ => delegated_step(stage, frame, operation),
     }
 }
@@ -113,6 +117,27 @@ fn delegated_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mu
         Operation::SpreadCall { .. } | Operation::SuperCall { .. } => super::spread::step(stage, frame, operation),
         Operation::LoadCapture { .. } | Operation::StoreCapture { .. } => super::captures::step(stage, frame, operation),
         _ => Step::Unresolved,
+    }
+}
+
+/// `IteratorCleanupPush`: the frame's own cleanup entry, which defines no register; a frame with no
+/// cleanup stack leaves it to the general step.
+#[inline(always)]
+fn iterator_cleanup_push<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, iterator: Register,
+    done: Register) -> Step<S::Word, F::Control> {
+    match frame.iterator_push(stage, iterator, done) {
+        Some(()) => Step::Value(stage.constant(0)),
+        None => Step::Unresolved,
+    }
+}
+
+/// `IteratorCleanupPop`: the frame's own top cleanup entry, which defines no register; an empty
+/// stack leaves it to the general step, which raises.
+#[inline(always)]
+fn iterator_cleanup_pop<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F) -> Step<S::Word, F::Control> {
+    match frame.iterator_pop(stage) {
+        Some(()) => Step::Value(stage.constant(0)),
+        None => Step::Unresolved,
     }
 }
 

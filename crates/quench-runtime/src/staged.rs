@@ -489,7 +489,8 @@ pub(crate) const fn row_writes_result(op: Op) -> bool {
     if matches!(op.staged(), Some(Decoder::WasmState | Decoder::WasmMemory)) {
         return matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister);
     }
-    !matches!(op, Op::GetEnumerated | Op::StoreName | Op::StoreLocal | Op::InitializeTdz | Op::DefineArrayElement)
+    !matches!(op, Op::GetEnumerated | Op::StoreName | Op::StoreLocal | Op::InitializeTdz | Op::DefineArrayElement
+        | Op::IteratorCleanupPush | Op::IteratorCleanupPop)
 }
 
 /// The truthiness on which `op` jumps, for a jump on its register's truthiness
@@ -683,6 +684,11 @@ pub(crate) enum Operation<W, P> {
     /// The VM field-store helper for `object.atom = value` through cache `site`.
     #[cfg_attr(not(test), allow(dead_code))] // no tier builds it until the call-out rows land
     FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
+    /// Push the iterator in register `iterator` with its `done` register on the running cleanup
+    /// stack (`Frame::iterator_push`), which closes it where the loop exits abruptly.
+    IteratorCleanupPush { iterator: Register, done: Register },
+    /// Pop the running cleanup stack's top entry (`Frame::iterator_pop`).
+    IteratorCleanupPop,
     /// The value `base.name` reads through `lookup`'s plan (`property::read_with`); the tier
     /// defines the result register.
     GetField { base: FieldBase, lookup: FieldLookup },

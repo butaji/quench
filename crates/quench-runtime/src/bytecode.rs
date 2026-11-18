@@ -869,8 +869,8 @@ opcodes!($;
     RequireObjectCoercible => READ_THROW; layout Scalar; meaning Unused; class RequireObjectCoercible; staged Value; traits ROW_HANDLER INLINABLE PURE_SETUP LIFETIME_SAFE, @ Register, @ fields(Unused, Register, Unused),
     RequireIteratorResult => READ_THROW; layout Scalar; meaning Unused; class RequireIteratorResult; staged Value; step Lane; traits ROW_HANDLER, @ Register, @ fields(Unused, Register, Unused),
     SuperCallCheck => READ_THROW; layout Scalar; meaning Unused; step Body; traits NAME_OPERATION CALL_LINK, @ Register, @ fields(Unused, Unused, Unused),
-    IteratorCleanupPush => Effect::CONTROL; layout Scalar; meaning Unused; class IteratorCleanupPush; step Lane, @ Register, @ fields(Register, Register, Unused),
-    IteratorCleanupPop => Effect::CONTROL; layout Scalar; meaning Unused; class IteratorCleanupPop; step Lane, @ Register, @ fields(Unused, Unused, Unused),
+    IteratorCleanupPush => Effect::CONTROL; layout Scalar; meaning Unused; class IteratorCleanupPush; staged Names; step Lane; traits ROW_HANDLER, @ Register, @ fields(Register, Register, Unused),
+    IteratorCleanupPop => Effect::CONTROL; layout Scalar; meaning Unused; class IteratorCleanupPop; staged Names; step Lane; traits ROW_HANDLER, @ Register, @ fields(Unused, Unused, Unused),
     // `a` = the next key of the for-in state `b` (`Vm::for_in_next`) that is still an enumerable property; to `imm` once none is left.
     ForInNext => CALL_EFFECT; layout Scalar; meaning JumpTarget; flow ConditionalJump; class ForInNext; staged Names; step Lane; traits LANE_LOOP_EXIT, @ Register, @ fields(ResultRegister, Register, Unused),
     // `a` = the for-in state over `b` (`Vm::for_in_start`): its key snapshot, at the first key.

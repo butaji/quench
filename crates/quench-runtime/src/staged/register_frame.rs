@@ -112,6 +112,17 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn allocate_value(&mut self, _stage: &mut S, _destination: Register, _allocation: Allocation, _proof: S::Proof) -> Option<S::Word> { None }
 
+    /// `IteratorCleanupPush`: pushes the iterator in register `iterator` with its `done` register on the
+    /// running activation's cleanup stack, closed if the loop exits abruptly; `None` where the frame keeps
+    /// no such stack (the general step pushes it).
+    #[inline(always)]
+    fn iterator_push(&mut self, _stage: &mut S, _iterator: Register, _done: Register) -> Option<()> { None }
+
+    /// `IteratorCleanupPop`: pops the running activation's top cleanup entry; `None` where the frame
+    /// has none to pop (the general step raises it).
+    #[inline(always)]
+    fn iterator_pop(&mut self, _stage: &mut S) -> Option<()> { None }
+
     /// Continue where no interrupt is requested; `None` leaves at the frame's miss edge.
     #[inline(always)]
     fn safepoint(&mut self, _stage: &mut S, _proof: S::Proof) -> Option<()> { Some(()) }

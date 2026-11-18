@@ -38,7 +38,7 @@ script_handler! {
     /// (`Vm::pure_string_concat_apart`), made as the general loop makes it. A window holding any
     /// other value, or a result past the string length limit, takes the general path.
     #[inline(never)]
-    pub(super) fn lane_string_concat_miss<>(cx, r, ip, i, view) {
+    pub(super) fn string_concat_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let (base, count) = (usize::from(i.b), usize::from(i.c));
         let part = |_: &Vm<H>, part: usize| r.get((base + part) as Register);

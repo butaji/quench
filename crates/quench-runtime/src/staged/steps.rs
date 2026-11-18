@@ -24,7 +24,8 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::LoadName { .. } | Operation::Protocol { .. }
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } | Operation::SpreadCall { .. } | Operation::SuperCall { .. }
-            | Operation::LoadCapture { .. } | Operation::StoreCapture { .. } | Operation::CloneEnv { .. } => super::names::step(stage, frame, operation),
+            | Operation::LoadCapture { .. } | Operation::StoreCapture { .. } | Operation::CloneEnv { .. }
+            | Operation::IteratorCleanupPush { .. } | Operation::IteratorCleanupPop => super::names::step(stage, frame, operation),
         value => value_step(stage, frame, value),
     }
 }
