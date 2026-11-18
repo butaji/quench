@@ -91,6 +91,10 @@ pub struct NativeJsModule {
     pub functions: Vec<NativeFunction>,
     pub data: Vec<NativeData>,
     entry_table: usize,
+    /// Per definition, the 64-bit immediates in a process's address range: a compiling process's
+    /// pointer, which is unmapped where the image runs. Linked code must name a symbol instead,
+    /// so a producer reports these (`process_addresses`) until the lowering does.
+    process_addresses: Vec<(String, u64)>,
 }
 
 impl NativeJsModule {
@@ -98,6 +102,10 @@ impl NativeJsModule {
     pub fn entry_table_symbol(&self) -> &str {
         &self.data[self.entry_table].name
     }
+
+    /// The addresses the module embedded as immediates, by definition: an image that runs in
+    /// another process faults at each.
+    pub fn process_addresses(&self) -> &[(String, u64)] { &self.process_addresses }
 }
 
 /// Lower every function before execution. Deferred function bodies are resolved
@@ -122,7 +130,29 @@ pub fn lower_native_js_module_with_options(
         super::jit_backend::CodePublication::RelocatableObject,
     )
     .ok_or("native target unavailable")?;
-    CallThreaded::new(ObjectExtension { isa, namespace, options, program, functions: Vec::new() }).specialize(program)
+    let mut module =
+        CallThreaded::new(ObjectExtension { isa, namespace, options, program, functions: Vec::new() })
+            .specialize(program)?;
+    module.process_addresses = embedded_process_addresses(&module);
+    Ok(module)
+}
+
+/// The 64-bit immediates of `module`'s definitions that lie in a process's address range: an
+/// address the lowering embedded instead of naming a symbol.
+fn embedded_process_addresses(module: &NativeJsModule) -> Vec<(String, u64)> {
+    let mut found = Vec::new();
+    for definition in &module.functions {
+        let crate::NativeFunction::Definition { name, function } = definition else { continue };
+        for inst in function.layout.blocks().flat_map(|block| function.layout.block_insts(block)) {
+            let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = function.dfg.insts[inst]
+                else { continue };
+            let bits = imm.bits();
+            if (0x1_0000_0000..0x1_f000_0000).contains(&bits) {
+                found.push((name.clone(), bits as u64));
+            }
+        }
+    }
+    found
 }
 
 /// The call-threaded generating extension for linked objects: each semantic
@@ -324,7 +354,7 @@ impl ObjectExtension<'_> {
         let entry_table = data.len();
         let entries = (ABI_SYMBOL_INDEX, first_definition);
         data.push(entry_table_data(&*self.isa, self.namespace, self.program.function_count(), entries)?);
-        Ok(NativeJsModule { functions, data, entry_table })
+        Ok(NativeJsModule { functions, data, entry_table, process_addresses: Vec::new() })
     }
 }
 
@@ -527,4 +557,20 @@ mod tests {
         }
     }
 
+    /// A linked image runs in another process, so a body that reads a table through an address
+    /// this process happens to hold faults where the image runs. Today the shape descriptor
+    /// table is still embedded (`process_addresses` reports it, one per body with a field
+    /// read); this is the acceptance check for giving it a payload word instead.
+    #[test]
+    #[ignore = "the lowering still embeds the shape descriptor table's address"]
+    fn linked_bodies_name_no_process_address() {
+        let program = crate::Engine::specialize(
+            "function f(o){let s=0;for(let i=0;i<8;i++){s=s+o.x;}return s;} f({x:1});",
+            "linked-addresses.cjs",
+        )
+        .unwrap();
+        let module = lower_native_js_module(&program, "quench_linked").unwrap();
+        assert_eq!(module.process_addresses(), &[], "a body embedded a process address: {:?}",
+            module.process_addresses());
+    }
 }

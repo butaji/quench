@@ -86,6 +86,14 @@ impl CompiledSources {
                 ..Default::default()
             };
             let module = lower_native_js_module_with_options(&records, &format!("quench_{name}"), options)?;
+            // A linked unit must name every address as a symbol. Where a body embedded this
+            // process's pointer instead, the image faults there when another process runs it.
+            for (definition, address) in module.process_addresses() {
+                eprintln!(
+                    "warning: {definition} embeds the compiling process's address {address:#x}; \
+                     the image will fault there until the lowering names a symbol"
+                );
+            }
             let symbol = module.entry_table_symbol().to_owned();
             for function in &module.functions {
                 if let quench_runtime::NativeFunction::Import { name, .. } = function {
