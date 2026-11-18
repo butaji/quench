@@ -116,7 +116,7 @@ pub(crate) fn environment_slot_store<S: Stage>(stage: &mut S, storage: S::Word, 
 /// earlier iteration of its scope left, which a scope's `InitializeTdz` and its declaration's store make. A leave at
 /// `miss` past the run or at a slot another environment shares (any other internal marker), nothing written. The store
 /// has no barrier of its own, as `environment_slot_store`'s: an activation's environment lives only within a lane run,
-/// which collects nothing, so it is young or remembered (`dispatch_fast::lane_store_window_local_window` asserts it).
+/// which collects nothing, so it is young or remembered (`dispatch_fast::window_records`'s `FLAG_WINDOW` store asserts it).
 #[inline(always)]
 pub(crate) fn environment_slot_define<S: Stage>(stage: &mut S, storage: S::Word, slot: u16, value: S::Word, miss: S::Miss) -> Option<()> {
     let (values, len) = storage_run(stage, storage, miss)?;

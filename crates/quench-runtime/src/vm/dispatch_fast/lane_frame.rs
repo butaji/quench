@@ -213,6 +213,10 @@ struct YieldSuspension {
     element_span: Option<(*mut u8, ElementSpan)>,
     /// The constants, local slots and outer captures the staged row's operands name.
     reads: Reads,
+    /// The window of an environment activation's run, where a window record reads its locals
+    /// (`FLAG_WINDOW`): the register at its base, whose locals follow its environment and slots
+    /// words (`WINDOW_LOCALS`). `None` in a frame's run.
+    window: Option<*mut Value>,
 }
 
 /// The proof span of an array a proved element row names (`dispatch_fast::proof_span`): the lane
@@ -296,6 +300,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
             capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, callee: None, globals: None, memory: None, memories: None, element_span: None, reads: Reads::NONE, window: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -320,6 +325,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
             capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, callee: None, globals: None, memory: None, memories: None, element_span: None, reads: Reads::NONE, window: None }
     }
 }
 
@@ -425,14 +431,25 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         (Value::boolean(condition).to_bits(), Boxing::Value)
     }
 
+    /// The local `slot` of the running activation: its window's where the run holds one
+    /// (`window`), else the frame's. An uninitialized binding (the deleted marker) is the row's miss.
     #[inline(always)]
     fn load_local(&mut self, _stage: &mut Concrete, slot: u16, _miss: Option<()>)
         -> Option<(u64, Boxing)> {
-        let (locals, len) = self.locals?;
-        (usize::from(slot) < len).then(|| {
-            // SAFETY: `slot` is inside the activation's live local slots.
-            (unsafe { *locals.add(usize::from(slot)) }.to_bits(), Boxing::Value)
-        })
+        let value = match self.window {
+            // SAFETY: a window record's slot is one of its function's locals, which the window holds
+            // after its environment and slots words (`lane_activate_environment`).
+            Some(window) => unsafe { *window.add(usize::from(super::WINDOW_LOCALS) + usize::from(slot)) },
+            None => {
+                let (locals, len) = self.locals?;
+                if usize::from(slot) >= len {
+                    return None;
+                }
+                // SAFETY: `slot` is inside the activation's live local slots.
+                unsafe { *locals.add(usize::from(slot)) }
+            }
+        };
+        (!value.is_deleted()).then_some((value.to_bits(), Boxing::Value))
     }
 
     #[inline(always)]
@@ -451,6 +468,9 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         unsafe { (host.define)(host.cx, array, index, value) }.then_some(())
     }
 
+    /// Writes local `slot` of the running activation, its window's where the run holds one (`window`).
+    /// The window's environment is young (`window_environment`) or remembered, so a plain local
+    /// needs no barrier: no collection runs in the lane.
     #[inline(always)]
     fn suspend_await(&mut self, _stage: &mut Concrete, destination: Register, source: Register) -> Option<Edge> {
         let suspension = self.suspension?;
@@ -495,10 +515,16 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 
     #[inline(always)]
     fn store_local(&mut self, _stage: &mut Concrete, slot: u16, value: u64, _miss: Option<()>) -> bool {
-        let Some((locals, len)) = self.locals else { return false };
-        if usize::from(slot) >= len { return false; }
-        // SAFETY: `slot` is inside the activation's live local slots.
-        unsafe { *locals.add(usize::from(slot)) = Value::from_bits(value) };
+        match self.window {
+            // SAFETY: as `load_local`'s read of the window's local.
+            Some(window) => unsafe { *window.add(usize::from(super::WINDOW_LOCALS) + usize::from(slot)) = Value::from_bits(value) },
+            None => {
+                let Some((locals, len)) = self.locals else { return false };
+                if usize::from(slot) >= len { return false; }
+                // SAFETY: `slot` is inside the activation's live local slots.
+                unsafe { *locals.add(usize::from(slot)) = Value::from_bits(value) };
+            }
+        }
         true
     }
 
@@ -700,7 +726,7 @@ unsafe fn environment_read<H: Host>(cx: *mut ()) -> Option<*mut crate::heap::Env
 }
 
 /// `EnvironmentReads::write`: the storage `environment_of` finds for a store to `slot`, after the
-/// environment's write barrier (`Heap::remember_cell`), as `lane_store_window_local_general` takes it.
+/// environment's write barrier (`Heap::remember_cell`), as `store_local_miss` takes it.
 ///
 /// # Safety
 /// `cx` is the running lane's context.
@@ -966,6 +992,11 @@ pub(in crate::vm::dispatch_fast) const FLAG_NAME_GLOBAL_SCOPED: u8 = 7;
 /// `FLAG` of a `StringCaseIndex` record its tier filtered (`string_case_filter::specialize`): the row
 /// answers from the filter the record's operand names. Not a flag role, so its immediate is whole.
 pub(in crate::vm::dispatch_fast) const FLAG_CASE_FILTER: u8 = 8;
+/// `FLAG` of a local-access record of a plain slot (`plain_frame_local`) in an environment window's
+/// function (`specialize_environment_window`): its immediate names the window's register base above
+/// its slot (`staged::window_base`). In a window activation's run the row reads the window's locals;
+/// in a frame's run, the frame's own locals, as an unflagged plain record does.
+pub(in crate::vm::dispatch_fast) const FLAG_WINDOW: u8 = 9;
 
 /// Whether opcode `op`'s lane handler is its staged row (`lane_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -1136,15 +1167,17 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
     if !locals {
         return LaneFrame::<ACC>::new(r, view);
     }
-    // A checked local access holds the frame's locals only where its hand handler would read them
-    // directly: an activation without its own environment (`lane_load_local`'s guard), and not a
-    // root body's frame. Any other leaves to that handler (`row_miss`).
+    // A local access holds the frame's locals only in an activation without its own environment, and
+    // not a root body's frame. A window record (`FLAG_WINDOW`) in an activation that holds one reads the
+    // window's locals instead. Any other leaves to its miss (`row_miss`).
     let environment_free = unsafe { (*cx).registers }.env().is_deleted();
+    if FLAG == FLAG_WINDOW && !environment_free {
+        return LaneFrame::<ACC> { window: Some(r.0.wrapping_add(usize::from(crate::staged::window_base(i.imm())))),
+            ..LaneFrame::<ACC>::new(r, view) };
+    }
     let vm = unsafe { vm(cx) };
     let frame = &mut vm.frames[unsafe { (*cx).frame() }];
-    if const { crate::staged::checked_local(LaneFields::<OP>::OPCODE) }
-        && (!environment_free || frame.function == super::ROOT_FUNCTION_ID)
-    {
+    if !environment_free || frame.function == super::ROOT_FUNCTION_ID {
         return LaneFrame::<ACC>::new(r, view);
     }
     let (slots, len) = (frame.locals.as_mut_ptr(), frame.locals.len());
@@ -1155,28 +1188,28 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
 /// whose slot its frame's locals do not hold (an environment's, a mapped `arguments`' or a self
 /// binding's), as the row would only leave there.
 pub(in crate::vm::dispatch_fast) fn checked_local_hand<H: Host>(op: Op) -> Handler {
-    row_miss::<H>(op)
+    row_miss::<H, FLAG_UNREAD>(op)
 }
 
 /// Where opcode `op`'s row leaves when its words do not decide it: the VM's general step, or for
 /// a capture access the lane's own slow arm, which walks the scopes and requickens the record to
 /// the root binding it finds (`lane_load_capture_walk`, `store_outer_capture_miss`), or for a
 /// `ToPropertyKey` the lane's integer and symbol answers (`lane_to_property_key`).
-const fn row_miss<H: Host, const FLAG: u8>(op: Op) -> Handler {
+pub(in crate::vm::dispatch_fast) const fn row_miss<H: Host, const FLAG: u8>(op: Op) -> Handler {
     match crate::staged::miss(op) {
         crate::staged::Miss::WalkScopes => super::lane_load_capture_walk::<H>,
         crate::staged::Miss::StoreThroughScopes => super::store_outer_capture_miss::<H>,
         crate::staged::Miss::ArgumentsBinding => super::lane_frame_arguments::<H, false>,
-        crate::staged::Miss::EnvironmentLoad => super::lane_load_local::<H>,
-        crate::staged::Miss::EnvironmentStore => super::lane_store_local::<H>,
+        crate::staged::Miss::EnvironmentLoad => super::load_local_miss::<H>,
+        crate::staged::Miss::EnvironmentStore => super::store_local_miss::<H>,
         crate::staged::Miss::StoreNameFirst => super::store_name_first_miss::<H>,
         crate::staged::Miss::PropertyKeyValue => super::lane_to_property_key::<H>,
         crate::staged::Miss::Binary => super::lane_binary_general::<H>,
         crate::staged::Miss::WasmMemoryLoad => super::lane_wasm_memory_load::<H>,
         crate::staged::Miss::WasmMemoryStore => super::lane_wasm_memory_store::<H>,
         crate::staged::Miss::WasmMemoryAddress => super::lane_wasm_memory_address::<H>,
-        crate::staged::Miss::LocalLoad => super::lane_load_local::<H>,
-        crate::staged::Miss::LocalStore => super::lane_store_local::<H>,
+        crate::staged::Miss::LocalLoad => super::load_local_miss::<H>,
+        crate::staged::Miss::LocalStore => super::store_local_miss::<H>,
         crate::staged::Miss::LocalInitialize => super::lane_initialize_tdz::<H>,
         crate::staged::Miss::Unary => super::denoted::lane_unary::<H>,
         crate::staged::Miss::Concat => super::denoted::string_concat_miss::<H>,

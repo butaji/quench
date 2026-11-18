@@ -144,10 +144,10 @@ pub(crate) enum Miss {
     /// frame or window that holds it.
     ArgumentsBinding,
     /// An environment read the frame holds no storage for (an uncaptured or root frame, a
-    /// mapped `arguments`, an environment window): the lane's local read (`lane_load_local`).
+    /// mapped `arguments`, an environment window): the lane's local read (`load_local_miss`).
     EnvironmentLoad,
     /// An environment write the frame cannot make in place: the lane's local store
-    /// (`lane_store_local`), which takes the binding rules.
+    /// (`store_local_miss`), which takes the binding rules.
     EnvironmentStore,
     /// A global-name store the frame does not hold (its hint misses): the name's first-run
     /// resolution, which resolves the store and holds the record on its row.
@@ -168,10 +168,10 @@ pub(crate) enum Miss {
     PropertyKeyValue,
     /// A checked local read the frame does not hold in its own locals (a temporal dead zone, a
     /// numeric target, a root body, an environment, a mapped `arguments`): the lane's local read
-    /// (`lane_load_local`), which takes the binding rules.
+    /// (`load_local_miss`), which takes the binding rules.
     LocalLoad,
     /// A checked local store the frame does not hold in its own locals: the lane's local store
-    /// (`lane_store_local`).
+    /// (`store_local_miss`).
     LocalStore,
     /// An InitializeTdz the frame does not hold in its own locals: the lane's dead-zone opening
     /// (`lane_initialize_tdz`), which finds the binding wherever the frame keeps it.
@@ -629,6 +629,15 @@ pub(crate) const LOCAL_INITIALIZE_ROW: u16 = Op::InitializeTdz as u16;
 /// `StoreEnvLocal`), which a frame's specialization rewrites where the slot is not captured.
 pub(crate) const LOAD_ENV_LOCAL_ROW: u16 = Op::LoadEnvLocal as u16;
 pub(crate) const STORE_ENV_LOCAL_ROW: u16 = Op::StoreEnvLocal as u16;
+
+/// The local slot a local-access record names. An environment window's record carries its register
+/// count above the slot (`dispatch_fast::specialize_environment_window`), so the slot is the low half
+/// of its immediate; every local decoder reads it through here.
+pub(crate) const fn window_slot(imm: u32) -> u16 { (imm & u16::MAX as u32) as u16 }
+
+/// The register base of the environment window a local-access record names, where its immediate
+/// carries one (`window_slot` names the slot above it); `0` where none is named.
+pub(crate) const fn window_base(imm: u32) -> u16 { (imm >> u16::BITS) as u16 }
 
 /// Whether `op` is a checked local access: its row reads and writes the frame's own locals in
 /// place, and leaves to its hand handler (`Miss`) for any slot those locals do not hold.
@@ -1109,22 +1118,22 @@ impl<W, P> Operation<W, P> {
         Some(match instruction.op() {
             Op::LoadLocalPlain => Self::LoadLocalPlain {
                 destination: instruction.result_register(),
-                slot: u16::try_from(instruction.local_slot()).ok()? },
+                slot: window_slot(instruction.imm()) },
             Op::StoreLocalPlain => Self::StoreLocalPlain {
                 source: instruction.register_a(),
-                slot: u16::try_from(instruction.local_slot()).ok()?,
+                slot: window_slot(instruction.imm()),
                 result: instruction.optional_register_b() },
             Op::LoadLocal => Self::LoadLocalChecked {
                 destination: instruction.result_register(),
-                slot: u16::try_from(instruction.local_slot()).ok()?,
+                slot: window_slot(instruction.imm()),
                 numeric: instruction.result_flags() & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 },
             Op::StoreLocal => Self::StoreLocalChecked {
                 source: instruction.register_a(),
-                slot: u16::try_from(instruction.local_slot()).ok()?,
+                slot: window_slot(instruction.imm()),
                 result: instruction.optional_register_b(),
                 initializing: instruction.c() != 0 },
             Op::InitializeTdz => Self::InitializeLocal {
-                slot: u16::try_from(instruction.local_slot()).ok()? },
+                slot: window_slot(instruction.imm()) },
             _ => return None,
         })
     }
