@@ -44,7 +44,7 @@ fn objects_of_every_form(heap: &mut Heap) -> Vec<(Value, Vec<Value>)> {
     let mut objects = Vec::new();
     for prototype in [false, true] {
         for values in &value_sets {
-            let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+            let object = heap.alloc_object(Object::new(Value::NULL));
             for (slot, value) in values.iter().enumerate() {
                 heap.property_add(object, *value, slot as u32 + 1);
             }

@@ -96,7 +96,7 @@ pub(crate) unsafe fn concrete_set_function_name(heap: &mut Heap, record_id: u32,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::heap::{Cell, Object};
+    use crate::heap::Object;
     use crate::Value;
 
     /// A heap that knows the shapes 1 to `shapes`, each of as many slots as its number, and an
@@ -106,7 +106,7 @@ mod tests {
         for shape in 1..=shapes {
             heap.register_property_shape(shape, shape as usize, None);
         }
-        let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let object = heap.alloc_object(Object::new(Value::NULL));
         (heap, object)
     }
 

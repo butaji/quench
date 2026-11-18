@@ -44,7 +44,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "DataView")?;
         self.data_view_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+            .alloc_object(Self::empty_object(self.object_proto));
         self.install_data_view_for_realm(
             program,
             self.realm.globals,

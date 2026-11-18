@@ -122,7 +122,7 @@ impl<H: Host> Vm<H> {
         } else {
             self.realm_object_prototype(realm)
         };
-        self.heap.alloc(Cell::Object(Self::empty_object(parent)))
+        self.heap.alloc_object(Self::empty_object(parent))
     }
 
     /// The closure of `parts` over `env`, and the shape its own properties are named under where

@@ -756,7 +756,7 @@ impl<H: Host> Vm<H> {
                     let proto = vm.prototype_from_constructor(p, new_target)?;
                     let mut object = Self::empty_object(proto);
                     vm.capture_constructed_name(&mut object, callee, callee == new_target);
-                    vm.heap.alloc(Cell::Object(object))
+                    vm.heap.alloc_object(object)
                 };
                 let previous_target = vm.construct_target;
                 vm.set_construct_target(Some(ConstructionTarget { callee, new_target }));

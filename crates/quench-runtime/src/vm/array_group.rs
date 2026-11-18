@@ -21,7 +21,7 @@ impl<H: Host> Vm<H> {
         let grouped = if to_map {
             self.heap.alloc_map(Self::empty_object(self.map_proto), Default::default())
         } else {
-            self.heap.alloc(Cell::Object(Self::empty_object(self.object_proto)))
+            self.heap.alloc_object(Self::empty_object(self.object_proto))
         };
         for index in 0..length {
             let value = self.array_value_at(this, index);

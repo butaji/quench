@@ -5,7 +5,7 @@ use super::property::{read_with, Arm, FieldPlan, Owner, PlanSource, StoreArm, St
 use super::test_words::ANSWER;
 use super::*;
 use crate::bytecode::{FieldBase, Operand};
-use crate::heap::{Cell, Heap, Object};
+use crate::heap::{Heap, Object};
 use crate::typed_ir::Type;
 use crate::{Value, ValueType};
 
@@ -131,7 +131,7 @@ fn heap_of(count: u32) -> Heap {
 
 /// An object holding `values` in slots `0..`, and its exact shape.
 fn object_of(heap: &mut Heap, values: &[Value]) -> (Value, u32) {
-    let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+    let object = heap.alloc_object(Object::new(Value::NULL));
     for (index, value) in values.iter().enumerate() {
         heap.property_add(object, *value, index as u32 + 1);
     }

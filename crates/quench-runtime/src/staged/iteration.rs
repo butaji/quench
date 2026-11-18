@@ -206,7 +206,7 @@ mod tests {
         for shape in 1..=2 {
             heap.register_property_shape(shape, shape as usize, None);
         }
-        let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let object = heap.alloc_object(Object::new(Value::NULL));
         heap.property_add(object, Value::integer(1), 1);
         heap.property_add(object, Value::integer(2), 2);
         let shape = heap.object(object).expect("an object").exact_shape();

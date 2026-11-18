@@ -36,7 +36,7 @@ impl<H: Host> Vm<H> {
             let next = self.heap.root(next);
             next_root = Some(next);
             let result = match kind {
-                GroupByKind::Object => self.heap.alloc(Cell::Object(Self::empty_object(Value::NULL))),
+                GroupByKind::Object => self.heap.alloc_object(Self::empty_object(Value::NULL)),
                 GroupByKind::Map => self.heap.alloc_map(
                     Self::empty_object(
                         self.realm

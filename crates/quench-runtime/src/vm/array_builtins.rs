@@ -179,7 +179,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_array_unscopables(&mut self, array_proto: Value) -> Result<(), JsError> {
         let unscopables = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         for name in [
             "at",
             "copyWithin",

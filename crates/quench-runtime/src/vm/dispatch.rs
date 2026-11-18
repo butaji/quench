@@ -622,7 +622,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     let value = self
                         .heap
-                        .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+                        .alloc_object(Self::empty_object(Value::NULL));
                     if let Some(source_name) = self.programs.source_name(program).map(str::to_owned)
                     {
                         let url = self.host.import_meta_url(&source_name);

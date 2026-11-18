@@ -3162,7 +3162,7 @@ impl<H: Host> Vm<H> {
         self.random_state = fresh_random_seed();
         self.realm.globals = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         if self.main_realm.is_null() {
             self.main_realm = self.realm.globals;
         }
