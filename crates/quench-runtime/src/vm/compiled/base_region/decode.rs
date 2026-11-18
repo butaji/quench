@@ -1,7 +1,7 @@
 use super::*;
 use crate::vm::global_facts::LexicalSlot;
 use crate::staged::property::StoreArm;
-use crate::staged::{NumberOperation, Operation};
+use crate::staged::{Constant, DecodeContext, NumberOperation, Operation};
 mod fields;
 use fields::{field_row, field_store_row};
 pub(super) use fields::{site_read_row, stores_field};
@@ -249,12 +249,6 @@ pub(super) fn jump_binary(numbers: Numbers, instruction: WideInstruction) -> Res
     ))
 }
 
-pub(super) fn load_const(numbers: Numbers, instruction: WideInstruction) -> Result<Decoded, String> {
-    let number = numbers(instruction.constant_index()).ok_or_else(|| "LoadConst: not a Number".to_string())?;
-    let word = Source::Constant(Value::number(number).to_bits());
-    Ok(Decoded::number(Kind::Move, Some(instruction.result_register()), Some(word), None, None))
-}
-
 pub(super) fn inc_dec(instruction: WideInstruction) -> Result<Decoded, String> {
     let decrement = instruction.boolean_flag().ok_or("IncDec")?;
     Ok(Decoded::number(
@@ -367,12 +361,10 @@ fn named_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instructi
 /// string, a BigInt): the tagged word the compiling VM holds for it, written as it is
 /// (`Source::Value`), where the VM has the program's constants (`Known::constants`).
 fn value_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
-    // derivation debt: no staged::Operation for LoadConst here, as the Value table is `known.constants`, not a `DecodeContext`
-    if instruction.op().class() != Class::LoadConst || instruction.result_flags() != 0 {
-        return None;
-    }
-    let value = known.constants.get(instruction.constant_index())?;
-    Some(Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Value(value.to_bits())), None, None))
+    let table = |index: usize| known.constants.get(index).map(|value| Constant::untyped(*value));
+    let context = DecodeContext { constant_at: Some(&table), ..DecodeContext::EMPTY };
+    let Some(Operation::LoadConst { destination, constant }) = Operation::<(), ()>::decode(instruction, context) else { return None };
+    (instruction.result_flags() == 0).then(|| Decoded::number(Kind::Move, Some(destination), Some(Source::Value(constant.value.to_bits())), None, None))
 }
 
 /// The row of `instruction` at `pc`: a numeric or heap row where one takes it, else the step the
@@ -401,7 +393,9 @@ fn names(known: Known, row: Decoded) -> Decoded {
 pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Option<Option<Decoded>> {
     let copy = || Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Register(instruction.register_b())), None, None);
     let plain = instruction.result_flags() == 0;
-    Some(match staged_of(instruction) {
+    let number = |index: usize| numbers(index).map(|number| Constant::untyped(Value::number(number)));
+    let context = DecodeContext { constant_at: Some(&number), ..DecodeContext::EMPTY };
+    Some(match Operation::<(), ()>::decode(instruction, context) {
         Some(Operation::Move { .. }) => plain.then(copy),
         // A Number operand is its own numeric value: the loop's entry guards and its own rows prove
         // it, and a function's row proves it itself (`checked`).
@@ -410,8 +404,9 @@ pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
         Some(Operation::CompareJump { .. }) => jump_binary(numbers, instruction).ok(),
         Some(Operation::Jump) => Some(Decoded::number(Kind::Jump, None, None, None, Some(instruction.jump_target()))),
         Some(Operation::JumpIf { .. }) => Some(truthiness_jump(instruction)),
-        // derivation debt: no staged::Operation for LoadConst of a Number (no Number table in `DecodeContext::EMPTY`)
-        _ if instruction.op().class() == Class::LoadConst => load_const(numbers, instruction).ok().filter(|_| plain),
+        // A Number constant is its own word, as the region's numbers hold it.
+        Some(Operation::LoadConst { destination, constant }) => plain.then(|| Decoded::number(Kind::Move, Some(destination),
+            Some(Source::Constant(constant.value.to_bits())), None, None)),
         // derivation debt: no staged::Operation for a Binary with a Number constant operand, nor for NumericAdd or
         // NumericMultiply (no decoder)
         _ if matches!(instruction.op().class(), Class::Binary | Class::NumericAdd | Class::NumericMultiply) => binary(numbers, instruction).ok().filter(|_| plain),

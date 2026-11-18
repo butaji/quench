@@ -142,6 +142,9 @@ pub(crate) enum Operation<W, P> {
     /// Define `destination` with the activation's `this`; where the activation does not
     /// hold it, leave at the frame's miss edge.
     LoadThis { destination: Register },
+    /// Nothing: the instruction changes no register, local or heap value. A tier continues at the
+    /// next instruction itself; `step` has no control word for it, so it leaves at the miss edge.
+    Nop,
     /// A Number operation (`numeric`).
     Number(NumberOperation),
     /// Continue where register `register` is neither `null` nor `undefined`; those leave at
@@ -284,6 +287,7 @@ impl<W, P> Operation<W, P> {
             Op::LoadConst => Self::LoadConst {
                 destination: instruction.result_register(),
                 constant: context.constant(instruction.constant_index())? },
+            Op::Nop => Self::Nop,
             Op::Jump => Self::Jump,
             Op::JumpFalse => Self::JumpIf {
                 register: instruction.register_a(), taken: false },
@@ -333,6 +337,8 @@ impl<W, P> Operation<W, P> {
             Op::LoadThis => Self::LoadThis {
                 destination: instruction.result_register() },
             Op::RequireObjectCoercible => Self::RequireObjectCoercible {
+                register: instruction.register_b() },
+            Op::RequireIteratorResult => Self::RequireIteratorResult {
                 register: instruction.register_b() },
             Op::ToNumeric => Self::Number(NumberOperation::ToNumeric {
                 destination: instruction.result_register(), source: instruction.register_b() }),

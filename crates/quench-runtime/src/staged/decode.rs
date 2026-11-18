@@ -11,6 +11,9 @@ use crate::bytecode::{MethodSite, Register, ResidualProgram};
 #[derive(Clone, Copy)]
 pub(crate) struct DecodeContext<'a> {
     pub(crate) constants: &'a [Constant],
+    /// The constant at an index `constants` does not hold, as the tier types it (a region's Number
+    /// table, the compiling VM's values): `None` where `constants` is the whole table.
+    pub(crate) constant_at: Option<&'a dyn Fn(usize) -> Option<Constant>>,
     pub(crate) method_sites: &'a [MethodSite],
     #[allow(dead_code)] // read by the form-generic lane helpers
     pub(crate) call_records: &'a [Register],
@@ -18,14 +21,14 @@ pub(crate) struct DecodeContext<'a> {
 
 impl DecodeContext<'static> {
     /// No table: a tier that decodes only the rows whose operands the record holds.
-    pub(crate) const EMPTY: Self = Self { constants: &[], method_sites: &[], call_records: &[] };
+    pub(crate) const EMPTY: Self = Self { constants: &[], constant_at: None, method_sites: &[], call_records: &[] };
 }
 
 impl<'a> DecodeContext<'a> {
     /// The method sites and call records of `program`; its constants are the tier's to type
     /// (`of_constants`), so a `LoadConst` decodes only where the tier gives them.
     pub(crate) fn of(program: &'a ResidualProgram) -> Self {
-        Self { constants: &[], method_sites: &program.method_sites, call_records: &program.method_arguments }
+        Self { constants: &[], constant_at: None, method_sites: &program.method_sites, call_records: &program.method_arguments }
     }
 
     /// Only the constants `constants`.
@@ -34,9 +37,9 @@ impl<'a> DecodeContext<'a> {
         DecodeContext { constants, ..DecodeContext::EMPTY }
     }
 
-    /// The constant at `index`, as the tier typed it.
+    /// The constant at `index`, as the tier typed it: from `constants`, else from `constant_at`.
     pub(crate) fn constant(self, index: usize) -> Option<Constant> {
-        self.constants.get(index).copied()
+        self.constants.get(index).copied().or_else(|| self.constant_at.and_then(|at| at(index)))
     }
 
     /// The method site at `index`.

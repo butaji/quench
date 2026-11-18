@@ -339,7 +339,27 @@ pub(crate) const RAISED_RUN: u64 = 1 << 32;
 /// The context words below every lane window's register 0 (the runtime's
 /// `register_file::FRAME_CONTEXT`): a pushed window leaves them free past its registers for the
 /// next. Checked against the runtime by `stencil_layout_matches`.
-pub(crate) const FRAME_CONTEXT_WORDS: usize = 3;
+pub(crate) const FRAME_CONTEXT_WORDS: usize = if PLAIN_FRAMES { 8 } else { 3 };
+
+/// Stage C (`calls-frames/call-protocol-v2.md`, "final shape"): a plain direct call writes the
+/// callee's header below its register 0 and pushes no frame record. Off until the runtime's
+/// `register_file::FRAME_CONTEXT` is 8 and `LaneStack` has the plain words; the switch flips both
+/// the context size above and the call rows' push (`call_rows.rs`), so it is one line.
+pub(crate) const PLAIN_FRAMES: bool = false;
+/// The header words a plain call writes, as byte offsets below the callee's register 0: word `k`
+/// counted down from register 0 lies at `-k * 8`.
+pub(crate) const HEADER_CALL: usize = 4 * 8;
+pub(crate) const HEADER_CALLER_REGISTERS: usize = 5 * 8;
+pub(crate) const HEADER_CALLER_BASE: usize = 6 * 8;
+pub(crate) const HEADER_PACKED: usize = 7 * 8;
+pub(crate) const HEADER_CALLEE: usize = 8 * 8;
+/// The payload word holding the address of the lane stack's plain words (`LaneStackWords`): the
+/// plain frame count at +0, the innermost plain frame's registers at +8, the values' base at +16.
+/// The calls thread sends the runtime's offset when the core lands; 0 while `PLAIN_FRAMES` is off.
+pub(crate) const JS_STEP_LANE_PLAIN: usize = 0;
+pub(crate) const PLAIN_DEPTH_AT: usize = 0;
+pub(crate) const PLAIN_REGISTERS_AT: usize = 8;
+pub(crate) const PLAIN_BASE_AT: usize = 16;
 
 /// The entry cell's entry, recovery and body words (`EntryCell`), and the recovery space's
 /// values and activations (`LaneRecoverySpace`).

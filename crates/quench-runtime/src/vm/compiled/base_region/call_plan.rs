@@ -151,6 +151,9 @@ pub(super) struct DirectFacts {
     /// A construction site's forwarding record: not a plain call.
     pub(super) construction: bool,
     pub(super) frame_bytes: u64,
+    /// The caller's call record and the callee's function, the plain header's fixed words.
+    pub(super) call: u64,
+    pub(super) function: u32,
 }
 
 impl DirectFacts {
@@ -173,6 +176,8 @@ impl DirectFacts {
             registers: callee.registers,
             construction: callee.forwarder.is_some(),
             frame_bytes: FRAME_BYTES as u64,
+            call: callee.call as u64,
+            function: callee.target.function,
         }
     }
 
@@ -303,6 +308,8 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts) -> Result<(CallPart, Box<
         this_register: shape.this,
         args_register: shape.window,
         result_register: shape.result,
+        call: facts.call,
+        header: quench_bjit::call_record::plain_header(facts.function, shape.argc),
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let this = if facts.lexical { ThisRow::Lexical } else if facts.global_this.is_some() { ThisRow::Sloppy } else { ThisRow::Strict };
@@ -358,7 +365,7 @@ mod tests {
 
     fn facts(registers: u16, params: u16) -> DirectFacts {
         let cell = CellFacts { registers, room: registers, params, fill: crate::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
-        DirectFacts { callee: 7, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, lexical: false, registers, construction: false, frame_bytes: 32 }
+        DirectFacts { callee: 7, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, lexical: false, registers, construction: false, frame_bytes: 32, call: 0x3000, function: 1 }
     }
 
     /// Each call opcode has its form, and an instruction that is no call, or carries a result flag, has none.

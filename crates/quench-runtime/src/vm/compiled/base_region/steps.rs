@@ -171,11 +171,10 @@ fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
         Some(Operation::Protocol { step: Protocol::AppendArray { length: 0, spread: false }, operands: [_, Some(_)], .. }) => Some(Heap::Append),
         Some(Operation::ForInNext { .. }) => Some(Heap::ForIn),
         Some(Operation::TypeofIndex { .. }) => Some(Heap::TypeofIndex),
+        Some(Operation::RequireIteratorResult { .. }) => Some(Heap::Object),
         _ => match instruction.op().class() {
             // derivation debt: no staged::Operation for SetFunctionName (the naming is a recorded site, `names`)
             Class::SetFunctionName => names::of(known, instruction).map(names::Name::heap),
-            // derivation debt: no staged::Operation for RequireIteratorResult (no decoder)
-            Class::RequireIteratorResult => Some(Heap::Object),
             // derivation debt: no staged::Operation for the `typeof` string and `typeof` test operators
             Class::Unary => typeof_arm(instruction.unary_operator()),
             _ => None,
@@ -240,9 +239,8 @@ fn branches_back(pc: u32, instruction: WideInstruction) -> bool {
 /// as a body's do, so a step that jumps backward may be made in place. A helper step names the register it writes, and a fast
 /// arm the register it reads; an add row also names its transition and the atom it holds unnamed.
 pub(super) fn decode_step(pc: u32, instruction: WideInstruction, known: Known, (helpers, polls): (LaneHelpers, bool)) -> Decoded {
-    match instruction.op().class() {
-        // derivation debt: no staged::Operation for Nop (no decoder)
-        Class::Nop => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
+    match staged_of(instruction) {
+        Some(Operation::Nop) => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
         _ => {
             let step = if branches_back(pc, instruction) && !polls { Step::Leave } else { lowering(instruction, known, helpers) };
             let helped = step.runs_helper();

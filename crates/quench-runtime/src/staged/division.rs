@@ -111,6 +111,7 @@ impl<W, P> Operation<W, P> {
                 ("target", BYTECODE)]),
             Self::LoadThis { .. } => SmallVec::from_slice(&[("destination", REGISTER)]),
             Self::RequireObjectCoercible { .. } => SmallVec::from_slice(&[("register", REGISTER)]),
+            Self::Nop => SmallVec::new(),
             _ => self.heap_operand_times(),
         }
     }
