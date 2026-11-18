@@ -23,13 +23,18 @@ impl<W, P> Operation<W, P> {
         })
     }
 
-    /// `Binary` over two registers: equality as its own row, any other operator the VM's.
+    /// `Binary`: an arithmetic, bitwise or relation operator as its Number operation
+    /// (`numeric::binary_operation`, whose operands may be constants), equality as its own row,
+    /// and any other operator the VM's over two registers.
     fn decode_binary(instruction: WideInstruction) -> Option<Self> {
-        let left = instruction.operand_b().register_index()?;
-        let right = instruction.operand_c().register_index()?;
         if instruction.result_flags() != 0 { return None; }
         let destination = instruction.result_register();
         let operator = instruction.binary_operator();
+        if let Some(number) = super::numeric::binary_operation(operator, destination, instruction.operand_b(), instruction.operand_c()) {
+            return Some(Self::Number(number));
+        }
+        let left = instruction.operand_b().register_index()?;
+        let right = instruction.operand_c().register_index()?;
         Some(match equality_operator(operator) {
             Some((strict, negated)) => Self::Equality { destination, left, right, strict, negated },
             None => Self::Binary { destination, left, right, operator },

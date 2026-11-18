@@ -47,7 +47,7 @@ macro_rules! number_arithmetic_operators {
     ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
         impl NumberArithmetic {
             #[inline(always)]
-            pub(super) fn from_operator(operator: u32) -> Option<Self> {
+            pub(crate) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == BinaryOperator::$operator as u32 {
                         return Some(Self::$operation);
@@ -56,39 +56,21 @@ macro_rules! number_arithmetic_operators {
                 None
             }
 
-            /// The Number arithmetic operation denoted by a JavaScript bytecode
-            /// and its operator. General `Binary` accepts every arithmetic row;
-            /// specialized bytecodes are accepted only for their corresponding
-            /// operator, as recorded in this table.
-            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                if instruction as u16 == crate::staged::BINARY_ROW {
-                    return Self::from_operator(operator);
+            /// The Number arithmetic operation the decoded instruction denotes: the `Arithmetic`
+            /// of `Operation::Number`, which `Binary` decodes its arithmetic operators to
+            /// (`staged::numeric::binary_operation`). No record of another opcode denotes one.
+            pub(crate) fn from_instruction(instruction: crate::bytecode::WideInstruction) -> Option<Self> {
+                match crate::staged::Operation::<u64, ()>::of(instruction)? {
+                    crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic { operation, .. }) => Some(operation),
+                    _ => None,
                 }
-                $(number_arithmetic_operators!(
-                    @specialized_instruction
-                    instruction,
-                    operator,
-                    Self::$operation,
-                    $operator,
-                    $specialized_instruction
-                );)+
-                None
             }
-        }
-    };
-    (
-        @specialized_instruction
-        $instruction:ident,
-        $operator:ident,
-        $operation:expr,
-        $operator_name:ident,
-        None
-    ) => {};
-    (@specialized_instruction $instruction:ident, $operator:ident, $operation:expr, $operator_name:ident, $specialized_instruction:ident) => {
-        if $instruction.class().eq(crate::bytecode::Class::$specialized_instruction)
-            && $operator == BinaryOperator::$operator_name as u32
-        {
-            return Some($operation);
+
+            /// `from_instruction` of an opcode and its operator field, for a caller that holds
+            /// the opcode but no record: the record is built with the operator in its immediate.
+            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
+                Self::from_instruction(crate::bytecode::WideInstruction::new(instruction, 0, 0, 0, operator))
+            }
         }
     };
 }
@@ -173,14 +155,19 @@ macro_rules! number_bitwise_operators {
                 None
             }
 
-            /// The signed int32 operation denoted by an eligible JavaScript
-            /// bytecode and operator. Bitwise operands may be narrowed only
-            /// for the general `Binary` instruction; entry guards are checked
-            /// separately by the caller.
+            /// The signed int32 operation the decoded instruction denotes: the `Bitwise` of
+            /// `Operation::Number`, which `Binary` decodes its bitwise operators to.
+            pub(crate) fn from_instruction(instruction: crate::bytecode::WideInstruction) -> Option<Self> {
+                match crate::staged::Operation::<u64, ()>::of(instruction)? {
+                    crate::staged::Operation::Number(crate::staged::NumberOperation::Bitwise { operation, .. }) => Some(operation),
+                    _ => None,
+                }
+            }
+
+            /// `from_instruction` of an opcode and its operator field, for a caller that holds
+            /// the opcode but no record.
             pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                (instruction as u16 == crate::staged::BINARY_ROW)
-                    .then(|| Self::from_operator(operator))
-                    .flatten()
+                Self::from_instruction(crate::bytecode::WideInstruction::new(instruction, 0, 0, 0, operator))
             }
         }
     };
@@ -306,16 +293,17 @@ mod numeric_instruction_tests {
             NumberArithmetic::from_js_instruction(Op::Binary, BinaryOperator::Addition as u32),
             Some(NumberArithmetic::Add)
         );
+        // The specialized opcodes have no staged decoder, so the decoded operation denotes none.
         assert_eq!(
             NumberArithmetic::from_js_instruction(Op::NumericAdd, BinaryOperator::Addition as u32),
-            Some(NumberArithmetic::Add)
+            None
         );
         assert_eq!(
             NumberArithmetic::from_js_instruction(
                 Op::NumericMultiply,
                 BinaryOperator::Multiplication as u32
             ),
-            Some(NumberArithmetic::Multiply)
+            None
         );
         assert_eq!(
             NumberArithmetic::from_js_instruction(
