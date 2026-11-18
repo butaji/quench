@@ -9,27 +9,6 @@
 //! `arguments` object does.
 use super::*;
 
-/// The handler of `class`'s record of parameter `slot` when the parameter is one a mapped
-/// `arguments` object aliases in a suspended function's window; `None` for any other record.
-pub(super) fn mapped_parameter_handler<H: Host>(
-    function: &Function,
-    class: Class,
-    slot: usize,
-) -> Option<Handler> {
-    let handler: Handler = match class {
-        Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal => {
-            lane_load_mapped_parameter::<H>
-        }
-        Class::StoreLocal | Class::StoreLocalPlain | Class::StoreEnvLocal => {
-            lane_store_mapped_parameter::<H>
-        }
-        _ => return None,
-    };
-    (crate::vm::arguments::mapped_arguments_slot(function, slot).is_some()
-        && function.arguments_ride_window())
-    .then_some(handler)
-}
-
 /// Where a parameter lives in an environment window: its local among the window's locals, or,
 /// for a parameter a closure captured once the window's environment exists, its slot there. A
 /// captured parameter rides the window's locals until a closure makes the environment, which takes
@@ -136,68 +115,3 @@ pub(super) fn window_binding<H: Host>(vm: &Vm<H>, r: Registers, body: &Function,
     unsafe { ParameterHome::of(r.0.add(usize::from(body.registers)), body, slot) }.read(&vm.heap)
 }
 
-/// The `arguments` object the running window activation made on entry, and the home of its
-/// parameter `slot`, for the window whose entries start at register `registers`; `None` in a
-/// frame's run, which the general path serves.
-fn mapped_window<H: Host>(
-    cx: *mut LaneContext<H>,
-    r: Registers,
-    registers: u16,
-    slot: usize,
-) -> Option<(Value, ParameterHome)> {
-    if unsafe { (*cx).registers }.env().is_deleted() {
-        return None;
-    }
-    let vm = unsafe { vm(cx) };
-    let function = vm.lane_stack.activations.last()?.function;
-    // SAFETY: the context's program outlives the lane run.
-    let body = unsafe { &*(*cx).code }.function(function as usize);
-    Some((
-        window_binding(vm, r, body, usize::from(body.arguments_slot?)),
-        // SAFETY: the running window activation's entries start at `registers`.
-        unsafe { ParameterHome::of(r.0.add(usize::from(registers)), body, slot) },
-    ))
-}
-
-script_handler! {
-    /// A local load of a parameter a mapped `arguments` object aliases, in the window
-    /// activation of a suspended function: the element the object maps it to, else the
-    /// parameter's binding. Any other run, a numeric local or an uninitialized binding takes the
-    /// general path.
-    fn lane_load_mapped_parameter<>(cx, r, ip, i, view) {
-        let (slot, registers) = environment_window_fields(i);
-        let Some((arguments, home)) = mapped_window(cx, r, registers, slot).filter(|_| i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0)
-        else {
-            return exit(ip);
-        };
-        let vm = unsafe { vm(cx) };
-        let value = vm.mapped_window_element(arguments, slot).unwrap_or_else(|| home.read(&vm.heap));
-        if value.is_deleted() {
-            return exit(ip);
-        }
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
-}
-
-script_handler! {
-    /// `lane_load_mapped_parameter`'s store: the parameter's binding and, while the mapping
-    /// holds, the element (`Vm::store_mapped_argument`).
-    fn lane_store_mapped_parameter<>(cx, r, ip, i, view) {
-        let (slot, registers) = environment_window_fields(i);
-        let Some((arguments, home)) = mapped_window(cx, r, registers, slot) else {
-            return exit(ip);
-        };
-        let vm = unsafe { vm(cx) };
-        if i.c == 0 && home.read(&vm.heap).is_deleted() {
-            return exit(ip);
-        }
-        let value = r.get(i.a);
-        home.write(vm, value);
-        vm.store_mapped_argument(arguments, slot, value);
-        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
-            r.set(register, value);
-        }
-        next!(cx, r, following(ip), view)
-    }
-}

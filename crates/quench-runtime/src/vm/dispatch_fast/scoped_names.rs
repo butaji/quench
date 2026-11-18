@@ -149,7 +149,7 @@ script_handler! {
 script_handler! {
     /// `StoreEnvLocal` of such a function (`specialize_environment_window`), which may write a
     /// `with` object's binding instead of the local: the object that has the local's name takes
-    /// the store (`scoped_store`), else the window's own (`lane_store_window_local`). A frame's
+    /// the store (`scoped_store`), else the window's own, which the general path stores. A frame's
     /// run takes the general path, as it did for every function that resolves names at run time.
     #[inline(never)]
     fn lane_store_scoped_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
@@ -166,8 +166,8 @@ script_handler! {
         let value = r.get(i.a);
         match scoped_store(vm, &scope, atom, value) {
             ScopedStore::Undecided => exit(ip),
-            ScopedStore::Unscoped if ENVIRONMENT => sibling!(lane_store_window_local::<H, true>, r, ip, view),
-            ScopedStore::Unscoped => sibling!(lane_store_window_local::<H, false>, r, ip, view),
+            // The window's own local (`FLAG_WINDOW`'s row) is not this record's: the general path stores it.
+            ScopedStore::Unscoped => exit(ip),
             ScopedStore::Stored => {
                 if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
                     r.set(register, value);
