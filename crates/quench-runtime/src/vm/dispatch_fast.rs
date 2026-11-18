@@ -3009,6 +3009,9 @@ fn exited(ip: Ip) -> (Ip, bool) {
 /// VM is live while a handler runs.
 #[inline(always)]
 unsafe fn vm<'a, H: Host>(cx: *mut LaneContext<H>) -> &'a mut Vm<H> {
+    // A handler runs inside a lane run, whose context the entry binds; a null one would be
+    // read as the VM's state, so fail here rather than at an unrelated offset.
+    debug_assert!(!cx.is_null(), "a lane handler ran with no lane context");
     unsafe { &mut *(*cx).vm }
 }
 
