@@ -60,6 +60,30 @@ impl Stage for Concrete {
     #[inline(always)]
     fn constant(&mut self, bits: u64) -> u64 { bits }
     #[inline(always)]
+    fn wasm_i32_binary(&mut self, operator: crate::wasm::integer::I32BinaryOperator, left: u64, right: u64) -> Option<u64> {
+        operator.evaluate(left as u32 as i32, right as u32 as i32).ok().map(|value| u64::from(value as u32))
+    }
+    #[inline(always)]
+    fn wasm_i32_unary(&mut self, operator: crate::wasm::integer::I32UnaryOperator, value: u64) -> Option<u64> {
+        Some(u64::from(operator.evaluate(value as u32 as i32) as u32))
+    }
+    #[inline(always)]
+    fn wasm_i64_binary(&mut self, operator: crate::wasm::integer::I64BinaryOperator, left: u64, right: u64) -> Option<(u64, bool)> {
+        match operator.evaluate(left as i64, right as i64).ok()? {
+            crate::WasmValue::I32(value) => Some((u64::from(value as u32), true)),
+            crate::WasmValue::I64(value) => Some((value as u64, false)),
+            _ => None,
+        }
+    }
+    #[inline(always)]
+    fn wasm_i64_unary(&mut self, operator: crate::wasm::integer::I64UnaryOperator, value: u64) -> Option<(u64, bool)> {
+        match operator.evaluate(value as i64) {
+            crate::WasmValue::I32(value) => Some((u64::from(value as u32), true)),
+            crate::WasmValue::I64(value) => Some((value as u64, false)),
+            _ => None,
+        }
+    }
+    #[inline(always)]
     fn load_u32(&mut self, _at: Access, base: u64, offset: i32) -> u64 {
         // SAFETY: a staged operation loads only from a live record or table at a layout offset.
         u64::from(unsafe { ((base as *const u8).offset(offset as isize) as *const u32).read() })

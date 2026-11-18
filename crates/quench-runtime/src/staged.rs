@@ -90,13 +90,14 @@ pub(crate) mod value;
 mod steps;
 mod control;
 mod generic;
-pub(crate) use steps::{step, row_step, RowStep, step_flow, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic};
+pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic};
 pub(crate) mod effects;
 #[allow(dead_code)] // the K-PLAN builder; its first consumer is the u-jit lowering (P4, TOD-1700)
 pub(crate) mod function_plan;
 pub(crate) mod region;
 pub(crate) mod wasm;
 pub(crate) mod wasm_float;
+pub(crate) mod wasm_int;
 mod wasm_concrete;
 pub(crate) mod wasm_call;
 pub(crate) mod wasm_flow;
@@ -427,6 +428,8 @@ pub(crate) enum Operation<W, P> {
     /// `left` compared with `right` (`Comparison`), jumping to the target when the comparison
     /// holds, or fails where `negate` (`JumpBinaryFalse`); otherwise continue after it.
     CompareJump { comparison: Comparison, left: Operand, right: Operand, negate: bool },
+    /// A Wasm i32 or i64 register or immediate operator (`wasm_int`), which the row answers from its words.
+    WasmInt(wasm_int::WasmIntOperation),
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes and the
@@ -445,6 +448,7 @@ impl<W, P> Operation<W, P> {
             Decoder::Call => Self::decode_call(instruction, context),
             Decoder::Names => names::decode(instruction),
             Decoder::Proved => None,
+            Decoder::WasmInt => Self::decode_wasm_int(instruction),
         }
     }
 
@@ -549,6 +553,12 @@ impl<W, P> Operation<W, P> {
                 Self::Void { destination },
             _ => return None,
         })
+    }
+
+    /// The Wasm integer operations of `decode` (`Decoder::WasmInt`), from a record's wide fields.
+    #[inline(always)]
+    pub(crate) fn decode_wasm_int(instruction: WideInstruction) -> Option<Self> {
+        wasm_int::decode(instruction).map(Self::WasmInt)
     }
 
     /// The local-slot operations of `decode`.

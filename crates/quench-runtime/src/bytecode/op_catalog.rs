@@ -168,6 +168,8 @@ pub(crate) enum Decoder {
     /// A by-name read decoded under a tier's proof of the global it names
     /// (`Operation::decode_load_name`), so `Operation::decode` has none.
     Proved,
+    /// A Wasm i32 or i64 register or immediate operator (`staged::wasm_int`).
+    WasmInt,
 }
 
 /// An opcode's general step a lane or a body makes in place, by one helper of the

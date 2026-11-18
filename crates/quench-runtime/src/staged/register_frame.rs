@@ -53,6 +53,17 @@ pub(crate) trait Frame<S: Stage> {
     /// Define `register` with `value`, carrying `fact`.
     fn write(&mut self, stage: &mut S, register: Register, value: S::Word, fact: Self::Fact);
 
+    /// The 64-bit word of `register` for an i64 operation. A boxed operand (`raw` false) is read as
+    /// a value that holds a 64-bit word, `None` where it holds a tagged value; a raw operand reads
+    /// the machine word as it is. `None` where the frame cannot read it (the default).
+    #[inline(always)]
+    fn wide_read(&mut self, _stage: &mut S, _register: Register, _raw: bool) -> Option<S::Word> { None }
+
+    /// Define `register` with the 64-bit word `value` of an i64 result: boxed (`raw` false) only
+    /// where the word is not tagged, else as the machine word. `None` where the frame cannot.
+    #[inline(always)]
+    fn wide_write(&mut self, _stage: &mut S, _register: Register, _value: S::Word, _raw: bool) -> Option<()> { None }
+
     /// Copy `source` into `destination` with its value and every fact derived from it; the
     /// word copied.
     #[inline(always)]

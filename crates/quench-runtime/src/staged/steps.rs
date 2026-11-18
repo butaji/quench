@@ -22,6 +22,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::LoadName { .. } | Operation::Protocol { .. }
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } | Operation::SpreadCall { .. } | Operation::SuperCall { .. }
             | Operation::LoadCapture { .. } | Operation::StoreCapture { .. } | Operation::CloneEnv { .. } => super::names::step(stage, frame, operation),
+        Operation::WasmInt(operation) => wasm_int::step(stage, frame, operation),
         value => value_step(stage, frame, value),
     }
 }
@@ -178,6 +179,8 @@ pub(crate) enum RowStep {
     Keyed,
     /// Comparisons, binaries, `void` and property keys (`generic::step`).
     Generic,
+    /// The Wasm i32 and i64 integer operators (`Decoder::WasmInt`, `wasm_int::step`).
+    WasmInt,
     /// Any operation: the whole of `step`.
     Full,
 }
@@ -187,6 +190,7 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
     match op.staged() {
         Some(Decoder::Flow) => RowStep::Flow,
         Some(Decoder::Local) => RowStep::Local,
+        Some(Decoder::WasmInt) => RowStep::WasmInt,
         Some(Decoder::Names) | Some(Decoder::Proved) => RowStep::Names,
         Some(Decoder::Property) => if matches!(op, Op::Delete) { RowStep::Keyed } else { RowStep::Property },
         Some(Decoder::Element) => RowStep::Keyed,
@@ -198,6 +202,15 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
             _ => RowStep::Full,
         },
         _ => RowStep::Full,
+    }
+}
+
+/// `step` of a Wasm integer row (`RowStep::WasmInt`).
+#[inline(always)]
+pub(crate) fn step_wasm_int<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    match operation {
+        Operation::WasmInt(operation) => super::wasm_int::step(stage, frame, operation),
+        _ => Step::Unresolved,
     }
 }
 

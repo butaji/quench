@@ -11017,41 +11017,6 @@ lane_handler! {
     }
 }
 
-lane_handler! {
-    fn lane_i32_unary<ACC: u8>(cx, r, ip, i, view) {
-        let Some(operator) = I32UnaryOperator::from_tag(i.imm()) else {
-            return exit(ip);
-        };
-        let value = operator.evaluate(read_i32::<ACC, ACC_B>(r, i.b, view));
-        produce!(cx, r, ip, i.a, view.integers.encode(value), view)
-    }
-}
-
-lane_handler! {
-    /// An i32 operator over two registers or a register and a constant; a
-    /// trap leaves the lane.
-    fn lane_i32_binary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
-        let (operator, immediate) = const {
-            match I32BinaryOperator::from_register_op(opcode(OP)) {
-                Some(operator) => (operator, false),
-                None => match I32BinaryOperator::from_immediate_op(opcode(OP)) {
-                    Some(operator) => (operator, true),
-                    None => panic!("not an i32 binary operator"),
-                },
-            }
-        };
-        let right = if immediate {
-            i.imm() as i32
-        } else {
-            read_i32::<ACC, ACC_C>(r, i.c, view)
-        };
-        let Ok(value) = operator.evaluate(read_i32::<ACC, ACC_B>(r, i.b, view), right) else {
-            return exit(ip);
-        };
-        produce!(cx, r, ip, i.a, view.integers.encode(value), view)
-    }
-}
-
 /// A scalar of static Wasm type `ty` read from a slot value.
 #[inline(always)]
 fn lane_scalar(value: Value, ty: crate::WasmType) -> Option<crate::WasmValue> {
@@ -11547,42 +11512,6 @@ lane_handler! {
             operator.evaluate(f32::from_bits(input as u32))
         };
         let Some(value) = lane_encode(view, value) else {
-            return exit(ip);
-        };
-        produce!(cx, r, ip, i.a, value, view)
-    }
-}
-
-lane_handler! {
-    /// An i64 operator; a trap leaves the lane, where the general loop
-    /// raises it.
-    fn lane_i64_binary<ACC: u8>(cx, r, ip, i, view) {
-        let (Some(left), Some(right), Some(operator)) = (
-            read::<ACC, ACC_B>(r, i.b, view).bits64(),
-            read::<ACC, ACC_C>(r, i.c, view).bits64(),
-            I64BinaryOperator::from_tag(i.imm()),
-        ) else {
-            return exit(ip);
-        };
-        let Ok(value) = operator.evaluate(left as i64, right as i64) else {
-            return exit(ip);
-        };
-        let Some(value) = lane_encode(view, value) else {
-            return exit(ip);
-        };
-        produce!(cx, r, ip, i.a, value, view)
-    }
-}
-
-lane_handler! {
-    fn lane_i64_unary<ACC: u8>(cx, r, ip, i, view) {
-        let (Some(input), Some(operator)) = (
-            read::<ACC, ACC_B>(r, i.b, view).bits64(),
-            I64UnaryOperator::from_tag(i.imm()),
-        ) else {
-            return exit(ip);
-        };
-        let Some(value) = lane_encode(view, operator.evaluate(input as i64)) else {
             return exit(ip);
         };
         produce!(cx, r, ip, i.a, value, view)
@@ -20974,11 +20903,6 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     if OP >= 256 && !lane_runs_row(op) && !jumps_by_row(op) {
         return None;
     }
-    if I32BinaryOperator::from_register_op(op).is_some()
-        || I32BinaryOperator::from_immediate_op(op).is_some()
-    {
-        return LaneHandler::producer(lane_i32_binary::<H, OP, ACC>);
-    }
     let handler: Handler = if I32BinaryOperator::from_jump_op(op).is_some()
         || I32BinaryOperator::from_immediate_jump_op(op).is_some()
     {
@@ -21002,15 +20926,12 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
             Class::WasmI32AddJump => {
                 return LaneHandler::producer(lane_add_jump_nonzero::<H, BACKWARD, ACC>);
             }
-            Class::WasmI32Unary => return LaneHandler::producer(lane_i32_unary::<H, ACC>),
             Class::WasmFloatBinary32 | Class::WasmFloatBinary64 => {
                 return LaneHandler::producer(lane_float_binary::<H, OP, ACC>);
             }
             Class::WasmFloatUnary32 | Class::WasmFloatUnary64 => {
                 return LaneHandler::producer(lane_float_unary::<H, OP, ACC>);
             }
-            Class::WasmI64Binary => return LaneHandler::producer(lane_i64_binary::<H, ACC>),
-            Class::WasmI64Unary => return LaneHandler::producer(lane_i64_unary::<H, ACC>),
             Class::WasmScalarConvert => {
                 return LaneHandler::producer(lane_scalar_convert::<H, ACC>);
             }

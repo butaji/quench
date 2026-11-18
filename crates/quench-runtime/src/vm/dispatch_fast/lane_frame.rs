@@ -256,6 +256,19 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
+    fn wide_read(&mut self, stage: &mut Concrete, register: Register, raw: bool) -> Option<u64> {
+        let word = self.read(stage, register);
+        if raw { Some(word) } else { Value::from_bits(word).bits64() }
+    }
+
+    #[inline(always)]
+    fn wide_write(&mut self, _stage: &mut Concrete, register: Register, value: u64, raw: bool) -> Option<()> {
+        let value = if raw { Value::from_bits(value) } else { Value::from_bits64(value)? };
+        self.registers.set(register, value);
+        Some(())
+    }
+
+    #[inline(always)]
     fn this(&mut self, _stage: &mut Concrete) -> u64 {
         if self.this.is_deleted() && let Some((context, read)) = self.frame_this {
             // SAFETY: the running lane's context, live for the row's step.
@@ -771,6 +784,12 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         return LaneFrame::<ACC> { binary: Some((cx.cast(), binary)), decisions: Some(Decisions::of(cx)), reads: Reads::of_jump::<H>(cx, None),
             ..LaneFrame::<ACC>::new(r, view) };
     }
+    if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmInt)) } {
+        // An integer row reads its operands from the register file: the carried accumulator stands for
+        // one field only, and a row reads two registers (`LaneFrame::read`).
+        let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
+        return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::new(r, view) };
+    }
     if !locals {
         return LaneFrame::<ACC>::new(r, view);
     }
@@ -885,6 +904,7 @@ macro_rules! row_step {
         else if const { matches!(crate::staged::row_step($op), R::Property) } { crate::staged::step_property($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::Keyed) } { crate::staged::step_keyed($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::Generic) } { crate::staged::step_generic($stage, $frame, $operation) }
+        else if const { matches!(crate::staged::row_step($op), R::WasmInt) } { crate::staged::step_wasm_int($stage, $frame, $operation) }
         else { crate::staged::step($stage, $frame, $operation) }
     }};
 }
@@ -970,6 +990,8 @@ lane_handler! {
             Operation::decode_value(crate::staged::Fields::wide(fields))
         } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
             Operation::decode_generic(crate::staged::Fields::wide(fields))
+        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmInt)) } {
+            Operation::decode_wasm_int(crate::staged::Fields::wide(fields))
         } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
             Operation::decode_names(crate::staged::Fields::wide(fields))
         } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Proved)) } {
