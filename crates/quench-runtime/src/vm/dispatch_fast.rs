@@ -1614,6 +1614,9 @@ struct ScriptActivation {
     /// forwarding constructor passed on (`Completion::Forwarder`), or for values passed past
     /// the parameters.
     forwards: bool,
+    /// The register past its registers that holds the first value it kept (`forwards`), its
+    /// function's register count, so a read of them looks up no function; 0 when it keeps none.
+    kept: u16,
     /// Its environment and frame locals follow its registers (`CallEntry::Environment`).
     environment: bool,
     /// The record of the suspended frame a windowed activation runs over (`generator_windows`,
@@ -14478,6 +14481,7 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
             argc: leaf.argc,
             completion: if leaf.caller_program.is_some() { Completion::Cross } else { Completion::Plain },
             forwards: false,
+            kept: 0,
             environment: false,
             record: std::ptr::null_mut(),
         }),
@@ -16959,6 +16963,7 @@ fn lane_activate_keeping_window<H: Host, const GENERAL: bool>(
     let entered = lane_enter_window::<H, GENERAL, false>(cx, r, ip, target, callee_registers, argc, this, false, None);
     if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations.last_mut().map(|activation| &mut activation.kind) {
         script.forwards = true;
+        script.kept = target.registers;
     }
     Ok(entered)
 }
@@ -16993,7 +16998,7 @@ fn lane_activate_gathering<H: Host>(
     let fixed = target.params - 1;
     if view {
         // A rest view keeps every value passed after its registers, as a keeping activation
-        // does, and its rest register holds `undefined` (`lane_rest_view`).
+        // does, and its rest register holds `undefined` (`LaneFrame::rest_view`).
         let callee_registers = lane_fill_window(vm, target, passed, argc.min(fixed));
         callee_registers.set(fixed, Value::UNDEFINED);
         let count = usize::from(target.registers);
@@ -17005,6 +17010,8 @@ fn lane_activate_gathering<H: Host>(
         let entered = lane_enter_window::<H, false, false>(cx, r, ip, target, callee_registers, argc, this, false, None);
         if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations.last_mut().map(|activation| &mut activation.kind) {
             script.forwards = true;
+            script.kept = target.registers;
+        script.kept = target.registers;
         }
         return Ok(entered);
     }
@@ -17648,31 +17655,6 @@ script_handler! {
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
-    }
-}
-
-script_handler! {
-    /// `RestLength` (`GET` false) or `RestGet` (`GET` true) of a rest view
-    /// (`Function::rest_view`) in a keeping activation: the values past its first `imm`
-    /// parameters among those it kept after its registers, where `RestGet`'s record carries
-    /// their first register (`derive_lane_view`). Read in place whatever its rest register
-    /// holds: only these reads see the rest array, which no write changes, so an array an
-    /// entry made holds the same values. A frame, and a key other than an index they hold,
-    /// take the general path (`Vm::rest_view_step`).
-    fn lane_rest_view<GET: bool>(cx, r, ip, i, view) {
-        if let Some((argc, _)) = unsafe { lane_keeping_activation(cx) } {
-            let length = argc.saturating_sub(i.imm() as u16);
-            if !GET {
-                r.set(i.a, Value::integer(i32::from(length)));
-                next!(cx, r, following(ip), view)
-            }
-            // A negative index wraps past every length, so one unsigned compare bounds it.
-            if let Some(index) = r.get(i.b).as_int().map(|index| index as u32).filter(|index| *index < u32::from(length)) {
-                r.set(i.a, r.get(i.c + index as u16));
-                next!(cx, r, following(ip), view)
-            }
-        }
-        exit(ip)
     }
 }
 
@@ -18869,6 +18851,7 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
             argc,
             completion: if skipped.is_some() { Completion::Forwarder } else { Completion::of(constructs, cross, SETTLES) },
             forwards: false,
+            kept: 0,
             environment: false,
             record: std::ptr::null_mut(),
         }),
@@ -19072,6 +19055,7 @@ fn lane_activate_environment<H: Host>(
             argc,
             completion: Completion::of(constructs, cross, false),
             forwards: false,
+            kept: 0,
             environment: true,
             record: std::ptr::null_mut(),
         }),
@@ -19310,7 +19294,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     let window_size = if keeps { count + argc } else { count };
     // The rest array, made before the window is: the values past the other parameters, read
     // in place from the caller's window or the kept values.
-    // A rest view that keeps the values reads them in place (`lane_rest_view`).
+    // A rest view that keeps the values reads them in place (`LaneFrame::rest_view`).
     let rest = (gathers && !(keeps && target.forms & TARGET_REST_VIEW != 0)).then(|| {
         let fixed = usize::from(target.params) - 1;
         let passed: &[Value] = match arguments {
@@ -19384,6 +19368,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
                 Completion::of(constructs, cross, false)
             },
             forwards: keeps,
+            kept: if keeps { target.registers } else { 0 },
             environment: false,
             record: std::ptr::null_mut(),
         }),
@@ -21537,6 +21522,11 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     let Some(op) = Op::from_index(OP as usize) else {
         return None;
     };
+    // The opcodes past a byte are selected per record (`derive_lane_view`); a generated row
+    // is their only table entry.
+    if OP as usize >= 1 << u8::BITS && !lane_runs_row(op) {
+        return None;
+    }
     if I32BinaryOperator::from_register_op(op).is_some()
         || I32BinaryOperator::from_immediate_op(op).is_some()
     {
@@ -21693,11 +21683,13 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
 }
 
 /// Dense fast handlers cover the first opcode byte; later opcodes use general dispatch.
-const TABLE_SLOTS: usize = 1 << u8::BITS;
+const TABLE_SLOTS: usize = crate::bytecode::OPCODE_COUNT.next_multiple_of(TABLE_ROW as usize);
 
 /// Opcodes per generated table row.
 const TABLE_ROW: u16 = 16;
 const TABLE_ROWS: usize = TABLE_SLOTS / TABLE_ROW as usize;
+// `lane_table` lists one generated row per sixteen opcodes.
+const _: () = assert!(TABLE_ROWS == 17, "add a `table_row!` to `lane_table` per sixteen new opcodes");
 
 macro_rules! table_row {
     ($h:ty, $backward:literal, $acc:expr, $row:literal) => {
@@ -21757,6 +21749,7 @@ macro_rules! lane_table {
             table_row!($h, $backward, $acc, 13),
             table_row!($h, $backward, $acc, 14),
             table_row!($h, $backward, $acc, 15),
+            table_row!($h, $backward, $acc, 16),
         ])
     };
 }
@@ -21895,11 +21888,16 @@ fn lane_call_fits(instruction: WideInstruction) -> bool {
             lane_returns(instruction)
         }
         Class::Binary if instruction.returns_from_frame() => lane_returns(instruction),
-        Class::CallRest => {
-            lane_returns(instruction) && !instruction.direct_eval() && !instruction.parameter_eval()
-        }
+        _ if spreads_rest_view(instruction) => lane_returns(instruction),
         _ => true,
     }
+}
+
+/// Whether `instruction`'s staged row is a call spreading a rest parameter kept as a view
+/// (`Passing::Rest`): the interpreter's own decode names it, so no opcode is listed here.
+fn spreads_rest_view(instruction: WideInstruction) -> bool {
+    matches!(crate::staged::Operation::<u64, ()>::decode_names(instruction),
+        Some(crate::staged::Operation::SpreadCall { passing: crate::staged::Passing::Rest, .. }))
 }
 
 /// A `Call` record's operand, flagged when only the `Await` right after the call reads its
@@ -22286,13 +22284,8 @@ fn derive_lane_view<'live, H: Host>(
                     },
                     produces: false,
                 })
-            } else if op.class() == Class::CallRest {
+            } else if spreads_rest_view(instruction) {
                 Some(LaneHandler { handler: lane_call_rest::<H> as Handler, produces: false })
-            } else if matches!(op.class(), Class::RestGet | Class::RestLength) {
-                Some(LaneHandler {
-                    handler: if op.class() == Class::RestGet { lane_rest_view::<H, true> as Handler } else { lane_rest_view::<H, false> as Handler },
-                    produces: false,
-                })
             } else if op.reads_arguments() {
                 Some(LaneHandler {
                     handler: if op.class().eq(Class::ArgumentsLength) {
@@ -22348,9 +22341,6 @@ fn derive_lane_view<'live, H: Host>(
                 // count its unused field carries (`lane_argument_get`).
                 c: if handler == lane_argument_get::<H> as Handler as *const () {
                     function.registers as u16
-                } else if handler == lane_rest_view::<H, true> as Handler as *const () {
-                    // The first kept value past the fixed parameters (`lane_rest_view`).
-                    function.registers as u16 + instruction.imm() as u16
                 } else {
                     instruction.c()
                 },
@@ -25478,6 +25468,7 @@ impl PreparedShape {
                 argc: if keeps { argc } else { argc.min(params) } as u16,
                 completion: Completion::ReturnsToNative,
                 forwards: keeps,
+                kept: if keeps { target.registers } else { 0 },
                 environment: false,
                 record: std::ptr::null_mut(),
             }),

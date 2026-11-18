@@ -489,6 +489,7 @@ fn job_activation(
             argc: 0,
             completion: Completion::ResumesJob,
             forwards: false,
+            kept: 0,
             environment,
             record,
         }),

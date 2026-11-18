@@ -19,6 +19,9 @@ type PropertyDeleter = unsafe fn(*mut (), Value, Value) -> Option<Value>;
 /// run resolved, which runs no guest code; `None` leaves the instruction to the residual.
 type NameReader = unsafe fn(*mut (), NameRead, u32) -> Option<Value>;
 
+/// The values a keeping activation kept (`kept_values`).
+type KeptValues = unsafe fn(*mut ()) -> Option<(u16, u16)>;
+
 /// How a by-name load's record reads its name once resolved (`lane_name_resolution`).
 #[derive(Clone, Copy)]
 pub(super) enum NameRead {
@@ -46,6 +49,9 @@ struct LaneHost {
     allocate: AllocationMaker,
     delete: PropertyDeleter,
     read_name: NameReader,
+    /// The values a keeping activation kept (`kept_values`): their count and the register
+    /// that holds the first, past the function's registers.
+    kept_values: KeptValues,
     /// What the by-name load the frame runs resolved its name to, if it runs one.
     name: Option<NameBinding>,
 }
@@ -125,7 +131,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     fn hosted<H: Host>(registers: Registers, view: Carried, cx: *mut LaneContext<H>) -> Self {
         let host = LaneHost { cx: cx.cast(), allocate: lane_allocation::<H>, delete: lane_delete_value::<H>,
-            read_name: lane_name_value::<H>, name: None };
+            read_name: lane_name_value::<H>, kept_values: kept_values::<H>, name: None };
         Self { host: Some(host), ..Self::new(registers, view) }
     }
 
@@ -161,6 +167,23 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 
     #[inline(always)]
     fn fact(&self, _register: Register) -> Self::Fact { Boxing::Value }
+
+    /// A rest view's read from the values the running keeping activation kept past its
+    /// registers (`kept_values`), read in place; a frame keeps none of its own.
+    #[inline(always)]
+    fn rest_view(&mut self, _stage: &mut Concrete, get: bool, fixed: usize, key: Option<Register>) -> Option<(u64, Self::Fact)> {
+        let host = self.host?;
+        // SAFETY: the reader was made for the lane context this frame runs in.
+        let (argc, first) = unsafe { (host.kept_values)(host.cx) }?;
+        let fixed = u16::try_from(fixed).ok()?;
+        let length = argc.saturating_sub(fixed);
+        if !get {
+            return Some((Value::integer(i32::from(length)).to_bits(), Boxing::Value));
+        }
+        // A negative index wraps past every length, so one unsigned compare bounds it.
+        let index = self.registers.get(key?).as_int().map(|index| index as u32).filter(|index| *index < u32::from(length))?;
+        Some((self.registers.get(first + fixed + index as u16).to_bits(), Boxing::Value))
+    }
 
     #[inline(always)]
     fn read(&mut self, _stage: &mut Concrete, register: Register) -> u64 {
@@ -458,7 +481,7 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8>(cx: *mut LaneContext<H>, r: 
     let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Local)) };
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
         let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
-        return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::new(r, view) };
+        return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::hosted::<H>(r, view, cx) };
     }
     if !locals {
         return LaneFrame::<ACC>::new(r, view);
@@ -548,6 +571,21 @@ unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Alloca
         Allocation::Template { template } => lane_template_value(cx, template),
         Allocation::Concat { window } => lane_concat_value(cx, r, window),
     }
+}
+
+/// The count of the values the running keeping activation kept and the register holding the
+/// first (`ScriptActivation::kept`); `None` in a frame or any other activation.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+unsafe fn kept_values<H: Host>(cx: *mut ()) -> Option<(u16, u16)> {
+    let cx = cx.cast::<LaneContext<H>>();
+    if unsafe { (*cx).registers }.env().is_deleted() {
+        return None;
+    }
+    let script = unsafe { vm(cx) }.lane_stack.activations.last()?.script().filter(|script| script.forwards)?;
+    Some((script.argc, script.kept))
 }
 
 /// The value of `atom` under `read` in the lane context `cx`, which allocates nothing and runs
