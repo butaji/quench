@@ -1440,6 +1440,30 @@ enum Role {
     Array { elements: Representation, written: bool },
 }
 
+impl Role {
+    /// The role that holds both `self` and `other`, or `None` when no single role does. Only
+    /// Float64 and Tagged elements join; a Tagged scalar widens an array, and an array joins a
+    /// Tagged scalar's register as a Tagged array.
+    fn join(self, other: Role) -> Option<Role> {
+        use Representation::{Float64, Tagged};
+        let boxed = |elements: Representation| matches!(elements, Float64 | Tagged);
+        match (self, other) {
+            (Role::Scalar(Float64), Role::Scalar(Float64)) => Some(self),
+            (Role::Scalar(Tagged), Role::Scalar(Tagged)) => Some(self),
+            (Role::Array { elements: a, written }, Role::Array { elements: b, written: more })
+                if boxed(a) && boxed(b) =>
+            {
+                Some(Role::Array { elements: a.join(b), written: written || more })
+            }
+            (Role::Array { elements, written }, Role::Scalar(Tagged)) if boxed(elements) => {
+                Some(Role::Array { elements: Tagged, written })
+            }
+            (Role::Scalar(Tagged), Role::Array { written, .. }) => Some(Role::Array { elements: Tagged, written }),
+            _ => None,
+        }
+    }
+}
+
 struct Admission<'a> {
     constants: &'a [Value],
     /// The registers an allocation defines (`boxed`).
@@ -1467,30 +1491,11 @@ impl Admission<'_> {
     }
 
     fn note(&mut self, register: Register, role: Role) -> Option<()> {
-        use Representation::{Float64, Tagged};
-        match (self.roles.get(&register).copied(), role) {
-            (None, role) => {
-                self.roles.insert(register, role);
-            }
-            (Some(Role::Scalar(Float64)), Role::Scalar(Float64)) => {}
-            (Some(Role::Scalar(Tagged)), Role::Scalar(Tagged)) => {}
-            (Some(Role::Array { elements: Float64, written }), Role::Array { elements: Float64, written: more }) => {
-                self.roles.insert(register, Role::Array { elements: Float64, written: written || more });
-            }
-            (Some(Role::Array { elements: Float64, written }), Role::Scalar(Tagged))
-            | (Some(Role::Array { elements: Tagged, written }), Role::Scalar(Tagged)) => {
-                self.roles.insert(register, Role::Array { elements: Tagged, written });
-            }
-            (Some(Role::Scalar(Tagged)), Role::Array { written, .. }) => {
-                self.roles.insert(register, Role::Array { elements: Tagged, written });
-            }
-            (Some(Role::Array { elements: Float64, written }), Role::Array { elements: Tagged, written: more })
-            | (Some(Role::Array { elements: Tagged, written }), Role::Array { elements: Float64, written: more })
-            | (Some(Role::Array { elements: Tagged, written }), Role::Array { elements: Tagged, written: more }) => {
-                self.roles.insert(register, Role::Array { elements: Tagged, written: written || more });
-            }
-            _ => return None,
-        }
+        let joined = match self.roles.get(&register).copied() {
+            None => role,
+            Some(old) => old.join(role)?,
+        };
+        self.roles.insert(register, joined);
         Some(())
     }
 
