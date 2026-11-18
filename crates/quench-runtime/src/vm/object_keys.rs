@@ -150,19 +150,21 @@ impl<H: Host> Vm<H> {
     fn shape_enumerable_data_items(&mut self, object: Value, kind: EnumerableOwnPropertyKind) -> Option<Value> {
         let slots = self.shape_enumerable_slots(object)?;
         let data = self.object_data(object)?;
+        // A shape whose chain added no accessor (`shape_may_have_accessors`) holds data
+        // properties only, so no slot needs its attributes read.
+        let data_only = !self.shape_may_have_accessors(data.shape());
         let values = slots
             .iter()
             .map(|&(_, slot)| {
                 let slot = slot as usize;
-                self.slot_attributes(data, slot)
-                    .is_some_and(|attributes| !attributes.accessor)
+                (data_only || self.slot_attributes(data, slot).is_some_and(|attributes| !attributes.accessor))
                     .then(|| self.heap.property_get(data, slot))
                     .flatten()
             })
-            .collect::<Option<Vec<Value>>>()?;
+            .collect::<Option<smallvec::SmallVec<[Value; 8]>>>()?;
         let start = self.active_call_roots.len();
         self.active_call_roots.push(object);
-        let mut items = Vec::with_capacity(values.len());
+        let mut items = smallvec::SmallVec::<[Value; 8]>::with_capacity(values.len());
         for (&(atom, _), value) in slots.iter().zip(values) {
             let item = match kind {
                 EnumerableOwnPropertyKind::KeyValue => {

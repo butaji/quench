@@ -236,6 +236,9 @@ impl<H: Host> Vm<H> {
                 self.typeof_test_value(value, index, negated)
             }
             crate::bytecode::UNARY_TYPEOF_INDEX => self.typeof_index_value(value),
+            op if let Some(elements) = crate::bytecode::array_pattern_test(op) => {
+                Value::boolean(self.array_pattern_reads_elements(value, elements))
+            }
             op @ (crate::bytecode::UNARY_TO_STRING_PRIMITIVE | crate::bytecode::UNARY_ADD_OPERAND_STRING) => return self.string_primitive(p, op, value),
             _ => return Err(JsError("unsupported unary operator".into())),
         })

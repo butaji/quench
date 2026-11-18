@@ -143,6 +143,26 @@ impl FunctionCompiler<'_, '_> {
         self.resolve_control_destinations(&control, end, Some(update));
     }
 
+    /// Whether each value a for-of loop over `left` takes goes only to an array pattern that
+    /// binds names: `const`, `let` or `var` of one plain array pattern of names and holes,
+    /// with no rest. The pattern reads the value and nothing keeps it, so a step may yield the
+    /// one shared entry pair (`Vm::iterator_item_value`); the loop marks its
+    /// `RequireIteratorResult` with that.
+    fn value_only_to_array_pattern(left: &ForStatementLeft<'_>) -> bool {
+        let ForStatementLeft::VariableDeclaration(declaration) = left else {
+            return false;
+        };
+        if super::disposal::disposes(declaration.kind) || declaration.declarations.len() != 1 {
+            return false;
+        }
+        let BindingPattern::ArrayPattern(array) = &declaration.declarations[0].id else {
+            return false;
+        };
+        array.rest.is_none()
+            && !array.elements.is_empty()
+            && array.elements.iter().all(|element| matches!(element, None | Some(BindingPattern::BindingIdentifier(_))))
+    }
+
     fn for_iterable(
         &mut self,
         left: &ForStatementLeft<'_>,
@@ -189,7 +209,8 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::Await, awaited, result, 0, 0);
             result = awaited;
         }
-        self.emit(Op::RequireIteratorResult, 0, result, 0, 0);
+        let pattern_only = u16::from(!await_values && Self::value_only_to_array_pattern(left));
+        self.emit(Op::RequireIteratorResult, pattern_only, result, 0, 0);
         let done = self.reg();
         let done_atom = self.owner.atom("done");
         let done_cache = self.owner.cache_site();

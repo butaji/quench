@@ -1993,6 +1993,9 @@ pub(crate) struct Vm<H> {
     /// A Set or Map shape with no own `@@iterator` (`Vm::intact_iteration_kind`).
     collection_iteration_shape: Option<u32>,
     array_species_proof: Option<array::ArraySpeciesProof>,
+    /// An array shape no `@@isConcatSpreadable` reaches under a prototype layout epoch
+    /// (`Vm::concat_spreadable_absent`).
+    concat_spreadable_proof: Option<(u32, u64)>,
     for_in: object_static::ForInMemo,
     /// What `JSON.stringify`'s plain writer keeps between calls: its text buffer, which a
     /// payload's text would otherwise regrow from empty on each call, and its member plans
@@ -2125,6 +2128,13 @@ pub(crate) struct Vm<H> {
     /// The one `{ value, done }` result a lane iterator step reuses (`Vm::reused_iterator_result`),
     /// `undefined` until the first; cleared with `iterator_result_header`.
     reused_iterator_result: Value,
+    /// The one `[key, value]` pair a for-of step over entries reuses when the step's value goes
+    /// only to an array pattern (`Vm::iterator_item_value`), `undefined` until the first;
+    /// cleared with `reused_iterator_result`.
+    shared_entry_pair: Value,
+    /// Whether the entry step running now may yield `shared_entry_pair`
+    /// (`lane_iterator_step_reads`).
+    share_entry_pair: bool,
     /// The shapes of a complete data and accessor property descriptor object
     /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so
     /// field-cache invalidation clears them.
@@ -3049,6 +3059,7 @@ impl<H: Host> Vm<H> {
         self.array_iteration_shape = None;
         self.collection_iteration_shape = None;
         self.array_species_proof = None;
+        self.concat_spreadable_proof = None;
         self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);
         self.iterator_absence_proof.set(None);
@@ -3117,6 +3128,7 @@ impl<H: Host> Vm<H> {
         self.closure_templates.fill(None);
         self.iterator_result_header = None;
         self.reused_iterator_result = Value::UNDEFINED;
+        self.shared_entry_pair = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
         self.regexp_object_shapes = None;

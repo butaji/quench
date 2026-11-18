@@ -971,6 +971,12 @@ impl UniqueElements {
         }
     }
 
+    /// The values in reverse order; the count of other values is unchanged.
+    pub(crate) fn reverse(&mut self) {
+        // SAFETY: a unique backing is wide; its first `len` values are initialized.
+        unsafe { std::slice::from_raw_parts_mut(self.0.values(), self.0.len()) }.reverse();
+    }
+
     /// `values` at the indices from `start`.
     pub(crate) fn copy_from(&mut self, start: usize, values: &[Value]) {
         assert!(start + values.len() <= self.0.len(), "array copy out of bounds");
