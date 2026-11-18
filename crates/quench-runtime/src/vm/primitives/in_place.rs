@@ -116,44 +116,134 @@ impl<H: Host> Vm<H> {
 }
 
 impl<H: Host> Vm<H> {
-    /// `replace` or `replaceAll` of a flat ASCII receiver at a non-empty flat ASCII search
-    /// string, by a flat ASCII replacement with no `$` (so no substitution pattern): no
-    /// conversion runs guest code, so the result's bytes are written once, the unmatched runs
-    /// copied around each replacement; no match answers the receiver itself. `None` leaves
-    /// any other call to `call_primitive_native`.
-    pub(super) fn replace_in_place(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+    /// The one body of `replace` and `replaceAll` at a string pattern: a flat string receiver,
+    /// pattern and replacement (the replacement's `$` patterns are GetSubstitution with no
+    /// captures, which `replacement_substitution` makes). No conversion here runs guest code, so
+    /// the result is written once, the unmatched runs copied around each replacement. A
+    /// replacement function, a non-string pattern or a rope leaves the call to the general path
+    /// (`string_replace_native`), which answers `None` here.
+    pub(super) fn replace_string_pattern(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        receiver: Value,
+        args: &[Value],
+    ) -> Option<Result<Value, JsError>> {
         if !matches!(native, Native::StringReplace | Native::StringReplaceAll) {
             return None;
         }
         let [search, replacement, ..] = args else {
             return None;
         };
+        let replace_all = native == Native::StringReplaceAll;
+        // Flat ASCII text, pattern and replacement read in place, with no copy of any of them.
         let ascii = |value: Value| match self.heap.string(value)?.existing_flat()?.view() {
             Units::Ascii(bytes) => Some(bytes),
             Units::Wide(_) => None,
         };
-        let (text, needle, with) = (ascii(receiver)?, ascii(*search)?, ascii(*replacement)?);
-        if needle.is_empty() || with.contains(&b'$') {
-            return None;
+        if let (Some(text), Some(needle), Some(with)) = (ascii(receiver), ascii(*search), ascii(*replacement))
+            && !needle.is_empty()
+            && !with.contains(&b'$')
+        {
+            return Some(Ok(match ascii_replaced(text, needle, with, replace_all) {
+                Some(bytes) => self.heap.alloc_ascii_run(&bytes),
+                None => receiver,
+            }));
         }
-        let Some(first) = crate::vm::wtf16::find_ascii(text, needle) else {
-            return Some(receiver);
-        };
-        let mut bytes = smallvec::SmallVec::<[u8; 64]>::new();
-        bytes.extend_from_slice(&text[..first]);
-        bytes.extend_from_slice(with);
-        let mut cursor = first + needle.len();
-        if native == Native::StringReplaceAll {
-            // Occurrences do not overlap: each search starts past the previous match.
-            while let Some(at) = crate::vm::wtf16::find_ascii(&text[cursor..], needle) {
-                bytes.extend_from_slice(&text[cursor..cursor + at]);
-                bytes.extend_from_slice(with);
-                cursor += at + needle.len();
-            }
-        }
-        bytes.extend_from_slice(&text[cursor..]);
-        Some(self.heap.alloc_ascii_run(&bytes))
+        let input = self.flat_string(receiver)?;
+        let search = self.flat_string(*search)?;
+        let template = self.flat_string(*replacement)?;
+        Some(self.replace_units(p, receiver, &input, &search, &template, replace_all))
     }
+
+    /// A string value's flat units, read in place: a rope is left to the general path, which
+    /// flattens it.
+    fn flat_string(&self, value: Value) -> Option<JsString> {
+        let string = self.heap.string(value)?;
+        string.existing_flat()?;
+        Some(string.clone())
+    }
+
+
+    /// The replacement text of one match at `index`: `template` itself, or its substitution
+    /// (`$$`, `$&`, `` $` ``, `$'`) where it holds a `$`, appended to `output`.
+    #[allow(clippy::too_many_arguments)]
+    fn append_replacement(
+        &mut self,
+        p: &ResidualProgram,
+        output: &mut crate::vm::wtf16::JsStringBuilder,
+        substitutes: bool,
+        template: &JsString,
+        input: &JsString,
+        index: usize,
+        search: &JsString,
+    ) -> Result<(), JsError> {
+        if substitutes {
+            let text = self.replacement_substitution(p, template, input, index, search, &[], Value::UNDEFINED)?;
+            output.append(&text);
+        } else {
+            output.append(template);
+        }
+        Ok(())
+    }
+
+    /// `replace_string_pattern` of units of either width. Each match takes the replacement
+    /// template, or its GetSubstitution when the template has a `$`; empty matches occur at
+    /// each code-unit boundary, so a replace-all search resumes one unit on.
+    pub(in crate::vm) fn replace_units(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        input: &JsString,
+        search: &JsString,
+        template: &JsString,
+        replace_all: bool,
+    ) -> Result<Value, JsError> {
+        let Some(first) = input.find_units(search.units(), 0) else {
+            return Ok(receiver);
+        };
+        let units = template.units();
+        let substitutes = (0..units.len()).any(|index| units.at(index) == u16::from(b'$'));
+        let advance = search.units().len().max(1);
+        let mut output = crate::vm::wtf16::JsStringBuilder::default();
+        let mut cursor = 0;
+        let mut position = Some(first);
+        while let Some(index) = position {
+            output.append_slice(input, cursor..index);
+            self.append_replacement(p, &mut output, substitutes, template, input, index, search)?;
+            cursor = index + search.units().len();
+            let next = index + advance;
+            position = if replace_all && next <= input.units().len() {
+                input.find_units(search.units(), next)
+            } else {
+                None
+            };
+        }
+        output.append_slice(input, cursor..input.units().len());
+        let output = self.string_build_result(p, output.finish())?;
+        Ok(self.heap.alloc_string(output))
+    }
+}
+
+/// The text of `replace` (or `replaceAll`) of flat ASCII `text` with a non-empty `needle` and
+/// a `with` holding no `$`: the unmatched runs copied around each replacement, written once.
+/// `None` when nothing matches, so the receiver is the result.
+fn ascii_replaced(text: &[u8], needle: &[u8], with: &[u8], replace_all: bool) -> Option<smallvec::SmallVec<[u8; 64]>> {
+    let first = crate::vm::wtf16::find_ascii(text, needle)?;
+    let mut bytes = smallvec::SmallVec::<[u8; 64]>::new();
+    bytes.extend_from_slice(&text[..first]);
+    bytes.extend_from_slice(with);
+    let mut cursor = first + needle.len();
+    if replace_all {
+        // Occurrences do not overlap: each search starts past the previous match.
+        while let Some(at) = crate::vm::wtf16::find_ascii(&text[cursor..], needle) {
+            bytes.extend_from_slice(&text[cursor..cursor + at]);
+            bytes.extend_from_slice(with);
+            cursor += at + needle.len();
+        }
+    }
+    bytes.extend_from_slice(&text[cursor..]);
+    Some(bytes)
 }
 
 /// The units range `slice` (negative bounds count from the end) or `substring` (bounds in

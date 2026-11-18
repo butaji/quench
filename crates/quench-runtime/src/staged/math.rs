@@ -132,6 +132,70 @@ pub(crate) fn int_multiply(left: i32, right: i32) -> i32 {
     left.wrapping_mul(right)
 }
 
+/// `Math.max` (`maximum`) or `Math.min` of two int32 values: an int32 is never -0.
+#[inline(always)]
+pub(crate) fn int_extreme(maximum: bool, left: i32, right: i32) -> i32 {
+    if maximum { left.max(right) } else { left.min(right) }
+}
+
+/// `Math.abs` of an int32, whose magnitude is an int32 except at -2^31 (`None`, for the double path).
+#[inline(always)]
+pub(crate) fn int_abs(value: i32) -> Option<i32> {
+    (value != i32::MIN).then(|| value.abs())
+}
+
+/// `Math.sign`: `NaN` and the zeros unchanged, otherwise -1 or 1 by the sign.
+#[inline(always)]
+pub(crate) fn sign(value: f64) -> f64 {
+    if value.is_nan() || value == 0.0 {
+        value
+    } else if value.is_sign_negative() {
+        -1.0
+    } else {
+        1.0
+    }
+}
+
+/// `Math.clz32`: the leading zero bits of the ToUint32 of `value`, as a Number.
+#[inline(always)]
+#[cfg(not(stencil_build))]
+pub(crate) fn clz32(value: f64) -> f64 {
+    f64::from(to_uint32(value).leading_zeros())
+}
+
+/// The modulus of ToUint32, 2^32.
+#[cfg(not(stencil_build))]
+const UINT32_MODULUS: f64 = 4_294_967_296.0;
+
+/// ToUint32 of `value`: its integer part modulo 2^32, zero for NaN and the infinities. Here
+/// rather than in `value`, since this module also builds into the baseline JIT's stencils.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+fn to_uint32(value: f64) -> u32 {
+    if !value.is_finite() {
+        return 0;
+    }
+    value.trunc().rem_euclid(UINT32_MODULUS) as u32
+}
+
+/// `Math.hypot` of Numbers: infinite if any is (even beside a NaN), NaN if any is, else the
+/// root of the sum of squares, scaled by the largest magnitude so the squares do not overflow.
+#[cfg(not(stencil_build))]
+pub(crate) fn hypot(values: &[f64]) -> f64 {
+    if values.iter().any(|value| value.is_infinite()) {
+        return f64::INFINITY;
+    }
+    if values.iter().any(|value| value.is_nan()) {
+        return f64::NAN;
+    }
+    let largest = values.iter().copied().map(f64::abs).fold(0.0, f64::max);
+    if largest == 0.0 {
+        return 0.0;
+    }
+    let squares = values.iter().map(|value| value / largest).map(|ratio| ratio * ratio).sum::<f64>();
+    largest * squares.sqrt()
+}
+
 /// `operation` of the binary64 word `value`, on `stage`.
 #[inline(always)]
 pub(crate) fn unary<S: NumericStage>(stage: &mut S, operation: FloatUnary, value: S::Word) -> S::Word {

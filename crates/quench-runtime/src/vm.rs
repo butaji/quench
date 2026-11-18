@@ -142,6 +142,7 @@ mod atomics;
 mod bigint;
 mod boolean;
 mod builtins;
+mod native_rows;
 mod call_arguments;
 mod call_printer;
 pub(crate) use call_printer::{freeze_call_sites, freeze_source_call_sites};

@@ -4,45 +4,8 @@ use super::*;
 
 /// Marks a cached atom field that has not been interned since the last program reset.
 pub(super) const NO_CACHED_ATOM: Atom = Atom::MAX;
-const MATH_FUNCTIONS: &[(&str, Native)] = &[
-    ("abs", Native::MathAbs),
-    ("acos", Native::MathAcos),
-    ("acosh", Native::MathAcosh),
-    ("asin", Native::MathAsin),
-    ("asinh", Native::MathAsinh),
-    ("atan", Native::MathAtan),
-    ("atan2", Native::MathAtan2),
-    ("atanh", Native::MathAtanh),
-    ("cbrt", Native::MathCbrt),
-    ("ceil", Native::MathCeil),
-    ("clz32", Native::MathClz32),
-    ("cos", Native::MathCos),
-    ("cosh", Native::MathCosh),
-    ("exp", Native::MathExp),
-    ("expm1", Native::MathExpm1),
-    ("floor", Native::MathFloor),
-    ("f16round", Native::MathF16Round),
-    ("fround", Native::MathFround),
-    ("hypot", Native::MathHypot),
-    ("imul", Native::MathImul),
-    ("log", Native::MathLog),
-    ("log10", Native::MathLog10),
-    ("log1p", Native::MathLog1p),
-    ("log2", Native::MathLog2),
-    ("max", Native::MathMax),
-    ("min", Native::MathMin),
-    ("pow", Native::MathPow),
-    ("random", Native::MathRandom),
-    ("round", Native::MathRound),
-    ("sign", Native::MathSign),
-    ("sin", Native::MathSin),
-    ("sinh", Native::MathSinh),
-    ("sqrt", Native::MathSqrt),
-    ("sumPrecise", Native::MathSumPrecise),
-    ("tan", Native::MathTan),
-    ("tanh", Native::MathTanh),
-    ("trunc", Native::MathTrunc),
-];
+/// `Math`'s functions, in installation order: derived from the rows of `native_rows`.
+const MATH_FUNCTIONS: &[(&str, Native)] = super::native_rows::MATH_FUNCTIONS;
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
     Native::Print, Native::HostDone, Native::CreateRealm, Native::IsHTMLDDA, Native::EvalScript, Native::CollectGarbage, Native::RealmTypeError, Native::Eval, Native::Function, Native::FunctionPrototype, Native::FunctionPrototypeHasInstance, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag, Native::ShadowRealm, Native::ShadowRealmEvaluate, Native::ShadowRealmImportValue, Native::ShadowRealmImportValueFulfilled, Native::ShadowRealmWrappedFunction,

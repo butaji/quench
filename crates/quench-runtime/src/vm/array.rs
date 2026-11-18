@@ -697,31 +697,6 @@ impl<H: Host> Vm<H> {
         crate::staged::builtins::concrete_array_push(records, array, room, value)
     }
 
-    /// `pop()` of a direct array whose elements are ordinary and dense, as
-    /// `array_push_one` admits it: an empty one answers `undefined`; one whose last element is
-    /// present removes it, as the generic steps' Get, DeletePropertyOrThrow and `length` set
-    /// do: in place by the staged row (`pop_in_place`) where the array owns its backing, else
-    /// through the heap, which copies it first. `None` for a hole, which its prototypes
-    /// answer, and for any other receiver.
-    #[inline(always)]
-    pub(super) fn array_pop_one(&mut self, this: Value) -> Option<Value> {
-        if !self.heap.record_array(this)?.holds_ordinary_elements() {
-            return None;
-        }
-        if let Some(popped) = self.pop_in_place(this) {
-            return Some(popped);
-        }
-        match self.heap.record_array(this)?.elements().last() {
-            None => Some(Value::UNDEFINED),
-            Some(last) if last.is_deleted() => None,
-            // Removing stores no reference, which the write barrier passes.
-            Some(_) => super::index::mutable_array_elements(
-                self.heap.record_array_store_mut(this, Value::UNDEFINED)?.elements_mut(),
-            )
-            .pop(),
-        }
-    }
-
     /// The staged removal (`staged::builtins::array_pop`) of the last element of `array`,
     /// which retires the proofs a shorter array falsifies first.
     #[inline(always)]
@@ -731,10 +706,18 @@ impl<H: Host> Vm<H> {
         crate::staged::builtins::concrete_array_pop(records, array)
     }
 
-    /// `push` onto a dense array (`dense_array_length`) as one append, when each appended
-    /// index stores plainly (`array_indices_store_plainly`); one value first as `array_push_one`.
+    /// `push` onto a dense array as one append: the single-value case is `array_push_one`,
+    /// every other dense receiver `array_push_appended`. The one core of `Array.prototype.push`,
+    /// called by the general native and the steady call path alike.
+    #[inline(always)]
     pub(super) fn array_push_dense(&mut self, this: Value, args: &[Value]) -> Option<Value> {
         if let [value] = *args && let Some(length) = self.array_push_one(this, value) { return Some(length); }
+        self.array_push_appended(this, args)
+    }
+
+    /// `push` onto a dense array (`dense_array_length`) as one append, when each appended
+    /// index stores plainly (`array_indices_store_plainly`).
+    fn array_push_appended(&mut self, this: Value, args: &[Value]) -> Option<Value> {
         let length = self.dense_array_length(this)?;
         let final_length = length.checked_add(args.len())?;
         if final_length > MAX_ARRAY_LENGTH {
@@ -826,11 +809,33 @@ impl<H: Host> Vm<H> {
         true
     }
 
-    /// `pop` of a dense array (`dense_array_length`) as one removal, when its last element
-    /// is present: the generic steps read that own data element, delete it and shorten
-    /// `length` by one; a receiver `array_pop_one` admits takes its steps.
+    /// `pop` of a dense array as one removal, when its last element is present: the generic
+    /// steps read that own data element, delete it and shorten `length` by one. An empty
+    /// array answers `undefined`; a hole, which its prototypes answer, takes the general path
+    /// (`None`), as does any other receiver. The one core of `Array.prototype.pop`, called by
+    /// the general native and the steady call path alike.
+    #[inline(always)]
     pub(super) fn array_pop_dense(&mut self, this: Value) -> Option<Value> {
-        if self.heap.record_array(this).is_some_and(|object| object.holds_ordinary_elements()) { return self.array_pop_one(this); }
+        if !self.heap.record_array(this)?.holds_ordinary_elements() {
+            return self.array_pop_plain_elements(this);
+        }
+        if let Some(popped) = self.pop_in_place(this) {
+            return Some(popped);
+        }
+        match self.heap.record_array(this)?.elements().last() {
+            None => Some(Value::UNDEFINED),
+            Some(last) if last.is_deleted() => None,
+            // Removing stores no reference, which the write barrier passes.
+            Some(_) => super::index::mutable_array_elements(
+                self.heap.record_array_store_mut(this, Value::UNDEFINED)?.elements_mut(),
+            )
+            .pop(),
+        }
+    }
+
+    /// `array_pop_dense` for a dense array that holds no ordinary elements
+    /// (`dense_array_length`), whose backing is edited in place.
+    fn array_pop_plain_elements(&mut self, this: Value) -> Option<Value> {
         let length = self.dense_array_length(this)?;
         let Some(last) = length.checked_sub(1) else { return Some(Value::UNDEFINED) };
         let object = self.heap.array_mut(this)?;
