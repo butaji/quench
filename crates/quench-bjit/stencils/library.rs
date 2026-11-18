@@ -12,18 +12,6 @@ use std::collections::BTreeSet;
 /// A row as codes: kind, destination, operands, speculate.
 pub type Code = (u8, u8, u8, u8, bool);
 
-/// The operands a kind reads, the others fixed to `MEM`.
-fn read_operands(kind: u8, dst: u8, a: u8, b: u8) -> (u8, u8, u8) {
-    match kind {
-        _ if is_copy(kind) => (dst, a, MEM),
-        _ if is_compare(kind) => (MEM, a, b),
-        JUMP | JUMP_POLL | JUMP_WATCH | POLL | TAG_INIT => (MEM, MEM, MEM),
-        GUARD | NOT | NEG | CLZ32 | MATH_FIRST..=MATH_LAST => (dst, a, MEM),
-        JUMP_TRUE | JUMP_FALSE | SPILL => (MEM, a, MEM),
-        _ => (dst, a, b),
-    }
-}
-
 /// Whether the row speculates: double rows never do (a bitwise row reading a pinned double
 /// still speculates its int32 side), a copy or control row always does.
 fn speculates(kind: u8, places: [u8; 3], spec: bool) -> bool {

@@ -60,7 +60,7 @@ pub(crate) fn tagged_place<const P: u8, const H: u8>(s: &S) -> u64 {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
         Representation::Tagged => word,
-        Representation::Int32 | Representation::Int64 => int_word(word as u32 as i32),
+        Representation::Int32 | Representation::Int64 => value::int_word(&mut stage(), word as u32 as u64),
         Representation::Float64 => canonical(f64::from_bits(word)),
     }
 }
@@ -89,8 +89,8 @@ pub(crate) fn number_place<const P: u8, const H: u8>(s: &S) -> Option<u64> {
         _ if P == CONST => Some(word),
         Representation::Float64 => Some(word),
         Representation::Int32 | Representation::Int64 => Some(widen(word)),
-        Representation::Tagged if is_int(word) => Some(widen(word)),
-        Representation::Tagged => is_double(word).then_some(word),
+        Representation::Tagged if value::is_int(&mut stage(), word) => Some(widen(word)),
+        Representation::Tagged => value::is_double(&mut stage(), word).then_some(word),
     }
 }
 
@@ -123,7 +123,7 @@ pub(crate) fn index_of<const P: u8, const H: u8>(s: &S) -> Option<i32> {
 #[inline(always)]
 pub(crate) fn number_word<const P: u8, const H: u8>(s: &S) -> Option<u64> {
     let word = tagged_place::<P, H>(s);
-    if P == MEM && !(is_int(word) || is_double(word)) {
+    if P == MEM && !(value::is_int(&mut stage(), word) || value::is_double(&mut stage(), word)) {
         return None;
     }
     Some(word)
@@ -137,7 +137,7 @@ fn put_int<const D: u8>(s: &mut S, value: u64) {
         // SAFETY: the frame slot of hole 0 is writable; an int slot's tag stays in place.
         MEMINT => unsafe { (slot::<0>(s) as *mut u32).write(value as u32) },
         PINF.. => s.f[(D - PINF) as usize] = f64::from_bits(widen(value)),
-        _ => unsafe { (slot::<0>(s) as *mut u64).write(int_word(value as u32 as i32)) },
+        _ => unsafe { (slot::<0>(s) as *mut u64).write(value::int_word(&mut stage(), value as u32 as u64)) },
     }
 }
 
@@ -147,16 +147,16 @@ fn put_int<const D: u8>(s: &mut S, value: u64) {
 #[inline(always)]
 fn put_tagged<const D: u8>(s: &mut S, word: u64) -> bool {
     match D {
-        PINF.. if is_double(word) => s.f[(D - PINF) as usize] = f64::from_bits(word),
+        PINF.. if value::is_double(&mut stage(), word) => s.f[(D - PINF) as usize] = f64::from_bits(word),
         PINF.. => {
             core::hint::cold_path();
-            if !is_int(word) {
+            if !value::is_int(&mut stage(), word) {
                 return false;
             }
             put_int::<D>(s, word);
         }
         PIN..=LAST_INT_PIN | MEMINT => {
-            if !is_int(word) {
+            if !value::is_int(&mut stage(), word) {
                 return false;
             }
             put_int::<D>(s, word);
@@ -186,14 +186,15 @@ fn put<const D: u8>(s: &mut S, value: u64, rep: Representation) -> bool {
 }
 
 /// ToBoolean of an operand: an int32 by its value, a double by its number, a tagged word by the
-/// staged rule (`value::tagged_truthiness`); `None` where a heap cell decides, which leaves.
+/// staged rule (`value::tagged_truthiness`, which also decides a record, a boolean and an int);
+/// `None` where a heap cell decides, which leaves.
 #[inline(always)]
 fn truthy<const P: u8, const H: u8>(s: &S) -> Option<bool> {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
-        Rep::Int32 => Some(word as u32 != 0),
-        Rep::Float64 => Some(stage().number_truthy(word)),
-        Rep::Tagged => {
+        Representation::Int32 | Representation::Int64 => Some(word as u32 != 0),
+        Representation::Float64 => Some(stage().number_truthy(word)),
+        Representation::Tagged => {
             let (undecided, truthy) = value::tagged_truthiness(&mut stage(), word);
             (!undecided).then_some(truthy)
         }
