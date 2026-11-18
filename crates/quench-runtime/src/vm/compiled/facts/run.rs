@@ -185,7 +185,7 @@ impl Facts {
     fn branch(&mut self, text: &Text<'_>, seeds: Seeds<'_>, (pc, target): (usize, usize), mut point: Point, pending: &mut Pending) {
         let instruction = text.instructions[pc];
         let mut following = (instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump).then(|| point.clone());
-        if instruction.op().is_jump_binary_false() {
+        if matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::CompareJump { .. })) {
             point.refine(text.constants, instruction, false);
             if let Some(following) = following.as_mut() { following.refine(text.constants, instruction, true); }
         }
