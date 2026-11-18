@@ -1024,6 +1024,39 @@ pub(in crate::vm::dispatch_fast) const fn jump_row<H: Host, const OP: u16>(backw
     if backward { row_jump::<H, OP, true> } else { row_jump::<H, OP, false> }
 }
 
+/// Opcode `$op`'s staged operation decoded from `$fields` by its row family's one decoder. Each
+/// decoder is an `if const` branch: rustc compiles only the taken one (it compiles every arm of a
+/// `match` on a constant).
+macro_rules! row_decode {
+    ($op:ident, $flag:expr, $fields:ident) => {
+        if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Flow)) } {
+            Operation::decode_flow($fields, crate::staged::DecodeContext::EMPTY)
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Local)) } {
+            Operation::decode_local(crate::staged::Fields::wide($fields))
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Value)) } {
+            Operation::decode_value(crate::staged::Fields::wide($fields))
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
+            Operation::decode_generic(crate::staged::Fields::wide($fields))
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmInt)) } {
+            Operation::decode_wasm_int(crate::staged::Fields::wide($fields))
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
+            Operation::decode_names(crate::staged::Fields::wide($fields))
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmFloat)) } {
+            Operation::decode_wasm_float(crate::staged::Fields::wide($fields))
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmState)) } {
+            Operation::decode_wasm_state($fields, crate::staged::DecodeContext::EMPTY)
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmMemory)) } {
+            Operation::decode_wasm_access(crate::staged::Fields::wide($fields))
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Proved)) } {
+            // A by-name load's proof of its global is the lane's own binding (`row_frame`), so the
+            // proof is the unit.
+            Operation::decode_load_name(crate::staged::Fields::wide($fields), ())
+        } else {
+            None
+        }
+    };
+}
+
 lane_handler! {
     /// The lane handler of every jump `jumps_by_row` admits, generated from its staged row as
     /// `lane_row` is: the record's decoder (flow, or generic for a comparison) reads it, the row
@@ -1073,31 +1106,7 @@ lane_handler! {
         let fields = LaneFields::<OP, FLAG>(i);
         // `if const`, not `match const`: rustc compiles only a taken `if const` branch, so each
         // instantiation holds its one decoder (a `match` on a constant compiles every arm).
-        let decoded = if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Flow)) } {
-            Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY)
-        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Local)) } {
-            Operation::decode_local(crate::staged::Fields::wide(fields))
-        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Value)) } {
-            Operation::decode_value(crate::staged::Fields::wide(fields))
-        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
-            Operation::decode_generic(crate::staged::Fields::wide(fields))
-        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmInt)) } {
-            Operation::decode_wasm_int(crate::staged::Fields::wide(fields))
-        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
-            Operation::decode_names(crate::staged::Fields::wide(fields))
-        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmFloat)) } {
-            Operation::decode_wasm_float(crate::staged::Fields::wide(fields))
-        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmState)) } {
-            Operation::decode_wasm_state(fields, crate::staged::DecodeContext::EMPTY)
-        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmMemory)) } {
-            Operation::decode_wasm_access(crate::staged::Fields::wide(fields))
-        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Proved)) } {
-            // A by-name load's proof of its global is the lane's own binding (`row_frame`), so the
-            // proof is the unit.
-            Operation::decode_load_name(crate::staged::Fields::wide(fields), ())
-        } else {
-            None
-        };
+        let decoded = row_decode!(OP, FLAG, fields);
         let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, ip, view) };
         // A row that reads records in place (`Decoder::Names`) may read a slot of the property arena.
         let property_values = if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
@@ -1121,6 +1130,123 @@ lane_handler! {
             Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG>(LaneFields::<OP, FLAG>::OPCODE) }, r, ip, view),
         }
     }
+}
+
+lane_handler! {
+    /// Two adjacent rows as one record, generated from their staged rows (`staged::FUSED_ROWS`):
+    /// row `A` steps over this record, then row `B` over the next one, with no dispatch between
+    /// them. Neither row is written for the pair: each is its own row's decode and step, so the
+    /// pair is the composition the specializer would make (Futamura). Only this record changes;
+    /// the next keeps its own row for jumps into it. A miss of `A` takes `A`'s miss here; a miss
+    /// of `B` takes `B`'s at the next record, after `A`'s effects, as two records would.
+    /// `BACKWARD` is `B`'s jump direction where `B` is a jump (`jumps_by_row`).
+    pub(super) fn fused_rows<A: u16, B: u16, BACKWARD: bool>(cx, r, ip, i, view) {
+        // A flagged row reads its flag at its first run (`lane_row`): such pairs are not fused.
+        if LaneFields::<A>::FLAG_ROLE || LaneFields::<B>::FLAG_ROLE {
+            sibling!(lane_row::<H, A, ACC_NONE, FLAG_UNREAD>, r, ip, view)
+        }
+        let fields = LaneFields::<A>(i);
+        let Some(operation) = row_decode!(A, FLAG_UNREAD, fields) else { sibling!(lane_general_step::<H>, r, ip, view) };
+        let property_values = if const { matches!(LaneFields::<A>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
+            unsafe { vm(cx) }.heap.arena_values_base()
+        } else { std::ptr::null() };
+        let mut stage = Concrete::new(property_values);
+        let mut frame = row_frame::<H, A, ACC_NONE, FLAG_UNREAD>(cx, r, i, view);
+        match row_step!(LaneFields::<A>::OPCODE, &mut stage, &mut frame, operation) {
+            Step::Value(value) => {
+                if const { !crate::staged::row_writes_result(LaneFields::<A>::OPCODE) } {
+                    r.set(i.a, Value::from_bits(value));
+                }
+            }
+            Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG_UNREAD>(LaneFields::<A>::OPCODE) }, r, ip, view),
+        }
+        // `B` over the next record; it reads registers (no accumulator), which `A` wrote.
+        let ip = following(ip);
+        // SAFETY: the next record of the running view.
+        let i = unsafe { &*ip };
+        let fields = LaneFields::<B>(i);
+        if const { jumps_by_row(LaneFields::<B>::OPCODE) } {
+            let decoded = if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
+                Operation::decode_names(crate::staged::Fields::wide(fields))
+            } else if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
+                Operation::decode_generic(crate::staged::Fields::wide(fields))
+            } else if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmJump)) } {
+                Operation::decode_wasm_jump(crate::staged::Fields::wide(fields))
+            } else {
+                Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY)
+            };
+            let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, ip, view) };
+            let mut stage = Concrete::new(std::ptr::null());
+            let carried = if const { LaneFields::<B>::RESULT_A } { Carried::script_in(cx, view) } else { view };
+            let mut frame = row_frame::<H, B, ACC_NONE, FLAG_UNREAD>(cx, r, i, view);
+            match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
+                Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(r, ip, BACKWARD, carried, None)),
+                Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
+                Step::Unresolved => sibling!(const { jump_row_miss::<H, BACKWARD>(LaneFields::<B>::OPCODE) }, r, ip, view),
+            }
+        }
+        let Some(operation) = row_decode!(B, FLAG_UNREAD, fields) else { sibling!(lane_general_step::<H>, r, ip, view) };
+        let property_values = if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
+            unsafe { vm(cx) }.heap.arena_values_base()
+        } else { std::ptr::null() };
+        let mut stage = Concrete::new(property_values);
+        let mut frame = row_frame::<H, B, ACC_NONE, FLAG_UNREAD>(cx, r, i, view);
+        match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
+            Step::Value(value) => {
+                if const { !crate::staged::row_writes_result(LaneFields::<B>::OPCODE) } {
+                    r.set(i.a, Value::from_bits(value));
+                }
+                if const { row_produces(LaneFields::<B>::OPCODE) } {
+                    next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view })
+                }
+                next!(cx, r, following(ip), view)
+            }
+            Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG_UNREAD>(LaneFields::<B>::OPCODE) }, r, ip, view),
+        }
+    }
+}
+
+/// Opcode pair `(A, B)`'s fused record handler for `B`'s jump direction `backward`.
+pub(in crate::vm::dispatch_fast) const fn fused_row<H: Host, const A: u16, const B: u16>(backward: bool) -> Handler {
+    if backward { fused_rows::<H, A, B, true> } else { fused_rows::<H, A, B, false> }
+}
+
+/// Whether `handler` is opcode `OP`'s plain row in any direction: its value row with no
+/// accumulator field, or its jump row.
+pub(in crate::vm::dispatch_fast) fn plain_row<H: Host, const OP: u16>(handler: *const ()) -> bool {
+    if const { jumps_by_row(LaneFields::<OP>::OPCODE) } {
+        return handler == jump_row::<H, OP>(false) as *const () || handler == jump_row::<H, OP>(true) as *const ();
+    }
+    handler == lane_row::<H, OP, ACC_NONE, FLAG_UNREAD> as Handler as *const ()
+}
+
+/// Gives each record whose row and next record's row are a pair of `staged::FUSED_ROWS` the
+/// pair's fused record (`fused_rows`); the next record keeps its own row.
+pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstruction]) {
+    macro_rules! pairs {
+        ($($pair:literal),*) => {
+            [$((
+                (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }>(handler)) as fn(*const ()) -> bool,
+                (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[$pair].1 }>(handler)) as fn(*const ()) -> bool,
+                jump_row_backward::<H, { crate::staged::FUSED_ROWS[$pair].1 }> as fn(*const ()) -> bool,
+                [fused_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }>(false),
+                    fused_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }>(true)],
+            )),*]
+        };
+    }
+    let pairs = pairs!(0, 1, 2, 3);
+    const { assert!(crate::staged::FUSED_ROWS.len() == 4, "one `pairs!` index per fused pair") };
+    for pc in 0..records.len().saturating_sub(1) {
+        let (first, second) = (records[pc].handler, records[pc + 1].handler);
+        if let Some((_, _, backward, fused)) = pairs.iter().find(|(a, b, _, _)| a(first) && b(second)) {
+            records[pc].handler = fused[usize::from(backward(second))] as *const ();
+        }
+    }
+}
+
+/// Whether `handler` is opcode `OP`'s backward jump row.
+fn jump_row_backward<H: Host, const OP: u16>(handler: *const ()) -> bool {
+    if const { jumps_by_row(LaneFields::<OP>::OPCODE) } { handler == jump_row::<H, OP>(true) as *const () } else { false }
 }
 
 /// The value `allocation` makes in the lane context `cx` (a `*mut LaneContext<H>`): it

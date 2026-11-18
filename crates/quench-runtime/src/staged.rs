@@ -217,6 +217,17 @@ pub(crate) const fn miss(op: Op) -> Miss {
     }
 }
 
+/// The adjacent opcode pairs a tier runs as one generated record (`dispatch_fast::fused_rows`):
+/// row `.0` then row `.1`, with no dispatch between them. Each is a pair of generated rows the
+/// lane meets back to back in loops: a local store or a move then the loop's back jump, a local
+/// read then the test on it. No flagged row (`LaneFields::FLAG_ROLE`) is a member.
+pub(crate) const FUSED_ROWS: [(u16, u16); 4] = [
+    (Op::StoreLocalPlain as u16, Op::Jump as u16),
+    (Op::Move as u16, Op::Jump as u16),
+    (Op::LoadLocalPlain as u16, Op::JumpFalse as u16),
+    (Op::LoadLocalPlain as u16, Op::JumpTrue as u16),
+];
+
 /// The opcode whose row answers an arguments binding's count (`Miss::ArgumentsBinding`), which a
 /// tier names to give the row a fact it proved at view time.
 pub(crate) const ARGUMENTS_COUNT_ROW: u16 = Op::ArgumentsLength as u16;

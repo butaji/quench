@@ -22274,6 +22274,10 @@ fn derive_lane_view<'live, H: Host>(
     } else {
         Box::default()
     };
+    // Adjacent generated rows the staged pair list names run as one generated record.
+    if !wasm {
+        lane_frame::fuse_rows::<H>(&mut records);
+    }
     // A record reads the accumulator its predecessor produced only when control reaches it
     // from that predecessor running its own handler. A fusion replaces a record's handler, or
     // runs records ahead of it and lands past them, without carrying what the replaced or
