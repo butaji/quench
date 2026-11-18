@@ -12,69 +12,66 @@
 //! decrements the copied ones. A full collection recounts from scratch.
 use super::*;
 
-/// The record family of a counted value and its id there: the index into
-/// `Heap::record_families`, and the id.
+/// The record space of a counted value and its id there (`RecordSpaceId`, the family numbering
+/// `Heap::record_families` shares).
 #[inline(always)]
-fn locate(value: Value) -> Option<(usize, RecordId)> {
+fn locate(value: Value) -> Option<(RecordSpaceId, RecordId)> {
     if !value.is_heap() {
         None
     } else if let Some(id) = value.direct_object_index() {
-        Some((0, id))
+        Some((RecordSpaceId::Object, id))
     } else if let Some(id) = value.direct_array_index() {
-        Some((1, id))
+        Some((RecordSpaceId::Array, id))
     } else if let Some(id) = value.direct_function_index() {
-        Some((2, id))
+        Some((RecordSpaceId::Function, id))
     } else if let Some(id) = value.direct_promise_index() {
-        Some((3, id))
+        Some((RecordSpaceId::Promise, id))
     } else if let Some(id) = value.direct_await_index() {
-        Some((4, id))
+        Some((RecordSpaceId::Await, id))
     } else if let Some(id) = value.direct_iterator_index() {
-        Some((5, id))
+        Some((RecordSpaceId::Iterator, id))
     } else if let Some(id) = value.direct_collection_index() {
-        Some((9, id))
+        Some((RecordSpaceId::Collection, id))
     } else if let Some(id) = value.direct_string_index() {
         Some(match small_strings::small_string_local(id) {
-            Some(local) => (7, local),
-            None => (6, id),
+            Some(local) => (RecordSpaceId::SmallString, local),
+            None => (RecordSpaceId::String, id),
         })
     } else {
-        value.direct_v128_index().map(|id| (8, id))
+        value.direct_v128_index().map(|id| (RecordSpaceId::V128, id))
     }
+}
+
+/// `with_space!`'s arms, one per record family (`for_each_record_space!`): `$body` runs with
+/// `$space` bound to the family's space, shared.
+macro_rules! with_space_arms {
+    ($heap:tt, $family:tt, $space:tt, $body:tt ; $($family_id:ident = $field:ident : $space_ty:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+        match $family {
+            $(RecordSpaceId::$family_id => { let $space = &$heap.$field; $body })*
+        }
+    };
+}
+
+/// `with_space_mut!`'s arms: as `with_space_arms`, with the space mutable.
+macro_rules! with_space_mut_arms {
+    ($heap:tt, $family:tt, $space:tt, $body:tt ; $($family_id:ident = $field:ident : $space_ty:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+        match $family {
+            $(RecordSpaceId::$family_id => { let $space = &mut $heap.$field; $body })*
+        }
+    };
 }
 
 /// Runs `$body` with `$space` bound to the record space of family `$family` (`locate`).
 macro_rules! with_space {
     ($heap:expr, $family:expr, |$space:ident| $body:expr) => {
-        match $family {
-            0 => { let $space = &$heap.object_records; $body }
-            1 => { let $space = &$heap.array_records; $body }
-            2 => { let $space = &$heap.function_records; $body }
-            3 => { let $space = &$heap.promise_records; $body }
-            4 => { let $space = &$heap.await_records; $body }
-            5 => { let $space = &$heap.iterator_records; $body }
-            6 => { let $space = &$heap.string_records; $body }
-            7 => { let $space = &$heap.small_strings; $body }
-            9 => { let $space = &$heap.collection_records; $body }
-            _ => { let $space = &$heap.v128_records; $body }
-        }
+        for_each_record_space!(with_space_arms, $heap, $family, $space, $body)
     };
 }
 
 /// `with_space!`, mutably.
 macro_rules! with_space_mut {
     ($heap:expr, $family:expr, |$space:ident| $body:expr) => {
-        match $family {
-            0 => { let $space = &mut $heap.object_records; $body }
-            1 => { let $space = &mut $heap.array_records; $body }
-            2 => { let $space = &mut $heap.function_records; $body }
-            3 => { let $space = &mut $heap.promise_records; $body }
-            4 => { let $space = &mut $heap.await_records; $body }
-            5 => { let $space = &mut $heap.iterator_records; $body }
-            6 => { let $space = &mut $heap.string_records; $body }
-            7 => { let $space = &mut $heap.small_strings; $body }
-            9 => { let $space = &mut $heap.collection_records; $body }
-            _ => { let $space = &mut $heap.v128_records; $body }
-        }
+        for_each_record_space!(with_space_mut_arms, $heap, $family, $space, $body)
     };
 }
 

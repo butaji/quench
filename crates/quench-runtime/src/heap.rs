@@ -8,8 +8,11 @@ use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use rc_drop::{StoppedCellDrop, cell_rc_drop_lock};
 
-/// Every record space, listed once, in `Heap`'s field order. Each row is `field: Type => handle`:
-/// the space's `Heap` field and type, and the `Value` constructor naming its records
+/// Every record space, listed once, in `Heap`'s field order. Each row is
+/// `Family = field: Space [Elem] view => handle`: `Family` names the space's `RecordSpaceId`
+/// variant (whose index is the family's number, in this order); `field: Space` is the space's
+/// `Heap` field and type; `Elem` is the type its records hold; `view` is its field in
+/// `ParallelMarkView`; and `handle` is the `Value` constructor naming its records
 /// (`Heap::record_families`). `$m` is a callback called as `$m! { $pre ; rows }`, where `$pre`
 /// is what the caller passes (nothing, or the heap for `mark_bits!`). The `Heap` struct still
 /// declares these fields by hand, since a macro cannot expand into a struct body that also holds
@@ -18,18 +21,18 @@ macro_rules! for_each_record_space {
     ($m:ident, $($pre:tt)*) => {
         $m! {
             $($pre)* ;
-            object_records: ObjectRecordSpace => Value::direct_object,
-            array_records: ArrayRecordSpace => Value::direct_array,
-            function_records: FunctionRecordSpace => Value::direct_function,
-            promise_records: PromiseRecordSpace => Value::direct_promise,
-            await_records: AwaitRecordSpace => Value::direct_await,
-            iterator_records: IteratorRecordSpace => Value::direct_iterator,
-            collection_records: CollectionRecordSpace => Value::direct_collection,
-            string_records: StringRecordSpace => Value::direct_string,
-            small_strings: small_strings::SmallStringSpace => small_strings::small_string_value,
-            v128_records: V128RecordSpace => Value::direct_v128,
-            environment_records: EnvironmentRecordSpace => Value::direct_environment,
-            symbol_records: SymbolRecordSpace => Value::direct_symbol,
+            Object = object_records: ObjectRecordSpace [Object] objects => Value::direct_object,
+            Array = array_records: ArrayRecordSpace [ArrayObject] arrays => Value::direct_array,
+            Function = function_records: FunctionRecordSpace [FunctionRecord] functions => Value::direct_function,
+            Promise = promise_records: PromiseRecordSpace [PromiseCell] promises => Value::direct_promise,
+            Await = await_records: AwaitRecordSpace [AwaitState] awaits => Value::direct_await,
+            Iterator = iterator_records: IteratorRecordSpace [IteratorRecord] iterators => Value::direct_iterator,
+            Collection = collection_records: CollectionRecordSpace [CollectionRecord] collections => Value::direct_collection,
+            String = string_records: StringRecordSpace [JsString] strings => Value::direct_string,
+            SmallString = small_strings: small_strings::SmallStringSpace [SmallParts] small_strings => small_strings::small_string_value,
+            V128 = v128_records: V128RecordSpace [[u8; crate::wasm::V128_BYTES]] v128s => Value::direct_v128,
+            Environment = environment_records: EnvironmentRecordSpace [EnvironmentRecord] environments => Value::direct_environment,
+            Symbol = symbol_records: SymbolRecordSpace [SymbolData] symbols => Value::direct_symbol,
         }
     };
 }
@@ -57,7 +60,7 @@ macro_rules! record_reference_test {
 
 /// `MarkBits`: every record family's mark bits, and the legacy slots' mark words.
 macro_rules! mark_bits_struct {
-    (; $($field:ident : $space:ty => $handle:path,)*) => {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
         /// Every family's mark bits, borrowed apart from the slot a trace holds (`mark_bits!`).
         #[derive(Clone, Copy)]
         pub(super) struct MarkBits<'a> {
@@ -69,7 +72,7 @@ macro_rules! mark_bits_struct {
 
 /// The `MarkBits` literal over `$heap`'s mark fields (`mark_bits!`).
 macro_rules! mark_bits_literal {
-    ($heap:tt ; $($field:ident : $space:ty => $handle:path,)*) => {
+    ($heap:tt ; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
         MarkBits {
             $($field: &$heap.$field,)*
             marks: &$heap.marks,
@@ -79,7 +82,7 @@ macro_rules! mark_bits_literal {
 
 /// `record_families` and `record_families_mut`, over every record space.
 macro_rules! record_families_fns {
-    (; $($field:ident : $space:ty => $handle:path,)*) => {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
         /// Every record family, with the `Value` constructor naming its records.
         fn record_families(&self) -> [(&dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
             [$((&self.$field, $handle),)*]
@@ -94,9 +97,27 @@ macro_rules! record_families_fns {
     };
 }
 
+/// `RecordSpaceId`, the family numbering every record-space lookup shares (`locate`, `with_space!`,
+/// `record_families`), and `RECORD_FAMILIES`, its count. A variant's index is its row's position
+/// in `for_each_record_space!`. Environments and symbols are numbered but never counted, so no
+/// lookup names them.
+macro_rules! record_space_ids {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+        /// A record space's family, named by its row in `for_each_record_space!`.
+        #[allow(dead_code)]
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub(super) enum RecordSpaceId {
+            $($family,)*
+        }
+
+        /// The number of record families (`Heap::record_families`).
+        const RECORD_FAMILIES: usize = [$(RecordSpaceId::$family),*].len();
+    };
+}
+
 /// `Heap::reset`'s empty record spaces.
 macro_rules! reset_record_spaces {
-    (; $($field:ident : $space:ty => $handle:path,)*) => {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
         /// Replaces every record space with an empty one (`Heap::reset`).
         fn reset_record_spaces(&mut self) {
             $(self.$field = <$space>::default();)*
@@ -468,8 +489,7 @@ struct SweepOutput {
     swept_slots: usize,
 }
 
-/// The record families `Heap::record_families` lists.
-const RECORD_FAMILIES: usize = 12;
+for_each_record_space!(record_space_ids,);
 
 for_each_record_space!(mark_bits_struct,);
 
