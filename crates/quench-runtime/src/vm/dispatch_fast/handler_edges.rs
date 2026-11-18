@@ -24,7 +24,7 @@ fn handler_home<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>) -> (u32, HandlerHo
     match vm.lane_stack.activations().last().copied() {
         Some(activation) => {
             let home = HandlerHome::Window(WindowHome {
-                depth: vm.lane_stack.activations().len() - 1,
+                depth: vm.lane_stack.activation_count() - 1,
                 program: unsafe { (*cx).program },
                 function: activation.function(),
                 window: activation.window_ptr(),

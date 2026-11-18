@@ -49,7 +49,7 @@ fn promote_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, parame
     // SAFETY: the running lane's context, which nothing else accesses.
     let (this, env) = unsafe { ((*cx).registers.this(), (*cx).registers.env()) };
     let record = if scope.record.is_null() {
-        let depth = vm.lane_stack.activations().len() - 1;
+        let depth = vm.lane_stack.activation_count() - 1;
         let callee = vm.lane_stack.activations().last().and_then(Activation::script)?.callee;
         vm.lane_stack.own_record(depth, FrameRecord::for_eval(scope.program, scope.function, callee, this, env))
     } else {

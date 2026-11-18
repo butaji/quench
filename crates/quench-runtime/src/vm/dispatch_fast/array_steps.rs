@@ -340,7 +340,7 @@ pub(super) fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H
     } else {
         lane_apply_array_step(cx, mapped)
     };
-    let depth = vm.lane_stack.activations().len() - 1;
+    let depth = vm.lane_stack.activation_count() - 1;
     if applied.is_none()
         && depth < vm.lane_stack.activation_limit.get()
         && let Some(index) = step.iteration.advance()

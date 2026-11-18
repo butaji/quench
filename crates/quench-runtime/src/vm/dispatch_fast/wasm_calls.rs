@@ -59,7 +59,7 @@ macro_rules! enter_wasm_function {
                 <= crate::stack::GuestCallGuard::remaining_storage_bytes()
                     .saturating_sub(stack.wasm_storage_bytes)
             && stack.activation_count() < stack.activation_limit.get()
-            && vm.frames.len() + stack.activations().len()
+            && vm.frames.len() + stack.activation_count()
                 < super::dispatch_frame::WASM_ACTIVATION_LIMIT
             && stack.values.room()
                 >= fill_room::<ACTIVATION_FILL_BLOCK>(usize::from(shape.registers))

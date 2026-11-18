@@ -427,7 +427,9 @@ fn lane_body_activate<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target:
     // lies outside its records: a loop region's `Callee` exit (`lane_loop_native`) leaves the
     // lane there and needs its PC. `lane_specialize` below takes the prologue's warming step.
     let start = unsafe { (*cx).base };
-    let depth = vm.lane_stack.activations().len() - 1;
+    // Counted without making a plain activation a record: `finish` reads the records, which
+    // spills them, so the index then names this activation.
+    let depth = vm.lane_stack.activation_count() - 1;
     let leave = move |resume: Ip, acc: Value| finish(cx, depth, resume, acc, constructs);
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::super::program_store::derived_lane_view);

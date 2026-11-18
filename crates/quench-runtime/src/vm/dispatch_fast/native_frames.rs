@@ -115,7 +115,7 @@ pub(super) fn in_innermost_frame<H: Host>(cx: *mut LaneContext<H>, helper: impl 
     lane_materialize_running_leaf(cx);
     let Some(frame) = vm.lane_stack.activations().top_native() else { return helper() };
     let owner = CallerState::of_context(cx);
-    let depth = vm.lane_stack.activations().len();
+    let depth = vm.lane_stack.activation_count();
     CallerState::of_frame(&frame).install(cx);
     let status = helper();
     if status == LANE_CALL_LEFT {
@@ -157,7 +157,7 @@ pub(super) fn left_native_frames<H: Host>(cx: *mut LaneContext<H>) -> bool {
 fn advance_into_native_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&'static LaneView, &'static super::super::compiled::LaneMethod)> {
     let vm = unsafe { vm(cx) };
     vm.link_natives(cx);
-    let (count, len) = (vm.lane_stack.activations().native_depth(), vm.lane_stack.activations().len());
+    let (count, len) = (vm.lane_stack.activations().native_depth(), vm.lane_stack.activation_count());
     let mut innermost = None;
     for depth in len - count..len {
         let slot = vm.lane_stack.activations_mut().slot(depth);
@@ -180,7 +180,7 @@ fn advance_into_native_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&'sta
 /// Drops the native frames a terminated run left, with their windows.
 pub(super) fn discard_frames<H: Host>(cx: *mut LaneContext<H>) {
     let vm = unsafe { vm(cx) };
-    let (count, len) = (vm.lane_stack.activations().native_depth(), vm.lane_stack.activations().len());
+    let (count, len) = (vm.lane_stack.activations().native_depth(), vm.lane_stack.activation_count());
     if count == 0 { return; }
     // SAFETY: the values hold no drop glue.
     unsafe {

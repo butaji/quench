@@ -179,7 +179,7 @@ fn lane_resume_generator<H: Host>(
     let code = unsafe { &*(*cx).code };
     let (frame, environment) = vm.generator_window_frame(generator, code)?;
     let (program, function, this, pc, size) = (frame.program, frame.function, frame.this(), frame.pc, frame.registers.len());
-    let depth = Some(vm.lane_stack.activations().len()).filter(|&depth| depth < vm.lane_stack.activation_limit.get())?;
+    let depth = Some(vm.lane_stack.activation_count()).filter(|&depth| depth < vm.lane_stack.activation_limit.get())?;
     // SAFETY: the record holds the frame, which nothing moves before the resume below.
     let plan = window_plan(vm, code, unsafe { &*std::ptr::from_ref(frame) }, environment)?;
     let WindowPlan { view, parent, locals, capture, .. } = plan;
@@ -276,7 +276,7 @@ fn lane_suspend_generator<H: Host>(
     passed_on: Option<Value>,
 ) -> Resumed {
     let vm = unsafe { vm(cx) };
-    let depth = vm.lane_stack.activations().len() - 1;
+    let depth = vm.lane_stack.activation_count() - 1;
     let activation = *vm.lane_stack.activations().last().expect("a running generator's activation");
     let ActivationKind::Script(script) = activation.kind() else {
         unreachable!("a generator runs as a script activation");

@@ -15,7 +15,7 @@ use crate::bytecode::Atom;
 /// instruction a binding site scopes (`Frame::binding_site_pc`). `None` in a frame's run.
 pub(super) fn window_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, at_site: bool) -> Option<WindowScope> {
     let vm = unsafe { vm(cx) };
-    let depth = vm.lane_stack.activations().len().checked_sub(1)?;
+    let depth = vm.lane_stack.activation_count().checked_sub(1)?;
     let activation = vm.lane_stack.activations().last()?;
     let script = activation.script().filter(|script| script.environment)?;
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the running

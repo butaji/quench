@@ -2638,7 +2638,7 @@ impl LaneStack {
     fn pop_activation(&mut self) -> Option<Activation> {
         let activation = self.activations_mut().pop()?;
         self.wasm_storage_bytes -= activation.frame_storage_bytes();
-        self.drop_owned_from(self.activations().len());
+        self.drop_owned_from(self.activation_count());
         Some(activation)
     }
 
@@ -3966,7 +3966,7 @@ script_handler! {
     fn lane_iterator_cleanup_push<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let iterator = super::ActiveIterator { iterator: i.a, done: i.b };
-        if let Some(depth) = vm.lane_stack.activations().len().checked_sub(1) {
+        if let Some(depth) = vm.lane_stack.activation_count().checked_sub(1) {
             vm.lane_stack.iterators.push((depth, iterator));
         } else {
             let frame = unsafe { (*cx).frame() };
@@ -3980,7 +3980,7 @@ script_handler! {
     /// `IteratorCleanupPop` in the running VM frame (`lane_iterator_cleanup_push`).
     fn lane_iterator_cleanup_pop<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let popped = match vm.lane_stack.activations().len().checked_sub(1) {
+        let popped = match vm.lane_stack.activation_count().checked_sub(1) {
             // The running activation's own entry, the last.
             Some(depth) => vm.lane_stack.iterators.pop_if(|(owner, _)| *owner == depth).is_some(),
             None => {
@@ -13883,7 +13883,7 @@ impl<H: Host> Vm<H> {
             return;
         }
         #[cfg(feature = "profile-lane-exits")]
-        super::lane_exits::record_detail(format!("materialize depth {}", self.lane_stack.activations().len()));
+        super::lane_exits::record_detail(format!("materialize depth {}", self.lane_stack.activation_count()));
         let mut activations = std::mem::take(self.lane_stack.activations_mut());
         let lane_wasm_storage_bytes = std::mem::take(&mut self.lane_stack.wasm_storage_bytes);
         debug_assert_eq!(
@@ -14585,7 +14585,7 @@ impl<H: Host> Vm<H> {
     /// still make of them.
     pub(super) fn lane_stack_words(&mut self, frames: usize) -> LaneStackWords {
         let stack = &mut self.lane_stack;
-        let frames = frames.min(stack.activation_limit.get().saturating_sub(stack.activations().len() + 1));
+        let frames = frames.min(stack.activation_limit.get().saturating_sub(stack.activation_count() + 1));
         let frames_end = stack.activations().top_ptr().wrapping_add(frames).addr();
         // SAFETY: the values' capacity bounds the vector's own allocation.
         let values_end = unsafe { stack.values.as_mut_ptr().add(stack.values.capacity()) }.addr();
@@ -18574,7 +18574,7 @@ fn lane_room_prepare<H: Host>(cx: *mut LaneContext<H>, room: LaneRecoverySpace) 
     let vm = unsafe { vm(cx) };
     if !unsafe { (*cx).script_calls } || vm.with_scope_entered { return false; }
     let values = vm.lane_stack.values.room() < room.values;
-    let activations = vm.lane_stack.activations().capacity() - vm.lane_stack.activations().len() < room.activations;
+    let activations = vm.lane_stack.activations().capacity() - vm.lane_stack.activation_count() < room.activations;
     if !values && !activations { return false; }
     vm.materialize_lane_activations(cx);
     if values { vm.lane_stack.reserve_values(room.values); }
@@ -19949,7 +19949,7 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
         stack.values.release_window(window);
     }
     // A return from inside a `with` leaves its scope without an exit.
-    stack.drop_with_objects_from(stack.activations().len());
+    stack.drop_with_objects_from(stack.activation_count());
     // The caller's memory view reads its program's records (`MemoryView::script`), which an
     // activation of the caller's own JavaScript program left in place.
     if CROSSES {
@@ -21521,7 +21521,7 @@ fn lane_activate_wasm_export<H: Host>(
     if frame_storage_bytes
         > crate::stack::GuestCallGuard::remaining_storage_bytes().saturating_sub(stack.wasm_storage_bytes)
         || stack.activation_count() >= stack.activation_limit.get()
-        || vm.frames.len() + stack.activations().len() >= super::dispatch_frame::WASM_ACTIVATION_LIMIT
+        || vm.frames.len() + stack.activation_count() >= super::dispatch_frame::WASM_ACTIVATION_LIMIT
         || stack.values.room() < fill_room::<ACTIVATION_FILL_BLOCK>(count)
     {
         return None;
@@ -25655,7 +25655,7 @@ impl<H: Host> Vm<H> {
         let (code, program) = (saved.code, saved.program);
         // SAFETY: the deferred call's record lies in the caller activation's view.
         let call = unsafe { saved.base.add(deferred.call_pc) };
-        let lower = self.lane_stack.activations().len();
+        let lower = self.lane_stack.activation_count();
         let Some(start) = lane_push_callback(cx, call, &target, args, this, false) else {
             // A push that found no room made the activations frames, as the native's
             // observation of the frame stack would have.

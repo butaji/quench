@@ -223,7 +223,7 @@ pub(super) fn lane_end_body_callee<H: Host>(cx: *mut LaneContext<H>, value: Valu
 #[inline(always)]
 pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let depth = vm.lane_stack.activations().len().checked_sub(1)?;
+    let depth = vm.lane_stack.activation_count().checked_sub(1)?;
     let top: *const Activation = &vm.lane_stack.activations()[depth];
     // SAFETY: `top` is the innermost activation, which nothing else accesses.
     if !matches!(unsafe { (*top).kind() }, ActivationKind::Script(script) if script.completion == Completion::ReturnsToNative) {
