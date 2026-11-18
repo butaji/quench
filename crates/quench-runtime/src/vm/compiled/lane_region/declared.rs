@@ -5,7 +5,7 @@
 use super::*;
 
 /// The type a declared language set seeds where a tier checks it exactly: a Number, or a set
-/// `scalar::checkable` names. A String, BigInt, Symbol or a mixed set with Number is not checked here.
+/// `scalar::checkable` names (a String included). A BigInt, Symbol or a mixed set with Number is not checked here.
 pub(super) fn checkable_declared(bits: u16) -> Option<Type> {
     let ty = Type::languages(bits);
     (ty == Type::NUMBER || scalar::checkable(bits)).then_some(ty)
