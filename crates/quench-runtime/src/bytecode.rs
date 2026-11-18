@@ -29,7 +29,7 @@ mod instruction;
 mod register_list;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
-mod numeric_ops; mod op_classes; mod op_scan; mod unary_operators;
+mod numeric_ops; mod op_classes; mod op_scan; mod unary_operators; mod rest_alias;
 pub(crate) use unary_operators::*;
 mod source_positions;
 pub(crate) use source_positions::SourcePositions;
@@ -1373,6 +1373,9 @@ pub struct Function {
     /// parameter is written, and none is read after an element could be, so the object
     /// keeps the mapped layout without parameter links (`arguments_alias_parameters`).
     pub unaliased_arguments: bool,
+    /// `function f(...rest)` compiled with no parameters, `rest` naming its `arguments` binding
+    /// (`compile::rest_alias`): the binding materializes as the rest array, not an arguments object.
+    pub rest_alias: bool,
     pub arguments_slot: Option<u16>,
     pub simple_parameters: bool,
     pub strict: bool,

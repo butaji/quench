@@ -49,7 +49,7 @@ fn function_of(code: Vec<Instr>, registers: u16, handlers: Vec<crate::bytecode::
         params: 0, length: 0, parameter_end_pc: 0, parameter_atoms: vec![].into(), rest: false, is_async: false,
         is_generator: false, is_class_constructor: false, derived_constructor: false, instance_initializer: None,
         super_home_atom: None, constructible: true, class_initializer: false, parameter_eval_arguments_error: false,
-        unaliased_arguments: false, prototype_unobservable: false, arguments_slot: None, simple_parameters: true,
+        unaliased_arguments: false, rest_alias: false, prototype_unobservable: false, arguments_slot: None, simple_parameters: true,
         strict: false, locals: 0, local_atoms: vec![].into(), environment_atoms: vec![].into(),
         selective_capture_slots: None, local_registers: Vec::new().into(), inherited_with_scope: false,
         lexical_atoms: vec![].into(), global_declarations: None, name_bindings: Default::default(),

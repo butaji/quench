@@ -179,7 +179,7 @@ impl Compiler<'_> {
             constructible: false,
             class_initializer,
             parameter_eval_arguments_error: false,
-            unaliased_arguments: false,
+            unaliased_arguments: false, rest_alias: false,
             prototype_unobservable: false,
             arguments_slot: None,
             simple_parameters,

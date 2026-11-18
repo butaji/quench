@@ -291,7 +291,7 @@ impl FunctionCompiler<'_, '_> {
             );
             self.after_super_call(dst);
         } else {
-            let op = if Self::forwards_arguments(value) {
+            let op = if self.forwards_arguments(value) {
                 Op::CallForwardingArguments
             } else {
                 Op::Call
@@ -315,14 +315,16 @@ impl FunctionCompiler<'_, '_> {
         dst
     }
 
-    /// `f.apply(receiver, arguments)`: the call passes the activation's `arguments` binding
-    /// on, which the activation may then never materialize (`CallPlan::forwards_arguments`).
-    fn forwards_arguments(value: &CallExpression<'_>) -> bool {
+    /// `f.apply(receiver, arguments)`, or of a rest alias (`compile::rest_alias`): the call passes
+    /// the activation's `arguments` binding on, which the activation may then never materialize
+    /// (`CallPlan::forwards_arguments`).
+    fn forwards_arguments(&self, value: &CallExpression<'_>) -> bool {
         matches!(&value.callee, Expression::StaticMemberExpression(member)
             if !member.optional && member.property.name == "apply")
             && matches!(
                 value.arguments.as_slice(),
                 [_, Argument::Identifier(arguments)] if arguments.name == "arguments"
+                    || self.arguments_alias.as_deref() == Some(arguments.name.as_str())
             )
     }
 

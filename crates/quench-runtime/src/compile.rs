@@ -80,7 +80,7 @@ pub(crate) mod program_profile;
 mod register_profile;
 pub(crate) mod replay;
 mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIELD_SITE_WINDOW, SUPERINSTRUCTION_WINDOW, settle_deferred_rewrite};
-mod rewrite;
+mod rewrite; mod rest_alias;
 mod sequence;
 pub(crate) mod stack;
 pub(crate) mod statement_stream;
@@ -4006,7 +4006,8 @@ impl<'a> Compiler<'a> {
         let id = self.functions.reserve();
         let body_lexicals = self.collect_body_lexical_bindings(body);
         let lexical_atoms: Vec<_> = body_lexicals.iter().map(|(atom, _)| *atom).collect();
-        let params: Vec<Atom> = params.iter().map(|name| self.atom(name)).collect();
+        let rest_alias = rest_alias::rest_alias(&options, [parent.is_none(), streamed.is_some(), expression_body.is_some()], body);
+        let params: Vec<Atom> = params[..params.len().saturating_sub(usize::from(rest_alias.is_some()))].iter().map(|name| self.atom(name)).collect();
         let mut locals = params.clone();
         if let Some(formal) = options.defaults {
             for name in FunctionCompiler::parameter_bound_names(formal) {
@@ -4169,7 +4170,7 @@ impl<'a> Compiler<'a> {
         function.dynamic_eval = dynamic_eval;
         function.literal_singletons = literal_singletons::Owner { parent, binds_dynamically, options: &options }.declarations(&function.owner.atoms, &params, body);
         if arguments_slot.is_some() && parameter_arguments_slot.is_none() {
-            function.arguments_alias = early::arguments_alias(options.defaults, body);
+            function.arguments_alias = rest_alias.clone().or_else(|| early::arguments_alias(options.defaults, body));
         }
         let mut lexical_slots: Vec<_> = lexical_atoms
             .iter()
@@ -4278,8 +4279,9 @@ impl<'a> Compiler<'a> {
                 0
             },
             parameter_atoms: parameter_atoms.into(),
+            // A rest alias's list is no rest list of the function's own (`rest_alias`).
             rest: options.rest_override
-                || options.defaults.is_some_and(|value| value.rest.is_some()),
+                || options.defaults.is_some_and(|value| value.rest.is_some()) != rest_alias.is_some(),
             is_async: options.async_function,
             is_generator: options.generator,
             is_class_constructor: options.class_constructor,
@@ -4292,7 +4294,7 @@ impl<'a> Compiler<'a> {
             prototype_unobservable: options.prototype_unobservable,
             class_initializer: options.class_initializer,
             parameter_eval_arguments_error: function.parameter_eval_arguments_error,
-            unaliased_arguments,
+            unaliased_arguments, rest_alias: rest_alias.as_ref().and(arguments_slot).is_some(),
             arguments_slot,
             simple_parameters,
             strict: root_strict,
