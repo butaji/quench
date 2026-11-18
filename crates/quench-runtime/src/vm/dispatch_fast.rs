@@ -4116,9 +4116,9 @@ fn lane_index_slot_element<H: Host>(vm: &mut Vm<H>, ip: Ip, base: Value, key: Va
     // every index inside its length, so their reads come before the ordinary array probes,
     // which would only decline them.
     vm.dense_array_element(base, key)
-        .or_else(|| lane_named_key_element(ip, vm, base, key))
+        .or_else(|| named_key_element(vm, base, key))
         .or_else(|| lane_typed_array_element(ip, vm, base, key))
-        .or_else(|| lane_string_index_element(ip, vm, base, key))
+        .or_else(|| lane_string_element(vm, base, key))
         .or_else(|| vm.absent_array_element(base, key))
         .or_else(|| lane_site_keyed_get(vm, ip, base, key))
         .or_else(|| vm.keyed_array_length(base, key))
@@ -11150,7 +11150,7 @@ mod named_keys;
 mod denoted;
 mod wasm_calls;
 use wasm_calls::{known_call_handler, reference_call_handler};
-use named_keys::{lane_named_key_element, lane_string_index_element};
+use named_keys::named_key_element;
 mod in_place_natives;
 mod root_bindings;
 use root_bindings::frame_capture_at_root;
