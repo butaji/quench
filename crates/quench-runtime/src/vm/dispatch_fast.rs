@@ -133,6 +133,16 @@ const INLINE_SITE_TARGETS: usize = 1;
 
 /// A `LaneInstruction::call_link` that names no entry: no cache holds this many.
 const NO_CALL_LINK: u16 = u16::MAX;
+/// The bit of a call link the plain call proved (`lane_script_call_prove`): its target activates
+/// plainly and takes the site's argument count, so `lane_script_call` tests only the callee's
+/// identity. The index is the link without it (`link_index`); a link without the bit is out of
+/// range for `lane_script_call`, which proves it first.
+const PLAIN_LINK: u16 = 1 << 15;
+const _: () = assert!(SCRIPT_CALL_TARGETS[0] < PLAIN_LINK as usize && SCRIPT_CALL_TARGETS[1] < PLAIN_LINK as usize);
+
+/// The script target index a call link names, with or without `PLAIN_LINK`.
+#[inline(always)]
+fn link_index(link: u16) -> usize { usize::from(link & !PLAIN_LINK) }
 const _: () = assert!(std::mem::size_of::<LaneInstruction>() == 3 * std::mem::size_of::<u64>());
 
 /// The immediate, resolved by its role: a jump target becomes the byte
@@ -14198,7 +14208,7 @@ impl<H: Host> Vm<H> {
     /// costs the hash again.
     #[inline(always)]
     fn linked_script_call_entry(&mut self, callee: Value, link: &std::cell::Cell<u16>) -> Option<*const ScriptCallTarget> {
-        let linked = usize::from(link.get());
+        let linked = link_index(link.get());
         let index = if self.script_call_holds(linked, callee) {
             linked
         } else {
@@ -14732,21 +14742,47 @@ script_handler! {
         }
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
+        // The link proves the call (`PLAIN_LINK`): the target activates plainly and takes the
+        // site's arguments, so only the callee's identity and the run's admission are tested.
         // A pending construction refuses every cached target (`LaneStack::set_refused`).
-        let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else {
+        let index = usize::from(i.call_link.get() ^ PLAIN_LINK);
+        if !vm.script_call_holds(index, callee) {
+            sibling!(lane_script_call_prove::<H, ARGC, PLAIN>, r, ip, Carried::script_in(cx, view))
+        }
+        debug_assert!(!lane_constructing(vm, callee));
+        // SAFETY: `script_call_holds` found the entry within the cache; nothing below resolves
+        // a target or collects.
+        let target = unsafe { &*std::ptr::from_ref(vm.lane_stack.script_targets.entries.get_unchecked(index)) };
+        debug_assert!(target.entry == CallEntry::Activates);
+        #[cfg(feature = "profile-lane-exits")]
+        profile_script_call_target(cx, ip, callee, target);
+        lane_plain_activation!(cx, vm, r, ip, i, target, ARGC, PLAIN, proven)
+    }
+}
+
+script_handler! {
+    /// `lane_script_call` of a site whose link is not proved: the target it links, which
+    /// takes its entry's form where that is not a plain activation
+    /// (`lane_script_call_requicken`) and the out-of-line form where the site's arguments are
+    /// more than it takes, else the link is proved (`PLAIN_LINK`) and the call runs plainly.
+    #[cold]
+    #[inline(never)]
+    fn lane_script_call_prove<ARGC: u16, PLAIN: bool>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some(target) = vm.linked_script_call_entry(r.get(i.b), &i.call_link) else {
             sibling!(lane_script_call_resolve::<H>, r, ip, Carried::script_in(cx, view))
         };
-        debug_assert!(!lane_constructing(vm, callee));
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
-        // One test: the site calls the form for its target's entry directly from now on
-        // (`lane_script_call_requicken`), out of line so this handler makes no call.
         if target.entry != CallEntry::Activates {
             sibling!(lane_script_call_requicken::<H>, r, ip, Carried::script_in(cx, view))
         }
-        #[cfg(feature = "profile-lane-exits")]
-        profile_script_call_target(cx, ip, callee, target);
-        lane_plain_activation!(cx, vm, r, ip, i, target, ARGC, PLAIN)
+        let argc = call_argument_count::<ARGC>(i);
+        if argc > FIXED_ARGUMENT_COPIES || !crate::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)) {
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
+        }
+        i.call_link.set(i.call_link.get() | PLAIN_LINK);
+        sibling!(lane_script_call::<H, ARGC, PLAIN>, r, ip, Carried::script_in(cx, view))
     }
 }
 
@@ -14754,7 +14790,13 @@ script_handler! {
 /// whose argument count is `ARGC` (`call_argument_count`), past its target's proof
 /// (`lane_script_call`, `lane_script_call_leaf`).
 macro_rules! lane_plain_activation {
-    ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident, $plain:expr) => {{
+    ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident, $plain:expr) => {
+        lane_plain_activation!($cx, $vm, $r, $ip, $i, $target, $argc, $plain, false)
+    };
+    ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident, $plain:expr, proven) => {
+        lane_plain_activation!($cx, $vm, $r, $ip, $i, $target, $argc, $plain, true)
+    };
+    ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident, $plain:expr, $proven:literal) => {{
         let (cx, vm, r, ip, i, target) = ($cx, $vm, $r, $ip, $i, $target);
         // A plain call's receiver is `undefined` by its record (`lane_script_call`'s `PLAIN`).
         // Its `this` is then its target's (`ScriptCallTarget::lexical_this`), one load.
@@ -14773,8 +14815,14 @@ macro_rules! lane_plain_activation {
         // whose activation keeps them or grows the stack (`lane_activate`), and so does another
         // program's target (`lane_push_activation`).
         // So does a window past `FIXED_ARGUMENT_COPIES`, whose copy is a call.
+        // A proved link (`PLAIN_LINK`) proved the argument count; the room stays per call.
         let argc = call_argument_count::<$argc>(i);
-        if argc > FIXED_ARGUMENT_COPIES || !lane_admits_window(vm, target, argc) {
+        if if $proven {
+            debug_assert!(argc <= FIXED_ARGUMENT_COPIES && crate::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)));
+            !lane_activation_room(vm, target)
+        } else {
+            argc > FIXED_ARGUMENT_COPIES || !lane_admits_window(vm, target, argc)
+        } {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
@@ -18377,7 +18425,7 @@ fn lane_site_targets<H: Host>(vm: &Vm<H>, view: &LaneView, pc: u32) -> Vec<super
     // A collection since the site linked retires its entry; the callee's own entry of this
     // generation, where a call resolved it again, is the same target. A linked entry another
     // site's callee took since names no callee of this site.
-    let latest = vm.lane_stack.script_targets.entries.get(usize::from(record.call_link.get())).and_then(|linked| {
+    let latest = vm.lane_stack.script_targets.entries.get(link_index(record.call_link.get())).and_then(|linked| {
         if linked.generation() == vm.lane_stack.generation {
             Some(linked)
         } else {
