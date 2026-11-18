@@ -6,7 +6,8 @@ use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
 
 use crate::bytecode::DeclaredTypes;
-use super::{DECLARED_ANY, declared_language, language};
+use crate::typed_ir::language_bit;
+use super::{DECLARED_ANY, declared_language};
 
 /// Record each annotated instance and static field of every class in `program`, and each
 /// annotated parameter property of a constructor (an instance field named by its parameter).
@@ -52,7 +53,7 @@ impl Collect<'_> {
         let Some(annotation) = &property.type_annotation else { return };
         let mut languages = declared_language(&annotation.type_annotation);
         if property.optional {
-            languages |= language(crate::ValueType::Undefined);
+            languages |= language_bit(crate::ValueType::Undefined);
         }
         if languages != DECLARED_ANY {
             self.declarations.declare_field(class_start, identifier.name.as_str(), languages, property.r#static);

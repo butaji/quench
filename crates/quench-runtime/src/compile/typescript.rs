@@ -7,6 +7,8 @@ use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::Span;
 
+use crate::typed_ir::language_bit;
+
 mod admit;
 mod checked;
 mod enum_folding;
@@ -37,7 +39,7 @@ pub(super) fn declared_parameters(formals: &FormalParameters<'_>, checked: Optio
         let checked = checked.map_or(DECLARED_ANY, |languages| languages[index]);
         let set = if declared & checked == 0 { DECLARED_ANY } else { declared & checked };
         if set != DECLARED_ANY && (item.optional || item.initializer.is_some()) {
-            set | language(crate::ValueType::Undefined)
+            set | language_bit(crate::ValueType::Undefined)
         } else {
             set
         }
@@ -45,34 +47,30 @@ pub(super) fn declared_parameters(formals: &FormalParameters<'_>, checked: Optio
     if parameters.iter().all(|&set| set == DECLARED_ANY) { Vec::new() } else { parameters }
 }
 
-/// No declared fact: every language type.
-pub(crate) const DECLARED_ANY: u16 = u16::MAX;
-
-const fn language(kind: crate::ValueType) -> u16 {
-    1 << kind as u16
-}
+/// No declared fact: every language type (`typed_ir::ANY_LANGUAGES`, the bits of `Type::ANY`).
+pub(crate) const DECLARED_ANY: u16 = crate::typed_ir::ANY_LANGUAGES;
 
 /// The language types a TypeScript type admits at run time, `DECLARED_ANY` where it does not
 /// name a closed set.
 fn declared_language(ty: &TSType<'_>) -> u16 {
     use crate::ValueType as V;
     match ty {
-        TSType::TSNumberKeyword(_) => language(V::Number),
-        TSType::TSStringKeyword(_) | TSType::TSTemplateLiteralType(_) => language(V::String),
-        TSType::TSBooleanKeyword(_) => language(V::Boolean),
-        TSType::TSBigIntKeyword(_) => language(V::BigInt),
-        TSType::TSSymbolKeyword(_) => language(V::Symbol),
-        TSType::TSUndefinedKeyword(_) | TSType::TSVoidKeyword(_) => language(V::Undefined),
-        TSType::TSNullKeyword(_) => language(V::Null),
-        TSType::TSObjectKeyword(_) => language(V::Object) | language(V::Function),
-        TSType::TSArrayType(_) | TSType::TSTupleType(_) => language(V::Object),
-        TSType::TSFunctionType(_) | TSType::TSConstructorType(_) => language(V::Function),
+        TSType::TSNumberKeyword(_) => language_bit(V::Number),
+        TSType::TSStringKeyword(_) | TSType::TSTemplateLiteralType(_) => language_bit(V::String),
+        TSType::TSBooleanKeyword(_) => language_bit(V::Boolean),
+        TSType::TSBigIntKeyword(_) => language_bit(V::BigInt),
+        TSType::TSSymbolKeyword(_) => language_bit(V::Symbol),
+        TSType::TSUndefinedKeyword(_) | TSType::TSVoidKeyword(_) => language_bit(V::Undefined),
+        TSType::TSNullKeyword(_) => language_bit(V::Null),
+        TSType::TSObjectKeyword(_) => language_bit(V::Object) | language_bit(V::Function),
+        TSType::TSArrayType(_) | TSType::TSTupleType(_) => language_bit(V::Object),
+        TSType::TSFunctionType(_) | TSType::TSConstructorType(_) => language_bit(V::Function),
         TSType::TSLiteralType(literal) => match &literal.literal {
-            TSLiteral::NumericLiteral(_) => language(V::Number),
-            TSLiteral::StringLiteral(_) | TSLiteral::TemplateLiteral(_) => language(V::String),
-            TSLiteral::BooleanLiteral(_) => language(V::Boolean),
-            TSLiteral::BigIntLiteral(_) => language(V::BigInt),
-            TSLiteral::UnaryExpression(_) => language(V::Number) | language(V::BigInt),
+            TSLiteral::NumericLiteral(_) => language_bit(V::Number),
+            TSLiteral::StringLiteral(_) | TSLiteral::TemplateLiteral(_) => language_bit(V::String),
+            TSLiteral::BooleanLiteral(_) => language_bit(V::Boolean),
+            TSLiteral::BigIntLiteral(_) => language_bit(V::BigInt),
+            TSLiteral::UnaryExpression(_) => language_bit(V::Number) | language_bit(V::BigInt),
         },
         TSType::TSParenthesizedType(inner) => declared_language(&inner.type_annotation),
         TSType::TSUnionType(union) => union.types.iter().fold(0, |set, member| set | declared_language(member)),
