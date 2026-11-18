@@ -2695,6 +2695,18 @@ impl ProgramStore {
         Ok(())
     }
 
+    /// Drops the native code of `id`, which its records no longer answer: a program restored
+    /// or stored from bytes may decode records other than those the code was compiled from
+    /// (`js_semantic_callout` proves it at the first entry). The id runs the shared bodies from
+    /// then on; the code's published lane bodies go with it.
+    #[cfg(feature = "native-execution")]
+    pub(super) fn retire_native_js(&mut self, id: ProgramId) {
+        if let Some(entry) = self.entry_mut(id) {
+            entry.native_js = None;
+            entry.lane_views = LaneViews::default();
+        }
+    }
+
     #[cfg(feature = "native-execution")]
     pub(super) fn native_js_code(&self, id: ProgramId) -> Option<&Rc<super::native_program::NativeJsCode>> {
         self.entry(id)?.native_js.as_ref()

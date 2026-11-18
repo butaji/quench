@@ -4694,12 +4694,13 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 packed.op()
             };
             if selected.opcode != source_opcode {
-                let source = program.source_text().map(|text| text.chars().take(60).collect::<String>()).unwrap_or_default();
-                let window: Vec<u16> = body.code.iter().skip(pc.saturating_sub(2)).take(5)
-                    .map(|packed| body.wide.get(packed.wide_index()).map_or(packed.op(), |wide| wide.op()) as u16).collect();
-                return Err(JsError::validation(format!(
-                    "native semantic opcode does not match instruction: pc {pc} selects opcode {} but the program writes opcode {} (ops around pc: {window:?}; program {} {:?})",
-                    selected.opcode as u16, source_opcode as u16, dispatch.program_id.raw(), source)));
+                // The code was compiled for records this program does not have (a program
+                // stored or restored from bytes decodes its own): retire it once, and let the
+                // general loop run this record and every later one.
+                vm.programs.retire_native_js(dispatch.program_id);
+                return Ok(JsCalloutStep::Stop(JsNativeStep {
+                    instruction_pc: pc, next_pc: pc, result: Ok(StepResult::Continue),
+                }));
             }
             if arguments.is_null() {
                 return Err(JsError::validation("native semantic operands are missing".into()));
