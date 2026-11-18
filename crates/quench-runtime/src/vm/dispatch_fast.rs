@@ -2718,6 +2718,29 @@ impl LaneStack {
         self.wasm_storage_bytes += frame_storage_bytes;
     }
 
+    /// `push_activation` of a copy of `template`, a record no plain activation is (a prepared
+    /// callback's), copied straight into its slot rather than through a temporary.
+    ///
+    /// # Safety
+    /// As `push_activation`.
+    #[inline(always)]
+    unsafe fn push_activation_copy(&mut self, template: &Activation, window: *mut Value) {
+        debug_assert!(!Self::is_plain(template, window), "a prepared activation completes to its native");
+        let records = self.activations_mut();
+        let len = records.len();
+        debug_assert!(len < records.capacity(), "lane activations stay within capacity");
+        // SAFETY: the slot at `len` lies within capacity and is uninitialized; the length
+        // covers it once written.
+        let frame_storage_bytes = unsafe {
+            let slot = records.top_ptr();
+            std::ptr::copy_nonoverlapping(template, slot, 1);
+            (*slot).native.window = window.addr();
+            records.set_len(len + 1);
+            (*slot).frame_storage_bytes()
+        };
+        self.wasm_storage_bytes += frame_storage_bytes;
+    }
+
     #[inline(always)]
     fn pop_activation(&mut self) -> Option<Activation> {
         let activation = self.activations_mut().pop()?;
@@ -26315,7 +26338,7 @@ fn lane_admit_prepared<H: Host>(cx: *mut LaneContext<H>, activation: &Activation
     }
     // SAFETY: as `lane_push_callback`'s.
     let at = stack.values.top();
-    unsafe { stack.push_activation(*activation, at) };
+    unsafe { stack.push_activation_copy(activation, at) };
     Some(at)
 }
 
