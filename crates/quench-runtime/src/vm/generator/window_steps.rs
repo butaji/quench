@@ -79,14 +79,37 @@ impl<H: Host> Vm<H> {
         unsafe { &mut *record }.suspend(continuation);
     }
 
-    /// The record of `generator`, which runs as a lane window: the one the lane last resumed
-    /// while no collection ran since (`LaneStack::last_generator`), else looked up.
+    /// The generator record of `generator`. A record is boxed once at creation and freed only by
+    /// a collection, so the last one found is reused while no collection ran since
+    /// (`LaneStack::last_generator`): a step looks its generator up several times.
     #[inline(always)]
-    fn windowed_generator_record(&mut self, generator: Value) -> *mut GeneratorRecord {
+    pub(in crate::vm) fn generator_record_mut(
+        &mut self,
+        generator: Value,
+    ) -> Option<&mut GeneratorRecord> {
         let (last, epoch, record) = self.lane_stack.last_generator;
         if last == generator && epoch == self.heap.collection_epoch() {
-            return record;
+            // SAFETY: the record is boxed, never replaced, and freed only by a collection.
+            return Some(unsafe { &mut *record });
         }
+        self.looked_up_generator_record(generator)
+    }
+
+    #[inline(never)]
+    fn looked_up_generator_record(&mut self, generator: Value) -> Option<&mut GeneratorRecord> {
+        let epoch = self.heap.collection_epoch();
+        let record: *mut GeneratorRecord = match self.heap.iterator_mut(generator) {
+            Some(IteratorRecord { ext, .. }) => std::ptr::from_mut(ext.generator.as_deref_mut()?),
+            _ => return None,
+        };
+        self.lane_stack.last_generator = (generator, epoch, record);
+        // SAFETY: just found in the live heap.
+        Some(unsafe { &mut *record })
+    }
+
+    /// The record of `generator`, which runs as a lane window.
+    #[inline(always)]
+    fn windowed_generator_record(&mut self, generator: Value) -> *mut GeneratorRecord {
         std::ptr::from_mut(self.generator_record_mut(generator).expect("a windowed yield belongs to a generator"))
     }
 

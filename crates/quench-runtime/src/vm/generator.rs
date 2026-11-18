@@ -147,16 +147,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn generator_record_mut(
-        &mut self,
-        generator: Value,
-    ) -> Option<&mut GeneratorRecord> {
-        match self.heap.iterator_mut(generator) {
-            Some(IteratorRecord { ext, .. }) => ext.generator.as_deref_mut(),
-            _ => None,
-        }
-    }
-
     pub(super) fn call_generator(
         &mut self,
         p: &ResidualProgram,
