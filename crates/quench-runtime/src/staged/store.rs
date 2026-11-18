@@ -34,7 +34,7 @@ pub(crate) fn narrow_form<S: Stage>(stage: &mut S, value: S::Word, fact: Type) -
 fn any_narrow_form<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
     let upper = stage.and_imm(value, UPPER_WORD);
     let is_int = stage.eq_imm(upper, ValueLayout::INT_TAG);
-    stage.choose(is_int, |stage| integer_form(stage, value), |stage| reference_form(stage, value, upper))
+    stage.choose(is_int, #[inline(always)] |stage| integer_form(stage, value), #[inline(always)] |stage| reference_form(stage, value, upper))
 }
 
 /// Whether the int32 `value`'s biased low word is below the narrow integer span: it has a narrow form.

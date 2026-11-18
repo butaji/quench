@@ -454,6 +454,11 @@ pub(super) fn sampled_arrays<H: Host>(vm: &Vm<H>, values: impl Iterator<Item = V
 
 pub(super) fn sample_array<H: Host>(vm: &Vm<H>, value: Value) -> Option<crate::typed_ir::Type> {
     use crate::typed_ir::Type;
+    // A float typed array's kind fixes its elements as Numbers, as a C array's element type does.
+    if let Some(kind) = vm.typed_array_kind(value) {
+        use crate::heap::TypedArrayKind as Kind;
+        return matches!(kind, Kind::Float16 | Kind::Float32 | Kind::Float64).then_some(Type::NUMBER);
+    }
     let elements = vm.heap.record_array(value)?.elements().as_slice();
     let sample = &elements[..elements.len().min(SAMPLED_ELEMENTS)];
     if sample.is_empty() { return None; }

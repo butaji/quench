@@ -321,6 +321,9 @@ impl<H: Host> Vm<H> {
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
         if entry.is_none() && !called && !amortizes_entry(plan.tiers, &plan.unit, function, &plan.direct) { plan_miss(self, Miss::PlanNotAmortized); return Err(Unstarted::Short); }
+        // A recurrent compile (no observed entries to price) still repays only where one entry of
+        // its unit, inlined callees included, saves more than the entry costs.
+        if entry.is_none() && observed.is_none() && looped.is_none() && !super::lane_facts::entry_repays(plan.tiers, &plan.unit) { plan_miss(self, Miss::PlanNotAmortized); return Err(Unstarted::Short); }
         bind_callees(&plan.direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget, arrays));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
@@ -507,6 +510,7 @@ impl LaneMethod {
     /// A leave at a construction inside an inlined frame is the same: a construction no plan
     /// makes is generic only at a caller record (`Lowering::construct`), so the callee that
     /// holds it keeps its own body.
+    #[inline]
     pub(in crate::vm) fn feedback(&self, exit: LaneExit, program: &ResidualProgram) -> LaneExit {
         let LaneExit::Inlined { frame, pc } = exit else { return exit };
         let Some(inlined) = self.inlined.get(frame) else { return exit };

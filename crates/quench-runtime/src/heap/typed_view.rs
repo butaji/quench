@@ -123,6 +123,7 @@ pub(super) struct TypedViewTable {
 
 impl TypedViewTable {
     /// The directory's base and its page count.
+    #[inline]
     pub(super) fn directory(&self) -> (*const usize, usize) {
         (self.directory.as_ptr(), self.directory.len())
     }

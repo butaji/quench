@@ -677,6 +677,40 @@ fn whole_read_per_iteration_copies_keep_their_owners_slots() {
 }
 
 #[test]
+fn closures_that_die_with_their_iteration_share_the_loop_environment() {
+    // A call-only closure declared in a loop's body that makes no closure needs no copy of the
+    // environment per iteration (`IterationClosureFinder`); every other closure keeps its own.
+    let source = r#"
+      "use strict";
+      const out = [];
+      function t(name, v) { out.push(name + "=" + JSON.stringify(v)); }
+      { const fs = []; for (let i = 0; i < 3; i++) { fs.push(() => i); } t("esc", fs.map(f => f())); }
+      { let g; for (let i = 0; i < 3; i++) { g = () => i; } t("outer", g()); }
+      { const fs = []; for (let i = 0; i < 3; i++) { const mk = () => () => i; fs.push(mk()); } t("nested", fs.map(f => f())); }
+      { let s = 0; for (let i = 0; i < 5; i++) { const f = () => i * 2; s += f(); } t("local", s); }
+      { let s = ""; for (const x of ["a", "b"]) { const f = () => x + x; s += f(); } t("forof", s); }
+      { const fs = []; for (const x of [1, 2, 3]) { fs.push(() => x); } t("forofesc", fs.map(f => f())); }
+      { const fs = []; for (let i = 0, h = () => i; i < 3; i++) { fs.push(h()); } t("head", fs); }
+      const o = { v: 7, m() { let s = 0; for (let i = 0; i < 3; i++) { const f = () => this.v + i; s += f(); } return s; } };
+      t("this", o.m());
+      { const r = []; for (let i = 0; i < 6; i++) { const f = () => i; i++; r.push(f()); } t("mut", r); }
+      function* gen() { for (let i = 0; i < 3; i++) { const f = () => i; yield f(); } }
+      t("gen", [...gen()]);
+      { const fs = []; for (let i = 0; i < 3; i++) { const f = () => i; fs.push(() => f()); } t("via", fs.map(g => g())); }
+      { let s = 0; for (let i = 1; i < 4; i++) { const f = (n) => n <= 0 ? 0 : i + f(n - 1); s += f(2); } t("rec", s); }
+      const got = out.join(" ");
+      const want = 'esc=[0,1,2] outer=2 nested=[0,1,2] local=20 forof="aabb" forofesc=[1,2,3] head=[0,0,0] this=24 mut=[1,3,5] gen=[0,1,2] via=[0,1,2] rec=12';
+      if (got !== want) throw new Error(got);
+    "#;
+    let program = Engine::specialize(source, "iteration-closures.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap_or_else(|error| panic!("{mode:?}: {error:?}"));
+    }
+}
+
+#[test]
 fn array_definitions_reuse_accessor_slots_and_allow_frozen_same_values() {
     let source = r#"
       for(const index of [0,100000]) {
@@ -2320,11 +2354,10 @@ fn rootless_shapes_survive_collection_and_shape_compaction() {
 #[test]
 fn shape_roots_keep_symbols_and_active_accessors_alive() {
     use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
-    use crate::heap::Cell;
 
     let program = Engine::specialize("", "shape-roots.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
-    let symbol = vm.heap.alloc(Cell::Symbol(crate::heap::SymbolData::public(None)));
+    let symbol = vm.heap.alloc_symbol(crate::heap::SymbolData::public(None));
     let symbol_weak = vm.heap.weak_handle(symbol).unwrap();
     let symbol_shape = vm.transition_property_shape(0, PropertyKey::symbol(symbol));
     let first =
@@ -4230,10 +4263,7 @@ fn array_like_list_roots_release_after_callback_completion() {
                     if phase == "invalid" {
                         assert!(values[0].is_undefined());
                     } else if property_keys {
-                        assert!(matches!(
-                            vm.heap.get(values[0]),
-                            Some(super::Cell::Symbol(_))
-                        ));
+                        assert!(vm.heap.is_symbol(values[0]));
                     } else {
                         let rank = vm.intern_atom("rank");
                         assert_eq!(vm.own_property(values[0], rank), Some(Value::number(42.0)));
@@ -8074,9 +8104,9 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                     .collect::<Vec<_>>();
                 let atom = vm.intern_atom("entry");
                 let property = if symbol {
-                    super::property_key::PropertyKey::symbol(vm.heap.alloc(super::Cell::Symbol(
+                    super::property_key::PropertyKey::symbol(vm.heap.alloc_symbol(
                         crate::heap::SymbolData::public(Some("entry".into())),
-                    )))
+                    ))
                 } else {
                     super::property_key::PropertyKey::string(atom)
                 };
@@ -8145,7 +8175,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                         if symbol {
                             assert_eq!(returned_key, key);
                             assert!(
-                                matches!(vm.heap.get(returned_key), Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref() == "entry")
+                                matches!(vm.heap.symbol_data(returned_key), Some(crate::heap::SymbolData { description: Some(name), .. }) if name.as_ref() == "entry")
                             );
                         } else {
                             assert_eq!(vm.to_string(&program, returned_key).unwrap(), "entry");
@@ -8154,7 +8184,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                     }
                     Ok(result) if phase == "result-symbol" => {
                         assert!(
-                            matches!(vm.heap.get(result),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="answer")
+                            matches!(vm.heap.symbol_data(result),Some(crate::heap::SymbolData { description: Some(name), .. }) if name.as_ref()=="answer")
                         );
                         Some(vm.heap.weak_handle(result).unwrap())
                     }
@@ -8551,9 +8581,9 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                         .expect("operands");
                     let key = if symbol {
                         vm.heap
-                            .alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some(
+                            .alloc_symbol(crate::heap::SymbolData::public(Some(
                                 "entry".into(),
-                            ))))
+                            )))
                     } else if phase == "coercion" {
                         let atom = vm.intern_atom("keyOperand");
                         let factory = vm.own_property(vm.realm.globals, atom).unwrap();
@@ -8620,7 +8650,7 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                             );
                             assert_eq!(vm.heap.weak_value(handles[1]), Some(key));
                             assert!(if symbol {
-                                matches!(vm.heap.get(key),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="entry")
+                                matches!(vm.heap.symbol_data(key),Some(crate::heap::SymbolData { description: Some(name), .. }) if name.as_ref()=="entry")
                             } else {
                                 vm.heap.string(key).is_some_and(|name| name.host_string()=="entry")
                             });
@@ -8845,7 +8875,7 @@ fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
                         assert_eq!(keys.len(), 2);
                         assert_eq!(vm.to_string(&program, keys[0]).unwrap(), "first");
                         assert!(
-                            matches!(vm.heap.get(keys[1]),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="entry")
+                            matches!(vm.heap.symbol_data(keys[1]),Some(crate::heap::SymbolData { description: Some(name), .. }) if name.as_ref()=="entry")
                         );
                         for (handle, value) in handles.iter().zip([proxy, target, handler]) {
                             assert_eq!(

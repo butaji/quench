@@ -199,6 +199,16 @@ const FOUND: &[&str] = &[
        out.push(found ? found[0] + '|' + found[1] + '|' + found[2] + '|' + found[3] : 'null');
      });
      throw out.join(';');",
+    // A method read by name (`n.push`) was folded to Array.prototype.push whatever the receiver
+    // held: an object's own `push` then never ran, and the native push appended to the object.
+    "function leaf(n, r) { for (var o = 0; o < r.length; o++) n.push(r[o]); return true; }
+     var bad = 0;
+     for (var k = 0; k < 3000; k++) {
+       var out = { a: [], push: function (x) { this.a.push(x); return true; } };
+       leaf(out, ['a', 'b', 'c', 'd']);
+       if (out.a.join(',') !== 'a,b,c,d') bad++;
+     }
+     throw bad;",
 ];
 
 #[test]

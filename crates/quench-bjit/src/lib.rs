@@ -70,6 +70,9 @@ pub struct Row<'a> {
     pub stencil: &'a Stencil,
     pub hole: &'a dyn Fn(u32) -> u64,
     pub taken: Option<usize>,
+    /// A row only a miss reaches (an inline-cache row's fallback): placed after every other row's
+    /// hot part, so the hot rows around it stay back to back.
+    pub cold: bool,
 }
 
 /// Where a row's parts go: the hot parts back to back (a jump to the next row dropped where the
@@ -82,19 +85,45 @@ struct Layout {
 }
 
 fn layout(rows: &[Row]) -> Layout {
-    let (mut hot, mut hot_sizes, mut len) = (Vec::new(), Vec::new(), 0);
-    for (k, row) in rows.iter().enumerate() {
-        hot.push(len);
-        let drop = if row.stencil.next_jump.is_some() && k + 1 < rows.len() { row.stencil.tail_len } else { 0 };
-        hot_sizes.push(row.stencil.hot_len - drop);
+    let n = rows.len();
+    let order: Vec<usize> = (0..n).filter(|&k| !rows[k].cold).chain((0..n).filter(|&k| rows[k].cold)).collect();
+    let mut follows = vec![None; n];
+    for pair in order.windows(2) {
+        follows[pair[0]] = Some(pair[1]);
+    }
+    let (mut hot, mut hot_sizes, mut len) = (vec![0; n], vec![0; n], 0);
+    for &k in &order {
+        hot[k] = len;
+        let drop = match trailing_jump(rows[k].stencil) {
+            Some((NEXT, tail)) if k + 1 < n && follows[k] == Some(k + 1) => tail,
+            Some((TAKEN, tail)) if follows[k].is_some() && follows[k] == Some(rows[k].taken.unwrap_or(k + 1)) => tail,
+            _ => 0,
+        };
+        hot_sizes[k] = rows[k].stencil.hot_len - drop;
         len += hot_sizes[k];
     }
-    let mut cold = Vec::new();
-    for row in rows {
-        cold.push(len);
-        len += row.stencil.code.len() - row.stencil.hot_len;
+    let mut cold = vec![0; n];
+    for &k in &order {
+        cold[k] = len;
+        len += rows[k].stencil.code.len() - rows[k].stencil.hot_len;
     }
     Layout { hot, hot_sizes, cold, len }
+}
+
+/// The successor the unconditional jump ending a stencil's hot part names (`NEXT` or `TAKEN`) and
+/// its length: the stitcher drops it where the row it names is placed right behind.
+fn trailing_jump(stencil: &Stencil) -> Option<(u32, usize)> {
+    if stencil.next_jump.is_some() {
+        return Some((NEXT, stencil.tail_len));
+    }
+    stencil.relocs.iter().filter(|r| r.index == TAKEN).find_map(|r| {
+        let at = r.offset as usize;
+        match r.class {
+            class::REL32 if at + IMM32_WIDTH == stencil.hot_len && at >= 1 && stencil.code[at - 1] == class::JMP_REL32 => Some((TAKEN, JMP_REL32_LEN)),
+            class::BRANCH26 if at + patch::INSN_BYTES == stencil.hot_len && stencil.code[at + 3] & 0xfc == 0x14 => Some((TAKEN, patch::INSN_BYTES)),
+            _ => None,
+        }
+    })
 }
 
 impl Layout {
@@ -335,7 +364,7 @@ mod rustc_tests {
     }
 
     /// The cache rows (`stencils/ic_rows.rs`) patch the holes `base_rows` fills: a get its
-    /// destination, receiver, shape and slot offset (a holder read also the holder's shape), a
+    /// destination and receiver, the upper-word table, shape and slot offset (a holder read also the holder's shape), a
     /// store its receiver, value, atom, shape and slot offset; a chained row's hit takes the
     /// branch target and the last entry's miss takes the exit.
     #[test]
@@ -349,9 +378,11 @@ mod rustc_tests {
             let successors: Vec<u32> = stencil.relocs.iter().filter(|reloc| crate::class::is_successor(reloc.class)).map(|reloc| reloc.index).collect();
             (values, successors)
         };
-        assert_eq!(row(IC_GET_ROW, false).0, [0, 1, 2, 3]);
-        assert_eq!(row(IC_GET_HOLDER_ROW, false).0, [0, 1, 2, 3, 4]);
-        assert_eq!(row(IC_SET_ROW, false).0, [0, 1, 2, 3, 4]);
+        // A get's receiver offset (hole 0's upper half) and upper-word table (hole 1) are 64-bit fields.
+        assert_eq!(row(IC_GET_ROW, false).0, [0, 2, 3]);
+        assert_eq!(row(IC_GET_HOLDER_ROW, false).0, [0, 2, 3, 4]);
+        // A store's atom (hole 2) is a Stable fact the code holds, which the row does not read.
+        assert_eq!(row(IC_SET_ROW, false).0, [0, 1, 3, 4]);
         for heap in [IC_GET_ROW, IC_GET_HOLDER_ROW, IC_SET_ROW] {
             let (last, chained) = (row(heap, false).1, row(heap, true).1);
             assert!(last.contains(&crate::EXIT) && !last.contains(&crate::TAKEN), "{heap}: {last:?}");

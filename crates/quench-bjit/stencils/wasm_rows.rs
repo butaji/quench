@@ -13,9 +13,12 @@ use crate::staged::wasm::{Width, integer_binary};
 use crate::staged::wasm_concrete::{ConcreteWasm, scalar_stage};
 use crate::staged::wasm_memory::{Access, WasmMemory, WasmMemoryWrite, load, store};
 use crate::wasm::WasmType;
+use crate::staged::wasm_float::{Float, convert, float_binary};
+use crate::wasm::conversion::ScalarConversionOperator;
+use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::WasmTrap;
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
-use crate::words::{HOLE_A, HOLE_B, Out, S, hole, hole64, slot};
+use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S, hole, hole64, slot};
 
 pub(crate) use crate::wasm_codes::*;
 
@@ -32,6 +35,32 @@ pub(crate) unsafe fn run<const K: u8, const OP: u32, const W: u8, const SHAPE: u
                 Out::Next(s)
             }
             LOAD => memory_load::<OP>(s),
+            CALL => call(s),
+            FLOAT_BINARY => {
+                let operator = const { float_binary_operator(OP) };
+                let word = float_binary(&mut ConcreteWasm, operator, const { float_of(W) }, read::<HOLE_A>(&s), read::<HOLE_B>(&s));
+                write::<0>(&s, word);
+                Out::Next(s)
+            }
+            FLOAT_UNARY => {
+                let operator = const { float_unary_operator(OP) };
+                let word = ConcreteWasm.operate_float_unary(operator, const { float_of(W) }, read::<HOLE_A>(&s));
+                write::<0>(&s, word);
+                Out::Next(s)
+            }
+            CONVERT => match convert(&mut ConcreteWasm, const { conversion(OP) }, read::<HOLE_A>(&s)) {
+                Ok(word) => {
+                    write::<0>(&s, word);
+                    Out::Next(s)
+                }
+                Err(error) => trap(s, error),
+            },
+            SELECT => {
+                let taken = read::<HOLE_FOURTH>(&s) as u32 != 0;
+                write::<0>(&s, if taken { read::<HOLE_A>(&s) } else { read::<HOLE_B>(&s) });
+                Out::Next(s)
+            }
+            TRAP => trap(s, WasmTrap::Unreachable),
             STORE => memory_store::<OP>(s),
             CONSTANT => {
                 write::<0>(&s, hole64::<HOLE_B>());
@@ -49,6 +78,34 @@ const fn binary_operator(tag: u32) -> Binary {
         Some(operator) => operator,
         None => Binary::Add,
     }
+}
+
+const fn float_binary_operator(tag: u32) -> FloatBinary {
+    match FloatBinary::from_tag(tag) {
+        Some(operator) => operator,
+        None => FloatBinary::Add,
+    }
+}
+
+const fn float_unary_operator(tag: u32) -> FloatUnary {
+    match FloatUnary::from_tag(tag) {
+        Some(operator) => operator,
+        None => FloatUnary::Absolute,
+    }
+}
+
+const fn conversion(tag: u32) -> ScalarConversionOperator {
+    match ScalarConversionOperator::from_tag(tag) {
+        Some(operator) => operator,
+        None => match ScalarConversionOperator::from_tag(0) {
+            Some(operator) => operator,
+            None => unreachable!(),
+        },
+    }
+}
+
+const fn float_of(width: u8) -> Float {
+    if width == W32 { Float::F32 } else { Float::F64 }
 }
 
 const fn unary_operator(tag: u32) -> Unary {
@@ -238,5 +295,27 @@ unsafe fn memory_store<const OP: u32>(s: S) -> Out {
             Ok(()) => Out::Next(s),
             Err(error) => trap(s, error),
         }
+    }
+}
+
+/// The u-jit's compiled-function ABI, which every Wasm function's entry takes, stitched or not.
+type WasmEntry = unsafe extern "C" fn(usize, u64, u64, *const u64, *mut u64) -> u32;
+
+/// Calls the entry in the cell at hole B's address: the arguments are the registers from hole A
+/// on, the result goes to hole 0's register, and a trap's status leaves. The call clobbers the
+/// pins; the memory's base and length come back from the frame header (`FRAME_HEADER_WORDS`).
+#[inline(always)]
+unsafe fn call(mut s: S) -> Out {
+    unsafe {
+        let entry: WasmEntry = core::mem::transmute(*(hole64::<HOLE_B>() as *const usize));
+        let status = entry(s.ctx, s.p[1] as u64, s.p[2] as u64, slot::<HOLE_A>(&s) as *const u64, slot::<0>(&s) as *mut u64);
+        let header = s.frame as *const usize;
+        s.p[1] = *header.add(1);
+        s.p[2] = *header.add(2);
+        if status != 0 {
+            s.p[0] = status as usize;
+            return Out::Exit(s);
+        }
+        Out::Next(s)
     }
 }

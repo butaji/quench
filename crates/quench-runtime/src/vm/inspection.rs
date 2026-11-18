@@ -124,8 +124,8 @@ impl<H: Host> Vm<H> {
                     "Object"
                 }
             }
-            Some(Cell::Map { .. }) => "Map",
-            Some(Cell::Set { .. }) => "Set",
+            _ if self.heap.is_map(value) => "Map",
+            _ if self.heap.is_set(value) => "Set",
             Some(Cell::WeakMap { .. }) => "WeakMap",
             Some(Cell::WeakSet { .. }) => "WeakSet",
             Some(Cell::Date { .. }) => "Date",

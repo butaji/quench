@@ -46,6 +46,13 @@ use cranelift_codegen::entity::{SecondaryMap, packed_option::PackedOption};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
+/// The staged operation a record decodes to, with no constants or sites resolved: what a
+/// tier's analysis asks of a record instead of naming its opcode (`Operation::decode`).
+#[inline]
+pub(in crate::vm) fn decoded(instruction: impl std::borrow::Borrow<crate::bytecode::WideInstruction>) -> Option<crate::staged::Operation<(), ()>> {
+    crate::staged::Operation::decode(*instruction.borrow(), crate::staged::DecodeContext::EMPTY)
+}
+
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 mod exit_protocol;
@@ -1411,7 +1418,7 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
     lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
         fields: &[], global_reads, facts, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
-        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
+        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], typed_captures: &[], int_captures: &[],
         plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Prefix,
             completion: lane_region::Completion::Body, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok().filter(|region| region.native != 0)
@@ -1465,6 +1472,7 @@ enum Kind {
 }
 
 impl Kind {
+    #[inline]
     fn of(ty: crate::WasmType) -> Option<Self> {
         match ty {
             crate::WasmType::I32 | crate::WasmType::F32 => Some(Self::I32),
@@ -2693,7 +2701,7 @@ fn stitched_entry<H: Host>(
     program: ProgramId,
     code: &crate::bytecode::ResidualProgram,
     index: usize,
-    plan: &Plan,
+    (plans, cells): (&[Option<Plan>], &[std::cell::Cell<usize>]),
     memory_slot: Option<u32>,
 ) -> Option<Vec<u8>> {
     if !crate::jit_mode::base_only() {
@@ -2704,11 +2712,14 @@ fn stitched_entry<H: Host>(
         let value = vm.programs.constant(program, at)?;
         Some(vm.decode_bits64(value).unwrap_or(u64::from(value.wasm_bits32())))
     };
-    wasm_stitch::stitch(function, usize::from(function.params), plan.result.is_some(), &constant, memory_slot)
+    // A callee has an entry where it has a plan; its cell holds the entry once placed.
+    let callee = |callee: usize| plans.get(callee)?.as_ref().map(|_| cells[callee].as_ptr() as u64);
+    let world = wasm_stitch::World { constant: &constant, memory_slot, callee: &callee };
+    wasm_stitch::stitch(function, usize::from(function.params), plans[index].as_ref()?.result.is_some(), &world)
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-fn stitched_entry<H: Host>(_: &Vm<H>, _: ProgramId, _: &crate::bytecode::ResidualProgram, _: usize, _: &Plan, _: Option<u32>) -> Option<Vec<u8>> {
+fn stitched_entry<H: Host>(_: &Vm<H>, _: ProgramId, _: &crate::bytecode::ResidualProgram, _: usize, _: (&[Option<Plan>], &[std::cell::Cell<usize>]), _: Option<u32>) -> Option<Vec<u8>> {
     None
 }
 
@@ -2805,6 +2816,8 @@ fn compiled_reference_target<H: Host>(
 pub(super) struct CompiledProgram {
     _code: CodeMemory,
     table: Box<[usize]>,
+    /// Each function's entry address, which stitched rows call through (`wasm_stitch::World`).
+    _entry_cells: Box<[std::cell::Cell<usize>]>,
     /// The compiled functions in index order: a selective tier holds a few of a module's
     /// thousands, so only `positions` is as long as the module.
     functions: Box<[CompiledFunction]>,
@@ -3159,6 +3172,13 @@ pub(super) struct CompiledOsrRegion {
     /// What its code owns of its calls: the callees it runs as their own rows, whose registers
     /// follow the activation's (`CallCode`).
     pub(super) calls: CallCode,
+    /// The dispatch the region's runs reuse (`Crossing::General`): its last run's, put back as the
+    /// run returns, so an entry rebinds the words that change between runs instead of building
+    /// the dispatch again (`JsStepDispatch::rebind_region`). A run entered while another of the
+    /// region runs finds none here and builds its own.
+    parked: std::cell::Cell<Option<Box<JsStepDispatch>>>,
+    /// Whether the region has parked its dispatch (`parked`).
+    made: std::cell::Cell<bool>,
 }
 
 
@@ -3231,16 +3251,42 @@ impl CompiledOsrRegion {
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
         (lane_context, direct_calls): (usize, bool),
     ) -> RegionRun {
+        let lend = self.calls.enters_callees().then_some(direct_calls);
+        let mut bind = |dispatch: &mut JsStepDispatch, residual: &Rc<ResidualProgram>, vm: &mut Vm<H>| {
+            osr_lane::bind_loop::<H>(dispatch, region, entry, lane_context);
+            // SAFETY: the caller's contract covers the context and `registers`.
+            let captures = unsafe { osr_lane::bind_captures::<H>(dispatch, region, entry, lane_context) };
+            unsafe { osr_lane::bind_frame(dispatch, residual, vm, (program, function, lane_context), registers) };
+            captures
+        };
+        // A region that calls callees by their entries runs on the lane frame's payload, which their
+        // own helpers read (`region_lend`).
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
-        let outcome = unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
-            osr_lane::bind_loop(native, vm, region, entry, (frame, lane_context));
-            let _captures = osr_lane::bind_captures::<H>(native, region, entry, lane_context);
-            osr_lane::bind_frame(native, vm, (program, function, lane_context), registers);
-            // A region that calls callees by their entries runs on the lane frame's payload, which their
-            // own helpers read (`region_lend`).
-            let lend = self.calls.enters_callees().then_some(direct_calls);
-            osr_lane::enter(native, vm, program, (code, resume), registers, interrupt, (lane_context, lend))
-        }) }.unwrap_or(RegionRun::own(LaneExit::Terminated));
+        let outcome = match self.parked.take().filter(|_| self.crossing == Crossing::General) {
+            Some(mut dispatch) => unsafe {
+                let vm = &mut *vm;
+                match vm.programs.get(program) {
+                    Some(residual) => {
+                        dispatch.rebind_region(vm, program, &residual, frame);
+                        let _captures = bind(&mut dispatch, &residual, vm);
+                        let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
+                        self.parked.set(Some(dispatch));
+                        run
+                    }
+                    None => RegionRun::own(LaneExit::Terminated),
+                }
+            },
+            None => unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
+                native.dispatch.bind_native_storage(vm);
+                let _captures = bind(&mut native.dispatch, &native._program, vm);
+                let run = osr_lane::enter(&mut native.dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
+                // The first run of the region parks a dispatch for the runs after it.
+                if self.crossing == Crossing::General && !self.made.replace(true) {
+                    self.parked.set(Some(Box::new(JsStepDispatch::idle())));
+                }
+                run
+            }) }.unwrap_or(RegionRun::own(LaneExit::Terminated)),
+        };
         // SAFETY: as above; the activation that held `vm` has returned.
         note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, region, self.calls.enters_callees());
         outcome
@@ -3586,6 +3632,7 @@ pub(super) struct LaneMethod {
 
 impl LaneMethod {
     pub(super) fn frame_reach(&self) -> usize { self.frame_reach }
+    #[inline]
     pub(super) fn recovery_space(&self) -> super::dispatch_fast::LaneRecoverySpace { self.recovery_space }
     /// The registers of the function it runs, which an inlined callee's follow.
     pub(super) fn caller_registers(&self) -> u16 {
@@ -3689,6 +3736,7 @@ impl LaneExit {
         match self { Self::At(pc) | Self::Returned { pc, .. } | Self::Threw { pc } => Some(pc), Self::Entry | Self::Stub => Some(0), Self::Inlined { .. } | Self::Callee | Self::Terminated => None }
     }
     /// Where the activation resumes: an entry leave at its first record.
+    #[inline]
     pub(super) fn resumed(self) -> Self {
         if self.entered_nothing() { Self::At(0) } else { self }
     }
@@ -4075,7 +4123,7 @@ impl<H: Host> Vm<H> {
     ) -> LaneExit {
         self.run_lane_body(&BodyRun {
             method, direct_calls, program, residual, registers, receiver, captures, lane_context,
-            pending: NO_PENDING_ACTIVATIONS,
+            pending: NO_PENDING_ACTIVATIONS, bases_stand: false,
         })
     }
 
@@ -4116,7 +4164,13 @@ impl<H: Host> Vm<H> {
             (context.stack_limit, context.entry_stack, context.interrupt,
                 context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner)
         };
-        let exit = self.run_lane_method(method, true, program, residual, registers, receiver, captures, lane_context);
+        // The callee runs in the caller's program and its caller's helper allocated nothing since
+        // the caller's body last checked the bases (`BodyRun::bases_stand`).
+        let exit = self.run_lane_body(&BodyRun {
+            method, direct_calls: true, program, residual, registers, receiver, captures, lane_context,
+            // An entry from outside any body (`saved.residual == 0`) checks them as any entry does.
+            pending: NO_PENDING_ACTIVATIONS, bases_stand: saved.residual != 0,
+        });
         // SAFETY: as above.
         unsafe {
             // An entry from outside any body (the interpreter's call) found the run's words
@@ -4214,6 +4268,7 @@ struct LaneEntry {
 }
 
 impl LaneEntry {
+    #[inline]
     fn of(dispatch: &JsStepDispatch) -> Self {
         Self {
             program_id: dispatch.program_id,
@@ -4233,6 +4288,7 @@ impl LaneEntry {
         Self { program_id: dispatch.program_id, field_entries: dispatch.field_entries, residual: dispatch.residual, ..self }
     }
 
+    #[inline]
     fn install(self, dispatch: &mut JsStepDispatch) {
         dispatch.program_id = self.program_id;
         dispatch.field_entries = self.field_entries;
@@ -4260,6 +4316,7 @@ struct LaneRun {
 }
 
 impl LaneRun {
+    #[inline]
     fn of(dispatch: &JsStepDispatch) -> Self {
         Self { vm: dispatch.vm, program_id: dispatch.program_id, lane_context: dispatch.lane_context, residual: dispatch.residual, stores_specialized: dispatch.stores_specialized }
     }
@@ -4331,6 +4388,7 @@ pub(super) fn take_lane_exit_line() -> u64 {
     unsafe { std::mem::take(&mut (*lane_frame()).dispatch.exit_line) }
 }
 
+#[inline]
 fn lane_frame() -> *mut LaneFrame {
     let frame = LANE_FRAME.with(std::cell::UnsafeCell::get);
     // SAFETY: the frame is reached only through this pointer, on its thread, and no
@@ -4524,6 +4582,22 @@ impl JsStepDispatch {
         self.slots_tracked = usize::from(vm.heap.tracks_slot_values());
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
+    }
+
+    /// Readies a region's parked dispatch (`CompiledOsrRegion::parked`) for a run of `program`
+    /// above VM frame `frame`: the words `JsNativeActivation::with_function` and
+    /// `bind_native_storage` bind, the run state the last run left reset to `idle`'s, and the
+    /// bases refreshed (`refresh_heap_bases`), which reread only what moved since the last run.
+    /// The words the run's binds set (`osr_lane`) are theirs.
+    fn rebind_region<H: Host>(&mut self, vm: &mut Vm<H>, program_id: ProgramId, program: &ResidualProgram, frame: usize) {
+        self.bind_lane_storage(std::ptr::from_mut(vm));
+        (self.program_id, self.frame) = (program_id, frame);
+        (self.capture_values, self.capture_len, self.capture_stores) = (std::ptr::null(), 0, 0);
+        (self.inlined, self.exit_line, self.returned_pc) = (0, 0, 0);
+        (self.lane_values_top, self.lane_values_end, self.lane_activations_top, self.lane_frames_end) = (0, 0, 0, 0);
+        self.environment_storage = crate::heap::absent_environment_storage();
+        self.outcome = None;
+        self.refresh_heap_bases(vm, program);
     }
 
     /// Refresh the additional frame and array views read by native code.
@@ -5726,6 +5800,7 @@ struct MemoryArguments {
 }
 
 impl MemoryArguments {
+    #[inline]
     fn of(fixed_base: Option<i32>, guarded: bool) -> Self {
         Self {
             base: fixed_base.is_none(),
@@ -6332,6 +6407,8 @@ struct Emitter<'a, 'b, H: Host> {
     simd_words: Option<ir::StackSlot>,
     /// The table an indirect target is being emitted for (`WasmTable`).
     indirect: Option<wasm_table_stage::IndirectSite>,
+    /// The row an indirect target just checked, which the call that follows reads again.
+    checked_row: Option<wasm_table_stage::CheckedRow>,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -7041,6 +7118,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             vectors: Vec::new(),
             simd_words: None,
             indirect: None,
+            checked_row: None,
         };
         // Registers start at i32 zero, as an activation's register file does.
         for register in 0..function.registers {
@@ -7671,6 +7749,7 @@ impl<H: Host> Vm<H> {
     /// Whether any of `tiers` runs: compiled execution under a memory policy
     /// that compiles them (`PolicyTiers::js_function_tiers`) and a JIT mode that allows one, in a build whose profiles do not count
     /// interpreted work exactly.
+    #[inline]
     pub(super) fn tier_may_run(&self, tiers: &[crate::jit_mode::Tier]) -> bool {
         !cfg!(quench_profiled)
             && self.execution_mode == ExecutionMode::Compiled
@@ -8357,6 +8436,8 @@ impl<H: Host> Vm<H> {
         let mut offsets = vec![None; count];
         let mut spans = Vec::new();
         let mut entries = vec![None; count];
+        // Stitched rows call a function through its cell, filled once the code is placed.
+        let entry_cells: Box<[std::cell::Cell<usize>]> = (0..count).map(|_| std::cell::Cell::new(0)).collect();
         let mut calls = Vec::new();
         let place = |bytes: &mut Vec<u8>, code: Vec<u8>| {
             bytes.resize(bytes.len().next_multiple_of(FUNCTION_ALIGNMENT), 0);
@@ -8439,7 +8520,7 @@ impl<H: Host> Vm<H> {
             // `--b-jit` enters a function through its stitched rows where every instruction has
             // one (`wasm_stitch`): the interpreter's staged rules, copied and patched. Its
             // compiled body stays for the calls of the other functions until the rows take calls.
-            let entry = match stitched_entry(self, program, &code, index, plans[index].as_ref()?, memory_slot) {
+            let entry = match stitched_entry(self, program, &code, index, (&plans, &entry_cells), memory_slot) {
                 Some(stitched) => stitched,
                 None => entry,
             };
@@ -8452,6 +8533,9 @@ impl<H: Host> Vm<H> {
         let mapped_bytes = memory.length();
         let base = memory.pointer() as usize;
         write_perf_map("wasm-function", base, &bytes, &spans);
+        for (cell, entry) in entry_cells.iter().zip(&entries) {
+            cell.set(entry.map_or(0, |entry| base + entry));
+        }
         let table: Box<[usize]> = offsets
             .iter()
             .map(|offset| offset.map_or(0, |offset| base + offset))
@@ -8528,6 +8612,7 @@ impl<H: Host> Vm<H> {
         Some(CompiledProgram {
             _code: memory,
             table,
+            _entry_cells: entry_cells,
             functions,
             positions,
             memory_slot,

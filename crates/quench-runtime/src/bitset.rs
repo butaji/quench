@@ -156,6 +156,7 @@ impl BitSet {
     }
 
     /// The membership words, lowest index first.
+    #[inline]
     pub(crate) fn words(&self) -> &[u64] {
         &self.words
     }

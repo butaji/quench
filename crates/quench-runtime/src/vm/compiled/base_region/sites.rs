@@ -68,7 +68,7 @@ fn membership_keys(code: &[WideInstruction], constants: &[Value]) -> Vec<Option<
         let key = match instruction.operand_b().kind()? {
             OperandKind::Constant => usize::from(instruction.operand_b().payload()),
             OperandKind::Register => match origin(code, &joins, pc, instruction.operand_b().register_index()?) {
-                Origin::Written(load) if load.op().class() == Class::LoadConst => load.constant_index(),
+                Origin::Written(load) => crate::staged::Operation::<(), ()>::decode_constant_load(load).map(|(_, index)| index)?,
                 _ => return None,
             },
             _ => return None,
@@ -159,7 +159,7 @@ fn instanceof_jump(known: Known, pc: u32, instruction: WideInstruction, dst: Reg
 /// The rows of a `JumpBinaryFalse` of `instanceof` or `in` the VM remembers an answer for: the comparison's row, writing its boolean to
 /// the register `scratch`, then the jump to the instruction's target where that boolean is false.
 pub(super) fn compare_jump(known: Known, pc: u32, instruction: WideInstruction, scratch: Register) -> Option<Vec<Decoded>> {
-    (instruction.op().class() == Class::JumpBinaryFalse).then_some(())?;
+    matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. })).then_some(())?;
     let compared = instanceof_jump(known, pc, instruction, scratch).or_else(|| membership_row(known, pc, instruction, scratch))?;
     let jump = Decoded::number(Kind::JumpFalse, None, Some(Source::Register(scratch)), None, Some(instruction.jump_target()));
     Some(vec![compared, jump])

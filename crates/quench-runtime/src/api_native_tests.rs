@@ -9,6 +9,8 @@ fn split_host_catalog_preserves_descriptors_and_dispatch_indices() {
         Ok(c.number(42.0))
     }
     impl crate::Host for SplitHost {
+        // Its tests exercise no lane behaviour (`Host::RUNS_LANE`).
+        const RUNS_LANE: bool = false;
         fn write_line(&mut self, _: &str) { panic!("unexpected output") }
         fn clock_millis(&mut self) -> f64 { 0.0 }
         fn functions(&self) -> &[HostFunction<Self>] { panic!("combined catalog must not be read") }
@@ -2138,6 +2140,8 @@ struct EntryCacheHost {
     lines: Rc<RefCell<Vec<String>>>,
 }
 impl Host for EntryCacheHost {
+    // Its tests exercise no lane behaviour (`Host::RUNS_LANE`).
+    const RUNS_LANE: bool = false;
     fn write_line(&mut self, line: &str) {
         self.lines.borrow_mut().push(line.to_owned());
     }

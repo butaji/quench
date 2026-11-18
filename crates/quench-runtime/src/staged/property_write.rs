@@ -25,6 +25,7 @@ pub(super) fn set_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     let fact = frame.value_fact(value);
     let (raw, tagged) = match frame.plans().store_plan(site) {
         Some(StorePlan::Own { arms, .. }) => (arms.iter().any(|arm| arm.raw_double), arms.iter().any(|arm| !arm.raw_double)),
+        Some(StorePlan::Entry) if frame.entry_slot_raw() => (true, false),
         _ => (false, true),
     };
     let number = if raw { frame.stored_number(stage, value, miss) } else { None };
@@ -73,6 +74,11 @@ fn store_value<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base
     let plans = frame.plans();
     let (arms, join) = match plans.store_plan(site)? {
         StorePlan::Entry => {
+            // A raw-double slot takes the binary64 word; a frame with no view of it leaves.
+            if frame.entry_slot_raw() {
+                let number = number.or_else(|| { let zero = stage.constant(0); let never = stage.ne_imm(zero, 0u32); stage.guard(never, miss).map(|()| zero) })?;
+                return frame.entry_slot_store(stage, site, number, miss).map(|()| number);
+            }
             let value = source.tagged(stage, frame);
             return frame.entry_slot_store(stage, site, value, miss).map(|()| value);
         }
@@ -82,8 +88,8 @@ fn store_value<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base
             let at = (Owner::of(base)?, base_word(stage, frame, base, miss)?);
             let tagged = value;
             frame.stored(stage, at.0, miss,
-                |stage, frame, miss| layout_store(stage, frame, at, (id, slot), tagged?, miss),
-                move |stage: &mut S, frame: &mut F, miss: S::Miss| {
+                #[inline(always)] |stage, frame, miss| layout_store(stage, frame, at, (id, slot), tagged?, miss),
+                #[inline(always)] move |stage: &mut S, frame: &mut F, miss: S::Miss| {
                     let value = source.tagged(stage, frame);
                     vm_store(stage, frame, join, at, (atom, site), (value, fact), miss)
                 })?;
@@ -240,6 +246,12 @@ fn arm_store<S: Stage>(stage: &mut S, (record, object): (S::Word, S::Word), arm:
             stage.guard(never, miss)?;
             return Some(());
         };
+        if arm.unformed {
+            // The site left the form open: a packed record holds no run to store into.
+            let inline = super::object::inline_storage(stage, record);
+            let flat = stage.not(inline);
+            stage.guard(flat, miss)?;
+        }
         return own_store_raw(stage, record, arm.slot, number, miss);
     }
     let value = value?;

@@ -73,14 +73,16 @@ impl<H: Host> Vm<H> {
     /// into a Map, a Set into a Set): its keys are already distinct and canonical, so no entry
     /// is looked up or hashed again. `false` leaves `collection` as it was.
     fn copy_collection_table(&mut self, collection: Value, source: Value) -> bool {
-        let copy = match (self.heap.get(source), self.heap.get(collection)) {
-            (Some(Cell::Set { entries, .. }), Some(Cell::Set { entries: target, .. })) if target.len() == 0 => {
-                TableCopy::Set(entries.duplicate().into())
-            }
-            (Some(Cell::Map { entries, .. }), Some(Cell::Map { entries: target, .. })) if target.len() == 0 => {
-                TableCopy::Map(entries.duplicate().into())
-            }
-            _ => return false,
+        let copy = if let (Some(entries), Some(target)) = (self.heap.set_entries(source), self.heap.set_entries(collection))
+            && target.len() == 0
+        {
+            TableCopy::Set(entries.duplicate().into())
+        } else if let (Some(entries), Some(target)) = (self.heap.map_entries(source), self.heap.map_entries(collection))
+            && target.len() == 0
+        {
+            TableCopy::Map(entries.duplicate().into())
+        } else {
+            return false;
         };
         self.heap.grow_cell_payload(collection, |cell| match (cell, copy) {
             (Cell::Set { entries, .. }, TableCopy::Set(copy)) => *entries = copy,

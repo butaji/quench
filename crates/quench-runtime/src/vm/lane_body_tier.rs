@@ -242,11 +242,17 @@ impl LaneView {
     /// none, specializes again at its next entry and calls this one by its entry
     /// (`compiled::DirectCallee`). A caller's running body keeps its code (`retired`).
     fn respecialize_callers(&self) {
-        for caller in self.tier().callers.take() {
+        let callers = self.tier().callers.take();
+        // A caller's code keeps running while it waits to specialize again (a loop it entered
+        // never returns to its entry), and calls through the lane's helper until then: its
+        // demand outlives this body, so a later recompile of it is still wanted whatever its length.
+        if !callers.is_empty() { self.tier().history.set(LaneBodyHistory { demanded: true, ..self.tier().history.get() }); }
+        for caller in callers {
             unsafe { &*caller }.respecialize();
         }
     }
 
+    #[inline]
     pub(super) fn note_late_call(&self) -> bool {
         let history = self.tier().history.get();
         let late_calls = history.late_calls.saturating_add(1);
@@ -254,6 +260,14 @@ impl LaneView {
         late_calls == self.tiers.lane_body.late_call_calls
     }
 
+    /// Whether the late calls counted past the threshold (`note_late_call`), which only a
+    /// respecialization resets.
+    #[inline]
+    pub(super) fn late_calls_settled(&self) -> bool {
+        self.tier().history.get().late_calls > self.tiers.lane_body.late_call_calls
+    }
+
+    #[inline]
     pub(super) fn owns_record(&self, record: super::Ip) -> bool {
         let start = self.records();
         record >= start && record < start.wrapping_add(self.records.len())

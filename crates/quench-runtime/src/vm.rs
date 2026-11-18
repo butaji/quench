@@ -130,6 +130,8 @@ mod array;
 pub(crate) mod array_buffer;
 mod array_builtins;
 mod array_copy;
+mod array_dense;
+mod inplace;
 mod array_flatten;
 mod array_group;
 mod array_indexed;
@@ -510,6 +512,17 @@ impl Frame {
         self.initialized_registers = self.initialized_registers.max(usize::from(count));
     }
 
+    /// Gives a generator or async activation's register file room for the environment window
+    /// its lane resumes lay after the registers (`open_environment_window`) in one allocation,
+    /// not a reallocation at its first resume.
+    #[inline(always)]
+    fn reserve_suspension_window(&mut self, function: &crate::bytecode::Function) {
+        if function.is_generator || function.is_async {
+            self.registers.clear();
+            self.registers.reserve(usize::from(function.registers) + usize::from(dispatch_fast::WINDOW_LOCALS) + usize::from(function.locals));
+        }
+    }
+
     /// Sizes the register file for `function`. Compiled code writes every register before
     /// reading it, so stale values from a pooled frame are unobservable to the program; they
     /// matter only to a collector that scans the whole file. A function with a liveness root
@@ -526,6 +539,7 @@ impl Frame {
             || function.is_async
             || function.initial_register != crate::bytecode::InitialRegister::Undefined
         {
+            self.reserve_suspension_window(function);
             self.prepare_registers(function.registers, function.initial_register);
         } else {
             if register_count <= self.initialized_registers {
@@ -2143,10 +2157,10 @@ pub(crate) struct Vm<H> {
     /// The field slots of the descriptor shape `ToPropertyDescriptor` last read
     /// (`object_descriptors::DescriptorLayout`); derived from shapes.
     descriptor_layout: Option<object_descriptors::DescriptorLayout>,
-    /// The shape a new RegExp object starts in and the one its own `lastIndex` moves it to
-    /// (`Vm::regexp_from_matcher`), as the first one recorded; derived from shapes, so
-    /// field-cache invalidation clears it.
-    regexp_object_shapes: Option<(u32, u32)>,
+    /// The header of a new RegExp object of the paired prototype: inline storage in the shape
+    /// its own `lastIndex` gives an empty object, as the first one recorded
+    /// (`Vm::regexp_from_meta`); derived from shapes, so field-cache invalidation clears it.
+    regexp_object_header: Option<(Value, crate::heap::InlineObjectHeader)>,
     /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
     /// slot; derived from shapes, so field-cache invalidation clears it.
     regexp_last_index_layouts: Vec<(u32, u32)>,
@@ -3132,7 +3146,7 @@ impl<H: Host> Vm<H> {
         self.shared_entry_pair = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
-        self.regexp_object_shapes = None;
+        self.regexp_object_header = None;
         self.regexp_last_index_layouts.clear();
         self.regexp_builtin_layouts.clear();
         self.regexp_symbol_layouts.clear();

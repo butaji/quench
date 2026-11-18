@@ -512,6 +512,23 @@ pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond
     match layout.slots {
         Slots::Flat(base) => flat_read(stage, base, slot, rep),
         Slots::Packed(packed) => packed_read(stage, packed, slot, rep),
+        Slots::Either { packed: Packed::Record(record), inline, flat } => {
+            // One operand for both forms (`site_offset`): a stencil numbers its holes as the row runs.
+            let offset = site_offset(stage, slot);
+            stage.choose(inline, |stage| {
+                let half = stage.shr_imm(offset, HALF_SHIFT);
+                let address = stage.add(record, half);
+                let narrow = stage.load_u32(Region::Payload.mutable(), address, OBJECT.payload_offset as i32);
+                decode_narrow(stage, narrow)
+            }, |stage| {
+                let address = stage.add(flat, offset);
+                match rep {
+                    Representation::Float64 => stage.load_f64(Region::ObjectSlots.mutable(), address, 0),
+                    Representation::Int32 | Representation::Tagged => stage.load_u64(Region::ObjectSlots.mutable(), address, 0),
+                    Representation::Int64 => unreachable!("a slot word is never an Int64"),
+                }
+            })
+        }
         Slots::Either { packed, inline, flat } => stage.choose(inline,
             |stage| packed_read(stage, packed, slot, rep), |stage| flat_read(stage, flat, slot, rep)),
         Slots::Narrow(base) => narrow_read(stage, base, slot, rep),
@@ -588,6 +605,18 @@ fn narrow_read<S: Stage>(stage: &mut S, base: S::Word, slot: u16, _rep: Represen
     let address = stage.add_imm(base, offset);
     let narrow = stage.load_u32(Region::ObjectSlots.mutable(), address, 0);
     decode_narrow(stage, narrow)
+}
+
+/// The shift from a slot's byte offset in a flat run to its half's in the packed payload word.
+const HALF_SHIFT: u64 = (OBJECT.property_value_size as u64 / HALF_BYTES).trailing_zeros() as u64;
+
+/// The byte offset of `slot` in a flat run, a per-site operand, as a word: the one operand a read of
+/// either form takes, the packed half's offset being it shifted (`HALF_SHIFT`).
+#[inline(always)]
+fn site_offset<S: Stage>(stage: &mut S, slot: u16) -> S::Word {
+    let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64);
+    let zero = stage.constant(0);
+    stage.add_imm(zero, offset)
 }
 
 /// Flat value `slot`: the slot is a per-site operand, so its byte offset is a hole.

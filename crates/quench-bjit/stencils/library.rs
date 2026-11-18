@@ -18,7 +18,7 @@ fn read_operands(kind: u8, dst: u8, a: u8, b: u8) -> (u8, u8, u8) {
         _ if is_copy(kind) => (dst, a, MEM),
         _ if is_compare(kind) => (MEM, a, b),
         JUMP | JUMP_POLL | JUMP_WATCH | POLL | TAG_INIT => (MEM, MEM, MEM),
-        GUARD | NOT | NEG | SQRT => (dst, a, MEM),
+        GUARD | NOT | NEG | MATH_FIRST..=MATH_LAST => (dst, a, MEM),
         JUMP_TRUE | JUMP_FALSE | SPILL => (MEM, a, MEM),
         _ => (dst, a, b),
     }
@@ -144,7 +144,7 @@ fn truthiness(places: &Places, rows: &mut BTreeSet<Code>) {
     }
     let dsts: Vec<u8> = places.ints_dst.iter().chain(&places.floats_dst).copied().collect();
     let srcs: Vec<u8> = places.ints_src.iter().copied().chain(double_pins()).collect();
-    product(rows, &[NEG, SQRT], &dsts, &srcs, &[true]);
+    product(rows, &[NEG, SQRT, FLOOR, CEIL, TRUNC, ABS, ROUND], &dsts, &srcs, &[true]);
 }
 
 /// Every row the library holds, canonical, once.
@@ -189,8 +189,8 @@ const HEAP_USES: &[(Uses, &[std::ops::RangeInclusive<u8>])] = &[
         LOAD_LOCAL_ROW..=LOAD_LOCAL_ROW, LOAD_CHECKED_ROW..=LOAD_CHECKED_ROW, GLOBAL_READ_ROW..=GLOBAL_READ_ROW, LEXICAL_READ_ROW..=LEXICAL_READ_ROW,
         CONSTANT_ROW..=CONSTANT_ROW, CALLEE_CAPTURE_ROW..=CALLEE_CAPTURE_ROW]),
     (uses(Entry::Kept, false, true, false), &[GLOBAL_STORE_ROW..=GLOBAL_STORE_ROW, SITE_STORE_ROW..=SITE_STORE_ROW, THIS_STORE_ROW..=THIS_STORE_ROW,
-        IC_SET_ROW..=IC_SET_ROW, IC_SET_INT_ROW..=IC_SET_INT_ROW]),
-    (uses(Entry::Kept, true, false, false), &[SITE_ROW..=SITE_ROW, THIS_SITE_ROW..=THIS_SITE_ROW, HELD_ROW..=HELD_ROW, IC_GET_ROW..=IC_GET_ROW, IC_GET_HOLDER_ROW..=IC_GET_HOLDER_ROW]),
+        IC_SET_ROW..=IC_SET_ROW, IC_SET_INT_ROW..=IC_SET_INT_ROW, IC_KNOWN_SET_ROW..=IC_KNOWN_SET_INT_ROW]),
+    (uses(Entry::Kept, true, false, false), &[SITE_ROW..=SITE_ROW, THIS_SITE_ROW..=THIS_SITE_ROW, HELD_ROW..=HELD_ROW, IC_GET_ROW..=IC_GET_ROW, IC_GET_HOLDER_ROW..=IC_GET_HOLDER_ROW, IC_KNOWN_GET_ROW..=IC_KNOWN_GET_ROW]),
     (uses(Entry::Kept, true, false, true), &[INDEX_ROW..=INDEX_ROW]),
     (uses(Entry::Always, true, false, true), &[TYPED_INDEX_ROW..=TYPED_INDEX_LAST]),
     (uses(Entry::Always, false, true, true), &[TYPED_STORE_ROW..=TYPED_STORE_LAST]),
@@ -224,12 +224,13 @@ pub fn heap_name((heap, entry, dst, a, b): HeapCode) -> String {
 fn cache_rows(dsts: &[u8], srcs: &[u8], rows: &mut BTreeSet<HeapCode>) {
     for chained in [false, true] {
         for &dst in dsts {
-            rows.extend([IC_GET_ROW, IC_GET_HOLDER_ROW].map(|heap| heap_canonical((heap, chained, dst, MEM, MEM))));
+            rows.extend([IC_GET_ROW, IC_GET_HOLDER_ROW, IC_KNOWN_GET_ROW].map(|heap| heap_canonical((heap, chained, dst, MEM, MEM))));
         }
         for &a in srcs {
-            rows.extend([IC_SET_ROW, IC_SET_INT_ROW].map(|heap| heap_canonical((heap, chained, MEM, a, MEM))));
+            rows.extend([IC_SET_ROW, IC_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_KNOWN_SET_INT_ROW].map(|heap| heap_canonical((heap, chained, MEM, a, MEM))));
         }
     }
+    rows.insert(heap_canonical((IC_PROOF_ROW, false, MEM, MEM, MEM)));
 }
 
 /// The typed element rows: each native kind's read over a Number destination (the place of a Number the row

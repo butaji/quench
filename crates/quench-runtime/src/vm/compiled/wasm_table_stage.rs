@@ -33,6 +33,18 @@ pub(super) struct IndirectSite {
     signature_index: u32,
 }
 
+/// The row an indirect target checked: its element index (the target's value), the row's
+/// address and its signature id, each defined before the checks' branches. A call emitted in
+/// the block the target ended in (only moves of its arguments between: anything that could
+/// change the table also branches) reads them instead of loading them again.
+#[derive(Clone, Copy)]
+pub(super) struct CheckedRow {
+    block: Option<ir::Block>,
+    index: ir::Value,
+    address: ir::Value,
+    id: ir::Value,
+}
+
 /// Whether the element at `index` of the table at binding `table` satisfies the type
 /// `expected` (a type index of the program) although its id is not the expected one: a subtype,
 /// or a host function whose signature the VM compares. A reference the VM cannot compare does
@@ -93,7 +105,9 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.indirect = Some(IndirectSite { words, table, signature_index });
         let index = self.read(instruction.c(), Kind::I32);
         let index = self.convert(Conversion::ExtendI32Unsigned, index);
+        self.checked_row = None;
         let row = infallible(indirect_target(self, index, expected));
+        self.checked_row = self.checked_row.map(|checked| CheckedRow { block: self.body.core.builder.current_block(), ..checked });
         self.indirect = None;
         self.write(instruction.a(), Kind::I64, row);
     }
@@ -110,6 +124,7 @@ impl<H: Host> WasmTable for Emitter<'_, '_, H> {
     fn element_signature(&mut self, index: ir::Value) -> ir::Value {
         let row = self.table_row(self.site().words, index);
         let id = self.load_word(Width::I32, MemFlagsData::trusted(), row, TableTarget::SIGNATURE);
+        self.checked_row = Some(CheckedRow { block: None, index, address: row, id });
         self.convert(Conversion::ExtendI32Unsigned, id)
     }
 
@@ -118,7 +133,9 @@ impl<H: Host> WasmTable for Emitter<'_, '_, H> {
         index
     }
 
-    /// An equal id accepts; any other is the VM's to relate.
+    /// An equal id accepts; any other is the VM's to relate. The relating path traps on a
+    /// mismatch itself, so both paths join accepted: the rule's mismatch test is a constant,
+    /// and the equal path is one compare and branch, with no flag joined and tested again.
     fn signature_accepts(
         &mut self,
         reference: ir::Value,
@@ -130,8 +147,7 @@ impl<H: Host> WasmTable for Emitter<'_, '_, H> {
         let context = self.body.core.context;
         let builder = &mut self.body.core.builder;
         let (relate, join) = (builder.create_block(), builder.create_block());
-        builder.append_block_param(join, types::I32);
-        self.branch_if(equal, (join, &[equal]), (relate, &[]));
+        self.branch_if(equal, (join, &[]), (relate, &[]));
         self.body.core.builder.set_cold_block(relate);
         self.enter(relate);
         let table = self.constant(Width::I64, i64::from(site.table));
@@ -139,9 +155,11 @@ impl<H: Host> WasmTable for Emitter<'_, '_, H> {
         let target = compiled_table_accepts::<H> as *const () as usize;
         let related = self.call_leaf(target, &[context, table, reference, expected_type]);
         let related = self.convert(Conversion::WrapI64, related);
-        self.goto(join, &[related]);
+        let mismatch = self.operate_unary(crate::wasm::integer::I64UnaryOperator::EqualZero, Width::I32, related);
+        infallible(self.trap_when(mismatch, crate::WasmTrap::IndirectCallTypeMismatch));
+        self.goto(join, &[]);
         self.enter(join);
-        self.body.core.builder.block_params(join)[0]
+        self.constant(Width::I32, 1)
     }
 }
 
@@ -168,10 +186,13 @@ impl<H: Host> Emitter<'_, '_, H> {
         let (args, out) = self.spill_arguments(instruction, &signature);
         let row = self.read(instruction.b(), Kind::I64);
         let words = self.table_words(table);
+        // The target checked in this block: its row and id, not loaded again.
+        let block = self.body.core.builder.current_block();
+        let checked = self.checked_row.take().filter(|checked| checked.block.is_some() && checked.block == block && checked.index == row);
         let builder = &mut self.body.core.builder;
         let (slow, done) = (builder.create_block(), builder.create_block());
         builder.append_block_param(done, types::I64);
-        self.native_calls(words, row, expected, &signature, (args, out), (slow, done));
+        self.native_calls(words, row, checked, expected, &signature, (args, out), (slow, done));
         self.body.core.builder.set_cold_block(slow);
         self.enter(slow);
         let status = self.call_through_vm(pc, table, signature_index, row, (args, out));
@@ -189,15 +210,21 @@ impl<H: Host> Emitter<'_, '_, H> {
         &mut self,
         words: ir::Value,
         row: ir::Value,
+        checked: Option<CheckedRow>,
         expected: CanonicalSignature,
         signature: &crate::WasmSignature,
         buffers: (ir::Value, ir::Value),
         (slow, done): (ir::Block, ir::Block),
     ) {
-        let address = self.table_row(words, row);
         let context = self.body.core.context;
         let flags = MemFlagsData::trusted();
-        let id = self.load_word(Width::I32, flags, address, TableTarget::SIGNATURE);
+        let (address, id) = match checked {
+            Some(checked) => (checked.address, checked.id),
+            None => {
+                let address = self.table_row(words, row);
+                (address, self.load_word(Width::I32, flags, address, TableTarget::SIGNATURE))
+            }
+        };
         let wanted = self.constant(Width::I32, expected.word() as i64);
         let same_signature = self.operate(Binary::Equal, Width::I32, id, wanted);
         let builder = &mut self.body.core.builder;

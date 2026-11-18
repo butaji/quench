@@ -176,7 +176,7 @@ impl<H: Host> Vm<H> {
         } else if let Some(text) = self.heap.string(value) {
             write_json_string(text, output);
         } else {
-            return matches!(self.heap.get(value), Some(Cell::Symbol(_))).then_some(false);
+            return self.heap.is_symbol(value).then_some(false);
         }
         Some(true)
     }

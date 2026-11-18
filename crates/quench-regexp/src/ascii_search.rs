@@ -20,14 +20,21 @@ impl Regex {
     /// Whether a non-sticky search from any position in any subject matches at that position:
     /// some path through the pattern matches empty unconditionally, so a caller that reads
     /// only where a match starts needs no search.
+    #[inline]
     pub fn matches_at_every_start(&self) -> bool {
         self.complete().empty_everywhere
     }
 
     /// The range `find_ascii` finds, for a caller that observes no captures.
     pub fn find_range_ascii(&self, bytes: &[u8], start: usize, sticky: bool) -> Option<Option<Range<usize>>> {
+        // A pattern that is one literal run is one search for it (`LiteralRun`).
+        let complete = self.complete();
+        if let Some(finder) = complete.literal_run.finder(&complete.required_literal).filter(|_| !sticky) {
+            let rest = bytes.get(start..)?;
+            return Some(finder.find(rest).map(|at| start + at..start + at + finder.needle().len()));
+        }
         let program = match self.ascii_program(bytes, start, sticky)? {
-            Some(program) => program,
+            Some(program) => complete.bounds.as_ref().unwrap_or(program),
             None => return Some(None),
         };
         Some(program.find_bounds(bytes, start, sticky))
@@ -56,7 +63,7 @@ impl Regex {
     /// `None` where the pattern did not compile to the backtracking matcher.
     fn ascii_program(&self, bytes: &[u8], start: usize, sticky: bool) -> Option<Option<&backtrack::Program>> {
         let complete = self.complete();
-        let program = complete.backtracking.as_ref()?;
+        let program = &complete.backtracking;
         if start > bytes.len() || bytes.len() - start < complete.min_length {
             return Some(None);
         }

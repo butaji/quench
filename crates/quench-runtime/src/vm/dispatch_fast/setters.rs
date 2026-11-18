@@ -92,8 +92,8 @@ pub(super) fn frame_completion(completion: Option<Completion>, traps: &mut impl 
     match completion {
         Some(Completion::Assigns) => CallCompletion::Assigned,
         Some(Completion::ReadsTrapped | Completion::AssignsTrapped) => CallCompletion::Trapped(traps.next().expect("each trapped activation has its entry").1),
-        Some(generator @ (Completion::Generates | Completion::Delegates)) => {
-            CallCompletion::Generator(super::super::generator::GeneratorResume::new(generator == Completion::Generates))
+        Some(generator) if generator.is_generator() => {
+            CallCompletion::Generator(super::super::generator::GeneratorResume::new(generator.reuses_result()))
         }
         _ => CallCompletion::Value,
     }

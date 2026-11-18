@@ -20,9 +20,9 @@ use crate::wasm::integer::I64BinaryOperator as Binary;
 use quench_bjit::wasm::{self as codes, WasmCode};
 use quench_bjit::{HOLES, Row, Stencil, padded_holes};
 
-/// The frame word a register is.
+/// The frame word a register is, past the header words.
 const fn slot(register: u16) -> u64 {
-    8 * (1 + register as u64)
+    8 * (codes::FRAME_HEADER_WORDS + register as u64)
 }
 
 /// The word an integer constant is at `width`: an i32 zero-extended.
@@ -30,6 +30,13 @@ const fn word(width: Width, value: i64) -> u64 {
     match width {
         Width::I32 => value as u32 as u64,
         Width::I64 => value as u64,
+    }
+}
+
+const fn float_code(float: crate::staged::wasm_float::Float) -> u8 {
+    match float {
+        crate::staged::wasm_float::Float::F32 => codes::W32,
+        crate::staged::wasm_float::Float::F64 => codes::W64,
     }
 }
 
@@ -45,11 +52,56 @@ const fn width_code(width: Width) -> u8 {
 struct Planned {
     stencil: &'static str,
     holes: [u64; HOLES],
-    taken: Option<usize>,
+    taken: Option<Target>,
+}
+
+/// Where a row's taken successor is: an instruction's first row, or a row of the same
+/// instruction (a table's search).
+#[derive(Clone, Copy)]
+enum Target {
+    Pc(usize),
+    Row(usize),
 }
 
 fn row(code: WasmCode, holes: [u64; 3], taken: Option<usize>) -> Planned {
-    Planned { stencil: leak(codes::wasm_name(code)), holes: padded_holes(holes), taken }
+    Planned { stencil: leak(codes::wasm_name(code)), holes: padded_holes(holes), taken: taken.map(Target::Pc) }
+}
+
+/// A conditional row on the i32 register `selector` against `value`, taken to `target`.
+fn compare(operator: Binary, selector: u16, value: u32, target: Target) -> Planned {
+    Planned {
+        stencil: leak(codes::wasm_name((codes::JUMP_IF, operator as u32, codes::W32, codes::IMMEDIATE))),
+        holes: padded_holes([0, slot(selector), u64::from(value)]),
+        taken: Some(target),
+    }
+}
+
+/// The rows of a branch table on `selector`: past the cases, the default; inside, a binary
+/// search down to runs of equality tests.
+fn table(selector: u16, cases: &[usize], default: usize) -> Vec<Planned> {
+    fn search(rows: &mut Vec<Planned>, selector: u16, cases: &[usize], low: usize, high: usize) {
+        if high - low <= 4 {
+            for case in low..high - 1 {
+                rows.push(compare(Binary::Equal, selector, case as u32, Target::Pc(cases[case])));
+            }
+            rows.push(row((codes::GOTO, 0, codes::W64, codes::REGISTER), [0; 3], Some(cases[high - 1])));
+            return;
+        }
+        let middle = (low + high) / 2;
+        let split = rows.len();
+        rows.push(compare(Binary::GreaterEqualUnsigned, selector, middle as u32, Target::Row(0)));
+        search(rows, selector, cases, low, middle);
+        rows[split].taken = Some(Target::Row(rows.len()));
+        search(rows, selector, cases, middle, high);
+    }
+    let mut rows = Vec::new();
+    if cases.is_empty() {
+        rows.push(row((codes::GOTO, 0, codes::W64, codes::REGISTER), [0; 3], Some(default)));
+        return rows;
+    }
+    rows.push(compare(Binary::GreaterEqualUnsigned, selector, cases.len() as u32, Target::Pc(default)));
+    search(&mut rows, selector, cases, 0, cases.len());
+    rows
 }
 
 /// A row name, interned for the life of the process: the names are a fixed, small set.
@@ -106,7 +158,15 @@ fn numeric(instruction: WideInstruction, operation: WasmOperation) -> Option<Vec
             binary(Binary::ShiftRightUnsigned, Width::I32, Operand::Constant(i64::from(instruction.c() as i16)), a, b),
             binary(Binary::And, Width::I32, Operand::Constant(i64::from(instruction.imm() as i32)), a, a),
         ],
-        WasmOperation::FloatBinary { .. } | WasmOperation::FloatUnary { .. } | WasmOperation::Convert { .. } => return None,
+        WasmOperation::FloatBinary { operator, float } => {
+            vec![row((codes::FLOAT_BINARY, operator as u32, float_code(float), codes::REGISTER), [slot(a), slot(b), slot(instruction.c())], None)]
+        }
+        WasmOperation::FloatUnary { operator, float } => {
+            vec![row((codes::FLOAT_UNARY, operator as u32, float_code(float), codes::REGISTER), [slot(a), slot(b), 0], None)]
+        }
+        WasmOperation::Convert { operator } => {
+            vec![row((codes::CONVERT, operator as u32, codes::W64, codes::REGISTER), [slot(a), slot(b), 0], None)]
+        }
     })
 }
 
@@ -142,11 +202,13 @@ fn memory(instruction: WideInstruction, memory: Memory) -> Option<Vec<Planned>> 
 /// instance binding of the memory the entry passes (`WasmEntry`'s base and length), whose
 /// binding instruction then places nothing.
 fn plan(
-    instruction: WideInstruction,
+    pc: usize,
+    instructions: &[WideInstruction],
     returns: bool,
-    constant: &dyn Fn(usize) -> Option<u64>,
-    memory_slot: Option<u32>,
+    world: &World<'_>,
 ) -> Option<Vec<Planned>> {
+    let instruction = instructions[pc];
+    let (constant, memory_slot) = (world.constant, world.memory_slot);
     let (a, b) = (instruction.a(), instruction.b());
     match Step::of(instruction.op(), instruction.imm())? {
         Step::Numeric(operation) => numeric(instruction, operation),
@@ -167,6 +229,28 @@ fn plan(
         }
         Step::Memory(step) => memory(instruction, step),
         Step::Flow(Flow::Jump) => Some(vec![row((codes::GOTO, 0, codes::W64, codes::REGISTER), [0; 3], Some(instruction.jump_target() as usize))]),
+        Step::Flow(Flow::Select) => {
+            let (condition, _) = instruction.register_pair();
+            let mut select = row((codes::SELECT, 0, codes::W64, codes::REGISTER), [slot(a), slot(b), slot(instruction.c())], None);
+            select.holes[3] = slot(condition);
+            Some(vec![select])
+        }
+        Step::Flow(Flow::Unreachable) => Some(vec![row((codes::TRAP, 0, codes::W64, codes::REGISTER), [0; 3], None)]),
+        Step::Flow(Flow::Table) => {
+            let entries = crate::bytecode::branch_table_entries(pc, instruction);
+            let targets: Vec<usize> = entries.map(|entry| instructions.get(entry).map(|jump| jump.jump_target() as usize)).collect::<Option<_>>()?;
+            let (default, cases) = targets.split_last()?;
+            Some(table(a, cases, *default))
+        }
+        Step::Call(crate::staged::wasm_call::Call::Known) => {
+            // A tail call (its destination flagged) has no row yet.
+            if a & crate::bytecode::RETURN_REGISTER != 0 {
+                return None;
+            }
+            let cell = (world.callee)(usize::from(instruction.known_function_index()))?;
+            let window = crate::bytecode::ImmediateLayout::call_window_base(instruction.imm());
+            Some(vec![row((codes::CALL, 0, codes::W64, codes::REGISTER), [slot(a), slot(window), cell], None)])
+        }
         Step::Flow(Flow::Return) => Some(vec![if returns {
             Planned { stencil: "leave_wasm_word", holes: padded_holes([slot(a)]), taken: None }
         } else {
@@ -190,18 +274,23 @@ fn stencil(name: &str) -> Option<Stencil> {
 /// The code of `function`: the entry, the trap routine, then the rows, every successor patched;
 /// `None` where an instruction has no rows yet. The code is position independent: it calls and
 /// jumps only within itself.
-pub(super) fn stitch(
-    function: &Function,
-    params: usize,
-    returns: bool,
-    constant: &dyn Fn(usize) -> Option<u64>,
-    memory_slot: Option<u32>,
-) -> Option<Vec<u8>> {
+/// What the rows of a module's functions name outside the function: its constants' frame words
+/// (`None` for one a row cannot hold, a vector), the instance binding of the memory the entry
+/// passes (`WasmEntry`'s base and length), whose binding instruction then places nothing, and
+/// the address of the cell holding a function's entry, which its direct calls call through
+/// (`None` for a function without an entry).
+pub(super) struct World<'a> {
+    pub(super) constant: &'a dyn Fn(usize) -> Option<u64>,
+    pub(super) memory_slot: Option<u32>,
+    pub(super) callee: &'a dyn Fn(usize) -> Option<u64>,
+}
+
+pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &World<'_>) -> Option<Vec<u8>> {
     let instructions: Vec<WideInstruction> =
         function.code.iter().map(|packed| function.widened(*packed)).collect();
     let mut planned = Vec::with_capacity(instructions.len());
-    for instruction in &instructions {
-        planned.push(plan(*instruction, returns, constant, memory_slot)?);
+    for pc in 0..instructions.len() {
+        planned.push(plan(pc, &instructions, returns, world)?);
     }
     // The first row of each instruction, and past the last.
     let mut first = Vec::with_capacity(planned.len() + 1);
@@ -211,7 +300,20 @@ pub(super) fn stitch(
         rows += rows_of.len();
     }
     first.push(rows);
-    let flat: Vec<Planned> = planned.into_iter().flatten().collect();
+    let flat: Vec<Planned> = planned
+        .into_iter()
+        .enumerate()
+        .flat_map(|(pc, rows)| {
+            let first = first[pc];
+            rows.into_iter().map(move |mut planned| {
+                // A row target becomes the row's index in the function.
+                if let Some(Target::Row(row)) = planned.taken {
+                    planned.taken = Some(Target::Row(first + row));
+                }
+                planned
+            })
+        })
+        .collect();
     // Control never runs past the last row: it leaves.
     if !flat.last().is_some_and(|last| last.stencil.starts_with("leave_")) {
         return None;
@@ -228,7 +330,7 @@ pub(super) fn stitch(
         .iter()
         .zip(&stencils)
         .zip(&holes)
-        .map(|((planned, stencil), hole)| Row { stencil, hole: &**hole, taken: planned.taken.map(|pc| first[pc]) })
+        .map(|((planned, stencil), hole)| Row { stencil, hole: &**hole, taken: planned.taken.map(|target| row_index(target, &first)), cold: false })
         .collect();
 
     let entry = stencil("entry_wasm")?;
@@ -246,6 +348,14 @@ pub(super) fn stitch(
     let (length, _) = unsafe { quench_bjit::copy_patch(&placed, code.as_mut_ptr().add(rows_at), |_, _| trap_at) };
     code.truncate(rows_at + length);
     Some(code)
+}
+
+/// The index of the row `target` is, a row target already being one (`stitch`).
+fn row_index(target: Target, first: &[usize]) -> usize {
+    match target {
+        Target::Pc(pc) => first[pc],
+        Target::Row(row) => row,
+    }
 }
 
 /// Copies `routine` into `code` (its own length), its value holes `holes` and its one successor

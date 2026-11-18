@@ -4,7 +4,7 @@
 //!
 //! The entry saves the callee-saved registers, reserves the function's frame on the native stack
 //! (hole 0: its bytes, 8 more than a multiple of 16, so the call to the first row is aligned),
-//! puts the result pointer in the frame's first word and copies the arguments (hole 1: their
+//! puts the result pointer, the memory base and its length in the frame's header words, and copies the arguments (hole 1: their
 //! count) into the registers the parameters are (hole 3: the first one's frame offset, past
 //! the instance bindings), and zeroes the registers after them (hole 2: their count), as the
 //! interpreter's frame starts them. The rows run with the
@@ -20,11 +20,23 @@ unsafe extern "C" {
     static HOLE_V3: u8;
 }
 
+/// The status of a call past the context's stack limit (its first word), which the entry
+/// returns before it touches the stack, as the u-jit's entry does.
+const EXHAUSTED: u32 = match crate::WasmTrap::CallStackExhausted.compiled_status() {
+    Some(status) => status,
+    None => 0,
+};
+
 /// Enters the function: frame, arguments, then the first row.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_wasm() {
     core::arch::naked_asm!(
+        "cmp rsp, [rdi]",
+        "jae 2f",
+        "mov eax, {exhausted}",
+        "ret",
+        "2:",
         "push rbp",
         "push rbx",
         "push r12",
@@ -38,6 +50,8 @@ pub unsafe extern "C" fn entry_wasm() {
         "mov r15, rsi",
         "mov rbx, rdx",
         "mov [r12], r8",
+        "mov [r12 + 8], rsi",
+        "mov [r12 + 16], rdx",
         "movabs rdi, offset {first_parameter}",
         "add rdi, r12",
         "mov rsi, rcx",
@@ -61,6 +75,7 @@ pub unsafe extern "C" fn entry_wasm() {
         count = sym HOLE_V1,
         rest = sym HOLE_V2,
         first_parameter = sym HOLE_V3,
+        exhausted = const EXHAUSTED,
         first = sym HOLE_NEXT,
     )
 }

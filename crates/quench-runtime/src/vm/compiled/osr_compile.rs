@@ -271,6 +271,26 @@ fn loop_fields(region: &LoopRegion, observation: &Observation<'_>)
     super::lane_region::flat_table(reads.chain(stores))
 }
 
+/// A store site the observation names no load for, whose receiver register the loop just read the
+/// same field of (`o.f = o.f + x`), takes that read's loads: the store meets the shapes the read
+/// met, whose facts the region already names, and its row guards the shape it holds.
+fn stored_after_reads(instructions: &[crate::bytecode::WideInstruction], fields: &mut Vec<Option<Vec<NativeFieldLoad>>>) {
+    for (at, store) in instructions.iter().enumerate() {
+        let Some(receiver) = store.field_store_register() else { continue };
+        let site = usize::from(store.cache_site_index());
+        if fields.get(site).is_some_and(|loads| loads.as_ref().is_some_and(|loads| !loads.is_empty())) { continue }
+        let atom = store.atom_index();
+        let read = instructions[..at].iter().rev().take_while(|earlier| earlier.defined_register() != Some(receiver))
+            .find_map(|earlier| match earlier.op().is_get_field().then(|| earlier.field_lookup()).flatten() {
+                Some(FieldLookup::Atom { atom: read, cache_site, .. }) if read == atom && earlier.register_b() == receiver => Some(cache_site),
+                _ => None,
+            });
+        let Some(loads) = read.and_then(|read| fields.get(usize::from(read)).cloned().flatten()) else { continue };
+        if fields.len() <= site { fields.resize(site + 1, None) }
+        fields[site] = Some(loads);
+    }
+}
+
 impl OsrFacts {
     /// The facts the observation's field descriptors embed in code compiled from it.
     fn observed(observation: &Observation<'_>) -> Self {
@@ -343,7 +363,7 @@ impl LoopPlanner<'_> {
         generic: &[usize], direct: &super::lane_region::DirectSites) -> Option<super::lane_region::LoweredRegion> {
         let number_reads = observed_reads(self.program, unit, self.observation.number_arrays, self.observation.abandoned, generic);
         super::lane_region::RegionSpecializer {
-            number_reads: &number_reads, int_entries: self.observation.int_entries, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
+            number_reads: &number_reads, int_entries: self.observation.int_entries, number_entries: self.observation.double_registers, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
             function_id: self.function_id, unit, helpers: self.helpers, fields: self.fields,
             global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts { tiers: self.tiers, held_atoms: self.stores, construct_plans: self.observation.construct_plans, ..VmFacts::STATIC }, generic,
             direct, frame_captures: self.observation.frame_captures, isa: self.isa,
@@ -435,7 +455,14 @@ pub(in crate::vm) fn start_osr_region(
     let invalidation = Invalidation::default();
     // The b-jit's rows hold global slots where the VM and the program run specialized (`stores` is that fact).
     let globals = (crate::jit_mode::base_regions() && region.inlining.is_none() && stores.is_some()).then(|| global_reads(&loop_unit(program.function(function_id as usize)), GlobalTable::Base));
-    let known = super::base_region::Known { program, stores, reads: None, adds: None, names: None, invalidation: Some(invalidation.address()), constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: globals.as_ref(), stitch: &tiers.stitch };
+    // The field sites' loads the observation recorded, which its facts name (`OsrFacts::observed`): a
+    // shape compaction retires the region, so its inline-cache rows may patch these shapes in.
+    let fields = loop_fields(region, observation);
+    let mut row_fields = fields.clone();
+    stored_after_reads(region.instructions(), &mut row_fields);
+    let reads = |site: u16| row_fields.get(usize::from(site)).cloned().flatten().unwrap_or_default();
+    let reads = stores.is_some().then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>);
+    let known = super::base_region::Known { program, stores, reads, adds: None, names: None, invalidation: Some(invalidation.address()), constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: globals.as_ref(), stitch: &tiers.stitch };
     let unit_calls = std::mem::take(&mut calls.direct);
     if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation.clone())) {
         return decided;
@@ -443,7 +470,7 @@ pub(in crate::vm) fn start_osr_region(
     // The calls' callees, by the sites that reached them: the lowered unit calls them by their entries.
     let caller = program.function(function_id as usize);
     let held = stores.map(|names| super::HeldAtoms { names, invalidation: invalidation.address() });
-    let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views, tiers, stores: held, unit_calls: &unit_calls };
+    let planner = LoopPlanner { observation, fields: &fields, isa: &*isa, program, function_id, helpers, views, tiers, stores: held, unit_calls: &unit_calls };
     let (lowered, direct) = lower_loop(&planner, region, global_reads, widened)?;
     let function = lowered.function;
     super::residuals::report_clif(region.header, &function);
@@ -492,7 +519,7 @@ impl PendingOsrRegion {
         if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
             dump_native_code(directory, DumpSite::Loop { header }, &memory, &clif);
         }
-        Ok(OsrCompile::Done(CompiledOsrRegion { code: memory, entry, facts, crossing, resumes, calls }))
+        Ok(OsrCompile::Done(CompiledOsrRegion { code: memory, entry, facts, crossing, resumes, calls, parked: std::cell::Cell::new(None), made: std::cell::Cell::new(false) }))
     }
 }
 

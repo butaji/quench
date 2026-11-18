@@ -100,7 +100,7 @@ fn kind_repr(kind: Kind, operands: Option<Representation>, widened: bool) -> Opt
     match kind {
         Kind::Not => Some(Representation::Tagged),
         _ if operands == Some(Representation::Tagged) => Some(Representation::Tagged),
-        Kind::Neg | Kind::Sqrt => Some(Representation::Float64),
+        Kind::Neg | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round => Some(Representation::Float64),
         Kind::Move | Kind::Const => operands,
         Kind::Div => Some(Representation::Float64),
         Kind::Add | Kind::Sub | Kind::Mul | Kind::Rem => if widened || operands == Some(Representation::Float64) { Some(Representation::Float64) } else { Some(Representation::Int32) },

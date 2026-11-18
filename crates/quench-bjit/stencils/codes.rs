@@ -50,10 +50,18 @@ pub const NOT: u8 = 27;
 pub const NEG: u8 = 28;
 /// `%`: the staged Number remainder (`NumberOperation::Remainder`).
 pub const REM: u8 = 29;
-/// `Math.sqrt` of a Number: the staged `NumberOperation::Math`, a double, the one definition the
-/// native runs (`staged::math::float_unary`), one `sqrtsd`. `Math.abs` is a sign mask LLVM loads from
-/// a constant pool and the rounding functions are libm calls in the stencil build: no stencil holds either.
+/// The Math functions of one Number: the staged `NumberOperation::Math`, a double, the one definition
+/// the native runs (`staged::math::float_unary`): `sqrtsd`, `roundsd` (x86-64-v2 and up), a sign mask in
+/// a register, and `Math.round`'s composition of them, its constants immediates (`machine::constant`).
 pub const SQRT: u8 = 30;
+pub const FLOOR: u8 = 31;
+pub const CEIL: u8 = 32;
+pub const TRUNC: u8 = 33;
+pub const ABS: u8 = 34;
+pub const ROUND: u8 = 35;
+/// The first and last of the Math rows.
+pub const MATH_FIRST: u8 = SQRT;
+pub const MATH_LAST: u8 = ROUND;
 
 pub const CAPTURE_ROW: u8 = 0;
 pub const INDEX_ROW: u8 = 1;
@@ -166,6 +174,12 @@ pub const TYPED_INDEX_LAST: u8 = TYPED_INDEX_ROW + TYPED_KINDS - 1;
 pub const TYPED_STORE_ROW: u8 = TYPED_INDEX_LAST + 1;
 pub const TYPED_STORE_LAST: u8 = TYPED_STORE_ROW + TYPED_KINDS - 1;
 pub const TYPED_LENGTH_ROW: u8 = TYPED_STORE_LAST + 1;
+/// The receiver-proof rows (`ic_rows.rs`, `base_region::proofs`): the proof that the object register is of the
+/// entry's exact shape with flat values, and the guardless read and stores of a receiver every path proved so.
+pub const IC_PROOF_ROW: u8 = TYPED_LENGTH_ROW + 1;
+pub const IC_KNOWN_GET_ROW: u8 = IC_PROOF_ROW + 1;
+pub const IC_KNOWN_SET_ROW: u8 = IC_KNOWN_GET_ROW + 1;
+pub const IC_KNOWN_SET_INT_ROW: u8 = IC_KNOWN_SET_ROW + 1;
 /// The discriminants of the kinds with no native element (BigInt64, BigUint64, Float16), which have no row.
 pub const NON_NATIVE_KINDS: [u8; 3] = [7, 8, 9];
 /// The property-add rows (`staged::add::site_add`): an object register's or the activation's receiver
