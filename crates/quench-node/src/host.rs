@@ -7,6 +7,7 @@ pub(crate) mod real_path;
 pub mod process_start;
 pub mod resident_pages;
 pub(crate) mod shared_vm;
+pub(crate) mod ts_checker;
 pub(crate) mod startup_snapshot;
 
 pub(crate) use crate::shared_run::EntryGoal;

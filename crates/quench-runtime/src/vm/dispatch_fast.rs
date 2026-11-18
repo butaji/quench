@@ -21778,7 +21778,7 @@ const TABLE_SLOTS: usize = crate::bytecode::OPCODE_COUNT.next_multiple_of(TABLE_
 const TABLE_ROW: u16 = 16;
 const TABLE_ROWS: usize = TABLE_SLOTS / TABLE_ROW as usize;
 // `lane_table` lists one generated row per sixteen opcodes.
-const _: () = assert!(TABLE_ROWS == 17, "add a `table_row!` to `lane_table` per sixteen new opcodes");
+const _: () = assert!(TABLE_ROWS == 18, "add a `table_row!` to `lane_table` per sixteen new opcodes");
 
 macro_rules! table_row {
     ($h:ty, $backward:literal, $acc:expr, $row:literal) => {
@@ -21839,6 +21839,7 @@ macro_rules! lane_table {
             table_row!($h, $backward, $acc, 14),
             table_row!($h, $backward, $acc, 15),
             table_row!($h, $backward, $acc, 16),
+            table_row!($h, $backward, $acc, 17),
         ])
     };
 }
