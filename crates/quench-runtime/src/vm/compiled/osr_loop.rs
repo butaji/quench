@@ -33,6 +33,7 @@ use crate::bytecode::{
     OperandKind, Register, WideInstruction,
 };
 use crate::compile::liveness::RegisterSet;
+use crate::dataflow::{solve, Dataflow};
 use crate::value::Value;
 use super::super::operations::{NumberArithmetic, NumberBitwise, NumberUnary};
 
@@ -2444,50 +2445,74 @@ fn successors(region: &LoopRegion, pc: u32) -> Vec<u32> {
     successors
 }
 
+/// Forward reaching definitions over a region's instructions: a block's input is the definitions
+/// reaching it, and its output replaces the register its instruction writes with that write.
+struct Reaching<'a> {
+    region: &'a LoopRegion,
+    /// Each definition of an entry register or a write is its index, `entries` plus the offset.
+    entries: usize,
+    /// The offsets reachable from the header inside the region.
+    reachable: Vec<bool>,
+    /// The offsets each instruction's control flows to inside the region.
+    edges: Vec<Vec<usize>>,
+}
+
+impl Dataflow for Reaching<'_> {
+    type State = std::collections::BTreeMap<Register, std::collections::BTreeSet<Definition>>;
+    fn blocks(&self) -> usize { self.edges.len() }
+    fn edges(&self, block: usize) -> &[usize] { &self.edges[block] }
+    fn entry_state(&self, block: usize) -> Option<Self::State> {
+        if !self.reachable[block] {
+            return None;
+        }
+        let mut state = std::collections::BTreeMap::new();
+        if block == 0 {
+            for (index, register) in self.region.entry_registers().enumerate() {
+                state.entry(register).or_insert_with(std::collections::BTreeSet::new).insert(index);
+            }
+        }
+        Some(state)
+    }
+    fn join(&self, into: &mut Self::State, incoming: &Self::State) -> bool {
+        let mut changed = false;
+        for (register, definitions) in incoming {
+            let set = into.entry(*register).or_default();
+            let before = set.len();
+            set.extend(definitions.iter().copied());
+            changed |= set.len() != before;
+        }
+        changed
+    }
+    fn transfer(&mut self, block: usize, state: &Self::State) -> Self::State {
+        let mut out = state.clone();
+        if let Some(register) = number_definition(self.region.instructions[block]) {
+            out.insert(register, std::collections::BTreeSet::from([self.entries + block]));
+        }
+        out
+    }
+}
+
 fn webs(region: &LoopRegion) -> Webs {
     use std::collections::{BTreeMap, BTreeSet};
     let count = region.instructions.len();
     let entries = region.entry_count();
     let inside = |pc: u32| (region.header..=region.backedge).contains(&pc);
+    let edges: Vec<Vec<usize>> = (0..count).map(|offset| {
+        let pc = region.header + offset as u32;
+        successors(region, pc).into_iter().filter(|pc| inside(*pc)).map(|pc| (pc - region.header) as usize).collect()
+    }).collect();
     let mut reachable = vec![false; count];
-    let mut pending = vec![region.header];
-    while let Some(pc) = pending.pop() {
-        let offset = (pc - region.header) as usize;
+    let mut pending = vec![0usize];
+    while let Some(offset) = pending.pop() {
         if std::mem::replace(&mut reachable[offset], true) {
             continue;
         }
-        pending.extend(successors(region, pc).into_iter().filter(|pc| inside(*pc)));
-    }
-    let mut reaching: Vec<BTreeMap<Register, BTreeSet<Definition>>> = vec![BTreeMap::new(); count];
-    for (index, register) in region.entry_registers().enumerate() {
-        reaching[0].entry(register).or_default().insert(index);
+        pending.extend(edges[offset].iter().copied());
     }
     // Forward reaching definitions to a fixpoint; regions are small.
-    loop {
-        let mut changed = false;
-        for offset in 0..count {
-            if !reachable[offset] {
-                continue;
-            }
-            let pc = region.header + offset as u32;
-            let mut out = reaching[offset].clone();
-            if let Some(register) = number_definition(region.instructions[offset]) {
-                out.insert(register, BTreeSet::from([entries + offset]));
-            }
-            for successor in successors(region, pc).into_iter().filter(|pc| inside(*pc)) {
-                let target = &mut reaching[(successor - region.header) as usize];
-                for (register, definitions) in &out {
-                    let set = target.entry(*register).or_default();
-                    let before = set.len();
-                    set.extend(definitions.iter().copied());
-                    changed |= set.len() != before;
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
+    let mut analysis = Reaching { region, entries, reachable, edges };
+    let reaching: Vec<BTreeMap<Register, BTreeSet<Definition>>> = solve(&mut analysis).into_iter().map(Option::unwrap_or_default).collect();
+    let Reaching { reachable, .. } = analysis;
     let mut webs = Webs {
         reachable,
         parent: (0..entries + count).collect(),
