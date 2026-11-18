@@ -13,7 +13,7 @@ use super::lane_region::StableFacts;
 use crate::code_dependencies::Invalidation;
 mod calls;
 pub(in crate::vm) use calls::{CallCode, RegionCalls};
-use crate::bytecode::{FieldLookup, Function, Op, ResidualProgram, WideInstruction};
+use crate::bytecode::{FieldLookup, Function, ResidualProgram, WideInstruction};
 use crate::vm::global_facts::GlobalTable;
 use super::super::specializer::Specializer;
 use std::collections::BTreeMap;
@@ -172,7 +172,7 @@ fn insert_markers(instructions: &mut Vec<WideInstruction>, origins: &mut Vec<lan
     inserted.dedup_by_key(|(at, _)| *at);
     let mut markers: Vec<usize> = inserted.iter().map(|(at, _)| *at).collect();
     for &(at, call) in inserted.iter().rev() {
-        instructions.insert(at, WideInstruction::new(Op::Nop, 0, 0, 0, 0));
+        instructions.insert(at, crate::staged::emit::nop());
         origins.insert(at, lane_unit::Origin::Caller(call));
     }
     // A jump target lands on the marker at its own position, as the call's PC did: an
@@ -265,7 +265,7 @@ impl OsrFacts {
 pub(super) fn observed_reads(unit: &lane_unit::Unit, number_arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)],
     abandoned: &[usize], generic: &[usize]) -> Vec<super::facts::ObservedRead> {
     unit.instructions.iter().enumerate()
-        .filter(|(pc, instruction)| instruction.op().is_get_index() && !abandoned.contains(pc))
+        .filter(|(pc, instruction)| matches!(crate::staged::Operation::<u64, ()>::of(**instruction), Some(crate::staged::Operation::ElementRead { .. })) && !abandoned.contains(pc))
         .filter_map(|(pc, instruction)| {
             let register = instruction.operand_b().register_index()?;
             let ty = number_arrays.iter().find(|(array, _)| *array == register)?.1;
