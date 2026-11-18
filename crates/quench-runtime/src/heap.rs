@@ -1196,7 +1196,7 @@ impl Heap {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::Array { object });
         }
-        self.alloc_array_of(object, prototype)
+        self.alloc_slotless_array_of(object, prototype)
     }
 
     /// `alloc(Cell::Array { object })`: an array record while one is free, charged as any
@@ -1210,6 +1210,15 @@ impl Heap {
     #[inline(always)]
     fn alloc_array_of(&mut self, object: ArrayObject, prototype: Value) -> Value {
         self.admit_object_contents(&object);
+        self.alloc_slotless_array_of(object, prototype)
+    }
+
+    /// `alloc_array_of` of an array with no named property (`ArrayObject::fresh`: the empty
+    /// shape, no property store), whose admission to the slot-type ledger
+    /// (`admit_object_contents`) has no slot to note or recode.
+    #[inline(always)]
+    fn alloc_slotless_array_of(&mut self, object: ArrayObject, prototype: Value) -> Value {
+        debug_assert!(object.shape() == 0);
         self.mark_prototype(prototype);
         self.charge_payload_allocation(array_payload_bytes(&object));
         match self.array_records.try_insert(object) {
@@ -1247,7 +1256,7 @@ impl Heap {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::Array { object });
         }
-        self.alloc_array_of(object, prototype)
+        self.alloc_slotless_array_of(object, prototype)
     }
 
     /// The allocation ledger's charge for one cell owning `payload` bytes beyond its slot, of
@@ -1365,6 +1374,7 @@ impl Heap {
     /// The directory of the typed array view record pages by legacy slot and its page count
     /// (`NATIVE_TYPED_ARRAY_LAYOUT`): read an entry from a current live typed array's slot
     /// index, finish before any VM safepoint, which an allocation may move the directory at.
+    #[inline]
     pub(crate) fn typed_view_directory(&self) -> (*const usize, usize) {
         self.typed_views.directory()
     }

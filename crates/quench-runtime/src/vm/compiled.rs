@@ -3387,7 +3387,7 @@ struct JsStepDispatch {
     /// `epoch`, and the admission a site whose entry misses asks.
     call_cache: usize,
     epoch: u64,
-    layout_seen: u64, // `Heap::native_layout_epoch` at the last lane entry's refresh; `u64::MAX`: never
+    layout_seen: u64, // `Heap::native_layout_epoch` at the last reread of the bases (`refresh_object_bases`); `u64::MAX`: never
     frameless: usize,
     /// The VM's in-loop call targets (`Vm::in_loop_call_target`), which an inlined body's
     /// binding probes before its helper; an empty table where an eval binds no callee.
@@ -4342,7 +4342,31 @@ impl JsStepDispatch {
 
     /// Object loads, stores and barriers share these bases in lane and general code.
     /// Allocation or collection between native entries may move any of them.
+    /// The bases native code reads, as `vm` holds them now. They stand while this VM's record
+    /// layout (`Heap::native_layout_epoch`: collections, record blocks, mark blocks), method
+    /// cache atom words, typed view directory and slot tracking are as last read, and the
+    /// lazily made empty string and unit strings exist: then one pass of compares replaces the
+    /// rereads every allocating, call or step helper ends with.
+    #[inline]
     fn refresh_object_bases<H: Host>(&mut self, vm: &Vm<H>) {
+        let layout = vm.heap.native_layout_epoch();
+        let atoms = vm.method_cache_atoms.words();
+        let (directory, pages) = vm.heap.typed_view_directory();
+        if self.vm == (vm as *const Vm<H>).addr() && self.layout_seen == layout
+            && self.method_cache_atoms == atoms.as_ptr() as usize && self.method_cache_atom_words == atoms.len()
+            && self.typed_view_directory == directory.addr() && self.typed_view_pages == pages
+            && self.slots_tracked == usize::from(vm.heap.tracks_slot_values())
+            && self.empty_string != Value::DELETED.to_bits() && self.ascii_unit_strings != 0
+        {
+            return;
+        }
+        self.reread_object_bases(vm);
+        self.layout_seen = layout;
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn reread_object_bases<H: Host>(&mut self, vm: &Vm<H>) {
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
         self.function_record_base = vm.heap.function_record_base().map_or(0, |base| base as usize);
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
