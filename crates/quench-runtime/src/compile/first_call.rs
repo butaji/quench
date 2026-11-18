@@ -212,7 +212,9 @@ impl ParsedProgramShape<'_> {
     /// The starts of the function declarations of `program`, of this shape, that may compile
     /// as first-call stubs: an eval's whose functions compile again from their text alone
     /// (`replayable`), or a large classic script's (`stubbing`), when its root is sloppy and
-    /// declares no lexical binding.
+    /// declares no lexical binding. A Function-constructor body's declarations are not roots:
+    /// their free names are the body's own bindings, which a root's chunk, compiled as a script,
+    /// would resolve in the global environment. They stub as nested stubs (`nested_stub_captures`).
     pub(super) fn first_call_roots(self, replayable: bool, program: &Program<'_>, inherited_strict: bool) -> Starts {
         let strict = inherited_strict || program.directives.iter().any(|directive| directive.directive == "use strict");
         let lexical = program.body.iter().any(|statement| match statement {
