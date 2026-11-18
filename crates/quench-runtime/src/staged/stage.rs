@@ -192,7 +192,7 @@ pub(crate) trait Stage {
         let either = self.any(neither_a, neither_b);
         self.not(either)
     }
-    /// ToBoolean of the Number whose IEEE double bits are `bits` (`number_is_truthy`).
+    /// ToBoolean of the Number whose IEEE double bits are `bits` (`number_truthiness` at f64).
     fn number_truthy(&mut self, bits: Self::Word) -> Self::Cond;
     /// Whether the shape word `shape` is one of `shapes`, sorted.
     fn shape_in(&mut self, shape: Self::Word, shapes: &[u32]) -> Self::Cond;

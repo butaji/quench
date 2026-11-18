@@ -13,6 +13,7 @@
 //! holds under the body's own dependencies (`GlobalRead::Stable`): the load of the binding
 //! defines the callee register as that constant, and the call compares nothing per use.
 
+use crate::bytecode::JsDenotation;
 use super::*;
 use crate::bytecode::ImmediateLayout;
 use crate::staged::flow::FlowStage;

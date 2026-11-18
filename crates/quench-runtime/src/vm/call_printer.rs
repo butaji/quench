@@ -92,7 +92,7 @@ impl<H: Host> Vm<H> {
     fn call_instruction_callee(&self, program: &ResidualProgram, frame: usize, instruction: WideInstruction, construct: bool) -> Option<Callee> {
         let register = |index: u16| self.frames.get(frame)?.registers.get(usize::from(index)).copied();
         if call_kind(instruction)? != construct { return None; }
-        Some(if crate::staged::meaning_dispatch::method_call(instruction) {
+        Some(if crate::staged::calls_method_site(instruction.op()) {
             Callee::Method {
                 receiver: register(instruction.register_b())?,
                 atom: program.method_sites.get(instruction.method_site_index())?.atom,
@@ -144,7 +144,14 @@ impl<H: Host> Vm<H> {
 }
 
 fn call_kind(instruction: WideInstruction) -> Option<bool> {
-    crate::staged::meaning_dispatch::named_callee_is_construction(instruction)
+    // merge: HEAD's named_callee_is_construction is replaced by the derivation's construction and makes_call tests.
+    if crate::staged::Operation::<u64, ()>::is_construction(instruction) && !instruction.is_super_construct() {
+        Some(true)
+    } else if crate::staged::makes_call(instruction.op()) {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 /// Freeze source-derived descriptions without opening or compiling lazy function bodies.

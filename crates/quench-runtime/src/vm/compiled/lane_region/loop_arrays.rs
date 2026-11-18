@@ -1,6 +1,7 @@
 //! The arrays a region's loops index in place (`LoopArray`), whose views each loop's
 //! entering edge proves once (`Lowering::hoist_arrays`).
 
+use crate::bytecode::Class;
 use super::*;
 
 /// An array base a local loop indexes and never redefines: its loop's entry proves the

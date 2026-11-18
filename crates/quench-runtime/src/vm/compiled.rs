@@ -26,8 +26,8 @@
 use tier_policy::Tiers;
 use super::dispatch_fast::Activation;
 use super::*;
-use crate::bytecode::{Class, Traits,
-    ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
+use crate::bytecode::{Traits,
+    ControlFlowLayout, FieldLookup, Function, Operand, OperandKind, ResidualProgram,
     WideInstruction,
 };
 use crate::staged::wasm_call::Call as WasmCall;
@@ -1053,11 +1053,15 @@ lane_helper_inventory! { H;
     FieldAdd => lane_field_add::<H>,
     /// The slow arm of a loop's hoisted typed array view proof (`lane_typed_array_view`).
     TypedArrayView => lane_typed_array_view::<H>,
-    /// A VM operation a staged row calls out for (`dispatch_fast::lane_vm_step`).
-    VmStep => super::dispatch_fast::lane_vm_step::<H>,
-    /// An instruction whose general step runs in place (`dispatch_fast::lane_body_step`), which the b-jit's
+    /// `+` of strings (`dispatch_fast::body_string_concat`), named by the b-jit call planner
+    /// (`base_region::call_plan`), which the whole-function planner will consume.
+    #[allow(dead_code)]
+    StringConcat => super::dispatch_fast::body_string_concat::<H>,
+    /// A VM operation a staged row calls out for (`dispatch_fast::vm_operation_step`).
+    VmStep => super::dispatch_fast::vm_operation_step::<H>,
+    /// An instruction whose general step runs in place (`dispatch_fast::body_general_step`), which the b-jit's
     /// helper steps and stepped calls make (`base_region::steps`).
-    Step => super::dispatch_fast::lane_body_step::<H>,
+    Step => super::dispatch_fast::body_general_step::<H>,
     /// ToBoolean of a value its cell decides (`lane_truthy`).
     Truthy => lane_truthy::<H>,
     /// The array storage proofs a shorter array falsifies (`lane_retire_array_proofs`).
@@ -1073,10 +1077,10 @@ lane_helper_inventory! { H;
     /// A regexp literal's fresh object of its site's template (`lane_new_regexp`).
     NewRegExp => lane_new_regexp::<H>,
     /// A decision of two words the call-out carries, which needs no VM record
-    /// (`dispatch_fast::lane_decide`).
-    Decide => super::dispatch_fast::lane_decide::<H>,
-    /// A handler's entry in the frame, for the exception it catches (`dispatch_fast::lane_handler_edge`).
-    HandlerEdge => super::dispatch_fast::lane_handler_edge::<H>,
+    /// (`dispatch_fast::decide_comparison`).
+    Decide => super::dispatch_fast::decide_comparison::<H>,
+    /// A handler's entry in the frame, for the exception it catches (`dispatch_fast::handler_edge`).
+    HandlerEdge => super::dispatch_fast::handler_edge::<H>,
 }
 
 /// Makes the frames of a chain of native activations, outer to inner, above the payload's
@@ -1264,7 +1268,7 @@ struct NullishComparison {
 /// Resolve the constant operand and equality denotation before execution.
 fn nullish_comparison(constants: &[crate::bytecode::Constant], instruction: WideInstruction,
     register_type: impl Fn(Register) -> typed_ir::Type) -> Option<NullishComparison> {
-    if !instruction.op().class().eq(Class::JumpBinaryFalse) { return None; }
+    if !matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::CompareJump { .. })) { return None; }
     let nullish = |operand: Operand| {
         let ty = facts::operand_type(constants, operand, &register_type);
         if ty == typed_ir::Type::language(crate::ValueType::Null) { Some(Value::NULL) }
@@ -3967,7 +3971,7 @@ unsafe extern "C" fn lane_strict_equal_cells<H: Host>(vm: u64, _residual: u64, l
 }
 
 /// A lane body's `value instanceof constructor`, decided as the interpreter's own record
-/// decides it (`lane_instanceof_jump_true`): the constructor's proof (`Vm::record_instanceof`),
+/// decides it (`lane_instanceof_value`): the constructor's proof (`Vm::record_instanceof`),
 /// else the ordinary walk (`Vm::ordinary_instanceof`), which calls nothing. 1 or 0, or
 /// `Value::DELETED` where only the full algorithm decides, which leaves the body at the test.
 unsafe extern "C" fn lane_instance_of<H: Host>(vm: u64, _residual: u64, value: u64, constructor: u64) -> u64 {
@@ -4116,7 +4120,7 @@ unsafe extern "C" fn lane_function_capture_read<H: Host>(vm: u64, callee: u64, s
 
 impl<H: Host> Vm<H> {
     /// The value a global read of `atom` through cache `site` takes as the lane's own read
-    /// does (`dispatch_fast::lane_load_global_name_refresh`): its global lexical binding's, else
+    /// does (`dispatch_fast::global_name_refresh_miss`): its global lexical binding's, else
     /// the global object's own data property or cached field; none for a binding in its TDZ or a miss.
     pub(super) fn lane_global_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> Option<Value> {
         match self.global_name_read(code, atom, site) {
@@ -4140,18 +4144,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn instruction_field_sites(program: &ResidualProgram, instruction: &WideInstruction) -> Vec<(u16, bool)> {
-        match decoded_completed(instruction) {
-            Some(crate::staged::Operation::GetField { .. }) => match instruction.field_lookup() {
-                Some(FieldLookup::Atom { cache_site, .. }) => vec![(cache_site, true)],
-                Some(FieldLookup::Site(index)) => program.field_sites.get(index).map_or_else(Vec::new, |site| {
-                    let reads = [Some(site.first), site.second].into_iter().flatten().map(|(_, cache)| (cache, true));
-                    reads.chain(site.sink.map(|(_, cache)| (cache, false))).collect()
-                }),
-                None => Vec::new(),
-            },
-            Some(crate::staged::Operation::SetField { .. }) => vec![(instruction.cache_site_index(), false)],
-            _ => Vec::new(),
-        }
+        crate::staged::Operation::<u64, ()>::field_cache_sites(*instruction, &program.field_sites)
     }
 
     /// The proved shapes and slots of `unit`'s field sites, but those of the instructions at
@@ -4784,7 +4777,7 @@ const JS_NO_STOP_PC: usize = usize::MAX;
 
 #[cfg(feature = "profile-native-ops")]
 fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction: WideInstruction) -> &'static str {
-    if instruction.op().class().eq(Class::JumpBinaryFalse) {
+    if matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::CompareJump { .. })) {
         let Some((strict, _)) = super::operations::equality_operator(instruction.binary_operator_field()) else {
             return "branch-relation";
         };
@@ -4808,7 +4801,8 @@ fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction
             "branch-other-equality"
         };
     }
-    if matches!(decoded(instruction), Some(crate::staged::Operation::LoadCapture { .. })) {
+    // merge: `is_capture_read` does not exist on the staged Operation; match the decoded LoadCapture instead.
+    if matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::LoadCapture { .. })) {
         if instruction.capture_depth() != 0 {
             return "capture-outer-depth";
         }
@@ -4832,7 +4826,7 @@ fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction
             None => "capture-slot-miss",
         };
     }
-    if !instruction.op().class().eq(Class::GetField) {
+    if !crate::staged::Operation::<u64, ()>::is_field_read(instruction) {
         return "other";
     }
     if vm.frames[frame].function == 0 {
@@ -5040,7 +5034,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             }));
         }
 
-        if !SINGLE_OPERATION && matches!(decoded_completed(instruction), Some(crate::staged::Operation::GetField { .. }))
+        if !SINGLE_OPERATION && crate::staged::Operation::<u64, ()>::is_field_read(instruction)
             && (instruction.result_flags() == 0
                 || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
             && !instruction.writes_current_this()
@@ -5089,8 +5083,9 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             }
         }
 
-        // A named store through a register receiver (`SetField`, `SetFieldStrict`): the js field store.
-        if !SINGLE_OPERATION && matches!(decoded_completed(instruction), Some(crate::staged::Operation::SetField { base: Some(_), .. }))
+        // merge: HEAD's js field store is a named store through a register receiver (`base: Some`).
+        if !SINGLE_OPERATION && matches!(crate::staged::Operation::<u64, ()>::of(instruction),
+            Some(crate::staged::Operation::SetField { base: Some(_), .. }))
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
             && next_pc < body.code.len()
@@ -5134,7 +5129,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         let mut next = next_pc;
         loop {
             let layout = current_instruction.op().control_flow_layout();
-            let is_call = current_instruction.op().is_ordinary_call();
+            let is_call = crate::staged::Operation::<u64, ()>::is_ordinary_call(current_instruction);
             let diagnostics_enabled = is_call && vm.programs.js_jit_diagnostics_enabled();
             let direct_call_target = if diagnostics_enabled && is_call {
                 vm.frames[dispatch.frame]
@@ -5160,7 +5155,8 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                     current_instruction.op(),
                 );
             let call_sample_started = sample_call.then(std::time::Instant::now);
-            let capture = if matches!(decoded(current_instruction), Some(crate::staged::Operation::LoadCapture { .. })) {
+            let capture = if matches!(crate::staged::Operation::<u64, ()>::of(current_instruction),
+                Some(crate::staged::Operation::LoadCapture { .. })) {
                 vm.cached_direct_capture(
                     dispatch.frame,
                     current_instruction.capture_depth(),
@@ -5206,7 +5202,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 )
             };
             // A construction the operation pushed completes as a pushed call does.
-            let step = if current_instruction.op().class().eq(Class::Construct) && dispatch.allow_inline_calls {
+            let step = if crate::staged::Operation::<u64, ()>::is_construction(current_instruction) && dispatch.allow_inline_calls {
                 vm.complete_pushed_call(program, dispatch.frame, current_instruction, step)
             } else { step };
             if is_call && diagnostics_enabled {
@@ -7902,7 +7898,7 @@ impl<H: Host> Vm<H> {
             let body = program.function_get(function as usize)?;
             let last_pc = body.code.len().checked_sub(1)?;
             let terminal = body.code.get(last_pc)?.as_wide();
-            if terminal.op().class().eq(Class::Return) {
+            if matches!(crate::staged::Operation::<u64, ()>::of(terminal), Some(crate::staged::Operation::Return { .. })) {
                 return Some((last_pc, terminal.register_a(), value));
             }
         }
@@ -7922,7 +7918,7 @@ impl<H: Host> Vm<H> {
     /// The callee's depth-0 capture under the same environment binding as the lane.
     pub(super) fn environment_capture(&mut self, env: Value, slot: u16) -> Option<Value> {
         // A frameless activation's function has no environment of its own
-        // (`lane_load_capture_walk`).
+        // (`load_capture_walk_miss`).
         let (slots, root) = self.walked_capture_slots(env, false, 0)?;
         // SAFETY: as `Vm::walked_capture_slots`; nothing collects before the read.
         self.owned_capture(unsafe { &*slots }, root, slot)
@@ -8112,7 +8108,7 @@ impl<H: Host> Vm<H> {
         let value = compiled.call(arguments, &self.execution_interrupt, poll_page)?;
         let last_pc = function.code.len().checked_sub(1)?;
         let terminal = function.code.get(last_pc)?.as_wide();
-        (terminal.op().class().eq(Class::Return)).then_some((last_pc, terminal.register_a(), value))
+        (matches!(crate::staged::Operation::<u64, ()>::of(terminal), Some(crate::staged::Operation::Return { .. }))).then_some((last_pc, terminal.register_a(), value))
     }
 
     /// Compiles and installs `function`'s numeric body (`js_compiled::compile`); `None` where
@@ -8237,7 +8233,7 @@ impl<H: Host> Vm<H> {
         (compiled.params() == params).then_some(())?;
         let return_pc = body.code.len().checked_sub(1)?;
         let terminal = body.code.get(return_pc)?.as_wide();
-        (terminal.op().class().eq(Class::Return)).then_some(())?;
+        (matches!(crate::staged::Operation::<u64, ()>::of(terminal), Some(crate::staged::Operation::Return { .. }))).then_some(())?;
         Some(DirectTierEntry {
             compiled: Rc::downgrade(compiled),
             return_pc,
@@ -9376,7 +9372,7 @@ const VOID_RESULT_CONSTANT: usize = 1;
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
 pub(super) fn lane_body_may_amortize(tiers: &Tiers, body: &crate::bytecode::Function) -> bool {
     body.loops() || body.code.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
-        || body.code.iter().any(|packed| body.widened(*packed).op().is_call())
+        || body.code.iter().any(|packed| crate::staged::Operation::<u64, ()>::is_plain_call(super::dispatch_fast::decoded_instruction(body, *packed)))
 }
 
 /// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
@@ -10510,7 +10506,9 @@ mod tests {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
             let writer = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "write")).unwrap();
-            let store = program.function(writer).instructions().find(|i| matches!(decoded(i), Some(crate::staged::Operation::SetField { base: Some(_), strict: false, .. }))).unwrap();
+            // merge: HEAD found the register-receiver store (`base: Some`, not strict).
+            let store = program.function(writer).instructions().find(|i| matches!(crate::staged::Operation::<u64, ()>::of(*i),
+                Some(crate::staged::Operation::SetField { base: Some(_), strict: false, .. }))).unwrap();
             let method = vm.compile_lane_method(&program, reader as u32,
                 &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
             assert!(!method.dependencies.slots.is_empty());
@@ -11845,9 +11843,8 @@ mod tests {
     fn static_semantic_entry_admits_wide_opcodes_without_decoding_source_operands() {
         let mut program = crate::Engine::specialize("throw 7;", "wide-semantic-entry.js").unwrap();
         let body = &mut program.functions[0];
-        let pc = body.instructions().position(|instruction| matches!(decoded(instruction), Some(crate::staged::Operation::Protocol {
-            step: crate::staged::Protocol::Owned(crate::staged::protocol_owned::OwnedVarStep::ThrowValue), .. }))).unwrap();
-        let instruction = body.widened(body.code[pc]);
+        let pc = body.instructions().position(|instruction| crate::staged::Operation::<u64, ()>::is_throw(instruction)).unwrap();
+        let instruction = super::super::dispatch_fast::decoded_instruction(body, body.code[pc]);
         let wide_index = body.wide.len();
         body.wide.push(instruction);
         body.code[pc] = crate::bytecode::Instr::wide(wide_index).unwrap();

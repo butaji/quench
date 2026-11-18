@@ -212,7 +212,7 @@ fn a_row_that_calls_out_names_the_call_its_frame_receives() {
         let (call, result) = row.call_out().expect("a calling row");
         assert_eq!(frame.calls.last(), Some(&(call, result)));
     }
-    assert_eq!(CallOut::ForInNext { state: 1 }.operands().fixed, [None, Some(1)]);
+    assert_eq!(CallOut::ForInNext { state: 1 }.operands().fixed, [None, Some(Operand::register(1))]);
     assert!(Row::<u64, ()>::Jump.call_out().is_none());
 }
 
@@ -220,9 +220,9 @@ fn a_row_that_calls_out_names_the_call_its_frame_receives() {
 fn an_equality_or_key_the_words_do_not_decide_calls_the_vm_and_a_decided_one_does_not() {
     let mut frame = Probe::new(3);
     frame.registers[..2].copy_from_slice(&[Value::number(1.5).to_bits(), Value::number(2.5).to_bits()]);
-    let equality = Row::Equality { destination: 2, left: 0, right: 1, strict: true, negated: true };
+    let equality = Row::Equality { destination: 2, left: Operand::register(0), right: Operand::register(1), strict: true, negated: true };
     assert!(matches!(run(&mut frame, equality), Step::Value(_)));
-    assert_eq!(frame.calls, [(CallOut::Equality { left: 0, right: 1, strict: true, negated: true }, Some(2))]);
+    assert_eq!(frame.calls, [(CallOut::Equality { left: Operand::register(0), right: Operand::register(1), strict: true, negated: true }, Some(2))]);
     frame.calls.clear();
     frame.registers[1] = frame.registers[0];
     assert!(matches!(run(&mut frame, equality), Step::Value(_)));
@@ -233,7 +233,7 @@ fn an_equality_or_key_the_words_do_not_decide_calls_the_vm_and_a_decided_one_doe
     assert_eq!(frame.calls, [(CallOut::PropertyKey { source: 0 }, Some(2))]);
     frame.declines = true;
     assert!(matches!(run(&mut frame, key), Step::Unresolved));
-    assert!(matches!(run(&mut frame, Row::Equality { destination: 2, left: 0, right: 1, strict: true, negated: false }),
+    assert!(matches!(run(&mut frame, Row::Equality { destination: 2, left: Operand::register(0), right: Operand::register(1), strict: true, negated: false }),
         Step::Value(_)), "a decided pair needs no host");
     frame.registers[1] = Value::number(2.5).to_bits();
     assert!(matches!(run(&mut frame, equality), Step::Unresolved));
@@ -261,7 +261,7 @@ fn a_delete_the_frame_does_not_answer_is_the_vms_and_defines_its_result() {
     assert!(matches!(run(&mut frame, delete), Step::Value(_)));
     assert_eq!(frame.calls, [(CallOut::Delete { base: 1, key: 2, strict: true }, Some(0))]);
     assert_eq!(Value::from_bits(frame.registers[0]), Value::number(9.0));
-    assert_eq!(CallOut::Delete { base: 1, key: 2, strict: true }.operands().fixed, [Some(1), Some(2)]);
+    assert_eq!(CallOut::Delete { base: 1, key: 2, strict: true }.operands().fixed, [Some(Operand::register(1)), Some(Operand::register(2))]);
     frame.declines = true;
     assert!(matches!(run(&mut frame, delete), Step::Unresolved));
 }

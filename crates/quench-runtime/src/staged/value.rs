@@ -113,11 +113,11 @@ pub(crate) fn is_double<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     stage.ugt_imm(offset, ValueLayout::TAG_FIELD_SPAN)
 }
 
-/// ToBoolean of `bits` as far as its own word decides it (`Value::truthiness`):
-/// `(undecided, truthy)`. A heap value other than an object or array record is undecided, its
-/// cell deciding (a string's length, a BigInt, the IsHTMLDDA object); `truthy` holds for any
-/// other truthy value: a record, a nonzero int32 or Number, or an immediate but `null`,
-/// `undefined`, `false` and the deleted marker.
+/// ToBoolean of `bits` as far as its own word decides it: `(undecided, truthy)`. A heap value
+/// other than an object or array record is undecided, its cell deciding (a string's length, a
+/// BigInt, the IsHTMLDDA object); `truthy` holds for any other truthy value: a record, a nonzero
+/// int32 or Number, or an immediate but `null`, `undefined`, `false` and the deleted marker.
+/// `Value::truthiness` is this at `Concrete`, so every stage decides the same cases.
 #[inline(always)]
 pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::Cond, S::Cond) {
     let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
@@ -168,6 +168,23 @@ pub(crate) fn typeof_classes<S: Stage>(stage: &mut S, bits: S::Word) -> (S::Cond
     let boolean = stage.eq_imm(tag, crate::Value::TRUE.to_bits() & ValueLayout::TAG_MASK);
     let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
     (number, boolean, null)
+}
+
+/// The kind a heap value's `typeof` name follows from its cell (a string, a BigInt, a symbol, an
+/// object or a function), as its index in `bytecode::TYPEOF_NAMES`: what `Frame::type_of` proves.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct TypeofKind(u64);
+
+impl TypeofKind {
+    /// The kind whose `typeof` name is `bytecode::TYPEOF_NAMES[index]`.
+    pub(crate) const fn of_index(index: u64) -> Self {
+        Self(index)
+    }
+
+    /// The index in `bytecode::TYPEOF_NAMES` of this kind's name.
+    pub(crate) const fn index(self) -> u64 {
+        self.0
+    }
 }
 
 /// The index in `bytecode::TYPEOF_NAMES` of `typeof` of the value `bits` where its tag alone decides

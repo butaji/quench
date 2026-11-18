@@ -6,34 +6,67 @@
 
 use super::value::{is_direct_string, is_int};
 use super::*;
+use crate::bytecode::OperandKind;
 use crate::value::ValueLayout;
+#[cfg(not(stencil_build))]
 use crate::vm::operations::equality_operator;
 use crate::Value;
+
+/// Whether `operand` names a register or a program constant: the operands a `Binary` or an
+/// `Equality` row reads (`NumericFrame::operand_word`).
+fn is_value_operand(operand: Operand) -> bool {
+    matches!(operand.kind(), Some(OperandKind::Register | OperandKind::Constant))
+}
 
 impl<W, P> Operation<W, P> {
     /// The `Binary`, `ToPropertyKey` and `JumpBinaryFalse` operations of `decode`; `None` where
     /// an operand is no register or the instruction returns from the frame.
-    pub(super) fn decode_generic(instruction: WideInstruction) -> Option<Self> {
+    pub(crate) fn decode_generic(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::ToPropertyKey => Self::PropertyKey {
                 destination: instruction.result_register(), source: instruction.register_b() },
             Op::Binary => return Self::decode_binary(instruction),
+            #[cfg(not(stencil_build))]
+            Op::NumericAdd | Op::NumericMultiply => return Self::decode_numeric_arithmetic(instruction),
             Op::JumpBinaryFalse => Self::decode_compare(instruction),
             _ => return None,
         })
     }
 
-    /// `Binary` over two registers: equality as its own row, any other operator the VM's.
+    /// `NumericAdd` and `NumericMultiply`: the Number arithmetic of their own operator (`+` or `*`)
+    /// over their two operands, which `Binary` decodes to the same operation (`decode_binary`). A record
+    /// whose operator field names another operator is none.
+    #[cfg(not(stencil_build))]
+    fn decode_numeric_arithmetic(instruction: WideInstruction) -> Option<Self> {
+        let own = match instruction.op() {
+            Op::NumericAdd => oxc_ast::ast::BinaryOperator::Addition,
+            _ => oxc_ast::ast::BinaryOperator::Multiplication,
+        } as u32;
+        if instruction.binary_operator() != own { return None; }
+        Self::decode_binary(instruction)
+    }
+
+    /// `Binary`: an arithmetic, bitwise or relation operator as its Number operation
+    /// (`numeric::binary_operation`), equality as its own row, and any other operator the VM's.
+    /// Both operands may be registers or program constants; any other operand leaves the record
+    /// to the general step.
     fn decode_binary(instruction: WideInstruction) -> Option<Self> {
-        let left = instruction.operand_b().register_index()?;
-        let right = instruction.operand_c().register_index()?;
         if instruction.result_flags() != 0 { return None; }
         let destination = instruction.result_register();
         let operator = instruction.binary_operator();
-        Some(match equality_operator(operator) {
+        let (left, right) = (instruction.operand_b(), instruction.operand_c());
+        if let Some(number) = super::numeric::binary_operation(operator, destination, left, right) {
+            return Some(Self::Number(number));
+        }
+        if !is_value_operand(left) || !is_value_operand(right) { return None; }
+        #[cfg(not(stencil_build))]
+        return Some(match equality_operator(operator) {
             Some((strict, negated)) => Self::Equality { destination, left, right, strict, negated },
             None => Self::Binary { destination, left, right, operator },
-        })
+        });
+        // The stencil build has no equality classifier: a non-Number `Binary` is the caller's own path.
+        #[cfg(stencil_build)]
+        return None;
     }
 }
 
@@ -111,9 +144,11 @@ pub(super) fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2]
 /// words do not decide it.
 #[inline(always)]
 fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
-    [left, right]: [Register; 2], (strict, negated): (bool, bool)) -> Step<S::Word, F::Control> {
-    let words = [frame.tagged(stage, left), frame.tagged(stage, right)];
-    let (decided, equal) = decide(stage, words, strict);
+    [left, right]: [Operand; 2], (strict, negated): (bool, bool)) -> Step<S::Word, F::Control> {
+    let (Some(left_word), Some(right_word)) = (frame.operand_word(stage, left), frame.operand_word(stage, right)) else {
+        return Step::Unresolved;
+    };
+    let (decided, equal) = decide(stage, [left_word, right_word], strict);
     let result = if negated { stage.not(equal) } else { equal };
     let (decision, fact) = frame.boolean(stage, result);
     let call = CallOut::Equality { left, right, strict, negated };

@@ -1,5 +1,5 @@
 //! The VM operations staged rows call out for (`staged::CallOut`), and the interpreter's frame
-//! that runs those rows in place. The lane's helper (`dispatch_fast::lane_vm_step`) makes the same
+//! that runs those rows in place. The lane's helper (`dispatch_fast::vm_operation_step`) makes the same
 //! step by `Vm::call_out`, so every tier shares the one definition.
 
 use super::*;
@@ -100,6 +100,12 @@ impl<H: Host> Vm<H> {
                 let binding = self.load_local_binding(p, VarOwner::Frame(frame), usize::from(slot), None)?;
                 self.read_arguments_binding(p, frame, binding, None).map(Some)
             }
+            // The element at `value` (the index operand), as `Op::ArgumentGet` reads it.
+            CallOut::ArgumentGet { slot, .. } => {
+                let frame = self.own_frame();
+                let binding = self.load_local_binding(p, VarOwner::Frame(frame), usize::from(slot), None)?;
+                self.read_arguments_binding(p, frame, binding, Some(value)).map(Some)
+            }
             CallOut::GlobalWrite { atom, site, initialize, .. } => {
                 self.at_binding_site(owner, resume, |vm| vm.store_name(p, owner, atom, value, site, initialize))?;
                 Ok(None)
@@ -108,6 +114,16 @@ impl<H: Host> Vm<H> {
                 self.at_binding_site(owner, resume, |vm| vm.load_name_typeof(p, owner, atom, site)).map(Some),
             CallOut::LoadName { atom, site } =>
                 self.at_binding_site(owner, resume, |vm| vm.load_name(p, owner, atom, Some(site))).map(Some),
+            // The frame's own clone, as `Op::CloneEnv` makes it and the lane's clone did: the frame's
+            // environment becomes its iteration copy where a closure captured it. Defines no register.
+            CallOut::CloneEnv { plan } => {
+                let frame = self.owner_frame(owner).expect("a clone names its frame");
+                let body = p.function(self.frames[frame].function as usize);
+                let clones = &body.environment_clones;
+                let clone = clones.get(plan as usize).expect("a clone's plan belongs to the running function");
+                self.clone_frame_environment(frame, &clone.fresh, clones.resets(clone))?;
+                Ok(None)
+            }
             _ => unreachable!("{operation:?} is no name step"),
         }
     }
@@ -292,7 +308,10 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
 
     fn vm_step(&mut self, _stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, ())> {
         let (vm, owner) = (&*self.vm, self.site.owner);
-        let operands = operation.operands().read(&self.program.method_arguments, |register| vm.owner_register(owner, register));
+        let operands = operation.operands().read(&self.program.method_arguments, |operand| match operand.register_index() {
+            Some(register) => vm.owner_register(owner, register),
+            None => vm.active_constant(usize::from(operand.payload())).expect("a call-out's constant is in its program"),
+        });
         match self.vm.call_out(self.program, self.site, operation, operands) {
             Ok(value) => Some((value.map_or(0, Value::to_bits), ())),
             Err(error) => {

@@ -2,6 +2,7 @@
 //! (`Lowering::resolve`): a counter below a bound, scaled and added to a base, all of them
 //! invariant but the counter.
 
+use crate::bytecode::JsDenotation;
 use super::super::*;
 use super::{Hoist, Induction, Reach, Term, Version};
 use super::super::super::facts::{IndexProof, Model, Point};

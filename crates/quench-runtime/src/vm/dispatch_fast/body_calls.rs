@@ -421,7 +421,7 @@ fn lane_body_this(target: &ScriptCallTarget, this: Value) -> Value {
 /// and any other end leaves the lane in the activation (`LANE_CALL_LEFT`).
 fn lane_body_activate<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: &ScriptCallTarget, this: Value, constructs: bool, how: LaneActivation) -> u64 {
     let vm = unsafe { vm(cx) };
-    lane_note_late_call(cx, call.ip, target, call.argc());
+    record_late_call(cx, call.ip, target, call.argc());
     let registers = match lane_body_push(cx, call, target, this, constructs, how) { Ok(registers) => registers, Err(refused) => return refused };
     // A leave resumes at a record of the callee's view, never at its tier prologue, which
     // lies outside its records: a loop region's `Callee` exit (`lane_loop_native`) leaves the

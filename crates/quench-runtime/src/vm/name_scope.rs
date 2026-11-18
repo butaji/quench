@@ -97,7 +97,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The general path's by-name read of `atom` at the running frame's current instruction,
-    /// when the lane left it as a probe (`lane_load_name_probe`): its record becomes a hinted
+    /// when the lane left it as a probe (`FLAG_PROBE`): its record becomes a hinted
     /// global read if the name lands on the global object, else it exits. A probe left at
     /// another instruction is dropped, its record probing again.
     pub(super) fn settle_name_probe(&mut self, p: &ResidualProgram, atom: Atom) {

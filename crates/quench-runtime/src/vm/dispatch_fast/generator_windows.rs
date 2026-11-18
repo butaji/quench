@@ -75,10 +75,10 @@ pub(super) fn running_generator<H: Host>(vm: &Vm<H>) -> bool {
 }
 
 /// `lane_generator_step` of a for-of step of a generator's `next` that the lane resumes as an
-/// activation (`lane_resume_generator`); `None` leaves any other step, and a step that returns
+/// activation (`resume_generator_in_lane`); `None` leaves any other step, and a step that returns
 /// its result from the frame, to the general ones.
 #[inline(never)]
-pub(super) fn lane_resume_generator_step<H: Host>(
+pub(super) fn resume_generator_step_in_lane<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
@@ -90,7 +90,7 @@ pub(super) fn lane_resume_generator_step<H: Host>(
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
         return None;
     }
-    lane_resume_generator(cx, r, ip, generator, method, Value::UNDEFINED, completion)
+    resume_generator_in_lane(cx, r, ip, generator, method, Value::UNDEFINED, completion)
 }
 
 /// How a resumed generator's window carries its locals (`FrameRecord::open_environment_window`):
@@ -214,7 +214,7 @@ pub(super) fn window_environments<H: Host>(
 /// them, are the record's own, bound as a call binds a fresh one; the frame's receiver and
 /// captures run with it. The registers and record the lane continues at, or `None`, before any
 /// effect, where the lane has no room or no view for it.
-pub(super) fn lane_resume_generator<H: Host>(
+pub(super) fn resume_generator_in_lane<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
@@ -330,7 +330,7 @@ fn generator_activation<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
 /// `destination`, and the activation pops. The caller resumes with the step's result: the
 /// iterator result of a yield of `value`, or `passed_on`, a delegate's own result object.
 #[inline(never)]
-fn lane_suspend_generator<H: Host>(
+fn suspend_generator_in_lane<H: Host>(
     cx: *mut LaneContext<H>,
     pc: usize,
     destination: crate::bytecode::Register,
@@ -346,12 +346,12 @@ fn lane_suspend_generator<H: Host>(
     vm.suspend_generator_window(script.callee, pc, destination, value, depth);
     vm.lane_stack.pop_activation();
     let (memory, _) = lane_restore_caller(cx, &activation);
-    lane_resume_generated(vm, &activation, memory, (value, false), passed_on)
+    resume_generated_in_lane(vm, &activation, memory, (value, false), passed_on)
 }
 
 /// The return of the generator activation, popped with its caller restored (`memory`), with
 /// `value`: the generator completes, and its caller resumes with the step's final result.
-pub(super) fn lane_generator_returned<H: Host>(
+pub(super) fn generator_returned_in_lane<H: Host>(
     cx: *mut LaneContext<H>,
     activation: &Activation,
     memory: MemoryView,
@@ -362,16 +362,16 @@ pub(super) fn lane_generator_returned<H: Host>(
         unreachable!("a generator runs as a script activation");
     };
     vm.finish_generator_window(script.callee);
-    lane_resume_generated(vm, activation, memory, (value, true), None)
+    resume_generated_in_lane(vm, activation, memory, (value, true), None)
 }
 
-/// The caller of a generator `activation` it left (`lane_suspend_generator`,
-/// `lane_generator_returned`) resumes with the step's `value` and `done`, or the delegate's own
+/// The caller of a generator `activation` it left (`suspend_generator_in_lane`,
+/// `generator_returned_in_lane`) resumes with the step's `value` and `done`, or the delegate's own
 /// result `passed_on`: a for-of step's reads take them in their registers and the caller goes
 /// on past them (`Completion::StepReads`), as `lane_iterator_step_reads` makes an array's step;
 /// any other caller takes the step's result object after its call, in the call's register, or,
 /// for a delegate's step, at the `yield*` itself in its state register.
-fn lane_resume_generated<H: Host>(vm: &mut Vm<H>, activation: &Activation, memory: MemoryView, (value, done): (Value, bool), passed_on: Option<Value>) -> Resumed {
+fn resume_generated_in_lane<H: Host>(vm: &mut Vm<H>, activation: &Activation, memory: MemoryView, (value, done): (Value, bool), passed_on: Option<Value>) -> Resumed {
     let completion = activation.script().map(|script| script.completion);
     if let (Some(Completion::StepReads(form)), None) = (completion, passed_on) {
         // SAFETY: the step's records follow its call in the caller's live view (`lane_for_of_step`).
@@ -397,11 +397,11 @@ fn lane_resume_generated<H: Host>(vm: &mut Vm<H>, activation: &Activation, memor
 
 /// `yield` of the running generator activation (`running_generator`): the frame suspends in
 /// place, resuming after this record, and its caller continues with the step's result.
-pub(super) fn lane_yield_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Resumed {
+pub(super) fn yield_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction, value: Register) -> Resumed {
     // SAFETY: the record lies in the running view.
     let pc = unsafe { ip.offset_from((*cx).base) } as usize;
     // The generator receives the next value in this record's A register.
-    lane_suspend_generator(cx, pc + 1, i.a & crate::bytecode::REGISTER_MASK, r.get(i.b), None)
+    suspend_generator_in_lane(cx, pc + 1, i.a & crate::bytecode::REGISTER_MASK, r.get(value), None)
 }
 
 /// `yield*` of the running generator activation (`running_generator`): a step of a delegate
@@ -409,15 +409,15 @@ pub(super) fn lane_yield_in_window<H: Host>(cx: *mut LaneContext<H>, r: Register
 /// this record, made again; that result taken back, the delegate's completion goes to the
 /// destination, and any other step passes on as this generator's own yield of the delegate's
 /// result object. Anything else takes the general step.
-pub(super) fn lane_yield_star_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Resumed {
+pub(super) fn yield_star_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction, iterable: Register) -> Resumed {
     let vm = unsafe { vm(cx) };
     let (state, next_method) = ImmediateLayout::register_pair(i.imm());
     let destination = i.a & crate::bytecode::REGISTER_MASK;
     let waiting = r.get(state);
     if waiting.is_undefined() {
-        let (delegate, method) = (r.get(i.c), r.get(next_method));
+        let (delegate, method) = (r.get(iterable), r.get(next_method));
         if vm.steps_as_generator(delegate, method)
-            && let Some((registers, start)) = lane_resume_generator(cx, r, ip, delegate, method, r.get(destination), Completion::Delegates)
+            && let Some((registers, start)) = resume_generator_in_lane(cx, r, ip, delegate, method, r.get(destination), Completion::Delegates)
         {
             return Resumed::At(registers, start, Carried::script(cx));
         }
@@ -434,5 +434,5 @@ pub(super) fn lane_yield_star_in_window<H: Host>(cx: *mut LaneContext<H>, r: Reg
     // The generator resumes at this record, which takes the value its caller sends next.
     // SAFETY: the record lies in the running view.
     let pc = unsafe { ip.offset_from((*cx).base) } as usize;
-    lane_suspend_generator(cx, pc, destination, Value::UNDEFINED, Some(waiting))
+    suspend_generator_in_lane(cx, pc, destination, Value::UNDEFINED, Some(waiting))
 }

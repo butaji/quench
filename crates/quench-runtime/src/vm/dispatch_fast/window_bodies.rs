@@ -13,13 +13,6 @@ pub(in crate::vm) struct BodyLocals {
     pub(in crate::vm) environment: u64,
 }
 
-/// The storage the environment window at register `registers` of `r` keeps its environment-owned locals in.
-#[inline(always)]
-pub(super) fn window_storage(r: Registers, registers: u16) -> *mut crate::heap::EnvironmentSlots {
-    // SAFETY: a window's slots word holds its storage's address, held in a `Value`'s bits (`lane_activate_environment`).
-    unsafe { std::mem::transmute::<Value, u64>(r.get(registers + WINDOW_SLOTS)) as *mut crate::heap::EnvironmentSlots }
-}
-
 /// The locals the body entered on lane context `cx` reads: the window's where its function's activation runs one
 /// (an activation of a function with a window layout whose context holds the environment's parent, as every window
 /// handler decides it), else the VM frame's, with storage that holds no slot (`heap::absent_environment_storage`),

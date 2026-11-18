@@ -10,7 +10,7 @@ pub(super) fn bind_loop<H: Host>(
 ) {
     dispatch.lane_context = lane_context;
     // A region's `THIS`-based reads take the running activation's receiver, as a lane
-    // body's do (`lane_loop_body`); `with` leaves it `DELETED`. A frameless activation's
+    // body's do (`run_loop_body`); `with` leaves it `DELETED`. A frameless activation's
     // receiver is the lane context's: `frame` is then the VM frame beneath it, its caller's.
     // SAFETY: `lane_context` is the running lane's context for `H`.
     dispatch.receiver = unsafe { super::dispatch_fast::lane_context_this::<H>(lane_context) }.to_bits();
@@ -49,7 +49,7 @@ pub(super) unsafe fn bind_captures<H: Host>(
     let calls = region.instructions().iter().any(|instruction| instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call);
     let live = (calls || !region.stored_captures.is_empty())
         // SAFETY: the caller's contract.
-        .then(|| unsafe { super::dispatch_fast::lane_context_captures::<H>(lane_context) }).flatten();
+        .then(|| unsafe { super::dispatch_fast::context_captures::<H>(lane_context) }).flatten();
     let none = region.captures.is_empty() && region.stored_captures.is_empty();
     let captures = if live.is_some() || none { Vec::new() } else { dense_captures(region, entry) };
     if let Some(((values, len), stores)) = live {

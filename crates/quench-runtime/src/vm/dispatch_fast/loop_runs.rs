@@ -53,6 +53,22 @@ impl super::LoopSite {
         }
     }
 
+    /// The warm-up part of `interprets`, as a loop site's backward jump row takes it: true, with the
+    /// same count `interprets` makes and the diagnostics count the site's body makes, while the site
+    /// warms up; false, changing nothing, once warm, where `interprets` decides.
+    #[inline(always)]
+    pub(super) fn warm_backedge(&self) -> bool {
+        let (taken, needed) = (self.taken.get(), self.needed.get());
+        if taken >= needed {
+            return false;
+        }
+        self.taken.set(taken + 1);
+        if self.diagnostics {
+            self.lane_backedge_count.set(self.lane_backedge_count.get().saturating_add(1));
+        }
+        true
+    }
+
     /// Whether the interpreter takes this backward jump: while the site warms up, and until the
     /// model, weighing the compile where the count reaches `needed`, finds it pays.
     #[inline(always)]

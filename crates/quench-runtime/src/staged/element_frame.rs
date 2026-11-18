@@ -7,6 +7,13 @@ use super::elements::DenseView;
 use super::{value, PropertyFrame, Stage};
 use crate::bytecode::{Operand, Register};
 
+/// The element frame's contract for a stencil. The only method a stencil frame must override is
+/// `array_records`; every other element method refuses by default (`None`, the row's miss edge):
+/// `kept_view`, `array_store_gate`, `index_set_host` and `proved_view`/`keep_view`. `index_key`,
+/// `index_offset` and `element_probed` carry the stage logic every frame shares (an int32 guard and
+/// the fast-then-host join), so they are not overrides. `index_get_host` is declared on `PropertyFrame`,
+/// which this trait extends, and refuses there (`None`); `stored` is the same fast-then-slow join as
+/// `element_probed`. Neither is redeclared here, since a second declaration would make the call ambiguous.
 pub(crate) trait ElementFrame<S: Stage>: PropertyFrame<S> {
     /// The dense view of the array in base register `base` that the frame's array storage proofs
     /// hold, its readable elements, or its writable ones where `writable` (a store replacing in
@@ -62,6 +69,11 @@ pub(crate) trait ElementFrame<S: Stage>: PropertyFrame<S> {
     /// a typed array, which no storage change has retired; a view proved writable answers a read too.
     #[inline(always)]
     fn kept_view(&mut self, _stage: &mut S, _base: S::Word, _writable: bool) -> Option<ElementView<S::Word>> { None }
+
+    /// The dense view of the array in register `base` that a proof the frame holds gives, for a read
+    /// or (`writable`) a store; `None` leaves the access to prove the array itself.
+    #[inline(always)]
+    fn proved_view(&mut self, _stage: &mut S, _base: Register, _writable: bool) -> Option<DenseView<S::Word>> { None }
 
     /// Records the dense view an element access proved of the array `base`.
     #[inline(always)]

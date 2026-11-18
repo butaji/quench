@@ -44,7 +44,7 @@ fn handler_home<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>) -> (u32, HandlerHo
 /// fresh environment per entry, whose copy replaces the one the lane's caches name in a frame.
 /// A promoted binding is the body's own register. The running function is the innermost
 /// activation's, else the frame's.
-pub(in crate::vm) unsafe extern "C" fn lane_handler_edge<H: Host>(
+pub(in crate::vm) unsafe extern "C" fn handler_edge<H: Host>(
     _vm: u64,
     _residual: u64,
     context: u64,

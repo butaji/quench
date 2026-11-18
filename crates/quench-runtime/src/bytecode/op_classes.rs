@@ -46,7 +46,7 @@ impl Op {
         matches!(self, Op::Move)
     }
 
-    /// A general step a b-jit body's helper makes in place (`lane_body_step`): one that only continues,
+    /// A general step a b-jit body's helper makes in place (`body_general_step`): one that only continues,
     /// jumps or throws, on the frame's own registers, bindings and environment, with no call, return,
     /// suspension or `this` binding (the catalog's `GenericStep`). The lane's own in-place steps
     /// (`steps_in_lane`) are among them; the rest may replace the frame's environment, which the lane's

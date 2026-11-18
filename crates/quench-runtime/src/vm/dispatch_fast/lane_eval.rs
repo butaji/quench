@@ -127,7 +127,7 @@ script_handler! {
     /// A direct eval call of a window activation (`specialize_environment_window`): its value in
     /// the call's register. Any other callee or activation takes the general path.
     #[inline(never)]
-    fn lane_direct_eval<>(cx, r, ip, i, view) {
+    fn direct_eval_handler<>(cx, r, ip, i, view) {
         let Some(value) = direct_eval_in_window(cx, r, ip, i) else {
             return exit(ip);
         };
@@ -138,5 +138,5 @@ script_handler! {
 
 /// The handler of a direct eval call in a function whose window activations run it.
 pub(super) const fn direct_eval<H: Host>() -> Handler {
-    lane_direct_eval::<H>
+    direct_eval_handler::<H>
 }

@@ -1672,11 +1672,10 @@ fn for_each_of_one_element_with_a_dead_result_keeps_callback_semantics() {
 
 #[test]
 fn capture_update_calls_keep_closure_semantics() {
-    // A capture's int32 update by a constant is one record (`lane_update_capture_int32`), and a
-    // plain call of a capture leaf whose body is that update and its return is answered in
-    // place (`lane_script_call_update_capture`): the int32 wrap both ways, extra values and a
-    // receiver, a returned call, shared captures, recreated closures, captures holding other
-    // values, a call in the binding's TDZ, a const binding and an arrow keep closure semantics.
+    // A capture's int32 update by a constant runs its generated rows, and a plain call of a capture
+    // leaf whose body is that update and its return runs the call: the int32 wrap both ways, extra
+    // values and a receiver, a returned call, shared captures, recreated closures, captures holding
+    // other values, a call in the binding's TDZ, a const binding and an arrow keep closure semantics.
     // Expected value is Node's (v22).
     let source = r#"
       var out = [];
@@ -20403,7 +20402,7 @@ fn lane_name_loads_resolve_undefined_intrinsics_and_call_receivers() {
     // By-name loads of the global `undefined`, of globals a call reads (whose receiver is
     // `undefined`: a strict function's `this`, globalThis for a sloppy one), of intrinsic
     // names (`{ __proto__: v }`, `super`) and of intrinsic natives, run from their first
-    // resolution to their bound reads (`lane_load_name_resolve`, `lane_load_name_bound`). The
+    // resolution to their bound reads (`load_name_resolve_miss`, `name_row`). The
     // expected values are Node's.
     let source = r#"
       function hot(f) { var s = 0; for (var i = 0; i < 3000; i++) s = (s + f(i)) | 0; return s; }
@@ -20475,7 +20474,7 @@ fn lane_intrinsic_native_reads_keep_each_name_its_own_native() {
 #[cfg(not(quench_profiled))]
 #[test]
 fn global_reads_follow_redefinition_deletion_accessors_and_later_lexical_declarations() {
-    // Hot reads of global bindings (`lane_load_name_bound`) across every change of what the
+    // Hot reads of global bindings (`name_row`) across every change of what the
     // name resolves to; the expectations are Node's, each script run as its own global Script.
     let first = r#"
 function hot(read) { var s = 0; for (var i = 0; i < 2000; i++) s = (s + read()) | 0; return s; }
@@ -23606,7 +23605,7 @@ fn lane_array_iterations_keep_callback_method_semantics() {
     // loop, throws, collections inside callbacks, map and filter results and species, the
     // early answers, nesting and recursion, generator, async and bound callbacks, a redefined
     // forEach, and callbacks whose activations become frames mid-iteration behave as Node's;
-    // so do array literals made at once (`lane_make_array_elements`). Expected value is
+    // so do array literals made at once (the `MakeArray` row and its `DefineElement` rows). Expected value is
     // Node's (`node --expose-gc`).
     let source = r#"var gc = typeof $262 !== "undefined" ? $262.gc : typeof globalThis.gc === "function" ? globalThis.gc : function () {};
 var out = [];

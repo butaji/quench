@@ -18,6 +18,9 @@ pub(super) fn frame_capture_at_root<H: Host>(cx: *mut LaneContext<H>, frame: usi
     }
 }
 
+// merge: ours (HEAD) moved root-binding reads into the staged `LoadCapture { root }` operation
+// and dropped these helpers; kept because theirs' root-binding lane records call them. Drop
+// them with those records if the dispatch_fast.rs resolution does not keep those records.
 /// The root environment `depth` parent links out from the running activation's closure
 /// environment, while each link is an environment (a frame's: `Vm::capture_env`): no
 /// capture walk, as a root binding's records read it (`lane_load_root_binding`,
@@ -82,4 +85,3 @@ pub(super) fn lane_root_binding_slot<H: Host>(cx: *mut LaneContext<H>, depth: u1
     let owner = program.map_or(vm.active_program, ProgramId::from_raw);
     vm.programs.root_slot(owner, slot) == crate::bytecode::RootSlotRule::Binding
 }
-

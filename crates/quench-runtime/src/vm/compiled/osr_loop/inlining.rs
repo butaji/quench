@@ -3,9 +3,9 @@
 //! guards the frames end with.
 
 use super::{
-    admitted_store, CalleeSource, field_base, inlined_returning, inlined_set_this, inlinable, intern_field, object_reads, renamed,
+    admitted_store, CalleeSource, field_base, inlined_returning, inlined_set_this, inlinable, intern_field, is_move_row, object_reads, renamed,
     FieldBase, FieldLookup, FieldPath, FieldReceiver, FieldSite, FieldUse, ImmediateLayout, ImmediateRole, InlineCallee,
-    InlineFrame, InlineGuard, LoopRegion, Op, Origin, Register, RegisterSet, WideInstruction, CALLEE_CAPTURE,
+    InlineFrame, InlineGuard, LoopRegion, Origin, Register, RegisterSet, WideInstruction, CALLEE_CAPTURE,
     MAX_INLINE_PARAMS, MAX_REGION_FIELDS,
 };
 mod pc_map;
@@ -33,10 +33,10 @@ pub(super) fn stored_names(caller: &[WideInstruction], sites: &[FieldSite]) -> B
     let mut names = BitSet::new(0);
     caller
         .iter()
-        .filter_map(|instruction| match crate::vm::compiled::decoded_completed(instruction) {
-            _ if admitted_store(*instruction) => Some(instruction.atom_index()),
+        .filter_map(|instruction| match instruction.op() {
+            _ if admitted_store(instruction.op()) => Some(instruction.atom_index()),
             // A fused read the bytecode stores into a `this` field (`inlined_set_this`).
-            Some(crate::staged::Operation::GetField { .. }) if instruction.writes_current_this() => match instruction.field_lookup()? {
+            op if crate::staged::reads_named_field(op) && instruction.writes_current_this() => match instruction.field_lookup()? {
                 FieldLookup::Site(index) => sites.get(index)?.sink.map(|(atom, _)| atom),
                 FieldLookup::Atom { .. } => None,
             },
@@ -79,8 +79,7 @@ pub(super) fn admitted_callee<'a>(
     // this slice receiver-independent; recovery still performs the ordinary binding below.
     if !matches!(source, CalleeSource::Path) {
         body(&callee, &reached)
-            .all(|instruction| !matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::GetField { .. }))
-                || field_base(instruction, sites) != Some(FieldBase::THIS))
+            .all(|instruction| !crate::staged::reads_named_field(instruction.op()) || field_base(instruction, sites) != Some(FieldBase::THIS))
             .then_some(())?;
     }
     Some((callee, reached))
@@ -106,7 +105,7 @@ pub(super) fn bound_parameters(
         body(callee, reached).all(|instruction| instruction.defined_register() != Some(parameter)).then_some(())?;
         let argument = window + parameter;
         let moved = run.iter().rposition(|instruction| instruction.defined_register() == Some(argument))?;
-        (matches!(crate::vm::compiled::decoded(run[moved]), Some(crate::staged::Operation::Move { .. })) && !defines(run[moved].register_b())).then_some(())?;
+        (is_move_row(run[moved]) && !defines(run[moved].register_b())).then_some(())?;
         bound[usize::from(parameter)] = Some(run[moved].register_b());
         dropped.insert(first + moved as u32, ());
     }
@@ -131,7 +130,7 @@ const COMPLETION_LENGTH: u32 = 2;
 
 /// How many region instructions a reached callee instruction becomes.
 fn callee_length(instruction: WideInstruction, sites: &[FieldSite]) -> u32 {
-    if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) {
+    if crate::staged::returns(instruction.op()) {
         COMPLETION_LENGTH
     } else if inlined_returning(instruction) {
         // The computation, then the completion of the call.
@@ -353,7 +352,7 @@ impl<'c, 'a> Emission<'c, 'a> {
             if site.frame.bound[usize::from(parameter)].is_some() {
                 continue;
             }
-            let copy = WideInstruction::new(Op::Move, site.frame.base + parameter, site.window + parameter, 0, 0);
+            let copy = WideInstruction::new(crate::staged::row_op(crate::staged::MOVE_ROW), site.frame.base + parameter, site.window + parameter, 0, 0);
             self.push(copy, Origin::Caller(site.resume), self.plan.mask(site.resume)?);
         }
         Some(())
@@ -362,14 +361,14 @@ impl<'c, 'a> Emission<'c, 'a> {
     /// Completes the call as the callee's `Return` does: the result's move, then the jump
     /// past the call.
     fn complete(&mut self, view: &CallView<'_, '_>, returned: Register, origin: Origin, set: RegisterSet) {
-        self.push(WideInstruction::new(Op::Move, view.site.result, returned, 0, 0), origin, set);
-        self.push(WideInstruction::new(Op::Jump, 0, 0, 0, view.continuation), origin, set);
+        self.push(WideInstruction::new(crate::staged::row_op(crate::staged::MOVE_ROW), view.site.result, returned, 0, 0), origin, set);
+        self.push(WideInstruction::new(crate::staged::row_op(crate::staged::JUMP_ROW), 0, 0, 0, view.continuation), origin, set);
     }
 
     fn callee_instruction(&mut self, view: &CallView<'_, 'a>, callee_pc: usize, instruction: WideInstruction) -> Option<()> {
         let origin = Origin::Inlined { frame: view.index, pc: callee_pc as u32 };
         let set = view.frame_mask(callee_pc)?;
-        if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) {
+        if crate::staged::returns(instruction.op()) {
             self.complete(view, view.register(instruction.register_a()), origin, set);
             return Some(());
         }
@@ -391,21 +390,14 @@ impl<'c, 'a> Emission<'c, 'a> {
     }
 
     fn callee_part(&mut self, view: &CallView<'_, 'a>, instruction: WideInstruction) -> Option<WideInstruction> {
-        let instruction = if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::LoadCapture { .. })) {
-            self.callee_capture(view.index, instruction)?
-        } else {
-            instruction
-        };
+        let instruction = if crate::staged::reads_capture(instruction.op()) { self.callee_capture(view.index, instruction)? } else { instruction };
         // The callee's `this` is the call's receiver, a caller register: its store of a
         // `this` field is a store to that register's object.
-        // Only a non-strict store to `this` (`SetField` with no base register) is rebased; a
-        // strict one passes through as before.
-        if !matches!(crate::vm::compiled::decoded_completed(instruction),
-            Some(crate::staged::Operation::SetField { base: None, strict: false, .. })) {
+        if !crate::staged::writes_this_field(instruction.op()) {
             return view.rename(instruction);
         }
-        let store = view.rename(WideInstruction::new(Op::SetField, instruction.a(), 0, instruction.c(), instruction.imm()))?;
-        Some(WideInstruction::new(Op::SetField, store.a(), view.frame.receiver, store.c(), store.imm()))
+        let store = view.rename(WideInstruction::new(crate::staged::row_op(crate::staged::SET_FIELD_ROW), instruction.a(), 0, instruction.c(), instruction.imm()))?;
+        Some(WideInstruction::new(crate::staged::row_op(crate::staged::SET_FIELD_ROW), store.a(), view.frame.receiver, store.c(), store.imm()))
     }
 
     /// A callee's own capture reads its environment, which its identity guard fixes
@@ -418,7 +410,7 @@ impl<'c, 'a> Emission<'c, 'a> {
             self.callee_captures.len() - 1
         });
         let slot = CALLEE_CAPTURE | u16::try_from(position).ok().filter(|position| *position < CALLEE_CAPTURE)?;
-        Some(WideInstruction::new(Op::LoadCapture, instruction.a(), instruction.b(), instruction.c(), ImmediateLayout::capture_immediate(0, slot)))
+        Some(WideInstruction::new(crate::staged::row_op(crate::staged::LOAD_CAPTURE_ROW), instruction.a(), instruction.b(), instruction.c(), ImmediateLayout::capture_immediate(0, slot)))
     }
 }
 

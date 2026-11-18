@@ -19,7 +19,7 @@ const OBJECT_SLOTS: Access = Region::ObjectSlots.mutable();
 /// Where a call-out's record is, and what its slow case needs of the lowering: the registers the
 /// helper reads, and where a status other than completion or a miss ends the body.
 pub(in super::super) struct CallOutSite {
-    /// The record the helper decodes (`dispatch_fast::lane_vm_step`).
+    /// The record the helper decodes (`dispatch_fast::vm_operation_step`).
     pub(in super::super) record: u32,
     /// The block a status of a leave in a callee, or a termination, reaches with the status.
     pub(in super::super) stop: ir::Block,
@@ -87,7 +87,7 @@ pub(super) fn site_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, sit
 /// A decision of two registers no record names (`CallOut::Decide` carries its operands): the
 /// lane's `Decide` helper takes their tagged words, made on a copy of the facts so only this slow
 /// path pays for boxing, and the operator, and answers by the interpreter's own rule
-/// (`lane_decision`) the boolean it decides or `DELETED`, which leaves at the miss edge. It runs
+/// (`comparison_decision`) the boolean it decides or `DELETED`, which leaves at the miss edge. It runs
 /// no guest code and allocates nothing, so no register is spilled and the arena stays.
 fn decide_words(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, operands: [Register; 2], operator: u32,
     miss: ir::Block) -> (ir::Value, RegisterFact) {

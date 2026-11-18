@@ -13,9 +13,10 @@ impl<W, P> Operation<W, P> {
             Self::Move { destination, source } | Self::LogicalNot { destination, source }
                 | Self::Number(NumberOperation::ToNumeric { destination, source } | NumberOperation::IncDec { destination, source, .. }) =>
                 [Some(destination), Some(source)],
-            Self::LoadLocalPlain { destination, .. } | Self::LoadThis { destination } | Self::Void { destination } =>
-                [Some(destination), None],
-            Self::StoreLocalPlain { source, result, .. } => [Some(source), result],
+            Self::LoadLocalPlain { destination, .. } | Self::LoadLocalChecked { destination, .. } | Self::LoadThis { destination }
+                | Self::Void { destination } => [Some(destination), None],
+            Self::StoreLocalPlain { source, result, .. } | Self::StoreLocalChecked { source, result, .. } => [Some(source), result],
+            Self::InitializeLocal { .. } => [None, None],
             Self::RequireObjectCoercible { register } => [Some(register), None],
             _ => return None,
         })
@@ -24,7 +25,8 @@ impl<W, P> Operation<W, P> {
     /// Whether the row reads or writes the activation's local slots (`Frame::load_local`), which a
     /// numeric region's activation has none of.
     pub(crate) const fn uses_locals(&self) -> bool {
-        matches!(self, Self::LoadLocalPlain { .. } | Self::StoreLocalPlain { .. })
+        matches!(self, Self::LoadLocalPlain { .. } | Self::StoreLocalPlain { .. } | Self::LoadLocalChecked { .. }
+            | Self::StoreLocalChecked { .. } | Self::InitializeLocal { .. })
     }
 
     /// Whether a frame's step of the row can leave at its miss edge: a row that only copies or

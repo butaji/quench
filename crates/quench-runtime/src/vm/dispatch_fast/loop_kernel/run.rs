@@ -96,14 +96,12 @@ fn operate(op: NodeOp, out: &mut [f64], a: Column, b: Column) {
     )
 }
 
+/// `operation` of two Numbers as the staged Number row computes it: the interpreter's stage
+/// (`Concrete`) runs `NumericStage::float_arithmetic` on the binary64 words.
 #[inline(always)]
 pub(super) fn arith(operation: NumberArithmetic, a: f64, b: f64) -> f64 {
-    match operation {
-        NumberArithmetic::Add => a + b,
-        NumberArithmetic::Subtract => a - b,
-        NumberArithmetic::Multiply => a * b,
-        NumberArithmetic::Divide => a / b,
-    }
+    let mut stage = crate::staged::Concrete::new(std::ptr::null());
+    f64::from_bits(crate::staged::NumericStage::float_arithmetic(&mut stage, operation, a.to_bits(), b.to_bits()))
 }
 
 #[inline(always)]
@@ -269,7 +267,7 @@ impl LoopKernel {
                 Scalar::Register(register) => r.get(register).as_number()?,
                 Scalar::Capture(imm) => {
                     let (depth, slot) = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
-                    super::super::lane_capture_value::<H>(cx, depth, slot)?.as_number()?
+                    super::super::capture_read_value::<H>(cx, depth, slot)?.as_number()?
                 }
                 Scalar::Length { register, atom } => {
                     // SAFETY: the running VM.

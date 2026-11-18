@@ -1039,7 +1039,7 @@ impl<H: Host> Vm<H> {
     /// site resuming at `site`: a copy that names the site, sharing the activation's dynamic
     /// bindings and slots, so the closure's by-name lookups find what the site scopes. The
     /// environment itself where there is no such site. A frame's closure
-    /// (`capture_binding_environment`) and a window activation's (`lane_make_scoped_closure`)
+    /// (`capture_binding_environment`) and a window activation's (`scoped_names::scoped_closure_into`)
     /// make it the same way.
     pub(super) fn site_environment(&mut self, environment: Value, site: Option<u32>) -> Result<Value, JsError> {
         let Some(binding_site_pc) = site else {

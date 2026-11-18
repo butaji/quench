@@ -1,4 +1,5 @@
 use super::*;
+use crate::bytecode::Class;
 use crate::typed_ir::IntRange;
 
 #[test]

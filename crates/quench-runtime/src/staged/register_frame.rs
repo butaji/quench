@@ -2,6 +2,7 @@
 //! so the b-jit stencil build (`quench-bjit/build.rs`) compiles the same trait the interpreter
 //! and the specializers use.
 
+use super::value::TypeofKind;
 use super::{Allocation, CallOut, Edge, Stage};
 use crate::bytecode::Register;
 use crate::typed_ir::Type;
@@ -20,6 +21,19 @@ impl Constant {
     pub(crate) const fn untyped(value: crate::Value) -> Self {
         Self { value, ty: Type::ANY }
     }
+}
+
+/// The representation a Wasm scalar takes in a register frame (`Frame::wasm_read`, `Frame::wasm_write`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum WasmRep {
+    /// An i32 or f32: its 32 bits, zero-extended; a register holds them as an encoded integer.
+    Int32,
+    /// An i64 or a boxed f64: its 64 bits in place, where the value is untagged.
+    Bits64,
+    /// A raw f64: its 64 bits as the register's machine word, never boxed or canonicalized.
+    RawBits64,
+    /// The register's tagged word as it is (a select's copy).
+    Tagged,
 }
 
 /// A register frame: each register's word and the static fact the stage keeps about it. A
@@ -77,10 +91,52 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
 
+    /// Define element `index` of the literal array `array` as `value` (`Operation::DefineElement`):
+    /// the VM's definition into a fresh hole. `None` where the frame has no definer or the
+    /// definition is the general path's.
+    #[inline(always)]
+    fn define_element(&mut self, _stage: &mut S, _array: S::Word, _index: u32, _value: S::Word) -> Option<()> { None }
+
     /// The heap value `allocation` makes, defined into `destination`; `None` where the frame
     /// has no allocator for it or the value is the general path's (a due collection).
     #[inline(always)]
     fn allocate_value(&mut self, _stage: &mut S, _destination: Register, _allocation: Allocation, _proof: S::Proof) -> Option<S::Word> { None }
+
+    /// `Await`: suspends the running promise job on the value in `source`, resuming into `destination`, and
+    /// leaves the lane run (`Edge::Leave`); `None` where the frame cannot suspend, which the general step does.
+    #[inline(always)]
+    fn suspend_await(&mut self, _stage: &mut S, _destination: Register, _source: Register) -> Option<Self::Control> { None }
+
+    /// `Yield`: suspends the running generator on the value in `value`, transferring control to its
+    /// caller or resumption (`Edge::Transfer`); `None` where the frame cannot, which the general step does.
+    #[inline(always)]
+    fn suspend_yield(&mut self, _stage: &mut S, _value: Register) -> Option<Self::Control> { None }
+
+    /// `Throw`: raises the value in `source` as the frame's completion; `None` where the frame cannot, which
+    /// the general step does.
+    #[inline(always)]
+    fn raise(&mut self, _stage: &mut S, _source: Register) -> Option<Self::Control> { None }
+
+    /// `YieldStar`: the `yield*` of the iterable in `iterable`, transferring control as `suspend_yield` does;
+    /// `None` where the frame cannot, which the general step does.
+    #[inline(always)]
+    fn suspend_yield_star(&mut self, _stage: &mut S, _iterable: Register) -> Option<Self::Control> { None }
+
+    /// `StringCaseIndex`: the index of the value in `source` among the `count` program constants from
+    /// `start`, as the frame's case table answers it; `None` where the frame has none (the general step).
+    #[inline(always)]
+    fn case_index(&mut self, _stage: &mut S, _source: Register, _start: u32, _count: u16) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// `IteratorCleanupPush`: pushes the iterator in register `iterator` with its `done` register on the
+    /// running activation's cleanup stack, closed if the loop exits abruptly; `None` where the frame keeps
+    /// no such stack (the general step pushes it).
+    #[inline(always)]
+    fn iterator_push(&mut self, _stage: &mut S, _iterator: Register, _done: Register) -> Option<()> { None }
+
+    /// `IteratorCleanupPop`: pops the running activation's top cleanup entry; `None` where the frame
+    /// has none to pop (the general step raises it).
+    #[inline(always)]
+    fn iterator_pop(&mut self, _stage: &mut S) -> Option<()> { None }
 
     /// Continue where no interrupt is requested; `None` leaves at the frame's miss edge.
     #[inline(always)]
@@ -105,6 +161,55 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn ret(&mut self, _stage: &mut S, _register: Register) -> Option<Self::Control> { None }
 
+    /// `register`'s Wasm scalar word in the representation `rep` names (zero-extended integer or
+    /// IEEE bits); `None` where the frame does not hold it so, which leaves the row to its miss.
+    #[inline(always)]
+    fn wasm_read(&mut self, _stage: &mut S, _register: Register, _rep: WasmRep) -> Option<S::Word> { None }
+
+    /// Define `register` with the Wasm scalar `word` in the representation `rep` names, returning
+    /// its tagged word; `None` where the frame cannot make that value in place.
+    #[inline(always)]
+    fn wasm_write(&mut self, _stage: &mut S, _register: Register, _word: S::Word, _rep: WasmRep) -> Option<S::Word> { None }
+
+    /// The Wasm global bound in `binding` (the register encoding of its binding), as the register
+    /// encoding its slot holds; `None` where the frame cannot load it, which leaves the row to its miss.
+    #[inline(always)]
+    fn wasm_global_load(&mut self, _stage: &mut S, _binding: S::Word) -> Option<S::Word> { None }
+
+    /// Store `value` (a register encoding) to the mutable Wasm global bound in `binding`; `None`
+    /// where the frame cannot, which leaves the row to its miss.
+    #[inline(always)]
+    fn wasm_global_store(&mut self, _stage: &mut S, _binding: S::Word, _value: S::Word) -> Option<()> { None }
+
+    /// The running instance's slot `slot` as its register encoding (`WasmInstanceBinding`); `None`
+    /// where the frame cannot read it, which leaves the row to its miss.
+    #[inline(always)]
+    fn wasm_instance_slot(&mut self, _stage: &mut S, _slot: u32) -> Option<S::Word> { None }
+
+    /// The 16 bytes of the vector `register` holds; `None` where it holds no vector.
+    #[inline(always)]
+    fn vector(&mut self, _stage: &mut S, _register: Register) -> Option<[u8; VECTOR_BYTES]> { None }
+
+    /// The 16 bytes of the vector constant `constant` names; `None` where it names none.
+    #[inline(always)]
+    fn vector_constant(&mut self, _stage: &mut S, _constant: Constant) -> Option<[u8; VECTOR_BYTES]> { None }
+
+    /// Define `register` with the vector `bytes` in a fresh cell, returning its tagged word; `None`
+    /// where the frame cannot make it, which leaves the row to its miss.
+    #[inline(always)]
+    fn set_vector(&mut self, _stage: &mut S, _register: Register, _bytes: [u8; VECTOR_BYTES]) -> Option<S::Word> { None }
+
+    /// The bytes of the linear memory a direct access addresses (the function's memory, which the
+    /// frame resolved); `None` where the frame holds none, which leaves the row to its miss.
+    #[inline(always)]
+    fn direct_memory(&mut self) -> Option<&mut [u8]> { None }
+
+    /// The bytes of the linear memory the Wasm memory value in `register` names, and whether its
+    /// index is an i64 (memory64); `None` where the frame does not resolve it, which leaves the row
+    /// to its miss.
+    #[inline(always)]
+    fn wasm_memory(&mut self, _stage: &mut S, _register: Register) -> Option<(&mut [u8], bool)> { None }
+
     /// The activation's environment storage word and the fact its slot reads carry
     /// (`environment::environment_slot`); `None` where the frame holds no environment.
     #[inline(always)]
@@ -119,6 +224,32 @@ pub(crate) trait Frame<S: Stage> {
     /// binding is not one only kept values answer.
     #[inline(always)]
     fn arguments_length(&mut self, _stage: &mut S, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
+    /// The element `index` (a word) of the arguments binding in local `slot`, where the frame holds
+    /// its kept values (a keeping activation's); `None` leaves it to the row's miss.
+    #[inline(always)]
+    fn argument(&mut self, _stage: &mut S, _slot: u16, _index: S::Word) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// The by-name read of `atom` through the running window activation's scope chain (its `with`
+    /// objects, then its dynamic bindings), defining `destination` and, for a call, `receiver`; `None`
+    /// where the frame does not decide it, which leaves the name to the row's miss.
+    #[inline(always)]
+    fn scoped_name(&mut self, _stage: &mut S, _destination: Register, _receiver: Option<Register>, _atom: u32) -> Option<()> { None }
+
+    /// Store `value` to `atom` through the running window activation's scope chain: the `with` object
+    /// that has the name takes it. `None` where no object does, or the frame cannot decide it.
+    #[inline(always)]
+    fn scoped_store(&mut self, _stage: &mut S, _atom: u32, _value: S::Word) -> Option<()> { None }
+
+    /// Store `value` to local `slot` through the running window activation's scope chain (the `with`
+    /// object that has the local's name takes it). `None` where no object does, or the frame cannot decide it.
+    #[inline(always)]
+    fn scoped_local_store(&mut self, _stage: &mut S, _slot: u16, _value: S::Word) -> Option<()> { None }
+
+    /// The function the running activation runs (its self binding's value), as a word and the fact
+    /// the frame keeps of it; `None` where the frame does not hold it, leaving the read to the
+    /// interpreter.
+    #[inline(always)]
+    fn callee(&mut self, _stage: &mut S) -> Option<(S::Word, Self::Fact)> { None }
 
     /// A rest view's read (`Protocol::RestView`): `rest.length` (`get` false) or `rest[key]`
     /// of the values its activation kept past its first `fixed` parameters; `None` where the
@@ -135,6 +266,23 @@ pub(crate) trait Frame<S: Stage> {
     fn vm_step(&mut self, _stage: &mut S, _operation: CallOut, _result: Option<Register>)
         -> Option<(S::Word, Self::Fact)> { None }
 
+    /// The `typeof` kind of the heap value `word`, which its cell decides (a string, a BigInt, a
+    /// symbol, an object or a function), where the frame proves it; `None` leaves the row at the
+    /// frame's miss edge, where the interpreter names it.
+    #[inline(always)]
+    fn type_of(&mut self, _stage: &mut S, _word: S::Word) -> Option<TypeofKind> { None }
+
+    /// The interned `typeof` result string of the name `name` (an index in `bytecode::TYPEOF_NAMES`,
+    /// as a word), with the fact the frame keeps of it; `None` where the frame holds no such table.
+    #[inline(always)]
+    fn typeof_string(&mut self, _stage: &mut S, _name: S::Word) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// SetFunctionName: name the function `function` by the program atom `name` through cache
+    /// `site`, as the VM does (`Vm::set_function_name`). `None` where the frame has no host, which
+    /// leaves the row to the interpreter.
+    #[inline(always)]
+    fn set_function_name(&mut self, _stage: &mut S, _function: S::Word, _name: u32, _site: u16) -> Option<()> { None }
+
     /// Read the capture `slot`, `depth` scopes out (a static operand: the walk's length), with the
     /// fact the frame keeps of it; `root` reads the root environment's projected binding (a
     /// script's global var or lexical) the walk ends at instead of a function's slots. `None`
@@ -147,6 +295,32 @@ pub(crate) trait Frame<S: Stage> {
     /// not take the direct store (a `const`, an uninitialized `let`).
     #[inline(always)]
     fn store_capture(&mut self, _stage: &mut S, _depth: u16, _slot: u16, _value: S::Word) -> Option<()> { None }
+
+    /// Whether `value instanceof constructor` holds, decided by the words alone (the frame's
+    /// `object::instanceof_by_words` over its record table and the constructor's proven prototype);
+    /// `None` where the frame does not decide it, leaving the test to the VM's callout.
+    #[inline(always)]
+    fn instance_of(&mut self, _stage: &mut S, _value: S::Word, _constructor: S::Word) -> Option<S::Cond> { None }
+
+    /// Continues where register `source` holds a direct array; `None` where the frame does not
+    /// decide it, leaving the row to its miss edge.
+    #[inline(always)]
+    fn direct_array(&mut self, _stage: &mut S, _source: Register) -> Option<()> { None }
+
+    /// The length of the direct array in register `source` as an int32 and its fact; `None` leaves
+    /// the read to the VM.
+    #[inline(always)]
+    fn array_length(&mut self, _stage: &mut S, _source: Register) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// The length of the typed array in register `source` as an int32 and its fact; `None` leaves
+    /// the read to the VM.
+    #[inline(always)]
+    fn typed_length(&mut self, _stage: &mut S, _source: Register) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// Appends `value` to the array in register `array` where its backing is writable and has room;
+    /// `None` leaves the append to the VM, which grows it.
+    #[inline(always)]
+    fn array_append(&mut self, _stage: &mut S, _array: Register, _value: S::Word) -> Option<()> { None }
 
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
@@ -161,6 +335,12 @@ pub(crate) trait Frame<S: Stage> {
 
     /// Continue at the jump target.
     fn jump(&mut self, stage: &mut S) -> Self::Control;
+
+    /// Where a branch table's selector `index` (an int32 word) goes among `entries` entries: the entry
+    /// it picks, the last one for any selector past the cases (`Edge::Entry`). `None` where this
+    /// frame cannot decide the entry, leaving the table to the tier's own lowering.
+    #[inline(always)]
+    fn branch_table(&mut self, _stage: &mut S, _index: S::Word, _entries: u32) -> Option<Self::Control> { None }
 
     /// The canonical boolean `condition`, with the fact this stage keeps of it.
     fn boolean(&mut self, stage: &mut S, condition: S::Cond) -> (S::Word, Self::Fact);
@@ -266,3 +446,6 @@ pub(crate) enum Step<W, C> {
     /// its truthiness: the interpreter must take its fallback path.
     Unresolved,
 }
+
+/// The bytes of a Wasm `v128` (`wasm::V128_BYTES`; the stencil build has no `wasm` module).
+pub(crate) const VECTOR_BYTES: usize = 16;

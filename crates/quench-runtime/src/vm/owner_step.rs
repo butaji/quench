@@ -1,7 +1,7 @@
 //! The local, capture and name steps, which read and write the variables of the activation that
 //! runs them (`VarOwner`) and the registers it addresses: made over a frame by the interpreter
 //! (`Vm::step`) and over the window of a lane's frameless activation by its body
-//! (`dispatch_fast::vm_steps::lane_owner_step_in`), by this one definition (the catalog's `owned` column, `Op::owned_step`).
+//! (`dispatch_fast::vm_steps::owner_step_in`), by this one definition (the catalog's `owned` column, `Op::owned_step`).
 #[cfg(test)]
 #[path = "owner_step_tests.rs"]
 mod tests;

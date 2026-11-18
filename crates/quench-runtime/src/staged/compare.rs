@@ -58,6 +58,10 @@ pub(crate) enum Comparison {
     Bitwise(NumberBitwise),
     /// `===` or `!==` (`negated`) of the tested operand (the row's `left`) and the Boolean
     /// `expected`: a Boolean has one encoding, so identity decides it.
+    // No decode makes it since the boolean-constant jump handler went with
+    // specialize_register_operands; the lane re-adopts it at the Ir pass (a constant-operand
+    // decode that sees the constant's kind).
+    #[allow(dead_code)]
     Boolean { expected: bool, negated: bool },
     /// `value instanceof constructor` of two registers: its prototype-chain walk is no word test,
     /// so the VM decides it (`CallOut::Decide`), guest code (`@@hasInstance`, a proxy) included.

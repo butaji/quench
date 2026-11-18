@@ -164,7 +164,9 @@ impl Stage for Concrete {
     #[inline(always)]
     fn pick(&mut self, cond: bool, then: bool, otherwise: bool) -> bool { if cond { then } else { otherwise } }
     #[inline(always)]
-    fn number_truthy(&mut self, bits: u64) -> bool { crate::vm::number_is_truthy(f64::from_bits(bits)) }
+    fn number_truthy(&mut self, bits: u64) -> bool {
+        crate::vm::operations::number_truthiness(&mut crate::vm::operations::NumberF64Stage, f64::from_bits(bits))
+    }
     #[inline(always)]
     fn shape_in(&mut self, shape: u64, shapes: &[u32]) -> bool {
         u32::try_from(shape).is_ok_and(|shape| shapes.binary_search(&shape).is_ok())

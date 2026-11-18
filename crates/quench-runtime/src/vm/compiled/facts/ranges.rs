@@ -4,7 +4,8 @@
 //! read what it proves; this file is the one meaning of a range.
 
 use super::{immediate, operand_type, set};
-use crate::bytecode::{Constant, JsDenotation, Operand, WideInstruction};
+use crate::bytecode::{Constant, Operand, WideInstruction};
+use crate::staged::{NumberOperation, Operation};
 use crate::typed_ir::{IntRange, Type};
 use crate::value::Value;
 use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
@@ -38,7 +39,7 @@ fn negative_zero(operation: NumberArithmetic, left: IntRange, right: IntRange) -
 
 /// The arithmetic operator `instruction` is and its operands' ranges, where both are known.
 fn operation(lookup: Lookup<'_>, instruction: WideInstruction) -> Option<(NumberArithmetic, IntRange, IntRange)> {
-    if instruction.op().js_denotation() != JsDenotation::NumericBinary { return None; }
+    if !Operation::<u64, ()>::is_number_binary(instruction) { return None; }
     let operation = NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator())?;
     let [left, right] = [instruction.operand_b(), instruction.operand_c()].map(lookup);
     Some((operation, left?, right?))
@@ -57,9 +58,7 @@ fn stepped(lookup: Lookup<'_>, instruction: WideInstruction) -> Option<IntRange>
 /// int32 never overflows, whatever int32 operands reach it.
 pub(in crate::vm::compiled) fn exact(lookup: Lookup<'_>, instruction: WideInstruction) -> Option<IntRange> {
     if instruction.result_flags() != 0 { return None; }
-    let decoded = crate::vm::compiled::decoded(instruction);
-    if matches!(decoded, Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. })
-        | crate::staged::Operation::IncDecLocal { .. })) { return stepped(lookup, instruction); }
+    if matches!(Operation::<u64, ()>::of(instruction), Some(Operation::Number(NumberOperation::IncDec { .. }))) { return stepped(lookup, instruction); }
     let (operation, left, right) = operation(lookup, instruction)?;
     arithmetic(operation, left, right)
 }
@@ -141,10 +140,10 @@ pub(super) fn bitwise(lookup: Lookup<'_>, operation: NumberBitwise, operands: [O
 /// operation or a step that fits int32, a bitwise result; `None` for any other.
 pub(in crate::vm::compiled) fn result(lookup: Lookup<'_>, constants: &[Constant], instruction: WideInstruction) -> Option<IntRange> {
     if instruction.result_flags() != 0 { return None; }
-    if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() {
+    if crate::staged::loads_constant(instruction.op()) {
         return constants.get(instruction.constant_index()).and_then(immediate).and_then(Value::as_int).map(IntRange::singleton);
     }
-    let bitwise_operation = (instruction.op().js_denotation() == JsDenotation::NumericBinary)
+    let bitwise_operation = Operation::<u64, ()>::is_number_binary(instruction)
         .then(|| NumberBitwise::from_js_instruction(instruction.op(), instruction.binary_operator())).flatten();
     match bitwise_operation {
         Some(operation @ (NumberBitwise::And | NumberBitwise::Or | NumberBitwise::Xor | NumberBitwise::ShiftRight)) =>

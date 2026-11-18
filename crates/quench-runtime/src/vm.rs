@@ -258,7 +258,6 @@ use var_owner::{EvalCaller, VarOwner};
 pub(crate) mod operations;
 #[cfg(all(test, feature = "bench-primitives"))]
 mod primitive_bench;
-pub(crate) use operations::number_is_truthy;
 mod primitives;
 pub(crate) mod program_store;
 mod promise;
@@ -646,7 +645,7 @@ struct Realm {
     globals: Value,
     /// Every global lexical name of the realm, including every bound one
     /// (`Realm::bind_global_lexical`), so it alone answers whether a name is one: a test every
-    /// global name load makes (`lane_load_name_bound`).
+    /// global name load makes (`name_row`).
     global_lexical_declarations: AtomSet,
     global_lexical_bindings: GlobalLexicalBindings,
     immutable_global_lexical_bindings: FxHashSet<Atom>,
@@ -1945,9 +1944,15 @@ pub(crate) struct Vm<H> {
     free_cache_layouts: FxHashMap<crate::bytecode::CacheSiteCounts, Vec<ProgramCacheLayout>>,
     /// The register file of the frame the general loop dispatches; see `run_general_loop`.
     active_registers: *mut Value,
+    /// The staged row the general loop's fast prelude decoded for the instruction it dispatches and
+    /// found the frame left: the arm that runs next takes it as declined, rather than decode and try it again.
+    pending_row: Option<crate::staged::Operation<u64, ()>>,
+    /// The step result a staged row stopped the general loop's run with (a return, a raise or a
+    /// suspension); the fast prelude takes it as the instruction's step result.
+    row_stop: Option<Result<StepResult, JsError>>,
     /// How the last lane run left its activation, for the code it exits to to take (`LaneCompletion`).
     lane_completion: LaneCompletion,
-    /// Where a lane body's native `throw` raised the error in `lane_raised`
+    /// Where a lane body's native `throw` raised the error in `lane_completion`
     /// (`compiled::raise_site`), which the lane gives it as its source location once it
     /// escapes the native frames (`dispatch_fast::lane_raised_exit`).
     lane_raise_site: u64,
@@ -2053,7 +2058,7 @@ pub(crate) struct Vm<H> {
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,
     /// The native each intrinsic name read so far stands for (`bytecode::intrinsic_name_native`),
-    /// indexed by atom and recorded by its first read (`lane_load_name_resolve`); it lives as long
+    /// indexed by atom and recorded by its first read (`load_name_resolve_miss`); it lives as long
     /// as the atoms.
     intrinsic_natives: Vec<Option<Native>>,
     /// Each native's family, by discriminant, derived on its first call (`Vm::native_family_of`).
@@ -2535,7 +2540,7 @@ impl<H: Host> Vm<H> {
         }
     }
     /// A global lexical name was declared: it may shadow a global property that a global name
-    /// read's hint names (`dispatch_fast::lane_load_name_bound`), so every such hint is
+    /// read's hint names (`dispatch_fast::name_row`), so every such hint is
     /// dropped (`LaneView::clear_name_hints`), and code holding one retires (`note_global_shadowing`).
     pub(super) fn note_global_lexical_names(&self) {
         self.programs.clear_global_name_hints();

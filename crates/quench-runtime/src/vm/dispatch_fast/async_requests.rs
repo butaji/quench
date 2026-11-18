@@ -57,7 +57,7 @@ pub(super) fn lane_async_generator_throw<H: Host>(cx: *mut LaneContext<H>, r: Re
 
 /// The request of `generator`, whose `next` or `throw` the call at `ip` with registers `r`
 /// makes: its promise made and rooted in `LaneStack::settling`, the generator resumes as an
-/// activation receiving `sent` (`lane_resume_generator`). The registers and record the lane
+/// activation receiving `sent` (`resume_generator_in_lane`). The registers and record the lane
 /// continues at, or `None`, before any effect but a promise left to the collector.
 fn lane_resume_request<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction, generator: Value, sent: Value) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
@@ -65,7 +65,7 @@ fn lane_resume_request<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i
     note_allocation(vm);
     let root = vm.heap.root(promise);
     vm.lane_stack.settling.push(Some(root));
-    let resumed = generator_windows::lane_resume_generator(cx, r, ip, generator, r.get(i.b), sent, Completion::AsyncRequest);
+    let resumed = generator_windows::resume_generator_in_lane(cx, r, ip, generator, r.get(i.b), sent, Completion::AsyncRequest);
     if resumed.is_none() {
         vm.lane_stack.settling.pop();
         vm.heap.release_root(root);
@@ -81,7 +81,7 @@ fn take_request_promise<H: Host>(vm: &mut Vm<H>) -> Value {
 }
 
 /// `await` (or, where `yielded`, `yield`) at `ip` of the in-place request's activation, on
-/// registers `r`: the awaited value, converted as an `await`'s source is (`lane_await_source`);
+/// registers `r`: the awaited value, converted as an `await`'s source is (`await_source_in_lane`);
 /// the frame suspends back into the generator's record, resuming after this record, the
 /// activation pops, and the caller goes on with the request's promise. A conversion that could
 /// run guest code takes the general path.
@@ -90,7 +90,7 @@ pub(super) fn lane_suspend_request<H: Host>(cx: *mut LaneContext<H>, r: Register
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let Some(value) = vm.lane_await_source(code, r.get(i.b)) else {
+    let Some(value) = vm.await_source_in_lane(code, r.get(i.b)) else {
         return Resumed::Exit(exit(ip));
     };
     note_allocation(vm);

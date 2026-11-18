@@ -2,57 +2,8 @@
 //! record, steps the operation on the concrete stage, and answers the edge or the written value.
 use super::*;
 
-/// The edge a staged jump test takes, or `None` where the value's heap cell decides it.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_jump_if<const TAKEN: bool>(r: Registers, view: Carried, register: u16) -> Option<Edge> {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    jump_edge(crate::staged::step(&mut stage, &mut frame, Operation::JumpIf { register, taken: TAKEN }))
-}
-
-/// The edge a staged jump's step takes, or `None` where the interpreter's own path decides it.
-#[inline(always)]
-fn jump_edge(step: Step<u64, Edge>) -> Option<Edge> {
-    match step {
-        Step::Control(edge) => Some(edge),
-        Step::Unresolved => None,
-        Step::Value(_) => unreachable!("a jump produces no value"),
-    }
-}
-
-/// The `typeof` name index of `source` into `destination` by the staged operation; false,
-/// writing nothing, where a heap value's cell decides the name.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_typeof_index(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    match crate::staged::step(&mut stage, &mut frame, Operation::TypeofIndex { destination, source }) {
-        Step::Value(_) => true,
-        Step::Unresolved => false,
-        Step::Control(_) => unreachable!("a typeof transfers no control"),
-    }
-}
-
-/// Whether the staged RequireIteratorResult accepts `register` as it is (a direct object or
-/// array record); false where the full operation decides.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_require_iterator_result(r: Registers, view: Carried, register: u16) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    matches!(crate::staged::step(&mut stage, &mut frame, Operation::RequireIteratorResult { register }), Step::Value(_))
-}
-
-/// ToPropertyKey of the direct string in `source` into `destination`, by the staged operation;
-/// false, writing nothing, where the value is no direct string.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_property_key(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    matches!(crate::staged::step(&mut stage, &mut frame, Operation::PropertyKey { destination, source }), Step::Value(_))
-}
-
 /// `StoreCapture` of `source` to the capture at `depth` and `slot` past the running function's
-/// dense slots, by the staged operation and the lane's own store (`lane_capture_store`); false,
+/// dense slots, by the staged operation and the lane's own store (`store_to_capture`); false,
 /// storing nothing, where the binding does not take the direct store.
 #[inline(always)]
 pub(in crate::vm::dispatch_fast) fn staged_store_capture<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried,
@@ -63,48 +14,7 @@ pub(in crate::vm::dispatch_fast) fn staged_store_capture<H: Host>(cx: *mut LaneC
     matches!(crate::staged::step(&mut stage, &mut frame, Operation::StoreCapture { source, depth, slot }), Step::Value(_))
 }
 
-/// The edge the staged comparison jump of registers `left` and `right` takes, or `None` where the
-/// interpreter's own path decides it. The jump's backward poll is `lane_jump`'s, the one copy
-/// every jump takes through `jump_on_edge!`.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_compare_jump<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried,
-    comparison: Comparison, [left, right]: [u16; 2]) -> Option<Edge> {
-    staged_comparison_jump::<H>(cx, r, view, comparison, [RecordOperand::Register(left), RecordOperand::Register(right)])
-}
 
-/// The comparison `operator` makes of the observed `values`: two Numbers decide a relation as
-/// binary64 (the static arm the handler selects), and any other relation is no Number relation,
-/// which the handler's cold path decides.
-#[inline(always)]
-fn observed(operator: u32, [left, right]: [Value; 2]) -> Comparison {
-    match Comparison::of_operator(operator).by_vm() {
-        Comparison::Relation { .. } if left.as_number().is_none() || right.as_number().is_none() => Comparison::Operator(operator),
-        comparison => comparison,
-    }
-}
-
-/// The edge the staged jump of `operator` over the record's `operands` takes: the comparison the
-/// observed operands select (`observed`), or `None` where the interpreter's cold path decides it.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_record_jump<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried, operator: u32,
-    operands: [RecordOperand; 2]) -> Option<Edge> {
-    let values = [operands[0].value(cx, r)?, operands[1].value(cx, r)?];
-    staged_comparison_jump::<H>(cx, r, view, observed(operator, values), operands)
-}
-
-/// The edge the staged jump of `comparison` over the record's `operands` takes, or `None` where
-/// the interpreter's own path decides it.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_comparison_jump<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried, comparison: Comparison,
-    operands: [RecordOperand; 2]) -> Option<Edge> {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    frame.decisions = Some(Decisions::of(cx));
-    let ([left, right], reads) = RecordOperand::staged_pair::<H>(cx, operands);
-    frame.reads = reads;
-    let operation = Operation::CompareJump { comparison, left, right, negate: true };
-    jump_edge(crate::staged::step(&mut stage, &mut frame, operation))
-}
 
 /// `LoadCapture` of the capture at `depth` and `slot` into `destination` (of the root's projected
 /// binding where `root`), by the staged operation: the running function's own slots, else the lane's
@@ -184,13 +94,3 @@ pub(in crate::vm::dispatch_fast) fn staged_store_local_checked<H: Host, const AC
     true
 }
 
-/// The edge a staged unconditional jump takes.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_jump(r: Registers, view: Carried) -> Edge {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    match crate::staged::step(&mut stage, &mut frame, Operation::Jump) {
-        Step::Control(edge) => edge,
-        _ => unreachable!("a jump produces no value"),
-    }
-}

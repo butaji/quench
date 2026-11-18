@@ -9,23 +9,19 @@
 //! `arguments` object does.
 use super::*;
 
-/// The handler of `instruction`'s record of parameter `slot` when the parameter is one a mapped
-/// `arguments` object aliases in a suspended function's window; `None` for any other record.
-pub(super) fn mapped_parameter_handler<H: Host>(
-    function: &Function,
-    instruction: WideInstruction,
-    slot: usize,
-) -> Option<Handler> {
-    let handler: Handler = if super::window_records::is_local_load(instruction) {
-        lane_load_mapped_parameter::<H>
-    } else if super::window_records::is_local_store(instruction) {
-        lane_store_mapped_parameter::<H>
+// merge: HEAD's dispatcher, adapted to theirs' staged queries and handler names. Theirs'
+// window_local_handler does not wire it (its row wiring is not merged), so it stays unused.
+#[allow(dead_code)]
+pub(super) fn mapped_parameter_handler<H: Host>(function: &Function, op: Op, slot: usize) -> Option<Handler> {
+    let handler: Handler = if crate::staged::accesses_local_slot(op) && !crate::staged::stores_local_slot(op) {
+        load_mapped_parameter::<H>
+    } else if crate::staged::stores_local_slot(op) {
+        store_mapped_parameter::<H>
     } else {
         return None;
     };
-    (crate::vm::arguments::mapped_arguments_slot(function, slot).is_some()
-        && function.arguments_ride_window())
-    .then_some(handler)
+    (crate::vm::arguments::mapped_arguments_slot(function, slot).is_some() && function.arguments_ride_window())
+        .then_some(handler)
 }
 
 /// Where a parameter lives in an environment window: its local among the window's locals, or,
@@ -134,6 +130,11 @@ pub(super) fn window_binding<H: Host>(vm: &Vm<H>, r: Registers, body: &Function,
     unsafe { ParameterHome::of(r.0.add(usize::from(body.registers)), body, slot) }.read(&vm.heap)
 }
 
+// merge: theirs' mapped-parameter handlers (`lane_load_mapped_parameter`, `lane_store_mapped_parameter`)
+// are kept under ours-style names. They read the element through `Vm::mapped_window_element`, which
+// only theirs' object_array/arguments.rs defines, and no row of ours requickens to them, so they are
+// unused here until that helper and the row wiring are merged. Ours' `window_arguments` (dispatch_fast.rs)
+// reads the element through `stored_arguments_element`.
 /// The `arguments` object the running window activation made on entry, and the home of its
 /// parameter `slot`, for the window whose entries start at register `registers`; `None` in a
 /// frame's run, which the general path serves.
@@ -162,7 +163,7 @@ script_handler! {
     /// activation of a suspended function: the element the object maps it to, else the
     /// parameter's binding. Any other run, a numeric local or an uninitialized binding takes the
     /// general path.
-    fn lane_load_mapped_parameter<>(cx, r, ip, i, view) {
+    fn load_mapped_parameter<>(cx, r, ip, i, view) {
         let (slot, registers) = environment_window_fields(i);
         let Some((arguments, home)) = mapped_window(cx, r, registers, slot).filter(|_| i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0)
         else {
@@ -179,9 +180,9 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_load_mapped_parameter`'s store: the parameter's binding and, while the mapping
+    /// `load_mapped_parameter`'s store: the parameter's binding and, while the mapping
     /// holds, the element (`Vm::store_mapped_argument`).
-    fn lane_store_mapped_parameter<>(cx, r, ip, i, view) {
+    fn store_mapped_parameter<>(cx, r, ip, i, view) {
         let (slot, registers) = environment_window_fields(i);
         let Some((arguments, home)) = mapped_window(cx, r, registers, slot) else {
             return exit(ip);

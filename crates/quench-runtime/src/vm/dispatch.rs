@@ -1,7 +1,8 @@
 use super::*;
+use super::dispatch_frame::{InterpreterFrame, RowRun};
 
 mod increment;
-pub(super) use increment::{integer_increment, number_increment};
+pub(super) use increment::number_increment;
 
 // Publish the current resume PC only while a binding-site consumer runs.
 macro_rules! with_binding_site_pc {
@@ -59,7 +60,7 @@ impl<H: Host> Vm<H> {
         // Hosts permitting proper tail calls leave strict terminal calls to `step`. Wasm programs run in
         // the loop (as in-loop Wasm frames), and their calls keep Wasm's own activation and
         // exhaustion accounting, so they are never inlined as user calls.
-        if !crate::staged::meaning_dispatch::ordinary_call(i)
+        if !crate::staged::calls_ordinary(i.op())
             || i.direct_eval()
             || self.direct_eval
             || self.parameter_eval
@@ -78,7 +79,7 @@ impl<H: Host> Vm<H> {
         if entry.push == super::InLoopPush::Settles {
             // Settling calls consume the ordinary register window and cannot take
             // CallArray's materialized argument vector through this continuation.
-            if crate::staged::meaning_dispatch::array_call(i) {
+            if crate::staged::calls_array(i.op()) {
                 return None;
             }
             return self.try_settling_call(p, f, i, pc, callee, target);
@@ -97,7 +98,7 @@ impl<H: Host> Vm<H> {
         // indexed values before pushing the frame, just as `Vm::step` does. The
         // copied Values are rooted through activation setup below because the
         // caller resumes past the temporary array register before its frame is pushed.
-        let array_arguments = if crate::staged::meaning_dispatch::array_call(i) {
+        let array_arguments = if crate::staged::calls_array(i.op()) {
             match self.array_values(self.read(f, window.base)) {
                 Ok(arguments) => Some(arguments),
                 Err(error) => return Some(Err(error)),
@@ -372,7 +373,7 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         pc: usize,
     ) -> Option<Result<StepResult, JsError>> {
-        if !crate::staged::meaning_dispatch::call_or_forwarding(i)
+        if !crate::staged::calls_positional(i.op())
             || self.direct_eval
             || self.parameter_eval
             || p.kind == crate::bytecode::ProgramKind::Wasm
@@ -395,7 +396,7 @@ impl<H: Host> Vm<H> {
         // `f.call(...)`, a bound function without bound arguments, or an uncurried builtin
         // (`Vm::forwarded_call`). A forwarded `arguments` reaches here unmaterialized, which
         // only `apply` takes as its list.
-        let forwarded = if crate::staged::meaning_dispatch::plain_call(i) { self.forwarded_call(callee, target, window) } else { None };
+        let forwarded = if crate::staged::calls(i.op()) { self.forwarded_call(callee, target, window) } else { None };
         let arguments = match forwarded {
             Some(super::function::Forwarded { callee: forwarded_target, receiver: forwarded_this, args: forwarded_arguments, .. }) => {
                 (target, this) = (forwarded_target, forwarded_this);
@@ -411,7 +412,7 @@ impl<H: Host> Vm<H> {
                 }) => {
                     // A forwarded `arguments` reaches here unmaterialized, which only `apply`
                     // takes as its list.
-                    if !crate::staged::meaning_dispatch::plain_call(i) {
+                    if !crate::staged::calls(i.op()) {
                         return None;
                     }
                     let (bound_target, bound_this, bound) = self.bound_function_parts(*env)?;
@@ -426,7 +427,7 @@ impl<H: Host> Vm<H> {
                     ..
                 }) => {
                     let list = window.get(2).copied().unwrap_or(Value::UNDEFINED);
-                    if !crate::staged::meaning_dispatch::plain_call(i) || self.heap.array(list).is_none() {
+                    if !crate::staged::calls(i.op()) || self.heap.array(list).is_none() {
                         return None;
                     }
                     target = window.first().copied().unwrap_or(Value::UNDEFINED);
@@ -470,7 +471,7 @@ impl<H: Host> Vm<H> {
         pc: usize,
     ) -> Option<Result<StepResult, JsError>> {
         let callee = self.read(f, i.register_b());
-        if !crate::staged::meaning_dispatch::plain_call(i)
+        if !crate::staged::calls(i.op())
             || !matches!(
                 self.heap.function(callee),
                 Some(FunctionRecord { kind: FunctionKind::Native(Native::ReflectApply), .. })
@@ -577,32 +578,38 @@ impl<H: Host> Vm<H> {
             }
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
             Op::LoadConst => {
-                debug_assert_eq!(self.frames[f].program, self.active_program);
-                let value = self.active_constant(i.constant_index()).ok_or_else(|| {
-                    JsError::validation("constant index is outside program".into())
-                })?;
-                self.write(f, i.result_register(), value);
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::of(p)) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.load_const_miss(f, i);
+                    }
+                    RowRun::Stop(stop) => return stop,
+                }
             }
             Op::CreateRegExpLiteral => {
                 let value = self.regexp_literal(p, f, i.regexp_literal_site_index())?;
                 self.write(f, i.result_register(), value);
             }
-            Op::LoadLocalPlain => {
-                // SAFETY: validated bytecode bounds the slot by Function.locals,
-                // and frame setup sizes locals to that count.
-                let value = unsafe { self.read_validated_local(f, i.local_slot()) };
-                self.write(f, i.result_register(), value);
+            // Checked local reads and writes run their staged rows first; a row that leaves (a binding in
+            // its temporal dead zone, a root or mirrored binding) is the owner's step.
+            Op::LoadLocal | Op::StoreLocal => {
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        self.owner_step(p, VarOwner::Frame(f), i, *pc)?;
+                    }
+                    RowRun::Stop(stop) => return stop,
+                }
             }
-            Op::LoadLocal | Op::LoadEnvLocal | Op::StoreVarBinding | Op::StoreLocal | Op::StoreEnvLocal
-            | Op::LoadCapture | Op::StoreCapture | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
-            | Op::StoreName => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
-            Op::StoreLocalPlain => {
-                let value = self.read(f, i.register_a());
-                // SAFETY: validated bytecode bounds the slot by Function.locals,
-                // and frame setup sizes locals to that count.
-                unsafe { self.write_validated_local(f, i.local_slot(), value) };
-                if let Some(register) = i.optional_register_b() {
-                    self.write(f, register, value);
+            Op::LoadEnvLocal | Op::StoreVarBinding | Op::StoreEnvLocal | Op::StoreName => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
+            // Captures and name loads run their staged rows first; a row that leaves is the owner's step.
+            Op::LoadCapture | Op::StoreCapture | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof => {
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        self.owner_step(p, VarOwner::Frame(f), i, *pc)?;
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::LoadThis => {
@@ -711,66 +718,22 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), v);
             }
             Op::GetField => {
-                let lookup = i.field_lookup().ok_or_else(|| {
-                    JsError::validation("invalid nested field lookup encoding".into())
-                })?;
-                let v = match lookup {
-                    crate::bytecode::FieldLookup::Site(site) => self.resolve_field(p, f, site)?,
-                    crate::bytecode::FieldLookup::Atom {
-                        atom,
-                        base,
-                        cache_site,
-                    } => {
-                        let base = self.resolve_field_base(p, f, base)?;
-                        // A read fused with its frame's return pushes the getter as a call
-                        // whose completion returns from the frame (`PendingGeneralCall::returns`);
-                        // a getter is no tail call, so a strict frame pushes it too.
-                        if allow_inline_calls
-                            && !i.writes_current_this()
-                            && let Some(getter) =
-                                self.cached_field_getter(base, atom, self.field_cache_index(cache_site))
-                            && let Some(result) =
-                                self.try_inline_getter(p, f, *pc, getter, base, i.result_register())
-                        {
-                            return result;
-                        }
-                        // A private field reads straight from the object's private elements;
-                        // methods, accessors and a missing brand take the ordinary [[Get]].
-                        match self.is_private_name(atom).then(|| self.private_field_value(p, base, atom)).flatten() {
-                            Some(value) => value,
-                            None => self.get_field_cached(p, base, atom, cache_site)?,
-                        }
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.get_field_step_miss(p, f, i, pc, allow_inline_calls);
                     }
-                };
-                if i.writes_current_this() {
-                    let crate::bytecode::FieldLookup::Site(site) = lookup else {
-                        unreachable!("field sink is only attached to nested field lookup")
-                    };
-                    let sink = p.field_sites[site].sink.expect("fused field sink");
-                    self.with_field_source(f, site, crate::bytecode::FieldPart::Sink, |vm| vm.set_field_cached(
-                        p, vm.frames[f].this, sink.0, v, sink.1,
-                        p.function(vm.frames[f].function as usize).strict,
-                    ))?;
+                    RowRun::Stop(stop) => return stop,
                 }
-                if i.returns_from_frame() {
-                    return Ok(StepResult::Return(v));
-                }
-                self.write(f, i.result_register(), v);
             }
             Op::GetIndex => {
-                #[cfg(feature = "profile-aggregate")]
-                self.profile.index_dispatch(false, false);
-                let base = self.resolve_operand(p, f, i.operand_b())?;
-                let key = self.resolve_operand(p, f, i.operand_c())?;
-                if allow_inline_calls
-                    && let Some(getter) = self.proved_symbol_getter(base, key)
-                    && let Some(result) =
-                        self.try_inline_getter(p, f, *pc, getter, base, i.result_register())
-                {
-                    return result;
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.get_index_miss(p, f, i, pc, allow_inline_calls);
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
-                let v = self.get_index(p, base, key)?;
-                self.write(f, i.result_register(), v);
             }
             Op::CheckPrivate => {
                 let object = self.read(f, i.register_a());
@@ -847,8 +810,13 @@ impl<H: Host> Vm<H> {
                 self.store_resolved_name(p, object, atom, self.read(f, i.register_a()), strict)?;
             }
             Op::ToNumeric => {
-                let value = self.to_numeric(p, self.read(f, i.register_b()))?;
-                self.write(f, i.result_register(), value);
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.to_numeric_miss(p, f, i);
+                    }
+                    RowRun::Stop(stop) => return stop,
+                }
             }
             Op::CopyDataProperties => self.copy_data_properties(
                 p,
@@ -879,7 +847,7 @@ impl<H: Host> Vm<H> {
             }
             Op::ArgumentsLength | Op::ArgumentGet => {
                 let binding = self.load_local_binding(p, VarOwner::Frame(f), i.local_slot(), None)?;
-                let key = (i.op() == Op::ArgumentGet).then(|| self.read(f, i.register_b()));
+                let key = crate::staged::reads_argument(i.op()).then(|| self.read(f, i.register_b()));
                 let value = self.read_arguments_binding(p, f, binding, key)?;
                 self.write(f, i.result_register(), value);
             }
@@ -904,129 +872,40 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::Await => {
-                // Promise conversion is part of this instruction, so abrupt
-                // completion reaches the active frame's catch/finally handlers.
-                // A primitive needs none: the promise PromiseResolve would wrap it in is
-                // already fulfilled and unreachable, so the resume reads the value itself
-                // (`enqueue_async_resume`).
-                let awaited = self.read(f, i.register_b());
-                let value = if self.is_object_like(awaited) {
-                    self.promise_for_value(p, awaited)?
-                } else {
-                    awaited
-                };
-                return Ok(StepResult::Await {
-                    value,
-                    destination: i.result_register(),
-                });
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.await_miss(p, f, i);
+                    }
+                    RowRun::Stop(stop) => return stop,
+                }
             }
             Op::Yield => {
-                let value = self.read(f, i.register_b());
-                let value = if p.function(self.frames[f].function as usize).is_async {
-                    self.promise_for_value(p, value)?
-                } else {
-                    value
-                };
-                return Ok(StepResult::Yield {
-                    value,
-                    destination: i.result_register(),
-                    delegated_result: None,
-                });
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.yield_miss(p, f, i);
+                    }
+                    RowRun::Stop(stop) => return stop,
+                }
             }
             Op::YieldStar => {
-                let iterator = self.read(f, i.register_c());
-                let iterator = if iterator.is_undefined() {
-                    let source = self.read(f, i.register_b());
-                    let asynchronous = p.function(self.frames[f].function as usize).is_async;
-                    let iterator = if asynchronous {
-                        self.get_async_iterator(p, source)?
-                    } else {
-                        self.get_iterator(p, source)?
-                    };
-                    self.write(f, i.register_c(), iterator);
-                    iterator
-                } else {
-                    iterator
-                };
-                let (state_register, next_method_register) = i.register_pair();
-                let next_method = self.read(f, next_method_register);
-                let next_method = if next_method.is_undefined() {
-                    let receiver = match self.heap.iterator(iterator) {
-                        Some(IteratorRecord {
-                            source,
-                            kind: IteratorKind::AsyncFromSync,
-                            ..
-                        }) => *source,
-                        _ => iterator,
-                    };
-                    let atom = self.runtime_atoms.next;
-                    let method = self.get_property(p, receiver, atom)?;
-                    if !self.is_function(method) {
-                        return Err(
-                            self.type_error(p, "iterator next method is not callable".into())
-                        );
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.yield_star_miss(p, f, i, pc);
                     }
-                    self.write(f, next_method_register, method);
-                    method
-                } else {
-                    next_method
-                };
-                let awaited_result = self.read(f, state_register);
-                let asynchronous = p.function(self.frames[f].function as usize).is_async;
-                // An awaited step's result, or a synchronous delegate step the lane made as an
-                // activation (`Completion::Delegates`), waits in the state register.
-                let result = if !awaited_result.is_undefined() {
-                    self.write(f, state_register, Value::UNDEFINED);
-                    awaited_result
-                } else {
-                    let input = self.read(f, i.result_register());
-                    let result =
-                        self.iterator_next_with_cached_method(p, iterator, next_method, &[input])?;
-                    if asynchronous {
-                        *pc -= 1;
-                        let value = self.promise_for_value(p, result)?;
-                        return Ok(StepResult::Await {
-                            value,
-                            destination: state_register,
-                        });
-                    }
-                    result
-                };
-                let done_atom = self.runtime_atoms.done;
-                let done = self.get_property(p, result, done_atom)?;
-                if self.truthy(done) {
-                    let value_atom = self.runtime_atoms.value;
-                    let value = self.get_property(p, result, value_atom)?;
-                    self.write(f, i.result_register(), value);
-                } else {
-                    *pc -= 1;
-                    if asynchronous {
-                        self.write(f, state_register, Value::UNDEFINED);
-                    }
-                    let value = if asynchronous {
-                        let value_atom = self.runtime_atoms.value;
-                        self.get_property(p, result, value_atom)?
-                    } else {
-                        Value::UNDEFINED
-                    };
-                    return Ok(StepResult::Yield {
-                        value,
-                        destination: i.result_register(),
-                        delegated_result: Some(result),
-                    });
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::SetField | Op::SetFieldStrict => {
-                let object = self.read(f, i.register_b());
-                let value = self.read(f, i.register_a());
-                self.set_field_cached(
-                    p,
-                    object,
-                    i.atom_index(),
-                    value,
-                    i.cache_site_index(),
-                    i.op().field_store().is_some_and(|store| store.strict),
-                )?;
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.set_field_miss(p, f, i);
+                    }
+                    RowRun::Stop(stop) => return stop,
+                }
             }
             Op::DefinePropertyRecord => {
                 let mode = i.property_definition_mode().ok_or_else(|| {
@@ -1078,107 +957,48 @@ impl<H: Host> Vm<H> {
                 )?;
             }
             Op::SetIndex => {
-                #[cfg(feature = "profile-aggregate")]
-                self.profile.index_dispatch(true, false);
-                self.set_index_mode(
-                    p,
-                    self.read(f, i.register_b()),
-                    self.read(f, i.register_c()),
-                    self.read(f, i.register_a()),
-                    p.function(self.frames[f].function as usize).strict
-                        || i.boolean_flag().expect("validated boolean immediate"),
-                )?
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.set_index_miss(p, f, i);
+                    }
+                    RowRun::Stop(stop) => return stop,
+                }
             }
             Op::DefineArrayElement => {
                 let (array, value) = (self.read(f, i.register_b()), self.read(f, i.register_a()));
                 self.define_array_literal_element(p, array, i.array_index() as usize, value)?;
             }
-            Op::Move => self.write(f, i.result_register(), self.read(f, i.register_b())),
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-                let operator = i.binary_operator();
-                let left_operand = i.operand_b();
-                let right_operand = i.operand_c();
-                self.profile
-                    .binary(operator as usize, left_operand.0, right_operand.0);
-                let left = self.resolve_operand(p, f, left_operand)?;
-                let right = self.resolve_operand(p, f, right_operand)?;
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    let integer = self.numeric_integer_binary(operator, left, right).is_some();
-                    self.profile.regional_binary(
-                        self.frames[f].program.raw(),
-                        self.frames[f].function,
-                        (*pc - 1) as u32,
-                        integer,
-                    );
-                    if i.op() != Op::Binary {
-                        self.profile.numeric_binary_path(
-                            operator as usize,
-                            integer,
-                            left.as_int().is_some() && right.as_int().is_some(),
-                        );
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.binary_miss(p, f, i, pc);
                     }
-                }
-                let v = match self.number_binary(operator, left, right) {
-                    Some(value) => value,
-                    None => self.binary(p, operator, left, right)?,
-                };
-                if i.returns_from_frame() {
-                    return Ok(StepResult::Return(v));
-                }
-                if let Some(local) = i.numeric_local_target() {
-                    self.frames[f].locals[local as usize] = v;
-                    self.profile
-                        .virtual_opcode(self.frames[f].program.raw(), Op::StoreLocalPlain as usize);
-                } else {
-                    self.write(f, i.result_register(), v);
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::IncDec => {
-                let input = self.read(f, i.register_b());
-                let is_decrement = i.boolean_flag().expect("validated boolean immediate");
-                // ToNumeric, then Number::add or BigInt::add of one (ECMA-262 13.4).
-                let value = match number_increment(input, is_decrement) {
-                    Some(value) => value,
-                    None => {
-                        let numeric = self.to_numeric(p, input)?;
-                        match number_increment(numeric, is_decrement) {
-                            Some(value) => value,
-                            None => self.numeric_update(p, numeric, is_decrement)?,
-                        }
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.inc_dec_miss(p, f, i);
                     }
-                };
-                self.write(f, i.result_register(), value);
+                    RowRun::Stop(stop) => return stop,
+                }
             }
             Op::StringConcat => {
                 let v = self.frame_string_concat(p, f, i.register_window())?;
                 self.write(f, i.result_register(), v);
             }
+            // merge: HEAD's inline Unary, Jump, JumpFalse/JumpTrue arms are dropped; the derivation runs them as staged rows (step_row_of).
             Op::Unary => {
-                let v = self.unary(p, i.unary_operator(), self.read(f, i.register_b()))?;
-                if i.returns_from_frame() {
-                    return Ok(StepResult::Return(v));
-                }
-                self.write(f, i.result_register(), v);
-            }
-            Op::Jump => {
-                *pc = i.jump_target() as usize;
-                self.frames[f].pc = *pc;
-                self.frames[f].pc_is_resume = true;
-                self.maybe_collect(p);
-            }
-            Op::JumpFalse | Op::JumpTrue => {
-                let value = self.read(f, i.register_a());
-                let truthy = self.truthy(value);
-                #[cfg(feature = "profile-aggregate")]
-                self.profile
-                    .branch_value(value.profile_kind() as usize, truthy);
-                let jumps_when_truthy = matches!(
-                    crate::vm::compiled::decoded(i),
-                    Some(crate::staged::Operation::JumpIf { taken: true, .. })
-                );
-                if truthy == jumps_when_truthy {
-                    *pc = i.jump_target() as usize;
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.unary_miss(p, f, i);
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::ForInNext => match self.for_in_next(p, self.read(f, i.register_b()))? {
@@ -1186,15 +1006,12 @@ impl<H: Host> Vm<H> {
                 None => *pc = i.jump_target() as usize,
             },
             Op::JumpBinaryFalse => {
-                let operator = i.binary_operator_field();
-                let left_operand = i.operand_b();
-                let right_operand = i.operand_c();
-                self.profile
-                    .binary(operator as usize, left_operand.0, right_operand.0);
-                let left = self.resolve_operand(p, f, left_operand)?;
-                let right = self.resolve_operand(p, f, right_operand)?;
-                if !self.binary_truthy(p, operator, left, right)? {
-                    *pc = i.jump_target() as usize;
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.jump_binary_false_miss(p, f, i, pc);
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::Call | Op::CallArray | Op::CallSpread | Op::CallForwardingArguments => {
@@ -1529,13 +1346,394 @@ impl<H: Host> Vm<H> {
                 }
                 self.write(f, i.result_register(), v);
             }
-            Op::Return => return Ok(StepResult::Return(self.read(f, i.register_a()))),
-            Op::Throw => {
-                let value = self.read(f, i.register_a());
-                return Err(JsError::thrown_primitive(value).unwrap_or_else(|| JsError::thrown(value, self.detail_string(value))));
-            }
+            // Return and Throw are rows: the frame's completion (`Frame::ret`, `Frame::raise`) stops the run.
+            Op::Return | Op::Throw => match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                RowRun::Stop(stop) => return stop,
+                RowRun::Done(_) | RowRun::Declined => unreachable!("a return or a raise row stops the run"),
+            },
             Op::WasmBranchTable => *pc += self.branch_table_case(f, i),
             _ => return self.step_unlisted(p, f, i, pc),
+        }
+        Ok(StepResult::Continue)
+    }
+
+    /// Runs `operation`, decoded from `i` at resume PC `pc`, as its staged row on the running frame
+    /// `f` (`InterpreterFrame::step_row`). A taken jump sets `pc`, and a back-edge jump publishes its
+    /// PC and checks for a due collection.
+    #[inline(always)]
+    fn run_row(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize,
+        operation: crate::staged::Operation<u64, ()>) -> RowRun {
+        use crate::staged::{Edge, Operation};
+        if !self.row_admitted(p, f, operation) {
+            return RowRun::Declined;
+        }
+        let run = InterpreterFrame::step_row(self as *mut Self, p, f, *pc, i, operation);
+        if matches!(run, RowRun::Done(Edge::Target)) {
+            *pc = i.jump_target() as usize;
+            if matches!(operation, Operation::Jump) {
+                self.frames[f].pc = *pc;
+                self.frames[f].pc_is_resume = true;
+                self.maybe_collect(p);
+            }
+        }
+        run
+    }
+
+    /// The staged row `i` decodes to under `context`: a general row, a name load (under no context:
+    /// its proof is the frame's), or the lane's suspension and string-case rows.
+    #[inline(always)]
+    pub(super) fn decode_row(i: WideInstruction, context: crate::staged::DecodeContext<'_>) -> Option<crate::staged::Operation<u64, ()>> {
+        crate::staged::Operation::<u64, ()>::decode(i, context)
+            .or_else(|| crate::staged::Operation::<u64, ()>::decode_load_name(i, ()))
+            .or_else(|| crate::staged::Operation::<u64, ()>::decode_lane(i))
+    }
+
+    /// Whether the staged row `operation` may run on frame `f`: the checked local rows need the
+    /// frame's slots to be its own (`Function::has_plain_locals`); every other row is admitted.
+    #[inline(always)]
+    pub(super) fn row_admitted(&self, p: &ResidualProgram, f: usize, operation: crate::staged::Operation<u64, ()>) -> bool {
+        match operation {
+            crate::staged::Operation::LoadLocalChecked { .. } | crate::staged::Operation::StoreLocalChecked { .. } => {
+                let function = self.frames[f].function;
+                p.function(function as usize).has_plain_locals(function == super::ROOT_FUNCTION_ID)
+            }
+            _ => true,
+        }
+    }
+
+    /// `i` decoded under `context` and run as its staged row (`run_row`). The fast prelude already
+    /// decoded this instruction and tried its row where it declined (`pending_row`): the arm runs its
+    /// miss path without decoding or trying the row again.
+    #[inline(always)]
+    fn step_row_of(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize,
+        context: crate::staged::DecodeContext<'_>) -> RowRun {
+        if self.pending_row.take().is_some() {
+            return RowRun::Declined;
+        }
+        match Self::decode_row(i, context) {
+            Some(operation) => self.run_row(p, f, i, pc, operation),
+            None => RowRun::Declined,
+        }
+    }
+
+    #[inline(never)]
+    fn load_const_miss(&mut self, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
+        debug_assert_eq!(self.frames[f].program, self.active_program);
+        let value = self.active_constant(i.constant_index()).ok_or_else(|| {
+            JsError::validation("constant index is outside program".into())
+        })?;
+        self.write(f, i.result_register(), value);
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn binary_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, _pc: &mut usize) -> Result<StepResult, JsError> {
+        let operator = i.binary_operator();
+        let left_operand = i.operand_b();
+        let right_operand = i.operand_c();
+        self.profile
+            .binary(operator as usize, left_operand.0, right_operand.0);
+        let left = self.resolve_operand(p, f, left_operand)?;
+        let right = self.resolve_operand(p, f, right_operand)?;
+        #[cfg(feature = "profile-aggregate")]
+        {
+            let integer = self.numeric_integer_binary(operator, left, right).is_some();
+            self.profile.regional_binary(
+                self.frames[f].program.raw(),
+                self.frames[f].function,
+                (*pc - 1) as u32,
+                integer,
+            );
+            if !crate::staged::binary(i.op()) {
+                self.profile.numeric_binary_path(
+                    operator as usize,
+                    integer,
+                    left.as_int().is_some() && right.as_int().is_some(),
+                );
+            }
+        }
+        let v = match self.number_binary(operator, left, right) {
+            Some(value) => value,
+            None => self.binary(p, operator, left, right)?,
+        };
+        if i.returns_from_frame() {
+            return Ok(StepResult::Return(v));
+        }
+        if let Some(local) = i.numeric_local_target() {
+            self.frames[f].locals[local as usize] = v;
+            self.profile
+                .virtual_opcode(self.frames[f].program.raw(), crate::staged::STORE_LOCAL_PLAIN_ROW as usize);
+        } else {
+            self.write(f, i.result_register(), v);
+        }
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn inc_dec_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
+        let input = self.read(f, i.register_b());
+        let is_decrement = i.boolean_flag().expect("validated boolean immediate");
+        // ToNumeric, then Number::add or BigInt::add of one (ECMA-262 13.4).
+        let value = match number_increment(input, is_decrement) {
+            Some(value) => value,
+            None => {
+                let numeric = self.to_numeric(p, input)?;
+                match number_increment(numeric, is_decrement) {
+                    Some(value) => value,
+                    None => self.numeric_update(p, numeric, is_decrement)?,
+                }
+            }
+        };
+        self.write(f, i.result_register(), value);
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn to_numeric_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
+        let value = self.to_numeric(p, self.read(f, i.register_b()))?;
+        self.write(f, i.result_register(), value);
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn unary_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
+        let v = self.unary(p, i.unary_operator(), self.read(f, i.register_b()))?;
+        if i.returns_from_frame() {
+            return Ok(StepResult::Return(v));
+        }
+        self.write(f, i.result_register(), v);
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn jump_binary_false_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize) -> Result<StepResult, JsError> {
+        let operator = i.binary_operator_field();
+        let left_operand = i.operand_b();
+        let right_operand = i.operand_c();
+        self.profile
+            .binary(operator as usize, left_operand.0, right_operand.0);
+        let left = self.resolve_operand(p, f, left_operand)?;
+        let right = self.resolve_operand(p, f, right_operand)?;
+        if !self.binary_truthy(p, operator, left, right)? {
+            *pc = i.jump_target() as usize;
+        }
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn get_field_step_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool) -> Result<StepResult, JsError> {
+        let lookup = i.field_lookup().ok_or_else(|| {
+            JsError::validation("invalid nested field lookup encoding".into())
+        })?;
+        let v = match lookup {
+            crate::bytecode::FieldLookup::Site(site) => self.resolve_field(p, f, site)?,
+            crate::bytecode::FieldLookup::Atom {
+                atom,
+                base,
+                cache_site,
+            } => {
+                let base = self.resolve_field_base(p, f, base)?;
+                // A read fused with its frame's return pushes the getter as a call
+                // whose completion returns from the frame (`PendingGeneralCall::returns`);
+                // a getter is no tail call, so a strict frame pushes it too.
+                if allow_inline_calls
+                    && !i.writes_current_this()
+                    && let Some(getter) =
+                        self.cached_field_getter(base, atom, self.field_cache_index(cache_site))
+                    && let Some(result) =
+                        self.try_inline_getter(p, f, *pc, getter, base, i.result_register())
+                {
+                    return result;
+                }
+                // A private field reads straight from the object's private elements;
+                // methods, accessors and a missing brand take the ordinary [[Get]].
+                match self.is_private_name(atom).then(|| self.private_field_value(p, base, atom)).flatten() {
+                    Some(value) => value,
+                    None => self.get_field_cached(p, base, atom, cache_site)?,
+                }
+            }
+        };
+        if i.writes_current_this() {
+            let crate::bytecode::FieldLookup::Site(site) = lookup else {
+                unreachable!("field sink is only attached to nested field lookup")
+            };
+            let sink = p.field_sites[site].sink.expect("fused field sink");
+            self.with_field_source(f, site, crate::bytecode::FieldPart::Sink, |vm| vm.set_field_cached(
+                p, vm.frames[f].this, sink.0, v, sink.1,
+                p.function(vm.frames[f].function as usize).strict,
+            ))?;
+        }
+        if i.returns_from_frame() {
+            return Ok(StepResult::Return(v));
+        }
+        self.write(f, i.result_register(), v);
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn get_index_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool) -> Result<StepResult, JsError> {
+        #[cfg(feature = "profile-aggregate")]
+        self.profile.index_dispatch(false, false);
+        let base = self.resolve_operand(p, f, i.operand_b())?;
+        let key = self.resolve_operand(p, f, i.operand_c())?;
+        if allow_inline_calls
+            && let Some(getter) = self.proved_symbol_getter(base, key)
+            && let Some(result) =
+                self.try_inline_getter(p, f, *pc, getter, base, i.result_register())
+        {
+            return result;
+        }
+        let v = self.get_index(p, base, key)?;
+        self.write(f, i.result_register(), v);
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn set_field_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
+        let object = self.read(f, i.register_b());
+        let value = self.read(f, i.register_a());
+        self.set_field_cached(
+            p,
+            object,
+            i.atom_index(),
+            value,
+            i.cache_site_index(),
+            i.op().field_store().is_some_and(|store| store.strict),
+        )?;
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn set_index_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
+        #[cfg(feature = "profile-aggregate")]
+        self.profile.index_dispatch(true, false);
+        self.set_index_mode(
+            p,
+            self.read(f, i.register_b()),
+            self.read(f, i.register_c()),
+            self.read(f, i.register_a()),
+            p.function(self.frames[f].function as usize).strict
+                || i.boolean_flag().expect("validated boolean immediate"),
+        )?;
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn await_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
+        // Promise conversion is part of this instruction, so abrupt
+        // completion reaches the active frame's catch/finally handlers.
+        // A primitive needs none: the promise PromiseResolve would wrap it in is
+        // already fulfilled and unreachable, so the resume reads the value itself
+        // (`enqueue_async_resume`).
+        let awaited = self.read(f, i.register_b());
+        let value = if self.is_object_like(awaited) {
+            self.promise_for_value(p, awaited)?
+        } else {
+            awaited
+        };
+        return Ok(StepResult::Await {
+            value,
+            destination: i.result_register(),
+        });
+    }
+
+    #[inline(never)]
+    fn yield_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
+        let value = self.read(f, i.register_b());
+        let value = if p.function(self.frames[f].function as usize).is_async {
+            self.promise_for_value(p, value)?
+        } else {
+            value
+        };
+        return Ok(StepResult::Yield {
+            value,
+            destination: i.result_register(),
+            delegated_result: None,
+        });
+    }
+
+    #[inline(never)]
+    fn yield_star_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize) -> Result<StepResult, JsError> {
+        let iterator = self.read(f, i.register_c());
+        let iterator = if iterator.is_undefined() {
+            let source = self.read(f, i.register_b());
+            let asynchronous = p.function(self.frames[f].function as usize).is_async;
+            let iterator = if asynchronous {
+                self.get_async_iterator(p, source)?
+            } else {
+                self.get_iterator(p, source)?
+            };
+            self.write(f, i.register_c(), iterator);
+            iterator
+        } else {
+            iterator
+        };
+        let (state_register, next_method_register) = i.register_pair();
+        let next_method = self.read(f, next_method_register);
+        let next_method = if next_method.is_undefined() {
+            let receiver = match self.heap.iterator(iterator) {
+                Some(IteratorRecord {
+                    source,
+                    kind: IteratorKind::AsyncFromSync,
+                    ..
+                }) => *source,
+                _ => iterator,
+            };
+            let atom = self.runtime_atoms.next;
+            let method = self.get_property(p, receiver, atom)?;
+            if !self.is_function(method) {
+                return Err(
+                    self.type_error(p, "iterator next method is not callable".into())
+                );
+            }
+            self.write(f, next_method_register, method);
+            method
+        } else {
+            next_method
+        };
+        let awaited_result = self.read(f, state_register);
+        let asynchronous = p.function(self.frames[f].function as usize).is_async;
+        // An awaited step's result, or a synchronous delegate step the lane made as an
+        // activation (`Completion::Delegates`), waits in the state register.
+        let result = if !awaited_result.is_undefined() {
+            self.write(f, state_register, Value::UNDEFINED);
+            awaited_result
+        } else {
+            let input = self.read(f, i.result_register());
+            let result =
+                self.iterator_next_with_cached_method(p, iterator, next_method, &[input])?;
+            if asynchronous {
+                *pc -= 1;
+                let value = self.promise_for_value(p, result)?;
+                return Ok(StepResult::Await {
+                    value,
+                    destination: state_register,
+                });
+            }
+            result
+        };
+        let done_atom = self.runtime_atoms.done;
+        let done = self.get_property(p, result, done_atom)?;
+        if self.truthy(done) {
+            let value_atom = self.runtime_atoms.value;
+            let value = self.get_property(p, result, value_atom)?;
+            self.write(f, i.result_register(), value);
+        } else {
+            *pc -= 1;
+            if asynchronous {
+                self.write(f, state_register, Value::UNDEFINED);
+            }
+            let value = if asynchronous {
+                let value_atom = self.runtime_atoms.value;
+                self.get_property(p, result, value_atom)?
+            } else {
+                Value::UNDEFINED
+            };
+            return Ok(StepResult::Yield {
+                value,
+                destination: i.result_register(),
+                delegated_result: Some(result),
+            });
         }
         Ok(StepResult::Continue)
     }
@@ -1545,6 +1743,26 @@ impl<H: Host> Vm<H> {
     /// (`staged_value_step`); any other is a Wasm step.
     #[inline(never)]
     fn step_unlisted(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize) -> Result<StepResult, JsError> {
+        // The register moves, local slot accesses and jumps no arm names run as their staged rows
+        // on the running frame (`InterpreterFrame`). A jump on a heap value's truthiness is the
+        // VM's, which runs no guest code; any other row that leaves is unreachable on validated bytecode.
+        if let Some(operation @ (crate::staged::Operation::Move { .. } | crate::staged::Operation::LoadLocalPlain { .. }
+            | crate::staged::Operation::StoreLocalPlain { .. } | crate::staged::Operation::Jump | crate::staged::Operation::JumpIf { .. })) =
+            crate::staged::Operation::<u64, ()>::of(i)
+        {
+            match self.run_row(p, f, i, pc, operation) {
+                RowRun::Done(_) => return Ok(StepResult::Continue),
+                RowRun::Stop(stop) => return stop,
+                RowRun::Declined => {}
+            }
+            let crate::staged::Operation::JumpIf { register, taken } = operation else {
+                unreachable!("validated bytecode bounds the registers and slots of a register row");
+            };
+            if self.truthy(self.read(f, register)) == taken {
+                *pc = i.jump_target() as usize;
+            }
+            return Ok(StepResult::Continue);
+        }
         if !matches!(i.op().staged(), Some(crate::bytecode::Decoder::Names)) {
             return self.step_wasm(p, f, i, pc);
         }
@@ -1633,20 +1851,16 @@ impl<H: Host> Vm<H> {
     #[cfg(feature = "native-execution")]
     pub(super) fn pushed_frame(&self, caller: usize, i: WideInstruction, getter: Value, this: Value)
         -> (Value, crate::bytecode::RegisterWindow, Value, CallCompletion) {
-        let decoded = crate::vm::compiled::decoded_completed(i);
-        match i.op() {
-            _ if crate::staged::meaning_dispatch::construction(i) => {
-                let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else {
-                    unreachable!("a pushed construction passes registers")
-                };
-                (self.read(caller, i.register_b()), window, this, CallCompletion::Constructor(this))
-            }
+        if crate::staged::Operation::<u64, ()>::is_construction(i) {
+            let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else {
+                unreachable!("a pushed construction passes registers")
+            };
+            (self.read(caller, i.register_b()), window, this, CallCompletion::Constructor(this))
+        } else if crate::staged::Operation::<u64, ()>::is_field_read(i) {
             // A getter's activation: its receiver bound as passed, no arguments (`general_getter`).
-            _ if matches!(decoded, Some(crate::staged::Operation::GetField { .. })) =>
-            {
-                (getter, crate::bytecode::RegisterWindow { base: 0, count: 0 }, this, CallCompletion::Value)
-            }
-            _ => (self.read(caller, i.register_b()), i.call_window(), self.read(caller, i.register_c()), CallCompletion::Value),
+            (getter, crate::bytecode::RegisterWindow { base: 0, count: 0 }, this, CallCompletion::Value)
+        } else {
+            (self.read(caller, i.register_b()), i.call_window(), self.read(caller, i.register_c()), CallCompletion::Value)
         }
     }
 }

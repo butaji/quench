@@ -23,9 +23,11 @@ impl Lowering<'_, '_> {
             if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) { return true; }
             let decoded = Operation::<ir::Value, EmitProof>::decode(*instruction, context);
             match decoded {
+                // A constant operand is no proven Number here (its constants are untyped).
                 Some(Operation::Binary { left, right, .. } | Operation::Equality { left, right, .. }) =>
-                    number(pc, left) && number(pc, right),
+                    [left, right].into_iter().all(|operand| operand.register_index().is_some_and(|register| number(pc, register))),
                 // Undecoded until now, so the unit has always taken it as a may-move instruction: kept as it was.
+                // merge: theirs decodes RequireIteratorResult; HEAD's conservative no-move arm is kept so it stays a may-move instruction.
                 Some(Operation::RequireIteratorResult { .. }) => false,
                 Some(operation) => !operation.moves_arrays(),
                 None => false,

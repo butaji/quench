@@ -1,15 +1,14 @@
-//! Lane handlers an operation's JavaScript denotation (`JsDenotation`) selects: numeric
-//! binaries and unaries, and string concatenation answered where no part's conversion runs
-//! guest code.
+//! Lane handlers of the `Unary` row's general arm, and the miss arm of a `StringConcat` row
+//! (`Miss::Concat`): the parts the row's pure concatenation declines.
 use super::*;
 
 script_handler! {
     /// `Unary`: logical not and `typeof` of any value, and the numeric operators of a
     /// Number, run no guest code; any other operand takes the general operation in place
-    /// (`lane_unary_general`).
-    pub(super) fn lane_unary<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { lane_unary_value(cx, r, i) }) else {
-            sibling!(lane_unary_general::<H>, r, ip, Carried::script(cx))
+    /// (`unary_general`).
+    pub(super) fn unary_miss<>(cx, r, ip, i, view) {
+        let Some(value) = (unsafe { unary_value(cx, r, i) }) else {
+            sibling!(unary_general::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
@@ -17,11 +16,11 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_unary` of an operand its value declines: the general operation made in place
+    /// `unary_miss` of an operand its value declines: the general operation made in place
     /// (`lane_in_place`), which may reach guest code (a `ToPrimitive` hook of an object
     /// concatenated or negated) or throw. A throw takes the general path, which raises it.
     #[inline(never)]
-    fn lane_unary_general<>(cx, r, ip, i, view) {
+    fn unary_general<>(cx, r, ip, i, view) {
         let (operator, operand) = (i.imm(), r.get(i.b));
         let Some(value) = lane_in_place(cx, ip, |vm, code| vm.unary(code, operator, operand)) else {
             return exit(ip);
@@ -33,26 +32,20 @@ script_handler! {
     }
 }
 
-/// `StringConcat` for the parts a string of parts does not take, out of the handler so its
-/// buffers and spills stay off the handler's hot path; `None` where the general path must run.
-#[cold]
-#[inline(never)]
-fn concat_apart<H: Host>(vm: &mut Vm<H>, cx: *mut LaneContext<H>, count: usize, part: impl Fn(&Vm<H>, usize) -> Value + Copy) -> Option<Value> {
-    // SAFETY: the context's program outlives the lane run.
-    vm.pure_string_concat_apart(unsafe { &*(*cx).code }, count, part)
-}
-
 script_handler! {
-    /// `StringConcat` of a window whose every part converts to a string purely
-    /// (`Vm::converts_to_string_purely`), made as the general loop makes it; a window holding
-    /// any other value, or a result past the string length limit, takes the general path.
-    fn lane_string_concat<>(cx, r, ip, i, view) {
+    /// `StringConcat` (`Miss::Concat`) of a window whose parts the row's pure concatenation declined
+    /// (`concat_value_in_lane`): a string of parts, or the parts that convert with no guest code
+    /// (`Vm::pure_string_concat_apart`), made as the general loop makes it. A window holding any
+    /// other value, or a result past the string length limit, takes the general path.
+    #[inline(never)]
+    pub(super) fn string_concat_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let (base, count) = (usize::from(i.b), usize::from(i.c));
         let part = |_: &Vm<H>, part: usize| r.get((base + part) as Register);
         let value = match vm.string_of_parts(count, part) {
             Some(value) => value,
-            None => match concat_apart(vm, cx, count, part) {
+            // SAFETY: the context's program outlives the lane run.
+            None => match vm.pure_string_concat_apart(unsafe { &*(*cx).code }, count, part) {
                 Some(value) => value,
                 None => return exit(ip),
             },
@@ -61,19 +54,4 @@ script_handler! {
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
-}
-
-/// The lane handler `op`'s denotation selects, if it selects one.
-pub(super) const fn denoted_handler<H: Host>(op: Op) -> Option<Handler> {
-    match op.js_denotation() {
-        crate::bytecode::JsDenotation::NumericBinary => Some(lane_binary::<H>),
-        crate::bytecode::JsDenotation::NumericUnary => Some(lane_unary::<H>),
-        crate::bytecode::JsDenotation::StringConcatenation => Some(lane_string_concat::<H>),
-        _ => None,
-    }
-}
-
-/// The lane handler of a `Unary` record, which a view specializes further.
-pub(super) const fn unary_handler<H: Host>() -> Handler {
-    lane_unary::<H>
 }

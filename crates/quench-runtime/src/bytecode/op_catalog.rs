@@ -191,6 +191,28 @@ pub(crate) enum Decoder {
     /// A by-name read decoded under a tier's proof of the global it names
     /// (`Operation::decode_load_name`), so `Operation::decode` has none.
     Proved,
+    /// A literal's allocation (`Operation::Allocate` over `Allocation`) or an array literal's
+    /// element definition (`Operation::DefineElement`), decoded by `Operation::decode_literal`
+    /// under the tier's proof of the allocation, so `Operation::decode` has none.
+    Literal,
+    /// A Wasm i32 or i64 register or immediate operator (`staged::wasm_int`).
+    WasmInt,
+    /// The float and conversion operators of Wasm (`staged::wasm_float`): the scalar operators a
+    /// `WasmFloat` record names, with `WasmSelect` as its word copy.
+    WasmFloat,
+    /// A Wasm i32 conditional jump or fused add-and-jump: int32 operands, and an edge the row
+    /// answers (`staged::WasmJump`).
+    WasmJump,
+    /// The Wasm instance's state: a global's load and store, and the fill of a register window
+    /// with one constant (`staged::wasm_state`).
+    WasmState,
+    /// A Wasm direct load or store of the function's memory (`staged::wasm_access`).
+    WasmMemory,
+    /// A Wasm SIMD operator or byte shuffle on the lane's vector registers (`staged::wasm_simd`).
+    WasmVector,
+    /// A row only the lane's frame answers, which the plan does not decode (`Operation::decode_lane`):
+    /// a string-case index and an `await` the lane suspends.
+    Lane,
 }
 
 /// An opcode's general step a lane or a body makes in place, by one helper of the
@@ -290,7 +312,7 @@ impl Traits {
     /// A lane step that leaves its loop (`ForInNext` once no key is left), which the lane's loop
     /// dispatch makes with its own handler.
     pub(crate) const LANE_LOOP_EXIT: Self = Self(1 << 30);
-    /// An op whose lane handler is its staged row (`lane_row`), generated rather than written; the
+    /// An op whose lane handler is its staged row (`generated_row`), generated rather than written; the
     /// flow rows that fall through have theirs without the trait.
     pub(crate) const ROW_HANDLER: Self = Self(1u32 << 31);
 

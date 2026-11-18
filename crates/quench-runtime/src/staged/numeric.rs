@@ -2,6 +2,8 @@
 
 use super::{Frame, Stage, Step};
 use crate::bytecode::{Operand, Register};
+#[cfg(not(stencil_build))]
+use oxc_ast::ast::BinaryOperator;
 use crate::vm::operations::{
     int32_bitwise_bits, CheckedInt32Stage, NumberArithmetic, NumberArithmeticStage, NumberBitwise, NumberF64Stage,
     NumberRelation, NumberUnary, PartialOrderStage,
@@ -151,6 +153,13 @@ pub(crate) enum NumberOperation {
         operation: NumberArithmetic, domain: Domain, overflow: Overflow, zero: NegativeZero },
     /// Number x Number relation, producing its predicate word.
     Relation { left: Operand, right: Operand, relation: NumberRelation, domain: Domain },
+    /// Number x Number relation of two operands in `domain`, defining its Boolean in `destination`
+    /// (a `Binary` of a relation operator, whose value is the Boolean the relation answers).
+    RelationValue { destination: Register, left: Operand, right: Operand, relation: NumberRelation, domain: Domain },
+    /// Bitwise `operation` of two operands' ToInt32, defining the int32 it makes in `destination`
+    /// (a `Binary` of a bitwise operator). A zero-fill shift of a negative dividend by a zero count
+    /// is above `i32::MAX`, which no int32 holds: it leaves.
+    Bitwise { destination: Register, left: Operand, right: Operand, operation: NumberBitwise },
     /// `left % right` with both operands in `domain`. An int32 result that is no int32 (a
     /// zero divisor's NaN, a negative dividend's `-0`) leaves.
     Remainder { destination: Register, left: Operand, right: Operand, domain: Domain },
@@ -184,6 +193,10 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             arithmetic(stage, frame, destination, left, right, operation, domain, (overflow, zero)),
         NumberOperation::Relation { left, right, relation, domain } =>
             self::relation(stage, frame, left, right, relation, domain),
+        NumberOperation::RelationValue { destination, left, right, relation, domain } =>
+            relation_value(stage, frame, destination, left, right, relation, domain),
+        NumberOperation::Bitwise { destination, left, right, operation } =>
+            bitwise_value(stage, frame, destination, left, right, operation),
         NumberOperation::Remainder { destination, left, right, domain } =>
             remainder(stage, frame, destination, left, right, domain),
         NumberOperation::IncDec { destination, source, decrement, overflow } =>
@@ -305,6 +318,62 @@ fn relation<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     left: Operand, right: Operand, relation: NumberRelation, domain: Domain) -> Step<S::Word, F::Control> {
     let Some(holds) = relation_holds(stage, frame, left, right, relation, domain) else { return Step::Unresolved };
     Step::Value(stage.cond_word(holds))
+}
+
+/// A relation of two operands in `domain`, defining its Boolean in `destination`.
+#[inline(always)]
+fn relation_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, left: Operand, right: Operand, relation: NumberRelation, domain: Domain) -> Step<S::Word, F::Control> {
+    let Some(holds) = relation_holds(stage, frame, left, right, relation, domain) else { return Step::Unresolved };
+    let (value, fact) = frame.boolean(stage, holds);
+    frame.write(stage, destination, value, fact);
+    Step::Value(value)
+}
+
+/// The bitwise `operation` of two operands' ToInt32, defining its int32 in `destination`. A
+/// zero-fill shift leaves where its count is zero and its dividend negative (the Number is above
+/// `i32::MAX`, which no int32 holds).
+#[inline(always)]
+fn bitwise_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, left: Operand, right: Operand, operation: NumberBitwise) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    let Some(left) = frame.int32_operand(stage, left, miss) else { return Step::Unresolved };
+    let Some(right) = frame.int32_operand(stage, right, miss) else { return Step::Unresolved };
+    if operation == NumberBitwise::ShiftRightUnsigned {
+        let count = stage.and_imm(right, 31u64);
+        let zero_count = stage.eq_imm(count, 0u64);
+        let negative = stage.i32_is_negative(left);
+        let widens = stage.both(zero_count, negative);
+        if stage.guard_false(widens, miss).is_none() {
+            return Step::Unresolved;
+        }
+    }
+    let bits = stage.int_bitwise(operation, left, right);
+    let result = frame.int_result(stage, bits);
+    let fact = frame.int_fact();
+    frame.write(stage, destination, result, fact);
+    Step::Value(result)
+}
+
+/// The Number operation a `Binary` of `operator` over `left` and `right` denotes, defining
+/// `destination`: an arithmetic, a remainder, a bitwise or a relation. The decode cannot see the
+/// operands' representations, so it names the widest domain (`Float64`; a bitwise is int32 by its
+/// operator). `None` for any other operator (equality, `in`, `instanceof`): the VM's. The operator
+/// tables are the operations' own (`NumberArithmetic::from_operator` and its siblings).
+#[cfg(not(stencil_build))]
+pub(crate) fn binary_operation(operator: u32, destination: Register, left: Operand, right: Operand) -> Option<NumberOperation> {
+    if let Some(operation) = NumberArithmetic::from_operator(operator) {
+        return Some(NumberOperation::Arithmetic { destination, left, right, operation, domain: Domain::Float64,
+            overflow: Overflow::Widen, zero: NegativeZero::Ignore });
+    }
+    if operator == BinaryOperator::Remainder as u32 {
+        return Some(NumberOperation::Remainder { destination, left, right, domain: Domain::Float64 });
+    }
+    if let Some(operation) = NumberBitwise::from_operator(operator) {
+        return Some(NumberOperation::Bitwise { destination, left, right, operation });
+    }
+    NumberRelation::from_operator(operator).map(|relation|
+        NumberOperation::RelationValue { destination, left, right, relation, domain: Domain::Float64 })
 }
 
 /// Whether `relation` holds of two operands in `domain`; `None` where the frame proves neither.

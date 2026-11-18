@@ -10,13 +10,6 @@ const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
 /// The high dword of every int32's word (`Registers::int` compares it in memory).
 pub(crate) const INT_TAG_HIGH: u32 = (TAG_INT >> 32) as u32;
 
-/// Whether a word's high 16 bits (`TAG_SHIFT` is 48) name a tag rather than a double's bits:
-/// `Value::is_tagged` from the tag field alone, for a reader that loads only that half-word.
-#[inline(always)]
-pub(crate) fn tag_field_is_tagged(field: u16) -> bool {
-    const { assert!(TAG_SHIFT == 48) };
-    u32::from(field).wrapping_sub((FIRST_TAG >> TAG_SHIFT) as u32) <= ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as u32
-}
 pub(crate) const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
 
@@ -788,22 +781,11 @@ impl Value {
     /// and array records, which hold only ordinary objects and arrays and so never "", 0n or
     /// the IsHTMLDDA function. `None` leaves another heap value to its cell.
     #[inline(always)] pub(crate) fn truthiness(self) -> Option<bool> {
-        // A boolean first, in one test: conditions mostly test comparison results.
-        if self.0 & !(Self::TRUE.0 ^ Self::FALSE.0) == Self::FALSE.0 {
-            return Some(self == Self::TRUE);
-        }
-        // An integer's truth is its bits' (`if (i & 3)`), without the double conversion.
-        if let Some(integer) = self.as_int() {
-            return Some(integer != 0);
-        }
-        // An object or array record before the double decode (`if (o)`).
-        if self.is_heap() {
-            return self.is_record().then_some(true);
-        }
-        if let Some(number) = self.as_number() {
-            return Some(crate::vm::number_is_truthy(number));
-        }
-        Some(!(self.is_null() || self.is_undefined() || self.is_deleted() || self == Self::FALSE))
+        let (undecided, truthy) = crate::staged::value::tagged_truthiness(
+            &mut crate::staged::Concrete::new(std::ptr::null()),
+            self.0,
+        );
+        (!undecided).then_some(truthy)
     }
 
     #[inline(always)] pub fn is_heap(self) -> bool {

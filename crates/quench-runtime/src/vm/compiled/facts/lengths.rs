@@ -5,6 +5,7 @@
 
 use super::run::{Model, Point};
 use crate::bytecode::{FieldLookup, Operand, Register, ResidualProgram, WideInstruction};
+use crate::staged::{DecodeContext, NumberOperation, Operation};
 use crate::typed_ir::{IntRange, Type};
 use crate::compile::liveness::RegisterSet;
 use super::super::super::operations::NumberRelation;
@@ -128,7 +129,7 @@ impl Relations {
     /// The relations after `instruction` at `pc`.
     pub(super) fn step(&mut self, model: &Model<'_>, pc: usize, instruction: WideInstruction,
         written: &dyn Fn(WideInstruction) -> Vec<Register>) {
-        if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Move { .. })) && instruction.result_flags() == 0 {
+        if matches!(Operation::<u64, ()>::of(instruction), Some(Operation::Move { .. })) && instruction.result_flags() == 0 {
             self.copy(instruction.result_register(), instruction.register_b());
         } else {
             for register in written(instruction) { self.kill(register); }
@@ -142,16 +143,15 @@ impl Model<'_> {
     /// Whether `instruction` may change an array's length or run guest code that can: all but
     /// numeric steps, moves, jumps and reads of a hoisted view, whose misses leave.
     pub(in crate::vm::compiled) fn disturbs_lengths(&self, pc: usize, instruction: WideInstruction) -> bool {
-        use crate::staged::Operation as Staged;
-        let op = instruction.op();
-        let decoded = crate::vm::compiled::decoded(instruction);
-        let completed = crate::vm::compiled::decoded_completed(instruction);
-        let quiet = matches!(decoded, Some(Staged::Move { .. } | Staged::Jump | Staged::Nop | Staged::JumpIf { .. }
-                | Staged::CompareJump { .. } | Staged::Number(crate::staged::NumberOperation::IncDec { .. })
-                | Staged::IncDecLocal { .. }))
-            || crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some()
-            || op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary
-            || (matches!(completed, Some(Staged::ElementRead { .. } | Staged::ElementReadOperand { .. })) && (self.dense)(pc));
+        let quiet = Operation::<u64, ()>::is_nop(instruction)
+            || crate::staged::loads_constant(instruction.op())
+            || matches!(Operation::<u64, ()>::decode(instruction, DecodeContext::EMPTY),
+                Some(Operation::Move { .. } | Operation::LoadConst { .. } | Operation::Jump | Operation::JumpIf { .. }
+                    | Operation::CompareJump { .. } | Operation::Number(NumberOperation::IncDec { .. })))
+            || Operation::<u64, ()>::is_number_binary(instruction)
+            // merge: HEAD also keeps a dense element read of a frame local's base (`ElementReadOperand`) quiet.
+            || (matches!(Operation::<u64, ()>::of(instruction), Some(Operation::ElementRead { .. } | Operation::ElementReadOperand { .. }))
+                && (self.dense)(pc));
         !quiet || self.generic.contains(&pc)
     }
 }
@@ -188,10 +188,9 @@ impl Point {
     /// access reads or writes a hoisted view and its index is non-negative, and below the array's
     /// length (`Proven`) or below another register's value (`Versioned`).
     pub(in crate::vm::compiled) fn index_proof(&self, model: &Model<'_>, pc: usize, instruction: WideInstruction) -> IndexProof {
-        // An element read of a frame local's base (`ElementReadOperand`) has no register array to prove.
-        let (array, index) = match crate::vm::compiled::decoded_completed(instruction) {
-            Some(crate::staged::Operation::ElementRead { base, key }) => (Some(base), key.register_index()),
-            Some(crate::staged::Operation::ElementWrite { base, key, .. }) => (Some(base), Some(key)),
+        let (array, index) = match Operation::<u64, ()>::of(instruction) {
+            Some(Operation::ElementRead { base, key }) => (Some(base), key.register_index()),
+            Some(Operation::ElementWrite { base, key, .. }) => (Some(base), Some(key)),
             _ => return IndexProof::Check,
         };
         let Some((array, index)) = array.zip(index) else { return IndexProof::Check };

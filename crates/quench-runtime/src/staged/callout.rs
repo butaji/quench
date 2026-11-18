@@ -1,10 +1,11 @@
 //! The VM operations a staged row calls out for when its own words do not decide it, named as
 //! data. A frame answers one in place (`Frame::vm_step`): the interpreter's frame calls the VM
 //! method, the lane specializer's frame calls the lane helper that decodes the record and makes
-//! the same step (`dispatch_fast::lane_vm_step`), and a frame with no host declines.
+//! the same step (`dispatch_fast::vm_operation_step`), and a frame with no host declines.
 
 use super::spread::Passing;
 use super::{Arguments, NumericFrame, NumericStage, Operation, Protocol, Register, Step};
+use crate::bytecode::Operand;
 
 /// The tag byte of each `CallOut`, which a helper-call row passes as its immediate.
 pub(crate) const TAG_EQUALITY: u8 = 0;
@@ -23,7 +24,10 @@ pub(crate) const TAG_LOAD_NAME: u8 = 12;
 pub(crate) const TAG_SUPER_CALL: u8 = 13;
 pub(crate) const TAG_DECIDE: u8 = 14;
 pub(crate) const TAG_ENUMERATED_GET: u8 = 15;
-pub(crate) const TAG_ACCESSOR: u8 = 16;
+pub(crate) const TAG_CLONE_ENV: u8 = 16;
+pub(crate) const TAG_ARGUMENT_GET: u8 = 17;
+// merge: HEAD's Accessor keeps its variant (used by vm/call_out.rs) under a fresh tag, since theirs took 16 and 17.
+pub(crate) const TAG_ACCESSOR: u8 = 18;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -32,10 +36,10 @@ pub(crate) const TAG_ACCESSOR: u8 = 16;
 pub(crate) enum CallOut {
     /// `left == right`, or `===` where `strict`, negated for `!=` and `!==`, by the VM's full
     /// equality: strings and BigInts compare by contents, a conversion may run guest code.
-    Equality { left: Register, right: Register, strict: bool, negated: bool } = TAG_EQUALITY,
+    Equality { left: Operand, right: Operand, strict: bool, negated: bool } = TAG_EQUALITY,
     /// `left operator right` by the VM's `Vm::binary`: a string or BigInt relation or operator,
-    /// `instanceof`, `in`.
-    Binary { left: Register, right: Register, operator: u32 } = TAG_BINARY,
+    /// `instanceof`, `in`. An operand may be a program constant (`Operand::constant`).
+    Binary { left: Operand, right: Operand, operator: u32 } = TAG_BINARY,
     /// ToPropertyKey of `source` (`Vm::to_property_key`): a Number allocates, an object runs
     /// guest code.
     PropertyKey { source: Register } = TAG_PROPERTY_KEY,
@@ -51,6 +55,8 @@ pub(crate) enum CallOut {
     StoreEnvLocal { source: Register, slot: u16, initialize: bool } = TAG_STORE_ENV_LOCAL,
     /// The length of the arguments binding in local `slot`.
     ArgumentsLength { slot: u16 } = TAG_ARGUMENTS_LENGTH,
+    /// The element `index` of the arguments binding in local `slot` (the VM's read, by the binding rules).
+    ArgumentGet { index: Register, slot: u16 } = TAG_ARGUMENT_GET,
     /// `source` to the global name `atom` through cache `site`, `initialize` for a declaration.
     GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool } = TAG_GLOBAL_WRITE,
     /// The `typeof` name of the global `atom` through cache `site`.
@@ -73,6 +79,9 @@ pub(crate) enum CallOut {
     Decide { left: Register, right: Register, operator: u32 } = TAG_DECIDE,
     /// `base[key]` of a for-in's enumerated read whose state's memo did not answer: the element read.
     EnumeratedGet { base: Register, key: Register } = TAG_ENUMERATED_GET,
+    /// The running activation's environment cloned by environment clone plan `plan`, the copy a
+    /// `for (let ...)` iteration's closures capture. It defines no register.
+    CloneEnv { plan: u32 } = TAG_CLONE_ENV,
     /// The `[[Get]]` of `atom` on `receiver` through cache `site` by the VM's field read
     /// (`Vm::get_field_cached`): where the site cached a getter, the getter runs by the
     /// interpreter's own activation (`call_value`) with `receiver` as `this`. The getter is the
@@ -85,32 +94,40 @@ pub(crate) enum CallOut {
 /// passes (`Arguments`), which a handle names without copying it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct Operands {
-    pub(crate) fixed: [Option<Register>; 2],
+    /// The fixed operands: a register or a program constant (`Operand`).
+    pub(crate) fixed: [Option<Operand>; 2],
     pub(crate) list: Option<Arguments>,
 }
 
-/// The values of a `CallOut`'s operands, read by the tier from its own registers.
+/// The values of a `CallOut`'s operands, read by the tier from its own registers or constants.
 pub(crate) struct OperandValues<V> {
     pub(crate) fixed: [Option<V>; 2],
     pub(crate) list: Vec<V>,
 }
 
 impl Operands {
-    /// Operands of fixed place alone.
-    const fn of_fixed(fixed: [Option<Register>; 2]) -> Self {
+    /// Operands of register place alone.
+    fn of_fixed(fixed: [Option<Register>; 2]) -> Self {
+        Self::of_operands(fixed.map(|register| register.map(Operand::register)))
+    }
+
+    /// Operands of fixed place alone, each a register or a constant.
+    const fn of_operands(fixed: [Option<Operand>; 2]) -> Self {
         Self { fixed, list: None }
     }
 
     /// Every register the operands name, with the list's resolved by `records` (the call records
-    /// of a method site; a window needs none).
+    /// of a method site; a window needs none). A constant operand names no register.
     pub(crate) fn registers<'a>(self, records: &'a [Register]) -> impl Iterator<Item = Register> + 'a {
-        self.fixed.into_iter().flatten().chain(self.list.into_iter().flat_map(move |list| list.registers(records)))
+        self.fixed.into_iter().flatten().filter_map(Operand::register_index)
+            .chain(self.list.into_iter().flat_map(move |list| list.registers(records)))
     }
 
-    /// The operands' values, each register read by `read` in the order `registers` names them.
-    pub(crate) fn read<V>(self, records: &[Register], mut read: impl FnMut(Register) -> V) -> OperandValues<V> {
-        let fixed = self.fixed.map(|register| register.map(&mut read));
-        let list = self.list.map_or_else(Vec::new, |list| list.registers(records).map(&mut read).collect());
+    /// The operands' values, each operand read by `read` in the order `registers` names them, the
+    /// list's as registers.
+    pub(crate) fn read<V>(self, records: &[Register], mut read: impl FnMut(Operand) -> V) -> OperandValues<V> {
+        let fixed = self.fixed.map(|operand| operand.map(&mut read));
+        let list = self.list.map_or_else(Vec::new, |list| list.registers(records).map(Operand::register).map(&mut read).collect());
         OperandValues { fixed, list }
     }
 }
@@ -143,18 +160,23 @@ impl CallOut {
     /// then the second, which is the only one an operation of a single operand has, then the
     /// list of arguments a call passes.
     pub(crate) fn operands(self) -> Operands {
-        Operands::of_fixed(match self {
-            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } | Self::Delete { base: left, key: right, .. }
+        let fixed = match self {
+            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } => return Operands::of_operands([Some(left), Some(right)]),
+            Self::Delete { base: left, key: right, .. }
                 | Self::Decide { left, right, .. } | Self::EnumeratedGet { base: left, key: right } => [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
+            Self::ArgumentGet { index, .. } => [Some(index), None],
             Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
-            Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. } => [None, None],
+            Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. }
+                | Self::CloneEnv { .. } => [None, None],
             Self::Accessor { receiver, .. } => [Some(receiver), None],
             Self::Protocol { operands, .. } => operands,
             Self::Spread { callee, receiver, arguments, .. } =>
-                return Operands { fixed: [Some(callee), Some(receiver)], list: Some(arguments) },
-            Self::SuperCall { callee, arguments, .. } => return Operands { fixed: [Some(callee), None], list: Some(arguments) },
-        })
+                return Operands { fixed: [Some(Operand::register(callee)), Some(Operand::register(receiver))], list: Some(arguments) },
+            Self::SuperCall { callee, arguments, .. } =>
+                return Operands { fixed: [Some(Operand::register(callee)), None], list: Some(arguments) },
+        };
+        Operands::of_fixed(fixed)
     }
 }
 
@@ -182,6 +204,8 @@ impl<W, P> Operation<W, P> {
             Self::StoreEnvLocal { source, slot, result, initialize } =>
                 (CallOut::StoreEnvLocal { source, slot, initialize }, result),
             Self::ArgumentsLength { destination, slot } => (CallOut::ArgumentsLength { slot }, Some(destination)),
+            Self::ArgumentGet { destination, index, slot } => (CallOut::ArgumentGet { index, slot }, Some(destination)),
+            Self::CloneEnv { plan } => (CallOut::CloneEnv { plan }, None),
             Self::GlobalWrite { source, atom, site, initialize } =>
                 (CallOut::GlobalWrite { source, atom, site, initialize }, None),
             Self::GlobalTypeof { destination, atom, site } => (CallOut::GlobalTypeof { atom, site }, Some(destination)),

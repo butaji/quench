@@ -42,8 +42,8 @@ fn make<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, (step, instruction): (V
 /// body's own `Return` row completes the activation with it.
 ///
 /// # Safety
-/// As `lane_body_step`; `record` is the record at `call_pc`.
-pub(super) unsafe fn lane_activation_value_step<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: WideInstruction) -> Option<u64> {
+/// As `body_general_step`; `record` is the record at `call_pc`.
+pub(super) unsafe fn activation_value_step<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: WideInstruction) -> Option<u64> {
     let instruction = record.without_return();
     let step = instruction.op().value_step().filter(|_| instruction.result_flags() == 0)?;
     let r = unsafe { (*cx).registers };

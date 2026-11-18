@@ -22,7 +22,7 @@ impl<H: Host> Vm<H> {
 /// 14 MB; babylonjs's module scope: 124K records, each iteration). Where a return already
 /// `retired`, only a caller that loops takes its view here; any other frame returns at its
 /// call record on the general path (`lane_frame_return`).
-pub(super) fn lane_completes_return<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall, frame: usize, retired: bool) -> bool {
+pub(super) fn completes_return<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall, frame: usize, retired: bool) -> bool {
     let vm = unsafe { vm(cx) };
     call.caller + 1 == frame
         && frame + 1 == vm.frames.len()
@@ -55,7 +55,7 @@ fn caller_loops<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall) -> 
 /// A site whose caller counted past the threshold without specializing again
 /// (`LaneContext::late_settled`) counts nothing more in this run: only a count reaching the
 /// threshold acts.
-pub(super) fn lane_note_late_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, target: &ScriptCallTarget, argc: u16) {
+pub(super) fn record_late_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, target: &ScriptCallTarget, argc: u16) {
     if unsafe { (*cx).late_settled } == ip { return; }
     let vm = unsafe { vm(cx) };
     // The innermost frame's function: a native callee's frame is linked, so it is the activation's.

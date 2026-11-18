@@ -40,25 +40,35 @@ pub(crate) enum Protocol {
     Wasm(super::protocol_wasm::WasmHostStep),
 }
 
+/// The bits of a `CloneEnv`'s immediate that name its clone plan: an environment window's record
+/// (`dispatch_fast::specialize_environment_window`) carries its register count above them.
+pub(crate) const ENVIRONMENT_CLONE_PLAN_MASK: u32 = u16::MAX as u32;
+
 /// The staged operation `instruction` denotes among the name, environment and iteration
 /// opcodes; `None` for any other opcode.
 #[inline(always)]
 pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>> {
     let destination = || instruction.result_register();
-    let slot = || u16::try_from(instruction.local_slot()).ok();
+    let slot = || Some(crate::staged::window_slot(instruction.imm()));
     Some(match instruction.op() {
+        Op::CloneEnv => Operation::CloneEnv { plan: instruction.imm() & ENVIRONMENT_CLONE_PLAN_MASK },
         Op::LoadEnvLocal => Operation::LoadEnvLocal { destination: destination(), slot: slot()? },
         Op::StoreEnvLocal => Operation::StoreEnvLocal { source: instruction.register_a(),
             slot: slot()?, result: instruction.optional_register_b(),
             initialize: instruction.boolean_field(crate::bytecode::InstructionField::C).unwrap_or(false) },
         Op::ArgumentsLength => Operation::ArgumentsLength { destination: destination(), slot: slot()? },
+        Op::ArgumentGet => Operation::ArgumentGet { destination: destination(), index: instruction.register_b(), slot: slot()? },
         Op::LoadNameTypeof => Operation::GlobalTypeof { destination: destination(), atom: instruction.atom_index(), site: instruction.cache_site_index() },
+        Op::SetFunctionName => Operation::SetFunctionName { function: instruction.register_a(), name: instruction.atom_index(),
+            site: instruction.cache_site_index() },
         Op::StoreName => Operation::GlobalWrite { source: instruction.register_a(), atom: instruction.atom_index(),
             site: instruction.cache_site_index(),
             initialize: instruction.boolean_field(crate::bytecode::InstructionField::B)? },
         Op::ForInNext => Operation::ForInNext { destination: destination(), state: instruction.register_b() },
         Op::GetEnumerated => Operation::EnumeratedGet { destination: destination(), base: instruction.register_b(),
             key: instruction.register_c(), state: crate::bytecode::ImmediateLayout::register_pair(instruction.imm()).0 },
+        Op::IteratorCleanupPush => Operation::IteratorCleanupPush { iterator: instruction.register_a(), done: instruction.register_b() },
+        Op::IteratorCleanupPop => Operation::IteratorCleanupPop,
         _ => return decode_protocol(instruction),
     })
 }
@@ -112,19 +122,24 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::StoreEnvLocal { source, slot, result, initialize } =>
             store_environment(stage, frame, (source, slot, initialize), result),
         Operation::ArgumentsLength { destination, slot } => arguments_length(stage, frame, destination, slot),
+        Operation::ArgumentGet { destination, index, slot } => argument_get(stage, frame, destination, index, slot),
         Operation::GlobalTypeof { destination, atom, site } => global_typeof(stage, frame, destination, (atom, site)),
+        Operation::SetFunctionName { function, name, site } => set_function_name(stage, frame, function, (name, site)),
         Operation::GlobalWrite { source, atom, site, initialize } =>
             global_write(stage, frame, source, (atom, site, initialize)),
         Operation::LoadName { destination, atom, site, receiver, proof } =>
             load_name(stage, frame, (destination, receiver), (atom, site), proof),
         // A frame's in-place rest read answers the value; its runner defines the destination, as
-        // for every names row's value (`lane_row`).
+        // for every names row's value (`generated_row`).
         Operation::Protocol { step: Protocol::RestView { get, fixed, .. }, destination: Some(_), operands }
             if let Some((value, _)) = frame.rest_view(stage, get, fixed, operands[0]) => Step::Value(value),
         Operation::Protocol { step, destination, operands } =>
             calling(stage, frame, CallOut::Protocol { step, operands }, destination),
         Operation::ForInNext { destination, state } => for_in_next(stage, frame, destination, state),
         Operation::EnumeratedGet { destination, state, base, key } => enumerated_get(stage, frame, destination, [state, base, key]),
+        Operation::CloneEnv { plan } => calling(stage, frame, CallOut::CloneEnv { plan }, None),
+        Operation::IteratorCleanupPush { iterator, done } => iterator_cleanup_push(stage, frame, iterator, done),
+        Operation::IteratorCleanupPop => iterator_cleanup_pop(stage, frame),
         _ => delegated_step(stage, frame, operation),
     }
 }
@@ -140,6 +155,27 @@ fn delegated_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mu
     }
 }
 
+/// `IteratorCleanupPush`: the frame's own cleanup entry, which defines no register; a frame with no
+/// cleanup stack leaves it to the general step.
+#[inline(always)]
+fn iterator_cleanup_push<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, iterator: Register,
+    done: Register) -> Step<S::Word, F::Control> {
+    match frame.iterator_push(stage, iterator, done) {
+        Some(()) => Step::Value(stage.constant(0)),
+        None => Step::Unresolved,
+    }
+}
+
+/// `IteratorCleanupPop`: the frame's own top cleanup entry, which defines no register; an empty
+/// stack leaves it to the general step, which raises.
+#[inline(always)]
+fn iterator_cleanup_pop<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F) -> Step<S::Word, F::Control> {
+    match frame.iterator_pop(stage) {
+        Some(()) => Step::Value(stage.constant(0)),
+        None => Step::Unresolved,
+    }
+}
+
 /// `ArgumentsLength`: the frame's own length, else the VM's.
 #[inline(always)]
 fn arguments_length<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
@@ -147,6 +183,17 @@ fn arguments_length<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &
     match frame.arguments_length(stage, slot) {
         Some(length) => defined(stage, frame, destination, Some(length)),
         None => calling(stage, frame, CallOut::ArgumentsLength { slot }, Some(destination)),
+    }
+}
+
+/// `ArgumentGet`: the frame's own kept element at `index`, else the VM's read of the binding.
+#[inline(always)]
+fn argument_get<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
+    index: Register, slot: u16) -> Step<S::Word, F::Control> {
+    let word = frame.tagged(stage, index);
+    match frame.argument(stage, slot, word) {
+        Some(read) => defined(stage, frame, destination, Some(read)),
+        None => calling(stage, frame, CallOut::ArgumentGet { index, slot }, Some(destination)),
     }
 }
 
@@ -160,11 +207,27 @@ fn global_typeof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
     }
 }
 
+/// `SetFunctionName`: the frame's own naming of the function in `function`, which defines no register;
+/// where the frame holds no naming, the row leaves to the interpreter.
+#[inline(always)]
+fn set_function_name<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, function: Register,
+    (name, site): (u32, u16)) -> Step<S::Word, F::Control> {
+    let word = frame.tagged(stage, function);
+    match frame.set_function_name(stage, word, name, site) {
+        Some(()) => Step::Value(word),
+        None => Step::Unresolved,
+    }
+}
+
 /// `GlobalWrite`: the frame's own store to the global name, else the VM's.
 #[inline(always)]
 fn global_write<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, source: Register,
     (atom, site, initialize): (u32, u16, bool)) -> Step<S::Word, F::Control> {
     let value = frame.tagged(stage, source);
+    // A window whose names resolve through its scope stores to the `with` object that has the name first.
+    if frame.scoped_store(stage, atom, value).is_some() {
+        return Step::Value(value);
+    }
     match frame.global_write(stage, source, atom, site, value, initialize) {
         Some(()) => Step::Value(value),
         None => calling(stage, frame, CallOut::GlobalWrite { source, atom, site, initialize }, None),
@@ -190,6 +253,10 @@ fn global_row<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 #[inline(always)]
 fn load_name<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     (destination, receiver): (Register, Option<Register>), (atom, site): (u32, u16), proof: S::Proof) -> Step<S::Word, F::Control> {
+    // A window whose names resolve through its scope reads the `with` object or dynamic binding that has the name first.
+    if frame.scoped_name(stage, destination, receiver, atom).is_some() {
+        return Step::Value(stage.constant(0));
+    }
     match (global_row(stage, frame, destination, (atom, site), proof), receiver) {
         (None, None) => calling(stage, frame, CallOut::LoadName { atom, site }, Some(destination)),
         (None, Some(_)) => Step::Unresolved,
@@ -236,6 +303,14 @@ fn load_environment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &
 fn store_environment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     (source, slot, initialize): (Register, u16, bool), result: Option<Register>) -> Step<S::Word, F::Control> {
     let value = frame.tagged(stage, source);
+    // A window whose names resolve through its scope stores to the `with` object that has the local's name first.
+    if frame.scoped_local_store(stage, slot, value).is_some() {
+        if let Some(result) = result {
+            let fact = frame.fact(source);
+            frame.write(stage, result, value, fact);
+        }
+        return Step::Value(value);
+    }
     if frame.environment_write(stage, slot, value).is_none() {
         return calling(stage, frame, CallOut::StoreEnvLocal { source, slot, initialize }, result);
     }
@@ -246,14 +321,17 @@ fn store_environment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: 
     Step::Value(value)
 }
 
-/// `ForInNext`: the VM's next key, or `Value::DELETED` where none is left, which takes the jump.
+/// `ForInNext`: the VM's next key, or `Value::DELETED` where none is left, which takes the jump. An
+/// exhausted step writes nothing: the destination keeps the word it held, as the general step leaves it.
 #[inline(always)]
 fn for_in_next<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
     state: Register) -> Step<S::Word, F::Control> {
     match frame.vm_step(stage, CallOut::ForInNext { state }, Some(destination)) {
         Some((key, fact)) => {
-            frame.write(stage, destination, key, fact);
             let exhausted = stage.eq_imm(key, Value::DELETED.to_bits());
+            let kept = frame.tagged(stage, destination);
+            let word = stage.select(exhausted, kept, key);
+            frame.write(stage, destination, word, fact);
             Step::Control(frame.branch(stage, exhausted))
         }
         None => Step::Unresolved,

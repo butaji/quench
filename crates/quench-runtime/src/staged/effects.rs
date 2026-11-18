@@ -101,6 +101,7 @@ impl<W, P> Operation<W, P> {
             Self::IndexWrite { .. } => Effects::writes(Region::Elements),
             Self::ElementRead { .. } => Effects { reads: RegionSet::of(Region::Elements), may_call_js: true, may_throw: true, ..Effects::NONE },
             Self::ElementWrite { .. } => Effects::ANY,
+            Self::DefineElement { .. } => Effects::writes(Region::Elements),
             // A closure promotes the activation's captured locals into its environment.
             Self::Allocate { allocation: Allocation::Closure { .. }, .. } => Effects {
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots).with(Region::Frame)
@@ -132,6 +133,8 @@ impl<W, P> Operation<W, P> {
             Self::Move { .. } | Self::LoadConst { .. } | Self::LoadThis { .. } => Effects::NONE,
             Self::LoadLocalPlain { .. } => Effects::reads(Region::Frame),
             Self::StoreLocalPlain { .. } => Effects::writes(Region::Frame),
+            Self::LoadLocalChecked { .. } => Effects::reads(Region::Frame),
+            Self::StoreLocalChecked { .. } | Self::InitializeLocal { .. } => Effects::writes(Region::Frame),
             Self::Jump | Self::JumpIf { .. } | Self::LogicalNot { .. } | Self::Number(_) | Self::Return { .. } => Effects::NONE,
             Self::CompareJump { comparison, .. } if !comparison.runs_guest_code() => Effects::NONE,
             Self::RequireObjectCoercible { .. } | Self::RequireIteratorResult { .. } => Effects { may_throw: true, ..Effects::NONE },
@@ -158,7 +161,7 @@ mod tests {
             Operation::Jump, Operation::Safepoint { proof: () }, Operation::LoadThis { destination: 0 }];
         assert!(stay.iter().all(|row| !row.moves_arrays()));
         let move_arrays: [Row; 4] = [Operation::ElementWrite { value: 0, base: 1, key: 2 }, Operation::IndexWrite { index: 0, value: 0, proof: () },
-            Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () }, Operation::Binary { destination: 0, left: 1, right: 2, operator: 0 }];
+            Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () }, Operation::Binary { destination: 0, left: crate::bytecode::Operand::register(1), right: crate::bytecode::Operand::register(2), operator: 0 }];
         assert!(move_arrays.iter().all(Row::moves_arrays));
     }
 }

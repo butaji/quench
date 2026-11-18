@@ -67,7 +67,7 @@ fn forwarding_read_body(body: &Function) -> bool {
 /// A `GetField` of `this` or a parameter, into a register past the parameters that the
 /// call's copies leave.
 fn reads_receiver_field(field: WideInstruction, body: &Function, survives_copies: impl Fn(u16) -> bool) -> bool {
-    matches!(crate::vm::compiled::decoded(field), Some(crate::staged::Operation::GetField { .. }))
+    crate::staged::reads_named_field(field.op())
         && field.result_flags() == 0
         && field.result_register() >= body.params
         && survives_copies(field.result_register())
@@ -77,7 +77,7 @@ fn reads_receiver_field(field: WideInstruction, body: &Function, survives_copies
 /// A `GetField` of `field`'s value, into another register past the parameters that the
 /// call's copies leave.
 fn reads_method(method: WideInstruction, field: WideInstruction, body: &Function, survives_copies: impl Fn(u16) -> bool) -> bool {
-    matches!(crate::vm::compiled::decoded(method), Some(crate::staged::Operation::GetField { .. }))
+    crate::staged::reads_named_field(method.op())
         && method.result_flags() == 0
         && method.result_register() >= body.params
         && method.result_register() != field.result_register()
@@ -88,14 +88,14 @@ fn reads_method(method: WideInstruction, field: WideInstruction, body: &Function
 /// Each parameter, in order, moved to its place in the call window at `window`.
 fn moves_parameters(body: &Function, moves: &[crate::bytecode::Instr], window: u16) -> bool {
     moves.iter().zip(0..body.params).all(|(&packed, parameter)| {
-        let moved = body.widened(packed);
-        matches!(crate::vm::compiled::decoded(moved), Some(crate::staged::Operation::Move { .. })) && moved.b() == parameter && moved.a() == window + parameter
+        let moved = decoded_instruction(body, packed);
+        crate::staged::copies_register(moved.op()) && moved.b() == parameter && moved.a() == window + parameter
     })
 }
 
 /// The call of `method` on `field` with every parameter, returning its completion.
 fn calls_method(call: WideInstruction, method: WideInstruction, field: WideInstruction, body: &Function) -> bool {
-    crate::staged::meaning_dispatch::plain_call(call)
+    crate::staged::calls(call.op())
         && call.result_flags() == crate::bytecode::RETURN_REGISTER
         && call.b() == method.a()
         && call.c() == field.a()
@@ -109,14 +109,14 @@ fn element_read_body(body: &Function) -> bool {
     let [field, element, done, ..] = body.code.as_slice() else {
         return false;
     };
-    let [field, element, done] = [field, element, done].map(|packed| body.widened(*packed));
-    // A lookup-less `GetField` has the nested base, which `reads_this_or_parameter` refuses.
-    matches!(crate::vm::compiled::decoded_completed(field), Some(crate::staged::Operation::GetField { .. }))
+    let [field, element, done] = [field, element, done].map(|packed| decoded_instruction(body, *packed));
+    crate::staged::reads_named_field(field.op())
         && !field.returns_from_frame()
         && reads_this_or_parameter(FieldBase(field.b()), body)
-        && matches!(crate::vm::compiled::decoded_completed(element), Some(crate::staged::Operation::ElementRead { base, .. }) if base == field.a())
+        && crate::staged::reads_element(element.op())
+        && element.b() == field.a()
         && element.c() < body.params
-        && matches!(crate::vm::compiled::decoded(done), Some(crate::staged::Operation::Return { .. }))
+        && crate::staged::returns(done.op())
         && done.a() == element.a()
 }
 
@@ -132,10 +132,7 @@ fn leading_pair(body: &Function) -> Option<[WideInstruction; 2]> {
 /// `() => binding` compiles.
 fn capture_read_body(body: &Function) -> bool {
     leading_pair(body).is_some_and(|[load, done]| {
-        matches!(crate::vm::compiled::decoded_completed(load), Some(crate::staged::Operation::LoadCapture { .. }))
-            && !load.returns_from_frame()
-            && matches!(crate::vm::compiled::decoded(done), Some(crate::staged::Operation::Return { .. }))
-            && done.a() == load.a()
+        crate::staged::reads_capture(load.op()) && !load.returns_from_frame() && crate::staged::returns(done.op()) && done.a() == load.a()
     })
 }
 
@@ -145,10 +142,7 @@ fn this_read_body(body: &Function) -> bool {
     !body.is_arrow
         && !body.is_class_constructor
         && leading_pair(body).is_some_and(|[load, done]| {
-            matches!(crate::vm::compiled::decoded(load), Some(crate::staged::Operation::LoadThis { .. }))
-                && !load.returns_from_frame()
-                && matches!(crate::vm::compiled::decoded(done), Some(crate::staged::Operation::Return { .. }))
-                && done.a() == load.a()
+            crate::staged::loads_this(load.op()) && !load.returns_from_frame() && crate::staged::returns(done.op()) && done.a() == load.a()
         })
 }
 
@@ -226,11 +220,14 @@ fn leaf_reads(instruction: WideInstruction, body: &Function, code: &ResidualProg
     // Records the decode leaves to the opcode: the other threads' opcodes (a number operation
     // with a binary form, a unary, a name, a call) and a record the decode rejects.
     Some(match instruction.op() {
-        op if op.is_leaf_value() || op.is_leaf_jump() => PLAIN_LEAF,
-        op if op.is_leaf_binary() => return binary_leaf(instruction),
+        op if crate::staged::leaf_value_or_jump(op) => PLAIN_LEAF,
+        op if crate::staged::leaf_binary_operation(op) => return binary_leaf(instruction),
         op if op.traits().has(Traits::THIS_LEAF) => CONTEXT_LEAF,
         op if op.addresses_capture() => CAPTURE_LEAF,
-        // A global name's first load finds the running function (`lane_name_resolution`),
+        // merge: the fallback store arm is kept for stores the decode leaves to the opcode
+        // (the decoded `SetField` arm above covers the rest).
+        _ if crate::staged::Operation::<u64, ()>::is_field_store(instruction) => return store_leaf(instruction, private),
+        // A global name's first load finds the running function (`name_resolution`),
         // which makes the leaf an activation first; its later loads read the realm alone.
         op if op.traits().has(Traits::NAME_LEAF) && body.names_resolve_statically(code) => PLAIN_LEAF,
         op if op.traits().has(Traits::FIELD_LEAF) => field_leaf(instruction, code, private)?,

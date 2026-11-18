@@ -371,6 +371,7 @@ pub(super) fn other<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
     stage.select(int, zero, one)
 }
 
+#[cfg(test)]
 /// The interpreter's reading of `replace_element` at `index` of the backing whose first value
 /// `values` addresses.
 ///

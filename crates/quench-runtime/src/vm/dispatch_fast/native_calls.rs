@@ -1,5 +1,5 @@
 //! Calls the lane answers in place for their common case (else `lane_native_call`), and
-//! for-in's step (`lane_for_in_next`).
+//! for-in's step (`fast_names_step`, the loop exit's row).
 use super::*;
 use crate::vm::object_get::ordinary_chain::ChainRead;
 
@@ -131,7 +131,7 @@ pub(super) fn install_math_field_call<H: Host>(cx: *mut LaneContext<H>, call_ip:
     let (call, copy, field) = unsafe { (&*call_ip, &*copy_ip, &*field_ip) };
     let one_argument = ImmediateLayout::argument_count(call.imm()) == 1
         && ImmediateLayout::call_window_base(call.imm()) == copy.a;
-    let copies = copy.handler == lane_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
+    let copies = copy.handler == generated_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
     let reads_callee = field.a == call.b
         && own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler);
     if one_argument && copies && reads_callee && copy.a != field.a {
@@ -146,8 +146,8 @@ fn install_math_field_call2<H: Host>(call_ip: Ip) {
     let (second_ip, first_ip, field_ip) = unsafe { (call_ip.sub(1), call_ip.sub(2), call_ip.sub(3)) };
     let (call, second, first, field) = unsafe { (&*call_ip, &*second_ip, &*first_ip, &*field_ip) };
     let window = ImmediateLayout::call_window_base(call.imm());
-    let copy = lane_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
-    let constant_second = second.handler == lane_row::<H, { opc::LoadConst }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
+    let copy = generated_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
+    let constant_second = second.handler == generated_row::<H, { opc::LoadConst }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
     let shaped = first.handler == copy && (second.handler == copy || constant_second)
         && first.a == window && second.a == window + 1;
     let reads_callee = field.a == call.b && field.a != window && field.a != window + 1

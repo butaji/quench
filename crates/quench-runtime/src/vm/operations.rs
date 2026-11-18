@@ -47,7 +47,7 @@ macro_rules! number_arithmetic_operators {
     ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
         impl NumberArithmetic {
             #[inline(always)]
-            pub(super) fn from_operator(operator: u32) -> Option<Self> {
+            pub(crate) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == BinaryOperator::$operator as u32 {
                         return Some(Self::$operation);
@@ -56,39 +56,21 @@ macro_rules! number_arithmetic_operators {
                 None
             }
 
-            /// The Number arithmetic operation denoted by a JavaScript bytecode
-            /// and its operator. General `Binary` accepts every arithmetic row;
-            /// specialized bytecodes are accepted only for their corresponding
-            /// operator, as recorded in this table.
-            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                if instruction.is_binary() {
-                    return Self::from_operator(operator);
+            /// The Number arithmetic operation the decoded instruction denotes: the `Arithmetic`
+            /// of `Operation::Number`, which `Binary` decodes its arithmetic operators to
+            /// (`staged::numeric::binary_operation`). No record of another opcode denotes one.
+            pub(crate) fn from_instruction(instruction: crate::bytecode::WideInstruction) -> Option<Self> {
+                match crate::staged::Operation::<u64, ()>::of(instruction)? {
+                    crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic { operation, .. }) => Some(operation),
+                    _ => None,
                 }
-                $(number_arithmetic_operators!(
-                    @specialized_instruction
-                    instruction,
-                    operator,
-                    Self::$operation,
-                    $operator,
-                    $specialized_instruction
-                );)+
-                None
             }
-        }
-    };
-    (
-        @specialized_instruction
-        $instruction:ident,
-        $operator:ident,
-        $operation:expr,
-        $operator_name:ident,
-        None
-    ) => {};
-    (@specialized_instruction $instruction:ident, $operator:ident, $operation:expr, $operator_name:ident, $specialized_instruction:ident) => {
-        if $instruction.class().eq(crate::bytecode::Class::$specialized_instruction)
-            && $operator == BinaryOperator::$operator_name as u32
-        {
-            return Some($operation);
+
+            /// `from_instruction` of an opcode and its operator field, for a caller that holds
+            /// the opcode but no record: the record is built with the operator in its immediate.
+            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
+                Self::from_instruction(crate::bytecode::WideInstruction::new(instruction, 0, 0, 0, operator))
+            }
         }
     };
 }
@@ -108,6 +90,7 @@ impl NumberArithmetic {
     }
 }
 
+#[cfg(test)]
 /// Whether swapping two already-evaluated operands preserves the canonical Number
 /// result. This is not a law for evaluating/coercing guest operands or string addition.
 #[inline(always)]
@@ -141,7 +124,7 @@ macro_rules! number_unary_operators {
             /// The side-effect-free Number unary operation denoted by JavaScript bytecode.
             /// Other unary operators still require their normal coercion and effect paths.
             pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                (instruction.is_unary())
+                (instruction as u16 == crate::staged::UNARY_ROW)
                     .then(|| Self::from_operator(operator))
                     .flatten()
             }
@@ -173,14 +156,19 @@ macro_rules! number_bitwise_operators {
                 None
             }
 
-            /// The signed int32 operation denoted by an eligible JavaScript
-            /// bytecode and operator. Bitwise operands may be narrowed only
-            /// for the general `Binary` instruction; entry guards are checked
-            /// separately by the caller.
+            /// The signed int32 operation the decoded instruction denotes: the `Bitwise` of
+            /// `Operation::Number`, which `Binary` decodes its bitwise operators to.
+            pub(crate) fn from_instruction(instruction: crate::bytecode::WideInstruction) -> Option<Self> {
+                match crate::staged::Operation::<u64, ()>::of(instruction)? {
+                    crate::staged::Operation::Number(crate::staged::NumberOperation::Bitwise { operation, .. }) => Some(operation),
+                    _ => None,
+                }
+            }
+
+            /// `from_instruction` of an opcode and its operator field, for a caller that holds
+            /// the opcode but no record.
             pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                (instruction.is_binary())
-                    .then(|| Self::from_operator(operator))
-                    .flatten()
+                Self::from_instruction(crate::bytecode::WideInstruction::new(instruction, 0, 0, 0, operator))
             }
         }
     };
@@ -193,6 +181,28 @@ impl NumberBitwise {
     pub(super) fn result_is_int32(self, right: Option<f64>) -> bool {
         self != Self::ShiftRightUnsigned || right.is_some_and(|right|
             crate::value::number_to_u32(right) & crate::value::WORD32_SHIFT_MASK != 0)
+    }
+}
+
+#[cfg(test)]
+/// `OP` on two int32 operands when its Number result is again an int32 (no overflow, no
+/// -0, no `>>>` past 2^31): the raw i32, so a fused second operator reads it without a tag
+/// test. `None` leaves the case to `integer_operator`.
+#[inline(always)]
+pub(super) fn int32_operator<const OP: u32>(left: i32, right: i32) -> Option<i32> {
+    match numeric_binary_operator(OP)? {
+        BinaryOperator::Addition => left.checked_add(right),
+        BinaryOperator::Subtraction => left.checked_sub(right),
+        BinaryOperator::Multiplication => {
+            let product = left.checked_mul(right)?;
+            // 0 from a negative factor is -0, not an int32.
+            (product != 0 || (left | right) >= 0).then_some(product)
+        }
+        operator => {
+            let operation = NumberBitwise::from_binary_operator(operator)?;
+            let bits = operation.apply(&mut I32BitwiseStage, left, right);
+            (operation != NumberBitwise::ShiftRightUnsigned || bits >= 0).then_some(bits)
+        }
     }
 }
 
@@ -234,43 +244,6 @@ pub(super) fn integer_binary(op: u32, left: i32, right: i32) -> Option<Value> {
     numeric_integer_result(numeric_binary_operator(op)?, left, right)
 }
 
-/// `number_relation` of two integers alone: `None` for any other pair. Few values stay live,
-/// so a lane handler inlining it saves no registers.
-#[inline(always)]
-pub(super) fn integer_relation_i32(op: u32, left: i32, right: i32) -> Option<bool> {
-    if op > LAST_COMPARISON_OPERATOR {
-        return None;
-    }
-    Some(number_comparison(op, left, right))
-}
-
-/// The truth a jump test of two int32 operands takes: a comparison's result, or whether a
-/// bitwise operator's int32 result is nonzero (`if (flags & MASK)`, the Number it would make
-/// is never made: its ToBoolean is its bits' test). `None` for any other operator.
-#[inline(always)]
-pub(super) fn integer_test_i32(op: u32, left: i32, right: i32) -> Option<bool> {
-    let bits = match op {
-        BITWISE_AND => left & right,
-        BITWISE_OR => left | right,
-        BITWISE_XOR => left ^ right,
-        SHIFT_LEFT => left.wrapping_shl(right as u32),
-        SHIFT_RIGHT => left.wrapping_shr(right as u32),
-        SHIFT_RIGHT_ZERO_FILL => ((left as u32).wrapping_shr(right as u32)) as i32,
-        _ => return integer_relation_i32(op, left, right),
-    };
-    Some(bits != 0)
-}
-
-/// A comparison operator on two int32 Values; `None` for any other operator or value.
-#[inline(always)]
-pub(super) fn integer_relation(op: u32, left: Value, right: Value) -> Option<bool> {
-    if op > LAST_COMPARISON_OPERATOR {
-        return None;
-    }
-    let (a, b) = Value::int_pair(left, right)?;
-    Some(number_comparison(op, a, b))
-}
-
 /// A comparison operator on two Numbers, comparing integers as integers; `None` for any
 /// other operator or value.
 #[inline(always)]
@@ -286,18 +259,9 @@ pub(super) fn number_relation(op: u32, left: Value, right: Value) -> Option<bool
     Some(number_comparison(op, left.as_number()?, right.as_number()?))
 }
 
-/// Comparison `op` (at most `LAST_COMPARISON_OPERATOR`) of two Numbers' doubles, as
-/// `number_relation` decides it past its int32 pair: an int32 converts exactly, so any two
-/// Numbers compare this way.
-#[inline(always)]
-pub(super) fn double_relation(op: u32, left: f64, right: f64) -> bool {
-    debug_assert!(op <= LAST_COMPARISON_OPERATOR);
-    number_comparison(op, left, right)
-}
-
 #[cfg(test)]
 mod numeric_instruction_tests {
-    use super::{NumberArithmetic, NumberBitwise, NumberUnary, Op, number_is_truthy};
+    use super::{NumberArithmetic, NumberBitwise, NumberF64Stage, NumberUnary, Op, number_truthiness};
     use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
     #[test]
@@ -306,6 +270,8 @@ mod numeric_instruction_tests {
             NumberArithmetic::from_js_instruction(Op::Binary, BinaryOperator::Addition as u32),
             Some(NumberArithmetic::Add)
         );
+        // The specialized opcodes decode to the Number operation of their own operator (`NumericAdd`
+        // is `+`, `NumericMultiply` is `*`); any other operator is none.
         assert_eq!(
             NumberArithmetic::from_js_instruction(Op::NumericAdd, BinaryOperator::Addition as u32),
             Some(NumberArithmetic::Add)
@@ -414,7 +380,7 @@ mod numeric_instruction_tests {
             (f64::MIN_POSITIVE, true),
             (-1.0, true),
         ] {
-            assert_eq!(number_is_truthy(value), expected);
+            assert_eq!(number_truthiness(&mut NumberF64Stage, value), expected);
         }
     }
 }
@@ -548,33 +514,6 @@ pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Opti
     // One operand at a time: each tag test needs a single scratch register, which keeps the
     // lane's integer handlers free of saved registers.
     let (left, right) = (left.as_int()?, right.as_int()?);
-    numeric_integer_result(numeric_binary_operator(OP)?, left, right)
-}
-
-/// `OP` on two int32 operands when its Number result is again an int32 (no overflow, no
-/// -0, no `>>>` past 2^31): the raw i32, so a fused second operator reads it without a tag
-/// test. `None` leaves the case to `integer_operator`.
-#[inline(always)]
-pub(super) fn int32_operator<const OP: u32>(left: i32, right: i32) -> Option<i32> {
-    match numeric_binary_operator(OP)? {
-        BinaryOperator::Addition => left.checked_add(right),
-        BinaryOperator::Subtraction => left.checked_sub(right),
-        BinaryOperator::Multiplication => {
-            let product = left.checked_mul(right)?;
-            // 0 from a negative factor is -0, not an int32.
-            (product != 0 || (left | right) >= 0).then_some(product)
-        }
-        operator => {
-            let operation = NumberBitwise::from_binary_operator(operator)?;
-            let bits = operation.apply(&mut I32BitwiseStage, left, right);
-            (operation != NumberBitwise::ShiftRightUnsigned || bits >= 0).then_some(bits)
-        }
-    }
-}
-
-/// `integer_operator` of two operands the caller already read as int32s.
-#[inline(always)]
-pub(super) fn integer_pair_operator<const OP: u32>(left: i32, right: i32) -> Option<Value> {
     numeric_integer_result(numeric_binary_operator(OP)?, left, right)
 }
 

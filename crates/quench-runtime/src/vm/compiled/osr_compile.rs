@@ -13,7 +13,7 @@ use super::lane_region::StableFacts;
 use crate::code_dependencies::Invalidation;
 mod calls;
 pub(in crate::vm) use calls::{CallCode, RegionCalls};
-use crate::bytecode::{FieldLookup, Function, Op, ResidualProgram, WideInstruction};
+use crate::bytecode::{FieldLookup, Function, ResidualProgram, WideInstruction};
 use crate::vm::global_facts::GlobalTable;
 use super::super::specializer::Specializer;
 use super::{DirectCallee, DirectCandidates};
@@ -267,7 +267,7 @@ fn insert_markers(instructions: &mut Vec<WideInstruction>, origins: &mut Vec<lan
         _ => None,
     }).collect();
     for &(at, call) in inserted.iter().rev() {
-        instructions.insert(at, WideInstruction::new(Op::Nop, 0, 0, 0, 0));
+        instructions.insert(at, crate::staged::emit::nop());
         origins.insert(at, lane_unit::Origin::Caller(call));
     }
     // A jump target lands on the marker at its own position, as the call's PC did: an

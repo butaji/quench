@@ -209,10 +209,9 @@ impl Facts {
         let conditional = instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump;
         // Only a comparison refines its edges apart; any other conditional jump sends one state
         // both ways, with no copy.
-        let compares = matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. }));
-        let refines = conditional && compares;
+        let refines = conditional && matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::CompareJump { .. }));
         let mut following = refines.then(|| point.clone());
-        if compares {
+        if matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::CompareJump { .. })) {
             point.refine(text.constants, instruction, false);
             if let Some(following) = following.as_mut() { following.refine(text.constants, instruction, true); }
         }

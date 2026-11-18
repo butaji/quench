@@ -673,6 +673,7 @@ impl ArrayElements {
         true
     }
 
+    #[cfg(test)]
     /// `UniqueElements::set` through the first value a unique backing gave
     /// (`unique_values`): the count of other values in its header keeps the write.
     ///

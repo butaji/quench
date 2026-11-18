@@ -165,7 +165,7 @@ fn plan_super_parent<H: Host>(vm: &mut Vm<H>, callee: Value) {
 /// at every node. `None` leaves the construction to the general path: another program's or
 /// realm's class, or an add the caches do not answer, whose partial receiver no code has seen.
 #[inline(never)]
-pub(super) fn lane_super_construction<H: Host>(
+pub(super) fn super_construction<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     i: &LaneInstruction,

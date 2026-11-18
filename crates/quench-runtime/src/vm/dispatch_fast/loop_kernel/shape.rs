@@ -240,9 +240,10 @@ impl<'a> Graph<'a> {
         self.accesses - 1
     }
 
-    fn inc_dec(&mut self, instruction: WideInstruction, file: &[Sym]) -> Option<Sym> {
-        let step = if instruction.boolean_flag()? { -1 } else { 1 };
-        Some(match *file.get(usize::from(instruction.register_b()))? {
+    /// `source ± 1` (`IncDec`, `Number(IncDec)` of the staged row).
+    fn inc_dec(&mut self, source: Register, decrement: bool, file: &[Sym]) -> Option<Sym> {
+        let step = if decrement { -1 } else { 1 };
+        Some(match *file.get(usize::from(source))? {
             Sym::Affine(register, offset) => Sym::Affine(register, offset.checked_add(step)?),
             Sym::Const(value) => Sym::Const(value + f64::from(step)),
             other => self.node(SymOp::Arith(NumberArithmetic::Add), other, Sym::Const(f64::from(step)))?,
@@ -275,9 +276,10 @@ impl<'a> Graph<'a> {
         (!*self.written.get(usize::from(register))?).then_some(Sym::Field(register, atom))
     }
 
-    fn get_index(&mut self, instruction: WideInstruction, file: &[Sym]) -> Option<Sym> {
-        let base = self.base(self.operand(file, instruction.operand_b())?)?;
-        let index = Self::index(self.operand(file, instruction.operand_c())?)?;
+    /// `base[key]` (`ElementRead` of the staged row).
+    fn get_index(&mut self, base: Register, key: crate::bytecode::Operand, file: &[Sym]) -> Option<Sym> {
+        let base = self.base(*file.get(usize::from(base))?)?;
+        let index = Self::index(self.operand(file, key)?)?;
         // A second read of an element no store came between reads the first's column.
         let same = |&&(id, order): &&(u16, u16)| {
             matches!(self.nodes[usize::from(id)].0, SymOp::Load { base: b, index: i } if b == base && i == index)
@@ -293,10 +295,11 @@ impl<'a> Graph<'a> {
         Some(node)
     }
 
-    fn set_index(&mut self, instruction: WideInstruction, file: &[Sym]) -> Option<()> {
-        let value = self.arith_operand(*file.get(usize::from(instruction.a()))?)?;
-        let base = self.base(*file.get(usize::from(instruction.b()))?)?;
-        let index = Self::index(*file.get(usize::from(instruction.c()))?)?;
+    /// `base[key] = stored` (`ElementWrite` of the staged row).
+    fn set_index(&mut self, stored: Register, base: Register, key: Register, file: &[Sym]) -> Option<()> {
+        let value = self.arith_operand(*file.get(usize::from(stored))?)?;
+        let base = self.base(*file.get(usize::from(base))?)?;
+        let index = Self::index(*file.get(usize::from(key))?)?;
         let order = self.access();
         self.stores.push((base, index, value, order));
         Some(())
@@ -308,23 +311,33 @@ impl<'a> Graph<'a> {
         if writes_local(instruction) {
             return Err(());
         }
-        use crate::staged::{NumberOperation, Operation};
-        let value = match crate::vm::compiled::decoded_completed(instruction) {
-            Some(Operation::Move { source, .. }) => file.get(usize::from(source)).copied(),
-            Some(Operation::LoadCapture { .. }) => Some(Sym::Capture(instruction.imm())),
-            Some(Operation::GetField { .. }) => self.field(instruction),
-            Some(Operation::Number(NumberOperation::IncDec { .. })) => self.inc_dec(instruction, file),
-            Some(Operation::ElementRead { .. }) => self.get_index(instruction, file),
-            Some(Operation::ElementWrite { .. }) => return self.set_index(instruction, file).map(|()| None).ok_or(()),
-            Some(Operation::Nop) => return Ok(None),
-            _ => match Operation::<(), ()>::decode_constant_load(instruction) {
-                Some((_, index)) => self.constants.get(index).and_then(|v| v.as_number()).map(Sym::Const),
-                // The binary operators are not in the decoder's table yet: they keep their class test.
-                None => match instruction.op().class() {
-                    Class::Binary | Class::NumericAdd | Class::NumericMultiply => self.binary(instruction, file),
-                    _ => None,
-                },
-            },
+        // The staged row decides what the instruction means where it has one; the opcode arms
+        // below are the operations the staged decoder does not yet express (`LoadConst` needs the
+        // tier's typed constants, `Binary` decodes register operands only, `NumericAdd` and
+        // `NumericMultiply` have no staged decoder, `Nop` decodes to nothing).
+        let value = match staged_operation(instruction) {
+            Some(crate::staged::Operation::Move { source, .. }) => file.get(usize::from(source)).copied(),
+            Some(crate::staged::Operation::LoadCapture { .. }) => Some(Sym::Capture(instruction.imm())),
+            Some(crate::staged::Operation::GetField { .. }) => self.field(instruction),
+            Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { source, decrement, .. })) => {
+                self.inc_dec(source, decrement, file)
+            }
+            Some(crate::staged::Operation::ElementRead { base, key }) => self.get_index(base, key, file),
+            Some(crate::staged::Operation::ElementWrite { value, base, key }) => {
+                return self.set_index(value, base, key, file).map(|()| None).ok_or(());
+            }
+            _ => {
+                let op = instruction.op();
+                if crate::staged::loads_constant(op) {
+                    self.constants.get(instruction.constant_index()).and_then(|v| v.as_number()).map(Sym::Const)
+                } else if crate::staged::computes_arithmetic(op) {
+                    self.binary(instruction, file)
+                } else if crate::staged::does_nothing(op) {
+                    return Ok(None);
+                } else {
+                    None
+                }
+            }
         };
         value.map(Some).ok_or(())
     }
@@ -362,17 +375,15 @@ fn shifted(kind: SymOp, a: Sym, b: Sym) -> Option<Sym> {
     }
 }
 
-/// Whether `instruction` writes a numeric local besides its result, which no kernel models.
-fn writes_local(instruction: WideInstruction) -> bool {
-    !is_element_write_or_nop(instruction) && instruction.numeric_local_target().is_some()
+/// The staged operation `instruction` denotes, if its decoder has one (`Operation::decode`).
+fn staged_operation(instruction: WideInstruction) -> Option<crate::staged::Operation<(), ()>> {
+    crate::staged::Operation::decode(instruction, crate::staged::DecodeContext::EMPTY)
 }
 
-/// Whether `instruction` decodes as an element store or a `Nop`.
-fn is_element_write_or_nop(instruction: WideInstruction) -> bool {
-    matches!(
-        crate::vm::compiled::decoded_completed(instruction),
-        Some(crate::staged::Operation::ElementWrite { .. } | crate::staged::Operation::Nop)
-    )
+/// Whether `instruction` writes a numeric local besides its result, which no kernel models.
+fn writes_local(instruction: WideInstruction) -> bool {
+    let stores = matches!(staged_operation(instruction), Some(crate::staged::Operation::ElementWrite { .. }));
+    !stores && !crate::staged::does_nothing(instruction.op()) && instruction.numeric_local_target().is_some()
 }
 
 /// The registers `body` writes.
@@ -406,7 +417,7 @@ impl Shape {
         let test = header + decoded[header..backedge].iter().position(leaves)?;
         let (pre, body) = (&decoded[header..test], &decoded[test + 1..backedge]);
         let jump = decoded[test];
-        if jump.op().class() != Class::JumpBinaryFalse || jump.jump_target() as usize != backedge + 1 || body.iter().any(leaves) {
+        if !crate::staged::compare_jump(jump.op()) || jump.jump_target() as usize != backedge + 1 || body.iter().any(leaves) {
             return None;
         }
         let relation = NumberRelation::from_operator(jump.binary_operator_field())?;

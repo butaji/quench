@@ -15,8 +15,6 @@ pub(crate) enum Suspension {
     /// `yield`: the yielded value, awaited first in an async generator.
     Yield,
     /// `yield*`: delegation to the iterator `iterator` holds (undefined before the first step).
-    /// Only the interpreter's suspension reads it yet.
-    #[cfg_attr(not(test), allow(dead_code))]
     YieldStar { iterator: Register },
 }
 

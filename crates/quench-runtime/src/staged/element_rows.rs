@@ -74,26 +74,15 @@ fn dense_view<S: Stage, F: ElementFrame<S>>(stage: &mut S, frame: &mut F, base: 
 fn read<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, base: Register, key: Operand) -> Option<S::Word> {
     let miss = frame.miss();
     let object = frame.tagged(stage, base);
-    let view = match frame.proved_view(stage, base, false) {
-        // The proof's bound tests the key too: the word past the int32 tag is below it only for
-        // an int32 in the backing (`Value::int_key_offset`), so the key needs no test of its own.
-        Some(view) => {
-            let bits = frame.key_word(stage, key)?;
-            let offset = stage.add_imm(bits, crate::value::ValueLayout::INT_TAG.wrapping_neg());
-            return frame.element_probed(stage, miss,
-                #[inline(always)] |stage, _, absent| read_element(stage, view, offset, absent),
-                #[inline(always)] |stage, frame, miss| {
-                    let key = frame.key_word(stage, key)?;
-                    frame.index_get_host(stage, object, key, miss)
-                });
-        }
-        None => match frame.kept_view(stage, object, false) {
-            Some(view) => view,
+    let view = match frame.kept_view(stage, object, false) {
+        Some(view) => view,
+        None => match frame.proved_view(stage, base, false) {
+            Some(view) => ElementView::Dense(view),
             // A frame that keeps no views reads the element of any backing in place.
             None if frame.reads_any_backing() => {
                 let records = frame.array_records(stage)?;
-                // A key that is no offset into the backing (a string, a symbol, a negative int32)
-                // is the host's read, not a leave of the row: the host path serves every key.
+                // merge: HEAD's let-else keeps a key that is no offset into the backing on the host read path
+                // (theirs' `?` leaves the row instead); HEAD's proved-view probe arm is dropped for theirs' view order.
                 let Some(index) = frame.index_offset(stage, key, miss) else {
                     let key = frame.key_word(stage, key)?;
                     return frame.index_get_host(stage, object, key, miss);
@@ -186,7 +175,7 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 #[inline(always)]
 pub(crate) fn concrete_record_replace(records: *const crate::heap::ArrayObject, base: crate::Value, index: usize,
     value: crate::Value) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::new(core::ptr::null());
     prove_view(&mut stage, records as u64, base.to_bits(), true, ())
         .and_then(|view| replace_present(&mut stage, view, index as u64, value.to_bits(), ()))
         .is_some()

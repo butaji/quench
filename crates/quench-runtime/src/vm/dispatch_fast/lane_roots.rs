@@ -1,7 +1,7 @@
 //! What a lane run is rooted in: the VM frame a general loop entered it from, or, for a promise
 //! job or a native `next`, the suspended frame of an async function or a generator that its
 //! owner keeps (`Vm::run_lane_job`). A job's lane resumes the activation over its record's register file
-//! with no VM frame beneath it; its `await` suspends it back into the record (`lane_await`), its
+//! with no VM frame beneath it; its `await` suspends it back into the record (`await_in_lane`), its
 //! return ends the run, and any other exit makes it a frame the general loop finishes.
 use super::*;
 use super::generator_windows::{open_window_locals, cached_window_plan, store_window_plan, WindowPlan};
@@ -60,7 +60,7 @@ impl<H: Host> LaneContext<H> {
 /// The words of an innermost activation's state that a parked lane keeps: its receiver and its environment.
 const INNERMOST_STATE_LEN: usize = 2;
 
-/// Everything a lane run's context starts from (`Vm::lane_context`).
+/// Everything a lane run's context starts from (`Vm::context_for_start`).
 pub(super) struct LaneStart<'a> {
     pub(super) code: &'a ResidualProgram,
     pub(super) program: ProgramId,
@@ -177,7 +177,7 @@ impl<H: Host> Vm<H> {
 
     /// The context of a lane run that starts as `start` says; its other state starts empty.
     #[inline(always)]
-    pub(super) fn lane_context(&mut self, start: LaneStart<'_>) -> LaneContext<H> {
+    pub(super) fn context_for_start(&mut self, start: LaneStart<'_>) -> LaneContext<H> {
         let LaneStart { code, program, root, registers, base, this, pending, executing, inline_calls, script_calls, script_constructs, floor } = start;
         // The root's receiver is its window's context word (`Registers::this`); its environment
         // and captures are the window's to write where it has its own (a frame's run has none).
@@ -279,12 +279,7 @@ impl<H: Host> Vm<H> {
             instruction,
             self.programs.source_name(unsafe { (*cx).program }).unwrap_or_default(),
             instruction
-                .filter(|instruction| match crate::vm::compiled::decoded_completed(instruction) {
-                    Some(crate::staged::Operation::GetField { .. }) => true,
-                    Some(_) => false,
-                    // A field read the decode rejects (one with no lookup) keeps the opcode test.
-                    None => instruction.op().is_get_field(),
-                })
+                .filter(|instruction| crate::staged::reads_named_field(instruction.op()))
                 .and_then(|instruction| code.atoms.get(instruction.imm() as usize)),
             body.name.map_or("", |atom| &code.atoms[atom as usize]),
             body.source_span.map(|span| span.start),
@@ -349,7 +344,7 @@ impl<H: Host> Vm<H> {
         let caller_registers = self.active_registers;
         let entered = self.enter_lane_floor(code, window.entry.program);
         let start = job_start(code, job, &window, (&raw mut pending, &raw mut executing), entered.cell);
-        let mut context = self.lane_context(start);
+        let mut context = self.context_for_start(start);
         let ip = self.drive_lane(&mut context, entered, |cx| match resume {
             JobResume::Sends(_) => window.enter(cx),
             JobResume::Throws(error) => window.enter_raising(cx, error),

@@ -5,7 +5,7 @@ use super::*;
 /// The lane's store of `value` to the capture at `depth` and `slot` past the running
 /// function's dense slots (`lane_store_capture`): whether it stored, which a binding the
 /// direct store does not take (a `const`, an uninitialized `let`) does not.
-pub(super) fn lane_capture_store<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16, value: Value) -> bool {
+pub(super) fn store_to_capture<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16, value: Value) -> bool {
     let vm = unsafe { vm(cx) };
     let env = unsafe { (*cx).registers }.env();
     // A frame run's first depth-0 store finds its slots, tagged when they admit every
@@ -33,12 +33,12 @@ pub(super) fn lane_capture_store<H: Host>(cx: *mut LaneContext<H>, depth: u16, s
         return vm.owner_capture_env(VarOwner::Frame(unsafe { (*cx).frame() }), depth)
             .is_some_and(|target| vm.direct_store_environment(code, program, target, slot, value));
     }
-    lane_environment_store(vm, code, program, env, depth, slot, value)
+    store_to_environment(vm, code, program, env, depth, slot, value)
 }
 
-/// `lane_capture_store` of a function running in environment `env` without a frame: its
+/// `store_to_capture` of a function running in environment `env` without a frame: its
 /// depth-0 capture is `env` itself, stored with one lookup.
-pub(super) fn lane_environment_store<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, program: ProgramId, env: Value, depth: u16, slot: u16, value: Value) -> bool {
+pub(super) fn store_to_environment<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, program: ProgramId, env: Value, depth: u16, slot: u16, value: Value) -> bool {
     if depth == 0 && vm.direct_store_own_environment(code, program, env, slot, value) {
         return true;
     }

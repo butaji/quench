@@ -857,10 +857,9 @@ struct SuperRule {
 
 pub(super) const CONST_ARRAY_OBJECT2: [Op; 4] = [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2];
 
-const SUPER_RULES: &[SuperRule] = &[SuperRule {
-    pattern: &[Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2],
-    fuse: fuse_const_array_object2,
-}];
+/// No superinstruction rules: a fused record would carry a second meaning for its parts, so
+/// `MakeConstArray`, `Binary` and `MakeObject2` run as their own generated rows.
+const SUPER_RULES: &[SuperRule] = &[];
 
 fn rewrite_super_window(
     function: &mut BcFunction,
@@ -929,35 +928,6 @@ fn rewrite_super_window(
     );
     function.code = code;
     changed
-}
-
-fn fuse_const_array_object2(
-    window: &[Instr],
-    superinstructions: &mut SiteTable<'_, Superinstruction>,
-) -> Option<Instr> {
-    let code: [Instr; 4] = window.try_into().ok()?;
-    if code.map(|instruction| instruction.op()) != CONST_ARRAY_OBJECT2 {
-        return None;
-    }
-    let [array, _, second, object] = code;
-    let object_inputs = [object.register_b(), object.register_c()];
-    if code
-        .iter()
-        .any(|instruction| instruction.result_flags() != 0)
-        || !object_inputs.contains(&array.result_register())
-        || !object_inputs.contains(&second.result_register())
-    {
-        return None;
-    }
-    let site = superinstructions.len() as u32;
-    superinstructions.push(Superinstruction::new(code));
-    Some(Instr::new(
-        Op::SuperConstArrayObject2,
-        object.result_register(),
-        0,
-        0,
-        site,
-    ))
 }
 
 /// `protected_positions` of `function` as it stands.
@@ -1697,35 +1667,6 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
         assert!(recipes(Op::LoadEnvLocal, Op::GetField).is_empty());
         assert!(matches!(recipes(Op::Binary, Op::Move).as_slice(), [Recipe::ProducerMove]));
         assert!(matches!(recipes(Op::Binary, Op::Return).as_slice(), [Recipe::ReturnResult]));
-    }
-
-    #[test]
-    fn fuses_local_four_instruction_window_as_data() {
-        let code = [
-            Instr::new(Op::MakeConstArray, 1, 3, 0, 7),
-            Instr::new(
-                Op::Binary,
-                2,
-                Operand::constant(1).unwrap().0,
-                Operand::local(0).0,
-                8,
-            ),
-            Instr::new(
-                Op::Binary,
-                3,
-                Operand::register(2).0,
-                Operand::constant(2).unwrap().0,
-                8,
-            ),
-            Instr::new(Op::MakeObject2, 4, 1, 3, 0),
-        ];
-        let mut sites = SiteTable::default();
-        let fused = fuse_const_array_object2(&code, &mut sites).unwrap();
-        assert_eq!(fused.op(), Op::SuperConstArrayObject2);
-        assert_eq!(
-            sites[0].code.map(|instruction| instruction.op()),
-            CONST_ARRAY_OBJECT2
-        );
     }
 
     #[test]

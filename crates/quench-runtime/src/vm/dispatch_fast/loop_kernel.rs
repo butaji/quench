@@ -1,5 +1,5 @@
 //! Proved loop kernels: a counted loop whose body is straight-line Number work over record
-//! arrays runs as one record (`lane_loop_kernel`, on the loop's test record) that executes
+//! arrays runs as one record (`loop_kernel_head`, on the loop's test record) that executes
 //! the body column-wise over chunks of iterations in Rust loops, instead of one dispatched
 //! record per operation per iteration.
 //!
@@ -141,7 +141,7 @@ fn register(kernel: &LoopKernel) -> Option<u16> {
     Some(slot)
 }
 
-/// Gives each loop that has a kernel its kernel record (`lane_loop_kernel`) on the loop's test
+/// Gives each loop that has a kernel its kernel record (`loop_kernel_head`) on the loop's test
 /// record. Runs after every other pass: the kernel keeps the record's final handler and
 /// leaves the record's operand to it.
 pub(super) fn install_loop_kernels<H: Host>(
@@ -154,7 +154,7 @@ pub(super) fn install_loop_kernels<H: Host>(
     let mut kernels = Vec::new();
     for backedge in 0..decoded.len() {
         let jump = decoded[backedge];
-        if !matches!(crate::vm::compiled::decoded(jump), Some(crate::staged::Operation::Jump)) {
+        if !matches!(crate::staged::Operation::<(), ()>::decode(jump, crate::staged::DecodeContext::EMPTY), Some(crate::staged::Operation::Jump)) {
             continue;
         }
         let header = jump.jump_target() as usize;
@@ -167,7 +167,7 @@ pub(super) fn install_loop_kernels<H: Host>(
         let Some(kernel) = LoopKernel::of(decoded, constants, function, header, backedge, records[header].handler) else {
             continue;
         };
-        records[header].handler = lane_loop_kernel::<H> as Handler as *const ();
+        records[header].handler = loop_kernel_head::<H> as Handler as *const ();
         records[header].call_link.set(kernel.slot);
         kernels.push(kernel);
     }
@@ -184,7 +184,7 @@ pub(super) fn install_loop_kernels<H: Host>(
 pub(super) unsafe fn requicken_kernel<H: Host>(ip: Ip, handler: Handler) -> bool {
     // SAFETY: the caller's contract.
     let record = unsafe { &*ip };
-    if record.handler != lane_loop_kernel::<H> as Handler as *const () {
+    if record.handler != loop_kernel_head::<H> as Handler as *const () {
         return false;
     }
     // SAFETY: the record names a live kernel of its view (`install_loop_kernels`).
@@ -196,7 +196,7 @@ pub(super) unsafe fn requicken_kernel<H: Host>(ip: Ip, handler: Handler) -> bool
 script_handler! {
     /// A loop's head record holding its kernel (`LoopKernel`): runs the loop as far as the
     /// kernel can, then the record's own handler.
-    fn lane_loop_kernel<>(cx, r, ip, i, view) {
+    fn loop_kernel_head<>(cx, r, ip, i, view) {
         // SAFETY: the record names a live kernel of its view (`install_loop_kernels`).
         let kernel = unsafe { &*(&*KERNELS.get())[usize::from(i.call_link.get())] };
         // The loop's own records continue from where the kernel left the registers: its

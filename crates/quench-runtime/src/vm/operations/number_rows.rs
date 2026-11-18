@@ -328,11 +328,6 @@ impl NumberTruthinessStage<f64> for NumberF64Stage {
     }
 }
 
-#[inline(always)]
-pub(crate) fn number_is_truthy(value: f64) -> bool {
-    number_truthiness(&mut NumberF64Stage, value)
-}
-
 pub(crate) struct PartialOrderStage;
 
 impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {

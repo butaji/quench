@@ -48,7 +48,7 @@ impl<H: Host> Vm<H> {
             })
     }
 
-    /// A global name read as the lane takes it (`dispatch_fast::lane_load_global_name_refresh`):
+    /// A global name read as the lane takes it (`dispatch_fast::global_name_refresh_miss`):
     /// an initialized global lexical binding of the name, else the global object's own data
     /// field with the hint that names it, else the site's cached field.
     pub(super) fn global_name_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> GlobalNameRead {

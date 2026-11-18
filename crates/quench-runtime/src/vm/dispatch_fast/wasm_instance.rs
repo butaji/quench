@@ -1,16 +1,16 @@
-//! Lane handlers of a Wasm instance's state: its bindings, linear memory, SIMD values and
-//! globals.
+//! Lane handlers of a Wasm instance's state: its memory bindings, linear memory and globals, and
+//! the heap callbacks of its vector rows. A non-memory instance binding and the SIMD operators run
+//! as their staged rows (`Decoder::WasmState`, `Decoder::WasmVector`).
 use super::*;
+// merge: kept HEAD imports the body still uses (scalar_address, ConcreteWasm); the SIMD imports are dropped, since theirs runs SIMD operators as staged rows and nothing here names them.
 use crate::staged::wasm_memory::scalar_address;
-use crate::staged::wasm_simd::WasmSimd as _;
-use crate::staged::wasm_simd_concrete::ConcreteSimd;
 use crate::staged::ConcreteWasm;
 
 lane_handler! {
-    /// Load an instance binding; loading the function's memory register
-    /// resolves the memory view.
-    pub(super) fn lane_instance_binding<MEMORY: bool>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
+    /// Load the memory binding of the function's memory register and install its memory view:
+    /// the row answers the value, but the carried view and the lane context's memory are this
+    /// handler's to update, so the memory binding keeps its own body.
+    pub(super) fn lane_instance_binding_memory<>(cx, r, ip, i, view) {
         let env = lane_instance_env(cx);
         let (known, storage) = unsafe { (*cx).instance_slots };
         let slot = i.imm();
@@ -25,13 +25,9 @@ lane_handler! {
             return exit(ip);
         };
         r.set(i.a, value);
-        let view = if MEMORY {
-            let memory = resolve_memory(cx, value);
-            unsafe { (*cx).memory = memory };
-            Carried { memory, ..view }
-        } else {
-            view
-        };
+        let memory = resolve_memory(cx, value);
+        unsafe { (*cx).memory = memory };
+        let view = Carried { memory, ..view };
         next!(cx, r, following(ip), view)
     }
 }
@@ -103,92 +99,71 @@ lane_handler! {
     }
 }
 
-/// A SIMD operand of static type `ty`: a vector or an i32 read from its slot directly, any
-/// other scalar as `Vm::decode_wasm_value` reads it. `None` for another representation.
-#[inline(always)]
-fn lane_simd_operand<H: Host>(vm: &Vm<H>, value: Value, ty: crate::WasmType) -> Option<crate::WasmValue> {
-    match ty {
-        crate::WasmType::V128 => Some(crate::WasmValue::V128(u128::from_le_bytes(vm.heap.v128(value)?))),
-        crate::WasmType::I32 => Some(crate::WasmValue::I32(value.as_int()?)),
-        _ => vm.decode_wasm_value(value, ty).ok(),
-    }
+/// The global bound in `binding` as its register encoding (`Vm::wasm_global_load`, the staged
+/// rule), for the instance-state row of the lane context `context` (`WasmGlobals`). Anything but a
+/// global binding answers `None`, which leaves the row to its general step.
+///
+/// # Safety
+/// `context` is the running lane's context.
+pub(super) unsafe fn wasm_global_load<H: Host>(context: *mut (), binding: Value) -> Option<Value> {
+    let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+    vm.wasm_global_load(binding).ok()
 }
 
-lane_handler! {
-    /// A Wasm SIMD operator (`crate::wasm::simd::SimdOperator`), which neither traps nor runs
-    /// guest code: its operands decoded by their static types and its result encoded, a
-    /// vector in a fresh cell (`Vm::encode_wasm_value`). An operand of another
-    /// representation takes the general path, which raises its validation error.
-    pub(super) fn lane_wasm_simd<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let Some((kernel, _)) = crate::wasm::simd::SimdKernel::of(i.imm()) else {
-            return exit(ip);
-        };
-        let Some(left) = lane_simd_operand(vm, r.get(i.b), kernel.left) else {
-            return exit(ip);
-        };
-        let right = match kernel.right {
-            None => None,
-            Some(ty) => match lane_simd_operand(vm, r.get(i.c), ty) {
-                Some(right) => Some(right),
-                None => return exit(ip),
-            },
-        };
-        let value = match crate::staged::wasm_simd_concrete::execute(i.imm(), left, right) {
-            crate::WasmValue::V128(bits) => vm.heap.alloc_v128(bits.to_le_bytes()),
-            value => vm.encode_wasm_value(value),
-        };
-        note_allocation(vm);
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
+/// Store `value` to the mutable global bound in `binding` (`Vm::wasm_global_store`, the staged
+/// rule), for the lane context `context`; `false` for a binding that is no mutable global, which the
+/// row leaves to the general step that raises.
+///
+/// # Safety
+/// `context` is the running lane's context.
+pub(super) unsafe fn wasm_global_store<H: Host>(context: *mut (), binding: Value, value: Value) -> bool {
+    let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+    vm.wasm_global_store(binding, value).is_ok()
 }
 
-
-lane_handler! {
-    /// `i8x16.shuffle` of two vectors by the record's constant lane indices, as
-    /// `lane_wasm_simd` runs an operator.
-    pub(super) fn lane_wasm_simd_shuffle<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let Some(indices) = vm.heap.v128(i.constant()) else {
-            return exit(ip);
-        };
-        let (Some(left), Some(right)) = (vm.heap.v128(r.get(i.b)), vm.heap.v128(r.get(i.c))) else {
-            return exit(ip);
-        };
-        let (left, right) = (u128::from_le_bytes(left), u128::from_le_bytes(right));
-        let shuffled = ConcreteSimd.vector_shuffle(indices, left, right);
-        let value = vm.encode_wasm_value(crate::WasmValue::V128(shuffled));
-        note_allocation(vm);
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
+/// The value of the running instance's slot `slot` (`WasmInstanceBinding`) for the instance-state
+/// row of the lane context `context`: the environment's dense storage this run holds, else the
+/// heap's read (`lane_instance_slot_miss`). `None` for a slot that holds no binding.
+///
+/// # Safety
+/// `context` is the running lane's context.
+pub(super) unsafe fn wasm_instance_slot<H: Host>(context: *mut (), slot: u32) -> Option<Value> {
+    let cx = context.cast::<LaneContext<H>>();
+    let env = lane_instance_env(cx);
+    let (known, storage) = unsafe { (*cx).instance_slots };
+    // SAFETY: `storage` is the dense storage of `known`, found this run, which no collection has run
+    // since (`lane_after_nested_collection` drops it).
+    let cached = if known == env && slot <= u32::from(u16::MAX) {
+        unsafe { crate::heap::EnvironmentSlots::read_storage(storage, slot as u16) }
+    } else {
+        None
+    };
+    cached.or_else(|| lane_instance_slot_miss(cx, env, slot as usize))
 }
 
-lane_handler! {
-    /// A global's load (`Vm::wasm_global_load`, the staged rule): the slot's word under its
-    /// type's storage. Anything but a global binding takes the general path.
-    pub(super) fn lane_global_get<>(cx, r, ip, i, view) {
-        let Ok(value) = unsafe { vm(cx) }.wasm_global_load(r.get(i.b)) else {
-            return exit(ip);
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
+/// The 16 bytes of the vector cell `value` (`Heap::v128`) for the vector rows of the lane context
+/// `context`; `None` where `value` is no vector.
+///
+/// # Safety
+/// `context` is the running lane's context.
+pub(super) unsafe fn wasm_vector_read<H: Host>(context: *mut (), value: Value) -> Option<[u8; 16]> {
+    let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+    vm.heap.v128(value)
 }
 
-lane_handler! {
-    /// A global's store (`Vm::wasm_global_store`, the staged rule); a binding that is no
-    /// mutable global takes the general path, which raises.
-    pub(super) fn lane_global_set<>(cx, r, ip, i, view) {
-        if unsafe { vm(cx) }.wasm_global_store(r.get(i.b), r.get(i.a)).is_err() {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), view)
-    }
+/// A fresh vector cell holding `bytes` for the vector rows of the lane context `context`
+/// (`Heap::alloc_v128`), noting the allocation as the hand handlers did.
+///
+/// # Safety
+/// `context` is the running lane's context.
+pub(super) unsafe fn wasm_vector_alloc<H: Host>(context: *mut (), bytes: [u8; 16]) -> Option<Value> {
+    let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+    let value = vm.heap.alloc_v128(bytes);
+    note_allocation(vm);
+    Some(value)
 }
 
-/// `lane_instance_binding`'s first read of `env` this run (or of a slot its storage does not
+/// `lane_instance_binding_memory`'s first read of `env` this run (or of a slot its storage does not
 /// hold as a plain value): the heap's read, after which the run keeps `env`'s dense storage.
 #[cold]
 #[inline(never)]
