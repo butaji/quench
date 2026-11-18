@@ -1221,8 +1221,7 @@ fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Cons
     let target = |instruction: &WideInstruction| instruction.op().control_flow_layout().jumps().then(|| instruction.jump_target() as usize);
     let falls = |instruction: &WideInstruction| instruction.op().control_flow_layout().falls_through();
     let mut loops = Vec::new();
-    for (back, instruction) in instructions.iter().enumerate() {
-        let Some(header) = target(instruction).filter(|header| *header <= back) else { continue };
+    for (back, header) in crate::bytecode::back_edges_of(instructions.iter().copied()) {
         let entry_header = start == header;
         let body = &instructions[header..=back];
         let entries = usize::from(header > 0 && falls(&instructions[header - 1]))
@@ -1598,9 +1597,7 @@ pub(super) fn lower(
     let payload = if numeric { stage.raw_const(Lane::I64, 0) } else {
         stage.raw_load(Lane::I64, regions::dispatch(), context, std::mem::offset_of!(CallContext, adapter_payload) as i32) };
     let fault_poll = match coverage { Coverage::Loop { poll, .. } => poll, _ => true }
-        && super::FAULT_POLL_SUPPORTED && unit.instructions.iter().enumerate().any(|(pc, instruction)|
-            instruction.op().control_flow_layout().jumps()
-                && instruction.jump_target() as usize <= pc);
+        && super::FAULT_POLL_SUPPORTED && crate::bytecode::back_edges_of(unit.instructions.iter().copied()).next().is_some();
     let mut seen_headers: CompoundBitSet = CompoundBitSet::with_capacity(unit.instructions.len());
     let mut shared_headers = CompoundBitSet::with_capacity(unit.instructions.len());
     for (pc, instruction) in unit.instructions.iter().enumerate() {

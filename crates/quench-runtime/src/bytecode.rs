@@ -1235,7 +1235,7 @@ impl HotDecoding {
     /// Makes a function whose code loops expand on its first entry. Priming at installation
     /// leaves the entry path itself unchanged.
     pub(crate) fn prime_loop(&self, code: &[Instr], wide: &[WideInstruction]) {
-        if self.entries.get() == 0 && has_backward_branch(code, wide) {
+        if self.entries.get() == 0 && back_edges_of(code.iter().map(|&packed| widen(packed, wide))).next().is_some() {
             self.entries.set(HOT_DECODE_ENTRIES - 1);
         }
     }
@@ -1260,15 +1260,15 @@ impl HotDecoding {
     }
 }
 
-/// Whether some jump in `code` targets its own or an earlier instruction: a loop.
-fn has_backward_branch(code: &[Instr], wide: &[WideInstruction]) -> bool {
-    code.iter().enumerate().any(|(pc, packed)| {
-        let instruction = if packed.is_wide() {
-            wide[packed.wide_index()]
-        } else {
-            packed.as_wide()
-        };
-        instruction.op().control_flow_layout().jumps() && instruction.jump_target() as usize <= pc
+/// The back edges of a sequence of fixed-width instructions, in source order: each jump whose
+/// target is its own or an earlier instruction, as (source pc, target pc). The one definition
+/// of a loop's back edge; handler edges are not jumps and are not listed here.
+pub(crate) fn back_edges_of(instructions: impl Iterator<Item = WideInstruction>) -> impl Iterator<Item = (usize, usize)> {
+    instructions.enumerate().filter_map(|(pc, instruction)| {
+        instruction.op().control_flow_layout().jumps()
+            .then(|| instruction.jump_target() as usize)
+            .filter(|&target| target <= pc)
+            .map(|target| (pc, target))
     })
 }
 
@@ -2425,9 +2425,14 @@ impl Function {
                 })
     }
 
+    /// The body's back edges, as (source pc, target pc), in source order (`back_edges_of`).
+    pub(crate) fn back_edges(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        back_edges_of(self.instructions())
+    }
+
     /// Whether some jump of the body targets its own or an earlier instruction: a loop.
     pub(crate) fn loops(&self) -> bool {
-        has_backward_branch(&self.code, &self.wide)
+        self.back_edges().next().is_some()
     }
 
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
