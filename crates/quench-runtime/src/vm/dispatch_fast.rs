@@ -10765,32 +10765,6 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// A direct store `OP`, reading through field `ACC`, followed by a move: both records run
-    /// here, the moved value carried as the move carries it.
-    fn lane_store_move<OP: u16, ACC: u8>(cx, r, ip, i, view) {
-        let store = const {
-            match MemoryStore::from_direct_op(opcode(OP)) {
-                Some(store) => store,
-                None => panic!("not a direct store"),
-            }
-        };
-        let Some(value) = stored_value(store, read::<ACC, ACC_A>(r, i.a, view)) else {
-            return exit(ip);
-        };
-        // SAFETY: as for `MemoryView::read`.
-        if unsafe { view.memory.write(store, lane_address::<ACC>(r, i, view), value) }
-            .is_none()
-        {
-            return exit(ip);
-        }
-        let next = following(ip);
-        // SAFETY: the view fuses a store only with a following move.
-        let moved = unsafe { &*next };
-        produce!(cx, r, next, moved.a, r.get(moved.b), view)
-    }
-}
-
-lane_handler! {
     /// Two direct i32 loads `LOAD` and the i32 register operator `OP` combining their values
     /// (`a[i] * b[j]`), the first value as its left operand when `FIRST_LEFT`: three records
     /// run here, the loads issued together, each value written as its own record writes it.
@@ -11066,23 +11040,6 @@ fn move_load_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
         };
     }
     i32_loads!(loads)
-}
-
-/// The store-then-move handler for direct store `op` reading through field `acc`.
-fn store_move_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
-    macro_rules! stores {
-        ($($store:ident),+) => {
-            match (op as u16, acc) {
-                $(
-                    (opc::$store, ACC_NONE) => Some(lane_store_move::<H, { opc::$store }, ACC_NONE> as Handler),
-                    (opc::$store, ACC_A) => Some(lane_store_move::<H, { opc::$store }, ACC_A> as Handler),
-                    (opc::$store, ACC_C) => Some(lane_store_move::<H, { opc::$store }, ACC_C> as Handler),
-                )+
-                _ => None,
-            }
-        };
-    }
-    stores!(WasmI32Store, WasmI32Store8, WasmI32Store16)
 }
 
 /// Continue in `frame` at `pc`: the record the frame's function resumes at.
@@ -19996,18 +19953,6 @@ fn derive_lane_view<'live, H: Host>(
                 && i32_load(&records, pc + 1).is_some()
                 && decoded[pc + 1].c() == decoded[pc].a()
                 && let Some(fused) = move_load_handler::<H>(decoded[pc + 1].op(), ACC_NONE)
-            {
-                records[pc].handler = fused as *const ();
-            }
-        }
-        // A plain i32 store followed by a move runs with it as one record.
-        for pc in 0..records.len().saturating_sub(1) {
-            let op = decoded[pc].op();
-            let Some(acc) = [ACC_NONE, ACC_A, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, op as u16, acc)) else {
-                continue;
-            };
-            if [ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, opc::Move, acc))
-                && let Some(fused) = store_move_handler::<H>(op, acc)
             {
                 records[pc].handler = fused as *const ();
             }
