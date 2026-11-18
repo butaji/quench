@@ -198,6 +198,21 @@ pub(crate) fn layout_shape(id: u32) -> u32 {
 /// Every storage-form bit of an auxiliary word.
 pub(crate) const FORM_BITS: u32 = OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form;
 
+/// The `Form` layout `id` names: a fact of the id (its auxiliary word's form bits), so a caller
+/// holding the id at compile time passes it and the stage emits no run-time form test. Plain
+/// inline values are `Packed`, a plain arena run is `Arena`. A narrow run and values with extras
+/// have no `Form` of their own: a formed read takes them from the id (`proved_own_layout`), and
+/// the fallback reads them as `Either`. An id past the table names no layout and reads as `Arena`,
+/// which no guard of a cleared hint admits. Reads the auxiliary word, which bounds its id.
+#[inline(always)]
+pub(crate) fn form_of_layout(id: u32) -> Form {
+    match crate::heap::layouts::auxiliary(id) & FORM_BITS {
+        0 => Form::Arena,
+        bits if bits == OBJECT.inline_form => Form::Packed,
+        _ => Form::Either,
+    }
+}
+
 /// `IcOp::LoadSlot`: the value at `slot` of the reached record.
 #[inline(always)]
 fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u16, Representation), form: Form, storage_len: usize,
@@ -335,7 +350,7 @@ pub(crate) unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &cra
     guard_layout(&mut stage, &at, hint, ())?;
     debug_assert!(form == HINTED_FORM || layout_form(hint) == form, "a fixed form's matched hint names it");
     let bits = if form == HINTED_FORM { layout_form(hint) } else { form };
-    let layout = slot_layout(&mut stage, &Reached { formed: Some(bits), ..at }, Form::Either, usize::from(slot) + 1, ())?;
+    let layout = slot_layout(&mut stage, &Reached { formed: Some(bits), ..at }, form_of_layout(hint), usize::from(slot) + 1, ())?;
     let word = read_slot(&mut stage, layout, slot, Representation::Tagged);
     // Packed and narrow slots hold narrow values, never a raw double (`packed_read`,
     // `narrow_read`), so a fixed one of those forms skips the float-slot decode.

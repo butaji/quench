@@ -58,7 +58,7 @@ pub(super) fn word_formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, fra
     let bits = ic::layout_form(word);
     frame.prove_shape(stage, owner, shape, direct);
     let formed = Reached { formed: Some(bits), ..*at };
-    let layout = ic::slot_layout(stage, &formed, Form::Either, storage_len, miss)?;
+    let layout = ic::slot_layout(stage, &formed, ic::form_of_layout(word), storage_len, miss)?;
     frame.keep_layout(owner, shape, layout);
     Some(read_slot_value(stage, layout, slot, rep))
 }
