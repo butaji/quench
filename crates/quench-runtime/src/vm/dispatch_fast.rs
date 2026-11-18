@@ -22055,7 +22055,7 @@ fn install_loop_sites<'live, H: Host>(
     let live = || *masks.get_or_init(live);
     let mut rejections = Vec::new();
     let sites: Vec<(usize, LoopSite)> = (0..records.len())
-        .filter(|pc| records[*pc].handler == backward && decoded[*pc].op().is_jump() && !fused_into(*pc))
+        .filter(|pc| records[*pc].handler == backward && matches!(crate::staged::Operation::<(), ()>::decode(decoded[*pc], crate::staged::DecodeContext::EMPTY), Some(crate::staged::Operation::Jump)) && !fused_into(*pc))
         .map(|pc| {
             let header = decoded[pc].jump_target();
             let (region, promotion_only, analysis_failure, call_boundary_pcs) = match super::compiled::analyze_osr_region_detailed(
