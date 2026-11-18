@@ -432,8 +432,9 @@ struct LoopStore {
     header: ObjectHeader,
     address: ir::Value,
     packed_range: Option<IntRange>,
-    /// Whether the slot's arena word is a raw double, which the carried Number stores as is.
-    raw: bool,
+    /// The domain the entry admitted for the store (`Type::NUMBER` where the slot keeps raw
+    /// doubles, which the carried Number stores as is; `Type::INT32` otherwise).
+    domain: Type,
 }
 
 pub(super) struct LoweredRegion {
@@ -3861,7 +3862,8 @@ impl Lowering<'_, '_> {
                         let field = &self.loop_fields[index];
                         field.stores.iter().position(|pc| *pc == store).and_then(|index| field.store_ranges[index])
                     });
-                    self.loop_stores.insert(store, LoopStore { header: object_header, address, packed_range, raw: number });
+                    let domain = if number { Type::NUMBER } else { Type::INT32 };
+                    self.loop_stores.insert(store, LoopStore { header: object_header, address, packed_range, domain });
                 }
             }
             let read = LoopRead { value: variable, ty, representation, receiver, header: object_header, step: None };
@@ -4339,7 +4341,7 @@ impl Lowering<'_, '_> {
     /// The slot a loop's entry projected for the int32 store at `pc` (`LoopStore`), where the
     /// store's object is the record the projection addresses.
     fn projected_slot(&self, state: &State, pc: usize, (register, ty): (Option<Register>, Type)) -> Option<LoopStore> {
-        self.loop_stores.get(&pc).copied().filter(|slot| ty.is_subtype(if slot.raw { Type::NUMBER } else { Type::INT32 })
+        self.loop_stores.get(&pc).copied().filter(|slot| ty.is_subtype(slot.domain)
             && state.proofs.headers[state.header_index(register)].is_some_and(|header| header.record == slot.header.record))
     }
 

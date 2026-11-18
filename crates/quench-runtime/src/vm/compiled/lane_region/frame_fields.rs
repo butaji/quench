@@ -245,7 +245,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     }
 
     fn entry_slot_raw(&self) -> bool {
-        self.fields.as_ref().and_then(|fields| fields.held.slot).is_some_and(|slot| slot.raw)
+        self.fields.as_ref().and_then(|fields| fields.held.slot).is_some_and(|slot| slot.domain == Type::NUMBER)
     }
 
     /// The direct store, and where it declines (a shape, the barrier or the storage does not
