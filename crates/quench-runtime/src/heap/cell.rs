@@ -3416,11 +3416,6 @@ impl EnvironmentScopeRef {
             with_objects: Box::default(),
         })
     }
-
-    #[cfg(feature = "profile-memory")]
-    pub(crate) fn boxed_bytes(&self) -> usize {
-        self.scope().map_or(0, |_| size_of::<EnvironmentScope>())
-    }
 }
 
 impl Drop for EnvironmentScopeRef {
