@@ -12,7 +12,7 @@ use super::*;
 
 /// Whether the innermost activation is an async generator's in-place request.
 pub(super) fn running_request<H: Host>(vm: &Vm<H>) -> bool {
-    vm.lane_stack.activations.last().and_then(Activation::script).is_some_and(|script| script.completion == Completion::AsyncRequest)
+    vm.lane_stack.activations().last().and_then(Activation::script).is_some_and(|script| script.completion == Completion::AsyncRequest)
 }
 
 /// `next` of an async generator, called at `ip` with registers `r`: the generator resumes in
@@ -62,8 +62,8 @@ pub(super) fn lane_suspend_request<H: Host>(cx: *mut LaneContext<H>, r: Register
         return Resumed::Exit(exit(ip));
     };
     note_allocation(vm);
-    let depth = vm.lane_stack.activations.len() - 1;
-    let activation = *vm.lane_stack.activations.last().expect("a request's activation runs");
+    let depth = vm.lane_stack.activation_count() - 1;
+    let activation = *vm.lane_stack.activations().last().expect("a request's activation runs");
     let ActivationKind::Script(script) = activation.kind else { unreachable!("a request runs as a script activation") };
     // SAFETY: the record lies in the running view.
     let pc = unsafe { ip.offset_from((*cx).base) } as usize;
