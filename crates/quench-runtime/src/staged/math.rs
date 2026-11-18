@@ -154,6 +154,13 @@ pub(crate) fn int_multiply(left: i32, right: i32) -> i32 {
     left.wrapping_mul(right)
 }
 
+/// `Math.clz32`: the leading zero bits of the ToUint32 of a Number, given as that ToUint32 (`value::number_to_u32`
+/// in the interpreter, the stencil's exact truncation in a row).
+#[inline(always)]
+pub(crate) fn leading_zeros(uint32: u32) -> u32 {
+    uint32.leading_zeros()
+}
+
 /// `operation` of the binary64 word `value`, on `stage`.
 #[inline(always)]
 pub(crate) fn unary<S: NumericStage>(stage: &mut S, operation: FloatUnary, value: S::Word) -> S::Word {

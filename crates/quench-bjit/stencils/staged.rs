@@ -29,6 +29,8 @@ pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, Nu
 #[path = "../../quench-runtime/src/staged/elements.rs"] pub(crate) mod elements;
 #[path = "../../quench-runtime/src/staged/environment.rs"] pub(crate) mod environment;
 #[path = "../../quench-runtime/src/staged/string_length.rs"] pub(crate) mod string_length;
+#[path = "../../quench-runtime/src/staged/code_units.rs"] pub(crate) mod code_units;
+#[path = "../../quench-runtime/src/staged/parse_int.rs"] pub(crate) mod parse_int;
 #[path = "../../quench-runtime/src/staged/typed_elements.rs"] pub(crate) mod typed_elements;
 #[path = "../../quench-runtime/src/staged/entry.rs"] pub(crate) mod entry;
 #[path = "../../quench-runtime/src/staged/frame.rs"] #[allow(dead_code)] pub(crate) mod frame;

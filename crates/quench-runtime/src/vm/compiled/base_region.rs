@@ -35,6 +35,7 @@ mod call_plan;
 mod sites;
 pub(in crate::vm::compiled) mod callees;
 mod decode;
+pub(in crate::vm::compiled) mod declared;
 mod entry_facts;
 pub(in crate::vm::compiled) mod function;
 pub(in crate::vm) use function::inlined_exit_key;

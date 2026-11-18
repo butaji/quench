@@ -50,6 +50,11 @@ pub(super) enum Heap {
     ThisChain,
     /// The `length` of the direct array at hole 1, an int32 (what the array's record counts).
     Length,
+    /// `String.prototype.charCodeAt` of the flat string at hole 1, at the int32 index at hole 2 (`CHAR_CODE_AT_ROW`): the call
+    /// the method read's native folds into (`base_region::function::native_call`).
+    CharCodeAt,
+    /// `parseInt` of the flat string at hole 1 in radix 10 (`PARSE_INT_ROW`).
+    ParseInt,
     /// Stores the value operand (hole 1) into the own data field the site's cache entry (hole 2) names
     /// of the object register whose frame offset is hole 0, where the store gate admits it.
     SiteStore,
@@ -101,6 +106,9 @@ pub(super) enum Heap {
     StoreChecked(u16),
     /// The register at the frame offset of hole 1 holds exactly the word of hole 2.
     Identity,
+    /// The entry test of a declared parameter (`base_region::declared`): the register at hole 0 holds a word whose
+    /// tag-decided languages meet the declared mask at hole 1, else the entry leaves with nothing written.
+    Declared,
     /// A prototype-held field folded to the value its holder held when the code was compiled (hole 2):
     /// the object register whose frame offset sits above the destination's in hole 0 is a direct object
     /// of the exact shape in hole 1's low half and the prototype link in its high half, else the row
@@ -251,6 +259,7 @@ impl Heap {
     fn test_code(self) -> Option<u8> {
         Some(match self {
             Heap::Identity => library::IDENTITY_ROW,
+            Heap::Declared => library::DECLARED_ROW,
             Heap::TypeofIndex => library::TYPEOF_INDEX_ROW,
             Heap::TypeofString => library::TYPEOF_STRING_ROW,
             Heap::Instanceof => library::INSTANCEOF_ROW,
@@ -281,6 +290,8 @@ impl Heap {
         match self {
             Heap::Array => library::ARRAY_ROW,
             Heap::Length => library::LENGTH_ROW,
+            Heap::CharCodeAt => library::CHAR_CODE_AT_ROW,
+            Heap::ParseInt => library::PARSE_INT_ROW,
             Heap::Word => library::CONSTANT_ROW,
             Heap::Append => library::APPEND_ROW,
             Heap::ForIn => library::FOR_IN_ROW,
@@ -296,17 +307,10 @@ impl Heap {
         matches!(self, Heap::StoreLocal(_) | Heap::Capture(_) | Heap::CaptureSet(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::EnvDefine(_))
     }
 
-    /// Whether the row reads a snapshot of the heap the loop's entry took (the record's captures,
-    /// fields and array views) or tables a helper may move: not the activation's `this` and local
-    /// slots, which every run reads live, and the rows that read no heap.
-    pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::EnvDefine(_) | Heap::Identity | Heap::Live | Heap::Realm | Heap::Word | Heap::Object | Heap::Key | Heap::Append | Heap::Add { .. } | Heap::ForIn | Heap::Name { .. } | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
-    }
-
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
     /// which a register held in a pinned register as a Number does not have there.
     pub(super) fn reads_frame_word(self) -> bool {
-        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
+        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::Declared | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value
@@ -317,7 +321,7 @@ impl Heap {
     }
 
     pub(super) fn yields_tagged(self) -> bool {
-        matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::Word)
+        matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::Word | Heap::CharCodeAt | Heap::ParseInt)
     }
 }
 
@@ -428,8 +432,8 @@ mod tests {
         use stencil_layout as mirror;
         use mirror::words as w;
         assert_eq!(
-            [ValueLayout::TAG_MASK, ValueLayout::INT_TAG, ValueLayout::INTERNAL_TAG, ValueLayout::HEAP_TAG, ValueLayout::DIRECT_ARRAY_TAG, ValueLayout::DIRECT_OBJECT_TAG, ValueLayout::DIRECT_FUNCTION_TAG, ValueLayout::HEAP_FAMILY_MASK, ValueLayout::DIRECT_STRING_TAG, u64::from(ValueLayout::TAG_SHIFT), ValueLayout::FIRST_TAG_FIELD, ValueLayout::TAG_FIELD_SPAN, ValueLayout::CANONICAL_NAN, crate::Value::NULL.to_bits(), crate::Value::UNDEFINED.to_bits(), crate::Value::DELETED.to_bits(), crate::Value::FALSE.to_bits(), crate::Value::TRUE.to_bits()],
-            [w::TAG_MASK, w::INT_TAG, w::INTERNAL_TAG, w::HEAP_TAG, w::DIRECT_ARRAY_TAG, w::DIRECT_OBJECT_TAG, w::DIRECT_FUNCTION_TAG, w::HEAP_FAMILY_MASK, w::DIRECT_STRING_TAG, u64::from(w::TAG_SHIFT), w::FIRST_TAG_FIELD, w::TAG_FIELD_SPAN, w::CANONICAL_NAN, w::NULL, w::UNDEFINED, w::DELETED, w::FALSE, w::TRUE]
+            [ValueLayout::TAG_MASK, ValueLayout::INT_TAG, ValueLayout::INTERNAL_TAG, ValueLayout::HEAP_TAG, ValueLayout::DIRECT_ARRAY_TAG, ValueLayout::DIRECT_OBJECT_TAG, ValueLayout::DIRECT_FUNCTION_TAG, ValueLayout::DIRECT_PROMISE_TAG, ValueLayout::DIRECT_ITERATOR_TAG, ValueLayout::HEAP_FAMILY_MASK, ValueLayout::DIRECT_STRING_TAG, u64::from(ValueLayout::TAG_SHIFT), ValueLayout::FIRST_TAG_FIELD, ValueLayout::TAG_FIELD_SPAN, ValueLayout::CANONICAL_NAN, crate::Value::NULL.to_bits(), crate::Value::UNDEFINED.to_bits(), crate::Value::DELETED.to_bits(), crate::Value::FALSE.to_bits(), crate::Value::TRUE.to_bits()],
+            [w::TAG_MASK, w::INT_TAG, w::INTERNAL_TAG, w::HEAP_TAG, w::DIRECT_ARRAY_TAG, w::DIRECT_OBJECT_TAG, w::DIRECT_FUNCTION_TAG, w::DIRECT_PROMISE_TAG, w::DIRECT_ITERATOR_TAG, w::HEAP_FAMILY_MASK, w::DIRECT_STRING_TAG, u64::from(w::TAG_SHIFT), w::FIRST_TAG_FIELD, w::TAG_FIELD_SPAN, w::CANONICAL_NAN, w::NULL, w::UNDEFINED, w::DELETED, w::FALSE, w::TRUE]
         );
         assert_eq!(
             [crate::value::LOWER_WORD, crate::value::HEAP_FAMILY_BITS, u64::from(crate::value::HEAP_FAMILY_SHIFT), crate::value::NARROW_HEAP_FAMILIES as u64, crate::value::TAG_UNDEFINED, crate::value::TAG_NULL, crate::value::TAG_BOOL, crate::value::TAG_DELETED],

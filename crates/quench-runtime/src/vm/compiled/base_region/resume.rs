@@ -55,7 +55,7 @@ impl ResumeTable {
 /// The entry rows of one PC's resume stub.
 pub(super) struct Stub {
     pub(super) pc: u32,
-    rows: Vec<(&'static Stencil, [u64; HOLES])>,
+    rows: Vec<EntryRow>,
     /// The row the stub's jump lands on: the PC's first row.
     target: usize,
 }
@@ -63,7 +63,12 @@ pub(super) struct Stub {
 impl Stub {
     /// The hole values of the stub's rows, its jump last.
     pub(super) fn holes(&self) -> impl Iterator<Item = [u64; HOLES]> + '_ {
-        self.rows.iter().map(|(_, holes)| *holes).chain([[0; HOLES]])
+        self.rows.iter().map(|row| row.holes).chain([[0; HOLES]])
+    }
+
+    /// The exits of the stub's rows, then none for its jump, where a declared test's miss goes to `failed`.
+    pub(super) fn exits(&self, failed: usize) -> impl Iterator<Item = Vec<Target>> + '_ {
+        self.rows.iter().map(move |row| row.exits(failed)).chain([Vec::new()])
     }
 }
 
@@ -100,8 +105,8 @@ pub(super) fn place_stubs<'a>(rows: &mut Vec<Placed<'a>>, stubs: &'a [Stub], jum
     let mut jumps = Vec::with_capacity(stubs.len());
     for stub in stubs {
         let first = rows.len();
-        for (stencil, _) in &stub.rows {
-            rows.push(Placed { stencil, hole: &*holes[hole], taken: Some(failed), cold: false });
+        for row in &stub.rows {
+            rows.push(Placed { stencil: row.stencil, hole: &*holes[hole], taken: row.taken(failed), cold: false });
             hole += 1;
         }
         rows.push(Placed { stencil: jump, hole: &*holes[hole], taken: None, cold: false });

@@ -98,6 +98,8 @@ pub enum Kind {
     Min,
     Max,
     Imul,
+    /// `Math.clz32` of one Number (`codes::CLZ32`).
+    Clz32,
 }
 
 impl Kind {

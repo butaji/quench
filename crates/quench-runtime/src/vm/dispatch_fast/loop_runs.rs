@@ -55,6 +55,21 @@ impl super::LoopSite {
         }
     }
 
+    /// Whether a loop enclosing this one is admitted by the region analysis and still enters native code
+    /// (`enclosing`): this loop then runs as plain jumps inside it, and does not warm up or enter its own
+    /// region, which the enclosing loop's region covers. Once that loop stops entering (it retires, or its
+    /// runs cost more than they save) this loop takes its own region again.
+    pub(super) fn inside_admitted_loop(&self) -> bool {
+        self.enclosing.get().is_some_and(|enclosing| {
+            enclosing.iter().any(|outer| {
+                // SAFETY: the sites are boxed with the lane view, which outlives the lane run that reads them
+                // (`install_loop_sites`), and an enclosing site is another of them.
+                let outer = unsafe { &**outer };
+                outer.is_admitted() && outer.enters()
+            })
+        })
+    }
+
     /// Whether the interpreter takes this backward jump: while the site warms up, and until the
     /// model, weighing the compile where the count reaches `needed`, finds it pays.
     #[inline(always)]

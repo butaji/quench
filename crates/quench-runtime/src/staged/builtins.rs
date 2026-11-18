@@ -27,16 +27,6 @@ pub(crate) enum UnitWidth {
     Wide,
 }
 
-impl UnitWidth {
-    #[inline(always)]
-    const fn bytes(self) -> u64 {
-        match self {
-            Self::Narrow => size_of::<u8>() as u64,
-            Self::Wide => size_of::<u16>() as u64,
-        }
-    }
-}
-
 /// The largest ASCII code unit.
 const ASCII_MAX: u64 = 0x7f;
 /// The largest length a Number holds as an int32 (`Value::length`).
@@ -56,12 +46,7 @@ fn int32_payload<S: Stage>(stage: &mut S, bits: S::Word, miss: S::Miss) -> Optio
 /// The unit at `index` of the `units` run, which `index` is within.
 #[inline(always)]
 fn unit_at<S: Stage>(stage: &mut S, width: UnitWidth, units: S::Word, index: S::Word) -> S::Word {
-    let offset = stage.mul_imm(index, width.bytes());
-    let address = stage.add(units, offset);
-    match width {
-        UnitWidth::Narrow => stage.load_u8(Region::HeapMeta.mutable(), address, 0),
-        UnitWidth::Wide => stage.load_u16(Region::HeapMeta.mutable(), address, 0),
-    }
+    super::code_units::code_unit(stage, width == UnitWidth::Wide, units, index)
 }
 
 /// `charCodeAt(index)` of the flat string of `length` units at `units`, `index` a value word:

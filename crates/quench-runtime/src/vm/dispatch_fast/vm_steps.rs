@@ -19,6 +19,8 @@ pub(in crate::vm) unsafe extern "C" fn lane_vm_step<H: Host>(_vm: u64, _residual
     let status = native_frames::in_innermost_frame(cx, || unsafe { lane_vm_step_in(cx, call_pc) });
     // SAFETY: `context` is the running lane's; the step may have allocated or run guest code.
     unsafe { refresh_body_bases::<H>(context) };
+    // SAFETY: as above; a region the lane runs reads its payload's bases after the step too.
+    unsafe { refresh_region_bases_of::<H>(context) };
     status
 }
 
@@ -179,7 +181,8 @@ unsafe fn lane_owner_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, rec
 /// replaced the frame's environment, so the lane's capture caches, which name the old one, are
 /// dropped after it (`lane_clone_env`).
 /// `lane_body_step_record`, then the heap bases the body's rows read through the payload reloaded
-/// (`Vm::refresh_body_bases`): the step may have allocated or run guest code.
+/// (`Vm::refresh_body_bases`), and those of the loop region's payload the lane runs
+/// (`refresh_region_bases_of`): the step may have allocated or run guest code.
 ///
 /// # Safety
 /// As `lane_body_step_record`.
@@ -187,6 +190,8 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_step<H: Host>(vm: u64, residual
     // SAFETY: the caller's contract.
     let status = unsafe { lane_body_step_record::<H>(vm, residual, context, call_pc) };
     unsafe { refresh_body_bases::<H>(context) };
+    // SAFETY: as `lane_body_step_record`; a region the lane runs reads its payload's bases after the step too.
+    unsafe { refresh_region_bases_of::<H>(context) };
     status
 }
 

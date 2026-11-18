@@ -1,0 +1,244 @@
+//! TypeScript's declared parameter types (`Function::declared_parameters`) as a body's entry facts.
+//! A declared type is no proof (TypeScript is unsound): the entry checks each declared parameter
+//! once and every row after it trusts the check. A word the declaration lies about fails the
+//! entry (`LaneExit::Entry`): the body is not entered and the interpreter runs the activation, so
+//! a lie costs an entry, never a wrong result.
+//!
+//! A declared Number enters as a double (`seen`) where nothing observed it an int, so the existing
+//! Number guard of its home (`link::entry_rows`) proves it and the rows of its entry web read it
+//! unboxed; its first write starts a web of its own (`repr::representations`), so the fact lasts
+//! until then. The other sets a tag alone decides are `EntryGuard`s, kept for parameters the
+//! function never writes, which hold the fact at every row.
+
+use super::*;
+use super::super::lane_region::scalar::parameter_register;
+use crate::bytecode::{Function, Operand};
+use crate::staged::{DecodeContext, Operation};
+use crate::typed_ir::Type;
+use crate::ValueType;
+
+const fn language(kind: ValueType) -> u16 {
+    1 << kind as u16
+}
+
+/// The stencil's language bits (`quench_bjit::shared_words::language`) are these types' bits.
+const _: () = {
+    use quench_bjit::shared_words::language as bits;
+    assert!(language(ValueType::Undefined) == bits::UNDEFINED && language(ValueType::Null) == bits::NULL);
+    assert!(language(ValueType::Boolean) == bits::BOOLEAN && language(ValueType::Number) == bits::NUMBER);
+    assert!(language(ValueType::Object) == bits::OBJECT && language(ValueType::Function) == bits::FUNCTION);
+};
+
+/// The language types a value's tag word alone decides, with no heap read: the immediates (a
+/// Number, a Boolean, `null`, `undefined`) and the direct object and direct function families. A
+/// String, a Symbol or a BigInt needs a heap read, so a set naming one gets no entry check.
+const TAG_DECIDED: u16 = language(ValueType::Number) | language(ValueType::Boolean) | language(ValueType::Null)
+    | language(ValueType::Undefined) | language(ValueType::Object) | language(ValueType::Function);
+
+/// What a declared parameter type gives the b-jit's entry: exactly a Number, proved through the
+/// register's representation, or a set of tag-decided language types (`language` bits), tested at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::vm::compiled) enum DeclaredFact {
+    Number,
+    Languages(u16),
+}
+
+impl DeclaredFact {
+    /// The fact the declared set `declared` gives where an entry can check it; none for no fact
+    /// (`DECLARED_ANY`) or a set naming a type a tag does not decide.
+    pub(in crate::vm::compiled) fn of(declared: u16) -> Option<Self> {
+        if Type::languages(declared) == Type::NUMBER {
+            return Some(Self::Number);
+        }
+        (declared != 0 && declared & !TAG_DECIDED == 0).then_some(Self::Languages(declared))
+    }
+}
+
+/// Each parameter of `function` with a checkable declared fact, by the register it enters in.
+fn declared(function: &Function) -> impl Iterator<Item = (Register, DeclaredFact)> + '_ {
+    function.declared_parameters.iter().enumerate()
+        .filter_map(|(index, declared)| Some((parameter_register(function, index)?, DeclaredFact::of(*declared)?)))
+}
+
+/// The registers some instruction of `function` writes.
+fn written(function: &Function) -> Bits {
+    let mut written = Bits::default();
+    for instruction in function.instructions() {
+        for register in instruction.written_registers() {
+            written.insert(usize::from(register));
+        }
+    }
+    written
+}
+
+/// The registers the entry holds as ints and as doubles (`BodySpec::seen`), each declared Number
+/// parameter a double where nothing observed it an int or a double. A body's entry web of the
+/// register ends at its first write; a region is entered at its loop's header, where only a
+/// parameter the function never writes still holds the value it entered with.
+pub(super) fn seen(function: &Function, ending: Ending, [ints, doubles]: [&[Register]; SEEN]) -> [Vec<Register>; SEEN] {
+    let written = (ending == Ending::Region).then(|| written(function));
+    let mut doubles = doubles.to_vec();
+    for (register, _) in declared(function).filter(|(_, fact)| *fact == DeclaredFact::Number) {
+        let kept = written.as_ref().is_none_or(|written| !written.contains(usize::from(register)));
+        if kept && !ints.contains(&register) && !doubles.contains(&register) {
+            doubles.push(register);
+        }
+    }
+    [ints.to_vec(), doubles]
+}
+
+/// An entry test of a declared parameter that no Number guard covers. The entry row reads the
+/// register's frame slot word and continues only where its language type is one of `languages`
+/// as its tag alone decides it: a Number (int32 or double word), `true`/`false`, `null`,
+/// `undefined` (the hole is no `undefined`), a direct object family word
+/// (`Value::is_direct_object_family`) or a direct function word (`Value::direct_function_index`).
+/// Any other word, a heap-decided object or function included, fails the entry with
+/// `LaneExit::Entry` before any row runs, as a Number guard's failure does (`Leaves::open`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct EntryGuard {
+    pub(super) register: Register,
+    pub(super) languages: u16,
+}
+
+/// The entry tests of `function`'s declared parameters that are no Number and that the function
+/// never writes, so the fact holds at every row: what `link::entry_rows` emits after the
+/// Number guards (`Heap::Declared`).
+pub(super) fn entry_guards(function: &Function) -> Vec<EntryGuard> {
+    let written = written(function);
+    declared(function)
+        .filter(|(register, _)| !written.contains(usize::from(*register)))
+        .filter_map(|(register, fact)| match fact {
+            DeclaredFact::Number => None,
+            DeclaredFact::Languages(languages) => Some(EntryGuard { register, languages }),
+        })
+        .collect()
+}
+
+/// The declared Number parameters the function never writes: the entry's Number guard of each
+/// (`link::entry_rows`) holds at every row, so a row reading it in its frame slot needs no proof of its own.
+pub(super) fn entry_numbers(function: &Function) -> Vec<Register> {
+    let written = written(function);
+    declared(function).filter(|(register, fact)| *fact == DeclaredFact::Number && !written.contains(usize::from(*register))).map(|(register, _)| register).collect()
+}
+
+/// A `typeof` test of a register the entry proves exactly a direct function (`Languages(FUNCTION)`: its
+/// entry test admits no other word, and no instruction writes it): `typeof` of a direct function is
+/// `'function'`, so the test is that Boolean, written to the destination as a constant. `None` for any other row.
+pub(super) fn typeof_fold(function: &Function, instruction: WideInstruction) -> Option<Decoded> {
+    if instruction.op().class() != Class::Unary || instruction.result_flags() != 0 {
+        return None;
+    }
+    let (index, negated) = crate::bytecode::typeof_test(instruction.unary_operator())?;
+    if guard_languages(function, instruction.register_b())? != language(ValueType::Function) {
+        return None;
+    }
+    let holds = (index == crate::bytecode::typeof_name_index("function")?) != negated;
+    Some(Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Value(Value::boolean(holds).to_bits())), None, None))
+}
+
+/// The language set the entry test of `register` admits, where the register is a declared parameter
+/// the function never writes (`entry_guards`): the set holds at every row.
+fn guard_languages(function: &Function, register: Register) -> Option<u16> {
+    entry_guards(function).into_iter().find(|guard| guard.register == register).map(|guard| guard.languages)
+}
+
+/// The truth every value of a language set `languages` has, where the set decides it: `null` and
+/// `undefined` are falsy, a direct object or function is truthy (`Languages` admits no other word). A
+/// set holding a Number or a Boolean may be either, so it has no constant truth.
+fn constant_truth(languages: u16) -> Option<bool> {
+    const FALSY: u16 = language(ValueType::Null) | language(ValueType::Undefined);
+    const TRUTHY: u16 = language(ValueType::Object) | language(ValueType::Function);
+    if languages & !FALSY == 0 {
+        Some(false)
+    } else if languages & !TRUTHY == 0 {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// The language of a constant operand that is `null` or `undefined`, `None` for any other operand.
+fn nullish_language(constants: &[Value], operand: Operand) -> Option<u16> {
+    if operand.kind() != Some(OperandKind::Constant) {
+        return None;
+    }
+    let word = constants.get(usize::from(operand.payload()))?.to_bits();
+    if word == Value::NULL.to_bits() {
+        Some(language(ValueType::Null))
+    } else if word == Value::UNDEFINED.to_bits() {
+        Some(language(ValueType::Undefined))
+    } else {
+        None
+    }
+}
+
+/// The result of an equality test of a guarded register with `null` or `undefined` (`x ?? y` and `x?.y`
+/// test `!== null` and `!== undefined` strictly; `x == null` loosely): `Some` where the register's language
+/// set decides it. A loose test is equal to `null` and `undefined` alone (a direct object is no IsHTMLDDA
+/// object, which a heap cell would be).
+fn nullish_result(function: &Function, constants: &[Value], instruction: WideInstruction) -> Option<bool> {
+    let (strict, negated) = crate::vm::operations::equality_operator(instruction.binary_operator_field())?;
+    let (b, c) = (instruction.operand_b(), instruction.operand_c());
+    let (tested, expected) = [(b, c), (c, b)].into_iter()
+        .find_map(|(tested, other)| Some((tested.register_index()?, nullish_language(constants, other)?)))?;
+    let languages = guard_languages(function, tested)?;
+    let nullish = language(ValueType::Null) | language(ValueType::Undefined);
+    let target = if strict { expected } else { nullish };
+    let equal = if languages & !target == 0 {
+        true
+    } else if languages & target == 0 {
+        false
+    } else {
+        return None;
+    };
+    Some(equal != negated)
+}
+
+/// A conditional jump whose outcome every row of a declared register decides, as an unconditional
+/// jump: to its target where taken, else to the next row (as `Nop` is). Covers `JumpTrue`/`JumpFalse` on
+/// the register's truthiness (`constant_truth`) and the equality jumps `??`, `?.` and `== null` take
+/// (`JumpBinaryFalse`, `nullish_result`). `None` for any other row, or where the entry does not decide it.
+pub(super) fn branch_fold(function: &Function, constants: &[Value], pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+    let taken = match Operation::<(), ()>::decode(instruction, DecodeContext::EMPTY) {
+        Some(Operation::JumpIf { register, taken }) => constant_truth(guard_languages(function, register)?)? == taken,
+        _ if instruction.op().class() == Class::JumpBinaryFalse => !nullish_result(function, constants, instruction)?,
+        _ => return None,
+    };
+    let target = if taken { instruction.jump_target() } else { pc + 1 };
+    Some(Decoded::number(Kind::Jump, None, None, None, Some(target)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_declared_number_is_proved_through_its_representation() {
+        assert_eq!(DeclaredFact::of(language(ValueType::Number)), Some(DeclaredFact::Number));
+    }
+
+    #[test]
+    fn tag_decided_sets_are_tested_at_entry() {
+        for set in [language(ValueType::Boolean), language(ValueType::Null) | language(ValueType::Undefined),
+            language(ValueType::Object), language(ValueType::Function), language(ValueType::Number) | language(ValueType::Undefined)] {
+            assert_eq!(DeclaredFact::of(set), Some(DeclaredFact::Languages(set)));
+        }
+    }
+
+    #[test]
+    fn sets_a_tag_does_not_decide_get_no_check() {
+        assert_eq!(DeclaredFact::of(u16::MAX), None);
+        assert_eq!(DeclaredFact::of(language(ValueType::String)), None);
+        assert_eq!(DeclaredFact::of(language(ValueType::Number) | language(ValueType::BigInt)), None);
+        assert_eq!(DeclaredFact::of(0), None);
+    }
+
+    #[test]
+    fn a_language_set_decides_its_truth_only_where_every_member_agrees() {
+        let [null, undefined, object, function, boolean] = [ValueType::Null, ValueType::Undefined, ValueType::Object, ValueType::Function, ValueType::Boolean].map(language);
+        assert_eq!(constant_truth(null | undefined), Some(false));
+        assert_eq!(constant_truth(object | function), Some(true));
+        assert_eq!(constant_truth(boolean), None);
+        assert_eq!(constant_truth(null | object), None);
+    }
+}

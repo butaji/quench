@@ -70,7 +70,7 @@ pub(super) fn global_row(known: Known, pc: u32, instruction: WideInstruction) ->
         GlobalRead::Constant(value) if instruction.op().loads_name() => {
             Some(word_row(instruction, value))
         }
-        GlobalRead::Slot(slot) => slot_row(known, instruction, Access::of(slot)?),
+        GlobalRead::Slot(slot) | GlobalRead::NativeSlot { slot, .. } => slot_row(known, instruction, Access::of(slot)?),
         GlobalRead::Lexical(slot) => lexical_row(instruction, slot),
         _ => None,
     }

@@ -72,8 +72,8 @@ pub(super) enum Step {
     Fast(Heap),
     /// `LaneHelper::VmStep` makes the record's call-out in place (`staged::CallOut`) and the region continues.
     CallOut,
-    /// `Fast` in a region whose heap rows read snapshots (`settle`): a helper's effects would not
-    /// reach them, so the slow arm is the leave at the record, which the interpreter runs.
+    /// A fast arm whose miss is the leave at the record, which the interpreter runs: an add with no
+    /// in-place step (`lowering`), an `instanceof` jump (`sites::instanceof_jump`).
     Guard(Heap),
     /// The region leaves at the record.
     Leave,
@@ -254,23 +254,6 @@ pub(super) fn decode_step(pc: u32, instruction: WideInstruction, known: Known, (
             let name = names::of(known, instruction).filter(|name| matches!(step, Step::Fast(fast) | Step::Guard(fast) if fast == name.heap()));
             let result = written.next();
             Decoded { target, a: read, base, also: written.next(), add, name, atom: add.map(|_| instruction.atom_index()), ..Decoded::step(step, result) }
-        }
-    }
-}
-
-/// A helper step, alone or behind a fast arm, may write any heap value, which the snapshots a heap row reads (the entry
-/// record's captures, fields and array views) would not see, and run guest code that changes a
-/// Stable fact a region holds (the global object's layout): where the region has such a row its
-/// helper steps leave instead. A fast arm stays: its hit stores as a `Store` row does, in the
-/// backing the views read live, and only its slow arm becomes the leave (`Step::Guard`).
-pub(super) fn settle(rows: &mut [&mut Decoded]) {
-    if rows.iter().any(|row| row.heap.is_some_and(Heap::reads_snapshot) || row.global.is_some() || row.lexical.is_some()) {
-        for row in rows.iter_mut() {
-            row.step = match row.step {
-                Some(Step::Fast(fast)) => Some(Step::Guard(fast)),
-                Some(step) if step.runs_helper() => Some(Step::Leave),
-                step => step,
-            };
         }
     }
 }

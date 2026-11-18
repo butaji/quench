@@ -1,7 +1,11 @@
 use super::*;
 use super::call_plan::DirectFacts;
+use super::declared::EntryGuard;
 use super::super::LaneHelper;
 use quench_bjit::{call, exit_stub, padded_holes, patch_successor, EXIT_STUB_LEN, HOLES};
+
+mod entry;
+pub(super) use entry::{EntryRow, entry_rows};
 
 /// `jmp rel32`: a resume stub's last row, which jumps to its PC's first row.
 #[cfg(target_arch = "x86_64")]
@@ -156,6 +160,11 @@ pub(super) struct Layout<'a> {
     pub(super) realm: Option<RealmProof>,
     /// Per row, whether a receiver proof reaches it (`Decoded::relies`): no resume stub enters there.
     pub(super) relies: &'a [bool],
+    /// The entry tests of the declared parameters the function never writes (`declared::entry_guards`).
+    pub(super) guards: Vec<EntryGuard>,
+    /// The declared Number parameters the function never writes, which the entry's Number guards prove
+    /// (`declared::entry_numbers`).
+    pub(super) numbers: Vec<Register>,
 }
 
 impl Layout<'_> {
@@ -224,42 +233,6 @@ impl Layout<'_> {
     pub(super) fn routine(&self, pc: u32) -> Result<Vec<u8>, String> {
         leave_chain(&self.spills(pc), &[], self.ending.tails().1, self.ending.holes(0))
     }
-}
-
-/// The entry rows: the realm a body inlined callees in, or its rows' global slots belong to, is the
-/// active one, each pinned register live at the header (or, for a resume stub, at its PC; `entered` are
-/// the webs live there) loads its int32, each int slot is checked
-/// (or, dead there, tagged), and each other Number register live there is checked, so a loop whose
-/// values are no Numbers is never entered.
-pub(super) fn entry_rows(layout: &Layout, entered: &[usize]) -> Result<Vec<(&'static Stencil, [u64; HOLES])>, String> {
-    let guard = |kind, dst, offset: u64| {
-        numeric::stencil(numeric::Row { kind, dst, a: Place::Mem, b: Place::Mem, speculate: true }).map(|stencil| {
-            (stencil, padded_holes(if kind == Kind::TagInit { [offset, 0, 0] } else { [0, offset, 0] }))
-        })
-    };
-    let mut rows = Vec::new();
-    if let Some(realm) = layout.realm {
-        let row = HeapRow { heap: Heap::Realm, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
-        rows.push((base_rows::stencil(row)?, padded_holes([0, realm.offset, realm.global])));
-    }
-    let slot = |web: Register| u64::from(layout.homes.orig[usize::from(web)]) * SLOT;
-    for (pin, web) in layout.homes.pins.iter().filter(|(_, web)| entered.contains(&usize::from(*web))) {
-        rows.push(guard(Kind::Guard, Place::Pin(*pin as u8), slot(*web))?);
-    }
-    for (pin, web) in layout.homes.floats.iter().filter(|(_, web)| entered.contains(&usize::from(*web))) {
-        rows.push(guard(Kind::Guard, Place::PinF(*pin as u8), slot(*web))?);
-    }
-    for web in &layout.homes.slots {
-        let live = entered.contains(&usize::from(*web));
-        rows.push(guard(if live { Kind::Guard } else { Kind::TagInit }, Place::MemInt, slot(*web))?);
-    }
-    for web in entered.iter().map(|web| *web as Register) {
-        let number = layout.span.number_registers().contains(&layout.homes.orig[usize::from(web)]);
-        if number && layout.homes.place(web) == Place::Mem {
-            rows.push(guard(Kind::Guard, Place::Mem, slot(web))?);
-        }
-    }
-    Ok(rows)
 }
 
 /// A leave row of the cold area, behind the body: what it returns and what it writes back first.
@@ -404,18 +377,24 @@ pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<(Vec<u8>, Res
     let (body_exits, routines) = exit_targets(layout, &body, (g, g + n), &mut leaves)?;
     let stubs = if layout.ending == Ending::Region { resume_stubs(layout, planned, (g, &starts))? } else { Vec::new() };
     let jump = leave_row(jump_row());
-    let mut holes: Vec<[u64; HOLES]> = entry.iter().map(|(_, holes)| *holes).collect();
+    let mut holes: Vec<[u64; HOLES]> = entry.iter().map(|row| row.holes).collect();
     holes.extend(body.iter().map(|row| row.holes));
     holes.extend(std::iter::repeat_n([0; HOLES], leaves.0.len()));
     holes.extend(stubs.iter().flat_map(Stub::holes));
     let hole_fns: Vec<Box<dyn Fn(u32) -> u64 + '_>> =
         holes.iter().map(|h| Box::new(move |i: u32| h[i as usize]) as Box<dyn Fn(u32) -> u64>).collect();
+    let failed_row = g + n + failed;
     let mut rows: Vec<Placed> = Vec::with_capacity(g + n + leaves.0.len());
-    rows.extend(entry.iter().enumerate().map(|(k, (stencil, _))| Placed { stencil, hole: &*hole_fns[k], taken: Some(g + n + failed), cold: false }));
+    rows.extend(entry.iter().enumerate().map(|(k, row)| Placed { stencil: row.stencil, hole: &*hole_fns[k], taken: row.taken(failed_row), cold: false }));
     rows.extend(body.iter().enumerate().map(|(k, row)| Placed { stencil: row.stencil, hole: &*hole_fns[g + k], taken: targets[k], cold: row.cold }));
     rows.extend(leaves.0.iter().enumerate().map(|(k, (_, stencil))| Placed { stencil, hole: &*hole_fns[g + n + k], taken: None, cold: false }));
-    let jumps = place_stubs(&mut rows, &stubs, &jump, &hole_fns, g + n + failed);
-    let exits: Vec<Vec<Target>> = std::iter::repeat_with(Vec::new).take(g).chain(body_exits).chain(std::iter::repeat_with(Vec::new).take(rows.len() - g - n)).collect();
+    let jumps = place_stubs(&mut rows, &stubs, &jump, &hole_fns, failed_row);
+    // Behind the body: the leave rows, then each stub's rows and jump, which are the rows `place_stubs` appended.
+    let exits: Vec<Vec<Target>> = entry.iter().map(|row| row.exits(failed_row)).chain(body_exits)
+        .chain(std::iter::repeat_with(Vec::new).take(leaves.0.len()))
+        .chain(stubs.iter().flat_map(|stub| stub.exits(failed_row)))
+        .collect();
+    debug_assert_eq!(exits.len(), rows.len());
     let (code, offsets, thunk) = place_rows(layout.ending, &rows, (&exits, &routines), &jumps)?;
     Ok((code, ResumeTable::of(thunk, &stubs, &jumps, &offsets)?))
 }
@@ -494,67 +473,4 @@ pub(super) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use quench_bjit::Reloc;
-
-    /// The machine code of a bare return on the host architecture.
-    #[cfg(target_arch = "x86_64")]
-    fn ret() -> Vec<u8> {
-        vec![quench_bjit::RET]
-    }
-
-    /// The machine code of a bare return on the host architecture.
-    #[cfg(target_arch = "aarch64")]
-    fn ret() -> Vec<u8> {
-        quench_bjit::RET.to_vec()
-    }
-
-    /// A row that is one `jmp rel32` through its first exit hole.
-    #[cfg(target_arch = "x86_64")]
-    fn exiting() -> Stencil {
-        let exit = Reloc { offset: 1, class: quench_bjit::REL32, index: quench_bjit::EXIT, addend: -(std::mem::size_of::<i32>() as i64) };
-        Stencil { code: vec![quench_bjit::stub::JMP_REL32, 0, 0, 0, 0], relocs: vec![exit], imm32: Vec::new(), next_jump: None, tail_len: 0, raw_len: 5, hot_len: 5 }
-    }
-
-    /// A row that is one `b` through its first exit hole (its displacement counts from its start).
-    #[cfg(target_arch = "aarch64")]
-    fn exiting() -> Stencil {
-        let exit = Reloc { offset: 0, class: quench_bjit::BRANCH26, index: quench_bjit::EXIT, addend: 0 };
-        let code = quench_bjit::stub::A64_B.to_le_bytes().to_vec();
-        Stencil { code, relocs: vec![exit], imm32: Vec::new(), next_jump: None, tail_len: 0, raw_len: 4, hot_len: 4 }
-    }
-
-    /// Where the row at `at` of `code` jumps to.
-    #[cfg(target_arch = "x86_64")]
-    fn jump_target(code: &[u8], at: usize) -> usize {
-        let field = at + 1;
-        let displacement = i32::from_le_bytes(code[field..field + std::mem::size_of::<i32>()].try_into().expect("a displacement"));
-        (field as i64 + std::mem::size_of::<i32>() as i64 + i64::from(displacement)) as usize
-    }
-
-    /// Where the row at `at` of `code` branches to (its `b` displacement counts from `at`).
-    #[cfg(target_arch = "aarch64")]
-    fn jump_target(code: &[u8], at: usize) -> usize {
-        let insn = u32::from_le_bytes(code[at..at + JUMP_LEN].try_into().expect("an instruction"));
-        (at as i64 + quench_bjit::patch::branch_delta(insn, quench_bjit::class::BRANCH26)) as usize
-    }
-
-    /// A row's stub and a leave row lie after every hot row, the stub after the routines, and each
-    /// exit reaches its own target.
-    #[test]
-    fn exits_land_in_the_cold_area_behind_the_hot_rows() {
-        let (hot, leave) = (exiting(), leave_row(ret()));
-        let hole = |_: u32| 0u64;
-        let rows = [Placed { stencil: &hot, hole: &hole, taken: None, cold: false }, Placed { stencil: &hot, hole: &hole, taken: None, cold: false }, Placed { stencil: &leave, hole: &hole, taken: None, cold: false }];
-        let exits = [vec![Target::Stub { pc: 7, routine: 0 }], vec![Target::Row(2)], Vec::new()];
-        let routines = [ret()];
-        let (code, ..) = place_rows(Ending::Body, &rows, (&exits, &routines), &[]).expect("a layout");
-        let head = thunk(Ending::Body, 0).expect("a thunk").len();
-        let (second, leave_at) = (head + hot.code.len(), head + 2 * hot.code.len());
-        let stub = leave_at + leave.code.len() + routines[0].len();
-        assert_eq!(jump_target(&code, head), stub, "the first row's exit is its stub");
-        assert_eq!(jump_target(&code, second), leave_at, "the second row's exit is the leave row");
-        assert_eq!(code.len(), stub + EXIT_STUB_LEN);
-    }
-}
+mod tests;

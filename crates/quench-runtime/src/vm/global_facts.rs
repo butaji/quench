@@ -66,6 +66,10 @@ pub(crate) enum GlobalRead {
     /// from being recycled. A call of the register it defines runs the native's operation
     /// inline while the callee is still that value (`Lowering::intrinsic_call`).
     NativeMember { value: Value, native: super::Native, holder: u32 },
+    /// A `Slot` read (the b-jit's) of a global name whose function is the native `native` (`parseInt`) when the body was
+    /// compiled, held by the global object's watched exact shape `holder` (`NativeMember`'s code dependency). The read is the
+    /// slot's; a call of the register it defines guards the function's identity (`base_region::function::native_call`).
+    NativeSlot { slot: GlobalSlot, value: Value, native: super::Native, holder: u32 },
 }
 
 /// Which tier a table of by-name global accesses is for (`Vm::global_table`): the lane specializer
