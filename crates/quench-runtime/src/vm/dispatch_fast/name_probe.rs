@@ -24,12 +24,10 @@ script_handler! {
 /// Quickens the record of the by-name read at `pc` of `view`, which `Vm::settle_name_probe`
 /// settled: a hinted global read where the name lands on the global object, else an exit.
 pub(in crate::vm) fn settle_name_record<H: Host>(view: &LaneView, pc: usize, op: Op, lands: bool) {
-    use crate::staged::NameLoad;
-    let handler = match (lands, op.class()) {
+    let handler = match (lands, crate::staged::name_load(op)) {
         (false, _) => lane_exit::<H> as Handler,
-        (true, Class::LoadName) => name_row::<H, FLAG_NAME_GLOBAL_SCOPED>(NameLoad::Read),
-        (true, Class::LoadNameCall) => name_row::<H, FLAG_NAME_GLOBAL_SCOPED>(NameLoad::Call),
-        (true, _) => name_row::<H, FLAG_NAME_GLOBAL_SCOPED>(NameLoad::Typeof),
+        (true, Some(load)) => name_row::<H, FLAG_NAME_GLOBAL_SCOPED>(load),
+        (true, None) => name_row::<H, FLAG_NAME_GLOBAL_SCOPED>(crate::staged::NameLoad::Typeof),
     };
     // SAFETY: `pc` is a record of the view, whose records live while its program does.
     requicken::<H>(unsafe { view.records().add(pc) }, handler);
