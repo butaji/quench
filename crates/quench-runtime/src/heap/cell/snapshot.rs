@@ -36,7 +36,6 @@ mod tag {
     pub(super) const WEAK_REF: u8 = 10;
     pub(super) const FINALIZATION_REGISTRY: u8 = 11;
     pub(super) const PROXY: u8 = 13;
-    pub(super) const FUNCTION: u8 = 14;
     pub(super) const BINDING_REFERENCE: u8 = 15;
     /// `WebAssembly.JSTag`, the one Wasm cell every realm holds (`wasm_js::js_tag_cell`).
     pub(super) const JS_TAG: u8 = 17;
@@ -699,10 +698,6 @@ impl Cell {
                 writer.value(*target);
                 writer.value(*handler);
             }
-            Self::Function(function) => {
-                writer.u8(tag::FUNCTION);
-                function.write_snapshot(writer)?;
-            }
             Self::BindingReference { environment, slot, kind } => {
                 writer.u8(tag::BINDING_REFERENCE);
                 writer.value(*environment);
@@ -847,7 +842,6 @@ impl Cell {
                 target: reader.value()?,
                 handler: reader.value()?,
             },
-            tag::FUNCTION => Self::Function(Box::new(FunctionRecord::read_snapshot(reader)?)),
             tag::BINDING_REFERENCE => Self::BindingReference {
                 environment: reader.value()?,
                 slot: reader.u16()?,

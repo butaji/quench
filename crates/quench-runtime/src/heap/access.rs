@@ -361,29 +361,19 @@ impl Heap {
         }
     }
 
-    /// A function, in its record or in a slot (`FunctionRecord`).
+    /// A function, in its function record (`FunctionRecord`).
     #[inline(always)]
     pub(crate) fn function(&self, value: Value) -> Option<&FunctionRecord> {
-        if let Some(record_id) = value.direct_function_index() {
-            // SAFETY: a direct-function Value names an initialized function record.
-            return Some(unsafe { self.function_records.get_live(record_id) });
-        }
-        match self.get(value)? {
-            Cell::Function(function) => Some(function),
-            _ => None,
-        }
+        let record_id = value.direct_function_index()?;
+        // SAFETY: a direct-function Value names an initialized function record.
+        Some(unsafe { self.function_records.get_live(record_id) })
     }
 
     /// `function`, mutably, past the write barrier.
     pub(crate) fn function_mut(&mut self, value: Value) -> Option<&mut FunctionRecord> {
-        if let Some(record_id) = value.direct_function_index() {
-            // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.function_records.get_live_mut(record_id, &self.properties) });
-        }
-        match self.get_mut(value)? {
-            Cell::Function(function) => Some(function),
-            _ => None,
-        }
+        let record_id = value.direct_function_index()?;
+        // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
+        Some(unsafe { self.function_records.get_live_mut(record_id, &self.properties) })
     }
 
     #[inline(always)] pub(crate) fn is_function_value(&self, value: Value) -> bool {

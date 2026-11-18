@@ -4297,8 +4297,7 @@ impl IteratorRecord {
 
 /// A function: its ordinary object, creation realm, code and closure environment. The
 /// heap keeps it in the function record family (`Heap::function`), where a dead closure
-/// costs its occupancy bit; a heap whose record range is unavailable boxes it in a
-/// `Cell::Function` slot.
+/// costs its occupancy bit.
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub(crate) struct FunctionRecord {
@@ -4505,8 +4504,6 @@ pub(crate) enum Cell {
         target: Value,
         handler: Value,
     },
-    /// A function where no function record is available (`FunctionRecord`).
-    Function(Box<FunctionRecord>),
     BindingReference {
         environment: Value,
         slot: u16,
@@ -4663,7 +4660,6 @@ impl Cell {
             Self::ArrayFromAsyncState(_) => "array_from_async_state",
             Self::AwaitState(_) => "await_state",
             Self::Proxy { .. } => "proxy",
-            Self::Function(_) => "function",
             Self::BindingReference { .. } => "binding_reference",
             Self::WasmBits64(_) => "wasm_bits64",
             Self::WasmInstance(_) => "wasm_instance",
@@ -4709,7 +4705,6 @@ impl Cell {
     /// a user function's code, an environment's scope, a suspended generator.
     pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
         match self {
-            Self::Function(function) => function.program().into_iter().for_each(&mut visit),
             Self::AwaitState(state) => state.program_references(&mut visit),
             _ => {}
         }

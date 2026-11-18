@@ -8,8 +8,11 @@ use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use rc_drop::{StoppedCellDrop, cell_rc_drop_lock};
 
-/// Every record space, listed once, in `Heap`'s field order. Each row is `field: Type => handle`:
-/// the space's `Heap` field and type, and the `Value` constructor naming its records
+/// Every record space, listed once, in `Heap`'s field order. Each row is
+/// `Family = field: Space [Elem] view => handle`: `Family` names the space's `RecordSpaceId`
+/// variant (whose index is the family's number, in this order); `field: Space` is the space's
+/// `Heap` field and type; `Elem` is the type its records hold; `view` is its field in
+/// `ParallelMarkView`; and `handle` is the `Value` constructor naming its records
 /// (`Heap::record_families`). `$m` is a callback called as `$m! { $pre ; rows }`, where `$pre`
 /// is what the caller passes (nothing, or the heap for `mark_bits!`). The `Heap` struct still
 /// declares these fields by hand, since a macro cannot expand into a struct body that also holds
@@ -18,18 +21,18 @@ macro_rules! for_each_record_space {
     ($m:ident, $($pre:tt)*) => {
         $m! {
             $($pre)* ;
-            object_records: ObjectRecordSpace => Value::direct_object,
-            array_records: ArrayRecordSpace => Value::direct_array,
-            function_records: FunctionRecordSpace => Value::direct_function,
-            promise_records: PromiseRecordSpace => Value::direct_promise,
-            await_records: AwaitRecordSpace => Value::direct_await,
-            iterator_records: IteratorRecordSpace => Value::direct_iterator,
-            collection_records: CollectionRecordSpace => Value::direct_collection,
-            string_records: StringRecordSpace => Value::direct_string,
-            small_strings: small_strings::SmallStringSpace => small_strings::small_string_value,
-            v128_records: V128RecordSpace => Value::direct_v128,
-            environment_records: EnvironmentRecordSpace => Value::direct_environment,
-            symbol_records: SymbolRecordSpace => Value::direct_symbol,
+            Object = object_records: ObjectRecordSpace [Object] objects => Value::direct_object,
+            Array = array_records: ArrayRecordSpace [ArrayObject] arrays => Value::direct_array,
+            Function = function_records: FunctionRecordSpace [FunctionRecord] functions => Value::direct_function,
+            Promise = promise_records: PromiseRecordSpace [PromiseCell] promises => Value::direct_promise,
+            Await = await_records: AwaitRecordSpace [AwaitState] awaits => Value::direct_await,
+            Iterator = iterator_records: IteratorRecordSpace [IteratorRecord] iterators => Value::direct_iterator,
+            Collection = collection_records: CollectionRecordSpace [CollectionRecord] collections => Value::direct_collection,
+            String = string_records: StringRecordSpace [JsString] strings => Value::direct_string,
+            SmallString = small_strings: small_strings::SmallStringSpace [SmallParts] small_strings => small_strings::small_string_value,
+            V128 = v128_records: V128RecordSpace [[u8; crate::wasm::V128_BYTES]] v128s => Value::direct_v128,
+            Environment = environment_records: EnvironmentRecordSpace [EnvironmentRecord] environments => Value::direct_environment,
+            Symbol = symbol_records: SymbolRecordSpace [SymbolData] symbols => Value::direct_symbol,
         }
     };
 }
@@ -57,7 +60,7 @@ macro_rules! record_reference_test {
 
 /// `MarkBits`: every record family's mark bits, and the legacy slots' mark words.
 macro_rules! mark_bits_struct {
-    (; $($field:ident : $space:ty => $handle:path,)*) => {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
         /// Every family's mark bits, borrowed apart from the slot a trace holds (`mark_bits!`).
         #[derive(Clone, Copy)]
         pub(super) struct MarkBits<'a> {
@@ -69,7 +72,7 @@ macro_rules! mark_bits_struct {
 
 /// The `MarkBits` literal over `$heap`'s mark fields (`mark_bits!`).
 macro_rules! mark_bits_literal {
-    ($heap:tt ; $($field:ident : $space:ty => $handle:path,)*) => {
+    ($heap:tt ; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
         MarkBits {
             $($field: &$heap.$field,)*
             marks: &$heap.marks,
@@ -79,7 +82,7 @@ macro_rules! mark_bits_literal {
 
 /// `record_families` and `record_families_mut`, over every record space.
 macro_rules! record_families_fns {
-    (; $($field:ident : $space:ty => $handle:path,)*) => {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
         /// Every record family, with the `Value` constructor naming its records.
         fn record_families(&self) -> [(&dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
             [$((&self.$field, $handle),)*]
@@ -94,9 +97,27 @@ macro_rules! record_families_fns {
     };
 }
 
+/// `RecordSpaceId`, the family numbering every record-space lookup shares (`locate`, `with_space!`,
+/// `record_families`), and `RECORD_FAMILIES`, its count. A variant's index is its row's position
+/// in `for_each_record_space!`. Environments and symbols are numbered but never counted, so no
+/// lookup names them.
+macro_rules! record_space_ids {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+        /// A record space's family, named by its row in `for_each_record_space!`.
+        #[allow(dead_code)]
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub(super) enum RecordSpaceId {
+            $($family,)*
+        }
+
+        /// The number of record families (`Heap::record_families`).
+        const RECORD_FAMILIES: usize = [$(RecordSpaceId::$family),*].len();
+    };
+}
+
 /// `Heap::reset`'s empty record spaces.
 macro_rules! reset_record_spaces {
-    (; $($field:ident : $space:ty => $handle:path,)*) => {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
         /// Replaces every record space with an empty one (`Heap::reset`).
         fn reset_record_spaces(&mut self) {
             $(self.$field = <$space>::default();)*
@@ -468,8 +489,7 @@ struct SweepOutput {
     swept_slots: usize,
 }
 
-/// The record families `Heap::record_families` lists.
-const RECORD_FAMILIES: usize = 12;
+for_each_record_space!(record_space_ids,);
 
 for_each_record_space!(mark_bits_struct,);
 
@@ -1383,15 +1403,6 @@ impl Heap {
                 Ok(record_id) => return Value::direct_await(record_id),
                 Err(state) => Cell::AwaitState(Box::new(state)),
             },
-            Cell::Function(function) => match self.function_records.try_insert(*function) {
-                Ok(record_id) => {
-                    let value = Value::direct_function(record_id);
-                    #[cfg(feature = "profile-memory")]
-                    self.profile_allocation(value);
-                    return value;
-                }
-                Err(function) => Cell::Function(Box::new(function)),
-            },
             cell => cell,
         };
         self.alloc_slotted(cell, track_young)
@@ -1676,12 +1687,10 @@ impl Heap {
         self.alloc_in_slot_with(self.tracks_young_cells(), false, || Cell::RegExp { object, meta })
     }
 
-    /// `alloc(Cell::Function(..))` without boxing the function first: a function record
-    /// while one is free.
+    /// A new function record of `function`, with no payload or external bytes. The function
+    /// space holds as many records as `RECORD_SPACE_CAPACITY`, so a full space is a panic, as
+    /// for symbols.
     pub(crate) fn alloc_function(&mut self, function: FunctionRecord) -> Value {
-        if cfg!(feature = "profile-aggregate") {
-            return self.alloc(Cell::Function(Box::new(function)));
-        }
         self.mark_prototype(function.object.proto());
         self.insert_function_record(function)
     }
@@ -1690,35 +1699,26 @@ impl Heap {
     /// `alloc_unfilled_object_under_flagged_prototype` allocates an object.
     pub(crate) fn alloc_function_under_flagged_prototype(&mut self, function: FunctionRecord) -> Value {
         debug_assert!(self.prototype_flagged(function.object.proto()));
-        if cfg!(feature = "profile-aggregate") {
-            return self.alloc(Cell::Function(Box::new(function)));
-        }
         self.insert_function_record(function)
     }
 
-    /// A function record of `function`, else a slot: one allocation, with no payload or
-    /// external bytes.
+    /// A function record of `function`: one allocation, admitted and charged as an object
+    /// record is (`alloc_object_record`).
     #[inline(always)]
     fn insert_function_record(&mut self, function: FunctionRecord) -> Value {
+        #[cfg(feature = "profile-aggregate")]
+        let bytes = function.object.allocated_extra_bytes() + size_of::<FunctionRecord>();
         self.admit_object_contents(&function.object);
         self.allocated += 1;
-        match self.function_records.try_insert(function) {
-            Ok(record_id) => {
-                let value = Value::direct_function(record_id);
-                #[cfg(feature = "profile-memory")]
-                self.profile_allocation(value);
-                value
-            }
-            Err(mut function) => {
-                // A young run's owner is a record (`YoungOwner`): a function that takes a
-                // legacy slot takes an ordinary run first.
-                if self.properties.holds_young_run(function.object.properties()) {
-                    let storage = self.properties.duplicate(function.object.properties());
-                    function.object.replace_property_storage(storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], &mut self.properties);
-                }
-                self.alloc_in_slot(Cell::Function(Box::new(function)), self.tracks_young_cells())
-            }
-        }
+        let Ok(record_id) = self.function_records.try_insert(function) else {
+            panic!("function records exhausted");
+        };
+        let value = Value::direct_function(record_id);
+        #[cfg(feature = "profile-aggregate")]
+        self.profile_record_allocation(CellKind::Function, "function", bytes);
+        #[cfg(feature = "profile-memory")]
+        self.profile_allocation(value);
+        value
     }
 
     /// `alloc(Cell::Promise(..))` without boxing the promise first: a promise record while
@@ -4855,13 +4855,6 @@ impl Heap {
                 object(value);
                 work.extend([*target, *handler]);
             }
-            Cell::Function(function) => {
-                object(&function.object);
-                work.push(function.env);
-                if last_proto.first_shared(function.realm) {
-                    work.push(function.realm);
-                }
-            }
             Cell::WasmGlobal { header, bits, ty, .. } => {
                 object(&header.object);
                 work.extend((WasmStorage::of(*ty) == WasmStorage::Handle).then(|| Value::from_bits(*bits)));
@@ -5106,7 +5099,6 @@ impl Heap {
             Cell::WeakMap { .. } => CellKind::WeakMap,
             Cell::WeakSet { .. } => CellKind::WeakSet,
             Cell::WeakRef { .. } | Cell::FinalizationRegistry { .. } => CellKind::WeakRef,
-            Cell::Function(_) => CellKind::Function,
             Cell::BindingReference { .. } => CellKind::Environment,
             Cell::BigInt(_) => CellKind::BigInt,
             Cell::WasmElements(_) | Cell::WasmInstance(_) => CellKind::WasmElements,
@@ -5191,7 +5183,6 @@ impl Heap {
                 Cell::WasmMemory { bytes, .. } => bytes.capacity(),
                 Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
                 Cell::WeakSet { entries, .. } => entries.allocated_bytes(),
-                Cell::Function(_) => size_of::<FunctionRecord>(),
                 Cell::BigInt(value) => value.spilled_bytes(),
                 Cell::Error(value) => value.capacity(),
             }
@@ -5551,7 +5542,7 @@ impl Heap {
         for slot in self.slots.iter() {
             let Some(cell) = slot.cell.as_ref() else { continue };
             let kind = match cell {
-                Cell::Object(_) => "object", Cell::Array { .. } => "array", Cell::Function(_) => "function",
+                Cell::Object(_) => "object", Cell::Array { .. } => "array",
                 Cell::Proxy { .. } => "proxy", Cell::WeakMap { .. } => "weakmap",
                 Cell::AccessorPair { .. } => "accessor", Cell::BindingReference { .. } => "binding",
                 _ => "other",

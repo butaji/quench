@@ -1837,7 +1837,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::BigInt(_)) => {
                 Err(self.type_error(p, "Do not know how to serialize a BigInt".into()))
             }
-            Some(Cell::Function(_)) | None => Ok(false),
+            None => Ok(false),
             Some(Cell::Array { .. } | Cell::Promise(_)) => {
                 unreachable!("heap.array, heap.promise and the collection accessors classify their values before this match")
             }
