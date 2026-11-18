@@ -33,6 +33,10 @@ impl<H: Host> Vm<H> {
     }
 }
 
+/// The digits of a magnitude below ten, and what each power of ten adds.
+const ONE_DIGIT: u32 = 1;
+/// The base of the text the key orders.
+const TEXT_RADIX: u64 = 10;
 /// The most decimal digits of an int32's magnitude.
 const INT_DIGITS: u32 = 10;
 /// Bits of `int_string_key` below the scaled digits: the digit count.
@@ -46,8 +50,8 @@ const SIGN_BIT: u32 = 40;
 /// count, by which a prefix comes first.
 fn int_string_key(value: i32) -> u64 {
     let magnitude = u64::from(value.unsigned_abs());
-    let digits = magnitude.checked_ilog10().map_or(1, |log| log + 1);
-    let scaled = magnitude * 10u64.pow(INT_DIGITS - digits);
+    let digits = magnitude.checked_ilog10().map_or(ONE_DIGIT, |log| log + ONE_DIGIT);
+    let scaled = magnitude * TEXT_RADIX.pow(INT_DIGITS - digits);
     (u64::from(value >= 0) << SIGN_BIT) | (scaled << DIGIT_COUNT_BITS) | u64::from(digits)
 }
 
