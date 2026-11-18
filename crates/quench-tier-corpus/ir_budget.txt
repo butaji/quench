@@ -23,7 +23,7 @@ call_direct 8 30 222.1
 call_method 11 39 279.1
 cmp_dbl 6 24 90.1
 cmp_int 7.5 29 80.1
-date_now 34 108 383.1
+date_now 34 108 260.1
 dbl_add 4 18 46.3
 dbl_div 8 30 93.1
 dbl_mul 4 18 44.1
@@ -58,7 +58,7 @@ k13_matmul 666 2004 17441.8
 k14_bsearch 62.2 192.6 866.2
 k15_isort 266.8 806.4 5569.7
 k16_sieve 310 936 8091.9
-k17_hash 134 408 5572.3
+k17_hash 134 408 5252.3
 k18_math 44 138 744.6
 k19_gcd 47.1 147.3 672.9
 k20_switch 169 513 3945.3
@@ -80,7 +80,7 @@ not_op 5.5 23 65.6
 num_to_str 569 1713 1713
 parse_int 196 594 1036.1
 shl_shr 7 27 93.1
-str_charcodeat 9 33 207.1
+str_charcodeat 9 33 187.1
 str_compare 4 18 176.1
 str_concat 531.56 1601 1601
 str_concat_acc 7 27 531.1

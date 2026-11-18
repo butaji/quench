@@ -43,7 +43,7 @@ macro_rules! builtin_rows {
 builtin_rows!(
     0 => MapGet, 1 => MapHas, 2 => MapSet, 3 => SetHas, 4 => WeakMapGet, 5 => WeakMapHas,
     6 => WeakSetHas, 7 => StringCharAt, 8 => ArrayIsArray, 9 => StringCharCodeAt, 10 => ArrayPush, 11 => ArrayPop,
-    12 => JsonStringify,
+    12 => JsonStringify, 13 => DateNow,
 );
 
 /// The Math functions whose call a site makes under its own handler, one instantiation of
