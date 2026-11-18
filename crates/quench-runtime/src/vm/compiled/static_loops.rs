@@ -94,7 +94,7 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
     }
 }
 
-fn scalar_body(program: &ResidualProgram, instruction: WideInstruction) -> bool {
+fn scalar_body(_program: &ResidualProgram, instruction: WideInstruction) -> bool {
     instruction.result_flags() == 0 && instruction.numeric_local_target().is_none()
         && (crate::staged::loads_constant(instruction.op())
             || matches!(Operation::<u64, ()>::decode(instruction, DecodeContext::EMPTY),

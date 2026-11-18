@@ -305,41 +305,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// `steady_instanceof` through the proof `constructor` holds (`Vm::instanceof_proofs`):
-    /// its `prototype` link, read once and kept while no slot or layout of the constructor
-    /// (marked a prototype) changes, so a use reads neither its layout nor its `prototype`.
-    #[inline(always)]
-    pub(super) fn proved_instanceof(&mut self, value: Value, constructor: Value) -> Option<bool> {
-        let proof = &self.instanceof_proofs[instanceof_holder_index(constructor)];
-        if proof.0 != constructor || !proof.2.as_ref().is_some_and(|watch| watch.is_published()) {
-            return self.prove_instanceof(value, constructor);
-        }
-        let target = proof.1;
-        if Self::primitive_instance(value, &self.heap) {
-            return Some(false);
-        }
-        self.instanceof_chain(value, target)
-    }
-
-    /// `proved_instanceof` without a current proof: the steady case, which then records one.
-    #[inline(never)]
-    fn prove_instanceof(&mut self, value: Value, constructor: Value) -> Option<bool> {
-        let holds = self.steady_instanceof(value, constructor)?;
-        if let Some(target) = self.steady_instanceof_target(constructor)
-            && let Some(shape) = self.heap.function(constructor).map(|function| function.object.exact_shape())
-        {
-            self.heap.mark_prototype(constructor);
-            let watch = crate::code_dependencies::new_dependency();
-            let code: std::rc::Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();
-            // The mark may have changed the exact shape the subscription names.
-            let shape = self.heap.function(constructor).map_or(shape, |function| function.object.exact_shape());
-            if crate::heap::subscribe_prototype_values(shape, &code) {
-                self.instanceof_proofs[instanceof_holder_index(constructor)] = (constructor, target, Some(watch));
-            }
-        }
-        Some(holds)
-    }
-
     /// The object of `value`, a heap object other than a proxy, whose prototype link
     /// `[[GetPrototypeOf]]` reads without running guest code.
     #[inline(always)]

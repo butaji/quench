@@ -5,7 +5,7 @@ use super::lane_reads::Reads;
 use crate::bytecode::{Operand, Register};
 use crate::typed_ir::Type;
 use crate::bytecode::RegisterWindow;
-use crate::staged::{Allocation, CallOut, Comparison, Concrete, Constant, Edge, Frame, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep, read_initialized_local, write_initialized_local, write_local};
+use crate::staged::{Allocation, CallOut, Concrete, Constant, Edge, Frame, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep, read_initialized_local, write_initialized_local, write_local};
 
 /// The maker of a frame's heap values: allocates in the lane context it is given and runs no
 /// guest code; `None` leaves the instruction to the general path.
@@ -415,19 +415,6 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             Boxing::Double => Value::number(f64::from_bits(value)),
         };
         self.registers.set(register, value);
-    }
-
-    #[inline(always)]
-    fn wide_read(&mut self, stage: &mut Concrete, register: Register, raw: bool) -> Option<u64> {
-        let word = self.read(stage, register);
-        if raw { Some(word) } else { Value::from_bits(word).bits64() }
-    }
-
-    #[inline(always)]
-    fn wide_write(&mut self, _stage: &mut Concrete, register: Register, value: u64, raw: bool) -> Option<()> {
-        let value = if raw { Value::from_bits(value) } else { Value::from_bits64(value)? };
-        self.registers.set(register, value);
-        Some(())
     }
 
     #[inline(always)]
@@ -1405,7 +1392,6 @@ pub(in crate::vm::dispatch_fast) const fn row_miss<H: Host, const FLAG: u8>(op: 
         crate::staged::Miss::WalkScopes => super::lane_load_capture_walk::<H>,
         crate::staged::Miss::StoreThroughScopes => super::store_outer_capture_miss::<H>,
         crate::staged::Miss::ArgumentsBinding => super::lane_frame_arguments::<H, false>,
-        crate::staged::Miss::ArgumentsBinding => super::lane_frame_arguments::<H, false>,
         crate::staged::Miss::ArgumentsElement => super::lane_frame_arguments::<H, true>,
         crate::staged::Miss::EnvironmentLoad => super::load_local_miss::<H>,
         crate::staged::Miss::EnvironmentStore => match FLAG {
@@ -2302,15 +2288,6 @@ fn lane_concat_value<H: Host>(cx: *mut LaneContext<H>, r: Registers, window: Reg
         |_: &Vm<H>, part: usize| r.get((base + part) as Register))?;
     note_allocation(vm);
     Some(value)
-}
-
-/// `allocation` into `destination` by the staged operation, in the lane context `cx`'s own run;
-/// false, writing nothing, where the general path must make it.
-#[inline(always)]
-pub(super) fn staged_allocate<H: Host>(cx: *mut LaneContext<H>, r: Registers, destination: u16, allocation: Allocation) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
-    matches!(crate::staged::step(&mut stage, &mut frame, Operation::Allocate { destination, allocation, proof: () }), Step::Value(_))
 }
 
 /// `delete base[key]` into `destination` by the staged operation, in the lane context `cx`'s own

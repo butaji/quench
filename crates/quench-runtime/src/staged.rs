@@ -441,13 +441,9 @@ pub(crate) const FUSED_PLAIN: u8 = 0;
 /// the fused record skips `A`'s register write. `fuse_rows` installs it only where liveness
 /// proves that; otherwise the pair runs as `FUSED_PLAIN`.
 pub(crate) const FUSED_DEAD_FIRST: u8 = 1;
-/// `FUSED_ROWS` mode: `A`'s result stays an unboxed word for `B`. Never boxed in the fused record.
-pub(crate) const FUSED_RAW: u8 = 2;
 /// The mode of a window pair or chain `fuse_rows` installs for a window local's (`FLAG_WINDOW`) first row: both
 /// rows run at the window's flag, reading the window's locals. Not a table mode; `fuse_rows` names it.
 pub(crate) const FUSED_WINDOW: u8 = 3;
-/// `FUSED_ROWS` mode: `B` runs on the record at `A`'s jump target (reserved; not yet implemented in `fused_rows`).
-pub(crate) const FUSED_TARGET: u8 = 4;
 
 /// The opcode whose row answers an arguments binding's count (`Miss::ArgumentsBinding`), which a
 /// tier names to give the row a fact it proved at view time.
@@ -495,13 +491,6 @@ pub(crate) const LOAD_CONST_ROW: u16 = Op::LoadConst as u16;
 pub(crate) const STORE_LOCAL_PLAIN_ROW: u16 = Op::StoreLocalPlain as u16;
 /// The opcode whose row makes a closure (`Operation::Allocate` over `Allocation::Closure`).
 pub(crate) const MAKE_CLOSURE_ROW: u16 = Op::MakeClosure as u16;
-
-/// The opcode whose row answers a `Binary` record: a register pair without result flags decodes
-/// here (`decode_binary`); any other record runs the general step.
-pub(crate) const BINARY_ROW: u16 = Op::Binary as u16;
-/// The opcode of a conditional jump on a comparison of two operands (`Operation::CompareJump`),
-/// the record the default comparison handler and its register forms are told apart by.
-pub(crate) const COMPARE_JUMP_ROW: u16 = Op::JumpBinaryFalse as u16;
 
 /// Whether `op` is a conditional jump whose row answers its control edge from a comparison of
 /// two operands (`Operation::CompareJump`): a jump the lane runs as its generated row.
@@ -626,8 +615,6 @@ pub(crate) const fn wasm_memory_store(op: Op) -> bool {
 /// The opcodes of the Wasm i32 zero tests, which the lane names to give a zero test's row the
 /// handler of its direction (`jump_row`).
 pub(crate) const WASM_I32_ADD_IMMEDIATE_ROW: u16 = Op::WasmI32AddImmediate as u16;
-pub(crate) const WASM_JUMP_ZERO_ROW: u16 = Op::WasmJumpI32Zero as u16;
-pub(crate) const WASM_JUMP_NONZERO_ROW: u16 = Op::WasmJumpI32NonZero as u16;
 /// The opcodes of the by-name load rows, one per `NameLoad`, which a tier names to instantiate
 /// the row of a binding it resolved (`lane_frame::name_row`).
 pub(crate) const LOAD_NAME_ROW: u16 = Op::LoadName as u16;
@@ -737,8 +724,6 @@ pub(crate) const fn jumps(op: Op) -> bool { matches!(op, Op::Jump) }
 pub(crate) const fn returns(op: Op) -> bool { matches!(op, Op::Return) }
 /// Reads a captured slot (`LoadCapture`).
 pub(crate) const fn reads_capture(op: Op) -> bool { matches!(op, Op::LoadCapture) }
-/// Writes a captured slot (`StoreCapture`).
-pub(crate) const fn writes_capture(op: Op) -> bool { matches!(op, Op::StoreCapture) }
 /// Reads a binding by name (`LoadName`).
 pub(crate) const fn reads_name(op: Op) -> bool { matches!(op, Op::LoadName) }
 /// Reads an environment slot (`LoadEnvLocal`).
@@ -747,10 +732,6 @@ pub(crate) const fn reads_environment_slot(op: Op) -> bool { matches!(op, Op::Lo
 pub(crate) const fn defines_array_element(op: Op) -> bool { matches!(op, Op::DefineArrayElement) }
 /// Refuses `null` and `undefined` (`RequireObjectCoercible`).
 pub(crate) const fn requires_object_coercible(op: Op) -> bool { matches!(op, Op::RequireObjectCoercible) }
-/// Copies a register into another (`Move`).
-pub(crate) const fn moves(op: Op) -> bool { matches!(op, Op::Move) }
-/// Jumps on a register's truthiness (`JumpFalse`, `JumpTrue`).
-pub(crate) const fn tests_truthiness(op: Op) -> bool { matches!(op, Op::JumpFalse | Op::JumpTrue) }
 /// Writes `this` as a field (`SetThisField`).
 pub(crate) const fn writes_this_field(op: Op) -> bool { matches!(op, Op::SetThisField) }
 
@@ -1263,17 +1244,6 @@ impl Operation<u64, ()> {
         matches!(Self::of(instruction), Some(Self::Throw { .. }))
     }
 
-    /// Whether `instruction` returns from its frame: its decoded operation is `Return`.
-    pub(crate) fn is_return(instruction: WideInstruction) -> bool {
-        matches!(Self::of(instruction), Some(Self::Return { .. }))
-    }
-
-    /// Whether `instruction` is a Number, equality or general `Binary` operation: the operation a
-    /// `Binary` record decodes to, whose operator the tier reads from its operand field.
-    pub(crate) fn is_binary(instruction: WideInstruction) -> bool {
-        matches!(Self::of(instruction), Some(Self::Number(_) | Self::Equality { .. } | Self::Binary { .. }))
-    }
-
     /// Whether `instruction` yields a value from a generator (`Yield`, a lane row). The interpreter
     /// frame answers no suspension (`Frame::suspend_yield`), so its yield is the general loop's step.
     pub(crate) fn is_yield(instruction: WideInstruction) -> bool {
@@ -1286,11 +1256,6 @@ impl Operation<u64, ()> {
         matches!(Self::decode_lane(instruction), Some(Self::Await { .. }))
     }
 
-    /// Whether `instruction` tests a private name's brand (`PrivateIn`), which no staged row answers.
-    pub(crate) fn is_private_in(instruction: WideInstruction) -> bool {
-        instruction.op() == Op::PrivateIn
-    }
-
     /// Whether `instruction` is a named field read (`GetField`), whatever its result flags.
     pub(crate) fn is_field_read(instruction: WideInstruction) -> bool {
         instruction.op() == Op::GetField
@@ -1300,22 +1265,6 @@ impl Operation<u64, ()> {
     /// field of `this`), whatever its operand.
     pub(crate) fn is_field_store(instruction: WideInstruction) -> bool {
         instruction.op().is_field_store()
-    }
-
-    /// Whether `instruction` is the named store `SetField` itself (not a store to `this`).
-    pub(crate) fn is_set_field(instruction: WideInstruction) -> bool {
-        instruction.op() == Op::SetField
-    }
-
-    /// Whether `instruction` reads a capture (`LoadCapture`), whatever its result flags.
-    pub(crate) fn is_capture_read(instruction: WideInstruction) -> bool {
-        instruction.op() == Op::LoadCapture
-    }
-
-    /// Whether `instruction` is an ordinary call (`Call`, `CallArray`), which a native tier
-    /// profiles and dispatches as a call.
-    pub(crate) fn is_ordinary_call(instruction: WideInstruction) -> bool {
-        instruction.op().is_ordinary_call()
     }
 
     /// The field cache sites `instruction` reads (`true`) or stores through (`false`), as the

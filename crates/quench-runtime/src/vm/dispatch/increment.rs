@@ -32,21 +32,3 @@ pub(in crate::vm) fn number_increment(input: Value, is_decrement: bool) -> Optio
         .as_number()
         .map(|number| Value::number(number + increment_delta(is_decrement)))
 }
-
-/// `number_increment` of an integer whose update stays one; `None` for any other value or
-/// an overflow, which `number_increment` answers.
-#[inline(always)]
-pub(in crate::vm) fn integer_increment(input: Value, is_decrement: bool) -> Option<Value> {
-    // A counter in [0, 2^31): its word's distance above the int tag (`Value::int_key_offset`)
-    // stepped by one stays below 2^31 exactly when the input is an int32 whose step is a
-    // non-negative int32, which is then the step itself: one compare is the tag test and the
-    // overflow test. Negative counters and the step below zero take the checked form.
-    let offset = input.int_key_offset();
-    let stepped = if is_decrement { offset.wrapping_sub(1) } else { offset.wrapping_add(1) };
-    // A decrement of the least int32 (offset 2^31) would land at 2^31 - 1: its bound is one less.
-    if stepped < (1 << 31) - usize::from(is_decrement) {
-        return Some(Value::integer(stepped as i32));
-    }
-    let integer = input.as_int()?;
-    if is_decrement { integer.checked_sub(1) } else { integer.checked_add(1) }.map(Value::integer)
-}

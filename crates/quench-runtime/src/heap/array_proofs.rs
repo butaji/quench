@@ -27,7 +27,7 @@
 //! could carry one past a change: entering a nested run, ending its own, and restoring a
 //! context a native's callback copied.
 
-use super::{ArrayElements, ArrayObject, Heap};
+use super::{ArrayObject, Heap};
 use crate::value::Value;
 use std::mem::MaybeUninit;
 use std::ptr::NonNull;
@@ -77,63 +77,6 @@ impl ArrayStorageProofs {
     fn proves(&self, slot: usize, bound: usize, base: Value) -> bool {
         // SAFETY: a nonzero bound was written by `prove` with the slot's base.
         bound != 0 && unsafe { self.bases[slot].assume_init() } == base
-    }
-
-    /// The present element `base[index]` through the proof in `register`'s slot; `None`
-    /// where the slot does not prove `base`, past the length, or at a hole.
-    #[inline(always)]
-    pub(crate) fn element(&self, register: u16, base: Value, index: usize) -> Option<Value> {
-        let slot = Self::slot(register);
-        let bound = self.readable[slot];
-        if index >= bound || !self.proves(slot, bound, base) {
-            return None;
-        }
-        // SAFETY: the proof holds (module documentation): `index` is below the length of
-        // the backing whose first element `values` names.
-        let value = unsafe { *self.values[slot].assume_init().as_ptr().add(index) };
-        (!value.is_deleted()).then_some(value)
-    }
-
-    /// Replaces the present element `base[index]` with `value` through the proof in
-    /// `register`'s slot, as `Vm::try_replace_record_element` would; `false` stores nothing:
-    /// a slot that does not prove `base` writable, an index past the length, a hole, or a
-    /// value the write barrier might log.
-    #[inline(always)]
-    pub(crate) fn replace(&mut self, register: u16, base: Value, index: usize, value: Value) -> bool {
-        let slot = Self::slot(register);
-        let bound = self.writable[slot];
-        if value.heap_index().is_some() || index >= bound || !self.proves(slot, bound, base) {
-            return false;
-        }
-        // SAFETY: as in `element`; a nonzero writable bound proves the backing this array's
-        // own and in-place replacement its whole store.
-        let values = unsafe { self.values[slot].assume_init() };
-        if unsafe { *values.as_ptr().add(index) }.is_deleted() {
-            return false;
-        }
-        // SAFETY: as above.
-        unsafe { ArrayElements::replace_through(values, index, value) };
-        true
-    }
-
-    /// `replace` of a value whatever its kind, for a store the write barrier admitted unlogged
-    /// (`Heap::array_store_unlogged`): a heap value into a proved array (`arr[i] = o`).
-    #[inline(always)]
-    pub(crate) fn replace_admitted(&mut self, register: u16, base: Value, index: usize, value: Value) -> bool {
-        let slot = Self::slot(register);
-        let bound = self.writable[slot];
-        if index >= bound || !self.proves(slot, bound, base) {
-            return false;
-        }
-        // SAFETY: as in `element`; a nonzero writable bound proves the backing this array's
-        // own and in-place replacement its whole store.
-        let values = unsafe { self.values[slot].assume_init() };
-        if unsafe { *values.as_ptr().add(index) }.is_deleted() {
-            return false;
-        }
-        // SAFETY: as above.
-        unsafe { ArrayElements::replace_through(values, index, value) };
-        true
     }
 
     /// The first element and the elements a read through the proof in `register`'s slot may reach,
@@ -195,13 +138,6 @@ impl ArrayStorageProofs {
 }
 
 impl Heap {
-    /// Whether a store of `stored` into the record array `base` names logs nothing in the write
-    /// barrier, as `record_array_store_mut_unlogged` admits it: the gate of a proved heap-value
-    /// replacement (`ArrayStorageProofs::replace_admitted`).
-    #[inline(always)]
-    pub(crate) fn array_store_unlogged(&self, base: Value, stored: Value) -> bool {
-        base.direct_array_index().is_some_and(|record_id| !self.array_records.store_logs(record_id, stored))
-    }
 
     /// Proves the storage of `base` in `register`'s slot of `proofs` when `base` names a
     /// record array; `false` for any other value.

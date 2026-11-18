@@ -2911,25 +2911,6 @@ impl<H: Host> Vm<H> {
         unsafe { *self.frames.get_unchecked(frame).locals.get_unchecked(slot) }
     }
 
-    #[inline(always)]
-    /// Writes a local whose slot was checked by residual validation.
-    ///
-    /// # Safety
-    /// `frame` must identify an active frame, and `slot` must be less than the
-    /// active function's local count. Frame initialization sizes locals to that
-    /// count.
-    pub(super) unsafe fn write_validated_local(&mut self, frame: usize, slot: usize, value: Value) {
-        // SAFETY: the caller establishes that the frame is active and validation
-        // established `slot < Function.locals`; invocation setup sizes this frame
-        // to that function's local count.
-        unsafe {
-            *self
-                .frames
-                .get_unchecked_mut(frame)
-                .locals
-                .get_unchecked_mut(slot) = value;
-        }
-    }
 }
 
 /// The slots of the environment a promotion makes of `locals`: those the `selective` capture list

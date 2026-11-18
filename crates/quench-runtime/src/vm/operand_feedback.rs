@@ -164,22 +164,6 @@ pub(super) unsafe fn note_operands<H: Host>(cx: *mut LaneContext<H>, ip: Ip, lef
     }
 }
 
-/// Adds `kind` to the feedback byte of the record at `ip`: what `note_operands` adds for an
-/// operand pair already known to be of that kind (two BigInts, two strings), without
-/// classifying them again.
-///
-/// # Safety
-/// As `note_operands`.
-#[inline(always)]
-pub(super) unsafe fn note_kind<H: Host>(cx: *mut LaneContext<H>, ip: Ip, kind: OperandKinds) {
-    // SAFETY: as the function's own.
-    let cell = unsafe { feedback_cell((*cx).base, ip) };
-    let kinds = OperandKinds(cell.get()).union(kind);
-    if kinds.0 != cell.get() {
-        cell.set(kinds.0);
-    }
-}
-
 /// A view's records, with the feedback bytes of its sites in front of them: one byte per record,
 /// counted back from the first.
 pub(super) struct Records {

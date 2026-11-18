@@ -12,16 +12,6 @@ impl Heap {
         }
     }
 
-    /// Whether `value`'s cell is in the remembered set: its writes need no barrier until the
-    /// next collection.
-    pub(crate) fn is_remembered_cell(&self, value: Value) -> bool {
-        let Some(HeapReference::LegacySlot(index)) = value.heap_reference() else {
-            return false;
-        };
-        let (word, bit) = crate::heap::slot_bit(index as usize);
-        self.remembered_marks.get(word).is_some_and(|marks| marks & bit != 0)
-    }
-
     /// The write barrier: an old (marked) cell written to joins the remembered set once.
     #[inline(always)]
     pub(in crate::heap) fn remember(&mut self, index: usize) {

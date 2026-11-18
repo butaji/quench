@@ -85,7 +85,7 @@ impl<'a, H: Host> InterpreterFrame<'a, H> {
         // SAFETY: `vm` is the running VM, live for the row. The register and local pointers are the
         // running activation's, which stay allocated for the activation's run.
         let (registers, locals, locals_len, function) = unsafe {
-            let running = &mut (*vm).frames[frame];
+            let running = &mut (&mut *vm).frames[frame];
             (running.registers.as_mut_ptr(), running.locals.as_mut_ptr(), running.locals.len(), running.function)
         };
         let site = CallSite { owner: VarOwner::Frame(frame), function, resume: pc };

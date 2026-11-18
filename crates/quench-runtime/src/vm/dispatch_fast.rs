@@ -31,10 +31,8 @@ use smallvec::SmallVec;
 use crate::heap::InlineObjectHeader;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::*;
-use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
 use crate::bytecode::index as opc;
 use crate::bytecode::{Class, RegisterList, Traits};
-use crate::staged::Allocation;
 use crate::staged::wasm_float::{Float, float_binary, is_float_comparison};
 use crate::staged::ConcreteWasm;
 use crate::bytecode::{
@@ -43,9 +41,7 @@ use crate::bytecode::{
 use crate::wasm::float::{
     F32BinaryOperator, F64BinaryOperator, F64UnaryOperator,
 };
-use crate::wasm::integer::{
-    I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator,
-};
+use crate::wasm::integer::I32BinaryOperator;
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
 
 /// The arithmetic operators the lane decides per operator (`lane_operator`,
@@ -684,7 +680,7 @@ pub(super) use body_calls::{lane_body_call, lane_body_construct};
 mod lane_leaves;
 #[path = "operand_feedback.rs"]
 pub(super) mod operand_feedback;
-use operand_feedback::{has_operand_feedback, note_kind, OperandKinds, note_operands, Records};
+use operand_feedback::{has_operand_feedback, note_operands, Records};
 #[path = "lane_body_tier.rs"]
 mod lane_body_tier;
 #[path = "loop_tier.rs"]
@@ -1326,38 +1322,6 @@ impl Registers {
             return None;
         }
         Some(unsafe { halves.read() } as i32)
-    }
-
-    /// The register's Number (`Value::as_number`), its tag read as the word's top half-word
-    /// (`movzx`) and a double loaded straight into a vector register: no copy and shift of
-    /// the whole word for the tag.
-    #[inline(always)]
-    fn number(self, register: u16) -> Option<f64> {
-        // SAFETY: as for `get`; the tag field is the word's high 16 bits (little endian).
-        let word = unsafe { self.0.add(usize::from(register)) };
-        let field = unsafe { word.cast::<u16>().add(3).read() };
-        if !crate::value::tag_field_is_tagged(field) {
-            return Some(unsafe { word.cast::<f64>().read() });
-        }
-        if u32::from(field) << 16 == crate::value::INT_TAG_HIGH {
-            return Some(f64::from(unsafe { word.cast::<i32>().read() }));
-        }
-        None
-    }
-
-    /// `number`, and whether the register held an int32.
-    #[inline(always)]
-    fn number_kind(self, register: u16) -> Option<(f64, bool)> {
-        // SAFETY: as for `number`.
-        let word = unsafe { self.0.add(usize::from(register)) };
-        let field = unsafe { word.cast::<u16>().add(3).read() };
-        if !crate::value::tag_field_is_tagged(field) {
-            return Some((unsafe { word.cast::<f64>().read() }, false));
-        }
-        if u32::from(field) << 16 == crate::value::INT_TAG_HIGH {
-            return Some((f64::from(unsafe { word.cast::<i32>().read() }), true));
-        }
-        None
     }
 
     #[inline(always)]
@@ -3259,11 +3223,6 @@ fn read<const ACC: u8, const FIELD: u8>(r: Registers, register: u16, view: Carri
     }
 }
 
-#[inline(always)]
-fn read_i32<const ACC: u8, const FIELD: u8>(r: Registers, register: u16, view: Carried) -> i32 {
-    read::<ACC, FIELD>(r, register, view).wasm_bits32() as i32
-}
-
 /// Write an accumulator producer's result and continue with it carried.
 macro_rules! produce {
     ($cx:expr, $r:expr, $ip:expr, $register:expr, $value:expr, $view:expr) => {{
@@ -3289,14 +3248,6 @@ fn following(ip: Ip) -> Ip {
     unsafe { ip.add(1) }
 }
 
-/// The opcode a handler instantiation serves.
-const fn opcode(index: u16) -> Op {
-    match Op::from_index(index as usize) {
-        Some(op) => op,
-        None => panic!("lane handler for an opcode outside the opcode table"),
-    }
-}
-
 lane_handler! {
     /// Not a lane instruction: the general path executes it.
     fn lane_exit<>(cx, r, ip, i, view) {
@@ -3314,7 +3265,7 @@ mod lane_reads;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, lane_runs_row, staged_allocate, NameBinding, NameRead, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
+use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, lane_runs_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
 lane_handler! {
@@ -3765,21 +3716,6 @@ pub(super) fn proof_index(key: Value) -> Option<usize> {
     usize::try_from(key.as_int()?).ok()
 }
 
-/// The integer `IncDec` of `value`, the update `dispatch::number_increment` makes of an
-/// integer that does not overflow; `None` for any other value.
-#[inline(always)]
-pub(super) fn integer_increment<const DECREMENT: bool>(value: Value) -> Option<i32> {
-    // As `dispatch::integer_increment`: a non-negative step by one word-range compare.
-    let offset = value.int_key_offset();
-    let stepped = if DECREMENT { offset.wrapping_sub(1) } else { offset.wrapping_add(1) };
-    // A decrement of the least int32 (offset 2^31) would land at 2^31 - 1: its bound is one less.
-    if stepped < (1 << 31) - usize::from(DECREMENT) {
-        return Some(stepped as i32);
-    }
-    let integer = value.as_int()?;
-    if DECREMENT { integer.checked_sub(1) } else { integer.checked_add(1) }
-}
-
 script_handler! {
     /// The `Binary` row's miss (`Miss::Binary`) for operands its value declines: the general operation made in place
     /// (`lane_in_place`), which may reach guest code (a proxy's `has`, a
@@ -3898,13 +3834,6 @@ unsafe fn lane_returning_binary_value<H: Host>(
         return Some(value);
     }
     unsafe { lane_binary_value(cx, r, i) }
-}
-
-/// An operator of operands not both Numbers the lane computes in place: a concatenation of
-/// strings for `+`, or BigInt arithmetic; `None` leaves it to the general path.
-fn lane_other_operator_value<H: Host>(cx: *mut LaneContext<H>, operator: u32, left: Value, right: Value) -> Option<Value> {
-    let concatenated = (operator == super::operations::ADDITION).then(|| lane_concatenation(cx, left, right));
-    concatenated.flatten().or_else(|| lane_bigint_value(cx, operator, left, right))
 }
 
 /// A BigInt operator of two BigInts that raises nothing (`Vm::bigint_binary_value`), which
@@ -4040,13 +3969,6 @@ unsafe fn running_callee<H: Host>(cx: *mut ()) -> Option<Value> {
 
 
 
-
-/// The double a `lane_operator_double_constant` record carries as its constant: a Number no
-/// integer holds, whose value bits are its double's (`constant_operator_handler`).
-#[inline(always)]
-fn double_constant(i: &LaneInstruction) -> f64 {
-    f64::from_bits(i.constant().to_bits())
-}
 
 /// `plain_keyed_get` at lane site `ip`, recording the own slot a symbol or index key's proof
 /// gives for the site's next read (`Vm::site_keyed_own_read`). Out of line: the site's hits
@@ -7198,15 +7120,6 @@ fn lane_jump<H: Host>(
     Resumed::At(r, target, view)
 }
 
-/// A backward jump whose fuel ran out (`script_fuel_out`): its safepoint, as `lane_jump`
-/// takes it, for the handlers that fuse the jump with its target's records.
-#[inline(always)]
-fn lane_jump_safepoint<H: Host>(ip: Ip, view: Carried) -> Resumed {
-    // SAFETY: the view records the distance to a validated jump target.
-    let target = unsafe { ip.byte_offset((*ip).jump()) };
-    Resumed::Exit(lane_safepoint::<H>(ip, target, view.acc))
-}
-
 /// Count one backward jump of a crediting run (`LaneContext::backedges_left`); at the budget's
 /// end, credit the running Wasm function with one interpreter entry for the loop work
 /// (`ProgramStore::note_wasm_tier_backedges`) and refill it. A function entered once and
@@ -8128,45 +8041,6 @@ mod vector_region;
 mod wasm_instance;
 use wasm_instance::{lane_instance_binding_memory, lane_wasm_memory_address, lane_wasm_memory_load, lane_wasm_memory_store};
 
-/// `if condition { chosen } else { other }` of two loaded values, picked after both load, so
-/// neither load waits on the condition; the compiler would otherwise load once from a picked
-/// register address, a load the condition delays.
-#[inline(always)]
-fn select_loaded(condition: bool, chosen: Value, other: Value) -> Value {
-    #[cfg(target_arch = "x86_64")]
-    {
-        let mut picked = other.to_bits();
-        // SAFETY: a register-only conditional move; no memory or stack.
-        unsafe {
-            std::arch::asm!(
-                "test {condition:e}, {condition:e}",
-                "cmovnz {picked}, {chosen}",
-                condition = in(reg) u32::from(condition),
-                chosen = in(reg) chosen.to_bits(),
-                picked = inout(reg) picked,
-                options(pure, nomem, nostack),
-            );
-        }
-        Value::from_bits(picked)
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        std::hint::select_unpredictable(condition, chosen, other)
-    }
-}
-
-
-/// A numeric scalar as a slot value.
-#[inline(always)]
-fn lane_encode(view: Carried, value: crate::WasmValue) -> Option<Value> {
-    Some(match value {
-        crate::WasmValue::I32(value) => view.integers.encode(value),
-        crate::WasmValue::F32(bits) => view.integers.encode(bits as i32),
-        crate::WasmValue::I64(value) => Value::from_bits64(value as u64)?,
-        crate::WasmValue::F64(bits) => Value::from_bits64(bits)?,
-        _ => return None,
-    })
-}
 
 /// The float operators a lane record runs as one hardware operation or
 /// comparison, by index: the operator is part of the handler, not a
@@ -8633,39 +8507,6 @@ fn lane_safepoint_writing<H: Host>(
 /// entry) in direction `backward`. The pair's two moves and the jump run as one record.
 fn move_pair_jump_handler<H: Host>(backward: bool) -> Handler {
     lane_frame::chain_row::<H, { opc::Move }, { opc::Move }, { opc::Jump }, { crate::staged::NO_LINK }, { crate::staged::FUSED_PLAIN }>(backward)
-}
-
-/// The most records before a record that one fused record can run through:
-/// an f64 load, arithmetic and store (`FloatPairs::UPDATES`) start two
-/// records ahead of the last they run.
-const FUSION_REACH: usize = 2;
-
-/// The scalar direct store `store` writes for slot value `value`: registers
-/// hold their static Wasm types, and a value whose bits need a box has none.
-#[inline(always)]
-fn stored_value(store: MemoryStore, value: Value) -> Option<crate::WasmValue> {
-    Some(match store.value_type() {
-        crate::WasmType::I32 => crate::WasmValue::I32(value.wasm_bits32() as i32),
-        crate::WasmType::F32 => crate::WasmValue::F32(value.as_int()? as u32),
-        crate::WasmType::I64 => crate::WasmValue::I64(value.bits64()? as i64),
-        crate::WasmType::F64 => crate::WasmValue::F64(value.bits64()?),
-        _ => return None,
-    })
-}
-
-/// The direct load an instantiation serves.
-const fn direct_load(op: u16) -> MemoryLoad {
-    match MemoryLoad::from_direct_op(opcode(op)) {
-        Some(load) => load,
-        None => panic!("not a direct load"),
-    }
-}
-
-/// The i32 loads the load fusions below serve.
-macro_rules! i32_loads {
-    ($m:ident) => {
-        $m!(WasmI32Load, WasmI32Load8S, WasmI32Load8U, WasmI32Load16S, WasmI32Load16U)
-    };
 }
 
 
@@ -11280,7 +11121,6 @@ mod named_keys;
 mod denoted;
 mod wasm_calls;
 use wasm_calls::{known_call_handler, reference_call_handler};
-use denoted::lane_unary;
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
 mod root_bindings;
@@ -16525,14 +16365,6 @@ pub(in crate::vm) const ELEMENT_WRITE: u16 = {
     }
 };
 
-/// The handlers the primitive benches check a lane view derives: a proved element read and store
-/// (`proved_row`'s rows), and the fused update, read and addition (`chain_row`).
-pub(in crate::vm) fn proved_read_handler<H: Host>() -> *const () { lane_row::<H, ELEMENT_READ, ACC_NONE, FLAG_SET> as Handler as *const () }
-pub(in crate::vm) fn proved_store_handler<H: Host>() -> *const () { lane_row::<H, ELEMENT_WRITE, ACC_NONE, FLAG_SET> as Handler as *const () }
-pub(in crate::vm) fn updated_read_add_handler<H: Host>() -> *const () {
-    lane_frame::chain_row::<H, { opc::IncDec }, { opc::GetIndex }, { opc::Binary }, { crate::staged::NO_LINK }, { crate::staged::FUSED_PLAIN }>(false) as *const ()
-}
-
 /// The handler serving opcode `OP` whose accumulator field is `ACC`, derived
 /// from the opcode's semantic family; `None` when the general path executes
 /// the opcode.
@@ -16560,18 +16392,6 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
         handler,
         produces: false,
     })
-}
-
-/// The handler of a Wasm i32 zero test's generated row (`jump_row`) in direction `backward`: the test
-/// that jumps where zero (`when_zero`), else where nonzero. A row jump carries no register.
-fn zero_test_row<H: Host>(when_zero: bool, backward: bool) -> *const () {
-    let handler: Handler = match (when_zero, backward) {
-        (true, false) => jump_row::<H, { crate::staged::WASM_JUMP_ZERO_ROW }>(false),
-        (true, true) => jump_row::<H, { crate::staged::WASM_JUMP_ZERO_ROW }>(true),
-        (false, false) => jump_row::<H, { crate::staged::WASM_JUMP_NONZERO_ROW }>(false),
-        (false, true) => jump_row::<H, { crate::staged::WASM_JUMP_NONZERO_ROW }>(true),
-    };
-    handler as *const ()
 }
 
 
@@ -17342,11 +17162,11 @@ fn derive_lane_view<'live, H: Host>(
                 .is_some_and(|jump| handler == jump.handler as *const ())
         })
     };
-    let entry_jumps = branch_table_entry_records(&decoded);
+    let _entry_jumps = branch_table_entry_records(&decoded);
     // A plain move or add of a constant whose next record jumps fuses with that jump
     // (`staged::FUSED_ROWS`, `fuse_rows`), except at a hot OSR latch: its jump record stays
     // visible to `install_loop_sites`, which runs before the fusion pass.
-    let then_fuses = |records: &[LaneInstruction], pc: usize| {
+    let _then_fuses = |records: &[LaneInstruction], pc: usize| {
         pc + 1 < records.len()
             && (serves(records[pc].handler, opc::Move, ACC_NONE) || serves(records[pc].handler, opc::WasmI32AddImmediate, ACC_NONE))
             && jump_direction(records[pc + 1].handler).is_some_and(|backward| !(loop_tier && backward))
@@ -17812,14 +17632,6 @@ unsafe fn proof_span<H: Host>(context: *mut u8, register: u16, base: Value, writ
     if writable { proofs.write_span(register, base) } else { proofs.read_span(register, base) }
 }
 
-/// Applies `$apply!` to the arithmetic operators the lane fuses with a neighbouring record
-/// (`operator_handler`), as a comma-separated list of `operations` constants.
-macro_rules! fused_arithmetic {
-    ($apply:ident) => {
-        $apply!(ADDITION, SUBTRACTION, MULTIPLICATION, DIVISION)
-    };
-}
-
 /// Gives each element read and store whose register base its innermost loop does not
 /// redefine the proved row (`proved_row`), which reaches the element through the
 /// run's proof of the array's storage (`ArrayStorageProofs`) instead of decoding the array:
@@ -17895,13 +17707,6 @@ fn update_direction<H: Host>(record: &LaneInstruction) -> Option<bool> {
     is_row::<H, { opc::IncDec }>(record.handler).then(|| record.imm() != 0)
 }
 
-/// The row handler (`lane_row`) of an `IncDec` of the direction a fused update's `DECREMENT` names,
-/// which the fused record runs where its own fast form does not take the value.
-#[inline(always)]
-fn inc_dec_row<H: Host, const DECREMENT: bool>() -> Handler {
-    if DECREMENT { lane_row::<H, { opc::IncDec }, ACC_NONE, FLAG_SET> } else { lane_row::<H, { opc::IncDec }, ACC_NONE, FLAG_CLEAR> }
-}
-
 /// An environment-window record's immediate: its own (a local slot or closure function, at
 /// most `ENVIRONMENT_WINDOW_FIELD`) below, the function's register count above.
 const ENVIRONMENT_WINDOW_SHIFT: u32 = u16::BITS;
@@ -17969,7 +17774,6 @@ const ARGUMENTS_COUNT: u16 = crate::staged::ARGUMENTS_COUNT_ROW;
 
 /// The jump rows the jump passes fuse and requicken to (`jump_row`).
 const JUMP: u16 = opc::Jump;
-const JUMP_IF_TRUE: u16 = opc::JumpTrue;
 
 /// The capture rows the capture passes fuse (`specialize_captures`, `specialize_capture_updates`,
 /// `specialize_load_branch_pairs`) and whose read a fused update falls back to.
@@ -17995,13 +17799,6 @@ fn specialize_captures<H: Host>(records: &mut [LaneInstruction]) {
         };
         records[pc].handler = handler as *const ();
     }
-}
-
-/// Whether `record` is a `LoadCapture` row of the running function's own scope, whose dense slots
-/// the passes that fuse a read with its consumer (`specialize_load_branch_pairs`)
-/// read; an outer read is not one.
-fn is_own_capture_read<H: Host>(record: &LaneInstruction) -> bool {
-    is_row::<H, CAPTURE_READ>(record.handler) && ImmediateLayout::capture_depth(record.imm()) == 0
 }
 
 
@@ -18032,54 +17829,6 @@ fn specialize_frame_locals<H: Host>(function: &Function, records: &mut [LaneInst
         };
         record.handler = handler as *const ();
     }
-}
-
-/// The handler of a specialized `Binary` operator, with a register or (`CONSTANT`) a constant
-/// right operand.
-/// A `JumpBinaryFalse` integer test handler's operator parameter that names none: the
-/// handler reads the operator from the record's `a` field (`relation_operator`).
-const RECORD_RELATION: u32 = u32::MAX;
-
-/// `$pick!` of the comparison `$operator` the lane decides with its own instantiation of a
-/// jump test, else of `RECORD_RELATION`, whose handler reads the record's operator.
-macro_rules! relation_operators {
-    ($operator:expr, $pick:ident) => {{
-        use oxc_ast::ast::BinaryOperator as B;
-        const EQUALITY: u32 = B::Equality as u32;
-        const INEQUALITY: u32 = B::Inequality as u32;
-        const STRICT_EQUALITY: u32 = B::StrictEquality as u32;
-        const STRICT_INEQUALITY: u32 = B::StrictInequality as u32;
-        const LESS_THAN: u32 = B::LessThan as u32;
-        const LESS_EQUAL: u32 = B::LessEqualThan as u32;
-        const GREATER_THAN: u32 = B::GreaterThan as u32;
-        const GREATER_EQUAL: u32 = B::GreaterEqualThan as u32;
-        const BITWISE_AND: u32 = B::BitwiseAnd as u32;
-        const BITWISE_OR: u32 = B::BitwiseOR as u32;
-        const BITWISE_XOR: u32 = B::BitwiseXOR as u32;
-        match $operator {
-            EQUALITY => $pick!(EQUALITY),
-            INEQUALITY => $pick!(INEQUALITY),
-            STRICT_EQUALITY => $pick!(STRICT_EQUALITY),
-            STRICT_INEQUALITY => $pick!(STRICT_INEQUALITY),
-            LESS_THAN => $pick!(LESS_THAN),
-            LESS_EQUAL => $pick!(LESS_EQUAL),
-            GREATER_THAN => $pick!(GREATER_THAN),
-            GREATER_EQUAL => $pick!(GREATER_EQUAL),
-            // The truth of an integer bitwise result (`integer_test_i32`).
-            BITWISE_AND => $pick!(BITWISE_AND),
-            BITWISE_OR => $pick!(BITWISE_OR),
-            BITWISE_XOR => $pick!(BITWISE_XOR),
-            _ => $pick!(RECORD_RELATION),
-        }
-    }};
-}
-
-/// The operator of an integer jump test (`lane_jump_binary_false_registers`,
-/// `lane_jump_binary_false_small`): `OP`, fixed when the view was derived
-/// (`relation_jump_handler`), else the record's.
-#[inline(always)]
-fn relation_operator<const OP: u32>(i: &LaneInstruction) -> u32 {
-    if OP == RECORD_RELATION { u32::from(i.a) } else { OP }
 }
 
 

@@ -2,7 +2,7 @@ use super::*;
 use super::dispatch_frame::{InterpreterFrame, RowRun};
 
 mod increment;
-pub(super) use increment::{integer_increment, number_increment};
+pub(super) use increment::number_increment;
 
 // Publish the current resume PC only while a binding-site consumer runs.
 macro_rules! with_binding_site_pc {
@@ -1477,7 +1477,7 @@ impl<H: Host> Vm<H> {
     }
 
     #[inline(never)]
-    fn binary_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize) -> Result<StepResult, JsError> {
+    fn binary_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, _pc: &mut usize) -> Result<StepResult, JsError> {
         let operator = i.binary_operator();
         let left_operand = i.operand_b();
         let right_operand = i.operand_c();

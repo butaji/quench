@@ -90,13 +90,6 @@ impl NumberArithmetic {
     }
 }
 
-/// Whether swapping two already-evaluated operands preserves the canonical Number
-/// result. This is not a law for evaluating/coercing guest operands or string addition.
-#[inline(always)]
-pub(super) fn number_result_is_commutative(operator: u32) -> bool {
-    matches!(NumberArithmetic::from_operator(operator), Some(NumberArithmetic::Add | NumberArithmetic::Multiply))
-}
-
 /// Sign of a non-overflowing zero product: at least one factor is zero, so
 /// the result is -0 exactly when either factor is negative. The caller must
 /// establish zero before interpreting this predicate; views supply primitives.
@@ -221,43 +214,6 @@ pub(super) fn integer_binary(op: u32, left: i32, right: i32) -> Option<Value> {
     numeric_integer_result(numeric_binary_operator(op)?, left, right)
 }
 
-/// `number_relation` of two integers alone: `None` for any other pair. Few values stay live,
-/// so a lane handler inlining it saves no registers.
-#[inline(always)]
-pub(super) fn integer_relation_i32(op: u32, left: i32, right: i32) -> Option<bool> {
-    if op > LAST_COMPARISON_OPERATOR {
-        return None;
-    }
-    Some(number_comparison(op, left, right))
-}
-
-/// The truth a jump test of two int32 operands takes: a comparison's result, or whether a
-/// bitwise operator's int32 result is nonzero (`if (flags & MASK)`, the Number it would make
-/// is never made: its ToBoolean is its bits' test). `None` for any other operator.
-#[inline(always)]
-pub(super) fn integer_test_i32(op: u32, left: i32, right: i32) -> Option<bool> {
-    let bits = match op {
-        BITWISE_AND => left & right,
-        BITWISE_OR => left | right,
-        BITWISE_XOR => left ^ right,
-        SHIFT_LEFT => left.wrapping_shl(right as u32),
-        SHIFT_RIGHT => left.wrapping_shr(right as u32),
-        SHIFT_RIGHT_ZERO_FILL => ((left as u32).wrapping_shr(right as u32)) as i32,
-        _ => return integer_relation_i32(op, left, right),
-    };
-    Some(bits != 0)
-}
-
-/// A comparison operator on two int32 Values; `None` for any other operator or value.
-#[inline(always)]
-pub(super) fn integer_relation(op: u32, left: Value, right: Value) -> Option<bool> {
-    if op > LAST_COMPARISON_OPERATOR {
-        return None;
-    }
-    let (a, b) = Value::int_pair(left, right)?;
-    Some(number_comparison(op, a, b))
-}
-
 /// A comparison operator on two Numbers, comparing integers as integers; `None` for any
 /// other operator or value.
 #[inline(always)]
@@ -271,15 +227,6 @@ pub(super) fn number_relation(op: u32, left: Value, right: Value) -> Option<bool
     // Equality, strict equality and the relational operators agree with IEEE 754
     // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.
     Some(number_comparison(op, left.as_number()?, right.as_number()?))
-}
-
-/// Comparison `op` (at most `LAST_COMPARISON_OPERATOR`) of two Numbers' doubles, as
-/// `number_relation` decides it past its int32 pair: an int32 converts exactly, so any two
-/// Numbers compare this way.
-#[inline(always)]
-pub(super) fn double_relation(op: u32, left: f64, right: f64) -> bool {
-    debug_assert!(op <= LAST_COMPARISON_OPERATOR);
-    number_comparison(op, left, right)
 }
 
 #[cfg(test)]
@@ -537,33 +484,6 @@ pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Opti
     // One operand at a time: each tag test needs a single scratch register, which keeps the
     // lane's integer handlers free of saved registers.
     let (left, right) = (left.as_int()?, right.as_int()?);
-    numeric_integer_result(numeric_binary_operator(OP)?, left, right)
-}
-
-/// `OP` on two int32 operands when its Number result is again an int32 (no overflow, no
-/// -0, no `>>>` past 2^31): the raw i32, so a fused second operator reads it without a tag
-/// test. `None` leaves the case to `integer_operator`.
-#[inline(always)]
-pub(super) fn int32_operator<const OP: u32>(left: i32, right: i32) -> Option<i32> {
-    match numeric_binary_operator(OP)? {
-        BinaryOperator::Addition => left.checked_add(right),
-        BinaryOperator::Subtraction => left.checked_sub(right),
-        BinaryOperator::Multiplication => {
-            let product = left.checked_mul(right)?;
-            // 0 from a negative factor is -0, not an int32.
-            (product != 0 || (left | right) >= 0).then_some(product)
-        }
-        operator => {
-            let operation = NumberBitwise::from_binary_operator(operator)?;
-            let bits = operation.apply(&mut I32BitwiseStage, left, right);
-            (operation != NumberBitwise::ShiftRightUnsigned || bits >= 0).then_some(bits)
-        }
-    }
-}
-
-/// `integer_operator` of two operands the caller already read as int32s.
-#[inline(always)]
-pub(super) fn integer_pair_operator<const OP: u32>(left: i32, right: i32) -> Option<Value> {
     numeric_integer_result(numeric_binary_operator(OP)?, left, right)
 }
 

@@ -3544,29 +3544,6 @@ impl EnvironmentSlots {
         Some(std::mem::ManuallyDrop::new(Self(std::mem::ManuallyDrop::into_inner(slots))))
     }
 
-    /// Read through a live dense-storage cache by `staged::environment::dense_capture`.
-    /// The dense storage of the parent environment of the environment whose dense storage is
-    /// at `storage`, as `link` recorded it in collection `epoch`; `None` when no link of that
-    /// collection was recorded.
-    ///
-    /// # Safety
-    /// `storage` came from `dense_storage` of a live heap environment in collection `epoch`
-    /// (never a storage laid out in place, which has no prefix of its own).
-    #[inline(always)]
-    pub(crate) unsafe fn linked_parent(storage: *const usize, epoch: u64) -> Option<*const usize> {
-        type Slice = super::thin_slice::ThinBoxSlice<EnvironmentSlot, ENVIRONMENT_PREFIX_WORDS>;
-        // SAFETY: as the caller guarantees, the prefix words precede the header; an empty
-        // storage's are the shared empty header's zeros, which name no collection.
-        unsafe {
-            let prefix = Slice::prefix(std::ptr::NonNull::new_unchecked(storage.cast_mut()));
-            if *prefix != epoch.wrapping_add(1) as usize {
-                return None;
-            }
-            let parent = *prefix.add(1) as *const usize;
-            (!parent.is_null()).then_some(parent)
-        }
-    }
-
     /// Records `parent`, the dense storage of the parent environment of the environment whose
     /// dense storage is at `storage`, for collection `epoch` (`linked_parent`). Within one
     /// collection a live environment's storage never moves, and each collection names a new
@@ -3609,25 +3586,6 @@ impl EnvironmentSlots {
         // SAFETY: the caller's exclusive access and authorization, over the view's `len` values.
         unsafe { crate::staged::environment::concrete_dense_capture_store(values.cast_mut(), len, u16::try_from(slot).ok()?, value) }
             .then_some(())
-    }
-
-    /// `read_storage` and `write_storage` of one slot under one borrow and bounds test: `update`
-    /// maps the slot's ordinary value to the one it stores, or declines and stores nothing.
-    /// The old value and the stored one.
-    /// # Safety
-    /// As `write_storage`.
-    #[inline(always)]
-    pub(crate) unsafe fn update_storage(
-        storage: *const usize,
-        slot: usize,
-        update: impl FnOnce(Value) -> Option<Value>,
-    ) -> Option<(Value, Value)> {
-        // SAFETY: as guaranteed by the caller, for this update only.
-        let mut slots = unsafe { Self::borrow_storage(storage) }?;
-        let place = slots.dense_plain_mut(slot)?;
-        let old = *place;
-        *place = update(old)?;
-        Some((old, *place))
     }
 
     /// Native entry's values/count projection of the same cached storage.
@@ -3716,18 +3674,6 @@ impl EnvironmentSlots {
     pub(crate) fn dense_plain(&self, slot: usize) -> Option<Value> {
         debug_assert!(!self.0.marked());
         let value = self.0.get(slot)?.0;
-        (!value.is_internal_marker()).then_some(value)
-    }
-    /// `dense` for writing.
-    #[inline(always)]
-    pub(crate) fn dense_mut(&mut self) -> Option<&mut Self> {
-        (!self.0.marked()).then_some(self)
-    }
-    /// `dense_plain`'s slot to write: an ordinary value's place, which a store replaces.
-    #[inline(always)]
-    pub(crate) fn dense_plain_mut(&mut self, slot: usize) -> Option<&mut Value> {
-        debug_assert!(!self.0.marked());
-        let value = &mut self.0.get_mut(slot)?.0;
         (!value.is_internal_marker()).then_some(value)
     }
     /// The value of a slot this environment owns; a shared slot lives in its owner.

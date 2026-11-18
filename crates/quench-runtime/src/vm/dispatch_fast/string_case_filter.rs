@@ -64,7 +64,6 @@ struct Case {
 }
 
 pub(super) struct StringCaseFilter {
-    start: usize,
     short_lengths: u64,
     max_length: usize,
     buckets: Box<[Bucket]>,

@@ -10,13 +10,6 @@ const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
 /// The high dword of every int32's word (`Registers::int` compares it in memory).
 pub(crate) const INT_TAG_HIGH: u32 = (TAG_INT >> 32) as u32;
 
-/// Whether a word's high 16 bits (`TAG_SHIFT` is 48) name a tag rather than a double's bits:
-/// `Value::is_tagged` from the tag field alone, for a reader that loads only that half-word.
-#[inline(always)]
-pub(crate) fn tag_field_is_tagged(field: u16) -> bool {
-    const { assert!(TAG_SHIFT == 48) };
-    u32::from(field).wrapping_sub((FIRST_TAG >> TAG_SHIFT) as u32) <= ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as u32
-}
 pub(crate) const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
 

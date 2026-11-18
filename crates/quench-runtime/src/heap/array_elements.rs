@@ -755,18 +755,6 @@ impl ArrayElements {
         true
     }
 
-    /// `UniqueElements::set` through the first value a unique backing gave
-    /// (`unique_values`): the count of other values in its header keeps the write.
-    ///
-    /// # Safety
-    /// `values` is the first value of a backing its array still owns alone, and `index` is
-    /// below its length.
-    #[inline(always)]
-    pub(crate) unsafe fn replace_through(values: NonNull<Value>, index: usize, value: Value) {
-        // SAFETY: the caller's contract; the header precedes the values in the allocation.
-        unsafe { crate::staged::elements::concrete_replace_element(values.as_ptr(), index, value) }
-    }
-
     /// Whether this wide backing, which this array alone owns, may become double on its
     /// first non-int32 Number: never one made generic from an encoded backing (`KEEP_WIDE`).
     #[inline(always)]
