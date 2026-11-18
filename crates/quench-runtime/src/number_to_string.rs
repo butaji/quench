@@ -47,8 +47,47 @@ impl AppendBytes for Vec<u8> {
         }
         // SAFETY: the spare capacity holds `bytes.len()` bytes, which `bytes` does not alias.
         unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.as_mut_ptr().add(self.len()), bytes.len());
+            copy_short(bytes, self.as_mut_ptr().add(self.len()));
             self.set_len(self.len() + bytes.len());
+        }
+    }
+}
+
+/// Copies `bytes` to `to` as `copy_nonoverlapping` does, a short run (a key, a number, a
+/// literal) inline: two overlapping word moves rather than a `memcpy` call, whose entry and
+/// size dispatch cost more than such a copy.
+///
+/// # Safety
+/// `to` is valid for `bytes.len()` writes and does not alias `bytes`.
+/// The word sizes `copy_short` moves a short run in.
+const WIDE_WORD: usize = size_of::<u64>();
+const NARROW_WORD: usize = size_of::<u32>();
+/// The longest run `copy_short` moves without `memcpy`: two overlapping wide words.
+const SHORT_RUN: usize = 2 * WIDE_WORD;
+
+#[inline(always)]
+unsafe fn copy_short(bytes: &[u8], to: *mut u8) {
+    let (from, len) = (bytes.as_ptr(), bytes.len());
+    // SAFETY: every read is within `bytes` and every write within `to`'s `len` bytes; the
+    // overlapping moves write the same bytes twice.
+    unsafe {
+        match len {
+            WIDE_WORD..=SHORT_RUN => {
+                let (head, tail) = (from.cast::<u64>().read_unaligned(), from.add(len - WIDE_WORD).cast::<u64>().read_unaligned());
+                to.cast::<u64>().write_unaligned(head);
+                to.add(len - WIDE_WORD).cast::<u64>().write_unaligned(tail);
+            }
+            NARROW_WORD..WIDE_WORD => {
+                let (head, tail) = (from.cast::<u32>().read_unaligned(), from.add(len - NARROW_WORD).cast::<u32>().read_unaligned());
+                to.cast::<u32>().write_unaligned(head);
+                to.add(len - NARROW_WORD).cast::<u32>().write_unaligned(tail);
+            }
+            0..NARROW_WORD => {
+                for index in 0..len {
+                    to.add(index).write(from.add(index).read());
+                }
+            }
+            _ => std::ptr::copy_nonoverlapping(from, to, len),
         }
     }
 }
