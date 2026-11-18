@@ -57,10 +57,9 @@ impl OsrFacts {
 /// 34 ms of a 733 ms run). Its facts are the observation's at the start, to which `watch`
 /// subscribes: a shape compaction or a slot widening meanwhile discards the code.
 pub(in crate::vm) struct PendingOsrRegion {
-    /// Its lowering's end, which a drop waits for: the lowering reads `directs` by pointer.
-    /// First, so it drops before them.
-    done: Option<super::super::jit_backend::Done>,
-    code: super::super::jit_backend::Pending<super::lane_compile::AssertSend<Option<LoopLowered>>>,
+    /// Its lowering and code on the code generator's thread; a drop waits for the lowering,
+    /// which reads `directs` by pointer. First, so it drops before them.
+    code: super::super::jit_backend::OffThread<Option<LoopLowered>>,
     watch: Rc<crate::code_dependencies::PublishedCode<()>>,
     header: u32,
     facts: OsrFacts,
@@ -443,10 +442,10 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::b
     let facts = OsrFacts { stable: StableFacts { globals: stable, holders, atoms, layouts, slots: slot_types, ..Default::default() },
         calls: LaneDependencies::of(std::iter::empty(), &calls.direct), ..OsrFacts::observed(observation) };
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
-    let code = super::super::jit_backend::run_in_background(move || super::lane_compile::AssertSend(Some(LoopLowered {
-        plan: 0, stable: StableFacts::default(), roots: Default::default(), clif: None, code: Ok(code) })));
+    let code = super::super::jit_backend::OffThread::ready(Some(LoopLowered {
+        plan: 0, stable: StableFacts::default(), roots: Default::default(), clif: None, code: Ok(code) }));
     let call_frame = (registers, calls.invalidation.clone());
-    Some(Some(PendingOsrRegion { done: None, code, watch, header: region.header, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean }, resumes, facts,
+    Some(Some(PendingOsrRegion { code, watch, header: region.header, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean }, resumes, facts,
         calls: Some(calls), directs: Vec::new(), call_frame }))
 }
 
@@ -521,15 +520,12 @@ pub(in crate::vm) fn start_osr_region(
     let facts = LoopFacts { int_entries: observation.int_entries.to_vec(), double_registers: observation.double_registers.to_vec(),
         typed_captures: observation.typed_captures.to_vec(), int_captures: observation.int_captures.to_vec(),
         frame_captures: observation.frame_captures.to_vec(), entry_bounds: observation.entry_bounds };
-    let job = super::lane_compile::AssertSend(LoopJob { program: program.detached(&functions), plans, fields, facts, isa, function_id, helpers, views, tiers,
-        held: stores.map(|names| (names.clone(), invalidation.address())) });
-    let (code, done) = super::super::jit_backend::run_in_background_guarded(move || {
-        let super::lane_compile::AssertSend(job) = job;
-        super::lane_compile::AssertSend(job.run())
-    });
+    let job = LoopJob { program: program.detached(&functions), plans, fields, facts, isa, function_id, helpers, views, tiers,
+        held: stores.map(|names| (names.clone(), invalidation.address())) };
+    let code = super::super::jit_backend::OffThread::guarded(job, |job| job.run());
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
     let call_frame = (program.function(function_id as usize).registers, invalidation);
-    Some(PendingOsrRegion { done: Some(done), code, watch, header: region.header, facts: OsrFacts::observed(observation), crossing: super::Crossing::General,
+    Some(PendingOsrRegion { code, watch, header: region.header, facts: OsrFacts::observed(observation), crossing: super::Crossing::General,
         resumes: super::base_region::ResumeTable::empty(), calls: None, directs, call_frame })
 }
 
@@ -566,10 +562,9 @@ impl PendingOsrRegion {
         let lowered = match self.code.poll() {
             std::task::Poll::Pending => return Err(self),
             std::task::Poll::Ready(_) if !self.watch.is_published() => return Ok(OsrCompile::Stale),
-            std::task::Poll::Ready(Some(super::lane_compile::AssertSend(Some(lowered)))) => lowered,
+            std::task::Poll::Ready(Some(Some(lowered))) => lowered,
             std::task::Poll::Ready(_) => return Ok(OsrCompile::Failed),
         };
-        drop(self.done.take());
         let LoopLowered { plan, stable, roots, clif, code } = lowered;
         let Ok(code) = code else { return Ok(OsrCompile::Failed) };
         let calls = match self.calls.take() {

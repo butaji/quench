@@ -63,10 +63,10 @@ impl NumericImage {
     /// program that shares nothing with it (`ResidualProgram::detached`): the lowering reads
     /// only the program, so the program's thread does no more than copy the function. The image
     /// arrives when the work is done, `None` where the region does not lower or compile.
-    pub(in crate::vm) fn start(program: &ResidualProgram, function_id: u32) -> Option<crate::vm::jit_backend::Pending<Option<Self>>> {
+    pub(in crate::vm) fn start(program: &ResidualProgram, function_id: u32) -> Option<crate::vm::jit_backend::OffThread<Option<Self>>> {
         program.function_get(function_id as usize)?;
         let detached = program.detached(&[function_id]);
-        Some(crate::vm::jit_backend::run_in_background(move || Self::build(lower_numeric_region(&detached, function_id)?, function_id)))
+        Some(crate::vm::jit_backend::OffThread::start((detached, function_id), |(detached, function_id)| Self::build(lower_numeric_region(&detached, function_id)?, function_id)))
     }
 
     fn build(lowering: NumericLowering, function_id: u32) -> Option<Self> {

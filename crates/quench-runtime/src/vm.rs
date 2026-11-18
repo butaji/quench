@@ -1901,7 +1901,7 @@ pub(crate) struct Vm<H> {
     execution_mode: ExecutionMode,
     native_execution_rejections: u64,
     /// Numeric function bodies whose compile runs on the code generator's thread (`Vm::js_tier_compile`).
-    js_tier_pending: FxHashMap<(ProgramId, u32), jit_backend::Pending<Option<compiled::NumericImage>>>,
+    js_tier_pending: FxHashMap<(ProgramId, u32), jit_backend::OffThread<Option<compiled::NumericImage>>>,
     #[cfg(feature = "native-execution")]
     native_program_resolver: Option<Box<native_program::NativeProgramResolver<H>>>,
     execution_interrupt: crate::ExecutionInterrupt,

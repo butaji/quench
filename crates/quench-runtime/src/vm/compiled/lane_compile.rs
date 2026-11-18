@@ -1,7 +1,7 @@
 //! A lane body's two halves: planning, which reads the VM (call targets, field proofs, direct
 //! callees) and lowers the unit, and code generation, which reads nothing of it. The plan
 //! keeps everything the method holds but its code, so code generation may run on the code
-//! generator's thread (`jit_backend::run_in_background`) while the program runs on.
+//! generator's thread (`jit_backend::OffThread`) while the program runs on.
 
 use super::*;
 use super::super::program_store::lane_publication::LaneKey;
@@ -143,15 +143,14 @@ impl LoweringJob<'_> {
 /// where it names shapes (`retire_named_shapes`). A collection alone leaves it valid: an
 /// allocation-heavy loop collects more often than a body compiles.
 pub(in crate::vm) struct PendingLaneMethod {
-    /// Its lowering's end, which a drop waits for: the lowering reads the plan's direct callees
-    /// by pointer (`LoweringJob::direct_sites`). First, so it drops before the plan.
-    done: super::jit_backend::Done,
+    /// Its lowering and code, on the code generator's thread; a drop waits for the lowering,
+    /// which reads the plan's direct callees by pointer (`LoweringJob::direct_sites`). First,
+    /// so it drops before the plan.
+    code: super::jit_backend::OffThread<Lowered>,
     plan: LanePlan,
     /// The leaves it was planned from (`LaneBodyWork::Start`), which a plan again reuses.
     generic: Vec<LaneExit>,
     watch: Rc<crate::code_dependencies::PublishedCode<()>>,
-    /// Its lowering and code, on the code generator's thread.
-    code: super::jit_backend::Pending<AssertSend<Lowered>>,
     /// What it compiles from (`LanePlan::key`).
     key: LaneKey,
     /// The site its planned size is noted for (`ProgramStore::note_planned_lane_ir`).
@@ -160,16 +159,6 @@ pub(in crate::vm) struct PendingLaneMethod {
     taken: Box<TakenFacts>,
 }
 
-/// A value moved to the code generator's thread and back, which is `Send` though its type is not
-/// (`LoweringJob`, `Lowered`): it shares no reference count with a value the program's thread
-/// keeps (the job's program is a detached copy; its direct callees it reads by pointer and
-/// never clones), and one thread at a time uses it.
-pub(super) struct AssertSend<T>(pub(super) T);
-
-// SAFETY: as the type's comment says: no part of it is counted by a value of another thread, and
-// the pointers it holds name data the program's thread keeps alive and leaves unchanged until
-// the work is done (`PendingLaneMethod::done`).
-unsafe impl<T> Send for AssertSend<T> {}
 
 /// What a lowering and its code generation came to.
 pub(super) enum Lowered {
@@ -512,13 +501,9 @@ impl<H: Host> Vm<H> {
         let plan = LanePlan { unit, lowered: lane_region::LoweredLane::default(), fields, direct, closed, function, invalidation, budget, tiers };
         let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
         let replans = !plan.unit.frames.is_empty() && budget > 0;
-        let job = AssertSend(job);
-        let (code, done) = super::jit_backend::run_in_background_guarded(move || {
-            let AssertSend(job) = job;
-            AssertSend(Lowered::of(&job, census, replans))
-        });
+        let code = super::jit_backend::OffThread::guarded((job, census, replans), |(job, census, replans)| Lowered::of(&job, census, replans));
         self.programs.note_pending_native_calls(&watch, plan.callees());
-        Ok(PendingLaneMethod { done, plan, generic: generic.to_vec(), watch, code, key, site, taken: Box::new(taken) })
+        Ok(PendingLaneMethod { plan, generic: generic.to_vec(), watch, code, key, site, taken: Box::new(taken) })
     }
 
     /// The unit PCs of stores whose sites added their property to some receiver (they hold
@@ -645,10 +630,10 @@ impl PendingLaneMethod {
     fn poll(mut self: Box<Self>) -> Result<LaneCompile, Box<Self>> {
         Ok(match self.code.poll() {
             std::task::Poll::Pending => return Err(self),
-            std::task::Poll::Ready(Some(AssertSend(Lowered::Compiled { lowered, ir, code: Ok(code) }))) => LaneCompile::Lowered(self, lowered, ir, code),
-            std::task::Poll::Ready(Some(AssertSend(Lowered::Compiled { code: Err(reason), .. }))) if self.plan.replans(reason) =>
+            std::task::Poll::Ready(Some(Lowered::Compiled { lowered, ir, code: Ok(code) })) => LaneCompile::Lowered(self, lowered, ir, code),
+            std::task::Poll::Ready(Some(Lowered::Compiled { code: Err(reason), .. })) if self.plan.replans(reason) =>
                 LaneCompile::Replan(std::mem::take(&mut self.generic), self.plan.budget),
-            std::task::Poll::Ready(Some(AssertSend(Lowered::Oversized))) => LaneCompile::Replan(std::mem::take(&mut self.generic), self.plan.budget),
+            std::task::Poll::Ready(Some(Lowered::Oversized)) => LaneCompile::Replan(std::mem::take(&mut self.generic), self.plan.budget),
             std::task::Poll::Ready(_) => LaneCompile::Done(None),
         })
     }
