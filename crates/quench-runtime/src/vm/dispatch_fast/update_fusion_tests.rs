@@ -32,17 +32,14 @@ fn a_retired_loop_site_fuses_its_update_as_the_interpreter_does() {
     assert_eq!(retired, interpreted, "the retired loop's update runs the records the interpreter's does");
 }
 
-/// The fusion of an update, a jump and the integer test the jump goes back to is one record's, as the
-/// loader makes it; a jump to another record fuses the update and jump alone.
+/// The fusion of an update and the unconditional jump after it is the `IncDec`/`Jump` pair's record,
+/// as the loader makes it; any other record before a jump fuses nothing.
 #[test]
-fn an_update_fuses_with_its_back_edge_and_test() {
-    const OPERATOR: u32 = oxc_ast::ast::BinaryOperator::LessThan as u32;
+fn an_update_fuses_with_the_jump_after_it() {
     let record = |handler: *const (), a: u16| LaneInstruction { handler, operand: LaneOperand { jump: 0 }, a, b: 0, c: 0, call_link: std::cell::Cell::new(NO_CALL_LINK) };
     let update = record(lane_row::<TestHost, { opc::IncDec }, ACC_NONE, FLAG_UNREAD> as Handler as *const (), 0);
     let jump = record(jump_row::<TestHost, { opc::Jump }>(true) as *const (), 0);
-    let test = record(relation_jump_handler::<TestHost, false>(OPERATOR, false) as *const (), OPERATOR as u16);
-    let fused = |test: Option<&LaneInstruction>| update_fusion::<TestHost>(&update, &jump, |offset| if offset == 0 { test } else { None }).map(|handler| handler as *const ());
-    assert_eq!(fused(Some(&test)), Some(update_loop_handler::<TestHost>(OPERATOR, false, true) as *const ()));
-    assert_eq!(fused(None), Some(fused_row::<TestHost, { opc::IncDec }, { opc::Jump }>(true) as *const ()));
-    assert!(update_fusion::<TestHost>(&jump, &jump, |_| None).is_none(), "only an `IncDec` fuses with the jump after it");
+    let fused = update_fusion::<TestHost>(&update, &jump).map(|handler| handler as *const ());
+    assert_eq!(fused, Some(fused_row::<TestHost, { opc::IncDec }, { opc::Jump }, { crate::staged::FUSED_PLAIN }>(true) as *const ()));
+    assert!(update_fusion::<TestHost>(&jump, &jump).is_none(), "only an `IncDec` fuses with the jump after it");
 }

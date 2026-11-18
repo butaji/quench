@@ -3972,119 +3972,6 @@ fn lane_after_nested_collection<H: Host>(cx: *mut LaneContext<H>) {
 
 
 
-script_handler! {
-    /// `lane_inc_dec_jump` whose backward jump enters the loop's own integer register test
-    /// (`lane_jump_binary_false_registers`, `specialize_update_jumps`): the update, the back
-    /// edge's safepoint, then the test, continuing in the body or at the loop's exit, a
-    /// rotated loop's one dispatch per iteration where the pair and the test took two. A pair
-    /// other than two integers runs the test's own record, any update but an integer's that
-    /// stays one the update's own (`lane_row` of `IncDec`).
-    fn lane_inc_dec_loop<DECREMENT: bool, OP: u32, COUNTER: bool>(cx, r, ip, i, view) {
-        // An overflow, a double or a BigInt runs the update's own record, which continues at
-        // the jump record.
-        let Some(value) = super::dispatch::integer_increment(r.get(i.b), DECREMENT) else {
-            sibling!(inc_dec_row::<H, DECREMENT>(), r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        let jump_ip = following(ip);
-        // SAFETY: the view records the distance to a validated jump target, the test record
-        // `specialize_update_jumps` matched. Computed before the fuel test, so the test's
-        // branch reads the decrement's own flags.
-        let test_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
-        if script_fuel_out(cx) {
-            resume!(cx, lane_jump_safepoint::<H>(jump_ip, Carried::script_in(cx, view)))
-        }
-        let test = unsafe { &*test_ip };
-        // A test of the counter (`COUNTER`, `specialize_update_jumps`) reads the integer just
-        // written, whose tag the update proved.
-        let left = if COUNTER { value } else { r.get(test.b) };
-        let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(test), left, r.get(test.c))
-        else {
-            next!(cx, r, test_ip, Carried::script_in(cx, view))
-        };
-        if !holds {
-            resume!(cx, lane_jump::<H>(r, test_ip, false, Carried::script_in(cx, view), None));
-        }
-        next!(cx, r, following(test_ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_inc_dec_loop` whose back edge enters an integer test against a small constant
-    /// (`lane_jump_binary_false_small`, the constant in the record), as a counting-down loop's
-    /// `i >= 0`: the update, the safepoint and the test as one dispatch. A value other than
-    /// an integer runs the test's own record.
-    fn lane_inc_dec_small_loop<DECREMENT: bool, OP: u32>(cx, r, ip, i, view) {
-        let Some(value) = super::dispatch::integer_increment(r.get(i.b), DECREMENT) else {
-            sibling!(inc_dec_row::<H, DECREMENT>(), r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        let jump_ip = following(ip);
-        // SAFETY: the view records the distance to a validated jump target, the test record
-        // `specialize_update_jumps` matched. Computed before the fuel test, so the test's
-        // branch reads the decrement's own flags.
-        let test_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
-        if script_fuel_out(cx) {
-            resume!(cx, lane_jump_safepoint::<H>(jump_ip, Carried::script_in(cx, view)))
-        }
-        let test = unsafe { &*test_ip };
-        let right = lane_small_constant::<H, false>(cx, test);
-        let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(test), r.get(test.b), right) else {
-            next!(cx, r, test_ip, Carried::script_in(cx, view))
-        };
-        if !holds {
-            resume!(cx, lane_jump::<H>(r, test_ip, false, Carried::script_in(cx, view), None));
-        }
-        next!(cx, r, following(test_ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_inc_dec_loop` whose back edge enters a fused load and register test
-    /// (`lane_load_jump_binary_false_registers`), a loop bound read from a local or a capture
-    /// each iteration, as NavierStokes' `i <= width`: the update, the safepoint, the load and
-    /// the test as one dispatch. A load the fast read misses or a pair other than two integers
-    /// runs the load's own record, which loads again and tests.
-    fn lane_inc_dec_load_loop<DECREMENT: bool, CAPTURE: bool, OP: u32>(cx, r, ip, i, view) {
-        let Some(value) = super::dispatch::integer_increment(r.get(i.b), DECREMENT) else {
-            sibling!(inc_dec_row::<H, DECREMENT>(), r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        let jump_ip = following(ip);
-        // SAFETY: the view records the distance to a validated jump target, the load record
-        // `specialize_update_jumps` matched, whose branch record follows it. Computed before
-        // the fuel test, so its branch reads the decrement's own flags.
-        let load_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
-        if script_fuel_out(cx) {
-            resume!(cx, lane_jump_safepoint::<H>(jump_ip, Carried::script_in(cx, view)))
-        }
-        let load = unsafe { &*load_ip };
-        let branch_ip = following(load_ip);
-        let branch = unsafe { &*branch_ip };
-        let bound = if CAPTURE {
-            let slots = capture_reads(unsafe { (*cx).registers }.capture());
-            // SAFETY: as `lane_load_capture`'s read.
-            let bound = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, ImmediateLayout::capture_slot(load.imm())) };
-            let Some(bound) = bound else {
-                next!(cx, r, load_ip, Carried::script_in(cx, view))
-            };
-            bound
-        } else {
-            // SAFETY: as `lane_load_jump_binary_false_registers`' local read.
-            unsafe { vm(cx).read_validated_local((*cx).frame(), load.imm() as usize) }
-        };
-        r.set(load.a, bound);
-        let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(branch), r.get(branch.b), r.get(branch.c))
-        else {
-            next!(cx, r, load_ip, Carried::script_in(cx, view))
-        };
-        if !holds {
-            resume!(cx, lane_jump::<H>(r, branch_ip, false, Carried::script_in(cx, view), None));
-        }
-        next!(cx, r, following(branch_ip), Carried::script_in(cx, view))
-    }
-}
-
 /// The update of a BigInt (`Vm::bigint_increment`, which allocates its result); `None` for
 /// any other value. Out of line: its arithmetic keeps stack temporaries a handler inlining
 /// it would hold on its common path.
@@ -10114,12 +10001,11 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     unsafe { (*ip.cast_mut()).operand = LaneOperand { jump: site.jump }; }
     requicken::<H>(ip, jump_row::<H, JUMP>(true));
     // The site kept the update before the jump from fusing with it (`install_loop_sites`
-    // runs before `specialize_update_jumps`): the plain jump takes the loader's fusion now.
+    // runs before `fuse_rows`): the plain jump takes the loader's pair fusion now.
     if site.backedge > site.header {
-        // SAFETY: the record before the backedge is the loop body's, in the same view as the jump and the header;
-        // the record after the header is read only for a fused load, whose test record it is.
+        // SAFETY: the record before the backedge is the loop body's, in the same view as the jump.
         let update = unsafe { ip.sub(1) };
-        if let Some(fused) = update_fusion::<H>(unsafe { &*update }, unsafe { &*ip }, |offset| Some(unsafe { &*header.add(offset) })) {
+        if let Some(fused) = update_fusion::<H>(unsafe { &*update }, unsafe { &*ip }) {
             requicken::<H>(update, fused);
         }
     }
@@ -21712,7 +21598,6 @@ fn derive_lane_view<'live, H: Host>(
     };
     // The fused records are script handlers; Wasm bodies run none.
     if !wasm {
-        specialize_update_jumps::<H>(&decoded, &mut records);
         specialize_nullish_back_edges::<H>(&decoded, &mut records);
         specialize_update_back_edges::<H>(&decoded, &mut records);
         specialize_store_moves::<H>(&mut records);
@@ -22639,46 +22524,19 @@ fn specialize_nullish_back_edges<H: Host>(decoded: &[WideInstruction], records: 
     }
 }
 
-/// Gives each `IncDec` that an unconditional jump follows the fusion `update_fusion` makes of it. The
-/// jump and test records stay, for a jump that enters them and for the update's own slow path.
-fn specialize_update_jumps<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
-    for pc in 0..records.len().saturating_sub(1) {
-        let fused = update_fusion::<H>(&records[pc], &records[pc + 1], |offset| records.get(decoded[pc + 1].imm() as usize + offset));
-        if let Some(fused) = fused {
-            records[pc].handler = fused as *const ();
-        }
-    }
-}
-
-/// The handler of the `IncDec` record `update` that the record `jump` follows, where `jump` is an unconditional
-/// jump: the generated pair of `IncDec` and `Jump` (`fused_row`, a `staged::FUSED_ROWS` pair), or, when the jump goes back to the loop's forward integer
-/// register test (`test`, read only then), the update, jump and test (`lane_inc_dec_loop`). `None` for any other
-/// pair. The loader (`specialize_update_jumps`) and a loop site that retires (`lane_loop_retire`) fuse by it, so a
-/// declined loop runs what the interpreter's own does.
-fn update_fusion<'a, H: Host>(update: &LaneInstruction, jump: &LaneInstruction, at: impl Fn(usize) -> Option<&'a LaneInstruction>) -> Option<Handler> {
-    let decrement = update_direction::<H>(update)?;
+/// The handler of the `IncDec` record `update` that the record `jump` follows, where `jump` is an
+/// unconditional jump: the generated pair of `IncDec` and `Jump` (`fused_row`, the `staged::FUSED_ROWS`
+/// entry of that pair, `FUSED_PLAIN`). `None` for any other pair. The loader's `fuse_rows` pass and a
+/// loop site that retires (`lane_loop_retire`) fuse by it, so a declined loop runs what the
+/// interpreter's own does. The jump's target record keeps its own row.
+fn update_fusion<H: Host>(update: &LaneInstruction, jump: &LaneInstruction) -> Option<Handler> {
+    update_direction::<H>(update)?;
     let backward = match jump.handler {
         plain if plain == jump_row::<H, JUMP>(true) as *const () => true,
         plain if plain == jump_row::<H, JUMP>(false) as *const () => false,
         _ => return None,
     };
-    let looped = || -> Option<Handler> {
-        let test = at(0).filter(|_| backward)?;
-        let operator = u32::from(test.a);
-        if test.handler == relation_jump_handler::<H, false>(operator, false) as *const () {
-            return Some(update_loop_handler::<H>(operator, decrement, test.b == update.a));
-        }
-        // A test against a constant in the record.
-        if test.handler == relation_jump_handler::<H, true>(operator, false) as *const () {
-            return Some(update_small_loop_handler::<H>(operator, decrement));
-        }
-        // A fused load and test (`specialize_load_branch_pairs`), whose test record follows.
-        let operator = u32::from(at(1)?.a);
-        [false, true].into_iter()
-            .find(|&capture| test.handler == load_relation_jump_handler::<H>(operator, false, capture) as *const ())
-            .map(|capture| update_load_loop_handler::<H>(operator, decrement, capture))
-    };
-    Some(looped().unwrap_or_else(|| fused_row::<H, { opc::IncDec }, { opc::Jump }>(backward)))
+    Some(fused_row::<H, { opc::IncDec }, { opc::Jump }, { crate::staged::FUSED_PLAIN }>(backward))
 }
 
 /// Whether `record`, an `IncDec` running its row (`lane_row`), decrements (its immediate flag);
@@ -23000,23 +22858,6 @@ unsafe fn requicken_small_number_relation<H: Host, const BACKWARD: bool, const T
     relation_operators!(u32::from(unsafe { (*ip).a }), pick)
 }
 
-/// The fused update, back edge and register test handler (`lane_inc_dec_loop`) of the test's
-/// `operator`: as `relation_jump_handler` picks, the comparison's own instantiation; `counter`
-/// where the test's left operand is the updated register.
-fn update_loop_handler<H: Host>(operator: u32, decrement: bool, counter: bool) -> Handler {
-    macro_rules! pick {
-        ($op:expr) => {
-            match (decrement, counter) {
-                (true, true) => lane_inc_dec_loop::<H, true, { $op }, true> as Handler,
-                (true, false) => lane_inc_dec_loop::<H, true, { $op }, false> as Handler,
-                (false, true) => lane_inc_dec_loop::<H, false, { $op }, true> as Handler,
-                (false, false) => lane_inc_dec_loop::<H, false, { $op }, false> as Handler,
-            }
-        };
-    }
-    relation_operators!(operator, pick)
-}
-
 /// The fused back edge, update, copy and small-constant test handler
 /// (`lane_jump_back_update_small`) of the test's `operator`.
 fn update_back_small_handler<H: Host>(operator: u32, decrement: bool, moved: bool) -> Handler {
@@ -23027,54 +22868,6 @@ fn update_back_small_handler<H: Host>(operator: u32, decrement: bool, moved: boo
                 (true, false) => lane_jump_back_update_small::<H, true, false, { $op }> as Handler,
                 (false, true) => lane_jump_back_update_small::<H, false, true, { $op }> as Handler,
                 (false, false) => lane_jump_back_update_small::<H, false, false, { $op }> as Handler,
-            }
-        };
-    }
-    relation_operators!(operator, pick)
-}
-
-/// The fused update, back edge and small-constant test handler (`lane_inc_dec_small_loop`) of
-/// the test's `operator`.
-fn update_small_loop_handler<H: Host>(operator: u32, decrement: bool) -> Handler {
-    macro_rules! pick {
-        ($op:expr) => {
-            if decrement {
-                lane_inc_dec_small_loop::<H, true, { $op }> as Handler
-            } else {
-                lane_inc_dec_small_loop::<H, false, { $op }> as Handler
-            }
-        };
-    }
-    relation_operators!(operator, pick)
-}
-
-/// The fused update, back edge, load and register test handler (`lane_inc_dec_load_loop`) of
-/// the test's `operator`, after a local (`capture` false) or capture read.
-fn update_load_loop_handler<H: Host>(operator: u32, decrement: bool, capture: bool) -> Handler {
-    macro_rules! pick {
-        ($op:expr) => {
-            match (decrement, capture) {
-                (true, true) => lane_inc_dec_load_loop::<H, true, true, { $op }> as Handler,
-                (true, false) => lane_inc_dec_load_loop::<H, true, false, { $op }> as Handler,
-                (false, true) => lane_inc_dec_load_loop::<H, false, true, { $op }> as Handler,
-                (false, false) => lane_inc_dec_load_loop::<H, false, false, { $op }> as Handler,
-            }
-        };
-    }
-    relation_operators!(operator, pick)
-}
-
-/// The fused load and register jump test handler (`lane_load_jump_binary_false_registers`) of
-/// `operator`, after a local (`capture` false) or capture read, branching `backward` or not:
-/// as `relation_jump_handler` picks, the comparison's own instantiation.
-fn load_relation_jump_handler<H: Host>(operator: u32, backward: bool, capture: bool) -> Handler {
-    macro_rules! pick {
-        ($op:expr) => {
-            match (backward, capture) {
-                (true, true) => lane_load_jump_binary_false_registers::<H, true, true, { $op }> as Handler,
-                (true, false) => lane_load_jump_binary_false_registers::<H, true, false, { $op }> as Handler,
-                (false, true) => lane_load_jump_binary_false_registers::<H, false, true, { $op }> as Handler,
-                (false, false) => lane_load_jump_binary_false_registers::<H, false, false, { $op }> as Handler,
             }
         };
     }
