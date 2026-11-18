@@ -317,7 +317,7 @@ impl<H: Host> Vm<H> {
             && !self.is_promise(source)
             && !self.is_object_like(source)
         {
-            self.with_call_roots([Some(source), Some(promise), generator].into_iter().flatten(), |vm| {
+            self.with_call_roots([source, promise, generator.unwrap_or(Value::UNDEFINED)], |vm| {
                 let parent = vm.promise_record(promise).and_then(|record| record.host_context().get());
                 let awaited = vm.promise_object_with_parent(parent)?;
                 vm.with_call_roots([awaited], |vm| vm.promise_resolve_value(p, awaited, source))?;

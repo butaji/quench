@@ -511,6 +511,17 @@ impl Frame {
         self.initialized_registers = self.initialized_registers.max(usize::from(count));
     }
 
+    /// Gives a generator or async activation's register file room for the environment window
+    /// its lane resumes lay after the registers (`open_environment_window`) in one allocation,
+    /// not a reallocation at its first resume.
+    #[inline(always)]
+    fn reserve_suspension_window(&mut self, function: &crate::bytecode::Function) {
+        if function.is_generator || function.is_async {
+            self.registers.clear();
+            self.registers.reserve(usize::from(function.registers) + usize::from(dispatch_fast::WINDOW_LOCALS) + usize::from(function.locals));
+        }
+    }
+
     /// Sizes the register file for `function`. Compiled code writes every register before
     /// reading it, so stale values from a pooled frame are unobservable to the program; they
     /// matter only to a collector that scans the whole file. A function with a liveness root
@@ -527,6 +538,7 @@ impl Frame {
             || function.is_async
             || function.initial_register != crate::bytecode::InitialRegister::Undefined
         {
+            self.reserve_suspension_window(function);
             self.prepare_registers(function.registers, function.initial_register);
         } else {
             if register_count <= self.initialized_registers {

@@ -147,16 +147,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn generator_record_mut(
-        &mut self,
-        generator: Value,
-    ) -> Option<&mut GeneratorRecord> {
-        match self.heap.iterator_mut(generator) {
-            Some(IteratorRecord { ext, .. }) => ext.generator.as_deref_mut(),
-            _ => None,
-        }
-    }
-
     pub(super) fn call_generator(
         &mut self,
         p: &ResidualProgram,
@@ -214,6 +204,7 @@ impl<H: Host> Vm<H> {
         self.initialize_activation_bindings(&mut frame, false, Value::UNDEFINED, true);
         frame.captured = false;
         frame.with_base = self.with_stack.len();
+        frame.reserve_suspension_window(function);
         frame.prepare_registers(function.registers, function.initial_register);
         frame.initialize_promoted_registers(function, args);
         if function.parameter_end_pc != 0 {
@@ -1506,12 +1497,7 @@ impl<H: Host> Vm<H> {
                     self.async_generator_throw_ready(p, generator, request.value, request.promise)?;
                 }
             }
-            if self
-                .generator_record_mut(generator)
-                .is_some_and(|record| record.is_executing())
-            {
-                return Ok(());
-            }
+            // A request that left the generator executing ends the loop at the next pop.
         }
     }
 

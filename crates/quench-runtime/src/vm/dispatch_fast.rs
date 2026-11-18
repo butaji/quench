@@ -2332,10 +2332,27 @@ pub(super) struct LaneStack {
     /// The exported Wasm function a JavaScript call last entered (`Vm::wasm_export_frame_call`),
     /// so the next call of it reads its closure and signature once. A collection forgets it.
     pub(super) wasm_export: Option<super::wasm_js::WasmExportCall>,
-    /// The window plan last derived for a frame that made no environment of its own
-    /// (`generator_windows::cached_window_plan`): every new activation of the same function
-    /// under the same environment, as each call of an async function is, shares it.
-    pub(super) last_window_plan: Option<(ProgramId, u32, generator_windows::WindowPlan)>,
+    /// The window plans last derived for frames that made no environment of their own
+    /// (`generator_windows::cached_window_plan`), one slot per function index modulo
+    /// `SHARED_PLANS`: every new activation of the same function under the same environment,
+    /// as each call of an async function is, shares it.
+    pub(super) last_window_plan: [Option<(ProgramId, u32, generator_windows::WindowPlan)>; generator_windows::SHARED_PLANS],
+    /// The record of the generator the lane last resumed as a window, under the collection
+    /// epoch of the resume (`Vm::windowed_generator_record`): its yield finds the record without
+    /// a heap lookup. A collection, the only way a generator's cell is freed and its index
+    /// reused, retires it.
+    pub(in crate::vm) last_generator: (Value, u64, *mut crate::vm::activation::GeneratorRecord),
+}
+
+/// Drops the entries of `held` that activations from index `depth` on own. Activations push
+/// their entries innermost last, so the owners ascend and those entries are a suffix: the
+/// common case, none, is one comparison.
+#[inline(always)]
+fn drop_owned_entries<T>(held: &mut Vec<(usize, T)>, depth: usize) {
+    if held.last().is_some_and(|(owner, _)| *owner >= depth) {
+        let first = held.partition_point(|(owner, _)| *owner < depth);
+        held.truncate(first);
+    }
 }
 
 /// The addresses a lane run's direct calls push onto (`Vm::lane_stack_words`).
@@ -2386,7 +2403,8 @@ impl Default for LaneStack {
             body_boundary: None,
             boundary_frames: None,
             wasm_export: None,
-            last_window_plan: None,
+            last_window_plan: [None; generator_windows::SHARED_PLANS],
+            last_generator: (Value::UNDEFINED, u64::MAX, std::ptr::null_mut()),
         }
     }
 }
@@ -2486,10 +2504,10 @@ impl LaneStack {
     #[cold]
     #[inline(never)]
     fn drop_owned_held_from(&mut self, depth: usize) {
-        self.iterators.retain(|(owner, _)| *owner < depth);
-        self.with_objects.retain(|(owner, _)| *owner < depth);
-        self.records.retain(|(owner, _)| *owner < depth);
-        self.trap_checks.retain(|(owner, _)| *owner < depth);
+        drop_owned_entries(&mut self.iterators, depth);
+        drop_owned_entries(&mut self.with_objects, depth);
+        drop_owned_entries(&mut self.records, depth);
+        drop_owned_entries(&mut self.trap_checks, depth);
     }
 
     /// The generation of a lane run under `key`: the current one while the key holds, else

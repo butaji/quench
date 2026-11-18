@@ -24,7 +24,8 @@ impl<H: Host> Vm<H> {
         };
         let resume = AwaitResume { state: Some(state), promise, role, rejected };
         let previous_global = self.switch_realm_global(realm);
-        let settled = self.with_call_roots([Some(promise), role.generator(), Some(value)].into_iter().flatten(), |vm| {
+        let settled = // A fixed list, `undefined` for an absent root, extends the roots in one copy.
+        self.with_call_roots([promise, role.generator().unwrap_or(Value::UNDEFINED), value], |vm| {
             vm.resume_awaited(p, state, resume, value)?;
             match role.generator() {
                 Some(generator) => vm.resume_async_generator_queue(p, generator),
@@ -90,7 +91,7 @@ impl<H: Host> Vm<H> {
         let program = self.job_frame(job).ok_or_else(|| JsError("stale async continuation".into()))?.program;
         let code = self.programs.get(program).ok_or_else(|| JsError("async continuation program is unavailable".into()))?;
         let previous_program = self.replace_active_program(program);
-        let roots = [Some(resume.promise), resume.role.generator(), resume.state, how.value()].into_iter().flatten();
+        let roots = [resume.promise, resume.role.generator().unwrap_or(Value::UNDEFINED), resume.state.unwrap_or(Value::UNDEFINED), how.value().unwrap_or(Value::UNDEFINED)];
         let settled = self.with_call_roots(roots, |vm| {
             vm.maybe_collect(&code);
             let resumed = if vm.native_microtask_running && job.kind == SuspendKind::AsyncFunction { job.object } else { Value::UNDEFINED };
