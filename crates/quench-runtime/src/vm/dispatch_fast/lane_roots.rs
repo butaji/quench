@@ -175,6 +175,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The context of a lane run that starts as `start` says; its other state starts empty.
+    #[inline(always)]
     pub(super) fn lane_context(&mut self, start: LaneStart<'_>) -> LaneContext<H> {
         let LaneStart { code, program, root, registers, base, this, pending, executing, inline_calls, script_calls, script_constructs, floor } = start;
         // The root's receiver is its window's context word (`Registers::this`); its environment
