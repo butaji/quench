@@ -69,7 +69,7 @@ typed_store_f64 8 30 98.6
 typeof_op 4 18 57.1
 ushr 5 21 55.1
 k_dispatch 14 48 348.6
-k_json 812 2442 4981.5
+k_json 812 2442 4915.8
 k_nbody_pair 21.1 70 1340.1
 k_regexp 40.2 127 1224.3
 k_str_build 14.1 49 1461
@@ -109,3 +109,7 @@ k_vec_local 8.9 32.7 193.8
 obj_spread 146 444 1350.8
 typed_store_u8c 24 78 155.9
 alloc_literal1 140 426 426
+arr_isarray 4 18 211.1
+arr_slice 144 438 1696.8
+str_includes 99 303 600.1
+str_slice 166 504 779.2

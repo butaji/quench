@@ -217,4 +217,10 @@ function nameRead(n, o) { let a = 0; for (let i = 0; i < n; i++) { a = (a + o.na
 function lengthRead(n, o) { let a = 0; for (let i = 0; i < n; i++) { a = (a + o.length) | 0; } return a; }
 ops.field_name = function (n) { return nameRead(n, { id: 3, name: 4 }); };
 ops.field_length = function (n) { return lengthRead(n, { id: 3, length: 4 }); };
+// Builtin method calls outside the lane's builtin rows: the native call protocol plus a small
+// body (a search of a short needle, a short slice, a type test).
+ops.str_includes = function (n) { let a = 0; const s = S; for (let i = 0; i < n; i++) { if (s.includes("lazy")) a++; } return a; };
+ops.str_slice = function (n) { let a = 0; const s = S; for (let i = 0; i < n; i++) { a += s.slice(4, 9).length; } return a; };
+ops.arr_isarray = function (n) { const arr = [1, 2, 3]; let a = 0; for (let i = 0; i < n; i++) { if (Array.isArray(arr)) a++; } return a; };
+ops.arr_slice = function (n) { const arr = [1, 2, 3, 4]; let a = 0; for (let i = 0; i < n; i++) { a += arr.slice(0, 2).length; } return a; };
 globalThis.PRIMITIVE_OPS = ops;
