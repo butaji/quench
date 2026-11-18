@@ -465,15 +465,22 @@ mod tests {
         (field as i64 + std::mem::size_of::<i32>() as i64 + i64::from(displacement)) as usize
     }
 
+    /// A bare return's first byte: x86-64's `ret`, else a body's byte on an architecture whose
+    /// b-jit rows this test still lays out (`quench-bjit` builds `RET` for x86-64 alone).
+    #[cfg(target_arch = "x86_64")]
+    use quench_bjit::RET;
+    #[cfg(not(target_arch = "x86_64"))]
+    const RET: u8 = 0xc0;
+
     /// A row's stub and a leave row lie after every hot row, the stub after the routines, and each
     /// exit reaches its own target.
     #[test]
     fn exits_land_in_the_cold_area_behind_the_hot_rows() {
-        let (hot, leave) = (exiting(), leave_row(vec![quench_bjit::RET]));
+        let (hot, leave) = (exiting(), leave_row(vec![RET]));
         let hole = |_: u32| 0u64;
         let rows = [Placed { stencil: &hot, hole: &hole, taken: None }, Placed { stencil: &hot, hole: &hole, taken: None }, Placed { stencil: &leave, hole: &hole, taken: None }];
         let exits = [vec![Target::Stub { pc: 7, routine: 0 }], vec![Target::Row(2)], Vec::new()];
-        let routines = [vec![quench_bjit::RET]];
+        let routines = [vec![RET]];
         let (code, ..) = place_rows(Ending::Body, &rows, (&exits, &routines), &[]).expect("a layout");
         let head = thunk(Ending::Body, 0).expect("a thunk").len();
         let (second, leave_at) = (head + hot.code.len(), head + 2 * hot.code.len());

@@ -137,8 +137,12 @@ impl NarrowLayout {
     pub(crate) const CODE_MASK: u32 = (1 << NARROW_CODE_BITS) - 1;
     pub(crate) const INDEX_SHIFT: u32 = NARROW_INDEX_SHIFT;
     pub(crate) const INDEX_BITS: u32 = NARROW_INDEX_BITS;
-    #[cfg(test)] pub(crate) const DIRECT_OBJECT_UPPER: u64 = DIRECT_OBJECT_UPPER;
-    #[cfg(test)] pub(crate) const DIRECT_OBJECT_CODE: u32 = DIRECT_OBJECT_NARROW_CODE;
+    /// The direct object family's upper word and code, read by the x86-64 stencil mirror test
+    /// (`base_rows`), the only consumer.
+    #[cfg(all(test, target_arch = "x86_64"))]
+    pub(crate) const DIRECT_OBJECT_UPPER: u64 = DIRECT_OBJECT_UPPER;
+    #[cfg(all(test, target_arch = "x86_64"))]
+    pub(crate) const DIRECT_OBJECT_CODE: u32 = DIRECT_OBJECT_NARROW_CODE;
 
     /// Only codes selected by the decoder belong in a native image.
     #[cfg(feature = "aot")]

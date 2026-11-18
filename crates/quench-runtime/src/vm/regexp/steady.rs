@@ -2,9 +2,6 @@
 use super::*;
 use super::ascii::AsciiReplace;
 
-/// `String.prototype.replace`'s arguments: the search and the replacement.
-const REPLACE_ARGUMENTS: usize = 2;
-
 impl<H: Host> Vm<H> {
     /// `RegExp.prototype.exec` or `test` when the call runs no guest code and raises
     /// nothing, so it observes no frame (`lane_regexp_call`): a RegExp receiver, a string

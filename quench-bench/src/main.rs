@@ -1250,7 +1250,6 @@ fn aot_mode_error(options: &Options) -> Option<&'static str> {
         options.resume.is_some(),
         options.preflight_only,
         options.jit_diagnostics,
-        options.jit_js_general_dispatch,
         options.jit_wasm_selective,
         options.jit_wasm_selective_ab,
         options.jit_wasm_root.is_some(),

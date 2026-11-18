@@ -7,7 +7,7 @@ script_handler! {
     /// without the root's slot rule the walk resolves each read. A miss (a frame's
     /// environment, a deleted binding) walks, which reads the same immediate.
     fn lane_load_root_binding<>(cx, r, ip, i, view) {
-        let env = unsafe { (*cx).env };
+        let env = unsafe { (*cx).registers }.env();
         let imm = i.imm();
         let (slot, depth) = (ImmediateLayout::capture_slot(imm), ImmediateLayout::capture_depth(imm));
         let vm = unsafe { vm(cx) };
