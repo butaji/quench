@@ -66,7 +66,14 @@ pub(in crate::vm::compiled) struct Text<'a> {
     pub(in crate::vm::compiled) written: &'a dyn Fn(WideInstruction) -> Vec<Register>,
     pub(in crate::vm::compiled) own_shape: &'a dyn Fn(usize) -> Option<(Register, u32)>,
     pub(in crate::vm::compiled) native_calls: bool,
+    /// The exception edges native code takes (`lane_region::catches`), ascending by PC.
+    pub(in crate::vm::compiled) raises: &'a [Raise],
 }
+
+/// An exception edge: the raising instruction's PC, its handler's block and the register the
+/// handler binds the thrown value to, if any. The handler is entered in the state before the
+/// instruction, a call's register untouched, with the bound register holding any value.
+pub(in crate::vm::compiled) type Raise = (usize, usize, Option<Register>);
 
 impl Point {
     /// The state at the entry: the checked inputs, an int32 one taking the range the entry
@@ -214,8 +221,8 @@ impl Facts {
 /// The fixpoint of `transfer` over the CFG, seeded by checked region-entry facts.
 pub(in crate::vm::compiled) fn analyze(entry: usize, initial: &[Type], instructions: &[WideInstruction],
     leaders: &CompoundBitSet, constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>,
-    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, seeds: Seeds<'_>) -> Facts {
-    analyze_text(&Text { entry, instructions, leaders, constants, written, own_shape, native_calls }, initial, seeds)
+    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], seeds: Seeds<'_>) -> Facts {
+    analyze_text(&Text { entry, instructions, leaders, constants, written, own_shape, native_calls, raises }, initial, seeds)
 }
 
 /// `analyze` over `text`.
@@ -225,10 +232,26 @@ pub(in crate::vm::compiled) fn analyze_text(text: &Text<'_>, initial: &[Type], s
     if text.entry < text.instructions.len() {
         facts.reach(text.entry, &Point::entering(initial, seeds), &mut pending, seeds);
     }
+    let mut raised: smallvec::SmallVec<[(usize, usize, Point); 2]> = smallvec::SmallVec::new();
     while let Some(leader) = pending.pop() {
         let mut point = facts.point_at(leader);
-        let ended = run_block(&mut point, text, seeds, leader, |pc, _| { facts.reached.insert(pc); });
+        let ended = run_block(&mut point, text, seeds, leader, |pc, state| {
+            facts.reached.insert(pc);
+            let first = text.raises.partition_point(|raise| raise.0 < pc);
+            for &(_, target, bound) in text.raises[first..].iter().take_while(|raise| raise.0 == pc) {
+                let mut caught = state.clone();
+                if let Some(register) = bound {
+                    set(&mut caught.types, register, Type::ANY);
+                    caught.relations.kill(register);
+                }
+                raised.push((pc, target, caught));
+            }
+        });
         facts.follow(text, seeds, ended, point, &mut pending);
+        for (pc, target, caught) in raised.drain(..) {
+            if target <= pc { facts.headers.insert(target); }
+            facts.reach(target, &caught, &mut pending, seeds);
+        }
     }
     facts
 }

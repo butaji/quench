@@ -1,6 +1,4 @@
 vm::catch_tests::a_catch_unwinds_the_with_scopes_it_leaves
-vm::catch_tests::a_throw_from_a_compiled_callee_is_caught_by_a_compiled_caller_without_leaving
-vm::catch_tests::finally_blocks_and_rethrows_across_compiled_frames_match_the_interpreter
 vm::compiled::base_body::forms::a_numeric_operator_with_a_local_target_is_a_helper_step
 vm::compiled::base_body::forms::a_ten_deep_call_chain_makes_its_steps_in_the_callees
 vm::compiled::base_body::forms::an_environment_binding_in_its_dead_zone_raises_as_the_interpreter_does

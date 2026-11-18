@@ -123,7 +123,7 @@ impl Lowering<'_, '_> {
         let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),
             signless: &signless };
         let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
-            native_calls: self.native_calls };
+            native_calls: self.native_calls, raises: &self.raises };
         let mut proved = IntRanges::new(instructions.len());
         let mut seen = Seen::default();
         facts::analyze_text(&text, initial, seeds).replay(&text, seeds, |pc, point| self.prove_at((&mut proved, &mut seen), (&model, &signless, instructions), pc, point));

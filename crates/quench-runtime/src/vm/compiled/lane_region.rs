@@ -583,6 +583,8 @@ struct Lowering<'a, 'f> {
     call_out_stop: Option<ir::Block>,
     /// The throws native code catches itself, by unit PC (`catches::catch_edges`).
     catches: catches::Catches,
+    /// The same throws as the analysis's exception edges (`facts::Raise`), ascending by PC.
+    raises: Vec<super::facts::Raise>,
 }
 
 enum Liveness<'a> {
@@ -1669,6 +1671,7 @@ pub(super) fn lower(
         finishes: false,
         leave,
         stop,
+        raises: catches::raises(&catches),
         catches,
     };
     let instructions = unit.instructions.clone();
@@ -1678,7 +1681,7 @@ pub(super) fn lower(
         }
     }
     let mut initial = completion.initial_types(count, usize::from(function.params));
-    let heap = literals::heap_primitive_pcs(entry_pc, &initial, &instructions, &leaders, &program.constants, lowering.native_calls);
+    let heap = literals::heap_primitive_pcs(entry_pc, &initial, &instructions, &leaders, &program.constants, lowering.native_calls, &lowering.raises);
     if !numeric {
         scalar::require_entry_types(program, function, &instructions, |pc| generic.contains(&entry_leave(unit)) || heap.contains(pc), &lowering.written, &mut initial);
     }
@@ -1689,7 +1692,7 @@ pub(super) fn lower(
         let [field] = site_loads(fields, cache_site)?.as_slice() else { return None };
         field.own_direct().then_some((base.register_index()?, field.shape))
     };
-    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, super::facts::Seeds::observing(observed));
+    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &lowering.raises, super::facts::Seeds::observing(observed));
     lowering.intrinsics = native_calls::intrinsic_calls(unit, global_reads, |pc| direct.contains_key(&pc));
     let loops = local_loops(unit, &program.constants, entry_pc, &lowering.intrinsics);
     // One entry query of the call depth replaces each binding's helper with its cached
@@ -1732,7 +1735,7 @@ pub(super) fn lower(
             }
         }
         refined |= lowering.seed_loop_ints(&mut initial, &loops);
-        if refined { lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, super::facts::Seeds::observing(observed)); }
+        if refined { lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &lowering.raises, super::facts::Seeds::observing(observed)); }
         lowering.refine_inductive_inputs(&mut initial, &instructions, &leaders, &loops, &own_shape);
     }
     lowering.refine_loop_inputs(entry_pc, &initial, &instructions, &leaders, &loops, &own_shape);
@@ -1760,9 +1763,12 @@ pub(super) fn lower(
     (lowering.forward, lowering.sealable) = edges::leader_edges(&instructions, &leaders, entry_pc);
     // No forward edge of the bytecode's enters a handler's block: its proofs are none, and it
     // seals once the region ends.
-    for catch in lowering.catches.iter().flatten() {
+    for (pc, catch) in lowering.catches.iter().enumerate().filter_map(|(pc, catch)| Some((pc, (*catch)?))) {
         lowering.forward[catch.target] = None;
         lowering.sealable.remove(catch.target);
+        // A throw of an inlined callee reaches its caller's handler block after the walk passed
+        // it: the block is lowered when the walk reaches it, as one an edge entered.
+        if catch.target < pc { lowering.entered.insert(catch.target); }
     }
     lowering.entered.insert(entry_pc);
     lowering.stable.start = entry_pc;
@@ -2487,7 +2493,7 @@ impl Lowering<'_, '_> {
                 && instruction.register_b() < self.unit.registers => self.typeof_index(state, pc, instruction),
             opcode if opcode.is_unary() && crate::bytecode::typeof_test(instruction.unary_operator()).is_some()
                 && !self.helpers.is_numeric() => self.typeof_test(state, pc, instruction),
-            _ if plain && instruction.op().js_denotation() == JsDenotation::NumericUnary
+            _ if instruction.op().js_denotation() == JsDenotation::NumericUnary
                 && instruction.register_b() < self.unit.registers => self.unary(state, pc, instruction),
             _ if self.allocation_row(pc, instruction) => Some(self.allocation(state, pc, instruction)),
             _ if self.is_construction(instruction) => self.construct(state, pc, instruction),
@@ -3245,7 +3251,7 @@ impl Lowering<'_, '_> {
                 }
             });
         if let Some(facts) = super::facts::inductive_int32(initial, candidates, header..=back,
-            instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls, self.observed) {
+            instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls, &self.raises, self.observed) {
             self.facts = facts;
         }
     }
@@ -3288,7 +3294,7 @@ impl Lowering<'_, '_> {
             self.number_inputs(header, back, &defined, &mut candidates);
         }
         if let Some(facts) = super::facts::loop_int32(entry, initial, candidates, instructions, boundaries,
-            &self.program.constants, &writes, own_shape, self.native_calls, self.observed) {
+            &self.program.constants, &writes, own_shape, self.native_calls, &self.raises, self.observed) {
             self.facts = facts;
         }
     }
@@ -4053,7 +4059,10 @@ impl Lowering<'_, '_> {
     /// source's representation. A non-Number source leaves at its exact PC for the general
     /// coercion, and an int32 negation that overflows widens and leaves.
     fn unary(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        if instruction.result_flags() != 0 || instruction.writes_current_this() {
+        // A returning result completes the activation as a returning binary's does.
+        let returns = instruction.returns_from_frame();
+        if instruction.writes_current_this() || (instruction.result_flags() != 0 && !returns)
+            || (returns && (self.completion.numeric() || !matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))))) {
             return None;
         }
         let operation = crate::vm::operations::NumberUnary::from_js_instruction(
@@ -4071,6 +4080,10 @@ impl Lowering<'_, '_> {
             operation, domain,
         });
         self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
+        if returns {
+            self.complete_result(state, pc, instruction.result_register());
+            return Some(false);
+        }
         Some(true)
     }
 
@@ -4154,26 +4167,32 @@ impl Lowering<'_, '_> {
             return Some(false);
         }
         if returns {
-            // The completion names the function's terminal `Return` where it has one, whose
-            // register the lane reads it from, else the binary's own record.
-            let terminal = self.unit.instructions.len().checked_sub(1)
-                .filter(|terminal| self.unit.instructions[*terminal].op().is_return())
-                .and_then(|terminal| match self.unit.origins.get(terminal) {
-                    Some(super::lane_unit::Origin::Caller(record)) => Some((*record, self.unit.instructions[terminal].register_a())),
-                    _ => None,
-                });
-            let Some(super::lane_unit::Origin::Caller(own)) = self.unit.origins.get(pc).copied() else { unreachable!("a returning binary is a caller record's") };
-            let bits = self.tagged(state, destination);
-            // The activation's `Return` register holds it too, as the record it names reads.
-            if let Some((_, register)) = terminal {
-                let base = self.registers_base;
-                self.store_word(regions::frame(), bits, base, register_offset(register));
-            }
-            self.return_value(terminal.map_or(own, |(record, _)| record), bits);
+            self.complete_result(state, pc, destination);
             self.native += 1;
             return Some(false);
         }
         Some(true)
+    }
+
+    /// Completes the activation with `destination`, the result of the returning operator at the
+    /// caller record `pc` (`RETURN_REGISTER`). The completion names the function's terminal
+    /// `Return` where it has one, whose register the lane reads it from, else the operator's own
+    /// record.
+    fn complete_result(&mut self, state: &mut State, pc: usize, destination: Register) {
+        let terminal = self.unit.instructions.len().checked_sub(1)
+            .filter(|terminal| self.unit.instructions[*terminal].op().is_return())
+            .and_then(|terminal| match self.unit.origins.get(terminal) {
+                Some(super::lane_unit::Origin::Caller(record)) => Some((*record, self.unit.instructions[terminal].register_a())),
+                _ => None,
+            });
+        let Some(super::lane_unit::Origin::Caller(own)) = self.unit.origins.get(pc).copied() else { unreachable!("a returning operator is a caller record's") };
+        let bits = self.tagged(state, destination);
+        // The activation's `Return` register holds it too, as the record it names reads.
+        if let Some((_, register)) = terminal {
+            let base = self.registers_base;
+            self.store_word(regions::frame(), bits, base, register_offset(register));
+        }
+        self.return_value(terminal.map_or(own, |(record, _)| record), bits);
     }
 }
 

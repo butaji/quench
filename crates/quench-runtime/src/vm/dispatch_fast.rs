@@ -17606,6 +17606,8 @@ fn lane_body_concluded<H: Host>(
     // Counted once the leave is resolved: a retirement or reoptimization moves the body.
     if counts {
         lane_note_body_end(cx, own, feedback, |left| lane_note_leave(cx, function, left));
+    } else {
+        lane_note_warming_leave(cx, own);
     }
     lane_body_resumed(cx, ip, resumed)
 }
@@ -18110,11 +18112,20 @@ pub(super) unsafe extern "C" fn lane_body_capture_store<H: Host>(_vm: u64, _resi
 
 /// Whether a body's run that ended at `exit` counts toward its retirement and
 /// reoptimization: a leave into a callee that only lacked a body while warming toward one
-/// (`LaneContext::callee_warming`) does not, as the next run may find the callee's body.
+/// (`LaneContext::callee_warming`) does not, as the next run may find the callee's body. Only
+/// a `Callee` leave reads the flag: the callee's own code may run nested bodies before the
+/// leave resolves, whose other ends must not take it.
 fn lane_leave_counts<H: Host>(cx: *mut LaneContext<H>, exit: super::compiled::LaneExit) -> bool {
-    // SAFETY: the running lane's context, read and reset by the run that ended.
-    let warming = unsafe { std::mem::take(&mut (*cx).callee_warming) };
-    !(warming && exit == super::compiled::LaneExit::Callee)
+    // SAFETY: the running lane's context, read and reset by the run that left into the callee.
+    exit != super::compiled::LaneExit::Callee || !unsafe { std::mem::take(&mut (*cx).callee_warming) }
+}
+
+/// With diagnostics, counts a leave of `own`'s body into a warming callee, which
+/// `lane_leave_counts` keeps from its feedback, in the view's report.
+fn lane_note_warming_leave<H: Host>(cx: *mut LaneContext<H>, own: &LaneView) {
+    if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
+        own.tier().body_stats.warming_leaves.set(own.tier().body_stats.warming_leaves.get() + 1);
+    }
 }
 
 /// Where the lane continues after a run of `method`, `own`'s body, on the activation whose

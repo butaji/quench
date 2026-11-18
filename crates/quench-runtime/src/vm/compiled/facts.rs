@@ -380,13 +380,13 @@ fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants
 pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitSet,
     body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &CompoundBitSet,
     constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>,
-    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, observed: Observed<'_>) -> Option<Facts> {
+    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
     // Each unsuccessful iteration removes at least one candidate. Compile
     // work is bounded by candidate count, without a semantic iteration cap.
     while !candidates.is_empty() {
         let mut inputs = initial.to_vec();
         for register in candidates.iter() { inputs[register] = Type::INT32; }
-        let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls, Seeds::observing(observed));
+        let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls, raises, Seeds::observing(observed));
         let mut rejected: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
         for register in candidates.iter() {
             if !facts.backedge().get(register).is_some_and(|ty| ty.is_int32()) { rejected.insert(register); }
@@ -411,11 +411,11 @@ pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitS
 pub(super) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Contract, std::ops::RangeInclusive<usize>)>,
     instructions: &[WideInstruction], leaders: &CompoundBitSet, constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Vec<Register>, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
-    native_calls: bool, observed: Observed<'_>) -> Option<Facts> {
+    native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
     while !candidates.is_empty() {
         let contracts: Vec<Contract> = candidates.iter().map(|(contract, _)| *contract).collect();
         let seeds = Seeds { contracts: &contracts, ..Seeds::observing(observed) };
-        let facts = analyze(entry, initial, instructions, leaders, constants, written, own_shape, native_calls, seeds);
+        let facts = analyze(entry, initial, instructions, leaders, constants, written, own_shape, native_calls, raises, seeds);
         let mut rejected = vec![false; candidates.len()];
         facts.for_each_definition(instructions, leaders, constants, written, native_calls, |pc, register, ty| {
             for (index, ((_, candidate, required), body)) in candidates.iter().enumerate() {
@@ -441,7 +441,7 @@ pub(super) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Co
 pub(in crate::vm) use immediates::{constant_number, constant_type, immediate, is_int32};
 pub(in crate::vm) use binary::{generic_operator, heap_primitive_binary};
 pub(super) use lengths::IndexProof;
-pub(super) use run::{analyze, analyze_text, Model, Point, Seeds, Text};
+pub(super) use run::{analyze, analyze_text, Model, Point, Raise, Seeds, Text};
 
 #[cfg(test)]
 #[path = "facts/decode_ratchet.rs"] mod decode_ratchet;
