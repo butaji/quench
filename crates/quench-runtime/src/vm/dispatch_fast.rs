@@ -2614,7 +2614,7 @@ struct LaneContext<H: Host> {
     /// (`ActivationKind::WasmEntry`), or `DELETED` where the frame's environment is the
     /// instance's (`lane_instance_env`).
     instance: Value,
-    /// The last outer capture walk an activation read through (`lane_load_outer_capture`).
+    /// The last outer capture walk an activation read through (`Reads::of_captures`).
     /// One walk measured better than one per depth parity on closure-heavy code.
     outer: OuterWalk,
     /// The storage of the environment a frame run's captured locals live in, once a local
@@ -5788,83 +5788,6 @@ script_handler! {
             sibling!(lane_set_index_slot::<H>, r, ip, view)
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-/// `lane_load_outer_capture`'s first read: up the links from the closure environment's
-/// storage (`EnvironmentSlots::link`) to the capture `imm` names, in an activation; `None`
-/// leaves the read to that handler's other ways.
-#[inline(always)]
-fn linked_outer_capture<H: Host>(cx: *mut LaneContext<H>, imm: u32) -> Option<Value> {
-    if unsafe { (*cx).registers }.env().is_deleted() {
-        return None;
-    }
-    let capture = capture_reads(unsafe { (*cx).registers }.capture());
-    if capture.is_null() {
-        return None;
-    }
-    let epoch = unsafe { vm(cx) }.heap.collection_epoch();
-    let mut storage = capture;
-    // SAFETY: as `lane_load_outer_capture`'s walk.
-    for _ in 0..ImmediateLayout::capture_depth(imm) {
-        storage = unsafe { crate::heap::EnvironmentSlots::linked_parent(storage, epoch) }?;
-    }
-    unsafe { crate::heap::EnvironmentSlots::read_storage(storage, ImmediateLayout::capture_slot(imm)) }
-}
-
-script_handler! {
-    /// Two outer capture reads in a row (`specialize_captures`), as Earley-Boyer's nested
-    /// closures read their free variables: both through the closure's storage links
-    /// (`linked_outer_capture`) as one record. A first read the links miss runs the first
-    /// record's own handler, a second the second record's.
-    fn lane_load_outer_capture_pair<>(cx, r, ip, i, view) {
-        let Some(value) = linked_outer_capture(cx, i.imm()) else {
-            sibling!(lane_load_outer_capture::<H>, r, ip, view)
-        };
-        r.set(i.a, value);
-        let second_ip = following(ip);
-        // SAFETY: the pair is two records, the second never the view's last.
-        let second = unsafe { &*second_ip };
-        let Some(value) = linked_outer_capture(cx, second.imm()) else {
-            next!(cx, r, second_ip, view)
-        };
-        r.set(second.a, value);
-        next!(cx, r, following(second_ip), view)
-    }
-}
-
-script_handler! {
-    /// `lane_load_capture` of a capture past the running function's own scope
-    /// (`specialize_captures`): the staged read through the walk the lane remembers (a frame's
-    /// remembered walk, an activation's `LaneContext::outer`) or a new walk it then remembers;
-    /// any other read takes `lane_load_capture_walk`.
-    fn lane_load_outer_capture<>(cx, r, ip, i, view) {
-        let imm = i.imm();
-        // The links from the closure environment's storage up its chain (`EnvironmentSlots::link`),
-        // one load and compare per level.
-        if let Some(value) = linked_outer_capture(cx, imm) {
-            r.set(i.a, value);
-            next!(cx, r, following(ip), view)
-        }
-        sibling!(lane_load_outer_capture_remembered::<H>, r, ip, view)
-    }
-}
-
-script_handler! {
-    /// `lane_load_outer_capture` past its links: the staged read through the walk the lane
-    /// remembers. Apart, so the linked read spills nothing for it.
-    #[inline(never)]
-    fn lane_load_outer_capture_remembered<>(cx, r, ip, i, view) {
-        let imm = i.imm();
-        let at = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
-        if !lane_frame::staged_load_capture::<H>(cx, r, view, i.a, at, false) {
-            #[cfg(feature = "profile-lane-exits")]
-            super::lane_exits::capture(super::lane_exits::CaptureEvent::LaneMiss);
-            sibling!(lane_load_capture_walk::<H>, r, ip, view)
-        }
-        #[cfg(feature = "profile-lane-exits")]
-        super::lane_exits::capture(super::lane_exits::CaptureEvent::LaneHit);
-        next!(cx, r, following(ip), view)
     }
 }
 
@@ -22179,38 +22102,33 @@ const JUMP_IF_TRUE: u16 = opc::JumpTrue;
 const CAPTURE_READ: u16 = opc::LoadCapture;
 const CAPTURE_WRITE: u16 = opc::StoreCapture;
 
-/// Gives each capture record its handler by the capture's depth, which the bytecode fixes:
-/// a `LoadCapture` past the function's own scope the one that reads remembered walks
-/// (`lane_load_outer_capture`), a `StoreCapture` past it the lane's walking store
-/// (`lane_store_outer_capture`); a depth-0 store followed by a read of the same capture runs
-/// both (`lane_store_capture_load`). The other depth-0 records keep the handlers that read
-/// the running function's dense slots.
+/// Gives each capture record its handler by the capture's depth, which the bytecode fixes: a
+/// `StoreCapture` past the function's own scope the lane's walking store (`lane_store_outer_capture`).
+/// A `LoadCapture` past it keeps its row, which reads through the lane's remembered walks
+/// (`Reads::of_captures`). A depth-0 record is its row read as the zero depth it is
+/// (`row_near`); a depth-0 store followed by a read of the same capture runs both
+/// (`lane_store_capture_load`).
 fn specialize_captures<H: Host>(records: &mut [LaneInstruction]) {
-    let load = |handler: *const ()| is_row::<H, CAPTURE_READ>(handler);
     let store = |handler: *const ()| is_row::<H, CAPTURE_WRITE>(handler);
     for pc in 0..records.len() {
         let record = &records[pc];
         let own = ImmediateLayout::capture_depth(record.imm()) == 0;
-        let handler: Handler = if load(record.handler) && !own {
-            lane_load_outer_capture::<H>
-        } else if store(record.handler) && !own {
+        let handler: Handler = if store(record.handler) && !own {
             lane_store_outer_capture::<H>
-        } else if let Some(near) = row_near::<H, CAPTURE_READ>(record.handler).or_else(|| row_near::<H, CAPTURE_WRITE>(record.handler)) {
-            // Its own scope's capture: the row reads its depth as the zero it is.
+        } else if own && let Some(near) = row_near::<H, CAPTURE_READ>(record.handler).or_else(|| row_near::<H, CAPTURE_WRITE>(record.handler)) {
             near
         } else {
             continue;
         };
         records[pc].handler = handler as *const ();
     }
-    // Two outer reads in a row run as one record; the second keeps its own handler for a
-    // jump that enters it and for the pair's misses.
-    let outer = lane_load_outer_capture::<H> as Handler as *const ();
-    for pc in 0..records.len().saturating_sub(1) {
-        if records[pc].handler == outer && records[pc + 1].handler == outer {
-            records[pc].handler = lane_load_outer_capture_pair::<H> as Handler as *const ();
-        }
-    }
+}
+
+/// Whether `record` is a `LoadCapture` row of the running function's own scope, whose dense slots
+/// the passes that fuse a read with its consumer (`capture_int32_update`, `specialize_load_branch_pairs`)
+/// read; an outer read is not one.
+fn is_own_capture_read<H: Host>(record: &LaneInstruction) -> bool {
+    is_row::<H, CAPTURE_READ>(record.handler) && ImmediateLayout::capture_depth(record.imm()) == 0
 }
 
 /// Gives each own capture's read (`lane_load_capture`) whose value an int32 sum or difference
@@ -22220,13 +22138,13 @@ fn specialize_captures<H: Host>(records: &mut [LaneInstruction]) {
 /// stay for jumps and for steps the update leaves to them.
 fn specialize_capture_updates<H: Host>(records: &mut [LaneInstruction]) {
     use super::operations::{ADDITION, SUBTRACTION};
-    let load = |handler: *const ()| is_row::<H, CAPTURE_READ>(handler);
+    let load = |record: &LaneInstruction| is_own_capture_read::<H>(record);
     let store = |handler: *const ()| is_row::<H, CAPTURE_WRITE>(handler);
     let add = lane_operator_int32::<H, ADDITION, true> as Handler as *const ();
     let subtract = lane_operator_int32::<H, SUBTRACTION, true> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(3) {
         let (read, operator, truncation, write) = (&records[pc], &records[pc + 1], &records[pc + 2], &records[pc + 3]);
-        if !load(read.handler)
+        if !load(read)
             || (operator.handler != add && operator.handler != subtract)
             || operator.b != read.a
             || !store(write.handler)
@@ -22236,7 +22154,7 @@ fn specialize_capture_updates<H: Host>(records: &mut [LaneInstruction]) {
             continue;
         }
         // The store's own read of the same capture, the fifth record, makes the `UPDATE_LOADS` run.
-        let loads_back = records.get(pc + 4).is_some_and(|next| load(next.handler) && next.imm() == write.imm());
+        let loads_back = records.get(pc + 4).is_some_and(|next| load(next) && next.imm() == write.imm());
         let form = if loads_back { UPDATE_LOADS } else { UPDATE_STORES };
         macro_rules! forms {
             ($($form:ident),*) => {

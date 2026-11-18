@@ -886,6 +886,9 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         // A capture row reads the running function's dense slots (its miss walks: `row_miss`) and
         // stores through the lane's own store.
         let (capture_slots, captures) = (Some(capture_reads(r.capture())), Some(CaptureStores::own(r)));
+        // A `LoadCapture` past the running function's own scope reads through the lane's remembered
+        // walks (`Reads::of_captures`) before its walk miss.
+        let reads = if const { OP == crate::staged::LOAD_CAPTURE_ROW } { Reads::of_captures::<H>(cx) } else { Reads::NONE };
         // A `LoadCallee` row reads the running function (`running_callee`).
         let callee: Option<(*mut (), unsafe fn(*mut ()) -> Option<Value>)> = if const { OP == crate::staged::LOAD_CALLEE_ROW } {
             let read: unsafe fn(*mut ()) -> Option<Value> = super::running_callee::<H>;
@@ -893,7 +896,7 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         } else {
             None
         };
-        return LaneFrame::<ACC> { this: r.this(), frame_this: Some((cx.cast(), read)), capture_slots, captures, callee,
+        return LaneFrame::<ACC> { this: r.this(), frame_this: Some((cx.cast(), read)), capture_slots, captures, callee, reads,
             ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {

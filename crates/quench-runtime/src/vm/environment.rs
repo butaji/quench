@@ -1523,7 +1523,7 @@ impl<H: Host> Vm<H> {
 
     /// Links each function environment's dense storage on the walk from `env` to `depth` to
     /// its parent's (`EnvironmentSlots::link`), for an activation's later outer captures
-    /// (`lane_load_outer_capture`): only where both are function environments other than a
+    /// (`Reads::of_captures`): only where both are function environments other than a
     /// root, whose dense slots a capture walk reads as they are.
     #[inline(never)]
     pub(super) fn link_capture_chain(&self, env: Value, depth: u16) {
