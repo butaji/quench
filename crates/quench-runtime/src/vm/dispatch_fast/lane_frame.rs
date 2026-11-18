@@ -167,6 +167,15 @@ impl RecordPlan {
         Self { other: Some(heap), functions: true, ..Self::own(layout, slot, records) }
     }
 
+    /// The read of one object's own constant (`IcOp::OwnConstant`) from the receiver's word,
+    /// which equals the object's own word (`Vm::own_constant_word_operands`): one compare of the
+    /// register, no record addressed.
+    #[inline(always)]
+    pub(in crate::vm::dispatch_fast) fn own_constant(object: u64, watch: u64, value: u64) -> Self {
+        let read = crate::staged::ic::IcOp::OwnConstant { record: object, watch, value };
+        Self { ops: [read, read], len: 1, records: 0, other: None, word: true, store: None, functions: false }
+    }
+
     /// `own_other` of a layout whose storage form `form` the row's site fixed.
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn own_other_formed(layout: u32, form: u32, slot: u16, records: u64,
@@ -707,6 +716,11 @@ lane_handler! {
             if const { FLAG == super::STRING_SITE } {
                 sibling!(lane_get_field_string_refresh::<H>, r, ip, Carried::script_in(script, view))
             }
+            if const { super::own_constant_site(FLAG) } {
+                // Another object, or the object was written: the site reads as its tier decides
+                // and never holds an own constant again.
+                sibling!(super::refuse_own_constant_row::<H>, r, ip, Carried::script_in(script, view))
+            }
             if const { super::cell_own_site(FLAG) } {
                 // The record moves on as the site's tier decides, which rebinds the hint.
                 sibling!(lane_get_field_miss::<H>, r, ip, Carried::script_in(script, view))
@@ -838,6 +852,11 @@ lane_handler! {
                 } else {
                     RecordPlan::own_other_formed(hint.receiver, form & !crate::staged::TAGGED_SLOTS, hint.slot, records, &raw const machine.heap)
                 });
+            } else if const { super::own_constant_site(FLAG) } {
+                // One object's own constant: its record's address, then the watch on its values.
+                let machine = unsafe { vm(script) };
+                let Some((object, watch, value)) = machine.own_constant_word_operands(i.call_link.get()) else { property_miss!() };
+                frame.plan = Some(RecordPlan::own_constant(object, watch, value));
             } else if const { FLAG == super::STRING_SITE } {
                 // A string receiver's read through the record's `String.prototype` hint.
                 let machine = unsafe { vm(script) };

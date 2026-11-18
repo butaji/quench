@@ -23,6 +23,10 @@ pub(crate) enum IcOp<'a> {
     /// `GuardLayout` of a layout whose storage form the site fixed (a generated row's site
     /// fact): the form is a constant of the row, so the load after it reads no table entry.
     GuardFormed { id: u32, form: u32 },
+    /// The read of the one object whose record is at `record` as `value`, while `watch` holds
+    /// (`own_constant_read`): an own constant, as an enum member or a namespace export. A plan
+    /// that starts from the receiver's word compares the word with the object's own instead.
+    OwnConstant { record: u64, watch: u64, value: u64 },
     /// The read moves to the record's prototype, an object record, else misses.
     Prototype,
     /// The value at `slot` of the record, whose guarded shapes keep at least `storage_len`
@@ -96,6 +100,7 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
             IcOp::LoadPrototypeSlot(slot) => return prototype_slot(stage, at.record, slot, miss),
             IcOp::PrototypeConstants(values) => return prototype_constants(stage, at.record, values, miss),
             IcOp::Held { guard, watch, value } => return holder_read(stage, at.record, guard, watch, value, miss),
+            IcOp::OwnConstant { record, watch, value } => return own_constant_read(stage, at.record, record, watch, value, miss),
             IcOp::HeldString { watch, value } => return string_read(stage, at.record, watch, value, miss),
         }
     }

@@ -192,6 +192,10 @@ const INHERITED_HINT: u32 = super::NO_FIELD_RECEIVER - 1;
 /// read (`Vm::holder_hint_hit`), as `INHERITED_HINT` no object's exact shape.
 const HOLDER_HINT: u32 = super::NO_FIELD_RECEIVER - 2;
 
+/// The `FieldOperand::shape` of a read's record whose hint is an own constant
+/// (`Vm::own_constant_operands`), as `INHERITED_HINT` no object's exact shape.
+const OWN_CONSTANT_HINT: u32 = super::NO_FIELD_RECEIVER - 3;
+
 impl LaneInstruction {
     /// The own-field hint of a `GetField` or `SetField` record: an exact receiver shape and the
     /// slot of its own data field, as the site's primary entry proved it
@@ -7437,6 +7441,22 @@ script_handler! {
             // SAFETY: a successful direct-object lookup proves the range is reserved.
             unsafe { (*cx).binding.object_base = vm.heap.object_record_base().unwrap_unchecked() };
         }
+        // A register read probes for an own constant (an enum member, a namespace export): the
+        // first object it meets stays unhinted, so the next read comes back here; the same
+        // object again is held as the read's value under a watch on its values.
+        if !THIS && !holds_loop_site(ip) && vm.probes_own_constant(ip.addr()) {
+            let first = !vm.own_constant_probed(ip.addr());
+            if let Some(index) = vm.probe_own_constant(ip.addr(), i.imm(), object, value, NO_CALL_LINK) {
+                set_record_hint(ip, OWN_CONSTANT_HINT, index);
+                requicken::<H>(ip, lane_row::<H, FIELD_LEAF_READ, ACC_NONE, OWN_CONSTANT_REGISTER>);
+                r.set(i.a, value);
+                next!(cx, r, following(ip), Carried::script_in(cx, view))
+            }
+            if first {
+                r.set(i.a, value);
+                next!(cx, r, following(ip), Carried::script_in(cx, view))
+            }
+        }
         // The hit proved the entry an own one of the receiver's shape.
         let hint = vm.form_hint(vm.field_cache_entry(i.c), object);
         set_field_hint(ip, hint);
@@ -7613,6 +7633,11 @@ pub(super) const CELL_OWN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 6);
 /// is the slot load past the layout guard.
 pub(super) const CELL_RUN_THIS: u8 = own_site(true, OWN_FORMS.len() + 7);
 pub(super) const CELL_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 7);
+/// The site fact of a register read of one object's own constant (`IcOp::OwnConstant`): the
+/// record's hint names an own-constant hint (`OWN_CONSTANT_HINT`, `Vm::own_constant_operands`).
+pub(super) const OWN_CONSTANT_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 8);
+pub(super) const fn own_constant_site(site: u8) -> bool { site == OWN_CONSTANT_REGISTER }
+
 pub(super) const fn cell_own_site(site: u8) -> bool {
     site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
 }
@@ -7642,7 +7667,7 @@ pub(super) const fn own_site_form(site: u8) -> u32 {
 /// Whether the word own-field site `site` reads is a slot word to decode (`decode_staged_word`):
 /// every form but a fixed tagged one and packed or narrow values, which hold no raw double.
 pub(super) const fn own_site_decodes(site: u8) -> bool {
-    if held_site(site) || site == STRING_SITE || inherited_site(site) { return false; }
+    if held_site(site) || site == STRING_SITE || inherited_site(site) || own_constant_site(site) { return false; }
     let form = own_site_form(site);
     form == HINTED_FORM || (form & crate::staged::TAGGED_SLOTS == 0 && form != crate::value_vec::INLINE_FORM
         && form != crate::value_vec::NARROW_FORM)
@@ -7941,6 +7966,19 @@ script_handler! {
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// The own-constant row's miss (`OWN_CONSTANT_REGISTER`): another object, or the object was
+    /// written. The site never holds an own constant again and reads as its tier decides.
+    /// Out of line, so the row's hit path makes no call and saves no register.
+    #[inline(never)]
+    #[cold]
+    fn refuse_own_constant_row<>(cx, r, ip, i, view) {
+        let _ = i;
+        unsafe { vm(cx) }.refuse_own_constant(ip.addr());
+        sibling!(lane_get_field_miss::<H>, r, ip, Carried::script_in(cx, view))
     }
 }
 
