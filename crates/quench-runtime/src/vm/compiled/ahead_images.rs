@@ -13,6 +13,25 @@ struct Image {
     code: RelocatableCode,
     /// The text of each atom the code names, by the number it names it with.
     atoms: Vec<(u32, String)>,
+    /// The loops of this function whose lowering proved no fact a load would have to subscribe:
+    /// code alone, entered at the loop's header and left at its edges.
+    loops: Vec<Loop>,
+}
+
+/// One loop of a function: its header and back edge, the fault poll it needs, and its code.
+#[derive(Debug)]
+struct Loop {
+    header: u32,
+    backedge: u32,
+    fault_poll: bool,
+    code: RelocatableCode,
+    atoms: Vec<(u32, String)>,
+}
+
+/// The atom texts a relocatable code names, by the number it names them with.
+fn code_atoms(code: &RelocatableCode, program: &ResidualProgram) -> Vec<(u32, String)> {
+    code.relocations.iter().filter_map(|relocation| lane_region::relocs::atom_key(relocation.namespace, relocation.key))
+        .collect::<std::collections::BTreeSet<_>>().into_iter().map(|atom| (atom, program.atoms[atom as usize].to_string())).collect()
 }
 
 /// A program's ahead-of-time lane bodies by function.
@@ -26,7 +45,7 @@ pub struct AheadImages {
     images: Vec<(u32, Image)>,
 }
 
-const MAGIC: &[u8; 8] = b"QAHEAD\0\x02";
+const MAGIC: &[u8; 8] = b"QAHEAD\0\x03";
 
 /// Names the build whose machine code and layouts the images are (`build.rs`); a file from another build is rejected.
 const BUILD_ID: u64 = match u64::from_str_radix(env!("QUENCH_BUILD_ID"), 16) { Ok(id) => id, Err(_) => 0 };
@@ -47,6 +66,13 @@ fn fingerprint(program: &ResidualProgram) -> u64 {
     hash
 }
 
+/// `function`'s machine code with the relocations a load links.
+fn compile_relocatable(function: ir::Function, isa: &dyn cranelift_codegen::isa::TargetIsa) -> Option<RelocatableCode> {
+    crate::vm::jit_backend::compile_function(function, isa, Some(lane_region::LANE_BODY_MAX_CODE_BYTES), |compiled, function| {
+        RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
+    }).ok()
+}
+
 /// The image of `function`, or `None` where it lowers to nothing a lane body may run.
 fn image(program: &ResidualProgram, function: u32) -> Option<Image> {
     let body = program.function_get(function as usize)?;
@@ -56,12 +82,21 @@ fn image(program: &ResidualProgram, function: u32) -> Option<Image> {
     if lowered.region.native == 0 { return None; }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = crate::vm::jit_backend::target_isa()?;
-    let code = crate::vm::jit_backend::compile_function(native, &*isa, Some(lane_region::LANE_BODY_MAX_CODE_BYTES), |compiled, function| {
-        RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
-    }).ok()?;
-    let atoms = code.relocations.iter().filter_map(|relocation| lane_region::relocs::atom_key(relocation.namespace, relocation.key))
-        .collect::<std::collections::BTreeSet<_>>().into_iter().map(|atom| (atom, program.atoms[atom as usize].to_string())).collect();
-    Some(Image { fault_poll: lowered.region.fault_poll, code, atoms })
+    let code = compile_relocatable(native, &*isa)?;
+    let atoms = code_atoms(&code, program);
+    // A loop ships as code alone only where its lowering proved no fact (`StableFacts::is_empty`)
+    // and needs no Number result: a load cannot subscribe build-time shapes or cells. Only a
+    // compiler build lowers loops.
+    #[cfg(feature = "aot")]
+    let loops = super::ahead_loops(program, function, &*isa).into_iter().filter_map(|(header, backedge, region)| {
+        if !region.stable.is_empty() || region.number_result.is_some() { return None; }
+        let code = compile_relocatable(region.function, &*isa)?;
+        let atoms = code_atoms(&code, program);
+        Some(Loop { header, backedge, fault_poll: region.fault_poll, code, atoms })
+    }).collect();
+    #[cfg(not(feature = "aot"))]
+    let loops = Vec::new();
+    Some(Image { fault_poll: lowered.region.fault_poll, code, atoms, loops })
 }
 
 impl AheadImages {
@@ -89,6 +124,11 @@ impl AheadImages {
     /// How many functions have an image.
     pub fn len(&self) -> usize { self.images.len() }
 
+    /// The loops `function`'s image carries, as `(header, backedge, fault_poll)`.
+    pub fn loops_of(&self, function: u32) -> Vec<(u32, u32, bool)> {
+        self.get(function).map(|image| image.loops.iter().map(|loop_| (loop_.header, loop_.backedge, loop_.fault_poll)).collect()).unwrap_or_default()
+    }
+
     /// Whether no function has an image.
     pub fn is_empty(&self) -> bool { self.images.is_empty() }
 
@@ -101,21 +141,12 @@ impl AheadImages {
         out.extend((self.images.len() as u32).to_le_bytes());
         for (function, image) in &self.images {
             out.extend(function.to_le_bytes());
-            out.push(u8::from(image.fault_poll));
-            out.extend((image.code.code.len() as u32).to_le_bytes());
-            out.extend(&*image.code.code);
-            out.extend((image.code.relocations.len() as u32).to_le_bytes());
-            for relocation in &*image.code.relocations {
-                out.extend((relocation.offset as u32).to_le_bytes());
-                out.extend(relocation.namespace.to_le_bytes());
-                out.extend(relocation.key.to_le_bytes());
-                out.extend(relocation.addend.to_le_bytes());
-            }
-            out.extend((image.atoms.len() as u32).to_le_bytes());
-            for (atom, text) in &image.atoms {
-                out.extend(atom.to_le_bytes());
-                out.extend((text.len() as u32).to_le_bytes());
-                out.extend(text.as_bytes());
+            write_code(&mut out, image.fault_poll, &image.code, &image.atoms);
+            out.extend((image.loops.len() as u32).to_le_bytes());
+            for loop_ in &image.loops {
+                out.extend(loop_.header.to_le_bytes());
+                out.extend(loop_.backedge.to_le_bytes());
+                write_code(&mut out, loop_.fault_poll, &loop_.code, &loop_.atoms);
             }
         }
         out
@@ -128,22 +159,54 @@ impl AheadImages {
         let program = words.quad()?;
         let mut images = Vec::new();
         for _ in 0..words.half()? {
-            let (function, fault_poll) = (words.half()?, words.byte()? != 0);
-            let length = words.half()? as usize;
-            let code: Box<[u8]> = words.bytes(length)?.into();
-            let relocations = (0..words.half()?).map(|_| Ok(Relocation {
-                offset: words.half()? as usize, kind: cranelift_codegen::binemit::Reloc::Abs8,
-                namespace: words.half()?, key: words.half()?, addend: words.quad()? as i64 })).collect::<Result<_, String>>()?;
-            let atoms = (0..words.half()?).map(|_| {
-                let atom = words.half()?;
-                let length = words.half()? as usize;
-                Ok((atom, String::from_utf8(words.bytes(length)?.to_vec()).map_err(|_| "an atom is not text")?))
-            }).collect::<Result<_, String>>()?;
-            images.push((function, Image { fault_poll, code: RelocatableCode { code, relocations }, atoms }));
+            let function = words.half()?;
+            let (fault_poll, code, atoms) = read_code(&mut words)?;
+            let loops = (0..words.half()?).map(|_| {
+                let (header, backedge) = (words.half()?, words.half()?);
+                let (fault_poll, code, atoms) = read_code(&mut words)?;
+                Ok(Loop { header, backedge, fault_poll, code, atoms })
+            }).collect::<Result<Vec<_>, String>>()?;
+            images.push((function, Image { fault_poll, code, atoms, loops }));
         }
         images.sort_by_key(|(function, _)| *function);
         Ok(Self { program, known: Default::default(), images })
     }
+}
+
+/// One image's or loop's payload: the fault poll, the code with its relocations, and the atom
+/// texts it names.
+fn write_code(out: &mut Vec<u8>, fault_poll: bool, code: &RelocatableCode, atoms: &[(u32, String)]) {
+    out.push(u8::from(fault_poll));
+    out.extend((code.code.len() as u32).to_le_bytes());
+    out.extend(&*code.code);
+    out.extend((code.relocations.len() as u32).to_le_bytes());
+    for relocation in &*code.relocations {
+        out.extend((relocation.offset as u32).to_le_bytes());
+        out.extend(relocation.namespace.to_le_bytes());
+        out.extend(relocation.key.to_le_bytes());
+        out.extend(relocation.addend.to_le_bytes());
+    }
+    out.extend((atoms.len() as u32).to_le_bytes());
+    for (atom, text) in atoms {
+        out.extend(atom.to_le_bytes());
+        out.extend((text.len() as u32).to_le_bytes());
+        out.extend(text.as_bytes());
+    }
+}
+
+fn read_code(words: &mut Words<'_>) -> Result<(bool, RelocatableCode, Vec<(u32, String)>), String> {
+    let fault_poll = words.byte()? != 0;
+    let length = words.half()? as usize;
+    let code: Box<[u8]> = words.bytes(length)?.into();
+    let relocations = (0..words.half()?).map(|_| Ok(Relocation {
+        offset: words.half()? as usize, kind: cranelift_codegen::binemit::Reloc::Abs8,
+        namespace: words.half()?, key: words.half()?, addend: words.quad()? as i64 })).collect::<Result<_, String>>()?;
+    let atoms = (0..words.half()?).map(|_| {
+        let atom = words.half()?;
+        let length = words.half()? as usize;
+        Ok((atom, String::from_utf8(words.bytes(length)?.to_vec()).map_err(|_| "an atom is not text")?))
+    }).collect::<Result<_, String>>()?;
+    Ok((fault_poll, RelocatableCode { code, relocations }, atoms))
 }
 
 /// The images of each program stored while recording (`start_recording`); the entry may run

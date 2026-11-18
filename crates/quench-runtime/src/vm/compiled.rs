@@ -1325,9 +1325,9 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
 /// The loop `header..=backedge` of `function_id` lowered for an ahead image: the same region
 /// specializer as a lane body and the runtime's own loop plan, over static facts and a linking
 /// helper table. `None` where the region declines or lowers no record; otherwise its records.
-#[cfg(all(test, feature = "aot"))]
-pub(super) fn lowered_ahead_loop(program: &ResidualProgram, function_id: u32,
-    isa: &dyn cranelift_codegen::isa::TargetIsa, (header, backedge): (u32, u32)) -> Result<usize, String> {
+#[cfg(feature = "aot")]
+pub(in crate::vm::compiled) fn ahead_loop_region(program: &ResidualProgram, function_id: u32,
+    isa: &dyn cranelift_codegen::isa::TargetIsa, (header, backedge): (u32, u32)) -> Result<lane_region::LoweredRegion, String> {
     use super::specializer::Specializer;
     let function = program.function_get(function_id as usize).ok_or("no such function")?;
     // The analysis inputs the runtime's loop site builds (`lane_method_call_region`): the
@@ -1341,21 +1341,27 @@ pub(super) fn lowered_ahead_loop(program: &ResidualProgram, function_id: u32,
         .map_err(|failure| format!("region rejected: {:?}", failure.reason))?;
     let unit = lane_unit::with_budget(program, function_id, function, 0, &|_, _| Vec::new(),
         &|callee| program.function_get(callee as usize)).ok_or("no unit")?;
-    let lowered = lane_region::RegionSpecializer { function_id, unit: &unit, helpers: LaneHelpers::Ahead,
+    lane_region::RegionSpecializer { function_id, unit: &unit, helpers: LaneHelpers::Ahead,
         fields: &[], global_reads: &crate::vm::global_facts::GlobalReads::default(), facts: VmFacts::STATIC, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
         entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
         plan: lane_region::RegionPlan { entry_bounds: true,
             coverage: lane_region::Coverage::Loop { header: region.header as usize, backedge: region.backedge as usize, poll: true },
             completion: lane_region::Completion::Body, views: lane_region::ElementViews::Dense } }
-        .specialize(program)?;
-    Ok(lowered.native)
+        .specialize(program)
 }
 
-/// Every loop of `function_id` that lowers ahead: its header, back edge and native records.
+/// `ahead_loop_region`'s native record count.
 #[cfg(all(test, feature = "aot"))]
-pub(super) fn ahead_loops_of(program: &ResidualProgram, function_id: u32,
-    isa: &dyn cranelift_codegen::isa::TargetIsa) -> Vec<(u32, u32, usize)> {
+pub(in crate::vm::compiled) fn lowered_ahead_loop(program: &ResidualProgram, function_id: u32,
+    isa: &dyn cranelift_codegen::isa::TargetIsa, (header, backedge): (u32, u32)) -> Result<usize, String> {
+    ahead_loop_region(program, function_id, isa, (header, backedge)).map(|lowered| lowered.native)
+}
+
+/// Every loop of `function_id` that lowers ahead: its header, back edge and lowered region.
+#[cfg(feature = "aot")]
+pub(in crate::vm::compiled) fn ahead_loops(program: &ResidualProgram, function_id: u32,
+    isa: &dyn cranelift_codegen::isa::TargetIsa) -> Vec<(u32, u32, lane_region::LoweredRegion)> {
     let Some(function) = program.function_get(function_id as usize) else { return Vec::new() };
     let decoded: Vec<_> = function.instructions().collect();
     let mut loops = Vec::new();
@@ -1363,8 +1369,8 @@ pub(super) fn ahead_loops_of(program: &ResidualProgram, function_id: u32,
         if !instruction.op().control_flow_layout().jumps() { continue; }
         let header = instruction.jump_target();
         if header > pc as u32 { continue; }
-        if let Ok(records) = lowered_ahead_loop(program, function_id, isa, (header, pc as u32)) {
-            loops.push((header, pc as u32, records));
+        if let Ok(lowered) = ahead_loop_region(program, function_id, isa, (header, pc as u32)) {
+            loops.push((header, pc as u32, lowered));
         }
     }
     loops
@@ -9163,8 +9169,9 @@ mod ahead_loop_tests {
         }).next_back().map(|(pc, instruction)| (instruction.jump_target(), pc as u32)).expect("the body has a loop");
         let records = super::lowered_ahead_loop(&program, 1, &*isa, (header, backedge));
         assert!(matches!(records, Ok(records) if records > 0), "the loop lowered no record: {records:?} ({header}..={backedge})");
-        let loops = super::ahead_loops_of(&program, 1, &*isa);
-        assert!(loops.iter().any(|(_, _, records)| *records > 0), "no loop of the body lowers ahead: {loops:?}");
+        let loops = super::ahead_loops(&program, 1, &*isa);
+        assert!(loops.iter().any(|(_, _, lowered)| lowered.native > 0), "no loop of the body lowers ahead: {}",
+            loops.iter().map(|(header, backedge, lowered)| (*header, *backedge, lowered.native)).collect::<Vec<_>>().len());
     }
 }
 

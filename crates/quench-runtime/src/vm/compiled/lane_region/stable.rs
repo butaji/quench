@@ -30,6 +30,16 @@ pub(crate) struct StableFacts {
     pub(crate) shapes: Box<[u32]>,
 }
 
+impl StableFacts {
+    /// Whether the lowering proved no fact a publication would have to subscribe: the case an
+    /// ahead image can ship as code alone.
+    #[cfg(feature = "aot")]
+    pub(in crate::vm) fn is_empty(&self) -> bool {
+        self.holders.is_empty() && self.atoms.is_empty() && self.globals.is_empty() && self.roots.is_empty()
+            && self.layouts.is_empty() && self.slots.is_empty() && self.instanceofs.is_empty() && self.shapes.is_empty()
+    }
+}
+
 /// The Stable facts a lowering folded so far.
 #[derive(Default)]
 pub(super) struct StableUses {

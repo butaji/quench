@@ -87,6 +87,20 @@ mod tests {
         assert_eq!(output_with(source, Some(&images.to_bytes())), expected);
     }
 
+    /// A body whose loop lowers under static facts ships that loop's code in the image, and the
+    /// file round trip keeps it.
+    #[test]
+    fn a_loop_of_a_body_ships_with_its_code() {
+        let source = "function loopfn(n){ let a=0; for(let i=0;i<n;i++){a=(a+i)|0;} return a; }\nprint(loopfn(10));";
+        let program = crate::Engine::specialize(source, "ahead-loop.js").unwrap();
+        let images = AheadImages::compile(&program);
+        let loops = (0..program.function_count() as u32).flat_map(|function| images.loops_of(function)).collect::<Vec<_>>();
+        assert!(!loops.is_empty(), "no loop shipped");
+        let round_trip = AheadImages::from_bytes(&images.to_bytes()).unwrap();
+        let back = (0..program.function_count() as u32).flat_map(|function| round_trip.loops_of(function)).collect::<Vec<_>>();
+        assert_eq!(back, loops);
+    }
+
     #[test]
     fn ahead_images_serve_only_the_program_they_were_compiled_from() {
         let program = crate::Engine::specialize("function add(a,b){return a+b;}", "ahead-a.js").unwrap();
