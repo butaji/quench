@@ -1258,26 +1258,11 @@ fn handler_is<H: Host>(ip: Ip, handler: Handler) -> bool {
     unsafe { (*ip).handler == handler as *const () }
 }
 
-/// The receiver's context word, counted down from register 0 (`register_file::FRAME_CONTEXT`).
-const CONTEXT_THIS: usize = 1;
-/// The environment's context word.
-const CONTEXT_ENV: usize = 2;
-/// The captures' context word.
-const CONTEXT_CAPTURE: usize = 3;
-/// A plain activation's frame header (call protocol v2 stage C), the context words below
-/// its captures: the caller's call record.
-const CONTEXT_CALL: usize = 4;
-/// The caller's registers.
-const CONTEXT_CALLER_REGISTERS: usize = 5;
-/// The caller's records (`LaneContext::base`).
-const CONTEXT_CALLER_BASE: usize = 6;
-/// `function` (bits 0-31) | flags (bits 32-47) | argc (bits 48-63).
-const CONTEXT_PACKED: usize = 7;
-/// The callee.
-const CONTEXT_CALLEE: usize = 8;
+/// The context words below register 0 (`staged::frame`, the one source of the frame layout).
+use crate::staged::frame::{CONTEXT_CALL, CONTEXT_CALLEE, CONTEXT_CALLER_BASE, CONTEXT_CALLER_REGISTERS, CONTEXT_CAPTURE, CONTEXT_ENV, CONTEXT_PACKED, CONTEXT_THIS};
 const _: () = assert!(CONTEXT_CALLEE == super::register_file::FRAME_CONTEXT);
 /// `CONTEXT_PACKED`'s flag of a plain frame.
-pub(in crate::vm) const PLAIN_FRAME_FLAG: u64 = 1 << 32;
+pub(in crate::vm) const PLAIN_FRAME_FLAG: u64 = crate::staged::frame::PLAIN_FLAG;
 
 /// The active frame's registers. Lane instructions never resize registers or
 /// change the frame stack, so the base stays valid for the whole lane run.
@@ -1336,7 +1321,7 @@ impl Registers {
             *self.0.sub(CONTEXT_CALL).cast::<Ip>() = call;
             *self.0.sub(CONTEXT_CALLER_REGISTERS).cast::<Registers>() = caller_registers;
             *self.0.sub(CONTEXT_CALLER_BASE).cast::<Ip>() = caller_base;
-            *self.0.sub(CONTEXT_PACKED).cast::<u64>() = u64::from(function) | PLAIN_FRAME_FLAG | (u64::from(argc) << 48);
+            *self.0.sub(CONTEXT_PACKED).cast::<u64>() = u64::from(function) | PLAIN_FRAME_FLAG | (u64::from(argc) << crate::staged::frame::ARGC_SHIFT);
             *self.0.sub(CONTEXT_CALLEE) = callee;
         }
     }
@@ -1360,7 +1345,10 @@ impl Registers {
         // SAFETY: as for `plain_caller`.
         unsafe {
             let packed = *self.0.sub(CONTEXT_PACKED).cast::<u64>();
-            (packed as u32, (packed >> 48) as u16, *self.0.sub(CONTEXT_CALLEE))
+            // Emitted direct calls' plain frames (compiled bodies, native frames) are spilled
+            // by their rows' own branch of `LaneStack::spill_plain` once those rows write them.
+            debug_assert!(packed & (crate::staged::frame::BODY_FLAG | crate::staged::frame::NATIVE_FLAG) == 0);
+            (packed as u32, (packed >> crate::staged::frame::ARGC_SHIFT) as u16, *self.0.sub(CONTEXT_CALLEE))
         }
     }
 
@@ -1605,6 +1593,8 @@ pub(in crate::vm) struct Activation {
 pub(in crate::vm) use quench_bjit::shared_words::KIND_NATIVE;
 /// Where the kind's tag lies in an activation.
 pub(in crate::vm) const KIND_OFFSET: usize = std::mem::offset_of!(Activation, kind);
+const _: () = assert!(KIND_OFFSET == crate::staged::frame::ACTIVATION_KIND_OFFSET);
+const _: () = assert!(std::mem::size_of::<Activation>() == crate::staged::frame::ACTIVATION_BYTES);
 const KIND_SCRIPT: u8 = 1;
 const KIND_WASM: u8 = 2;
 
@@ -2406,7 +2396,11 @@ pub(in crate::vm) struct PlainFrames {
 }
 pub(in crate::vm) const PLAIN_DEPTH_OFFSET: usize = std::mem::offset_of!(PlainFrames, depth);
 pub(in crate::vm) const PLAIN_REGISTERS_OFFSET: usize = std::mem::offset_of!(PlainFrames, registers);
-const _: () = assert!(PLAIN_DEPTH_OFFSET == 0 && PLAIN_REGISTERS_OFFSET == 8);
+const _: () = {
+    use crate::staged::frame;
+    assert!(PLAIN_DEPTH_OFFSET == frame::PLAIN_DEPTH_AT && PLAIN_REGISTERS_OFFSET == frame::PLAIN_REGISTERS_AT);
+    assert!(std::mem::offset_of!(PlainFrames, program) == frame::PLAIN_PROGRAM_AT);
+};
 
 /// The addresses a lane run's direct calls push onto (`Vm::lane_stack_words`).
 #[derive(Clone, Copy)]
@@ -2457,15 +2451,13 @@ impl LaneStack {
     fn spill_plain(&self) {
         let depth = self.plain.depth.replace(0);
         let program = self.plain.program.get();
-        let mut windows: smallvec::SmallVec<[Registers; 32]> = smallvec::SmallVec::with_capacity(depth);
-        let mut registers = Registers(self.plain.registers.get());
-        for _ in 0..depth {
-            windows.push(registers);
-            registers = registers.plain_caller().1;
-        }
         // SAFETY: no reference into the records lives (`activations`).
         let records = unsafe { &mut *self.activation_records.get() };
-        for &window in windows.iter().rev() {
+        let len = records.len();
+        debug_assert!(len + depth <= records.capacity(), "the activation limit counts plain activations");
+        // Innermost first, each into its own slot above the records, outermost lowest.
+        let mut window = Registers(self.plain.registers.get());
+        for slot in (len..len + depth).rev() {
             let (call, caller_registers, caller_base) = window.plain_caller();
             let (function, argc, callee) = window.plain_callee();
             let mut activation = Activation::of_parts(
@@ -2481,10 +2473,13 @@ impl LaneStack {
                 }),
             );
             activation.native.window = window.0.addr();
-            debug_assert!(records.len() < records.capacity(), "the activation limit counts plain activations");
-            // SAFETY: the activation limit counts plain activations within the capacity.
-            unsafe { records.push_unchecked(activation) };
+            // SAFETY: the activation limit counts plain activations within the capacity, so
+            // the slot lies in the allocation; the length covers it once all are written.
+            unsafe { records.top_ptr().sub(len).add(slot).write(activation) };
+            window = caller_registers;
         }
+        // SAFETY: every slot up to `len + depth` was written above.
+        unsafe { records.set_len(len + depth) };
     }
 
     /// Whether `activation` may be a plain activation: a script activation of the lane's own

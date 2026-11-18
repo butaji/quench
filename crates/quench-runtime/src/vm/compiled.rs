@@ -3439,7 +3439,7 @@ struct JsStepDispatch {
     residual: usize,
     /// Immutable function admitted with `residual` by `JsNativeActivation`.
     body: *const crate::bytecode::Function,
-    /// A lane body's scratch window (`LaneFrame::scratch`), where a leave inside an inlined
+    /// A lane body's scratch window (`BodyRunContext::scratch`), where a leave inside an inlined
     /// callee writes the callee's registers.
     inlined: usize,
     /// The lowering line of the guard a lane body last left at, where its code was compiled
@@ -3528,7 +3528,7 @@ pub(super) struct LaneMethod {
     pub(super) inlined: Vec<InlinedCall>,
     /// Its leaves, by place (`ExitTable`).
     pub(super) exits: ExitTable,
-    /// The scratch registers a leave inside an inlined call fills (`LaneFrame::scratch`): one
+    /// The scratch registers a leave inside an inlined call fills (`BodyRunContext::scratch`): one
     /// per register of the inlined callees, the unit's past the caller's.
     scratch_width: usize,
     /// Whether its inlined frames' registers live in the activation's register file past the
@@ -3595,7 +3595,7 @@ impl LaneMethod {
         self.closed
     }
 
-    /// Sizes this thread's scratch window for it (`LaneFrame::scratch`): the one event that
+    /// Sizes this thread's scratch window for it (`BodyRunContext::scratch`): the one event that
     /// grows the window, so a run never checks it. Its publication does it
     /// (`ProgramStore::publish_lane_method`), on the thread that runs it.
     pub(super) fn reserve_scratch(&self) {
@@ -4103,7 +4103,7 @@ impl<H: Host> Vm<H> {
         unsafe {
             // An entry from outside any body (the interpreter's call) found the run's words
             // unbound: they stay bound to the run it made, so the next such entry of the same run
-            // binds none of them again (`LaneFrame::bind_run`); the per-entry words go back.
+            // binds none of them again (`BodyRunContext::bind_run`); the per-entry words go back.
             let saved = if saved.residual == 0 && saved.field_entries == 0 { saved.keeping_run_of(&(*frame).dispatch) } else { saved };
             saved.install(&mut (*frame).dispatch);
             if self.field_entries_epoch != moved_from { self.rebind_lane_field_entries(); }
@@ -4159,7 +4159,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Hands `write` each of the `count` registers an inlined callee its lane body left
-    /// inside held, as the body wrote them to the scratch window (`LaneFrame::scratch`).
+    /// inside held, as the body wrote them to the scratch window (`BodyRunContext::scratch`).
     pub(super) fn lane_scratch(start: usize, count: usize, mut write: impl FnMut(u16, Value)) {
         LANE_FRAME.with(|frame| {
             // SAFETY: as in `run_lane_method`; no lane body runs while the lane reads it.
@@ -4231,7 +4231,7 @@ impl LaneEntry {
 
 /// The words of the dispatch payload and context that stay as they are for every entry of one
 /// lane run: its VM, program, residual and store specialization, and what follows
-/// from them, the program's field cache entries (`LaneFrame::bind_run`). An entry writes them
+/// from them, the program's field cache entries (`BodyRunContext::bind_run`). An entry writes them
 /// only where its run is not the one that bound them; the words it writes per entry are its lane
 /// context (compared here only after it is written), its registers and the stack's room.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4252,14 +4252,14 @@ impl LaneRun {
 
 /// The context and payload every lane body on this thread runs with
 /// (`Vm::run_lane_method`). Thread facts are set once; each entry writes its own.
-struct LaneFrame {
+struct BodyRunContext {
     context: CallContext,
     dispatch: JsStepDispatch,
     /// The registers of an inlined callee its lane body left inside.
     scratch: Vec<Value>,
 }
 
-impl LaneFrame {
+impl BodyRunContext {
     /// Binds the payload and context to `run`'s words, written once per run: a nested entry
     /// of the same run (`Vm::run_nested_lane_method`) and each next entry of the lane's calls
     /// find them standing. `field_entries` derives the program's field cache entries, which
@@ -4305,7 +4305,7 @@ impl LaneFrame {
 }
 
 thread_local! {
-    static LANE_FRAME: std::cell::UnsafeCell<Option<LaneFrame>> = const { std::cell::UnsafeCell::new(None) };
+    static LANE_FRAME: std::cell::UnsafeCell<Option<BodyRunContext>> = const { std::cell::UnsafeCell::new(None) };
 }
 
 /// This thread's lane frame, made at its first lane body run.
@@ -4317,11 +4317,11 @@ pub(super) fn take_lane_exit_line() -> u64 {
 }
 
 #[inline]
-fn lane_frame() -> *mut LaneFrame {
+fn lane_frame() -> *mut BodyRunContext {
     let frame = LANE_FRAME.with(std::cell::UnsafeCell::get);
     // SAFETY: the frame is reached only through this pointer, on its thread, and no
     // reference into it outlives the statement that makes it.
-    unsafe { (*frame).get_or_insert_with(LaneFrame::new) as *mut LaneFrame }
+    unsafe { (*frame).get_or_insert_with(BodyRunContext::new) as *mut BodyRunContext }
 }
 
 

@@ -30,7 +30,7 @@ pub enum Event {
     Refused,
     /// A lane body entered through its entry cell before any activation.
     CellCrossed,
-    /// An entry that bound a different run into the lane frame (`LaneFrame::bind_run`).
+    /// An entry that bound a different run into the lane frame (`BodyRunContext::bind_run`).
     RunBound,
     /// A run that completed with its body's `Return`, as opposed to an exception.
     Returned,
