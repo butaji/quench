@@ -2,7 +2,25 @@
 //! the repeat's test rejects can never use a unit it gives back, so it keeps no frame to give
 //! units back. A static fact of the program, so every tier that runs it gains: `[\w.]+@`,
 //! `(\w+)\s`, `\d{4}-`, `\w+(?=@)` backtrack nothing.
-use super::{Beyond, ClassItem, ClassKind, Inst, MatchSet, UnitTest, ASCII_UNITS};
+use super::{Beyond, UNBOUNDED, ClassItem, ClassKind, Inst, MatchSet, UnitTest, ASCII_UNITS};
+
+/// The test of the repeat a run begins with (past the openings of groups) where a failed run
+/// from a start fails from each later start the repeat's units cover, and at their end: the
+/// repeat is atomic, unbounded and takes at least one unit, so from a later start inside its
+/// units it ends where it ended and the rest of the run, which reads positions and units
+/// but no capture (no backreference), fails as it did; and at their end it takes no unit.
+/// `None` where a search's runs do not begin at its start (an anchor or a prefix scan).
+pub(super) fn restart_skip(instructions: &[Inst], scanned: bool) -> Option<UnitTest> {
+    let references = instructions.iter().any(|inst| matches!(inst, Inst::Backreference { .. } | Inst::BackreferenceBack { .. }));
+    if scanned || references {
+        return None;
+    }
+    let first = instructions.iter().find(|inst| !matches!(inst, Inst::CaptureOpen { .. }))?;
+    match *first {
+        Inst::UnitRepeat { test, min, max: UNBOUNDED, atomic: true, .. } if min >= 1 => Some(test),
+        _ => None,
+    }
+}
 
 /// Marks each greedy `UnitRepeat` whose follower rejects every unit it takes `atomic`.
 pub(super) fn mark(instructions: &mut [Inst], sets: &[MatchSet]) {

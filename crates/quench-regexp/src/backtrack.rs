@@ -664,6 +664,9 @@ pub(crate) struct Program {
     anchored_run: Option<AnchoredRun>,
     /// The program's native search once it is hot (`native::NativeSlot`).
     native: NativeSlot,
+    /// The test of the atomic repeat a run begins with, where a failed run from a start fails
+    /// from every start up to the end of the units it passes (`possessive::restart_skip`).
+    restart_skip: Option<UnitTest>,
 }
 
 /// The compiled form of a construct this matcher does not run.
@@ -1417,12 +1420,13 @@ impl Program {
                 && *length > 0
                 && compiler.instructions[..prefix.len()].iter().all(|instruction| matches!(instruction, Inst::Unit(_)))
         });
+        let class_run = class_run_of(&compiler.instructions, &compiler.sets, capture_count);
+        possessive::mark(&mut compiler.instructions, &compiler.sets);
+        let restart_skip = possessive::restart_skip(&compiler.instructions, anchored || !prefix.is_empty());
         Some(Self {
-            class_run: class_run_of(&compiler.instructions, &compiler.sets, capture_count),
-            sets: {
-                possessive::mark(&mut compiler.instructions, &compiler.sets);
-                scanned_sets(std::mem::take(&mut compiler.sets), &compiler.instructions)
-            },
+            class_run,
+            restart_skip,
+            sets: scanned_sets(std::mem::take(&mut compiler.sets), &compiler.instructions),
             anchored_run: anchored_run_of(&compiler.instructions, capture_count),
             native: NativeSlot::default(),
             instructions: compiler.instructions.into_boxed_slice(),
@@ -1617,6 +1621,16 @@ impl Program {
         }
     }
 
+    /// The first position past a start whose run failed that a run may still match from: the
+    /// next one, or past the units the run's leading atomic repeat took (`restart_skip`).
+    #[inline(always)]
+    fn next_candidate<T: Text + ?Sized>(&self, text: &T, failed: usize) -> usize {
+        match self.restart_skip {
+            Some(test) => self.run_end(test, text, failed, text.len()) + 1,
+            None => failed + 1,
+        }
+    }
+
     #[inline(always)]
     fn next_start<T: Text + ?Sized>(&self, text: &T, from: usize, last: usize) -> Option<usize> {
         if from > last {
@@ -1724,7 +1738,7 @@ impl Program {
                     if stage.stack.capacity() >= MAXIMUM_STACK_FRAMES && EXHAUSTED.get() {
                         return None;
                     }
-                    let next = search.and_then(|search| self.next_start(stage.text, *start + 1, search.last))?;
+                    let next = search.and_then(|search| self.next_start(stage.text, self.next_candidate(stage.text, *start), search.last))?;
                     stage.stack.push(Frame::Barrier);
                     *start = next;
                     let (pc, position) = self.entry(stage.text, next);

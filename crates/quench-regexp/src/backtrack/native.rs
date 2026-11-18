@@ -51,6 +51,9 @@ pub struct NativePlan {
     pub unset: usize,
     /// How the code moves on from a start that failed (`Program::native_restarts`).
     pub restarts: NativeRestarts,
+    /// The test of the leading atomic repeat whose units a failed start skips, and the unit
+    /// past them (`Program::next_candidate`).
+    pub restart_skip: Option<NativeTest>,
 }
 
 /// Where a native search goes once no match starts at its start: back to its caller, which
@@ -132,8 +135,6 @@ pub(super) struct NativeSlot {
 const INITIAL_STACK_FRAMES: usize = 1024;
 /// A full stack grows by this factor.
 const STACK_GROWTH: usize = 4;
-/// The next start of a search lies a unit past the one that failed.
-const NEXT_START: usize = 1;
 
 fn native_test(test: UnitTest, sets: &[MatchSet]) -> NativeTest {
     match test {
@@ -148,7 +149,8 @@ impl Program {
     fn native_plan(&self) -> Option<NativePlan> {
         let insts = self.instructions.iter().map(|inst| self.native_inst(*inst)).collect::<Option<Vec<_>>>()?;
         let restarts = self.native_restarts();
-        Some(NativePlan { insts, entry: self.entry.unwrap_or(0), registers: self.register_count, unset: super::UNSET, restarts })
+        let restart_skip = self.restart_skip.map(|test| native_test(test, &self.sets));
+        Some(NativePlan { insts, entry: self.entry.unwrap_or(0), registers: self.register_count, unset: super::UNSET, restarts, restart_skip })
     }
 
     /// How native code moves past a failed start: on itself where `next_start` admits a
@@ -271,7 +273,7 @@ impl Program {
             if last.is_some() {
                 return Some(None);
             }
-            start = match self.next_start(text, start + NEXT_START, search.last) {
+            start = match self.next_start(text, self.next_candidate(text, start), search.last) {
                 Some(next) => next,
                 None => return Some(None),
             };

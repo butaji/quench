@@ -388,6 +388,9 @@ impl<'a, 'f> Emit<'a, 'f> {
             return;
         };
         let (next, exhausted, run) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
+        if let Some(test) = self.plan.restart_skip {
+            self.skip_taken_units(test);
+        }
         self.b.goto(next, &[]);
         self.b.enter_open(next);
         let start = self.b.use_var(self.start);
@@ -432,6 +435,22 @@ impl<'a, 'f> Emit<'a, 'f> {
         let zero = self.constant(0);
         self.push_frame(barrier, zero, zero);
         self.goto(entry);
+    }
+
+    /// Moves the failed start to the end of the units its leading atomic repeat took
+    /// (`Program::next_candidate`), whose next position the restart tries.
+    fn skip_taken_units(&mut self, test: NativeTest) {
+        let (scan, step, done) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
+        self.b.goto(scan, &[]);
+        self.b.enter_open(scan);
+        let at = self.b.use_var(self.start);
+        let takes = takes_unit(self, test, at);
+        self.branch(takes, step, done);
+        self.b.enter_open(step);
+        let after = self.b.raw_binary_imm(Binary::Add, at, 1);
+        self.b.def_var(self.start, after);
+        self.b.goto(scan, &[]);
+        self.b.enter_open(done);
     }
 
     /// Jumps by `id` to the restore block, the barrier block or a resume block.
