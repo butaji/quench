@@ -10625,34 +10625,6 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// An i32 add of a constant whose sum the next record, direct load `OP`,
-    /// reads as its address: both records run here, the sum written as the
-    /// add writes it. A load the general path must run exits at its record.
-    fn lane_add_load<OP: u16>(cx, r, ip, i, view) {
-        let load = const {
-            match MemoryLoad::from_direct_op(opcode(OP)) {
-                Some(load) => load,
-                None => panic!("not a direct load"),
-            }
-        };
-        let sum = r.i32(i.b).wrapping_add(i.imm() as i32);
-        r.set(i.a, view.integers.encode(sum));
-        let next = following(ip);
-        // SAFETY: the view fuses an add only with a following load record.
-        let access = unsafe { &*next };
-        let address = u64::from(sum as u32) + u64::from(access.imm());
-        // SAFETY: as for `MemoryView::read`.
-        let Some(value) = (unsafe { view.memory.read(load, address) }) else {
-            return exit(next);
-        };
-        let Some(value) = lane_encode(view, value) else {
-            return exit(next);
-        };
-        produce!(cx, r, next, access.a, value, view)
-    }
-}
-
-lane_handler! {
     /// A jump absorbing the move (`ADD` false) or i32 add of the constant
     /// `c` (`ADD` true) at its target: the record holds the target's fields
     /// and jumps past it, carrying the result as the target would.
@@ -10792,65 +10764,6 @@ impl<H: Host> ScaledIndex<H> {
     ];
 }
 
-lane_handler! {
-    /// An i32 add of a constant, the f64 load reading its sum, and the f64
-    /// operator `SECOND` taking the loaded value as its left (`LEFT`) or
-    /// right operand: three records run here, each result written as its
-    /// own record writes it. Bits that need a box leave at the load.
-    fn lane_add_load_f64<SECOND: u8, LEFT: bool>(cx, r, ip, i, view) {
-        let sum = r.i32(i.b).wrapping_add(i.imm() as i32);
-        r.set(i.a, view.integers.encode(sum));
-        let load = following(ip);
-        // SAFETY: the view fuses an add only with a following load and
-        // float operator.
-        let access = unsafe { &*load };
-        let address = u64::from(sum as u32) + u64::from(access.imm());
-        // SAFETY: as for `MemoryView::read`.
-        let Some(crate::WasmValue::F64(bits)) =
-            (unsafe { view.memory.read(MemoryLoad::F64Load, address) })
-        else {
-            return exit(load);
-        };
-        let Some(loaded) = Value::from_bits64(bits) else {
-            return exit(load);
-        };
-        r.set(access.a, loaded);
-        let next = following(load);
-        let second = unsafe { &*next };
-        let first = f64::from_bits(bits);
-        let (left, right) = if LEFT {
-            (first, f64::from_bits(r.get(second.c).float_bits64()))
-        } else {
-            (f64::from_bits(r.get(second.b).float_bits64()), first)
-        };
-        let value = match f64_operation(SECOND, left, right) {
-            Ok(result) => Value::from_float_bits64(result.to_bits()),
-            Err(truth) => view.integers.encode(i32::from(truth)),
-        };
-        produce!(cx, r, next, second.a, value, view)
-    }
-}
-
-macro_rules! add_load_f64_handlers {
-    ($host:ty; $($second:expr),+) => {
-        [$([
-            lane_add_load_f64::<$host, $second, false> as Handler,
-            lane_add_load_f64::<$host, $second, FUSED_LEFT> as Handler,
-        ]),+]
-    };
-}
-
-struct AddLoadF64<H>(std::marker::PhantomData<H>);
-
-impl<H: Host> AddLoadF64<H> {
-    /// By the float operator and whether the loaded value is its left
-    /// operand.
-    const HANDLERS: [[Handler; 2]; FLOAT_ARITHMETIC] = add_load_f64_handlers!(H;
-        FLOAT_ADD, FLOAT_SUBTRACT, FLOAT_MULTIPLY, FLOAT_DIVIDE, FLOAT_EQUAL,
-        FLOAT_NOT_EQUAL, FLOAT_LESS, FLOAT_GREATER, FLOAT_LESS_EQUAL, FLOAT_GREATER_EQUAL);
-}
-
-/// The fused add-and-load handler for direct load `op`.
 /// The fused handler for direct load `load`, with address field `acc`, and
 /// direct store `store` writing its value: copies of one value type.
 fn load_store_handler<H: Host>(load: Op, store: Op, acc: u8) -> Option<Handler> {
@@ -10895,33 +10808,6 @@ fn load_table_handler<H: Host>(op: Op, acc: u8, add: bool) -> Option<Handler> {
         WasmI32Load8U,
         WasmI32Load16S,
         WasmI32Load16U
-    )
-}
-
-const fn add_load_handler<H: Host>(op: Op) -> Option<Handler> {
-    macro_rules! loads {
-        ($($load:ident),+) => {
-            match op as u16 {
-                $(opc::$load => Some(lane_add_load::<H, { opc::$load }> as Handler),)+
-                _ => None,
-            }
-        };
-    }
-    loads!(
-        WasmI32Load,
-        WasmI64Load,
-        WasmF32Load,
-        WasmF64Load,
-        WasmI32Load8S,
-        WasmI32Load8U,
-        WasmI32Load16S,
-        WasmI32Load16U,
-        WasmI64Load8S,
-        WasmI64Load8U,
-        WasmI64Load16S,
-        WasmI64Load16U,
-        WasmI64Load32S,
-        WasmI64Load32U
     )
 }
 
@@ -20417,33 +20303,6 @@ fn derive_lane_view<'live, H: Host>(
                 exits[pc] = true;
                 reads_accumulator[pc] = false;
                 accumulator_registers[pc] = NO_ACCUMULATOR;
-            }
-        }
-        // An add of a constant whose sum the next record loads from runs with
-        // that load as one record: the load reads the sum as its carried
-        // accumulator, so control reaches it only from the add.
-        for pc in 0..records.len().saturating_sub(1) {
-            let instruction = decoded[pc];
-            let next = decoded[pc + 1];
-            let plain_add = serves(records[pc].handler, opc::WasmI32AddImmediate, ACC_NONE);
-            let carried_load = serves(records[pc + 1].handler, next.op() as u16, ACC_C);
-            if instruction.op().is_wasm_i32_add_immediate()
-                && plain_add
-                && carried_load
-                && let Some(fused) = add_load_handler::<H>(next.op())
-            {
-                // A float operator taking the loaded f64 joins the fusion.
-                let operator = (next.op().is_wasm_f64_load() && pc + 2 < records.len())
-                    .then(|| decoded[pc + 2])
-                    .filter(|third| third.op().is_wasm_f64_binary())
-                    .and_then(|third| {
-                        let second = float_arithmetic(third.op(), third.imm())?;
-                        let left = [ACC_B, ACC_C].into_iter().find(|acc| {
-                            serves(records[pc + 2].handler, third.op() as u16, *acc)
-                        })? == ACC_B;
-                        Some(AddLoadF64::<H>::HANDLERS[usize::from(second)][usize::from(left)])
-                    });
-                records[pc].handler = operator.unwrap_or(fused) as *const ();
             }
         }
         // An i32 load whose value the next record's branch table selects on
