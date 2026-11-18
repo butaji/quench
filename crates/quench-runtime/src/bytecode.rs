@@ -3421,6 +3421,7 @@ impl FieldBase {
     pub(crate) const NESTED: u16 = u16::MAX - 1;
     const LOCAL_FLAG: u16 = 0x4000;
 
+    #[inline(always)]
     pub(crate) fn register(value: Register) -> Self {
         debug_assert!(value <= REGISTER_MASK);
         Self(value)
@@ -3430,6 +3431,7 @@ impl FieldBase {
         (self.0 <= REGISTER_MASK).then_some(self.0)
     }
 
+    #[inline(always)]
     pub(crate) fn local(value: u16) -> Option<Self> {
         (value <= REGISTER_MASK).then_some(Self(Self::LOCAL_FLAG | value))
     }

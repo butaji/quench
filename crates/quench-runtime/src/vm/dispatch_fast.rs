@@ -7447,12 +7447,15 @@ const THIS_FIELD_STORE_STRICT: u16 = field_store_opcode(StoreReceiver::This, tru
 
 /// The generated own-field store (`lane_row` of the store opcode) of a store record whose
 /// receiver and strictness `store` names.
-const fn field_store_row<H: Host>(store: FieldStore) -> Handler {
+const fn field_store_row<H: Host>(store: FieldStore) -> Handler { field_store_row_at::<H, FLAG_UNREAD>(store) }
+
+/// `field_store_row` at site fact `FLAG`: `ADD_SITE` is the row of a store that may add its property.
+const fn field_store_row_at<H: Host, const FLAG: u8>(store: FieldStore) -> Handler {
     match (store.receiver, store.strict) {
-        (StoreReceiver::Register, false) => lane_row::<H, FIELD_STORE, ACC_NONE, FLAG_UNREAD>,
-        (StoreReceiver::Register, true) => lane_row::<H, FIELD_STORE_STRICT, ACC_NONE, FLAG_UNREAD>,
-        (StoreReceiver::This, false) => lane_row::<H, THIS_FIELD_STORE, ACC_NONE, FLAG_UNREAD>,
-        (StoreReceiver::This, true) => lane_row::<H, THIS_FIELD_STORE_STRICT, ACC_NONE, FLAG_UNREAD>,
+        (StoreReceiver::Register, false) => lane_row::<H, FIELD_STORE, ACC_NONE, FLAG>,
+        (StoreReceiver::Register, true) => lane_row::<H, FIELD_STORE_STRICT, ACC_NONE, FLAG>,
+        (StoreReceiver::This, false) => lane_row::<H, THIS_FIELD_STORE, ACC_NONE, FLAG>,
+        (StoreReceiver::This, true) => lane_row::<H, THIS_FIELD_STORE_STRICT, ACC_NONE, FLAG>,
     }
 }
 
@@ -7555,6 +7558,10 @@ pub(super) const NESTED_SITE: u8 = own_site(false, OWN_FORMS.len() + 16);
 fn nested_row_site<H: Host>(vm: &Vm<H>, code: &ResidualProgram, i: &LaneInstruction) -> bool {
     code.field_sites.get(i.imm() as usize).is_some_and(|site| site.second.is_some_and(|(atom, _)| atom != vm.length_atom))
 }
+
+/// The site fact of a named store that may add its property (`StorePlan::Add`, `RecordPlan::own_add`):
+/// its row runs the VM's adds, and a refused add takes the general cached write.
+pub(super) const ADD_SITE: u8 = own_site(false, OWN_FORMS.len() + 17);
 
 pub(super) const fn cell_own_site(site: u8) -> bool {
     site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
@@ -9482,6 +9489,7 @@ script_handler! {
     /// (`lane_set_object_field`, `lane_set_this_field`), which the store itself takes.
     #[inline(never)]
     fn lane_set_field_miss<THIS: bool>(cx, r, ip, i, view) {
+        let store = field_store_at(cx, ip);
         let vm = unsafe { vm(cx) };
         let polymorphic = vm.field_site_polymorphic(i.c);
         let adds = vm.field_site_adds(i.c);
@@ -9493,7 +9501,8 @@ script_handler! {
         let handler: Option<Handler> = if vm.is_private_name(i.imm()) {
             Some(if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> })
         } else if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
-            Some(if THIS { lane_set_this_field_add::<H> } else { lane_set_object_field_add::<H> })
+            // The generated add row of the store's own opcode (`ADD_SITE`, `RecordPlan::own_add`).
+            store.map(|store| field_store_row_at::<H, ADD_SITE>(store))
         } else if polymorphic && !cell_receiver {
             Some(lane_set_field_polymorphic::<H, THIS>)
         } else if adds || polymorphic {
@@ -9508,76 +9517,6 @@ script_handler! {
             sibling!(lane_set_this_field::<H>, r, ip, Carried::script_in(cx, view))
         }
         sibling!(lane_set_object_field::<H>, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-/// The cached add of an add record (`Vm::primary_field_add_hit`) of `r[i.a]` to `object`.
-/// Out of line: the add keeps locals whose addresses its callees take, which the handler's
-/// common path then does not hold.
-#[inline(never)]
-fn lane_field_add<H: Host>(
-    vm: &mut Vm<H>,
-    code: &ResidualProgram,
-    object: Value,
-    i: &LaneInstruction,
-) -> bool {
-    // SAFETY: the record's registers belong to the running activation, which the add
-    // neither moves nor frees.
-    let value = unsafe { (*lane_context::<H>()).registers }.get(i.a);
-    vm.primary_field_add_hit(code, object, i.imm(), value, i.c)
-}
-
-script_handler! {
-    /// `SetField` or `SetFieldStrict` at a site that adds a property to records of one shape
-    /// (`lane_set_field_miss`): the proved add inline (`Vm::proved_field_add_hit`), else the
-    /// cached add alone, out of line (`lane_set_field_add_any`).
-    fn lane_set_object_field_add<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        if !vm.proved_field_add_hit(r.get(i.b), i.imm(), r.get(i.a), i.c) {
-            sibling!(lane_set_field_add_any::<H, false>, r, ip, Carried::script_in(cx, view))
-        }
-        // Adding a property can allocate.
-        note_allocation(vm);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_set_object_field_add` for `SetThisField` and `SetThisFieldStrict`.
-    fn lane_set_this_field_add<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let added = unsafe { lane_fixed_this(cx, r) }.is_some_and(|this| vm.proved_field_add_hit(this, i.imm(), r.get(i.a), i.c));
-        if !added {
-            sibling!(lane_set_field_add_any::<H, true>, r, ip, Carried::script_in(cx, view))
-        }
-        // Adding a property can allocate.
-        note_allocation(vm);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// An add record's add past a proved one (`lane_set_object_field_add`,
-    /// `lane_set_this_field_add`): the cached add (`Vm::primary_field_add_hit`), which may
-    /// prove the chain or move storage. Any other write moves the record to the general
-    /// cached write (`lane_set_object_field`, `lane_set_this_field`), which makes it.
-    #[inline(never)]
-    fn lane_set_field_add_any<THIS: bool>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let vm = unsafe { vm(cx) };
-        let object = if THIS { unsafe { lane_fixed_this(cx, r) } } else { Some(r.get(i.b)) };
-        if !object.is_some_and(|object| lane_field_add(vm, code, object, i)) {
-            let general: Handler = if THIS { lane_set_this_field::<H> } else { lane_set_object_field::<H> };
-            requicken::<H>(ip, general);
-            if THIS {
-                sibling!(lane_set_this_field::<H>, r, ip, Carried::script_in(cx, view))
-            }
-            sibling!(lane_set_object_field::<H>, r, ip, Carried::script_in(cx, view))
-        }
-        // Adding a property can allocate.
-        note_allocation(vm);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
 

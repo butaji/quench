@@ -94,6 +94,60 @@ impl Decisions {
     }
 }
 
+/// The lane context's own-field store and add hits, erased of its host so the frame names no `H`:
+/// what `StorePlan::Layout` joins to (`field_store_host`), and what `StorePlan::Add` joins to
+/// (`field_add`).
+#[derive(Clone, Copy)]
+struct FieldStores {
+    context: *mut (),
+    /// The VM's own-field store of `value` to `atom` through `site`, which takes the form hint it
+    /// leaves for the record (`primary_own_field_store_hit`); `None` where the VM declines.
+    own: fn(*mut (), Value, u32, u16, Value) -> Option<crate::vm::FieldCache>,
+    /// The VM's add the proved chain makes (`proved_field_add_hit`), noting its allocation.
+    proved: fn(*mut (), Value, u32, u16, Value) -> bool,
+    /// The VM's cached add (`primary_field_add_hit`), noting its allocation.
+    primary: fn(*mut (), Value, u32, u16, Value) -> bool,
+}
+
+impl FieldStores {
+    /// The stores and adds of the running lane's `cx`.
+    #[inline(always)]
+    fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
+        Self { context: cx.cast(),
+            own: |context, object, atom, site, value| {
+                let cx = context.cast::<LaneContext<H>>();
+                let vm = unsafe { vm(cx) };
+                // SAFETY: the context's program outlives the lane run.
+                let code = unsafe { &*(*cx).code };
+                if !vm.primary_own_field_store_hit::<true>(code, object, atom, value, site, crate::heap::PropertyStoreLayout::MayWiden) {
+                    return None;
+                }
+                Some(vm.form_hint(vm.field_cache_entry(site), object))
+            },
+            proved: |context, object, atom, site, value| {
+                let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+                let added = vm.proved_field_add_hit(object, atom, value, site);
+                if added {
+                    // Adding a property can allocate.
+                    note_allocation(vm);
+                }
+                added
+            },
+            primary: |context, object, atom, site, value| {
+                let cx = context.cast::<LaneContext<H>>();
+                let vm = unsafe { vm(cx) };
+                // SAFETY: the context's program outlives the lane run.
+                let code = unsafe { &*(*cx).code };
+                let added = vm.primary_field_add_hit(code, object, atom, value, site);
+                if added {
+                    note_allocation(vm);
+                }
+                added
+            },
+        }
+    }
+}
+
 /// The interpreter's frame: the live register file and the accumulator view a producer
 /// carries. `ACC` names the record's accumulator field (`read`).
 pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
@@ -127,6 +181,11 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     elements: Option<ElementSteps>,
     /// The run's array storage proofs, for a proved element row (`PROVED_SITE`); none elsewhere.
     proofs: Option<*mut crate::heap::ArrayStorageProofs>,
+    /// The VM's stores and adds a named store row joins to, for a store record (`FieldStores`).
+    stores: Option<FieldStores>,
+    /// The form hint the VM's own-field store left for the store record, which the row writes to
+    /// the record once the store completes (`PropertyFrame::field_store_host`).
+    stored: Option<crate::vm::FieldCache>,
 }
 
 /// The element steps of the running lane, erased of its host so the frame names no `H`: the
@@ -165,9 +224,9 @@ pub(in crate::vm::dispatch_fast) struct RecordPlan {
     /// Whether the plan starts from the receiver's word rather than its object record
     /// (`IcOp::HeldString`).
     word: bool,
-    /// The own-field store the record's hint proves, `(layout, slot)` (`StorePlan::Layout`);
-    /// `None` for a read's plan.
-    store: Option<(u32, u16)>,
+    /// The store the record's hint proves (`StorePlan::Layout`), or the add it proves
+    /// (`StorePlan::Add`); `None` for a read's plan.
+    store: Option<crate::staged::property::StorePlan<'static>>,
     /// Whether the plan's receivers are mostly functions (`own_other`): their object part is
     /// found inline, before any other family.
     functions: bool,
@@ -237,8 +296,17 @@ impl RecordPlan {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn own_store(layout: u32, slot: u16, records: u64) -> Self {
         use crate::staged::ic::IcOp;
+        use crate::staged::property::{StoreJoin, StorePlan};
         let none = IcOp::GuardLayout(layout);
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: Some((layout, slot)), functions: false, nested: None }
+        let store = StorePlan::Layout { id: layout, slot, join: StoreJoin::Host };
+        Self { ops: [none, none], len: 0, records, other: None, word: false, store: Some(store), functions: false, nested: None }
+    }
+
+    /// The adding store of a named store record whose site may add its property (`StorePlan::Add`):
+    /// the VM's proved or cached add completes it (`PropertyFrame::field_add`).
+    #[inline(always)]
+    pub(in crate::vm::dispatch_fast) fn own_add() -> Self {
+        Self { store: Some(crate::staged::property::StorePlan::Add), ..Self::own_store(0, 0, 0) }
     }
 
     /// The read of a string receiver through a `String.prototype` hint whose operands are
@@ -286,7 +354,7 @@ impl RecordPlan {
 #[derive(Clone, Copy)]
 pub(in crate::vm::dispatch_fast) struct LanePlans {
     read: Option<([crate::staged::ic::IcOp<'static>; 2], usize)>,
-    store: Option<(u32, u16)>,
+    store: Option<crate::staged::property::StorePlan<'static>>,
     nested: Option<[(u32, u16); 2]>,
 }
 
@@ -300,9 +368,9 @@ impl crate::staged::property::PlanSource for LanePlans {
     fn nested_hops(&self) -> Option<[(u32, u16); 2]> { self.nested }
     #[inline(always)]
     fn store_plan(&self, _site: u16) -> Option<crate::staged::property::StorePlan<'_>> {
-        // The VM's own-field hit completes what the layout store refuses (`StoreJoin::Host`),
-        // which the lane frame answers as a miss: the record's store handlers take it.
-        self.store.map(|(id, slot)| crate::staged::property::StorePlan::Layout { id, slot, join: crate::staged::property::StoreJoin::Host })
+        // The VM's own-field hit completes what the layout store refuses (`StoreJoin::Host`), and
+        // the VM's adds complete an add record's store (`StorePlan::Add`).
+        self.store
     }
 }
 
@@ -311,7 +379,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None, elements: None, proofs: None }
+            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None, elements: None, proofs: None, stores: None, stored: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -335,7 +403,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None, elements: None, proofs: None }
+            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None, elements: None, proofs: None, stores: None, stored: None }
     }
 }
 
@@ -576,6 +644,32 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
         let steps = self.elements?;
         // SAFETY: the steps were made for the lane context this frame runs in.
         (steps.read)(steps.context, steps.site, Value::from_bits(base), Value::from_bits(key)).map(Value::to_bits)
+    }
+
+    /// The VM's own-field store of `value` to `atom` through `site` (`LaneHelper::FieldSet`): the
+    /// form hint it leaves is the record's, which the row writes once the store completes.
+    #[inline(always)]
+    fn field_store_host(&mut self, _stage: &mut Concrete, object: u64, atom: u32, site: u16, value: u64, _miss: ()) -> Option<()> {
+        let stores = self.stores?;
+        let Some(crate::staged::property::StorePlan::Layout { .. }) = self.plan.and_then(|plan| plan.store) else { return None };
+        let object = Value::from_bits(object);
+        // An unbound `this` is no object: the store leaves to the general path.
+        if object.is_deleted() { return None; }
+        self.stored = Some((stores.own)(stores.context, object, atom, site, Value::from_bits(value))?);
+        Some(())
+    }
+
+    /// The VM's add of `value` to `atom` of `object` through `site` (`LaneHelper::FieldAdd`): the
+    /// proved add, else the cached one; a refused add leaves to the general path.
+    #[inline(always)]
+    fn field_add(&mut self, _stage: &mut Concrete, object: u64, atom: u32, site: u16, value: u64, _miss: ()) -> Option<()> {
+        let stores = self.stores?;
+        let object = Value::from_bits(object);
+        if object.is_deleted() { return None; }
+        let value = Value::from_bits(value);
+        let added = (stores.proved)(stores.context, object, atom, site, value)
+            || (stores.primary)(stores.context, object, atom, site, value);
+        added.then_some(())
     }
 
     #[inline(always)]
@@ -908,6 +1002,15 @@ lane_handler! {
             Some(crate::bytecode::FieldStore { receiver: crate::bytecode::StoreReceiver::This, .. })) };
         macro_rules! store_miss { () => {{
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
+            if const { FLAG == super::ADD_SITE } {
+                // A refused add: the general cached write, which the record keeps from now on.
+                let general: Handler = if this_store { super::lane_set_this_field::<H> } else { super::lane_set_object_field::<H> };
+                requicken::<H>(ip, general);
+                if this_store {
+                    sibling!(super::lane_set_this_field::<H>, r, ip, Carried::script_in(script, view))
+                }
+                sibling!(super::lane_set_object_field::<H>, r, ip, Carried::script_in(script, view))
+            }
             if this_store {
                 sibling!(super::lane_set_field_own_miss::<H, true, false>, r, ip, Carried::script_in(script, view))
             }
@@ -972,11 +1075,22 @@ lane_handler! {
             // The live record table: a direct object receiver proves it reserved, and any other
             // receiver leaves at the row's family test before it is addressed.
             let records = unsafe { vm(script) }.heap.live_object_records() as u64;
-            // A method cache that may name the atom must see the store (`store_admitted`).
-            if unsafe { vm(script) }.method_caches_may_name(i.imm()) { store_miss!() }
-            if this_store { frame.this = r.this(); }
-            let hint = i.field_hint();
-            frame.plan = Some(RecordPlan::own_store(hint.receiver, hint.slot, records));
+            // A method cache that may name the atom must see the store (`store_admitted`); an add
+            // leaves that to the VM's adds, which admit it themselves.
+            if const { FLAG != super::ADD_SITE } && unsafe { vm(script) }.method_caches_may_name(i.imm()) { store_miss!() }
+            // `this` as the VM's own-field hit resolves it (`lane_fixed_this`), so a fixed one stores.
+            if const { FLAG == super::ADD_SITE } {
+                // The VM's adds complete the add row's store (`field_add`); an own-field store row
+                // leaves what its layout store refuses to its miss, with no call on its path.
+                if this_store { frame.this = unsafe { super::lane_fixed_this(cx, r) }.unwrap_or(Value::DELETED); }
+                frame.stores = Some(FieldStores::of::<H>(view.memory.bytes.cast::<LaneContext<H>>()));
+            } else if this_store { frame.this = r.this(); }
+            frame.plan = Some(if const { FLAG == super::ADD_SITE } {
+                RecordPlan::own_add()
+            } else {
+                let hint = i.field_hint();
+                RecordPlan::own_store(hint.receiver, hint.slot, records)
+            });
         } else if property {
             // The record's plan: its own-field hint over the object records the lane bound; an
             // unbound table is the miss's to bind.
@@ -1092,6 +1206,8 @@ lane_handler! {
         }
         match crate::staged::step(&mut stage, &mut frame, operation) {
             Step::Value(_) if store => {
+                // The form the VM's own-field store left for the record (`field_store_host`).
+                if let Some(hint) = frame.stored { set_field_hint(ip, hint); }
                 let script: *mut LaneContext<H> = view.memory.bytes.cast();
                 next!(script, r, following(ip), Carried::script_in(script, view))
             }
