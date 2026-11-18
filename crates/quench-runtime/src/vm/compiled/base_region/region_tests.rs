@@ -62,10 +62,13 @@ fn a_guard_failing_inside_an_inlined_callee_resumes_in_the_callee() {
     assert_eq!(ran.kinds.count(Event::OsrInlined), 0, "no region inlined a callee it loads by a helper step: {:?}", ran.kinds);
 }
 
-/// A callee too large or too varied to inline, whose body is published, is called by its entry from
-/// the region (held in a register: a by-name load would be a helper step, `function::interprets`): the region runs on the lane frame's payload, and prints what the interpreter prints.
+/// A callee too large or too varied to inline, whose body is published, would be called by its entry
+/// from the region; a call in a loop region costs more than the interpreter's call today, so the
+/// region is not built (`function::interprets`) and the output is the interpreter's. Once the region
+/// call protocol is cheaper than the interpreter's call, the region runs and lends its frame
+/// (`Event::OsrLent`).
 #[test]
-fn a_callee_with_a_published_body_is_called_by_its_entry_from_a_region() {
+fn a_loop_calling_a_published_body_is_not_a_region_while_a_region_call_costs_more_than_the_interpreter() {
     let ran = run_regions(
         "function work(a) { var s = 0; for (var k = 0; k < 4; k++) s = s + Math.floor((a + k) / 3); return s; }
          function warm(f) { var t = 0; for (var i = 0; i < 2000; i++) t = (t + f(i)) | 0; return t; }
@@ -73,6 +76,5 @@ fn a_callee_with_a_published_body_is_called_by_its_entry_from_a_region() {
          print(warm(work)); print(run(40000, work)); print(run(30, work));",
     );
     assert_eq!(ran.interpreted, ran.compiled);
-    assert!(ran.runs > 0, "a region ran");
-    assert!(ran.kinds.count(Event::OsrLent) > 0, "a region called its callee by the entry: {:?}", ran.kinds);
+    assert_eq!(ran.kinds.count(Event::OsrLent), 0, "no region calls in its loop: {:?}", ran.kinds);
 }

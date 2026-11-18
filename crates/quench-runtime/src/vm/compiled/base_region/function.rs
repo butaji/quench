@@ -282,13 +282,16 @@ fn leaves(layout: &Layout, row: &Decoded) -> bool {
 
 /// Whether `row` interprets its instruction rather than running its handler's residue: the general
 /// step a lane helper makes from the instruction's PC (re-decoding it and dispatching on its form,
-/// hundreds of instructions where the interpreter's quickened handler spends tens). The design is a ladder, b-jit at most the interpreter's instructions on every
+/// hundreds of instructions where the interpreter's quickened handler spends tens), or a call (the
+/// region call protocol costs more than the interpreter's own call today). The design is a ladder, b-jit at most the interpreter's instructions on every
 /// operation (b-jit is the interpreter with dispatch and decode folded), so a loop region holding
 /// one on its loop is not built and the interpreter runs the loop: interpreting inside a region is
 /// slower than the interpreter by construction. A fast arm's slow arm (`Step::Fast`), a throw and a
-/// leave are off the loop's steady path; a call (`Step::Call`) runs its callee's code.
+/// leave are off the loop's steady path. A call leaves this list once its protocol runs in fewer
+/// instructions than the interpreter's call: the tier-ladder gate (`quench-gate --only ir-budget`,
+/// call_direct, call_closure, k03_call_add) says when.
 fn interprets(row: &Decoded) -> bool {
-    matches!(row.step, Some(Step::Helper | Step::CallOut))
+    matches!(row.step, Some(Step::Helper | Step::CallOut | Step::Call(_)))
 }
 
 /// The plan of row `pc`: nothing where control never reaches it, a leave row, or the row with the

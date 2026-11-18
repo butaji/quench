@@ -371,8 +371,12 @@ fn render_inversions(header: &str, debt: &BTreeSet<(String, usize)>) -> String {
 
 /// The tiers of `counts` (one per tier, ladder order) that run more instructions than the tier before.
 fn ladder_breaks(counts: &[f64; TIERS.len()]) -> Vec<usize> {
-    (1..TIERS.len()).filter(|tier| counts[*tier] > counts[tier - 1] + tolerance(counts[tier - 1])).collect()
+    (1..TIERS.len()).filter(|tier| counts[*tier] > counts[tier - 1] + SAME_COUNT.max(counts[tier - 1] * LADDER_FRACTION)).collect()
 }
+
+/// Two tiers running the same library code (a string builder, `parseInt`) differ by a tenth of a
+/// percent with code layout; an inversion the design forbids is a whole handler or more.
+const LADDER_FRACTION: f64 = 0.005;
 
 /// Judges every op's ladder against the inversion debt, which shrinks to what is still inverted
 /// (only on a run of every op); returns the inversions the debt does not hold.
