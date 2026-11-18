@@ -1,43 +1,19 @@
-//! Admit typed syntax without assuming declarations are runtime proofs.
-//! Runtime-changing TS constructs must have a lowering before admission.
+//! TypeScript is a source language of the engine: the compiler admits the typed tree
+//! (`admit`) and keeps its declarations. A declared type is no run-time proof (TypeScript
+//! is unsound), so tiers check it once where a value enters typed code, then trust it.
 
 use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::Span;
-use oxc_syntax::scope::ScopeFlags;
 
-/// Remove only erased module declarations/specifiers. Empty value imports and
-/// reexports retain their evaluation edge, even when all named types disappear.
-pub(super) fn erase_module_types(program: &mut Program<'_>) {
-    program.body.retain_mut(|statement| match statement {
-        Statement::TSTypeAliasDeclaration(_) | Statement::TSInterfaceDeclaration(_) => false,
-        Statement::ImportDeclaration(import) => {
-            if import.import_kind.is_type() { return false; }
-            if let Some(specifiers) = &mut import.specifiers {
-                specifiers.retain(|specifier| !matches!(specifier,
-                    ImportDeclarationSpecifier::ImportSpecifier(specifier) if specifier.import_kind.is_type()));
-            }
-            true
-        },
-        Statement::ExportNamedDeclaration(export) => {
-            if export.export_kind.is_type() { return false; }
-            export.specifiers.retain(|specifier| !specifier.export_kind.is_type());
-            true
-        },
-        Statement::ExportFromDeclaration(export) => {
-            if export.export_kind.is_type() { return false; }
-            export.specifiers.retain(|specifier| !specifier.export_kind.is_type());
-            true
-        },
-        Statement::ExportAllDeclaration(export) => !export.export_kind.is_type(),
-        Statement::ExportDeclaration(export) => !matches!(export.declaration,
-            Declaration::TSTypeAliasDeclaration(_) | Declaration::TSInterfaceDeclaration(_)),
-        Statement::ExportDefaultDeclaration(export) => !matches!(export.declaration,
-            ExportDefaultDeclarationKind::TSInterfaceDeclaration(_)),
-        _ => true,
-    });
-}
+mod admit;
+mod enums;
+mod imports;
+pub(super) use admit::{Declarations, DeclaredKind};
+pub(super) use imports::{elide as elide_type_only_imports, type_only_imports};
+pub(super) use admit::admit;
 
+/// What admission leaves without a run-time meaning yet: decorators.
 pub(super) fn unsupported_runtime_syntax(program: &Program<'_>) -> Option<(Span, &'static str)> {
     #[derive(Default)]
     struct Check {
@@ -45,69 +21,36 @@ pub(super) fn unsupported_runtime_syntax(program: &Program<'_>) -> Option<(Span,
     }
 
     impl Check {
-        fn reject(&mut self, span: Span, message: &'static str) {
-            self.error.get_or_insert((span, message));
+        fn decorated(&mut self, decorators: &[Decorator<'_>], span: Span) {
+            if !decorators.is_empty() {
+                self.error.get_or_insert((span, "TypeScript decorators need a runtime meaning"));
+            }
         }
     }
 
     impl<'a> Visit<'a> for Check {
         fn visit_formal_parameter(&mut self, parameter: &FormalParameter<'a>) {
-            if parameter.accessibility.is_some() || parameter.readonly || parameter.r#override {
-                self.reject(
-                    parameter.span,
-                    "TypeScript parameter properties need a runtime lowering",
-                );
-            }
-            if !parameter.decorators.is_empty() {
-                self.reject(
-                    parameter.span,
-                    "TypeScript parameter decorators need a runtime lowering",
-                );
-            }
+            self.decorated(&parameter.decorators, parameter.span);
             walk::walk_formal_parameter(self, parameter);
         }
 
-        fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
-            if declaration.declare {
-                self.reject(
-                    declaration.span,
-                    "ambient declarations need type-only binding lowering",
-                );
-            }
-            walk::walk_variable_declaration(self, declaration);
-        }
-
-        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
-            if function.declare || function.body.is_none() {
-                self.reject(
-                    function.span,
-                    "ambient functions and overloads need type-only binding lowering",
-                );
-            }
-            walk::walk_function(self, function, flags);
-        }
-
         fn visit_class(&mut self, class: &Class<'a>) {
-            if class.declare || !class.decorators.is_empty() {
-                self.reject(class.span, "ambient classes and decorators need a lowering");
-            }
+            self.decorated(&class.decorators, class.span);
             walk::walk_class(self, class);
         }
 
         fn visit_property_definition(&mut self, property: &PropertyDefinition<'a>) {
-            if property.declare || !property.decorators.is_empty() {
-                self.reject(
-                    property.span,
-                    "declared class fields and decorators need a lowering",
-                );
-            }
+            self.decorated(&property.decorators, property.span);
             walk::walk_property_definition(self, property);
         }
 
+        fn visit_accessor_property(&mut self, accessor: &AccessorProperty<'a>) {
+            self.decorated(&accessor.decorators, accessor.span);
+            walk::walk_accessor_property(self, accessor);
+        }
+
         fn visit_method_definition(&mut self, method: &MethodDefinition<'a>) {
-            if !method.decorators.is_empty() {
-                self.reject(method.span, "decorated methods need a runtime lowering");
-            }
+            self.decorated(&method.decorators, method.span);
             walk::walk_method_definition(self, method);
         }
     }
@@ -154,20 +97,75 @@ mod tests {
         assert!(Engine::specialize("const value: number = 1;", "named.cts").is_err());
     }
 
+    fn run_typescript(source: &str) -> Vec<String> {
+        let mut outputs = Vec::new();
+        for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled] {
+            let program = Engine::specialize_typescript(source, "admitted.cts").unwrap();
+            let host = TestHost::default();
+            let view = host.clone();
+            let mut runtime = Runtime::new(host);
+            runtime.set_execution_mode(mode);
+            runtime.execute(&program).unwrap();
+            outputs.push(view.lines().join("|"));
+        }
+        assert_eq!(outputs[0], outputs[1]);
+        outputs.swap_remove(0).split('|').map(str::to_owned).collect()
+    }
+
     #[test]
-    fn unsupported_typescript_cannot_silently_drop_runtime_effects() {
-        for source in [
-            "class Box { constructor(public value: number) {} }",
-            "function deferred() { class Box { constructor(readonly value: number) {} } }",
-            "declare const absent: number;",
-            "declare function absent(): number;",
-            "class Box { declare value: number; }",
-            "enum Color { Red, Green }",
-        ] {
-            assert!(
-                Engine::specialize_typescript(source, "unsupported.cts").is_err(),
-                "{source}"
-            );
+    fn declarations_without_runtime_meaning_are_admitted() {
+        let lines = run_typescript(r#"
+            interface Point { x: number }
+            type Alias = Point | string;
+            declare const ambient: number;
+            declare function external(): void;
+            declare namespace Types { const t: number; }
+            function pick(value: string): string;
+            function pick(value: number): number;
+            function pick(value: any) { return value; }
+            abstract class Base {
+                abstract area(): number;
+                abstract readonly name: string;
+                declare tag: string;
+                [key: string]: unknown;
+                describe() { return this.area(); }
+            }
+            class Square extends Base { name = "sq"; constructor(private side: number) { super(); } area(): number; area() { return this.side ** 2; } }
+            function local() { interface Inner { y: number } type T = number; const v: T = 2; return v; }
+            console.log([pick(1), pick("s"), new Square(3).describe(), local(), "tag" in new Square(1)].join(" "));
+        "#);
+        assert_eq!(lines, ["1 s 9 2 false"]);
+    }
+
+    #[test]
+    fn enums_namespaces_and_parameter_properties_have_their_runtime_meaning() {
+        let lines = run_typescript(r#"
+            enum E { A, B, C = A + 10, D = "d" }
+            const enum Flags { X = 1 << 3, Y = X | 1 }
+            enum Computed { Len = "abc".length, Next }
+            enum E { Late = 20 }
+            namespace N { export const k = 1; export function g() { return k + 1; } export namespace M { export enum Q { R } } }
+            namespace N { export const k2 = 2; }
+            namespace A.B.C { export const deep = "deep"; }
+            class P { constructor(public x: number, protected readonly y = 2, z?: number) {} sum() { return this.x + this.y; } }
+            class Q extends P { extra = 5; constructor(x: number, private w: string) { super(x); } }
+            const q = new Q(1, "w");
+            import alias = N.M;
+            console.log([E.A, E[1], E.C, E[10], E.D, E.Late, E[20], Flags.Y, Computed.Len, Computed.Next, Computed[4]].join(" "));
+            console.log([N.k, N.g(), N.M.Q.R, N.M.Q[0], N.k2, A.B.C.deep, alias.Q.R].join(" "));
+            console.log([new P(3).sum(), q.sum(), Object.keys(q).join()].join(" "));
+        "#);
+        assert_eq!(lines, [
+            "0 B 10 C d 20 Late 9 3 4 Next",
+            "1 2 0 R 2 deep 0",
+            "5 3 x,y,extra,w",
+        ]);
+    }
+
+    #[test]
+    fn decorators_still_need_a_runtime_meaning() {
+        for source in ["@sealed class Box {}", "class Box { @log method() {} }", "class Box { constructor(@inject() value: number) {} }"] {
+            assert!(Engine::specialize_typescript(source, "decorated.cts").is_err(), "{source}");
         }
     }
 }

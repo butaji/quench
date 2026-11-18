@@ -515,8 +515,10 @@ impl Engine {
         if let Some(error) = semantic.diagnostics.first() {
             return StaticModuleAnalysis { early_error: Some(error.message.to_string()), plan: None };
         }
+        let type_only_imports = typescript::type_only_imports(&parsed.program, semantic.semantic.scoping());
         drop(semantic);
-        Self::erase_type_only_module_syntax(&mut parsed.program);
+        Self::admit_typescript(&allocator, &mut parsed.program);
+        typescript::elide_type_only_imports(&mut parsed.program, &type_only_imports, &mut typescript::Declarations::default());
         StaticModuleAnalysis {
             early_error: None,
             plan: Some(StaticModulePlan {
@@ -527,10 +529,12 @@ impl Engine {
         }
     }
 
-    /// Project typed module syntax onto runtime edges and bindings while
-    /// retaining the source positions used by the compiler and replay.
-    pub fn erase_type_only_module_syntax(program: &mut Program<'_>) {
-        if program.source_type.is_typescript() { typescript::erase_module_types(program); }
+    /// Admit a typed tree (`typescript::admit`): its declared environment kept apart from
+    /// code generation, its run-time forms (enums, namespaces, parameter properties) in
+    /// place. Every compile parse admits through `lazy_bodies::parse`; a host that reads
+    /// module structure from its own parse admits here.
+    pub fn admit_typescript<'a>(allocator: &'a Allocator, program: &mut Program<'a>) {
+        if program.source_type.is_typescript() { typescript::admit(allocator, program); }
     }
 
     /// A host that wraps a typed body must erase type-only module declarations
@@ -543,7 +547,7 @@ impl Engine {
             .with_options(oxc_parser::ParseOptions { allow_return_outside_function: true, ..Default::default() }).parse();
         if !parsed.diagnostics.is_empty() || stack::validate_parsed(&parsed).is_err() { return None; }
         let spans: Vec<_> = parsed.program.body.iter().map(GetSpan::span).collect();
-        Self::erase_type_only_module_syntax(&mut parsed.program);
+        Self::admit_typescript(&allocator, &mut parsed.program);
         let runtime_spans: FxHashSet<_> = parsed.program.body.iter().map(|statement| {
             let span = statement.span(); (span.start, span.end)
         }).collect();
@@ -956,6 +960,10 @@ impl Engine {
             released,
         )
     }
+    /// Compile a TypeScript module: the typed tree is the program, as for `.ts`/`.mts` files.
+    pub fn specialize_typescript_module(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_module_with_atom_prefix(source, name, true, &NoAtomPrefix, ReleasedRecords::Dropped)
+    }
     pub fn specialize_module(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_module_with_mode(source, name, SpecializationMode::Enabled)
     }
@@ -1303,9 +1311,10 @@ impl Engine {
         let native_requests = atom_prefix.native_source_requests().map(|pending| {
             (pending, Self::native_source_requests(&parsed.program, semantic.semantic.scoping(), atom_prefix.specialized(), atom_prefix.native_global_script_calls()))
         });
+        let type_only_imports = if module_goal { typescript::type_only_imports(&parsed.program, semantic.semantic.scoping()) } else { Vec::new() };
         drop(semantic);
         parsed.program.directives.drain(..usize::from(inherited_directive));
-        Self::erase_type_only_module_syntax(&mut parsed.program);
+        typescript::elide_type_only_imports(&mut parsed.program, &type_only_imports, &mut typescript::Declarations::default());
         #[cfg(feature = "aot")]
         let mut native_requests = native_requests;
         if lazy {
