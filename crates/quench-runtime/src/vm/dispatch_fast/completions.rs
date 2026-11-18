@@ -13,7 +13,7 @@ use super::*;
 #[inline(always)]
 pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let completion = match vm.lane_stack.activations.last().map(|activation| activation.kind()) {
+    let completion = match vm.lane_stack.activations().last().map(|activation| activation.kind()) {
         Some(ActivationKind::Script(script)) => Some(script.completion),
         _ => None,
     };
@@ -45,7 +45,7 @@ pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, 
 #[inline(always)]
 fn lane_complete_trapped_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let top = vm.lane_stack.activations.last();
+    let top = vm.lane_stack.activations().last();
     if proxy_traps::trap_result_needs_general_path(vm, top, value) {
         return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
     }
@@ -145,13 +145,13 @@ pub(super) fn lane_complete_plain_activation<H: Host, const LEAF: u8>(cx: *mut L
 #[inline(always)]
 pub(super) fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let (outermost, crossed) = returning_chain_outermost(&vm.lane_stack.activations)?;
+    let (outermost, crossed) = returning_chain_outermost(vm.lane_stack.activations())?;
     // Script activations hold no Wasm storage (`LaneStack::pop_activation`), so the inner
     // ones go without its accounting.
-    debug_assert!(vm.lane_stack.activations[outermost..].iter().all(|activation| activation.frame_storage_bytes() == 0));
-    vm.lane_stack.activations.truncate(outermost + 1);
+    debug_assert!(vm.lane_stack.activations()[outermost..].iter().all(|activation| activation.frame_storage_bytes() == 0));
+    vm.lane_stack.activations_mut().truncate(outermost + 1);
     vm.lane_stack.drop_owned_from(outermost + 1);
-    let top = &vm.lane_stack.activations[outermost];
+    let top = &vm.lane_stack.activations()[outermost];
     let completion = match top.kind() {
         ActivationKind::Script(script) => script.completion,
         ActivationKind::Native | ActivationKind::Wasm { .. } | ActivationKind::WasmEntry { .. } => unreachable!("a chain holds script activations"),
@@ -223,8 +223,8 @@ pub(super) fn lane_end_body_callee<H: Host>(cx: *mut LaneContext<H>, value: Valu
 #[inline(always)]
 pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let depth = vm.lane_stack.activations.len().checked_sub(1)?;
-    let top: *const Activation = &vm.lane_stack.activations[depth];
+    let depth = vm.lane_stack.activations().len().checked_sub(1)?;
+    let top: *const Activation = &vm.lane_stack.activations()[depth];
     // SAFETY: `top` is the innermost activation, which nothing else accesses.
     if !matches!(unsafe { (*top).kind() }, ActivationKind::Script(script) if script.completion == Completion::ReturnsToNative) {
         return None;
@@ -232,7 +232,7 @@ pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, va
     // SAFETY: a script activation holds no drop glue and no Wasm storage
     // (`Activation::frame_storage_bytes`); its slot stays as it is, unread by the stack, until
     // the next push, so it is read in place, as `lane_return_from` reads a plain one.
-    unsafe { vm.lane_stack.activations.set_len(depth) };
+    unsafe { vm.lane_stack.activations_mut().set_len(depth) };
     vm.lane_stack.drop_owned_from(depth);
     let activation = unsafe { &*top };
     lane_restore_caller(cx, activation);
@@ -286,7 +286,7 @@ pub(super) fn lane_resume_at(activation: &Activation, memory: MemoryView, at: Ip
 /// `then`), or a trap whose result the target's invariants refuse (`proxy_traps::trap_result_needs_general_path`).
 #[inline(always)]
 pub(super) fn lane_caller_returns_in_frame<H: Host>(vm: &mut Vm<H>, value: Value, then: &mut Value) -> bool {
-    match vm.lane_stack.activations.last() {
+    match vm.lane_stack.activations().last() {
         None => true,
         Some(caller) if settling(caller) => match lane_settled_then(vm, value) {
             Some(read) => {

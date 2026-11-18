@@ -45,7 +45,7 @@ impl LaneStack {
     pub(super) unsafe fn push_generator_activation(&mut self, mut activation: Activation) {
         activation.native.window |= HEAP_WINDOW;
         // SAFETY: as the caller guarantees; a script activation holds no Wasm storage.
-        unsafe { self.activations.push_unchecked(activation) };
+        unsafe { self.activations_mut().push_unchecked(activation) };
     }
 
     /// The iterators a resumed generator's loops left open, now the loops of the activation at
@@ -69,7 +69,7 @@ impl LaneStack {
 /// Whether the running activation is a generator over its record's register file.
 #[inline(always)]
 pub(super) fn running_generator<H: Host>(vm: &Vm<H>) -> bool {
-    vm.lane_stack.activations.last().and_then(Activation::script).is_some_and(|script| script.completion.is_generator())
+    vm.lane_stack.activations().last().and_then(Activation::script).is_some_and(|script| script.completion.is_generator())
 }
 
 /// `lane_generator_step` of a for-of step of a generator's `next` that the lane resumes as an
@@ -179,7 +179,7 @@ fn lane_resume_generator<H: Host>(
     let code = unsafe { &*(*cx).code };
     let (frame, environment) = vm.generator_window_frame(generator, code)?;
     let (program, function, this, pc, size) = (frame.program, frame.function, frame.this(), frame.pc, frame.registers.len());
-    let depth = Some(vm.lane_stack.activations.len()).filter(|&depth| depth < vm.lane_stack.activation_limit.get())?;
+    let depth = Some(vm.lane_stack.activations().len()).filter(|&depth| depth < vm.lane_stack.activation_limit.get())?;
     // SAFETY: the record holds the frame, which nothing moves before the resume below.
     let plan = window_plan(vm, code, unsafe { &*std::ptr::from_ref(frame) }, environment)?;
     let WindowPlan { view, parent, locals, capture, .. } = plan;
@@ -276,8 +276,8 @@ fn lane_suspend_generator<H: Host>(
     passed_on: Option<Value>,
 ) -> Resumed {
     let vm = unsafe { vm(cx) };
-    let depth = vm.lane_stack.activations.len() - 1;
-    let activation = *vm.lane_stack.activations.last().expect("a running generator's activation");
+    let depth = vm.lane_stack.activations().len() - 1;
+    let activation = *vm.lane_stack.activations().last().expect("a running generator's activation");
     let ActivationKind::Script(script) = activation.kind() else {
         unreachable!("a generator runs as a script activation");
     };

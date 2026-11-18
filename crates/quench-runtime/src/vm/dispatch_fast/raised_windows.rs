@@ -16,8 +16,8 @@ pub(super) fn settle_raised_window<H: Host>(cx: *mut LaneContext<H>, record: Ip)
     if vm.lane_deferred.is_some() || vm.lane_stack.native_boundary.is_some() {
         return None;
     }
-    let depth = vm.lane_stack.activations.len().checked_sub(1)?;
-    let activation = *vm.lane_stack.activations.last()?;
+    let depth = vm.lane_stack.activations().len().checked_sub(1)?;
+    let activation = *vm.lane_stack.activations().last()?;
     let script = *activation.script().filter(|script| script.completion.is_windowed())?;
     if vm.lane_stack.iterators.last().is_some_and(|(owner, _)| *owner == depth) {
         return None;

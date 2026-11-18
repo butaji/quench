@@ -10,7 +10,7 @@ impl LaneStack {
     pub(in crate::vm) fn extend_roots(&self, programs: &ProgramStore, out: &mut Vec<Value>) {
         self.extend_window_roots(programs, out);
         out.extend(
-            self.activations
+            self.activations()
                 .iter()
                 .filter_map(Activation::script)
                 .map(|script| script.callee),
@@ -31,7 +31,7 @@ impl LaneStack {
     /// which its callee keeps alive.
     fn extend_window_roots(&self, programs: &ProgramStore, out: &mut Vec<Value>) {
         let (span, top) = (self.values.span(), self.values.top().addr());
-        let mut windows = self.activations.iter().enumerate().filter(|(_, activation)| span.contains(&activation.window_word())).peekable();
+        let mut windows = self.activations().iter().enumerate().filter(|(_, activation)| span.contains(&activation.window_word())).peekable();
         while let Some((depth, activation)) = windows.next() {
             let end = windows.peek().map_or(top, |(_, next)| next.window_word());
             let len = end.wrapping_sub(activation.window_word()) / std::mem::size_of::<Value>() - lane_values::CONTEXT;
@@ -59,9 +59,9 @@ impl LaneStack {
     /// (`Vm::collect_slow`): every register where no activation is above it or the function
     /// has no liveness. Its registers hold Wasm values the collector reads as it reads a frame's.
     fn extend_wasm_roots(&self, programs: &ProgramStore, depth: usize, window: &[Value], out: &mut Vec<Value>) {
-        let activation = &self.activations[depth];
+        let activation = &self.activations()[depth];
         let masks = programs.residual(activation.caller_program()).and_then(|program| program.register_root_masks(activation.function()));
-        let call_pc = self.activations.get(depth + 1).and_then(Activation::caller_pc);
+        let call_pc = self.activations().get(depth + 1).and_then(Activation::caller_pc);
         match masks.zip(call_pc) {
             Some((masks, pc)) => masks.extend_live(pc, window, out),
             None => out.extend_from_slice(window),

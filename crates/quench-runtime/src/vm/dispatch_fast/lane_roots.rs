@@ -167,7 +167,7 @@ impl<H: Host> Vm<H> {
         (self.lane_deferred, self.lane_native, self.running_window) = (deferred, native, window);
         let mut stack = self.lane_roots.pop().expect("the lane stack this run parked").stack;
         std::mem::swap(&mut self.lane_stack, &mut stack);
-        if stack.activations.is_empty() {
+        if stack.activations().is_empty() {
             self.spare_lane_stacks.push(stack);
         }
         self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
@@ -257,7 +257,7 @@ impl<H: Host> Vm<H> {
     /// The census detail of a lane exit at the record `ip` of the innermost activation.
     #[cfg(feature = "profile-lane-exits")]
     fn record_lane_exit(&self, cx: *mut LaneContext<H>, ip: Ip) {
-        let Some(activation) = self.lane_stack.activations.last() else {
+        let Some(activation) = self.lane_stack.activations().last() else {
             return;
         };
         // SAFETY: the context's program outlives the run; `ip` is a record of

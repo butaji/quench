@@ -21,10 +21,10 @@ pub(super) fn drop_environment_caches<H: Host>(cx: *mut LaneContext<H>) {
 /// The running function, the home a handler's scopes and binding live in, and whether the running
 /// function keeps its locals in its record: the innermost activation's, else the frame's.
 fn handler_home<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>) -> (u32, HandlerHome, bool) {
-    match vm.lane_stack.activations.last().copied() {
+    match vm.lane_stack.activations().last().copied() {
         Some(activation) => {
             let home = HandlerHome::Window(WindowHome {
-                depth: vm.lane_stack.activations.len() - 1,
+                depth: vm.lane_stack.activations().len() - 1,
                 program: unsafe { (*cx).program },
                 function: activation.function(),
                 window: activation.window_ptr(),

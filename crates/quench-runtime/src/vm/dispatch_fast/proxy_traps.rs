@@ -165,8 +165,8 @@ fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, target: Value
     let by_layout = vm.heap.array(target).is_none() || (atom != vm.length_atom && !vm.atom_class(atom).contains(crate::vm::object::AtomClass::ARRAY_INDEX));
     let layout = if by_layout { vm.object_data(target).map_or(0, |data| data.layout_id()) } else { 0 };
     let check = TrapCheck { target, atom, access, layout };
-    let depth = vm.lane_stack.activations.len() - 1;
-    if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations.last_mut().map(|activation| activation.kind_mut()) {
+    let depth = vm.lane_stack.activations().len() - 1;
+    if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations_mut().last_mut().map(|activation| activation.kind_mut()) {
         script.completion = completion;
     }
     vm.lane_stack.trap_checks.push((depth, check));
