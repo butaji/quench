@@ -1461,6 +1461,19 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// `compile_embedding_script_in_realm` for host source the caller owns.
+    pub(crate) fn compile_embedding_owned_script_in_realm(
+        &mut self,
+        global: RootId,
+        source: std::rc::Rc<String>,
+        name: &str,
+        origin: (u32, u32),
+    ) -> Result<crate::CompiledScript, JsError> {
+        self.with_embedding_realm(global, |vm| {
+            vm.compile_embedding_owned_host_script(source, name, origin)
+        })
+    }
+
     pub(crate) fn evaluate_embedding_compiled_script_in_realm(
         &mut self,
         global: RootId,

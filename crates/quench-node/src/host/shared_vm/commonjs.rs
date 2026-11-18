@@ -3064,7 +3064,9 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                             filename, &wrapper_source, prefix.len()..wrapper_source.len() - suffix.len(), disk_offset_utf16,
                         );
                     }
-                    let wrapper = match evaluate_wrapper(context, prefix, &wrapper_source, key, is_main, typescript) {
+                    // The compiled program keeps the wrapper it compiled, shared with this call.
+                    let wrapper_source = std::rc::Rc::new(wrapper_source);
+                    let wrapper = match evaluate_wrapper(context, prefix, std::rc::Rc::clone(&wrapper_source), key, is_main, typescript) {
                         Ok(wrapper) => wrapper,
                         Err(_) if !quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY && declared.is_none()
                             && detect_source_kind_for_path(filename, &wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()])
@@ -3080,8 +3082,7 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                         filename,
                         &wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()],
                     )?;
-                    // The compiled program keeps its own source; the module body runs
-                    // inside this call, so the wrapper is released before it.
+                    // The module body runs inside this call, so the wrapper is released before it.
                     drop(wrapper_source);
                     wrapper
                 }
@@ -3153,24 +3154,18 @@ pub(crate) fn native_commonjs_source(
 fn evaluate_wrapper(
     context: &mut Context<'_>,
     prefix: &str,
-    source: &str,
+    source: std::rc::Rc<String>,
     filename: &str,
     entry: bool,
     typescript: bool,
 ) -> Result<RootId, RootedError> {
     let (line_offset, column_offset) = quench_runtime::wrapper_origin(prefix)
         .ok_or_else(|| RootedError::host("CommonJS wrapper origin exceeds compiler positions"))?;
-    if typescript {
-        if super::esm_errors::node_modules_typescript(Path::new(filename)) {
-            let error = super::esm_errors::type_stripping_unsupported(filename);
-            return Err(throw_module_load_error(context, error)?);
-        }
-        context.evaluate_typescript_script_with_origin_rooted(source, filename, line_offset, column_offset, entry)
-    } else if entry {
-        context.evaluate_entry_script_with_origin_rooted(source, filename, line_offset, column_offset)
-    } else {
-        context.evaluate_specialized_script_with_origin_rooted(source, filename, line_offset, column_offset)
+    if typescript && super::esm_errors::node_modules_typescript(Path::new(filename)) {
+        let error = super::esm_errors::type_stripping_unsupported(filename);
+        return Err(throw_module_load_error(context, error)?);
     }
+    context.evaluate_owned_script_with_origin_rooted(source, filename, line_offset, column_offset, entry, typescript)
 }
 
 pub(crate) fn compile_public(
@@ -3183,8 +3178,8 @@ pub(crate) fn compile_public(
     let content = context.string_text(content)?.ok_or_else(|| RootedError::host("Module._compile content must be a string"))?;
     let name = context.string_text(filename)?.ok_or_else(|| RootedError::host("Module._compile filename must be a string"))?;
     let text = script_body(content.as_str());
-    let source = [WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat();
-    let wrapper = evaluate_wrapper(context, WRAPPER_PREFIX, &source, &name, false, false)?;
+    let source = std::rc::Rc::new([WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat());
+    let wrapper = evaluate_wrapper(context, WRAPPER_PREFIX, source, &name, false, false)?;
     let exports = get(context, module, "exports")?;
     let require = context.host_function_with_data(crate::host::shared_vm::operation!("require"), module)?;
     install_resolve(context, require, module)?;

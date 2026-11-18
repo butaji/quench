@@ -1161,6 +1161,21 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// `compile_script_in_realm_with_origin` for host source the caller owns: the compiled
+    /// Script keeps the string as its text, without a copy.
+    pub fn compile_script_in_realm_with_origin_owned(
+        &mut self,
+        global: RootId,
+        source: std::rc::Rc<String>,
+        name: &str,
+        line_offset: u32,
+        column_offset: u32,
+    ) -> Result<CompiledScript, RootedError> {
+        self.vm
+            .compile_embedding_owned_script_in_realm(global, source, name, (line_offset, column_offset))
+            .map_err(|error| self.error(error))
+    }
+
     pub fn compiled_script_is_current(&self, script: &CompiledScript) -> bool {
         self.vm.compiled_script_is_current(script)
     }
@@ -1211,6 +1226,28 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<RootId, RootedError> {
         let result = self.vm.evaluate_embedding_typescript_script_with_origin(
             source, name, Some((line_offset, column_offset)), keep_records,
+        );
+        self.completion(result)
+    }
+
+    /// `evaluate_specialized_script_with_origin_rooted` for host source the caller owns, as the
+    /// classic form (`keep_records` false), the entry (`keep_records`) or TypeScript (`typescript`),
+    /// which keeps the string as the program's text instead of a copy of it.
+    pub fn evaluate_owned_script_with_origin_rooted(
+        &mut self,
+        source: std::rc::Rc<String>,
+        name: &str,
+        line_offset: u32,
+        column_offset: u32,
+        keep_records: bool,
+        typescript: bool,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_owned_script_with_origin(
+            source,
+            name,
+            (line_offset, column_offset),
+            keep_records,
+            typescript,
         );
         self.completion(result)
     }
@@ -1273,7 +1310,7 @@ impl<'a, H: Host> NativeContext<'a, H> {
         suffix: &str,
         name: &str,
     ) -> Result<RootId, RootedError> {
-        let body = crate::bytecode::SourceText::Shared(std::sync::Arc::from(body));
+        let body = crate::bytecode::SourceText::Owned(std::rc::Rc::new(body));
         self.evaluate_library_body(prefix, body, suffix, name)
     }
 

@@ -69,12 +69,20 @@ pub(super) struct ChunkWindow<'a> {
     utf16_excess: &'a [(usize, usize)],
     /// The run of a streamed body the chunk compiles.
     run: Option<&'a super::statement_stream::StreamRun>,
+    /// The load checked the function's body alone (`ProgramReplay::checked_at_load`), so its early
+    /// errors are settled and the chunk's analysis skips their check.
+    checked: bool,
 }
 
 impl<'a> ChunkWindow<'a> {
     /// Whether the chunk compiles the first run of a streamed body.
     pub(super) fn first_run(&self) -> bool {
         self.run.is_some_and(|run| run.from.is_none())
+    }
+
+    /// Whether the load checked the function's body (`checked`).
+    pub(super) fn checked(&self) -> bool {
+        self.checked
     }
 
     pub(super) fn start(&self) -> u32 {
@@ -200,8 +208,9 @@ impl Engine {
         let (line_starts, utf16_excess) = source_layout(source);
         let stubs = &program.first_call_scopes;
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
-        let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, line_starts, utf16_excess, run };
-        Self::specialize_script_shaped(&chunk.text, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script())
+        let checked = program.replay.as_deref().is_some_and(|replay| replay.checked_at_load(span.start));
+        let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, line_starts, utf16_excess, run, checked };
+        Self::specialize_script_shaped(&chunk.text, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script(), None)
     }
 }
 

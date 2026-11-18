@@ -557,7 +557,7 @@ impl ResultLayout {
     }
 
     #[inline(always)]
-    const fn allows_numeric_local(self) -> bool {
+    pub(crate) const fn allows_numeric_local(self) -> bool {
         matches!(self, Self::NumericReturnable)
     }
 }
@@ -3618,6 +3618,9 @@ pub(crate) enum SourceText {
     /// The text of a guest string the program compiled from (an eval's source), shared with
     /// that string's storage.
     Local(std::rc::Rc<str>),
+    /// The text of a host caller's owned string, which the program keeps as it is: a host that
+    /// already owns its source hands the string over instead of a copy of it.
+    Owned(std::rc::Rc<String>),
     Static(&'static str),
     Kept(KeptText),
     /// The text of an eval's guest string that was a rope of ASCII text: the program keeps the
@@ -3760,6 +3763,7 @@ impl std::ops::Deref for SourceText {
         match self {
             Self::Shared(text) => text,
             Self::Local(text) => text,
+            Self::Owned(text) => text,
             Self::Static(text) => text,
             Self::Kept(text) => text,
             Self::Rope(text) => text,

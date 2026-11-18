@@ -532,6 +532,15 @@ pub(super) fn decode_snapshot_program(
     Ok((program, atom_count))
 }
 
+/// `text`, a string the encoding `encoded` holds, as a view of those kept bytes rather than a
+/// copy of it: `text` lies within them, and the reader checked it is UTF-8.
+fn kept_residual_text(encoded: &super::KeptBytes, text: &str) -> Result<super::SourceText, String> {
+    let bytes: &[u8] = encoded.as_ref().as_ref();
+    let base = bytes.as_ptr() as usize;
+    let start = (text.as_ptr() as usize).checked_sub(base).ok_or("residual source text is outside its encoding")?;
+    Ok(super::SourceText::Kept(super::KeptText { bytes: encoded.clone(), range: start..start + text.len() }))
+}
+
 /// How a decoder reads atoms (`AtomEncoding`).
 enum ReadAtoms<'a> {
     /// The table, in the program's ids.
@@ -574,7 +583,7 @@ fn decode_program(
     let source_name = input.string()?;
     let text = match input.u8()? {
         OPTIONAL_STRING_NONE => None,
-        OPTIONAL_STRING_SOME => Some(super::SourceText::Shared(std::sync::Arc::from(input.string()?))),
+        OPTIONAL_STRING_SOME => Some(kept_residual_text(encoded, input.str_ref()?)?),
         OPTIONAL_STRING_ELIDED => Some(elided.take().ok_or("residual source text is not supplied")?),
         _ => return Err("invalid optional residual string".into()),
     };
@@ -1744,8 +1753,12 @@ impl<'a> BinaryReader<'a> {
     }
     pub(super) fn u64(&mut self) -> Result<u64, String> { Ok(u64::from_le_bytes(self.array()?)) }
     pub(super) fn string(&mut self) -> Result<String, String> {
+        self.str_ref().map(str::to_owned)
+    }
+    /// The next string, borrowed from the encoding.
+    pub(super) fn str_ref(&mut self) -> Result<&'a str, String> {
         let len = self.u32()? as usize;
-        String::from_utf8(self.take(len)?.to_vec()).map_err(|_| "invalid residual string".into())
+        std::str::from_utf8(self.take(len)?).map_err(|_| "invalid residual string".into())
     }
     pub(super) fn strings(&mut self) -> Result<AtomTable, String> {
         let count = self.u32()? as usize;

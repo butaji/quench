@@ -361,6 +361,12 @@ pub(crate) enum StaticModuleThrow {
         message: Option<Constant>,
     },
 }
+
+/// What a static module's text evaluates to without running it (`Engine::static_module_outcome`).
+pub(crate) enum StaticModuleOutcome {
+    Exports(Vec<(String, Constant)>),
+    Throw(StaticModuleThrow),
+}
 #[derive(Clone, Debug, Default)]
 pub(crate) struct StaticModulePlan {
     pub(crate) link_plan: Option<ModuleLinkPlan>,
@@ -621,7 +627,10 @@ impl Engine {
         Some(plan)
     }
 
-    pub(crate) fn static_module_throw(source: &str) -> Option<StaticModuleThrow> {
+    /// `read` of the program of a static module's text, parsed and checked as a module, or None
+    /// where it does not parse or check. One parse serves every reading of the text
+    /// (`static_module_outcome`).
+    fn with_static_module<R>(source: &str, read: impl FnOnce(&Program<'_>) -> Option<R>) -> Option<R> {
         if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
@@ -638,8 +647,24 @@ impl Engine {
         if !semantic.diagnostics.is_empty() {
             return None;
         }
+        read(&parsed.program)
+    }
+
+    /// What a static module's text evaluates to without running it: its exports, else the value
+    /// its program throws.
+    pub(crate) fn static_module_outcome(source: &str, module_name: &str) -> Option<StaticModuleOutcome> {
+        Self::with_static_module(source, |program| {
+            Self::static_module_exports_of(program, module_name)
+                .map(StaticModuleOutcome::Exports)
+                .or_else(|| Self::static_module_throw_of(program).map(StaticModuleOutcome::Throw))
+        })
+    }
+
+    /// The value a static module's program throws, when its only statement besides empty ones is
+    /// a throw (`static_module_outcome`).
+    fn static_module_throw_of(program: &Program<'_>) -> Option<StaticModuleThrow> {
         let mut thrown = None;
-        for statement in &parsed.program.body {
+        for statement in &program.body {
             match statement {
                 Statement::EmptyStatement(_) => {}
                 Statement::ThrowStatement(statement) if thrown.is_none() => {
@@ -677,25 +702,15 @@ impl Engine {
         source: &str,
         module_name: &str,
     ) -> Option<Vec<(String, Constant)>> {
-        if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
-        let normalized = early::normalize_hashbang(source);
-        let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
-        let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return None;
-        }
-        if !parsed.diagnostics.is_empty() {
-            return None;
-        }
-        let semantic = oxc_semantic::SemanticBuilder::new()
-            .with_check_syntax_error(true)
-            .build(&parsed.program);
-        if !semantic.diagnostics.is_empty() {
-            return None;
-        }
+        Self::with_static_module(source, |program| Self::static_module_exports_of(program, module_name))
+    }
+
+    /// The exports of a static module's program, when it only declares them
+    /// (`static_module_outcome`).
+    fn static_module_exports_of(program: &Program<'_>, module_name: &str) -> Option<Vec<(String, Constant)>> {
         let mut bindings = FxHashMap::default();
         let mut exports = Vec::new();
-        for statement in &parsed.program.body {
+        for statement in &program.body {
             match statement {
                 Statement::EmptyStatement(_) => {}
                 Statement::VariableDeclaration(declaration) => {
@@ -779,26 +794,29 @@ impl Engine {
         source: &str, name: &str, prefix: &dyn AtomPrefix,
         options: HostScriptOptions, released: ReleasedRecords, first_call: bool,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        if options.typescript {
-            Self::specialize_typescript_script_with_atom_prefix(source, name, prefix, options.keep_records, released)
-        } else if options.keep_records {
-            Self::specialize_kept_script_with_atom_prefix(source, name, prefix)
-        } else if first_call {
-            Self::specialize_script_shaped(source, name, prefix, ParsedProgramShape::FirstCallScript, released, SourceType::script())
-        } else {
-            Self::specialize_script_with_atom_prefix(source, name, prefix, released)
-        }
+        Self::specialize_host_script_provided(source, name, prefix, options, released, first_call, None)
     }
 
-    pub(crate) fn specialize_typescript_script_with_atom_prefix(
-        source: &str, name: &str, atom_prefix: &dyn AtomPrefix,
-        keep_records: bool, released: ReleasedRecords,
+    /// `specialize_host_script` for a host text the caller holds in shared storage: `provided`
+    /// is that storage, which the program keeps in place of a copy of `source` (`kept_or_provided`).
+    pub(crate) fn specialize_host_script_provided(
+        source: &str, name: &str, prefix: &dyn AtomPrefix,
+        options: HostScriptOptions, released: ReleasedRecords, first_call: bool,
+        provided: Option<crate::bytecode::SourceText>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(
-            source, name, atom_prefix,
-            if keep_records { ParsedProgramShape::KeptRecords } else { ParsedProgramShape::Any },
-            released, SourceType::script().with_typescript(true),
-        )
+        // The routes of the Script, typescript and first-call forms; each one's shape and
+        // released records are those its own helper gave.
+        let (shape, released, source_type) = if options.typescript {
+            let shape = if options.keep_records { ParsedProgramShape::KeptRecords } else { ParsedProgramShape::Any };
+            (shape, released, SourceType::script().with_typescript(true))
+        } else if options.keep_records {
+            (ParsedProgramShape::KeptRecords, ReleasedRecords::Dropped, SourceType::script())
+        } else if first_call {
+            (ParsedProgramShape::FirstCallScript, released, SourceType::script())
+        } else {
+            (ParsedProgramShape::Any, released, SourceType::script())
+        };
+        Self::specialize_script_shaped(source, name, prefix, shape, released, source_type, provided)
     }
 
     pub fn specialize(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
@@ -820,17 +838,7 @@ impl Engine {
         atom_prefix: &dyn AtomPrefix,
         released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::Any, released, SourceType::script())
-    }
-
-    /// `specialize_script_with_atom_prefix` for a program whose functions keep their records:
-    /// a host script whose program will keep only a static body of `source`, or an entry.
-    pub(crate) fn specialize_kept_script_with_atom_prefix(
-        source: &str,
-        name: &str,
-        atom_prefix: &dyn AtomPrefix,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::KeptRecords, ReleasedRecords::Dropped, SourceType::script())
+        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::Any, released, SourceType::script(), None)
     }
 
     fn specialize_script_shaped(
@@ -840,6 +848,7 @@ impl Engine {
         shape: ParsedProgramShape<'_>,
         released: ReleasedRecords,
         source_type: SourceType,
+        provided_text: Option<crate::bytecode::SourceText>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode_and_private_names(
             source,
@@ -854,7 +863,7 @@ impl Engine {
             &[],
             shape,
             released,
-            None,
+            provided_text,
         )
     }
     pub fn specialize_unspecialized(
@@ -1279,7 +1288,7 @@ impl Engine {
         // Parsing is done; the semantic analysis starts here.
         compile_phase_boundary(CompilePhase::Analysis);
         let inherited_directive = add_use_strict(&mut parsed.program, &allocator, inherited_strict);
-        let semantic = semantic_stats::checked_semantic(&parsed.program, name)?;
+        let semantic = semantic_stats::checked_semantic(&parsed.program, name, expected_shape.checked_at_load())?;
         let mut private_name_ids = private_name_ids(&semantic.semantic);
         let mut private_name_labels = private_name_labels(&semantic.semantic);
         let mut prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program, &Default::default());
@@ -1396,6 +1405,7 @@ impl Engine {
         compiler.first_call.plan(expected_shape, compiler.replayable_source, &parsed.program, inherited_strict, (std::mem::take(&mut facts.free_names), std::mem::take(&mut facts.call_only_found)));
         compiler.streamed = std::mem::take(&mut facts.streamed);
         compiler.stream_candidates = std::mem::take(&mut facts.stream_candidates);
+        compiler.checked_bodies = std::mem::take(&mut facts.checked);
         if let ParsedProgramShape::FirstCallChunk(window) = expected_shape {
             // The chunk's text parsed alone; its functions now lie at their place.
             let delta = window.start();
@@ -1893,7 +1903,7 @@ struct Compiler<'a> {
     capture_script_completion: bool,
     eval_context: Option<EvalContext>,
     /// The text the caller already holds in shared storage, which the program keeps in place
-    /// of a copy of `text` when it is exactly `text` (`source_text::kept_or_provided`).
+    /// of a copy of `text` (`source_text::kept_or_provided`).
     provided_text: Option<crate::bytecode::SourceText>,
     eval_annex_b_collisions: early::AnnexBCollisions,
     atoms: CompilerAtoms<'a>,
@@ -1913,6 +1923,9 @@ struct Compiler<'a> {
     /// The starts of the function bodies compiled from their source parsed again, which a
     /// replay stands in the same way (`ProgramReplay::lazy_bodies`).
     lazy_compiled: Vec<u32>,
+    /// The starts of the function bodies the load's check found free of early errors
+    /// (`BodyFacts::checked`), which its replay keeps (`ProgramReplay::checked_bodies`).
+    checked_bodies: Vec<u32>,
     /// The arenas lazily parsed functions are parsed again in, one per nesting of such
     /// functions, each reset and reused: an arena per function interleaved its blocks with
     /// the program's long-lived records, and the heap kept the holes between them.
@@ -2504,6 +2517,7 @@ impl<'a> Compiler<'a> {
             prototype_unobservable: FxHashSet::default(),
             lazy_bodies: FxHashSet::default(),
             lazy_compiled: Vec::new(),
+            checked_bodies: Vec::new(),
             lazy_arenas: Vec::new(),
             streamed: FxHashSet::default(),
             stream_candidates: FxHashSet::default(),
@@ -3640,6 +3654,7 @@ impl<'a> Compiler<'a> {
                     root_strict: self.root_strict,
                     module_goal: self.module_goal,
                     lazy_bodies: lazy_bodies::sorted(std::mem::take(&mut self.lazy_compiled)),
+                    checked_bodies: lazy_bodies::sorted(std::mem::take(&mut self.checked_bodies)),
                     specialized: self.mode == SpecializationMode::Enabled,
                     template_sites: self.template_sites,
                     atoms,
