@@ -125,9 +125,8 @@ pub(in crate::compile) struct NestedStub {
 /// references its own analysis leaves unresolved, but its own `arguments`, and a declaration's
 /// own name, which the scope around it binds. None for a function that may reach its scopes
 /// by name (direct `eval`, `with`), whose captures its names do not bound.
-pub(in crate::compile) fn free_names(program: &Program<'_>, scoping: &oxc_semantic::Scoping, released: &[Box<str>]) -> Option<(u32, Box<[Box<str>]>)> {
-    let text = program.source_text.get(program.span.start as usize..program.span.end as usize)?;
-    if reaches_scopes_by_name(text) {
+pub(in crate::compile) fn free_names(program: &Program<'_>, scoping: &oxc_semantic::Scoping, released: &[Box<str>], bounded: &dyn Fn(u32) -> bool) -> Option<(u32, Box<[Box<str>]>)> {
+    if reaches_scopes_by_name(program, bounded) {
         return None;
     }
     let (start, own) = match program.body.first()? {
@@ -148,10 +147,92 @@ pub(in crate::compile) fn free_names(program: &Program<'_>, scoping: &oxc_semant
     Some((start, names.into_boxed_slice()))
 }
 
-/// Whether the source of a function may reach its scopes by name (direct `eval`, `with`), which
-/// its free names do not bound.
-fn reaches_scopes_by_name(text: &str) -> bool {
+/// Whether the function `program` holds may reach its scopes by name (direct `eval`, `with`),
+/// which its free names do not bound: its tree holds a `with` statement or a reference named
+/// `eval`, or a body released from it (statements empty) whose text names either and that
+/// `bounded` does not know to bound its names (checked alone, `BodyFacts::check`). A text
+/// naming neither needs no walk. The words in comments, strings and longer names (`startsWith`,
+/// `evaluate`) do not count: a bundle's module that holds them stays a stub.
+pub(in crate::compile) fn reaches_scopes_by_name(program: &Program<'_>, bounded: &dyn Fn(u32) -> bool) -> bool {
+    let Some(text) = program.source_text.get(program.span.start as usize..program.span.end as usize) else {
+        return true;
+    };
+    if !names_scope_words(text) {
+        return false;
+    }
+    let mut reach = ReachByName { source: program.source_text, bounded, found: false };
+    oxc_ast_visit::Visit::visit_program(&mut reach, program);
+    reach.found
+}
+
+/// Whether `text` holds either word a reach by name needs.
+fn names_scope_words(text: &str) -> bool {
     text.contains("eval") || text.contains("with")
+}
+
+/// Finds a reach by name in a tree (`reaches_scopes_by_name`).
+struct ReachByName<'s, 'b> {
+    source: &'s str,
+    bounded: &'b dyn Fn(u32) -> bool,
+    found: bool,
+}
+
+impl ReachByName<'_, '_> {
+    /// Whether a body whose statements are empty, at `body` of the function at `start`, was
+    /// released with text that may reach by name, and is not known to bound its names.
+    fn released_reaches(&self, start: u32, body: oxc_span::Span) -> bool {
+        let text = self.source.get(body.start as usize..body.end as usize).unwrap_or("eval");
+        names_scope_words(text) && !(self.bounded)(start)
+    }
+}
+
+impl<'a> oxc_ast_visit::Visit<'a> for ReachByName<'_, '_> {
+    fn visit_with_statement(&mut self, _: &oxc_ast::ast::WithStatement<'a>) {
+        self.found = true;
+    }
+
+    fn visit_identifier_reference(&mut self, reference: &oxc_ast::ast::IdentifierReference<'a>) {
+        if reference.name.as_str() == "eval" {
+            self.found = true;
+        }
+    }
+
+    fn visit_function(&mut self, function: &oxc_ast::ast::Function<'a>, flags: oxc_syntax::scope::ScopeFlags) {
+        if self.found {
+            return;
+        }
+        match function.body.as_deref() {
+            Some(body) if body.statements.is_empty() => {
+                if self.released_reaches(function.span.start, body.span) {
+                    self.found = true;
+                } else {
+                    oxc_ast_visit::walk::walk_formal_parameters(self, &function.params);
+                }
+            }
+            _ => oxc_ast_visit::walk::walk_function(self, function, flags),
+        }
+    }
+
+    fn visit_arrow_function_expression(&mut self, arrow: &oxc_ast::ast::ArrowFunctionExpression<'a>) {
+        if self.found {
+            return;
+        }
+        if arrow.body.statements.is_empty() {
+            if self.released_reaches(arrow.span.start, arrow.body.span) {
+                self.found = true;
+            } else {
+                oxc_ast_visit::walk::walk_formal_parameters(self, &arrow.params);
+            }
+        } else {
+            oxc_ast_visit::walk::walk_arrow_function_expression(self, arrow);
+        }
+    }
+
+    fn visit_statement(&mut self, statement: &oxc_ast::ast::Statement<'a>) {
+        if !self.found {
+            oxc_ast_visit::walk::walk_statement(self, statement);
+        }
+    }
 }
 
 /// The free name of a class method's that reads `super.x`: no binding's, a reserved word.
@@ -231,10 +312,10 @@ impl<'f> FreeNameCheck<'f> {
     pub(in crate::compile) fn check(&mut self, body: oxc_parser::LazyBody<'_, '_>) {
         // The parse's free names where it found them (`LazyBody::early`), else the analysis'.
         let found = match body.early {
-            Some(early) => crate::compile::lazy_bodies::parse_free_names(body.program, early),
+            Some(early) => crate::compile::lazy_bodies::parse_free_names(body.program, early, &|start| self.found.contains_key(&start.wrapping_add(self.delta))),
             None => {
                 let built = crate::compile::semantic_stats::builder(body.program).build(body.program);
-                free_names(body.program, built.semantic.scoping(), &[])
+                free_names(body.program, built.semantic.scoping(), &[], &|start| self.found.contains_key(&start.wrapping_add(self.delta)))
             }
         };
         if let Some((start, names)) = found {

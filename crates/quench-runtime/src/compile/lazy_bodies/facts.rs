@@ -94,8 +94,8 @@ impl BodyFacts {
         if verify_early()
             && let Some(early) = early
         {
-            let semantic = inner.bounded.then(|| crate::compile::first_call::free_names(program, built.semantic.scoping(), &inner.free)).flatten();
-            let tracked = parse_free_names(program, early);
+            let semantic = inner.bounded.then(|| crate::compile::first_call::free_names(program, built.semantic.scoping(), &inner.free, &|start| self.bounds_names(start))).flatten();
+            let tracked = parse_free_names(program, early, &|start| self.bounds_names(start));
             if semantic.as_ref().map(|names| &names.1) != tracked.as_ref().map(|names| &names.1) {
                 eprintln!("early-verify: free names differ at {}: semantic {:?} parse {:?}", program.span.start, semantic.map(|names| names.1), tracked.map(|names| names.1));
             }
@@ -127,6 +127,12 @@ impl BodyFacts {
         true
     }
 
+    /// Whether the body of the function at `start`, released and checked alone, bounds what it
+    /// reaches by name with its free names.
+    fn bounds_names(&self, start: u32) -> bool {
+        self.free_names.contains_key(&start) && !self.unbounded.contains(&start)
+    }
+
     /// Takes the parse's verdict on a body it found no early error could lie in
     /// (`LazyBody::early`) where its facts need no analysis: no private name, and call-only
     /// facts waiting for its compilation or none to find, no function lying inside
@@ -141,7 +147,7 @@ impl BodyFacts {
         if !self.call_only_deferred && functions_inside {
             return false;
         }
-        let free_names = parse_free_names(program, early);
+        let free_names = parse_free_names(program, early, &|start| self.bounds_names(start));
         if functions_inside && crate::compile::call_only::compiles_at_load(program, in_function && free_names.is_none(), false) {
             return false;
         }
@@ -204,7 +210,7 @@ impl BodyFacts {
             self.next_private_id = self.next_private_id.max(first_id + id + 1);
         }
         self.private_name_labels.extend(crate::compile::private_name_labels(semantic));
-        let free_names = inner.bounded.then(|| crate::compile::first_call::free_names(program, semantic.scoping(), &inner.free)).flatten();
+        let free_names = inner.bounded.then(|| crate::compile::first_call::free_names(program, semantic.scoping(), &inner.free, &|start| self.bounds_names(start))).flatten();
         if free_names.is_none() && let Some(start) = crate::compile::first_call::alone_start(program) {
             self.unbounded.insert(start);
         }
@@ -231,9 +237,8 @@ fn verify_early() -> bool {
 /// A body's free names from the parse's (`LazyBody::early`), as `first_call::free_names`
 /// gives them: with a declaration's own name, None where the body may reach its scopes by
 /// name.
-pub(in crate::compile) fn parse_free_names(program: &Program<'_>, early: &[&str]) -> Option<(u32, Box<[Box<str>]>)> {
-    let text = program.source_text.get(program.span.start as usize..program.span.end as usize)?;
-    if text.contains("eval") || text.contains("with") {
+pub(in crate::compile) fn parse_free_names(program: &Program<'_>, early: &[&str], bounded: &dyn Fn(u32) -> bool) -> Option<(u32, Box<[Box<str>]>)> {
+    if crate::compile::first_call::reaches_scopes_by_name(program, bounded) {
         return None;
     }
     let (start, own) = match program.body.first()? {

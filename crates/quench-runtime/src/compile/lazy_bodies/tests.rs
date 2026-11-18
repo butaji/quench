@@ -106,6 +106,7 @@ fn skimmed_bodies_have_the_free_names_of_their_semantic_check() {
         "function f() { return new.target; }",
         "function f(f) { return f + g; }",
         "function g() { return g; } function h() { return g; }",
+        "function f(s) { /* with eval */ return s.startsWith('eval') + o.evaluate(w); }",
     ];
     for source in sources {
         assert_eq!(lazy_free_names(source, true), lazy_free_names(source, false), "{source}");
@@ -140,4 +141,22 @@ fn skimmed_bodies_match_the_semantic_check_on_a_corpus() {
     }
     eprintln!("files={files} differ={}", differ.len());
     assert!(differ.is_empty(), "{differ:#?}");
+}
+
+/// The words `eval` and `with` in comments, strings and longer names leave a body's free names
+/// bounded: a bundle's module that holds them still compiles on first call. A real `eval` call
+/// or `with` statement, here or in a function inside, does not.
+#[test]
+fn scope_words_outside_code_keep_free_names() {
+    let names = lazy_free_names("function f(s) { // with eval\n return s.startsWith('eval') + x.evaluate(y); }", false).expect("checked");
+    assert_eq!(names.iter().map(|(_, names)| names.clone()).collect::<Vec<_>>(), vec![vec!["x".to_string(), "y".to_string()]]);
+    for reaching in [
+        "function f() { return eval(s); }",
+        "function f() { with (o) { return p; } }",
+        "function f() { return function () { return eval(s); }; }",
+        "function f() { return () => { with (o) return p; }; }",
+    ] {
+        let names = lazy_free_names(reaching, false).expect("checked");
+        assert!(names.iter().all(|(start, _)| *start != 0), "{reaching}: {names:?}");
+    }
 }
