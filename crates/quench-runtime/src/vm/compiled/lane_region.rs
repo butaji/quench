@@ -324,7 +324,7 @@ impl ReceiverRecovery {
     fn for_body(body: &crate::bytecode::Function) -> Self {
         if body.instructions().all(|instruction| {
             !instruction.writes_current_this()
-                && !instruction.op().is_load_this()
+                && !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::LoadThis { .. }))
                 && !instruction.stores_to_this()
                 && (!instruction.op().is_get_field() || matches!(instruction.field_lookup(),
                     Some(FieldLookup::Atom { base, .. }) if base != crate::bytecode::FieldBase::THIS))
@@ -1131,7 +1131,7 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
         // ToNumeric of a Number is the Number; any other operand leaves (`Lowering::instruction`). A
         // dense element is read natively, any other leaving (`emit_dense_element_read`); a null or
         // undefined operand leaves before any effect (`staged::require_object_coercible`).
-        opcode if opcode.is_to_numeric() || opcode.is_get_index() || opcode.is_require_object_coercible() => !instruction.returns_from_frame(),
+        opcode if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Number(crate::staged::NumberOperation::ToNumeric { .. }))) || opcode.is_get_index() || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::RequireObjectCoercible { .. })) => !instruction.returns_from_frame(),
         // A Number operator of a Number; any other operand leaves before any effect (`Lowering::unary`).
         opcode if opcode.immediate_role() == crate::bytecode::ImmediateRole::UnaryOperator
             && crate::vm::operations::NumberUnary::from_js_instruction(opcode, instruction.unary_operator()).is_some() =>
@@ -1576,7 +1576,7 @@ pub(super) fn lower(
     let mut seen_headers: CompoundBitSet = CompoundBitSet::with_capacity(unit.instructions.len());
     let mut shared_headers = CompoundBitSet::with_capacity(unit.instructions.len());
     for (pc, instruction) in unit.instructions.iter().enumerate() {
-        if !instruction.op().is_jump() { continue; }
+        if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump)) { continue; }
         let target = instruction.jump_target() as usize;
         if target > pc { continue; }
         if seen_headers.contains(target) { shared_headers.insert(target); }
@@ -2575,7 +2575,7 @@ impl Lowering<'_, '_> {
                 let Some(constant) = self.program.constants.get(instruction.constant_index()) else { return false };
                 self.load_constant(state, pc, instruction, constant)
             }
-            opcode if opcode.is_return() && plain && self.completion.numeric() => {
+            _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) && plain && self.completion.numeric() => {
                 self.return_number(state, instruction.register_a(), pc32);
                 Some(false)
             }
@@ -2610,7 +2610,7 @@ impl Lowering<'_, '_> {
                 let taken_block = self.builder.create_block();
                 let fall_block = self.builder.create_block();
                 self.step(state, frame::Edges::Branch { target: taken_block, following: fall_block, miss: exit },
-                    crate::staged::Operation::JumpIf { register: instruction.register_a(), taken: instruction.op().is_jump_true() });
+                    crate::staged::Operation::JumpIf { register: instruction.register_a(), taken: matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::JumpIf { taken: true, .. })) });
                 self.continue_branch(state, pc, target, taken_block, fall_block);
                 return false;
             }
@@ -3307,7 +3307,7 @@ impl Lowering<'_, '_> {
     fn require_object_latches(&mut self, instructions: &[WideInstruction], leaders: &CompoundBitSet,
         loops: &[(usize, usize)]) {
         for &(header, back) in loops {
-            if !instructions[back].op().is_jump()
+            if !matches!(crate::vm::compiled::decoded(instructions[back]), Some(crate::staged::Operation::Jump))
                 || self.unit.markers.iter().any(|pc| (header..=back).contains(pc)) { continue; }
             let first = instructions[header];
             if !first.op().is_get_field() || first.result_flags() != 0 { continue; }

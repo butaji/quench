@@ -36,7 +36,7 @@ fn copied_from(instructions: &[WideInstruction], leader: impl Fn(usize) -> bool,
         let instruction = instructions[at];
         if instruction.written_registers().any(|written| written == register) {
             return match instruction.op() {
-                opcode if opcode.is_move() => ArraySource::Register(instruction.register_b()),
+                _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Move { .. })) => ArraySource::Register(instruction.register_b()),
                 opcode if opcode.is_load_capture() && captured(at) => ArraySource::Capture(at),
                 _ => ArraySource::Register(register),
             };
