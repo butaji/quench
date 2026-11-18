@@ -2108,7 +2108,10 @@ lane_handler! {
     /// reads its flag from its record at run time. `MODE` is the pair's `staged::FUSED_*`:
     /// `FUSED_DEAD_FIRST` skips `A`'s register write (installed only where liveness proves
     /// `A`'s register dead and `B` does not name it); `FUSED_RAW` runs as `FUSED_PLAIN` here.
-    pub(super) fn fused_rows<A: u16, B: u16, BACKWARD: bool, MODE: u8>(cx, r, ip, i, view) {
+    /// `FUSED_TARGET` (a backward `B` whose target holds the conditional test `TARGET`): the
+    /// back edge's fuel check, then `TARGET`'s row over the target record's own fields, which
+    /// continues at its taken or fall-through edge. Any other mode ignores `TARGET`.
+    pub(super) fn fused_rows<A: u16, B: u16, BACKWARD: bool, MODE: u8, TARGET: u16>(cx, r, ip, i, view) {
         // Row `A` at flag `$flag`: a flagged row (`LaneFields::FLAG_ROLE`) reads its flag here,
         // from the record, rather than requickening (`generated_row`).
         macro_rules! step_a { ($flag:expr) => {{
@@ -2155,7 +2158,39 @@ lane_handler! {
             let carried = if const { LaneFields::<B>::RESULT_A } { Carried::script_in(cx, view) } else { view };
             let mut frame = row_frame::<H, B, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
             match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
-                Step::Control(Edge::Target) => resume!(cx, super::take_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
+                Step::Control(Edge::Target) => {
+                    if const { MODE == crate::staged::FUSED_TARGET } {
+                        // The back edge's target holds the test `TARGET`: its fuel check (the jump's
+                        // own, before its target runs), then the test over its own record. The test's
+                        // jump direction is its record's distance, as `take_jump`'s direction is.
+                        let test_ip = unsafe { ip.byte_offset((*ip).jump()) };
+                        if BACKWARD && script_fuel_out(cx) {
+                            return super::safepoint_at::<H>(ip, test_ip, carried.acc);
+                        }
+                        // SAFETY: the view records the distance to a validated jump target.
+                        let test_i = unsafe { &*test_ip };
+                        let fields = LaneFields::<TARGET>(test_i);
+                        let decoded = if const { matches!(LaneFields::<TARGET>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
+                            Operation::decode_generic(crate::staged::Fields::wide(fields))
+                        } else {
+                            Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY)
+                        };
+                        let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, test_ip, carried) };
+                        let mut stage = Concrete::new(std::ptr::null());
+                        let mut frame = row_frame::<H, TARGET, ACC_NONE, FLAG_UNREAD>(cx, r, test_ip, test_i, carried);
+                        match row_step!(LaneFields::<TARGET>::OPCODE, &mut stage, &mut frame, operation) {
+                            Step::Control(Edge::Target) => {
+                                // SAFETY: as the read of `test_i` above.
+                                let backward_test = unsafe { (*test_ip).jump() } <= 0;
+                                resume!(cx, super::take_jump::<H>(cx, r, test_ip, backward_test, carried, None))
+                            }
+                            Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(test_ip), carried),
+                            Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG_UNREAD>(LaneFields::<TARGET>::OPCODE) }, r, test_ip, carried),
+                        }
+                    } else {
+                        resume!(cx, super::take_jump::<H>(cx, r, ip, BACKWARD, carried, None))
+                    }
+                }
                 Step::Control(Edge::Entry(k)) => resume!(cx, super::take_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
                 Step::Control(Edge::Leave) => unreachable!("a jump leaves no lane run"),
                 Step::Control(Edge::Transfer) => unreachable!("a jump transfers no control"),
@@ -2365,7 +2400,7 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
 
 /// Opcode pair `(A, B)`'s fused record handler for `B`'s jump direction `backward`.
 pub(in crate::vm::dispatch_fast) const fn fused_row<H: Host, const A: u16, const B: u16, const MODE: u8>(backward: bool) -> Handler {
-    if backward { fused_rows::<H, A, B, true, MODE> } else { fused_rows::<H, A, B, false, MODE> }
+    if backward { fused_rows::<H, A, B, true, MODE, B> } else { fused_rows::<H, A, B, false, MODE, B> }
 }
 
 /// Whether `handler` is opcode `OP`'s plain row in any direction: its value row with no
