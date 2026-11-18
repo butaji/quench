@@ -280,6 +280,11 @@ pub(crate) const LOAD_CALLEE_ROW: u16 = Op::LoadCallee as u16;
 /// The opcode whose row clones the running activation's environment (`Operation::CloneEnv`), which
 /// a tier names to give the row its environment window.
 pub(crate) const CLONE_ENV_ROW: u16 = Op::CloneEnv as u16;
+/// The opcode whose row reads a capture (`Operation::LoadCapture`), which a tier names to find the
+/// captures a loop reads.
+pub(crate) const LOAD_CAPTURE_ROW: u16 = Op::LoadCapture as u16;
+/// The opcode whose row is an unconditional jump (`Operation::Jump`).
+pub(crate) const JUMP_ROW: u16 = Op::Jump as u16;
 
 /// The opcode whose row answers a plain `Binary` record (`specialize_register_operands` recognizes
 /// it by this, the hand handler being the fallback for the operands the row does not decode).

@@ -346,7 +346,7 @@ pub(super) fn typed_capture_slots<H: Host>(cx: *mut LaneContext<H>) -> Vec<u16> 
     let code = unsafe { &*(*cx).code };
     let Some((_, function, _, _)) = loop_tier::lane_loop_function(cx, code) else { return Vec::new() };
     let mut slots: Vec<u16> = function.instructions()
-        .filter(|instruction| instruction.op().is_load_capture() && instruction.capture_depth() == 0)
+        .filter(|instruction| instruction.op() as u16 == crate::staged::LOAD_CAPTURE_ROW && instruction.capture_depth() == 0)
         .map(|instruction| crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())).collect();
     slots.sort_unstable();
     slots.dedup();
@@ -362,7 +362,7 @@ pub(super) fn int_capture_slots<H: Host>(cx: *mut LaneContext<H>) -> Vec<u16> {
     let code = unsafe { &*(*cx).code };
     let Some((_, function, _, _)) = lane_loop_function(cx, code) else { return Vec::new() };
     let mut slots: Vec<u16> = function.instructions()
-        .filter(|instruction| instruction.op().is_load_capture() && instruction.capture_depth() == 0)
+        .filter(|instruction| instruction.op() as u16 == crate::staged::LOAD_CAPTURE_ROW && instruction.capture_depth() == 0)
         .map(|instruction| crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())).collect();
     slots.sort_unstable();
     slots.dedup();
