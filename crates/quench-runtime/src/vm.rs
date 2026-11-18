@@ -660,12 +660,12 @@ impl Realm {
 #[derive(Default)]
 struct RealmIntrinsics {
     arguments_objects: FxHashMap<(Value, bool), ArgumentsObjectTemplate>,
-    iterator_prototypes: FxHashMap<Value, IteratorRealmPrototypes>,
+    iterator_prototypes: realm_table::RealmTable<IteratorRealmPrototypes>,
     builtin_prototypes: FxHashMap<(Value, Native), Value>,
     /// Original per-realm constructors for function factory allocations.
     function_constructors: FxHashMap<(Value, Native), Value>,
-    promise_constructors: FxHashMap<Value, Value>,
-    error_intrinsics: FxHashMap<Value, ErrorRealmIntrinsics>,
+    promise_constructors: realm_table::RealmTable<Value>,
+    error_intrinsics: realm_table::RealmTable<ErrorRealmIntrinsics>,
     regexp_intrinsics: realm_table::RealmTable<regexp::RegExpIntrinsics>,
     intl_number_format_constructors: FxHashMap<Value, Value>,
     intl_number_format_prototypes: FxHashMap<Value, Value>,

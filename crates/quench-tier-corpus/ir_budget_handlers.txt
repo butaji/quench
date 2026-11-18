@@ -298,8 +298,8 @@ k11_saxpy 25.0 lane_inc_dec_loop<false, 4, true>
 k11_saxpy 6.0 lane_load_const
 k12_copy 920.0 lane_loop_kernel
 k12_copy 186.0 Vm::typed_array_span
-k12_copy 176.0 LoopKernel::chunk_length
 k12_copy 176.0 LoopKernel::columns
+k12_copy 174.0 LoopKernel::chunk_length
 k12_copy 125.0 LoopKernel::write_back
 k12_copy 111.0 lane_get_length_typed
 k12_copy 109.0 Vm::typed_array_geometry_read
@@ -545,7 +545,7 @@ k_json 5.0 CallArguments::as_slice
 k_json 4.0 __rust_no_alloc_shim_is_unstable_v2
 k_json 4.0 JsString::unflattened_host
 k_json 3.0 json_text_str
-k_json 2.6 Vm::collect_inner
+k_json 2.5 Vm::collect_inner
 k_json 2.2 RecordSpace::load_free_word
 k_json 1.8 RecordSpace::claim_slow
 k_json 1.4 RecordSpace::sweep_disposing<<quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#7}::{closure#0}, <quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#7}::{closure#1}>
