@@ -657,25 +657,6 @@ impl<H: Host> Vm<H> {
         true
     }
 
-    /// CreateDataPropertyOrThrow of `values` at indices `0..` of `array`, a dense array
-    /// (`dense_array_length`) of exactly their count holding only holes, as ArrayCreate
-    /// makes one: each definition fills its hole. `false` leaves `array` untouched.
-    pub(super) fn fill_dense_holes(&mut self, array: Value, values: &[Value]) -> bool {
-        if self.dense_array_length(array) != Some(values.len())
-            || !self
-                .heap
-                .array(array)
-                .is_some_and(|object| object.elements().iter().all(|value| value.is_deleted()))
-        {
-            return false;
-        }
-        let Some(object) = self.heap.array_mut(array) else {
-            unreachable!("matched an array above");
-        };
-        super::index::mutable_array_elements(object.elements_mut()).copy_from(0, values);
-        true
-    }
-
     /// `push(value)` onto a direct array whose elements are ordinary and dense
     /// (`Object::holds_ordinary_elements`) and whose prototypes hold no index
     /// (`chain_holds_no_index`, a held proof that a change to any of them retires): OrdinarySet
@@ -983,13 +964,6 @@ impl<H: Host> Vm<H> {
             return Ok(self.array_of(&values));
         }
         let result = self.array_species_create(p, object, count)?;
-        if let Some(values) = self.present_dense_elements(object, start..end).map(|values| values.into_owned())
-            && self.fill_dense_holes(result, &values)
-        {
-            // Each CreateDataPropertyOrThrow filled a hole; the final `length` Set still runs.
-            self.set_array_like_length(p, result, count)?;
-            return Ok(result);
-        }
         // `result` is held only here while guest code (getters, traps) can collect.
         self.with_call_roots([result], |vm| {
             for (destination, source) in (start..end).enumerate() {
