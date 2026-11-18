@@ -180,7 +180,7 @@ script_handler! {
 
 script_handler! {
     /// `MakeClosure` of such a function (`specialize_environment_window`): in a frame's run, as
-    /// `lane_make_closure`; in a window activation, over its environment and its scope chain
+    /// the `MakeClosure` row's closure; in a window activation, over its environment and its scope chain
     /// (`lane_scoped_closure_value`).
     fn lane_make_scoped_closure<>(cx, r, ip, i, view) {
         let (function, registers) = environment_window_fields(i);

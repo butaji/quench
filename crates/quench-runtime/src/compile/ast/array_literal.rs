@@ -61,7 +61,7 @@ impl FunctionCompiler<'_, '_> {
 
     /// The registers holding a short literal's elements, every one evaluated before the
     /// array is made, which no code can observe: its definitions then follow `MakeArray`
-    /// back to back, which the lane makes as one literal (`specialize_array_literals`).
+    /// back to back, which the lane makes as a hole array and then defines (`Operation::DefineElement`).
     /// A value read from a register that a later element could assign is copied first; the
     /// last element's is read as it stands.
     /// `None` for a literal with holes or past the window, which define as they go.

@@ -3484,7 +3484,7 @@ script_handler! {
 
 script_handler! {
     /// `MakeClosure` of a function an environment activation may run: in a frame's run, as
-    /// `lane_make_closure`; in an environment activation, over its environment.
+    /// the `MakeClosure` row's closure; in an environment activation, over its environment.
     fn lane_make_window_closure<>(cx, r, ip, i, view) {
         let (function, registers) = environment_window_fields(i);
         let value = if unsafe { (*cx).registers }.env().is_deleted() {
@@ -3682,17 +3682,6 @@ script_handler! {
     }
 }
 
-lane_handler! {
-    /// `DefineArrayElement` into the literal's dense storage (`Vm::define_literal_element`);
-    /// any other definition takes the general path.
-    fn lane_define_array_element<>(cx, r, ip, i, view) {
-        if !(unsafe { vm(cx) }).define_literal_element(r.get(i.b), i.imm() as usize, r.get(i.a)) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
-
 script_handler! {
     /// `InitializeTdz`: opens the binding's dead zone wherever the frame keeps it, as the
     /// general path does (`Vm::owner_binding_mut`).
@@ -3802,21 +3791,6 @@ script_handler! {
     }
 }
 
-
-script_handler! {
-    /// `MakeConstArray`: the new array of the running program's constant elements, as the
-    /// general loop makes it (`Vm::const_array_value`).
-    #[inline(never)]
-    fn lane_make_const_array<>(cx, r, ip, i, view) {
-        // The record holds the elements' constant index and count (`lane_operand`), so the
-        // running function's instruction is not decoded again.
-        let allocation = Allocation::ConstArray { constant: i.imm(), count: i.b };
-        if !staged_allocate(cx, r, i.a, allocation) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
 
 lane_handler! {
@@ -6000,16 +5974,6 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// `MakeClosure` in a frame's own lane run: the staged closure row (`lane_closure_value_of`).
-    fn lane_make_closure<>(cx, r, ip, i, view) {
-        if !staged_allocate(cx, r, i.a, Allocation::Closure { function: i.imm() }) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
 /// The closure a `MakeClosure` record makes as the general loop does, in a frame's own lane
 /// run of a function with no binding sites outside a module's root: its environment is the
 /// frame's, promoted once, and making it allocates and runs no guest code. Any other
@@ -6075,27 +6039,6 @@ fn lane_regexp_literal_value<H: Host>(cx: *mut LaneContext<H>, site: u32) -> Opt
     }
 }
 
-script_handler! {
-    /// `MakeObject2`: a two-property literal allocates and runs no guest code.
-    fn lane_make_object2<>(cx, r, ip, i, view) {
-        if !staged_allocate(cx, r, i.a, Allocation::ObjectPair { site: i.imm(), first: i.b, second: i.c }) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `MakeObjectLiteral`: an ordinary object of the literal site's shape holding the
-    /// record's window of registers, as the general loop makes it.
-    fn lane_make_object_literal<>(cx, r, ip, i, view) {
-        if !staged_allocate(cx, r, i.a, Allocation::ObjectLiteral { site: i.imm(), window: lane_literal_window(i) }) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
 /// The window of property values a `MakeObjectLiteral` record reads.
 #[inline(always)]
 fn lane_literal_window(i: &LaneInstruction) -> crate::bytecode::RegisterWindow {
@@ -6118,43 +6061,6 @@ fn lane_object_literal_value<H: Host>(cx: *mut LaneContext<H>, r: Registers, sit
     value
 }
 
-script_handler! {
-    /// `MakeObject`: an empty ordinary object (`Vm::object`), as the general loop makes it.
-    fn lane_make_object<>(cx, r, ip, i, view) {
-        if !staged_allocate(cx, r, i.a, Allocation::Empty) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-lane_handler! {
-    /// `MakeArray`: a fresh array of the record's length in holes (`Vm::hole_array`).
-    fn lane_make_array<>(cx, r, ip, i, view) {
-        if !staged_allocate(cx, r, i.a, Allocation::Array { length: i.imm() }) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
-
-lane_handler! {
-    /// `MakeArray` whose literal's `DefineArrayElement` records follow it, one per index in
-    /// order (`specialize_array_literals`): the array made with those elements at once, as
-    /// their definitions into its holes would leave it, and the run goes on past them.
-    fn lane_make_array_elements<>(cx, r, ip, i, view) {
-        let length = i.imm() as usize;
-        // SAFETY: `specialize_array_literals` matched the `length` records after this one.
-        let elements = RegisterList::collect(length, |index| unsafe { (*ip.add(index + 1)).a })
-            .expect("a fused literal fits the window");
-        if !staged_allocate(cx, r, i.a, Allocation::ArrayOf { elements }) {
-            return exit(ip);
-        }
-        // SAFETY: as above.
-        next!(cx, r, unsafe { ip.add(length + 1) }, view)
-    }
-}
-
 /// The array of the values in `elements` (`Vm::literal_array`), out of line as `lane_new_object`.
 #[inline(never)]
 fn lane_literal_array_value<H: Host>(vm: &mut Vm<H>, r: Registers, elements: RegisterList) -> Value {
@@ -6164,7 +6070,7 @@ fn lane_literal_array_value<H: Host>(vm: &mut Vm<H>, r: Registers, elements: Reg
     value
 }
 
-/// `lane_make_object`'s object. Out of line: an allocation whose record space is full falls
+/// A literal's empty object (`Allocation::Empty`). Out of line: an allocation whose record space is full falls
 /// back to a heap slot, which takes the new object by its stack address, a temporary the
 /// handler then does not hold.
 #[inline(never)]
@@ -6174,7 +6080,7 @@ fn lane_new_object<H: Host>(vm: &mut Vm<H>) -> Value {
     value
 }
 
-/// `lane_make_array`'s array of `length` holes, out of line as `lane_new_object`.
+/// The `MakeArray` row's array of `length` holes, out of line as `lane_new_object`.
 #[inline(never)]
 fn lane_new_hole_array<H: Host>(vm: &mut Vm<H>, length: usize) -> Value {
     let value = vm.hole_array(length);
@@ -17251,7 +17157,7 @@ const RETURNING_FIELD_INHERITED: u8 = 8;
 /// `RETURNING_FIELD` of a nested site whose steps hit primary own entries
 /// (`lane_nested_own_value`).
 const RETURNING_FIELD_NESTED: u8 = 9;
-/// A returning `MakeObjectLiteral` (`return { ... }`): the literal `lane_make_object_literal`
+/// A returning `MakeObjectLiteral` (`return { ... }`): the literal the `MakeObjectLiteral` row
 /// makes, returned from the frame.
 const RETURNING_OBJECT_LITERAL: u8 = 10;
 /// `RETURNING_FIELD` of a private name of a register or `this`: the site's private field
@@ -19025,7 +18931,6 @@ const fn iterator_handler<H: Host>(opcode: Op) -> Option<Handler> {
 /// branch tests, which read it.
 const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
-        Class::DefineArrayElement => Some(lane_define_array_element::<H>),
         Class::GetField => Some(lane_get_field_first::<H>),
         _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::Register, .. })) => Some(lane_set_object_field_own::<H, false>),
         _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::This, .. })) => Some(lane_set_this_field_own::<H, false>),
@@ -19038,7 +18943,6 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
         _ if denoted_handler::<H>(opcode).is_some() => denoted_handler::<H>(opcode),
         Class::GetIndex => Some(lane_get_index::<H>),
         Class::SetIndex => Some(lane_set_index::<H>),
-        Class::MakeConstArray => Some(lane_make_const_array::<H>),
         Class::StringCaseIndex => Some(lane_string_case_index::<H>),
         Class::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
         Class::WasmSimd => Some(lane_wasm_simd::<H>),
@@ -19049,11 +18953,6 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
         Class::CallSpread => Some(lane_call_spread::<H>),
         Class::Delete => Some(lane_delete::<H>),
         Class::Construct => Some(lane_script_construct::<H>),
-        Class::MakeObject2 => Some(lane_make_object2::<H>),
-        Class::MakeClosure => Some(lane_make_closure::<H>),
-        Class::MakeObjectLiteral => Some(lane_make_object_literal::<H>),
-        Class::MakeArray => Some(lane_make_array::<H>),
-        Class::MakeObject => Some(lane_make_object::<H>),
         Class::CreateRegExpLiteral => Some(lane_regexp_literal::<H>),
         Class::CallForwardingArguments => Some(lane_forward_call::<H>),
         Class::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
@@ -19223,7 +19122,7 @@ fn lane_operand(
             }
         }
         // A case selector reads its run of constants from the context by index, as a constant
-        // array reads its elements' (`lane_make_const_array`).
+        // array reads its elements' (the `MakeConstArray` row).
         ImmediateRole::ConstantIndex
             if instruction.op().is_string_case_index() || instruction.op().class() == Class::MakeConstArray =>
         {
@@ -20334,7 +20233,6 @@ fn derive_lane_view<'live, H: Host>(
         specialize_script_calls::<H>(&mut records, function.undefined_register);
         specialize_proved_arrays::<H>(&decoded, &mut records, &raw_results::raw_result_triples(&decoded, &function.handlers, || live().map(|masks| &**masks)));
         specialize_moved_index_reads::<H>(&mut records);
-        specialize_array_literals::<H>(&decoded, &mut records);
     }
     // Loop kernels take their test records last, keeping each record's final handler.
     let loop_kernels = if !wasm && (!loop_tier || crate::jit_mode::base_only()) {
@@ -21022,21 +20920,6 @@ fn specialize_moved_index_reads<H: Host>(records: &mut [LaneInstruction]) {
     }
 }
 
-/// Gives each `MakeArray` of a literal whose elements are defined by the records right after
-/// it, a `DefineArrayElement` of a register value for each index in order (`Allocation::ArrayOf`),
-/// the literal made at once (`lane_make_array_elements`). The definitions stay: nothing jumps
-/// between them, and a run entered past the `MakeArray` takes them as before.
-fn specialize_array_literals<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
-    let make = lane_make_array::<H> as Handler as *const ();
-    for pc in 0..records.len() {
-        if records[pc].handler == make
-            && matches!(Allocation::decode(decoded[pc], &decoded[pc + 1..]), Some((_, Allocation::ArrayOf { .. })))
-        {
-            records[pc].handler = lane_make_array_elements::<H> as Handler as *const ();
-        }
-    }
-}
-
 /// The handler of the `IncDec` record `update` that the record `jump` follows, where `jump` is an
 /// unconditional jump: the generated pair of `IncDec` and `Jump` (`fused_row`, the `staged::FUSED_ROWS`
 /// entry of that pair, `FUSED_PLAIN`). `None` for any other pair. The loader's `fuse_rows` pass and a
@@ -21126,7 +21009,8 @@ fn specialize_environment_window<H: Host>(
                     || is_row::<H, { crate::staged::LOCAL_STORE_ROW }>(handler)
                     || is_row::<H, { crate::staged::LOCAL_INITIALIZE_ROW }>(handler)
 
-                    || is_row::<H, { crate::staged::CLONE_ENV_ROW }>(handler);
+                    || is_row::<H, { crate::staged::CLONE_ENV_ROW }>(handler)
+                    || is_row::<H, { crate::staged::MAKE_CLOSURE_ROW }>(handler);
                 if own > ENVIRONMENT_WINDOW_FIELD || !(row || plain.iter().any(|plain| *plain as *const () == handler)) {
                     return None;
                 }

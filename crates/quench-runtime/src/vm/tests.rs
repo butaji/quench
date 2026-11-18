@@ -23418,7 +23418,7 @@ fn lane_array_iterations_keep_callback_method_semantics() {
     // loop, throws, collections inside callbacks, map and filter results and species, the
     // early answers, nesting and recursion, generator, async and bound callbacks, a redefined
     // forEach, and callbacks whose activations become frames mid-iteration behave as Node's;
-    // so do array literals made at once (`lane_make_array_elements`). Expected value is
+    // so do array literals made at once (the `MakeArray` row and its `DefineElement` rows). Expected value is
     // Node's (`node --expose-gc`).
     let source = r#"var gc = typeof $262 !== "undefined" ? $262.gc : typeof globalThis.gc === "function" ? globalThis.gc : function () {};
 var out = [];

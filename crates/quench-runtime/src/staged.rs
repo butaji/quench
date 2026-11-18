@@ -375,6 +375,8 @@ pub(crate) const LOAD_CONST_ROW: u16 = Op::LoadConst as u16;
 /// The opcode whose row writes a local slot from a register (`Operation::StoreLocalPlain`), which the
 /// interpreter names where it records the local write of a fused binary.
 pub(crate) const STORE_LOCAL_PLAIN_ROW: u16 = Op::StoreLocalPlain as u16;
+/// The opcode whose row makes a closure (`Operation::Allocate` over `Allocation::Closure`).
+pub(crate) const MAKE_CLOSURE_ROW: u16 = Op::MakeClosure as u16;
 
 /// The opcode whose row answers a plain `Binary` record (`specialize_register_operands` recognizes
 /// it by this, the hand handler being the fallback for the operands the row does not decode).
@@ -448,7 +450,7 @@ pub(crate) const fn row_writes_result(op: Op) -> bool {
     if matches!(op.staged(), Some(Decoder::WasmState | Decoder::WasmMemory)) {
         return matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister);
     }
-    !matches!(op, Op::GetEnumerated | Op::StoreName | Op::StoreLocal | Op::InitializeTdz)
+    !matches!(op, Op::GetEnumerated | Op::StoreName | Op::StoreLocal | Op::InitializeTdz | Op::DefineArrayElement)
 }
 
 /// The truthiness on which `op` jumps, for a jump on its register's truthiness
@@ -587,6 +589,9 @@ pub(crate) enum Operation<W, P> {
     /// literal template or string concatenation `allocation` makes, defined into `destination`; a due collection leaves
     /// at the frame's miss edge (`Frame::allocate_value`).
     Allocate { destination: Register, allocation: Allocation, proof: P },
+    /// Define element `index` of the literal array in `array` as `value` (`DefineArrayElement`), a
+    /// fresh hole of that array; the frame's element definer answers it (`Frame::define_element`).
+    DefineElement { array: Register, index: u32, value: Register },
     /// Continue unless an interrupt or a due collection is requested (`Frame::safepoint`).
     Safepoint { proof: P },
     /// The element store's host helper for `base[key] = value`, under `proof`; the frame's
@@ -719,7 +724,8 @@ impl<W, P> Operation<W, P> {
             Decoder::Call => Self::decode_call(instruction, context),
             Decoder::Names => names::decode(instruction),
             Decoder::WasmFloat => Self::decode_wasm_float(instruction),
-            Decoder::Proved => None,
+            // Under the tier's proof of the allocation (`decode_literal`), so none here.
+            Decoder::Proved | Decoder::Literal => None,
             Decoder::WasmInt => Self::decode_wasm_int(instruction),
             Decoder::WasmJump => Self::decode_wasm_jump(instruction),
             Decoder::WasmState => Self::decode_wasm_state(instruction, context),
@@ -739,6 +745,22 @@ impl<W, P> Operation<W, P> {
     #[inline(always)]
     pub(crate) fn decode_names(instruction: WideInstruction) -> Option<Self> {
         names::decode(instruction)
+    }
+
+    /// The literal operations of `decode` (`Decoder::Literal`) under the tier's `proof` of the
+    /// allocation: the allocation a literal, closure or constant array record makes
+    /// (`Allocation::decode`, which an array literal's element definitions do not change: the
+    /// array is a hole array and each definition is `DefineElement`), and an element definition.
+    #[inline(always)]
+    pub(crate) fn decode_literal(instruction: WideInstruction, proof: P) -> Option<Self> {
+        match instruction.op() {
+            Op::DefineArrayElement => Some(Self::DefineElement {
+                array: instruction.register_b(), index: instruction.imm(), value: instruction.register_a() }),
+            _ => {
+                let (destination, allocation) = Allocation::decode(instruction, &[])?;
+                Some(Self::Allocate { destination, allocation, proof })
+            }
+        }
     }
 
     /// The register moves and control transfers of `decode`, from any record a tier holds

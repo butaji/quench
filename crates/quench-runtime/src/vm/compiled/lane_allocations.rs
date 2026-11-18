@@ -4,7 +4,7 @@
 
 use super::{Host, JsStepDispatch, ResidualProgram, Value, Vm};
 
-/// A lane body's empty object literal, as the lane's own (`dispatch_fast::lane_make_object`);
+/// A lane body's empty object literal, as the lane's own (the `MakeObject` row, `Allocation::Empty`);
 /// `DELETED` where a collection is due, which the body leaves for. The allocation may move
 /// the property arena, whose base and length the dispatch reads again.
 pub(super) unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64, payload: u64) -> u64 {
@@ -44,7 +44,7 @@ pub(super) unsafe extern "C" fn lane_binary<H: Host>(vm: u64, residual: u64, pay
 }
 
 /// A lane body's array literal of the `count` program constants from `constant`, as the lane's
-/// own (`dispatch_fast::lane_make_const_array`); `DELETED` where a collection is due or the
+/// own (the `MakeConstArray` row, `Allocation::ConstArray`); `DELETED` where a collection is due or the
 /// range is outside the constants.
 pub(super) unsafe extern "C" fn lane_new_const_array<H: Host>(vm: u64, _residual: u64, payload: u64, constant: u64, count: u64) -> u64 {
     // SAFETY: as `lane_new_object`.
@@ -57,7 +57,7 @@ pub(super) unsafe extern "C" fn lane_new_const_array<H: Host>(vm: u64, _residual
 }
 
 /// A lane body's array literal of `length` holes, or of the `elements` its definitions
-/// write, as the lane's own (`dispatch_fast::lane_make_array`, `lane_make_array_elements`);
+/// write, as the lane's own (the `MakeArray` row and its `DefineElement` rows);
 /// `DELETED` where a collection is due, as `lane_new_object`.
 pub(super) unsafe extern "C" fn lane_new_array<H: Host>(vm: u64, _residual: u64, payload: u64, length: u64, elements: u64) -> u64 {
     // SAFETY: as `lane_new_object`; nonzero `elements` addresses `length` values the code wrote.
@@ -83,7 +83,7 @@ pub(super) unsafe extern "C" fn lane_new_regexp<H: Host>(vm: u64, residual: u64,
 }
 
 /// A lane body's object literal of literal `site`'s shape over the `count` values at `parts`,
-/// as the lane makes it (`dispatch_fast::lane_make_object_literal`); `DELETED` where a
+/// as the lane makes it (the `MakeObjectLiteral` row, `Allocation::ObjectLiteral`); `DELETED` where a
 /// collection is due.
 pub(super) unsafe extern "C" fn lane_new_object_literal<H: Host>(vm: u64, residual: u64, payload: u64, site: u64, parts: u64, count: u64) -> u64 {
     // SAFETY: as `lane_new_object`; the residual is the running program, and `parts` addresses

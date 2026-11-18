@@ -101,6 +101,7 @@ impl<W, P> Operation<W, P> {
             Self::IndexWrite { .. } => Effects::writes(Region::Elements),
             Self::ElementRead { .. } => Effects { reads: RegionSet::of(Region::Elements), may_call_js: true, may_throw: true, ..Effects::NONE },
             Self::ElementWrite { .. } => Effects::ANY,
+            Self::DefineElement { .. } => Effects::writes(Region::Elements),
             // A closure promotes the activation's captured locals into its environment.
             Self::Allocate { allocation: Allocation::Closure { .. }, .. } => Effects {
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots).with(Region::Frame)

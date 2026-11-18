@@ -168,6 +168,10 @@ pub(crate) enum Decoder {
     /// A by-name read decoded under a tier's proof of the global it names
     /// (`Operation::decode_load_name`), so `Operation::decode` has none.
     Proved,
+    /// A literal's allocation (`Operation::Allocate` over `Allocation`) or an array literal's
+    /// element definition (`Operation::DefineElement`), decoded by `Operation::decode_literal`
+    /// under the tier's proof of the allocation, so `Operation::decode` has none.
+    Literal,
     /// A Wasm i32 or i64 register or immediate operator (`staged::wasm_int`).
     WasmInt,
     /// The float and conversion operators of Wasm (`staged::wasm_float`): the scalar operators a

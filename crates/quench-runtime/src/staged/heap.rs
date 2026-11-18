@@ -10,6 +10,7 @@ pub(super) fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fram
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         allocate @ Operation::Allocate { .. } => allocation_step(stage, frame, allocate),
+        define @ Operation::DefineElement { .. } => element_define_step(stage, frame, define),
         helper @ (Operation::IndexSetHelper { .. } | Operation::FieldStoreMiss { .. }) => helper_step(stage, frame, helper),
         index => index_step(stage, frame, index),
     }
@@ -26,6 +27,19 @@ fn allocation_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
     };
     match value {
         Some(value) => Step::Value(value),
+        None => Step::Unresolved,
+    }
+}
+
+/// An array literal's element definition over a frame's definer (`Frame::define_element`).
+#[inline(always)]
+fn element_define_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    let Operation::DefineElement { array, index, value } = operation else { return Step::Unresolved };
+    let array = frame.tagged(stage, array);
+    let value = frame.tagged(stage, value);
+    match frame.define_element(stage, array, index, value) {
+        Some(()) => Step::Value(value),
         None => Step::Unresolved,
     }
 }

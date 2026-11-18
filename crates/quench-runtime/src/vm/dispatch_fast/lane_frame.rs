@@ -11,6 +11,10 @@ use crate::staged::{Allocation, CallOut, Comparison, Concrete, Constant, Edge, F
 /// guest code; `None` leaves the instruction to the general path.
 type AllocationMaker = unsafe fn(*mut (), Registers, Allocation) -> Option<Value>;
 
+/// The definer of a frame's array literal element (`lane_define_element`): the VM's definition of
+/// `value` at `index` into the literal array `array`; false leaves the definition to the general path.
+type ElementDefiner = unsafe fn(*mut (), u64, u32, u64) -> bool;
+
 /// The deleter of a frame's own `delete base[key]` hit: the `true` of a deletion that runs no
 /// guest code; `None` leaves the instruction to the general path.
 type PropertyDeleter = unsafe fn(*mut (), Value, Value) -> Option<Value>;
@@ -48,6 +52,7 @@ pub(super) enum NameBinding {
 struct LaneHost {
     cx: *mut (),
     allocate: AllocationMaker,
+    define: ElementDefiner,
     delete: PropertyDeleter,
     read_name: NameReader,
     /// What the by-name load the frame runs resolved its name to, if it runs one.
@@ -227,7 +232,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
     #[inline(always)]
     fn hosted<H: Host>(registers: Registers, view: Carried, cx: *mut LaneContext<H>) -> Self {
-        let host = LaneHost { cx: cx.cast(), allocate: lane_allocation::<H>, delete: lane_delete_value::<H>,
+        let host = LaneHost { cx: cx.cast(), allocate: lane_allocation::<H>, define: lane_define_element::<H>, delete: lane_delete_value::<H>,
             read_name: lane_name_value::<H>, name: None };
         Self { host: Some(host), ..Self::new(registers, view) }
     }
@@ -368,6 +373,13 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         let value = unsafe { (host.allocate)(host.cx, self.registers, allocation) }?;
         self.registers.set(destination, value);
         Some(value.to_bits())
+    }
+
+    #[inline(always)]
+    fn define_element(&mut self, _stage: &mut Concrete, array: u64, index: u32, value: u64) -> Option<()> {
+        let host = self.host?;
+        // SAFETY: the definer was made for the lane context this frame runs in.
+        unsafe { (host.define)(host.cx, array, index, value) }.then_some(())
     }
 
     #[inline(always)]
@@ -908,6 +920,11 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         return LaneFrame::<ACC> { binary: Some((cx.cast(), binary)), decisions: Some(Decisions::of(cx)), reads: Reads::of_jump::<H>(cx, None),
             ..LaneFrame::<ACC>::new(r, view) };
     }
+    if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Literal)) } {
+        // An allocation or an element definition makes its value in the lane context, as a staged
+        // allocation does (`LaneHost::allocate`, `LaneHost::define`).
+        return LaneFrame::<ACC>::hosted::<H>(r, view, cx);
+    }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmInt)) } {
         // An integer row reads its operands from the register file: the carried accumulator stands for
         // one field only, and a row reads two registers (`LaneFrame::read`).
@@ -1108,6 +1125,8 @@ macro_rules! row_decode {
             Operation::decode_wasm_state($fields, crate::staged::DecodeContext::EMPTY)
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmMemory)) } {
             Operation::decode_wasm_access($fields, crate::staged::DecodeContext::EMPTY)
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Literal)) } {
+            Operation::decode_literal(crate::staged::Fields::wide($fields), ())
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Proved)) } {
             // A by-name load's proof of its global is the lane's own binding (`row_frame`), so the
             // proof is the unit.
@@ -1525,6 +1544,17 @@ unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Alloca
         Allocation::Template { template } => lane_template_value(cx, template),
         Allocation::Concat { window } => lane_concat_value(cx, r, window),
     }
+}
+
+/// `DefineArrayElement` of `value` at `index` into the literal array `array` in the lane context `cx`'s
+/// own run (`Vm::define_literal_element`); false where the general path must define it.
+///
+/// # Safety
+/// `cx` is the running lane's context. Called through `LaneHost::define`, a constant function pointer.
+#[inline(always)]
+unsafe fn lane_define_element<H: Host>(cx: *mut (), array: u64, index: u32, value: u64) -> bool {
+    let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
+    vm.define_literal_element(Value::from_bits(array), index as usize, Value::from_bits(value))
 }
 
 /// The value of `atom` under `read` in the lane context `cx`, which allocates nothing and runs

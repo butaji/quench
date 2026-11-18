@@ -101,6 +101,12 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn index_write(&mut self, _stage: &mut S, _index: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
 
+    /// Define element `index` of the literal array `array` as `value` (`Operation::DefineElement`):
+    /// the VM's definition into a fresh hole. `None` where the frame has no definer or the
+    /// definition is the general path's.
+    #[inline(always)]
+    fn define_element(&mut self, _stage: &mut S, _array: S::Word, _index: u32, _value: S::Word) -> Option<()> { None }
+
     /// The heap value `allocation` makes, defined into `destination`; `None` where the frame
     /// has no allocator for it or the value is the general path's (a due collection).
     #[inline(always)]

@@ -156,6 +156,7 @@ impl<W, P> Operation<W, P> {
             Self::Allocate { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("allocation", BYTECODE),
                 ("proof", PROOF)]),
             Self::Safepoint { .. } => SmallVec::from_slice(&[("proof", PROOF)]),
+            Self::DefineElement { .. } => SmallVec::from_slice(&[("array", REGISTER), ("index", BYTECODE), ("value", REGISTER)]),
             Self::CloneEnv { .. } => SmallVec::from_slice(&[("plan", BYTECODE)]),
             _ => unreachable!("`operand_times` answers every other operation"),
         }
