@@ -5,7 +5,7 @@
 //! fresh zero pages without writing them, so a page becomes resident only once a site on it
 //! records a cache.
 
-/// An entry kind a `SiteTable` holds: its value is stored as `Stored`, and its empty value
+/// An entry kind a `CacheSiteTable` holds: its value is stored as `Stored`, and its empty value
 /// stores as zero words.
 pub(super) trait SiteEntry: Copy {
     /// The stored form: plain `u32` words, so every byte is initialized.
@@ -97,7 +97,7 @@ pub(in crate::vm) mod storage {
 
 /// One entry per cache site. Entries at and past `len` are zero bits, so growth only
 /// moves the length.
-pub(super) struct SiteTable<T: SiteEntry> {
+pub(super) struct CacheSiteTable<T: SiteEntry> {
     base: std::ptr::NonNull<T::Stored>,
     len: usize,
     /// Entries the mapping holds; zero while there is no mapping.
@@ -105,21 +105,21 @@ pub(super) struct SiteTable<T: SiteEntry> {
 }
 
 // SAFETY: the table owns its mapping as a `Vec` owns its buffer.
-unsafe impl<T: SiteEntry + Send> Send for SiteTable<T> {}
+unsafe impl<T: SiteEntry + Send> Send for CacheSiteTable<T> {}
 
-impl<T: SiteEntry> Default for SiteTable<T> {
+impl<T: SiteEntry> Default for CacheSiteTable<T> {
     fn default() -> Self {
         Self { base: std::ptr::NonNull::dangling(), len: 0, capacity: 0 }
     }
 }
 
-impl<T: SiteEntry> Drop for SiteTable<T> {
+impl<T: SiteEntry> Drop for CacheSiteTable<T> {
     fn drop(&mut self) {
         self.release();
     }
 }
 
-impl<T: SiteEntry> SiteTable<T> {
+impl<T: SiteEntry> CacheSiteTable<T> {
     const ENTRY_BYTES: usize = size_of::<T::Stored>();
 
     /// A table of `len` empty entries.
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn empty_entries_read_back_and_growth_keeps_recorded_entries() {
-        let mut table = SiteTable::<u32>::with_empty(3);
+        let mut table = CacheSiteTable::<u32>::with_empty(3);
         assert!(table.iter().all(|entry| entry == u32::MAX));
         table.set(1, 7);
         table.extend_empty(MAPPING_GRANULE_BYTES);

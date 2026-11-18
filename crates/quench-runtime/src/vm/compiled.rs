@@ -857,18 +857,18 @@ fn emit_lane_helper_call(
 /// needs no barrier log. Verified Numbers are immediate and discharge the test at
 /// compilation. Otherwise the caller must perform the logged store.
 fn emit_unlogged_property_store_guard(
-    builder: &mut FunctionBuilder<'_>, space: crate::staged::RecordSpace, payload: ir::Value, record_id: ir::Value,
+    builder: &mut FunctionBuilder<'_>, space: crate::staged::StagedRecordSpace, payload: ir::Value, record_id: ir::Value,
     value: ir::Value, fallback: ir::Block,
 ) {
     use crate::staged::barrier::{unlogged_store, MarkList};
     // A marked owner would be logged by RecordSpace::store_logs; otherwise the
     // barrier is a no-op. Marks and block bases are refreshed after each callout.
     let list = match space {
-        crate::staged::RecordSpace::Object => MarkList {
+        crate::staged::StagedRecordSpace::Object => MarkList {
             blocks: std::mem::offset_of!(JsStepDispatch, object_mark_blocks),
             count: std::mem::offset_of!(JsStepDispatch, object_mark_block_count),
         },
-        crate::staged::RecordSpace::Function => MarkList {
+        crate::staged::StagedRecordSpace::Function => MarkList {
             blocks: std::mem::offset_of!(JsStepDispatch, function_mark_blocks),
             count: std::mem::offset_of!(JsStepDispatch, function_mark_block_count),
         },
@@ -3536,7 +3536,7 @@ struct JsStepDispatch {
     typed_view_pages: usize,
     buffer_relocations: usize,
     /// The function records' mark blocks and their count, which a store into a function's own
-    /// properties reads as the object records' are (`RecordSpace::Function`); and the empty
+    /// properties reads as the object records' are (`StagedRecordSpace::Function`); and the empty
     /// string's word, which a function's inferred name replaces (`staged::naming`).
     function_mark_blocks: usize,
     function_mark_block_count: usize,

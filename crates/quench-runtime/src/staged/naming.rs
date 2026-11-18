@@ -15,7 +15,7 @@ use super::add::{Edge, admitted};
 use super::entry::plain_value;
 use super::object::{Form, Rep};
 use super::slot_store::store_slot;
-use super::{RecordSpace, Stage};
+use super::{StagedRecordSpace, Stage};
 use crate::heap::{NATIVE_FUNCTION_LAYOUT as FUNCTION, NATIVE_OBJECT_LAYOUT as OBJECT};
 
 /// The storage form the name slot is in: a slot below the inline count is packed or an arena run
@@ -34,7 +34,7 @@ pub(crate) fn name_form(slot: u16) -> Form {
 #[inline(always)]
 pub(crate) fn set_function_name<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, (edge, empty): (Edge<S::Word>, S::Word),
     form: Form, name: S::Word, miss: S::Miss) -> Option<()> {
-    let payload = admitted(stage, RecordSpace::Function, record, record_id, edge.before, name, miss)?;
+    let payload = admitted(stage, StagedRecordSpace::Function, record, record_id, edge.before, name, miss)?;
     let current = plain_value(stage, record, edge.slot, miss)?;
     let moved = stage.sub(current, empty);
     let unnamed = stage.eq_imm(moved, 0u32);

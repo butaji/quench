@@ -6,7 +6,7 @@
 
 use super::object::{Form, Rep, arena_run, decode_narrow, extras_pointer, has_extras, inline_storage, plain_payload};
 use super::slot_store::store_slot;
-use super::{RecordSpace, Stage};
+use super::{StagedRecordSpace, Stage};
 use super::region::Region;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::vm::NATIVE_FIELD_CACHE_LAYOUT as ENTRY;
@@ -106,7 +106,7 @@ pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), ob
     stage.guard(own, miss)?;
     shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
     if gated {
-        let open = stage.store_gate(RecordSpace::Object, id, value);
+        let open = stage.store_gate(StagedRecordSpace::Object, id, value);
         stage.guard(open, miss)?;
     }
     let slot = entry_slot(stage, entry);

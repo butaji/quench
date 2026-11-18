@@ -256,7 +256,7 @@ pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id:
         // The arena form: the payload is the run's start (`Object::plain_arena_start`).
         // SAFETY: a live record, read before any write.
         let start = unsafe { (*record).proved_arena_start() };
-        if !heap.store_unlogged(super::RecordSpace::Object, record_id, value) {
+        if !heap.store_unlogged(super::StagedRecordSpace::Object, record_id, value) {
             return false;
         }
         // SAFETY: the layout matched, so its run holds `slot`; the gate admitted the write.
@@ -270,7 +270,7 @@ pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id:
     // store, which changes nothing on a miss.
     // SAFETY: a live record, read before any write.
     if let Some(start) = unsafe { (*record).formed_plain_start(shape) } {
-        if !heap.store_unlogged(super::RecordSpace::Object, record_id, value) {
+        if !heap.store_unlogged(super::StagedRecordSpace::Object, record_id, value) {
             return false;
         }
         // SAFETY: the shape matched, so its run holds `slot`; the gate admitted the write.
@@ -300,7 +300,7 @@ pub(crate) unsafe fn concrete_narrow_store(heap: &mut crate::heap::Heap, record_
     let Some(narrow) = value.to_narrow() else {
         return false;
     };
-    if !heap.store_unlogged(super::RecordSpace::Object, record_id, value) {
+    if !heap.store_unlogged(super::StagedRecordSpace::Object, record_id, value) {
         return false;
     }
     // SAFETY: the shape matched, so the run's halves hold `slot`; the gate admitted the write.

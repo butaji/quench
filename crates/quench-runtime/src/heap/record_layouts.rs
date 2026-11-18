@@ -43,7 +43,7 @@ pub(crate) struct NativeArrayLayout {
 /// The native reader's view of a function record: its own properties are the `Object` at
 /// `object_offset`, whose words `NATIVE_OBJECT_LAYOUT` names. The record is `repr(C)`, so the layout
 /// is the declaration's. Generated code reads and, through the function space's barrier
-/// (`RecordSpace::Function`, `emit_unlogged_property_store_guard`), stores them.
+/// (`StagedRecordSpace::Function`, `emit_unlogged_property_store_guard`), stores them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeFunctionLayout {
     pub(crate) record_size: usize,

@@ -231,7 +231,7 @@ fn the_barrier_log_path_of_a_store_gate_is_cold() {
     builder.append_block_params_for_function_params(entry);
     builder.switch_to_block(entry);
     let [payload, record, value] = builder.block_params(entry).try_into().unwrap();
-    let open = Emit { builder: &mut builder, property_values: None, gate: Some(payload) }.store_gate(crate::staged::RecordSpace::Object, record, value);
+    let open = Emit { builder: &mut builder, property_values: None, gate: Some(payload) }.store_gate(crate::staged::StagedRecordSpace::Object, record, value);
     let open = builder.ins().uextend(types::I64, open);
     builder.ins().return_(&[open]);
     builder.seal_all_blocks();
