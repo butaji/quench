@@ -53,20 +53,19 @@ impl super::LoopSite {
         }
     }
 
-    /// The warm-up part of `interprets`, as a loop site's backward jump row takes it: true, with the
-    /// same count `interprets` makes and the diagnostics count the site's body makes, while the site
-    /// warms up; false, changing nothing, once warm, where `interprets` decides.
-    #[inline(always)]
-    pub(super) fn warm_backedge(&self) -> bool {
-        let (taken, needed) = (self.taken.get(), self.needed.get());
-        if taken >= needed {
-            return false;
-        }
-        self.taken.set(taken + 1);
-        if self.diagnostics {
-            self.lane_backedge_count.set(self.lane_backedge_count.get().saturating_add(1));
-        }
-        true
+    /// Whether a loop enclosing this one is admitted by the region analysis and still enters native code
+    /// (`enclosing`): this loop then runs as plain jumps inside it, and does not warm up or enter its own
+    /// region, which the enclosing loop's region covers. Once that loop stops entering (it retires, or its
+    /// runs cost more than they save) this loop takes its own region again.
+    pub(super) fn inside_admitted_loop(&self) -> bool {
+        self.enclosing.get().is_some_and(|enclosing| {
+            enclosing.iter().any(|outer| {
+                // SAFETY: the sites are boxed with the lane view, which outlives the lane run that reads them
+                // (`install_loop_sites`), and an enclosing site is another of them.
+                let outer = unsafe { &**outer };
+                outer.is_admitted() && outer.enters()
+            })
+        })
     }
 
     /// Whether the interpreter takes this backward jump: while the site warms up, and until the

@@ -88,6 +88,8 @@ pub(crate) mod store;
 pub(crate) mod slot_store;
 pub(crate) mod strings;
 pub(crate) mod string_length;
+pub(crate) mod code_units;
+pub(crate) mod parse_int;
 pub(crate) mod holder;
 pub(crate) mod iteration;
 pub(crate) mod naming;

@@ -96,12 +96,21 @@ fn read_doubles(row: &Decoded) -> bool {
 }
 
 /// The representation a non-heap row of `kind` writes, given the greatest representation of its `operands`.
-fn kind_repr(kind: Kind, operands: Option<Representation>, widened: bool) -> Option<Representation> {
+///
+/// `Math.floor`, `Math.ceil`, `Math.trunc` and `Math.round` of any Number, and `Math.abs` of an int32,
+/// speculate an int32 result, as an int32 `+` does: the row computes through doubles (`math_row`) and its
+/// int destination takes the canonical word only where it is an int (`places::put`), else it leaves with
+/// nothing written and the leave widens the row, whose next compile writes a double (`-0`, NaN, a value past
+/// int32, `Math.abs(-2**31)`). The result then stays an unboxed int32 for the rows that use it (an index, a
+/// bitwise operand, an int32 sum), as the interpreter's own Math handlers answer an int word for one.
+fn kind_repr(kind: Kind, operands: Repr, widened: bool) -> Repr {
     match kind {
         Kind::Not => Repr::Tagged,
         _ if operands == Repr::Tagged => Repr::Tagged,
+        Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Round if !widened && operands >= Repr::Int => Repr::Int,
+        Kind::Abs if !widened && operands == Repr::Int => Repr::Int,
         Kind::Neg | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round | Kind::Min | Kind::Max => Repr::Double,
-        Kind::Imul => Repr::Int,
+        Kind::Imul | Kind::Clz32 => Repr::Int,
         Kind::Move | Kind::Const => operands,
         Kind::Div => Some(Representation::Float64),
         Kind::Add | Kind::Sub | Kind::Mul | Kind::Rem => if widened || operands == Some(Representation::Float64) { Some(Representation::Float64) } else { Some(Representation::Int32) },

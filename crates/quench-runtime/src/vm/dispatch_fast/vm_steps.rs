@@ -19,6 +19,8 @@ pub(in crate::vm) unsafe extern "C" fn vm_operation_step<H: Host>(_vm: u64, _res
     let status = native_frames::in_innermost_frame(cx, || unsafe { vm_operation_step_in(cx, call_pc) });
     // SAFETY: `context` is the running lane's; the step may have allocated or run guest code.
     unsafe { refresh_body_bases::<H>(context) };
+    // SAFETY: as above; a region the lane runs reads its payload's bases after the step too.
+    unsafe { refresh_region_bases_of::<H>(context) };
     status
 }
 
@@ -205,9 +207,10 @@ unsafe fn owner_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: 
 /// then. Where the body has no frame of its own (a native callee's activation) a step that needs
 /// one makes the activations frames and leaves past it (`frames_step_in`, `LANE_CALL_LEFT`). The step may have
 /// replaced the frame's environment, so the lane's capture caches, which name the old one, are
-/// dropped after it (`clone_environment_of`).
-/// `body_general_step_record`, then the heap bases the body's rows read through the payload reloaded
-/// (`Vm::refresh_body_bases`): the step may have allocated or run guest code.
+/// dropped after it (`lane_clone_env`).
+/// `lane_body_step_record`, then the heap bases the body's rows read through the payload reloaded
+/// (`Vm::refresh_body_bases`), and those of the loop region's payload the lane runs
+/// (`refresh_region_bases_of`): the step may have allocated or run guest code.
 ///
 /// # Safety
 /// As `body_general_step_record`.
@@ -215,6 +218,8 @@ pub(in crate::vm) unsafe extern "C" fn body_general_step<H: Host>(vm: u64, resid
     // SAFETY: the caller's contract.
     let status = unsafe { body_general_step_record::<H>(vm, residual, context, call_pc) };
     unsafe { refresh_body_bases::<H>(context) };
+    // SAFETY: as `lane_body_step_record`; a region the lane runs reads its payload's bases after the step too.
+    unsafe { refresh_region_bases_of::<H>(context) };
     status
 }
 

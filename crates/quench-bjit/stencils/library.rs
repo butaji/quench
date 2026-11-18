@@ -18,7 +18,7 @@ fn read_operands(kind: u8, dst: u8, a: u8, b: u8) -> (u8, u8, u8) {
         _ if is_copy(kind) => (dst, a, MEM),
         _ if is_compare(kind) => (MEM, a, b),
         JUMP | JUMP_POLL | JUMP_WATCH | POLL | TAG_INIT => (MEM, MEM, MEM),
-        GUARD | NOT | NEG | MATH_FIRST..=MATH_LAST => (dst, a, MEM),
+        GUARD | NOT | NEG | CLZ32 | MATH_FIRST..=MATH_LAST => (dst, a, MEM),
         JUMP_TRUE | JUMP_FALSE | SPILL => (MEM, a, MEM),
         _ => (dst, a, b),
     }
@@ -145,6 +145,10 @@ fn truthiness(places: &Places, rows: &mut BTreeSet<Code>) {
     let dsts: Vec<u8> = places.ints_dst.iter().chain(&places.floats_dst).copied().collect();
     let srcs: Vec<u8> = places.ints_src.iter().copied().chain(double_pins()).collect();
     product(rows, &[NEG, SQRT, FLOOR, CEIL, TRUNC, ABS, ROUND], &dsts, &srcs, &[true]);
+    // `Math.clz32` writes an int32 (0..=32) to an int destination, from an int32 or a Number.
+    for &dst in &places.ints_dst {
+        rows.extend(srcs.iter().map(|&a| canonical((CLZ32, dst, a, MEM, true))));
+    }
 }
 
 /// Every row the library holds, canonical, once.
@@ -199,6 +203,8 @@ const HEAP_USES: &[(Uses, &[std::ops::RangeInclusive<u8>])] = &[
     (uses(Entry::Never, false, true, false), &[STORE_LOCAL_ROW..=STORE_LOCAL_ROW, STORE_CHECKED_ROW..=STORE_CHECKED_ROW, CAPTURE_SET_ROW..=CAPTURE_SET_ROW,
         ENV_SET_ROW..=ENV_SET_ROW, ENV_DEFINE_ROW..=ENV_DEFINE_ROW,
         APPEND_ROW..=APPEND_ROW, LEXICAL_WRITE_ROW..=LEXICAL_WRITE_ROW]),
+    (uses(Entry::Never, true, false, true), &[CHAR_CODE_AT_ROW..=CHAR_CODE_AT_ROW]),
+    (uses(Entry::Never, true, false, false), &[PARSE_INT_ROW..=PARSE_INT_ROW]),
     (uses(Entry::Kept, false, false, false), &[ADD_PACKED_ROW..=ADD_PACKED_ROW, ADD_ARENA_ROW..=ADD_ARENA_ROW, ADD_EITHER_ROW..=ADD_EITHER_ROW,
         THIS_ADD_PACKED_ROW..=THIS_ADD_PACKED_ROW, THIS_ADD_ARENA_ROW..=THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW..=THIS_ADD_EITHER_ROW]),
 ];
@@ -278,7 +284,12 @@ pub fn heap_library() -> Vec<HeapCode> {
         rows.extend([false, true].map(|chained| heap_canonical((heap, chained, MEM, MEM, MEM))));
     }
     rows.extend(NAME_ROWS.map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
-    rows.extend([ARRAY_ROW, IDENTITY_ROW, LIVE_ROW, REALM_ROW, OBJECT_ROW, KEY_ROW, FOR_IN_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, INSTANCEOF_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW].map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
+    rows.extend([ARRAY_ROW, IDENTITY_ROW, DECLARED_ROW, LIVE_ROW, REALM_ROW, OBJECT_ROW, KEY_ROW, FOR_IN_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, INSTANCEOF_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW].map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
+    // `charCodeAt` reads its receiver's frame slot and an index place; `parseInt` reads its string's frame slot.
+    for &dst in &dsts {
+        rows.insert(heap_canonical((PARSE_INT_ROW, false, dst, MEM, MEM)));
+        rows.extend(srcs.iter().map(|&b| heap_canonical((CHAR_CODE_AT_ROW, false, dst, MEM, b))));
+    }
     cache_rows(&dsts, &srcs, &mut rows);
     rows.into_iter().collect()
 }

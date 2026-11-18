@@ -173,21 +173,11 @@ fn a_one_element_append_has_a_fast_row_and_a_spread_the_helper_alone() {
     assert!(matches!(row.a, Some(Source::Register(2))) && row.base == Some(1) && row.dst.is_none());
 }
 
-/// Where a region's heap rows read snapshots a helper's effects would not reach, a fast arm stays
-/// and its slow arm becomes the leave, while a helper step leaves; elsewhere both are kept.
+/// A guarded fast arm reads the payload but runs no helper, and a helper step runs one.
 #[test]
-fn a_snapshot_region_keeps_its_fast_arms_and_leaves_its_helper_steps() {
-    let rows = |reader: bool| {
-        let mut rows = vec![Decoded::step(Step::Fast(Heap::Append), None), Decoded::step(Step::Helper, None)];
-        if reader {
-            rows.push(Decoded::heap(Heap::Field, Some(0), None, None));
-        }
-        settle(&mut rows.iter_mut().collect::<Vec<_>>());
-        [rows[0].step, rows[1].step]
-    };
-    assert_eq!(rows(true), [Some(Step::Guard(Heap::Append)), Some(Step::Leave)]);
-    assert_eq!(rows(false), [Some(Step::Fast(Heap::Append)), Some(Step::Helper)]);
+fn a_guard_reads_the_payload_and_runs_no_helper() {
     assert!(Step::Guard(Heap::Append).reads_payload() && !Step::Guard(Heap::Append).runs_helper());
+    assert!(Step::Helper.runs_helper() && Step::Fast(Heap::Append).runs_helper());
 }
 
 /// A function holding a Wasm opcode is no b-jit body; the catalog's other opcodes are covered.

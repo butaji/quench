@@ -321,6 +321,9 @@ pub(super) struct LoopSite {
     /// Whether the site still enters native code: until its runs and declined entries cost more
     /// than their iterations save (`LoopSite::note_run`).
     entering: std::cell::Cell<bool>,
+    /// The sites of the function whose loops enclose this one (`install_loop_sites`), set once the
+    /// sites are boxed: the same storage the records name the sites by, which lives as long as the lane view.
+    enclosing: std::cell::OnceCell<Box<[*const LoopSite]>>,
     /// Entries declined in a row since the last native run, and the entries still to pass to the
     /// interpreter before the next attempt (`LoopSite::note_decline`): a decline whose cause
     /// persists costs attempts logarithmic in the iterations, not one per iteration.
@@ -7424,6 +7427,11 @@ script_handler! {
         if script_fuel_out(cx) {
             return safepoint_at::<H>(ip, header, Slot::unset());
         }
+        // A loop inside an admitted loop that still enters native code runs as plain jumps there: the outermost
+        // such loop takes the region (`install_loop_sites`), and this one neither warms up nor enters its own.
+        if site.inside_admitted_loop() {
+            next!(cx, r, header, Carried::script_in(cx, view))
+        }
         if site.interprets() {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
@@ -7751,6 +7759,8 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     // A run of this site still on the stack (a native attempt that retired it) must not hold
     // the header again on its way out (`lane_loop_hold_header`).
     site.header_handler.set(RETIRED_HEADER);
+    // A retired loop enters no native code, so the loops inside it take their own regions (`LoopSite::inside_admitted_loop`).
+    site.entering.set(false);
     // No site holds the header from now on, so its record, which linked this site alone, takes
     // field hints again (`holds_loop_site`).
     if site.hookable { unsafe { (*header).call_link.set(NO_CALL_LINK) }; }
@@ -14082,10 +14092,24 @@ pub(super) unsafe fn lane_region_payload<H: Host>(context: usize, payload: usize
 pub(super) unsafe extern "C" fn lane_region_call<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64) -> u64 {
     // SAFETY: the caller's contract.
     let status = unsafe { body_calls::lane_body_call::<H>(vm, residual, context, call_pc) };
-    let cx = context as usize as *mut LaneContext<H>;
     // SAFETY: as above.
-    unsafe { self::vm(cx).refresh_region_bases((*cx).region_payload, lane_direct_calls(cx)) };
+    unsafe { refresh_region_bases_of::<H>(context) };
     status
+}
+
+/// Reloads the heap bases of the native loop region the lane context `context` names (`lane_region_payload`), where
+/// one runs: the one refresh every lane helper a region's rows call ends with (`lane_region_call`, `lane_body_step`,
+/// `lane_vm_step`), so a row after any of them reads current bases (`Vm::refresh_region_bases`). Zero payload: no-op.
+///
+/// # Safety
+/// `context` is the running lane's.
+pub(super) unsafe fn refresh_region_bases_of<H: Host>(context: u64) {
+    let cx = context as usize as *mut LaneContext<H>;
+    // SAFETY: the caller's contract.
+    let payload = unsafe { (*cx).region_payload };
+    if payload != 0 {
+        unsafe { self::vm(cx).refresh_region_bases(payload, lane_direct_calls(cx)) };
+    }
 }
 
 /// Leaves the lane at `record`, where the running activation's body raised the exception in
@@ -18278,6 +18302,7 @@ fn install_loop_sites<'live, H: Host>(
                     taken: std::cell::Cell::new(0),
                     needed: std::cell::Cell::new(tiers.loops.warmup_taken),
                     entering: std::cell::Cell::new(true),
+                    enclosing: std::cell::OnceCell::new(),
                     declines_in_row: std::cell::Cell::new(0),
                     skipped_entries: std::cell::Cell::new(0),
                     diagnostics,
@@ -18311,10 +18336,15 @@ fn install_loop_sites<'live, H: Host>(
     }
     let pcs: Vec<usize> = sites.iter().map(|(pc, _)| *pc).collect();
     let sites: Box<[LoopSite]> = sites.into_iter().map(|(_, site)| site).collect();
-    // A site's address must fit `set_loop_site`'s 48 bits; a view outside them keeps no sites (its
-    // loops run their plain jumps).
-    if sites.iter().any(|site| (site as *const LoopSite as usize as u64) >> 48 != 0) {
-        return (Box::default(), rejections);
+    // The loops each site lies inside that the region analysis admits: such a loop takes the region, and the
+    // site runs as plain jumps inside it (`LoopSite::inside_admitted_loop`), so the outermost admitted loop
+    // is the one entered per run, not an inner loop re-entered per outer iteration.
+    for (index, site) in sites.iter().enumerate() {
+        let enclosing: Box<[*const LoopSite]> = sites.iter().enumerate()
+            .filter(|(other, outer)| *other != index && outer.header <= site.header && site.backedge <= outer.backedge && outer.is_admitted())
+            .map(|(_, outer)| std::ptr::from_ref(outer))
+            .collect();
+        let _ = site.enclosing.set(enclosing);
     }
     for (pc, site) in pcs.into_iter().zip(sites.iter()) {
         records[pc].handler = loop_jump_row::<H>() as *const ();

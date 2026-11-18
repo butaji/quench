@@ -518,6 +518,10 @@ impl<H: Host> Vm<H> {
                     Some(value) => crate::value::number_to_u32(self.to_number(p, value)?) as i32,
                     None => 0,
                 };
+                // Radix 10 (or absent): the shared int32 form of the text (`staged::parse_int`), which the b-jit's row answers too.
+                if (radix == 0 || radix == 10) && let Some(int) = crate::staged::parse_int::decimal_int32(text.encode_utf16()) {
+                    return Ok(Value::integer(int));
+                }
                 Ok(Value::number(super::string_extra::parse_integer(
                     &text, radix,
                 )))

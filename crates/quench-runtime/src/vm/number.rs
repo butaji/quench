@@ -721,7 +721,7 @@ fn math_unary_operation(native: Native) -> Option<fn(f64) -> f64> {
         Native::MathLog2 => f64::log2,
         Native::MathSinh => f64::sinh,
         Native::MathTanh => f64::tanh,
-        Native::MathClz32 => crate::staged::math::clz32,
+        Native::MathClz32 => |value| f64::from(crate::staged::math::leading_zeros(crate::value::number_to_u32(value))),
         Native::MathF16Round => f16_round,
         Native::MathSign => crate::staged::math::sign,
         _ => return None,
