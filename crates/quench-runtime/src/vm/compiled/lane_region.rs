@@ -585,6 +585,9 @@ struct Lowering<'a, 'f> {
     /// The calls that run inline as Math operations (`native_calls::intrinsic_calls`).
     intrinsics: native_calls::Intrinsics,
     hoisted: BTreeMap<usize, LoopRead>,
+    /// The loops whose entering edge tests the construct plan of each callee their kept
+    /// constructions build by, once for the loop (`virtual_objects::hoist_constructions`).
+    construct_ready: Vec<virtual_objects::ConstructReady>,
     /// Loop-invariant array bases whose views their loop's entry proves (`loop_arrays`).
     loop_arrays: Vec<LoopArray>,
     /// The shapes loops proved of their invariant receivers on their entering edges (`loop_receivers`).
@@ -1801,6 +1804,7 @@ pub(super) fn lower(
         hoists: BTreeMap::new(),
         intrinsics: Vec::new(),
         hoisted: BTreeMap::new(),
+        construct_ready: Vec::new(),
         loop_arrays: Vec::new(), loop_shapes: Vec::new(), arrays_fixed: false,
         array_vars: BTreeMap::new(),
         views,
@@ -2703,6 +2707,11 @@ impl Lowering<'_, '_> {
     /// Lower the instruction at `pc`; whether control falls through to the next.
     fn instruction(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         if self.consumed.contains(pc) { return true; }
+        // A construction readiness a loop's entry tested holds only across quiet instructions
+        // (`virtual_objects::hoist_constructions`): any other forgets it here, before its code.
+        if !self.construct_ready.is_empty() && !self.keeps_constructions_ready(state, pc, instruction) {
+            self.unready_constructions();
+        }
         self.left_here = self.generic.contains(&pc);
         self.advance_inductions(pc);
         if self.unit.markers.contains(&pc) || !retains_array_views(&self.program.constants, instruction) {
