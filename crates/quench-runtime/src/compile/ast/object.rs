@@ -36,7 +36,9 @@ impl FunctionCompiler<'_, '_> {
             return dst;
         }
         if let Some(properties) = Self::static_object_data_properties(value)
-            && properties.len() > crate::bytecode::INLINE_OBJECT_SITE_ATOMS
+            // One field or more than `MakeObject2`'s two: a one-field literal is the same
+            // allocation of its site's shape, never an empty object and a field definition.
+            && (properties.len() == 1 || properties.len() > crate::bytecode::INLINE_OBJECT_SITE_ATOMS)
             && properties.len() <= OBJECT_LITERAL_WINDOW_MAX
             && {
                 let mut keys = FxHashSet::default();

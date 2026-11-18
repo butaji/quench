@@ -9,6 +9,7 @@
 alloc_class 146 444 461.6
 alloc_ctor 143 435 362.1
 alloc_literal 143 435 435
+alloc_literal1 140 426 426
 arr_length 4 18 76.1
 arr_load_dbl 5 21 92.6
 arr_load_int 5 21 73.1
