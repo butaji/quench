@@ -7385,28 +7385,41 @@ unsafe fn enter_wasm(
     out: *mut u64,
     entry: WasmEntry,
 ) -> u32 {
-    // A fault resumes here with native frames unreturned, which held roots (`NativeRoots`): the
-    // entry gives back what it found.
-    let roots = context.native_roots;
+    // SAFETY: as the caller promises; the trampoline saves the caller's registers and records
+    // where a fault resumes.
+    let context: *mut CallContext = context;
+    unsafe { enter_compiled(context, |trampoline| match trampoline {
+        Some(trampoline) => trampoline(context, base, length, arguments, out, entry),
+        None => entry(context, base, length, arguments, out),
+    }) }
+}
+
+/// The one way into compiled code, whatever its ABI (`enter_wasm`, `lane_body_abi::enter_body`):
+/// `call` runs the entry through the fault-resuming trampoline where there is one, with
+/// `context` the active one, and a fault's unreturned native frames give back the roots they
+/// held (`NativeRoots`).
+///
+/// # Safety
+/// `call` must enter compiled code of the ABI it types the trampoline with, under `context`.
+pub(super) unsafe fn enter_compiled<R>(context: *mut CallContext, call: impl FnOnce(Option<Trampoline>) -> R) -> R {
+    // SAFETY: the caller's context outlives the call.
+    let roots = unsafe { (*context).native_roots };
     // SAFETY: a context with roots is a Wasm entry's, whose VM outlives the call.
     let depth = (!roots.is_null()).then(|| unsafe { (*roots).depth() });
-    let status = match guard_trampoline() {
+    let returned = match guard_trampoline() {
         Some(trampoline) => {
             let outer = ACTIVE_CONTEXT.with(|active| active.replace(context));
-            // SAFETY: as the caller promises; the trampoline saves the caller's registers
-            // and records where a fault resumes.
-            let status = unsafe { trampoline(context, base, length, arguments, out, entry) };
+            let returned = call(Some(trampoline));
             ACTIVE_CONTEXT.with(|active| active.set(outer));
-            status
+            returned
         }
-        // SAFETY: as the caller promises.
-        None => unsafe { entry(context, base, length, arguments, out) },
+        None => call(None),
     };
     if let Some(depth) = depth {
         // SAFETY: as above.
         unsafe { (*roots).set_depth(depth) };
     }
-    status
+    returned
 }
 
 /// Runs public JS function `entry` through the host trampoline: its ABI is the Wasm entry's,
