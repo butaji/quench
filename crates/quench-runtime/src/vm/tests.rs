@@ -3130,6 +3130,30 @@ fn reused_frames_resolve_captures_from_their_own_environment_state() {
 }
 
 #[test]
+fn environment_window_calls_start_locals_undefined_and_keep_captures() {
+    // A function with captured bindings runs in an environment window on each call: its
+    // captured parameter and var, and its uncaptured `fresh`, start `undefined` every time
+    // (the window's locals are filled, not carried over), and the closure keeps the
+    // captures of its own activation. Node agrees.
+    let source = "'use strict';\n\
+         var result = (() => {\n\
+           function make(a, b) {\n\
+             var fresh;\n\
+             var seen;\n\
+             var captured = a + b;\n\
+             var reader = () => captured + (seen === undefined ? 0 : 1000);\n\
+             var first = reader();\n\
+             seen = first;\n\
+             return [fresh === undefined, first, reader() === first + 1000 ? 'kept' : 'reset'].join('/');\n\
+           }\n\
+           var out = [];\n\
+           for (var i = 0; i < 4; i++) out.push(make(i, 10));\n\
+           return out.join(',');\n\
+         })();";
+    assert_eq!(global_text(source, "result"), "true/10/kept,true/11/kept,true/12/kept,true/13/kept");
+}
+
+#[test]
 fn collection_iterators_follow_deletes_compaction_and_clear() {
     // Deletes leave holes and compaction renumbers registered iterators; a `forEach` walk
     // defers compaction and still visits entries added after a `clear`. Node agrees.
@@ -20461,6 +20485,36 @@ check(hot(readG), 12000, 'property after lexical declarations');
     // Declaring `L` cleared every hint, whatever name it holds (`Vm::note_global_lexical_names`).
     assert_eq!(held(&vm), 0);
     vm.eval_script_source(&program, later, "global-reads-later.js").unwrap();
+}
+
+#[test]
+fn global_lexical_name_reads_follow_their_binding() {
+    // Scripts share one realm's global lexical scope. The second script reads `x` by name (a
+    // free name there) in a hot loop, reassigns it, declares `y`, and reads `later` in its TDZ;
+    // the third reads `x` after the reassignment. Node prints "2014 ReferenceError 3".
+    let first = Engine::specialize("let x = 1; function f() { return x; } var result = f();", "global-lexical-names.js").unwrap();
+    let later = r#"
+function readX() { return x; }
+let total = 0;
+for (let i = 0; i < 2000; i++) total += readX();
+x = 2;
+total += readX();
+let y = 5;
+total += y;
+let early = 'none';
+function readLater() { return later; }
+try { readLater(); } catch (e) { early = e.constructor.name; }
+let later = 7;
+total += readLater();
+result = [total, early].join(' ');
+"#;
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&first).unwrap();
+    vm.eval_script_source(&first, later, "global-lexical-names-later.js").unwrap();
+    vm.eval_script_source(&first, "let z = readX() + 1; result += ' ' + z;", "global-lexical-names-last.js").unwrap();
+    let name = vm.intern_atom("result");
+    let value = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(vm.to_string(&first, value).unwrap(), "2014 ReferenceError 3");
 }
 
 #[test]
