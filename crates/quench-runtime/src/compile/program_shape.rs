@@ -62,6 +62,10 @@ impl ParsedProgramShape<'_> {
     /// chunk's do: not replayable, their captures are the body's bindings (`FirstCallScopes`),
     /// never the global environment, so its root functions stay empty (`first_call_roots`).
     /// Its arrows stay eager, as an indirect eval's do.
+    ///
+    /// A script's arrows stay eager: stubbed too, babel-wtb's load fell from 421 to 361 Ir per
+    /// source byte, but its module arrows mostly run, and their chunks' second parse made the
+    /// whole run cost more (first 5.66 -> 5.90 G Ir, steady 1.79 -> 1.91 G, Nov 18).
     pub(super) fn stubbing(self, replayable: bool, source_bytes: usize, module: bool) -> Stubbing {
         if matches!(self, Self::FirstCallChunk(_)) {
             return Stubbing { functions: true, arrows: true };
@@ -70,7 +74,7 @@ impl ParsedProgramShape<'_> {
         let direct = eval && !replayable && (source_bytes >= DIRECT_EVAL_STUB_BYTES || crate::trace::Dev::DirectEvalStubs.on());
         let script = matches!(self, Self::FirstCallScript) && !module && source_bytes >= FIRST_CALL_SCRIPT_BYTES;
         let dynamic = matches!(self, Self::DynamicFunction { .. }) && source_bytes >= FIRST_CALL_SCRIPT_BYTES;
-        Stubbing { functions: (eval || script) && replayable || direct || dynamic, arrows: direct || script && replayable }
+        Stubbing { functions: (eval || script) && replayable || direct || dynamic, arrows: direct }
     }
 
     /// Where in the source lazily parsed bodies begin (`lazy_bodies::parse`): past a chunk's
