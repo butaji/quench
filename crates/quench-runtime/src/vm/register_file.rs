@@ -8,7 +8,7 @@ use crate::snapshot::{Reader, Snap, SnapshotResult, Writer};
 use crate::value::Value;
 
 /// The words in front of register 0: captures, environment, receiver (`r[-3]`, `r[-2]`, `r[-1]`).
-pub(in crate::vm) const FRAME_CONTEXT: usize = 3;
+pub(in crate::vm) const FRAME_CONTEXT: usize = 7;
 /// The words a new file holds room for past its context: a typical frame's registers and window plus
 /// `dispatch_fast::INLINED_WINDOW_ROOM`.
 const SPARE_WORDS: usize = 32 + crate::vm::dispatch_fast::INLINED_WINDOW_ROOM;
