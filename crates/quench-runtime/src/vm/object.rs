@@ -988,6 +988,7 @@ impl<H: Host> Vm<H> {
         self.array_iteration_shape = None;
         self.collection_iteration_shape = None;
         self.array_species_proof = None;
+        self.concat_spreadable_proof = None;
         self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);
         self.promise_species_proof.take();

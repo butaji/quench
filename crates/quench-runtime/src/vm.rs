@@ -1998,6 +1998,9 @@ pub(crate) struct Vm<H> {
     /// A Set or Map shape with no own `@@iterator` (`Vm::intact_iteration_kind`).
     collection_iteration_shape: Option<u32>,
     array_species_proof: Option<array::ArraySpeciesProof>,
+    /// An array shape no `@@isConcatSpreadable` reaches under a prototype layout epoch
+    /// (`Vm::concat_spreadable_absent`).
+    concat_spreadable_proof: Option<(u32, u64)>,
     for_in: object_static::ForInMemo,
     /// What `JSON.stringify`'s plain writer keeps between calls: its text buffer, which a
     /// payload's text would otherwise regrow from empty on each call, and its member plans
@@ -3053,6 +3056,7 @@ impl<H: Host> Vm<H> {
         self.array_iteration_shape = None;
         self.collection_iteration_shape = None;
         self.array_species_proof = None;
+        self.concat_spreadable_proof = None;
         self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);
         self.iterator_absence_proof.set(None);

@@ -122,6 +122,7 @@ impl<H: Host> Vm<H> {
             array_iteration_shape: _,
             collection_iteration_shape: _,
             array_species_proof: _,
+            concat_spreadable_proof: _,
             for_in: _,
             json_plain: _,
             species_slot_proof: _,
