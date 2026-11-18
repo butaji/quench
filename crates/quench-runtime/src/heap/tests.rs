@@ -1068,14 +1068,11 @@ fn promoted_owner_remembers_its_young_child(
 fn promoted_cells_remember_their_young_children() {
     promoted_owner_remembers_its_young_child(
         |heap| {
-            heap.alloc(Cell::Set {
-                object: plain_object(),
-                entries: Default::default(),
-            })
+            heap.alloc_set(plain_object(), Default::default())
         },
         |heap| heap.alloc(Cell::Error("young child".into())),
         |heap, owner, child| {
-            if let Some(Cell::Set { entries, .. }) = heap.get_mut(owner) {
+            if let Some(entries) = heap.set_entries_mut(owner) {
                 // The set is only traced, never searched, so the key hash is immaterial.
                 entries.push(child, 0);
             }

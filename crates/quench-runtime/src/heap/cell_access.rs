@@ -15,7 +15,8 @@ impl Cell {
             // cell stays small.
             Self::Object(object) => Some(object),
             Self::Array { object } => Some(object),
-            Self::RegExp { object, .. } | Self::Map { object, .. } | Self::Set { object, .. } => Some(object),
+            Self::RegExp { object, .. } => Some(object),
+            Self::Collection(collection) => Some(&collection.object),
             Self::ArrayBuffer { object, .. }
             | Self::ShadowRealm { object, .. }
             | Self::WeakMap { object, .. }
@@ -51,7 +52,8 @@ impl Cell {
             // cell stays small.
             Self::Object(object) => Some(object),
             Self::Array { object } => Some(object),
-            Self::RegExp { object, .. } | Self::Map { object, .. } | Self::Set { object, .. } => Some(object),
+            Self::RegExp { object, .. } => Some(object),
+            Self::Collection(collection) => Some(&mut collection.object),
             Self::ArrayBuffer { object, .. }
             | Self::ShadowRealm { object, .. }
             | Self::WeakMap { object, .. }
@@ -98,11 +100,15 @@ impl super::Heap {
             // SAFETY: a direct-promise Value names an initialized promise record.
             return Some(&unsafe { self.promise_records.get_live(record_id) }.object);
         }
+        if let Some(record_id) = value.direct_collection_index() {
+            // SAFETY: a direct-collection Value names an initialized collection record.
+            return Some(&unsafe { self.collection_records.get_live(record_id) }.object);
+        }
         let cell = self.get(value)?;
         // A DataView's and a buffer's geometry is accessors of their prototypes, so their own
         // names are their shape's too. A typed array is not here: every canonical numeric
         // string, not only an index, is its own element.
-        matches!(cell, Cell::Map { .. } | Cell::Set { .. } | Cell::WeakMap { .. } | Cell::WeakSet { .. }
+        matches!(cell, Cell::Collection(_) | Cell::WeakMap { .. } | Cell::WeakSet { .. }
             | Cell::Date { .. } | Cell::RegExp { .. } | Cell::Promise(_) | Cell::Iterator(_)
             | Cell::DataView { .. } | Cell::ArrayBuffer { .. } | Cell::WeakRef { .. } | Cell::FinalizationRegistry { .. })
             .then(|| cell.object()).flatten()

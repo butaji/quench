@@ -2781,9 +2781,9 @@ impl<H: Host> Vm<H> {
         }
         let legacy_cell = match heap_reference {
             Some(HeapReference::LegacySlot(index)) => self.heap.get_legacy(index),
-            // Function and iterator records have no cell; their shape answers like the
-            // slot forms' (`shape_property_lookup`).
-            Some(HeapReference::FunctionRecord(_) | HeapReference::IteratorRecord(_)) => {
+            // Function, iterator and collection records have no cell; their shape answers like
+            // the slot forms' (`shape_property_lookup`).
+            Some(HeapReference::FunctionRecord(_) | HeapReference::IteratorRecord(_) | HeapReference::CollectionRecord(_)) => {
                 let lookup = if self.specialized && p.specialized {
                     self.receiver_field_cache_read(self.shape_property_lookup(object, atom), atom, site)
                 } else {

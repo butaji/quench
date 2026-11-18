@@ -91,8 +91,8 @@ pub(crate) fn guard_received<S: Stage>(stage: &mut S, receiver: S::Word, miss: S
 }
 
 /// Whether `bits` names an object of any direct family (`Value::is_direct_object_family`): an
-/// ordinary object, array, function, promise or iterator. `object` is the test of the first, which
-/// the caller made.
+/// ordinary object, array, function, promise, iterator or collection. `object` is the test of the
+/// first, which the caller made.
 #[inline(always)]
 fn is_object_family<S: Stage>(stage: &mut S, bits: S::Word, object: S::Cond) -> S::Cond {
     let array = is_direct_array(stage, bits);
@@ -100,10 +100,12 @@ fn is_object_family<S: Stage>(stage: &mut S, bits: S::Word, object: S::Cond) -> 
     let family = stage.and_imm(bits, ValueLayout::HEAP_FAMILY_MASK);
     let promise = stage.eq_imm(family, ValueLayout::DIRECT_PROMISE_TAG);
     let iterator = stage.eq_imm(family, ValueLayout::DIRECT_ITERATOR_TAG);
+    let collection = stage.eq_imm(family, ValueLayout::DIRECT_COLLECTION_TAG);
     let records = stage.any(object, array);
     let others = stage.any(function, promise);
     let objects = stage.any(records, others);
-    stage.any(objects, iterator)
+    let iterators = stage.any(objects, iterator);
+    stage.any(iterators, collection)
 }
 
 /// The `this` a call binds for `receiver`. A strict callee takes any receiver as it is. A sloppy

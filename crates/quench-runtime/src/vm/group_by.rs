@@ -36,9 +36,9 @@ impl<H: Host> Vm<H> {
             let next = self.heap.root(next);
             next_root = Some(next);
             let result = match kind {
-                GroupByKind::Object => Cell::Object(Self::empty_object(Value::NULL)),
-                GroupByKind::Map => Cell::Map {
-                    object: Self::empty_object(
+                GroupByKind::Object => self.heap.alloc(Cell::Object(Self::empty_object(Value::NULL))),
+                GroupByKind::Map => self.heap.alloc_map(
+                    Self::empty_object(
                         self.realm
                             .intrinsics
                             .builtin_prototypes
@@ -46,10 +46,9 @@ impl<H: Host> Vm<H> {
                             .copied()
                             .unwrap_or(self.map_proto),
                     ),
-                    entries: Default::default(),
-                },
+                    Default::default(),
+                ),
             };
-            let result = self.heap.alloc(result);
             let result = self.heap.root(result);
             result_root = Some(result);
             let mut index = 0u64;

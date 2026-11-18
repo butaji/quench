@@ -169,11 +169,11 @@ impl<H: Host> Vm<H> {
         // or another realm's (a script loaded as its own realm makes its collections there),
         // whose intrinsic the fuse at that prototype proves. The iterators every realm makes
         // share one prototype, the realm's `next` fuse.
-        let (kind, holder, iterator, next) = match self.heap.get(source)? {
-            Cell::Set { object, .. } if !object.has_side_descriptors() => {
+        let (kind, holder, iterator, next) = match self.heap.object(source) {
+            Some(object) if self.heap.is_set(source) && !object.has_side_descriptors() => {
                 (IterationSource::Set, object.proto(), IntactFuse::SetIterator, IntactFuse::SetIteratorNext)
             }
-            Cell::Map { object, .. } if !object.has_side_descriptors() => {
+            Some(object) if self.heap.is_map(source) && !object.has_side_descriptors() => {
                 (IterationSource::Map, object.proto(), IntactFuse::MapIterator, IntactFuse::MapIteratorNext)
             }
             _ => return None,
@@ -990,16 +990,11 @@ impl<H: Host> Vm<H> {
         source: Value,
         kind: IteratorKind,
     ) -> Result<Value, JsError> {
-        let valid = matches!(
-            (kind, self.heap.get(source)),
-            (
-                IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries,
-                Some(Cell::Map { .. })
-            ) | (
-                IteratorKind::SetValues | IteratorKind::SetEntries,
-                Some(Cell::Set { .. })
-            )
-        );
+        let valid = match kind {
+            IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries => self.heap.is_map(source),
+            IteratorKind::SetValues | IteratorKind::SetEntries => self.heap.is_set(source),
+            _ => false,
+        };
         if !valid {
             return Err(JsError("collection iterator receiver is invalid".into()));
         }

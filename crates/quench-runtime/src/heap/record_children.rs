@@ -57,6 +57,13 @@ impl records::RecordChildren for IteratorRecord {
     }
 }
 
+impl records::RecordChildren for CollectionRecord {
+    fn children(&self, properties: &ValueArena, out: &mut Vec<Value>) {
+        snapshot_object(&self.object, properties, out);
+        Heap::collection_edges(&self.entries, out);
+    }
+}
+
 impl records::RecordChildren for AwaitState {
     fn children(&self, _properties: &ValueArena, out: &mut Vec<Value>) {
         self.extend_roots(out);

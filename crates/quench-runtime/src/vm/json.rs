@@ -1749,7 +1749,11 @@ impl<H: Host> Vm<H> {
             state.output.append_bytes(raw.as_bytes());
             return Ok(true);
         }
-        if self.heap.object_record(value).is_some() || self.heap.promise(value).is_some() {
+        if self.heap.object_record(value).is_some()
+            || self.heap.promise(value).is_some()
+            || self.heap.is_map(value)
+            || self.heap.is_set(value)
+        {
             return self.json_serialize_object(p, value, state).map(|()| true);
         }
         if let Some(array) = self.heap.array(value) {
@@ -1771,8 +1775,8 @@ impl<H: Host> Vm<H> {
                 Err(self.type_error(p, "Do not know how to serialize a BigInt".into()))
             }
             Some(Cell::Function(_)) | None => Ok(false),
-            Some(Cell::Array { .. } | Cell::Promise(_)) => {
-                unreachable!("heap.array and heap.promise classify their values before this match")
+            Some(Cell::Array { .. } | Cell::Promise(_) | Cell::Collection(_)) => {
+                unreachable!("heap.array, heap.promise and the collection accessors classify their values before this match")
             }
             _ if self.is_array(p, value)? => {
                 self.json_serialize_array(p, value, state).map(|()| true)
@@ -1783,8 +1787,6 @@ impl<H: Host> Vm<H> {
             Some(Cell::Proxy { .. })
             | Some(Cell::Date { .. })
             | Some(Cell::Error(_))
-            | Some(Cell::Map { .. })
-            | Some(Cell::Set { .. })
             | Some(Cell::ShadowRealm { .. })
             | Some(Cell::WeakMap { .. })
             | Some(Cell::WeakSet { .. })

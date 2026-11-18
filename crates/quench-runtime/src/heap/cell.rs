@@ -1525,7 +1525,8 @@ const PROTO_ARRAY_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + RECORD_SPACE_CAP
 const PROTO_FUNCTION_RECORD_BASE: u32 = PROTO_ARRAY_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
 const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
 const PROTO_ITERATOR_RECORD_BASE: u32 = PROTO_PROMISE_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
-const PROTO_RECORD_END: u32 = PROTO_ITERATOR_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_COLLECTION_RECORD_BASE: u32 = PROTO_ITERATOR_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_RECORD_END: u32 = PROTO_COLLECTION_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
 const _: () = assert!(PROTO_RECORD_END <= PROTO_UNDEFINED);
 
 /// An object's encoded prototype reference (`PROTO_INDEX_BITS`). Equal links name the same
@@ -1587,9 +1588,12 @@ impl ProtoLink {
             index if index < PROTO_ITERATOR_RECORD_BASE => {
                 Value::direct_promise(index - PROTO_PROMISE_RECORD_BASE)
             }
+            index if index < PROTO_COLLECTION_RECORD_BASE => {
+                Value::direct_iterator(index - PROTO_ITERATOR_RECORD_BASE)
+            }
             index => {
                 debug_assert!(index < PROTO_RECORD_END);
-                Value::direct_iterator(index - PROTO_ITERATOR_RECORD_BASE)
+                Value::direct_collection(index - PROTO_COLLECTION_RECORD_BASE)
             }
         }
     }
@@ -2289,6 +2293,7 @@ impl Object {
             Some(HeapReference::FunctionRecord(id)) => PROTO_FUNCTION_RECORD_BASE + id,
             Some(HeapReference::PromiseRecord(id)) => PROTO_PROMISE_RECORD_BASE + id,
             Some(HeapReference::IteratorRecord(id)) => PROTO_ITERATOR_RECORD_BASE + id,
+            Some(HeapReference::CollectionRecord(id)) => PROTO_COLLECTION_RECORD_BASE + id,
             Some(HeapReference::AwaitRecord(_)) => unreachable!("an await state is never a prototype"),
             Some(HeapReference::StringRecord(_)) => unreachable!("a string is never a prototype"),
             Some(HeapReference::V128Record(_)) => unreachable!("a Wasm vector is never a prototype"),
@@ -4103,6 +4108,45 @@ impl IteratorExt {
     }
 }
 
+/// A Map or a Set: its ordinary object and its entries. The heap keeps it in the collection
+/// record family (`Heap::map_entries`, `Heap::set_entries`); a heap whose record range is
+/// unavailable boxes it in a `Cell::Collection` slot.
+#[derive(Clone, Debug)]
+pub(crate) struct CollectionRecord {
+    pub(crate) object: Object,
+    pub(crate) entries: CollectionStorage,
+}
+
+/// The entries of a `CollectionRecord`: a Map's key-value pairs or a Set's values. Most
+/// collections stay empty (jsdom-d3: 107K of 132K Maps, 152K of 153K Sets), so the record
+/// holds the entries inline beside its object.
+#[derive(Clone, Debug)]
+pub(crate) enum CollectionStorage {
+    Map(super::Entries<(Value, Value)>),
+    Set(super::Entries<Value>),
+}
+
+impl CollectionStorage {
+    /// The entry storage this collection owns, which allocation and live weight charge
+    /// (`Cell::payload_bytes`).
+    pub(crate) fn payload_bytes(&self) -> usize {
+        match self {
+            Self::Map(entries) => entries.payload_bytes(),
+            Self::Set(entries) => entries.payload_bytes(),
+        }
+    }
+}
+
+impl CollectionRecord {
+    /// The kind a Map or Set reports as.
+    pub(crate) fn cell_kind(&self) -> super::CellKind {
+        match self.entries {
+            CollectionStorage::Map(_) => super::CellKind::Map,
+            CollectionStorage::Set(_) => super::CellKind::Set,
+        }
+    }
+}
+
 /// An iterator object: built-in iterators, iterator helpers and generators. The heap keeps
 /// it in the iterator record family (`Heap::iterator`); a heap whose record range is
 /// unavailable boxes it in a `Cell::Iterator` slot.
@@ -4312,17 +4356,8 @@ pub(crate) enum Cell {
         buffer: Value,
         length: ViewLength,
     },
-    // A Map's or Set's object lives in the cell, beside its entries' box: most collections
-    // stay empty (jsdom-d3: 107K of 132K Maps, 152K of 153K Sets), and a boxed object cost
-    // each a 16-byte allocation besides its slot.
-    Map {
-        object: Object,
-        entries: super::Entries<(Value, Value)>,
-    },
-    Set {
-        object: Object,
-        entries: super::Entries<Value>,
-    },
+    /// A Map or a Set where no collection record is available (`CollectionRecord`).
+    Collection(Box<CollectionRecord>),
     ShadowRealm {
         object: Box<Object>,
         caller_global: Value,
@@ -4505,8 +4540,10 @@ impl Cell {
             Self::ArrayBuffer { .. } => "array_buffer",
             Self::TypedArray { .. } => "typed_array",
             Self::DataView { .. } => "data_view",
-            Self::Map { .. } => "map",
-            Self::Set { .. } => "set",
+            Self::Collection(record) => match record.entries {
+                CollectionStorage::Map(_) => "map",
+                CollectionStorage::Set(_) => "set",
+            },
             Self::ShadowRealm { .. } => "shadow_realm",
             Self::WeakMap { .. } => "weak_map",
             Self::WeakSet { .. } => "weak_set",

@@ -36,6 +36,7 @@ impl Heap {
             return Err(SnapshotError::unsupported("a Wasm vector"));
         }
         write_records(writer, &self.iterator_records, |writer, record| record.write_snapshot(writer))?;
+        write_records(writer, &self.collection_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.environment_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.symbol_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.string_records, |writer, record: &JsString| Ok(record.write_snapshot(writer)))?;
@@ -103,6 +104,7 @@ impl Heap {
         read_records(reader, &mut heap.function_records, FunctionRecord::read_snapshot)?;
         read_records(reader, &mut heap.promise_records, PromiseCell::read_snapshot)?;
         read_records(reader, &mut heap.iterator_records, IteratorRecord::read_snapshot)?;
+        read_records(reader, &mut heap.collection_records, CollectionRecord::read_snapshot)?;
         read_records(reader, &mut heap.environment_records, EnvironmentRecord::read_snapshot)?;
         read_records(reader, &mut heap.symbol_records, SymbolData::read_snapshot)?;
         read_records(reader, &mut heap.string_records, JsString::read_snapshot)?;
@@ -142,6 +144,9 @@ impl Heap {
         self.iterator_records.for_each_live(|id, iterator| {
             if iterator.object.was_used_as_prototype() { prototypes.push(Value::direct_iterator(id)); }
         });
+        self.collection_records.for_each_live(|id, collection| {
+            if collection.object.was_used_as_prototype() { prototypes.push(Value::direct_collection(id)); }
+        });
         for (index, slot) in self.slots.iter().enumerate() {
             if slot.cell.as_ref().and_then(Cell::object).is_some_and(Object::was_used_as_prototype) {
                 prototypes.push(Value::heap(index as u32));
@@ -173,6 +178,7 @@ impl Heap {
             + self.promise_records.live_count()
             + self.iterator_records.live_count()
             + self.symbol_records.live_count()
+            + self.collection_records.live_count()
             + self.string_records.live_count()
             + self.small_strings.live_count();
         self.old_live = legacy_live;

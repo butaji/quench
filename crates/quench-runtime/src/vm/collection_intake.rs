@@ -84,9 +84,9 @@ impl<H: Host> Vm<H> {
         } else {
             return false;
         };
-        self.heap.grow_cell_payload(collection, |cell| match (cell, copy) {
-            (Cell::Set { entries, .. }, TableCopy::Set(copy)) => *entries = copy,
-            (Cell::Map { entries, .. }, TableCopy::Map(copy)) => *entries = copy,
+        self.heap.grow_collection_payload(collection, |storage| match (storage, copy) {
+            (CollectionStorage::Set(entries), TableCopy::Set(copy)) => *entries = copy,
+            (CollectionStorage::Map(entries), TableCopy::Map(copy)) => *entries = copy,
             _ => unreachable!("the copy is of the collection's kind"),
         });
         true

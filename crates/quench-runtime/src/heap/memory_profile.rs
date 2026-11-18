@@ -1,6 +1,6 @@
 use super::{
-    ArrayObject, Cell, CellKind, FreeSlotBitmap, FunctionRecord, Heap, IteratorRecord, Object,
-    PromiseCell, SymbolData,
+    ArrayObject, Cell, CellKind, CollectionRecord, CollectionStorage, FreeSlotBitmap, FunctionRecord, Heap,
+    IteratorRecord, Object, PromiseCell, SymbolData,
 };
 use crate::value::Value;
 use rustc_hash::FxHashMap;
@@ -256,6 +256,19 @@ impl MemoryProfile {
     }
 
     /// A collected record-space cell whose object carried `object_slots` property slots.
+    pub(super) fn allocated_collection(
+        &mut self,
+        identity: Value,
+        collection: &CollectionRecord,
+        object_slots: usize,
+    ) {
+        let (kind, name) = match collection.entries {
+            CollectionStorage::Map(_) => (CellKind::Map, "map"),
+            CollectionStorage::Set(_) => (CellKind::Set, "set"),
+        };
+        self.allocated_record(identity, kind as usize, collection.object.allocated_extra_bytes(), name, Some(object_slots));
+    }
+
     pub(super) fn freed_record_cell(&mut self, identity: Value, object_slots: usize) {
         let Some(index) = self.identity_slots.remove(&identity) else {
             return;
@@ -483,6 +496,7 @@ impl Heap {
         counts[CellKind::AwaitState as usize] = self.await_records.live_count();
         counts[CellKind::Iterator as usize] = self.iterator_records.live_count();
         counts[CellKind::Symbol as usize] = self.symbol_records.live_count();
+        self.collection_records.for_each_live(|_, collection| counts[collection.cell_kind() as usize] += 1);
         counts[CellKind::String as usize] = self.string_records.live_count() + self.small_strings.live_count();
         counts[CellKind::WasmV128 as usize] = self.v128_records.live_count();
         self.for_each_live_value(|identity| {
@@ -535,6 +549,7 @@ impl Heap {
             + self.promise_records.allocated_bytes()
             + self.await_records.allocated_bytes()
             + self.iterator_records.allocated_bytes()
+            + self.collection_records.allocated_bytes()
             + self.string_records.allocated_bytes()
             + self.small_string_bytes()
             + self.v128_records.allocated_bytes()
@@ -557,6 +572,7 @@ impl Heap {
                 + self.promise_records.high_water()
                 + self.await_records.high_water()
                 + self.iterator_records.high_water()
+                + self.collection_records.high_water()
                 + self.v128_records.high_water(),
             self.slots.capacity() * size_of::<super::Slot>(),
             self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
@@ -723,8 +739,10 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::Array { object } => object.elements().capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
             Cell::WasmMemory { bytes, .. } => bytes.capacity(),
-            Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
-            Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
+            Cell::Collection(collection) => match &collection.entries {
+                CollectionStorage::Map(entries) => entries.capacity() * size_of::<(Value, Value)>(),
+                CollectionStorage::Set(entries) => entries.capacity() * size_of::<Value>(),
+            },
             Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
             Cell::WeakSet { entries, .. } => entries.allocated_bytes(),
             Cell::BigInt(value) => value.spilled_bytes(),

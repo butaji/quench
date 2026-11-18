@@ -22,7 +22,7 @@
 use super::records::{ParallelRecordMarks, RecordId};
 use super::{
     ArrayObject, AwaitState, Cell, CellKind, EnvironmentTrace, FunctionRecord, GcTraceKind, Heap,
-    IteratorRecord, MarkBits, Object, ParallelObjectRootTrace, PromiseCell, SlotArena, SparseElements,
+    CollectionRecord, IteratorRecord, MarkBits, Object, ParallelObjectRootTrace, PromiseCell, SlotArena, SparseElements,
     PARALLEL_MARK_MAX_THREADS, PARALLEL_MARK_SPLIT_THRESHOLD, PARALLEL_MARK_STACK_SIZE_BYTES, mark_bits,
     mark_word_if_new, weak, PushedProtos,
 };
@@ -64,6 +64,7 @@ struct ParallelMarkView<'heap> {
     promises: ParallelRecordMarks<'heap, PromiseCell>,
     awaits: ParallelRecordMarks<'heap, AwaitState>,
     iterators: ParallelRecordMarks<'heap, IteratorRecord>,
+    collections: ParallelRecordMarks<'heap, CollectionRecord>,
     strings: ParallelRecordMarks<'heap, JsString>,
     small_strings: ParallelRecordMarks<'heap, super::SmallParts>,
     v128s: ParallelRecordMarks<'heap, [u8; crate::wasm::V128_BYTES]>,
@@ -172,6 +173,7 @@ impl<'heap> ParallelMarkView<'heap> {
             promises: heap.promise_records.parallel_marks(),
             awaits: heap.await_records.parallel_marks(),
             iterators: heap.iterator_records.parallel_marks(),
+            collections: heap.collection_records.parallel_marks(),
             strings: heap.string_records.parallel_marks(),
             small_strings: heap.small_strings.parallel_marks(),
             v128s: heap.v128_records.parallel_marks(),
@@ -349,6 +351,17 @@ impl<'heap> ParallelMarkView<'heap> {
                 Heap::iterator_edges(iterator, work);
                 self.note_marked_key(value, batch);
                 CellKind::Iterator
+            }
+            HeapReference::CollectionRecord(id) => {
+                if !self.collections.mark_if_new(id) {
+                    return;
+                }
+                // SAFETY: this view just marked the occupied record.
+                let collection = unsafe { self.collections.get(id) };
+                Heap::object_children(value, &collection.object, properties, work, &mut object_roots, trace_kind, last_proto);
+                Heap::collection_edges(&collection.entries, work);
+                self.note_marked_key(value, batch);
+                collection.cell_kind()
             }
             HeapReference::PromiseRecord(id) => {
                 if !self.promises.mark_if_new(id) {

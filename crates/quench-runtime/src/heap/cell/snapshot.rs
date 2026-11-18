@@ -476,6 +476,58 @@ impl EnvironmentRecord {
     }
 }
 
+impl CollectionRecord {
+    pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
+        writer.bool(matches!(self.entries, CollectionStorage::Map(_)));
+        self.write_body(writer)
+    }
+
+    pub(crate) fn read_snapshot(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
+        let map = reader.bool()?;
+        Self::read_body(reader, map)
+    }
+
+    /// The object and entries of a Map (`map`) or a Set, after its kind.
+    fn write_body(&self, writer: &mut Writer) -> SnapshotResult<()> {
+        write_object(writer, &self.object)?;
+        match &self.entries {
+            CollectionStorage::Map(entries) => {
+                let (slots, hashes, live, iterators) = entries.snapshot_parts()?;
+                writer.len(slots.len());
+                for (key, value) in slots {
+                    writer.value(*key);
+                    writer.value(*value);
+                }
+                hashes.iter().for_each(|&hash| writer.u32(hash)); writer.len(live);
+                writer.values(iterators);
+            }
+            CollectionStorage::Set(entries) => {
+                let (slots, hashes, live, iterators) = entries.snapshot_parts()?;
+                writer.values(slots);
+                hashes.iter().for_each(|&hash| writer.u32(hash)); writer.len(live);
+                writer.values(iterators);
+            }
+        }
+        Ok(())
+    }
+
+    fn read_body(reader: &mut Reader<'_>, map: bool) -> SnapshotResult<Self> {
+        let object = read_object(reader)?;
+        let entries = if map {
+            let slots = read_list(reader, |reader| Ok((reader.value()?, reader.value()?)))?;
+            let hashes = (0..slots.len()).map(|_| reader.u32()).collect::<SnapshotResult<_>>()?;
+            let (live, iterators) = (reader.len()?, reader.values()?);
+            CollectionStorage::Map(crate::heap::CollectionEntries::from_snapshot_parts(slots, hashes, live, iterators).into())
+        } else {
+            let slots = reader.values()?;
+            let hashes = (0..slots.len()).map(|_| reader.u32()).collect::<SnapshotResult<_>>()?;
+            let (live, iterators) = (reader.len()?, reader.values()?);
+            CollectionStorage::Set(crate::heap::CollectionEntries::from_snapshot_parts(slots, hashes, live, iterators).into())
+        };
+        Ok(Self { object, entries })
+    }
+}
+
 impl IteratorRecord {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
         let Self { object, source, kind, index, done, ext } = self;
@@ -607,25 +659,12 @@ impl Cell {
                 writer.value(*buffer);
                 write_view_length(writer, *length);
             }
-            Self::Map { object, entries } => {
-                writer.u8(tag::MAP);
-                write_object(writer, object)?;
-                let (slots, hashes, live, iterators) = entries.snapshot_parts()?;
-                writer.len(slots.len());
-                for (key, value) in slots {
-                    writer.value(*key);
-                    writer.value(*value);
-                }
-                hashes.iter().for_each(|&hash| writer.u32(hash)); writer.len(live);
-                writer.values(iterators);
-            }
-            Self::Set { object, entries } => {
-                writer.u8(tag::SET);
-                write_object(writer, object)?;
-                let (slots, hashes, live, iterators) = entries.snapshot_parts()?;
-                writer.values(slots);
-                hashes.iter().for_each(|&hash| writer.u32(hash)); writer.len(live);
-                writer.values(iterators);
+            Self::Collection(collection) => {
+                writer.u8(match collection.entries {
+                    CollectionStorage::Map(_) => tag::MAP,
+                    CollectionStorage::Set(_) => tag::SET,
+                });
+                collection.write_body(writer)?;
             }
             Self::ShadowRealm { object, caller_global, realm_global } => {
                 writer.u8(tag::SHADOW_REALM);
@@ -789,20 +828,8 @@ impl Cell {
                 buffer: reader.value()?,
                 length: read_view_length(reader)?,
             },
-            tag::MAP => {
-                let object = read_object(reader)?;
-                let slots = read_list(reader, |reader| Ok((reader.value()?, reader.value()?)))?;
-                let hashes = (0..slots.len()).map(|_| reader.u32()).collect::<SnapshotResult<_>>()?;
-                let (live, iterators) = (reader.len()?, reader.values()?);
-                Self::Map { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, hashes, live, iterators).into() }
-            }
-            tag::SET => {
-                let object = read_object(reader)?;
-                let slots = reader.values()?;
-                let hashes = (0..slots.len()).map(|_| reader.u32()).collect::<SnapshotResult<_>>()?;
-                let (live, iterators) = (reader.len()?, reader.values()?);
-                Self::Set { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, hashes, live, iterators).into() }
-            }
+            tag::MAP => Self::Collection(Box::new(CollectionRecord::read_body(reader, true)?)),
+            tag::SET => Self::Collection(Box::new(CollectionRecord::read_body(reader, false)?)),
             tag::SHADOW_REALM => Self::ShadowRealm {
                 object: boxed_object(reader)?,
                 caller_global: reader.value()?,

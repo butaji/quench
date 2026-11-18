@@ -1,7 +1,7 @@
 //! A live census of the heap's actual record spaces and owned payloads.
 //! Shared array/string storage is charged once; collecting a census adds no
 //! allocation-path instrumentation and does not execute guest code.
-use super::{Cell, CellKind, FreeSlotBitmap, Heap, Object, Slot};
+use super::{Cell, CellKind, CollectionRecord, CollectionStorage, FreeSlotBitmap, Heap, Object, Slot};
 use crate::value::Value;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use std::collections::{BTreeMap, HashSet};
@@ -23,6 +23,7 @@ pub struct HeapMemoryComposition {
     pub promise_record_reserved_bytes: usize,
     pub await_record_reserved_bytes: usize,
     pub iterator_record_reserved_bytes: usize,
+    pub collection_record_reserved_bytes: usize,
     pub string_record_reserved_bytes: usize,
     pub v128_record_reserved_bytes: usize,
     pub v128_record_used_bytes: usize,
@@ -120,6 +121,7 @@ impl Heap {
             let direct_promise = identity.direct_promise_index().is_some();
             let direct_await = identity.direct_await_index().is_some();
             let direct_iterator = identity.direct_iterator_index().is_some();
+            let direct_collection = identity.direct_collection_index().is_some();
             let direct_string = identity.direct_string_index().is_some();
             let direct_v128 = identity.direct_v128_index().is_some();
             let direct_environment = identity.direct_environment_index().is_some();
@@ -131,6 +133,7 @@ impl Heap {
                     || direct_promise
                     || direct_await
                     || direct_iterator
+                    || direct_collection
                     || direct_string
                     || direct_v128
                     || direct_environment
@@ -146,6 +149,8 @@ impl Heap {
                 CellKind::String as usize
             } else if direct_iterator {
                 CellKind::Iterator as usize
+            } else if direct_collection {
+                self.collection(identity).map_or(CellKind::Map, CollectionRecord::cell_kind) as usize
             } else if direct_await {
                 CellKind::AwaitState as usize
             } else if direct_object || direct_promise {
@@ -176,6 +181,11 @@ impl Heap {
                 "await_state"
             } else if direct_iterator {
                 "iterator"
+            } else if direct_collection {
+                match self.collection(identity).map(|collection| &collection.entries) {
+                    Some(CollectionStorage::Set(_)) => "set",
+                    _ => "map",
+                }
             } else if direct_string {
                 "string"
             } else {
@@ -237,6 +247,10 @@ impl Heap {
             } else if direct_iterator {
                 self.iterator(identity)
                     .map_or(0, |iterator| iterator.object.allocated_extra_bytes())
+            } else if direct_collection {
+                self.collection(identity).map_or(0, |collection| {
+                    collection.object.allocated_extra_bytes() + collection.entries.payload_bytes()
+                })
             } else if let Some(string) = self.string(identity) {
                 string.capacity()
             } else {
@@ -307,6 +321,7 @@ impl Heap {
             promise_record_reserved_bytes: self.promise_records.allocated_bytes(),
             await_record_reserved_bytes: self.await_records.allocated_bytes(),
             iterator_record_reserved_bytes: self.iterator_records.allocated_bytes(),
+            collection_record_reserved_bytes: self.collection_records.allocated_bytes(),
             string_record_reserved_bytes: self.string_records.allocated_bytes() + self.small_string_bytes(),
             v128_record_reserved_bytes: self.v128_records.allocated_bytes(),
             v128_record_used_bytes: self.v128_records.live_count() * crate::wasm::V128_BYTES,
@@ -384,6 +399,7 @@ impl HeapMemoryComposition {
             + self.promise_record_reserved_bytes
             + self.await_record_reserved_bytes
             + self.iterator_record_reserved_bytes
+            + self.collection_record_reserved_bytes
             + self.string_record_reserved_bytes
             + self.v128_record_reserved_bytes
             + self.legacy_cell_record_reserved_bytes

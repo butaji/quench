@@ -3176,6 +3176,26 @@ fn collection_iterators_follow_deletes_compaction_and_clear() {
 }
 
 #[test]
+fn collection_records_back_maps_sets_groups_and_prototypes() {
+    // Maps and Sets live in the collection record family: a group, a prototype, a stored
+    // field and a weak key each reach them through the record, not a legacy slot.
+    let source = "var out = [];\n\
+         var m = new Map([[1, 'a'], [2, 'b']]);\n\
+         var g = Map.groupBy([1, 2, 3], function (x) { return x % 2 ? 'odd' : 'even'; });\n\
+         out.push(m.size, m.get(2), g.get('odd').join('/'), g.size);\n\
+         var proto = Object.create(new Set([7]));\n\
+         out.push(proto.has(7), proto instanceof Set, Object.getPrototypeOf(proto) instanceof Set);\n\
+         out.push(JSON.stringify(m), Object.prototype.toString.call(new Set()));\n\
+         var holder = { inner: m }; holder.inner.set(3, 'c'); out.push(holder.inner.size);\n\
+         var wm = new WeakMap(); wm.set(m, 1); out.push(wm.get(m));\n\
+         var result = out.join();";
+    assert_eq!(
+        global_text(source, "result"),
+        "2,b,1/3,2,true,true,true,{},[object Set],3,1"
+    );
+}
+
+#[test]
 fn inner_lexical_bindings_shadow_outer_immutable_captures() {
     let source = "'use strict';\n\
          const a = 1;\n\

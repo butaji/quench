@@ -949,9 +949,6 @@ impl<H: Host> Vm<H> {
                     Some(Cell::Array { object: x, .. }) => object = x.proto(),
                     Some(Cell::ShadowRealm { object: x, .. }) => object = x.proto(),
                     Some(Cell::RegExp { object: x, .. }) => object = x.proto(),
-                    Some(Cell::Map { object: x, .. }) | Some(Cell::Set { object: x, .. }) => {
-                        object = x.proto()
-                    }
                     Some(Cell::WeakMap { object: x, .. })
                     | Some(Cell::WeakSet { object: x, .. }) => object = x.proto(),
                     Some(Cell::WeakRef { object: x, .. }) => object = x.proto(),

@@ -332,8 +332,8 @@ impl<H: Host> Vm<H> {
             B::RegExp => matches!(cell, Some(Cell::RegExp { .. })),
             B::NativeError => self.error_is_error(value) || matches!(cell, Some(Cell::Error(_))),
             B::Promise => self.is_promise(value),
-            B::Map => matches!(cell, Some(Cell::Map { .. })),
-            B::Set => matches!(cell, Some(Cell::Set { .. })),
+            B::Map => self.heap.is_map(value),
+            B::Set => self.heap.is_set(value),
             B::WeakMap => matches!(cell, Some(Cell::WeakMap { .. })),
             B::WeakSet => matches!(cell, Some(Cell::WeakSet { .. })),
             B::Proxy => matches!(cell, Some(Cell::Proxy { .. })),
@@ -568,11 +568,15 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<crate::CollectionPreview<Value>>, JsError> {
         use crate::CollectionPreview;
         let value = self.embedding_value(root)?;
+        if let Some(record) = self.heap.collection(value) {
+            return Ok(Some(match &record.entries {
+                CollectionStorage::Map(entries) => CollectionPreview {
+                    entries: entries.iter().flat_map(|(key, value)| [key, value]).collect(), is_key_value: true,
+                },
+                CollectionStorage::Set(entries) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
+            }));
+        }
         let preview = match (self.heap.iterator(value), self.heap.get(value)) {
-            (_, Some(Cell::Map { entries, .. })) => CollectionPreview {
-                entries: entries.iter().flat_map(|(key, value)| [key, value]).collect(), is_key_value: true,
-            },
-            (_, Some(Cell::Set { entries, .. })) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
             (_, Some(Cell::WeakMap { entries, .. })) => CollectionPreview {
                 entries: entries.iter().flat_map(|&(key, value)| [key, value]).collect(), is_key_value: true,
             },
@@ -907,8 +911,10 @@ impl<H: Host> Vm<H> {
             Cell::ArrayBuffer { .. } => "ArrayBuffer",
             Cell::TypedArray { object, .. } => object.native.kind().name(),
             Cell::DataView { .. } => "DataView",
-            Cell::Map { .. } => "Map",
-            Cell::Set { .. } => "Set",
+            Cell::Collection(record) => match record.entries {
+                CollectionStorage::Map(_) => "Map",
+                CollectionStorage::Set(_) => "Set",
+            },
             Cell::Date { .. } => "Date",
             Cell::RegExp { .. } => "RegExp",
             Cell::Function(_) => "Function",
