@@ -2265,11 +2265,13 @@ fn coalescing_repays(function: &BcFunction) -> bool {
 /// The lowering passes after a function's dispatch class is settled (`settle_dispatch`):
 /// numeric and plain-local specialization and frame registers. They add no table entries,
 /// so they run equally at load and on a function's first read from its finished program.
+/// Returns the live sets of the function as it stands when the last pass solved them and
+/// rewrote nothing after (`liveness::register_roots_from` reuses them), else `None`.
 pub(crate) fn lower_settled<'a>(
     function: &mut BcFunction,
     tables: &LoweringTables<'_>,
     atom_name: impl Fn(usize) -> Option<&'a str>,
-) {
+) -> Option<Vec<liveness::RegisterSet>> {
     let LoweringTables { methods, field_sites, superinstructions, specialized, undefined_constant, object_sites } = *tables;
     if function.dispatch == DispatchClass::Numeric {
         let live = liveness::analyze(function, methods, field_sites, superinstructions);
@@ -2296,8 +2298,11 @@ pub(crate) fn lower_settled<'a>(
         .any(|instruction| instruction.op() == Op::StoreLocalPlain)
     {
         let live = liveness::analyze(function, methods, field_sites, superinstructions);
-        numeric::apply_plain_local_stores(function, live.as_deref());
+        if !numeric::apply_plain_local_stores(function, live.as_deref()) {
+            return live;
+        }
     }
+    None
 }
 
 impl<'a> Compiler<'a> {
@@ -3491,12 +3496,13 @@ impl<'a> Compiler<'a> {
         for (id, function) in functions.iter_mut().enumerate() {
             let Some(function) = function else { continue };
             if lowered_here(id) {
-                self.lower_function(function, undefined_constant);
-                function.register_roots = liveness::register_roots(
+                let solved = self.lower_function(function, undefined_constant);
+                function.register_roots = liveness::register_roots_from(
                     function,
                     self.method_sites.as_slice(),
                     self.field_sites.as_slice(),
                     self.superinstructions.as_slice(),
+                    solved,
                 );
             } else {
                 self.settle_dispatch(function);
@@ -4474,7 +4480,7 @@ impl<'a> Compiler<'a> {
 
     /// The finishing passes of one function after every function's rewrites: its dispatch
     /// class (`settle_dispatch`), then the passes the class leaves (`lower_settled`).
-    fn lower_function(&self, function: &mut BcFunction, undefined_constant: u32) {
+    fn lower_function(&self, function: &mut BcFunction, undefined_constant: u32) -> Option<Vec<liveness::RegisterSet>> {
         self.settle_dispatch(function);
         lower_settled(
             function,
@@ -4487,7 +4493,7 @@ impl<'a> Compiler<'a> {
                 undefined_constant,
             },
             |atom| self.atoms.get(atom),
-        );
+        )
     }
 
     /// The lowering passes the dispatch class reads (shared returns and strict sets), then

@@ -82,6 +82,16 @@ pub(crate) fn register_roots(function: &Function, methods: &(impl MethodArgument
     )
 }
 
+/// `register_roots`, given the live sets `solved` that the lowering solved for `function` as it
+/// stands (`analyze`, `None` where it was not solved): their masks are `RegisterMasks::of`'s,
+/// so the function is not solved again.
+pub(crate) fn register_roots_from(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction], solved: Option<Vec<RegisterSet>>) -> crate::bytecode::RegisterRoots {
+    let Some(live) = solved else { return register_roots(function, methods, fields, superinstructions) };
+    debug_assert!(analyze(function, methods, fields, superinstructions).as_ref() == Some(&live), "the solved live sets match the code");
+    let live = RegisterMasks::new(live);
+    crate::bytecode::RegisterRoots::with_entry_live(true, entry_live(function, &live), dead_call_results(function, &live))
+}
+
 /// `function`'s live registers before each instruction, solved at the width `M`, which holds
 /// every one of its registers.
 pub(super) fn live_masks<M: LiveMask>(

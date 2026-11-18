@@ -4164,7 +4164,7 @@ impl ResidualProgram {
                 .expect("a program with an unlowered record holds the `undefined` constant");
             u32::try_from(index).expect("constant index fits u32")
         });
-        crate::compile::lower_settled(
+        let solved = crate::compile::lower_settled(
             &mut function,
             &crate::compile::LoweringTables {
                 object_sites: &self.object_sites,
@@ -4176,8 +4176,7 @@ impl ResidualProgram {
             },
             |atom| self.atoms.get(atom),
         );
-        function.register_roots =
-            crate::compile::liveness::register_roots(&function, self, &self.field_sites, &self.superinstructions);
+        function.register_roots = crate::compile::liveness::register_roots_from(&function, self, &self.field_sites, &self.superinstructions, solved);
         function.shrink_to_fit();
         function
     }

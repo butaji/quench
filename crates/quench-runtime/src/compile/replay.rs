@@ -901,12 +901,13 @@ pub(crate) fn recompile(
     capture_layout::apply_function(&mut function, id as usize, &function_replay.layout, &compiler.atoms);
     compiler.rewrite_replayed(program, id, function_replay.rewrite, &mut function);
     let undefined_constant = compiler.constant(Constant::Undefined);
-    compiler.lower_function(&mut function, undefined_constant);
-    liveness::mark_register_roots(
-        std::iter::once(&mut function),
+    let solved = compiler.lower_function(&mut function, undefined_constant);
+    function.register_roots = liveness::register_roots_from(
+        &function,
         compiler.method_arguments(),
         compiler.field_sites.as_slice(),
         compiler.superinstructions.as_slice(),
+        solved,
     );
     function.shrink_to_fit();
     // The function making this one named it after compiling it.

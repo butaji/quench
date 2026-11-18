@@ -49,10 +49,9 @@ pub(super) fn apply(function: &mut Function, live: Option<&[RegisterSet]>) {
     }
 }
 
-pub(super) fn apply_plain_local_stores(function: &mut Function, live: Option<&[RegisterSet]>) {
-    if let Some(live) = live {
-        compact_binary_stores(function, live, PLAIN_LOCAL_COMPACT_RULES, &[]);
-    }
+/// Compacts the plain local stores under `live`, and whether it rewrote any instruction.
+pub(super) fn apply_plain_local_stores(function: &mut Function, live: Option<&[RegisterSet]>) -> bool {
+    live.is_some_and(|live| compact_binary_stores(function, live, PLAIN_LOCAL_COMPACT_RULES, &[]))
 }
 
 fn compact_binary_stores(
@@ -60,8 +59,9 @@ fn compact_binary_stores(
     live: &[RegisterSet],
     rules: &[CompactRule],
     triple_rules: &[TripleCompactRule],
-) {
+) -> bool {
     let old = std::mem::take(&mut function.code);
+    let mut changed = false;
     let protected = protected_positions(
         &old,
         &function.wide,
@@ -90,6 +90,7 @@ fn compact_binary_stores(
             map[pc + 1] = code.len();
             map[pc + 2] = code.len();
             code.push(replacement);
+            changed = true;
             pc += 3;
             continue;
         }
@@ -107,6 +108,7 @@ fn compact_binary_stores(
         if let Some(replacement) = replacement {
             map[pc + 1] = code.len();
             code.push(replacement);
+            changed = true;
             pc += 2;
         } else {
             code.push(old[pc]);
@@ -125,6 +127,7 @@ fn compact_binary_stores(
         &old,
     );
     function.code = code;
+    changed
 }
 
 fn local_index_sources(
