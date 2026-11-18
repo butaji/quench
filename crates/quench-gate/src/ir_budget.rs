@@ -37,11 +37,10 @@ const MARK: &str = "quench_ir_mark";
 /// Marks per op: around op(n), then around op(2n), each run after a collection (`gc()`).
 const MARKS_PER_OP: usize = 4;
 /// Whether each measured run starts from a collected heap (`--expose-gc`, the runner's
-/// `collect`). Off while `gc()` corrupts a closure's captured value on v2-merged (a read of
-/// `k` in `call_closure` yields a Symbol after field_store, call_direct, call_closure each
-/// ran around `gc()`; repro in Linear TOD-1807); the unmeasured run before each mark keeps
-/// the heap state comparable meanwhile.
-const COLLECT: bool = false;
+/// `collect`), so an op's window never pays for a sweep of garbage an earlier op left
+/// (k_str_build gained a string sweep when alloc_* ops were added before it). The GC
+/// lane-cache fix (18bf724a3b) made `gc()` safe here.
+const COLLECT: bool = true;
 const OPS_VARIABLE: &str = "QUENCH_IR_BUDGET_OPS";
 const MODE_VARIABLE: &str = "QUENCH_IR_BUDGET_MODE";
 const LINE_PREFIX: &str = "IRBUDGET ";

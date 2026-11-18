@@ -2235,7 +2235,7 @@ impl<H: Host> Vm<H> {
                 .try_reserve(length)
                 .map_err(|_| self.type_error(p, "array-like list is too large".into()))?;
             for index in 0..length {
-                let atom = self.intern_atom(&index.to_string());
+                let atom = self.index_key_atom(index);
                 let element = self.get_property(p, self.heap.root_value(object).unwrap(), atom)?;
                 if matches!(element_kind, ArrayLikeElementKind::PropertyKey)
                     && !self.heap.is_string(element)
