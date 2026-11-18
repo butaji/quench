@@ -24096,3 +24096,36 @@ fn a_construction_that_ends_a_branch_builds_the_receiver_its_join_reads() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["84000"]);
 }
+
+#[test]
+fn declared_number_fields_seed_their_slot_type_at_the_first_add() {
+    let program = Engine::specialize_typescript(
+        "class V { x: number = 0; y: number = 0; }\nvar v = new V();\n",
+        "declared-number-fields.ts",
+    )
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    // Tracking must be on before the first construction for its add to seed the slot.
+    vm.heap.track_slot_representations(&vm.shape_layouts());
+    vm.execute(&program).unwrap();
+    let global = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        vm.own_property(vm.realm.globals, atom).unwrap()
+    };
+    let v = global(&mut vm, "v");
+    let x = vm.intern_atom("x");
+    let shape = vm.heap.object(v).unwrap().shape();
+    let slot = vm.shape_slot(shape, x).unwrap();
+    assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::NUMBER);
+
+    // The seed is not a proof: a string store widens the slot through the ordinary join, and reads
+    // of both fields stay correct.
+    let widen = Engine::specialize_typescript(
+        "v.x = \"text\";\nvar ok = v.x === \"text\" && v.y === 0;\n",
+        "declared-number-fields-widen.ts",
+    )
+    .unwrap();
+    vm.execute(&widen).unwrap();
+    assert_eq!(global(&mut vm, "ok"), Value::TRUE);
+    assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::ANY);
+}

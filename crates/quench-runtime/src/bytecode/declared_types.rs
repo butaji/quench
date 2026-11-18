@@ -96,7 +96,6 @@ impl DeclaredTypes {
 
     /// The declared language types of instance field `name` of the class starting at
     /// `class_start`, when the program declares one (the last declaration wins).
-    #[cfg_attr(not(test), expect(dead_code, reason = "the object model seeds field slot types from it next"))]
     pub(crate) fn declared_field(&self, class_start: u32, name: &str) -> Option<u16> {
         self.fields.iter().rev()
             .find(|field| !field.is_static && field.class_start == class_start && &*field.name == name)
