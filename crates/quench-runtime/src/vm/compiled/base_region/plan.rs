@@ -109,6 +109,8 @@ pub(super) struct Planned {
     pub(super) stop: Option<Stop>,
     /// The call record the row reads (`CallRecord`), which the code must not outlive.
     pub(super) owned: Option<Box<quench_bjit::call_record::CallRecord>>,
+    /// Reached only through a fast row's miss (`steps::behind`): laid out after the hot rows.
+    pub(super) cold: bool,
 }
 
 impl Planned {
@@ -129,7 +131,7 @@ impl Planned {
     }
 
     pub(super) fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
-        Self { stencil, node: None, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: None }
+        Self { stencil, node: None, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: None, cold: false }
     }
 }
 
