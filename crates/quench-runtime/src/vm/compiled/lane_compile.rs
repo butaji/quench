@@ -451,7 +451,7 @@ impl LanePlan {
             names_shapes, exits: ExitTable::of_unit(&self.unit), inlined: self.unit.frames,
             scratch_width, caller_registers, frame_reach: 0,
             amortizes, direct: self.direct, closed: self.closed,
-            framed: false, _records: Vec::new(), constructors: Box::default(),
+            framed: false, _records: Vec::new(), constructors: Box::default(), realm_bound: false,
         })
     }
 }
