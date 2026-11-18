@@ -85,7 +85,7 @@ fn primitive_array_growth_transitions() {
             if elements.capacity() != before.1 {
                 let bytes = elements.allocated_bytes();
                 let owned = quench_alloc::owns(elements.as_ptr().cast());
-                assert_eq!(owned, enabled && quench_alloc::class_of(bytes).is_some());
+                assert_eq!(owned, enabled && quench_alloc::granule_class_of(bytes).is_some());
                 eprintln!("push={PUSH} len={} capacity={} bytes={bytes} quench_owned={owned} moved={}",
                     elements.len(), elements.capacity(), elements.as_ptr() != before.0);
             }

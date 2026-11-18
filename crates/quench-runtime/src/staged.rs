@@ -121,7 +121,7 @@ pub(crate) use ic::{HINTED_FORM, TAGGED_SLOTS, concrete_hinted_own_field_hit, co
 pub(crate) use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
 
 mod stage;
-pub(crate) use stage::{fill_by_rows, Passed, RecordSpace, Stage, Table, word_bytes, word_offset};
+pub(crate) use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, word_bytes, word_offset};
 
 mod register_frame;
 pub(crate) use register_frame::{Constant, Frame, Step, bound_this, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};

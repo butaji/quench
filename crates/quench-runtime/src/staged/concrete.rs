@@ -185,7 +185,7 @@ impl Stage for Concrete {
     #[inline(always)]
     fn known(&self, cond: bool) -> Option<bool> { Some(cond) }
     #[inline(always)]
-    fn store_gate(&mut self, space: super::RecordSpace, record_id: u64, value: u64) -> bool {
+    fn store_gate(&mut self, space: super::StagedRecordSpace, record_id: u64, value: u64) -> bool {
         // SAFETY: a stage that stores holds its live heap.
         !self.heap.is_null() && unsafe { (*self.heap).store_unlogged(space, record_id as u32, crate::Value::from_bits(value)) }
     }

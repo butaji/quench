@@ -1694,7 +1694,7 @@ impl<H: Host> Vm<H> {
         debug_assert!(self.field_cache_index(site) < self.field_caches.len());
         // SAFETY: `active_field_entries` is re-derived whenever the active program or the
         // table changes, and the active program's layout reserves every compiler-emitted site.
-        unsafe { super::site_table::SiteTable::<FieldCache>::load_from(self.active_field_entries, usize::from(site)) }
+        unsafe { super::site_table::CacheSiteTable::<FieldCache>::load_from(self.active_field_entries, usize::from(site)) }
     }
 
     /// The primary holderless shape and slot the field cache proves for this bytecode site,

@@ -309,7 +309,7 @@ impl FrameRecord {
         out.extend(self.context.callee());
         out.extend_from_slice(&self.original_arguments);
         out.extend_from_slice(&self.with_objects);
-        out.extend([self.env, self.this()]);
+        extend_this_env_roots(out, self.this(), self.env);
         Value::extend_heap_values(out, &self.locals);
         out.extend(self.dynamic_bindings.iter().map(|(_, value)| *value));
         match self.live_registers {
@@ -417,6 +417,13 @@ impl Snap for FrameRecord {
         record.bind_window();
         Ok(record)
     }
+}
+
+/// Appends the receiver and environment of an activation to `out`, the two context words every
+/// activation holds beside its registers, which a collection traces as roots.
+#[inline]
+pub(in crate::vm) fn extend_this_env_roots(out: &mut Vec<Value>, this: Value, env: Value) {
+    out.extend([this, env]);
 }
 
 /// Clears the `registers` outside `live`: each past the set's width, and the runs of dead ones

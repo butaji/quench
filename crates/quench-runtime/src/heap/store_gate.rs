@@ -1,6 +1,6 @@
 //! The store barrier's gate, as the staged store reads it.
 use super::{Heap, Object};
-use crate::staged::RecordSpace;
+use crate::staged::StagedRecordSpace;
 use crate::Value;
 
 impl Heap {
@@ -8,14 +8,14 @@ impl Heap {
     /// observation (`ValueArena::tracks`) nor a barrier log (`RecordSpace::store_logs`): the
     /// store's gate (`staged::Stage::store_gate`).
     #[inline(always)]
-    pub(crate) fn store_unlogged(&self, space: RecordSpace, record_id: u32, value: Value) -> bool {
+    pub(crate) fn store_unlogged(&self, space: StagedRecordSpace, record_id: u32, value: Value) -> bool {
         // The common store: nothing watches, and the value names no record a log could need.
         if !self.store_watched && value.heap_index().is_none() {
             return true;
         }
         let logs = match space {
-            RecordSpace::Object => self.object_records.store_logs(record_id, value),
-            RecordSpace::Function => self.function_records.store_logs(record_id, value),
+            StagedRecordSpace::Object => self.object_records.store_logs(record_id, value),
+            StagedRecordSpace::Function => self.function_records.store_logs(record_id, value),
         };
         !self.tracks_slot_values() && !logs
     }

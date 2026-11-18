@@ -946,12 +946,7 @@ impl<H: Host> Vm<H> {
         // Under reference counts a minor collection frees old closures too.
         self.prune_function_values(full || self.heap.rc_active());
         self.prune_wasm_exported_functions();
-        // A home stays reachable through its environment; entries of swept environments go
-        // before their slots can name new cells.
-        let heap = &self.heap;
-        self.private_homes
-            .retain(|key, _| heap.is_live(key.environment));
-        self.private_site_homes.prune_dead(|value| heap.is_live(value));
+        self.prune_dead_private_homes();
         if full && self.programs.has_unchecked_reclaimable() {
             self.reclaim_unreferenced_programs();
         }
@@ -982,9 +977,7 @@ impl<H: Host> Vm<H> {
         let generation_key = (self.heap.collection_epoch(), self.realm.globals);
         self.lane_stack.retire_after_collection(generation_key);
         super::dispatch_fast::retire_running_lane_context();
-        self.lane_roots.iter_mut().for_each(|parked| parked.stack.forget_dead_callees(|value| heap.is_live(value)));
-        self.spare_lane_stacks.iter_mut().for_each(|spare| spare.forget_dead_callees(|value| heap.is_live(value)));
-        self.holder_hints.retire_dead(|holder| heap.is_live(holder));
+        self.forget_dead_parked_lanes_and_hints();
         self.realm.jobs.extend(
             finalization_jobs
                 .into_iter()
@@ -1003,6 +996,39 @@ impl<H: Host> Vm<H> {
         if !abandoned.promises.is_empty() {
             self.host.release_promise_contexts(&abandoned.promises);
         }
+        self.prune_dead_promise_and_string_tables();
+        H::after_collection(&mut crate::CollectionContext::new(&mut self.host, &mut self.heap));
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        self.heap.record_vm_gc_phase(3, after_collection_started);
+        self.collection_boundary(full);
+        #[cfg(feature = "profile-memory")]
+        if crate::trace::Channel::MemoryPeak.on() {
+            let phase = format!("gc_{}_after", self.heap.collection_count());
+            self.report_memory_snapshot(&phase);
+        }
+    }
+
+    /// A home stays reachable through its environment; entries of swept environments go
+    /// before their slots can name new cells.
+    fn prune_dead_private_homes(&mut self) {
+        let heap = &self.heap;
+        self.private_homes.retain(|key, _| heap.is_live(key.environment));
+        self.private_site_homes.prune_dead(|value| heap.is_live(value));
+    }
+
+    /// Forgets the callees a sweep freed in the parked and spare lane stacks, and retires the
+    /// watches of prototype hints whose holder died.
+    fn forget_dead_parked_lanes_and_hints(&mut self) {
+        let heap = &self.heap;
+        self.lane_roots.iter_mut().for_each(|parked| parked.stack.forget_dead_callees(|value| heap.is_live(value)));
+        self.spare_lane_stacks.iter_mut().for_each(|spare| spare.forget_dead_callees(|value| heap.is_live(value)));
+        self.holder_hints.retire_dead(|holder| heap.is_live(holder));
+    }
+
+    /// Prunes the promise tables and the dynamic string table, each entry dropped when the cell
+    /// it names was swept. Called after the abandoned contexts are released, as the inline
+    /// pruning was.
+    fn prune_dead_promise_and_string_tables(&mut self) {
         self.realm
             .promise
             .finally_handler_callbacks
@@ -1027,15 +1053,6 @@ impl<H: Host> Vm<H> {
         self.retain_live_gc_method_snapshots();
         if let Some(strings) = &mut self.dynamic_strings {
             strings.retain(|_, value| self.heap.is_live(*value));
-        }
-        H::after_collection(&mut crate::CollectionContext::new(&mut self.host, &mut self.heap));
-        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
-        self.heap.record_vm_gc_phase(3, after_collection_started);
-        self.collection_boundary(full);
-        #[cfg(feature = "profile-memory")]
-        if crate::trace::Channel::MemoryPeak.on() {
-            let phase = format!("gc_{}_after", self.heap.collection_count());
-            self.report_memory_snapshot(&phase);
         }
     }
 

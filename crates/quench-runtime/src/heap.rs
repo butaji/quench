@@ -7,6 +7,82 @@ use rayon::ThreadPool;
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use rc_drop::{StoppedCellDrop, cell_rc_drop_lock};
+
+/// Every record space, listed once, in `Heap`'s field order. Each row is `field: Type => handle`:
+/// the space's `Heap` field and type, and the `Value` constructor naming its records
+/// (`Heap::record_families`). `$m` is a callback called as `$m! { $pre ; rows }`, where `$pre`
+/// is what the caller passes (nothing, or the heap for `mark_bits!`). The `Heap` struct still
+/// declares these fields by hand, since a macro cannot expand into a struct body that also holds
+/// other fields: a new space is added there as well.
+macro_rules! for_each_record_space {
+    ($m:ident, $($pre:tt)*) => {
+        $m! {
+            $($pre)* ;
+            object_records: ObjectRecordSpace => Value::direct_object,
+            array_records: ArrayRecordSpace => Value::direct_array,
+            function_records: FunctionRecordSpace => Value::direct_function,
+            promise_records: PromiseRecordSpace => Value::direct_promise,
+            await_records: AwaitRecordSpace => Value::direct_await,
+            iterator_records: IteratorRecordSpace => Value::direct_iterator,
+            collection_records: CollectionRecordSpace => Value::direct_collection,
+            string_records: StringRecordSpace => Value::direct_string,
+            small_strings: small_strings::SmallStringSpace => small_strings::small_string_value,
+            v128_records: V128RecordSpace => Value::direct_v128,
+            environment_records: EnvironmentRecordSpace => Value::direct_environment,
+            symbol_records: SymbolRecordSpace => Value::direct_symbol,
+        }
+    };
+}
+
+/// `MarkBits`: every record family's mark bits, and the legacy slots' mark words.
+macro_rules! mark_bits_struct {
+    (; $($field:ident : $space:ty => $handle:path,)*) => {
+        /// Every family's mark bits, borrowed apart from the slot a trace holds (`mark_bits!`).
+        #[derive(Clone, Copy)]
+        pub(super) struct MarkBits<'a> {
+            $($field: &'a $space,)*
+            marks: &'a [AtomicU64],
+        }
+    };
+}
+
+/// The `MarkBits` literal over `$heap`'s mark fields (`mark_bits!`).
+macro_rules! mark_bits_literal {
+    ($heap:tt ; $($field:ident : $space:ty => $handle:path,)*) => {
+        MarkBits {
+            $($field: &$heap.$field,)*
+            marks: &$heap.marks,
+        }
+    };
+}
+
+/// `record_families` and `record_families_mut`, over every record space.
+macro_rules! record_families_fns {
+    (; $($field:ident : $space:ty => $handle:path,)*) => {
+        /// Every record family, with the `Value` constructor naming its records.
+        fn record_families(&self) -> [(&dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
+            [$((&self.$field, $handle),)*]
+        }
+
+        /// `record_families`, mutably.
+        fn record_families_mut(
+            &mut self,
+        ) -> [(&mut dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
+            [$((&mut self.$field, $handle),)*]
+        }
+    };
+}
+
+/// `Heap::reset`'s empty record spaces.
+macro_rules! reset_record_spaces {
+    (; $($field:ident : $space:ty => $handle:path,)*) => {
+        /// Replaces every record space with an empty one (`Heap::reset`).
+        fn reset_record_spaces(&mut self) {
+            $(self.$field = <$space>::default();)*
+        }
+    };
+}
+
 mod access;
 mod array_elements;
 pub(crate) mod layouts;
@@ -373,23 +449,7 @@ struct SweepOutput {
 /// The record families `Heap::record_families` lists.
 const RECORD_FAMILIES: usize = 12;
 
-/// Every family's mark bits, borrowed apart from the slot a trace holds (`mark_bits!`).
-#[derive(Clone, Copy)]
-pub(super) struct MarkBits<'a> {
-    object_records: &'a ObjectRecordSpace,
-    array_records: &'a ArrayRecordSpace,
-    function_records: &'a FunctionRecordSpace,
-    promise_records: &'a PromiseRecordSpace,
-    await_records: &'a AwaitRecordSpace,
-    iterator_records: &'a IteratorRecordSpace,
-    collection_records: &'a CollectionRecordSpace,
-    string_records: &'a StringRecordSpace,
-    small_strings: &'a small_strings::SmallStringSpace,
-    v128_records: &'a V128RecordSpace,
-    environment_records: &'a EnvironmentRecordSpace,
-    symbol_records: &'a SymbolRecordSpace,
-    marks: &'a [AtomicU64],
-}
+for_each_record_space!(mark_bits_struct,);
 
 impl MarkBits<'_> {
     /// Whether `value` is a heap value marked so far.
@@ -422,25 +482,21 @@ impl MarkBits<'_> {
 
 /// `MarkBits` of a heap, borrowing only its mark fields.
 macro_rules! mark_bits {
-    ($heap:expr) => {
-        MarkBits {
-            object_records: &$heap.object_records,
-            array_records: &$heap.array_records,
-            function_records: &$heap.function_records,
-            promise_records: &$heap.promise_records,
-            await_records: &$heap.await_records,
-            iterator_records: &$heap.iterator_records,
-            collection_records: &$heap.collection_records,
-            string_records: &$heap.string_records,
-            small_strings: &$heap.small_strings,
-            v128_records: &$heap.v128_records,
-            environment_records: &$heap.environment_records,
-            symbol_records: &$heap.symbol_records,
-            marks: &$heap.marks,
-        }
+    ($heap:tt) => {
+        for_each_record_space!(mark_bits_literal, $heap)
     };
 }
 use mark_bits;
+
+/// The bookkeeping that ends the serial visit of a value newly marked: its ephemerons are
+/// told (`EphemeronWork::newly_marked`), with `$cell` its legacy cell when it has one. Only
+/// the mark fields are borrowed (`mark_bits!`), so `$cell` may borrow from `slots`.
+macro_rules! ephemeron_tail {
+    ($heap:expr, $ctx:ident, $value:expr, $cell:expr) => {{
+        let mark_bits = mark_bits!($heap);
+        $ctx.ephemerons.newly_marked($value, $cell, |target| mark_bits.is_marked(target), $ctx.work);
+    }};
+}
 
 /// The ASCII code units, one past the last (`Heap::ascii_unit_strings`).
 pub(crate) const ASCII_UNITS: usize = 0x80;
@@ -758,90 +814,64 @@ impl Default for GcProfile {
     }
 }
 
-#[repr(usize)]
-#[derive(Clone, Copy)]
-pub(crate) enum CellKind {
-    Object,
-    Array,
-    Map,
-    Set,
-    Iterator,
-    WeakMap,
-    WeakSet,
-    WeakRef,
-    Function,
-    Environment,
+/// Every cell kind, once, in discriminant order: `Variant = "name"` rows, each with its attributes.
+/// `CellKind`, its `COUNT` and its `NAMES` are generated from these rows.
+macro_rules! cell_kinds {
+    ($($(#[$meta:meta])* $kind:ident = $name:literal,)*) => {
+        #[repr(usize)]
+        #[derive(Clone, Copy)]
+        pub(crate) enum CellKind {
+            $($(#[$meta])* $kind,)*
+        }
+        impl CellKind {
+            pub(crate) const COUNT: usize = [$(stringify!($kind)),*].len();
+            #[cfg(feature = "profile-memory")]
+            pub(crate) const NAMES: [&'static str; Self::COUNT] = [$($name,)*];
+        }
+    };
+}
+
+cell_kinds! {
+    Object = "object",
+    Array = "array",
+    Map = "map",
+    Set = "set",
+    Iterator = "iterator",
+    WeakMap = "weak_map",
+    WeakSet = "weak_set",
+    WeakRef = "weak_ref",
+    Function = "function",
+    Environment = "environment",
     /// String records; only the allocation profile counts them by kind.
     #[cfg_attr(not(feature = "profile-aggregate"), allow(dead_code))]
-    String,
-    BigInt,
-    Symbol,
-    Date,
-    Error,
-    RegExp,
-    ArrayFromAsync,
-    AwaitState,
-    TemporalDuration,
-    TemporalPlainDate,
-    TemporalPlainDateTime,
-    TemporalPlainMonthDay,
-    TemporalPlainYearMonth,
-    TemporalZonedDateTime,
-    TemporalInstant,
-    WasmGlobal,
-    WasmMemory,
-    WasmTable,
-    WasmElements,
-    WasmBits64,
-    WasmHostFunction,
-    WasmV128,
-    WasmGc,
-    WasmExtern,
-    WasmTag,
-    WasmException,
+    String = "string",
+    BigInt = "bigint",
+    Symbol = "symbol",
+    Date = "date",
+    Error = "error",
+    RegExp = "regexp",
+    ArrayFromAsync = "array_from_async",
+    AwaitState = "await_state",
+    TemporalDuration = "temporal_duration",
+    TemporalPlainDate = "temporal_plain_date",
+    TemporalPlainDateTime = "temporal_plain_date_time",
+    TemporalPlainMonthDay = "temporal_plain_month_day",
+    TemporalPlainYearMonth = "temporal_plain_year_month",
+    TemporalZonedDateTime = "temporal_zoned_date_time",
+    TemporalInstant = "temporal_instant",
+    WasmGlobal = "wasm_global",
+    WasmMemory = "wasm_memory",
+    WasmTable = "wasm_table",
+    WasmElements = "wasm_elements",
+    WasmBits64 = "wasm_bits64",
+    WasmHostFunction = "wasm_host_function",
+    WasmV128 = "wasm_v128",
+    WasmGc = "wasm_gc",
+    WasmExtern = "wasm_extern",
+    WasmTag = "wasm_tag",
+    WasmException = "wasm_exception",
 }
-impl CellKind {
-    pub(crate) const COUNT: usize = Self::WasmException as usize + 1;
-    #[cfg(feature = "profile-memory")]
-    pub(crate) const NAMES: [&'static str; Self::COUNT] = [
-        "object",
-        "array",
-        "map",
-        "set",
-        "iterator",
-        "weak_map",
-        "weak_set",
-        "weak_ref",
-        "function",
-        "environment",
-        "string",
-        "bigint",
-        "symbol",
-        "date",
-        "error",
-        "regexp",
-        "array_from_async",
-        "await_state",
-        "temporal_duration",
-        "temporal_plain_date",
-        "temporal_plain_date_time",
-        "temporal_plain_month_day",
-        "temporal_plain_year_month",
-        "temporal_zoned_date_time",
-        "temporal_instant",
-        "wasm_global",
-        "wasm_memory",
-        "wasm_table",
-        "wasm_elements",
-        "wasm_bits64",
-        "wasm_host_function",
-        "wasm_v128",
-        "wasm_gc",
-        "wasm_extern",
-        "wasm_tag",
-        "wasm_exception",
-    ];
-}
+
 #[derive(Default)]
 struct SparseElements {
     values: FxHashMap<usize, Value>,
@@ -851,6 +881,19 @@ struct SparseElements {
 /// before another trims (`Heap::live_at_environment_trim`): one live set, so what closures
 /// over-capture since can at most double what a trimmed heap holds.
 const ENVIRONMENT_TRIM_GROWTH: pacing::Ratio = pacing::Ratio::new(1, 1);
+
+/// The state a serial mark shares down its visit (`mark_work`, `mark_work_in_rounds`,
+/// `drain_work`, `mark_value`), built once by `mark_work`: the worklist, the object-root
+/// callback, the ephemeron work, the trace kind, the environment trace, and the protos the
+/// last visit pushed.
+struct MarkCtx<'a, 's, R> {
+    work: &'a mut Vec<Value>,
+    object_roots: &'a mut R,
+    ephemerons: &'a mut weak::EphemeronWork,
+    trace_kind: GcTraceKind,
+    environments: &'a mut EnvironmentTrace<'s>,
+    last_proto: PushedProtos,
+}
 
 impl Heap {
     pub fn new() -> Self {
@@ -981,48 +1024,12 @@ impl Heap {
         false
     }
 
-    /// Every record family, with the `Value` constructor naming its records.
-    fn record_families(&self) -> [(&dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
-        [
-            (&self.object_records, Value::direct_object),
-            (&self.array_records, Value::direct_array),
-            (&self.function_records, Value::direct_function),
-            (&self.promise_records, Value::direct_promise),
-            (&self.await_records, Value::direct_await),
-            (&self.iterator_records, Value::direct_iterator),
-            (&self.collection_records, Value::direct_collection),
-            (&self.string_records, Value::direct_string),
-            (&self.small_strings, small_strings::small_string_value),
-            (&self.v128_records, Value::direct_v128),
-            (&self.environment_records, Value::direct_environment),
-            (&self.symbol_records, Value::direct_symbol),
-        ]
-    }
+    for_each_record_space!(record_families_fns,);
 
     /// Record and payload bytes occupied now: live plus unswept garbage before a sweep.
     fn occupied_resident_bytes(&mut self) -> usize {
         let payload = self.payload_bytes;
         self.record_families_mut().iter().map(|(family, _)| family.occupied_bytes()).sum::<usize>() + payload
-    }
-
-    /// `record_families`, mutably.
-    fn record_families_mut(
-        &mut self,
-    ) -> [(&mut dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
-        [
-            (&mut self.object_records, Value::direct_object),
-            (&mut self.array_records, Value::direct_array),
-            (&mut self.function_records, Value::direct_function),
-            (&mut self.promise_records, Value::direct_promise),
-            (&mut self.await_records, Value::direct_await),
-            (&mut self.iterator_records, Value::direct_iterator),
-            (&mut self.collection_records, Value::direct_collection),
-            (&mut self.string_records, Value::direct_string),
-            (&mut self.small_strings, small_strings::small_string_value),
-            (&mut self.v128_records, Value::direct_v128),
-            (&mut self.environment_records, Value::direct_environment),
-            (&mut self.symbol_records, Value::direct_symbol),
-        ]
     }
 
     /// Each program a live cell or function can still run or resolve names in
@@ -2204,23 +2211,14 @@ impl Heap {
             );
         }
     }
+    for_each_record_space!(reset_record_spaces,);
+
     pub(crate) fn reset(&mut self) {
         self.slots.clear();
-        self.object_records = ObjectRecordSpace::default();
-        self.array_records = ArrayRecordSpace::default();
-        self.function_records = FunctionRecordSpace::default();
-        self.promise_records = PromiseRecordSpace::default();
-        self.await_records = AwaitRecordSpace::default();
-        self.environment_records = EnvironmentRecordSpace::default();
-        self.symbol_records = SymbolRecordSpace::default();
-        self.iterator_records = IteratorRecordSpace::default();
-        self.collection_records = CollectionRecordSpace::default();
-        self.string_records = StringRecordSpace::default();
-        self.small_strings = small_strings::SmallStringSpace::default();
+        self.reset_record_spaces();
         self.small_views = small_strings::SmallViews::default();
         self.small_templates = small_strings::SmallTemplates::default();
         self.clear_string_atoms();
-        self.v128_records = V128RecordSpace::default();
         self.marks.clear();
         self.aged.clear();
         self.free_by_slab.clear();
@@ -2370,15 +2368,17 @@ impl Heap {
     /// settled_reclaimable_bytes`), a large program a process keeps raises its own threshold,
     /// while a stream of short-lived ones keeps the minimum.
     pub(crate) fn charge_reclaimable_program(&mut self, bytes: usize) {
-        /// The least program footprint since the last full collection that makes one due.
-        const MINIMUM_PROGRAM_GROWTH: usize = 256 << 10;
+        /// The least program footprint since the last full collection that makes one due on
+        /// charge. Distinct from `pacing::PACING_MINIMUM_PROGRAM_GROWTH`, the floor
+        /// `should_full_collect` checks through the pacing table on each query.
+        const CHARGE_MINIMUM_PROGRAM_GROWTH: usize = 256 << 10;
         self.reclaimable_program_bytes_since_full = self.reclaimable_program_bytes_since_full.saturating_add(bytes);
         // Programs die without allocating on the heap: once as much program as the last full
         // collection kept has come since, a full collection is due by itself, or a code-load
         // loop keeps every dead program until heap allocation happens to make one
         // (octane-code-load: no full collection in a run). Against what was kept, programs
         // that all stay (one live function per eval) make it due ever less often.
-        if self.reclaimable_program_bytes_since_full >= self.reclaimable_program_bytes_after_full.max(MINIMUM_PROGRAM_GROWTH) {
+        if self.reclaimable_program_bytes_since_full >= self.reclaimable_program_bytes_after_full.max(CHARGE_MINIMUM_PROGRAM_GROWTH) {
             self.full_due = true;
             self.request_collection();
         }
@@ -3600,12 +3600,19 @@ impl Heap {
         trace_kind: GcTraceKind,
         environments: &mut EnvironmentTrace<'_>,
     ) {
+        let mut ctx = MarkCtx {
+            work,
+            object_roots,
+            ephemerons,
+            trace_kind,
+            environments,
+            last_proto: PushedProtos::default(),
+        };
         let Some(parallel) = parallel else {
-            let mut last_proto = PushedProtos::default();
-            self.drain_work::<false>(work, object_roots, ephemerons, trace_kind, environments, &mut last_proto, 0);
+            self.drain_work::<false, _>(&mut ctx, 0);
             return;
         };
-        self.mark_work_in_rounds(work, object_roots, parallel, ephemerons, trace_kind, environments);
+        self.mark_work_in_rounds(&mut ctx, parallel);
     }
 
     /// `mark_work` with a parallel mark: drains work until a round is due, runs the round,
@@ -3613,38 +3620,25 @@ impl Heap {
     // Kept out of line: `collect_with_object_roots` then inlines one serial visit
     // (`mark_value`), and with it the children walks, as before parallel rounds existed.
     #[inline(never)]
-    fn mark_work_in_rounds(
+    fn mark_work_in_rounds<R: FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>)>(
         &mut self,
-        work: &mut Vec<Value>,
-        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+        ctx: &mut MarkCtx<'_, '_, R>,
         parallel: parallel_mark::ParallelMark<'_>,
-        ephemerons: &mut weak::EphemeronWork,
-        trace_kind: GcTraceKind,
-        environments: &mut EnvironmentTrace<'_>,
     ) {
-        let mut last_proto = PushedProtos::default();
         let mut left_to_collector = Vec::new();
-        while self.drain_work::<true>(
-            work,
-            object_roots,
-            ephemerons,
-            trace_kind,
-            environments,
-            &mut last_proto,
-            parallel.round_minimum,
-        ) {
+        while self.drain_work::<true, _>(ctx, parallel.round_minimum) {
             self.mark_parallel_round(
                 parallel,
-                work,
+                ctx.work,
                 &mut left_to_collector,
-                object_roots,
-                ephemerons,
-                trace_kind,
-                environments,
+                ctx.object_roots,
+                ctx.ephemerons,
+                ctx.trace_kind,
+                ctx.environments,
             );
             // A worker counted the visit of an environment it left.
             while let Some(environment) = left_to_collector.pop() {
-                self.mark_value(environment, work, object_roots, ephemerons, trace_kind, environments, &mut last_proto);
+                self.mark_value(environment, ctx);
             }
         }
     }
@@ -3654,36 +3648,33 @@ impl Heap {
     /// round then takes them. Without `ROUNDS` the loop tests nothing per value but the
     /// stack, as the serial mark did before rounds existed.
     #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
-    fn drain_work<const ROUNDS: bool>(
+    fn drain_work<const ROUNDS: bool, R>(
         &mut self,
-        work: &mut Vec<Value>,
-        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
-        ephemerons: &mut weak::EphemeronWork,
-        trace_kind: GcTraceKind,
-        environments: &mut EnvironmentTrace<'_>,
-        last_proto: &mut PushedProtos,
+        ctx: &mut MarkCtx<'_, '_, R>,
         round_minimum: usize,
-    ) -> bool {
+    ) -> bool
+    where
+        R: FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+    {
         loop {
-            if ROUNDS && work.len() > round_minimum {
+            if ROUNDS && ctx.work.len() > round_minimum {
                 return true;
             }
-            let Some(value) = work.pop() else {
-                if !environments.has_pending() {
+            let Some(value) = ctx.work.pop() else {
+                if !ctx.environments.has_pending() {
                     return false;
                 }
-                self.trace_environment_edges(environments, work);
+                self.trace_environment_edges(ctx.environments, ctx.work);
                 continue;
             };
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.work_items += 1;
             }
-            self.mark_value(value, work, object_roots, ephemerons, trace_kind, environments, last_proto);
+            self.mark_value(value, ctx);
             #[cfg(feature = "profile-aggregate")]
             {
-                self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(work.len() as u64);
+                self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(ctx.work.len() as u64);
             }
         }
     }
@@ -3691,17 +3682,10 @@ impl Heap {
     /// Marks `value` when it is a heap value not marked yet, pushing the values it keeps
     /// alive onto `work`: the serial mark's visit of one value.
     #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
-    fn mark_value(
-        &mut self,
-        value: Value,
-        work: &mut Vec<Value>,
-        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
-        ephemerons: &mut weak::EphemeronWork,
-        trace_kind: GcTraceKind,
-        environments: &mut EnvironmentTrace<'_>,
-        last_proto: &mut PushedProtos,
-    ) {
+    fn mark_value<R>(&mut self, value: Value, ctx: &mut MarkCtx<'_, '_, R>)
+    where
+        R: FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+    {
         if let Some(record_id) = value.direct_object_index() {
             if !self.object_records.mark(record_id) {
                 return;
@@ -3717,9 +3701,9 @@ impl Heap {
                 // A survivor (or a re-marked candidate) counts what its snapshot names
                 // (`SatbSnapshot`), pushed here. Its shape's edges are pinned or this
                 // collection's roots, and its owned roots are roots (`Vm::collect_inner`).
-                let first = work.len();
-                Self::object_children(value, object, &self.properties, work, &mut |_, _, _, _, _| {}, trace_kind, &mut PushedProtos::default());
-                for &child in &work[first..] {
+                let first = ctx.work.len();
+                Self::object_children(value, object, &self.properties, ctx.work, &mut |_, _, _, _, _| {}, ctx.trace_kind, &mut PushedProtos::default());
+                for &child in &ctx.work[first..] {
                     self.rc_increment(child);
                 }
                 self.rc_counted += 1;
@@ -3728,19 +3712,13 @@ impl Heap {
                     value,
                     object,
                     &self.properties,
-                    work,
-                    object_roots,
-                    trace_kind,
-                    last_proto,
+                    ctx.work,
+                    ctx.object_roots,
+                    ctx.trace_kind,
+                    &mut ctx.last_proto,
                 );
             }
-            let mark_bits = mark_bits!(self);
-            ephemerons.newly_marked(
-                value,
-                None,
-                |target| mark_bits.is_marked(target),
-                work,
-            );
+            ephemeron_tail!(self, ctx, value, None);
         } else if let Some(record_id) = value.direct_array_index() {
             if !self.array_records.mark(record_id) {
                 return;
@@ -3754,9 +3732,9 @@ impl Heap {
             let array = unsafe { self.array_records.get_live(record_id) };
             if self.rc_marking && self.array_records.is_aged(record_id) {
                 // As for an object: the snapshot's values are counted as they are pushed.
-                let first = work.len();
-                Self::array_children(value, array, &self.properties, |_| false, work, &mut |_, _, _, _, _| {}, trace_kind, &mut PushedProtos::default());
-                for &child in &work[first..] {
+                let first = ctx.work.len();
+                Self::array_children(value, array, &self.properties, |_| false, ctx.work, &mut |_, _, _, _, _| {}, ctx.trace_kind, &mut PushedProtos::default());
+                for &child in &ctx.work[first..] {
                     self.rc_increment(child);
                 }
                 self.rc_counted += 1;
@@ -3767,24 +3745,18 @@ impl Heap {
                     array,
                     &self.properties,
                     |string| string_parts::mark_flat(string_records, string),
-                    work,
-                    object_roots,
-                    trace_kind,
-                    last_proto,
+                    ctx.work,
+                    ctx.object_roots,
+                    ctx.trace_kind,
+                    &mut ctx.last_proto,
                 );
             }
             if let Some(arrays) = self.sparse_arrays.as_ref()
                 && let Some(elements) = arrays.get(&value)
             {
-                work.extend(elements.values.values().copied());
+                ctx.work.extend(elements.values.values().copied());
             }
-            let mark_bits = mark_bits!(self);
-            ephemerons.newly_marked(
-                value,
-                None,
-                |target| mark_bits.is_marked(target),
-                work,
-            );
+            ephemeron_tail!(self, ctx, value, None);
         } else if let Some(record_id) = value.direct_function_index() {
             if !self.function_records.mark(record_id) {
                 return;
@@ -3800,14 +3772,13 @@ impl Heap {
                 value,
                 function,
                 &self.properties,
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
+                ctx.work,
+                ctx.object_roots,
+                ctx.trace_kind,
+                &mut ctx.last_proto,
             );
-            environments.closure(function.env, &function.kind, work);
-            let mark_bits = mark_bits!(self);
-            ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
+            ctx.environments.closure(function.env, &function.kind, ctx.work);
+            ephemeron_tail!(self, ctx, value, None);
         } else if let Some(record_id) = value.direct_iterator_index() {
             if !self.iterator_records.mark(record_id) {
                 return;
@@ -3823,14 +3794,13 @@ impl Heap {
                 value,
                 &iterator.object,
                 &self.properties,
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
+                ctx.work,
+                ctx.object_roots,
+                ctx.trace_kind,
+                &mut ctx.last_proto,
             );
-            Self::iterator_edges(iterator, work);
-            let mark_bits = mark_bits!(self);
-            ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
+            Self::iterator_edges(iterator, ctx.work);
+            ephemeron_tail!(self, ctx, value, None);
         } else if let Some(record_id) = value.direct_collection_index() {
             if !self.collection_records.mark(record_id) {
                 return;
@@ -3850,18 +3820,17 @@ impl Heap {
                 value,
                 &collection.object,
                 &self.properties,
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
+                ctx.work,
+                ctx.object_roots,
+                ctx.trace_kind,
+                &mut ctx.last_proto,
             );
-            Self::collection_edges(&collection.entries, work);
-            let mark_bits = mark_bits!(self);
-            ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
+            Self::collection_edges(&collection.entries, ctx.work);
+            ephemeron_tail!(self, ctx, value, None);
         } else if let Some(record_id) = value.direct_string_index() {
             if let Some(local) = small_strings::small_string_local(record_id) {
                 if self.small_strings.mark(local) {
-                    small_strings::trace_small(&self.small_strings, &mut self.string_records, local, work);
+                    small_strings::trace_small(&self.small_strings, &mut self.string_records, local, ctx.work);
                     if self.rc_marking && self.small_strings.is_aged(local) {
                         // A survivor counts its parts as it marks them (`Heap::rc_epoch`).
                         // SAFETY: just marked, so occupied.
@@ -3879,7 +3848,7 @@ impl Heap {
             }
             // A string holds no edges but its parts': marking it and tracing them is the visit.
             if self.string_records.mark(record_id) {
-                string_parts::trace_parts(&mut self.string_records, record_id, work);
+                string_parts::trace_parts(&mut self.string_records, record_id, ctx.work);
                 if self.rc_marking && self.string_records.is_aged(record_id) {
                     // As for a small string; a flat one, marked in place wherever its holder
                     // is traced, has no parts to count.
@@ -3908,7 +3877,7 @@ impl Heap {
             // A full collection traces environments by what their readers read.
             // SAFETY: a direct environment Value names an initialized record while it is live.
             let function = unsafe { self.environment_records.get_live(record_id) }.function;
-            if environments.whole(value, record_id, function) {
+            if ctx.environments.whole(value, record_id, function) {
                 return;
             }
             if !self.environment_records.mark(record_id) {
@@ -3920,7 +3889,7 @@ impl Heap {
                 self.gc_profile.marked_kinds[CellKind::Environment as usize] += 1;
             }
             // SAFETY: as above.
-            Self::environment_children(unsafe { self.environment_records.get_live(record_id) }, work, last_proto);
+            Self::environment_children(unsafe { self.environment_records.get_live(record_id) }, ctx.work, &mut ctx.last_proto);
         } else if let Some(record_id) = value.direct_symbol_index() {
             // A symbol holds no edges: marking it is the whole visit, and a weak key's ephemeron
             // is told that it is marked.
@@ -3930,8 +3899,7 @@ impl Heap {
                     self.gc_profile.marked += 1;
                     self.gc_profile.marked_kinds[CellKind::Symbol as usize] += 1;
                 }
-                let mark_bits = mark_bits!(self);
-                ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
+                ephemeron_tail!(self, ctx, value, None);
             }
         } else if let Some(record_id) = value.direct_await_index() {
             if !self.await_records.mark(record_id) {
@@ -3943,7 +3911,7 @@ impl Heap {
                 self.gc_profile.marked_kinds[CellKind::AwaitState as usize] += 1;
             }
             // SAFETY: a direct await Value names an initialized record.
-            unsafe { self.await_records.get_live(record_id) }.extend_roots(work);
+            unsafe { self.await_records.get_live(record_id) }.extend_roots(ctx.work);
         } else if let Some(record_id) = value.direct_promise_index() {
             if !self.promise_records.mark(record_id) {
                 return;
@@ -3959,14 +3927,13 @@ impl Heap {
                 value,
                 &promise.object,
                 &self.properties,
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
+                ctx.work,
+                ctx.object_roots,
+                ctx.trace_kind,
+                &mut ctx.last_proto,
             );
-            promise.record.append_roots(work);
-            let mark_bits = mark_bits!(self);
-            ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
+            promise.record.append_roots(ctx.work);
+            ephemeron_tail!(self, ctx, value, None);
         } else {
             let Some(index) = value.legacy_heap_index().map(|value| value as usize) else {
                 return;
@@ -3990,23 +3957,17 @@ impl Heap {
                 value,
                 cell,
                 &self.properties,
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
+                ctx.work,
+                ctx.object_roots,
+                ctx.trace_kind,
+                &mut ctx.last_proto,
             );
-            let mark_bits = mark_bits!(self);
-            ephemerons.newly_marked(
-                value,
-                Some(cell),
-                |target| mark_bits.is_marked(target),
-                work,
-            );
+            ephemeron_tail!(self, ctx, value, Some(cell));
             if let Some(arrays) = self.sparse_arrays.as_ref()
                 && matches!(cell, Cell::Array { .. })
                 && let Some(elements) = arrays.get(&Value::heap(index as u32))
             {
-                work.extend(elements.values.values().copied());
+                ctx.work.extend(elements.values.values().copied());
             }
         }
     }

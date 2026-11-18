@@ -4,6 +4,7 @@ use crate::Value;
 mod frame_record;
 mod generator_record;
 pub(crate) use frame_record::FrameRecord;
+pub(in crate::vm) use frame_record::extend_this_env_roots;
 #[cfg(test)]
 pub(in crate::vm) use frame_record::{frames_made, note_frame_made};
 pub(crate) use generator_record::{GeneratorRecord, GeneratorState};

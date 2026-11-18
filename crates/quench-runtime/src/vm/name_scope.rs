@@ -27,7 +27,7 @@ pub(super) struct NameProbe {
 /// What lane records that read a name from the global object past a scope that could have
 /// declared it rely on.
 #[derive(Default)]
-pub(super) struct ScopeNames {
+pub(super) struct DynamicScopeNames {
     /// The names a scope declared dynamically at any time (`Vm::note_dynamic_scope_name`).
     declared: BitSet,
     /// The names whose by-name reads landed on the global object past such a scope
@@ -37,7 +37,7 @@ pub(super) struct ScopeNames {
     pub(super) probe: Option<NameProbe>,
 }
 
-impl ScopeNames {
+impl DynamicScopeNames {
     /// Whether a scope declared `atom` dynamically at any time.
     #[inline(always)]
     pub(super) fn declared(&self, atom: Atom) -> bool {
