@@ -914,7 +914,7 @@ impl<H: Host> Vm<H> {
             .resize(usize::from(function.locals), Value::UNDEFINED);
         if function.rest {
             // A rest view's local stays `undefined`: its reads take the values past the fixed
-            // parameters from those the frame keeps (`Op::RestGet`), below.
+            // parameters from those the frame keeps (`RestGet`), below.
             if !function.rest_view() {
                 frame.locals[fixed] = self.rest_parameter_array(args.get(fixed..).unwrap_or_default());
             }
@@ -1002,7 +1002,7 @@ impl<H: Host> Vm<H> {
     /// `undefined`, and the values past the first `imm` parameters are those the frame kept;
     /// a key other than an index they hold makes the rest array, which the register keeps.
     pub(super) fn read_rest_view(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<Value, JsError> {
-        let get = i.op() == Op::RestGet;
+        let get = i.op().class() == crate::bytecode::Class::RestGet;
         let rest = if get { i.c() } else { i.b() };
         let fixed = i.imm() as usize;
         let mut held = self.read(f, rest);

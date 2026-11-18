@@ -2,7 +2,9 @@
 //! rest register become `RestGet` and `RestLength`, which read the values its activation kept
 //! past the fixed parameters (`Function::rest_view`). An entry that keeps those values leaves
 //! the register `undefined` and makes no array; any other entry still makes the array, and
-//! the reads then read it, so every entry stays exact.
+//! the reads then read it, so every entry stays exact. A spread of the whole rest parameter
+//! (`f(...rest)`, a `Move` of it into the window of the `CallSpread` right after) becomes
+//! `CallRest`, which spreads the kept values where the register holds `undefined`.
 use super::liveness::{self, MethodArguments, register_bit};
 use crate::bytecode::{FieldLookup, FieldSite, Function, Instr, Op, Superinstruction};
 
@@ -23,8 +25,17 @@ pub(super) fn rewrite(
     let Some(rest) = function.promoted_register(fixed) else { return };
     let Some(transfers) = liveness::transfers(function, methods, fields, supers) else { return };
     let bit = register_bit(rest);
+    let code: Vec<_> = function.instructions().collect();
+    let mut entered = vec![false; code.len() + 1];
+    for (pc, instruction) in code.iter().enumerate() {
+        crate::bytecode::for_each_instruction_successor(pc, *instruction, |successor| {
+            if successor != pc + 1 && successor < entered.len() {
+                entered[successor] = true;
+            }
+        });
+    }
     let mut replacements = Vec::new();
-    for (pc, instruction) in function.instructions().enumerate() {
+    for (pc, instruction) in code.iter().copied().enumerate() {
         let (uses, definitions) = transfers[pc];
         if definitions & bit != 0 { return; }
         if uses & bit == 0 { continue; }
@@ -36,6 +47,19 @@ pub(super) fn rewrite(
                     Instr::try_new(Op::RestLength, instruction.result_register(), rest, 0, u32::from(fixed)),
                 _ => None,
             },
+            // `Move window, rest` straight into `CallSpread` of that one-value window: the
+            // move stays, the call spreads what it moved (`CallRest`).
+            Op::Move if instruction.result_flags() == 0 && instruction.b() == rest => {
+                let window = instruction.result_register();
+                let Some(call) = code.get(pc + 1).copied().filter(|call| {
+                    call.op() == Op::CallSpread && !entered[pc + 1] && !call.direct_eval() && !call.parameter_eval()
+                        && call.call_window().base == window && call.call_window().count == 1
+                        && window != rest && call.b() != rest && call.c() != rest
+                }) else { return };
+                let Some(spread) = Instr::try_new(Op::CallRest, call.a(), call.b(), call.c(), call.imm()) else { return };
+                replacements.push((pc + 1, spread));
+                continue;
+            }
             _ => None,
         };
         let Some(replacement) = replacement else { return };

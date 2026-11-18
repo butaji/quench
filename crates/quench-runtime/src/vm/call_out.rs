@@ -53,7 +53,7 @@ impl<H: Host> Vm<H> {
                 self.operator_step(p, site, operation, (first, operand)),
             CallOut::ForInNext { .. } => Ok(Some(self.for_in_next(p, operand)?.unwrap_or(Value::DELETED))),
             CallOut::Protocol { step, .. } => self.protocol_step(p, step, first, second),
-            CallOut::Spread { passing, .. } => self.spread_call(p, passing, [first, second], &list).map(Some),
+            CallOut::Spread { passing, .. } => self.spread_call(p, site, passing, [first, second], &list).map(Some),
             CallOut::SuperCall { passing, .. } => self.super_call(p, passing, first, &list).map(Some),
             _ => self.name_step(p, site, operation, first),
         }

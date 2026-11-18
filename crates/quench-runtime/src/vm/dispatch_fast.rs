@@ -15793,11 +15793,10 @@ script_handler! {
 /// Values an applied frame call copies out without allocating their list.
 const FRAME_CALL_INLINE_ARGUMENTS: usize = 8;
 
-/// `lane_call_spread` of a callee the site links (`Vm::linked_script_call_entry`, as a plain
-/// call's), activated as a plain call is (`lane_push_passed`): a target keeping nothing
-/// (`ScriptCallTarget::forwards`) that takes the `length` elements of the intact `list` as its
-/// parameters, or drops those past them. The elements are read in place from a wide backing,
-/// decoded from a narrow one. `None` for any other call, which the general spread path makes.
+/// `lane_call_spread` of a callee the site links: the elements of the intact `list`, `length`
+/// of them, passed as `lane_passed_linked_call` passes values, read in place from a wide
+/// backing, decoded from a narrow one. `None` for any other call, which the general spread
+/// path makes.
 #[inline(always)]
 fn lane_spread_linked_call<H: Host>(
     cx: *mut LaneContext<H>,
@@ -15807,6 +15806,40 @@ fn lane_spread_linked_call<H: Host>(
     list: Value,
     length: usize,
 ) -> Option<(Registers, Ip)> {
+    let argc = u16::try_from(length).ok()?;
+    let elements = unsafe { vm(cx) }.heap.array_elements(list)?;
+    let mut decoded = [Value::UNDEFINED; FRAME_CALL_INLINE_ARGUMENTS];
+    let (passed, valid) = match elements.wide_values() {
+        Some(values) => (values.as_ptr(), argc),
+        None => {
+            let mut valid = 0;
+            for (slot, value) in decoded.iter_mut().zip(elements.iter().take(length)) {
+                *slot = value;
+                valid += 1;
+            }
+            (decoded.as_ptr(), valid)
+        }
+    };
+    lane_passed_linked_call(cx, r, ip, i, passed, argc, valid)
+}
+
+/// A spread call of a callee the site links (`Vm::linked_script_call_entry`, as a plain
+/// call's), passed the `argc` values at `passed`, of which the first `valid` may be read: a
+/// rest body that keeps nothing as `lane_activate_gathering` activates it, else a target
+/// keeping nothing (`ScriptCallTarget::forwards`) activated as a plain call is
+/// (`lane_push_passed`), taking the values as its parameters or dropping those past them.
+/// `passed` stays valid until the activation is made: no collection runs inside it. `None`
+/// for any other call.
+#[inline(always)]
+fn lane_passed_linked_call<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    passed: *const Value,
+    argc: u16,
+    valid: u16,
+) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
     let callee = r.get(i.b);
     if !unsafe { (*cx).script_calls } || lane_constructing(vm, callee) {
@@ -15814,7 +15847,13 @@ fn lane_spread_linked_call<H: Host>(
     }
     // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything else runs.
     let target = vm.linked_script_call_entry(callee, &i.call_link).map(|target| unsafe { *target })?;
-    let argc = u16::try_from(length).ok()?;
+    if target.entry == CallEntry::Gathers && target.forms & TARGET_GATHERS_KEEPING == 0 {
+        if !lane_admits_activation(&target) || valid < argc {
+            return None;
+        }
+        let this = lane_call_this(vm, &target, r.get(i.c))?;
+        return lane_activate_gathering(cx, r, ip, &target, passed, argc, this).ok();
+    }
     let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
     if !lane_admits_activation(&target)
         || target.forwards()
@@ -15827,22 +15866,41 @@ fn lane_spread_linked_call<H: Host>(
     }
     let this = lane_call_this(vm, &target, r.get(i.c))?;
     let argc = argc.min(target.params);
-    let elements = vm.heap.array_elements(list)?;
-    let mut decoded = [Value::UNDEFINED; FRAME_CALL_INLINE_ARGUMENTS];
-    let passed = match elements.wide_values() {
-        Some(values) => values.as_ptr(),
-        None if usize::from(argc) <= FRAME_CALL_INLINE_ARGUMENTS => {
-            for (slot, value) in decoded.iter_mut().zip(elements.iter().take(usize::from(argc))) {
-                *slot = value;
-            }
-            decoded.as_ptr()
-        }
-        None => return None,
-    };
+    if valid < argc {
+        return None;
+    }
     Some(lane_push_passed::<H, true, false>(cx, r, ip, &target, passed, argc, this, false))
 }
 
-
+script_handler! {
+    /// `CallRest`: the spread of a rest parameter kept as a view. Its window holds the rest
+    /// register; `undefined` there means the keeping activation's entry kept the values passed,
+    /// which, while array iteration is intact, a linked callee takes in place
+    /// (`lane_passed_linked_call`) with no array made. Otherwise the rest array they make is
+    /// put in the window and the call is `lane_call_spread`'s, an array spread as any.
+    #[inline(never)]
+    fn lane_call_rest<>(cx, r, ip, i, view) {
+        let window = ImmediateLayout::call_window_base(i.imm());
+        if r.get(window) == Value::UNDEFINED
+            && let Some((argc, function)) = unsafe { lane_keeping_activation(cx) }
+        {
+            let vm = unsafe { vm(cx) };
+            let body = unsafe { &*(*cx).code }.function(function as usize);
+            let fixed = body.params - 1;
+            let count = argc.saturating_sub(fixed);
+            // SAFETY: the keeping activation keeps its `argc` values after its registers.
+            let kept = unsafe { r.0.add(usize::from(body.registers) + usize::from(fixed)).cast_const() };
+            if vm.fresh_array_iteration_intact()
+                && let Some((registers, base)) = lane_passed_linked_call(cx, r, ip, i, kept, count, count)
+            {
+                next!(cx, registers, base, Carried::script_in(cx, view))
+            }
+            let rest = vm.rest_parameter_array(unsafe { std::slice::from_raw_parts(kept, usize::from(count)) });
+            r.set(window, rest);
+        }
+        sibling!(lane_call_spread::<H>, r, ip, view)
+    }
+}
 
 /// The values a lane `Call` record passes: its window of the running function's registers.
 ///
@@ -16689,7 +16747,9 @@ fn lane_call_keeping_activation<H: Host>(
     };
     let window = ImmediateLayout::call_window_base(i.imm());
     if target.entry == CallEntry::Gathers && target.forms & TARGET_GATHERS_KEEPING == 0 {
-        return lane_activate_gathering(cx, r, ip, &target, window, this).map_err(Some);
+        // SAFETY: the call's window of `r` holds its `argc` values.
+        let passed = unsafe { r.0.add(usize::from(window)).cast_const() };
+        return lane_activate_gathering(cx, r, ip, &target, passed, ImmediateLayout::argument_count(i.imm()), this).map_err(Some);
     }
     if target.entry == CallEntry::Keeps {
         return lane_activate_keeping_window::<H, false>(cx, r, ip, &target, window, this).map_err(Some);
@@ -16742,16 +16802,18 @@ fn lane_activate_keeping_window<H: Host, const GENERAL: bool>(
 }
 
 /// The plain activation (`lane_push_passed`) of a rest body of the running program that keeps
-/// nothing (`TARGET_GATHERS_KEEPING` clear), called with its window at `arguments` of `r`:
-/// the fixed parameters copied as any call's are, and the rest parameter's register the array
-/// of the values past them, read in place from the window.
+/// nothing (`TARGET_GATHERS_KEEPING` clear), passed the `argc` values at `passed` (its window
+/// of `r`, or the elements of the array a spread call passes): the fixed parameters copied as
+/// any call's are, and the rest parameter's register the array of the values past them, read
+/// in place, or `undefined` for a rest view that keeps the values after its registers.
 #[inline(always)]
 fn lane_activate_gathering<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
     target: &ScriptCallTarget,
-    arguments: u16,
+    passed: *const Value,
+    argc: u16,
     this: Value,
 ) -> Result<(Registers, Ip), Ip> {
     let vm = unsafe { vm(cx) };
@@ -16761,15 +16823,12 @@ fn lane_activate_gathering<H: Host>(
     if (returns && !lane_returning_call_admitted(cx)) || vm.with_scope_entered {
         return Err(exit(ip));
     }
-    let argc = ImmediateLayout::argument_count(i.imm());
     let view = target.forms & TARGET_REST_VIEW != 0;
     let room = usize::from(target.room) + if view { usize::from(argc) } else { 0 };
     if !lane_activation_room(vm, target) || vm.lane_stack.values.room() < room {
         return Err(lane_script_call_frame::<H>(ip, room));
     }
     let fixed = target.params - 1;
-    // SAFETY: the call's window of `r` holds its `argc` values.
-    let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
     if view {
         // A rest view keeps every value passed after its registers, as a keeping activation
         // does, and its rest register holds `undefined` (`lane_rest_view`).
@@ -21665,6 +21724,9 @@ fn lane_call_fits(instruction: WideInstruction) -> bool {
             lane_returns(instruction)
         }
         Class::Binary if instruction.returns_from_frame() => lane_returns(instruction),
+        Class::CallRest => {
+            lane_returns(instruction) && !instruction.direct_eval() && !instruction.parameter_eval()
+        }
         _ => true,
     }
 }
@@ -22049,9 +22111,11 @@ fn derive_lane_view<'live, H: Host>(
                     },
                     produces: false,
                 })
-            } else if matches!(op, Op::RestGet | Op::RestLength) {
+            } else if op.class() == Class::CallRest {
+                Some(LaneHandler { handler: lane_call_rest::<H> as Handler, produces: false })
+            } else if matches!(op.class(), Class::RestGet | Class::RestLength) {
                 Some(LaneHandler {
-                    handler: if op == Op::RestGet { lane_rest_view::<H, true> as Handler } else { lane_rest_view::<H, false> as Handler },
+                    handler: if op.class() == Class::RestGet { lane_rest_view::<H, true> as Handler } else { lane_rest_view::<H, false> as Handler },
                     produces: false,
                 })
             } else if op.reads_arguments() {

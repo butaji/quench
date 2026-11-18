@@ -611,6 +611,22 @@ static double NOINL op_call_rest(long n) {
   return a;
 }
 
+static double NOINL op_call_spread(long n) {
+  int32_t N = (int32_t)n, a = 0, xs[2] = {0, 1};
+  int32_t *p = xs;
+  OPAQUE_P(p);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); p[0] = i; a = (int32_t)((uint32_t)a + (uint32_t)sum_rest(2, p)); }
+  return a;
+}
+
+static int32_t NOINL forward_rest(int32_t count, const int32_t *xs) { return sum_rest(count, xs); }
+
+static double NOINL op_call_rest_forward(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); int32_t xs[2] = {i, 1}; a = (int32_t)((uint32_t)a + (uint32_t)forward_rest(2, xs)); }
+  return a;
+}
+
 static double NOINL op_call_closure(long n) {
   int32_t N = (int32_t)n, a = 0;
   struct env e = {5}, *p = &e;
@@ -846,7 +862,7 @@ static double NOINL op_k_str_build(long n) {
 typedef double (*opfn)(long);
 static const struct { const char *name; opfn fn; } TABLE[] = {
   {"field_read", op_field_read}, {"field_name", op_field_read}, {"field_length", op_field_read}, {"field_store", op_field_store}, {"call_direct", op_call_direct},
-  {"call_closure", op_call_closure}, {"call_rest", op_call_rest}, {"call_method", op_call_method},
+  {"call_closure", op_call_closure}, {"call_rest", op_call_rest}, {"call_spread", op_call_spread}, {"call_rest_forward", op_call_rest_forward}, {"call_method", op_call_method},
   {"empty", op_empty}, {"int_add", op_int_add}, {"int_add_noor", op_int_add_noor},
   {"int_sub", op_int_sub}, {"int_mul", op_int_mul}, {"int_mul_ovf", op_int_mul_ovf},
   {"int_div", op_int_div}, {"int_mod", op_int_mod}, {"int_mod_var", op_int_mod_var},

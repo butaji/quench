@@ -67,6 +67,11 @@ ops.call_direct = function (n) { let a = 0; for (let i = 0; i < n; i++) { a = (a
 // helpers and wrappers write it: the values passed are read in place, no array is made.
 const sumRest = (...xs) => (xs.length > 1 ? (xs[0] + xs[1]) | 0 : 0);
 ops.call_rest = function (n) { let a = 0; for (let i = 0; i < n; i++) { a = (a + sumRest(i, 1)) | 0; } return a; };
+// A call spreading an array (`f(...xs)`), the variadic call of a list held as an array.
+ops.call_spread = function (n) { const xs = [0, 1]; let a = 0; for (let i = 0; i < n; i++) { xs[0] = i; a = (a + sumRest(...xs)) | 0; } return a; };
+// A rest parameter forwarded whole (`(...xs) => g(...xs)`), the wrapper and decorator shape.
+const forwardRest = (...xs) => sumRest(...xs);
+ops.call_rest_forward = function (n) { let a = 0; for (let i = 0; i < n; i++) { a = (a + forwardRest(i, 1)) | 0; } return a; };
 ops.call_closure = function (n) { const k = 5, f = (x) => (x + k) | 0; let a = 0; for (let i = 0; i < n; i++) { a = (a + f(i)) | 0; } return a; };
 ops.call_method = function (n) { const o = { k: 1, m(x) { return (x + this.k) | 0; } }; let a = 0; for (let i = 0; i < n; i++) { a = (a + o.m(i)) | 0; } return a; };
 // Kernels: one inner iteration of a benchmark-shaped loop (n-body pair step, struct array,
