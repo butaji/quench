@@ -305,7 +305,7 @@ fn remainder<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             if stage.guard_false(negative_zero, miss).is_none() {
                 return Step::Unresolved;
             }
-            (result, frame.int_fact())
+            (frame.int_result(stage, result), frame.int_fact())
         }
     };
     frame.write(stage, destination, result, fact);
@@ -330,9 +330,18 @@ fn increment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, source: Register, decrement: bool,
     overflow: Overflow) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
-    let Some(value) = frame.int_operand(stage, Operand::register(source), miss) else { return Step::Unresolved };
-    let one = stage.i32_constant(1);
     let operation = if decrement { NumberArithmetic::Subtract } else { NumberArithmetic::Add };
+    let Some(value) = frame.int_operand(stage, Operand::register(source), miss) else {
+        // A stage that found the operand no int32 (the interpreter's, or a tier that knows it a
+        // binary64) steps the binary64 by one.
+        let Some(number) = frame.number_operand(stage, Operand::register(source), miss) else { return Step::Unresolved };
+        let one = stage.f64_constant(1.0);
+        let result = stage.float_arithmetic(operation, number, one);
+        let fact = frame.number_fact();
+        frame.write(stage, destination, result, fact);
+        return Step::Value(result);
+    };
+    let one = stage.i32_constant(1);
     int_arithmetic_result(stage, frame, destination, value, one, operation, (overflow, NegativeZero::Exit), miss)
 }
 
@@ -352,6 +361,25 @@ fn int_arithmetic_result<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fra
             Some(negative_zero) => stage.either(overflowed, negative_zero),
             None => overflowed,
         };
+        // A stage that knows whether the result widens (the interpreter's) writes the int32 or
+        // the binary64 it is, rather than the binary64 of either.
+        match stage.known(widen) {
+            Some(false) => {
+                let result = frame.int_result(stage, result);
+                let fact = frame.int_fact();
+                frame.write(stage, destination, result, fact);
+                return Step::Value(result);
+            }
+            Some(true) => {
+                let left = stage.i32_to_f64(left_value);
+                let right = stage.i32_to_f64(right_value);
+                let number = stage.float_arithmetic(operation, left, right);
+                let fact = frame.number_fact();
+                frame.write(stage, destination, number, fact);
+                return Step::Value(number);
+            }
+            None => {}
+        }
         let number = stage.choose(widen, |stage| {
             let left = stage.i32_to_f64(left_value);
             let right = stage.i32_to_f64(right_value);
@@ -365,6 +393,7 @@ fn int_arithmetic_result<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fra
         && stage.guard_false(negative_zero, miss).is_none() {
         return Step::Unresolved;
     }
+    let result = frame.int_result(stage, result);
     let fact = frame.int_fact();
     frame.write(stage, destination, result, fact);
     Step::Value(result)

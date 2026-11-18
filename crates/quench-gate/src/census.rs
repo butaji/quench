@@ -1,6 +1,6 @@
 //! Step 3: the JIT completeness census may not move away from done (`quench-lint --census`),
-//! and no tier may write an opcode's meaning by hand that `staged/hand_semantics.txt` does not
-//! allow (the runtime test that reads the table).
+//! and the derivation debt (`staged/derivation_debt.txt`: every place outside an opcode's staged
+//! row that decides its meaning) may only shrink (the runtime test that reads the table).
 
 use crate::{config::Config, lint::LINT, process, runtime_tests, step::Verdict};
 

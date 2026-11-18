@@ -3353,16 +3353,8 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{lane_load_const, lane_move, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_iterator_result, staged_require_object_coercible, staged_to_numeric, staged_typeof_index};
+use lane_frame::{is_row, lane_row, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_iterator_result, staged_typeof_index};
 
-lane_handler! {
-    fn lane_load_local_plain<>(cx, r, ip, i, view) {
-        if !lane_frame::staged_load_local_plain::<H, ACC_NONE>(cx, r, view, i.a, i.imm() as u16) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
 
 lane_handler! {
     /// `LoadLocal` and `LoadEnvLocal` of an initialized binding a VM frame owns
@@ -3753,15 +3745,6 @@ script_handler! {
     }
 }
 
-lane_handler! {
-    fn lane_store_local_plain<>(cx, r, ip, i, view) {
-        let result = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS);
-        if !lane_frame::staged_store_local_plain::<H, ACC_NONE>(cx, r, view, i.a, i.imm() as u16, result) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
 
 script_handler! {
     /// `InitializeTdz`: opens the binding's dead zone wherever the frame keeps it, as the
@@ -3939,19 +3922,6 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// Numbers and BigInts convert to themselves; other values take the general path.
-    fn lane_to_numeric<>(cx, r, ip, i, view) {
-        if !staged_to_numeric(r, Carried::script_in(cx, view), i.a, i.b) {
-            let value = r.get(i.b);
-            if !matches!(unsafe { vm(cx) }.heap.get(value), Some(crate::heap::Cell::BigInt(_))) {
-                return exit(ip);
-            }
-            r.set(i.a, value);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
 script_handler! {
     /// `MakeConstArray`: the new array of the running program's constant elements, as the
@@ -3968,16 +3938,6 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// `RequireObjectCoercible`: any value but `null` and `undefined` passes; the general
-    /// path throws for those.
-    fn lane_require_object_coercible<>(cx, r, ip, i, view) {
-        if !staged_require_object_coercible(r, Carried::script_in(cx, view), i.b) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
 lane_handler! {
     /// An instruction whose general step only continues or throws (`Op::steps_in_lane`),
@@ -4114,38 +4074,7 @@ fn lane_after_nested_collection<H: Host>(cx: *mut LaneContext<H>) {
     unsafe { retire_lane_binding::<H>(cx.cast()) };
 }
 
-script_handler! {
-    /// `IncDec` of a Number (`number_increment`); a BigInt takes `lane_inc_dec_bigint` and any
-    /// other value the general path.
-    /// The view derives the direction from the record (`specialize_updates`).
-    fn lane_inc_dec<DECREMENT: bool>(cx, r, ip, i, view) {
-        // A counter in [0, 2^31) by one compare (`integer_increment`), as the loop updates do; a
-        // decrement, often of a negative value, keeps the general update's single path.
-        if !DECREMENT && let Some(value) = integer_increment::<DECREMENT>(r.get(i.b)) {
-            r.set(i.a, Value::integer(value));
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
-        }
-        let Some(value) = super::dispatch::number_increment(r.get(i.b), DECREMENT) else {
-            sibling!(lane_inc_dec_bigint::<H, DECREMENT>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
-script_handler! {
-    /// `lane_inc_dec` of a value other than a Number: a BigInt's update (`lane_bigint_increment`);
-    /// any other value takes the general path. Out of line, so the Number update keeps none of
-    /// the BigInt update's temporaries.
-    #[inline(never)]
-    fn lane_inc_dec_bigint<DECREMENT: bool>(cx, r, ip, i, view) {
-        let Some(value) = lane_bigint_increment::<H, DECREMENT>(cx, r.get(i.b)) else {
-            return exit(ip);
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
 script_handler! {
     /// `IncDec` of a Number followed by an unconditional jump, a loop's update and its back
@@ -4154,7 +4083,7 @@ script_handler! {
     /// handler, which continues at the jump record.
     fn lane_inc_dec_jump<DECREMENT: bool, BACKWARD: bool>(cx, r, ip, i, view) {
         let Some(value) = super::dispatch::number_increment(r.get(i.b), DECREMENT) else {
-            sibling!(lane_inc_dec_bigint::<H, DECREMENT>, r, ip, Carried::script_in(cx, view))
+            sibling!(inc_dec_row::<H, DECREMENT>(), r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, value);
         resume!(cx, lane_jump::<H>(r, following(ip), BACKWARD, Carried::script_in(cx, view), None))
@@ -4167,12 +4096,12 @@ script_handler! {
     /// edge's safepoint, then the test, continuing in the body or at the loop's exit, a
     /// rotated loop's one dispatch per iteration where the pair and the test took two. A pair
     /// other than two integers runs the test's own record, any update but an integer's that
-    /// stays one the update's own (`lane_inc_dec`).
+    /// stays one the update's own (`lane_row` of `IncDec`).
     fn lane_inc_dec_loop<DECREMENT: bool, OP: u32, COUNTER: bool>(cx, r, ip, i, view) {
         // An overflow, a double or a BigInt runs the update's own record, which continues at
         // the jump record.
         let Some(value) = super::dispatch::integer_increment(r.get(i.b), DECREMENT) else {
-            sibling!(lane_inc_dec::<H, DECREMENT>, r, ip, Carried::script_in(cx, view))
+            sibling!(inc_dec_row::<H, DECREMENT>(), r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, value);
         let jump_ip = following(ip);
@@ -4205,7 +4134,7 @@ script_handler! {
     /// an integer runs the test's own record.
     fn lane_inc_dec_small_loop<DECREMENT: bool, OP: u32>(cx, r, ip, i, view) {
         let Some(value) = super::dispatch::integer_increment(r.get(i.b), DECREMENT) else {
-            sibling!(lane_inc_dec::<H, DECREMENT>, r, ip, Carried::script_in(cx, view))
+            sibling!(inc_dec_row::<H, DECREMENT>(), r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, value);
         let jump_ip = following(ip);
@@ -4236,7 +4165,7 @@ script_handler! {
     /// runs the load's own record, which loads again and tests.
     fn lane_inc_dec_load_loop<DECREMENT: bool, CAPTURE: bool, OP: u32>(cx, r, ip, i, view) {
         let Some(value) = super::dispatch::integer_increment(r.get(i.b), DECREMENT) else {
-            sibling!(lane_inc_dec::<H, DECREMENT>, r, ip, Carried::script_in(cx, view))
+            sibling!(inc_dec_row::<H, DECREMENT>(), r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, value);
         let jump_ip = following(ip);
@@ -5142,12 +5071,39 @@ script_handler! {
 }
 
 
+/// A lane record's register field as a staged operand: a lane field names a register of the
+/// running function, below `Operand::PAYLOAD_MASK`, so the operand's kind test folds away.
+#[inline(always)]
+fn record_register_operand(register: u16) -> crate::bytecode::Operand {
+    // SAFETY: a register is at most `bytecode::REGISTER_MASK` (the bits above are the result
+    // field's flags, which an operand field never carries), and that mask is the payload's.
+    unsafe { std::hint::assert_unchecked(register <= crate::bytecode::Operand::PAYLOAD_MASK) };
+    crate::bytecode::Operand::register(register)
+}
+
 script_handler! {
     /// `Binary` of operator `OP` on two registers, its operator and operand kinds resolved
     /// when the view was derived (`specialize_register_operands`): the fields hold the
     /// operand registers themselves. Integers take the fast path here, which saves no
     /// registers; the first other operand switches the record to `lane_operator_numbers`.
     fn lane_operator<OP: u32>(cx, r, ip, i, view) {
+        // An arithmetic operator is its staged Number row in the int32 domain, widening as the
+        // operator's Number result does; operands other than two int32 are the row's miss. A
+        // division has no int32 form (its result is a binary64): its own path below takes it.
+        if let Some(operation) = super::operations::NumberArithmetic::from_operator(OP)
+            .filter(|operation| !matches!(operation, super::operations::NumberArithmetic::Divide))
+        {
+            let mut stage = crate::staged::Concrete::new(std::ptr::null());
+            let mut frame = lane_frame::LaneFrame::<ACC_NONE>::new(r, Carried::script_in(cx, view));
+            let row = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic {
+                destination: i.a, left: record_register_operand(i.b), right: record_register_operand(i.c),
+                operation, domain: crate::staged::Domain::Int32, overflow: crate::staged::Overflow::Widen,
+                zero: crate::staged::NegativeZero::Exit });
+            match crate::staged::step(&mut stage, &mut frame, row) {
+                crate::staged::Step::Value(_) => next!(cx, r, following(ip), Carried::script_in(cx, view)),
+                _ => sibling!(lane_operator_first_miss::<H, OP>, r, ip, Carried::script_in(cx, view)),
+            }
+        }
         let (Some(left), Some(right)) = (r.int(i.b), r.int(i.c)) else {
             sibling!(lane_operator_first_miss::<H, OP>, r, ip, Carried::script_in(cx, view))
         };
@@ -6102,7 +6058,7 @@ script_handler! {
 script_handler! {
     /// `lane_set_index` whose stored value the next record, a register `Move`, copies, the
     /// `t = a[i] = v` of compiled code (`specialize_store_moves`): the store and the copy as
-    /// one record, the copy carried as `lane_move` carries it. A store the fast path leaves
+    /// one record, the copy carried as `lane_row` carries a `Move`. A store the fast path leaves
     /// runs the store's own slow path, which continues at the `Move` record.
     fn lane_set_index_move<>(cx, r, ip, i, view) {
         let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
@@ -21330,9 +21286,12 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     } else if MemoryStore::from_direct_op(op).is_some() {
         lane_store::<H, OP, ACC>
     } else {
+        if lane_runs_row(op) {
+            // The row defines the accumulator where its record's `a` is its result register.
+            let produces = matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister);
+            return Some(LaneHandler { handler: lane_row::<H, OP, ACC, FLAG_UNREAD>, produces });
+        }
         match op.class() {
-            Class::Move => return LaneHandler::producer(lane_move::<H, ACC>),
-            Class::LoadConst => return LaneHandler::producer(lane_load_const::<H>),
             Class::WasmI32ShiftRightUnsignedAnd => {
                 return LaneHandler::producer(lane_bit_field::<H, ACC>);
             }
@@ -21409,7 +21368,6 @@ const fn iterator_handler<H: Host>(opcode: Op) -> Option<Handler> {
 /// branch tests, which read it.
 const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
-        Class::StoreLocalPlain => Some(lane_store_local_plain::<H>),
         Class::StoreName => Some(lane_store_name_first::<H>),
         Class::DefineArrayElement => Some(lane_define_array_element::<H>),
         Class::StoreLocal | Class::StoreEnvLocal => Some(lane_store_local::<H>),
@@ -21420,9 +21378,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::GetField => Some(lane_get_field_first::<H>),
         _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::Register, .. })) => Some(lane_set_object_field_own::<H, false>),
         _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::This, .. })) => Some(lane_set_this_field_own::<H, false>),
-        Class::ToNumeric => Some(lane_to_numeric::<H>),
         Class::ToPropertyKey => Some(lane_to_property_key::<H>),
-        Class::RequireObjectCoercible => Some(lane_require_object_coercible::<H>),
         Class::DefinePropertyRecord => Some(lane_define_property_record::<H>),
         Class::DefineField => Some(lane_define_field::<H>),
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
@@ -21430,12 +21386,10 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         _ if iterator_handler::<H>(opcode).is_some() => iterator_handler::<H>(opcode),
         _ if for_in_steps::for_in_handler::<H, BACKWARD>(opcode).is_some() => for_in_steps::for_in_handler::<H, BACKWARD>(opcode),
         _ if opcode.steps_in_lane() => Some(lane_general_step::<H>),
-        Class::IncDec => Some(lane_inc_dec::<H, false>),
         _ if denoted_handler::<H>(opcode).is_some() => denoted_handler::<H>(opcode),
         Class::GetIndex => Some(lane_get_index::<H>),
         Class::SetIndex => Some(lane_set_index::<H>),
         Class::LoadCapture => Some(lane_load_capture::<H>),
-        Class::LoadLocalPlain => Some(lane_load_local_plain::<H>),
         Class::MakeConstArray => Some(lane_make_const_array::<H>),
         Class::StringCaseIndex => Some(lane_string_case_index::<H>),
         Class::LoadLocal | Class::LoadEnvLocal => Some(lane_load_local::<H>),
@@ -23461,11 +23415,10 @@ fn specialize_register_operands<H: Host>(
 /// comparison branch. The second record remains independently callable for branch-table and
 /// jump-target entry.
 fn specialize_load_branch_pairs<H: Host>(records: &mut [LaneInstruction]) {
-    let local = lane_load_local_plain::<H> as Handler as *const ();
     let capture = lane_load_capture::<H> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         let reads_capture = records[pc].handler == capture;
-        if records[pc].handler != local && !reads_capture {
+        if !is_row::<H, { opc::LoadLocalPlain }>(records[pc].handler) && !reads_capture {
             continue;
         }
         // A register jump test runs its operator's instantiation (`relation_jump_handler`),
@@ -23485,7 +23438,7 @@ fn specialize_load_branch_pairs<H: Host>(records: &mut [LaneInstruction]) {
 /// (`lane_return_constant`). The `Return` record stays for jumps that reach it, and the
 /// fused record's general return continues there.
 fn specialize_constant_returns<H: Host>(records: &mut [LaneInstruction]) {
-    let load = lane_load_const::<H> as Handler as *const ();
+    let load = lane_row::<H, { opc::LoadConst }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
     let ret = lane_return::<H, NOT_LEAF> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         if records[pc].handler == load && records[pc + 1].handler == ret && records[pc + 1].a == records[pc].a {
@@ -23499,20 +23452,10 @@ fn specialize_constant_returns<H: Host>(records: &mut [LaneInstruction]) {
 /// `IncDec` record stays for jumps that reach it; it reads no accumulator, and neither does
 /// its successor, since it produces none.
 fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
-    let to_numeric = lane_to_numeric::<H> as Handler as *const ();
-    let inc_dec = lane_inc_dec::<H, false> as Handler as *const ();
-    for record in records.iter_mut() {
-        if record.handler == inc_dec && record.imm() != 0 {
-            record.handler = lane_inc_dec::<H, true> as Handler as *const ();
-        }
-    }
     for pc in 0..records.len().saturating_sub(1) {
         let (conversion, update) = (&records[pc], &records[pc + 1]);
-        let decrement = update.handler == lane_inc_dec::<H, true> as Handler as *const ();
-        if conversion.handler != to_numeric
-            || (update.handler != inc_dec && !decrement)
-            || update.b != conversion.a
-        {
+        let Some(decrement) = update_direction::<H>(update) else { continue };
+        if !is_row::<H, { opc::ToNumeric }>(conversion.handler) || update.b != conversion.a {
             continue;
         }
         let handler: Handler = if decrement {
@@ -23536,17 +23479,13 @@ fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
 /// it is, for a jump that enters it and for a read the fused record leaves to it.
 fn specialize_updated_index_reads<H: Host>(records: &mut [LaneInstruction]) {
     let read = lane_get_index_registers::<H> as Handler as *const ();
-    let increment = lane_inc_dec::<H, false> as Handler as *const ();
-    let decrement = lane_inc_dec::<H, true> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         let (update, next) = (&records[pc], &records[pc + 1]);
-        if (update.handler != increment && update.handler != decrement)
-            || next.handler != read
-            || next.c != update.a
-        {
+        let Some(decrement) = update_direction::<H>(update) else { continue };
+        if next.handler != read || next.c != update.a {
             continue;
         }
-        let handler: Handler = if update.handler == decrement {
+        let handler: Handler = if decrement {
             lane_update_get_index::<H, true>
         } else {
             lane_update_get_index::<H, false>
@@ -23988,7 +23927,7 @@ fn specialize_value_jumps<H: Host>(decoded: &[WideInstruction], records: &mut [L
 /// the fused copy and read (`lane_move_get_index_proved`). The read record stays, for a jump
 /// that enters it and for the pair's declined proofs.
 fn specialize_moved_index_reads<H: Host>(records: &mut [LaneInstruction]) {
-    let copy = lane_move::<H, ACC_NONE> as Handler as *const ();
+    let copy = lane_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
     let read = lane_get_index_proved::<H> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         if records[pc].handler == copy && records[pc + 1].handler == read {
@@ -24012,20 +23951,20 @@ fn specialize_array_literals<H: Host>(decoded: &[WideInstruction], records: &mut
     }
 }
 
-/// Gives each backward unconditional jump whose target is an integer update (`lane_inc_dec`),
-/// then optionally a register copy of its result (`lane_move`), then a forward test against a
+/// Gives each backward unconditional jump whose target is an integer update (`lane_row` of `IncDec`),
+/// then optionally a register copy of its result (a `Move`'s `lane_row`), then a forward test against a
 /// small constant (`lane_jump_binary_false_small`), the fused back edge, update, copy and test
 /// (`lane_jump_back_update_small`). The head's records stay, for the loop's entry and for the
 /// values the fused record leaves to them.
 fn specialize_update_back_edges<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
     let back = lane_jump_always::<H, true> as Handler as *const ();
-    let copy = lane_move::<H, ACC_NONE> as Handler as *const ();
+    let copy = lane_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
     for pc in 0..records.len() {
         if records[pc].handler != back {
             continue;
         }
         let head = decoded[pc].imm() as usize;
-        let (Some(update), Some(decrement)) = (records.get(head), records.get(head).and_then(|update| update_direction::<H>(update.handler)))
+        let (Some(update), Some(decrement)) = (records.get(head), records.get(head).and_then(|update| update_direction::<H>(update)))
         else {
             continue;
         };
@@ -24088,7 +24027,7 @@ fn specialize_update_jumps<H: Host>(decoded: &[WideInstruction], records: &mut [
 /// pair. The loader (`specialize_update_jumps`) and a loop site that retires (`lane_loop_retire`) fuse by it, so a
 /// declined loop runs what the interpreter's own does.
 fn update_fusion<'a, H: Host>(update: &LaneInstruction, jump: &LaneInstruction, at: impl Fn(usize) -> Option<&'a LaneInstruction>) -> Option<Handler> {
-    let decrement = update_direction::<H>(update.handler)?;
+    let decrement = update_direction::<H>(update)?;
     let backward = match jump.handler {
         plain if plain == lane_jump_always::<H, true> as Handler as *const () => true,
         plain if plain == lane_jump_always::<H, false> as Handler as *const () => false,
@@ -24113,18 +24052,17 @@ fn update_fusion<'a, H: Host>(update: &LaneInstruction, jump: &LaneInstruction, 
     Some(looped().unwrap_or_else(|| update_jump::<H>(decrement, backward)))
 }
 
-/// Whether a record running `handler`, an `IncDec`'s own (`lane_inc_dec`), decrements;
+/// Whether `record`, an `IncDec` running its row (`lane_row`), decrements (its immediate flag);
 /// `None` for any other record.
-fn update_direction<H: Host>(handler: *const ()) -> Option<bool> {
-    let [increment, decrement] =
-        [lane_inc_dec::<H, false> as Handler as *const (), lane_inc_dec::<H, true> as Handler as *const ()];
-    if handler == increment {
-        Some(false)
-    } else if handler == decrement {
-        Some(true)
-    } else {
-        None
-    }
+fn update_direction<H: Host>(record: &LaneInstruction) -> Option<bool> {
+    is_row::<H, { opc::IncDec }>(record.handler).then(|| record.imm() != 0)
+}
+
+/// The row handler (`lane_row`) of an `IncDec` of the direction a fused update's `DECREMENT` names,
+/// which the fused record runs where its own fast form does not take the value.
+#[inline(always)]
+fn inc_dec_row<H: Host, const DECREMENT: bool>() -> Handler {
+    if DECREMENT { lane_row::<H, { opc::IncDec }, ACC_NONE, FLAG_SET> } else { lane_row::<H, { opc::IncDec }, ACC_NONE, FLAG_CLEAR> }
 }
 
 /// The fused update and jump (`lane_inc_dec_jump`) of an `IncDec` that decrements or not,
@@ -24143,7 +24081,7 @@ fn update_jump<H: Host>(decrement: bool, backward: bool) -> Handler {
 /// enters it and for the store's own slow path.
 fn specialize_store_moves<H: Host>(records: &mut [LaneInstruction]) {
     let store = lane_set_index::<H> as Handler as *const ();
-    let copy = lane_move::<H, ACC_NONE> as Handler as *const ();
+    let copy = lane_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         if records[pc].handler == store && records[pc + 1].handler == copy && records[pc + 1].b == records[pc].a {
             records[pc].handler = lane_set_index_move::<H> as Handler as *const ();
@@ -24193,7 +24131,9 @@ fn specialize_environment_window<H: Host>(
             WindowRecord::Keeps => {}
             WindowRecord::Eval => replacements.push((pc, lane_eval::direct_eval::<H>(), instruction.imm())),
             WindowRecord::Local(own) => {
-                if own > ENVIRONMENT_WINDOW_FIELD || !plain.iter().any(|handler| *handler as *const () == records[pc].handler) {
+                let handler = records[pc].handler;
+                let row = is_row::<H, { opc::LoadLocalPlain }>(handler) || is_row::<H, { opc::StoreLocalPlain }>(handler);
+                if own > ENVIRONMENT_WINDOW_FIELD || !(row || plain.iter().any(|plain| *plain as *const () == handler)) {
                     return None;
                 }
                 let handler = window_local_handler::<H>(function, instruction.op(), own as usize, scoped);

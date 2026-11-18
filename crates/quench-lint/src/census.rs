@@ -68,9 +68,9 @@ const METRICS: &[Metric] = &[
         extract: Extract::Syntax(extract::staged_opcodes),
     },
     Metric {
-        name: "hand_semantics_lines",
+        name: "derivation_debt_lines",
         direction: Direction::Down,
-        sources: &[Source::File("crates/quench-runtime/src/staged/hand_semantics.txt")],
+        sources: &[Source::File("crates/quench-runtime/src/staged/derivation_debt.txt")],
         extract: Extract::Text(extract::text_lines),
     },
     Metric {
