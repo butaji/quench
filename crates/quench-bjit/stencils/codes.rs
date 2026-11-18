@@ -247,6 +247,25 @@ numbered_codes! {
     /// `parseInt` of a flat string (hole 1: the frame slot) in radix 10 (`staged::parse_int::decimal_int32`): the int32
     /// into the destination (hole 0). Any other text leaves through EXIT0 with nothing written.
     PARSE_INT_ROW,
+    /// The staged rows (`staged_rows.rs`): a Number operation the planner's operator tables do not name, a relation or
+    /// an equality in value form, `~`, `void`, `InitializeTdz` of a frame local and `RequireObjectCoercible`. Each is a
+    /// fast arm over register operands, its destination a frame slot; `STAGED_FIRST..=STAGED_LAST` is the run
+    /// `heap_rows::run` routes to `staged_rows::run`.
+    STAGED_REMAINDER,
+    STAGED_RELVAL_LT,
+    STAGED_RELVAL_LE,
+    STAGED_RELVAL_GT,
+    STAGED_RELVAL_GE,
+    STAGED_RELVAL_EQ,
+    STAGED_RELVAL_NE,
+    STAGED_BITWISE_NOT,
+    STAGED_INIT_LOCAL,
+    STAGED_COERCIBLE,
+    STAGED_VOID,
+    STAGED_LOOSE_EQ,
+    STAGED_LOOSE_NE,
+    STAGED_STRICT_EQ,
+    STAGED_STRICT_NE,
 }
 
 /// The planned typed array kinds: each typed row family (`TYPED_INDEX_ROW`, `TYPED_STORE_ROW`) has one row per kind.
@@ -254,6 +273,9 @@ pub const TYPED_KINDS: u8 = 12;
 /// The last row of each typed family.
 pub const TYPED_INDEX_LAST: u8 = TYPED_INDEX_ROW + TYPED_KINDS - 1;
 pub const TYPED_STORE_LAST: u8 = TYPED_STORE_ROW + TYPED_KINDS - 1;
+/// The first and last staged codes: one heap-space run after the parse-int row.
+pub const STAGED_FIRST: u8 = STAGED_REMAINDER;
+pub const STAGED_LAST: u8 = STAGED_STRICT_NE;
 /// The discriminants of the kinds with no native element (BigInt64, BigUint64, Float16), which have no row.
 pub const NON_NATIVE_KINDS: [u8; 3] = [7, 8, 9];
 /// Every naming row's code.

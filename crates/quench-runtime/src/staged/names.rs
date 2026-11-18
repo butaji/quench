@@ -220,7 +220,7 @@ fn load_environment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &
 fn store_environment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     (source, slot, initialize): (Register, u16, bool), result: Option<Register>) -> Step<S::Word, F::Control> {
     let value = frame.tagged(stage, source);
-    if frame.environment_write(stage, slot, value).is_none() {
+    if frame.environment_write(stage, slot, value, initialize).is_none() {
         return calling(stage, frame, CallOut::StoreEnvLocal { source, slot, initialize }, result);
     }
     if let Some(result) = result {

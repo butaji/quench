@@ -37,13 +37,13 @@
 //! writes the live pinned registers back: the lowering of an instruction whose operation only
 //! the interpreter runs.
 
-use crate::layout::shared_words::KIND_NATIVE;
 use crate::layout::call_record::{CallRecord, CALLEE_EXIT, LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_BODY_THREW, LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_RAISED, NATIVE_JS_STOPPED, REGISTER_BYTES, TERMINATED_STATUS};
 use crate::codes::{LAST_INT_PIN, PIN, PINF};
 use crate::heap_rows::{payload, word_at};
-use crate::layout::{ACTIVATION_KIND_OFFSET, CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_ACTIVATIONS_TOP, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_FRAMES_END, JS_STEP_LANE_VALUES_END, JS_STEP_LANE_VALUES_TOP, JS_STEP_RESIDUAL, JS_STEP_RETURNED_PC, JS_STEP_VM, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
+use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_ACTIVATIONS_TOP, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_FRAMES_END, JS_STEP_LANE_VALUES_END, JS_STEP_LANE_VALUES_TOP, JS_STEP_RESIDUAL, JS_STEP_RETURNED_PC, JS_STEP_VM, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
+use crate::places::Places;
 use crate::stage::StencilStage;
-use crate::staged::{call::{admit_native, window_fill}, frame, value};
+use crate::staged::{call::{admit_native, window_fill}, protocol, CallFrame, CallOperation, Step};
 use crate::words::{S, hole64, is_int, slot};
 use crate::{Row, Value};
 use core::mem::{offset_of, transmute};
@@ -165,19 +165,29 @@ unsafe fn put(base: usize, offset: usize, word: u64) {
     unsafe { ((base + offset) as *mut u64).write(word) }
 }
 
-/// The frame slot's address of the register the record names at `field`.
+/// The frame slot's address of the register the record names at `field`, in the caller's register
+/// file at `file` (the call protocol's `CallFrame::call_registers`).
 #[inline(always)]
-unsafe fn register_slot(s: &S, record: usize, field: usize) -> usize {
+unsafe fn register_slot(file: usize, record: usize, field: usize) -> usize {
     // SAFETY: a register index the planner stored in a live record.
     let register = unsafe { ((record + field) as *const u16).read() };
-    s.frame + usize::from(register) * REGISTER_BYTES
+    file + usize::from(register) * REGISTER_BYTES
 }
 
 /// The word of the register the record names at `field`.
 #[inline(always)]
-unsafe fn read_register(s: &S, record: usize, field: usize) -> u64 {
+unsafe fn read_register(file: usize, record: usize, field: usize) -> u64 {
     // SAFETY: as `register_slot`, a register of the live frame.
-    unsafe { (register_slot(s, record, field) as *const u64).read() }
+    unsafe { (register_slot(file, record, field) as *const u64).read() }
+}
+
+/// The word a call-protocol step produced; `None` where it left at its miss edge.
+#[inline(always)]
+fn word_of(step: Step<u64, ()>) -> Option<u64> {
+    match step {
+        Step::Value(word) => Some(word),
+        _ => None,
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -220,31 +230,6 @@ enum Entered {
     Raised,
     /// The callee left: its (status, word), which the caller leaves with.
     Left(u32, u64),
-}
-
-/// How a direct row binds the receiver (`bound_this`).
-const STRICT: u8 = 0;
-const SLOPPY: u8 = 1;
-const LEXICAL: u8 = 2;
-
-/// The receiver the callee binds: strict takes it as it is, sloppy binds an object to itself and
-/// `undefined` or `null` to the record's global object, any other receiver refused; an arrow
-/// (lexical) binds none, the deleted marker.
-#[inline(always)]
-fn bound_this<const MODE: u8>(record: usize, this: u64) -> Option<u64> {
-    if MODE == STRICT {
-        return Some(this);
-    }
-    if MODE == LEXICAL {
-        return Some(Value::DELETED.to_bits());
-    }
-    let object = value::is_direct_object(&mut StencilStage::from_hole(0), this);
-    let nullish = this == Value::UNDEFINED.to_bits() || this == Value::NULL.to_bits();
-    match (object, nullish) {
-        (true, _) => Some(this),
-        (false, true) => Some(word_at(record, offset_of!(CallRecord, global_this))),
-        (false, false) => None,
-    }
 }
 
 /// The callee's window at `top`: `ARGC` arguments from the caller's register `args`, then
@@ -310,34 +295,33 @@ unsafe fn set_tops(payload: usize, values: usize, activations: usize) {
 /// The cell's validity and both stacks' room: `admit_native` over the values' free words less the callee's
 /// recovery space, and the frames its recovery needs.
 #[inline(always)]
-unsafe fn admit(record: usize, payload: usize) -> Option<Admitted> {
+unsafe fn admit(stage: &mut StencilStage, record: usize, payload: usize) -> Option<Admitted> {
     // SAFETY: the record and cell are live for the code's life, the payload for the activation's.
     unsafe {
         let cell = word_at(record, offset_of!(CallRecord, cell)) as usize;
         let (top, end) = (stack_top(payload, JS_STEP_LANE_VALUES_TOP), word_at(payload, JS_STEP_LANE_VALUES_END) as usize);
         let recovery = word_at(cell, CELL_RECOVERY_AT) as usize;
         let free = (((end - top) >> WORD_SHIFT) as u64).saturating_sub(word_at(recovery, RECOVERY_VALUES_AT) + FRAME_CONTEXT_WORDS as u64);
-        let room = admit_native(&mut StencilStage::from_hole(0), cell as u64, word_at(record, offset_of!(CallRecord, expected)), free, ())? as usize;
+        let room = admit_native(stage, cell as u64, word_at(record, offset_of!(CallRecord, expected)), free, ())? as usize;
         let shadow = stack_top(payload, JS_STEP_LANE_ACTIVATIONS_TOP);
         let frames = word_at(recovery, RECOVERY_ACTIVATIONS_AT) as usize + 1;
-        let fits = shadow + frames * word_at(record, offset_of!(CallRecord, frame_bytes)) as usize <= word_at(payload, JS_STEP_LANE_FRAMES_END) as usize;
+        let needed = (shadow + frames * word_at(record, offset_of!(CallRecord, frame_bytes)) as usize) as u64;
+        word_of(protocol::step(stage, (), CallOperation::Room { limit: word_at(payload, JS_STEP_LANE_FRAMES_END), needed }))?;
         let fill = window_fill(&mut StencilStage::from_hole(0), cell as u64, room as u64) as usize;
-        fits.then_some(Admitted { cell, top, room, fill, shadow })
+        Some(Admitted { cell, top, room, fill, shadow })
     }
 }
 
 /// The callee's window, its native frame (`ActivationKind::Native`), and the lane stack's new tops.
 #[inline(always)]
-unsafe fn push<const ARGC: usize>(s: &S, record: usize, payload: usize, a: &Admitted, this: u64) {
+unsafe fn push<const ARGC: usize>(file: usize, record: usize, payload: usize, a: &Admitted, this: u64) {
     // SAFETY: as `admit`, which proved the room.
     unsafe {
+        // The window's words past the arguments that are written: the cell's fill (at least the arguments).
         let written = if a.fill < ARGC { ARGC } else { a.fill };
-        fill_window::<ARGC>(register_slot(s, record, offset_of!(CallRecord, args_register)), a.top, written);
-        put(a.shadow, frame::CALLEE, word_at(record, offset_of!(CallRecord, descriptor)));
-        put(a.shadow, frame::THIS, this);
-        put(a.shadow, frame::BODY, word_at(a.cell, CELL_BODY_AT));
-        put(a.shadow, frame::WINDOW, a.top as u64);
-        put(a.shadow, ACTIVATION_KIND_OFFSET, u64::from(KIND_NATIVE));
+        fill_window::<ARGC>(register_slot(file, record, offset_of!(CallRecord, args_register)), a.top, written);
+        let native = crate::staged::call::NativeFrame { callee: word_at(record, offset_of!(CallRecord, descriptor)), this, body: word_at(a.cell, CELL_BODY_AT), window: a.top as u64 };
+        crate::staged::call::push_native(&mut StencilStage::from_hole(0), a.shadow as u64, native);
         set_tops(payload, a.top + ((a.room + FRAME_CONTEXT_WORDS) << WORD_SHIFT), a.shadow + word_at(record, offset_of!(CallRecord, frame_bytes)) as usize);
     }
 }
@@ -347,13 +331,13 @@ unsafe fn push<const ARGC: usize>(s: &S, record: usize, payload: usize, a: &Admi
 /// exception pops them, is counted in its cell and raises in the caller; any other status keeps the frames
 /// (the lane links them) and is the caller's leave.
 #[inline(always)]
-unsafe fn finish(s: &S, record: usize, payload: usize, a: &Admitted, returned: BodyReturn) -> Entered {
+unsafe fn finish(file: usize, record: usize, payload: usize, a: &Admitted, returned: BodyReturn) -> Entered {
     // SAFETY: as `push`.
     unsafe {
         match returned.status {
             LANE_BODY_RETURNED => {
                 set_tops(payload, a.top, a.shadow);
-                put(register_slot(s, record, offset_of!(CallRecord, result_register)), 0, returned.value);
+                put(register_slot(file, record, offset_of!(CallRecord, result_register)), 0, returned.value);
                 Entered::Returned
             }
             LANE_BODY_NOT_ENTERED => {
@@ -371,21 +355,43 @@ unsafe fn finish(s: &S, record: usize, payload: usize, a: &Admitted, returned: B
     }
 }
 
+/// How a direct row binds the receiver: as it is, sloppy (`protocol::bind_this`), or none (an arrow).
+const STRICT: u8 = 0;
+const SLOPPY: u8 = 1;
+const LEXICAL: u8 = 2;
+
 /// The direct call: the callee and receiver, admission, the push, the call, the pop.
 #[inline(always)]
 unsafe fn enter<const ARGC: usize, const MODE: u8>(s: &S) -> Entered {
     // SAFETY: as `admit`.
     unsafe {
         let record = hole64::<HOLE_RECORD>() as usize;
-        if read_register(s, record, offset_of!(CallRecord, callee_register)) != word_at(record, offset_of!(CallRecord, callee)) {
+        let mut stage = StencilStage::from_hole(0);
+        // The caller's register file: the call protocol's frame hook (`Places::call_registers`).
+        let mut frame = Places::<0, 0, 0>::new(S { frame: s.frame, ctx: s.ctx, p: s.p, f: s.f });
+        let Some(file) = CallFrame::call_registers(&mut frame, &mut stage) else { return Entered::Refused };
+        // Identity, then the receiver the callee binds (strict as it is, sloppy by `protocol::bind_this`).
+        let callee = read_register(file, record, offset_of!(CallRecord, callee_register));
+        let expected = word_at(record, offset_of!(CallRecord, callee));
+        if word_of(protocol::step(&mut stage, (), CallOperation::Callee { held: callee, expected })).is_none() {
             return Entered::Refused;
         }
-        let this = read_register(s, record, offset_of!(CallRecord, this_register));
-        let Some(this) = bound_this::<MODE>(record, this) else { return Entered::Refused };
+        // An arrow (lexical) binds no receiver: the deleted marker, its body reads `this` from its scope.
+        let this = if MODE == LEXICAL {
+            Value::DELETED.to_bits()
+        } else {
+            let receiver = read_register(file, record, offset_of!(CallRecord, this_register));
+            let sloppy = (MODE == SLOPPY).then(|| word_at(record, offset_of!(CallRecord, global_this)));
+            let Some(this) = word_of(protocol::step(&mut stage, (), CallOperation::BindThis { receiver, sloppy })) else {
+                return Entered::Refused;
+            };
+            this
+        };
         let payload = payload(s);
-        let Some(admitted) = admit(record, payload) else { return Entered::Refused };
-        push::<ARGC>(s, record, payload, &admitted, this);
+        let Some(admitted) = admit(&mut stage, record, payload) else { return Entered::Refused };
+        push::<ARGC>(file, record, payload, &admitted, this);
         let captures = word_at(record, offset_of!(CallRecord, captures));
+        // A body with a row entry runs its rows (the row ABI); else its lane body entry.
         let rows = word_at(admitted.cell, CELL_ROWS_AT) as usize;
         let returned = if rows != 0 {
             let entry: RowsEntry = transmute(rows);
@@ -395,7 +401,7 @@ unsafe fn enter<const ARGC: usize, const MODE: u8>(s: &S) -> Entered {
             let entry: BodyEntry = transmute(word_at(admitted.cell, CELL_ENTRY_AT) as usize);
             entry(s.ctx, this, captures, admitted.top)
         };
-        finish(s, record, payload, &admitted, returned)
+        finish(file, record, payload, &admitted, returned)
     }
 }
 
@@ -425,18 +431,6 @@ macro_rules! direct_row {
     };
 }
 
-direct_row!(call_direct_a0_strict, 0, STRICT);
-direct_row!(call_direct_a1_strict, 1, STRICT);
-direct_row!(call_direct_a2_strict, 2, STRICT);
-direct_row!(call_direct_a3_strict, 3, STRICT);
-direct_row!(call_direct_a0_sloppy, 0, SLOPPY);
-direct_row!(call_direct_a1_sloppy, 1, SLOPPY);
-direct_row!(call_direct_a2_sloppy, 2, SLOPPY);
-direct_row!(call_direct_a3_sloppy, 3, SLOPPY);
-direct_row!(call_direct_a0_lexical, 0, LEXICAL);
-direct_row!(call_direct_a1_lexical, 1, LEXICAL);
-direct_row!(call_direct_a2_lexical, 2, LEXICAL);
-direct_row!(call_direct_a3_lexical, 3, LEXICAL);
 
 /// The unconditional leave: every register is passed to the exit as it came.
 #[unsafe(no_mangle)]
@@ -470,15 +464,6 @@ macro_rules! reload_row {
     };
 }
 
-reload_row!(reload_4, PIN);
-reload_row!(reload_5, PIN + 1);
-reload_row!(reload_6, PIN + 2);
-reload_row!(reload_7, PIN + 3);
-reload_row!(reload_8, PINF);
-reload_row!(reload_9, PINF + 1);
-reload_row!(reload_10, PINF + 2);
-reload_row!(reload_11, PINF + 3);
-reload_row!(reload_12, PINF + 4);
-reload_row!(reload_13, PINF + 5);
-reload_row!(reload_14, PINF + 6);
-reload_row!(reload_15, PINF + 7);
+// The direct-call and reload row instances, one per argc and pinned place (build/call_rows.rs).
+include!(env!("QUENCH_STENCIL_CALL_ROWS"));
+

@@ -6,6 +6,7 @@
 use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::Span;
+use quench_bjit::shared_words::language as bits;
 
 mod admit;
 mod checked;
@@ -33,6 +34,8 @@ pub(super) fn declared_parameters(formals: &FormalParameters<'_>, checked: Optio
         let declared = item.type_annotation.as_ref()
             .map_or(DECLARED_ANY, |annotation| declared_language(&annotation.type_annotation));
         let checked = checked.map_or(DECLARED_ANY, |languages| languages[index]);
+        // A checker answers the family bit (`OBJECT`) only; it admits an exact plain object or array.
+        let checked = if checked & bits::OBJECT != 0 { checked | bits::OBJECT_PLAIN | bits::ARRAY } else { checked };
         let set = if declared & checked == 0 { DECLARED_ANY } else { declared & checked };
         if set != DECLARED_ANY && (item.optional || item.initializer.is_some()) {
             set | language(crate::ValueType::Undefined)
@@ -63,7 +66,17 @@ fn declared_language(ty: &TSType<'_>) -> u16 {
         TSType::TSUndefinedKeyword(_) | TSType::TSVoidKeyword(_) => language(V::Undefined),
         TSType::TSNullKeyword(_) => language(V::Null),
         TSType::TSObjectKeyword(_) => language(V::Object) | language(V::Function),
-        TSType::TSArrayType(_) | TSType::TSTupleType(_) => language(V::Object),
+        TSType::TSArrayType(_) | TSType::TSTupleType(_) => bits::ARRAY,
+        TSType::TSTypeReference(reference) => match &reference.type_name {
+            TSTypeName::IdentifierReference(name) if matches!(name.name.as_str(), "Array" | "ReadonlyArray") => bits::ARRAY,
+            _ => DECLARED_ANY,
+        },
+        TSType::TSTypeOperatorType(operator) if matches!(operator.operator, TSTypeOperatorOperator::Readonly) =>
+            declared_language(&operator.type_annotation),
+        // A literal of properties and methods is a plain object's type. A call or construct signature
+        // admits functions, and an empty literal admits every primitive: neither names the plain set.
+        TSType::TSTypeLiteral(literal) if !literal.members.is_empty() && literal.members.iter().all(|member|
+            !matches!(member, TSSignature::TSCallSignatureDeclaration(_) | TSSignature::TSConstructSignatureDeclaration(_))) => bits::OBJECT_PLAIN,
         TSType::TSFunctionType(_) | TSType::TSConstructorType(_) => language(V::Function),
         TSType::TSLiteralType(literal) => match &literal.literal {
             TSLiteral::NumericLiteral(_) => language(V::Number),

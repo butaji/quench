@@ -168,24 +168,11 @@ fn call(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstru
 /// evaluation of the call on the callee the site proves.
 fn math_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -> Option<Vec<Decoded>> {
     use crate::vm::global_facts::GlobalRead;
-    use crate::vm::Native;
     (shape.form == CallForm::Plain && (1..=2).contains(&shape.argc)).then_some(())?;
     let local = (shape.call_pc - region.header) as usize;
     let defined = (0..local).rev().find(|at| region.instructions()[*at].written_registers().any(|register| register == shape.callee))?;
     let GlobalRead::NativeMember { value, native, holder } = *sites.known.globals?.get(&(region.header as usize + defined))? else { return None };
-    let kind = match native {
-        Native::MathSqrt => Kind::Sqrt,
-        Native::MathFloor => Kind::Floor,
-        Native::MathCeil => Kind::Ceil,
-        Native::MathTrunc => Kind::Trunc,
-        Native::MathAbs => Kind::Abs,
-        Native::MathRound => Kind::Round,
-        Native::MathMin => Kind::Min,
-        Native::MathMax => Kind::Max,
-        Native::MathImul => Kind::Imul,
-        Native::MathClz32 => Kind::Clz32,
-        _ => return None,
-    };
+    let kind = fold::math_kind(native)?;
     let binary = matches!(kind, Kind::Min | Kind::Max | Kind::Imul);
     (u16::from(binary) + 1 == shape.argc as u16).then_some(())?;
     let guard = Decoded { hole: value.to_bits(), holder: Some(holder), ..Decoded::heap(Heap::Identity, None, Some(Source::Register(shape.callee)), None) };
@@ -357,7 +344,7 @@ fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Planned>, Str
 fn framed(homes: &Homes, row: &Decoded) -> bool {
     let through = match row.heap {
         Some(Heap::Store | Heap::TypedStore(_) | Heap::SiteStore) => row.base,
-        Some(Heap::Index | Heap::TypedIndex(_) | Heap::TypedLength | Heap::Array | Heap::Site | Heap::SiteChain | Heap::Length | Heap::Held | Heap::Identity | Heap::CharCodeAt | Heap::ParseInt) => row.a.and_then(register_of),
+        Some(Heap::Index | Heap::TypedIndex(_) | Heap::TypedLength | Heap::Site | Heap::SiteChain | Heap::Length | Heap::Held | Heap::Identity | Heap::CharCodeAt | Heap::ParseInt) => row.a.and_then(register_of),
         _ => None,
     };
     through.into_iter().all(|register| homes.place(register) == Place::Mem)
@@ -552,14 +539,20 @@ fn row_kinds(region: &LoopRegion, origins: &[Origin], kinds: &[OperandKinds]) ->
 fn parts(region: &LoopRegion, sites: &mut Sites, helpers: LaneHelpers) -> Vec<Part> {
     let at = |k: usize| region.header + k as u32;
     let planned: Vec<(usize, WideInstruction)> = region.instructions().iter().copied().enumerate().filter(|(_, instruction)| sites.plans(*instruction, helpers)).collect();
+    // A native method's field read folds into its call (`fold`): the read plans no row, the call's rows leave at the read.
+    let mut folds = fold::pairs(region, sites.known, |instruction| sites.plans(instruction, helpers));
+    let reads: Vec<u32> = folds.iter().map(|pair| pair.read).collect();
     let mut calls: Vec<Option<Vec<What>>> = region.instructions().iter().map(|_| None).collect();
     for (k, instruction) in planned {
-        calls[k] = Some(call(region, at(k), sites, instruction));
+        calls[k] = Some(match folds.iter().position(|pair| pair.call == at(k)) {
+            Some(index) => folds.swap_remove(index).whats(),
+            None => call(region, at(k), sites, instruction),
+        });
     }
     let facts = decode_facts(region, sites, &calls);
     let parts: Vec<Part> = region.instructions().iter().enumerate().flat_map(|(k, instruction)| {
         let pc = at(k);
-        let whats = calls[k].take().or_else(|| expanded(sites, pc, *instruction)).unwrap_or_else(|| vec![cover(region, pc, sites, *instruction, (facts, helpers))]);
+        let whats = calls[k].take().or_else(|| reads.contains(&pc).then(|| vec![What::Folded])).or_else(|| expanded(sites, pc, *instruction)).unwrap_or_else(|| vec![cover(region, pc, sites, *instruction, (facts, helpers))]);
         whats.into_iter().map(move |what| Part { pc, what })
     }).collect();
     parts
@@ -580,7 +573,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
     let [ints, doubles] = super::declared::seen(function, ending, spec.seen);
     let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), [ints.as_slice(), doubles.as_slice()]);
-    proofs::prove(&span, &mut decoded, &reached);
+    proofs::prove(&span, &mut decoded, &reached, &super::declared::exact_objects(function));
     if ending == Ending::Region && let Some(generic) = decoded.iter().enumerate().find(|(k, row)| reached.contains(*k) && interprets(row)) {
         return Err(format!("interprets in the loop: row {} {:?}", generic.0, generic.1.step));
     }

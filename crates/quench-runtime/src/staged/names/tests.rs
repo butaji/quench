@@ -50,7 +50,7 @@ impl Frame<Concrete> for Probe {
     fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, ()) { (Value::boolean(condition).to_bits(), ()) }
 
     fn environment(&mut self, _stage: &mut Concrete) -> Option<(u64, ())> { self.storage.map(|storage| (storage, ())) }
-    fn environment_write(&mut self, _stage: &mut Concrete, slot: u16, value: u64) -> Option<()> {
+    fn environment_write(&mut self, _stage: &mut Concrete, slot: u16, value: u64, _initialize: bool) -> Option<()> {
         self.answers().then(|| self.environment_writes.push((slot, value)))
     }
     fn arguments_length(&mut self, _stage: &mut Concrete, slot: u16) -> Option<(u64, ())> {

@@ -174,50 +174,103 @@ enum Entry {
     Always,
 }
 
-/// The places a heap row reads: its entry flag and which of its destination and operands.
+/// The places one operand of a heap row ranges over: a row that does not read the operand fixes it to `MEM`.
+#[derive(Clone, Copy)]
+enum Slot {
+    Unread,
+    /// Any destination: every int place and every double register.
+    Dst,
+    /// A typed element read's destination: a double register or `MEM`.
+    Float,
+    /// Any operand: every int place, the constant and immediate, and every double register.
+    Src,
+}
+
+impl Slot {
+    /// The places the slot ranges over.
+    fn set(self, places: &Places) -> Vec<u8> {
+        match self {
+            Slot::Unread => vec![MEM],
+            Slot::Dst => places.ints_dst.iter().copied().chain(double_pins()).collect(),
+            Slot::Float => places.floats_dst.clone(),
+            Slot::Src => places.ints_src.iter().copied().chain(double_pins()).collect(),
+        }
+    }
+}
+
+/// The places a heap row reads: its entry flag and the places each operand ranges over.
 #[derive(Clone, Copy)]
 struct Uses {
     entry: Entry,
-    dst: bool,
-    a: bool,
-    b: bool,
+    dst: Slot,
+    a: Slot,
+    b: Slot,
 }
 
-const fn uses(entry: Entry, dst: bool, a: bool, b: bool) -> Uses {
+const fn uses(entry: Entry, dst: Slot, a: Slot, b: Slot) -> Uses {
     Uses { entry, dst, a, b }
 }
 
-/// Each group of heap rows with the places it reads; a row in none reads nothing.
+/// Each group of heap rows with the operands it reads, and the places each reads. Every row of `heap_library`
+/// is named in exactly one group; a row in none reads nothing. Adding a heap kind is one entry here, and adding
+/// a place to a `Slot` set reaches every row that reads it.
 const HEAP_USES: &[(Uses, &[std::ops::RangeInclusive<u8>])] = &[
-    (uses(Entry::Never, true, false, false), &[CAPTURE_ROW..=CAPTURE_ROW, ENV_ROW..=ENV_ROW, FIELD_ROW..=FIELD_ROW, LENGTH_ROW..=LENGTH_ROW, THIS_ROW..=THIS_ROW,
+    // The frame, environment, global and constant reads of one destination.
+    (uses(Entry::Never, Slot::Dst, Slot::Unread, Slot::Unread), &[CAPTURE_ROW..=CAPTURE_ROW, ENV_ROW..=ENV_ROW, FIELD_ROW..=FIELD_ROW, LENGTH_ROW..=LENGTH_ROW, THIS_ROW..=THIS_ROW,
         LOAD_LOCAL_ROW..=LOAD_LOCAL_ROW, LOAD_CHECKED_ROW..=LOAD_CHECKED_ROW, GLOBAL_READ_ROW..=GLOBAL_READ_ROW, LEXICAL_READ_ROW..=LEXICAL_READ_ROW,
         CONSTANT_ROW..=CONSTANT_ROW, CALLEE_CAPTURE_ROW..=CALLEE_CAPTURE_ROW]),
-    (uses(Entry::Kept, false, true, false), &[GLOBAL_STORE_ROW..=GLOBAL_STORE_ROW, SITE_STORE_ROW..=SITE_STORE_ROW, THIS_STORE_ROW..=THIS_STORE_ROW,
+    // The stores of one operand into a global, a site or the receiver.
+    (uses(Entry::Kept, Slot::Unread, Slot::Src, Slot::Unread), &[GLOBAL_STORE_ROW..=GLOBAL_STORE_ROW, SITE_STORE_ROW..=SITE_STORE_ROW, THIS_STORE_ROW..=THIS_STORE_ROW,
         IC_SET_ROW..=IC_SET_ROW, IC_SET_INT_ROW..=IC_SET_INT_ROW, IC_KNOWN_SET_ROW..=IC_KNOWN_SET_INT_ROW]),
-    (uses(Entry::Kept, true, false, false), &[SITE_ROW..=SITE_ROW, THIS_SITE_ROW..=THIS_SITE_ROW, HELD_ROW..=HELD_ROW, IC_GET_ROW..=IC_GET_ROW, IC_GET_HOLDER_ROW..=IC_GET_HOLDER_ROW, IC_KNOWN_GET_ROW..=IC_KNOWN_GET_ROW]),
-    (uses(Entry::Kept, true, false, true), &[INDEX_ROW..=INDEX_ROW]),
-    (uses(Entry::Always, true, false, true), &[TYPED_INDEX_ROW..=TYPED_INDEX_LAST]),
-    (uses(Entry::Always, false, true, true), &[TYPED_STORE_ROW..=TYPED_STORE_LAST]),
-    (uses(Entry::Always, true, false, false), &[TYPED_LENGTH_ROW..=TYPED_LENGTH_ROW]),
-    (uses(Entry::Kept, false, true, true), &[STORE_ROW..=STORE_ROW]),
-    (uses(Entry::Never, false, true, false), &[STORE_LOCAL_ROW..=STORE_LOCAL_ROW, STORE_CHECKED_ROW..=STORE_CHECKED_ROW, CAPTURE_SET_ROW..=CAPTURE_SET_ROW,
-        ENV_SET_ROW..=ENV_SET_ROW, ENV_DEFINE_ROW..=ENV_DEFINE_ROW,
-        APPEND_ROW..=APPEND_ROW, LEXICAL_WRITE_ROW..=LEXICAL_WRITE_ROW]),
-    (uses(Entry::Never, true, false, true), &[CHAR_CODE_AT_ROW..=CHAR_CODE_AT_ROW]),
-    (uses(Entry::Never, true, false, false), &[PARSE_INT_ROW..=PARSE_INT_ROW]),
-    (uses(Entry::Kept, false, false, false), &[ADD_PACKED_ROW..=ADD_PACKED_ROW, ADD_ARENA_ROW..=ADD_ARENA_ROW, ADD_EITHER_ROW..=ADD_EITHER_ROW,
+    // The reads of one destination from a site, the receiver's site, a held field or an inline cache.
+    (uses(Entry::Kept, Slot::Dst, Slot::Unread, Slot::Unread), &[SITE_ROW..=SITE_ROW, THIS_SITE_ROW..=THIS_SITE_ROW, HELD_ROW..=HELD_ROW, IC_GET_ROW..=IC_GET_ROW, IC_GET_HOLDER_ROW..=IC_GET_HOLDER_ROW, IC_KNOWN_GET_ROW..=IC_KNOWN_GET_ROW]),
+    (uses(Entry::Kept, Slot::Dst, Slot::Unread, Slot::Src), &[INDEX_ROW..=INDEX_ROW]),
+    // `charCodeAt` reads its receiver's frame slot and an index place; `parseInt` reads its string's frame slot.
+    (uses(Entry::Never, Slot::Dst, Slot::Unread, Slot::Src), &[CHAR_CODE_AT_ROW..=CHAR_CODE_AT_ROW]),
+    (uses(Entry::Never, Slot::Dst, Slot::Unread, Slot::Unread), &[PARSE_INT_ROW..=PARSE_INT_ROW]),
+    // A typed element read (a double destination) and store, and the typed count.
+    (uses(Entry::Always, Slot::Float, Slot::Unread, Slot::Src), &[TYPED_INDEX_ROW..=TYPED_INDEX_LAST]),
+    (uses(Entry::Always, Slot::Unread, Slot::Src, Slot::Src), &[TYPED_STORE_ROW..=TYPED_STORE_LAST]),
+    (uses(Entry::Always, Slot::Dst, Slot::Unread, Slot::Unread), &[TYPED_LENGTH_ROW..=TYPED_LENGTH_ROW]),
+    (uses(Entry::Kept, Slot::Unread, Slot::Src, Slot::Src), &[STORE_ROW..=STORE_ROW]),
+    // The writes of one operand to a local, a capture, an environment or an append.
+    (uses(Entry::Never, Slot::Unread, Slot::Src, Slot::Unread), &[STORE_LOCAL_ROW..=STORE_LOCAL_ROW, STORE_CHECKED_ROW..=STORE_CHECKED_ROW, CAPTURE_SET_ROW..=CAPTURE_SET_ROW,
+        ENV_SET_ROW..=ENV_SET_ROW, ENV_DEFINE_ROW..=ENV_DEFINE_ROW, APPEND_ROW..=APPEND_ROW, LEXICAL_WRITE_ROW..=LEXICAL_WRITE_ROW]),
+    // The property adds, which read no operand the holes do not carry.
+    (uses(Entry::Kept, Slot::Unread, Slot::Unread, Slot::Unread), &[ADD_PACKED_ROW..=ADD_PACKED_ROW, ADD_ARENA_ROW..=ADD_ARENA_ROW, ADD_EITHER_ROW..=ADD_EITHER_ROW,
         THIS_ADD_PACKED_ROW..=THIS_ADD_PACKED_ROW, THIS_ADD_ARENA_ROW..=THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW..=THIS_ADD_EITHER_ROW]),
+    // The rows that read nothing but their holes.
+    (uses(Entry::Never, Slot::Unread, Slot::Unread, Slot::Unread), &[NAME_EITHER_ROW..=NAME_EITHER_ROW, NAME_ARENA_ROW..=NAME_ARENA_ROW, ARRAY_ROW..=ARRAY_ROW, DECLARED_ROW..=DECLARED_ROW, IC_PROOF_ROW..=IC_PROOF_ROW,
+        IDENTITY_ROW..=IDENTITY_ROW, LIVE_ROW..=LIVE_ROW, REALM_ROW..=REALM_ROW, OBJECT_ROW..=OBJECT_ROW, KEY_ROW..=KEY_ROW, FOR_IN_ROW..=FOR_IN_ROW,
+        TYPEOF_INDEX_ROW..=TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW..=TYPEOF_STRING_ROW, INSTANCEOF_ROW..=INSTANCEOF_ROW, TYPEOF_IS_ROW..=TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW..=TYPEOF_ISNOT_ROW]),
+    // The staged rows over two register operands into a frame slot (`staged_rows.rs`): a remainder, a relation or an
+    // equality as its Boolean or number. The destination is always a frame slot (`MEM`), which the planner requires.
+    (uses(Entry::Never, Slot::Unread, Slot::Src, Slot::Src), &[STAGED_REMAINDER..=STAGED_REMAINDER, STAGED_RELVAL_LT..=STAGED_RELVAL_NE, STAGED_LOOSE_EQ..=STAGED_STRICT_NE]),
+    // The staged rows over one register operand (`~`, and `RequireObjectCoercible`'s checked operand).
+    (uses(Entry::Never, Slot::Unread, Slot::Src, Slot::Unread), &[STAGED_BITWISE_NOT..=STAGED_BITWISE_NOT, STAGED_COERCIBLE..=STAGED_COERCIBLE]),
+    // The staged rows that read no operand: `InitializeTdz` of a frame local's slot (the hole) and `void`'s `undefined`.
+    (uses(Entry::Never, Slot::Unread, Slot::Unread, Slot::Unread), &[STAGED_INIT_LOCAL..=STAGED_INIT_LOCAL, STAGED_VOID..=STAGED_VOID]),
 ];
+
+/// Whether a heap code has a row: the typed kinds of `NON_NATIVE_KINDS` have none.
+fn has_row(heap: u8) -> bool {
+    let typed = |first: u8| heap.checked_sub(first).filter(|&kind| kind < TYPED_KINDS);
+    match typed(TYPED_INDEX_ROW).or_else(|| typed(TYPED_STORE_ROW)) {
+        Some(kind) => !NON_NATIVE_KINDS.contains(&kind),
+        None => true,
+    }
+}
 
 /// The heap row whose stencil computes `code`: the places a row ignores are fixed.
 pub fn heap_canonical((heap, entry, dst, a, b): HeapCode) -> HeapCode {
-    let row = HEAP_USES.iter().find(|(_, rows)| rows.iter().any(|rows| rows.contains(&heap))).map_or(uses(Entry::Never, false, false, false), |(row, _)| *row);
+    let row = HEAP_USES.iter().find(|(_, rows)| rows.iter().any(|rows| rows.contains(&heap))).map_or(uses(Entry::Never, Slot::Unread, Slot::Unread, Slot::Unread), |(row, _)| *row);
     let entry = match row.entry {
         Entry::Never => false,
         Entry::Kept => entry,
         Entry::Always => true,
     };
-    (heap, entry, if row.dst { dst } else { MEM }, if row.a { a } else { MEM }, if row.b { b } else { MEM })
+    let read = |slot: Slot, place: u8| if matches!(slot, Slot::Unread) { MEM } else { place };
+    (heap, entry, read(row.dst, dst), read(row.a, a), read(row.b, b))
 }
 
 /// The name of a heap row's stencil symbol.
@@ -225,71 +278,24 @@ pub fn heap_name((heap, entry, dst, a, b): HeapCode) -> String {
     format!("h_{heap}_{}_{dst}_{a}_{b}", u8::from(entry))
 }
 
-/// The inline-cache rows (`ic_rows.rs`), each as the last entry of its site (`entry` false) and
-/// as an entry followed by another (`entry` true, which hands a miss to the next row).
-fn cache_rows(dsts: &[u8], srcs: &[u8], rows: &mut BTreeSet<HeapCode>) {
-    for chained in [false, true] {
-        for &dst in dsts {
-            rows.extend([IC_GET_ROW, IC_GET_HOLDER_ROW, IC_KNOWN_GET_ROW].map(|heap| heap_canonical((heap, chained, dst, MEM, MEM))));
-        }
-        for &a in srcs {
-            rows.extend([IC_SET_ROW, IC_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_KNOWN_SET_INT_ROW].map(|heap| heap_canonical((heap, chained, MEM, a, MEM))));
-        }
-    }
-    rows.insert(heap_canonical((IC_PROOF_ROW, false, MEM, MEM, MEM)));
-}
-
-/// The typed element rows: each native kind's read over a Number destination (the place of a Number the row
-/// reads) and its store, and the count read.
-fn typed_rows(dsts: &[u8], srcs: &[u8], rows: &mut BTreeSet<HeapCode>) {
-    let floats = Places::all().floats_dst;
-    for kind in (0..TYPED_KINDS).filter(|kind| !NON_NATIVE_KINDS.contains(kind)) {
-        for &dst in &floats {
-            rows.extend(srcs.iter().map(|&b| heap_canonical((TYPED_INDEX_ROW + kind, true, dst, MEM, b))));
-        }
-        for (&a, &b) in srcs.iter().flat_map(|a| srcs.iter().map(move |b| (a, b))) {
-            rows.insert(heap_canonical((TYPED_STORE_ROW + kind, true, MEM, a, b)));
-        }
-    }
-    rows.extend(dsts.iter().map(|&dst| heap_canonical((TYPED_LENGTH_ROW, true, dst, MEM, MEM))));
-}
-
-/// Every heap row the library holds, canonical, once.
+/// Every heap row the library holds, canonical, once: each group's rows over both entry flags and every
+/// combination of the places its operands range over (`heap_canonical` folds the ones a row ignores).
 pub fn heap_library() -> Vec<HeapCode> {
     let places = Places::all();
-    let everywhere = |sources: &[u8]| -> Vec<u8> { sources.iter().copied().chain(double_pins()).collect() };
-    let (dsts, srcs) = (everywhere(&places.ints_dst), everywhere(&places.ints_src));
     let mut rows = BTreeSet::new();
-    for entry in [false, true] {
-        for &dst in &dsts {
-            for heap in [CAPTURE_ROW, INDEX_ROW, FIELD_ROW, SITE_ROW, LENGTH_ROW, THIS_SITE_ROW, HELD_ROW, GLOBAL_READ_ROW, CONSTANT_ROW] {
-                rows.extend(srcs.iter().map(|&b| heap_canonical((heap, entry, dst, MEM, b))));
+    for (row, ranges) in HEAP_USES {
+        let (dst_set, a_set, b_set) = (row.dst.set(&places), row.a.set(&places), row.b.set(&places));
+        for heap in ranges.iter().flat_map(|range| range.clone()).filter(|&heap| has_row(heap)) {
+            for entry in [false, true] {
+                for &dst in &dst_set {
+                    for &a in &a_set {
+                        for &b in &b_set {
+                            rows.insert(heap_canonical((heap, entry, dst, a, b)));
+                        }
+                    }
+                }
             }
         }
-        for (&a, &b) in srcs.iter().flat_map(|a| srcs.iter().map(move |b| (a, b))) {
-            rows.insert(heap_canonical((STORE_ROW, entry, MEM, a, b)));
-        }
-        for heap in [GLOBAL_STORE_ROW, SITE_STORE_ROW, THIS_STORE_ROW] {
-            rows.extend(srcs.iter().map(|&a| heap_canonical((heap, entry, MEM, a, MEM))));
-        }
     }
-    typed_rows(&dsts, &srcs, &mut rows);
-    for &dst in &dsts {
-        rows.extend([THIS_ROW, LOAD_LOCAL_ROW, LOAD_CHECKED_ROW, ENV_ROW, LEXICAL_READ_ROW, CALLEE_CAPTURE_ROW].map(|heap| heap_canonical((heap, false, dst, MEM, MEM))));
-    }
-    for heap in [STORE_LOCAL_ROW, STORE_CHECKED_ROW, CAPTURE_SET_ROW, ENV_SET_ROW, ENV_DEFINE_ROW, APPEND_ROW, LEXICAL_WRITE_ROW] {
-        rows.extend(srcs.iter().map(|&a| heap_canonical((heap, false, MEM, a, MEM))));
-    }
-    for heap in ADD_ROWS {
-        rows.extend([false, true].map(|chained| heap_canonical((heap, chained, MEM, MEM, MEM))));
-    }
-    rows.extend(NAME_ROWS.map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
-    rows.extend([ARRAY_ROW, IDENTITY_ROW, DECLARED_ROW, LIVE_ROW, REALM_ROW, OBJECT_ROW, KEY_ROW, FOR_IN_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, INSTANCEOF_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW].map(|heap| heap_canonical((heap, false, MEM, MEM, MEM))));
-    // `charCodeAt` reads its receiver's frame slot and an index place; `parseInt` reads its string's frame slot.
-    for &dst in &dsts {
-        rows.insert(heap_canonical((PARSE_INT_ROW, false, dst, MEM, MEM)));
-        rows.extend(srcs.iter().map(|&b| heap_canonical((CHAR_CODE_AT_ROW, false, dst, MEM, b))));
-    }
-    cache_rows(&dsts, &srcs, &mut rows);
     rows.into_iter().collect()
 }

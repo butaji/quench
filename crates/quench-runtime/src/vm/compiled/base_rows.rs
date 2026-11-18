@@ -35,8 +35,6 @@ pub(super) enum Heap {
     TypedLength,
     /// The field value the loop entry recorded: its byte offset in the record at hole 1.
     Field,
-    /// The array word at hole 1 is a direct array (what `RequireObjectCoercible` of one proves).
-    Array,
     /// The data field the site's field cache entry names, own or held by the receiver's prototype
     /// (`entry::site_read`), read from the object register whose frame offset sits above the
     /// destination's in hole 0 (hole 2: the entry's byte offset).
@@ -183,6 +181,10 @@ pub(super) enum Heap {
     /// hole 2 names, moving between the shapes of hole 0 (`library::ADD_AFTER_AT`), where it holds the empty
     /// name in `form`'s storage. A hit continues at TAKEN; a miss leaves into the helper step after the row.
     Name { form: Form },
+    /// A staged row of the `library::STAGED_FIRST..=STAGED_LAST` run (`staged_rows.rs`), by its code: a fast arm over the
+    /// register operands the planner names (`steps::fast_arm`), its destination a frame slot, which a miss leaves for the
+    /// helper step after the row. A hit continues at TAKEN.
+    Staged(u8),
 }
 
 /// The storage forms an add row exists for, in the order of `library::ADD_ROWS` (packed, arena, either).
@@ -203,7 +205,15 @@ pub(super) struct HeapRow {
 impl Heap {
     /// The row's code in `quench_bjit::numeric::library`.
     pub(super) fn code(self) -> u8 {
-        self.slot_code().or_else(|| self.element_code()).or_else(|| self.object_code()).or_else(|| self.test_code()).or_else(|| self.global_code()).unwrap_or_else(|| self.other_code())
+        self.slot_code().or_else(|| self.element_code()).or_else(|| self.object_code()).or_else(|| self.test_code()).or_else(|| self.global_code()).or_else(|| self.staged_code()).unwrap_or_else(|| self.other_code())
+    }
+
+    /// The code of a staged row, which names its own (`library::STAGED_*`).
+    fn staged_code(self) -> Option<u8> {
+        match self {
+            Heap::Staged(code) => Some(code),
+            _ => None,
+        }
     }
 
     /// The code of a row addressed by a frame, capture or environment slot.
@@ -288,7 +298,6 @@ impl Heap {
     /// The code of the remaining rows: arrays, constants, names and adds.
     fn other_code(self) -> u8 {
         match self {
-            Heap::Array => library::ARRAY_ROW,
             Heap::Length => library::LENGTH_ROW,
             Heap::CharCodeAt => library::CHAR_CODE_AT_ROW,
             Heap::ParseInt => library::PARSE_INT_ROW,
