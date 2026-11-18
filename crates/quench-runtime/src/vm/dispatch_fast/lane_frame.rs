@@ -130,6 +130,9 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     arguments: Option<(*mut (), unsafe fn(*mut (), u16) -> Option<Value>)>,
     /// The running frame's captured environment, for a staged environment row (`Decoder::Names`).
     environment: Option<EnvironmentReads>,
+    /// The global object's own data field a global-name store writes through the record's hint,
+    /// where the row is a `StoreName` (`global_name_store`).
+    global_store: Option<GlobalStore>,
     /// The constants, local slots and outer captures the staged row's operands name.
     reads: Reads,
 }
@@ -141,6 +144,13 @@ struct EnvironmentReads {
     context: *mut (),
     read: unsafe fn(*mut ()) -> Option<*mut crate::heap::EnvironmentSlots>,
     write: unsafe fn(*mut (), u16) -> Option<*mut crate::heap::EnvironmentSlots>,
+/// A row's global-name store: the lane context and the record's own hint, which the store
+/// writes through (`global_name_store`).
+#[derive(Clone, Copy)]
+struct GlobalStore {
+    cx: *mut (),
+    hint: crate::vm::FieldCache,
+    store: unsafe fn(*mut (), crate::vm::FieldCache, u32, Value) -> bool,
 }
 
 impl<const ACC: u8> LaneFrame<ACC> {
@@ -148,7 +158,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, reads: Reads::NONE }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -172,7 +182,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, reads: Reads::NONE }
     }
 }
 
@@ -406,6 +416,23 @@ impl<const ACC: u8> crate::staged::GlobalFrame<Concrete> for LaneFrame<ACC> {
         self.registers.set(destination, value);
         Some(())
     }
+
+    #[inline(always)]
+    fn global_write(&mut self, _stage: &mut Concrete, _source: Register, atom: u32, _site: u16, value: u64, _initialize: bool) -> Option<()> {
+        let GlobalStore { cx, hint, store } = self.global_store?;
+        // SAFETY: the store was made for the lane context this frame runs in.
+        unsafe { store(cx, hint, atom, Value::from_bits(value)) }.then_some(())
+    }
+}
+
+/// The store of `value` to the global object's own writable data field `atom` that `hint` names
+/// (`GlobalFrame::global_write`): it runs no guest code, and `false` where the hint misses.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+unsafe fn global_name_store<H: Host>(cx: *mut (), hint: crate::vm::FieldCache, atom: u32, value: Value) -> bool {
+    let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
+    vm.hinted_own_field_store_hit(hint, vm.realm.globals, atom, value)
 }
 
 impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {}
@@ -581,7 +608,7 @@ pub(in crate::vm::dispatch_fast) const fn lane_runs_row(op: Op) -> bool {
 /// The frame `lane_row` steps opcode `OP`'s row over: the register file and the carried view, and
 /// the running frame's local slots where the row is a local one (`Decoder::Local`).
 #[inline(always)]
-fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneContext<H>, r: Registers, view: Carried) -> LaneFrame<ACC> {
+fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction, view: Carried) -> LaneFrame<ACC> {
     let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Local)) };
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
         let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
@@ -593,7 +620,13 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
             |context, slot| unsafe { super::arguments_count::<H, false>(context.cast(), slot) }
         };
         let environment = EnvironmentReads { context: cx.cast(), read: environment_read::<H>, write: environment_write_storage::<H> };
-        return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), environment: Some(environment),
+        // A global-name store writes through the record's own hint (`global_name_store`).
+        let global_store = if const { OP == crate::staged::GLOBAL_WRITE_ROW } {
+            Some(GlobalStore { cx: cx.cast(), hint: i.field_hint(), store: global_name_store::<H> })
+        } else {
+            None
+        };
+        return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), environment: Some(environment), global_store,
             ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Value)) } {
@@ -627,6 +660,7 @@ const fn row_miss<H: Host>(op: Op) -> Handler {
         crate::staged::Miss::ArgumentsBinding => super::lane_frame_arguments::<H, false>,
         crate::staged::Miss::EnvironmentLoad => super::lane_load_local::<H>,
         crate::staged::Miss::EnvironmentStore => super::lane_store_local::<H>,
+        crate::staged::Miss::StoreNameFirst => super::lane_store_name_first::<H>,
         crate::staged::Miss::General | crate::staged::Miss::CellTruth { .. } => lane_general_step::<H>,
     }
 }
@@ -745,7 +779,7 @@ lane_handler! {
             unsafe { vm(cx) }.heap.arena_values_base()
         } else { std::ptr::null() };
         let mut stage = Concrete::new(property_values);
-        let mut frame = row_frame::<H, OP, ACC, FLAG>(cx, r, view);
+        let mut frame = row_frame::<H, OP, ACC, FLAG>(cx, r, i, view);
         match row_step!(LaneFields::<OP, FLAG>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Value(value) => {
                 // A row that answers its value without writing its register (`row_writes_result`):

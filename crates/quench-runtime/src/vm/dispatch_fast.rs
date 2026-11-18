@@ -406,8 +406,8 @@ pub(super) struct LaneView {
     /// hold, whose own-field hints a shape compaction clears.
     field_records: Box<[u32]>,
     /// The by-name load and store records past the loop headers its sites hold, whose
-    /// global-object hints (`lane_load_name_bound`, `lane_store_global_name`) a shape
-    /// compaction clears, and a change of the global
+    /// global-object hints (`lane_load_name_bound`, the `StoreName` row's `global_name_store`)
+    /// a shape compaction clears, and a change of the global
     /// lexical names they answer past (`LaneView::clear_name_hints`).
     name_records: Box<[u32]>,
 }
@@ -14942,11 +14942,13 @@ fn lane_running_function<H: Host>(cx: *mut LaneContext<H>) -> u32 {
 const UNDEFINED_GLOBAL: &str = "undefined";
 
 script_handler! {
-    /// A `StoreName`'s first run: an assignment to a name the global object answers whenever
-    /// no global lexical binding shadows it (as `lane_name_resolution` decides for a read)
-    /// takes `lane_store_global_name`, a `var`'s initializer too, which stores as one: the
-    /// declaration made the property, and a lexical binding is never hinted. Any other store
-    /// always takes the general path.
+    /// A `StoreName` row's miss (`Miss::StoreNameFirst`), the name's first-run resolution: an
+    /// assignment to a name the global object answers whenever no global lexical binding
+    /// shadows it (as `lane_name_resolution` decides for a read) takes
+    /// `lane_store_global_name_miss`, a `var`'s initializer too, which stores as one: the
+    /// declaration made the property, and a lexical binding is never hinted. The record stays
+    /// on its row, which stores through the hint this arm sets. Any other store always takes
+    /// the general path.
     #[inline(never)]
     fn lane_store_name_first<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
@@ -14957,8 +14959,7 @@ script_handler! {
             && code.function_get(function as usize).is_some_and(|function| function.names_resolve_statically(code))
             && vm.programs.names_are_global(unsafe { (*cx).program });
         if global {
-            requicken::<H>(ip, lane_store_global_name::<H>);
-            sibling!(lane_store_global_name::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(lane_store_global_name_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         if code.function_get(function as usize).is_some_and(|body| body.call_plan(code).holds_window_scope()) {
             requicken::<H>(ip, scoped_names::scoped_store_name::<H>());
@@ -14970,21 +14971,8 @@ script_handler! {
 }
 
 script_handler! {
-    /// A global name store (`lane_store_name_first`) through its record's hint: the global
-    /// object's own writable data field, which no realm's lexical declaration shadows while
-    /// the hint is held.
-    fn lane_store_global_name<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        if !vm.hinted_own_field_store_hit(i.field_hint(), vm.realm.globals, i.imm(), r.get(i.a)) {
-            sibling!(lane_store_global_name_miss::<H>, r, ip, Carried::script_in(cx, view))
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_store_global_name` past its hint: the global object's own writable data field,
-    /// which becomes the hint where no realm declares the name lexically
+    /// The global name store past the row's hint (`global_name_store`): the global object's own
+    /// writable data field, which becomes the hint where no realm declares the name lexically
     /// (`Vm::global_name_hintable`); any other store takes the general path, a shadowed name's
     /// from then on.
     #[inline(never)]
@@ -21202,7 +21190,6 @@ const fn iterator_handler<H: Host>(opcode: Op) -> Option<Handler> {
 /// branch tests, which read it.
 const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
-        Class::StoreName => Some(lane_store_name_first::<H>),
         Class::DefineArrayElement => Some(lane_define_array_element::<H>),
         Class::StoreLocal => Some(lane_store_local::<H>),
         Class::LoadCallee => Some(lane_load_callee::<H>),

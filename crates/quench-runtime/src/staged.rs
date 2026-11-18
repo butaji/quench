@@ -144,6 +144,9 @@ pub(crate) enum Miss {
     /// An environment write the frame cannot make in place: the lane's local store
     /// (`lane_store_local`), which takes the binding rules.
     EnvironmentStore,
+    /// A global-name store the frame does not hold (its hint misses): the name's first-run
+    /// resolution, which resolves the store and holds the record on its row.
+    StoreNameFirst,
 }
 
 /// The row of `op`'s miss route (`Miss`).
@@ -154,6 +157,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
         Op::ArgumentsLength => Miss::ArgumentsBinding,
         Op::LoadEnvLocal => Miss::EnvironmentLoad,
         Op::StoreEnvLocal => Miss::EnvironmentStore,
+        Op::StoreName => Miss::StoreNameFirst,
         _ => match truth_jump(op) {
             Some(taken) => Miss::CellTruth { taken },
             None => Miss::General,
@@ -168,11 +172,15 @@ pub(crate) const ARGUMENTS_COUNT_ROW: u16 = Op::ArgumentsLength as u16;
 /// The opcode whose row answers a `Unary` record (`specialize_register_operands` recognizes the
 /// plain row by it).
 pub(crate) const UNARY_ROW: u16 = Op::Unary as u16;
+/// The opcode whose row stores a global name (`GlobalFrame::global_write`), which a tier names to
+/// give the row its record's hint.
+pub(crate) const GLOBAL_WRITE_ROW: u16 = Op::StoreName as u16;
 
 /// Whether `op`'s row writes its result register itself when it answers a value. A keyed for-in
-/// read (`EnumeratedGet`) answers the word it read and leaves the write to the tier.
+/// read (`EnumeratedGet`) answers the word it read and leaves the write to the tier; a global
+/// store has no result register, and answers the source word it stored.
 pub(crate) const fn row_writes_result(op: Op) -> bool {
-    !matches!(op, Op::GetEnumerated)
+    !matches!(op, Op::GetEnumerated | Op::StoreName)
 }
 
 /// The truthiness on which `op` jumps, for a jump on its register's truthiness
