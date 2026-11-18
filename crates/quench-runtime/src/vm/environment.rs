@@ -1,4 +1,39 @@
-use super::name_scope::NameSource;
+//! # Name resolution entry points
+//!
+//! By-name reads walk one chain, the layers `locate_name` searches in order: `with` objects
+//! (`find_with_binding`), then the static layers (`resolve_name_source`: dynamic bindings,
+//! named bindings, locals, global lexicals, outer static owner, active global lexical). The
+//! shared walk is `locate_name` / `locate_name_without_with` (location) followed by
+//! `read_name_location` (value); the entries below differ only in what they do with it.
+//!
+//! - `load_name`: value of a by-name read; unresolvable global throws `ReferenceError`.
+//! - `load_name_call`: value and the `with` object it came from (the call's `this`); throws like `load_name`.
+//! - `load_name_typeof`: `load_name_call` with unresolvable globals read as `undefined`.
+//! - `locate_name`: the core; the `with` object if one holds the name, else the static location. Runs guest code only for `with` has/unscopables.
+//! - `locate_name_without_with`: the core minus `with`; intrinsics first, then `resolve_name_source`.
+//! - `resolve_name_source` (name_scope.rs): static layers only, returns a `NameLocation`, never reads or throws.
+//! - `read_name_location`: the read each location implies (TDZ via `checked_binding_read`, global `ReferenceError`/`undefined`).
+//! - `load_resolved_name`: value of a reference from `resolve_name`; strict unresolvable throws.
+//! - `resolve_name` / `resolve_name_reference`: ResolveName, producing the reference base (object, sentinel or `UNRESOLVABLE_NAME_REFERENCE`); no read.
+//! - `has_name_binding`: boolean existence for strict ResolveName; only guest `has` traps can run.
+//! - `name_binding`: the static `EvalBinding` the caller's metadata or capture chain declares; no value, no guest code.
+//! - `dynamic_binding_slot_in` / `dynamic_binding_in` / `dynamic_binding`: the dynamic record binding (own or outer) as a slot or value.
+//! - `outer_dynamic_binding` / `outer_dynamic_binding_in`: the owning environment and index of an outer dynamic binding.
+//! - `outer_environment_binding`: the static slot of an enclosing environment that declares the name.
+//! - `with_objects_before_binding`, `find_with_binding`, `first_with_binding`, `plain_first_with_binding`, `with_binding`: the `with` objects in scope before the binding, and their has test.
+//! - `store_name`: PutValue by name; creates a sloppy global property when nothing binds the name. `store_resolved_name` does the same for a resolved reference.
+//! - `store_with_binding`, `store_outer_dynamic_binding`, `store_direct_eval_var_binding`, `store_catch_binding`: the write-side layers of the same chain.
+//! - `direct_eval_variable_caller`, `direct_eval_catch_binding`, `direct_eval_var_binding`: a sloppy direct eval's variable scope and Annex B catch bindings.
+//! - `delete_environment_binding`: `delete name`; returns `None` where no layer declares it.
+//! - `lexical_this_owner`, `check_super_call`: the `this` binding, stored under the reserved lexical-this atom.
+//! - `load_global_object_name`, `has_global_object_binding`, `load_global_lexical_binding`, `store_global_lexical_assignment`: the global object and global lexical ends of the chain.
+//! - `dispatch_fast::lane_name_resolution`: a JIT lane's compile-time classifier (global, intrinsic, or general); it reads no bindings and does not walk the chain.
+//!
+//! Not merged into the core on purpose: the write paths (`store_name`, `store_resolved_name`)
+//! interleave PutValue ordering, mapped arguments and `with` side effects that a read does not
+//! have; `resolve_name` produces a reference, not a value, so its result is not a location to read.
+
+use super::name_scope::{DynamicSlot, NameLocation};
 use super::caller_view::CallerView;
 use super::property_key::PropertyKey;
 use super::*;
@@ -75,7 +110,7 @@ impl<H: Host> Vm<H> {
             .and_then(|atom| self.realm.global_lexical_bindings.get(&atom).copied())
     }
 
-    fn active_global_lexical_binding(&self, atom: Atom) -> Option<(usize, usize)> {
+    pub(super) fn active_global_lexical_binding(&self, atom: Atom) -> Option<(usize, usize)> {
         self.frames.iter().enumerate().rev().find_map(|(index, frame)| {
             if frame.function != super::ROOT_FUNCTION_ID || frame.this != self.realm.globals {
                 return None;
@@ -95,6 +130,12 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn active_global_lexical_value(&self, atom: Atom) -> Option<Value> {
         let (index, slot) = self.active_global_lexical_binding(atom)?;
+        self.active_global_lexical_at(index, slot)
+    }
+
+    /// The value of slot `slot` of frame `index`'s global lexical binding, from its environment
+    /// once captured, else its locals.
+    pub(super) fn active_global_lexical_at(&self, index: usize, slot: usize) -> Option<Value> {
         let frame = &self.frames[index];
         if frame.captured {
             self.heap.environment_slot(frame.env, slot)
@@ -1071,23 +1112,32 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn dynamic_binding_in(&self, lookup: &NameLookup) -> Option<Value> {
+        self.dynamic_slot_value(lookup.caller, self.dynamic_binding_slot_in(lookup)?)
+    }
+
+    /// The dynamic binding `lookup`'s name has: the activation's own (last declared), else the
+    /// outer one, unless the activation declares the name statically.
+    pub(super) fn dynamic_binding_slot_in(&self, lookup: &NameLookup) -> Option<DynamicSlot> {
         let (caller, atom) = (lookup.caller, lookup.atom);
-        if let Some(value) = self.own_dynamic_bindings(caller).and_then(|bindings| {
-            bindings
-                .iter()
-                .rev()
-                .find_map(|(candidate, value)| (*candidate == atom).then_some(*value))
-        }) {
-            return Some(value);
+        if let Some(index) = self
+            .own_dynamic_bindings(caller)
+            .and_then(|bindings| bindings.iter().rposition(|(candidate, _)| *candidate == atom))
+        {
+            return Some(DynamicSlot::Own(index));
         }
         if self.activation_has_static_binding(caller, atom) {
             return None;
         }
         let (env, index) = self.outer_dynamic_binding_in(lookup)?;
-        self.heap
-            .environment_bindings(env)?
-            .get(index)
-            .map(|(_, value)| *value)
+        Some(DynamicSlot::Outer(env, index))
+    }
+
+    /// The value at `slot` of the dynamic bindings `caller` reads it from (`dynamic_binding_slot_in`).
+    pub(super) fn dynamic_slot_value(&self, caller: &dyn CallerView, slot: DynamicSlot) -> Option<Value> {
+        match slot {
+            DynamicSlot::Own(index) => self.own_dynamic_bindings(caller)?.get(index).map(|(_, value)| *value),
+            DynamicSlot::Outer(env, index) => self.heap.environment_bindings(env)?.get(index).map(|(_, value)| *value),
+        }
     }
 
     fn activation_has_static_binding(&self, caller: &dyn CallerView, atom: Atom) -> bool {
@@ -1197,7 +1247,8 @@ impl<H: Host> Vm<H> {
         }
         if object == self.realm.globals {
             let owner = self.running_owner();
-            return self.load_name_without_with(p, owner, atom, None, false);
+            let location = self.locate_name_without_with(p, owner, atom);
+            return self.read_name_location(p, owner, atom, location, None, false);
         }
         let key = self.heap.alloc_string(self.atom_name(atom).into());
         if !self.has_property(p, object, key)? {
@@ -2042,23 +2093,68 @@ impl<H: Host> Vm<H> {
         Some(self.native_value(native))
     }
 
-    fn load_name_without_with(
+    /// Where a by-name read of `atom` in `owner` lands, with the `with` objects searched first.
+    /// This is the one lookup the by-name loads share (`load_name_call`).
+    pub(super) fn locate_name(
         &mut self,
         p: &ResidualProgram,
         owner: VarOwner,
         atom: Atom,
+    ) -> Result<NameLocation, JsError> {
+        if let Some((object, key)) = self.find_with_binding(p, owner, atom)? {
+            return Ok(NameLocation::WithObject(object, key));
+        }
+        Ok(self.locate_name_without_with(p, owner, atom))
+    }
+
+    /// `locate_name` without the object environments: an internal name's intrinsic, else the
+    /// static and dynamic layers (`resolve_name_source`).
+    pub(super) fn locate_name_without_with(&mut self, p: &ResidualProgram, owner: VarOwner, atom: Atom) -> NameLocation {
+        if self.atom_class(atom).contains(AtomClass::INTERNAL)
+            && let Some(value) = self.intrinsic_name_value(atom)
+        {
+            return NameLocation::Intrinsic(value);
+        }
+        self.resolve_name_source(p, owner, atom)
+    }
+
+    /// The value a located by-name read of `atom` yields. `cache` and `allow_unresolvable` apply
+    /// to the global object only (`load_global_object_name`).
+    fn read_name_location(
+        &mut self,
+        p: &ResidualProgram,
+        owner: VarOwner,
+        atom: Atom,
+        location: NameLocation,
         cache: Option<u16>,
         allow_unresolvable: bool,
     ) -> Result<Value, JsError> {
-        if self.atom_class(atom).contains(AtomClass::INTERNAL)
-            && let Some(value) = self.intrinsic_name_value(atom) {
-                return Ok(value);
+        let value = match location {
+            NameLocation::WithObject(object, key) => {
+                return self.get_with_binding_value(p, owner, object, key, atom);
             }
-        match self.resolve_name_source(p, owner, atom) {
-            NameSource::Value(value) => self.checked_binding_read(p, atom, value),
-            NameSource::Binding(binding) => self.load_name_binding(p, owner, binding),
-            NameSource::GlobalObject => self.load_global_object_name(p, atom, cache, allow_unresolvable),
-        }
+            NameLocation::Intrinsic(value) => return Ok(value),
+            NameLocation::Named(binding) => return self.load_name_binding(p, owner, binding),
+            NameLocation::Global => {
+                return self.load_global_object_name(p, atom, cache, allow_unresolvable);
+            }
+            NameLocation::FrameLocal(slot) => self.owner_locals(owner)[slot],
+            NameLocation::EnvironmentSlot(env, slot) => {
+                self.heap.environment_slot(env, slot).unwrap_or(Value::UNDEFINED)
+            }
+            NameLocation::Dynamic(slot) => self
+                .dynamic_slot_value(self.owner_view(owner), slot)
+                .ok_or_else(|| JsError("invalid dynamic binding".into()))?,
+            NameLocation::GlobalLexical(name) => *self
+                .realm
+                .global_lexical_bindings
+                .get(&name)
+                .ok_or_else(|| JsError("invalid global lexical binding".into()))?,
+            NameLocation::ActiveGlobalLexical(index, slot) => self
+                .active_global_lexical_at(index, slot)
+                .ok_or_else(|| JsError("invalid global lexical binding".into()))?,
+        };
+        self.checked_binding_read(p, atom, value)
     }
 
     /// Whether `atom` loaded by name in the executing activation can only denote a global
@@ -2066,7 +2162,7 @@ impl<H: Host> Vm<H> {
     /// dynamic scope access, so the compiler resolved every lexical binding statically; the
     /// code runs in the global environment, as script code or a global-scope eval; and the
     /// realm declares no global lexical binding of that name, which every started script
-    /// records before it runs. None of the dynamic layers `load_name_without_with` searches
+    /// records before it runs. None of the dynamic layers `locate_name_without_with` searches
     /// can then hold the name.
     #[inline(always)]
     pub(super) fn names_resolve_to_global_object(&self, p: &ResidualProgram, owner: VarOwner, atom: Atom) -> bool {
@@ -2124,15 +2220,17 @@ impl<H: Host> Vm<H> {
         if self.scope_names.probe.is_some() {
             self.settle_name_probe(p, atom);
         }
-        if let Some((object, key)) = self.find_with_binding(p, owner, atom)? {
-            return Ok((self.get_with_binding_value(p, owner, object, key, atom)?, object));
-        }
-        Ok((
-            self.load_name_without_with(p, owner, atom, cache, allow_unresolvable)?,
-            Value::UNDEFINED,
-        ))
+        let location = self.locate_name(p, owner, atom)?;
+        let this = match location {
+            NameLocation::WithObject(object, _) => object,
+            _ => Value::UNDEFINED,
+        };
+        let value = self.read_name_location(p, owner, atom, location, cache, allow_unresolvable)?;
+        Ok((value, this))
     }
 
+    /// `load_name_call` where an unresolvable global reads as `undefined` (`typeof name`). It
+    /// shares `load_name_call`'s single locate-then-read, so nothing is looked up twice.
     pub(super) fn load_name_typeof(
         &mut self,
         p: &ResidualProgram,
