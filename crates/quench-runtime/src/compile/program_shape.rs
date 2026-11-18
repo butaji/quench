@@ -61,7 +61,7 @@ impl ParsedProgramShape<'_> {
         let eval = matches!(self, Self::Eval(..));
         let direct = eval && !replayable && (source_bytes >= DIRECT_EVAL_STUB_BYTES || crate::trace::Dev::DirectEvalStubs.on());
         let script = matches!(self, Self::FirstCallScript) && !module && source_bytes >= FIRST_CALL_SCRIPT_BYTES;
-        Stubbing { functions: (eval || script) && replayable || direct, arrows: direct }
+        Stubbing { functions: (eval || script) && replayable || direct, arrows: direct || script && replayable }
     }
 
     /// Where in the source lazily parsed bodies begin (`lazy_bodies::parse`): past a chunk's
