@@ -156,6 +156,30 @@ impl ProgramStore {
         }
     }
 
+    /// `retire_native_calls` at a switch of the active realm, which keeps the bodies bound to
+    /// their own realm (`LaneMethod::realm_bound`): each proves it at entry and names no other.
+    ///
+    /// # Safety
+    /// As `retire_native_calls`.
+    pub(in crate::vm) unsafe fn retire_native_calls_across_realms(&self) {
+        let mut bindings = self.native_call_bindings.borrow_mut();
+        bindings.retain(|binding| {
+            if let NativeCallBinding::Published(weak) = binding
+                && let Some(code) = weak.upgrade()
+            {
+                if code.lease().is_some_and(|method| method.realm_bound) { return true; }
+                code.retire();
+                return false;
+            }
+            match binding {
+                NativeCallBinding::Published(_) => {}
+                NativeCallBinding::Region(weak) => if let Some(code) = weak.upgrade() { code.retire() },
+                NativeCallBinding::Pending { watch, .. } => if let Some(watch) = watch.upgrade() { watch.retire() },
+            }
+            false
+        });
+    }
+
     /// # Safety
     /// Realm/heap transition excludes execution using the old realm's guest locators.
     pub(in crate::vm) unsafe fn retire_native_calls(&self) {

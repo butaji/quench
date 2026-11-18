@@ -2278,7 +2278,7 @@ impl<H: Host> Vm<H> {
     fn swap_realm_global(&mut self, previous: Value, global: Value) {
         self.clear_call_targets();
         // SAFETY: native lane bodies invoke no guest callbacks/realm switches.
-        unsafe { self.programs.retire_native_calls(); }
+        unsafe { self.programs.retire_native_calls_across_realms(); }
         let leaving = ParkedRealm {
             global: previous,
             state: GlobalLexicalState {
