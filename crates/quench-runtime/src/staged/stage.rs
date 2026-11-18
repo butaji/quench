@@ -68,7 +68,7 @@ pub(crate) fn fill_by_rows<S: Stage + ?Sized>(stage: &mut S, top: S::Word, undef
 /// The two spaces share one block layout, so the gate's reading is one implementation that differs
 /// only in the mark block list it starts from.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) enum RecordSpace {
+pub(crate) enum StagedRecordSpace {
     Object,
     Function,
 }
@@ -170,7 +170,7 @@ pub(crate) trait Stage {
     /// without a barrier log: no slot representation observes the write, and the record is not
     /// one the barrier logs for this value. The one place the store barrier's layout is read;
     /// a stage without that layout answers no, and the store leaves at its miss.
-    fn store_gate(&mut self, space: RecordSpace, record_id: Self::Word, value: Self::Word) -> Self::Cond;
+    fn store_gate(&mut self, space: StagedRecordSpace, record_id: Self::Word, value: Self::Word) -> Self::Cond;
     /// Whether the dependency named by `watch` (a per-site operand) still holds: the interpreter
     /// tests it, a specializer proves it once at publication and its code pays no check (the
     /// assumption registry retires the code when it breaks); a stage without a registry answers

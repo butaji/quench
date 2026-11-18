@@ -48,9 +48,7 @@ const PROTOTYPE_METHODS: [(&str, &str); 10] = [
     ("defineCommand", "replDefineCommand"),
 ];
 
-fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    c.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 
 fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
     let key = c.string_rooted(name);

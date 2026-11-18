@@ -293,7 +293,17 @@ impl FunctionCompiler<'_, '_> {
         }
         match target {
             AssignmentTarget::ArrayAssignmentTarget(array) => {
-                let by_index = self.array_assignment_by_index(array, value);
+                let targets = if array.rest.is_some() || array.elements.is_empty() || array.elements.len() > crate::bytecode::ARRAY_PATTERN_MAX_ELEMENTS as usize { None } else {
+                    array.elements.iter().map(|element| match element {
+                        None => Some(None),
+                        Some(AssignmentTargetMaybeDefault::AssignmentTargetIdentifier(identifier)) => {
+                            let atom = self.owner.atom(identifier.name.as_str());
+                            self.stores_locally(atom, false).then_some(Some(atom))
+                        }
+                        Some(_) => None,
+                    }).collect::<Option<Vec<_>>>()
+                };
+                let direct = targets.map(|targets| self.direct_array_pattern(value, &targets, false));
                 let iterator = self.binding_iterator(value);
                 let (protected_start, error_atom) =
                     self.begin_binding_iterator_protection(iterator);
@@ -316,7 +326,7 @@ impl FunctionCompiler<'_, '_> {
                     }
                 }
                 self.end_binding_iterator_protection(iterator, protected_start, error_atom);
-                if let Some(done) = by_index {
+                if let Some(done) = direct {
                     self.patch(done);
                 }
             }
@@ -645,7 +655,18 @@ impl FunctionCompiler<'_, '_> {
                 }
             }
             BindingPattern::ArrayPattern(array) => {
-                let by_index = self.array_pattern_by_index(array, value);
+                let targets = if array.rest.is_some() || reference.is_some() || array.elements.is_empty()
+                    || array.elements.len() > crate::bytecode::ARRAY_PATTERN_MAX_ELEMENTS as usize { None } else {
+                    array.elements.iter().map(|element| match element {
+                        None => Some(None),
+                        Some(BindingPattern::BindingIdentifier(identifier)) => {
+                            let atom = self.owner.atom(identifier.name.as_str());
+                            self.stores_locally(atom, true).then_some(Some(atom))
+                        }
+                        Some(_) => None,
+                    }).collect::<Option<Vec<_>>>()
+                };
+                let direct = targets.map(|targets| self.direct_array_pattern(value, &targets, true));
                 let iterator = self.binding_iterator(value);
                 let (protected_start, error_atom) =
                     self.begin_binding_iterator_protection(iterator);
@@ -660,7 +681,7 @@ impl FunctionCompiler<'_, '_> {
                     self.bind_pattern(&rest.argument, rest_value);
                 }
                 self.end_binding_iterator_protection(iterator, protected_start, error_atom);
-                if let Some(done) = by_index {
+                if let Some(done) = direct {
                     self.patch(done);
                 }
             }
@@ -794,82 +815,31 @@ impl FunctionCompiler<'_, '_> {
         self.emit(Op::Throw, error, 0, 0, 0);
     }
 
-    /// The by-index form of array binding pattern `array` of `value`, ahead of its iterator
-    /// form: a `UNARY_ARRAY_PATTERN` test, and where it holds each element read as `value[i]`
-    /// and bound, then a jump past the iterator form, whose start the failed test lands on.
-    /// Returns that jump to patch. Only patterns of plain local names (and holes) without a
-    /// rest take it: binding one runs no guest code, so nothing between the test and the last
-    /// read can change what the test proved. `None` emits nothing.
-    fn array_pattern_by_index(&mut self, array: &oxc_ast::ast::ArrayPattern<'_>, value: Register) -> Option<usize> {
-        let count = array.elements.len() as u32;
-        if array.rest.is_some() || count == 0 || count > crate::bytecode::ARRAY_PATTERN_MAX_ELEMENTS {
-            return None;
-        }
-        let mut names = Vec::with_capacity(array.elements.len());
-        for element in &array.elements {
-            match element {
-                None => names.push(None),
-                Some(BindingPattern::BindingIdentifier(id)) => {
-                    let atom = self.owner.atom(id.name.as_str());
-                    self.local_slot(atom)?;
-                    names.push(Some(atom));
-                }
-                Some(_) => return None,
-            }
-        }
-        let holds = self.reg();
-        self.emit(Op::Unary, holds, value, 0, crate::bytecode::UNARY_ARRAY_PATTERN + count - 1);
-        let iterate = self.emit(Op::JumpFalse, holds, 0, 0, 0);
-        for (index, name) in names.into_iter().enumerate() {
-            let Some(atom) = name else { continue };
-            let key = self.literal(Constant::Number(index as f64));
+    /// The direct reads of an array pattern whose `targets` (an atom, or `None` for an
+    /// elision) each store only a local (`stores_locally`): while its `UNARY_ARRAY_PATTERN` test holds,
+    /// the pattern's iteration runs no guest code and its close calls nothing, so it is the
+    /// reads of `value`'s elements `0..targets.len()` and the stores, in order; else it jumps
+    /// to the iterator protocol the caller emits next. Every element is read before the first
+    /// store, which may overwrite `value`'s register (`[a, b] = a`). Returns the jump past the
+    /// protocol, for the caller to patch after it.
+    fn direct_array_pattern(&mut self, value: Register, targets: &[Option<Atom>], initializing: bool) -> usize {
+        let fits = self.reg();
+        self.emit(Op::Unary, fits, value, 0, crate::bytecode::UNARY_ARRAY_PATTERN + targets.len() as u32 - 1);
+        let protocol = self.emit(Op::JumpFalse, fits, 0, 0, 0);
+        let mut elements = Vec::with_capacity(targets.len());
+        for (index, target) in targets.iter().enumerate() {
+            let Some(atom) = *target else { continue };
             let element = self.reg();
+            let key = self.literal(Constant::Number(index as f64));
             self.emit(Op::GetIndex, element, value, key, 0);
-            self.initialize_atom(atom, element);
+            elements.push((atom, element));
+        }
+        for (atom, element) in elements {
+            self.store_atom_with_initialization(atom, element, initializing);
         }
         let done = self.emit(Op::Jump, 0, 0, 0, 0);
-        self.patch(iterate);
-        Some(done)
-    }
-
-    /// `array_pattern_by_index` of an array assignment pattern: only plain local names (and
-    /// holes) without defaults or a rest. Storing to one runs no guest code; a store that
-    /// throws (a constant, an uninitialized binding) throws where the iterator form's would,
-    /// and that form's close then finds no `return` either.
-    fn array_assignment_by_index(&mut self, array: &oxc_ast::ast::ArrayAssignmentTarget<'_>, value: Register) -> Option<usize> {
-        let count = array.elements.len() as u32;
-        if array.rest.is_some() || count == 0 || count > crate::bytecode::ARRAY_PATTERN_MAX_ELEMENTS {
-            return None;
-        }
-        let mut targets = Vec::with_capacity(array.elements.len());
-        for element in &array.elements {
-            match element {
-                None => targets.push(None),
-                Some(element) => {
-                    let simple = element.as_assignment_target()?.as_simple_assignment_target()?;
-                    let SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = simple else {
-                        return None;
-                    };
-                    let atom = self.owner.atom(identifier.name.as_str());
-                    self.local_slot(atom)?;
-                    targets.push(Some(simple));
-                }
-            }
-        }
-        let holds = self.reg();
-        self.emit(Op::Unary, holds, value, 0, crate::bytecode::UNARY_ARRAY_PATTERN + count - 1);
-        let iterate = self.emit(Op::JumpFalse, holds, 0, 0, 0);
-        for (index, target) in targets.into_iter().enumerate() {
-            let Some(target) = target else { continue };
-            let reference = self.prepare_assignment_reference(target);
-            let key = self.literal(Constant::Number(index as f64));
-            let element = self.reg();
-            self.emit(Op::GetIndex, element, value, key, 0);
-            self.store_assignment_reference(reference, element);
-        }
-        let done = self.emit(Op::Jump, 0, 0, 0, 0);
-        self.patch(iterate);
-        Some(done)
+        self.patch(protocol);
+        done
     }
 
     fn binding_iterator(&mut self, source: Register) -> BindingIterator {

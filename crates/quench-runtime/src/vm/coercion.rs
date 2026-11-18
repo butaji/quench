@@ -140,7 +140,7 @@ impl<H: Host> Vm<H> {
         } else {
             value
         };
-        if self.heap.is_string(primitive) || matches!(self.heap.get(primitive), Some(Cell::Symbol(_))) {
+        if self.heap.is_string(primitive) || self.heap.is_symbol(primitive) {
             return Ok(primitive);
         }
         // An array index's key, as a native's loop over a proxy or an array-like makes one per
@@ -237,7 +237,7 @@ impl<H: Host> Vm<H> {
             }
             crate::bytecode::UNARY_TYPEOF_INDEX => self.typeof_index_value(value),
             op if let Some(elements) = crate::bytecode::array_pattern_test(op) => {
-                Value::boolean(self.array_pattern_reads_elements(value, elements))
+                Value::boolean(self.array_pattern_fits(value, elements))
             }
             op @ (crate::bytecode::UNARY_TO_STRING_PRIMITIVE | crate::bytecode::UNARY_ADD_OPERAND_STRING) => return self.string_primitive(p, op, value),
             _ => return Err(JsError("unsupported unary operator".into())),
@@ -267,7 +267,7 @@ impl<H: Host> Vm<H> {
         }
         match self.heap.get(value) {
             Some(Cell::Date { milliseconds, .. }) => return Ok(*milliseconds),
-            Some(Cell::Symbol(_)) => {
+            _ if self.heap.is_symbol(value) => {
                 return Err(
                     self.type_error(program, "Cannot convert a Symbol value to a number".into())
                 );
@@ -307,7 +307,7 @@ impl<H: Host> Vm<H> {
             _ if let Some(value) = self.heap.string(value)  => return Ok(value.to_host_owned()),
             Some(Cell::Error(value)) => return Ok(value.clone()),
             Some(Cell::BigInt(value)) => return Ok(value.to_string()),
-            Some(Cell::Symbol(_)) => {
+            _ if self.heap.is_symbol(value) => {
                 return Err(
                     self.type_error(program, "Cannot convert a Symbol value to a string".into())
                 );

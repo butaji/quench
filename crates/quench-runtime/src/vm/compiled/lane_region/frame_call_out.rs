@@ -127,8 +127,7 @@ fn completion(stage: &mut Emit<'_, '_>, site: &CallOutSite, result: Option<Regis
     -> (ir::Value, RegisterFact) {
     match (holds, result) {
         (Some(holds), _) => {
-            let (yes, no) = (stage.constant(Value::TRUE.to_bits()), stage.constant(Value::FALSE.to_bits()));
-            (stage.select(holds, yes, no), RegisterFact::definition(Type::language(crate::ValueType::Boolean), Representation::Tagged))
+            (super::boolean_word(stage.builder, holds), RegisterFact::definition(Type::language(crate::ValueType::Boolean), Representation::Tagged))
         }
         (None, Some(register)) => (stage.load_u64(FRAME, site.registers, register_offset(register)),
             RegisterFact::definition(Type::ANY, Representation::Tagged)),
@@ -175,10 +174,10 @@ pub(super) fn global_write(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, 
         stage.store_u64(OBJECT_SLOTS, address, 0, value);
         return Some(());
     }
-    let (general, done) = (stage.builder.create_block(), stage.builder.create_block());
-    stage.builder.set_cold_block(general);
+    let general = super::cold_block(stage.builder);
+    let done = stage.builder.create_block();
     let record = stage.and_imm(bits, u64::from(u32::MAX));
-    emit_unlogged_property_store_guard(stage.builder, crate::staged::RecordSpace::Object, frame.payload, record, value, general);
+    emit_unlogged_property_store_guard(stage.builder, crate::staged::StagedRecordSpace::Object, frame.payload, record, value, general);
     stage.store_u64(OBJECT_SLOTS, address, 0, value);
     stage.jump(done, &[]);
     stage.builder.switch_to_block(general);

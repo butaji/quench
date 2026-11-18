@@ -104,13 +104,13 @@ impl<W, P> Operation<W, P> {
             // A closure promotes the activation's captured locals into its environment.
             Self::Allocate { allocation: Allocation::Closure { .. }, .. } => Effects {
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots).with(Region::Frame)
-                .with(Region::Records).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
             Self::Allocate { allocation: Allocation::Empty | Allocation::Array { .. } | Allocation::RegExp { .. } | Allocation::ConstArray { .. }, .. } => Effects {
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
-                .with(Region::Records).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
             Self::Allocate { allocation: Allocation::ObjectLiteral { .. } | Allocation::ObjectPair { .. } | Allocation::ArrayOf { .. } | Allocation::Template { .. }, .. } => Effects {
                 reads: RegionSet::of(Region::Frame), writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
-                .with(Region::Records).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
             _ => return self.property_effects(),
         })
     }
@@ -137,6 +137,9 @@ impl<W, P> Operation<W, P> {
             Self::RequireObjectCoercible { .. } | Self::RequireIteratorResult { .. } => Effects { may_throw: true, ..Effects::NONE },
             Self::Safepoint { .. } => Effects { may_collect: true, ..Effects::NONE },
             Self::Call(operation) => operation.effects(),
+            // A suspension resumes the activation after anything: an `await` may run guest code
+            // through PromiseResolve, and the frame's state is the generator's again.
+            Self::Suspend { .. } => Effects::ANY,
             // The memory operations answered in `memory_effects`; anything else is conservative.
             _ => Effects::ANY,
         }

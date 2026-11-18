@@ -8,6 +8,7 @@ use super::event_target_shared_vm::{argument, get, is_nullish, is_undefined, mis
 use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
 
+pub(super) use crate::modules::util_shared_vm::{validate_function, validate_number};
 pub(super) type Context<'a> = NativeContext<'a, NodeHost>;
 pub(super) type Outcome = Result<RootId, RootedError>;
 
@@ -185,21 +186,6 @@ pub(super) fn validate_object(c: &mut Context<'_>, value: RootId, name: &str) ->
         return Ok(());
     }
     Err(type_error_arg(c, value, name, "Object"))
-}
-
-/// `validateNumber(value, name)`.
-pub(super) fn validate_number(c: &mut Context<'_>, value: RootId, name: &str) -> Result<f64, RootedError> {
-    match c.rooted_value(value).and_then(|value| value.as_number()) {
-        Some(number) => Ok(number),
-        None => Err(type_error_arg(c, value, name, "number")),
-    }
-}
-
-pub(super) fn validate_function(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(), RootedError> {
-    if c.is_callable_rooted(value)? {
-        return Ok(());
-    }
-    Err(type_error_arg(c, value, name, "function"))
 }
 
 /// `${value}`, a symbol throwing.

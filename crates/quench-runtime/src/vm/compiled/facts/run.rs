@@ -206,7 +206,11 @@ impl Facts {
     /// state it proves.
     fn branch(&mut self, text: &Text<'_>, seeds: Seeds<'_>, (pc, target): (usize, usize), mut point: Point, pending: &mut Pending) {
         let instruction = text.instructions[pc];
-        let mut following = (instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump).then(|| point.clone());
+        let conditional = instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump;
+        // Only a comparison refines its edges apart; any other conditional jump sends one state
+        // both ways, with no copy.
+        let refines = conditional && instruction.op().is_jump_binary_false();
+        let mut following = refines.then(|| point.clone());
         if instruction.op().is_jump_binary_false() {
             point.refine(text.constants, instruction, false);
             if let Some(following) = following.as_mut() { following.refine(text.constants, instruction, true); }
@@ -214,7 +218,11 @@ impl Facts {
         if target <= pc { self.headers.insert(target); }
         if target == text.entry && target <= pc { self.join_backedge(&point.types); }
         self.reach(target, &point, pending, seeds);
-        if let Some(following) = following { self.reach(pc + 1, &following, pending, seeds); }
+        match following {
+            Some(following) => self.reach(pc + 1, &following, pending, seeds),
+            None if conditional => self.reach(pc + 1, &point, pending, seeds),
+            None => {}
+        }
     }
 
     /// The join of the entry's backedge inputs, without the unknown external input.
@@ -243,6 +251,9 @@ pub(in crate::vm::compiled) fn analyze(entry: usize, initial: &[Type], instructi
 /// `analyze` over `text`.
 pub(in crate::vm::compiled) fn analyze_text(text: &Text<'_>, initial: &[Type], seeds: Seeds<'_>) -> Facts {
     let mut facts = Facts::new(text.instructions.len(), initial.len(), seeds);
+    // Each reachable leader holds one row: room for every leader's (and the entry's) at once,
+    // in place of the doublings the rows' buffers grew through as blocks were reached.
+    facts.reserve_rows(text.leaders.iter().count() + 1, seeds.model.is_some());
     let mut pending = Pending::new();
     if text.entry < text.instructions.len() {
         facts.reach(text.entry, &Point::entering(initial, seeds), &mut pending, seeds);

@@ -69,7 +69,7 @@ impl Lowering<'_, '_> {
         if !self.division().folds(BindingTime::Stable) { return; }
         let Some(end) = self.loop_end(header) else { return };
         let global = self.loop_realm(header, end);
-        let folds = global.is_some() || self.unit.instructions[header..=end].iter().any(|instruction| instruction.op().is_get_field());
+        let folds = global.is_some() || self.unit.instructions[header..=end].iter().any(|instruction| matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })));
         let stable = folds && (header..=end).all(|pc| self.keeps_stable_facts(pc, self.unit.instructions[pc]));
         if !(stable || global.is_some()) || !self.enters_only_at_header(header, end) { return; }
         let exit = self.guard_exit(state, header as u32);
@@ -81,7 +81,7 @@ impl Lowering<'_, '_> {
     /// The last backedge of the loop at `header`, if one closes there.
     pub(super) fn loop_end(&self, header: usize) -> Option<usize> {
         self.unit.instructions.iter().rposition(|instruction|
-            instruction.op().is_jump() && instruction.jump_target() as usize == header).filter(|end| *end >= header)
+            matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump)) && instruction.jump_target() as usize == header).filter(|end| *end >= header)
     }
 
     /// The realm a Stable global read in `header..=end` was compiled against, if any.

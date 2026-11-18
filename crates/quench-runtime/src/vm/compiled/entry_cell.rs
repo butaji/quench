@@ -5,7 +5,7 @@ use crate::vm::dispatch_fast::LaneRecoverySpace;
 
 /// The status of a call that entered no body: its callee's entry cell held the stub, so the
 /// caller takes its helper path at the call.
-pub(in crate::vm) const LANE_BODY_NOT_ENTERED: u32 = RETURN_STATUS_BASE - 2;
+pub(in crate::vm) use quench_bjit::call_record::LANE_BODY_NOT_ENTERED;
 
 /// What a function's native callers read to enter its lane body: the entry (the stub where no
 /// body is published or it retired) and the body's own recovery space, which it is stored in
@@ -60,6 +60,7 @@ pub(in crate::vm) struct Evidence {
 }
 
 impl Evidence {
+    #[inline]
     const fn half_mask(&self) -> u64 { (1 << self.half_bits) - 1 }
 }
 
@@ -124,6 +125,7 @@ impl EntryCell {
     pub(in crate::vm) fn reset_evidence(&self) { self.counters.set(0) }
 
     /// Adds `runs` to one half (`shift` 0: leaves, `half_bits`: completions), saturating.
+    #[inline]
     fn add_half(&self, shift: u32, runs: u64) -> u64 {
         let word = self.counters.get();
         let half = ((word >> shift) & EVIDENCE.half_mask()).saturating_add(runs).min(EVIDENCE.half_mask());
@@ -136,6 +138,7 @@ impl EntryCell {
 
     /// Counts `runs` completions (a handler's run end counts one, a native caller's credit many);
     /// returns the completions so far.
+    #[inline]
     pub(in crate::vm) fn note_completions(&self, runs: u64) -> u64 { self.add_half(EVIDENCE.half_bits, runs) }
 
     /// The body's completions and leaves since it specialized: the tier model's one reader.
@@ -160,6 +163,7 @@ pub(super) const CAPTURE_ADDRESS_MASK: i64 = ((1 << CAPTURE_ADDRESS_BITS) - 1) &
 
 /// The one word a body's entry takes its captures in: the dense slots' address and count, and
 /// whether they admit every direct store (`dispatch_fast::capture_stores`).
+#[inline]
 pub(in crate::vm) fn capture_word(values: *const Value, len: usize, stores: bool) -> u64 {
     debug_assert!(values.addr() >> CAPTURE_ADDRESS_BITS == 0 && len >> (u64::BITS - CAPTURE_ADDRESS_BITS) == 0);
     values.addr() as u64 | u64::from(stores) * CAPTURE_STORES_BIT | (len as u64) << CAPTURE_ADDRESS_BITS

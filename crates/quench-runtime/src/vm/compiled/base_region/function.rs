@@ -62,6 +62,9 @@ pub(in crate::vm::compiled) struct Body {
     /// The registers its rows name past the function's own: its inlined callees' windows and the scratch of its
     /// `instanceof`/`in` jumps, whose frame slots its recovery room covers (`LaneRecoverySpace::reaching`).
     pub(in crate::vm::compiled) scratch: usize,
+    /// Whether its inline-cache rows hold shape ids, which a shape compaction renumbers
+    /// (`LaneMethod::names_shapes`).
+    pub(in crate::vm::compiled) names_shapes: bool,
 }
 
 /// What a stitch decides its call sites by: the callees they recorded and the stitch's budget, the
@@ -75,6 +78,8 @@ struct Sites<'a> {
     facts: &'a [Option<DirectFacts>],
     context: Context,
     registers: u16,
+    /// The first register the rows may write past the function's own (`inline_base`).
+    scratch: Register,
     known: Known<'a>,
     ending: Ending,
     views: Views,
@@ -140,19 +145,51 @@ fn returned(register: Register) -> Decoded {
 fn call(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstruction) -> Vec<What> {
     let (plain, returning) = instruction.split_return();
     let shape = CallShape { returning, ..CallShape::of(pc, plain, CallForm::Plain) };
-    let first = match sites.callees.inlined_call(sites.facts, region, &mut sites.context, &shape) {
-        Some(site) => What::Site(site),
-        None => What::Row(Decoded::step(Step::Call(shape), Some(shape.result))),
+    let first = match math_call(region, sites, &shape) {
+        Some(rows) => rows.into_iter().map(What::Row).collect(),
+        None => match sites.callees.inlined_call(sites.facts, region, &mut sites.context, &shape) {
+            Some(site) => vec![What::Site(site)],
+            None => vec![What::Row(Decoded::step(Step::Call(shape), Some(shape.result)))],
+        },
     };
     let completion = shape.returning.then(|| What::Row(returned(shape.result)));
-    std::iter::once(first).chain(completion).collect()
+    first.into_iter().chain(completion).collect()
+}
+
+/// A call of a native Math function a row computes (`Math.sqrt(x)`): its callee
+/// register was defined by a field read of a Stable global's member that was that native when the
+/// code was built (`GlobalRead::NativeMember`), and the call passes one argument. The rows: the
+/// callee's identity guarded (any other callee leaves at the call, for the interpreter to call it),
+/// then the staged Math operation of the argument into the result, which leaves where it is no
+/// Number. The holder's exact shape is held, so the identity is not recycled while the code runs.
+/// The interpreter's call protocol, the native's dispatch and its argument copy fold away: partial
+/// evaluation of the call on the callee the site proves.
+fn math_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -> Option<Vec<Decoded>> {
+    use crate::vm::global_facts::GlobalRead;
+    use crate::vm::Native;
+    (shape.form == CallForm::Plain && shape.argc == 1).then_some(())?;
+    let local = (shape.call_pc - region.header) as usize;
+    let defined = (0..local).rev().find(|at| region.instructions()[*at].written_registers().any(|register| register == shape.callee))?;
+    let GlobalRead::NativeMember { value, native, holder, .. } = *sites.known.globals?.get(&(region.header as usize + defined))? else { return None };
+    let kind = match native {
+        Native::MathSqrt => Kind::Sqrt,
+        Native::MathFloor => Kind::Floor,
+        Native::MathCeil => Kind::Ceil,
+        Native::MathTrunc => Kind::Trunc,
+        Native::MathAbs => Kind::Abs,
+        Native::MathRound => Kind::Round,
+        _ => return None,
+    };
+    let guard = Decoded { hole: value.to_bits(), holder: Some(holder), ..Decoded::heap(Heap::Identity, None, Some(Source::Register(shape.callee)), None) };
+    let operation = Decoded::number(kind, Some(shape.result), Some(Source::Register(shape.window)), None, None);
+    Some(vec![guard, operation])
 }
 
 /// The rows of an instruction a body makes in the scratch registers past the function's own (`scratch`): the comparison and the jump on it
 /// of an `instanceof` or `in` jump (`sites::compare_jump`). A region reads its entry record, and leaves it to `cover`.
 fn expanded(sites: &Sites, pc: u32, instruction: WideInstruction) -> Option<Vec<What>> {
-    (sites.ending == Ending::Body).then_some(())?;
-    let rows = compare_jump(sites.known, pc, instruction, sites.registers)?;
+    (sites.ending == Ending::Body && sites.scratch < crate::bytecode::REGISTER_MASK).then_some(())?;
+    let rows = compare_jump(sites.known, pc, instruction, sites.scratch)?;
     #[cfg(test)]
     note_fast(instruction.op() as u16);
     Some(rows.into_iter().map(What::Row).collect())
@@ -291,7 +328,39 @@ fn leaves(layout: &Layout, row: &Decoded) -> bool {
 /// instructions than the interpreter's call: the tier-ladder gate (`quench-gate --only ir-budget`,
 /// call_direct, call_closure, k03_call_add) says when.
 fn interprets(row: &Decoded) -> bool {
-    matches!(row.step, Some(Step::Helper | Step::CallOut | Step::Call(_)))
+    match row.step {
+        Some(Step::Helper | Step::CallOut) => true,
+        Some(Step::Call(_)) => !region_call_rows(),
+        _ => false,
+    }
+}
+
+/// Whether loop regions keep their call rows (`interprets` refuses them): never in a build, but a
+/// test of the region call protocol itself (a callee's throw, a callee changing what the entry
+/// recorded) runs under `with_region_call_rows`, so the protocol stays exact for the day calls
+/// leave `interprets`.
+#[cfg(not(test))]
+fn region_call_rows() -> bool {
+    false
+}
+
+#[cfg(test)]
+fn region_call_rows() -> bool {
+    REGION_CALL_ROWS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+thread_local! {
+    static REGION_CALL_ROWS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `body` with the calling thread's loop regions keeping their call rows.
+#[cfg(test)]
+pub(in crate::vm) fn with_region_call_rows<R>(body: impl FnOnce() -> R) -> R {
+    let previous = REGION_CALL_ROWS.with(|rows| rows.replace(true));
+    let result = body();
+    REGION_CALL_ROWS.with(|rows| rows.set(previous));
+    result
 }
 
 /// The plan of row `pc`: nothing where control never reaches it, a leave row, or the row with the
@@ -381,10 +450,23 @@ unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, 
     let started = std::time::Instant::now();
     // SAFETY: the caller's contract.
     let facts = unsafe { callees.facts() };
-    let sites = Sites { function: spec.known.program.function(spec.function as usize), id: spec.function, callees, facts: &facts, context: Context::root(spec.function, spec.registers, spec.known.stitch), registers: spec.registers, known: spec.known, ending, views };
+    let function = spec.known.program.function(spec.function as usize);
+    let sites = Sites { function, id: spec.function, callees, facts: &facts, context: Context::root(spec.function, inline_base(function, spec.registers), spec.known.stitch), registers: spec.registers, scratch: inline_base(function, spec.registers), known: spec.known, ending, views };
     let built = assemble(region, spec, sites, helpers);
     tally(&built, ending, (u64::from(region.backedge - region.header) + 1, started.elapsed().as_nanos() as u64));
     built
+}
+
+/// The first register past `function`'s own (`registers`) that the code's rows may write: an inlined
+/// callee's window and a body's scratch (`expanded`). A region and a body alike run over an activation
+/// that may keep its environment window (its header words, the environment among them, and its
+/// locals) right past its registers, in a lane activation's value stack or a VM frame's register file
+/// (`lane_context_locals_in_window`); the rows' registers start past it, so they never overlap it
+/// whatever the activation, and the run is admitted only where the storage reaches them
+/// (`dispatch_fast::lane_frame_holds_window`, `lane_body_admits`). A body's scratch written at
+/// `registers` overwrote the environment word (JetStream earley-boyer's "invalid local environment").
+fn inline_base(function: &crate::bytecode::Function, registers: u16) -> u16 {
+    registers.saturating_add(crate::vm::dispatch_fast::WINDOW_LOCALS).saturating_add(function.locals)
 }
 
 /// The bit of a widened key that says the instruction is an inlined callee's (`inlined_exit_key`).
@@ -447,15 +529,21 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     if ending == Ending::Body && stitched.rows[0].step == Some(Step::Leave) {
         return Err("first instruction leaves".to_string());
     }
-    let rows: Vec<Decoded> = stitched.rows.into_iter().enumerate().map(|(k, row)| if reached.contains(k) { row } else { Decoded::step(Step::Leave, None) }).collect();
+    let rows: Vec<Decoded> = stitched.rows.into_iter().enumerate()
+        .map(|(k, row)| if !reached.contains(k) { Decoded::step(Step::Leave, None) } else { row })
+        .collect();
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
-    let (reprs, homes, webs, decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), spec.seen);
+    let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), spec.seen);
+    proofs::prove(&span, &mut decoded, &reached);
     if ending == Ending::Region && let Some(generic) = decoded.iter().enumerate().find(|(k, row)| reached.contains(*k) && interprets(row)) {
-        return Err(format!("interprets in the loop: {:?}", generic.1.step));
+        return Err(format!("interprets in the loop: row {} {:?}", generic.0, generic.1.step));
     }
     let invalidation = spec.known.invalidation.filter(|_| decoded.iter().any(Decoded::holds_stable) && decoded.iter().any(Decoded::makes_calls));
-    let realm = (!stitched.frames.is_empty()).then_some(spec.realm).or_else(|| held_realm(&decoded));
-    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm };
+    // A body proves the realm it was compiled in at its entry, whatever it folds: a program shared by
+    // realms enters it only in that one, so a realm switch need not retire it (`LaneMethod::realm_bound`).
+    let realm = (ending == Ending::Body || !stitched.frames.is_empty()).then_some(spec.realm).or_else(|| held_realm(&decoded));
+    let relies: Vec<bool> = decoded.iter().map(|row| row.relies).collect();
+    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies };
     let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
     let (code, resumes) = link(&layout, &planned)?;
@@ -466,7 +554,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let bare = realm.is_none() && decoded.iter().all(|row| row.heap.is_none() && !row.makes_calls() && !row.step.is_some_and(Step::reads_payload));
     let records = planned.iter_mut().filter_map(|row| row.owned.take()).collect();
     let (atoms, holders) = (held_atoms(&decoded), held_holders(&decoded));
+    let names_shapes = decoded.iter().any(|row| row.ic.is_some());
     Ok(Body { code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region))), atoms, holders,
         instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,
-        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes, scratch })
+        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes, scratch, names_shapes })
 }

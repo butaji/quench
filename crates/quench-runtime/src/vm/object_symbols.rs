@@ -24,7 +24,7 @@ enum PlainCopyWrite {
 
 impl<H: Host> Vm<H> {
     pub(super) fn is_host_private_symbol(&self, key: Value) -> bool {
-        matches!(self.heap.get(key), Some(Cell::Symbol(data))
+        matches!(self.heap.symbol_data(key), Some(data)
             if data.kind == crate::heap::SymbolKind::HostPrivate)
     }
 
@@ -245,10 +245,7 @@ impl<H: Host> Vm<H> {
         if let (Some(l), Some(r)) = (self.heap.string(left), self.heap.string(right)) {
             return l == r;
         }
-        match (self.heap.get(left), self.heap.get(right)) {
-            (Some(Cell::Symbol(_)), Some(Cell::Symbol(_))) => left == right,
-            _ => false,
-        }
+        self.heap.is_symbol(left) && self.heap.is_symbol(right) && left == right
     }
 
     pub(super) fn copy_data_properties(
@@ -360,7 +357,7 @@ impl<H: Host> Vm<H> {
     /// for `Set`, no accessor or read-only property up the target's chain intercepts it. The
     /// copy then runs no guest code and cannot throw, so it gathers every value first and
     /// writes them in order. `false`, before any effect, leaves the copy to the general path.
-    fn copy_plain_properties(
+    pub(super) fn copy_plain_properties(
         &mut self,
         target: Value,
         source: Value,
@@ -591,7 +588,7 @@ impl<H: Host> Vm<H> {
     /// `object[key] = value` for a symbol `key` that `set_plain_symbol_property` completes as
     /// a successful write; `false` leaves any other store, unobserved, to the general path.
     pub(super) fn try_plain_symbol_set(&mut self, object: Value, key: Value, value: Value) -> bool {
-        matches!(self.heap.get(key), Some(Cell::Symbol(symbol)) if symbol.kind != crate::heap::SymbolKind::HostPrivate)
+        matches!(self.heap.symbol_data(key), Some(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate)
             && self.set_plain_symbol_property(object, key, value) == Some(true)
     }
 
@@ -807,7 +804,7 @@ impl<H: Host> Vm<H> {
             let values: Vec<Value> = self
                 .object_own_key_values(p, object)?
                 .into_iter()
-                .filter(|key| matches!(self.heap.get(*key), Some(Cell::Symbol(_))))
+                .filter(|key| self.heap.is_symbol(*key))
                 .collect();
             return Ok(self.array_of(&values));
         }

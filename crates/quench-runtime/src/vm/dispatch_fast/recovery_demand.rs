@@ -24,6 +24,6 @@ pub(super) fn with_demand<H: Host>(vm: &Vm<H>, room: LaneRecoverySpace) -> LaneR
 /// Whether the stacks hold the demand.
 pub(super) fn demand_met<H: Host>(vm: &Vm<H>) -> bool {
     let demand = vm.lane_stack.recovery_demand.get();
-    vm.lane_stack.activations.capacity() - vm.lane_stack.activations.len() >= demand.activations
+    vm.lane_stack.activations().capacity() - vm.lane_stack.activation_count() >= demand.activations
         && vm.lane_stack.values.room() >= demand.values
 }

@@ -80,7 +80,7 @@ pub(super) fn global_row(known: Known, pc: u32, instruction: WideInstruction) ->
 /// value the `Unary` after it names), and a store writes it.
 fn slot_row(known: Known, instruction: WideInstruction, access: Access) -> Option<Decoded> {
     match instruction.op().class() {
-        Class::LoadName | Class::LoadNameCall | Class::LoadNameTypeof => Some(Decoded {
+        _ if loads_global(instruction) => Some(Decoded {
             hole: access.offset(),
             global: Some(access),
             also: receiver(instruction),
@@ -91,7 +91,7 @@ fn slot_row(known: Known, instruction: WideInstruction, access: Access) -> Optio
                 None,
             )
         }),
-        Class::StoreName => store_row(known, instruction, access),
+        _ if stores_name(instruction) => store_row(known, instruction, access),
         _ => None,
     }
 }
@@ -101,7 +101,7 @@ fn slot_row(known: Known, instruction: WideInstruction, access: Access) -> Optio
 fn lexical_row(instruction: WideInstruction, slot: LexicalSlot) -> Option<Decoded> {
     let row = match instruction.op().class() {
         Class::LoadName | Class::LoadNameCall => Decoded { also: receiver(instruction), ..Decoded::heap(Heap::LexicalRead, Some(instruction.result_register()), None, None) },
-        Class::StoreName => Decoded::heap(Heap::LexicalWrite, None, Some(Source::Register(instruction.register_a())), None),
+        _ if stores_name(instruction) => Decoded::heap(Heap::LexicalWrite, None, Some(Source::Register(instruction.register_a())), None),
         _ => return None,
     };
     Some(Decoded { hole: slot.address as u64, lexical: Some(slot), ..row })
@@ -110,7 +110,14 @@ fn lexical_row(instruction: WideInstruction, slot: LexicalSlot) -> Option<Decode
 /// Whether `instruction` stores to a global name, which may write a field of the global object that a
 /// loop's entry record holds (`Facts::Entry`).
 pub(super) fn stores_name(instruction: WideInstruction) -> bool {
-    instruction.op().class() == Class::StoreName
+    matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::GlobalWrite { .. }))
+}
+
+/// Whether `instruction` loads a global name's value: a plain or call load, or the load a
+/// `typeof` reads (`Operation::GlobalTypeof`).
+fn loads_global(instruction: WideInstruction) -> bool {
+    matches!(instruction.op().class(), Class::LoadName | Class::LoadNameCall)
+        || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::GlobalTypeof { .. }))
 }
 
 /// The register a name call's `undefined` receiver is defined in.
@@ -156,7 +163,7 @@ pub(super) fn global_holes(
     Some(padded_holes(match heap {
         Heap::GlobalRead => [dst_hole, id, decoded.hole],
         Heap::GlobalStore => [id, a_hole, decoded.hole],
-        Heap::LexicalRead => [dst_hole, decoded.hole, 0],
+        Heap::LexicalRead | Heap::CalleeCapture => [dst_hole, decoded.hole, 0],
         Heap::LexicalWrite => [0, a_hole, decoded.hole],
         Heap::Word => [dst_hole, decoded.hole, 0],
         _ => return None,

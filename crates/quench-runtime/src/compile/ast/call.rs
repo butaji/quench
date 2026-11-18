@@ -288,7 +288,7 @@ impl FunctionCompiler<'_, '_> {
             );
             self.after_super_call(dst);
         } else {
-            let op = if Self::forwards_arguments(value) {
+            let op = if self.forwards_arguments(value) {
                 Op::CallForwardingArguments
             } else {
                 Op::Call
@@ -312,14 +312,14 @@ impl FunctionCompiler<'_, '_> {
         dst
     }
 
-    /// `f.apply(receiver, arguments)`: the call passes the activation's `arguments` binding
-    /// on, which the activation may then never materialize (`CallPlan::forwards_arguments`).
-    fn forwards_arguments(value: &CallExpression<'_>) -> bool {
+    /// `f.apply(receiver, arguments)`, or of a rest alias (`compile::rest_alias`): passes the
+    /// `arguments` binding on, never materialized then (`CallPlan::forwards_arguments`).
+    fn forwards_arguments(&self, value: &CallExpression<'_>) -> bool {
         matches!(&value.callee, Expression::StaticMemberExpression(member)
             if !member.optional && member.property.name == "apply")
             && matches!(
                 value.arguments.as_slice(),
-                [_, Argument::Identifier(arguments)] if arguments.name == "arguments"
+                [_, Argument::Identifier(arguments)] if self.names_arguments(arguments.name.as_str())
             )
     }
 
@@ -516,7 +516,10 @@ impl FunctionCompiler<'_, '_> {
             let callee = self.static_member(member);
             return (callee, self.load_this_value());
         }
-        let receiver = self.expression(&member.object);
+        let receiver = match member.object.without_parentheses() {
+            Expression::RegExpLiteral(literal) if matches!(member.property.name.as_str(), "test" | "exec") => self.regexp_literal(literal, true),
+            _ => self.expression(&member.object),
+        };
         let (callee, end) = if member.optional {
             let (callee, end, jump) = self.emit_optional_prefix(receiver);
             self.patch_instruction(jump, self.code.len() as u32);

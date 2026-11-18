@@ -46,7 +46,8 @@ fn successors(code: &[Instruction], at: usize) -> impl Iterator<Item = usize> {
     next.into_iter().chain(target_index(code, at))
 }
 
-fn reaches(code: &[Instruction], from: usize, to: usize) -> bool {
+/// Whether `from` reaches `to` without leaving the instructions between them.
+fn reaches_within(code: &[Instruction], from: usize, to: usize) -> bool {
     let mut visited = Visited::new(code.len());
     visited.insert(from);
     let mut pending = vec![from];
@@ -54,17 +55,20 @@ fn reaches(code: &[Instruction], from: usize, to: usize) -> bool {
         if at == to {
             return true;
         }
-        pending.extend(successors(code, at).filter(|next| visited.insert(*next)));
+        pending.extend(successors(code, at).filter(|next| (from..=to).contains(next) && visited.insert(*next)));
     }
     false
 }
 
-/// Every loop of `code`, by the position of the jump that closes it.
+/// Every loop of `code`, by the position of the jump that closes it: a backward jump whose
+/// target reaches it inside the code between them. A backward jump that only rejoins the
+/// straight line after a cold arm laid out past it (an `if` whose rare side sits at the end
+/// of the code) reaches its target only around an enclosing loop's back edge: it is no loop.
 pub fn loops(code: &[Instruction]) -> Vec<Loop> {
     (0..code.len())
         .filter_map(|branch| {
             let header = target_index(code, branch)?;
-            (header <= branch && reaches(code, header, branch)).then_some(Loop { header, branch })
+            (header <= branch && reaches_within(code, header, branch)).then_some(Loop { header, branch })
         })
         .collect()
 }
@@ -123,6 +127,15 @@ mod tests {
         assert_eq!(found, [Loop { header: 1, branch: 3 }]);
         let body = hottest(&code).expect("one loop");
         assert_eq!(body.len(), 3);
+    }
+
+    #[test]
+    fn a_cold_arm_that_rejoins_inside_a_loop_is_no_loop() {
+        // A loop at 0x3..0xf whose `if` at 0x7 jumps to a cold arm at 0x20 that rejoins at 0xb.
+        let code = parse(
+            "  0:\tmov    %rax,%rbx\n  3:\tadd    $0x1,%rax\n  7:\tje     0x20\n  9:\tnop\n  b:\tsub    $0x1,%rcx\n  f:\tjne    0x3\n 11:\tret\n 20:\tcvttsd2si %xmm0,%ecx\n 24:\tjmp    0xb\n",
+        );
+        assert_eq!(loops(&code), [Loop { header: 1, branch: 5 }]);
     }
 
     #[test]

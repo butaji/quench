@@ -45,7 +45,7 @@ impl<H: Host> Vm<H> {
         } else {
             match self.heap.get(object) {
                 _ if self.heap.is_string(object)  => "string",
-                Some(Cell::Symbol(_)) => "symbol",
+                _ if self.heap.is_symbol(object) => "symbol",
                 Some(Cell::BigInt(_)) => "bigint",
                 _ => "value",
             }

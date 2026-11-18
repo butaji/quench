@@ -49,9 +49,12 @@ mod wasm;
 mod wasm_codes;
 #[cfg(all(fixed_rows, target_arch = "x86_64"))]
 mod wasm_entry;
+#[cfg(all(fixed_rows, target_arch = "aarch64", not(target_vendor = "apple")))]
+#[path = "wasm_entry_a64.rs"]
+mod wasm_entry;
 mod wasm_rows;
 mod words;
-pub(crate) use facade::{Value, bytecode, heap, operations, typed_ir, units, value, value_vec, vm};
+pub(crate) use facade::{Value, ValueType, bytecode, heap, operations, typed_ir, units, value, value_vec, vm};
 pub(crate) use wasm::{WasmTrap, WasmType};
 
 use numeric::{Out, S};

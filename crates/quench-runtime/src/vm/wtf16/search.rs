@@ -40,7 +40,7 @@ impl<'a> Units<'a> {
 }
 
 /// The first offset of `needle`, which is not empty, in `haystack`.
-fn find_ascii(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+pub(crate) fn find_ascii(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if !scans(haystack.len(), needle.len()) {
         return memchr::memmem::find(haystack, needle);
     }

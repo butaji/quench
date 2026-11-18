@@ -4,7 +4,8 @@
 
 use crate::layout::{JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_VM, PROPERTY_BUFFER_BASE};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver};
-use crate::words::{hole, hole64, is_int};
+use crate::words::{hole, hole64, is_int, FIRST_TAG, HOLE_FOURTH};
+use crate::layout::words::TAG_SHIFT;
 use crate::places::tagged_place;
 use crate::stage::StencilStage;
 use crate::staged::{Frame, Stage, entry};
@@ -44,7 +45,9 @@ fn site_row<const D: u8, const CHAIN: bool>(s: S, payload: usize, object: u64) -
 #[inline(always)]
 fn site_store_row<const A: u8, const GATED: bool>(s: S, payload: usize, object: u64) -> Out {
     let value = tagged_place::<A, HOLE_A>(&s);
-    if !GATED && A == MEM && !is_int(value) {
+    // An ungated frame operand is tested: an int32 passes; a double passes where the slot's
+    // observed type holds Number, as hole 3 says (`STORE_ADMITS_DOUBLES`, `STORE_ADMITS_INT32`).
+    if !GATED && A == MEM && !is_int(value) && (value.wrapping_sub(FIRST_TAG) >> TAG_SHIFT) < hole::<HOLE_FOURTH>() as u32 as u64 {
         return Out::Exit(s);
     }
     let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;

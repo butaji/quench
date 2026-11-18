@@ -1,6 +1,6 @@
 use super::{
-    ArrayObject, Cell, CellKind, FreeSlotBitmap, FunctionRecord, Heap, IteratorRecord, Object,
-    PromiseCell,
+    ArrayObject, Cell, CellKind, CollectionRecord, CollectionStorage, FreeSlotBitmap, FunctionRecord, Heap,
+    IteratorRecord, Object, PromiseCell, SymbolData,
 };
 use crate::value::Value;
 use rustc_hash::FxHashMap;
@@ -221,6 +221,25 @@ impl MemoryProfile {
         );
     }
 
+    /// A symbol record: a symbol owns no object, so no slots, and its description's bytes.
+    pub(super) fn allocated_symbol(&mut self, identity: Value, symbol: &SymbolData) {
+        self.allocated_record(
+            identity,
+            CellKind::Symbol as usize,
+            symbol.description.as_ref().map_or(0, |description| description.len()),
+            "symbol",
+            None,
+        );
+    }
+
+    /// A collected symbol record (`freed_record_cell`, without object slots).
+    pub(super) fn freed_symbol(&mut self, identity: Value) {
+        let Some(index) = self.identity_slots.remove(&identity) else {
+            return;
+        };
+        self.freed_record(index, self.kinds[index] as usize, None);
+    }
+
     pub(super) fn allocated_iterator(
         &mut self,
         identity: Value,
@@ -237,6 +256,19 @@ impl MemoryProfile {
     }
 
     /// A collected record-space cell whose object carried `object_slots` property slots.
+    pub(super) fn allocated_collection(
+        &mut self,
+        identity: Value,
+        collection: &CollectionRecord,
+        object_slots: usize,
+    ) {
+        let (kind, name) = match collection.entries {
+            CollectionStorage::Map(_) => (CellKind::Map, "map"),
+            CollectionStorage::Set(_) => (CellKind::Set, "set"),
+        };
+        self.allocated_record(identity, kind as usize, collection.object.allocated_extra_bytes(), name, Some(object_slots));
+    }
+
     pub(super) fn freed_record_cell(&mut self, identity: Value, object_slots: usize) {
         let Some(index) = self.identity_slots.remove(&identity) else {
             return;
@@ -463,6 +495,8 @@ impl Heap {
         counts[CellKind::Object as usize] += self.promise_records.live_count();
         counts[CellKind::AwaitState as usize] = self.await_records.live_count();
         counts[CellKind::Iterator as usize] = self.iterator_records.live_count();
+        counts[CellKind::Symbol as usize] = self.symbol_records.live_count();
+        self.collection_records.for_each_live(|_, collection| counts[collection.cell_kind() as usize] += 1);
         counts[CellKind::String as usize] = self.string_records.live_count() + self.small_strings.live_count();
         counts[CellKind::WasmV128 as usize] = self.v128_records.live_count();
         self.for_each_live_value(|identity| {
@@ -498,6 +532,8 @@ impl Heap {
                 bytes[CellKind::Object as usize] += promise.object.allocated_extra_bytes();
             } else if let Some(string) = self.string(identity) {
                 bytes[CellKind::String as usize] += string.flat_unit_bytes();
+            } else if let Some(symbol) = self.symbol_data(identity) {
+                bytes[CellKind::Symbol as usize] += symbol.description.as_ref().map_or(0, |description| description.len());
             } else if let Some(cell) = self.get(identity) {
                 bytes[Self::cell_kind(cell) as usize] += Self::cell_payload_bytes(cell);
             }
@@ -513,9 +549,11 @@ impl Heap {
             + self.promise_records.allocated_bytes()
             + self.await_records.allocated_bytes()
             + self.iterator_records.allocated_bytes()
+            + self.collection_records.allocated_bytes()
             + self.string_records.allocated_bytes()
             + self.small_string_bytes()
             + self.v128_records.allocated_bytes()
+            + self.symbol_records.allocated_bytes()
             + self.live_value_payload_bytes()
             + self
                 .sparse_arrays
@@ -534,6 +572,7 @@ impl Heap {
                 + self.promise_records.high_water()
                 + self.await_records.high_water()
                 + self.iterator_records.high_water()
+                + self.collection_records.high_water()
                 + self.v128_records.high_water(),
             self.slots.capacity() * size_of::<super::Slot>(),
             self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
@@ -603,6 +642,8 @@ impl Heap {
                         && let Some(promise) = self.promise(identity)
                     {
                         promise.object.allocated_extra_bytes()
+                    } else if let Some(symbol) = self.symbol_data(identity) {
+                        symbol.description.as_ref().map_or(0, |description| description.len())
                     } else {
                         self.get(identity).map_or(0, cell_bytes)
                     }
@@ -698,14 +739,15 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::Array { object } => object.elements().capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
             Cell::WasmMemory { bytes, .. } => bytes.capacity(),
-            Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
-            Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
+            Cell::Collection(collection) => match &collection.entries {
+                CollectionStorage::Map(entries) => entries.capacity() * size_of::<(Value, Value)>(),
+                CollectionStorage::Set(entries) => entries.capacity() * size_of::<Value>(),
+            },
             Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
             Cell::WeakSet { entries, .. } => entries.allocated_bytes(),
             Cell::BigInt(value) => value.spilled_bytes(),
             Cell::Error(value) => value.capacity(),
             Cell::Promise(promise) => size_of::<super::PromiseCell>() + promise.record.reaction_heap_bytes(),
-            Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             Cell::Date { .. } => 0,
             Cell::RegExp { meta, .. } => meta.source.capacity(),
         }

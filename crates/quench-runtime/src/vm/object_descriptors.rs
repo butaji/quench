@@ -427,7 +427,7 @@ impl<H: Host> Vm<H> {
             self.materialize_lazy_data_property(p, target, PropertyKey::string(atom))?;
             return self.ordinary_own_string_property(p, target, &name, atom);
         }
-        if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+        if self.heap.is_symbol(key) {
             self.materialize_lazy_data_property(p, target, PropertyKey::symbol(key))?;
         }
         self.ordinary_own_property(p, target, key)
@@ -441,7 +441,7 @@ impl<H: Host> Vm<H> {
         target: Value,
         key: Value,
     ) -> Result<Option<(Value, PropertyAttributes)>, JsError> {
-        if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+        if self.heap.is_symbol(key) {
             let Some(value) = self.symbol_property(target, key) else {
                 return Ok(None);
             };

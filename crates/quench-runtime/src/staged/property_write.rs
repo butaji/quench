@@ -5,7 +5,7 @@
 
 use super::ic::{self, Reached};
 use super::property::{base_word, guard_receiver_shape, Owner, PlanSource, PropertyFrame, StoreArm, StoreJoin, StorePlan};
-use super::store::{own_store_proved, own_store_raw, slot_holds};
+use super::store::{own_store, own_store_proved, own_store_raw, slot_holds};
 use super::Stage;
 use crate::bytecode::{FieldBase, Register};
 use crate::typed_ir::Type;
@@ -25,6 +25,7 @@ pub(super) fn set_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     let fact = frame.value_fact(value);
     let (raw, tagged) = match frame.plans().store_plan(site) {
         Some(StorePlan::Own { arms, .. }) => (arms.iter().any(|arm| arm.raw_double), arms.iter().any(|arm| !arm.raw_double)),
+        Some(StorePlan::Entry) if frame.entry_slot_raw() => (true, false),
         _ => (false, true),
     };
     let number = if raw { frame.stored_number(stage, value, miss) } else { None };
@@ -73,10 +74,27 @@ fn store_value<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base
     let plans = frame.plans();
     let (arms, join) = match plans.store_plan(site)? {
         StorePlan::Entry => {
+            // A raw-double slot takes the binary64 word; a frame with no view of it leaves.
+            if frame.entry_slot_raw() {
+                let number = number.or_else(|| { let zero = stage.constant(0); let never = stage.ne_imm(zero, 0u32); stage.guard(never, miss).map(|()| zero) })?;
+                return frame.entry_slot_store(stage, site, number, miss).map(|()| number);
+            }
             let value = source.tagged(stage, frame);
             return frame.entry_slot_store(stage, site, value, miss).map(|()| value);
         }
         StorePlan::Own { arms, join } => (arms, join),
+        StorePlan::Layout { id, slot, join } => {
+            let base = base.map_or(FieldBase::THIS, FieldBase::register);
+            let at = (Owner::of(base)?, base_word(stage, frame, base, miss)?);
+            let tagged = value;
+            frame.stored(stage, at.0, miss,
+                #[inline(always)] |stage, frame, miss| layout_store(stage, frame, at, (id, slot), tagged?, miss),
+                #[inline(always)] move |stage: &mut S, frame: &mut F, miss: S::Miss| {
+                    let value = source.tagged(stage, frame);
+                    vm_store(stage, frame, join, at, (atom, site), (value, fact), miss)
+                })?;
+            return Some(source.answer());
+        }
         StorePlan::Add => (&[][..], StoreJoin::Add),
         StorePlan::Host => (&[][..], StoreJoin::Host),
         StorePlan::Bound => (&[][..], StoreJoin::Bound),
@@ -94,6 +112,18 @@ fn store_value<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base
             |stage, frame, miss| in_place(stage, frame, at, arms, (value, fact, number), miss), slow)?;
     }
     Some(source.answer())
+}
+
+/// The in-place store of `value` to `owner`'s `object` of layout `id` (`StorePlan::Layout`):
+/// the method-cache admission, the receiver's record, then the hinted own store, whose layout
+/// compare is the whole shape and form proof.
+#[inline(always)]
+fn layout_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, object): (Owner, S::Word),
+    (id, slot): (u32, u16), value: S::Word, miss: S::Miss) -> Option<()> {
+    frame.store_admitted(stage, miss)?;
+    let at = frame.receiver_record(stage, owner, object, false, miss)?;
+    let record_id = stage.and_imm(object, u64::from(u32::MAX));
+    own_store(stage, at.record, record_id, id, true, slot, value, miss)
 }
 
 /// The VM's completion of the store of `value`: its own-field hit, through the bound slot
@@ -159,7 +189,7 @@ fn tagged_through_layout<S: Stage>(stage: &mut S, (base, object): (S::Word, S::W
     super::slot_store::gate_open(stage, id, (value, fact), miss)?;
     let offset = stage.site(u64::from(arm.slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64);
     let address = stage.add_imm(base, offset);
-    super::slot_store::store_word(stage, address, value, super::object::Rep::Tagged);
+    super::slot_store::store_word(stage, address, value, crate::typed_ir::Representation::Tagged);
     Some(())
 }
 
@@ -181,7 +211,7 @@ fn raw_through_layout<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut 
     let super::object::Slots::Flat(base) = layout.slots else { return own_store_raw(stage, at.record, arm.slot, number, miss) };
     let offset = stage.site(u64::from(arm.slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64);
     let address = stage.add_imm(base, offset);
-    super::slot_store::store_word(stage, address, number, super::object::Rep::Float64);
+    super::slot_store::store_word(stage, address, number, crate::typed_ir::Representation::Float64);
     Some(())
 }
 
@@ -216,6 +246,12 @@ fn arm_store<S: Stage>(stage: &mut S, (record, object): (S::Word, S::Word), arm:
             stage.guard(never, miss)?;
             return Some(());
         };
+        if arm.unformed {
+            // The site left the form open: a packed record holds no run to store into.
+            let inline = super::object::inline_storage(stage, record);
+            let flat = stage.not(inline);
+            stage.guard(flat, miss)?;
+        }
         return own_store_raw(stage, record, arm.slot, number, miss);
     }
     let value = value?;

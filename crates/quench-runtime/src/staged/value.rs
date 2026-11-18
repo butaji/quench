@@ -43,7 +43,26 @@ pub(crate) fn is_heap<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     stage.eq_imm(tag, ValueLayout::HEAP_TAG)
 }
 
-/// The value word of the int32 whose zero-extended payload is `payload` (`Value::integer`).
+/// Whether `bits` is `true` or `false` (`Value::as_bool`).
+#[inline(always)]
+pub(crate) fn is_boolean<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    let (truthy, falsy) = (stage.eq_imm(bits, crate::Value::TRUE.to_bits()), stage.eq_imm(bits, crate::Value::FALSE.to_bits()));
+    stage.any(truthy, falsy)
+}
+
+/// Whether `bits` is `undefined`.
+#[inline(always)]
+pub(crate) fn is_undefined<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits())
+}
+
+/// Whether `bits` is `null`.
+#[inline(always)]
+pub(crate) fn is_null<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    stage.eq_imm(bits, crate::Value::NULL.to_bits())
+}
+
+/// The value word of an int32 whose 64-bit `payload` is its zero-extended bits (`Value::int`).
 #[inline(always)]
 pub(crate) fn int_word<S: Stage>(stage: &mut S, payload: S::Word) -> S::Word {
     stage.or_imm(payload, ValueLayout::INT_TAG)

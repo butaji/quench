@@ -715,6 +715,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    #[inline(always)]
     pub(super) fn call_native(
         &mut self,
         p: &ResidualProgram,
@@ -743,6 +744,9 @@ impl<H: Host> Vm<H> {
         };
         // String natives make text on demand; charge it before the caller's next safepoint.
         self.heap.charge_materialized_text();
+        if native.searches_regexps() {
+            return self.regexp_search_outcome(result);
+        }
         result
     }
 
@@ -771,6 +775,7 @@ impl<H: Host> Vm<H> {
         family
     }
 
+    #[inline(always)]
     fn call_native_dispatch(
         &mut self,
         p: &ResidualProgram,
@@ -855,8 +860,7 @@ impl<H: Host> Vm<H> {
                 }
                 let object = self.box_object(value)?;
                 self.with_stack.push(object);
-                self.with_scope_entered = true;
-                self.refresh_call_refusal();
+                self.enter_with_scope();
                 Ok(Value::UNDEFINED)
             }
             Native::WithExit => {
@@ -873,7 +877,6 @@ impl<H: Host> Vm<H> {
             Native::ArrayBuffer | Native::SharedArrayBuffer => {
                 Err(self.type_error(p, "constructor requires new".into()))
             }
-            native if native.is_host_control_native() => self.call_host(p, native, args),
             Native::WasmHost => self.call_wasm_host(args),
             Native::HostFunction => self.call_host_function(this, args),
             Native::Print => {
@@ -1175,17 +1178,17 @@ impl<H: Host> Vm<H> {
                 let number = self.to_number(p, value)?;
                 Ok(Value::boolean(super::number::global_number_predicate(native, number).unwrap_or_default()))
             }
-            Native::MathLog => {
-                let v = args.first().copied().unwrap_or(Value::UNDEFINED);
-                Ok(Value::number(self.to_number(p, v)?.ln()))
-            }
-            Native::MathPow => {
+            // Each argument converted in order, then the one numeric body (`number::math_numbers`).
+            Native::MathLog | Native::MathPow => {
                 let a = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let b = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                Ok(Value::number(exponentiate(
-                    self.to_number(p, a)?,
-                    self.to_number(p, b)?,
-                )))
+                let x = self.to_number(p, a)?;
+                let y = if native == Native::MathPow {
+                    self.to_number(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?
+                } else {
+                    f64::NAN
+                };
+                let result = super::number::math_numbers(native, &[x, y]).or_else(|| super::number::math_unary(native, x));
+                Ok(Value::number(result.unwrap_or(f64::NAN)))
             }
             Native::ArrayPush => self.array_push_native(p, this, args),
             Native::ArrayIsArray => {
@@ -1318,7 +1321,7 @@ impl<H: Host> Vm<H> {
             Native::NumberPrecision => self.number_format(p, this, args, native),
             Native::String => {
                 let argument = self.string_constructor_argument(args);
-                let text = if let Some(Cell::Symbol(description)) = self.heap.get(argument) {
+                let text = if let Some(description) = self.heap.symbol_data(argument) {
                     JsString::from(format!("Symbol({})", description.as_deref().unwrap_or("")))
                 } else {
                     self.coerce_js_string(p, argument)?
@@ -1645,6 +1648,8 @@ impl<H: Host> Vm<H> {
                     .unwrap_or_else(|| self.native_value(native));
                 self.construct_value_with_new_target(p, callee, callee, args)
             }
+            // Last among the guarded arms, so the named natives above dispatch by one jump.
+            native if native.is_host_control_native() => self.call_host(p, native, args),
             _ => self.call_primitive_native(p, native, this, args),
         }
     }
@@ -2166,8 +2171,8 @@ impl<H: Host> Vm<H> {
                     // Operands of one type compare as `===` does.
                     _ if let (Some(l), Some(r)) = (self.heap.string(left), self.heap.string(right)) => l == r,
                     (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) => left == right,
+                    _ if self.heap.is_symbol(left) && self.heap.is_symbol(right) => false,
                     // Two distinct Symbols, as a kind tag (`x.kind == Kind.A`) compares.
-                    (Some(Cell::Symbol(_)), Some(Cell::Symbol(_))) => false,
                     _ if self.is_object_like(left) && self.is_object_like(right) => false,
                     _ => return None,
                 },
@@ -2216,7 +2221,7 @@ impl<H: Host> Vm<H> {
         if let Some(values) = self.dense_apply_arguments(list)
             && (matches!(element_kind, ArrayLikeElementKind::Any)
                 || values.iter().all(|value| {
-                    self.heap.is_string(*value) || matches!(self.heap.get(*value), Some(Cell::Symbol(_)))
+                    self.heap.is_string(*value) || self.heap.is_symbol(*value)
                 }))
         {
             return Ok(values);
@@ -2240,7 +2245,7 @@ impl<H: Host> Vm<H> {
                 let element = self.get_property(p, self.heap.root_value(object).unwrap(), atom)?;
                 if matches!(element_kind, ArrayLikeElementKind::PropertyKey)
                     && !self.heap.is_string(element)
-                    && !matches!(self.heap.get(element), Some(Cell::Symbol(_)))
+                    && !self.heap.is_symbol(element)
                 {
                     return Err(self
                         .type_error(p, "array-like list contains an invalid property key".into()));

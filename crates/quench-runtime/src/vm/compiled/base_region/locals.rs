@@ -53,11 +53,15 @@ fn env_row(function: &Function, id: u32, instruction: WideInstruction) -> Option
     let plain_store = || instruction.optional_register_b().is_none() && instruction.result_flags() == 0
         && !function.is_self_binding_slot(instruction.local_slot());
     let define = |slot: u16, value: Source| Decoded { a: Some(value), ..Decoded::step(Step::Fast(Heap::EnvDefine(slot)), None) };
+    use crate::staged::Operation;
+    let decoded = crate::vm::compiled::decoded(instruction);
+    let env_load = matches!(decoded, Some(Operation::LoadEnvLocal { .. }));
+    let env_store = matches!(decoded, Some(Operation::StoreEnvLocal { .. }));
     match instruction.op().class() {
-        Class::LoadLocal | Class::LoadEnvLocal if !instruction.writes_numeric_local() => {
+        class if (class == Class::LoadLocal || env_load) && !instruction.writes_numeric_local() => {
             owned().map(|slot| Decoded::step(Step::Fast(Heap::EnvLocal(slot)), Some(instruction.result_register())))
         }
-        Class::StoreLocal | Class::StoreEnvLocal if plain_store() => {
+        class if (class == Class::StoreLocal || env_store) && plain_store() => {
             let value = Source::Register(instruction.register_a());
             match instruction.boolean_field(InstructionField::C)? {
                 false => owned().map(|slot| Decoded { a: Some(value), ..Decoded::step(Step::Fast(Heap::EnvStore(slot)), None) }),

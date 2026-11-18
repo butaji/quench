@@ -25,6 +25,10 @@ pub(in crate::vm) struct BodyRun<'a> {
     pub(in crate::vm) lane_context: *mut (),
     /// The activations of the running function not pushed yet (`CALLEE_ACTIVATION_PENDING`).
     pub(in crate::vm) pending: usize,
+    /// Whether the frame's heap bases are those a running body of the same run reads
+    /// (`Vm::run_nested_lane_method`): nothing allocated since that body checked them, so the
+    /// entry does not check them again.
+    pub(in crate::vm) bases_stand: bool,
 }
 
 impl<H: Host> Vm<H> {
@@ -55,12 +59,12 @@ impl<H: Host> Vm<H> {
     }
 
     /// The words an entry of `run` binds in the thread's lane frame: those of its run
-    /// (`LaneFrame::bind_run`), its registers and its stack's room, past the `pending`
+    /// (`BodyRunContext::bind_run`), its registers and its stack's room, past the `pending`
     /// activations. The frame's context.
     ///
     /// # Safety
     /// `frame` is the thread's lane frame; no reference into it is live.
-    unsafe fn bind_body_entry(&mut self, frame: *mut LaneFrame, run: &BodyRun) -> *mut CallContext {
+    unsafe fn bind_body_entry(&mut self, frame: *mut BodyRunContext, run: &BodyRun) -> *mut CallContext {
         // SAFETY: as the caller promises.
         unsafe {
             debug_assert!((*frame).scratch.len() >= run.method.scratch_width, "a body's publication sized the scratch window");
@@ -82,7 +86,7 @@ impl<H: Host> Vm<H> {
             (*dispatch).native_registers = run.registers;
             let locals = super::super::dispatch_fast::body_locals::<H>(run.lane_context);
             ((*dispatch).native_locals, (*dispatch).local_count, (*dispatch).environment_storage) = (locals.locals, locals.count, locals.environment);
-            (*dispatch).refresh_object_bases_at_entry(self);
+            if !run.bases_stand { (*dispatch).refresh_object_bases_at_entry(self); }
             let vm = self as *mut Self;
             (*dispatch).bind_lane_storage(vm);
             // A run starts with no native frames; its direct calls push their callees' windows and

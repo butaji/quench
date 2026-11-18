@@ -165,12 +165,17 @@ fn typeof_arm(operator: u32) -> Option<Heap> {
 /// word (`staged::iteration`, `staged::value`) or the backing's own layout words
 /// (`elements::append_in_room`) decide.
 fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
+    use crate::staged::Operation;
+    // The staged operation the instruction denotes names the arm where it has one.
+    match crate::vm::compiled::decoded(instruction) {
+        Some(Operation::PropertyKey { .. }) => return Some(Heap::Key),
+        Some(Operation::ForInNext { .. }) => return Some(Heap::ForIn),
+        Some(Operation::Protocol { step: crate::staged::Protocol::AppendArray { .. }, .. }) => return appends_one(instruction).then_some(Heap::Append),
+        _ => {}
+    }
     match instruction.op().class() {
         Class::SetFunctionName => names::of(known, instruction).map(names::Name::heap),
         Class::RequireIteratorResult => Some(Heap::Object),
-        Class::ToPropertyKey => Some(Heap::Key),
-        Class::AppendArray => appends_one(instruction).then_some(Heap::Append),
-        Class::ForInNext => Some(Heap::ForIn),
         Class::Unary => typeof_arm(instruction.unary_operator()),
         _ => None,
     }
@@ -241,8 +246,8 @@ fn branches_back(pc: u32, instruction: WideInstruction) -> bool {
 /// as a body's do, so a step that jumps backward may be made in place. A helper step names the register it writes, and a fast
 /// arm the register it reads; an add row also names its transition and the atom it holds unnamed.
 pub(super) fn decode_step(pc: u32, instruction: WideInstruction, known: Known, (helpers, polls): (LaneHelpers, bool)) -> Decoded {
-    match instruction.op().class() {
-        Class::Nop => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
+    match crate::vm::compiled::decoded(instruction) {
+        Some(crate::staged::Operation::Nop) => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
         _ => {
             let step = if branches_back(pc, instruction) && !polls { Step::Leave } else { lowering(instruction, known, helpers) };
             let helped = step.runs_helper();
@@ -314,8 +319,14 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
         Step::Fast(fast) => plan_guarded(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?), helpers),
         Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, None, helpers),
         Step::Return => {
-            let slot = operand(&layout.homes, decoded.a).1;
-            Ok(Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) })
+            let register = match decoded.a {
+                Some(Source::Register(register)) => register,
+                _ => return Err("return: no register".into()),
+            };
+            let mut parts = completion(layout, pc, register)?;
+            let mut first = parts.remove(0);
+            first.post = parts;
+            Ok(first)
         }
         Step::Call(shape) => plan_call(layout, shape, pc, helpers),
     }
@@ -369,12 +380,18 @@ fn plan_helper(layout: &Layout, pc: u32, decoded: &Decoded, helper: (LaneHelper,
 /// instruction's PC as the completion, as a body's `Return` does.
 pub(super) fn completing(mut run: Planned, layout: &Layout, pc: u32, result: Option<Register>) -> Result<Planned, String> {
     let web = result.ok_or("completion: the instruction writes no result")?;
-    let (place, slot) = operand(&layout.homes, Some(Source::Register(web)));
-    if matches!(place, Place::Pin(_) | Place::PinF(_)) {
-        run.post.push(Planned::of_part(call_plan::spill_part(place, layout.homes.orig[usize::from(web)])?));
-    }
-    run.post.push(Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) });
+    run.post.extend(completion(layout, pc, web)?);
     Ok(run)
+}
+
+/// The completion of the activation at `pc` with the value `web` holds: a pinned register is
+/// spilled to its frame slot first, as the stop returns the slot. Every completion (a returning
+/// instruction's, and a returning call's after its site) takes this one path.
+fn completion(layout: &Layout, pc: u32, web: Register) -> Result<Vec<Planned>, String> {
+    let (place, slot) = operand(&layout.homes, Some(Source::Register(web)));
+    let spill = matches!(place, Place::Pin(_) | Place::PinF(_)).then(|| call_plan::spill_part(place, layout.homes.orig[usize::from(web)]).map(Planned::of_part)).transpose()?;
+    let stop = Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) };
+    Ok(spill.into_iter().chain(std::iter::once(stop)).collect())
 }
 
 /// The chain of a `throw` at `pc`: the spills and the helper row, which raises, so nothing is live
@@ -455,6 +472,7 @@ pub(super) fn behind(mut fast: Planned, mut slow: Planned) -> Planned {
             Branch::Part(index) => Branch::Part(index + 1),
             pc @ Branch::Pc(_) => pc,
         });
+        part.cold = true;
         part
     }).collect();
     fast

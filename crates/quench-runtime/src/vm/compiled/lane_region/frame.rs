@@ -247,9 +247,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn boolean(&mut self, stage: &mut Emit<'_, '_>, holds: ir::Value)
         -> (ir::Value, RegisterFact) {
-        let (yes, no) = (stage.raw_const(Lane::I64, Value::TRUE.to_bits() as i64),
-            stage.raw_const(Lane::I64, Value::FALSE.to_bits() as i64));
-        let value = stage.raw_select(holds, yes, no);
+        let value = super::boolean_word(stage.builder, holds);
         (value, RegisterFact::definition(Type::language(crate::ValueType::Boolean),
             Representation::Tagged))
     }

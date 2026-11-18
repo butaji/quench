@@ -6,6 +6,7 @@ use super::*;
 use crate::staged::wasm_call::indirect_target;
 use crate::staged::wasm_machine::ConcreteTable;
 use crate::heap::{TableTarget, WasmTableElements};
+use super::compiled::InstanceContext;
 
 impl<H: Host> Vm<H> {
     /// What a table element holding `value` presents to an indirect call (`TableTarget`): the
@@ -38,6 +39,7 @@ impl<H: Host> Vm<H> {
             signature,
             entry: *function,
             instance: instance as u64,
+            body: InstanceContext::published_body(instance, *function),
         }
     }
 
@@ -76,6 +78,7 @@ impl<H: Host> Vm<H> {
     /// calls (`staged::wasm_call::indirect_target`): a validation error where the program has
     /// no such type, or where a reference whose id is not the expected one cannot be compared,
     /// which the rule meets only after the element checks.
+    #[inline(always)]
     fn wasm_indirect_element(
         &self,
         caller: ProgramId,

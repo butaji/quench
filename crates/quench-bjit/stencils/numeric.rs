@@ -11,7 +11,9 @@
 //! any write to a pinned register).
 
 use crate::bytecode::Operand;
-use crate::places::{DEST, LEFT, Places, RIGHT, Rep};
+use crate::places::{DEST, LEFT, Places, RIGHT};
+use crate::typed_ir::Representation;
+use crate::staged::math::FloatUnary;
 use crate::staged::{Concrete, Domain, Frame, NegativeZero, NumberOperation, NumericFrame, Overflow, Step, jump_if as branch_on_truth, logical_not, numeric};
 use crate::vm::operations::{I32BitwiseStage, NumberArithmetic, NumberBitwise, NumberRelation, NumberUnary, number_bitwise_f64_result};
 pub(crate) use crate::words::*;
@@ -137,12 +139,12 @@ fn bitwise_row<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: b
     let (x, y, operation) = (x as u32 as i32, y as u32 as i32, bitwise_of(K));
     let bits = operation.apply(&mut I32BitwiseStage, x, y);
     let result = if operation.keeps_int32(bits) {
-        (u64::from(bits as u32), Rep::Int32)
+        (u64::from(bits as u32), Representation::Int32)
     } else if holds_int(D) {
         return Out::Exit(frame.s);
     } else {
         // A Number past `i32::MAX` is no int word, so its bits are its tagged word.
-        (number_bitwise_f64_result(operation, x, y).to_bits(), Rep::Tagged)
+        (number_bitwise_f64_result(operation, x, y).to_bits(), Representation::Tagged)
     };
     frame.write(&mut Concrete::from_hole(0), DEST, result.0, result.1);
     finish(frame, true)
@@ -162,10 +164,10 @@ fn copy_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -
 fn guard_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
     let (mut stage, operand) = (Concrete::from_hole(0), Operand::register(LEFT));
     let proved = match D {
-        PIN..=LAST_INT_PIN => frame.int_operand(&mut stage, operand, ()).map(|word| (word, Rep::Int32)),
-        MEMINT => frame.int_operand(&mut stage, operand, ()).map(|_| (0, Rep::Tagged)),
-        PINF.. => frame.number_operand(&mut stage, operand, ()).map(|bits| (bits, Rep::Float64)),
-        _ => frame.prove_number(&mut stage, LEFT, ()).map(|()| (0, Rep::Tagged)),
+        PIN..=LAST_INT_PIN => frame.int_operand(&mut stage, operand, ()).map(|word| (word, Representation::Int32)),
+        MEMINT => frame.int_operand(&mut stage, operand, ()).map(|_| (0, Representation::Tagged)),
+        PINF.. => frame.number_operand(&mut stage, operand, ()).map(|bits| (bits, Representation::Float64)),
+        _ => frame.prove_number(&mut stage, LEFT, ()).map(|()| (0, Representation::Tagged)),
     };
     let Some((value, rep)) = proved else { return Out::Taken(frame.s) };
     if D != MEMINT && D != MEM {
@@ -240,6 +242,21 @@ fn neg_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) ->
     finish(frame, done)
 }
 
+/// The Math function `K` of the first operand, a double: the staged `NumberOperation::Math`.
+#[inline(always)]
+fn math_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    let operation = match K {
+        FLOOR => FloatUnary::Floor,
+        CEIL => FloatUnary::Ceil,
+        TRUNC => FloatUnary::Trunc,
+        ABS => FloatUnary::Abs,
+        ROUND => FloatUnary::Round,
+        _ => FloatUnary::Sqrt,
+    };
+    let done = staged(&mut frame, NumberOperation::Math { destination: DEST, source: Operand::register(LEFT), operation }).is_some();
+    finish(frame, done)
+}
+
 /// The tag of a fresh int slot: the upper half of its word.
 #[inline(always)]
 fn tag_init(s: S) -> Out {
@@ -305,6 +322,7 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
         JUMP_FALSE => truth_row::<false, D, A, B>(frame),
         NOT | NEG => unary_row::<K, D, A, B>(frame),
         REM => remainder_row::<D, A, B, SPEC>(frame),
+        MATH_FIRST..=MATH_LAST => math_row::<K, D, A, B>(frame),
         _ => tag_init(frame.s),
     }
 }

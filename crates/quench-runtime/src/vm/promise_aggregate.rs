@@ -22,7 +22,7 @@ impl<H: Host> Vm<H> {
         for (key, value) in keys.into_iter().zip(values) {
             let key = if let Some(name) = self.heap.string(key).cloned() {
                 PropertyKey::string(self.intern_js_atom(&name))
-            } else if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            } else if self.heap.is_symbol(key) {
                 PropertyKey::symbol(key)
             } else {
                 continue;

@@ -119,7 +119,7 @@ impl Lowering<'_, '_> {
         let versions: Vec<Version> = self.ranges.versioned().iter().copied().filter(|version| version.header == header).collect();
         for version in versions {
             let access = self.unit.instructions[version.pc];
-            let base = if access.op().is_get_index() { access.operand_b().register_index() } else { Some(access.register_b()) };
+            let base = if matches!(crate::vm::compiled::performed(access), Some(crate::staged::Operation::ElementRead { .. })) { access.operand_b().register_index() } else { Some(access.register_b()) };
             let array = self.loop_array(version.pc, base).expect("a versioned access indexes a hoisted array");
             if compared.contains(&(array.source, version.reach)) { continue; }
             compared.push((array.source, version.reach));

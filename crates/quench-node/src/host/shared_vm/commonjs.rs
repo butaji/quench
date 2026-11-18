@@ -209,11 +209,11 @@ pub(crate) fn source_kind_of_real_bytes(path: &Path, bytes: &[u8]) -> Result<que
 fn detect_source_kind_for_path(path: &Path, text: &str) -> quench_runtime::SourceKind {
     if path.extension().is_some_and(|extension| extension == "ts") {
         let body = script_body(text);
-        let Some((projected, has_module_declarations)) = quench_runtime::Engine::project_typescript_module_syntax(body) else {
+        let Some(has_module_syntax) = quench_runtime::Engine::typescript_has_module_syntax(body) else {
             return quench_runtime::SourceKind::Script;
         };
-        if has_module_declarations { return quench_runtime::SourceKind::Module; }
-        let wrapper = [WRAPPER_PREFIX, projected.as_ref(), WRAPPER_SUFFIX].concat();
+        if has_module_syntax { return quench_runtime::SourceKind::Module; }
+        let wrapper = [WRAPPER_PREFIX, body, WRAPPER_SUFFIX].concat();
         if valid_source(&wrapper, oxc_span::SourceType::cjs().with_typescript(true)) {
             return quench_runtime::SourceKind::Script;
         }
@@ -3055,15 +3055,8 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
         Some(crate::aot::PreparedModuleSource::Projected(text)) => text.to_owned().into(),
         _ => file_text,
     };
-    let typed_commonjs = filename.extension().is_some_and(|extension| extension == "ts" || extension == "cts");
-    let file_text = if prepared.is_none() && typed_commonjs {
-        match quench_runtime::Engine::project_typescript_module_syntax(&file_text) {
-            Some((std::borrow::Cow::Owned(source), _)) => source.into(),
-            _ => file_text,
-        }
-    } else { file_text };
     #[cfg(feature = "aot")]
-    if typed_commonjs {
+    if filename.extension().is_some_and(|extension| extension == "ts" || extension == "cts") {
         context.host_mut().record_prepared_module(filename, &file_text).map_err(RootedError::host)?;
     }
 
@@ -3118,6 +3111,7 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                     // briefly resident beside it. Its byte-order mark and `#!` line are
                     // what the prefix replaces.
                     let body_start = file_text.len() - text.len();
+                    let disk_offset_utf16 = file_text[..body_start].encode_utf16().count() as u32;
                     let mut wrapper_source = file_text.into_owned();
                     wrapper_source.reserve_exact(prefix.len() + suffix.len());
                     wrapper_source.replace_range(..body_start, prefix);
@@ -3126,6 +3120,11 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                         filename.extension().and_then(|extension| extension.to_str()),
                         Some("cts" | "ts"),
                     );
+                    if typescript {
+                        crate::host::ts_checker::prepare(
+                            filename, &wrapper_source, prefix.len()..wrapper_source.len() - suffix.len(), disk_offset_utf16,
+                        );
+                    }
                     let wrapper = match evaluate_wrapper(context, prefix, &wrapper_source, key, is_main, typescript) {
                         Ok(wrapper) => wrapper,
                         Err(_) if !quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY && declared.is_none()
@@ -3205,10 +3204,7 @@ pub(crate) fn native_commonjs_source(
         origin: Some(quench_runtime::wrapper_origin(WRAPPER_PREFIX).ok_or("CommonJS wrapper origin exceeds compiler positions")?),
         keep_records: entry, typescript,
     };
-    let body = if typescript {
-        quench_runtime::Engine::project_typescript_module_syntax(body).map(|(source, _)| source).unwrap_or_else(|| body.into())
-    } else { body.into() };
-    let source = [WRAPPER_PREFIX, body.as_ref(), WRAPPER_SUFFIX].concat();
+    let source = [WRAPPER_PREFIX, body, WRAPPER_SUFFIX].concat();
     quench_runtime::NativeSourceKey::new(&filename.to_string_lossy(), &["specialized", &options.cache_goal(), &source])
 }
 
@@ -3306,9 +3302,7 @@ fn transition_child(
     }
 }
 
-fn get(context: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    context.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 
 fn set(
     context: &mut Context<'_>,

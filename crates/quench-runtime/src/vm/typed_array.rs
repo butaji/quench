@@ -15,18 +15,21 @@ const TYPED_ARRAY_GEOMETRY_ENTRIES: usize = 8;
 /// prototype change or collection advances.
 #[derive(Clone, Copy)]
 struct TypedArrayGeometryProof {
-    /// The receiver's own shape, which proved itself neither a dictionary nor holding the name.
-    shape: u32,
-    prototype: Value,
+    /// The receiver's layout id (`Object::layout_id`): its own shape, which proved itself
+    /// neither a dictionary nor holding the name, and its prototype, one fact compared once.
+    layout: u32,
     atom: Atom,
     epoch: u64,
     /// The intrinsic accessor's native (`Vm::pure_native_getter`), fixed with the getter.
     native: Native,
 }
 
-/// The proof slot of `atom` read through `prototype`: a lookup and the proof it finds share it.
-fn geometry_slot(atom: Atom, prototype: Value) -> usize {
-    (atom as usize).wrapping_add(prototype.to_bits() as usize) % TYPED_ARRAY_GEOMETRY_ENTRIES
+/// The proof slot of `atom` read from a receiver of layout `layout`: a lookup and the proof
+/// it finds share it.
+#[inline(always)]
+fn geometry_slot(atom: Atom, layout: u32) -> usize {
+    const { assert!(TYPED_ARRAY_GEOMETRY_ENTRIES.is_power_of_two()) };
+    ((atom as usize) ^ (layout as usize)) & (TYPED_ARRAY_GEOMETRY_ENTRIES - 1)
 }
 
 #[derive(Default)]
@@ -50,27 +53,35 @@ impl<H: Host> Vm<H> {
         if data.has_side_descriptors() {
             return None;
         }
-        let (shape, prototype) = (data.shape(), data.proto());
+        let layout = data.layout_id();
         let epoch = crate::heap::prototype_layout_epoch();
-        let index = geometry_slot(atom, prototype);
-        let native = match self.typed_array_geometry.0[index].get() {
-            Some(proof) if proof.shape == shape && proof.prototype == prototype && proof.atom == atom && proof.epoch == epoch => {
-                proof.native
+        let native = match self.typed_array_geometry.0[geometry_slot(atom, layout)].get() {
+            Some(proof) if proof.layout == layout && proof.atom == atom && proof.epoch == epoch => proof.native,
+            _ => {
+                let (shape, prototype) = (data.shape(), data.proto());
+                self.prove_geometry_getter(layout, shape, prototype, atom, epoch)?
             }
-            _ => self.prove_geometry_getter(shape, prototype, atom, epoch)?,
         };
-        if native == Native::TypedArrayLengthGetter
-            && let Some(length) = self.typed_cached_length(object)
-        {
-            return Some(length);
+        if native == Native::TypedArrayLengthGetter {
+            if let Some(length) = self.typed_cached_length(object) {
+                return Some(length);
+            }
+            // The view's entry is the length proved once: make it here, so the next read of
+            // this view hits it rather than walking its buffer again.
+            self.fill_typed_view(object);
+            if let Some(length) = self.typed_cached_length(object) {
+                return Some(length);
+            }
         }
         self.pure_native_value(native, object)
     }
 
     /// The native getter `typed_array_geometry_read` reads `atom` through from a receiver of
-    /// own shape `shape` and prototype `prototype`, proved and recorded under `epoch`; `None`
-    /// where the shape is a dictionary or holds the name, or no intrinsic native accessor answers.
-    fn prove_geometry_getter(&mut self, shape: u32, prototype: Value, atom: Atom, epoch: u64) -> Option<Native> {
+    /// layout `layout`, own shape `shape` and prototype `prototype`, proved and recorded under
+    /// `epoch`; `None` where the shape is a dictionary or holds the name, or no intrinsic native
+    /// accessor answers.
+    #[inline(never)]
+    fn prove_geometry_getter(&mut self, layout: u32, shape: u32, prototype: Value, atom: Atom, epoch: u64) -> Option<Native> {
         if self.shape_is_dictionary(shape) || self.shape_slot(shape, atom).is_some() {
             return None;
         }
@@ -84,8 +95,7 @@ impl<H: Host> Vm<H> {
             link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
         }
         if crate::heap::prototype_layout_epoch() == epoch {
-            let index = geometry_slot(atom, prototype);
-            self.typed_array_geometry.0[index].set(Some(TypedArrayGeometryProof { shape, prototype, atom, epoch, native }));
+            self.typed_array_geometry.0[geometry_slot(atom, layout)].set(Some(TypedArrayGeometryProof { layout, atom, epoch, native }));
         }
         Some(native)
     }
@@ -1030,7 +1040,7 @@ impl<H: Host> Vm<H> {
             match self.heap.get(this) {
                 Some(Cell::DataView { .. }) => "#<DataView>".to_owned(),
                 Some(Cell::Date { .. }) => "[object Date]".to_owned(),
-                Some(Cell::Symbol(description)) => {
+                _ if let Some(description) = self.heap.symbol_data(this) => {
                     format!("Symbol({})", description.as_deref().unwrap_or(""))
                 }
                 Some(Cell::BigInt(_)) => self.to_string(p, this)?,

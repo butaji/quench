@@ -188,7 +188,7 @@ impl Unit {
         // A returning instruction continues at the function's terminal `Return` where it has
         // one, whose register then holds its value; otherwise it completes the activation.
         let terminal = self.instructions.len().checked_sub(1)
-            .filter(|terminal| self.instructions[*terminal].op().is_return());
+            .filter(|terminal| matches!(crate::vm::compiled::decoded(self.instructions[*terminal]), Some(crate::staged::Operation::Return { .. })));
         let mut starts = Vec::with_capacity(self.instructions.len() + 1);
         let mut successors = Vec::new();
         for (pc, instruction) in self.instructions.iter().enumerate() {
@@ -219,12 +219,7 @@ impl Unit {
     }
 }
 
-/// The callee instructions one unit inlines in all, the region's budget: what a lane body's
-/// code-size budget holds (`lane_region::LANE_BODY_MAX_CODE_BYTES`), TurboFan's cumulative
-/// inlining budget (`max_inlined_bytecode_size_cumulative`). The planner spends it on the call
-/// sites by weight per instruction (`weights::select`).
-pub(super) const MAX_UNIT_INLINED_INSTRUCTIONS: usize =
-    super::lane_region::LANE_BODY_MAX_CODE_BYTES / super::lane_region::LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
+pub(super) use crate::vm::compiled::tier_policy::MAX_UNIT_INLINED_INSTRUCTIONS;
 /// How deep calls nest inside a unit: JSC's inlining depth (`maximumInliningDepth`).
 const MAX_INLINING_DEPTH: usize = 5;
 
@@ -237,7 +232,7 @@ fn call_length(alternatives: &[InlinedPlan]) -> u32 {
 /// The canonical caller completion a terminal call may use without replaying the call.
 fn terminal_return(code: &[WideInstruction]) -> Option<usize> {
     code.len().checked_sub(1).filter(|pc|
-        code[*pc].op().is_return() && code[*pc].result_flags() == 0)
+        matches!(crate::vm::compiled::decoded(code[*pc]), Some(crate::staged::Operation::Return { .. })) && code[*pc].result_flags() == 0)
 }
 
 /// Whether an inlined callee's `instruction` renames to the unit's registers
@@ -261,7 +256,7 @@ fn renamable(instruction: WideInstruction) -> bool {
 /// The unit PCs an inlined callee instruction takes: a completion of the call (a `Return`, or
 /// an instruction that computes and returns) adds the result's move and the jump past the call.
 fn completion_length(instruction: WideInstruction) -> u32 {
-    if instruction.op().is_return() {
+    if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) {
         2
     } else if super::osr_loop::inlined_returning(instruction) {
         3
@@ -584,12 +579,12 @@ impl Emitter {
             return self.emit_returning(instruction, origin, register, receiver, result, continuation, target_of);
         }
         let rewritten = match instruction.op() {
-            opcode if opcode.is_return() => {
+            _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) => {
                 self.unit.instructions.push(WideInstruction::new(Op::Move, result, register(instruction.register_a()), 0, 0));
                 self.unit.origins.push(origin);
                 WideInstruction::new(Op::Jump, 0, 0, 0, continuation)
             }
-            opcode if opcode.is_load_this() => WideInstruction::new(Op::Move, register(instruction.result_register()), receiver, 0, 0),
+            _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::LoadThis { .. })) => WideInstruction::new(Op::Move, register(instruction.result_register()), receiver, 0, 0),
             // Exit-only operations (`inlinable`): their registers, renamed for the analyses;
             // the lowering leaves at each, and recovery runs the callee's own instruction.
             opcode if opcode.is_load_name() || opcode.is_throw() => WideInstruction::new(instruction.op(), register(instruction.a()), instruction.b(), instruction.c(), instruction.imm()),

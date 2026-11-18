@@ -50,6 +50,8 @@ struct PromiseContexts {
 }
 
 impl Host for PromiseContexts {
+    // Its tests exercise no lane behaviour (`Host::RUNS_LANE`).
+    const RUNS_LANE: bool = false;
     fn write_line(&mut self, _text: &str) {}
 
     fn clock_millis(&mut self) -> f64 {

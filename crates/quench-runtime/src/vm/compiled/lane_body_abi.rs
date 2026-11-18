@@ -12,21 +12,13 @@ pub(in crate::vm) struct BodyReturn {
 /// A lane body's entry: (context, receiver, capture word, registers) -> (status, result word).
 pub(in crate::vm) type BodyEntry = unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64) -> BodyReturn;
 
-/// The words a body takes: context, receiver, capture word and registers.
-const LANE_BODY_PARAMS: usize = 4;
-
 /// The lane body ABI: the shared native-entry ABI without the result pointer, whose word the
 /// body returns beside its status (`BodyReturn`).
 pub(in crate::vm) fn lane_body_signature(
     pointer: ir::Type,
     call_conv: cranelift_codegen::isa::CallConv,
 ) -> Signature {
-    let mut signature = Signature::new(call_conv);
-    for parameter in [pointer, types::I64, types::I64, pointer] as [ir::Type; LANE_BODY_PARAMS] {
-        signature.params.push(AbiParam::new(parameter));
-    }
-    signature.returns.extend([AbiParam::new(types::I32), AbiParam::new(types::I64)]);
-    signature
+    call_signature::typed_signature(call_conv, &[pointer, types::I64, types::I64, pointer], &[types::I32, types::I64])
 }
 
 /// Runs lane body `entry` through the fault-resuming trampoline: the shared trampoline

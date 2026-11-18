@@ -193,7 +193,7 @@ impl<H: Host> Vm<H> {
     fn lazy_member_key(&mut self, key: Value) -> Result<PropertyKey, JsError> {
         match self.heap.get(key).cloned() {
             _ if let Some(atom) = self.string_key_atom(key) => Ok(PropertyKey::string(atom)),
-            Some(Cell::Symbol(_)) => Ok(PropertyKey::symbol(key)),
+            _ if self.heap.is_symbol(key) => Ok(PropertyKey::symbol(key)),
             _ => Err(JsError(
                 "lazy data property key is a string or symbol".into(),
             )),

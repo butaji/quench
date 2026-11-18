@@ -47,16 +47,22 @@ pub(super) struct JsonHeapBuilder<'v, H: Host> {
     object_prototype: Value,
     /// The first property store that failed; the parse finishes and then reports it.
     pub(super) error: Option<JsError>,
-    /// What earlier parses learned, taken from the VM for this parse.
-    cache: JsonParseCache,
+    /// What earlier parses learned, taken from the VM for this parse and handed back when
+    /// it ends (`Drop`).
+    cache: std::mem::ManuallyDrop<Box<JsonParseState>>,
 }
+
+/// What JSON parses learn and later parses reuse (`JsonParseState`), boxed so a parse takes
+/// it from the VM and hands it back by moving one pointer.
+#[derive(Default)]
+pub(crate) struct JsonParseCache(Option<Box<JsonParseState>>);
 
 /// What JSON parses learn and later parses reuse: the layouts their objects took, their keys'
 /// atoms and their strings, as V8 keeps a JSON key list's map transitions. A collection
 /// renumbers shapes and frees the values, so these hold only within one collection epoch of
 /// one realm; atoms outlive collections, so `ascii_keys` stays.
 #[derive(Default)]
-pub(crate) struct JsonParseCache {
+struct JsonParseState {
     /// The collection epoch and object prototype the layouts and strings belong to.
     owner: Option<(u64, Value)>,
     /// The layouts parses met, `JSON_EMPTY_LAYOUT` first, and the keys added to them.
@@ -81,19 +87,28 @@ pub(crate) struct JsonParseCache {
     /// holds copies of the distinct runs, so the builder borrows nothing of the text.
     strings: hashbrown::HashTable<(Range<u32>, Value)>,
     string_bytes: Vec<u8>,
+    /// The stacks each parse gathers members on, empty between parses: their storage stays
+    /// for the next parse (`JsonBuilder::stacks`).
+    stacks: JsonStacks<Value, Atom, JsonObjectLayout>,
 }
 
 /// Bytes of keys and strings past which the cache is dropped rather than kept: a large text
 /// (a data literal) would otherwise stay resident through its strings.
 const JSON_CACHE_BYTES: usize = 1 << 16;
 
-impl JsonParseCache {
-    /// This cache for a parse in `epoch` of the realm of `object_prototype`, whose empty
-    /// object takes `empty_shape`: emptied of other epochs' layouts and strings.
-    fn prepared(mut self, epoch: u64, object_prototype: Value, empty_shape: u32) -> Self {
-        if self.owner == Some((epoch, object_prototype)) {
-            return self;
+impl JsonParseState {
+    /// Readies this cache for a parse in `epoch` of the realm of `object_prototype`, whose
+    /// empty object takes `empty_shape()`: emptied of other epochs' layouts and strings.
+    #[inline(always)]
+    fn prepare(&mut self, epoch: u64, object_prototype: Value, empty_shape: impl FnOnce() -> u32) {
+        if self.owner != Some((epoch, object_prototype)) {
+            self.renew(epoch, object_prototype, empty_shape());
         }
+    }
+
+    /// `prepare` of a cache another epoch or realm filled.
+    #[cold]
+    fn renew(&mut self, epoch: u64, object_prototype: Value, empty_shape: u32) {
         self.owner = Some((epoch, object_prototype));
         self.layouts.clear();
         self.layouts.push(JsonLayout { shape: empty_shape, expected: JSON_UNPLANNED });
@@ -104,7 +119,6 @@ impl JsonParseCache {
         self.key_bytes.clear();
         self.strings.clear();
         self.string_bytes.clear();
-        self
     }
 
     fn small(&self) -> bool {
@@ -152,12 +166,15 @@ impl<'v, H: Host> JsonHeapBuilder<'v, H> {
     pub(super) fn new(vm: &'v mut Vm<H>) -> Self {
         let globals = vm.realm.globals;
         let object_prototype = vm.realm_object_prototype(globals);
-        let empty_shape = Vm::<H>::empty_object(object_prototype).shape();
+        let mut cache = vm.json_parse_cache.0.take().unwrap_or_default();
+        cache.prepare(vm.heap.collection_epoch(), object_prototype, || {
+            Vm::<H>::empty_object(object_prototype).shape()
+        });
         Self {
             array_prototype: vm.array_prototype_for_realm(globals),
             object_prototype,
             error: None,
-            cache: std::mem::take(&mut vm.json_parse_cache).prepared(vm.heap.collection_epoch(), object_prototype, empty_shape),
+            cache: std::mem::ManuallyDrop::new(cache),
             vm,
         }
     }
@@ -299,16 +316,18 @@ impl<'v, H: Host> JsonHeapBuilder<'v, H> {
     /// The string value of ASCII run `bytes`: the one made for the same run before.
     fn ascii_string(&mut self, bytes: &[u8]) -> Value {
         let hash = ascii_run_hash(bytes);
-        let text = |range: &Range<u32>| &self.cache.string_bytes[range.start as usize..range.end as usize];
-        if let Some((_, value)) = self.cache.strings.find(hash, |(range, _)| same_ascii(text(range), bytes)) {
+        // The cache's fields borrow apart through one reference to it.
+        let cache = &mut **self.cache;
+        let text = |range: &Range<u32>| &cache.string_bytes[range.start as usize..range.end as usize];
+        if let Some((_, value)) = cache.strings.find(hash, |(range, _)| same_ascii(text(range), bytes)) {
             return *value;
         }
-        let value = self.vm.heap.alloc_string(JsString::from_unit_run(Units::Ascii(bytes)));
-        let start = self.cache.string_bytes.len() as u32;
-        self.cache.string_bytes.extend_from_slice(bytes);
-        let range = start..self.cache.string_bytes.len() as u32;
-        let string_bytes = &self.cache.string_bytes;
-        self.cache.strings.insert_unique(hash, (range, value), |(range, _)| {
+        let value = self.vm.heap.alloc_ascii_run(bytes);
+        let start = cache.string_bytes.len() as u32;
+        cache.string_bytes.extend_from_slice(bytes);
+        let range = start..cache.string_bytes.len() as u32;
+        let string_bytes = &cache.string_bytes;
+        cache.strings.insert_unique(hash, (range, value), |(range, _)| {
             ascii_run_hash(&string_bytes[range.start as usize..range.end as usize])
         });
         value
@@ -318,8 +337,10 @@ impl<'v, H: Host> JsonHeapBuilder<'v, H> {
 /// The cache goes back to the VM for the next parse unless this parse grew it large.
 impl<H: Host> Drop for JsonHeapBuilder<'_, H> {
     fn drop(&mut self) {
-        if self.cache.small() {
-            self.vm.json_parse_cache = std::mem::take(&mut self.cache);
+        // SAFETY: the builder is dropping, so nothing reads the cache after this.
+        let cache = unsafe { std::mem::ManuallyDrop::take(&mut self.cache) };
+        if cache.small() {
+            self.vm.json_parse_cache = JsonParseCache(Some(cache));
         }
     }
 }
@@ -402,6 +423,13 @@ impl<H: Host> JsonBuilder for JsonHeapBuilder<'_, H> {
     }
     fn primitive(&mut self, value: Value, _source: Units<'_>) -> Value {
         value
+    }
+    fn stacks(&mut self) -> JsonStacks<Value, Atom, JsonObjectLayout> {
+        std::mem::take(&mut self.cache.stacks)
+    }
+    fn keep_stacks(&mut self, mut stacks: JsonStacks<Value, Atom, JsonObjectLayout>) {
+        stacks.clear();
+        self.cache.stacks = stacks;
     }
 }
 

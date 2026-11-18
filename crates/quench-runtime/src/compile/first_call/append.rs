@@ -79,7 +79,7 @@ fn parse_text<'a>(
     free_names: Option<&mut FreeNames>,
 ) -> oxc_parser::ParserReturn<'a> {
     let Some(free_names) = free_names else {
-        return lazy_bodies::parse(allocator, &chunk.text, SourceType::script(), None, None, None, false, false, crate::compile::annex_b_targets::Recognize::No, None);
+        return lazy_bodies::parse(allocator, &chunk.text, SourceType::script(), None, None, None, false, false, crate::compile::annex_b_targets::Recognize::No, None, None);
     };
     let strict = window.outer.is_some_and(|(_, scopes)| scopes.strict());
     lazy_bodies::parse_chunk(allocator, &chunk.text, function_start - chunk.start, chunk.start, strict, free_names)

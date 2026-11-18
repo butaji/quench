@@ -24,12 +24,12 @@ impl<H: Host> Vm<H> {
         if kind == IteratorKind::String {
             return self.string_iterator_item(source, position);
         }
-        match (kind, self.heap.get(source)?) {
-            (IteratorKind::MapKeys, Cell::Map { entries, .. }) => entries.next_live(position).map(|(slot, (key, _))| ((key, None), slot + 1)),
-            (IteratorKind::MapValues, Cell::Map { entries, .. }) => entries.next_live(position).map(|(slot, (_, value))| ((value, None), slot + 1)),
-            (IteratorKind::MapEntries, Cell::Map { entries, .. }) => entries.next_live(position).map(|(slot, (key, value))| ((key, Some(value)), slot + 1)),
-            (IteratorKind::SetValues, Cell::Set { entries, .. }) => entries.next_live(position).map(|(slot, value)| ((value, None), slot + 1)),
-            (IteratorKind::SetEntries, Cell::Set { entries, .. }) => entries.next_live(position).map(|(slot, value)| ((value, Some(value)), slot + 1)),
+        match kind {
+            IteratorKind::MapKeys => self.heap.map_entries(source)?.next_live(position).map(|(slot, (key, _))| ((key, None), slot + 1)),
+            IteratorKind::MapValues => self.heap.map_entries(source)?.next_live(position).map(|(slot, (_, value))| ((value, None), slot + 1)),
+            IteratorKind::MapEntries => self.heap.map_entries(source)?.next_live(position).map(|(slot, (key, value))| ((key, Some(value)), slot + 1)),
+            IteratorKind::SetValues => self.heap.set_entries(source)?.next_live(position).map(|(slot, value)| ((value, None), slot + 1)),
+            IteratorKind::SetEntries => self.heap.set_entries(source)?.next_live(position).map(|(slot, value)| ((value, Some(value)), slot + 1)),
             _ => None,
         }
     }

@@ -55,8 +55,8 @@ impl LoopTier {
         if let Some(code) = self.code.take() { code.retire(); }
     }
 
-    pub(super) fn weigh_decline(&mut self) {
-        self.declined = self.declined.saturating_add(1);
+    pub(super) fn weigh_declines(&mut self, declines: u32) {
+        self.declined = self.declined.saturating_add(declines);
     }
 
     /// The entries made, native runs and declined ones, and the iterations the runs took.
@@ -241,8 +241,12 @@ pub(super) fn lane_loop_compile<H: Host>(
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let frame_captures: Vec<(usize, usize)> = region.inlining.as_deref()
         .map(|inlining| inlining.frames.iter().map(|frame| machine.lane_callee_captures(frame.callee)).collect()).unwrap_or_default();
+    // A construction site's plan, where the region may keep its receiver as its field values.
+    let construct_plans = |function: u32, pc: u32| super::lane_unit_targets(cx, function, pc).first().and_then(|target| target.identity())
+        .and_then(|callee| super::scalar_construct_plan(unsafe { vm(cx) }, callee));
     let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
-        int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures };
+        int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures,
+        construct_plans: Some(&construct_plans) };
     let policy = machine.heap.memory_policy();
     // A BaseJIT region inlines the calls its sites recorded.
     // A Cranelift region calls the callees its sites reached by their entries.
@@ -379,7 +383,7 @@ pub(super) fn lane_loop_function<H: Host>(cx: *mut LaneContext<H>, code: &Residu
     let machine = unsafe { vm(cx) };
     let function_index = machine
         .lane_stack
-        .activations
+        .activations()
         .last()
         .map_or_else(|| machine.frames[unsafe { (*cx).frame() }].function, |activation| activation.function);
     let function = code.function_get(function_index as usize)?;
@@ -450,6 +454,11 @@ pub(super) fn sampled_arrays<H: Host>(vm: &Vm<H>, values: impl Iterator<Item = V
 
 pub(super) fn sample_array<H: Host>(vm: &Vm<H>, value: Value) -> Option<crate::typed_ir::Type> {
     use crate::typed_ir::Type;
+    // A float typed array's kind fixes its elements as Numbers, as a C array's element type does.
+    if let Some(kind) = vm.typed_array_kind(value) {
+        use crate::heap::TypedArrayKind as Kind;
+        return matches!(kind, Kind::Float16 | Kind::Float32 | Kind::Float64).then_some(Type::NUMBER);
+    }
     let elements = vm.heap.record_array(value)?.elements().as_slice();
     let sample = &elements[..elements.len().min(SAMPLED_ELEMENTS)];
     if sample.is_empty() { return None; }

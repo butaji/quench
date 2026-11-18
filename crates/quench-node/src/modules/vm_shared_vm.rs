@@ -5,7 +5,9 @@
 //! Node's options and maps them onto the binding's positional arguments.
 use super::contextify_shared_vm as contextify;
 use super::event_constructor_shared_vm::get;
-use super::util_shared_vm::{argument_type_error, argument_type_error_with_expected, argument_value_error};
+use super::util_shared_vm::{
+    argument_type_error, argument_type_error_with_expected, argument_value_error, validate_boolean, validate_string,
+};
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
@@ -51,20 +53,6 @@ fn validate_object(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(),
         return Err(argument_type_error(c, value, name, "Object")?);
     }
     Ok(())
-}
-
-fn validate_string(c: &mut Context<'_>, value: RootId, name: &str) -> Result<String, RootedError> {
-    match c.string_text(value)? {
-        Some(text) => Ok(text),
-        None => Err(argument_type_error(c, value, name, "string")?),
-    }
-}
-
-fn validate_boolean(c: &mut Context<'_>, value: RootId, name: &str) -> Result<bool, RootedError> {
-    match c.rooted_value(value).and_then(|value| value.as_bool()) {
-        Some(flag) => Ok(flag),
-        None => Err(argument_type_error(c, value, name, "boolean")?),
-    }
 }
 
 fn validate_int32(c: &mut Context<'_>, value: RootId, name: &str) -> Result<f64, RootedError> {

@@ -152,7 +152,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             Owner::This => self.object_header(stage.builder, entry, None, readable, miss),
             Owner::Register(register) => self.object_header(stage.builder, entry, Some(register), readable, miss),
         };
-        Some(Reached { shape: Some(header.shape), inline: Some(header.inline), word: header.word, ..Reached::bare(header.address) })
+        Some(Reached { shape: Some(header.shape), inline: Some(header.inline), word: header.word, auxiliary: header.auxiliary, ..Reached::bare(header.address) })
     }
 
     /// The shape the owner's header holds as a constant, or its kept layout's.
@@ -242,6 +242,10 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
 
     fn entry_slot_store(&mut self, stage: &mut Emit<'b, 'c>, site: u16, value: ir::Value, miss: ir::Block) -> Option<()> {
         self.loop_slot_store(stage, site, value, miss)
+    }
+
+    fn entry_slot_raw(&self) -> bool {
+        self.fields.as_ref().and_then(|fields| fields.held.slot).is_some_and(|slot| slot.raw)
     }
 
     /// The direct store, and where it declines (a shape, the barrier or the storage does not

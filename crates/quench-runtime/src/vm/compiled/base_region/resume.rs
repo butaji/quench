@@ -83,6 +83,8 @@ pub(super) fn resume_stubs(layout: &Layout, planned: &[Planned], (first, starts)
         .entries
         .iter()
         .filter(|&&(_, row)| !planned[row as usize].stencil.code.is_empty() || !planned[row as usize].pre.is_empty())
+        // A row a receiver proof reaches stands on the access that proved it, which a resume skips.
+        .filter(|&&(_, row)| !layout.relies.get(row as usize).copied().unwrap_or(false))
         .map(|&(pc, row)| {
             let rows = entry_rows(layout, &layout.webs.live_at(&layout.span, row))?;
             Ok(Stub { pc, rows, target: first + starts[row as usize] })
@@ -99,10 +101,10 @@ pub(super) fn place_stubs<'a>(rows: &mut Vec<Placed<'a>>, stubs: &'a [Stub], jum
     for stub in stubs {
         let first = rows.len();
         for (stencil, _) in &stub.rows {
-            rows.push(Placed { stencil, hole: &*holes[hole], taken: Some(failed) });
+            rows.push(Placed { stencil, hole: &*holes[hole], taken: Some(failed), cold: false });
             hole += 1;
         }
-        rows.push(Placed { stencil: jump, hole: &*holes[hole], taken: None });
+        rows.push(Placed { stencil: jump, hole: &*holes[hole], taken: None, cold: false });
         hole += 1;
         jumps.push(Jump { first, row: rows.len() - 1, target: stub.target });
     }

@@ -1,6 +1,6 @@
 use super::*;
 
-mod spelling_tests; mod short_room_tests;
+mod spelling_tests; mod short_room_tests; mod rest_alias_tests;
 
 #[test]
 fn regression_global_var_lowering_checks_instruction_roles_before_slots() {
@@ -498,5 +498,52 @@ fn strict_for_in_of_head_rejects_eval_and_arguments() {
     }
     for head in ["for (eval.x in {});", "for (x of [eval]);", "for (let x in { eval: 1 });"] {
         assert!(!rejects(&format!("'use strict'; var x; {head}")), "{head}");
+    }
+}
+
+/// A Script's root splits like a function: a top-level loop's block bindings are registers and
+/// its per-iteration copy is gone when no closure captures them, while its global declarations
+/// stay in the root's environment.
+#[test]
+fn a_script_root_keeps_only_global_declarations_in_its_environment() {
+    let script = Engine::specialize_script_with_atom_prefix(
+        "\"use strict\"; let s = 0; const f = n => { s += n }; for (let i = 0; i < 9; i++) { f(i) }",
+        "host.js",
+        &NoAtomPrefix,
+        super::ReleasedRecords::Dropped,
+    )
+    .unwrap();
+    let listing = script.disassemble();
+    let root = listing.split("function 1").next().unwrap();
+    assert!(!root.contains("CloneEnv"), "{root}");
+    assert_eq!(root.matches("LoadEnvLocal").count() + root.matches("StoreEnvLocal").count(), 3, "{root}");
+    // A loop whose closures capture its binding keeps its copy.
+    let capturing = Engine::specialize_script_with_atom_prefix(
+        "const fs = []; for (let i = 0; i < 3; i++) { fs.push(() => i) }",
+        "host.js",
+        &NoAtomPrefix,
+        super::ReleasedRecords::Dropped,
+    )
+    .unwrap();
+    assert!(capturing.disassemble().split("function 1").next().unwrap().contains("CloneEnv"));
+}
+
+/// A strict eval's vars are its own bindings: plain registers, neither environment slots nor
+/// stores to the global object.
+#[test]
+fn a_strict_eval_var_is_a_register() {
+    let eval = Engine::specialize_eval_with_context(
+        "\"use strict\"; var s = 0; for (let i = 0; i < 3; i++) { s++; }",
+        "eval.js",
+        &NoAtomPrefix,
+        false,
+        EvalContext::default(),
+        &[],
+        &[],
+    )
+    .unwrap();
+    let listing = eval.disassemble();
+    for op in ["StoreName", "LoadName", "EnvLocal", "CloneEnv"] {
+        assert!(!listing.contains(op), "{listing}");
     }
 }

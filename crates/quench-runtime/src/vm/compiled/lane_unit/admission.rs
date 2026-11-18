@@ -49,7 +49,7 @@ pub(super) fn restartable(program: &crate::ResidualProgram, function: &Function,
         opcode if opcode.is_set_index() || opcode.is_call() => false,
         _ if instruction.op().is_field_store() => false,
         opcode if opcode.is_inc_dec() => instruction.numeric_local_target().is_none(),
-        opcode if opcode.is_jump() || opcode.is_jump_false() || opcode.is_jump_true() || opcode.is_jump_binary_false() => instruction.jump_target() as usize > pc,
+        opcode if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump)) || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::JumpIf { taken: false, .. })) || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::JumpIf { taken: true, .. })) || opcode.is_jump_binary_false() => instruction.jump_target() as usize > pc,
         _ => true, // `inlinable` owns the supported instruction/effect set.
     })
 }

@@ -130,10 +130,7 @@ impl<H: Host> Vm<H> {
                 let length = self.heap.array(source)?.elements().len();
                 self.present_dense_elements(source, 0..length).map(|values| values.into_owned())
             }
-            IterationSource::Set => match self.heap.get(source)? {
-                Cell::Set { entries, .. } => Some(entries.to_vec()),
-                _ => None,
-            },
+            IterationSource::Set => self.heap.set_entries(source).map(|entries| entries.to_vec()),
             IterationSource::Map => {
                 let pairs = self.intact_map_pairs(source)?;
                 Some(pairs.into_iter().map(|pair| self.iterator_item_value((pair[0], Some(pair[1])))).collect())
@@ -152,10 +149,7 @@ impl<H: Host> Vm<H> {
 
     /// The live entries of a Map that iterates intact (`IterationSource::Map`).
     pub(super) fn intact_map_pairs(&self, source: Value) -> Option<Vec<[Value; 2]>> {
-        match self.heap.get(source)? {
-            Cell::Map { entries, .. } => Some(entries.iter().map(|(key, value)| [key, value]).collect()),
-            _ => None,
-        }
+        self.heap.map_entries(source).map(|entries| entries.iter().map(|(key, value)| [key, value]).collect())
     }
 
     /// What iterating `source` is where every step runs an intrinsic over a store no step's
@@ -175,11 +169,11 @@ impl<H: Host> Vm<H> {
         // or another realm's (a script loaded as its own realm makes its collections there),
         // whose intrinsic the fuse at that prototype proves. The iterators every realm makes
         // share one prototype, the realm's `next` fuse.
-        let (kind, holder, iterator, next) = match self.heap.get(source)? {
-            Cell::Set { object, .. } if !object.has_side_descriptors() => {
+        let (kind, holder, iterator, next) = match self.heap.object(source) {
+            Some(object) if self.heap.is_set(source) && !object.has_side_descriptors() => {
                 (IterationSource::Set, object.proto(), IntactFuse::SetIterator, IntactFuse::SetIteratorNext)
             }
-            Cell::Map { object, .. } if !object.has_side_descriptors() => {
+            Some(object) if self.heap.is_map(source) && !object.has_side_descriptors() => {
                 (IterationSource::Map, object.proto(), IntactFuse::MapIterator, IntactFuse::MapIteratorNext)
             }
             _ => return None,
@@ -996,16 +990,11 @@ impl<H: Host> Vm<H> {
         source: Value,
         kind: IteratorKind,
     ) -> Result<Value, JsError> {
-        let valid = matches!(
-            (kind, self.heap.get(source)),
-            (
-                IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries,
-                Some(Cell::Map { .. })
-            ) | (
-                IteratorKind::SetValues | IteratorKind::SetEntries,
-                Some(Cell::Set { .. })
-            )
-        );
+        let valid = match kind {
+            IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries => self.heap.is_map(source),
+            IteratorKind::SetValues | IteratorKind::SetEntries => self.heap.is_set(source),
+            _ => false,
+        };
         if !valid {
             return Err(JsError("collection iterator receiver is invalid".into()));
         }
@@ -1024,10 +1013,12 @@ impl<H: Host> Vm<H> {
             done: false,
             ext: crate::heap::IteratorExt::default(),
         });
-        let registered = match self.heap.get_mut(source) {
-            Some(Cell::Map { entries, .. }) => entries.register_iterator(iterator),
-            Some(Cell::Set { entries, .. }) => entries.register_iterator(iterator),
-            _ => 0,
+        let registered = if let Some(entries) = self.heap.map_entries_mut(source) {
+            entries.register_iterator(iterator)
+        } else if let Some(entries) = self.heap.set_entries_mut(source) {
+            entries.register_iterator(iterator)
+        } else {
+            0
         };
         // Finished and collected iterators stay registered until the collection compacts or
         // clears; pruning at each doubling bounds the registry by twice its running iterators
@@ -1066,13 +1057,14 @@ impl<H: Host> Vm<H> {
                 || matches!(vm.heap.get(source), Some(Cell::TypedArray { .. }))
             {
                 IteratorKind::Array
+            } else if vm.heap.is_string(source) {
+                IteratorKind::String
+            } else if vm.heap.is_map(source) {
+                IteratorKind::MapEntries
+            } else if vm.heap.is_set(source) {
+                IteratorKind::SetValues
             } else {
-                match vm.heap.get(source) {
-                    _ if vm.heap.is_string(source) => IteratorKind::String,
-                    Some(Cell::Map { .. }) => IteratorKind::MapEntries,
-                    Some(Cell::Set { .. }) => IteratorKind::SetValues,
-                    _ => return Err(vm.type_error(p, "value is not iterable".into())),
-                }
+                return Err(vm.type_error(p, "value is not iterable".into()));
             };
             Ok(vm.heap.alloc_iterator(IteratorRecord {
                 object: Self::empty_object(vm.iterator_proto),
@@ -1971,7 +1963,7 @@ impl<H: Host> Vm<H> {
             for key in keys {
                 let property_key = self.to_property_key(p, key)?;
                 let property_key_root = self.heap.root(property_key);
-                let atom = if matches!(self.heap.get(property_key), Some(Cell::Symbol(_))) {
+                let atom = if self.heap.is_symbol(property_key) {
                     None
                 } else {
                     let name = self.coerce_js_string(p, property_key)?;
@@ -2080,14 +2072,14 @@ impl<H: Host> Vm<H> {
         if let Some(keys) = keys {
             let mut values = Vec::with_capacity(keys.len());
             for key in keys.iter().copied() {
-                let value = match self.heap.get(key) {
-                    _ if let Some(name) = self.heap.string(key)  => {
-                        let name = name.clone();
-                        let atom = self.intern_js_atom(&name);
-                        self.get_property(p, padding, atom)?
-                    }
-                    Some(Cell::Symbol(_)) => self.get_index(p, padding, key)?,
-                    _ => return Err(JsError::validation("invalid zipKeyed property key".into())),
+                let value = if let Some(name) = self.heap.string(key) {
+                    let name = name.clone();
+                    let atom = self.intern_js_atom(&name);
+                    self.get_property(p, padding, atom)?
+                } else if self.heap.is_symbol(key) {
+                    self.get_index(p, padding, key)?
+                } else {
+                    return Err(JsError::validation("invalid zipKeyed property key".into()));
                 };
                 values.push(value);
             }

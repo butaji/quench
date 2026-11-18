@@ -15,9 +15,10 @@
 
 use super::region::Region;
 use super::entry::direct_record;
-use super::object::{Form, Rep, plain_payload, proto_link};
+use super::object::{Form, plain_payload, proto_link};
+use crate::typed_ir::Representation;
 use super::slot_store::store_slot;
-use super::{RecordSpace, Stage};
+use super::{StagedRecordSpace, Stage};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
 /// One resolved transition as the words a stage computes on: the layout id the object must hold,
@@ -36,7 +37,7 @@ pub(crate) struct Edge<W> {
 /// shape reader or method cache can name it) and an open store gate (no slot representation
 /// observes the write, no barrier log is due). Answers the payload word the storage reads from.
 #[inline(always)]
-pub(super) fn admitted<S: Stage>(stage: &mut S, space: RecordSpace, record: S::Word, record_id: S::Word, before: S::Word,
+pub(super) fn admitted<S: Stage>(stage: &mut S, space: StagedRecordSpace, record: S::Word, record_id: S::Word, before: S::Word,
     value: S::Word, miss: S::Miss) -> Option<S::Word> {
     let layout = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32);
     let moved = stage.sub(layout, before);
@@ -59,8 +60,8 @@ pub(super) fn admitted<S: Stage>(stage: &mut S, space: RecordSpace, record: S::W
 #[inline(always)]
 pub(crate) fn add_property<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, edge: Edge<S::Word>,
     form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
-    let payload = admitted(stage, RecordSpace::Object, record, record_id, edge.before, value, miss)?;
-    store_slot(stage, record, payload, edge.slot, form, (value, Rep::Tagged), miss)?;
+    let payload = admitted(stage, StagedRecordSpace::Object, record, record_id, edge.before, value, miss)?;
+    store_slot(stage, record, payload, edge.slot, form, (value, Representation::Tagged), miss)?;
     stage.store_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32, edge.after);
     Some(())
 }

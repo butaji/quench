@@ -49,11 +49,11 @@ fn unwinds_natively(function: &Function) -> bool {
 /// register of the unit, or a call or construction, whose callee may throw. A call that returns
 /// its result (`RETURN_REGISTER`) raises as any call: its register is untouched on the raise.
 fn raising_instruction(instruction: WideInstruction, registers: Register) -> bool {
-    let class = instruction.op().class();
-    if class.eq(Class::Throw) {
+    use crate::staged::meaning::{means, Meaning};
+    if means(instruction, Meaning::Throw) {
         instruction.result_flags() == 0 && instruction.register_a() < registers
     } else {
-        (class.eq(Class::Call) || class.eq(Class::Construct))
+        (means(instruction, Meaning::Call) || means(instruction, Meaning::Construct))
             && instruction.result_flags() & !crate::bytecode::RETURN_REGISTER == 0
     }
 }
