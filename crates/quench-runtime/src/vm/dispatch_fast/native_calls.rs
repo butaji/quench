@@ -44,13 +44,13 @@ math_rows!(
     6 => MathMin, 7 => MathMax, 8 => MathImul, 9 => MathFround, 10 => MathSign,
 );
 
-/// The handlers of a Math call's field read: `GetField` rows (`lane_row`) at the three Math call
+/// The handlers of a Math call's field read: `GetField` rows (`generated_row`) at the three Math call
 /// sites (`MATH_CALL_SITE`, `MATH_CALL2_SITE`, `MATH_CALL2_CONST_SITE`). `FieldHit` reads a record
 /// of these as an own-field read.
 pub(super) fn math_field_call_handlers<H: Host>() -> [*const (); 3] {
-    [lane_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL_SITE> as *const (),
-        lane_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_SITE> as *const (),
-        lane_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_CONST_SITE> as *const ()]
+    [generated_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL_SITE> as *const (),
+        generated_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_SITE> as *const (),
+        generated_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_CONST_SITE> as *const ()]
 }
 
 script_handler! {
@@ -135,7 +135,7 @@ pub(super) fn install_math_field_call<H: Host>(cx: *mut LaneContext<H>, call_ip:
     let reads_callee = field.a == call.b
         && own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler);
     if one_argument && copies && reads_callee && copy.a != field.a {
-        requicken::<H>(field_ip, lane_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL_SITE> as Handler);
+        requicken::<H>(field_ip, generated_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL_SITE> as Handler);
     }
 }
 
@@ -153,8 +153,8 @@ fn install_math_field_call2<H: Host>(call_ip: Ip) {
     let reads_callee = field.a == call.b && field.a != window && field.a != window + 1
         && own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler);
     if shaped && reads_callee {
-        let row = if constant_second { lane_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_CONST_SITE> as Handler }
-            else { lane_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_SITE> as Handler };
+        let row = if constant_second { generated_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_CONST_SITE> as Handler }
+            else { generated_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_SITE> as Handler };
         requicken::<H>(field_ip, row);
     }
 }

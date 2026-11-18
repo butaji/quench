@@ -18535,7 +18535,7 @@ fn specialize_environment_window<H: Host>(
                 if own > ENVIRONMENT_WINDOW_FIELD {
                     return None;
                 }
-                let handler = window_local_handler::<H>(function, instruction, own as usize, scoped);
+                let handler = window_local_handler::<H>(function, instruction.op(), own as usize, scoped);
                 replacements.push((pc, handler, own | u32::from(registers) << ENVIRONMENT_WINDOW_SHIFT));
             }
         }

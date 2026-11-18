@@ -2519,7 +2519,7 @@ lane_handler! {
             }
             if const { FLAG == super::TYPED_LENGTH_SITE } {
                 // A receiver the host read does not answer: an array's or a string's length is the array row's.
-                sibling!(lane_row::<H, OP, ACC, { super::ARRAY_LENGTH_SITE }>, r, ip, Carried::script_in(script, view))
+                sibling!(generated_row::<H, OP, ACC, { super::ARRAY_LENGTH_SITE }>, r, ip, Carried::script_in(script, view))
             }
             if const { FLAG == super::GEOMETRY_SITE } {
                 // A name the view's geometry does not answer (a shadowed or ordinary one): the general read.
@@ -2542,7 +2542,7 @@ lane_handler! {
             }
             if const { super::inherited_other_site(FLAG) } {
                 // The inherited chain walk (`INHERITED_WALK_SITE`) answers what the record's hint did not.
-                sibling!(lane_row::<H, OP, ACC, { super::INHERITED_WALK_SITE }>, r, ip, Carried::script_in(script, view))
+                sibling!(generated_row::<H, OP, ACC, { super::INHERITED_WALK_SITE }>, r, ip, Carried::script_in(script, view))
             }
             if const { FLAG == super::HELD_CELL_REGISTER } {
                 sibling!(row_get_field_holder_cell_refresh::<H>, r, ip, Carried::script_in(script, view))
@@ -2573,7 +2573,7 @@ lane_handler! {
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
             if const { FLAG == super::ADD_SITE } {
                 // A refused add: the generated general write, which the record keeps from now on.
-                requicken::<H>(ip, lane_row::<H, OP, ACC_NONE, { super::GENERAL_SITE }>);
+                requicken::<H>(ip, generated_row::<H, OP, ACC_NONE, { super::GENERAL_SITE }>);
             }
             if const { FLAG == super::ADD_SITE || FLAG == super::GENERAL_SITE || FLAG == super::POLY_SITE } {
                 if this_store {
@@ -2584,7 +2584,7 @@ lane_handler! {
             if const { FLAG == FLAG_UNREAD } {
                 // A tracked runtime's own hint store is the record's first choice from now on.
                 if unsafe { vm(script) }.heap.tracks_slot_representations() {
-                    requicken::<H>(ip, lane_row::<H, OP, ACC_NONE, { super::TRACKED_SITE }>);
+                    requicken::<H>(ip, generated_row::<H, OP, ACC_NONE, { super::TRACKED_SITE }>);
                 }
             }
             if this_store {
@@ -2672,18 +2672,13 @@ lane_handler! {
             Concrete::storing(&raw const unsafe { vm(view.memory.bytes.cast::<LaneContext<H>>()) }.heap)
         } else { Concrete::new(property_values) };
         let mut frame = row_frame::<H, OP, ACC, FLAG>(cx, r, ip, i, view);
-        if const { super::typed_site(FLAG) } {
+        // merge: `typed_site`/`proved_site`/`element_move_site` (trunk helpers over PROVED_SITE, PROVED_MOVE_SITE, ELEMENT_MOVE_SITE) do not exist here; TYPED_SITE is the current constant.
+        if const { FLAG == super::TYPED_SITE } {
             // The element kind the record observed (`requicken_typed`), and the typed array records
             // the view proof reads.
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
             frame.typed = Some((crate::staged::typed_elements::native_kind_at(i.imm()),
                 unsafe { vm(script) }.heap.typed_view_directory()));
-        }
-        if const { super::proved_site(FLAG) } {
-            // The run's proofs of the storage of the arrays its loop indexes (`specialize_proved_arrays`).
-            // Past the proof the access leaves at its miss edge (`lane_proof_miss`), which proves
-            // the array for the next one; the host path would serve it without proving.
-            frame.elements = None;
         }
         if store {
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
@@ -2892,9 +2887,9 @@ lane_handler! {
                     if const { FLAG == FLAG_UNREAD || FLAG == super::NARROW_SITE } && !unsafe { vm(script) }.heap.tracks_slot_representations() {
                         let narrow = crate::heap::layouts::auxiliary(hint.receiver) & crate::value_vec::STORAGE_FORM == crate::value_vec::NARROW_FORM;
                         if const { FLAG == FLAG_UNREAD } {
-                            if narrow { requicken::<H>(ip, lane_row::<H, OP, ACC_NONE, { super::NARROW_SITE }>); }
+                            if narrow { requicken::<H>(ip, generated_row::<H, OP, ACC_NONE, { super::NARROW_SITE }>); }
                         } else if !narrow {
-                            requicken::<H>(ip, lane_row::<H, OP, ACC_NONE, FLAG_UNREAD>);
+                            requicken::<H>(ip, generated_row::<H, OP, ACC_NONE, FLAG_UNREAD>);
                         }
                     }
                 }
@@ -2943,14 +2938,7 @@ lane_handler! {
                 if const { !crate::staged::row_writes_result(LaneFields::<OP, FLAG>::OPCODE) } {
                     r.set(i.a, Value::from_bits(value));
                 }
-                if const { super::element_move_site(FLAG) } {
-                    // The `Move` record after the store copies the stored value, and the pair
-                    // continues past it (`produce!` at the copy's successor).
-                    // SAFETY: the pair is two records, the second never the view's last.
-                    let copy = unsafe { &*following(ip) };
-                    let script: *mut LaneContext<H> = view.memory.bytes.cast();
-                    produce!(script, r, following(ip), copy.a, Value::from_bits(value), Carried::script_in(script, view));
-                }
+// merge: the store-then-move pair (`element_move_site`) has no site constant in this design; its branch is dropped.
                 if const { row_produces(LaneFields::<OP, FLAG>::OPCODE) } {
                     next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view })
                 }
@@ -2963,7 +2951,8 @@ lane_handler! {
             Step::Unresolved if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element))
                 && matches!(LaneFields::<OP, FLAG>::OPCODE.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister) } => {
                 let script: *mut LaneContext<H> = view.memory.bytes.cast();
-                sibling!(super::lane_get_index_slot::<H>, r, ip, Carried::script_in(script, view))
+                // merge: `lane_get_index_slot` exists on neither branch; its current equivalent is the element row's miss (`row_index_read_miss`).
+                sibling!(super::row_index_read_miss::<H>, r, ip, Carried::script_in(script, view))
             }
             // A keyed write past its in-place replacement: an append, a hole, a typed array, a key.
             Step::Unresolved if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } => {
