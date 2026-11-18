@@ -514,6 +514,12 @@ impl Operation<u64, ()> {
         instruction.op() == Op::Call
     }
 
+    /// Whether `instruction` is an ordinary call through its callee register, with a window or a
+    /// spread array of arguments (`Call`, `CallArray`).
+    pub(crate) fn is_ordinary_call(instruction: WideInstruction) -> bool {
+        instruction.op().is_ordinary_call()
+    }
+
     /// Whether `instruction` constructs (`Construct`), with its callee and arguments in registers.
     pub(crate) fn is_construction(instruction: WideInstruction) -> bool {
         instruction.op() == Op::Construct
