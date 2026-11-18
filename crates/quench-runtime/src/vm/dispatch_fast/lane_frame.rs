@@ -164,6 +164,15 @@ impl RecordPlan {
         Self { other: Some(heap), functions: true, ..Self::own(layout, slot, records) }
     }
 
+    /// `own_other` of a layout whose storage form `form` the row's site fixed.
+    #[inline(always)]
+    pub(in crate::vm::dispatch_fast) fn own_other_formed(layout: u32, form: u32, slot: u16, records: u64,
+        heap: *const crate::heap::Heap) -> Self {
+        let mut plan = Self::own_other(layout, slot, records, heap);
+        plan.ops[0] = crate::staged::ic::IcOp::GuardFormed { id: layout, form };
+        plan
+    }
+
     /// The read through a prototype hint whose operands are `guard`, `watch` and `value`
     /// (`IcOp::Held`).
     #[inline(always)]
@@ -477,7 +486,9 @@ impl<const ACC: u8> crate::staged::ElementFrame<Concrete> for LaneFrame<ACC> {
     #[inline(always)]
     fn array_records(&mut self, _stage: &mut Concrete) -> Option<u64> {
         // SAFETY: the heap is the lane's, live for the row.
-        self.heap.and_then(|heap| unsafe { (*heap).array_record_base() }).map(|base| base as u64)
+        // The live table: a direct array receiver proves it reserved, and any other receiver
+        // leaves at the access's family test before it is addressed.
+        self.heap.map(|heap| unsafe { (*heap).live_array_records() } as u64)
     }
 
     /// The lane keeps no views: a read takes the element of any backing in place.
@@ -773,10 +784,11 @@ lane_handler! {
         let mut frame = row_frame::<H, OP, ACC>(cx, r, view);
         if store {
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
-            let records = unsafe { (*script).binding.object_base } as u64;
-            // A method cache that may name the atom must see the store (`store_admitted`); an
-            // unbound table is the miss's to bind.
-            if records == 0 || unsafe { vm(script) }.method_caches_may_name(i.imm()) { store_miss!() }
+            // The live record table: a direct object receiver proves it reserved, and any other
+            // receiver leaves at the row's family test before it is addressed.
+            let records = unsafe { vm(script) }.heap.live_object_records() as u64;
+            // A method cache that may name the atom must see the store (`store_admitted`).
+            if unsafe { vm(script) }.method_caches_may_name(i.imm()) { store_miss!() }
             if this_store { frame.this = r.this(); }
             let hint = i.field_hint();
             frame.plan = Some(RecordPlan::own_store(hint.receiver, hint.slot, records));
@@ -800,11 +812,17 @@ lane_handler! {
                 // A receiver outside the object records (a function) by its layout id; a direct
                 // object, should the site meet one, through the bound records.
                 let machine = unsafe { vm(script) };
-                let records = unsafe { (*script).binding.object_base } as u64;
-                if records == 0 { property_miss!() }
+                // The live record table: a direct object receiver proves it reserved.
+                let records = machine.heap.live_object_records() as u64;
                 if const { super::own_site_this(FLAG) } { frame.this = r.this(); }
                 let hint = i.field_hint();
-                frame.plan = Some(RecordPlan::own_other(hint.receiver, hint.slot, records, &raw const machine.heap));
+                // A fixed form is the hint layout's own (the decision chose the row by it).
+                let form = const { super::own_site_form(FLAG) };
+                frame.plan = Some(if form == HINTED_FORM {
+                    RecordPlan::own_other(hint.receiver, hint.slot, records, &raw const machine.heap)
+                } else {
+                    RecordPlan::own_other_formed(hint.receiver, form & !crate::staged::TAGGED_SLOTS, hint.slot, records, &raw const machine.heap)
+                });
             } else if const { FLAG == super::STRING_SITE } {
                 // A string receiver's read through the record's `String.prototype` hint.
                 let machine = unsafe { vm(script) };

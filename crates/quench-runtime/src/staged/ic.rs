@@ -20,6 +20,9 @@ pub(crate) enum IcOp<'a> {
     /// shape, the storage form, the prototype link and the flags, and the `LoadSlot` after it
     /// reads the form's layout, which the id's table entry names, with no test.
     GuardLayout(u32),
+    /// `GuardLayout` of a layout whose storage form the site fixed (a generated row's site
+    /// fact): the form is a constant of the row, so the load after it reads no table entry.
+    GuardFormed { id: u32, form: u32 },
     /// The read moves to the record's prototype, an object record, else misses.
     Prototype,
     /// The value at `slot` of the record, whose guarded shapes keep at least `storage_len`
@@ -77,6 +80,11 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
             IcOp::GuardLayout(id) => {
                 guard_layout(stage, &at, id, miss)?;
                 at.formed = Some(layout_form(id));
+            }
+            IcOp::GuardFormed { id, form } => {
+                guard_layout(stage, &at, id, miss)?;
+                debug_assert_eq!(layout_form(id), form, "a fixed form's layout names it");
+                at.formed = Some(form);
             }
             IcOp::Prototype => {
                 let link = proto_link(stage, at.record);

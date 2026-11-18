@@ -635,6 +635,13 @@ impl Heap {
         self.array_records.base_ptr()
     }
 
+    /// `array_record_base` untested, for a read that proves its receiver a direct array before
+    /// it addresses the table.
+    #[inline(always)]
+    pub(crate) fn live_array_records(&self) -> *const ArrayObject {
+        self.array_records.live_base()
+    }
+
     /// An array's dense element backing, whether it lives in a record or a slot.
     pub(crate) fn array_elements(&self, value: Value) -> Option<&super::ArrayElements> {
         self.array(value).map(ArrayObject::elements)
