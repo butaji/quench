@@ -286,7 +286,8 @@ fn another_instances_function_in_a_shared_table_is_called_natively_once_it_is_pu
     // The calls ran in the caller's code and switched to the other instance's: the VM entered
     // only the caller, and its callout never ran the target.
     assert_eq!(entries(&vm, &foreign, 0), before);
-    assert_eq!(entries(&vm, &own, CALLER as usize), caller.map(|entered| entered + 3));
+    // The caller's code is compiled at its first entry, so before the calls it has no count.
+    assert_eq!(entries(&vm, &own, CALLER as usize), Some(caller.unwrap_or(0) + 3));
 }
 
 #[test]
@@ -306,4 +307,65 @@ fn a_row_names_the_record_its_function_keeps_alive() {
     vm.collect_now(own.residual());
     assert_eq!(call(&mut vm, &instance, 0), Ok(SEVEN + 2));
     assert_eq!(vm.wasm_instance_address(environment, program), Some(record));
+}
+
+/// Function 0 grows the memory by a page and returns its size in pages before; function 1
+/// returns its size in pages. One memory of one page, at most four.
+fn growing_module() -> crate::WasmModule {
+    Engine::lower_wasm_module_with_tables(
+        "grows",
+        [
+            body(
+                0,
+                vec![
+                    Operator::I32Const { value: 1 },
+                    Operator::MemoryGrow { mem: 0 },
+                    Operator::End,
+                ],
+            ),
+            body(0, vec![Operator::MemorySize { mem: 0 }, Operator::End]),
+        ],
+        &WasmTypes::from_functions([FuncType::new([], [ValType::I32])]),
+        &[],
+        &[crate::WasmMemory {
+            ty: wasmparser::MemoryType {
+                initial: 1,
+                maximum: Some(4),
+                memory64: false,
+                shared: false,
+                page_size_log2: None,
+            },
+            import: None,
+        }],
+        &[],
+        &[],
+    )
+    .unwrap()
+}
+
+/// TOD-1790: a call into another instance reads the length its memory has now, not the one
+/// it had when its code was last published, in the interpreter and in the tier alike.
+#[test]
+fn a_call_into_another_instance_sees_the_memory_it_grew() {
+    for compiled in [false, true] {
+        let mut vm = vm_running(compiled);
+        let (own, foreign) = (module(), growing_module());
+        let instance = vm.instantiate_wasm_module(&own).unwrap();
+        let other = vm.instantiate_wasm_module(&foreign).unwrap();
+        // The VM enters the other instance once, which publishes its code and memory.
+        assert_eq!(vm.invoke_wasm(&other, 1, &[]).unwrap(), Some(WasmValue::I32(1)));
+        let table = vm.wasm_table(&instance, 0).unwrap();
+        let grow = vm.wasm_function(&other, 0).unwrap();
+        let size = vm.wasm_function(&other, 1).unwrap();
+        vm.wasm_table_fill(table, 0, grow, 1).unwrap();
+        vm.wasm_table_fill(table, 1, size, 1).unwrap();
+        for round in 0..3 {
+            assert_eq!(call(&mut vm, &instance, 0), Ok(1 + round), "grow, compiled={compiled}");
+            assert_eq!(call(&mut vm, &instance, 1), Ok(2 + round), "size, compiled={compiled}");
+        }
+        // The VM's own read agrees, and a failed growth changes nothing.
+        assert_eq!(vm.invoke_wasm(&other, 1, &[]).unwrap(), Some(WasmValue::I32(4)));
+        assert_eq!(call(&mut vm, &instance, 0), Ok(-1), "grow past the maximum, compiled={compiled}");
+        assert_eq!(call(&mut vm, &instance, 1), Ok(4), "size at the maximum, compiled={compiled}");
+    }
 }

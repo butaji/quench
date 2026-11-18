@@ -68,7 +68,7 @@ macro_rules! float_lane_projection {
         #[inline(always)]
         fn $binary_fn(left: u128, right: u128, operator: super::float::$binary) -> WasmValue {
             map_lanes(left, Some(right), <$bits>::BITS, |left, right| {
-                let value = operator.apply(
+                let value = operator.evaluate(
                     <$float>::from_bits(left as $bits),
                     <$float>::from_bits(right.unwrap() as $bits),
                 );
@@ -87,7 +87,7 @@ macro_rules! float_lane_projection {
         #[inline(always)]
         fn $unary_fn(value: u128, operator: super::float::$unary) -> WasmValue {
             map_lanes(value, None, <$bits>::BITS, |bits, _| {
-                scalar(operator.apply(<$float>::from_bits(bits as $bits)))
+                scalar(operator.evaluate(<$float>::from_bits(bits as $bits)))
             })
         }
         #[inline(always)]
@@ -95,7 +95,7 @@ macro_rules! float_lane_projection {
             map_lanes(left, Some(right), <$bits>::BITS, |left, right| {
                 let right = right.unwrap();
                 // The comparison decides selection; the original bits own the result.
-                let WasmValue::I32(select_right) = comparison.apply(
+                let WasmValue::I32(select_right) = comparison.evaluate(
                     <$float>::from_bits(left as $bits),
                     <$float>::from_bits(right as $bits),
                 ) else {
@@ -147,7 +147,7 @@ fn convert(value: u128, op: super::conversion::ScalarConversionOperator) -> Wasm
             ScalarBits::Bits64(bits)
         };
         let input = source.decode(bits).expect("scalar lane signature");
-        let output = op.apply(input).expect("nontrapping SIMD conversion");
+        let output = op.evaluate(input).expect("nontrapping SIMD conversion");
         result = replace(result, result_width, index as u8, scalar(output));
     }
     WasmValue::V128(result)
