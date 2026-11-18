@@ -36,6 +36,10 @@ pub(super) struct LoopTier {
     /// bound misses every versioned entry.
     entry_misses: u16,
     pub(super) unbounded: bool,
+    /// Whether the current code (or the compile under way) is a b-jit region the default mode
+    /// picked (`loop_model::base_region`), which moves to u-jit once its iterations repay that
+    /// compile (`promote`).
+    pub(super) base: bool,
 }
 
 impl LoopTier {
@@ -43,6 +47,16 @@ impl LoopTier {
         self.runs = self.runs.saturating_add(1);
         self.entry_misses = 0;
         self.iterations = self.iterations.saturating_add(backedges);
+    }
+
+    /// Moves a b-jit region the default mode picked to u-jit once the loop's iterations repay
+    /// the u-jit compile over it (`loop_model::promotes`): the stencil code goes, and the next
+    /// entry compiles the u-jit region, where a compilation remains.
+    pub(super) fn promote(&mut self, tiers: &Tiers, span: u64) {
+        if !self.base || self.compilations >= tiers.loops.max_compilations
+            || !super::super::compiled::loop_model::promotes(tiers, span, self.iterations) { return; }
+        self.base = false;
+        if let Some(code) = self.code.take() { code.retire(); }
     }
 
     /// Counts an entry the published code's guards declined: past `widen_after_leaves` in a row,
@@ -235,13 +249,18 @@ pub(super) fn lane_loop_compile<H: Host>(
     count_compilation(tier, site);
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
+    // The tier of this compile: b-jit where the u-jit region is not yet ahead of it, counting
+    // the interpreter's jumps and the native iterations the loop took so far.
+    let base = super::super::compiled::loop_model::base_region(machine.programs.tiers(), site.span(),
+        u64::from(site.taken.get()).saturating_add(tier.iterations));
+    tier.base = base && !crate::jit_mode::base_regions();
     let program = machine.programs.get(machine.active_program);
     let function = site.function();
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
-    let (native_field_loads, store_loads) = (native_field_loads(machine, own, region), native_store_loads(machine, region));
+    let (native_field_loads, store_loads) = (native_field_loads(machine, own.filter(|_| !base), region), native_store_loads(machine, region));
     let (ints, doubles) = entry_number_registers(region, r);
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let frame_captures: Vec<(usize, usize)> = region.inlining.as_deref()
@@ -255,13 +274,13 @@ pub(super) fn lane_loop_compile<H: Host>(
     let policy = machine.heap.memory_policy();
     // A BaseJIT region inlines the calls its sites recorded.
     // A Cranelift region calls the callees its sites reached by their entries.
-    let calls = program.as_deref().map(|program| if crate::jit_mode::base_regions() { region_calls(cx, machine, program, function) }
+    let calls = program.as_deref().map(|program| if base { region_calls(cx, machine, program, function) }
         else { unit_region_calls(cx, machine, program, function) }).unwrap_or_default();
     // Stores run in place for the atoms no method cache names, while the VM and the program run specialized.
     let stores = program.as_deref().filter(|program| machine.specialized && program.specialized).map(|_| machine.method_cache_atoms.bits().clone());
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
         &observation, (policy, machine.programs.tiers()), program, function, helpers,
-        &mut |unit, table| machine.global_table(program, function, unit, table), (&tier.widened, stores.as_ref()), calls));
+        &mut |unit, table| machine.global_table(program, function, unit, table), (&tier.widened, stores.as_ref()), calls, base));
     if let Some(pending) = &started {
         let (watch, callees) = pending.native_calls();
         machine.programs.note_pending_native_calls(&watch, callees);
@@ -300,8 +319,7 @@ fn native_field_loads<H: Host>(machine: &Vm<H>, own: Option<&super::LaneView>, r
     let available = machine.heap.object_record_base().is_some() && !properties_base.is_null() && properties_len > 0;
     // Each read's lane record hint names the storage form its receivers had (`own_field_hint`),
     // which code that embeds its shapes guards whole. Base regions read the live cache instead,
-    // whose entries name no form.
-    let own = own.filter(|_| !crate::jit_mode::base_regions());
+    // whose entries name no form (the caller passes no view for one).
     let reads: std::collections::HashMap<usize, usize> = region.field_reads().iter()
         .map(|(offset, index)| (*index, region.header as usize + *offset as usize)).collect();
     region.fields.iter().enumerate()
