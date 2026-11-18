@@ -2664,6 +2664,28 @@ impl ProgramStore {
         Some(derive_lane_view(entry, function, code, view, derive))
     }
 
+    /// A view of `function` derived afresh from its bytecode and not stored, beside the view
+    /// its runs settled (requickened records) if one was derived: the lane plan
+    /// (`QUENCH_TRACE=bytecode=lanes`, `Vm::report_lane_plan`).
+    pub(super) fn plan_lane_view<'s>(
+        &'s self,
+        id: ProgramId,
+        function: u32,
+        derive: impl FnOnce(
+            &crate::bytecode::Function,
+            &[Value],
+            crate::bytecode::ProgramKind,
+            &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+            &[crate::bytecode::FieldSite],
+        ) -> super::dispatch_fast::LaneView,
+    ) -> Option<(super::dispatch_fast::LaneView, Option<&'s super::dispatch_fast::LaneView>)> {
+        let entry = self.lane_entry(id)?;
+        let code = entry.residual.function_get(function as usize)?;
+        let live = || entry.residual.shared_register_root_masks(function);
+        let fresh = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
+        Some((fresh, entry.lane_views.derived(function)))
+    }
+
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {
         self.constants(id).get(index).copied()
     }

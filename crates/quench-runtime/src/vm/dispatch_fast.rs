@@ -14276,6 +14276,65 @@ impl<H: Host> Vm<H> {
     }
 }
 
+impl<H: Host> Vm<H> {
+    /// Prints every loaded function's lane view, derived afresh from its bytecode (no loop
+    /// tier), when `QUENCH_TRACE=bytecode=lanes` is set: per record `LANEPLAN program function pc
+    /// width handler settled | instruction`, handlers as run-time addresses (symbolized against
+    /// the symbol table by `quench-gate --only ir-predict`, less the anchor's bias), `settled`
+    /// the handler the stored view holds after the run (`-` where no run derived one).
+    pub(super) fn report_lane_plan(&mut self) {
+        if crate::trace::Channel::Bytecode.value() != Some(super::inspection::LANE_PLAN) {
+            return;
+        }
+        // A function whose load deferred its compilation (`CallFirstChunk`) compiles its chunk
+        // now, as its first call would, so the plan holds its body.
+        let mut stubs = Vec::new();
+        for index in 0..self.programs.len() {
+            let Some(residual) = self.programs.get(ProgramId::from_raw(index as u32)) else { continue };
+            residual.compile_released();
+            for function in 0..residual.functions.len() as u32 {
+                if residual.function_get(function as usize).is_some_and(|code| code.instructions().any(|instruction| instruction.op() == Op::CallFirstChunk)) {
+                    stubs.push((residual.clone(), ProgramId::from_raw(index as u32), function));
+                }
+            }
+        }
+        eprintln!("LANEPLAN-ANCHOR {:x}", lane_plan_anchor as fn() as usize);
+        for (residual, id, function) in stubs {
+            if let Ok(FunctionKind::User(chunk, body)) = self.compile_first_chunk(&residual, (id, function)) {
+                eprintln!("LANEPLAN-CHUNK {} {function} {} {body}", id.raw(), chunk.raw());
+            }
+        }
+        for index in 0..self.programs.len() {
+            let id = ProgramId::from_raw(index as u32);
+            let Some(residual) = self.programs.get(id) else { continue };
+            residual.compile_released();
+            for function in 0..residual.functions.len() as u32 {
+                let Some(code) = residual.function_get(function as usize) else { continue };
+                let name = code.name.map_or("<anonymous>", |atom| residual.atoms[atom as usize].as_ref());
+                let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
+                    derive_lane_view::<H>(function, code, constants, &self.heap, kind, live, sites, false, false, self.programs.tiers())
+                });
+                let Some((fresh, settled)) = plan else { continue };
+                eprintln!("LANEPLAN-FUNCTION {index} {function} {name}");
+                for (pc, instruction) in code.instructions().enumerate() {
+                    // SAFETY: `pc` names a record of each view (both derived from `code`); no
+                    // lane runs while the report reads them.
+                    let handler = unsafe { (*fresh.records[pc].get()).handler };
+                    let settled = settled.map_or_else(|| "-".to_owned(), |view| format!("{:x}", unsafe { (*view.records[pc].get()).handler }.addr()));
+                    eprintln!("LANEPLAN {index} {function} {pc} {} {:x} {settled} | {}", fused_width::<H>(handler), handler.addr(), instruction.text());
+                }
+            }
+        }
+    }
+}
+
+/// A function whose run-time address the lane plan prints (`LANEPLAN-ANCHOR`): less its
+/// address in the symbol table, it is the executable's load bias, PIE or not.
+#[inline(never)]
+fn lane_plan_anchor() {
+    std::hint::black_box(());
+}
+
 script_handler! {
     /// `lane_script_call` of a linked target whose entry is not a plain activation: the site
     /// calls the form for that entry directly from now on, an environment or keeping
