@@ -33,6 +33,29 @@ impl Output for Vec<u8> {
     }
 }
 
+impl<const N: usize> Output for smallvec::SmallVec<[u8; N]> {
+    #[inline(always)] fn push(&mut self, byte: u8) {
+        smallvec::SmallVec::push(self, byte);
+    }
+    #[inline(always)] fn extend_from_slice(&mut self, bytes: &[u8]) {
+        self.append_bytes(bytes);
+    }
+}
+
+impl<const N: usize> AppendBytes for smallvec::SmallVec<[u8; N]> {
+    /// One reservation and a short copy: SmallVec's own `extend_from_slice` inserts as at any
+    /// index.
+    #[inline(always)] fn append_bytes(&mut self, bytes: &[u8]) {
+        self.reserve(bytes.len());
+        // SAFETY: the reservation holds `bytes.len()` bytes past the length, which `bytes`
+        // does not alias.
+        unsafe {
+            copy_short(bytes, self.as_mut_ptr().add(self.len()));
+            self.set_len(self.len() + bytes.len());
+        }
+    }
+}
+
 /// Appending bytes where the std call (`Vec::extend_from_slice`) is shared across codegen
 /// units and so runs out of line: the copy into spare capacity is written here, and only
 /// growth calls out.
