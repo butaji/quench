@@ -280,6 +280,20 @@ fn leaves(layout: &Layout, row: &Decoded) -> bool {
     row.step == Some(Step::Leave) || !framed(&layout.homes, row)
 }
 
+/// Whether `row` interprets its instruction rather than running its handler's residue: the general
+/// step a lane helper makes from the instruction's PC (re-decoding it and dispatching on its form,
+/// hundreds of instructions where the interpreter's quickened handler spends tens), or a call (the
+/// region call protocol costs more than the interpreter's own call today). The design is a ladder, b-jit at most the interpreter's instructions on every
+/// operation (b-jit is the interpreter with dispatch and decode folded), so a loop region holding
+/// one on its loop is not built and the interpreter runs the loop: interpreting inside a region is
+/// slower than the interpreter by construction. A fast arm's slow arm (`Step::Fast`), a throw and a
+/// leave are off the loop's steady path. A call leaves this list once its protocol runs in fewer
+/// instructions than the interpreter's call: the tier-ladder gate (`quench-gate --only ir-budget`,
+/// call_direct, call_closure, k03_call_add) says when.
+fn interprets(row: &Decoded) -> bool {
+    matches!(row.step, Some(Step::Helper | Step::CallOut | Step::Call(_)))
+}
+
 /// The plan of row `pc`: nothing where control never reaches it, a leave row, or the row with the
 /// rows before it its kind needs.
 fn plan_row(layout: &Layout, (reprs, kinds): (&Reprs, Option<&OperandKinds>), reached: bool, pc: u32, row: &Decoded, helpers: LaneHelpers) -> Result<Planned, String> {
@@ -436,6 +450,9 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let rows: Vec<Decoded> = stitched.rows.into_iter().enumerate().map(|(k, row)| if reached.contains(k) { row } else { Decoded::step(Step::Leave, None) }).collect();
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
     let (reprs, homes, webs, decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), spec.seen);
+    if ending == Ending::Region && let Some(generic) = decoded.iter().enumerate().find(|(k, row)| reached.contains(*k) && interprets(row)) {
+        return Err(format!("interprets in the loop: {:?}", generic.1.step));
+    }
     let invalidation = spec.known.invalidation.filter(|_| decoded.iter().any(Decoded::holds_stable) && decoded.iter().any(Decoded::makes_calls));
     let realm = (!stitched.frames.is_empty()).then_some(spec.realm).or_else(|| held_realm(&decoded));
     let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm };

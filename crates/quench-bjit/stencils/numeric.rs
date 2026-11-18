@@ -284,6 +284,28 @@ fn control_row<const K: u8>(s: S) -> Out {
     }
 }
 
+/// The staged remainder of the row's operands in `domain`; whether it produced its result.
+#[inline(always)]
+fn remainder<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>, domain: Domain) -> bool {
+    let (left, right) = (Operand::register(LEFT), Operand::register(RIGHT));
+    staged(frame, NumberOperation::Remainder { destination: DEST, left, right, domain }).is_some()
+}
+
+/// A remainder row over int places: the int32 remainder where the row speculates int32s, else
+/// while both operand words are ints. Anything else (a zero divisor, a negative zero, a double)
+/// leaves: the f64 remainder is libm's `fmod`, a call a stencil cannot hold.
+#[inline(always)]
+fn remainder_row<const D: u8, const A: u8, const B: u8, const SPEC: bool>(mut frame: Places<D, A, B>) -> Out {
+    let done = if SPEC {
+        remainder(&mut frame, Domain::Int32)
+    } else {
+        let ints = frame.both_int();
+        frame.prove_ints();
+        ints && remainder(&mut frame, Domain::Int32)
+    };
+    finish(frame, done)
+}
+
 /// The unary rows: logical and Number negation.
 #[inline(always)]
 fn unary_row<const K: u8, const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>) -> Out {
@@ -307,7 +329,7 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
         JUMP_TRUE => truth_row::<true, D, A, B>(frame),
         JUMP_FALSE => truth_row::<false, D, A, B>(frame),
         NOT | NEG => unary_row::<K, D, A, B>(frame),
-        REM => rem_row::<D, A, B, SPEC>(frame),
+        REM => remainder_row::<D, A, B, SPEC>(frame),
         _ => tag_init(frame.s),
     }
 }

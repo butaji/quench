@@ -84,8 +84,7 @@ pub enum Kind {
     /// Number negation of a Number operand (`Neg`).
     Not,
     Neg,
-    /// `%` of two Numbers: int32 where both are and the remainder is one (no zero divisor, no
-    /// negative zero), else through doubles.
+    /// `%`, the staged Number remainder.
     Rem,
 }
 
@@ -93,6 +92,24 @@ impl Kind {
     /// Whether the kind is a bitwise operation, which computes on int32s only.
     pub fn is_bitwise(self) -> bool {
         (Kind::And..=Kind::UShr).contains(&self)
+    }
+
+    /// Whether the int32 operation gives the same result with its operands swapped, so the planner
+    /// may put an immediate second, where a row encodes it into the instruction.
+    pub fn commutes(self) -> bool {
+        matches!(self, Kind::Add | Kind::Mul | Kind::And | Kind::Or | Kind::Xor)
+    }
+
+    /// The int32 second operand that makes the operation its first operand unchanged (`x | 0`,
+    /// `x + 0`, `x * 1`, `x & -1`, `x << 0`): partial evaluation on a known immediate folds such a row
+    /// to a move. `>>>` has none: `x >>> 0` is a uint32, which an int32 register cannot hold.
+    pub fn neutral(self) -> Option<i32> {
+        match self {
+            Kind::Add | Kind::Sub | Kind::Or | Kind::Xor | Kind::Shl | Kind::Shr => Some(0),
+            Kind::Mul => Some(1),
+            Kind::And => Some(-1),
+            _ => None,
+        }
     }
 
     /// Whether a row of this kind with a double operand computes in f64.
