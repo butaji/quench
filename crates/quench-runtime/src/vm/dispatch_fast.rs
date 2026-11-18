@@ -5045,8 +5045,11 @@ script_handler! {
     /// registers; the first other operand switches the record to `lane_operator_numbers`.
     fn lane_operator<OP: u32>(cx, r, ip, i, view) {
         // An arithmetic operator is its staged Number row in the int32 domain, widening as the
-        // operator's Number result does; operands other than two int32 are the row's miss.
-        if let Some(operation) = super::operations::NumberArithmetic::from_operator(OP) {
+        // operator's Number result does; operands other than two int32 are the row's miss. A
+        // division has no int32 form (its result is a binary64): its own path below takes it.
+        if let Some(operation) = super::operations::NumberArithmetic::from_operator(OP)
+            .filter(|operation| !matches!(operation, super::operations::NumberArithmetic::Divide))
+        {
             let mut stage = crate::staged::Concrete::new(std::ptr::null());
             let mut frame = lane_frame::LaneFrame::<ACC_NONE>::new(r, Carried::script_in(cx, view));
             let row = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic {
