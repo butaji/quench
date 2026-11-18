@@ -68,7 +68,7 @@ pub(super) struct RegExpIntrinsics {
     pub(super) result_template: Option<RegExpResultTemplate>,
     /// Where `regexp_builtin_exec_matcher` last proved the builtin exec (`RegExpExecProof`);
     /// a memo, never snapshotted.
-    exec_proof: std::cell::Cell<Option<RegExpExecProof>>,
+    pub(super) exec_proof: std::cell::Cell<Option<RegExpExecProof>>,
     /// A function value found to be this realm's builtin `exec`: a function's kind never
     /// changes, so the prototype's `exec` slot holding this value needs no further look.
     /// Rooted (`gc.rs`), so the handle names it for as long as the memo does.
@@ -81,9 +81,9 @@ pub(super) struct RegExpIntrinsics {
 /// advances the epoch; shape compaction advances it too, so a proof never names a renumbered
 /// shape. The slot's value may change in place, so each use reads it.
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct RegExpExecProof {
-    shape: u32,
-    epoch: u64,
+pub(super) struct RegExpExecProof {
+    pub(super) shape: u32,
+    pub(super) epoch: u64,
     exec_slot: usize,
 }
 

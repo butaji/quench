@@ -23,7 +23,7 @@ impl<H: Host> Vm<H> {
         }
         let exec = native == Native::RegExpExec;
         // Proved once, the fuse answers `regexp_exec_is_builtin` with no read of the slot.
-        if !exec && (!self.fuse_intact(crate::code_dependencies::IntactFuse::RegExpExec) || !self.regexp_exec_is_builtin(receiver)) {
+        if !exec && (!self.fuse_intact(crate::code_dependencies::IntactFuse::RegExpExec) || !self.regexp_exec_proven(receiver)) {
             return None;
         }
         if let Some(outcome) = self.steady_ascii_direct(receiver, subject, exec, result_used) {
@@ -154,6 +154,24 @@ impl<H: Host> Vm<H> {
             return Ok(Value::UNDEFINED);
         }
         self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched))
+    }
+
+    /// `regexp_exec_is_builtin` where the RegExp exec fuse holds for this realm's prototype:
+    /// a RegExp of that prototype whose shape has no own `exec` (the recorded proof) finds the
+    /// builtin there, with no second look at the fuse and no read of the slot.
+    #[inline(always)]
+    fn regexp_exec_proven(&self, regexp: Value) -> bool {
+        let Some(Cell::RegExp { object, .. }) = self.heap.get(regexp) else {
+            return false;
+        };
+        let Some(intrinsics) = self.realm.intrinsics.regexp_intrinsics.get(&self.realm.globals) else {
+            return false;
+        };
+        let proven = intrinsics.exec_proof.get().is_some_and(|proof| proof.shape == object.shape() && proof.epoch == crate::heap::prototype_layout_epoch());
+        if object.proto() == intrinsics.prototype && proven {
+            return true;
+        }
+        self.regexp_exec_is_builtin(regexp)
     }
 
     /// The proof of `regexp_builtin_exec_matcher` that `regexp`'s exec is the builtin, without
