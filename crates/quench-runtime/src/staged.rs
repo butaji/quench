@@ -310,7 +310,7 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 49] = [
 /// Runs of three or four generated rows the lane runs as one record (`chain_rows`): each
 /// entry's links in record order, `NO_LINK` padding a three-link chain. Only the last link may
 /// be a jump. A chain at a record wins over a `FUSED_ROWS` pair there.
-pub(crate) const FUSED_CHAINS: [[u16; 4]; 18] = [
+pub(crate) const FUSED_CHAINS: [[u16; 4]; 19] = [
     // A local or capture read, then a register comparison, then its branch (`specialize_load_branch_pairs`).
     [Op::LoadLocalPlain as u16, Op::Binary as u16, Op::JumpFalse as u16, NO_LINK],
     [Op::LoadLocalPlain as u16, Op::Binary as u16, Op::JumpTrue as u16, NO_LINK],
@@ -332,6 +332,8 @@ pub(crate) const FUSED_CHAINS: [[u16; 4]; 18] = [
     [Op::WasmI32Load as u16, Op::WasmI32LessUnsigned as u16, Op::WasmI32Store as u16, NO_LINK],
     // An i32 add of a constant, an f64 load at its sum, then an f64 operator on the loaded value.
     [Op::WasmI32AddImmediate as u16, Op::WasmF64Load as u16, Op::WasmF64Binary as u16, NO_LINK],
+    // `c = (c + 1) | 0` of a capture: its read, the operator, the truncation, then the store.
+    [Op::LoadCapture as u16, Op::Binary as u16, Op::Binary as u16, Op::StoreCapture as u16],
 ];
 
 /// The absent fourth link of a three-link `FUSED_CHAINS` entry.

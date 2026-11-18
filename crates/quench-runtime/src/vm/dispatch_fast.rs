@@ -20020,7 +20020,6 @@ fn derive_lane_view<'live, H: Host>(
     if !wasm {
         specialize_store_moves::<H>(&mut records);
         specialize_typed_addresses::<H>(&mut records);
-        specialize_capture_updates::<H>(&mut records);
         specialize_constant_returns::<H>(&mut records);
         specialize_script_calls::<H>(&mut records, function.undefined_register);
         specialize_proved_arrays::<H>(&decoded, &mut records, &raw_results::raw_result_triples(&decoded, &function.handlers, || live().map(|masks| &**masks)));
@@ -20730,44 +20729,6 @@ fn is_own_capture_read<H: Host>(record: &LaneInstruction) -> bool {
     is_row::<H, CAPTURE_READ>(record.handler) && ImmediateLayout::capture_depth(record.imm()) == 0
 }
 
-/// Gives each own capture's read (`lane_load_capture`) whose value an int32 sum or difference
-/// with a constant (`lane_operator_int32`) takes, and whose truncated result the record after
-/// stores back to the same capture (`lane_store_capture`, `lane_store_capture_load`), the fused
-/// update (`lane_update_capture_int32`) of the form its end takes (`UpdateForm`). The records
-/// stay for jumps and for steps the update leaves to them.
-fn specialize_capture_updates<H: Host>(records: &mut [LaneInstruction]) {
-    use super::operations::{ADDITION, SUBTRACTION};
-    let load = |record: &LaneInstruction| is_own_capture_read::<H>(record);
-    let store = |handler: *const ()| is_row::<H, CAPTURE_WRITE>(handler);
-    let add = lane_operator_int32::<H, ADDITION, true> as Handler as *const ();
-    let subtract = lane_operator_int32::<H, SUBTRACTION, true> as Handler as *const ();
-    for pc in 0..records.len().saturating_sub(3) {
-        let (read, operator, truncation, write) = (&records[pc], &records[pc + 1], &records[pc + 2], &records[pc + 3]);
-        if !load(read)
-            || (operator.handler != add && operator.handler != subtract)
-            || operator.b != read.a
-            || !store(write.handler)
-            || write.imm() != read.imm()
-            || write.a != truncation.a
-        {
-            continue;
-        }
-        // The store's own read of the same capture, the fifth record, makes the `UPDATE_LOADS` run.
-        let loads_back = records.get(pc + 4).is_some_and(|next| load(next) && next.imm() == write.imm());
-        let form = if loads_back { UPDATE_LOADS } else { UPDATE_STORES };
-        macro_rules! forms {
-            ($($form:ident),*) => {
-                match (operator.handler == add, form) {
-                    $((true, $form) => lane_update_capture_int32::<H, ADDITION, $form> as Handler,
-                      (false, $form) => lane_update_capture_int32::<H, SUBTRACTION, $form> as Handler,)*
-                    _ => unreachable!("an update form"),
-                }
-            };
-        }
-        let handler = forms!(UPDATE_STORES, UPDATE_LOADS);
-        records[pc].handler = handler as *const ();
-    }
-}
 
 /// Gives each frame `LoadLocal` record the handler of its slot's static binding facts
 /// (`lane_load_frame_local`): a slot a mapped `arguments` mirrors, or a self binding, keeps the
