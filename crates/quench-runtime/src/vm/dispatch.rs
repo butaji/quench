@@ -892,116 +892,18 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::Await => {
-                // Promise conversion is part of this instruction, so abrupt
-                // completion reaches the active frame's catch/finally handlers.
-                // A primitive needs none: the promise PromiseResolve would wrap it in is
-                // already fulfilled and unreachable, so the resume reads the value itself
-                // (`enqueue_async_resume`).
-                let awaited = self.read(f, i.register_b());
-                let value = if self.is_object_like(awaited) {
-                    self.promise_for_value(p, awaited)?
-                } else {
-                    awaited
-                };
-                return Ok(StepResult::Await {
-                    value,
-                    destination: i.result_register(),
-                });
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    return self.await_miss(p, f, i);
+                }
             }
             Op::Yield => {
-                let value = self.read(f, i.register_b());
-                let value = if p.function(self.frames[f].function as usize).is_async {
-                    self.promise_for_value(p, value)?
-                } else {
-                    value
-                };
-                return Ok(StepResult::Yield {
-                    value,
-                    destination: i.result_register(),
-                    delegated_result: None,
-                });
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    return self.yield_miss(p, f, i);
+                }
             }
             Op::YieldStar => {
-                let iterator = self.read(f, i.register_c());
-                let iterator = if iterator.is_undefined() {
-                    let source = self.read(f, i.register_b());
-                    let asynchronous = p.function(self.frames[f].function as usize).is_async;
-                    let iterator = if asynchronous {
-                        self.get_async_iterator(p, source)?
-                    } else {
-                        self.get_iterator(p, source)?
-                    };
-                    self.write(f, i.register_c(), iterator);
-                    iterator
-                } else {
-                    iterator
-                };
-                let (state_register, next_method_register) = i.register_pair();
-                let next_method = self.read(f, next_method_register);
-                let next_method = if next_method.is_undefined() {
-                    let receiver = match self.heap.iterator(iterator) {
-                        Some(IteratorRecord {
-                            source,
-                            kind: IteratorKind::AsyncFromSync,
-                            ..
-                        }) => *source,
-                        _ => iterator,
-                    };
-                    let atom = self.runtime_atoms.next;
-                    let method = self.get_property(p, receiver, atom)?;
-                    if !self.is_function(method) {
-                        return Err(
-                            self.type_error(p, "iterator next method is not callable".into())
-                        );
-                    }
-                    self.write(f, next_method_register, method);
-                    method
-                } else {
-                    next_method
-                };
-                let awaited_result = self.read(f, state_register);
-                let asynchronous = p.function(self.frames[f].function as usize).is_async;
-                // An awaited step's result, or a synchronous delegate step the lane made as an
-                // activation (`Completion::Delegates`), waits in the state register.
-                let result = if !awaited_result.is_undefined() {
-                    self.write(f, state_register, Value::UNDEFINED);
-                    awaited_result
-                } else {
-                    let input = self.read(f, i.result_register());
-                    let result =
-                        self.iterator_next_with_cached_method(p, iterator, next_method, &[input])?;
-                    if asynchronous {
-                        *pc -= 1;
-                        let value = self.promise_for_value(p, result)?;
-                        return Ok(StepResult::Await {
-                            value,
-                            destination: state_register,
-                        });
-                    }
-                    result
-                };
-                let done_atom = self.runtime_atoms.done;
-                let done = self.get_property(p, result, done_atom)?;
-                if self.truthy(done) {
-                    let value_atom = self.runtime_atoms.value;
-                    let value = self.get_property(p, result, value_atom)?;
-                    self.write(f, i.result_register(), value);
-                } else {
-                    *pc -= 1;
-                    if asynchronous {
-                        self.write(f, state_register, Value::UNDEFINED);
-                    }
-                    let value = if asynchronous {
-                        let value_atom = self.runtime_atoms.value;
-                        self.get_property(p, result, value_atom)?
-                    } else {
-                        Value::UNDEFINED
-                    };
-                    return Ok(StepResult::Yield {
-                        value,
-                        destination: i.result_register(),
-                        delegated_result: Some(result),
-                    });
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    return self.yield_star_miss(p, f, i, pc);
                 }
             }
             Op::SetField | Op::SetFieldStrict => {
@@ -1467,6 +1369,8 @@ impl<H: Host> Vm<H> {
             }
             Step::Value(_) | Step::Control(Edge::Following) => true,
             Step::Unresolved => false,
+            Step::Control(Edge::Leave | Edge::Transfer | Edge::Entry(_)) =>
+                unreachable!("the interpreter frame neither suspends nor enters a branch table"),
         }
     }
 
@@ -1477,7 +1381,8 @@ impl<H: Host> Vm<H> {
     fn step_row_of(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize,
         context: crate::staged::DecodeContext<'_>) -> bool {
         let decoded = crate::staged::Operation::<u64, ()>::decode(i, context)
-            .or_else(|| crate::staged::Operation::<u64, ()>::decode_load_name(i, ()));
+            .or_else(|| crate::staged::Operation::<u64, ()>::decode_load_name(i, ()))
+            .or_else(|| crate::staged::Operation::<u64, ()>::decode_lane(i));
         match decoded {
             Some(operation) => self.step_staged(p, f, i, pc, operation),
             None => false,
@@ -1683,6 +1588,128 @@ impl<H: Host> Vm<H> {
             p.function(self.frames[f].function as usize).strict
                 || i.boolean_flag().expect("validated boolean immediate"),
         )?
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn await_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
+        // Promise conversion is part of this instruction, so abrupt
+        // completion reaches the active frame's catch/finally handlers.
+        // A primitive needs none: the promise PromiseResolve would wrap it in is
+        // already fulfilled and unreachable, so the resume reads the value itself
+        // (`enqueue_async_resume`).
+        let awaited = self.read(f, i.register_b());
+        let value = if self.is_object_like(awaited) {
+            self.promise_for_value(p, awaited)?
+        } else {
+            awaited
+        };
+        return Ok(StepResult::Await {
+            value,
+            destination: i.result_register(),
+        });
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn yield_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
+        let value = self.read(f, i.register_b());
+        let value = if p.function(self.frames[f].function as usize).is_async {
+            self.promise_for_value(p, value)?
+        } else {
+            value
+        };
+        return Ok(StepResult::Yield {
+            value,
+            destination: i.result_register(),
+            delegated_result: None,
+        });
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn yield_star_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize) -> Result<StepResult, JsError> {
+        let iterator = self.read(f, i.register_c());
+        let iterator = if iterator.is_undefined() {
+            let source = self.read(f, i.register_b());
+            let asynchronous = p.function(self.frames[f].function as usize).is_async;
+            let iterator = if asynchronous {
+                self.get_async_iterator(p, source)?
+            } else {
+                self.get_iterator(p, source)?
+            };
+            self.write(f, i.register_c(), iterator);
+            iterator
+        } else {
+            iterator
+        };
+        let (state_register, next_method_register) = i.register_pair();
+        let next_method = self.read(f, next_method_register);
+        let next_method = if next_method.is_undefined() {
+            let receiver = match self.heap.iterator(iterator) {
+                Some(IteratorRecord {
+                    source,
+                    kind: IteratorKind::AsyncFromSync,
+                    ..
+                }) => *source,
+                _ => iterator,
+            };
+            let atom = self.runtime_atoms.next;
+            let method = self.get_property(p, receiver, atom)?;
+            if !self.is_function(method) {
+                return Err(
+                    self.type_error(p, "iterator next method is not callable".into())
+                );
+            }
+            self.write(f, next_method_register, method);
+            method
+        } else {
+            next_method
+        };
+        let awaited_result = self.read(f, state_register);
+        let asynchronous = p.function(self.frames[f].function as usize).is_async;
+        // An awaited step's result, or a synchronous delegate step the lane made as an
+        // activation (`Completion::Delegates`), waits in the state register.
+        let result = if !awaited_result.is_undefined() {
+            self.write(f, state_register, Value::UNDEFINED);
+            awaited_result
+        } else {
+            let input = self.read(f, i.result_register());
+            let result =
+                self.iterator_next_with_cached_method(p, iterator, next_method, &[input])?;
+            if asynchronous {
+                *pc -= 1;
+                let value = self.promise_for_value(p, result)?;
+                return Ok(StepResult::Await {
+                    value,
+                    destination: state_register,
+                });
+            }
+            result
+        };
+        let done_atom = self.runtime_atoms.done;
+        let done = self.get_property(p, result, done_atom)?;
+        if self.truthy(done) {
+            let value_atom = self.runtime_atoms.value;
+            let value = self.get_property(p, result, value_atom)?;
+            self.write(f, i.result_register(), value);
+        } else {
+            *pc -= 1;
+            if asynchronous {
+                self.write(f, state_register, Value::UNDEFINED);
+            }
+            let value = if asynchronous {
+                let value_atom = self.runtime_atoms.value;
+                self.get_property(p, result, value_atom)?
+            } else {
+                Value::UNDEFINED
+            };
+            return Ok(StepResult::Yield {
+                value,
+                destination: i.result_register(),
+                delegated_result: Some(result),
+            });
+        }
         Ok(StepResult::Continue)
     }
 

@@ -1207,16 +1207,16 @@ impl Operation<u64, ()> {
         matches!(Self::of(instruction), Some(Self::Number(_) | Self::Equality { .. } | Self::Binary { .. }))
     }
 
-    /// Whether `instruction` yields a value from a generator (`Yield`). No staged row answers it:
-    /// a frame's yield is the general loop's step.
+    /// Whether `instruction` yields a value from a generator (`Yield`, a lane row). The interpreter
+    /// frame answers no suspension (`Frame::suspend_yield`), so its yield is the general loop's step.
     pub(crate) fn is_yield(instruction: WideInstruction) -> bool {
-        instruction.op() == Op::Yield
+        matches!(Self::decode_lane(instruction), Some(Self::Yield { .. }))
     }
 
-    /// Whether `instruction` awaits a value (`Await`). No staged row answers it: an async frame's
-    /// await is the general loop's step.
+    /// Whether `instruction` awaits a value (`Await`, a lane row). The interpreter frame answers no
+    /// suspension (`Frame::suspend_await`), so an async frame's await is the general loop's step.
     pub(crate) fn is_await(instruction: WideInstruction) -> bool {
-        instruction.op() == Op::Await
+        matches!(Self::decode_lane(instruction), Some(Self::Await { .. }))
     }
 
     /// Whether `instruction` tests a private name's brand (`PrivateIn`), which no staged row answers.

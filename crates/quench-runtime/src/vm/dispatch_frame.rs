@@ -2176,6 +2176,8 @@ impl<H: Host> Vm<H> {
                             continue;
                         }
                     }
+                    crate::staged::Step::Control(crate::staged::Edge::Leave | crate::staged::Edge::Transfer | crate::staged::Edge::Entry(_)) =>
+                        unreachable!("the interpreter frame neither suspends nor enters a branch table"),
                 }
             }
             match ins.op()  as u16 {
