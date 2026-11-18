@@ -1261,8 +1261,6 @@ fn handler_is<H: Host>(ip: Ip, handler: Handler) -> bool {
 /// The context words below register 0 (`staged::frame`, the one source of the frame layout).
 use crate::staged::frame::{CONTEXT_CALL, CONTEXT_CALLEE, CONTEXT_CALLER_BASE, CONTEXT_CALLER_REGISTERS, CONTEXT_CAPTURE, CONTEXT_ENV, CONTEXT_PACKED, CONTEXT_THIS};
 const _: () = assert!(CONTEXT_CALLEE == super::register_file::FRAME_CONTEXT);
-/// `CONTEXT_PACKED`'s flag of a plain frame.
-pub(in crate::vm) const PLAIN_FRAME_FLAG: u64 = crate::staged::frame::PLAIN_FLAG;
 
 /// The active frame's registers. Lane instructions never resize registers or
 /// change the frame stack, so the base stays valid for the whole lane run.
@@ -1311,19 +1309,6 @@ impl Registers {
     fn set_capture(self, capture: *const usize) {
         // SAFETY: as for `capture`.
         unsafe { *self.0.sub(CONTEXT_CAPTURE).cast::<*const usize>() = capture }
-    }
-
-    /// Write a plain activation's frame header below the window (`CONTEXT_CALL`..`CONTEXT_CALLEE`).
-    #[inline(always)]
-    fn write_plain_header(self, call: Ip, caller_registers: Registers, caller_base: Ip, function: u32, argc: u16, callee: Value) {
-        // SAFETY: every lane window has `FRAME_CONTEXT` words free below register 0.
-        unsafe {
-            *self.0.sub(CONTEXT_CALL).cast::<Ip>() = call;
-            *self.0.sub(CONTEXT_CALLER_REGISTERS).cast::<Registers>() = caller_registers;
-            *self.0.sub(CONTEXT_CALLER_BASE).cast::<Ip>() = caller_base;
-            *self.0.sub(CONTEXT_PACKED).cast::<u64>() = u64::from(function) | PLAIN_FRAME_FLAG | (u64::from(argc) << crate::staged::frame::ARGC_SHIFT);
-            *self.0.sub(CONTEXT_CALLEE) = callee;
-        }
     }
 
     /// The plain header's call record, caller registers and caller records.
@@ -2454,7 +2439,7 @@ impl LaneStack {
 
     /// The address of the plain activations' words (`PlainFrames`).
     #[inline(always)]
-    pub(in crate::vm) fn plain_frames_word(&self) -> usize { (&raw const self.plain).addr() }
+    pub(in crate::vm) fn plain_frames_word(&self) -> usize { (&raw const self.plain).expose_provenance() }
 
     /// Make the plain activations records, outermost first, as their pushes would have.
     #[cold]
@@ -2626,13 +2611,18 @@ impl LaneStack {
         if Self::is_plain(&activation, window) {
             debug_assert!(self.plain.depth.get() == 0 || self.plain.program.get() == activation.caller_program());
             let ActivationKind::Script(script) = activation.kind() else { unreachable!() };
-            Registers(window).write_plain_header(
-                activation.call(), activation.caller_registers(), activation.caller_base(),
-                activation.function(), script.argc, script.callee,
+            use crate::staged::protocol::{plain_packed, push_plain, PlainHeader};
+            let header = PlainHeader {
+                call: activation.call().expose_provenance() as u64,
+                caller_registers: activation.caller_registers().0.expose_provenance() as u64,
+                caller_base: activation.caller_base().expose_provenance() as u64,
+                packed: plain_packed(activation.function(), script.argc, 0),
+                callee: script.callee.to_bits(),
+            };
+            push_plain(
+                &mut crate::staged::Concrete::new(std::ptr::null()),
+                self.plain_frames_word() as u64, window.expose_provenance() as u64, header, u64::from(activation.caller_program().raw()),
             );
-            self.plain.program.set(activation.caller_program());
-            self.plain.registers.set(window);
-            self.plain.depth.set(self.plain.depth.get() + 1);
             return;
         }
         activation.native.window = window.addr();
@@ -2659,13 +2649,17 @@ impl LaneStack {
     fn pop_plain(&mut self) -> Option<(Ip, Registers, Ip)> {
         let depth = self.plain.depth.get();
         if depth == 0 { return None; }
-        let window = Registers(self.plain.registers.get());
-        let caller = window.plain_caller();
-        self.plain.depth.set(depth - 1);
-        self.plain.registers.set(caller.1.0);
+        let window = self.plain.registers.get();
+        let caller = crate::staged::protocol::pop_plain(
+            &mut crate::staged::Concrete::new(std::ptr::null()), self.plain_frames_word() as u64, window.addr() as u64,
+        );
         // SAFETY: the window is the innermost, the lane stack's own.
-        unsafe { self.values.release_window(window.0.addr()) };
-        Some(caller)
+        unsafe { self.values.release_window(window.addr()) };
+        Some((
+            std::ptr::with_exposed_provenance(caller.call as usize),
+            Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize)),
+            std::ptr::with_exposed_provenance(caller.base as usize),
+        ))
     }
 
     /// Drops what the activations from index `depth` on owned, which completed: their loops'
