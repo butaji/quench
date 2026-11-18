@@ -9,7 +9,7 @@ use crate::layout::{
     JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT, JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT, JS_STEP_PROPERTY_BUFFER, JS_STEP_SLOTS_TRACKED,
     LAYOUT_TABLE_BASE, NATIVE_OBJECT_LAYOUT as OBJECT, PROPERTY_BUFFER_BASE,
 };
-use crate::staged::{StagedRecordSpace, Stage, Table};
+use crate::staged::{Passed, StagedRecordSpace, Stage, Table};
 use crate::words::{hole, HOLE_FOURTH, HOLE_THIRD, LAST_HOLE};
 use crate::typed_ir::Type;
 use crate::staged::region::{Access, Region};
@@ -315,6 +315,33 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn walk_prototypes(&mut self, records: u64, object: u64, target: u64, max_depth: u32) -> (bool, bool) {
         crate::staged::object::walk_prototypes_loop(self, records, object, target, max_depth)
+    }
+    /// `fill_by_rows` with volatile stores: the window's prefix, the arguments it holds room for,
+    /// then `undefined`. The stores are volatile so LLVM cannot make the loop a `memcpy` or `memset`
+    /// call, which a stencil may not make. The window's `registers` words lie at the lane stack's
+    /// top, which admission proved free.
+    #[inline(always)]
+    fn fill_window(&mut self, top: u64, undefined: u64, prefix: &[u64], passed: Passed<'_, u64>, registers: u16) {
+        let store = |index: usize, value: u64| {
+            // SAFETY: as above; `index` is below `registers`.
+            unsafe { (top.wrapping_add((index * 8) as u64) as *mut u64).write_volatile(value) }
+        };
+        let mut next = 0_usize;
+        for bits in prefix.iter().take(usize::from(registers)) {
+            store(next, *bits);
+            next += 1;
+        }
+        for index in 0..passed.count().min(usize::from(registers) - next) {
+            let value = match passed {
+                Passed::Window { arguments, .. } => self.load_u64(Region::Frame.mutable(), arguments, (index * 8) as i32),
+                Passed::List { file, registers: indices } => self.load_u64(Region::Frame.mutable(), file, i32::from(indices[index]) * 8),
+            };
+            store(next, value);
+            next += 1;
+        }
+        for register in next..usize::from(registers) {
+            store(register, undefined);
+        }
     }
 }
 

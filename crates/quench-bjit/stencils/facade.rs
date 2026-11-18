@@ -85,6 +85,9 @@ pub(crate) mod value {
         pub(crate) const HEAP_TAG: u64 = words::HEAP_TAG;
         pub(crate) const DIRECT_ARRAY_TAG: u64 = words::DIRECT_ARRAY_TAG;
         pub(crate) const DIRECT_OBJECT_TAG: u64 = words::DIRECT_OBJECT_TAG;
+        pub(crate) const DIRECT_PROMISE_TAG: u64 = words::DIRECT_PROMISE_TAG;
+        pub(crate) const DIRECT_ITERATOR_TAG: u64 = words::DIRECT_ITERATOR_TAG;
+        pub(crate) const DIRECT_COLLECTION_TAG: u64 = words::DIRECT_COLLECTION_TAG;
         pub(crate) const DIRECT_FUNCTION_TAG: u64 = words::DIRECT_FUNCTION_TAG;
         pub(crate) const HEAP_FAMILY_MASK: u64 = words::HEAP_FAMILY_MASK;
         pub(crate) const DIRECT_STRING_TAG: u64 = words::DIRECT_STRING_TAG;
