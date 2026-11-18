@@ -364,10 +364,16 @@ const _: () = assert!(crate::wasm_codes::FRAME_HEADER_WORDS as usize > LENGTH_WO
 pub(crate) unsafe fn reload_memory(s: &mut S, length_at: usize) {
     unsafe {
         let header = s.frame as *mut usize;
-        *header.add(LENGTH_WORD) = *((s.ctx + length_at) as *const u64) as usize;
+        let length = *((s.ctx + length_at) as *const u64) as usize;
+        *header.add(LENGTH_WORD) = length;
         s.p[1] = *header.add(BASE_WORD);
-        s.p[2] = *header.add(LENGTH_WORD);
+        s.p[2] = length;
     }
+    // Wasm rows keep nothing in the other pins (the status pin is written only on a leave), so
+    // a call row hands them on as constants: the call need not save them around itself.
+    s.p[0] = 0;
+    s.p[3] = 0;
+    s.f = [0.0; 8];
 }
 
 /// Calls the entry in the cell at hole B's address: the arguments are the registers from hole A
