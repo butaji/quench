@@ -242,7 +242,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
 /// read then the test on it. No flagged row (`LaneFields::FLAG_ROLE`) is a member.
 ///
 /// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below.
-pub(crate) const FUSED_ROWS: [(u16, u16, u8); 44] = [
+pub(crate) const FUSED_ROWS: [(u16, u16, u8); 45] = [
     // An i32 add of a constant then the direct load at its sum (the load reads the register).
     (Op::WasmI32AddImmediate as u16, Op::WasmI32Load as u16, FUSED_PLAIN),
     (Op::WasmI32AddImmediate as u16, Op::WasmI64Load as u16, FUSED_PLAIN),
@@ -290,6 +290,8 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 44] = [
     // `(a + b) | 0`. Both rows run in full (`FUSED_PLAIN`); the hand pair's dead-write skip and its
     // raw result are dropped.
     (Op::Binary as u16, Op::Binary as u16, FUSED_PLAIN),
+    // A `typeof` test then the branch on it (`if (typeof x === "number")`).
+    (Op::Unary as u16, Op::JumpFalse as u16, FUSED_PLAIN),
     // `!(x instanceof C)` tests also take the `Binary` then `JumpTrue` pair above.
     // `c = c + 1` of a capture: the store, then the read of the same capture.
     (Op::StoreCapture as u16, Op::LoadCapture as u16, FUSED_PLAIN),
@@ -570,6 +572,9 @@ pub(crate) enum Operation<W, P> {
     /// Define `destination` with the `typeof` name index (int32) of register `source`'s value
     /// where its own word decides it; a heap value leaves at the frame's miss edge.
     TypeofIndex { destination: Register, source: Register },
+    /// Define `destination` with whether `typeof source` is the name at `index` in `TYPEOF_NAMES`,
+    /// negated where `negated` (`UNARY_TYPEOF_IS`); a heap value leaves at the frame's miss edge.
+    TypeofTest { destination: Register, source: Register, index: u64, negated: bool },
     /// Store `value` at dense array element `index`, under `proof`.
     IndexWrite { index: W, value: W, proof: P },
     /// The empty object, object or array literal, constant array, regexp literal, closure,
@@ -816,15 +821,29 @@ impl<W, P> Operation<W, P> {
     fn decode_unary(instruction: WideInstruction) -> Option<Self> {
         let (destination, source) = (instruction.result_register(), instruction.register_b());
         let operator = instruction.unary_operator();
+        if let Some((index, negated)) = crate::bytecode::typeof_test(operator) {
+            return Some(Self::TypeofTest { destination, source, index: index as u64, negated });
+        }
         Some(match operator {
             _ if operator == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot { destination, source },
             _ if operator == crate::bytecode::UNARY_TYPEOF_INDEX => Self::TypeofIndex { destination, source },
             _ if operator == oxc_ast::ast::UnaryOperator::BitwiseNot as u32 =>
                 Self::Number(NumberOperation::BitwiseNot { destination, source: Operand::register(source) }),
+            _ if operator == oxc_ast::ast::UnaryOperator::UnaryNegation as u32 =>
+                Self::number_unary(destination, source, crate::vm::operations::NumberUnary::Negate),
+            _ if operator == oxc_ast::ast::UnaryOperator::UnaryPlus as u32 =>
+                Self::number_unary(destination, source, crate::vm::operations::NumberUnary::Plus),
             _ if operator == oxc_ast::ast::UnaryOperator::Void as u32 && !instruction.returns_from_frame() =>
                 Self::Void { destination },
             _ => return None,
         })
+    }
+
+    /// `operation` of a Number `source` in the int32 domain: an int32 operand decides it, a double
+    /// or a value no Number leaves to the frame's miss edge (`Unary`'s arm).
+    #[inline(always)]
+    fn number_unary(destination: Register, source: Register, operation: crate::vm::operations::NumberUnary) -> Self {
+        Self::Number(NumberOperation::Unary { destination, source: Operand::register(source), operation, domain: Domain::Int32 })
     }
 
     /// The Wasm integer operations of `decode` (`Decoder::WasmInt`), from a record's wide fields.

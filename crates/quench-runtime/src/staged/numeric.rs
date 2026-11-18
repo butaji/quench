@@ -223,6 +223,11 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
                     Step::Value(value)
                 }
                 NumberUnary::Negate => {
+                    // The negation of zero is `-0`, a double: a zero operand leaves.
+                    let is_zero = stage.i32_is_zero(value);
+                    if stage.guard_false(is_zero, miss).is_none() {
+                        return Step::Unresolved;
+                    }
                     let zero = stage.i32_constant(0);
                     int_arithmetic_result(stage, frame, destination, zero, value,
                         NumberArithmetic::Subtract, LEAVES, miss)

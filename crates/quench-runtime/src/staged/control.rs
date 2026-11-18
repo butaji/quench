@@ -45,6 +45,22 @@ pub(super) fn typeof_index<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, f
     Step::Value(result)
 }
 
+/// `typeof source` tested against the name at `index` in `TYPEOF_NAMES`, negated where `negated`
+/// (`typeof x === "name"`): the boolean where the value's own word decides its name; a heap value
+/// leaves at the frame's miss edge, where its cell decides.
+#[inline(always)]
+pub(super) fn typeof_test<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, source: Register, index: u64, negated: bool) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    let bits = frame.tagged(stage, source);
+    let Some(name) = super::value::immediate_typeof_index(stage, bits, miss) else { return Step::Unresolved };
+    let named = stage.eq_imm(name, index);
+    let holds = if negated { stage.not(named) } else { named };
+    let (word, fact) = frame.boolean(stage, holds);
+    frame.write(stage, destination, word, fact);
+    Step::Value(word)
+}
+
 /// The name index of the immediate `bits` (of tag `tag`): every immediate that is no Number,
 /// Boolean or `null` is `undefined` or the deleted marker, whose name it is.
 #[inline(always)]

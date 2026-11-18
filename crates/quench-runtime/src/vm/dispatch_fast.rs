@@ -5864,142 +5864,13 @@ script_handler! {
     }
 }
 
-/// The index of "number" in `bytecode::TYPEOF_NAMES`.
-const NUMBER_NAME_INDEX: usize = 3;
 
 /// The handler of a `Unary` record whose operator the view decides once
-/// (`specialize_register_operands`): a `typeof` test (`lane_typeof_test`) or a Number operator
-/// (`lane_unary_number`), so the record dispatches on no operator at run time; `None` keeps the
-/// plain `Unary` row, which answers logical not (`LogicalNot`) itself.
+/// (`specialize_register_operands`): `typeof` of a value (`lane_unary`), which the row does not
+/// decode. `None` keeps the plain `Unary` row, which answers the operators it decodes (logical
+/// not, the `typeof` tests and index, Number negation and plus) itself.
 fn unary_operator_handler<H: Host>(operator: u32) -> Option<Handler> {
-    use oxc_ast::ast::UnaryOperator as U;
-    if let Some((index, negated)) = crate::bytecode::typeof_test(operator) {
-        macro_rules! names {
-            ($($index:literal),*) => {
-                match (index, negated) {
-                    $(($index, false) => lane_typeof_test::<H, $index, false> as Handler,
-                      ($index, true) => lane_typeof_test::<H, $index, true> as Handler,)*
-                    _ => return None,
-                }
-            };
-        }
-        return Some(names!(0, 1, 2, 3, 4, 5, 6, 7));
-    }
-    const NEGATION: u32 = U::UnaryNegation as u32;
-    const PLUS: u32 = U::UnaryPlus as u32;
-    match operator {
-        NEGATION => Some(lane_unary_number::<H, NEGATION> as Handler),
-        PLUS => Some(lane_unary_number::<H, PLUS> as Handler),
-        // The row decodes only the index form of `typeof`; a value's `typeof` stays in the lane.
-        super::coercion::TYPEOF => Some(lane_unary::<H> as Handler),
-        _ => None,
-    }
-}
-
-script_handler! {
-    /// `Unary` of a `typeof` test of the name at `INDEX` (`typeof x === "number"`, negated for
-    /// `!==`), chosen when the view was derived: an immediate's name decided here; a heap
-    /// operand's name is the VM's (`Vm::typeof_test_value`).
-    fn lane_typeof_test<INDEX: usize, NEGATED: bool>(cx, r, ip, i, view) {
-        let value = r.get(i.b);
-        if value.is_heap() {
-            sibling!(lane_typeof_test_heap::<H, INDEX, NEGATED>, r, ip, Carried::script_in(cx, view))
-        }
-        // An immediate's name (`immediate_typeof_index`), which a test of "number" decides by
-        // the Number test alone.
-        let named = if INDEX == NUMBER_NAME_INDEX {
-            value.as_number().is_some()
-        } else {
-            match super::coercion::immediate_typeof_index(value) {
-                Some(name) => name == INDEX,
-                None => sibling!(lane_typeof_test_heap::<H, INDEX, NEGATED>, r, ip, Carried::script_in(cx, view)),
-            }
-        };
-        let holds = named != NEGATED;
-        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-/// The `lane_typeof_test_jump` of the `typeof` test `operator`, `None` for another operator.
-fn typeof_test_jump_handler<H: Host>(operator: u32) -> Option<Handler> {
-    let (index, negated) = crate::bytecode::typeof_test(operator)?;
-    macro_rules! names {
-        ($($index:literal),*) => {
-            match (index, negated) {
-                $(($index, false) => lane_typeof_test_jump::<H, $index, false> as Handler,
-                  ($index, true) => lane_typeof_test_jump::<H, $index, true> as Handler,)*
-                _ => return None,
-            }
-        };
-    }
-    Some(names!(0, 1, 2, 3, 4, 5, 6, 7))
-}
-
-script_handler! {
-    /// `lane_typeof_test` whose result a forward `JumpFalse` record tests next (`if (typeof x
-    /// === "number")`): the test and the branch as one dispatch, the result register written
-    /// as the test writes it. An operand whose name the test alone does not decide runs
-    /// `lane_typeof_test_heap`, which continues at the jump record.
-    fn lane_typeof_test_jump<INDEX: usize, NEGATED: bool>(cx, r, ip, i, view) {
-        let value = r.get(i.b);
-        if value.is_heap() {
-            sibling!(lane_typeof_test_heap::<H, INDEX, NEGATED>, r, ip, Carried::script_in(cx, view))
-        }
-        let named = if INDEX == NUMBER_NAME_INDEX {
-            value.as_number().is_some()
-        } else {
-            match super::coercion::immediate_typeof_index(value) {
-                Some(name) => name == INDEX,
-                None => sibling!(lane_typeof_test_heap::<H, INDEX, NEGATED>, r, ip, Carried::script_in(cx, view)),
-            }
-        };
-        let holds = named != NEGATED;
-        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
-        let jump_ip = following(ip);
-        if !holds {
-            resume!(cx, lane_jump::<H>(cx, r, jump_ip, false, Carried::script_in(cx, view), None));
-        }
-        next!(cx, r, following(jump_ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_typeof_test` of a heap operand: its kind's name (`Vm::typeof_test_value`).
-    #[inline(never)]
-    fn lane_typeof_test_heap<INDEX: usize, NEGATED: bool>(cx, r, ip, i, view) {
-        r.set(i.a, unsafe { vm(cx) }.typeof_test_value(r.get(i.b), INDEX, NEGATED));
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `Unary` of the Number operator `OP` (`-x`, `+x`), chosen when the view was derived: a
-    /// Number operand's result made here (`number_unary_result`); any other operand takes the
-    /// general `lane_unary`.
-    fn lane_unary_number<OP: u32>(cx, r, ip, i, view) {
-        // An integer stays one: `+x` is itself, and `-x` of any but 0 (whose negation is -0)
-        // and the least int32 (whose negation is past int32).
-        if let Some(integer) = r.int(i.b) {
-            const NEGATION: u32 = oxc_ast::ast::UnaryOperator::UnaryNegation as u32;
-            if OP != NEGATION {
-                r.set(i.a, Value::integer(integer));
-                next!(cx, r, following(ip), Carried::script_in(cx, view))
-            }
-            if integer != 0 && integer != i32::MIN {
-                r.set(i.a, Value::integer(-integer));
-                next!(cx, r, following(ip), Carried::script_in(cx, view))
-            }
-        }
-        let Some(number) = r.get(i.b).as_number() else {
-            sibling!(lane_unary::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        let Some(result) = super::operations::number_unary_result(OP, number) else {
-            sibling!(lane_unary::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, Value::number(result));
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
+    (operator == super::coercion::TYPEOF).then_some(lane_unary::<H> as Handler)
 }
 
 /// The direct write of `value` to the running function's own capture `slot` through its dense
@@ -20881,20 +20752,14 @@ fn specialize_register_operands<H: Host>(
     let forward_test = jump_row::<H, { crate::staged::COMPARE_JUMP_ROW }>(false) as *const ();
     let backward_test = jump_row::<H, { crate::staged::COMPARE_JUMP_ROW }>(true) as *const ();
     let returning_binary = lane_returning::<H, RETURNING_BINARY, NOT_LEAF> as Handler as *const ();
-    let forward_false_jump = jump_row::<H, JUMP_IF_FALSE>(false) as *const ();
     for (pc, &instruction) in decoded.iter().enumerate() {
-        // A forward `JumpFalse` of this record's result follows it (`lane_typeof_test_jump`).
-        let tested_next = records.get(pc + 1).is_some_and(|next| next.handler == forward_false_jump && next.a == records[pc].a);
         let record = &mut records[pc];
         if record.handler == returning_binary {
             specialize_returning_operator::<H>(instruction, constants, record);
             continue;
         }
         if is_row::<H, { crate::staged::UNARY_ROW }>(record.handler) {
-            // `UNARY_TYPEOF_INDEX` keeps the plain row, which decodes it (`TypeofIndex`).
-            if tested_next && let Some(handler) = typeof_test_jump_handler::<H>(instruction.imm()) {
-                record.handler = handler as *const ();
-            } else if let Some(handler) = unary_operator_handler::<H>(instruction.imm()) {
+            if let Some(handler) = unary_operator_handler::<H>(instruction.imm()) {
                 record.handler = handler as *const ();
             }
             continue;
@@ -21399,7 +21264,6 @@ const ARGUMENTS_COUNT: u16 = crate::staged::ARGUMENTS_COUNT_ROW;
 
 /// The jump rows the jump passes fuse and requicken to (`jump_row`).
 const JUMP: u16 = opc::Jump;
-const JUMP_IF_FALSE: u16 = opc::JumpFalse;
 const JUMP_IF_TRUE: u16 = opc::JumpTrue;
 
 /// The capture rows the capture passes fuse (`specialize_captures`, `specialize_capture_updates`,
