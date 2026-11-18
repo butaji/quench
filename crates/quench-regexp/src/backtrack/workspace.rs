@@ -176,7 +176,7 @@ pub(super) fn anchored_run_of(instructions: &[Inst], capture_count: usize) -> Op
 }
 
 pub(super) fn class_run_of(instructions: &[Inst], sets: &[MatchSet], capture_count: usize) -> Option<Box<ClassRun>> {
-    let [Inst::UnitRepeat { test, min: 1, max: UNBOUNDED, greedy: true }, Inst::Match] = instructions else {
+    let [Inst::UnitRepeat { test, min: 1, max: UNBOUNDED, greedy: true, .. }, Inst::Match] = instructions else {
         return None;
     };
     if capture_count != 0 {

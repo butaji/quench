@@ -23,7 +23,8 @@ pub enum NativeTest {
 #[derive(Clone)]
 pub enum NativeInst {
     Unit(NativeTest),
-    UnitRepeat { test: NativeTest, min: u32, max: u32, greedy: bool },
+    /// `atomic`: a greedy repeat that keeps no frame (`possessive`).
+    UnitRepeat { test: NativeTest, min: u32, max: u32, greedy: bool, atomic: bool },
     Assert(AssertionTest),
     Split { alternative: u32 },
     GuardedSplit { alternative: u32, guard: Admission<NativeTest> },
@@ -139,7 +140,7 @@ impl Program {
         let sets = &self.sets;
         Some(match inst {
             Inst::Unit(test) => NativeInst::Unit(native_test(test, sets)),
-            Inst::UnitRepeat { test, min, max, greedy } => NativeInst::UnitRepeat { test: native_test(test, sets), min, max, greedy },
+            Inst::UnitRepeat { test, min, max, greedy, atomic } => NativeInst::UnitRepeat { test: native_test(test, sets), min, max, greedy, atomic },
             Inst::Assert(test) => NativeInst::Assert(test),
             Inst::Split { alternative } => NativeInst::Split { alternative },
             Inst::GuardedSplit { alternative, guard } => {

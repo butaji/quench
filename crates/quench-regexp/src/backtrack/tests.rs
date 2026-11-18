@@ -387,3 +387,31 @@ fn check_text_forms(regex: &Regex, subject: &str, units: &[super::super::Unit], 
         at_first(&|sticky| program.find(bytes, first, sticky, true));
     }
 }
+
+#[test]
+fn possessive_repeats_keep_their_answers() {
+    // (pattern, subject, match in UTF-8 offsets, whether the pattern's first repeat is atomic)
+    let cases: &[(&str, &str, Option<(usize, usize)>, bool)] = &[
+        (r"[\w.+-]+@[\w-]+\.[\w.]+", "x john.doe+tag@example.com y", Some((2, 26)), true),
+        (r"(\w+)\s(\w+)", "ab cd", Some((0, 5)), true),
+        (r"\w+(?=@)", "foo bar@x", Some((4, 7)), true),
+        (r"\w+(?!@)", "ab@", Some((0, 1)), false),
+        (r"a+(?=ab)", "aaab", Some((0, 2)), false),
+        (r"x*y", "xxz xy", Some((4, 6)), true),
+        (r"[a-z]+\d", "abc1", Some((0, 4)), true),
+        (r"\d+\d", "123", Some((0, 3)), false),
+        (r"\s+é", "a  é", Some((1, 5)), true),
+        (r"[a-c]+(d)", "abcd", Some((0, 4)), true),
+    ];
+    for &(pattern, subject, expected, atomic) in cases {
+        let regex = Regex::with_flags(pattern, Flags::default()).unwrap();
+        let program = &regex.complete().backtracking;
+        let marked = program.instructions.iter().find_map(|inst| match inst {
+            super::Inst::UnitRepeat { atomic, .. } => Some(*atomic),
+            _ => None,
+        });
+        assert_eq!(marked, Some(atomic), "/{pattern}/ atomic");
+        let found = regex.find_from(subject, 0).next().map(|found| (found.range.start, found.range.end));
+        assert_eq!(found, expected, "/{pattern}/ on {subject:?}");
+    }
+}

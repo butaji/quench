@@ -252,7 +252,7 @@ impl<'a, 'f> Emit<'a, 'f> {
     fn instruction(&mut self, pc: u32, inst: &NativeInst) {
         match inst {
             NativeInst::Unit(test) => self.unit(pc, *test),
-            NativeInst::UnitRepeat { test, min, max, greedy } => self.unit_repeat(pc, *test, (*min, *max), *greedy),
+            NativeInst::UnitRepeat { test, min, max, greedy, atomic } => self.unit_repeat(pc, *test, (*min, *max), (*greedy, *atomic)),
             NativeInst::Assert(test) => self.assertion(pc, *test),
             NativeInst::Split { alternative } => {
                 let position = self.position();

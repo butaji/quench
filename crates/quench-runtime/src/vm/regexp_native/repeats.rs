@@ -34,7 +34,7 @@ impl Emit<'_, '_> {
         self.b.enter_open(done);
     }
 
-    pub(super) fn unit_repeat(&mut self, pc: u32, test: NativeTest, (min, max): (u32, u32), greedy: bool) {
+    pub(super) fn unit_repeat(&mut self, pc: u32, test: NativeTest, (min, max): (u32, u32), (greedy, atomic): (bool, bool)) {
         let position = self.position();
         let ceiling = if max == UNBOUNDED {
             self.length
@@ -53,9 +53,11 @@ impl Emit<'_, '_> {
         };
         let enough = self.compare(Relation::UnsignedGreaterEqual, end, floor);
         self.require(enough);
-        let bound = if greedy { floor } else { ceiling };
-        let more = self.compare(more, end, bound);
-        self.push_resume_if(more, resume.0, resume.1, end);
+        if !atomic {
+            let bound = if greedy { floor } else { ceiling };
+            let more = self.compare(more, end, bound);
+            self.push_resume_if(more, resume.0, resume.1, end);
+        }
         self.set_position(end);
         self.next(pc);
     }

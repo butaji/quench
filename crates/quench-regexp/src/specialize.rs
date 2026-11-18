@@ -203,7 +203,7 @@ pub(super) fn replay<S: Stage>(stage: &mut S) -> Replay {
 pub(super) fn step<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
     match inst {
         Inst::Unit(test) => unit(stage, test, at),
-        Inst::UnitRepeat { test, min, max, greedy } => unit_repeat(stage, (test, min, max, greedy), at),
+        Inst::UnitRepeat { test, min, max, greedy, atomic } => unit_repeat(stage, (test, min, max, greedy, atomic), at),
         Inst::Assert(test) => Step::when(assertion_holds(stage, test, at.position), at.next()),
         Inst::Split { alternative } => {
             stage.push(Frame::Choice { pc: alternative, position: at.position });
@@ -268,11 +268,11 @@ fn unit<S: Stage>(stage: &mut S, test: UnitTest, at: Cursor) -> Step {
     Step::when(takes, at.then_at(at.position + 1))
 }
 
-/// `min..=max` units: greedy takes the most and keeps a frame to give units back, lazy takes the
-/// fewest and keeps a frame to take more. `UNBOUNDED` exceeds any subject, so the ceiling is the
+/// `min..=max` units: greedy takes the most and keeps a frame to give units back (none when
+/// `atomic`), lazy takes the fewest and keeps a frame to take more. `UNBOUNDED` exceeds any subject, so the ceiling is the
 /// subject's length then.
 #[inline(always)]
-fn unit_repeat<S: Stage>(stage: &mut S, (test, min, max, greedy): (UnitTest, u32, u32, bool), at: Cursor) -> Step {
+fn unit_repeat<S: Stage>(stage: &mut S, (test, min, max, greedy, atomic): (UnitTest, u32, u32, bool, bool), at: Cursor) -> Step {
     let ceiling = at.position.saturating_add(max as usize).min(stage.length());
     let floor = at.position + min as usize;
     if floor > stage.length() {
@@ -283,7 +283,7 @@ fn unit_repeat<S: Stage>(stage: &mut S, (test, min, max, greedy): (UnitTest, u32
         return Step::Fail;
     }
     let pc = at.pc + 1;
-    if greedy && end > floor {
+    if greedy && !atomic && end > floor {
         stage.push(Frame::Greedy { pc, floor, position: end });
     } else if !greedy && end < ceiling {
         stage.push(Frame::Lazy { pc, test, ceiling, position: end });

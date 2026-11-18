@@ -87,7 +87,7 @@ impl Compiler {
         }
         if count == 0 {
             if let Some(test) = self.unit_test(body, flags)? {
-                self.emit(if self.backward { Inst::UnitRepeatBack { test, min, max, greedy } } else { Inst::UnitRepeat { test, min, max, greedy } });
+                self.emit(if self.backward { Inst::UnitRepeatBack { test, min, max, greedy } } else { Inst::UnitRepeat { test, min, max, greedy, atomic: false } });
                 return Ok(());
             }
         }

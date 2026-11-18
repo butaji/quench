@@ -19,6 +19,7 @@ mod compile;
 mod dispatch;
 pub mod matcher;
 pub mod native;
+mod possessive;
 mod scan;
 // The per-instruction semantics over a stage trait; a child module so it sees this module's private items.
 #[path = "specialize.rs"]
@@ -305,6 +306,20 @@ impl Beyond {
         }
     }
 
+    /// Whether the test admits no unit past ASCII, by construction: the possessive pass
+    /// (`possessive::disjoint`) then decides a pair of sets by their ASCII tables alone.
+    fn ascii_only(&self) -> bool {
+        match self {
+            Self::Never => true,
+            Self::Either(either) => either.iter().all(Self::ascii_only),
+            Self::Ranges { ranges, negative: false } => ranges.last().is_none_or(|&(_, max)| max < ASCII_UNITS),
+            Self::Class { class, ignore_case, unicode } => !class.negative
+                && matches!(class.kind, ClassKind::Union)
+                && class.items.iter().all(|item| class_item_ascii_only(item, *ignore_case && *unicode)),
+            _ => false,
+        }
+    }
+
     /// Whether the test rejects every unit by construction.
     fn is_never(&self) -> bool {
         match self {
@@ -338,6 +353,17 @@ impl Beyond {
 }
 
 /// The ASCII units of `min..=max`, one bit per unit.
+/// Whether a class item admits no unit past ASCII: digits, and word units unless case-folded
+/// in Unicode mode (where U+017F and U+212A fold to `s` and `k`).
+fn class_item_ascii_only(item: &ClassItem, folded_unicode: bool) -> bool {
+    use oxc::regular_expression::ast::CharacterClassEscapeKind as Escape;
+    match item {
+        ClassItem::Escape(Escape::D) => true,
+        ClassItem::Escape(Escape::W) => !folded_unicode,
+        _ => false,
+    }
+}
+
 fn range_ascii_mask(min: u32, max: u32) -> u128 {
     if min >= ASCII_UNITS || min > max {
         return 0;
@@ -451,6 +477,8 @@ enum Inst {
         min: u32,
         max: u32,
         greedy: bool,
+        /// A greedy repeat that never gives a unit back (`possessive::mark`).
+        atomic: bool,
     },
     Assert(AssertionTest),
     /// Continue at the next instruction; on backtracking, at `alternative`.
@@ -1441,7 +1469,10 @@ impl Program {
         });
         Some(Self {
             class_run: class_run_of(&compiler.instructions, &compiler.sets, capture_count),
-            sets: scanned_sets(std::mem::take(&mut compiler.sets), &compiler.instructions),
+            sets: {
+                possessive::mark(&mut compiler.instructions, &compiler.sets);
+                scanned_sets(std::mem::take(&mut compiler.sets), &compiler.instructions)
+            },
             anchored_run: anchored_run_of(&compiler.instructions, capture_count),
             native: NativeSlot::default(),
             instructions: compiler.instructions.into_boxed_slice(),
