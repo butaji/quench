@@ -56,6 +56,9 @@ pub(crate) trait Fields: Copy {
     fn register_b(self) -> Register;
     /// The constant a `LoadConst` defines, typed as the tier gives it.
     fn constant(self, context: DecodeContext<'_>) -> Option<Constant>;
+    /// The record as the bytecode instruction it was made from: its opcode, fields and immediate,
+    /// which every decoder but the flow one's constant reads.
+    fn wide(self) -> WideInstruction;
 }
 
 impl Fields for WideInstruction {
@@ -66,4 +69,5 @@ impl Fields for WideInstruction {
     #[inline(always)] fn constant(self, context: DecodeContext<'_>) -> Option<Constant> {
         context.constant(self.constant_index())
     }
+    #[inline(always)] fn wide(self) -> WideInstruction { self }
 }

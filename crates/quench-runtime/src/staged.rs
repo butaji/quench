@@ -330,7 +330,8 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The value-level operations of `decode`.
-    fn decode_value(instruction: WideInstruction) -> Option<Self> {
+    #[inline(always)]
+    pub(crate) fn decode_value(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::LoadThis => Self::LoadThis {
                 destination: instruction.result_register() },
@@ -352,6 +353,7 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The unary operators of `decode_value`.
+    #[inline(always)]
     fn decode_unary(instruction: WideInstruction) -> Option<Self> {
         let (destination, source) = (instruction.result_register(), instruction.register_b());
         let operator = instruction.unary_operator();
@@ -367,7 +369,8 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The local-slot operations of `decode`.
-    fn decode_local(instruction: WideInstruction) -> Option<Self> {
+    #[inline(always)]
+    pub(crate) fn decode_local(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::LoadLocalPlain => Self::LoadLocalPlain {
                 destination: instruction.result_register(),

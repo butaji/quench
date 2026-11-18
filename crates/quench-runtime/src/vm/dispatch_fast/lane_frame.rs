@@ -5,7 +5,7 @@ use super::lane_reads::{RecordOperand, Reads};
 use crate::bytecode::{Operand, Register};
 use crate::typed_ir::Type;
 use crate::bytecode::RegisterWindow;
-use crate::staged::{Allocation, CallOut, Comparison, Concrete, Constant, Edge, Frame, GlobalBinding, NumberOperation, NumericFrame, Operation, Step, read_initialized_local, write_initialized_local, write_local};
+use crate::staged::{Allocation, CallOut, Comparison, Concrete, Constant, Edge, Frame, GlobalBinding, NumericFrame, Operation, Step, read_initialized_local, write_initialized_local, write_local};
 
 /// The maker of a frame's heap values: allocates in the lane context it is given and runs no
 /// guest code; `None` leaves the instruction to the general path.
@@ -380,11 +380,15 @@ pub(super) use staged_ops::*;
 #[derive(Clone, Copy)]
 struct LaneFields<'a, const OP: u16>(&'a LaneInstruction);
 
+impl<const OP: u16> LaneFields<'_, OP> {
+    const OPCODE: Op = match Op::from_index(OP as usize) { Some(op) => op, None => panic!("no such opcode") };
+}
+
 impl<const OP: u16> crate::staged::Fields for LaneFields<'_, OP> {
     #[inline(always)]
     fn op(self) -> Op {
         // A constant of the instantiation, so the decode's match folds to the one arm.
-        const { match Op::from_index(OP as usize) { Some(op) => op, None => panic!("no such opcode") } }
+        Self::OPCODE
     }
     #[inline(always)] fn result_register(self) -> u16 { self.0.a }
     #[inline(always)] fn register_a(self) -> u16 { self.0.a }
@@ -393,14 +397,41 @@ impl<const OP: u16> crate::staged::Fields for LaneFields<'_, OP> {
     fn constant(self, _: crate::staged::DecodeContext<'_>) -> Option<Constant> {
         Some(Constant::untyped(self.0.constant()))
     }
+    #[inline(always)]
+    fn wide(self) -> WideInstruction {
+        WideInstruction::new(self.op(), self.0.a, self.0.b, self.0.c, self.0.imm())
+    }
 }
 
-/// Whether opcode `op`'s lane handler is its staged row (`lane_row`): a row of the flow family
-/// that falls through. Derived from the catalog, so a row that joins the family gets its
-/// handler with no line written here.
+/// Whether opcode `op`'s lane handler is its staged row (`lane_row`): a row that falls through,
+/// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
+/// that joins gets its handler with no line written here.
 pub(in crate::vm::dispatch_fast) const fn lane_runs_row(op: Op) -> bool {
-    matches!(op.staged(), Some(crate::bytecode::Decoder::Flow))
-        && matches!(op.control_flow_layout(), crate::bytecode::ControlFlowLayout::Fallthrough)
+    matches!(op.control_flow_layout(), crate::bytecode::ControlFlowLayout::Fallthrough)
+        && (matches!(op.staged(), Some(crate::bytecode::Decoder::Flow))
+            || op.traits().has(crate::bytecode::Traits::ROW_HANDLER))
+}
+
+/// The frame `lane_row` steps opcode `OP`'s row over: the register file and the carried view, and
+/// the running frame's local slots where the row is a local one (`Decoder::Local`).
+#[inline(always)]
+fn row_frame<H: Host, const OP: u16, const ACC: u8>(cx: *mut LaneContext<H>, r: Registers, view: Carried) -> LaneFrame<ACC> {
+    let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Local)) };
+    if !locals {
+        return LaneFrame::<ACC>::new(r, view);
+    }
+    let vm = unsafe { vm(cx) };
+    let frame = &mut vm.frames[unsafe { (*cx).frame() }];
+    let (slots, len) = (frame.locals.as_mut_ptr(), frame.locals.len());
+    LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, slots, len)
+}
+
+/// Whether `handler` is opcode `OP`'s generated row handler (`lane_row`), at any accumulator field:
+/// the passes that fuse a record by its handler find the row whichever field the view carried.
+pub(in crate::vm::dispatch_fast) fn is_row<H: Host, const OP: u16>(handler: *const ()) -> bool {
+    let rows: [Handler; ACC_POSITIONS] = [lane_row::<H, OP, ACC_NONE>, lane_row::<H, OP, ACC_A>, lane_row::<H, OP, ACC_B>,
+        lane_row::<H, OP, ACC_C>, lane_row::<H, OP, ACC_PAIR>];
+    rows.iter().any(|row| *row as *const () == handler)
 }
 
 lane_handler! {
@@ -410,10 +441,17 @@ lane_handler! {
     /// step picks the continuation. `OP` and `ACC` are static, so rustc folds the decode and the
     /// row to the residual a hand-written handler would be (Futamura's first projection).
     pub(super) fn lane_row<OP: u16, ACC: u8>(cx, r, ip, i, view) {
-        let Some(operation) = Operation::decode_flow(LaneFields::<OP>(i), crate::staged::DecodeContext::EMPTY)
-            else { unreachable!("a lane record holds its operands") };
+        // The row family's decoder, a constant of the instantiation, so only its arm is compiled.
+        let fields = LaneFields::<OP>(i);
+        let decoded = match const { LaneFields::<OP>::OPCODE.staged() } {
+            Some(crate::bytecode::Decoder::Flow) => Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY),
+            Some(crate::bytecode::Decoder::Local) => Operation::decode_local(crate::staged::Fields::wide(fields)),
+            Some(crate::bytecode::Decoder::Value) => Operation::decode_value(crate::staged::Fields::wide(fields)),
+            _ => None,
+        };
+        let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, ip, view) };
         let mut stage = Concrete::new(std::ptr::null());
-        let mut frame = LaneFrame::<ACC>::new(r, view);
+        let mut frame = row_frame::<H, OP, ACC>(cx, r, view);
         match crate::staged::step(&mut stage, &mut frame, operation) {
             Step::Value(value) => next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view }),
             Step::Control(_) | Step::Unresolved => sibling!(lane_general_step::<H>, r, ip, view),

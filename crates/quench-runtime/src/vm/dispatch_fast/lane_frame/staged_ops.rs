@@ -33,19 +33,6 @@ pub(in crate::vm::dispatch_fast) fn staged_typeof_index(r: Registers, view: Carr
     }
 }
 
-/// Whether `register` is coercible to an object (neither `null` nor `undefined`), by the
-/// staged RequireObjectCoercible.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_require_object_coercible(r: Registers, view: Carried, register: u16) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    match crate::staged::step(&mut stage, &mut frame, Operation::RequireObjectCoercible { register }) {
-        Step::Value(_) => true,
-        Step::Unresolved => false,
-        Step::Control(_) => unreachable!("a coercibility test transfers no control"),
-    }
-}
-
 /// Whether the staged RequireIteratorResult accepts `register` as it is (a direct object or
 /// array record); false where the full operation decides.
 #[inline(always)]
@@ -53,19 +40,6 @@ pub(in crate::vm::dispatch_fast) fn staged_require_iterator_result(r: Registers,
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     matches!(crate::staged::step(&mut stage, &mut frame, Operation::RequireIteratorResult { register }), Step::Value(_))
-}
-
-/// ToNumeric of a Number register `source` into `destination`, by the staged operation;
-/// false, writing nothing, where `source` is not a Number.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_to_numeric(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    match crate::staged::step(&mut stage, &mut frame, Operation::Number(NumberOperation::ToNumeric { destination, source })) {
-        Step::Value(_) => true,
-        Step::Unresolved => false,
-        Step::Control(_) => unreachable!("a conversion transfers no control"),
-    }
 }
 
 /// ToPropertyKey of the direct string in `source` into `destination`, by the staged operation;
@@ -89,34 +63,6 @@ pub(in crate::vm::dispatch_fast) fn staged_load_this(r: Registers, view: Carried
         Step::Unresolved => false,
         Step::Control(_) => unreachable!("a load transfers no control"),
     }
-}
-
-/// `LoadLocalPlain` of `slot` into `destination` by the staged operation; false, writing
-/// nothing, where the activation has no such local slot.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_load_local_plain<H: Host, const ACC: u8>(cx: *mut LaneContext<H>,
-    r: Registers, view: Carried, destination: u16, slot: u16) -> bool {
-    let vm = unsafe { vm(cx) };
-    let frame = &mut vm.frames[unsafe { (*cx).frame() }];
-    let (locals, len) = (frame.locals.as_mut_ptr(), frame.locals.len());
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, locals, len);
-    matches!(crate::staged::step(&mut stage, &mut frame,
-        Operation::LoadLocalPlain { destination, slot }), Step::Value(_))
-}
-
-/// `StoreLocalPlain` of `source` to `slot`, and to `result` where the instruction has one,
-/// by the staged operation; false, writing nothing, where the activation has no such slot.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_store_local_plain<H: Host, const ACC: u8>(cx: *mut LaneContext<H>,
-    r: Registers, view: Carried, source: u16, slot: u16, result: Option<u16>) -> bool {
-    let vm = unsafe { vm(cx) };
-    let frame = &mut vm.frames[unsafe { (*cx).frame() }];
-    let (locals, len) = (frame.locals.as_mut_ptr(), frame.locals.len());
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, locals, len);
-    matches!(crate::staged::step(&mut stage, &mut frame,
-        Operation::StoreLocalPlain { source, slot, result }), Step::Value(_))
 }
 
 /// `StoreCapture` of `source` to the capture at `depth` and `slot` past the running function's

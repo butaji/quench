@@ -3306,16 +3306,8 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{lane_row, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_iterator_result, staged_require_object_coercible, staged_to_numeric, staged_typeof_index};
+use lane_frame::{is_row, lane_row, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_iterator_result, staged_typeof_index};
 
-lane_handler! {
-    fn lane_load_local_plain<>(cx, r, ip, i, view) {
-        if !lane_frame::staged_load_local_plain::<H, ACC_NONE>(cx, r, view, i.a, i.imm() as u16) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
 
 lane_handler! {
     /// `LoadLocal` and `LoadEnvLocal` of an initialized binding a VM frame owns
@@ -3706,15 +3698,6 @@ script_handler! {
     }
 }
 
-lane_handler! {
-    fn lane_store_local_plain<>(cx, r, ip, i, view) {
-        let result = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS);
-        if !lane_frame::staged_store_local_plain::<H, ACC_NONE>(cx, r, view, i.a, i.imm() as u16, result) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
 
 script_handler! {
     /// `InitializeTdz`: opens the binding's dead zone wherever the frame keeps it, as the
@@ -3892,19 +3875,6 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// Numbers and BigInts convert to themselves; other values take the general path.
-    fn lane_to_numeric<>(cx, r, ip, i, view) {
-        if !staged_to_numeric(r, Carried::script_in(cx, view), i.a, i.b) {
-            let value = r.get(i.b);
-            if !matches!(unsafe { vm(cx) }.heap.get(value), Some(crate::heap::Cell::BigInt(_))) {
-                return exit(ip);
-            }
-            r.set(i.a, value);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
 script_handler! {
     /// `MakeConstArray`: the new array of the running program's constant elements, as the
@@ -3921,16 +3891,6 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// `RequireObjectCoercible`: any value but `null` and `undefined` passes; the general
-    /// path throws for those.
-    fn lane_require_object_coercible<>(cx, r, ip, i, view) {
-        if !staged_require_object_coercible(r, Carried::script_in(cx, view), i.b) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
 lane_handler! {
     /// An instruction whose general step only continues or throws (`Op::steps_in_lane`),
@@ -21270,7 +21230,9 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
         lane_store::<H, OP, ACC>
     } else {
         if lane_runs_row(op) {
-            return LaneHandler::producer(lane_row::<H, OP, ACC>);
+            // The row defines the accumulator where its record's `a` is its result register.
+            let produces = matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister);
+            return Some(LaneHandler { handler: lane_row::<H, OP, ACC>, produces });
         }
         match op.class() {
             Class::WasmI32ShiftRightUnsignedAnd => {
@@ -21349,7 +21311,6 @@ const fn iterator_handler<H: Host>(opcode: Op) -> Option<Handler> {
 /// branch tests, which read it.
 const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
-        Class::StoreLocalPlain => Some(lane_store_local_plain::<H>),
         Class::StoreName => Some(lane_store_name_first::<H>),
         Class::DefineArrayElement => Some(lane_define_array_element::<H>),
         Class::StoreLocal | Class::StoreEnvLocal => Some(lane_store_local::<H>),
@@ -21360,9 +21321,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::GetField => Some(lane_get_field_first::<H>),
         _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::Register, .. })) => Some(lane_set_object_field_own::<H, false>),
         _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::This, .. })) => Some(lane_set_this_field_own::<H, false>),
-        Class::ToNumeric => Some(lane_to_numeric::<H>),
         Class::ToPropertyKey => Some(lane_to_property_key::<H>),
-        Class::RequireObjectCoercible => Some(lane_require_object_coercible::<H>),
         Class::DefinePropertyRecord => Some(lane_define_property_record::<H>),
         Class::DefineField => Some(lane_define_field::<H>),
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
@@ -21378,7 +21337,6 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::GetIndex => Some(lane_get_index::<H>),
         Class::SetIndex => Some(lane_set_index::<H>),
         Class::LoadCapture => Some(lane_load_capture::<H>),
-        Class::LoadLocalPlain => Some(lane_load_local_plain::<H>),
         Class::MakeConstArray => Some(lane_make_const_array::<H>),
         Class::StringCaseIndex => Some(lane_string_case_index::<H>),
         Class::LoadLocal | Class::LoadEnvLocal => Some(lane_load_local::<H>),
@@ -23404,11 +23362,10 @@ fn specialize_register_operands<H: Host>(
 /// comparison branch. The second record remains independently callable for branch-table and
 /// jump-target entry.
 fn specialize_load_branch_pairs<H: Host>(records: &mut [LaneInstruction]) {
-    let local = lane_load_local_plain::<H> as Handler as *const ();
     let capture = lane_load_capture::<H> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         let reads_capture = records[pc].handler == capture;
-        if records[pc].handler != local && !reads_capture {
+        if !is_row::<H, { opc::LoadLocalPlain }>(records[pc].handler) && !reads_capture {
             continue;
         }
         // A register jump test runs its operator's instantiation (`relation_jump_handler`),
@@ -23442,7 +23399,6 @@ fn specialize_constant_returns<H: Host>(records: &mut [LaneInstruction]) {
 /// `IncDec` record stays for jumps that reach it; it reads no accumulator, and neither does
 /// its successor, since it produces none.
 fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
-    let to_numeric = lane_to_numeric::<H> as Handler as *const ();
     let inc_dec = lane_inc_dec::<H, false> as Handler as *const ();
     for record in records.iter_mut() {
         if record.handler == inc_dec && record.imm() != 0 {
@@ -23452,7 +23408,7 @@ fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
     for pc in 0..records.len().saturating_sub(1) {
         let (conversion, update) = (&records[pc], &records[pc + 1]);
         let decrement = update.handler == lane_inc_dec::<H, true> as Handler as *const ();
-        if conversion.handler != to_numeric
+        if !is_row::<H, { opc::ToNumeric }>(conversion.handler)
             || (update.handler != inc_dec && !decrement)
             || update.b != conversion.a
         {
@@ -24100,7 +24056,9 @@ fn specialize_environment_window<H: Host>(
             WindowRecord::Keeps => {}
             WindowRecord::Eval => replacements.push((pc, lane_eval::direct_eval::<H>(), instruction.imm())),
             WindowRecord::Local(own) => {
-                if own > ENVIRONMENT_WINDOW_FIELD || !plain.iter().any(|handler| *handler as *const () == records[pc].handler) {
+                let handler = records[pc].handler;
+                let row = is_row::<H, { opc::LoadLocalPlain }>(handler) || is_row::<H, { opc::StoreLocalPlain }>(handler);
+                if own > ENVIRONMENT_WINDOW_FIELD || !(row || plain.iter().any(|plain| *plain as *const () == handler)) {
                     return None;
                 }
                 let handler = window_local_handler::<H>(function, instruction.op(), own as usize, scoped);
