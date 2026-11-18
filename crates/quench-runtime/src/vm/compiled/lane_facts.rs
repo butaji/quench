@@ -77,10 +77,39 @@ pub(super) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u
 pub(super) fn plan_key(unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug,
     direct: usize, generic: &[LaneExit], entry: Option<u32>, budget: usize,
     arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)]) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-    format!("{:?}{:?}{fields:?}{generic:?}{entry:?}{budget}{direct}{arrays:?}", unit.instructions, unit.frames)
-        .bytes().fold(FNV_OFFSET, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME))
+    use std::fmt::Write;
+    // The instructions, most of the key, fold as their words; the rest as its debug text,
+    // written into the hash without a string between.
+    let mut key = Fnv::default();
+    for instruction in &unit.instructions {
+        let (word, imm) = instruction.words();
+        key.word(word);
+        key.word(u64::from(imm));
+    }
+    let _ = write!(key, "{:?}{fields:?}{generic:?}{entry:?}{budget}{direct}{arrays:?}", unit.frames);
+    key.0
+}
+
+/// A 64-bit FNV-1a hash.
+struct Fnv(u64);
+
+impl Default for Fnv {
+    fn default() -> Self { Self(0xcbf2_9ce4_8422_2325) }
+}
+
+impl Fnv {
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    fn word(&mut self, word: u64) {
+        self.0 = (self.0 ^ word).wrapping_mul(Self::PRIME);
+    }
+}
+
+impl std::fmt::Write for Fnv {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        self.0 = text.bytes().fold(self.0, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(Self::PRIME));
+        Ok(())
+    }
 }
 
 /// Whether the tier model admits compiling `function`'s body for the `entries` it has made
