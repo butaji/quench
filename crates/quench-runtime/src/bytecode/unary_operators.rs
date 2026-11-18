@@ -36,6 +36,21 @@ pub(crate) const UNARY_TYPEOF_INDEX: u32 = UNARY_TYPEOF_IS + UNARY_TYPEOF_TESTS;
 /// is what the chain's `+` of that operand does, in the order the `+`s run.
 pub(crate) const UNARY_ADD_OPERAND_STRING: u32 = UNARY_TYPEOF_INDEX + 1;
 
+/// The `Unary` operators testing whether an array pattern of `n` elements and no rest may
+/// read its elements by index (`FunctionCompiler::array_pattern_by_index`): this plus `n - 1`,
+/// for `n` up to `ARRAY_PATTERN_MAX_ELEMENTS`. True of an ordinary Array whose iteration runs
+/// no guest code (`Vm::array_pattern_reads_elements`), where binding element `i` from the
+/// iterator's step reads exactly `value[i]`.
+pub(crate) const UNARY_ARRAY_PATTERN: u32 = UNARY_ADD_OPERAND_STRING + 1;
+pub(crate) const ARRAY_PATTERN_MAX_ELEMENTS: u32 = 16;
+
+/// The element count a `UNARY_ARRAY_PATTERN` operator tests.
+#[inline(always)]
+pub(crate) fn array_pattern_test(operator: u32) -> Option<usize> {
+    let offset = operator.checked_sub(UNARY_ARRAY_PATTERN).filter(|offset| *offset < ARRAY_PATTERN_MAX_ELEMENTS)?;
+    Some(offset as usize + 1)
+}
+
 /// The index in `TYPEOF_NAMES` of `name`, if some value's `typeof` is `name`.
 pub(crate) fn typeof_name_index(name: &str) -> Option<usize> {
     TYPEOF_NAMES.iter().position(|candidate| *candidate == name)

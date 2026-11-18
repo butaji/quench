@@ -60,6 +60,63 @@ impl<H: Host> Vm<H> {
         self.iterator_lacks_property_proving(iterator, key)
     }
 
+    /// Whether destructuring `value` with an array pattern of `elements` elements and no rest
+    /// binds element `i` to `value[i]` and ends with no call: an ordinary Array whose iteration
+    /// is intact (`array_iteration_intact`) with no indexed descriptor or sparse storage, whose
+    /// first `elements` elements are present data elements, so each iterator step reads its own
+    /// element and none is the last; then the pattern's close (the iterator is never done) finds
+    /// no `return` on `%ArrayIteratorPrototype%`'s chain. Nothing here, nor in reading those
+    /// elements, runs guest code.
+    pub(super) fn array_pattern_reads_elements(&mut self, value: Value, elements: usize) -> bool {
+        if !self.array_iteration_intact(value) {
+            return false;
+        }
+        let Some(array) = self.heap.array(value) else {
+            return false;
+        };
+        if array.has_indexed_descriptors() || self.heap.sparse_length(value).is_some() {
+            return false;
+        }
+        let stored = array.elements();
+        if stored.len() < elements || (0..elements).any(|index| stored.get(index).is_none_or(|element| element.is_deleted())) {
+            return false;
+        }
+        let key = PropertyKey::string(self.runtime_atoms.iterator_return);
+        let proto = self.array_iterator_proto;
+        self.iterator_absence_proved(proto, key) || self.prove_chain_lacks(proto, key)
+    }
+
+    /// Whether the chain from `proto` lacks `key` in every link's shape, recording the proof
+    /// (`iterator_absence_proof`) after making each link a prototype, as
+    /// `iterator_lacks_property_proving` does.
+    #[cold]
+    #[inline(never)]
+    fn prove_chain_lacks(&mut self, proto: Value, key: PropertyKey) -> bool {
+        let Some(atom) = key.key32() else {
+            return false;
+        };
+        let mut link = proto;
+        while !link.is_null() {
+            let Some(data) = self.heap.ordinary_object(link) else {
+                return false;
+            };
+            if data.has_side_descriptors() || self.shape_is_dictionary(data.shape()) || self.property_shape_slot(data.shape(), key).is_some() {
+                return false;
+            }
+            link = data.proto();
+        }
+        let epoch = crate::heap::prototype_layout_epoch();
+        let mut link = proto;
+        while !link.is_null() {
+            self.heap.mark_prototype(link);
+            link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
+        }
+        if crate::heap::prototype_layout_epoch() == epoch {
+            self.iterator_absence_proof.set(Some((proto, atom, epoch)));
+        }
+        true
+    }
+
     /// A fresh array iterator of `kind` over the object `source`, as `%Array.prototype.values%`
     /// and its kin make one.
     pub(super) fn array_iterator_of(&mut self, kind: IteratorKind, source: Value) -> Value {
