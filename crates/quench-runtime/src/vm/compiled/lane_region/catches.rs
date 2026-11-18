@@ -51,11 +51,10 @@ fn unwinds_natively(function: &Function) -> bool {
 /// Whether `instruction` raises an exception native code can route: a plain `throw` of a
 /// register of the unit, or a plain call or construction, whose callee may throw.
 fn raising_instruction(instruction: WideInstruction, registers: Register) -> bool {
-    let class = instruction.op().class();
-    instruction.result_flags() == 0 && if class.eq(Class::Throw) {
+    instruction.result_flags() == 0 && if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Throw) {
         instruction.register_a() < registers
     } else {
-        class.eq(Class::Call) || class.eq(Class::Construct)
+        crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Call) || crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Construct)
     }
 }
 

@@ -95,7 +95,7 @@ pub(super) fn keeps_arrays(intrinsics: &Intrinsics, pc: usize) -> bool {
 /// that function's argument count, and no direct callee is bound to it. Each with the function it held, whose identity the call guards.
 pub(super) fn intrinsic_calls(unit: &super::super::lane_unit::Unit, global_reads: &crate::vm::global_facts::GlobalReads,
     direct: impl Fn(usize) -> bool) -> Intrinsics {
-    unit.instructions.iter().enumerate().map(|(pc, instruction)| Some((pc, instruction)).filter(|(pc, instruction)| instruction.op().is_call()
+    unit.instructions.iter().enumerate().map(|(pc, instruction)| Some((pc, instruction)).filter(|(pc, instruction)| crate::staged::meaning::means(*instruction, crate::staged::meaning::Meaning::Call)
         && !direct(*pc) && !instruction.returns_from_frame()
         && !instruction.direct_eval() && !instruction.parameter_eval() && instruction.result_flags() == 0)
         .and_then(|(pc, instruction)| {

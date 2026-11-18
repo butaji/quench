@@ -58,7 +58,7 @@ impl Lowering<'_, '_> {
     /// Whether a reached instruction reads or stores a named field: only then does the body
     /// look at the receiver's record and the property arena at entry.
     pub(super) fn accesses_fields(&self, instructions: &[WideInstruction]) -> bool {
-        instructions.iter().enumerate().any(|(pc, instruction)| self.facts.reached(pc) && instruction.op().is_named_field_access())
+        instructions.iter().enumerate().any(|(pc, instruction)| self.facts.reached(pc) && crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::NamedFieldAccess))
     }
 
     /// The entry facts of a body that never looks at the receiver's record: no object, no

@@ -342,7 +342,7 @@ impl Lowering<'_, '_> {
             _ if matches!(crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()), Some(crate::staged::Operation::LoadName { .. })) => self.global_reads.contains_key(&pc),
             _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) => !instruction.writes_current_this(),
             _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) => true,
-            Class::Call => super::native_calls::keeps_arrays(&self.intrinsics, pc),
+            _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Call) => super::native_calls::keeps_arrays(&self.intrinsics, pc),
             _ if instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary => true,
             _ => reads_only(&self.program.constants, instruction),
         }

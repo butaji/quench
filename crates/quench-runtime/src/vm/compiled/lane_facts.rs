@@ -16,7 +16,7 @@ pub(super) fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<u
 pub(super) fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[DirectCandidates])
     -> (Box<[DirectCallee]>, BTreeMap<usize, *const DirectCallee>) {
     let (pcs, direct): (Vec<usize>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
-        .filter(|(_, instruction)| instruction.op().is_call() || instruction.op().class().eq(crate::bytecode::Class::Construct))
+        .filter(|(_, instruction)| crate::staged::meaning::means(*instruction, crate::staged::meaning::Meaning::Call) || crate::staged::meaning::means(*instruction, crate::staged::meaning::Meaning::Construct))
         .filter_map(|(pc, _)| match unit.origins[pc] {
             lane_unit::Origin::Caller(origin) => {
                 let inlined = |callee: &DirectCallee| unit.frames.iter()
@@ -123,7 +123,7 @@ impl Census {
 /// under a direct caller's frames.
 pub(super) fn unit_closed(unit: &lane_unit::Unit, function: u32, direct: impl Fn(usize) -> bool,
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>) -> bool {
-    unit.instructions.iter().enumerate().all(|(pc, instruction)| !instruction.op().is_call()
+    unit.instructions.iter().enumerate().all(|(pc, instruction)| !crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Call)
         || direct(pc)
         || match unit.origins[pc] {
             lane_unit::Origin::Caller(origin) => targets(function, origin),

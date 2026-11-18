@@ -55,7 +55,7 @@ fn read_demand(instruction: WideInstruction, register: usize, after: &dyn Fn() -
         // A strict (in)equality reads a Number operand's double (`Lowering::number_strict_equality`).
         _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. }))
             && equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict) => Demand::NUMBER,
-        _ if op.is_get_index() => element_read_demand(instruction, register),
+        _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) => element_read_demand(instruction, register),
         _ if op.js_denotation() == JsDenotation::NumericBinary && !instruction.returns_from_frame() => binary_read_demand(instruction, after),
         _ => Demand::TAGGED,
     }
@@ -84,7 +84,7 @@ fn element_read_demand(instruction: WideInstruction, register: usize) -> Demand 
 /// the helper of a call, a construction or a value step to read.
 fn homes_registers(instruction: WideInstruction) -> bool {
     instruction.op().steps_with_result()
-        || matches!(instruction.op().class(), Class::Call | Class::Construct)
+        || crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Call) || crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Construct)
 }
 
 /// The one table of reads: the views the instruction at `pc` reads of `register`.

@@ -143,7 +143,7 @@ pub(super) fn numeric_unit(program: &ResidualProgram, unit: &super::super::lane_
     direct: &DirectSites) -> bool {
     unit.frames.is_empty() && unit.instructions.iter().enumerate().all(|(pc, instruction)|
         numeric_instruction(program, *instruction)
-            || scalar && (direct.contains_key(&pc) || instruction.op().is_throwing_name_load()
+            || scalar && (direct.contains_key(&pc) || crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::ThrowingNameLoad)
                 || callee_capture(unit, direct, pc).is_some()))
 }
 
@@ -266,7 +266,7 @@ impl Lowering<'_, '_> {
     /// holds the function as a Stable fact, and the arguments are proved the numbers the entry takes.
     pub(super) fn scalar_call_admitted(&self, state: &State, pc: usize, instruction: WideInstruction) -> bool {
         let (Some(abi), Some(callee)) = (self.scalar_abi(), self.scalar_target(pc).map(|callee| callee.callee)) else { return false };
-        if !instruction.op().is_call() || instruction.result_flags() != 0 { return false; }
+        if !crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Call) || instruction.result_flags() != 0 { return false; }
         let window = usize::from(ImmediateLayout::call_window_base(instruction.imm()));
         let held = state.values[usize::from(instruction.register_b())].value.ty.function_identity();
         held.map(|identity| identity.to_bits()) == Some(callee.to_bits())
@@ -314,7 +314,7 @@ impl Lowering<'_, '_> {
     /// capture, in the entry or in the body that calls it, or its global binding, in the entry.
     pub(super) fn is_scalar_callee_load(&self, pc: usize, instruction: WideInstruction) -> bool {
         if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::LoadCapture { .. })) { return self.scalar_abi().is_some() && callee_capture(self.unit, self.direct, pc).is_some(); }
-        instruction.op().is_throwing_name_load() && matches!(self.completion, Completion::Scalar(_))
+        crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::ThrowingNameLoad) && matches!(self.completion, Completion::Scalar(_))
     }
 
     /// The load `is_scalar_callee_load` admits.

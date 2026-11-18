@@ -12,7 +12,7 @@ impl Lowering<'_, '_> {
             if self.shared_backedge(state, target) { return false; }
             self.interrupt_check(state, pc as u32);
             if let Some(header) = self.unit.instructions.get(target).copied()
-                && header.op().is_js_conditional_jump()
+                && crate::staged::meaning::means(header, crate::staged::meaning::Meaning::ConditionalJump)
                 && header.result_flags() == 0
                 && header.jump_target() as usize > pc
             {

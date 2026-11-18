@@ -36,6 +36,12 @@ pub(crate) fn is_int<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     stage.eq_imm(tag, ValueLayout::INT_TAG)
 }
 
+/// The value word of an int32 whose 64-bit `payload` is its zero-extended bits (`Value::int`).
+#[inline(always)]
+pub(crate) fn int_word<S: Stage>(stage: &mut S, payload: S::Word) -> S::Word {
+    stage.or_imm(payload, ValueLayout::INT_TAG)
+}
+
 /// Whether `bits` is a direct string reference (`Value::as_direct_string`).
 #[inline(always)]
 pub(crate) fn is_direct_string<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
