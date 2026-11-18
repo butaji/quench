@@ -80,7 +80,7 @@ unsafe fn lane_script_getter_answer<H: Host>(cx: *mut LaneContext<H>, target: &S
         // takes the kind its first run would.
         // SAFETY: as `lane_call_read`; the context's program outlives the lane run.
         let (entry, code) = unsafe { ((*target.view).records(), &*(*cx).code) };
-        if unsafe { (*entry).handler } == lane_returning_field_first::<H, NOT_LEAF> as *const () {
+        if unsafe { (*entry).handler } == row_returning_field_first::<H, NOT_LEAF> as *const () {
             requicken::<H>(entry, returning_field_first_kind::<H, NOT_LEAF>(unsafe { vm(cx) }, code, unsafe { &*entry }));
         }
     } else if !target.entry.answered_by_read() {

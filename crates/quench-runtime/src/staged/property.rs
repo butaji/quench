@@ -101,6 +101,9 @@ pub(crate) enum FieldPlan<'a> {
     /// The `length` of a receiver that is no array or string: an arguments object's or a user
     /// function's own data `length`, or a typed view's geometry (`PropertyFrame::length_read`).
     Length,
+    /// A private name's read of the frame's record (`PropertyFrame::private_field`): the
+    /// object's private field under the name's brand, which no field cache records.
+    Private { atom: u32 },
 }
 
 /// One own data slot a store site proved: objects of exact `shape` keep the field at `slot`.
@@ -361,6 +364,12 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
     #[inline(always)]
     fn field_get_host(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _site: u16, _miss: S::Miss) -> Option<S::Word> { None }
 
+    /// The private field `atom` of `object` at the frame's record, under the brand its
+    /// environment finds (`FieldPlan::Private`); an object without the field, or a private
+    /// method or accessor, leaves at `miss`.
+    #[inline(always)]
+    fn private_field(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _miss: S::Miss) -> Option<S::Word> { None }
+
     /// The VM's store of `value` to `atom` of `object` through `site`, which may add the
     /// property (`LaneHelper::FieldAdd`); a failure leaves at `miss`.
     #[inline(always)]
@@ -508,6 +517,7 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
             let records = frame.object_records(stage);
             run_owned(stage, frame, (owner, !readable), ops, (at, records), miss)
         }),
+        FieldPlan::Private { atom } => frame.private_field(stage, object, atom, miss),
     }
 }
 
