@@ -440,6 +440,16 @@ fn lane_body_activate<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target:
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
     let captures = capture_reads(unsafe { (*cx).registers.capture() });
     let exit = vm.run_nested_lane_method(&method, program, code, registers.0, lane_body_this(target, this), captures, cx.cast());
+    // The common end: the body returned and left no native frame, so there is nothing to
+    // resume, link or feed back (`lane_body_left` of a return), only the completion to count.
+    if let super::super::compiled::LaneExit::Returned { value, .. } = exit
+        && !native_frames::left_native_frames(cx)
+    {
+        lane_record_end(cx, own, &method, exit);
+        drop(method);
+        super::lane_note_body_end(cx, own, exit, |_| {});
+        return lane_body_completed(cx, call.ip, value, constructs);
+    }
     let (resumed, feedback) = lane_body_left(cx, registers, own, &method, exit);
     drop(method);
     if lane_leave_counts(cx, exit) {

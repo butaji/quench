@@ -141,9 +141,15 @@ pub(super) fn innermost_callee_env<H: Host>(cx: *mut LaneContext<H>) -> Option<V
 #[inline(always)]
 pub(super) fn advance_into_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&'static LaneView, &'static super::super::compiled::LaneMethod)> {
     // A run that left no native frame, the common completion, has nothing to link or advance.
-    let activations = &unsafe { vm(cx) }.lane_stack.activations;
-    if !activations.top_is_native() && activations.native_depth() == 0 { return None; }
+    if !left_native_frames(cx) { return None; }
     advance_into_native_frames(cx)
+}
+
+/// Whether the run that just ended left native frames on the lane stack, linked or not.
+#[inline(always)]
+pub(super) fn left_native_frames<H: Host>(cx: *mut LaneContext<H>) -> bool {
+    let activations = &unsafe { vm(cx) }.lane_stack.activations;
+    activations.top_is_native() || activations.native_depth() != 0
 }
 
 /// `advance_into_frames` past its test: the native frames to link and advance into.

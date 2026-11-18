@@ -4051,7 +4051,7 @@ impl<H: Host> Vm<H> {
     ) -> LaneExit {
         self.run_lane_body(&BodyRun {
             method, direct_calls, program, residual, registers, receiver, captures, lane_context,
-            pending: NO_PENDING_ACTIVATIONS,
+            pending: NO_PENDING_ACTIVATIONS, bases_stand: false,
         })
     }
 
@@ -4092,7 +4092,13 @@ impl<H: Host> Vm<H> {
             (context.stack_limit, context.entry_stack, context.interrupt,
                 context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner)
         };
-        let exit = self.run_lane_method(method, true, program, residual, registers, receiver, captures, lane_context);
+        // The callee runs in the caller's program and its caller's helper allocated nothing since
+        // the caller's body last checked the bases (`BodyRun::bases_stand`).
+        let exit = self.run_lane_body(&BodyRun {
+            method, direct_calls: true, program, residual, registers, receiver, captures, lane_context,
+            // An entry from outside any body (`saved.residual == 0`) checks them as any entry does.
+            pending: NO_PENDING_ACTIVATIONS, bases_stand: saved.residual != 0,
+        });
         // SAFETY: as above.
         unsafe {
             // An entry from outside any body (the interpreter's call) found the run's words
