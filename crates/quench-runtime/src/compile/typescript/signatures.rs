@@ -5,7 +5,7 @@
 
 use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
-use oxc_span::Span;
+use oxc_span::{GetSpan, Span};
 use oxc_syntax::scope::ScopeFlags;
 
 use crate::bytecode::{DeclaredSignature, DeclaredTypes};
@@ -90,13 +90,13 @@ impl<'a> Visit<'a> for Collect<'a, '_> {
 
     fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
         if !self.loop_head {
-            self.local(declarator.id.get_identifier_name(), declarator.type_annotation.as_deref());
+            self.local(declarator.id.get_identifier_name().map(|name| name.as_str()), declarator.type_annotation.as_deref());
         }
         walk::walk_variable_declarator(self, declarator);
     }
 
     fn visit_catch_parameter(&mut self, parameter: &CatchParameter<'a>) {
-        self.local(parameter.pattern.get_identifier_name(), parameter.type_annotation.as_deref());
+        self.local(parameter.pattern.get_identifier_name().map(|name| name.as_str()), parameter.type_annotation.as_deref());
         walk::walk_catch_parameter(self, parameter);
     }
 
@@ -149,16 +149,11 @@ fn returns_of(object: bool, annotation: Option<&TSTypeAnnotation<'_>>) -> u16 {
     }
 }
 
-/// The `this` parameter's languages. A named type (a class or an interface) is an object: a
-/// receiver of such a type is not a primitive the annotation leaves open.
+/// The `this` parameter's languages. A named type stays open (`DECLARED_ANY`): it may be an
+/// alias of a primitive or a type parameter, which no syntax tells apart from a class.
 fn this_of(parameter: Option<&TSThisParameter<'_>>) -> u16 {
-    let Some(annotation) = parameter.and_then(|parameter| parameter.type_annotation.as_deref()) else {
-        return DECLARED_ANY;
-    };
-    match &annotation.type_annotation {
-        TSType::TSTypeReference(_) => language_bit(crate::ValueType::Object),
-        ty => declared_language(ty),
-    }
+    parameter.and_then(|parameter| parameter.type_annotation.as_deref())
+        .map_or(DECLARED_ANY, |annotation| declared_language(&annotation.type_annotation))
 }
 
 /// The languages of an annotated rest parameter's elements: `...xs: T[]` and `...xs: Array<T>`
@@ -184,6 +179,7 @@ fn rest_of(params: &FormalParameters<'_>) -> u16 {
 #[cfg(test)]
 mod tests {
     use crate::bytecode::{DeclaredSignature, DeclaredTypes};
+    use crate::compile::typescript::DECLARED_ANY;
     use crate::{Engine, ValueType as V};
 
     fn bit(kind: V) -> u16 {
@@ -201,7 +197,7 @@ mod tests {
         let declared = declared_of(source, "signature.cts");
         let f = source.find("function f").unwrap() as u32;
         assert_eq!(declared.declared_signature(f), Some(&DeclaredSignature {
-            start: f, returns: bit(V::Boolean), rest: bit(V::String), this: bit(V::Object),
+            start: f, returns: bit(V::Boolean), rest: bit(V::String), this: DECLARED_ANY,
         }));
         assert_eq!(declared.declared_local(f, "x"), Some(bit(V::Number)));
         assert_eq!(declared.declared_local(f, "s"), Some(bit(V::String)));
