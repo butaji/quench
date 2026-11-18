@@ -108,7 +108,6 @@ switched! {
 
 impl InstanceContext {
     pub(super) const MEMORY_BASE: i32 = std::mem::offset_of!(Self, memory_base) as i32;
-    pub(super) const MEMORY_LENGTH: i32 = std::mem::offset_of!(Self, memory_length) as i32;
     pub(super) const ABI: i32 = std::mem::offset_of!(Self, abi) as i32;
     pub(super) const TABLE: i32 = std::mem::offset_of!(Self, table) as i32;
     pub(super) const ENV: i32 = std::mem::offset_of!(Self, env) as i32;
