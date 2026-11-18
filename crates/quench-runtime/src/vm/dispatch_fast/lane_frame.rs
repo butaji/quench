@@ -2402,15 +2402,17 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
             continue;
         }
         // The dead-first form is only sound when `B` never reads `A`'s register, and nothing
-        // after the pair reads it: the same liveness the hand pass used, plus `B`'s operands.
+        // after the pair reads it. `B`'s `a` is a read when `B` is a jump, so it counts as a read
+        // here too; a value `B` that overwrites `a` is simply not claimed dead (conservative).
+        // A jump `B`'s target is not checked, so `FUSED_DEAD_FIRST` names value rows only.
         let dead_first = {
             let (first, second) = (&records[pc], &records[pc + 1]);
-            second.b != first.a
+            second.a != first.a
+                && second.b != first.a
                 && second.c != first.a
-                && (second.a == first.a
-                    || live
-                        .and_then(|masks| masks.get(pc + 2))
-                        .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(first.a))))
+                && live
+                    .and_then(|masks| masks.get(pc + 2))
+                    .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(first.a)))
         };
         let handler = if *mode == crate::staged::FUSED_DEAD_FIRST && !dead_first {
             plain[direction]

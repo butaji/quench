@@ -316,10 +316,18 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 88] = [
     (Op::Move as u16, Op::Jump as u16, FUSED_PLAIN),
     // An i32 add of a constant then the unconditional jump after it (a loop latch).
     (Op::WasmI32AddImmediate as u16, Op::Jump as u16, FUSED_PLAIN),
+    // A local read then a branch on it.
     (Op::LoadLocalPlain as u16, Op::JumpFalse as u16, FUSED_PLAIN),
     (Op::LoadLocalPlain as u16, Op::JumpTrue as u16, FUSED_PLAIN),
+    // `x++` / `x--` on a Number (`ToNumeric` then the update). Subsumes `specialize_updates`
+    // (`lane_postfix_update`).
     (Op::ToNumeric as u16, Op::IncDec as u16, FUSED_PLAIN),
+    // An update then the unconditional jump after it. Subsumes `specialize_update_jumps`
+    // (`lane_inc_dec_jump`) and the update of `specialize_update_back_edges` where it sits
+    // directly before the back jump (its loop-test variant `lane_inc_dec_loop` is not kept).
     (Op::IncDec as u16, Op::Jump as u16, FUSED_PLAIN),
+    // A Number operation then a branch on its result. Subsumes `specialize_value_jumps`
+    // (`lane_value_jump`, the value's write kept: the dead-value variant is not kept).
     (Op::Binary as u16, Op::JumpFalse as u16, FUSED_PLAIN),
     (Op::Binary as u16, Op::JumpTrue as u16, FUSED_PLAIN),
     // Two arithmetic or bitwise operators, the second reading the first's result: `(a + b) * c`,
@@ -329,7 +337,8 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 88] = [
     // A `typeof` test then the branch on it (`if (typeof x === "number")`).
     (Op::Unary as u16, Op::JumpFalse as u16, FUSED_PLAIN),
     // `!(x instanceof C)` tests also take the `Binary` then `JumpTrue` pair above.
-    // `c = c + 1` of a capture: the store, then the read of the same capture.
+    // `c = c + 1` of a capture: the store, then the read of the same capture. Subsumes
+    // `specialize_capture_updates`' store-then-read form (`lane_store_capture_load`).
     (Op::StoreCapture as u16, Op::LoadCapture as u16, FUSED_PLAIN),
     // A bit-field extraction then an i32 operator (another extraction, a multiply, or an xor).
     (Op::WasmI32ShiftRightUnsignedAndImmediate as u16, Op::WasmI32ShiftRightUnsignedAndImmediate as u16, FUSED_PLAIN),
@@ -358,7 +367,8 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 88] = [
     (Op::WasmI32Load8U as u16, Op::WasmBranchTable as u16, FUSED_PLAIN),
     (Op::WasmI32Load16S as u16, Op::WasmBranchTable as u16, FUSED_PLAIN),
     (Op::WasmI32Load16U as u16, Op::WasmBranchTable as u16, FUSED_PLAIN),
-    // A local or capture read then a register comparison jump (`JumpBinaryFalse`).
+    // A local or capture read then a register comparison jump (`JumpBinaryFalse`). Subsumes
+    // `specialize_load_branch_pairs` (`load_relation_jump_handler`), both directions of the jump.
     (Op::LoadLocalPlain as u16, Op::JumpBinaryFalse as u16, FUSED_PLAIN),
     (Op::LoadCapture as u16, Op::JumpBinaryFalse as u16, FUSED_PLAIN),
     // A direct load then the direct store of its value, of the same width.
@@ -382,22 +392,27 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 88] = [
     (Op::WasmI32Load16S as u16, Op::WasmJumpI32NonZero as u16, FUSED_PLAIN),
     (Op::WasmI32Load16U as u16, Op::WasmJumpI32Zero as u16, FUSED_PLAIN),
     (Op::WasmI32Load16U as u16, Op::WasmJumpI32NonZero as u16, FUSED_PLAIN),
-    // `a[++i]`: an update then the keyed read it indexes.
+    // `a[++i]`: an update then the keyed read it indexes. Subsumes `specialize_updated_index_reads`
+    // (`lane_update_get_index`).
     (Op::IncDec as u16, Op::GetIndex as u16, FUSED_PLAIN),
-    // `x[t = i]`: a register copy then the keyed read of the copy's element.
+    // `x[t = i]`: a register copy then the keyed read of the copy's element. Subsumes
+    // `specialize_moved_index_reads` (`lane_move_get_index_proved`; the proof is the read's flag).
     (Op::Move as u16, Op::GetIndex as u16, FUSED_PLAIN),
-    // `t + K` then the element read or store its result addresses.
+    // `t + K` then the element read or store its result addresses. Subsumes the operator pairs
+    // (`specialize_operator_pairs`, `lane_operator_pair` and its constant form) into an element access.
     (Op::Binary as u16, Op::GetIndex as u16, FUSED_PLAIN),
     (Op::Binary as u16, Op::SetIndex as u16, FUSED_PLAIN),
-    // `a[i] = v; t = v` of a register copy of the stored value.
+    // `a[i] = v; t = v` of a register copy of the stored value. Subsumes `specialize_store_moves`
+    // (`lane_set_index_move`).
     (Op::SetIndex as u16, Op::Move as u16, FUSED_PLAIN),
 ];
 
 /// Runs of three or four generated rows the lane runs as one record (`chain_rows`): each
 /// entry's links in record order, `NO_LINK` padding a three-link chain. Only the last link may
 /// be a jump. A chain at a record wins over a `FUSED_ROWS` pair there.
-pub(crate) const FUSED_CHAINS: [[u16; 4]; 40] = [
-    // A local or capture read, then a register comparison, then its branch.
+pub(crate) const FUSED_CHAINS: [[u16; 4]; 41] = [
+    // A local or capture read, then a register comparison, then its branch. Subsumes the value
+    // jump of `specialize_value_jumps` (`lane_value_jump`) after a read.
     [Op::LoadLocalPlain as u16, Op::Binary as u16, Op::JumpFalse as u16, NO_LINK],
     [Op::LoadLocalPlain as u16, Op::Binary as u16, Op::JumpTrue as u16, NO_LINK],
     [Op::LoadCapture as u16, Op::Binary as u16, Op::JumpFalse as u16, NO_LINK],
@@ -419,7 +434,11 @@ pub(crate) const FUSED_CHAINS: [[u16; 4]; 40] = [
     // An i32 add of a constant, an f64 load at its sum, then an f64 operator on the loaded value.
     [Op::WasmI32AddImmediate as u16, Op::WasmF64Load as u16, Op::WasmF64Binary as u16, NO_LINK],
     // `c = (c + 1) | 0` of a capture: its read, the operator, the truncation, then the store.
+    // Subsumes the int32 capture update (`specialize_capture_updates`, `lane_update_capture_int32`).
     [Op::LoadCapture as u16, Op::Binary as u16, Op::Binary as u16, Op::StoreCapture as u16],
+    // `c = c + x` / `c -= x` of a capture: its read, the numeric operation, then the store. Subsumes
+    // the untruncated capture update (`specialize_capture_updates`, `lane_store_capture_load`).
+    [Op::LoadCapture as u16, Op::Binary as u16, Op::StoreCapture as u16, NO_LINK],
     // A move pair then the unconditional jump after it (a parallel copy at a loop's latch).
     [Op::Move as u16, Op::Move as u16, Op::Jump as u16, NO_LINK],
     // `(c ± k) & m` then an immediate comparison jump on the masked value (`c - '0'` digit tests).
@@ -441,8 +460,8 @@ pub(crate) const FUSED_CHAINS: [[u16; 4]; 40] = [
     [Op::WasmI32Load16S as u16, Op::WasmI32Load16S as u16, Op::WasmI32Multiply as u16, NO_LINK],
     [Op::WasmI32Load16U as u16, Op::WasmI32Load16U as u16, Op::WasmI32Multiply as u16, NO_LINK],
     [Op::WasmI32Load8U as u16, Op::WasmI32Load8U as u16, Op::WasmI32Add as u16, NO_LINK],
-    // `a[++i + K]`: the update, the keyed read it indexes, then the Number operation on the read
-    //.
+    // `a[++i + K]`: the update, the keyed read it indexes, then the Number operation on the read.
+    // Subsumes `specialize_updated_index_operators` (`lane_update_get_index_operator`).
     [Op::IncDec as u16, Op::GetIndex as u16, Op::Binary as u16, NO_LINK],
     // `heap[(p + K) >> S]` and `heap[p + K]`: the address sum, its shift, then the element read or
     // store it addresses.
@@ -459,7 +478,8 @@ pub(crate) const NO_LINK_OP: Op = Op::Nop;
 pub(crate) const FUSED_PLAIN: u8 = 0;
 /// `FUSED_ROWS` mode: `A`'s result register is dead after the pair, and `B` does not name it, so
 /// the fused record skips `A`'s register write. `fuse_rows` installs it only where liveness
-/// proves that; otherwise the pair runs as `FUSED_PLAIN`.
+/// proves that; otherwise the pair runs as `FUSED_PLAIN`. `B` must be a value row: a jump's
+/// target liveness is not checked, so no jump pair names this mode.
 pub(crate) const FUSED_DEAD_FIRST: u8 = 1;
 /// The mode of a window pair or chain `fuse_rows` installs for a window local's (`FLAG_WINDOW`) first row: both
 /// rows run at the window's flag, reading the window's locals. Not a table mode; `fuse_rows` names it.
