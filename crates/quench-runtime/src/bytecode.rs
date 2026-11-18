@@ -1121,8 +1121,8 @@ opcodes!($;
     // A key other than an index those values hold makes the rest array and reads it.
     // The rest register (`b` of `RestLength`, `c` of `RestGet`) holds `undefined` where the
     // entry kept the values, else the array an entry made, which they then read.
-    RestLength => Effect::READS_HEAP; layout Scalar; meaning ArrayLength; class RestLength, @ Register, @ fields(ResultRegister, Register, Unused),
-    RestGet => READ_THROW; layout Scalar; meaning ArrayLength; class RestGet, @ Register, @ fields(ResultRegister, Register, Register),
+    RestLength => Effect::READS_HEAP; layout Scalar; meaning ArrayLength; class RestLength; staged Names, @ Register, @ fields(ResultRegister, Register, Unused),
+    RestGet => READ_THROW; layout Scalar; meaning ArrayLength; class RestGet; staged Names, @ Register, @ fields(ResultRegister, Register, Register),
     // `CallSpread` of a rest parameter `compile::rest_reads` keeps as a view: its window holds
     // the rest register, `undefined` where the entry kept the values passed, which it spreads.
     CallRest => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call; class CallRest; staged Names; traits CALL_LINK, @ Returnable, @ fields(ResultRegister, Register, Register),

@@ -17717,7 +17717,7 @@ script_handler! {
     /// their first register (`derive_lane_view`). Read in place whatever its rest register
     /// holds: only these reads see the rest array, which no write changes, so an array an
     /// entry made holds the same values. A frame, and a key other than an index they hold,
-    /// take the general path (`Vm::read_rest_view`).
+    /// take the general path (`Vm::rest_view_step`).
     fn lane_rest_view<GET: bool>(cx, r, ip, i, view) {
         if let Some((argc, _)) = unsafe { lane_keeping_activation(cx) } {
             let length = argc.saturating_sub(i.imm() as u16);

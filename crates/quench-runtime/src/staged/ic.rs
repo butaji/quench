@@ -177,8 +177,10 @@ pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, proper
     let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
     // An exact shape has no form bits, so the whole word equals it only in the arena form,
     // whose payload is the run's start: one compare proves the shape and the form.
+    // The caller's contract: an exact shape, so no form bit needs testing.
+    debug_assert_eq!(shape & (OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form), 0, "an exact shape has no form bit");
     let whole = stage.eq_imm(word, u64::from(shape));
-    if shape & (OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form) == 0 && stage.known(whole) == Some(true) {
+    if stage.known(whole) == Some(true) {
         let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
         let run = arena_run(&mut stage, payload);
         let layout = Layout { slots: super::object::Slots::Flat(run), storage_len: usize::from(slot) + 1 };

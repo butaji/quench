@@ -127,7 +127,7 @@ mod tests {
     #[test]
     fn every_opcode_answers_the_loop_admission_questions_by_its_family() {
         use crate::bytecode::Class::{self, *};
-        let allocations: &[Class] = &[MakeObject, MakeObject2, MakeArray, Construct];
+        let allocations: &[Class] = &[MakeObject, MakeObject2, MakeObjectLiteral, MakeArray, Construct];
         let defining: &[Class] = &[LoadConst, Move, LoadCapture, Binary, NumericAdd, NumericMultiply, IncDec, Unary,
             ToNumeric, GetIndex, GetField, LoadEnvLocal, LoadName];
         let lowered: &[Class] = &[StoreCapture, RequireObjectCoercible, SetIndex, DefineArrayElement, Return, Jump,

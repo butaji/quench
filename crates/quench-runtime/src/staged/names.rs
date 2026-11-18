@@ -23,6 +23,11 @@ pub(crate) enum Protocol {
     /// Append `length` holes to the array operand, then the optional element operand, spread
     /// where `spread` (`AppendArray`).
     AppendArray { length: usize, spread: bool },
+    /// `rest.length` (`get` false, `RestLength`) or `rest[key]` (`RestGet`) of a rest view
+    /// (`Function::rest_view`): the values the activation kept past its first `fixed`
+    /// parameters while the rest register (`rest`, the second operand) holds `undefined`,
+    /// else the array there. A key no kept value answers makes the rest array, into `rest`.
+    RestView { get: bool, fixed: usize, rest: Register },
 }
 
 /// The staged operation `instruction` denotes among the name, environment and iteration
@@ -71,6 +76,10 @@ fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>
         Op::GetIterator => (Protocol::GetIterator, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::ForInStart => (Protocol::ForInStart, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::IteratorClose => (Protocol::IteratorClose, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
+        Op::RestLength => (Protocol::RestView { get: false, fixed: instruction.array_length(), rest: instruction.register_b() },
+            Some(instruction.result_register()), [None, Some(instruction.register_b())]),
+        Op::RestGet => (Protocol::RestView { get: true, fixed: instruction.array_length(), rest: instruction.register_c() },
+            Some(instruction.result_register()), [Some(instruction.register_b()), Some(instruction.register_c())]),
         _ => return super::spread::decode(instruction),
     };
     Some(Operation::Protocol { step, destination, operands })

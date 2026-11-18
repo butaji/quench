@@ -928,10 +928,6 @@ impl<H: Host> Vm<H> {
             Op::SetFunctionDebugName => {
                 self.set_function_debug_name(self.read(f, i.register_a()), i.atom_index());
             }
-            Op::RestLength | Op::RestGet => {
-                let value = self.read_rest_view(p, f, i)?;
-                self.write(f, i.result_register(), value);
-            }
             Op::ArgumentsLength | Op::ArgumentGet => {
                 let binding = self.load_local_binding(p, VarOwner::Frame(f), i.local_slot(), None)?;
                 let key = (i.op() == Op::ArgumentGet).then(|| self.read(f, i.register_b()));
