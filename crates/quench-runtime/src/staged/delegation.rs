@@ -2,11 +2,14 @@
 //! (`CallFrame::delegation`) and each register the row keeps written back. A step of the
 //! instruction obtains the delegate's iterator into `iterator` (GetIterator, async in an async
 //! generator), caches its `next` method in `next`, takes the step result that waits in `state`
-//! (an awaited result, or one the lane made in place) or calls `next` with the value the
-//! activation was resumed with, and in an async generator first awaits that result, resuming at
-//! this instruction with it in `state`. It then reads the result's `done`: a done result's
-//! `value` is the instruction's value and control falls through; any other result is yielded as
-//! this generator's own (`Suspending::delegated`), resuming at this instruction.
+//! (an awaited result, or one the lane made in place) or, with none waiting, lets the frame step
+//! the delegate in place (`CallFrame::delegation_in_place`, the lane's delegate generator) or
+//! calls `next` with the value the activation was resumed with, and in an async generator first
+//! awaits that result, resuming at this instruction with it in `state`. It then reads the
+//! result's `done`: a done result's `value` is the instruction's value and control falls through;
+//! any other result is yielded as this generator's own (`Suspending::delegated`), resuming at this
+//! instruction. Every step a frame declines, it declines before the row's effects: a frame
+//! answers a step only where it can finish it.
 //!
 //! The steps branch on what the delegate does, which only a stage that knows its words follows:
 //! another stage leaves the row before any effect, at its exact PC.
@@ -44,34 +47,40 @@ pub(super) struct Delegation {
     pub(super) next: Register,
 }
 
-/// How a delegation step ends: the delegate's completion, which falls through, or a suspension.
-enum Outcome<W> {
+/// How a delegation step ends: the delegate's completion, which falls through, a suspension, or
+/// the control of a step the frame makes in place (`CallFrame::delegation_in_place`).
+enum Outcome<W, C> {
     Completed(W),
     Suspends(Suspending<W>),
+    Transfers(C),
 }
 
-/// One step of `yield*` (`Delegation`): the delegate's completion as the instruction's value, or
-/// the suspension the frame makes; unresolved where a call-out left or raised.
+/// One step of `yield*` (`Delegation`): the delegate's completion as the instruction's value, the
+/// suspension the frame makes, or its in-place step; unresolved where a call-out left or raised.
 #[inline(always)]
 pub(super) fn delegate<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegation: Delegation) -> Step<S::Word, F::Control> {
     match delegation_step(stage, frame, delegation) {
         Some(Outcome::Completed(value)) => Step::Value(value),
         Some(Outcome::Suspends(suspended)) => settle(stage, frame, Some(suspended)),
+        Some(Outcome::Transfers(control)) => Step::Control(control),
         None => Step::Unresolved,
     }
 }
 
-/// The delegation's steps in order (`delegate`).
+/// The delegation's steps in order (`delegate`). A result waiting in `state` is read before the
+/// register is cleared, so a frame that cannot read it declines with nothing changed.
 #[inline(always)]
-fn delegation_step<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegation: Delegation) -> Option<Outcome<S::Word>> {
+fn delegation_step<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegation: Delegation)
+    -> Option<Outcome<S::Word, F::Control>> {
     let asynchronous = frame.asynchronous()?;
     let iterator = delegate_iterator(stage, frame, delegation, asynchronous)?;
     let method = next_method(stage, frame, delegation, iterator)?;
-    let result = match step_result(stage, frame, delegation, (iterator, method), asynchronous)? {
-        Outcome::Completed(result) => result,
-        awaits @ Outcome::Suspends(_) => return Some(awaits),
-    };
-    finish(stage, frame, delegation, result, asynchronous)
+    let waiting = frame.tagged(stage, delegation.state);
+    let empty = undefined(stage, waiting);
+    if !stage.known(empty)? {
+        return finish(stage, frame, delegation, waiting, asynchronous);
+    }
+    fresh_step(stage, frame, delegation, (iterator, method), asynchronous)
 }
 
 /// Whether `word` is `undefined`, which a delegation register holds before its step defines it.
@@ -108,22 +117,21 @@ fn next_method<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegati
     }, |_| Some(held))
 }
 
-/// The delegate's step result: the one waiting in `state`, taken (`state` cleared), else the
-/// call of `next` with the resumed value; an async generator awaits a fresh result first,
-/// resuming at this instruction with it in `state` (`Outcome::Suspends`).
+/// A step with no result waiting: in a sync generator the frame's own step of the delegate in
+/// place where it makes one (its result arrives in `state` and this instruction runs again),
+/// else the call of `next` with the resumed value, whose result is read at once; an async
+/// generator awaits that result first, resuming at this instruction with it in `state`.
 #[inline(always)]
-fn step_result<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegation: Delegation,
-    (iterator, method): (S::Word, S::Word), asynchronous: bool) -> Option<Outcome<S::Word>> {
-    let waiting = frame.tagged(stage, delegation.state);
-    let empty = undefined(stage, waiting);
-    if !stage.known(empty)? {
-        clear(stage, frame, delegation.state);
-        return Some(Outcome::Completed(waiting));
-    }
+fn fresh_step<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegation: Delegation,
+    (iterator, method): (S::Word, S::Word), asynchronous: bool) -> Option<Outcome<S::Word, F::Control>> {
     let input = frame.tagged(stage, delegation.destination);
-    let (result, _) = frame.delegation(stage, DelegationStep::Next { iterator, method, input })?;
+    let step = DelegationStep::Next { iterator, method, input };
+    if !asynchronous && let Some(control) = frame.delegation_in_place(stage, step, delegation.state) {
+        return Some(Outcome::Transfers(control));
+    }
+    let (result, _) = frame.delegation(stage, step)?;
     if !asynchronous {
-        return Some(Outcome::Completed(result));
+        return finish(stage, frame, delegation, result, false);
     }
     let value = frame.promise_resolve(stage, result)?;
     let awaited = Suspending { effect: SuspendEffect::Await, value, destination: delegation.state, delegated: None, again: true };
@@ -132,24 +140,27 @@ fn step_result<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegati
 
 /// The step result `result` read: where it is done, its `value` to `destination` as the
 /// instruction's value; else this generator yields it as its own, an async generator with its
-/// `value` read, resuming at this instruction. `done` is read before `value`.
+/// `value` read, resuming at this instruction. `done` is read before `value`, and `state` is
+/// cleared only after both, so a frame declines a read before any effect: the compiler resets
+/// `state` before each `yield*` begins, so a read that throws leaves nothing a later step sees.
 #[inline(always)]
 fn finish<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, delegation: Delegation, result: S::Word, asynchronous: bool)
-    -> Option<Outcome<S::Word>> {
+    -> Option<Outcome<S::Word, F::Control>> {
     let (done, _) = frame.delegation(stage, DelegationStep::Done { result })?;
     let (truthy, _) = frame.delegation(stage, DelegationStep::Truthy { value: done })?;
     let finished = stage.eq_imm(truthy, Value::TRUE.to_bits());
     if stage.known(finished)? {
         let (value, fact) = frame.delegation(stage, DelegationStep::Value { result })?;
+        clear(stage, frame, delegation.state);
         frame.write(stage, delegation.destination, value, fact);
         return Some(Outcome::Completed(value));
     }
     let value = if asynchronous {
-        clear(stage, frame, delegation.state);
         frame.delegation(stage, DelegationStep::Value { result })?.0
     } else {
         stage.constant(Value::UNDEFINED.to_bits())
     };
+    clear(stage, frame, delegation.state);
     let yielded = Suspending { effect: SuspendEffect::Yield, value, destination: delegation.destination, delegated: Some(result), again: true };
     Some(Outcome::Suspends(yielded))
 }

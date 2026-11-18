@@ -81,7 +81,7 @@ pub(crate) use plan::{plan_entry, CalleeKind, CallEntry, DirectPlan, Identity, R
 pub(crate) use plan::Bound;
 pub(crate) use invoke::{CallFrame, Entered, Room};
 mod suspend;
-pub(crate) use suspend::{await_source, SuspendEffect, Suspending, Suspension};
+pub(crate) use suspend::{await_source, SuspendEffect, Suspending, Suspension, YieldConversion};
 mod delegation;
 pub(crate) use delegation::DelegationStep;
 mod allocation;

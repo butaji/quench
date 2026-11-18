@@ -6,9 +6,11 @@
 //! resumes into and, for `yield*`, the delegate's result and that it resumes at this instruction.
 //!
 //! The interpreter's frame (`Vm::staged_suspend`) answers every call-out and the effect, so the
-//! general step runs these rows. The lane converts an `await`'s source by the same `await_source`
-//! over its own PromiseResolve, which observes nothing (`dispatch_fast::lane_await_source`), and
-//! suspends its in-place records itself (`dispatch_fast::generator_yields`). The emit and stencil
+//! general step runs these rows. The lane runs the `yield` and `yield*` rows on its own frame
+//! (`dispatch_fast::lane_frame::lane_suspension`), which answers the effect with its in-place
+//! suspension and declines, before any effect, a step it cannot finish; it converts an `await`'s
+//! source by the same `await_source` over its own PromiseResolve, which observes nothing
+//! (`dispatch_fast::lane_await_source`). The emit and stencil
 //! frames answer none of the call-outs yet, so the row stays unresolved there and the tier exits at
 //! its exact PC for the interpreter to suspend.
 use super::{CallFrame, Operation, Register, Stage, Step};
@@ -19,11 +21,27 @@ use crate::bytecode::{Op, WideInstruction};
 pub(crate) enum Suspension {
     /// `await`: the awaited value, converted as PromiseResolve converts it.
     Await,
-    /// `yield`: the yielded value, resolved to a promise first in an async generator.
-    Yield,
+    /// `yield`: the yielded value, converted first in an async generator as `conversion` says.
+    Yield { conversion: YieldConversion },
     /// `yield*`: delegation to the iterator `iterator` holds (undefined before the first step),
     /// whose `next` method `next` caches and whose awaited or in-place step result `state` holds.
     YieldStar { iterator: Register, state: Register, next: Register },
+}
+
+/// How an async generator's `yield` converts its value before it suspends (`yield_value`). The
+/// general path makes PromiseResolve(%Promise%, value) of every value (`Resolve`), as the
+/// interpreter always has; the lane converts it as an `await`'s source (`AwaitSource`), passing a
+/// primitive as it is. Either way the generator awaits the converted value before its request
+/// settles (AsyncGeneratorYield's Await), and the promise PromiseResolve wraps a primitive in is
+/// fresh, already fulfilled and reachable from nothing else, so both settle the request with the
+/// same value in the same job. The difference stays an explicit parameter of the row until a test
+/// pins that equivalence; a decoded row resolves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum YieldConversion {
+    /// PromiseResolve(%Promise%, value) of every value.
+    Resolve,
+    /// An object resolved, any other value as it is (`await_source`).
+    AwaitSource,
 }
 
 /// The control effect of a suspension: the activation awaits or yields.
@@ -59,7 +77,7 @@ impl<W, P> Operation<W, P> {
     pub(super) fn decode_suspend(instruction: WideInstruction) -> Option<Self> {
         let kind = match instruction.op() {
             Op::Await => Suspension::Await,
-            Op::Yield => Suspension::Yield,
+            Op::Yield => Suspension::Yield { conversion: YieldConversion::Resolve },
             Op::YieldStar => {
                 let (state, next) = instruction.register_pair();
                 Suspension::YieldStar { iterator: instruction.register_c(), state, next }
@@ -78,7 +96,7 @@ pub(crate) fn suspend<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, k
     value: Register) -> Step<S::Word, F::Control> {
     let suspended = match kind {
         Suspension::Await => await_value(stage, frame, destination, value),
-        Suspension::Yield => yield_value(stage, frame, destination, value),
+        Suspension::Yield { conversion } => yield_value(stage, frame, (destination, value), conversion),
         Suspension::YieldStar { iterator, state, next } => {
             let delegation = super::delegation::Delegation { source: value, destination, iterator, state, next };
             return super::delegation::delegate(stage, frame, delegation);
@@ -104,13 +122,17 @@ fn await_value<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, destinat
     Some(Suspending::after(SuspendEffect::Await, source, destination))
 }
 
-/// `yield` of the value in `value`, resuming into `destination`: an async generator yields
-/// PromiseResolve(%Promise%, value), any other generator the value itself.
+/// `yield` of the value in `value`, resuming into `destination`: an async generator yields its
+/// value converted as `conversion` says (`YieldConversion`), any other generator the value itself.
 #[inline(always)]
-fn yield_value<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, destination: Register, value: Register)
-    -> Option<Suspending<S::Word>> {
+fn yield_value<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, (destination, value): (Register, Register),
+    conversion: YieldConversion) -> Option<Suspending<S::Word>> {
     let yielded = frame.tagged(stage, value);
-    let value = if frame.asynchronous()? { frame.promise_resolve(stage, yielded)? } else { yielded };
+    let value = match (frame.asynchronous()?, conversion) {
+        (false, _) => yielded,
+        (true, YieldConversion::Resolve) => frame.promise_resolve(stage, yielded)?,
+        (true, YieldConversion::AwaitSource) => await_source(stage, frame, yielded)?,
+    };
     Some(Suspending::after(SuspendEffect::Yield, value, destination))
 }
 
