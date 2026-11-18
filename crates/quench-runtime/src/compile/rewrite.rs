@@ -38,8 +38,12 @@ macro_rules! fusion_recipes {
 
 // Ordered recipe entries are the complete overlap and semantic policy. The
 // macro derives recipe identity, pattern rows, and recipe dispatch together.
+// An empty pattern list means the recipe's pairs are derived from the opcode rows
+// (`derived_rules`), never listed by hand.
 fusion_recipes! {
-    ConstantLeft: [LoadConst, Binary] =>
+    // Derived: a `CONSTANT_PRODUCERS` op, then an op whose B and C are `Operand` slots
+    // (`CONSTANT_LEFT_SITES`). Left is tried before right, as the listed pairs were.
+    ConstantLeft: [] =>
         |first: Instr, mut second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             let result = first.result_register();
             let constant = Operand::constant(first.constant_index() as u32)?;
@@ -50,19 +54,24 @@ fusion_recipes! {
             }
             Some(second)
         };
-    ConstantRight: [LoadConst, Binary] =>
+    // Derived: a `CONSTANT_PRODUCERS` op, then any op whose C is an `Operand` (`CONSTANT_RIGHT_SITES`).
+    ConstantRight: [] =>
         |first: Instr, mut second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if second.operand_c().register_index() != Some(first.result_register()) { return None; }
             second.set_operand_c(Operand::constant(first.constant_index() as u32)?)?;
             Some(second)
         };
+    // Listed, not derived: `StoreLocal` and `StoreEnvLocal` have the same row fields and
+    // `LocalSlot` meaning, but env stores name a different slot space, so no row states
+    // "frame local store". The recipe's slot check is the only thing that separates them.
     StoreLoadLocal: [StoreLocal, LoadLocal] =>
         |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if first.optional_register_b().is_some() || first.local_slot() != second.local_slot() { return None; }
             first.set_optional_register_b(Some(second.result_register()));
             Some(first)
         };
-    LocalField: [LoadLocal, GetField; LoadLocalPlain, GetField] =>
+    // Derived: a `LOCAL_READERS` op, then a `FIELD_LOOKUPS` op reading its result as the base.
+    LocalField: [] =>
         |first: Instr, mut second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if first.numeric_local_store_target().is_some() || second.writes_current_this() {
                 return None;
@@ -84,6 +93,9 @@ fusion_recipes! {
         first.set_result_register(second.result_register());
         Some(first)
     };
+    // Listed, not derived: the fused op jumps when the comparison is false, which is `JumpFalse`'s
+    // identity. `JumpTrue` has the same row fields, and the comparison-only condition is a property
+    // of the operator (`fuses_with_jump_operator`), not of any row.
     BinaryJumpFalse: [Binary, JumpFalse] =>
         |first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if first.result_register() != second.register_a() { return None; }
@@ -99,12 +111,15 @@ fusion_recipes! {
             ))
         };
     // Its pairs are derived, not listed: every op whose row declares a returnable result
-    // (`ResultLayout::allows_return`) followed by the `Return` of that result (`rules_for`).
+    // (`ResultLayout::allows_return`) followed by the `Return` of that result (`derived_rules`).
     ReturnResult: [] => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
         if first.result_register() != second.register_a() { return None; }
         first.set_returns_from_frame();
         Some(first)
     };
+    // Listed, not derived: `GetField` is the only `ReturnableAndThis` row (`allows_this_write`), but
+    // `SetThisField` shares every row field with `SetThisFieldStrict`, which throws on a failed
+    // store. No row states the sloppy-mode sink this recipe fuses, so the second op stays named.
     GetSetThis: [GetField, SetThisField] =>
         |mut first: Instr, second: Instr, fields: &mut SiteTable<'_, FieldSite>| {
             if first.result_register() != second.register_a() { return None; }
@@ -703,13 +718,39 @@ const RULE_FIRSTS: [bool; Op::COUNT] = {
 /// The rules whose pattern is `[first, second]`, in rule order, then the derived ones.
 fn rules_for(first: Op, second: Op) -> impl Iterator<Item = &'static Rule> {
     let candidates: &'static [Rule] = if RULE_FIRSTS[first as usize] { RULES } else { &[] };
-    candidates.iter().filter(move |rule| rule.pattern == [first, second]).chain(derived_rule(first, second))
+    candidates.iter().filter(move |rule| rule.pattern == [first, second]).chain(derived_rules(first, second).iter())
 }
 
-/// `ReturnResult`'s rule, for any pair `derived_rule` admits.
+/// A per-op table, indexed by `Op as usize`: a derived set, computed from the opcode rows.
+pub(super) type OpSet = [bool; Op::COUNT];
+
+/// Builds an `OpSet` from a predicate over each op's rows. The predicate is a `const` expression,
+/// so every set is fixed at compile time and no list of ops can fall behind the rows.
+macro_rules! row_ops {
+    ($op:ident => $row:expr) => {{
+        let mut set: OpSet = [false; Op::COUNT];
+        let mut index = 0;
+        while index < Op::COUNT {
+            if let Some($op) = Op::from_index(index) {
+                set[index] = $row;
+            }
+            index += 1;
+        }
+        set
+    }};
+}
+
+/// `ReturnResult`'s rule, for any pair `derived_rules` admits.
 const RETURN_RESULT: Rule = Rule { pattern: [Op::Nop, Op::Return], recipe: Recipe::ReturnResult };
-/// `ProducerMove`'s rule, for any pair `derived_rule` admits.
+/// `ProducerMove`'s rule, for any pair `derived_rules` admits.
 const PRODUCER_MOVE: Rule = Rule { pattern: [Op::Nop, Op::Move], recipe: Recipe::ProducerMove };
+/// `ConstantLeft`'s rule, for any pair `derived_rules` admits. Its pattern is a placeholder:
+/// derived rules match through their derived sets, not through `pattern`.
+const CONSTANT_LEFT: Rule = Rule { pattern: [Op::Nop, Op::Nop], recipe: Recipe::ConstantLeft };
+/// `ConstantRight`'s rule, for any pair `derived_rules` admits (placeholder pattern, as above).
+const CONSTANT_RIGHT: Rule = Rule { pattern: [Op::Nop, Op::Nop], recipe: Recipe::ConstantRight };
+/// `LocalField`'s rule, for any pair `derived_rules` admits (placeholder pattern, as above).
+const LOCAL_FIELD: Rule = Rule { pattern: [Op::Nop, Op::Nop], recipe: Recipe::LocalField };
 
 /// Whether `op`'s row makes one value into its result register and nothing else of its
 /// registers: field A is the result, which it does not read; no other field writes a register
@@ -733,25 +774,73 @@ const fn plain_producer(op: Op) -> bool {
         && !matches!(op, Op::Move | Op::Await | Op::Yield)
 }
 
-/// Which ops are `plain_producer`s, by op.
-const PLAIN_PRODUCERS: [bool; Op::COUNT] = {
-    let mut producers = [false; Op::COUNT];
-    let mut index = 0;
-    while index < Op::COUNT {
-        if let Some(op) = Op::from_index(index) { producers[index] = plain_producer(op); }
-        index += 1;
-    }
-    producers
-};
+/// Which ops are `plain_producer`s: the rows that make one value into their result (`ProducerMove`).
+const PLAIN_PRODUCERS: OpSet = row_ops!(op => plain_producer(op));
 
-/// The rule a pair's rows imply: an op whose row declares a returnable result
-/// (`ResultLayout::allows_return`) completes its function itself when a `Return` of that
-/// result follows it, so no hand-written list of producers can fall behind the rows.
-fn derived_rule(first: Op, second: Op) -> Option<&'static Rule> {
-    match second {
-        Op::Return => first.result_layout().allows_return().then_some(&RETURN_RESULT),
-        Op::Move => PLAIN_PRODUCERS[first as usize].then_some(&PRODUCER_MOVE),
-        _ => None,
+/// Whether `op`'s row makes a constant its result: the immediate is a constant-pool index, read
+/// into the result register alone. `MakeConstArray` and `StringCaseIndex` also name an element
+/// count, so they are not constant producers.
+const fn constant_producer(op: Op) -> bool {
+    matches!(op.immediate_role(), ImmediateRole::ConstantIndex)
+        && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
+        && matches!(op.field_layout(InstructionField::B), FieldLayout::Unused)
+        && matches!(op.field_layout(InstructionField::C), FieldLayout::Unused)
+}
+
+/// Which ops are `constant_producer`s (`ConstantLeft` and `ConstantRight`'s first op): `LoadConst`.
+const CONSTANT_PRODUCERS: OpSet = row_ops!(op => constant_producer(op));
+
+/// Ops whose B and C fields are both `Operand` slots. A constant can fill either, and the
+/// `ConstantLeft` handler rewrites C as well as B, so it needs both to be operand slots.
+const CONSTANT_LEFT_SITES: OpSet = row_ops!(op =>
+    matches!(op.field_layout(InstructionField::B), FieldLayout::Operand)
+        && matches!(op.field_layout(InstructionField::C), FieldLayout::Operand));
+
+/// Ops whose C field is an `Operand` slot, which `ConstantRight` rewrites.
+const CONSTANT_RIGHT_SITES: OpSet = row_ops!(op => matches!(op.field_layout(InstructionField::C), FieldLayout::Operand));
+
+/// Ops whose row reads a local into its result: a `ResultRegister` with a `NumericLocalTarget`
+/// in B (`LoadLocal` and `LoadLocalPlain`). `LoadEnvLocal` reads an environment slot and has no
+/// such B field.
+pub(super) const LOCAL_READERS: OpSet = row_ops!(op =>
+    matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
+        && matches!(op.field_layout(InstructionField::B), FieldLayout::NumericLocalTarget));
+
+/// Ops whose B field is a `FieldBase` looked up by a `FieldLookup` immediate: the base of a field
+/// read (`GetField`). `LocalField`'s second op.
+const FIELD_LOOKUPS: OpSet = row_ops!(op =>
+    matches!(op.field_layout(InstructionField::B), FieldLayout::FieldBase)
+        && matches!(op.immediate_role(), ImmediateRole::FieldLookup));
+
+/// Ops whose result may carry a numeric local target (`ResultLayout::allows_numeric_local`):
+/// the arithmetic rows `Binary`, `NumericAdd`, `NumericMultiply`. Their store-compaction rules
+/// use it as the first op.
+pub(super) const NUMERIC_LOCAL_PRODUCERS: OpSet = row_ops!(op => op.result_layout().allows_numeric_local());
+
+/// Ops whose B and C are both `NumericIndexOperand` slots: the element read `GetIndex`, which
+/// takes two local operands as indices.
+pub(super) const NUMERIC_INDEX_CONSUMERS: OpSet = row_ops!(op =>
+    matches!(op.field_layout(InstructionField::B), FieldLayout::NumericIndexOperand)
+        && matches!(op.field_layout(InstructionField::C), FieldLayout::NumericIndexOperand));
+
+/// The rules a pair's rows imply, after its listed ones, in recipe order. Each set above
+/// states one row property the recipe relies on, so the rule holds for every op that has it.
+fn derived_rules(first: Op, second: Op) -> &'static [Rule] {
+    let (first_index, second_index) = (first as usize, second as usize);
+    if second == Op::Return {
+        // An op whose row declares a returnable result completes its function itself when a
+        // `Return` of that result follows it.
+        if first.result_layout().allows_return() { &[RETURN_RESULT] } else { &[] }
+    } else if second == Op::Move {
+        if PLAIN_PRODUCERS[first_index] { &[PRODUCER_MOVE] } else { &[] }
+    } else if CONSTANT_PRODUCERS[first_index] && CONSTANT_LEFT_SITES[second_index] {
+        &[CONSTANT_LEFT, CONSTANT_RIGHT]
+    } else if CONSTANT_PRODUCERS[first_index] && CONSTANT_RIGHT_SITES[second_index] {
+        &[CONSTANT_RIGHT]
+    } else if LOCAL_READERS[first_index] && FIELD_LOOKUPS[second_index] {
+        &[LOCAL_FIELD]
+    } else {
+        &[]
     }
 }
 
@@ -1586,11 +1675,28 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
 
     #[test]
     fn recipe_schema_generates_ordered_pattern_rows() {
-        assert_eq!(RULES.len(), 7);
-        assert_eq!(RULES[0].pattern, [Op::LoadConst, Op::Binary]);
-        assert_eq!(RULES[1].pattern, [Op::LoadConst, Op::Binary]);
-        assert!(matches!(RULES[0].recipe, Recipe::ConstantLeft));
-        assert!(matches!(RULES[1].recipe, Recipe::ConstantRight));
+        // Only the listed recipes are rows; the derived ones come from `derived_rules`.
+        assert_eq!(RULES.len(), 3);
+        assert_eq!(RULES[0].pattern, [Op::StoreLocal, Op::LoadLocal]);
+        assert!(matches!(RULES[0].recipe, Recipe::StoreLoadLocal));
+        assert!(matches!(RULES[1].recipe, Recipe::BinaryJumpFalse));
+        assert!(matches!(RULES[2].recipe, Recipe::GetSetThis));
+    }
+
+    #[test]
+    fn derived_rules_follow_row_properties_in_recipe_order() {
+        let recipes = |first: Op, second: Op| rules_for(first, second).map(|rule| rule.recipe).collect::<Vec<_>>();
+        // A constant producer fuses into any op with operand B and C slots, left before right.
+        for second in [Op::Binary, Op::NumericAdd, Op::NumericMultiply, Op::JumpBinaryFalse] {
+            assert!(matches!(recipes(Op::LoadConst, second).as_slice(), [Recipe::ConstantLeft, Recipe::ConstantRight]));
+        }
+        // A `GetIndex` has index operands, not operands, so no constant reaches it.
+        assert!(recipes(Op::LoadConst, Op::GetIndex).is_empty());
+        assert!(matches!(recipes(Op::LoadLocal, Op::GetField).as_slice(), [Recipe::LocalField]));
+        assert!(matches!(recipes(Op::LoadLocalPlain, Op::GetField).as_slice(), [Recipe::LocalField]));
+        assert!(recipes(Op::LoadEnvLocal, Op::GetField).is_empty());
+        assert!(matches!(recipes(Op::Binary, Op::Move).as_slice(), [Recipe::ProducerMove]));
+        assert!(matches!(recipes(Op::Binary, Op::Return).as_slice(), [Recipe::ReturnResult]));
     }
 
     #[test]

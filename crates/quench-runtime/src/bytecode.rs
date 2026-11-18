@@ -557,7 +557,7 @@ impl ResultLayout {
     }
 
     #[inline(always)]
-    const fn allows_numeric_local(self) -> bool {
+    pub(crate) const fn allows_numeric_local(self) -> bool {
         matches!(self, Self::NumericReturnable)
     }
 }
