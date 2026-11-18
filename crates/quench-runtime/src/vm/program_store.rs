@@ -11,6 +11,7 @@ pub(in crate::vm) mod lane_publication;
 mod chunks;
 mod eval_cache;
 mod js_jit_report;
+mod loops;
 mod residual;
 mod snapshot;
 mod tier_census;
@@ -2864,11 +2865,11 @@ const LANE_VIEW_DEFERRED_RUNS: u8 = 4;
 
 /// Count one view-less run of a function; true once its deferred runs are complete.
 fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
-    let done = runs.get();
-    if done >= LANE_VIEW_DEFERRED_RUNS {
+    let held = runs.get();
+    if held & loops::DEFERRED_RUNS >= LANE_VIEW_DEFERRED_RUNS {
         return true;
     }
-    runs.set(done + 1);
+    runs.set(held + 1);
     false
 }
 

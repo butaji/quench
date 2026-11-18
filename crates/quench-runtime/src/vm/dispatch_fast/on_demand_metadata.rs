@@ -17,16 +17,18 @@ impl<H: Host> Vm<H> {
 /// Whether the lane completes `call`, the general path's call of the innermost `frame`,
 /// itself: an async callee's promise settles on the general path
 /// (`PendingGeneralCall::completion`), and a caller the general path runs without a view
-/// (`ProgramStore::entry_lane_view` deferred it) resumes there unless a return already
-/// retired (`retired`), rather than deriving a view of every instruction of a function that
-/// may run once (mandreel's `global_init`: 614K records, 14 MB).
+/// (`ProgramStore::entry_lane_view` deferred it) resumes there, rather than deriving a view of
+/// every instruction of a function that may run once (mandreel's `global_init`: 614K records,
+/// 14 MB; babylonjs's module scope: 124K records, each iteration). Where a return already
+/// `retired`, only a caller that loops takes its view here; any other frame returns at its
+/// call record on the general path (`lane_frame_return`).
 pub(super) fn lane_completes_return<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall, frame: usize, retired: bool) -> bool {
     let vm = unsafe { vm(cx) };
     call.caller + 1 == frame
         && frame + 1 == vm.frames.len()
         && vm.lane_stack.body_boundary != Some(frame)
         && !call.completion.completes_on_general_path()
-        && (retired || !caller_runs_general(cx, call))
+        && (!caller_runs_general(cx, call) || retired && caller_loops(cx, call))
 }
 
 /// Whether `call`'s caller is a function of the running program whose view is not derived,
@@ -38,6 +40,12 @@ fn caller_runs_general<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCa
         && unsafe { &*(*cx).views }
             .get(vm.frames[call.caller].function as usize)
             .is_some_and(|view| super::super::program_store::derived_lane_view(view).is_none())
+}
+
+/// Whether `call`'s caller loops, so its view repays itself where its loop runs on.
+fn caller_loops<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall) -> bool {
+    let vm = unsafe { vm(cx) };
+    vm.programs.function_loops(unsafe { (*cx).program }, vm.frames[call.caller].function)
 }
 
 /// A call the running body made through the helper path to a callee it could call by its
