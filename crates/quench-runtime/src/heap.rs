@@ -4726,7 +4726,10 @@ impl Heap {
             }
             Cell::Function(function) => {
                 object(&function.object);
-                work.extend([function.env, function.realm]);
+                work.push(function.env);
+                if last_proto.first_shared(function.realm) {
+                    work.push(function.realm);
+                }
             }
             Cell::WasmGlobal { header, bits, ty, .. } => {
                 object(&header.object);
@@ -4739,8 +4742,11 @@ impl Heap {
                 scope,
                 ..
             } => {
-                work.push(*parent);
-                work.extend(slots.roots());
+                if last_proto.first_shared(*parent) {
+                    work.push(*parent);
+                }
+                // Only heap values are edges: a slot's number or `undefined` costs a pop.
+                work.extend(slots.roots().filter(|value| value.is_heap()));
                 let (dynamic_bindings, with_objects) = (scope.dynamic_bindings(), scope.with_objects());
                 match dynamic_bindings {
                     EnvironmentBindings::Owned(bindings) => {
@@ -4838,13 +4844,34 @@ impl Heap {
         );
         // The count of non-int32 values is kept per backing: none means no element to scan.
         if array.elements().holds_only_int32() || array.elements().double_values().is_some() { return; }
-        match array.elements().wide_values() {
-            Some(values) => work.extend(
-                values.iter().copied().filter(|value| value.is_heap() && !Self::mark_leaf(&mut mark_string, *value)),
-            ),
-            None => work.extend(
-                array.elements().iter().filter(|value| value.is_heap() && !Self::mark_leaf(&mut mark_string, *value)),
-            ),
+        // A run of one value (an array filled with one object or function) pushes it once:
+        // a pushed value is marked before the collection ends, and each repeat cost a pop.
+        let mut last = Value::UNDEFINED;
+        let mut push = |value: Value, work: &mut Vec<Value>| {
+            if value != last && !Self::mark_leaf(&mut mark_string, value) {
+                work.push(value);
+            }
+            last = value;
+        };
+        let elements = array.elements();
+        if let Some(values) = elements.wide_values() {
+            for &value in values {
+                if value.is_heap() {
+                    push(value, work);
+                }
+            }
+        } else if let Some(words) = elements.narrow_words() {
+            for &word in words {
+                if Value::narrow_is_heap(word) {
+                    push(Value::from_narrow(word), work);
+                }
+            }
+        } else {
+            for value in elements.iter() {
+                if value.is_heap() {
+                    push(value, work);
+                }
+            }
         }
     }
 
@@ -4943,7 +4970,9 @@ impl Heap {
             last_proto,
         );
         // The environment edge is the caller's (`EnvironmentTrace::closure`).
-        work.push(function.realm);
+        if last_proto.first_shared(function.realm) {
+            work.push(function.realm);
+        }
     }
     pub(super) fn cell_kind(cell: &Cell) -> CellKind {
         match cell {
@@ -5272,11 +5301,11 @@ mod offset_order_tests;
 /// objects alternates between theirs and their arrays' (V8-v7 Splay's leaves: one entry
 /// missed about twice per leaf, a third of the pops of a full collection).
 #[derive(Clone, Copy)]
-pub(crate) struct PushedProtos([Value; 2], ProtoLink);
+pub(crate) struct PushedProtos([Value; 2], ProtoLink, [Value; 2]);
 
 impl Default for PushedProtos {
     fn default() -> Self {
-        Self([Value::UNDEFINED; 2], ProtoLink::NULL)
+        Self([Value::UNDEFINED; 2], ProtoLink::NULL, [Value::UNDEFINED; 2])
     }
 }
 
@@ -5291,6 +5320,19 @@ impl PushedProtos {
             return false;
         }
         self.1 = link;
+        true
+    }
+
+    /// Whether the shared edge `edge` (a function's realm, an environment's parent) is a heap
+    /// value this walk did not push last as such. Closures of one realm and activations of one
+    /// scope name the same few cells: each push of one already pushed costs a work-list pop
+    /// that finds it marked (a closure per activation: 2 of its 8 pops, about 70 Ir).
+    #[inline(always)]
+    pub(crate) fn first_shared(&mut self, edge: Value) -> bool {
+        if !edge.is_heap() || edge == self.2[0] || edge == self.2[1] {
+            return false;
+        }
+        self.2 = [edge, self.2[0]];
         true
     }
 

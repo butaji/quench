@@ -562,6 +562,15 @@ impl ArrayElements {
         (!self.is_encoded()).then(|| unsafe { std::slice::from_raw_parts(self.values(), self.len()) })
     }
 
+    /// The packed words of a narrow backing (`Value::to_narrow`) as a slice; `None` for any
+    /// other. A collection's trace reads them word by word: a heap test and a decode per
+    /// element, with no per-element form dispatch (`read`).
+    #[inline(always)]
+    pub(crate) fn narrow_words(&self) -> Option<&[u32]> {
+        // SAFETY: the first `len` words of a narrow backing are initialized.
+        (self.is_encoded() && self.is_narrow()).then(|| unsafe { std::slice::from_raw_parts(self.narrow_values(), self.len()) })
+    }
+
     /// `values_cow`.
     #[inline]
     pub(crate) fn as_slice(&self) -> std::borrow::Cow<'_, [Value]> {
