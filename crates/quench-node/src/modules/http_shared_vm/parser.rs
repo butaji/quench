@@ -3,6 +3,7 @@
 //! and llhttp's error codes and reasons. Bytes go in with `push`; `next` yields one event
 //! at a time, so the caller can decide how a message's body is read once its head is known.
 
+use crate::modules::buffer_codec::latin1_text;
 use crate::modules::http_protocol::{is_http_token_char, HTTP_METHODS};
 
 /// Which side of an exchange the parser reads.
@@ -459,11 +460,6 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|window| window == needle)
 }
 
-/// A head byte string as Node reads it: each byte one Latin-1 character.
-fn latin1(bytes: &[u8]) -> String {
-    bytes.iter().map(|&byte| char::from(byte)).collect()
-}
-
 /// The head and where each of its header values starts.
 fn parse_head(kind: Kind, bytes: &[u8], lenient: bool) -> Result<(Head, Vec<usize>), (Failure, usize)> {
     let line_end = find(bytes, CRLF).unwrap_or(bytes.len());
@@ -485,11 +481,11 @@ fn parse_head(kind: Kind, bytes: &[u8], lenient: bool) -> Result<(Head, Vec<usiz
     let third = parts.next();
     match kind {
         Kind::Request => {
-            head.method = latin1(first);
+            head.method = latin1_text(first);
             if second.is_empty() || second.iter().any(|&byte| byte <= b' ' || byte == 0x7f) {
                 return Err((failure::INVALID_URL, first.len() + 1));
             }
-            head.url = latin1(second);
+            head.url = latin1_text(second);
             let version = third.ok_or((failure::INVALID_CONSTANT, line_end))?;
             (head.major, head.minor) = version_of(version)?;
         }
@@ -498,8 +494,8 @@ fn parse_head(kind: Kind, bytes: &[u8], lenient: bool) -> Result<(Head, Vec<usiz
             if second.len() != STATUS_DIGITS || !second.iter().all(u8::is_ascii_digit) {
                 return Err((failure::INVALID_STATUS, first.len() + 1));
             }
-            head.status = latin1(second).parse().map_err(|_| (failure::INVALID_STATUS, first.len() + 1))?;
-            head.reason = latin1(third.unwrap_or_default());
+            head.status = latin1_text(second).parse().map_err(|_| (failure::INVALID_STATUS, first.len() + 1))?;
+            head.reason = latin1_text(third.unwrap_or_default());
         }
     }
     let start = line_end + CRLF.len();
@@ -544,7 +540,7 @@ fn header_lines(bytes: &[u8], base: usize, lenient: bool) -> Result<Vec<((String
         if let Some(position) = value.iter().position(|&byte| !lenient && byte != b'\t' && (byte < b' ' || byte == 0x7f)) {
             return Err((failure::INVALID_HEADER_VALUE, value_at + position));
         }
-        headers.push(((latin1(name), latin1(value)), value_at));
+        headers.push(((latin1_text(name), latin1_text(value)), value_at));
     }
     Ok(headers)
 }

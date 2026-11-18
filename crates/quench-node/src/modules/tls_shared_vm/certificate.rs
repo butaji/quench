@@ -501,13 +501,4 @@ pub(crate) fn legacy(
     Ok(object)
 }
 
-fn put(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-    value: RootId,
-) -> Result<(), RootedError> {
-    let key = context.string_rooted(name);
-    context.define_data_property_rooted(object, key, value, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;

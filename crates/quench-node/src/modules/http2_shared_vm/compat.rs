@@ -10,6 +10,7 @@ use crate::modules::stream_shared_vm::{
     call_method, emit, get, is_nullish, is_undefined, next_tick, on, once, put, put_bool, put_number, truthy_member, Context,
     Outcome,
 };
+use crate::modules::util_shared_vm::validate_string;
 use quench_runtime::{RootId, RootedError};
 
 /// The HTTP version a compatibility request reports.
@@ -247,13 +248,6 @@ const STREAM_BOUND: [&str; 5] = ["on", "once", "end", "emit", "destroy"];
 const STREAM_FIELDS: [&str; 2] = ["writable", "destroyed"];
 /// The socket members the compatibility socket refuses.
 const SOCKET_MANIPULATION: [&str; 4] = ["write", "read", "pause", "resume"];
-
-fn validate_string(c: &mut Context<'_>, value: RootId, name: &str) -> Result<String, RootedError> {
-    match c.string_text(value)? {
-        Some(text) => Ok(text),
-        None => Err(crate::modules::util_shared_vm::argument_type_error(c, value, name, "string")?),
-    }
-}
 
 /// A process-wide one-time warning (`statusMessageWarned`, `statusConnectionHeaderWarned`).
 fn warn_once(c: &mut Context<'_>, message: &str, select: fn(&mut super::State) -> &mut bool) -> Result<(), RootedError> {

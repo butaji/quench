@@ -14,11 +14,7 @@ pub(crate) struct State {
     pub(crate) api: Option<RootId>,
     pub(crate) timeline: super::perf_timeline::Timeline,
 }
-fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let key = c.string_rooted(name);
-    c.define_data_property_rooted(object, key, value, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 fn unsupported<T>(c: &mut Context<'_>, message: &str) -> Result<T, RootedError> {
     let error = c.error_rooted(message)?;
     super::node_errors_shared_vm::decorate_error(c, error, "ERR_NOT_IMPLEMENTED")?;

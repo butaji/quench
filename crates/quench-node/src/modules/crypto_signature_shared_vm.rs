@@ -17,11 +17,7 @@ struct Handle {
     identity: HostWeakRoot,
     value: Signature,
 }
-fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let key = c.string_rooted(name);
-    c.define_data_property_rooted(object, key, value, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 fn coded(c: &mut Context<'_>, code: &str, message: &str, ty: bool) -> RootedError {
     let root = if ty {
         c.type_error_rooted(message)

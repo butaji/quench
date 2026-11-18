@@ -3,14 +3,8 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 type Context<'a> = NativeContext<'a, NodeHost>;
 
-fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    c.get_named_property_rooted(object, name)
-}
-fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let key = c.string_rooted(name);
-    c.define_data_property_rooted(object, key, value, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_get as get;
+use crate::modules::util_shared_vm::named_put as put;
 fn named(c: &mut Context<'_>, function: RootId, name: &str) -> Result<(), RootedError> {
     let key = c.string_rooted("name");
     let value = c.string_rooted(name);
