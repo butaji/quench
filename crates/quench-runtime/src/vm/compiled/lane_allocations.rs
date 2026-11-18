@@ -108,18 +108,22 @@ pub(super) unsafe extern "C" fn lane_new_closure<H: Host>(vm: u64, residual: u64
     // SAFETY: as `lane_new_object`; the residual is the running program.
     let (vm, program, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram),
         &mut *(payload as *mut JsStepDispatch)) };
-    // A lane or frameless activation has no frame of the payload's to read.
-    if dispatch.lane_context != 0 || vm.frameless.inside(dispatch) || vm.heap.should_collect() {
+    // A frameless activation has no frame of the payload's to read; a lane run's frame is its
+    // context's root (`lane_run_frame`).
+    if vm.frameless.inside(dispatch) || vm.heap.should_collect() {
         return Value::DELETED.to_bits();
     }
-    let function = vm.frames[dispatch.frame].function;
-    let shares_frame_environment = function != crate::vm::ROOT_FUNCTION_ID
-        && program.function_get(function as usize).is_some_and(|body| body.binding_sites.is_empty());
+    let frame = if dispatch.lane_context != 0 { super::dispatch_fast::lane_run_frame::<H>(dispatch.lane_context) } else { dispatch.frame };
+    let function = vm.frames[frame].function;
+    // A closure's captures resolve through the frame's environment wherever its bindings are
+    // shared or declared: the promotion moves both to the environment record.
+    let shares_frame_environment = function != crate::vm::ROOT_FUNCTION_ID;
     if !shares_frame_environment {
         return Value::DELETED.to_bits();
     }
-    let captured = vm.frames[dispatch.frame].captured;
-    let env = vm.promote_frame_environment(dispatch.frame);
+    let captured = vm.frames[frame].captured;
+    let env = vm.promote_frame_environment(frame);
+    if dispatch.lane_context != 0 { dispatch.bind_captures(vm); }
     let closure = vm.closure(program, id as u32, env).unwrap_or(Value::DELETED);
     super::dispatch_fast::note_allocation(vm);
     // The allocation moves only the record bases; the frame's views change where this closure first captured it.

@@ -2542,6 +2542,13 @@ unsafe fn resume_lane_binding<H: Host>(context: *mut ()) {
     unsafe { (*cx).binding.object_base = base };
 }
 
+/// The VM frame a lane run's context is rooted at (`LaneContext::frame`): the frame a promotion
+/// or a closure names when the lane, not the general payload, runs the activation.
+pub(in crate::vm) fn lane_run_frame<H: Host>(context: usize) -> usize {
+    // SAFETY: `context` is this run's lane context, of this host (`LaneContext::frame`).
+    unsafe { (*(context as *const LaneContext<H>)).frame() }
+}
+
 /// Lane state that handlers read rarely; the hot state travels in handler
 /// arguments so it stays in machine registers across dispatches. Its fields keep their
 /// declared order: a plain call saves and restores `this`, `env` and `capture` together
