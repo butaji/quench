@@ -104,6 +104,16 @@ impl<H: Host> Vm<H> {
                 self.at_binding_site(owner, resume, |vm| vm.load_name_typeof(p, owner, atom, site)).map(Some),
             CallOut::LoadName { atom, site } =>
                 self.at_binding_site(owner, resume, |vm| vm.load_name(p, owner, atom, Some(site))).map(Some),
+            // The frame's own clone, as `Op::CloneEnv` makes it and the lane's clone did: the frame's
+            // environment becomes its iteration copy where a closure captured it. Defines no register.
+            CallOut::CloneEnv { plan } => {
+                let frame = self.owner_frame(owner).expect("a clone names its frame");
+                let body = p.function(self.frames[frame].function as usize);
+                let clones = &body.environment_clones;
+                let clone = clones.get(plan as usize).expect("a clone's plan belongs to the running function");
+                self.clone_frame_environment(frame, &clone.fresh, clones.resets(clone))?;
+                Ok(None)
+            }
             _ => unreachable!("{operation:?} is no name step"),
         }
     }
