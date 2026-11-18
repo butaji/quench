@@ -87,26 +87,24 @@ arr_push 41.0 lane_get_field_holder_cell_register
 arr_push 24.0 lane_inc_dec_loop<false, 4, true>
 arr_push 14.0 lane_row<69, 0, 0>
 arr_push 10.9 __memcpy_avx_unaligned_erms
+arr_slice 191.0 Vm::as_native_activation<quench_runtime::value::Value, <quench_runtime::vm::Vm>::call_native_guarded::{closure#0}>
 arr_slice 162.0 Vm::array_slice_native
 arr_slice 161.8 Vm::array_of
 arr_slice 154.0 Vm::array_species_is_array_create
-arr_slice 137.0 lane_call_native
-arr_slice 119.0 Vm::as_native_activation<quench_runtime::value::Value, <quench_runtime::vm::Vm>::call_native_guarded::{closure#0}>
+arr_slice 151.0 lane_call_native
 arr_slice 112.0 Vm::has_intrinsic_species_getter
-arr_slice 109.0 Vm::call_native
 arr_slice 65.0 lane_native_call
 arr_slice 61.0 Vm::array_read_view
 arr_slice 60.5 RecordSpace::release<<quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#6}::{closure#7}, <quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#6}::{closure#8}>
 arr_slice 58.0 Vm::to_number
 arr_slice 54.0 Vm::present_dense_elements
-arr_slice 47.0 Vm::call_native_table
+arr_slice 50.0 {closure#1}
 arr_slice 45.0 lane_native_value
 arr_slice 41.0 lane_get_field_holder_cell_register
 arr_slice 38.0 Vm::array_like_length
 arr_slice 32.0 lane_get_length
 arr_slice 30.0 trunc
-arr_slice 28.0 Vm::call_native_dispatch
-arr_slice 27.0 CallArguments::from_slice
+arr_slice 29.0 Vm::call_native_table
 arr_slice 26.0 Vm::primitive_to_number
 arr_slice 24.0 lane_inc_dec_loop<false, 4, true>
 arr_slice 23.0 SmallVec::from_slice
@@ -343,7 +341,7 @@ k09_reduce 74.6 ScriptTargets::remember
 k09_reduce 72.0 Native::is_array_reducer
 k09_reduce 61.8 Heap::alloc_function_under_flagged_prototype
 k09_reduce 61.0 Heap::environment_bindings
-k09_reduce 60.0 lane_call_array_callback<false>
+k09_reduce 59.0 lane_call_array_callback<false>
 k09_reduce 58.0 Vm::closure_in_realm
 k09_reduce 41.0 lane_get_field_holder_cell_register
 k09_reduce 35.0 lane_load_window_local_general<false>
@@ -594,12 +592,11 @@ k_field_acc 14.0 lane_row<69, 0, 0>
 k_json 1067.1 parse_json_text<quench_runtime::vm::json::heap_builder::JsonHeapBuilder>
 k_json 544.0 Vm::json_write_plain
 k_json 305.9 __memcpy_avx_unaligned_erms
+k_json 185.0 Vm::as_native_activation<quench_runtime::value::Value, <quench_runtime::vm::Vm>::call_native_guarded::{closure#0}>
 k_json 178.4 __rust_dealloc
 k_json 171.8 Heap::alloc_object_with_properties
 k_json 157.9 QuenchAlloc::alloc_enabled
-k_json 137.0 lane_call_native
-k_json 119.0 Vm::as_native_activation<quench_runtime::value::Value, <quench_runtime::vm::Vm>::call_native_guarded::{closure#0}>
-k_json 103.0 Vm::call_native
+k_json 151.0 lane_call_native
 k_json 103.0 drop_glue<quench_runtime::vm::json::heap_builder::JsonHeapBuilder>
 k_json 96.8 Heap::alloc_string_record
 k_json 90.0 Vm::json_stringify_plain
@@ -617,9 +614,9 @@ k_json 56.0 JsString::units
 k_json 52.8 ValueArena::release_held
 k_json 52.0 Vm::json_plain_members
 k_json 51.1 RecordSpace::sweep<<quench_runtime::heap::StoppedStringSweep>::run::{closure#0}>
+k_json 50.0 {closure#1}
 k_json 48.8 RecordSpace::release<<quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#6}::{closure#0}, <quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#6}::{closure#1}>
 k_json 48.0 lane_call_builtin<12>
-k_json 46.0 Vm::call_native_table
 k_json 46.0 {closure#0}
 k_json 45.0 lane_native_value
 k_json 42.0 JsonHeapBuilder::object
@@ -629,10 +626,9 @@ k_json 37.0 lane_set_object_field_own<false>
 k_json 35.0 FlatUnits::ascii_with<<quench_runtime::vm::wtf16::FlatUnits>::ascii::{closure#0}>
 k_json 35.0 write_json_integer
 k_json 34.0 rc_inner_layout_for_value_layout
-k_json 28.0 Vm::call_native_dispatch
+k_json 28.0 Vm::call_native_table
 k_json 28.0 drop_glue<quench_runtime::vm::wtf16::FlatUnits>
 k_json 27.0 Vm::boxed_primitive_value
-k_json 27.0 CallArguments::from_slice
 k_json 26.0 write_json_string
 k_json 26.0 lane_get_field_own_bound<false, 67108864>
 k_json 24.6 u32::fmt

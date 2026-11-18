@@ -17,7 +17,7 @@ arr_load_dbl 5 21 86.1
 arr_load_int 5 21 72.1
 arr_load_obj 6 24 102.1
 arr_push 8 30 244
-arr_slice 144 438 1742.8
+arr_slice 144 438 1696.8
 arr_store_dbl 8 30 97.1
 arr_store_int 5 21 72.1
 arr_store_obj 3 15 86.1
@@ -59,7 +59,7 @@ k05_field_add 4 18 113.6
 k06_list 69 213 1854.3
 k07_area 3 15 250.9
 k08_escape 4 18 246.8
-k09_reduce 75 231 6823.9
+k09_reduce 75 231 6822.9
 k10_f64_sum 69 213 1835.1
 k11_saxpy 134 408 5943.3
 k12_copy 15 51 2373.1
@@ -74,7 +74,7 @@ k20_switch 169 513 3944.3
 k_dispatch 14 48 348.6
 k_dist2 12.9 44.7 252.7
 k_field_acc 3.9 17.7 63.3
-k_json 812 2442 4961.8
+k_json 812 2442 4915.8
 k_list_walk 6.9 26.7 151.2
 k_nbody_pair 21.1 70 1340.1
 k_regexp 40.2 127 1224.3

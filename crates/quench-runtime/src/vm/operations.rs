@@ -715,6 +715,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    #[inline(always)]
     pub(super) fn call_native(
         &mut self,
         p: &ResidualProgram,
@@ -771,6 +772,7 @@ impl<H: Host> Vm<H> {
         family
     }
 
+    #[inline(always)]
     fn call_native_dispatch(
         &mut self,
         p: &ResidualProgram,
@@ -873,7 +875,6 @@ impl<H: Host> Vm<H> {
             Native::ArrayBuffer | Native::SharedArrayBuffer => {
                 Err(self.type_error(p, "constructor requires new".into()))
             }
-            native if native.is_host_control_native() => self.call_host(p, native, args),
             Native::WasmHost => self.call_wasm_host(args),
             Native::HostFunction => self.call_host_function(this, args),
             Native::Print => {
@@ -1645,6 +1646,8 @@ impl<H: Host> Vm<H> {
                     .unwrap_or_else(|| self.native_value(native));
                 self.construct_value_with_new_target(p, callee, callee, args)
             }
+            // Last among the guarded arms, so the named natives above dispatch by one jump.
+            native if native.is_host_control_native() => self.call_host(p, native, args),
             _ => self.call_primitive_native(p, native, this, args),
         }
     }
