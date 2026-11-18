@@ -381,7 +381,7 @@ fn plan_row(layout: &Layout, (reprs, kinds): (&Reprs, Option<&OperandKinds>), re
 }
 
 /// What a body is built for: its function and registers, the rows whose int32 speculation failed
-/// (`widened`, by caller PC), the registers its entry held as ints and doubles (`seen`), and what
+/// (`widened`, by caller PC), the types its entry held by register (`seen`: `observed_types`), and what
 /// the program holds Stable (`Known`), whose invalidation word its code reads where a call may
 /// have changed a fact it folded, and the realm its inlined callees belong to (`RealmProof`).
 pub(in crate::vm::compiled) struct BodySpec<'a> {
@@ -390,7 +390,9 @@ pub(in crate::vm::compiled) struct BodySpec<'a> {
     pub(in crate::vm::compiled) known: Known<'a>,
     pub(in crate::vm::compiled) realm: RealmProof,
     pub(in crate::vm::compiled) widened: &'a [usize],
-    pub(in crate::vm::compiled) seen: [&'a [Register]; SEEN],
+    /// The type each entry register held when the compile observed it, by register (a register past the slice
+    /// is no observation: `Type::ANY`).
+    pub(in crate::vm::compiled) seen: &'a [Type],
     /// What each of the spanned instructions' sites saw of its operands (`OperandKinds`), from the
     /// header: which variant of row an arithmetic or comparison site takes (`variant_of`) and whether it is
     /// widened. Empty where nothing was recorded.

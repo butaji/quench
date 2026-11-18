@@ -1,5 +1,5 @@
 use super::*;
-use crate::typed_ir::Representation;
+use crate::typed_ir::{Representation, Type};
 use crate::vm::dispatch_fast::operand_feedback::{OperandClass, OperandKinds};
 
 /// The representation of each web, by its number: `None` is unseen (a web no writer reaches), else
@@ -120,20 +120,25 @@ fn loads_widened(decoded: &[Decoded], header: u32, widened: &[usize]) -> bool {
     decoded.iter().enumerate().any(|(k, row)| row.heap.is_some() && widened.contains(&(header as usize + k)))
 }
 
-/// Where a web starts: unseen where the region is not entered with it, else what the compile
-/// observed of its register (`seen`: the ints, then the doubles).
-fn entry_repr(entered: bool, register: Register, seen: [&[Register]; SEEN]) -> Option<Representation> {
-    match (entered, seen[0].contains(&register), seen[1].contains(&register)) {
-        (false, ..) => None,
-        (_, true, _) => Some(Representation::Int32),
-        (_, _, true) => Some(Representation::Float64),
-        _ => Some(Representation::Tagged),
+/// Where a web starts: unseen where the region is not entered with it, else the narrowest representation
+/// that holds the type the compile observed of its register (`seen`), tagged where none does.
+fn entry_repr(entered: bool, register: Register, seen: &[Type]) -> Option<Representation> {
+    if !entered {
+        return None;
     }
+    let observed = seen.get(usize::from(register)).copied().unwrap_or(Type::ANY);
+    Some(if Representation::Int32.accepts(observed) {
+        Representation::Int32
+    } else if Representation::Float64.accepts(observed) {
+        Representation::Float64
+    } else {
+        Representation::Tagged
+    })
 }
 
 /// The representation of every web the region names, to a fixed point: where the compile
-/// began (`ints`, `doubles`; dead at the header: none yet), then each writer's result.
-pub(super) fn representations(span: &Span, decoded: &[Decoded], (widened, kinds): (&[usize], &[Option<OperandKinds>]), seen: [&[Register]; SEEN], webs: &Webs) -> Reprs {
+/// began (`seen`, the entry's observed types; dead at the header: none yet), then each writer's result.
+pub(super) fn representations(span: &Span, decoded: &[Decoded], (widened, kinds): (&[usize], &[Option<OperandKinds>]), seen: &[Type], webs: &Webs) -> Reprs {
     let header = span.header;
     // One loaded value that left for its int32 speculation widens every loaded value at once: the
     // next compile need not discover them one leave at a time.
