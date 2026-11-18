@@ -18,6 +18,14 @@ pub const GOTO: u8 = 5;
 pub const LOAD: u8 = 6;
 /// `memory[A + B] = D`, likewise.
 pub const STORE: u8 = 7;
+/// Calls the `WasmEntry` in the cell at address B with the arguments from register A on and
+/// the result to D; a trap's status leaves. Its row is a `call_` row (`wasm_name`).
+pub const CALL: u8 = 8;
+
+/// The frame's header words before the registers: the result pointer, the memory base and its
+/// length (the call row reloads the pins from them).
+#[allow(dead_code)] // The stitcher reads it; `build.rs` includes this file too.
+pub const FRAME_HEADER_WORDS: u64 = 3;
 
 /// The value types of an access.
 pub const T_I32: u8 = 0;

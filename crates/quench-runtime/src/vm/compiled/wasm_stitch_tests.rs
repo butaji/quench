@@ -60,7 +60,9 @@ fn stitched(vm: &Vm<crate::SystemHost>, module: &crate::WasmModule, index: usize
     };
     let function = code.function(index);
     let params = function.params as usize;
-    let bytes = stitch(function, params, true, &constant, memory_slot).expect("rows for every instruction");
+    let no_callee = |_: usize| None;
+    let world = World { constant: &constant, memory_slot, callee: &no_callee };
+    let bytes = stitch(function, params, true, &world).expect("rows for every instruction");
     let memory = CodeMemory::new(&bytes).expect("code memory");
     // SAFETY: the code begins with the entry routine, which takes the `WasmEntry` ABI.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(memory.pointer()) };
@@ -75,7 +77,9 @@ fn run(entry: Entry, arguments: &[u64]) -> Result<u64, u32> {
 fn run_over(entry: Entry, memory: &mut [u8], arguments: &[u64]) -> Result<u64, u32> {
     let mut result = 0;
     // SAFETY: the rows read their frame and `memory` only, inside its length.
-    let status = unsafe { entry(std::ptr::null_mut(), memory.as_mut_ptr() as u64, memory.len() as u64, arguments.as_ptr(), &mut result) };
+    // The context's first word is the stack limit the entry checks.
+    let mut context = [0usize; 1];
+    let status = unsafe { entry(context.as_mut_ptr().cast(), memory.as_mut_ptr() as u64, memory.len() as u64, arguments.as_ptr(), &mut result) };
     if status == 0 { Ok(result) } else { Err(status) }
 }
 
