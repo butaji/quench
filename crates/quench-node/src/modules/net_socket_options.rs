@@ -12,9 +12,7 @@ const FIELDS: [(&str, &str); 5] = [
     ("count", "kSetKeepAliveCount"),
 ];
 
-fn get(context: &mut NativeContext<'_, NodeHost>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    context.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 fn field(
     context: &mut NativeContext<'_, NodeHost>,
     data: RootId,

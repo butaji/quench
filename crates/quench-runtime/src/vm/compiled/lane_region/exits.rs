@@ -53,15 +53,38 @@ impl Lowering<'_, '_> {
     /// The block that stores `stored` and leaves at `pc`, made at its first leave.
     pub(super) fn exit_block(&mut self, pc: usize, stored: ExitStores) -> ir::Block {
         if let Some(held) = self.exits[pc].iter().find(|held| held.stored == stored) { return held.block; }
-        let block = self.builder.create_block();
-        self.builder.set_cold_block(block);
+        let block = cold_block(&mut self.builder);
         self.exits[pc].push(ExitBlock { stored, block });
+        block
+    }
+
+    /// The block that stores `stored` and leaves at the exit word it is passed, shared by every
+    /// caller-frame leave of a body that stores the same registers.
+    pub(super) fn shared_exit_block(&mut self, stored: ExitStores) -> ir::Block {
+        if let Some(held) = self.shared_exits.iter().find(|held| held.stored == stored) { return held.block; }
+        let block = cold_block(&mut self.builder);
+        self.builder.append_block_param(block, ir::types::I64);
+        self.shared_exits.push(ExitBlock { stored, block });
         block
     }
 
     /// The exit blocks: write back each one's registers, and an inlined callee's registers to the
     /// window its recovery makes the activation from, then leave at the origin.
     pub(super) fn fill_exits(&mut self) {
+        if super::clif_census::enabled() {
+            let count = |stored: &ExitStores| [&stored.tagged, &stored.int, &stored.long, &stored.float].iter().map(|set| set.iter().count()).sum::<usize>();
+            let private: Vec<(usize, usize)> = self.exits.iter().flatten().map(|exit| (count(&exit.stored), usize::from(matches!(self.unit.origins.first(), Some(_))))).collect();
+            let boxed: usize = self.exits.iter().flatten().chain(self.shared_exits.iter()).map(|exit| [&exit.stored.int, &exit.stored.long, &exit.stored.float].iter().map(|set| set.iter().count()).sum::<usize>()).sum();
+            eprintln!("QUENCH_EXIT_CENSUS {{\"shared\":{},\"shared_stores\":{},\"private\":{},\"private_stores\":{},\"boxed\":{boxed}}}",
+                self.shared_exits.len(), self.shared_exits.iter().map(|exit| count(&exit.stored)).sum::<usize>(), private.len(), private.iter().map(|(n, _)| n).sum::<usize>());
+        }
+        for ExitBlock { stored, block } in std::mem::take(&mut self.shared_exits) {
+            self.switch_to(block, true);
+            let word = self.builder.block_params(block)[0];
+            self.store_exit_registers(&stored);
+            let stop = self.stop;
+            self.goto(stop, &[word]);
+        }
         for pc in 0..self.exits.len() {
             for ExitBlock { stored, block } in std::mem::take(&mut self.exits[pc]) {
                 self.switch_to(block, true);
@@ -86,7 +109,24 @@ impl Lowering<'_, '_> {
             for index in registers.iter() {
                 let bits = match representation {
                     Representation::Tagged => self.builder.use_var(self.registers.tagged[index]),
-                    _ => super::number_domains::box_unboxed(&mut self.builder, &mut self.registers, representation, index),
+                    Representation::Int32 => super::number_domains::box_unboxed(&mut self.builder, &mut self.registers, representation, index),
+                    // A double boxes out of line: the leave is cold, and the inline encoding
+                    // makes two blocks and fifteen instructions per register.
+                    _ => {
+                        let number = match representation {
+                            Representation::Int64 => {
+                                let variable = super::frame::register_long(&mut self.builder, &mut self.registers, index);
+                                let word = self.builder.use_var(variable);
+                                super::object_slots::emit(&mut self.builder).raw_unary(crate::staged::machine::Unary::FromSigned(crate::staged::machine::Lane::F64), word)
+                            }
+                            _ => {
+                                let variable = super::frame::register_float(&mut self.builder, &mut self.registers, index);
+                                self.builder.use_var(variable)
+                            }
+                        };
+                        let bits = super::object_slots::emit(&mut self.builder).raw_unary(crate::staged::machine::Unary::Bitcast(crate::staged::machine::Lane::I64), number);
+                        self.helper_call(LaneHelper::BoxNumber, &[bits])
+                    }
                 };
                 self.store_word(regions::frame(), bits, self.registers_base, register_offset(index as Register));
             }

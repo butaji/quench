@@ -545,6 +545,10 @@ impl ABIMachineSpec for X64ABIMachineSpec {
         let r_rbp = Gpr::RBP;
         let w_rbp = Writable::from_reg(r_rbp);
         let mut insts = SmallVec::new();
+        // A frameless leaf (`compute_frame_layout`) sets up nothing.
+        if frame_layout.setup_area_size == 0 {
+            return insts;
+        }
         // `push %rbp`
         // RSP before the call will be 0 % 16.  So here, it is 8 % 16.
         insts.push(Inst::External {
@@ -572,12 +576,16 @@ impl ABIMachineSpec for X64ABIMachineSpec {
         _call_conv: isa::CallConv,
         _flags: &settings::Flags,
         _isa_flags: &x64_settings::Flags,
-        _frame_layout: &FrameLayout,
+        frame_layout: &FrameLayout,
     ) -> SmallInstVec<Self::I> {
         let rbp = Gpr::RBP;
         let rsp = Gpr::RSP;
 
         let mut insts = SmallVec::new();
+        // A frameless leaf (`compute_frame_layout`) restores nothing.
+        if frame_layout.setup_area_size == 0 {
+            return insts;
+        }
         // `mov %rbp, %rsp`
         insts.push(Inst::External {
             inst: asm::inst::movq_mr::new(Writable::from_reg(rsp), rbp).into(),
@@ -956,8 +964,19 @@ impl ABIMachineSpec for X64ABIMachineSpec {
         // Compute clobber size.
         let clobber_size = compute_clobber_size(&regs);
 
-        // Compute setup area size.
-        let setup_area_size = 16; // RBP, return address
+        // Compute setup area size. Quench: a leaf that keeps nothing on the stack (no calls,
+        // no saved registers, no spills or slots, no stack arguments) runs on its caller's
+        // frame, with no `push %rbp; mov %rsp, %rbp` and no restore: its return address is all
+        // it adds, as in a C leaf.
+        let frameless = !flags.preserve_frame_pointers()
+            && function_calls == FunctionCalls::None
+            && clobber_size == 0
+            && fixed_frame_storage_size == 0
+            && stackslots_size == 0
+            && outgoing_args_size == 0
+            && incoming_args_size == 0
+            && tail_args_size == 0;
+        let setup_area_size = if frameless { 0 } else { 16 }; // RBP, return address
 
         // Return FrameLayout structure.
         FrameLayout {

@@ -128,6 +128,8 @@ impl Stage for Concrete {
     #[inline(always)]
     fn load_f64(&mut self, _at: Access, base: u64, offset: i32) -> u64 { self.read::<u64>(base, offset) }
     #[inline(always)]
+    fn box_number(&mut self, number: u64) -> u64 { crate::Value::number(f64::from_bits(number)).to_bits() }
+    #[inline(always)]
     fn store_u8(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u8) }
     #[inline(always)]
     fn store_u16(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u16) }
@@ -141,8 +143,7 @@ impl Stage for Concrete {
     fn f64_to_f32(&mut self, a: u64) -> u64 { u64::from((f64::from_bits(a) as f32).to_bits()) }
     #[inline(always)]
     fn clamp_u8(&mut self, a: u64) -> u64 {
-        let number = f64::from_bits(a);
-        if number.is_nan() { 0 } else { u64::from(number.clamp(f64::from(u8::MIN), f64::from(u8::MAX)).round_ties_even() as u8) }
+        u64::from(crate::value::number_to_uint8_clamp(f64::from_bits(a)))
     }
     #[inline(always)]
     fn fill_window(&mut self, top: u64, undefined: u64, prefix: &[u64], passed: super::Passed<'_, u64>, registers: u16) {
@@ -186,7 +187,7 @@ impl Stage for Concrete {
     #[inline(always)]
     fn known(&self, cond: bool) -> Option<bool> { Some(cond) }
     #[inline(always)]
-    fn store_gate(&mut self, space: super::RecordSpace, record_id: u64, value: u64) -> bool {
+    fn store_gate(&mut self, space: super::StagedRecordSpace, record_id: u64, value: u64) -> bool {
         // SAFETY: a stage that stores holds its live heap.
         !self.heap.is_null() && unsafe { (*self.heap).store_unlogged(space, record_id as u32, crate::Value::from_bits(value)) }
     }

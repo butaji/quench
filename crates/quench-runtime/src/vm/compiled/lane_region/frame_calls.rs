@@ -277,9 +277,6 @@ impl crate::staged::GlobalFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn global_write(&mut self, stage: &mut Emit<'_, '_>, source: Register, _atom: u32, _site: u16, value: ir::Value, _initialize: bool) -> Option<()> {
         super::call_out::global_write(self, stage, source, value)
     }
-    fn global_typeof(&mut self, stage: &mut Emit<'_, '_>, destination: Register, _atom: u32, _site: u16) -> Option<()> {
-        super::call_out::global_typeof(self, stage, destination)
-    }
 }
 
 impl EmitFrame<'_> {

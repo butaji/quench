@@ -140,11 +140,12 @@ pub(in crate::vm) fn lower_body(
     }
     let count = u32::try_from(range.len()).map_err(|_| "native region instruction count exceeds u32")?;
     let mut native = native_function(function_id, native_entry_signature(isa.pointer_type(), isa.default_call_conv()));
-    let mut builder_context = FunctionBuilderContext::new();
+    let mut builder_context = crate::vm::jit_backend::builder::take_context();
     let mut builder = FunctionBuilder::new(&mut native, &mut builder_context);
     build_body(&mut builder, &BodyPlan { sites, range, count, is_region }, &mut operation);
     builder.seal_all();
     builder.finalize(isa.frontend_config());
+    crate::vm::jit_backend::builder::keep_context(builder_context);
     Ok(native)
 }
 
@@ -213,10 +214,11 @@ pub(in crate::vm) fn lower_region_dispatch(
         return Err("invalid native region plan".into());
     }
     let mut native = native_function(function_id, native_entry_signature(isa.pointer_type(), isa.default_call_conv()));
-    let mut context_builder = FunctionBuilderContext::new();
+    let mut context_builder = crate::vm::jit_backend::builder::take_context();
     let mut builder = FunctionBuilder::new(&mut native, &mut context_builder);
     build_region_dispatch(&mut builder, &RegionPlan { count, width, regions: region_count }, &mut call);
     builder.seal_all();
     builder.finalize(isa.frontend_config());
+    crate::vm::jit_backend::builder::keep_context(context_builder);
     Ok(native)
 }

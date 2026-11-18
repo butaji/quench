@@ -23,6 +23,11 @@ pub(crate) enum Protocol {
     /// Append `length` holes to the array operand, then the optional element operand, spread
     /// where `spread` (`AppendArray`).
     AppendArray { length: usize, spread: bool },
+    /// `rest.length` (`get` false, `RestLength`) or `rest[key]` (`RestGet`) of a rest view
+    /// (`Function::rest_view`): the values the activation kept past its first `fixed`
+    /// parameters while the rest register (`rest`, the second operand) holds `undefined`,
+    /// else the array there. A key no kept value answers makes the rest array, into `rest`.
+    RestView { get: bool, fixed: usize, rest: Register },
 }
 
 /// The bits of a `CloneEnv`'s immediate that name its clone plan: an environment window's record
@@ -73,6 +78,7 @@ impl<W, P> Operation<W, P> {
 }
 
 /// The iteration and spread steps of `decode`, with the registers `Vm::call_out` reads.
+#[inline(always)]
 fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>> {
     let (step, destination, operands) = match instruction.op() {
         Op::AppendArray => (Protocol::AppendArray { length: instruction.array_length(),
@@ -81,6 +87,10 @@ fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>
         Op::GetIterator => (Protocol::GetIterator, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::ForInStart => (Protocol::ForInStart, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::IteratorClose => (Protocol::IteratorClose, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
+        Op::RestLength => (Protocol::RestView { get: false, fixed: instruction.array_length(), rest: instruction.register_b() },
+            Some(instruction.result_register()), [None, Some(instruction.register_b())]),
+        Op::RestGet => (Protocol::RestView { get: true, fixed: instruction.array_length(), rest: instruction.register_c() },
+            Some(instruction.result_register()), [Some(instruction.register_b()), Some(instruction.register_c())]),
         _ => return super::spread::decode(instruction),
     };
     Some(Operation::Protocol { step, destination, operands })
@@ -103,6 +113,10 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             global_write(stage, frame, source, (atom, site, initialize)),
         Operation::LoadName { destination, atom, site, receiver, proof } =>
             load_name(stage, frame, (destination, receiver), (atom, site), proof),
+        // A frame's in-place rest read answers the value; its runner defines the destination, as
+        // for every names row's value (`generated_row`).
+        Operation::Protocol { step: Protocol::RestView { get, fixed, .. }, destination: Some(_), operands }
+            if let Some((value, _)) = frame.rest_view(stage, get, fixed, operands[0]) => Step::Value(value),
         Operation::Protocol { step, destination, operands } =>
             calling(stage, frame, CallOut::Protocol { step, operands }, destination),
         Operation::ForInNext { destination, state } => for_in_next(stage, frame, destination, state),

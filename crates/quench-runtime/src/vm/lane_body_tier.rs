@@ -33,16 +33,7 @@ pub(super) struct LaneBodyHistory {
 mod audit;
 pub(super) use audit::{Epochs, Verdict};
 
-/// The entries and the milliseconds of warming past which a function specializes by its
-/// recurrence alone (`LaneView::recurrent`).
-const RECURRENT_ENTRIES: u32 = 16;
-/// The completed handler runs of a body per credit to the callees it calls natively: a callee's
-/// completions inside those runs are bounded by the caller's, so the credit lags by fewer than this.
-const NATIVE_CREDIT_RUNS: u64 = 64;
-const RECURRENT_TICKS: u32 = 256;
-/// The most times a dropped body doubles the warm-up of the next.
-const MAX_DOUBLINGS: u8 = 7;
-
+use crate::vm::compiled::tier_policy::{RECURRENT_ENTRIES, NATIVE_CREDIT_RUNS, RECURRENT_TICKS, MAX_DOUBLINGS};
 /// The warming entries every function has counted so far: a clock of the work the program does
 /// while its functions warm, which, unlike wall time, a rerun repeats.
 fn warm_ticks() -> u32 {
@@ -214,7 +205,7 @@ impl LaneView {
 
     /// Whether a body compiled a call of this function (`note_caller`): native callers want its
     /// body whatever its length, which only the lane's own entries ask to amortize.
-    fn called_by_bodies(&self) -> bool { !self.tier().callers.borrow().is_empty() || self.tier().history.get().demanded }
+    pub(in crate::vm) fn called_by_bodies(&self) -> bool { !self.tier().callers.borrow().is_empty() || self.tier().history.get().demanded }
 
     /// Warms again a body declined for its length alone, once a caller's compile meets a call to
     /// it: native callers want it whatever its length. Whether it is warming now.
@@ -242,11 +233,17 @@ impl LaneView {
     /// none, specializes again at its next entry and calls this one by its entry
     /// (`compiled::DirectCallee`). A caller's running body keeps its code (`retired`).
     fn respecialize_callers(&self) {
-        for caller in self.tier().callers.take() {
+        let callers = self.tier().callers.take();
+        // A caller's code keeps running while it waits to specialize again (a loop it entered
+        // never returns to its entry), and calls through the lane's helper until then: its
+        // demand outlives this body, so a later recompile of it is still wanted whatever its length.
+        if !callers.is_empty() { self.tier().history.set(LaneBodyHistory { demanded: true, ..self.tier().history.get() }); }
+        for caller in callers {
             unsafe { &*caller }.respecialize();
         }
     }
 
+    #[inline]
     pub(super) fn note_late_call(&self) -> bool {
         let history = self.tier().history.get();
         let late_calls = history.late_calls.saturating_add(1);
@@ -254,6 +251,14 @@ impl LaneView {
         late_calls == self.tiers.lane_body.late_call_calls
     }
 
+    /// Whether the late calls counted past the threshold (`note_late_call`), which only a
+    /// respecialization resets.
+    #[inline]
+    pub(super) fn late_calls_settled(&self) -> bool {
+        self.tier().history.get().late_calls > self.tiers.lane_body.late_call_calls
+    }
+
+    #[inline]
     pub(super) fn owns_record(&self, record: super::Ip) -> bool {
         let start = self.records();
         record >= start && record < start.wrapping_add(self.records.len())
@@ -355,6 +360,7 @@ impl LaneView {
                     return false;
                 }
                 super::super::compiled::base_region::count(super::super::compiled::base_region::Event::BodyCompile);
+                if !self.attempts_at(entries.saturating_add(1)) { super::super::compiled::base_region::count(super::super::compiled::base_region::Event::BodyRecurrent); }
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
                 (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| entries.saturating_add(1)), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
@@ -376,6 +382,13 @@ impl LaneView {
     /// The body a view's compile work came to (`LaneBodyOutcome`) makes of it; a compile in
     /// flight records the inlining its plan fits (`LaneBodyHistory::shrinks`).
     fn body_after(&self, outcome: super::super::compiled::LaneBodyOutcome, entry: Handler, entries: u32, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
+        {
+            use super::super::compiled::{LaneBodyOutcome as O, base_region::{Event, count}};
+            count(match &outcome {
+                O::Published(_) => Event::BodyPublished, O::Compiling(_) => Event::BodyCompiling, O::Unpaid => Event::BodyUnpaid,
+                O::Short => Event::BodyShort, O::Declined => Event::BodyDeclined, O::Stale => Event::BodyStale, O::Deferred => Event::BodyDeferred,
+            });
+        }
         match outcome {
             super::super::compiled::LaneBodyOutcome::Compiling(pending) => {
                 self.tier().history.set(LaneBodyHistory { shrinks: pending.shrinks(), ..self.tier().history.get() });
@@ -459,7 +472,7 @@ pub(super) fn start_gate<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, bod
     use super::super::compiled::LaneBodyOutcome;
     let body = body?;
     let calls = |pending: fn(&LaneView) -> bool| body.code.iter().enumerate().any(|(pc, packed)| {
-        super::decoded_instruction(body, *packed).op().is_call()
+        body.widened(*packed).op().is_call()
             && site_target(vm, view, pc).is_some_and(|target| {
                 // SAFETY: a resolved target's view outlives its program.
                 target.program() == vm.active_program && !target.view.is_null() && !std::ptr::eq(target.view, view) && pending(unsafe { &*target.view })

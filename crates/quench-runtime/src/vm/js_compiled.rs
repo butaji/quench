@@ -15,10 +15,7 @@ pub(super) struct JsJitArtifact {
     pub(super) result: super::compiled::NativeNumberResult,
 }
 
-// Keep native regions short so an interpreter interrupt cannot be delayed by a large body.
-const MAX_INSTRUCTIONS: usize = 256;
-const MAX_REGISTERS: usize = 256;
-pub(crate) const MAX_CODE_BYTES: usize = 64 * 1024;
+use crate::vm::compiled::tier_policy::{JS_COMPILED_MAX_INSTRUCTIONS, JS_COMPILED_MAX_REGISTERS};
 const MAX_PARAMETERS: usize = 8;
 
 /// Compile `function_id` as a numeric function through the shared semantic SSA specializer;
@@ -51,10 +48,10 @@ pub(super) fn candidate_rejection_reason(program: &ResidualProgram, function_id:
     if function.code.is_empty() {
         return "empty-function";
     }
-    if function.code.len() > MAX_INSTRUCTIONS {
+    if function.code.len() > JS_COMPILED_MAX_INSTRUCTIONS {
         return "bytecode-limit";
     }
-    if usize::from(function.registers) > MAX_REGISTERS {
+    if usize::from(function.registers) > JS_COMPILED_MAX_REGISTERS {
         return "register-limit";
     }
     if usize::from(function.params) > MAX_PARAMETERS {
@@ -72,9 +69,9 @@ pub(super) fn function_candidate(function: &Function, program: &ResidualProgram)
 
 fn scanned_function_candidate(function: &Function, program: &ResidualProgram) -> bool {
     !function.code.is_empty()
-        && function.code.len() <= MAX_INSTRUCTIONS
+        && function.code.len() <= JS_COMPILED_MAX_INSTRUCTIONS
         && function.wide.is_empty()
-        && usize::from(function.registers) <= MAX_REGISTERS
+        && usize::from(function.registers) <= JS_COMPILED_MAX_REGISTERS
         && usize::from(function.params) <= MAX_PARAMETERS
         && eligible(function, program)
 }

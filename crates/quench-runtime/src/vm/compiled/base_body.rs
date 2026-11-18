@@ -39,12 +39,13 @@ fn widened(generic: &[LaneExit]) -> Vec<usize> {
 
 impl LaneMethod {
     /// The lane body `body`'s code makes of `function`, published to executable memory. It names
-    /// no shapes or slots, so it depends on nothing but its own entry guards, the callees it calls
+    /// no slots, and shapes only in its inline-cache rows, which a compaction retires
+    /// (`names_shapes`), so otherwise it depends on nothing but its own entry guards, the callees it calls
     /// by their entries (`direct`, which it owns, and whose records it keeps) and its Stable facts
     /// (the globals that hold the callees it inlines, the atoms its stores hold unnamed by method
     /// caches and the values its folded reads hold of prototypes), whose change retires it and
     /// sets `invalidation`: the word its rows read, whose address its code names.
-    fn of_base_body(tiers: &Tiers, body: Body, function: u32, registers: u16, direct: Box<[DirectCallee]>, closed: bool, invalidation: Invalidation) -> Option<Self> {
+    fn of_base_body(tiers: &Tiers, body: Body, function: u32, registers: u16, direct: Box<[DirectCallee]>, (closed, realm_bound): (bool, bool), invalidation: Invalidation) -> Option<Self> {
         // Each inlined callee's registers are the frame slots from the caller's end (`Frame::base`).
         let scratch_width = window_width(&body.frames, registers);
         let memory = super::code_heap::publishing("b-jit-body", function as usize, || CodeMemory::new(&body.code))?;
@@ -56,9 +57,9 @@ impl LaneMethod {
         Some(Self {
             dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, atoms: body.atoms, instanceofs: body.instanceofs, layouts: body.layouts, slots: body.slot_types, ..Default::default() }, invalidation, _code: memory, entry,
             recovery_space: super::super::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
-            names_shapes: !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
-            caller_registers: registers, amortizes: body.loops || body.covered >= tiers.amortizing_instructions(super::tier_policy::lane_body_tier()) || !direct.is_empty(),
-            direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None,
+            names_shapes: body.names_shapes || !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
+            caller_registers: registers, frame_reach: body.scratch, amortizes: body.loops || body.covered >= tiers.amortizing_instructions(super::tier_policy::lane_body_tier()) || !direct.is_empty(),
+            direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, realm_bound,
         })
     }
 }
@@ -76,7 +77,7 @@ impl<H: Host> Vm<H> {
     /// refused otherwise), and the inlining body proves that realm active at its entry (`RealmProof`).
     fn inlinable_callee(&self, program: &ResidualProgram, callee: Value, function: u32) -> Option<InlineBody> {
         self.same_realm_user_target(callee)?;
-        InlineBody::of(program.function_get(function as usize)?, program.shared_register_root_masks(function))
+        InlineBody::of(program.function_get(function as usize)?, program.shared_register_root_masks(function), self.programs.constants(self.active_program))
     }
 
     /// The callees `candidates` (the callees each call site of `code`, the function's, reached, by
@@ -84,6 +85,8 @@ impl<H: Host> Vm<H> {
     /// callee register (`Vm::stable_callees`).
     pub(in crate::vm::compiled) fn stitch_callees(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], candidates: &[DirectCandidates]) -> Callees {
         let stable = self.stable_callees(program, function, code, &Callees::recorded(code, candidates));
+        // An arrow inlines as any callee does: a `this` read is no class a site admits (`Stitch::classes`), and a leave
+        // inside it makes its activation with its lexical `this` (`lane_call_this`).
         let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.callee, callee.target.function);
         Callees::of(code, candidates, &inline_body, stable)
     }
@@ -108,8 +111,13 @@ impl<H: Host> Vm<H> {
     /// Publishes the built body of `function` once its entry pays, binding the callees it names to `caller`.
     fn publish_base_body(&mut self, built: Body, (function, registers): (u32, u16), callees: Callees, (code, invalidation): (&[WideInstruction], Invalidation), caller: &super::super::dispatch_fast::LaneView) -> LaneBodyOutcome {
         let closed = callees.closed(code);
-        let Some(method) = LaneMethod::of_base_body(self.programs.tiers(), built, function, registers, callees.owned, closed, invalidation) else { return LaneBodyOutcome::Declined };
-        if !method.amortizes_entry() { return LaneBodyOutcome::Short }
+        // A body proves its realm at entry (`base_region::function::assemble`); its inlined callees are that
+        // realm's (`inlinable_callee`), and so must its direct ones be for a realm switch to leave it standing.
+        let realm_bound = callees.owned.iter().all(|callee| self.same_realm_user_target(callee.callee).is_some());
+        let Some(method) = LaneMethod::of_base_body(self.programs.tiers(), built, function, registers, callees.owned, (closed, realm_bound), invalidation) else { return LaneBodyOutcome::Declined };
+        // A body native callers call by its entry (`bind_callees`) pays for itself whatever its
+        // length, as a Cranelift body does (`start_lane_method`).
+        if !method.amortizes_entry() && !caller.called_by_bodies() { return LaneBodyOutcome::Short }
         bind_callees(&method.direct, caller);
         self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()).map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)
     }

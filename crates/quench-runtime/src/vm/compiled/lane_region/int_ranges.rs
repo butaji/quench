@@ -12,7 +12,7 @@
 use crate::bytecode::JsDenotation;
 use super::*;
 use super::super::facts::{self, Model, Observed, ObservedRead, Point, Seeds, Text};
-use super::loop_versions::{Hoist, Induction, Nest, Resolved, Shape, Version};
+use super::loop_versions::{Decision, Hoist, Induction, Nest, Resolved, Shape, Version};
 
 /// The facts one analysis proves, by unit PC.
 pub(super) struct IntRanges {
@@ -23,6 +23,9 @@ pub(super) struct IntRanges {
     versioned: Vec<Version>,
     /// The pure integer operations a loop's entry evaluates once (`Lowering::hoist_pure`), by PC (ascending).
     hoisted: Vec<Hoist>,
+    /// The relations of registers holding no Number that a loop's entry decides once
+    /// (`Lowering::hoist_decisions`), by PC (ascending).
+    decisions: Vec<Decision>,
     /// The products of a counter a loop's entry holds and advances (`Lowering::start_inductions`).
     inductions: Vec<Induction>,
     /// The arithmetic whose result leaves int32 within `IntRange::WORD`, by PC (ascending), with its range.
@@ -36,7 +39,7 @@ pub(super) struct IntRanges {
 impl IntRanges {
     pub(super) fn new(instructions: usize) -> Self {
         Self { overflow_free: CompoundBitSet::with_capacity(instructions), in_bounds: CompoundBitSet::with_capacity(instructions),
-            versioned: Vec::new(), hoisted: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions) }
+            versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions) }
     }
 
     /// Whether the product at `pc` may keep the int32 zero for a negative one: no operands make a
@@ -66,6 +69,9 @@ impl IntRanges {
 
     /// The pure integer operations hoisted to a loop's entry, by PC.
     pub(super) fn hoisted(&self) -> &[Hoist] { &self.hoisted }
+
+    /// The relations decided once at a loop's entry, by PC.
+    pub(super) fn decisions(&self) -> &[Decision] { &self.decisions }
 
     /// The products an entry holds and advances.
     pub(super) fn inductions(&self) -> &[Induction] { &self.inductions }
@@ -103,7 +109,7 @@ impl Lowering<'_, '_> {
     /// hoisted typed array of a fixed kind, each of which yields a Number of the kind's element
     /// type: an integer kind's range, a typed-array load being its elements' own integers.
     fn element_reads(&self, instructions: &[WideInstruction]) -> Vec<ObservedRead> {
-        let typed: Vec<ObservedRead> = instructions.iter().enumerate().filter(|(_, instruction)| instruction.op().is_get_index())
+        let typed: Vec<ObservedRead> = instructions.iter().enumerate().filter(|(_, instruction)| matches!(crate::vm::compiled::performed(**instruction), Some(crate::staged::Operation::ElementRead { .. })))
             .filter_map(|(pc, instruction)| {
                 let array = self.loop_array(pc, instruction.operand_b().register_index())?;
                 Some(ObservedRead { pc, ty: array.views.observed_kind().and_then(NativeKind::new)?.element_type() })
@@ -112,6 +118,27 @@ impl Lowering<'_, '_> {
             .copied().chain(typed.iter().copied()).collect();
         reads.sort_by_key(|read| read.pc);
         reads
+    }
+
+    /// The entering ranges (`entering`) the loop keeps: those still narrower than int32 at the
+    /// entry `entry` once its backedges join in. An entry sample is one value; where the loop
+    /// writes the register out of the range (a hash, say), the header's fact is the whole int32
+    /// range and the guard proves nothing, yet it leaves every later entry the sample misses.
+    pub(super) fn kept_entering(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
+        leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) -> Vec<(Register, IntRange)> {
+        if self.entering.is_empty() { return Vec::new(); }
+        let dense = |pc: usize| self.hoisted_access(pc);
+        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
+        let reads = self.element_reads(instructions);
+        let signless = self.signless_products(instructions);
+        let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),
+            signless: &signless };
+        let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
+            native_calls: self.native_calls, raises: &self.raises };
+        let facts = facts::analyze_text(&text, initial, seeds);
+        let Some(header) = facts.at(entry) else { return self.entering.clone() };
+        self.entering.iter().copied().filter(|&(register, _)| header.get(usize::from(register))
+            .and_then(|ty| ty.int_range()).is_some_and(|range| range != IntRange::FULL)).collect()
     }
 
     /// The proofs of the unit entered at `entry` with the checked inputs `initial`, over `loops`, its local loops.
@@ -124,7 +151,7 @@ impl Lowering<'_, '_> {
         let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),
             signless: &signless };
         let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
-            native_calls: self.native_calls };
+            native_calls: self.native_calls, raises: &self.raises };
         let mut proved = IntRanges::new(instructions.len());
         let mut seen = Seen::default();
         facts::analyze_text(&text, initial, seeds).replay(&text, seeds, |pc, point| self.prove_at((&mut proved, &mut seen), (&model, &signless, instructions), pc, point));
@@ -151,12 +178,26 @@ impl Lowering<'_, '_> {
             if self.hoistable(pc, instruction, point) { seen.hoistable.push(pc); }
         }
         if point.zero_free(&self.program.constants, instruction) { proved.zero_free.insert(pc); }
+        if self.decidable(instruction, point) { seen.decisions.push(pc); }
+    }
+
+    /// Whether the jump `instruction` is a relation the VM decides from two registers one of which
+    /// holds no Number here (`Comparison::Decided`): a pure decision of values no loop changes
+    /// where no instruction of it writes them, so its entry may decide it once.
+    fn decidable(&self, instruction: WideInstruction, point: &Point) -> bool {
+        use crate::staged::{Comparison, Operation};
+        let Some(Operation::<(), ()>::CompareJump { comparison: Comparison::Relation { .. }, left, right, .. }) =
+            Operation::decode(instruction, crate::staged::DecodeContext::EMPTY) else { return false };
+        let registers = [left, right].map(Operand::register_index);
+        !self.helpers.is_numeric() && registers.iter().all(Option::is_some)
+            && registers.iter().flatten().any(|register| point.numberless(*register))
     }
 
     /// What the entries of `nest`'s loops prove of what `seen`: the operations each evaluates once, and
     /// the accesses each proves within their arrays.
     fn prove_loops(&self, proved: &mut IntRanges, model: &Model<'_>, nest: Nest<'_>, seen: &Seen) {
         proved.hoisted = self.plan_hoists(nest, &seen.hoistable);
+        proved.decisions = self.plan_decisions(nest, &seen.decisions);
         let hoists = proved.hoisted.clone();
         let nest = Nest { hoists: &hoists, ..nest };
         for shape in &seen.shapes {
@@ -172,4 +213,5 @@ impl Lowering<'_, '_> {
 struct Seen {
     shapes: Vec<Shape>,
     hoistable: Vec<usize>,
+    decisions: Vec<usize>,
 }

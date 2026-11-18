@@ -8,7 +8,6 @@ core, runs, n = os.environ.get("CORE", "1"), int(os.environ.get("RUNS", "7")), o
 inner = os.environ.get("INNER", "0")  # INNER=1000: many short calls (lane body entries) instead of one long call (OSR)
 engines = {
   "default": ([qn], {}),
-  "lane": ([qn], {"QUENCH_DEV": "js-lane-methods"}),
   "nojit": ([qn, "--no-jit"], {}),
   "node": (["node"], {}), "bun": (["bun"], {}),
 }

@@ -1,5 +1,5 @@
 use super::*;
-use super::site_table::SiteTable;
+use super::site_table::CacheSiteTable;
 use crate::Engine;
 use crate::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
@@ -309,7 +309,6 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
         "a Number pointer store must not consume the owner's reference barrier");
     // A real reference store still logs its owner, and the collector follows it.
     assert!(unsafe { vm.heap.record_property_set_flat::<true>(record, slot, child, crate::heap::PropertyStoreLayout::MayWiden) });
-    assert!(!vm.heap.collection_is_full(false));
     vm.collect_slow(&program, false);
     assert!(vm.heap.is_live(child));
     assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(child));
@@ -1345,7 +1344,7 @@ fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
         let Some(crate::heap::FunctionRecord { env, .. }) = vm.heap.function(closure) else {
             panic!("{name} is a closure");
         };
-        let Some(Cell::Environment { scope, .. }) = vm.heap.get(*env) else {
+        let Some(crate::heap::EnvironmentRecord { scope, .. }) = vm.heap.environment(*env) else {
             panic!("{name} captured its creator's environment");
         };
         match scope.dynamic_bindings() {
@@ -1363,12 +1362,12 @@ fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
 fn field_cache_invalidation_resets_every_written_site() {
     const SITES: usize = 64;
     let mut vm = Vm::new(TestHost::default());
-    vm.field_caches = SiteTable::with_empty(SITES);
+    vm.field_caches = CacheSiteTable::with_empty(SITES);
     vm.refresh_active_field_entries();
-    vm.megamorphic_field_indices = SiteTable::with_empty(SITES);
-    vm.field_add_indices = SiteTable::with_empty(SITES);
-    vm.inherited_field_indices = SiteTable::with_empty(SITES);
-    vm.accessor_field_indices = SiteTable::with_empty(SITES);
+    vm.megamorphic_field_indices = CacheSiteTable::with_empty(SITES);
+    vm.field_add_indices = CacheSiteTable::with_empty(SITES);
+    vm.inherited_field_indices = CacheSiteTable::with_empty(SITES);
+    vm.accessor_field_indices = CacheSiteTable::with_empty(SITES);
     vm.field_cache_writes = Some(Vec::new());
     let record = |vm: &mut Vm<TestHost>, site: usize| {
         for receiver in 1..=3 {

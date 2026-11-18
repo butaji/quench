@@ -2,6 +2,7 @@ use super::*;
 mod interpreter_frame;
 mod loop_stack;
 pub(super) use interpreter_frame::{InterpreterFrame, RowRun, runs_row};
+mod materialized_stops;
 
 /// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.
 const RETAINED_FRAME_VALUES: usize = 256;
@@ -71,22 +72,7 @@ impl HotLoop {
     }
 }
 
-/// The backward jumps a JavaScript activation takes in the general path before its function's
-/// lane view is derived and the lane runs its loop (`Vm::note_back_edge`). Deriving a view
-/// costs some hundreds of instructions per instruction of the function; a module body that
-/// loops a few times (over its exports, say) ran faster without one.
-const HOT_LOOP_BACK_EDGES: u16 = 16;
-
-/// The loop work, in instructions its back edges span per instruction of the function, after
-/// which a view-less activation derives its function's lane view (`HotLoop`). A view costs
-/// some hundreds of instructions per instruction of the whole function, so a short loop in a
-/// large body that runs once (a module body filling a table) ran
-/// faster without one. Measured in instructions, warm compile cache, against deriving at
-/// `HOT_LOOP_BACK_EDGES` alone (x86_64 VM, 2026-10-26): @babel/core -11.0% (one: +0.9%,
-/// four: -9.9%), and within 0.2% on schema-utils, axios, semver, ajv, eslint, jiti, undici
-/// and source-map.
-const LANE_VIEW_LOOP_PAYBACK: u32 = 8;
-
+use crate::vm::compiled::tier_policy::{HOT_LOOP_BACK_EDGES, LANE_VIEW_LOOP_PAYBACK};
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
 pub(super) struct PendingGeneralCall {
     pub(super) caller: usize,
@@ -549,7 +535,7 @@ impl<H: Host> Vm<H> {
         if !lane_runs
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || !self.lane_admits(p)
-            || !self.programs.lane_call_may_derive(program, id)
+            || !self.programs.lane_call_may_derive(program, id, false, false)
         {
             return std::ptr::null();
         }
@@ -914,7 +900,11 @@ impl<H: Host> Vm<H> {
             .locals
             .resize(usize::from(function.locals), Value::UNDEFINED);
         if function.rest {
-            frame.locals[fixed] = self.rest_parameter_array(args.get(fixed..).unwrap_or_default());
+            // A rest view's local stays `undefined`: its reads take the values past the fixed
+            // parameters from those the frame keeps (`RestGet`), below.
+            if !function.rest_view() {
+                frame.locals[fixed] = self.rest_parameter_array(args.get(fixed..).unwrap_or_default());
+            }
         }
         if let Some(slot) = function.self_binding_slot {
             frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
@@ -928,7 +918,7 @@ impl<H: Host> Vm<H> {
             };
         }
         self.initialize_frame_invocation(p, frame, function, context, args);
-        if forwards_arguments {
+        if forwards_arguments || function.rest && function.rest_view() {
             // The frame keeps every argument for the object it may still materialize; legacy
             // reflection reads the same values, since such a frame reflects no parameter.
             debug_assert_eq!(frame.reflected_parameters, 0);
@@ -1027,7 +1017,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// A new activation's `arguments` object, mapped onto the parameters when the function's
-    /// parameter list allows it.
+    /// parameter list allows it; the rest array a rest alias names (`Function::rest_alias`).
     #[inline(never)]
     pub(super) fn activation_arguments_object(
         &mut self,
@@ -1035,6 +1025,7 @@ impl<H: Host> Vm<H> {
         context: CallContext,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if function.rest_alias { return Ok(self.rest_parameter_array(args)); }
         let mapped = function.arguments_are_mapped();
         let mut array = crate::heap::ArrayObject::new(
             Self::empty_object(self.object_proto),
@@ -1369,31 +1360,27 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| JsError("invalid environment clone owner".into()))?,
             )
         };
-        let Some(Cell::Environment {
+        let Some(crate::heap::EnvironmentRecord {
             parent,
             function,
             scope,
             ..
-        }) = self.heap.get(source)
+        }) = self.heap.environment(source)
         else {
             return Err(JsError("invalid environment clone".into()));
         };
-        let environment = Cell::Environment {
-            parent: *parent,
-            function: *function,
-            slots,
-            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
-                program: scope.program(),
-                root_eval_scope: scope.root_eval_scope(),
-                binding_site_pc: scope.binding_site_pc(),
-                dynamic_bindings: owner.map_or_else(
-                    || crate::heap::EnvironmentBindings::Owned(Vec::new()),
-                    crate::heap::EnvironmentBindings::Shared,
-                ),
-                with_objects: scope.with_objects().into(),
-            }),
-        };
-        Ok(self.heap.alloc(environment))
+        let (parent, function) = (*parent, *function);
+        let scope_ref = crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+            program: scope.program(),
+            root_eval_scope: scope.root_eval_scope(),
+            binding_site_pc: scope.binding_site_pc(),
+            dynamic_bindings: owner.map_or_else(
+                || crate::heap::EnvironmentBindings::Owned(Vec::new()),
+                crate::heap::EnvironmentBindings::Shared,
+            ),
+            with_objects: scope.with_objects().into(),
+        });
+        Ok(self.heap.alloc_environment(parent, function, slots, scope_ref).0)
     }
 
     pub(super) fn activate_frame(&mut self, frame: &mut Frame) {
@@ -1593,7 +1580,7 @@ impl<H: Host> Vm<H> {
             let stops_here = running == frame
                 && pending_calls.is_empty()
                 && executing.id == program
-                && self.lane_raised.is_none()
+                && !self.lane_completion.is_raised()
                 && pc < body.code.len();
             if stops_here
                 && let Some(outcome) = self.lane_stop_outcome(p, frame, cursor.instruction(pc), pc, body.is_async)
@@ -1601,7 +1588,7 @@ impl<H: Host> Vm<H> {
                 return Ok(outcome);
             }
             self.frames[running].pc = pc;
-            let raised = self.lane_raised.take();
+            let raised = self.lane_completion.take_raised();
             self.run_frames_after_lane_exit(p, running, &mut pending_calls, LaneExit { executing, raised })
         })();
         pending_calls.clear();
@@ -1626,7 +1613,7 @@ impl<H: Host> Vm<H> {
         pc: usize,
         asynchronous: bool,
     ) -> Option<FrameOutcome> {
-        let returned = match self.lane_returned.take() {
+        let returned = match self.lane_completion.take_returned() {
             Some(value) => Some(value),
             None => match crate::staged::Operation::<u64, ()>::of(instruction) {
                 Some(crate::staged::Operation::Return { source }) => Some(self.read(frame, source)),
@@ -1735,6 +1722,9 @@ impl<H: Host> Vm<H> {
         // retains after a cross-program tail call. Updated only where that switch happens.
         let mut executing_residual: *const ResidualProgram = current_program.as_deref().unwrap_or(entry_program);
         let mut frame = frame;
+        // The completion a call the lane made returned from the frame it left in, taken once
+        // per lane exit (`LaneCompletion::Returned`) and returned at that instruction.
+        let mut lane_returned = self.lane_completion.take_returned();
         // The initial Wasm activation is allocated before the dispatch loop and has no
         // caller guard. Account it here so root and reentrant Wasm entries obey the same
         // frame-payload limit as Wasm calls pushed by the loop.
@@ -1859,6 +1849,7 @@ impl<H: Host> Vm<H> {
             if !resumed && native_step.is_none() && Self::lane_enters(cursor.lane, pc, entering_after_lane_exit) {
                 let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
                 pc = self.run_fast_lane(p, cursor.program, cursor.lane, &mut frame, pc, pending_calls, &mut executing, allow_inline_calls);
+                lane_returned = self.lane_completion.take_returned();
                 crate::clock::note_lane_run();
                 after_lane_exit = self.heap.should_collect();
                 // The lane may leave in a frame of another program, its activations' calls
@@ -1992,7 +1983,7 @@ impl<H: Host> Vm<H> {
                             }
                             Some(v) if self.heap.array(v).is_some() => "array".into(),
                             Some(v) => match self.heap.get(v) {
-                                Some(Cell::Symbol(symbol)) => format!("symbol {:?}", symbol.kind),
+                                _ if let Some(symbol) = self.heap.symbol_data(v) => format!("symbol {:?}", symbol.kind),
                                 _ if self.heap.ordinary_object(v).is_some() => {
                                     let data = self.heap.ordinary_object(v).unwrap();
                                     format!("ordinary(ext={} side={} nullproto={} dict={})", data.is_extensible(), data.has_side_descriptors(), data.proto().is_null(), self.shape_is_dictionary(data.shape()))
@@ -2042,7 +2033,7 @@ impl<H: Host> Vm<H> {
                 self.active_registers = self.frames[frame].registers.as_mut_ptr();
                 // A call the lane made in place failed: it throws at its instruction, as the
                 // general path's call would have.
-                if let Some(error) = self.lane_raised.take() {
+                if let Some(error) = self.lane_completion.take_raised() {
                     let mut executing = ExecutingProgram {
                         id: executing_program,
                         retained: current_program.take(),
@@ -2383,7 +2374,7 @@ impl<H: Host> Vm<H> {
                 // A row that stopped the run (a return, a raise or a suspension) is the step result.
                 _ if let Some(stop) = self.row_stop.take() => stop,
                 // A call the lane made returned its callee's completion from this frame.
-                _ if let Some(value) = self.lane_returned.take() => Ok(StepResult::Return(value)),
+                _ if let Some(value) = lane_returned.take() => Ok(StepResult::Return(value)),
                 _ if let Some(crate::staged::Operation::Return { source }) = crate::staged::Operation::<u64, ()>::of(ins) => Ok(StepResult::Return(self.read(frame, source))),
                 _ if crate::staged::calls(ins.op()) && allow_inline_calls => {
                     match self.try_inline_reflect_apply(p, frame, ins, pc) {
@@ -2397,20 +2388,9 @@ impl<H: Host> Vm<H> {
                 _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
             }
             };
-            // The frame a generator's activation became yields to its caller, as its return
-            // completes the call (`finish_materialized_generator_step`).
-            let mut yielded = None;
-            let step = match step {
-                Ok(StepResult::Yield { value, destination, delegated_result })
-                    if pending_calls.last().is_some_and(|call| call.completion.is_generator() && call.caller + 1 == frame) =>
-                {
-                    self.frames[frame].pc = pc;
-                    self.frames[frame].pc_is_resume = true;
-                    yielded = Some(super::generator::MaterializedStop::Yielded { destination, delegated_result });
-                    Ok(StepResult::Return(value))
-                }
-                step => step,
-            };
+            // The frame a generator's activation became yields (or an in-place request's awaits)
+            // to its caller, as its return completes the call (`materialized_stop`).
+            let (step, mut yielded) = self.materialized_stop(pending_calls.last(), frame, pc, step);
             match step {
                 Ok(StepResult::Return(mut value)) => {
                     let completion = {
@@ -2431,7 +2411,7 @@ impl<H: Host> Vm<H> {
                     loop {
                     if let Some(mut pending) = pending_calls.pop() {
                         debug_assert_eq!(frame, pending.caller + 1);
-                        let completed_frame = self.frames.pop().unwrap();
+                        let (completed_frame, mut request_error) = (self.frames.pop().unwrap(), None);
                         // JavaScript in-loop pushes exclude the script root. Wasm calls
                         // share this return path and may enter defined function zero.
                         debug_assert!(
@@ -2449,10 +2429,17 @@ impl<H: Host> Vm<H> {
                                 let stop = yielded.take().unwrap_or(super::generator::MaterializedStop::Returned);
                                 value = self.finish_materialized_generator_step(completed_frame, resume, value, stop);
                             }
-                            None => {
-                                self.finish_frame_scopes(&completed_frame);
-                                self.pool_frame(completed_frame);
-                            }
+                            None => match pending.completion.take_async_request() {
+                                // SAFETY: as for `p` at the top of the loop; the frame's program.
+                                Some(root) => match self.settle_materialized_request(unsafe { &*executing_residual }, completed_frame, root, value, yielded.take()) {
+                                    Ok(promise) => value = promise,
+                                    Err(error) => request_error = Some((pending.call_pc, error)),
+                                },
+                                None => {
+                                    self.finish_frame_scopes(&completed_frame);
+                                    self.pool_frame(completed_frame);
+                                }
+                            },
                         }
                         frame = pending.caller;
                         if let Some(saved) = pending.caller_program.take() {
@@ -2463,7 +2450,7 @@ impl<H: Host> Vm<H> {
                         }
                         self.active_registers = self.frames[frame].registers.as_mut_ptr();
                         // SAFETY: as for `p` at the top of the loop.
-                        settle_error = self.trap_result_error(unsafe { &*executing_residual }, &pending, frame, value);
+                        settle_error = request_error.take().or_else(|| self.trap_result_error(unsafe { &*executing_residual }, &pending, frame, value));
                         value = self.completed_call_value(&pending.completion, frame, pending.destination, value);
                         if let CallCompletion::ToWasm(result) = pending.completion {
                             // SAFETY: as for `p` at the top of the loop.
@@ -2750,20 +2737,13 @@ impl<H: Host> Vm<H> {
                         let caller_residual = executing.retained.clone();
                         error = self.trap_raised_in_javascript(caller_residual.as_deref().unwrap_or(entry_program), error);
                     }
-                    // An async callee's abrupt completion rejects its promise, which the
-                    // call yields; the caller resumes after the call.
-                    if let Some(root) = pending.completion.take_promise() {
-                        let promise = self.release_settled_call_root(root);
-                        let caller_residual = executing.retained.clone();
-                        let caller_code = caller_residual.as_deref().unwrap_or(entry_program);
-                        match self.reject_settled_call(caller_code, promise, error) {
-                            Ok(()) => {
-                                self.write(frame, pending.destination, promise);
-                                return Ok((frame, pc));
-                            }
-                            Err(next) => error = next,
-                        }
-                    }
+                    // An async callee's or in-place request's abrupt completion settles its
+                    // promise, which the call yields; the caller resumes after the call.
+                    let caller_residual = executing.retained.clone();
+                    error = match self.settle_abandoned_call(caller_residual.as_deref().unwrap_or(entry_program), (frame, pending.destination), &mut pending.completion, error) {
+                        Ok(()) => return Ok((frame, pc)),
+                        Err(next) => next,
+                    };
                 }
             }
         }
@@ -2805,7 +2785,7 @@ impl<H: Host> Vm<H> {
             return Vec::new();
         }
         let mut layers = Vec::new();
-        while let Some(Cell::Environment { parent, scope, .. }) = self.heap.get(env) {
+        while let Some(crate::heap::EnvironmentRecord { parent, scope, .. }) = self.heap.environment(env) {
             if !scope.with_objects().is_empty() {
                 layers.push(scope.with_objects().to_vec());
             }

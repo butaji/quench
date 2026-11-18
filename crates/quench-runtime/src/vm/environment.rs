@@ -126,15 +126,12 @@ impl<H: Host> Vm<H> {
             ));
         }
         let (env, _) = self.outer_dynamic_binding(caller, atom)?;
-        let Cell::Environment {
+        let crate::heap::EnvironmentRecord {
             function,
             parent,
             scope,
             ..
-        } = self.heap.get(env)?
-        else {
-            return None;
-        };
+        } = self.heap.environment(env)?;
         Some((
             super::ProgramId::from_raw(scope.program()?),
             *function,
@@ -263,12 +260,12 @@ impl<H: Host> Vm<H> {
         // Its lexical fallback remains authoritative after that parent returns.
         let mut depth = 0u16;
         let mut environment = self.caller_capture_env(caller, depth)?;
-        while let Some(Cell::Environment {
+        while let Some(crate::heap::EnvironmentRecord {
             parent,
             function,
             scope,
             ..
-        }) = self.heap.get(environment)
+        }) = self.heap.environment(environment)
         {
             let (program, binding_site_pc) = (&scope.program(), &scope.binding_site_pc());
             if let Some(program) = program.and_then(|id| {
@@ -573,7 +570,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn captured_lexical_this(&self, mut env: Value) -> Option<Value> {
-        while let Some(Cell::Environment { parent, .. }) = self.heap.get(env) {
+        while let Some(crate::heap::EnvironmentRecord { parent, .. }) = self.heap.environment(env) {
             let dynamic_bindings = self.heap.environment_bindings(env)?;
             if let Some((_, value)) = dynamic_bindings
                 .iter()
@@ -665,7 +662,7 @@ impl<H: Host> Vm<H> {
         let mut inherited_count = 0;
         let mut before_binding = !local;
         let mut environment = parent;
-        while let Some(Cell::Environment { parent, scope, .. }) = self.heap.get(environment) {
+        while let Some(crate::heap::EnvironmentRecord { parent, scope, .. }) = self.heap.environment(environment) {
             let with_objects = scope.with_objects();
             inherited_count += with_objects.len();
             before_binding &= boundary != Some(environment);
@@ -687,7 +684,7 @@ impl<H: Host> Vm<H> {
         let declaration_depth = named.filter(|_| local || boundary == named_owner)
             .map_or(0, |binding| {
                 let owner_depth = named_owner.and_then(|owner| {
-                    let Cell::Environment { function, scope, .. } = self.heap.get(owner)? else { return None; };
+                    let crate::heap::EnvironmentRecord { function, scope, .. } = self.heap.environment(owner)?;
                     let pc = &scope.binding_site_pc()?;
                     let program = self.programs.get(super::ProgramId::from_raw(scope.program()?))?;
                     let metadata = program.function_get(*function as usize)?;
@@ -813,12 +810,12 @@ impl<H: Host> Vm<H> {
         mut env: Value,
         atom: Atom,
     ) -> Option<(Value, usize)> {
-        while let Some(Cell::Environment {
+        while let Some(crate::heap::EnvironmentRecord {
             parent,
             function,
             slots,
             scope,
-        }) = self.heap.get(env)
+        }) = self.heap.environment(env)
         {
             let program = &scope.program();
             if *function != u32::MAX
@@ -1025,7 +1022,7 @@ impl<H: Host> Vm<H> {
                 && binding.kind != crate::bytecode::LexicalBindingKind::FunctionName
         });
         let static_owner = lookup.static_owner(self).map(|(env, _)| env);
-        while let Some(Cell::Environment { parent, .. }) = self.heap.get(env) {
+        while let Some(crate::heap::EnvironmentRecord { parent, .. }) = self.heap.environment(env) {
             if lexical_capture && named_owner == Some(env) {
                 return None;
             }
@@ -1126,7 +1123,7 @@ impl<H: Host> Vm<H> {
         }
         let mut env = self.frames[frame].env;
         let static_owner = self.outer_environment_binding(env, atom).map(|(env, _)| env);
-        while let Some(Cell::Environment { parent, .. }) = self.heap.get(env) {
+        while let Some(crate::heap::EnvironmentRecord { parent, .. }) = self.heap.environment(env) {
             let dynamic_bindings = self.heap.environment_bindings(env)?;
             if static_owner == Some(env) {
                 return Some(false);
@@ -1324,18 +1321,16 @@ impl<H: Host> Vm<H> {
         depth: u16,
     ) -> Option<Value> {
         let mut env = if captured {
-            match self.heap.get(env)? {
-                Cell::Environment { parent, .. } => *parent,
-                _ => return None,
+            match self.heap.reachable_environment(env)? {
+                crate::heap::EnvironmentRecord { parent, .. } => *parent,
             }
         } else {
             env
         };
         env = self.skip_with_environment_layers(env)?;
         for _ in 0..depth {
-            env = match self.heap.get(env)? {
-                Cell::Environment { parent, .. } => *parent,
-                _ => return None,
+            env = match self.heap.reachable_environment(env)? {
+                crate::heap::EnvironmentRecord { parent, .. } => *parent,
             };
             env = self.skip_with_environment_layers(env)?;
         }
@@ -1347,8 +1342,8 @@ impl<H: Host> Vm<H> {
         // With-object and lexical-this wrappers are allocated function-less, and environment
         // clones keep their source's function, so a function's own layer ends the walk before
         // its boxed scope is read.
-        match self.heap.get(env) {
-            Some(Cell::Environment { function, .. }) if *function == u32::MAX => {
+        match self.heap.reachable_environment(env) {
+            Some(crate::heap::EnvironmentRecord { function, .. }) if *function == u32::MAX => {
                 self.skip_function_less_layers(env)
             }
             _ => Some(env),
@@ -1357,12 +1352,12 @@ impl<H: Host> Vm<H> {
 
     #[inline(never)]
     fn skip_function_less_layers(&self, mut env: Value) -> Option<Value> {
-        while let Some(Cell::Environment {
+        while let Some(crate::heap::EnvironmentRecord {
             parent,
             function,
             slots,
             scope,
-        }) = self.heap.get(env)
+        }) = self.heap.environment(env)
         {
             if *function != u32::MAX {
                 debug_assert!(scope.with_objects().is_empty());
@@ -1477,25 +1472,20 @@ impl<H: Host> Vm<H> {
         captured: bool,
         depth: u16,
     ) -> Option<(&crate::heap::EnvironmentSlots, Option<Option<u32>>)> {
-        let mut cell = self.heap.get(env)?;
+        let mut cell = self.heap.environment(env)?;
         if captured {
-            let Cell::Environment { parent, .. } = cell else {
-                return None;
-            };
-            cell = self.heap.get(*parent)?;
+            let crate::heap::EnvironmentRecord { parent, .. } = cell;
+            cell = self.heap.environment(*parent)?;
         }
         let mut remaining = depth;
         loop {
-            let Cell::Environment {
+            let crate::heap::EnvironmentRecord {
                 parent,
                 function,
                 slots,
                 scope,
                 ..
-            } = cell
-            else {
-                return None;
-            };
+            } = cell;
             if *function == u32::MAX {
                 return None;
             }
@@ -1506,7 +1496,7 @@ impl<H: Host> Vm<H> {
                 ));
             }
             remaining -= 1;
-            cell = self.heap.get(*parent)?;
+            cell = self.heap.environment(*parent)?;
         }
     }
 
@@ -1517,19 +1507,19 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     pub(super) fn link_capture_chain(&self, env: Value, depth: u16) {
         let epoch = self.heap.collection_epoch();
-        let function_storage = |cell: Option<&Cell>| match cell {
-            Some(Cell::Environment { parent, function, slots, .. })
+        let function_storage = |cell: Option<&crate::heap::EnvironmentRecord>| match cell {
+            Some(crate::heap::EnvironmentRecord { parent, function, slots, .. })
                 if *function != u32::MAX && *function != super::ROOT_FUNCTION_ID =>
             {
                 slots.dense_storage().map(|storage| (*parent, storage))
             }
             _ => None,
         };
-        let Some((mut parent, mut storage)) = function_storage(self.heap.get(env)) else {
+        let Some((mut parent, mut storage)) = function_storage(self.heap.environment(env)) else {
             return;
         };
         for _ in 0..depth {
-            let Some((next_parent, parent_storage)) = function_storage(self.heap.get(parent)) else {
+            let Some((next_parent, parent_storage)) = function_storage(self.heap.environment(parent)) else {
                 return;
             };
             // SAFETY: both are dense storages of live heap environments in this collection.
@@ -1701,9 +1691,9 @@ impl<H: Host> Vm<H> {
         // Global var, global lexical and module-import projections exist only for a program's
         // root function, so any other initialized environment slot, and a root slot of a
         // program without projections, is the binding itself.
-        if let Some(Cell::Environment {
+        if let Some(crate::heap::EnvironmentRecord {
             function, scope, ..
-        }) = self.heap.get(env)
+        }) = self.heap.environment(env)
             && (*function != super::ROOT_FUNCTION_ID
                 || self.root_environment_slot_is_binding(scope.program(), slot))
             && let Some(value) = self.heap.environment_slot(env, usize::from(slot))
@@ -1736,9 +1726,7 @@ impl<H: Host> Vm<H> {
     /// lexical binding (`root_global_lexical_value`). `None` for any other projection or
     /// read.
     pub(super) fn plain_projected_root_binding(&self, env: Value, slot: u16) -> Option<Value> {
-        let Cell::Environment { function, scope, .. } = self.heap.get(env)? else {
-            return None;
-        };
+        let crate::heap::EnvironmentRecord { function, scope, .. } = self.heap.environment(env)?;
         let owner_id = scope
             .program()
             .map_or(self.active_program, super::ProgramId::from_raw);
@@ -1759,15 +1747,12 @@ impl<H: Host> Vm<H> {
         env: Value,
         slot: u16,
     ) -> Result<Value, JsError> {
-        let Cell::Environment {
+        let crate::heap::EnvironmentRecord {
             function, scope, ..
         } = self
             .heap
-            .get(env)
-            .ok_or_else(|| JsError("invalid capture".into()))?
-        else {
-            return Err(JsError("invalid capture".into()));
-        };
+            .environment(env)
+            .ok_or_else(|| JsError("invalid capture".into()))?;
         let program = scope.program();
         let slot = usize::from(slot);
         let owner_id = program
@@ -1848,9 +1833,9 @@ impl<H: Host> Vm<H> {
         slot: u16,
         value: Value,
     ) -> bool {
-        let Some(Cell::Environment {
+        let Some(crate::heap::EnvironmentRecord {
             function, scope, ..
-        }) = self.heap.get(env)
+        }) = self.heap.environment(env)
         else {
             return false;
         };
@@ -1883,12 +1868,12 @@ impl<H: Host> Vm<H> {
         slot: u16,
         value: Value,
     ) -> bool {
-        let Some(Cell::Environment {
+        let Some(crate::heap::EnvironmentRecord {
             function,
             scope,
             slots,
             ..
-        }) = self.heap.get_mut(env)
+        }) = self.heap.environment_mut(env)
         else {
             return false;
         };
@@ -1914,9 +1899,9 @@ impl<H: Host> Vm<H> {
         program: super::ProgramId,
         env: Value,
     ) -> bool {
-        let Some(Cell::Environment {
+        let Some(crate::heap::EnvironmentRecord {
             function, scope, ..
-        }) = self.heap.get(env)
+        }) = self.heap.environment(env)
         else {
             return false;
         };
@@ -1931,8 +1916,8 @@ impl<H: Host> Vm<H> {
         slot: u16,
         value: Value,
     ) -> Result<(), JsError> {
-        let (function, program, deleted) = match self.heap.get(env) {
-            Some(Cell::Environment {
+        let (function, program, deleted) = match self.heap.environment(env) {
+            Some(crate::heap::EnvironmentRecord {
                 function, scope, ..
             }) => (
                 *function,

@@ -125,6 +125,20 @@ impl Operands {
 }
 
 impl CallOut {
+    /// The operands and operator of a step the VM decides from the two words alone, with no
+    /// effect: `===` and `!==` (`Vm::strict_equal`), as a decision or a value. It runs no guest
+    /// code, allocates nothing and never raises, so a tier may ask a pure helper of the words
+    /// (`dispatch_fast::lane_decide`) instead of making the step in place.
+    pub(crate) fn word_decision(self) -> Option<([Register; 2], u32)> {
+        use crate::vm::operations::{equality_binary_operator, equality_operator};
+        match self {
+            Self::Decide { left, right, operator } if equality_operator(operator).is_some_and(|(strict, _)| strict) =>
+                Some(([left, right], operator)),
+            Self::Equality { left, right, strict: true, negated } => Some(([left, right], equality_binary_operator(true, negated))),
+            _ => None,
+        }
+    }
+
     /// Whether the step reads or writes the locals of the running activation, or resolves a name
     /// through its bindings (`Vm::load_name` searches its scope): its owner is the activation's
     /// (`Vm::running_owner`), not the innermost frame's, which beside the lane's frameless

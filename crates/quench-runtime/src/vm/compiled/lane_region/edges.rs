@@ -39,7 +39,7 @@ fn rotated_bodies(instructions: &[WideInstruction]) -> CompoundBitSet {
     for (pc, instruction) in instructions.iter().enumerate() {
         let [_, target] = successors(pc, *instruction);
         if let Some(header) = target.filter(|target| *target <= pc)
-            && instructions.get(header).is_some_and(|test| test.op().is_js_conditional_jump()) {
+            && instructions.get(header).is_some_and(|test| crate::staged::meaning::means(test, crate::staged::meaning::Meaning::ConditionalJump)) {
             bodies.insert(header + 1);
         }
     }

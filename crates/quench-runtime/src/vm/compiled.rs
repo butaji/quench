@@ -41,19 +41,45 @@ use crate::staged::ConcreteWasm;
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName, types};
 #[cfg(test)]
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use cranelift_frontend::{FunctionBuilder, Variable};
+#[cfg(test)]
+use cranelift_frontend::FunctionBuilderContext;
 use cranelift_codegen::entity::{SecondaryMap, packed_option::PackedOption};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
+/// The staged operation a record decodes to, with no constants or sites resolved: what a
+/// tier's analysis asks of a record instead of naming its opcode (`Operation::decode`).
+#[inline]
+pub(in crate::vm) fn decoded(instruction: impl std::borrow::Borrow<crate::bytecode::WideInstruction>) -> Option<crate::staged::Operation<(), ()>> {
+    crate::staged::Operation::decode(*instruction.borrow(), crate::staged::DecodeContext::EMPTY)
+}
+
+/// The staged operation a record performs, whatever completion its result flags ask (a result
+/// that also returns from the frame or writes `this`): what an analysis asks of a record when the
+/// question is the operation, not how the frame completes. `decoded` declines a flagged record,
+/// whose row a tier makes through its completion.
+#[inline]
+pub(in crate::vm) fn performed(instruction: impl std::borrow::Borrow<crate::bytecode::WideInstruction>) -> Option<crate::staged::Operation<(), ()>> {
+    let instruction = *instruction.borrow();
+    let plain = if instruction.op().field_layout(crate::bytecode::InstructionField::A) == crate::bytecode::FieldLayout::ResultRegister {
+        crate::bytecode::WideInstruction::new(instruction.op(), instruction.a() & crate::bytecode::REGISTER_MASK,
+            instruction.b(), instruction.c(), instruction.imm())
+    } else { instruction };
+    decoded(plain)
+}
+
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
+pub(in crate::vm) mod call_signature;
 mod exit_protocol;
 mod region_lend;
 pub(super) use exit_protocol::{ExitTable, RegionRun};
 mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
 pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
+pub(super) use lane_facts::bind_callees as bind_region_callees;
 pub(super) use lane_region::ElementViews;
+pub(in crate::vm) use lane_region::inlines_keeping_arrays;
 use osr_compile::OsrFacts;
 use crate::typed_ir;
 
@@ -106,8 +132,14 @@ mod wasm_memory_stage;
 mod wasm_flow_stage;
 mod wasm_call_stage;
 mod wasm_table_stage;
+mod wasm_table_ops_stage;
 mod wasm_instance_switch;
 mod wasm_simd_stage;
+// `--b-jit` enters a module's functions through their stitched rows (`stitched_entry`).
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+mod wasm_stitch;
+#[cfg(target_arch = "x86_64")]
+mod wasm_call_vm;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(all(test, feature = "aot"))]
 pub(super) use lane_unit::static_call_targets;
@@ -214,17 +246,17 @@ mod fault_handler;
 pub use fault_handler::NativeFaultHandler;
 pub(super) use osr_loop::{
     CALLEE_CAPTURE, THIS_CAPTURE,
-    FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopRegion,
+    FieldReceiver, FieldUse, CalleeSource, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopRegion,
     MethodCalls, Observation, RegionAnalysisFailure, RegionRejection,
 };
 
 pub(super) use crate::staged::Domain as NumberRelationDomain;
 
 /// The most records a native function body covers.
-const MAX_NATIVE_RECORDS: usize = 2048;
+const MAX_NATIVE_RECORDS: usize = quench_bjit::call_record::GENERAL_DISPATCH_BLOCKS as usize;
 /// Return statuses encode the returning record's PC without colliding with the shared
 /// entry's small stop, resume, or trap statuses.
-const RETURN_STATUS_BASE: u32 = u32::MAX - MAX_NATIVE_RECORDS as u32;
+const RETURN_STATUS_BASE: u32 = quench_bjit::call_record::GENERAL_RETURN_STATUS_BASE;
 
 const _: () = assert!(RETURN_STATUS_BASE > TERMINATED_STATUS as u32);
 
@@ -305,10 +337,52 @@ fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> 
     (integer, exact)
 }
 
+// The boxes `emit_js_box_number` made while a lowering records them (`record_boxed_numbers`):
+// each tagged result with the binary64 word it boxed, which dominates it. A lowering that reads
+// the Number back takes that word (`State::proofs.numbers`) instead of unboxing.
+thread_local! {
+    static BOXED_NUMBERS: std::cell::RefCell<Option<Vec<(ir::Value, ir::Value)>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Starts recording the boxes `emit_js_box_number` makes, until `take_boxed_numbers`.
+pub(super) fn record_boxed_numbers() {
+    BOXED_NUMBERS.with(|boxed| *boxed.borrow_mut() = Some(Vec::new()));
+}
+
+/// The boxes made since `record_boxed_numbers`, which stops recording.
+pub(super) fn take_boxed_numbers() -> Vec<(ir::Value, ir::Value)> {
+    BOXED_NUMBERS.with(|boxed| boxed.borrow_mut().take().unwrap_or_default())
+}
+
 /// Encode a Number result with `Value::number`'s integer, double and NaN
 /// representations. A double with a fraction is its own bits, after one compare
 /// with its truncation; a whole, signed-zero or NaN result takes the cold encoding.
 pub(super) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+    let recording = BOXED_NUMBERS.with(|boxed| boxed.borrow().is_some());
+    if !recording { return emit_js_box_number_word(builder, number); }
+    // A recorded box is pure (no branch), so a lowering that reads the Number back leaves it
+    // unread and it folds away.
+    let result = emit_js_box_number_pure(builder, number);
+    BOXED_NUMBERS.with(|boxed| if let Some(boxed) = boxed.borrow_mut().as_mut() { boxed.push((result, number)); });
+    result
+}
+
+/// `emit_js_box_number` with no branch: the integer, double and NaN encodings, selected.
+fn emit_js_box_number_pure(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+    use crate::staged::machine::{Binary, Lane, Relation, Unary};
+    let (integer, is_integer) = emit_js_exact_int32(builder, number);
+    let mut stage = object_slots::emit(builder);
+    let bits = stage.raw_unary(Unary::Bitcast(Lane::I64), number);
+    let integer_bits = stage.raw_unary(Unary::ZeroExtend(Lane::I64), integer);
+    let int_tag = stage.raw_const(Lane::I64, crate::value::ValueLayout::INT_TAG as i64);
+    let integer_bits = stage.raw_binary(Binary::Or, integer_bits, int_tag);
+    let encoded = stage.raw_select(is_integer, integer_bits, bits);
+    let is_nan = stage.raw_compare(Relation::FloatUnordered, number, number);
+    let canonical_nan = stage.raw_const(Lane::I64, crate::value::ValueLayout::CANONICAL_NAN as i64);
+    stage.raw_select(is_nan, canonical_nan, encoded)
+}
+
+fn emit_js_box_number_word(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
     use crate::staged::machine::{Binary, Lane, Relation, Unary};
     let (cold, join) = (builder.create_block(), builder.create_block());
     builder.set_cold_block(cold);
@@ -644,7 +718,7 @@ fn emit_js_cached_field_slot(
         emit_js_guard(builder, own, fallback);
     }
 
-    let object_slots::ObjectHeader { record, shape, inline, address: object } = header
+    let object_slots::ObjectHeader { record, shape, inline, address: object, .. } = header
         .unwrap_or_else(|| object_slots::ObjectHeader::prove(builder, base, records, None, fallback));
     // The exact shape includes dictionary storage, which cannot match an own-data row.
     let same_shape = object_slots::emit(builder).raw_compare(Relation::Equal, shape, receiver_shape);
@@ -751,6 +825,16 @@ fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, o
     object_slots::emit(builder).load_u64(Region::Dispatch.mutable(), payload, offset)
 }
 
+/// A payload word fixed for a whole native run (`JsStepDispatch::vm`, `residual`): a nested
+/// run that rebinds it restores it before its caller's code continues
+/// (`Vm::run_nested_lane_method`), so the caller's code reads it once, and every helper call
+/// shares that read instead of loading it again after each call.
+fn emit_js_payload_fixed_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
+    use crate::staged::region::Region;
+    let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
+    object_slots::emit(builder).load_u64(Region::Dispatch.readonly(), payload, offset)
+}
+
 /// A record reservation's base in the dispatch payload (`JsStepDispatch::object_record_base`,
 /// `function_record_base`): fixed for a whole native run, so the load merges and hoists.
 fn emit_js_record_base(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
@@ -781,8 +865,8 @@ fn emit_lane_helper_call(
     helper: ir::Value,
     arguments: &[ir::Value],
 ) -> ir::Value {
-    let vm = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, vm));
-    let residual = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, residual));
+    let vm = emit_js_payload_fixed_word(builder, payload, std::mem::offset_of!(JsStepDispatch, vm));
+    let residual = emit_js_payload_fixed_word(builder, payload, std::mem::offset_of!(JsStepDispatch, residual));
     // All current helpers fit inline; larger future ABIs spill without a limit.
     let mut values = smallvec::SmallVec::<[ir::Value; 8]>::from_slice(&[vm, residual]);
     values.extend_from_slice(arguments);
@@ -793,18 +877,18 @@ fn emit_lane_helper_call(
 /// needs no barrier log. Verified Numbers are immediate and discharge the test at
 /// compilation. Otherwise the caller must perform the logged store.
 fn emit_unlogged_property_store_guard(
-    builder: &mut FunctionBuilder<'_>, space: crate::staged::RecordSpace, payload: ir::Value, record_id: ir::Value,
+    builder: &mut FunctionBuilder<'_>, space: crate::staged::StagedRecordSpace, payload: ir::Value, record_id: ir::Value,
     value: ir::Value, fallback: ir::Block,
 ) {
     use crate::staged::barrier::{unlogged_store, MarkList};
     // A marked owner would be logged by RecordSpace::store_logs; otherwise the
     // barrier is a no-op. Marks and block bases are refreshed after each callout.
     let list = match space {
-        crate::staged::RecordSpace::Object => MarkList {
+        crate::staged::StagedRecordSpace::Object => MarkList {
             blocks: std::mem::offset_of!(JsStepDispatch, object_mark_blocks),
             count: std::mem::offset_of!(JsStepDispatch, object_mark_block_count),
         },
-        crate::staged::RecordSpace::Function => MarkList {
+        crate::staged::StagedRecordSpace::Function => MarkList {
             blocks: std::mem::offset_of!(JsStepDispatch, function_mark_blocks),
             count: std::mem::offset_of!(JsStepDispatch, function_mark_block_count),
         },
@@ -940,6 +1024,8 @@ macro_rules! lane_helper_inventory {
 }
 lane_helper_inventory! { H;
     FunctionCapture => lane_function_capture_read::<H>,
+    /// A leave's boxing of an unboxed double (`lane_box_number`): out of line, as leaves are cold.
+    BoxNumber => lane_box_number,
     FieldGet => lane_field_get::<H>,
     /// The count of the entry function's `arguments` (`lane_body_arguments_length`).
     ArgumentsLength => super::dispatch_fast::lane_body_arguments_length::<H>,
@@ -971,6 +1057,8 @@ lane_helper_inventory! { H;
     /// A planned construction (`lane_construct`).
     Construct => constructions::lane_construct::<H>,
     ConstructReceiver => constructions::lane_construct_receiver::<H>,
+    /// Whether a construct plan holds (`dispatch_fast::construct_plan_holds`).
+    ConstructPlanHolds => constructions::lane_construct_plan_holds::<H>,
     /// A construction of the body's own, by the call protocol (`dispatch_fast::lane_body_construct`).
     ConstructCall => super::dispatch_fast::lane_body_construct::<H>,
     /// A body's uncaught `throw`, stashed for its native callers and the lane (`lane_raise`).
@@ -1042,7 +1130,7 @@ fn materialize_chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatc
 fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usize, entry: ChainFrame)
     -> Result<super::dispatch_frame::PendingGeneralCall, (u32, JsError)> {
     let body = program.function(vm.frames[caller].function as usize);
-    let instruction = super::dispatch_fast::decoded_instruction(body, body.code[entry.call_pc as usize]);
+    let instruction = body.widened(body.code[entry.call_pc as usize]);
     // The activation the instruction's step pushes (`Vm::pushed_frame`).
     let (callee, window, receiver, completion) = vm.pushed_frame(caller, instruction, entry.callee, entry.this);
     let env = vm.heap.function(callee).expect("admitted inline closure").env;
@@ -1190,9 +1278,7 @@ pub fn native_js_lane_helpers<H: Host>() -> *const () {
 
 #[cfg(feature = "aot")]
 pub(super) fn native_lane_helpers_signature(isa: &dyn cranelift_codegen::isa::TargetIsa) -> ir::Signature {
-    let mut signature = Signature::new(isa.default_call_conv());
-    signature.returns.push(AbiParam::new(isa.pointer_type()));
-    signature
+    call_signature::word_signature(isa.default_call_conv(), 0, 1, isa.pointer_type())
 }
 
 #[derive(Clone, Copy)]
@@ -1237,6 +1323,26 @@ pub(super) struct OnlineFacts<'a> {
     /// The naming a cache site recorded for a `SetFunctionName`'s atom and the word of the name's string
     /// (`Vm::native_function_name`), whose staged row names a function; `None` where none may be held.
     pub(super) names: Option<&'a dyn Fn(u16, Atom) -> Option<(crate::staged::add_plan::Transition, u64)>>,
+}
+
+/// A construct plan whose receiver is its fields alone (`ConstructPlanKind::Passed`): its
+/// callee, its receiver's exact shape and, per field in slot order, the field's name and where
+/// its value comes from. A body that reads such a receiver's fields and lets it escape nowhere
+/// keeps the values and allocates the receiver only at a leave.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ScalarConstructPlan {
+    pub(super) callee: Value,
+    pub(super) shape: u32,
+    pub(super) fields: smallvec::SmallVec<[(Atom, ScalarField); 4]>,
+}
+
+/// Where a field of a `ScalarConstructPlan` takes its value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum ScalarField {
+    /// The argument of this parameter (`undefined` past the passed ones).
+    Parameter(u16),
+    /// This constant, whatever is passed.
+    Constant(Value),
 }
 
 impl OnlineFacts<'_> {
@@ -1284,20 +1390,38 @@ pub(super) struct VmFacts<'a> {
     pub(super) frozen_constants: Option<usize>,
     /// The scalar entry a lane body's direct calls of its own function call (`lane_region::scalar`).
     pub(super) scalar: Option<lane_region::scalar::ScalarAbi>,
+    /// The names method caches hold now, where offline code stores in place under a dependency on
+    /// the atoms it stores staying unnamed (`OsrFacts::stable`): a loop region compiled for a
+    /// specialized run, which a cache naming one retires (`MethodCacheAtoms::name`).
+    pub(super) held_atoms: Option<HeldAtoms<'a>>,
+    /// The construct plan a construction record of a function holds now, by function and PC
+    /// (`ScalarConstructPlan`): what code may keep as its field values while the object
+    /// escapes nowhere (`lane_region::virtual_objects`). The code tests that the plan still
+    /// holds where it would construct, so it takes no dependency on it.
+    pub(super) construct_plans: Option<&'a dyn Fn(u32, u32) -> Option<ScalarConstructPlan>>,
+}
+
+/// What offline code holds of the atoms it stores (`VmFacts::held_atoms`): the names method caches
+/// hold now, and the word its publication sets when a cache names one it stores
+/// (`code_dependencies::Invalidation`), which a run that calls reads after each call.
+#[derive(Clone, Copy)]
+pub(super) struct HeldAtoms<'a> {
+    pub(super) names: &'a super::method_cache::AtomBits,
+    pub(super) invalidation: usize,
 }
 
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None };
+        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None }
+            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None }
     }
 }
 
@@ -1316,7 +1440,7 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
     lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
         fields: &[], global_reads, facts, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
-        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
+        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], typed_captures: &[], int_captures: &[],
         plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Prefix,
             completion: lane_region::Completion::Body, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok().filter(|region| region.native != 0)
@@ -1370,6 +1494,7 @@ enum Kind {
 }
 
 impl Kind {
+    #[inline]
     fn of(ty: crate::WasmType) -> Option<Self> {
         match ty {
             crate::WasmType::I32 | crate::WasmType::F32 => Some(Self::I32),
@@ -1574,27 +1699,10 @@ impl AnalysisState {
 
 /// Traps compiled code can raise, by status (index + 1); status 0 is a
 /// normal return.
-const TRAPS: [crate::WasmTrap; 9] = [
-    crate::WasmTrap::Unreachable,
-    crate::WasmTrap::OutOfBoundsMemory,
-    crate::WasmTrap::IntegerDivideByZero,
-    crate::WasmTrap::IntegerOverflow,
-    crate::WasmTrap::CallStackExhausted,
-    crate::WasmTrap::InvalidConversionToInteger,
-    crate::WasmTrap::UndefinedElement,
-    crate::WasmTrap::UninitializedElement,
-    crate::WasmTrap::IndirectCallTypeMismatch,
-];
+use crate::wasm::trap::COMPILED_TRAPS as TRAPS;
 
 const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
-const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
-const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
-const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
-/// A selective root may include a few hot callees learned from earlier
-/// indirect-call executions. Keep the profile-guided closure bounded so one
-/// polymorphic module cannot turn a tier promotion into eager compilation.
-const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
-pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
+use crate::vm::compiled::tier_policy::{MAX_JIT_ROOT_FUNCTIONS, MAX_JIT_ROOT_BYTECODES_PER_FUNCTION, MAX_JIT_ROOT_CODE_BYTES, MAX_JIT_PROFILED_INDIRECT_TARGETS, MAX_JIT_TIER_BYTECODES_PER_FUNCTION, THREAD_BUDGET, UNROLL_BUDGET, MAX_UNROLL_FACTOR, WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT, JS_TIER_LANE_ENTRY_RECORDS};
 
 fn jit_root_override() -> Result<Option<usize>, ()> {
     #[cfg(test)]
@@ -1744,11 +1852,7 @@ const TERMINATED_STATUS: i64 = quench_bjit::call_record::TERMINATED_STATUS as i6
 const _: () = assert!(TERMINATED_STATUS == RAISED_STATUS + 1, "the stencils' terminated status follows the raised one");
 
 fn trap_status(trap: crate::WasmTrap) -> i64 {
-    TRAPS
-        .iter()
-        .position(|candidate| *candidate == trap)
-        .map(|index| index as i64 + 1)
-        .expect("compiled code raises only listed traps")
+    i64::from(trap.compiled_status().expect("compiled code raises only listed traps"))
 }
 
 /// Stack compiled code may use below its entry before a call traps as
@@ -1822,6 +1926,9 @@ pub(super) struct CallContext {
     instance: *const InstanceContext,
     /// The VM's roots for the instances native code enters beyond this one.
     native_roots: *mut NativeRoots,
+    /// The VM's `memory_grow_callout::<H>`: (context, pages) -> the size before in pages, or -1.
+    /// A stitched `memory.grow` row calls it (`CONTEXT_MEMORY_GROW`).
+    memory_grow: usize,
 }
 
 impl CallContext {
@@ -1863,6 +1970,7 @@ impl CallContext {
             interrupt_owner: std::ptr::null(),
             instance: std::ptr::null(),
             native_roots: std::ptr::null_mut(),
+            memory_grow: 0,
         };
         context.bind_native_adapter(adapter_payload, interrupt, poll_page);
         context
@@ -1922,6 +2030,7 @@ impl CallContext {
             interrupt_owner: interrupt,
             instance: std::ptr::null(),
             native_roots: std::ptr::null_mut(),
+            memory_grow: 0,
         }
     }
 
@@ -1969,6 +2078,7 @@ impl CallContext {
             interrupt_owner: self.interrupt_owner,
             instance: self.instance,
             native_roots: self.native_roots,
+            memory_grow: self.memory_grow,
         }
     }
 }
@@ -1989,6 +2099,7 @@ const CONTEXT_TABLE_WORDS: i32 = std::mem::offset_of!(CallContext, table_words) 
 const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, callout) as i32;
 const CONTEXT_CALL_REFERENCE: i32 = std::mem::offset_of!(CallContext, call_reference) as i32;
 const CONTEXT_MEMORY_LENGTH: i32 = std::mem::offset_of!(CallContext, memory_length) as i32;
+const CONTEXT_MEMORY_GROW: i32 = std::mem::offset_of!(CallContext, memory_grow) as i32;
 const CONTEXT_CALL_REFERENCE_DIAGNOSTIC: i32 =
     std::mem::offset_of!(CallContext, call_reference_diagnostic) as i32;
 const CONTEXT_INSTANCE: i32 = std::mem::offset_of!(CallContext, instance) as i32;
@@ -2583,12 +2694,7 @@ pub(super) fn native_entry_signature(
     pointer: ir::Type,
     call_conv: cranelift_codegen::isa::CallConv,
 ) -> Signature {
-    let mut signature = Signature::new(call_conv);
-    for parameter in [pointer, types::I64, types::I64, pointer, pointer] {
-        signature.params.push(AbiParam::new(parameter));
-    }
-    signature.returns.push(AbiParam::new(types::I32));
-    signature
+    call_signature::typed_signature(call_conv, &[pointer, types::I64, types::I64, pointer, pointer], &[types::I32])
 }
 
 /// The verified Number result's machine view in the common native result word.
@@ -2602,6 +2708,91 @@ enum CompiledArgs<'a> {
         base: usize,
         count: usize,
     },
+}
+
+/// Function `index`'s entry stitched from the b-jit's rows, under `--b-jit` where it has rows
+/// for every instruction: the `WasmEntry` ABI the compiled entry has.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn stitched_entry<H: Host>(
+    vm: &Vm<H>,
+    program: ProgramId,
+    code: &crate::bytecode::ResidualProgram,
+    index: usize,
+    (plans, cells, callable): (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool]),
+    memory_slot: Option<u32>,
+    (full_plan, sites, env): (&Plan, &[(usize, usize)], Value),
+) -> Option<Vec<u8>> {
+    // The indirect call row calls the non-diagnostic reference callout.
+    if !crate::jit_mode::base_only() || vm.programs.js_jit_diagnostics_enabled() {
+        return None;
+    }
+    let function = code.function_get(index)?;
+    let constant = |at: usize| {
+        let value = vm.programs.constant(program, at)?;
+        if vm.heap.v128(value).is_some() {
+            return None;
+        }
+        Some(vm.decode_bits64(value).unwrap_or(u64::from(value.wasm_bits32())))
+    };
+    // A callee has an entry cell while it is `callable` (it has a plan and its stitch succeeded);
+    // the cell holds the entry once placed. A callee that is not callable is called through the
+    // VM (`CALL_VM`), so its callers stitch all the same.
+    let callee = |callee: usize| callable.get(callee).copied()?.then(|| cells[callee].as_ptr() as u64);
+    // A global access names its environment slot in the full plan; the row reads the cell from
+    // the context, since a program's code serves every instance.
+    let global = |pc: usize| -> Option<(u32, crate::staged::wasm_instance::Storage)> {
+        if !full_plan.reachable(pc) {
+            return None;
+        }
+        let Slot::Binding(slot) = full_plan.operand(pc) else { return None };
+        let binding = vm.heap.environment_slot(env, slot as usize)?;
+        let Some(Cell::WasmGlobal { ty, .. }) = vm.heap.get(binding) else { return None };
+        Some((slot, crate::staged::wasm_instance::Storage::of(*ty)))
+    };
+    let canonical = |index: u32| vm.programs.wasm_signatures(program)?.type_canonical(index).map(|canonical| canonical.word());
+    let indirect = |pc: usize| wasm_stitch::indirect::site(full_plan, sites, &canonical, pc);
+    let vector_constant = |at: usize| vm.heap.v128(vm.programs.constant(program, at)?);
+    let vector_move = |pc: usize| full_plan.reachable(pc) && full_plan.operand(pc) == Slot::Vector;
+    // A growth leaves the base in place only for a reserved (guarded) memory.
+    let memory_stable = memory_slot.is_none_or(|slot| {
+        vm.heap.environment_slot(env, slot as usize).and_then(|binding| guarded_memory(vm, binding)).is_some()
+    });
+    // A table or segment operation names its bindings in the full plan, as the u-jit reads them.
+    let table_bindings = |pc: usize| -> Option<(Option<u32>, Option<u32>)> {
+        if !full_plan.reachable(pc) {
+            return None;
+        }
+        let first = match full_plan.operand(pc) {
+            Slot::Binding(slot) => Some(slot),
+            _ => None,
+        };
+        let second = match full_plan.seconds[pc] {
+            Some(Slot::Binding(slot)) => Some(slot),
+            _ => None,
+        };
+        Some((first, second))
+    };
+    let world = wasm_stitch::World {
+        constant: &constant,
+        memory_slot,
+        memory_stable,
+        callee: &callee,
+        vm_call: wasm_call_vm::vm_call_callout::<H> as *const () as u64,
+        global: &global,
+        globals_offset: CONTEXT_GLOBALS as u64,
+        indirect: &indirect,
+        table_callout: wasm_table_ops_stage::table_op_callout::<H> as *const () as u64,
+        table_bindings: &table_bindings,
+        registers: function.registers,
+        vector_constant: &vector_constant,
+        vector_move: &vector_move,
+    };
+    wasm_stitch::stitch(function, usize::from(function.params), plans[index].as_ref()?.result.is_some(), &world)
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn stitched_entry<H: Host>(_: &Vm<H>, _: ProgramId, _: &crate::bytecode::ResidualProgram, _: usize, _: (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool]), _: Option<u32>, _: (&Plan, &[(usize, usize)], Value)) -> Option<Vec<u8>> {
+    None
 }
 
 /// The `CompiledProgram::positions` entry of a function an artifact does not hold.
@@ -2697,6 +2888,8 @@ fn compiled_reference_target<H: Host>(
 pub(super) struct CompiledProgram {
     _code: CodeMemory,
     table: Box<[usize]>,
+    /// Each function's entry address, which stitched rows call through (`wasm_stitch::World`).
+    _entry_cells: Box<[std::cell::Cell<usize>]>,
     /// The compiled functions in index order: a selective tier holds a few of a module's
     /// thousands, so only `positions` is as long as the module.
     functions: Box<[CompiledFunction]>,
@@ -3051,6 +3244,13 @@ pub(super) struct CompiledOsrRegion {
     /// What its code owns of its calls: the callees it runs as their own rows, whose registers
     /// follow the activation's (`CallCode`).
     pub(super) calls: CallCode,
+    /// The dispatch the region's runs reuse (`Crossing::General`): its last run's, put back as the
+    /// run returns, so an entry rebinds the words that change between runs instead of building
+    /// the dispatch again (`JsStepDispatch::rebind_region`). A run entered while another of the
+    /// region runs finds none here and builds its own.
+    parked: std::cell::Cell<Option<Box<JsStepDispatch>>>,
+    /// Whether the region has parked its dispatch (`parked`).
+    made: std::cell::Cell<bool>,
 }
 
 
@@ -3123,16 +3323,42 @@ impl CompiledOsrRegion {
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
         (lane_context, direct_calls): (usize, bool),
     ) -> RegionRun {
+        let lend = self.calls.enters_callees().then_some(direct_calls);
+        let mut bind = |dispatch: &mut JsStepDispatch, residual: &Rc<ResidualProgram>, vm: &mut Vm<H>| {
+            osr_lane::bind_loop::<H>(dispatch, region, entry, lane_context);
+            // SAFETY: the caller's contract covers the context and `registers`.
+            let captures = unsafe { osr_lane::bind_captures::<H>(dispatch, region, entry, lane_context) };
+            unsafe { osr_lane::bind_frame(dispatch, residual, vm, (program, function, lane_context), registers) };
+            captures
+        };
+        // A region that calls callees by their entries runs on the lane frame's payload, which their
+        // own helpers read (`region_lend`).
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
-        let outcome = unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
-            osr_lane::bind_loop(native, vm, region, entry, (frame, lane_context));
-            let _captures = osr_lane::bind_captures::<H>(native, region, entry, lane_context);
-            osr_lane::bind_frame(native, vm, (program, function, lane_context), registers);
-            // A region that calls callees by their entries runs on the lane frame's payload, which their
-            // own helpers read (`region_lend`).
-            let lend = self.calls.enters_callees().then_some(direct_calls);
-            osr_lane::enter(native, vm, program, (code, resume), registers, interrupt, (lane_context, lend))
-        }) }.unwrap_or(RegionRun::own(LaneExit::Terminated));
+        let outcome = match self.parked.take().filter(|_| self.crossing == Crossing::General) {
+            Some(mut dispatch) => unsafe {
+                let vm = &mut *vm;
+                match vm.programs.get(program) {
+                    Some(residual) => {
+                        dispatch.rebind_region(vm, program, &residual, frame);
+                        let _captures = bind(&mut dispatch, &residual, vm);
+                        let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
+                        self.parked.set(Some(dispatch));
+                        run
+                    }
+                    None => RegionRun::own(LaneExit::Terminated),
+                }
+            },
+            None => unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
+                native.dispatch.bind_native_storage(vm);
+                let _captures = bind(&mut native.dispatch, &native._program, vm);
+                let run = osr_lane::enter(&mut native.dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
+                // The first run of the region parks a dispatch for the runs after it.
+                if self.crossing == Crossing::General && !self.made.replace(true) {
+                    self.parked.set(Some(Box::new(JsStepDispatch::idle())));
+                }
+                run
+            }) }.unwrap_or(RegionRun::own(LaneExit::Terminated)),
+        };
         // SAFETY: as above; the activation that held `vm` has returned.
         note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, region, self.calls.enters_callees());
         outcome
@@ -3151,7 +3377,7 @@ pub(super) fn analyze_inlining_osr_region<'a>(
     live: &crate::compile::liveness::RegisterMasks,
     header: u32,
     backedge: u32,
-    resolve: &mut dyn FnMut(&[FieldUse], Option<u16>) -> Option<InlineCallee<'a>>,
+    resolve: &mut dyn FnMut(&[FieldUse], CalleeSource) -> Option<InlineCallee<'a>>,
 ) -> Option<LoopRegion> {
     osr_loop::inline_region(function, decoded, constants, sites, live, header, backedge, resolve)
 }
@@ -3357,7 +3583,7 @@ struct JsStepDispatch {
     residual: usize,
     /// Immutable function admitted with `residual` by `JsNativeActivation`.
     body: *const crate::bytecode::Function,
-    /// A lane body's scratch window (`LaneFrame::scratch`), where a leave inside an inlined
+    /// A lane body's scratch window (`BodyRunContext::scratch`), where a leave inside an inlined
     /// callee writes the callee's registers.
     inlined: usize,
     /// The lowering line of the guard a lane body last left at, where its code was compiled
@@ -3387,7 +3613,7 @@ struct JsStepDispatch {
     /// `epoch`, and the admission a site whose entry misses asks.
     call_cache: usize,
     epoch: u64,
-    layout_seen: u64, // `Heap::native_layout_epoch` at the last lane entry's refresh; `u64::MAX`: never
+    layout_seen: u64, // `Heap::native_layout_epoch` at the last reread of the bases (`refresh_object_bases`); `u64::MAX`: never
     frameless: usize,
     /// The VM's in-loop call targets (`Vm::in_loop_call_target`), which an inlined body's
     /// binding probes before its helper; an empty table where an eval binds no callee.
@@ -3409,7 +3635,7 @@ struct JsStepDispatch {
     typed_view_pages: usize,
     buffer_relocations: usize,
     /// The function records' mark blocks and their count, which a store into a function's own
-    /// properties reads as the object records' are (`RecordSpace::Function`); and the empty
+    /// properties reads as the object records' are (`StagedRecordSpace::Function`); and the empty
     /// string's word, which a function's inferred name replaces (`staged::naming`).
     function_mark_blocks: usize,
     function_mark_block_count: usize,
@@ -3446,7 +3672,7 @@ pub(super) struct LaneMethod {
     pub(super) inlined: Vec<InlinedCall>,
     /// Its leaves, by place (`ExitTable`).
     pub(super) exits: ExitTable,
-    /// The scratch registers a leave inside an inlined call fills (`LaneFrame::scratch`): one
+    /// The scratch registers a leave inside an inlined call fills (`BodyRunContext::scratch`): one
     /// per register of the inlined callees, the unit's past the caller's.
     scratch_width: usize,
     /// Whether its inlined frames' registers live in the activation's register file past the
@@ -3454,6 +3680,9 @@ pub(super) struct LaneMethod {
     /// one adopts them from the file (`Vm::lane_adopt_window`).
     framed: bool,
     caller_registers: u16,
+    /// The frame slots past `caller_registers` the code writes in the activation's own storage (a b-jit
+    /// body's scratch and inlined windows, past the environment window); 0 where it writes none there.
+    frame_reach: usize,
     /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
     amortizes: bool,
     /// The callees it calls by their compiled entries, which its code names.
@@ -3467,9 +3696,15 @@ pub(super) struct LaneMethod {
     /// The constructors its `instanceof` rows guard their operands against by identity: a collection that frees one
     /// retires it (`ProgramStore::retire_dead_native_calls`), so a word they name is never a reused one.
     pub(super) constructors: Box<[Value]>,
+    /// Whether it runs only in the realm it was compiled in: its entry proves that realm active
+    /// (`Heap::Realm`) and every callee it names is that realm's, so a switch to another realm
+    /// changes nothing it relies on (`ProgramStore::retire_native_calls_across_realms`).
+    pub(in crate::vm) realm_bound: bool,
 }
 
 impl LaneMethod {
+    pub(super) fn frame_reach(&self) -> usize { self.frame_reach }
+    #[inline]
     pub(super) fn recovery_space(&self) -> super::dispatch_fast::LaneRecoverySpace { self.recovery_space }
     /// The registers of the function it runs, which an inlined callee's follow.
     pub(super) fn caller_registers(&self) -> u16 {
@@ -3504,7 +3739,7 @@ impl LaneMethod {
         self.closed
     }
 
-    /// Sizes this thread's scratch window for it (`LaneFrame::scratch`): the one event that
+    /// Sizes this thread's scratch window for it (`BodyRunContext::scratch`): the one event that
     /// grows the window, so a run never checks it. Its publication does it
     /// (`ProgramStore::publish_lane_method`), on the thread that runs it.
     pub(super) fn reserve_scratch(&self) {
@@ -3544,11 +3779,11 @@ pub(super) enum LaneExit {
 /// The status of a lane body whose activation completes: its result word holds the value,
 /// and `JsStepDispatch::returned_pc` the record that completes it (`LaneExit::Returned`). It
 /// sits below the return statuses and above every small status.
-pub(super) const LANE_BODY_RETURNED: u32 = RETURN_STATUS_BASE - 1;
+pub(super) use quench_bjit::call_record::LANE_BODY_RETURNED;
 /// The status of a lane body whose activation ends by an exception no handler of its function
 /// covers: the exception is in `Vm::lane_raised` and `JsStepDispatch::returned_pc` names the
 /// record that raised it (`LaneExit::Threw`). Native callers unwind through it.
-pub(super) const LANE_BODY_THREW: u32 = RETURN_STATUS_BASE - 3;
+pub(super) use quench_bjit::call_record::LANE_BODY_THREW;
 
 /// What a lane body's native call (`dispatch_fast::lane_body_call`) did: completed, with its
 /// result in the call's register; missed before any effect, so the body leaves at the call;
@@ -3573,6 +3808,7 @@ impl LaneExit {
         match self { Self::At(pc) | Self::Returned { pc, .. } | Self::Threw { pc } => Some(pc), Self::Entry | Self::Stub => Some(0), Self::Inlined { .. } | Self::Callee | Self::Terminated => None }
     }
     /// Where the activation resumes: an entry leave at its first record.
+    #[inline]
     pub(super) fn resumed(self) -> Self {
         if self.entered_nothing() { Self::At(0) } else { self }
     }
@@ -3638,11 +3874,16 @@ unsafe extern "C" fn lane_truthy<H: Host>(vm: u64, _residual: u64, bits: u64) ->
 /// Admit a bound slot's write domain before any guest effect or raw store.
 unsafe extern "C" fn lane_field_write_admission<H: Host>(vm: u64, _residual: u64, shape: u64, slot: u64, domain: u64) -> u64 {
     #[cfg(test)] FIELD_WRITE_ADMISSIONS.with(|count| count.set(count.get() + 1));
-    let Some(domain) = crate::typed_ir::SlotType::ALL.get(domain as usize) else { return 0; };
+    let raw_double = domain & RAW_DOUBLE_WRITES != 0;
+    let Some(domain) = crate::typed_ir::SlotType::ALL.get((domain & !RAW_DOUBLE_WRITES) as usize) else { return 0; };
     // SAFETY: the shared native entry owns the VM; admission neither allocates nor reenters.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
-    u64::from(vm.heap.admit_slot_writes(shape as u32, slot as usize, domain.ty()))
+    u64::from(vm.heap.admit_slot_writes_as(shape as u32, slot as usize, domain.ty(), raw_double))
 }
+
+/// The bit of a write admission's domain word (`lane_field_write_admission`) that says the
+/// writer stores a slot of raw doubles as raw doubles (`StoreArm::raw_double`).
+pub(super) const RAW_DOUBLE_WRITES: u64 = 1 << 16;
 
 /// A logged own-field store that preserves every native storage projection.
 /// Migration or observed type widening declines before writing, leaving the full
@@ -3703,7 +3944,7 @@ unsafe extern "C" fn lane_raise<H: Host>(vm: u64, _residual: u64, value: u64, si
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
     let value = Value::from_bits(value);
     let message = vm.detail_string(value);
-    vm.lane_raised = Some(JsError::thrown(value, message));
+    vm.lane_completion.raise(JsError::thrown(value, message));
     vm.lane_raise_site = site;
     0
 }
@@ -3713,7 +3954,7 @@ unsafe extern "C" fn lane_raise<H: Host>(vm: u64, _residual: u64, value: u64, si
 unsafe extern "C" fn lane_take_raised<H: Host>(vm: u64, _residual: u64) -> u64 {
     // SAFETY: as `lane_field_get`.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
-    let error = vm.lane_raised.take().expect("a raised call left its exception");
+    let error = vm.lane_completion.take_raised().expect("a raised call left its exception");
     error.thrown_value().expect("a body raises a thrown value").to_bits()
 }
 
@@ -3748,6 +3989,13 @@ unsafe extern "C" fn lane_instance_of<H: Host>(vm: u64, _residual: u64, value: u
 
 /// A lane body's fused `typeof` test of a heap value (`Vm::typeof_test_value`): 1 where its
 /// name is the one at `index` of `bytecode::TYPEOF_NAMES`, else 0.
+/// The tagged Number of the double `bits` (`Value::number`): a leave's boxing of an unboxed
+/// register, called from its cold block instead of the inline encoding's two blocks and
+/// fifteen instructions per register.
+unsafe extern "C" fn lane_box_number(_vm: u64, _residual: u64, bits: u64) -> u64 {
+    Value::number(f64::from_bits(bits)).to_bits()
+}
+
 unsafe extern "C" fn lane_typeof_is<H: Host>(vm: u64, _residual: u64, value: u64, index: u64) -> u64 {
     // SAFETY: as `lane_field_get`; the test reads the value's cell and allocates nothing.
     let vm = unsafe { &*(vm as *const Vm<H>) };
@@ -3906,15 +4154,29 @@ impl<H: Host> Vm<H> {
     /// `generic`, where a previous body left on its runs: their proofs did not hold for the
     /// values they met (a function's own field, read through a plain object's proof), so
     /// they take the VM's cached read, which answers them (`lane_region::field_probe`).
-    fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize])
-        -> Vec<Option<Vec<NativeFieldLoad>>> {
+    /// `view` is the lane view of `function`, whose own instructions' records hold the own-field
+    /// hints (`LaneView::own_field_hint`); each own read's hint becomes its loads' `formed` layout
+    /// id, which a load names only where it is the load's shape (`lane_region::field_plans`). An
+    /// inlined instruction's record belongs to another body's view, so it takes no hint.
+    fn lane_unit_fields(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize],
+        view: Option<&super::dispatch_fast::LaneView>) -> Vec<Option<Vec<NativeFieldLoad>>> {
         let (generic, functions): (Vec<u16>, _) = (generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
             .map(|(site, _)| site).collect(), self.heap.function_shapes());
+        // Base regions read the live cache, whose entries name no form (`loop_tier::native_field_loads`).
+        let view = view.filter(|_| !crate::jit_mode::base_regions());
         let sites = unit.instructions
             .iter()
-            .flat_map(|instruction| Self::instruction_field_sites(program, instruction))
-            .filter(|(site, _)| !generic.contains(site))
-            .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }.into_iter().map(|load| NativeFieldLoad { function_shape: functions.contains(load.shape as usize), ..load }).collect::<Vec<_>>()))
+            .enumerate()
+            .flat_map(|(pc, instruction)| Self::instruction_field_sites(program, instruction).into_iter().map(move |(site, read)| (pc, site, read)))
+            .filter(|(_, site, _)| !generic.contains(site))
+            .map(|(pc, site, read)| {
+                let formed = match (read, view, unit.origins.get(pc)) {
+                    (true, Some(view), Some(lane_unit::Origin::Caller(caller))) => view.own_field_hint(*caller as usize),
+                    _ => None,
+                };
+                let loads = if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) };
+                (site, loads.into_iter().map(|load| NativeFieldLoad { function_shape: functions.contains(load.shape as usize), formed, ..load }).collect::<Vec<_>>())
+            })
             .filter(|(site, shapes)| !shapes.is_empty() && site_posterior::SiteEvidence::of(self.programs.tiers(), self.field_site_leaves(self.field_cache_index(*site)), shapes.len()).speculates())
             .map(|(site, shapes)| (usize::from(site), shapes));
         lane_region::flat_table(sites)
@@ -3936,7 +4198,7 @@ impl<H: Host> Vm<H> {
     ) -> LaneExit {
         self.run_lane_body(&BodyRun {
             method, direct_calls, program, residual, registers, receiver, captures, lane_context,
-            pending: NO_PENDING_ACTIVATIONS,
+            pending: NO_PENDING_ACTIVATIONS, bases_stand: false,
         })
     }
 
@@ -3977,9 +4239,19 @@ impl<H: Host> Vm<H> {
             (context.stack_limit, context.entry_stack, context.interrupt,
                 context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner)
         };
-        let exit = self.run_lane_method(method, true, program, residual, registers, receiver, captures, lane_context);
+        // The callee runs in the caller's program and its caller's helper allocated nothing since
+        // the caller's body last checked the bases (`BodyRun::bases_stand`).
+        let exit = self.run_lane_body(&BodyRun {
+            method, direct_calls: true, program, residual, registers, receiver, captures, lane_context,
+            // An entry from outside any body (`saved.residual == 0`) checks them as any entry does.
+            pending: NO_PENDING_ACTIVATIONS, bases_stand: saved.residual != 0,
+        });
         // SAFETY: as above.
         unsafe {
+            // An entry from outside any body (the interpreter's call) found the run's words
+            // unbound: they stay bound to the run it made, so the next such entry of the same run
+            // binds none of them again (`BodyRunContext::bind_run`); the per-entry words go back.
+            let saved = if saved.residual == 0 && saved.field_entries == 0 { saved.keeping_run_of(&(*frame).dispatch) } else { saved };
             saved.install(&mut (*frame).dispatch);
             if self.field_entries_epoch != moved_from { self.rebind_lane_field_entries(); }
             let context = &mut (*frame).context;
@@ -3992,12 +4264,12 @@ impl<H: Host> Vm<H> {
     /// Copies the registers that follow the first `from` of the activation at `registers`, where a
     /// stitched body kept its inlined callees' (`LaneMethod::framed`), into the scratch window a
     /// leave inside one reads (`lane_scratch`), before the activations it makes overwrite them.
-    pub(super) fn lane_adopt_window(registers: *const Value, from: usize) {
+    pub(super) fn lane_adopt_window(registers: *const Value, from: usize, width: usize) {
         let frame = lane_frame();
         // SAFETY: as `lane_stack_words`; the body's admission proved the room past the
         // activation's registers (`LaneRecoverySpace`), and no lane body runs while the lane reads it.
         unsafe {
-            for (at, slot) in (*frame).scratch.iter_mut().enumerate() {
+            for (at, slot) in (*frame).scratch.iter_mut().take(width).enumerate() {
                 *slot = registers.add(from + at).read();
             }
         }
@@ -4034,7 +4306,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Hands `write` each of the `count` registers an inlined callee its lane body left
-    /// inside held, as the body wrote them to the scratch window (`LaneFrame::scratch`).
+    /// inside held, as the body wrote them to the scratch window (`BodyRunContext::scratch`).
     pub(super) fn lane_scratch(start: usize, count: usize, mut write: impl FnMut(u16, Value)) {
         LANE_FRAME.with(|frame| {
             // SAFETY: as in `run_lane_method`; no lane body runs while the lane reads it.
@@ -4071,6 +4343,7 @@ struct LaneEntry {
 }
 
 impl LaneEntry {
+    #[inline]
     fn of(dispatch: &JsStepDispatch) -> Self {
         Self {
             program_id: dispatch.program_id,
@@ -4084,6 +4357,13 @@ impl LaneEntry {
         }
     }
 
+    /// This entry's per-entry words with the run words `dispatch` holds now: its program, field
+    /// cache entries and residual.
+    fn keeping_run_of(self, dispatch: &JsStepDispatch) -> Self {
+        Self { program_id: dispatch.program_id, field_entries: dispatch.field_entries, residual: dispatch.residual, ..self }
+    }
+
+    #[inline]
     fn install(self, dispatch: &mut JsStepDispatch) {
         dispatch.program_id = self.program_id;
         dispatch.field_entries = self.field_entries;
@@ -4097,10 +4377,10 @@ impl LaneEntry {
 }
 
 /// The words of the dispatch payload and context that stay as they are for every entry of one
-/// lane run: its VM, program, residual, lane context and store specialization, and what follows
-/// from them, the program's field cache entries (`LaneFrame::bind_run`). An entry writes them
-/// only where its run is not the one that bound them; the words it writes per entry are its
-/// registers and the stack's room.
+/// lane run: its VM, program, residual and store specialization, and what follows
+/// from them, the program's field cache entries (`BodyRunContext::bind_run`). An entry writes them
+/// only where its run is not the one that bound them; the words it writes per entry are its lane
+/// context (compared here only after it is written), its registers and the stack's room.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct LaneRun {
     vm: usize,
@@ -4111,6 +4391,7 @@ struct LaneRun {
 }
 
 impl LaneRun {
+    #[inline]
     fn of(dispatch: &JsStepDispatch) -> Self {
         Self { vm: dispatch.vm, program_id: dispatch.program_id, lane_context: dispatch.lane_context, residual: dispatch.residual, stores_specialized: dispatch.stores_specialized }
     }
@@ -4118,14 +4399,14 @@ impl LaneRun {
 
 /// The context and payload every lane body on this thread runs with
 /// (`Vm::run_lane_method`). Thread facts are set once; each entry writes its own.
-struct LaneFrame {
+struct BodyRunContext {
     context: CallContext,
     dispatch: JsStepDispatch,
     /// The registers of an inlined callee its lane body left inside.
     scratch: Vec<Value>,
 }
 
-impl LaneFrame {
+impl BodyRunContext {
     /// Binds the payload and context to `run`'s words, written once per run: a nested entry
     /// of the same run (`Vm::run_nested_lane_method`) and each next entry of the lane's calls
     /// find them standing. `field_entries` derives the program's field cache entries, which
@@ -4140,12 +4421,14 @@ impl LaneFrame {
     #[inline(always)]
     fn bind_run(&mut self, run: LaneRun, interrupt: &crate::ExecutionInterrupt, field_entries: impl FnOnce() -> usize) -> bool {
         let owner = std::ptr::from_ref(interrupt);
+        // The lane context is the entry's own activation, written by every entry; the other
+        // words stand for the whole run.
+        self.dispatch.lane_context = run.lane_context;
         let rebound = LaneRun::of(&self.dispatch) != run;
         if rebound {
             self.dispatch.field_entries = field_entries();
             self.context.stack_limit = native_stack_limit();
             self.dispatch.program_id = run.program_id;
-            self.dispatch.lane_context = run.lane_context;
             self.dispatch.residual = run.residual;
             self.dispatch.stores_specialized = run.stores_specialized;
         }
@@ -4169,7 +4452,7 @@ impl LaneFrame {
 }
 
 thread_local! {
-    static LANE_FRAME: std::cell::UnsafeCell<Option<LaneFrame>> = const { std::cell::UnsafeCell::new(None) };
+    static LANE_FRAME: std::cell::UnsafeCell<Option<BodyRunContext>> = const { std::cell::UnsafeCell::new(None) };
 }
 
 /// This thread's lane frame, made at its first lane body run.
@@ -4180,11 +4463,12 @@ pub(super) fn take_lane_exit_line() -> u64 {
     unsafe { std::mem::take(&mut (*lane_frame()).dispatch.exit_line) }
 }
 
-fn lane_frame() -> *mut LaneFrame {
+#[inline]
+fn lane_frame() -> *mut BodyRunContext {
     let frame = LANE_FRAME.with(std::cell::UnsafeCell::get);
     // SAFETY: the frame is reached only through this pointer, on its thread, and no
     // reference into it outlives the statement that makes it.
-    unsafe { (*frame).get_or_insert_with(LaneFrame::new) as *mut LaneFrame }
+    unsafe { (*frame).get_or_insert_with(BodyRunContext::new) as *mut BodyRunContext }
 }
 
 
@@ -4331,7 +4615,31 @@ impl JsStepDispatch {
 
     /// Object loads, stores and barriers share these bases in lane and general code.
     /// Allocation or collection between native entries may move any of them.
+    /// The bases native code reads, as `vm` holds them now. They stand while this VM's record
+    /// layout (`Heap::native_layout_epoch`: collections, record blocks, mark blocks), method
+    /// cache atom words, typed view directory and slot tracking are as last read, and the
+    /// lazily made empty string and unit strings exist: then one pass of compares replaces the
+    /// rereads every allocating, call or step helper ends with.
+    #[inline]
     fn refresh_object_bases<H: Host>(&mut self, vm: &Vm<H>) {
+        let layout = vm.heap.native_layout_epoch();
+        let atoms = vm.method_cache_atoms.words();
+        let (directory, pages) = vm.heap.typed_view_directory();
+        if self.vm == (vm as *const Vm<H>).addr() && self.layout_seen == layout
+            && self.method_cache_atoms == atoms.as_ptr() as usize && self.method_cache_atom_words == atoms.len()
+            && self.typed_view_directory == directory.addr() && self.typed_view_pages == pages
+            && self.slots_tracked == usize::from(vm.heap.tracks_slot_values())
+            && self.empty_string != Value::DELETED.to_bits() && self.ascii_unit_strings != 0
+        {
+            return;
+        }
+        self.reread_object_bases(vm);
+        self.layout_seen = layout;
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn reread_object_bases<H: Host>(&mut self, vm: &Vm<H>) {
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
         self.function_record_base = vm.heap.function_record_base().map_or(0, |base| base as usize);
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
@@ -4349,6 +4657,22 @@ impl JsStepDispatch {
         self.slots_tracked = usize::from(vm.heap.tracks_slot_values());
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
+    }
+
+    /// Readies a region's parked dispatch (`CompiledOsrRegion::parked`) for a run of `program`
+    /// above VM frame `frame`: the words `JsNativeActivation::with_function` and
+    /// `bind_native_storage` bind, the run state the last run left reset to `idle`'s, and the
+    /// bases refreshed (`refresh_heap_bases`), which reread only what moved since the last run.
+    /// The words the run's binds set (`osr_lane`) are theirs.
+    fn rebind_region<H: Host>(&mut self, vm: &mut Vm<H>, program_id: ProgramId, program: &ResidualProgram, frame: usize) {
+        self.bind_lane_storage(std::ptr::from_mut(vm));
+        (self.program_id, self.frame) = (program_id, frame);
+        (self.capture_values, self.capture_len, self.capture_stores) = (std::ptr::null(), 0, 0);
+        (self.inlined, self.exit_line, self.returned_pc) = (0, 0, 0);
+        (self.lane_values_top, self.lane_values_end, self.lane_activations_top, self.lane_frames_end) = (0, 0, 0, 0);
+        self.environment_storage = crate::heap::absent_environment_storage();
+        self.outcome = None;
+        self.refresh_heap_bases(vm, program);
     }
 
     /// Refresh the additional frame and array views read by native code.
@@ -4445,12 +4769,7 @@ pub(super) fn native_js_operation_signature(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
 ) -> Signature {
     let pointer = isa.pointer_type();
-    let mut signature = Signature::new(isa.default_call_conv());
-    for parameter in [pointer, types::I64, pointer, pointer] {
-        signature.params.push(AbiParam::new(parameter));
-    }
-    signature.returns.push(AbiParam::new(types::I64));
-    signature
+    call_signature::typed_signature(isa.default_call_conv(), &[pointer, types::I64, pointer, pointer], &[types::I64])
 }
 
 pub(super) use quench_bjit::call_record::NATIVE_JS_STOPPED;
@@ -4677,11 +4996,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 JsError::validation("invalid native semantic opcode".into()))?;
             // Linked operands are already resolved. Admission needs only the
             // source opcode, not a second decoding of every operand field.
-            let source_opcode = if packed.is_wide() {
-                body.wide[packed.wide_index()].op()
-            } else {
-                packed.op()
-            };
+            let source_opcode = body.op_of(packed);
             if selected.opcode != source_opcode {
                 return Err(JsError::validation("native semantic opcode does not match instruction".into()));
             }
@@ -4690,7 +5005,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             }
             #[cfg(feature = "profile-native-ops")]
             {
-                let source_instruction = super::dispatch_fast::decoded_instruction(body, packed);
+                let source_instruction = body.widened(packed);
                 super::native_op_profile::record_site(
                     dispatch.program_id.raw(), vm.frames[dispatch.frame].function, pc, source_instruction,
                     body.name.or(body.inferred_name)
@@ -4703,7 +5018,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             unsafe { &*arguments.cast::<super::native_operands::NativeJsOperands>() }
                 .instruction(selected.opcode)
         } else {
-            super::dispatch_fast::decoded_instruction(body, packed)
+            body.widened(packed)
         };
         let next_pc = pc.checked_add(1).ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
 
@@ -4984,7 +5299,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                         }));
                     };
                     current_instruction =
-                        super::dispatch_fast::decoded_instruction(body, packed);
+                        body.widened(packed);
                     next = current_pc
                         .checked_add(1)
                         .ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
@@ -5103,6 +5418,9 @@ struct Plan {
     /// (a moved value's kind, a global's binding, an import reference). The
     /// full register states exist only while planning.
     operands: Vec<Option<Slot>>,
+    /// Per instruction, the second binding slot of a table copy or segment init
+    /// (`TableOp::bindings`), `None` where the step names none.
+    seconds: Vec<Option<Slot>>,
 }
 
 impl Plan {
@@ -5113,6 +5431,7 @@ impl Plan {
             params: self.params.clone(),
             result: self.result,
             operands: Vec::new(),
+            seconds: Vec::new(),
         }
     }
 
@@ -5355,7 +5674,7 @@ impl<H: Host> Analysis<'_, H> {
         let instructions: Vec<WideInstruction> = function
             .code
             .iter()
-            .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
+            .map(|packed| function.widened(*packed))
             .collect();
         let mut entry = AnalysisState::new();
         for (offset, ty) in params.iter().enumerate() {
@@ -5423,6 +5742,15 @@ impl<H: Host> Analysis<'_, H> {
                 Some(state.get(operand, function.registers).unwrap_or(Slot::Conflict))
             })
             .collect();
+        let seconds: Vec<Option<Slot>> = states
+            .iter()
+            .zip(&instructions)
+            .map(|(state, instruction)| {
+                let state = state.as_ref()?;
+                let register = Step::of(instruction.op(), instruction.imm())?.second_binding(*instruction)?;
+                state.get(register, function.registers)
+            })
+            .collect();
         if let Some(started) = plan_started {
             let reachable = states.iter().flatten().count();
             let stored_slots: usize = states.iter().flatten().map(|state| state.slots.len()).sum();
@@ -5453,6 +5781,7 @@ impl<H: Host> Analysis<'_, H> {
             params,
             result,
             operands,
+            seconds,
         })
     }
 
@@ -5482,6 +5811,9 @@ impl<H: Host> Analysis<'_, H> {
             }
             Step::Memory(step) => {
                 self.transfer_memory(function, instruction, state, step, (memory_register, *memory_slot))
+            }
+            Step::Table(op) => {
+                self.transfer_table(function, instruction, state, op, (memory_register, *memory_slot))
             }
             Step::Flow(flow) => self.transfer_flow(function, instruction, state, flow, result),
             Step::Call(call) => self.transfer_call(function, instruction, state, call, callable),
@@ -5555,6 +5887,7 @@ struct MemoryArguments {
 }
 
 impl MemoryArguments {
+    #[inline]
     fn of(fixed_base: Option<i32>, guarded: bool) -> Self {
         Self {
             base: fixed_base.is_none(),
@@ -5582,31 +5915,15 @@ fn internal_signature(
     result: Option<crate::WasmType>,
     call_conv: cranelift_codegen::isa::CallConv,
 ) -> Signature {
-    let mut signature = Signature::new(call_conv);
-    for _ in 0..1 + memory.count() {
-        signature.params.push(AbiParam::new(types::I64));
-    }
-    for ty in plan_params {
-        signature
-            .params
-            .push(AbiParam::new(Kind::of(*ty).expect("planned").ir()));
-    }
-    signature.returns.push(AbiParam::new(types::I64));
-    if let Some(ty) = result {
-        signature
-            .returns
-            .push(AbiParam::new(Kind::of(ty).expect("planned").ir()));
-    }
-    signature
+    let params = (0..1 + memory.count())
+        .map(|_| types::I64)
+        .chain(plan_params.iter().map(|ty| Kind::of(*ty).expect("planned").ir()))
+        .collect::<Vec<_>>();
+    let returns = std::iter::once(types::I64)
+        .chain(result.map(|ty| Kind::of(ty).expect("planned").ir()))
+        .collect::<Vec<_>>();
+    call_signature::typed_signature(call_conv, &params, &returns)
 }
-
-/// Instructions a threaded copy may repeat between a constant's jump and the
-/// branch table the constant decides; bounds the code each copy adds. A
-/// dispatch copy repeats its table too, which counts as its edges: TSF's
-/// 290-way state table, copied at each of its 503 jumps, compiled one
-/// function to 10.6 MB of edge moves (3.5 s, 220 MiB peak); charged by its
-/// edges it compiles in 0.1 s.
-const THREAD_BUDGET: usize = 16;
 
 /// Where a threaded copy continues once its path is done.
 #[derive(Clone, Copy)]
@@ -5620,14 +5937,6 @@ enum ThreadEnd {
     /// case's back edge predicts its own successor.
     Dispatch,
 }
-
-/// Instructions all copies of an unrolled loop body may hold together, and the most copies.
-/// A body of up to a fourth of the budget runs as four copies: one interrupt check, one back
-/// edge and one set of loop-carried moves per four iterations (V8's optimizing tier unrolls
-/// small innermost Wasm loops for the same reasons); a body of more than half of it is not
-/// unrolled.
-const UNROLL_BUDGET: usize = 48;
-const MAX_UNROLL_FACTOR: usize = 4;
 
 /// Bytecodes up to which a compiled Wasm program unrolls its innermost loops. Every function
 /// compiles eagerly, and each copy is compiled whether its loop runs or not: in programs of
@@ -5900,6 +6209,29 @@ fn dispatch_path(instructions: &[WideInstruction], plan: &Plan, start: usize) ->
     }
 }
 
+/// Whether a Wasm function is a leaf: every reachable step is arithmetic, control flow, a
+/// register, constant or global, or a plain memory access, so it calls no function and re-enters
+/// no VM, and its frame is small (`LEAF_REGISTERS`). Its stack use is bounded by that frame and
+/// its running time by its loops' back edges, which poll themselves.
+fn is_leaf(instructions: &[WideInstruction], plan: &Plan, registers: u16) -> bool {
+    use crate::staged::wasm_memory::Memory;
+    /// The most registers a leaf's frame holds: a few KiB, well inside the stack budget's margin.
+    const LEAF_REGISTERS: u16 = 256;
+    registers <= LEAF_REGISTERS
+        && instructions.iter().enumerate().all(|(pc, instruction)| {
+            !plan.reachable(pc)
+                || matches!(
+                    Step::of(instruction.op(), instruction.imm()),
+                    Some(
+                        Step::Numeric(_)
+                            | Step::Flow(_)
+                            | Step::Instance(_)
+                            | Step::Memory(Memory::Load(_) | Memory::Store(_) | Memory::Size)
+                    )
+                )
+        })
+}
+
 /// Bind the activation's stable interrupt capability. The pointer is invariant;
 /// the byte it addresses remains atomic and must be read at every safepoint.
 fn native_interrupt_pointer(builder: &mut FunctionBuilder<'_>, context: ir::Value, fault_poll: bool) -> ir::Value {
@@ -6161,6 +6493,8 @@ struct Emitter<'a, 'b, H: Host> {
     simd_words: Option<ir::StackSlot>,
     /// The table an indirect target is being emitted for (`WasmTable`).
     indirect: Option<wasm_table_stage::IndirectSite>,
+    /// The row an indirect target just checked, which the call that follows reads again.
+    checked_row: Option<wasm_table_stage::CheckedRow>,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -6383,11 +6717,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let callout_signature = match self.callout_signature {
             Some(signature) => signature,
             None => {
-                let mut callout = Signature::new(self.call_conv);
-                for _ in 0..4 {
-                    callout.params.push(AbiParam::new(types::I64));
-                }
-                callout.returns.push(AbiParam::new(types::I64));
+                let callout = call_signature::word_signature(self.call_conv, 4, 1, types::I64);
                 let callout = self.body.core.builder.import_signature(callout);
                 self.callout_signature = Some(callout);
                 callout
@@ -6606,6 +6936,10 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.memory(instruction, step);
                 true
             }
+            Step::Table(op) => {
+                self.table_op(pc, instruction, op);
+                true
+            }
             Step::Flow(flow) => self.flow(function, pc, instruction, flow),
             Step::Call(call) => {
                 self.call(pc, instruction, call);
@@ -6658,20 +6992,6 @@ fn compile_built(
 /// worker busy while the building thread stays ahead, and bounds the Cranelift functions
 /// alive at once (each holds its whole body's IR) to a few per worker.
 const BUILT_FUNCTIONS_QUEUED_PER_WORKER: usize = 2;
-
-/// The Cranelift IR instructions the compile workers may hold at once, queued and compiling,
-/// under each memory policy (`MemoryPolicy`). Every worker holds its function's whole IR and
-/// Cranelift's working set grows with it, so the parallel compile of a whole module peaks
-/// with the functions in flight; a function heavier than the bound compiles alone. A bound
-/// on the count of queued functions did not move the peak (one queued per worker instead
-/// of two, memory-first `--jit`, tsf-wasm 43.5-44.5 MB either way).
-/// Memory-first bounds them at 50,000, about a third of tsf-wasm's 157k (its largest function
-/// 53.6k). JetStream `--jit`, memory-first, unpinned x86_64, 4 cores, median of 6,
-/// 2026-10-27: tsf-wasm max RSS 46.6 -> 42.0 MB, Score 23.2 -> 22.1, First 11.2 -> 10.0;
-/// sqlite3-wasm 73.6 -> 58.4 MB, Score 16.7 -> 16.2, First 2.96 -> 2.80. Throughput keeps
-/// every worker fed (unbounded; the same rows, median of 8, were unchanged).
-const WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT: [Option<usize>; crate::MemoryPolicy::ALL.len()] =
-    [None, Some(50_000)];
 
 /// A function's compiled body with its calls, and its compiled entry (`build_entry`).
 type CompiledBody = (Vec<u8>, Vec<Call>, Vec<u8>);
@@ -6793,7 +7113,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             internal_signature(memory, &plan.params, plan.result, call_conv),
         );
         use crate::staged::machine::{Lane, Relation};
-        let mut builder_context = FunctionBuilderContext::new();
+        let mut builder_context = crate::vm::jit_backend::builder::take_context();
         let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
         let entry = builder.create_block();
         builder.append_block_params_for_function_params(entry);
@@ -6821,7 +7141,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         let instructions: Vec<WideInstruction> = function
             .code
             .iter()
-            .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
+            .map(|packed| function.widened(*packed))
             .collect();
         let mut selectors: Vec<u16> = instructions
             .iter()
@@ -6870,6 +7190,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             vectors: Vec::new(),
             simd_words: None,
             indirect: None,
+            checked_row: None,
         };
         // Registers start at i32 zero, as an activation's register file does.
         for register in 0..function.registers {
@@ -6885,13 +7206,19 @@ impl<'a, H: Host> Analysis<'a, H> {
                 wasm_parameters[offset],
             );
         }
-        // Each activation checks the stack it may still use.
-        let stack_pointer = emitter.stack_pointer();
-        let limit = emitter.raw_load(Lane::I64, invariant(), context, CONTEXT_STACK_LIMIT);
-        let exhausted = emitter.raw_compare(Relation::UnsignedLess, stack_pointer, limit);
-        emitter.trap_if(exhausted, crate::WasmTrap::CallStackExhausted);
+        // Each activation that calls checks the stack it may still use and polls for an
+        // interrupt: unbounded depth and unbounded time both need a call (or a back edge, which
+        // polls itself). A leaf (`is_leaf`) runs bounded on one small frame, under the margin its
+        // caller's check left, so it enters with neither.
+        let leaf = is_leaf(&instructions, plan, function.registers);
+        if !leaf {
+            let stack_pointer = emitter.stack_pointer();
+            let limit = emitter.raw_load(Lane::I64, invariant(), context, CONTEXT_STACK_LIMIT);
+            let exhausted = emitter.raw_compare(Relation::UnsignedLess, stack_pointer, limit);
+            emitter.trap_if(exhausted, crate::WasmTrap::CallStackExhausted);
+        }
         emitter.known.clear();
-        emitter.jump(0, true);
+        emitter.jump(0, !leaf);
         // Every jump target starts a block, created before emission so a
         // backward jump finds its target's block already placed.
         for (pc, instruction) in instructions.iter().copied().enumerate() {
@@ -6954,6 +7281,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         emitter.finish_traps();
         emitter.body.core.builder.seal_all_blocks();
         emitter.body.into_builder().finalize(isa.frontend_config());
+        crate::vm::jit_backend::builder::keep_context(builder_context);
         #[cfg(test)]
         BUILT_BODIES.with(|built| built.borrow_mut().push((index, func.display().to_string())));
         Some(func)
@@ -6978,13 +7306,10 @@ impl<'a, H: Host> Analysis<'a, H> {
             UserFuncName::user(ENTRY_NAMESPACE, index as u32),
             signature,
         );
-        let mut builder_context = FunctionBuilderContext::new();
+        let mut builder_context = crate::vm::jit_backend::builder::take_context();
         let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
-        let block = builder.create_block();
-        builder.append_block_params_for_function_params(block);
-        builder.switch_to_block(block);
+        let (block, parameters) = crate::vm::jit_backend::builder::enter(&mut builder);
         builder.seal_block(block);
-        let parameters = builder.block_params(block).to_vec();
         let (context, base, length, args, out) = (
             parameters[0],
             parameters[1],
@@ -7027,6 +7352,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         let status = stage.raw_unary(Unary::Narrow(Lane::I32), results[0]);
         stage.leave(&[status]);
         builder.finalize(isa.frontend_config());
+        crate::vm::jit_backend::builder::keep_context(builder_context);
         func
     }
 }
@@ -7500,6 +7826,7 @@ impl<H: Host> Vm<H> {
     /// Whether any of `tiers` runs: compiled execution under a memory policy
     /// that compiles them (`PolicyTiers::js_function_tiers`) and a JIT mode that allows one, in a build whose profiles do not count
     /// interpreted work exactly.
+    #[inline]
     pub(super) fn tier_may_run(&self, tiers: &[crate::jit_mode::Tier]) -> bool {
         !cfg!(quench_profiled)
             && self.execution_mode == ExecutionMode::Compiled
@@ -8018,7 +8345,7 @@ impl<H: Host> Vm<H> {
                 }
                 *selected_function = true;
                 for packed in &function.code {
-                    let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
+                    let instruction = function.widened(*packed);
                     if let Some(callee) = Step::of(instruction.op(), instruction.imm())
                         .and_then(|step| step.callee(instruction))
                     {
@@ -8071,7 +8398,7 @@ impl<H: Host> Vm<H> {
                     *selected_function = true;
                     for packed in &function.code {
                         let instruction =
-                            super::dispatch_fast::decoded_instruction(function, *packed);
+                            function.widened(*packed);
                         if let Some(callee) = Step::of(instruction.op(), instruction.imm())
                             .and_then(|step| step.callee(instruction))
                         {
@@ -8143,11 +8470,17 @@ impl<H: Host> Vm<H> {
                 displacement_base(guarded_memory(self, binding)?.0)
             })
             .flatten();
-        let opt_level = jit_root_opt_level(root, root_only).ok()?;
-        if diagnostics_enabled {
-            eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
-        }
-        let isa = super::jit_backend::target_isa_at(opt_level)?;
+        // Under `--b-jit` no Cranelift code is generated, so no ISA is created.
+        let base_only = crate::jit_mode::base_only();
+        let isa = if base_only {
+            None
+        } else {
+            let opt_level = jit_root_opt_level(root, root_only).ok()?;
+            if diagnostics_enabled {
+                eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
+            }
+            Some(super::jit_backend::target_isa_at(opt_level)?)
+        };
         let mut reference_site_ids = vec![Vec::new(); count];
         let mut reference_call_sites = Vec::new();
         let mut reference_cache_sites = Vec::new();
@@ -8161,7 +8494,7 @@ impl<H: Host> Vm<H> {
             let full_plan = full_plans[index].as_ref()?;
             let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
-                let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
+                let instruction = function.widened(*packed);
                 if Step::of(instruction.op(), instruction.imm()) != Some(Step::Call(WasmCall::Reference)) {
                     continue;
                 }
@@ -8186,6 +8519,8 @@ impl<H: Host> Vm<H> {
         let mut offsets = vec![None; count];
         let mut spans = Vec::new();
         let mut entries = vec![None; count];
+        // Stitched rows call a function through its cell, filled once the code is placed.
+        let entry_cells: Box<[std::cell::Cell<usize>]> = (0..count).map(|_| std::cell::Cell::new(0)).collect();
         let mut calls = Vec::new();
         let place = |bytes: &mut Vec<u8>, code: Vec<u8>| {
             bytes.resize(bytes.len().next_multiple_of(FUNCTION_ALIGNMENT), 0);
@@ -8201,40 +8536,93 @@ impl<H: Host> Vm<H> {
         };
         // Largest first: the longest compile starts at once and the rest fill around it, so
         // the slowest function does not finish last on one worker (bodies are placed by index).
-        analysis.unrolls = program_unrolls(&code);
-        let mut build_order: Vec<usize> = (0..count).filter(|&index| plans[index].is_some()).collect();
-        build_order.sort_by_key(|&index| std::cmp::Reverse(code.function(index).code.len()));
-        let build = build_order.into_iter().map(|index| {
-            let full_plan = full_plans[index].as_ref()?;
-            let body_build_started = diagnostics_enabled.then(std::time::Instant::now);
-            let body_memory_before = body_build_started.and_then(|_| jit_memory_snapshot());
-            let built = analysis.build_function(
-                &*isa,
-                index,
-                full_plan,
-                &plans,
-                guarded,
-                fixed_base,
-                &reference_site_ids[index],
-                diagnostics_enabled,
-            );
-            if let Some(started) = body_build_started {
-                let memory_after = jit_memory_snapshot();
-                eprintln!(
-                    "QUENCH_WASM_JIT_BODY_MEMORY function={index} elapsed_us={} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
-                    started.elapsed().as_micros(),
-                    body_memory_before.map(|memory| memory.0),
-                    memory_after.map(|memory| memory.0),
-                    body_memory_before.map(|memory| memory.1),
-                    memory_after.map(|memory| memory.1),
+        // Without an ISA (`--b-jit`) no body or Cranelift entry exists: `bodies` stays empty.
+        let mut bodies = Vec::new();
+        if let Some(isa) = isa.as_deref() {
+            analysis.unrolls = program_unrolls(&code);
+            let mut build_order: Vec<usize> = (0..count).filter(|&index| plans[index].is_some()).collect();
+            build_order.sort_by_key(|&index| std::cmp::Reverse(code.function(index).code.len()));
+            let build = build_order.into_iter().map(|index| {
+                let full_plan = full_plans[index].as_ref()?;
+                let body_build_started = diagnostics_enabled.then(std::time::Instant::now);
+                let body_memory_before = body_build_started.and_then(|_| jit_memory_snapshot());
+                let built = analysis.build_function(
+                    isa,
+                    index,
+                    full_plan,
+                    &plans,
+                    guarded,
+                    fixed_base,
+                    &reference_site_ids[index],
+                    diagnostics_enabled,
                 );
+                if let Some(started) = body_build_started {
+                    let memory_after = jit_memory_snapshot();
+                    eprintln!(
+                        "QUENCH_WASM_JIT_BODY_MEMORY function={index} elapsed_us={} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
+                        started.elapsed().as_micros(),
+                        body_memory_before.map(|memory| memory.0),
+                        memory_after.map(|memory| memory.0),
+                        body_memory_before.map(|memory| memory.1),
+                        memory_after.map(|memory| memory.1),
+                    );
+                }
+                let entry = analysis.build_entry(isa, index, plans[index].as_ref()?, MemoryArguments::of(fixed_base, guarded));
+                Some((index, built?, entry))
+            });
+            bodies = compile_built_functions(isa, count, self.memory_policy(), build)?;
+        }
+        // Under `--b-jit` each function's entry is its stitched rows. A callee whose stitch fails
+        // has no entry cell, so it leaves `callable` and its callers call it through the VM
+        // (`CALL_VM`) instead of failing. Only a movable memory (`memory_stable` false) refuses
+        // that call, so there a caller still fails with its callee; the set only shrinks.
+        let mut stitched: Vec<Option<Vec<u8>>> = if base_only {
+            let mut callable: Vec<bool> = plans.iter().map(Option::is_some).collect();
+            loop {
+                let codes: Vec<Option<Vec<u8>>> = (0..count)
+                    .map(|index| {
+                        if !callable[index] {
+                            return None;
+                        }
+                        stitched_entry(self, program, &code, index, (&plans, &entry_cells, &callable), memory_slot, (full_plans[index].as_ref()?, &reference_site_ids[index], env))
+                    })
+                    .collect();
+                let kept: Vec<bool> = codes.iter().map(Option::is_some).collect();
+                if kept == callable {
+                    break codes;
+                }
+                callable = kept;
             }
-            let entry = analysis.build_entry(&*isa, index, plans[index].as_ref()?, MemoryArguments::of(fixed_base, guarded));
-            Some((index, built?, entry))
-        });
-        let mut bodies = compile_built_functions(&*isa, count, self.memory_policy(), build)?;
+        } else {
+            Vec::new()
+        };
         for index in 0..count {
             if plans[index].is_none() {
+                continue;
+            }
+            if base_only {
+                // `--b-jit`: the stitched rows are the entry, and the table names them as the
+                // body too (the same `WasmEntry` ABI, so indirect calls enter them directly).
+                // A function whose stitch failed has no native entry: it runs in the interpreter.
+                let Some(stitched) = stitched[index].take() else {
+                    continue;
+                };
+                let stitched_projected_len = projected_code_len(bytes.len(), stitched.len())?;
+                if let Some(root) = root
+                    && stitched_projected_len > MAX_JIT_ROOT_CODE_BYTES
+                {
+                    if diagnostics_enabled {
+                        eprintln!(
+                            "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={stitched_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
+                        );
+                    }
+                    return None;
+                }
+                let stitched_len = stitched.len();
+                let offset = place(&mut bytes, stitched);
+                offsets[index] = Some(offset);
+                spans.push((offset, stitched_len, index));
+                entries[index] = Some(offset);
                 continue;
             }
             let (body, function_calls, entry) = bodies[index].take()?;
@@ -8274,6 +8662,9 @@ impl<H: Host> Vm<H> {
         let mapped_bytes = memory.length();
         let base = memory.pointer() as usize;
         write_perf_map("wasm-function", base, &bytes, &spans);
+        for (cell, entry) in entry_cells.iter().zip(&entries) {
+            cell.set(entry.map_or(0, |entry| base + entry));
+        }
         let table: Box<[usize]> = offsets
             .iter()
             .map(|offset| offset.map_or(0, |offset| base + offset))
@@ -8350,6 +8741,7 @@ impl<H: Host> Vm<H> {
         Some(CompiledProgram {
             _code: memory,
             table,
+            _entry_cells: entry_cells,
             functions,
             positions,
             memory_slot,
@@ -8732,6 +9124,7 @@ impl<H: Host> Vm<H> {
                 interrupt_owner: std::ptr::null(),
                 instance: std::ptr::null(),
                 native_roots: &mut *self.native_roots,
+                memory_grow: wasm_memory_stage::memory_grow_callout::<H> as *const () as usize,
             };
             // SAFETY: the record belongs to the environment the call runs in.
             context.enter(unsafe { &*record });
@@ -8959,15 +9352,6 @@ impl<H: Host> Vm<H> {
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
 
-/// `compiled`'s body run directly on `arguments`, its parameters, when each is a Number
-/// its guards admit: the call a known callee makes without a frame (`js_jit_compiled_call`).
-/// The lane records a loop-free body runs below which a frameless activation is cheaper than
-/// the JavaScript tier's native entry of it. A direct native entry (`lane_tier_prologue`,
-/// `direct_call`, the shared entry) costs about 380 machine instructions past the
-/// activation, and a lane record about 20 (callgrind, typescript-lib under `--jit`,
-/// 2026-10-28: 9.7M native entries of 3- to 12-instruction predicates such as
-/// `isLineBreak`), so a body shorter than this cannot recoup its entries.
-const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 /// Whether a lane body for `body` could amortize an entry (`lane_facts::amortizes_entry`): a
 /// loop, a call (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
@@ -10544,7 +10928,7 @@ mod tests {
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let body = program.function(0);
         body.code.iter().copied().enumerate().find_map(|(pc, packed)| {
-            let instruction = super::super::dispatch_fast::decoded_instruction(body, packed);
+            let instruction = body.widened(packed);
             (instruction.op() == opcode).then_some((pc, instruction))
         }).expect("test operation exists")
     }
@@ -10556,7 +10940,7 @@ mod tests {
     ) -> (i64, u64, Option<JsNativeStep>) {
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let body = program.function(0);
-        let instruction = super::super::dispatch_fast::decoded_instruction(body, body.code[pc]);
+        let instruction = body.widened(body.code[pc]);
         let operands = super::super::NativeJsOperands::new(
             instruction.a(), instruction.b(), instruction.c(), instruction.imm(),
         );

@@ -22,6 +22,7 @@ impl Compiler<'_> {
             return id;
         }
         let id = self.functions.reserve();
+        let call_only = self.prototype_unobservable.contains(&value.span.start);
         let source_span = self.source_span(value.span);
         let body_lexicals = if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &value.body
         {
@@ -104,6 +105,7 @@ impl Compiler<'_> {
                 body => early::body_may_bind_dynamically(&[], body.as_expression()),
             };
         self.dynamic_binding_scopes += u32::from(binds_dynamically);
+        let declared_parameters = super::typescript::declared_parameters(&value.params, self.checked_parameters.as_deref());
         let mut function = FunctionCompiler::new(
             self,
             locals,
@@ -170,6 +172,7 @@ impl Compiler<'_> {
                 .count() as u16,
             parameter_end_pc: 0,
             parameter_atoms,
+            declared_parameters: declared_parameters.into(),
             rest: value.params.rest.is_some(),
             is_async: value.r#async,
             is_generator: false,
@@ -180,8 +183,9 @@ impl Compiler<'_> {
             constructible: false,
             class_initializer,
             parameter_eval_arguments_error: false,
-            unaliased_arguments: false,
-            prototype_unobservable: false,
+            unaliased_arguments: false, rest_alias: false,
+            // A call-only arrow (`call_only`) closes as a `Value::known_closure`, with no function object.
+            prototype_unobservable: call_only,
             arguments_slot: None,
             simple_parameters,
             strict,
@@ -204,7 +208,7 @@ impl Compiler<'_> {
             decoded: Default::default(),
             plain_locals: Default::default(),
             declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(),
+            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             dynamic_scope_access: Default::default(),

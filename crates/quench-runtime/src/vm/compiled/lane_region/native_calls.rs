@@ -77,6 +77,12 @@ impl Inline {
 /// Each with the function it held and the exact shape of the prototype holding it.
 pub(super) type Intrinsics = Vec<Option<(Value, Inline, u32)>>;
 
+/// Whether a lane body runs a call of `native` inline and the call changes no array: a loop
+/// whose calls are all such runs natively in a body (`loop_body::offer_body`).
+pub(in crate::vm) fn inlines_keeping_arrays(native: Native) -> bool {
+    Inline::of(native).is_some_and(|inline| !inline.mutates_arrays())
+}
+
 /// Whether the call at `pc` runs inline and changes no array, so a loop holds it natively and
 /// the Stable facts its code folded survive it.
 pub(super) fn keeps_arrays(intrinsics: &Intrinsics, pc: usize) -> bool {
@@ -89,13 +95,13 @@ pub(super) fn keeps_arrays(intrinsics: &Intrinsics, pc: usize) -> bool {
 /// that function's argument count, and no direct callee is bound to it. Each with the function it held, whose identity the call guards.
 pub(super) fn intrinsic_calls(unit: &super::super::lane_unit::Unit, global_reads: &crate::vm::global_facts::GlobalReads,
     direct: impl Fn(usize) -> bool) -> Intrinsics {
-    unit.instructions.iter().enumerate().map(|(pc, instruction)| Some((pc, instruction)).filter(|(pc, instruction)| instruction.op().is_call()
+    unit.instructions.iter().enumerate().map(|(pc, instruction)| Some((pc, instruction)).filter(|(pc, instruction)| crate::staged::meaning::means(*instruction, crate::staged::meaning::Meaning::Call)
         && !direct(*pc) && !instruction.returns_from_frame()
         && !instruction.direct_eval() && !instruction.parameter_eval() && instruction.result_flags() == 0)
         .and_then(|(pc, instruction)| {
             let callee = instruction.register_b();
             let defined = (0..pc).rev().find(|at| unit.instructions[*at].written_registers().any(|register| register == callee))?;
-            let GlobalRead::NativeMember { value, native, holder } = global_reads.get(&defined)? else { return None };
+            let GlobalRead::NativeMember { value, native, holder, .. } = global_reads.get(&defined)? else { return None };
             let inline = Inline::of(*native)?;
             (crate::bytecode::ImmediateLayout::argument_count(instruction.imm()) == inline.arguments())
                 .then_some((*value, inline, *holder))
@@ -111,9 +117,9 @@ impl Lowering<'_, '_> {
         let Some(&Some((callee, inline, holder))) = self.intrinsics.get(pc) else { return false };
         // The callee's identity is held by its holder, a dependency that retires this code
         // before the function can die and its id be reused.
-        if !self.division().folds(BindingTime::Stable) { return false; }
+        if !self.holds_holders() { return false; }
         let exit = self.guard_exit(state, pc as u32);
-        self.hold_holder(state, exit, holder);
+        self.hold_holder_any(state, exit, holder);
         let held = self.tagged(state, instruction.register_b());
         let same = self.is_identity(held, callee);
         emit_js_guard(&mut self.builder, same, exit);

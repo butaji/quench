@@ -85,6 +85,7 @@ fn number(operation: &NumberOperation) -> OperandTimes {
             ("left", operand(*left)), ("right", operand(*right)), ("relation", BYTECODE), ("domain", BYTECODE)]),
         Bitwise { left, right, .. } => SmallVec::from_slice(&[("destination", REGISTER),
             ("left", operand(*left)), ("right", operand(*right)), ("operation", BYTECODE)]),
+        Math { source, .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", operand(*source)), ("operation", BYTECODE)]),
     }
 }
 
@@ -117,12 +118,10 @@ impl<W, P> Operation<W, P> {
             Self::LoadThis { .. } | Self::LoadCallee { .. } => SmallVec::from_slice(&[("destination", REGISTER)]),
             Self::RequireObjectCoercible { .. } | Self::RequireIteratorResult { .. } => SmallVec::from_slice(&[("register", REGISTER)]),
             Self::IteratorCleanupPush { .. } => SmallVec::from_slice(&[("iterator", REGISTER), ("done", REGISTER)]),
-            Self::IteratorCleanupPop => SmallVec::from_slice(&[]),
+            Self::IteratorCleanupPop | Self::Nop => SmallVec::from_slice(&[]),
             Self::StringCaseIndex { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER),
                 ("start", BYTECODE), ("count", BYTECODE)]),
-            Self::Await { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER)]),
-            Self::Yield { .. } => SmallVec::from_slice(&[("value", REGISTER)]),
-            Self::YieldStar { .. } => SmallVec::from_slice(&[("iterable", REGISTER)]),
+            Self::Suspend { .. } => SmallVec::from_slice(&[("kind", BYTECODE), ("destination", REGISTER), ("value", REGISTER)]),
             Self::TypeofIndex { .. } | Self::TypeofString { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER)]),
             Self::SetFunctionName { .. } => SmallVec::from_slice(&[("function", REGISTER), ("name", BYTECODE), ("site", SITE)]),
             Self::TypeofTest { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER),

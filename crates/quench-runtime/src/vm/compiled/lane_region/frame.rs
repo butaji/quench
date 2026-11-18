@@ -65,6 +65,9 @@ pub(super) struct EmitFrame<'a> {
     /// The view of a loop's hoisted dense array the element row reads through, proved at the loop's
     /// entering edge (`ElementFrame::kept_view`).
     pub(super) held: Option<super::frame_elements::Held>,
+    /// Whether a read through `held` leaves at a hole or past the backing instead of calling
+    /// the VM's read, whose call would spill every value live across the loop.
+    pub(super) hole_leaves: bool,
     /// Whether no operation of the unit may move an array's backing or the record table
     /// (`fixed_arrays`), so the table's base word is read-only.
     pub(super) arrays_fixed: bool,
@@ -264,9 +267,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn boolean(&mut self, stage: &mut Emit<'_, '_>, holds: ir::Value)
         -> (ir::Value, RegisterFact) {
-        let (yes, no) = (stage.raw_const(Lane::I64, Value::TRUE.to_bits() as i64),
-            stage.raw_const(Lane::I64, Value::FALSE.to_bits() as i64));
-        let value = stage.raw_select(holds, yes, no);
+        let value = super::boolean_word(stage.builder, holds);
         (value, RegisterFact::definition(Type::language(crate::ValueType::Boolean),
             Representation::Tagged))
     }

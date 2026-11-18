@@ -94,7 +94,7 @@ pub(crate) fn instruction_sites(division: Division, function: &Function) -> Vec<
         .copied()
         .enumerate()
         .map(|(pc, packed)| {
-            let instruction = super::dispatch_fast::decoded_instruction(function, packed);
+            let instruction = function.widened(packed);
             let op = instruction.op();
             let continuation = if let Some(target) = static_successor(division, function, instruction, pc) {
                 Continuation::Static(target)

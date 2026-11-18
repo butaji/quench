@@ -190,7 +190,38 @@ fn overflowing(builder: &mut FunctionBuilder<'_>, operation: Binary, a: ir::Valu
     }
 }
 
+/// The integer constant `value` is, at its type's width: (zero-extended, sign-extended) bits.
+pub(super) fn known_integer(builder: &FunctionBuilder<'_>, value: ir::Value) -> Option<(u64, i64)> {
+    let dfg = &builder.func.dfg;
+    let ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } = dfg.insts[dfg.value_def(value).inst()?] else { return None };
+    let bits = dfg.value_type(value).bits();
+    let raw = imm.bits() as u64;
+    let unsigned = if bits >= 64 { raw } else { raw & ((1u64 << bits) - 1) };
+    let signed = if bits >= 64 { raw as i64 } else { ((unsigned << (64 - bits)) as i64) >> (64 - bits) };
+    Some((unsigned, signed))
+}
+
+/// An integer relation between two known constants, decided while lowering: specialization
+/// leaves no comparison it can answer (a cell index against a known count, a known tag).
+fn decided(relation: Relation, (a_unsigned, a_signed): (u64, i64), (b_unsigned, b_signed): (u64, i64)) -> Option<bool> {
+    Some(match relation {
+        Relation::Equal => a_unsigned == b_unsigned,
+        Relation::NotEqual => a_unsigned != b_unsigned,
+        Relation::SignedLess => a_signed < b_signed,
+        Relation::SignedLessEqual => a_signed <= b_signed,
+        Relation::SignedGreater => a_signed > b_signed,
+        Relation::SignedGreaterEqual => a_signed >= b_signed,
+        Relation::UnsignedLess => a_unsigned < b_unsigned,
+        Relation::UnsignedLessEqual => a_unsigned <= b_unsigned,
+        Relation::UnsignedGreater => a_unsigned > b_unsigned,
+        Relation::UnsignedGreaterEqual => a_unsigned >= b_unsigned,
+        _ => return None,
+    })
+}
+
 fn compare(builder: &mut FunctionBuilder<'_>, relation: Relation, a: ir::Value, b: ir::Value) -> ir::Value {
+    if let (Some(a), Some(b)) = (known_integer(builder, a), known_integer(builder, b))
+        && let Some(holds) = decided(relation, a, b) { return builder.ins().iconst(types::I8, i64::from(holds)); }
     let ins = builder.ins();
     match row(&FLOAT_CONDITIONS, relation) {
         Some(condition) => ins.fcmp(condition, a, b),
@@ -199,6 +230,12 @@ fn compare(builder: &mut FunctionBuilder<'_>, relation: Relation, a: ir::Value, 
 }
 
 fn compare_imm(builder: &mut FunctionBuilder<'_>, relation: Relation, a: ir::Value, bits: i64) -> ir::Value {
+    if let Some(known) = known_integer(builder, a) {
+        let width = builder.func.dfg.value_type(a).bits();
+        let unsigned = if width >= 64 { bits as u64 } else { (bits as u64) & ((1u64 << width) - 1) };
+        let signed = if width >= 64 { bits } else { ((unsigned << (64 - width)) as i64) >> (64 - width) };
+        if let Some(holds) = decided(relation, known, (unsigned, signed)) { return builder.ins().iconst(types::I8, i64::from(holds)); }
+    }
     let condition = row(&INTEGER_CONDITIONS, relation).expect("an integer relation");
     let ins = builder.ins();
     if relation.is_signed() { ins.icmp_imm_s(condition, a, bits) } else { ins.icmp_imm_u(condition, a, bits) }

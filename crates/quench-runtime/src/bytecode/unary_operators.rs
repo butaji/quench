@@ -7,10 +7,7 @@
 /// source order and `StringConcat` converts only what cannot be. No source operator spells
 /// it; it extends oxc's operator numbering.
 pub(crate) const UNARY_TO_STRING_PRIMITIVE: u32 = oxc_ast::ast::UnaryOperator::Delete as u32 + 1;
-/// The names `typeof` yields (ECMA-262 13.5.3.1), indexed as `typeof_name_index` (vm/coercion.rs) classifies
-/// values.
-pub(crate) const TYPEOF_NAMES: [&str; 8] =
-    ["undefined", "object", "boolean", "number", "string", "bigint", "symbol", "function"];
+pub(crate) use super::typeof_names::{TYPEOF_NAMES, typeof_name_index};
 /// The `Unary` operators that compare `typeof` of their operand with a name in
 /// `TYPEOF_NAMES` (`typeof x === "function"`): this plus the name's index tests equality,
 /// and that plus `TYPEOF_NAMES.len()` inequality. The comparison of two strings that
@@ -36,9 +33,17 @@ pub(crate) const UNARY_TYPEOF_INDEX: u32 = UNARY_TYPEOF_IS + UNARY_TYPEOF_TESTS;
 /// is what the chain's `+` of that operand does, in the order the `+`s run.
 pub(crate) const UNARY_ADD_OPERAND_STRING: u32 = UNARY_TYPEOF_INDEX + 1;
 
-/// The index in `TYPEOF_NAMES` of `name`, if some value's `typeof` is `name`.
-pub(crate) fn typeof_name_index(name: &str) -> Option<usize> {
-    TYPEOF_NAMES.iter().position(|candidate| *candidate == name)
+/// The `Unary` operators testing whether an array pattern of `n` elements and no rest reads
+/// its elements by index with no observable iteration step (`FunctionCompiler::direct_array_pattern`):
+/// this plus `n - 1`, for `n` up to `ARRAY_PATTERN_MAX_ELEMENTS` (`Vm::array_pattern_fits`).
+pub(crate) const UNARY_ARRAY_PATTERN: u32 = UNARY_ADD_OPERAND_STRING + 1;
+pub(crate) const ARRAY_PATTERN_MAX_ELEMENTS: u32 = 16;
+
+/// The element count a `UNARY_ARRAY_PATTERN` operator tests.
+#[inline(always)]
+pub(crate) fn array_pattern_test(operator: u32) -> Option<usize> {
+    let offset = operator.checked_sub(UNARY_ARRAY_PATTERN).filter(|offset| *offset < ARRAY_PATTERN_MAX_ELEMENTS)?;
+    Some(offset as usize + 1)
 }
 
 /// The name index and negation a `UNARY_TYPEOF_IS` operator tests.

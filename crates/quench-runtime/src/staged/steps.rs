@@ -17,10 +17,10 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
         Operation::WasmJump(jump) => super::wasm_jump::step(stage, frame, jump),
         Operation::BranchTable(table) => super::wasm_jump::branch_table(stage, frame, table),
-        call @ (Operation::Call(_) | Operation::Return { .. }) => call_step(stage, frame, call),
+        call @ (Operation::Call(_) | Operation::Return { .. } | Operation::Suspend { .. }) => call_step(stage, frame, call),
         Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
             | Operation::LoadLocalChecked { .. } | Operation::StoreLocalChecked { .. } | Operation::InitializeLocal { .. }
-            | Operation::LogicalNot { .. } | Operation::Safepoint { .. } => register_step(stage, frame, operation),
+            | Operation::LogicalNot { .. } | Operation::Safepoint { .. } | Operation::Nop => register_step(stage, frame, operation),
         Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. } | Operation::ArgumentGet { .. }
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::LoadName { .. } | Operation::Protocol { .. }
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } | Operation::SpreadCall { .. } | Operation::SuperCall { .. }
@@ -40,14 +40,16 @@ fn keyed_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     }
 }
 
-/// A call, a construction or a return: the call protocol's operations (`step`).
+/// A call, a construction, a return or a suspension: the operations that leave or enter an
+/// activation (`step`).
 #[inline(always)]
 fn call_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::Call(CallOperation::Site(site)) => super::invoke::invoke(stage, frame, frame.miss(), site),
         Operation::Return { source } => super::invoke::ret(stage, frame, source),
         Operation::Call(operation) => super::protocol::step(stage, frame.miss(), operation),
-        _ => unreachable!("`step` sends only calls and returns"),
+        Operation::Suspend { kind, destination, value } => super::suspend::suspend(stage, frame, kind, destination, value),
+        _ => unreachable!("`step` sends only calls, returns and suspensions"),
     }
 }
 
@@ -64,9 +66,7 @@ fn value_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             super::control::typeof_test(stage, frame, destination, source, index, negated),
         Operation::TypeofString { destination, source } => super::control::typeof_string(stage, frame, destination, source),
         Operation::StringCaseIndex { destination, source, start, count } => string_case_index(stage, frame, destination, source, start, count),
-        Operation::Await { destination, source } => suspended(frame.suspend_await(stage, destination, source)),
-        Operation::Yield { value } => suspended(frame.suspend_yield(stage, value)),
-        Operation::YieldStar { iterable } => suspended(frame.suspend_yield_star(stage, iterable)),
+        Operation::Suspend { kind, destination, value } => super::suspend::suspend(stage, frame, kind, destination, value),
         Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. } | Operation::ArgumentGet { .. }
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::Protocol { .. }
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } => super::names::step(stage, frame, operation),
@@ -84,16 +84,6 @@ fn string_case_index<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: 
             frame.write(stage, destination, value, fact);
             Step::Value(value)
         }
-        None => Step::Unresolved,
-    }
-}
-
-/// A frame's suspension of the running lane (`Await`, `Yield`, `YieldStar`): control leaves the run where the
-/// frame makes one; a frame that cannot suspend leaves the record to the general step.
-#[inline(always)]
-fn suspended<W, C>(control: Option<C>) -> Step<W, C> {
-    match control {
-        Some(control) => Step::Control(control),
         None => Step::Unresolved,
     }
 }
@@ -121,6 +111,7 @@ fn register_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
         Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. } | Operation::LoadLocalChecked { .. }
             | Operation::StoreLocalChecked { .. } | Operation::InitializeLocal { .. } => local_step(stage, frame, operation),
         Operation::LogicalNot { destination, source } => logical_not(stage, frame, destination, source),
+        Operation::Nop => Step::Value(stage.constant(0)),
         Operation::Safepoint { proof } => match frame.safepoint(stage, proof) {
             Some(()) => Step::Value(stage.constant(0)),
             None => Step::Unresolved,

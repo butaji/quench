@@ -63,11 +63,21 @@ pub(crate) trait WasmTable: WasmStage {
         signature: Self::Word,
         expected: Self::Word,
     ) -> Self::Word;
+    /// The flag of `otherwise` where `signature` differs from `expected`, else 1 (accepted):
+    /// the equal words, the common case, decide with one compare before any other check.
+    fn unless_equal(
+        &mut self,
+        signature: Self::Word,
+        expected: Self::Word,
+        otherwise: impl FnOnce(&mut Self) -> Result<Self::Word, Self::Exit>,
+    ) -> Result<Self::Word, Self::Exit>;
 }
 
 /// The reference at `index` of the table, which an indirect call of the `expected` signature
 /// calls: an index past the table traps, then a null element, then a function of another
-/// signature. The one place these checks and their order are written.
+/// signature. The one place these checks and their order are written. A signature equal to the
+/// expected one is accepted first: the expected signature is never null, so the null check runs
+/// only where they differ, and traps in the same order.
 #[inline(always)]
 pub(crate) fn indirect_target<S: WasmTable>(
     stage: &mut S,
@@ -77,13 +87,16 @@ pub(crate) fn indirect_target<S: WasmTable>(
     let one = stage.constant(Width::I64, 1);
     let outside = stage.table_range_exceeds(index, one);
     stage.trap_when(outside, WasmTrap::UndefinedElement)?;
+    debug_assert_ne!(expected, CanonicalSignature::NULL);
     let signature = stage.element_signature(index);
-    let null = stage.constant(Width::I64, CanonicalSignature::NULL.word() as i64);
-    let uninitialized = stage.operate(Binary::Equal, Width::I64, signature, null);
-    stage.trap_when(uninitialized, WasmTrap::UninitializedElement)?;
     let reference = stage.table_element(index);
     let expected = stage.constant(Width::I64, expected.word() as i64);
-    let accepted = stage.signature_accepts(reference, signature, expected);
+    let accepted = stage.unless_equal(signature, expected, |stage| {
+        let null = stage.constant(Width::I64, CanonicalSignature::NULL.word() as i64);
+        let uninitialized = stage.operate(Binary::Equal, Width::I64, signature, null);
+        stage.trap_when(uninitialized, WasmTrap::UninitializedElement)?;
+        Ok(stage.signature_accepts(reference, signature, expected))
+    })?;
     let mismatch = stage.operate_unary(Unary::EqualZero, Width::I32, accepted);
     stage.trap_when(mismatch, WasmTrap::IndirectCallTypeMismatch)?;
     Ok(reference)

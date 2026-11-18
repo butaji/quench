@@ -4,7 +4,7 @@
 //! staged step (whose answer picks the edge through `Frame::branch`). An operator the step does
 //! not name leaves the jump to the exact path.
 use super::*;
-use crate::staged::{Comparison, Domain, Nullish, Operation};
+use crate::staged::{nullish_of, Comparison, Domain, Operation};
 use crate::vm::operations::NumberRelation;
 
 impl Lowering<'_, '_> {
@@ -40,7 +40,7 @@ impl Lowering<'_, '_> {
             nullish_comparison(&self.program.constants, instruction, register_type)?;
         let (b, c) = (instruction.operand_b(), instruction.operand_c());
         let other = if c.register_index() == Some(source) { b } else { c };
-        Some((Comparison::Nullish { expected: Nullish::of(expected)?, strict, negated }, [Operand::register(source), other]))
+        Some((Comparison::Nullish { expected: nullish_of(expected)?, strict, negated }, [Operand::register(source), other]))
     }
 
     /// Whether neither constant operand is anything but a Number: a register's type is for the
@@ -68,12 +68,19 @@ impl Lowering<'_, '_> {
     /// a bitwise test of Numbers, and an equality, `instanceof` or `in` of registers in a body with
     /// the VM's helpers, whose decision runs on the operands the call-out carries. `None` where no
     /// step names it (a region with no VM helper, any other operator).
-    fn specialized(&self, state: &State, comparison: Comparison, operands: [Operand; 2]) -> Option<Comparison> {
+    fn specialized(&self, state: &State, (comparison, operator): (Comparison, u32), operands: [Operand; 2]) -> Option<Comparison> {
         let [left, right] = operands;
         if !(self.operand_supported(left) && self.operand_supported(right)) { return None; }
         let domain = self.number_domain(state, left, right).unwrap_or(Domain::Float64);
         let helpers = !self.helpers.is_numeric();
+        let numberless = [left, right].iter().filter_map(|operand| operand.register_index())
+            .any(|register| super::super::facts::numberless(state.values[usize::from(register)].value.ty));
         match comparison.by_vm() {
+            // A relation of a register the facts prove is no Number: the VM's decision, whose
+            // operands are registers (a constant operand leaves the jump to the exact path).
+            Comparison::Relation { .. } if numberless && helpers
+                && [left, right].iter().all(|operand| operand.register_index().is_some()) =>
+                Some(Comparison::Decided(operator)),
             Comparison::Relation { relation, .. } if self.numbers_supported(left, right) =>
                 Some(Comparison::Relation { relation, domain }),
             Comparison::Equality { negated, .. } if self.numbers_typed(state, left, right) => Some(Comparison::Relation {
@@ -93,10 +100,26 @@ impl Lowering<'_, '_> {
     /// A relation jump: the staged step of the comparison its operands settle on. Whether it
     /// lowered.
     fn relation_jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, comparison: Comparison) -> bool {
+        if let Some(read) = self.hoisted.get(&pc).copied() {
+            self.decided_jump(state, pc, instruction, read.value);
+            return true;
+        }
         let operands = [instruction.operand_b(), instruction.operand_c()];
-        let Some(comparison) = self.specialized(state, comparison, operands) else { return false };
+        let Some(comparison) = self.specialized(state, (comparison, instruction.binary_operator_field()), operands) else { return false };
         self.staged_jump(state, pc, instruction, comparison, operands);
         true
+    }
+
+    /// The jump on a decision its loop's entry held (`Lowering::hoist_decisions`): taken where the
+    /// held Boolean is false.
+    fn decided_jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, held: Variable) {
+        let target = instruction.jump_target() as usize;
+        if target <= pc { self.interrupt_check(state, pc as u32); }
+        let word = self.builder.use_var(held);
+        let holds = self.raw_compare_imm(Relation::Equal, word, Value::TRUE.to_bits() as i64);
+        let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
+        self.branch_if(holds, (fall, &[]), (taken, &[]));
+        self.continue_branch(state, pc, target, taken, fall);
     }
 
     /// The staged jump on `comparison` of `operands`: it jumps where the
@@ -109,7 +132,9 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit(state, pc32);
         let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
         let row = Operation::CompareJump { comparison, left, right, negate: true };
-        let site = self.decide_record(pc, [left, right]).filter(|_| comparison.operator().is_some())
+        // A relation the VM decides by its operator alone (`Decided`) has no record step: where the
+        // `Decide` helper cannot answer, the jump leaves to the exact path.
+        let site = self.decide_record(pc, [left, right]).filter(|_| comparison.operator().is_some() && !matches!(comparison, Comparison::Decided(_)))
             .map(|record| self.call_out_site(pc, record, None));
         let prototype = (comparison == Comparison::Instanceof).then(|| self.hold_instanceof(state, exit, right)).flatten();
         let sites = frame::Sites { call_out: site.as_ref(), prototype, ..frame::Sites::default() };

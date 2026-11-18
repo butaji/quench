@@ -80,7 +80,7 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
                     Some(Value::number(operation.apply(&mut NumberF64Stage, left, right)))
                 } else if let Some(operation) = NumberBitwise::from_js_instruction(instruction.op(), operator) {
                     Some(crate::vm::operations::number_bitwise_result(operation,
-                        crate::value::number_to_u32(left) as i32, crate::value::number_to_u32(right) as i32))
+                        crate::value::number_to_i32(left), crate::value::number_to_i32(right)))
                 } else {
                     NumberRelation::from_operator(operator).map(|operation|
                         Value::boolean(operation.apply(&mut PartialOrderStage, left, right)))

@@ -40,9 +40,7 @@ pub(super) use shape::Shape;
 #[thread_local]
 static KERNELS: std::cell::UnsafeCell<Vec<*const LoopKernel>> = std::cell::UnsafeCell::new(Vec::new());
 
-/// Entries declined for too few iterations before the kernel stands down for good.
-const SHORT_DECLINES: u32 = 64;
-
+use crate::vm::compiled::tier_policy::KERNEL_SHORT_DECLINES;
 /// A loop's kernel: its shape, the test record's own handler, and its run state.
 pub(super) struct LoopKernel {
     shape: Shape,
@@ -54,6 +52,9 @@ pub(super) struct LoopKernel {
     declines: std::cell::Cell<u32>,
     /// The run's columns (`run`), kept between runs.
     scratch: std::cell::UnsafeCell<Vec<f64>>,
+    /// The run's entry facts and recurrences (`run::State`), kept between runs: an entry
+    /// writes the slots its shape uses and copies nothing.
+    state: std::cell::UnsafeCell<Box<run::State>>,
 }
 
 /// The recurrence pass that runs the loop of `shape`, where the kernel is that loop's tier. A pass
@@ -99,6 +100,7 @@ impl LoopKernel {
             original: std::cell::Cell::new(original),
             declines: std::cell::Cell::new(0),
             scratch: std::cell::UnsafeCell::new(Vec::new()),
+            state: std::cell::UnsafeCell::new(Box::new(run::State::EMPTY)),
         });
         kernel.slot = register(&kernel)?;
         Some(kernel)
@@ -200,7 +202,7 @@ script_handler! {
         // The loop's own records continue from where the kernel left the registers: its
         // head runs, then its test, which fails where the kernel ran the whole loop.
         unsafe { kernel.run(cx, r, ip) };
-        if kernel.declines.get() >= SHORT_DECLINES {
+        if kernel.declines.get() >= KERNEL_SHORT_DECLINES {
             kernel.stand_down::<H>(ip);
         }
         sibling!(kernel.original::<H>(), r, ip, Carried::script_in(cx, view))

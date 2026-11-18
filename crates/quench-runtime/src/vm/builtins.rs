@@ -4,45 +4,8 @@ use super::*;
 
 /// Marks a cached atom field that has not been interned since the last program reset.
 pub(super) const NO_CACHED_ATOM: Atom = Atom::MAX;
-const MATH_FUNCTIONS: &[(&str, Native)] = &[
-    ("abs", Native::MathAbs),
-    ("acos", Native::MathAcos),
-    ("acosh", Native::MathAcosh),
-    ("asin", Native::MathAsin),
-    ("asinh", Native::MathAsinh),
-    ("atan", Native::MathAtan),
-    ("atan2", Native::MathAtan2),
-    ("atanh", Native::MathAtanh),
-    ("cbrt", Native::MathCbrt),
-    ("ceil", Native::MathCeil),
-    ("clz32", Native::MathClz32),
-    ("cos", Native::MathCos),
-    ("cosh", Native::MathCosh),
-    ("exp", Native::MathExp),
-    ("expm1", Native::MathExpm1),
-    ("floor", Native::MathFloor),
-    ("f16round", Native::MathF16Round),
-    ("fround", Native::MathFround),
-    ("hypot", Native::MathHypot),
-    ("imul", Native::MathImul),
-    ("log", Native::MathLog),
-    ("log10", Native::MathLog10),
-    ("log1p", Native::MathLog1p),
-    ("log2", Native::MathLog2),
-    ("max", Native::MathMax),
-    ("min", Native::MathMin),
-    ("pow", Native::MathPow),
-    ("random", Native::MathRandom),
-    ("round", Native::MathRound),
-    ("sign", Native::MathSign),
-    ("sin", Native::MathSin),
-    ("sinh", Native::MathSinh),
-    ("sqrt", Native::MathSqrt),
-    ("sumPrecise", Native::MathSumPrecise),
-    ("tan", Native::MathTan),
-    ("tanh", Native::MathTanh),
-    ("trunc", Native::MathTrunc),
-];
+/// `Math`'s functions, in installation order: derived from the rows of `native_rows`.
+const MATH_FUNCTIONS: &[(&str, Native)] = super::native_rows::MATH_FUNCTIONS;
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
     Native::Print, Native::HostDone, Native::CreateRealm, Native::IsHTMLDDA, Native::EvalScript, Native::CollectGarbage, Native::RealmTypeError, Native::Eval, Native::Function, Native::FunctionPrototype, Native::FunctionPrototypeHasInstance, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag, Native::ShadowRealm, Native::ShadowRealmEvaluate, Native::ShadowRealmImportValue, Native::ShadowRealmImportValueFulfilled, Native::ShadowRealmWrappedFunction,
@@ -781,7 +744,7 @@ impl<H: Host> Vm<H> {
             let name = well_known.name();
             let value = self
                 .heap
-                .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(format!("Symbol.{name}")))));
+                .alloc_symbol(crate::heap::SymbolData::public(Some(format!("Symbol.{name}"))));
             self.well_known_symbols.insert(well_known, value);
             self.set_named_constant(program, symbol, name, value)?;
         }
@@ -1067,6 +1030,10 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_math(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let math = self.object();
         self.install_builtin_to_string_tag(math, "Math")?;
+        // Functions, then value properties: the order Node's `Math` lists them in.
+        for (name, native) in MATH_FUNCTIONS {
+            self.set_builtin_named(program, math, name, *native)?;
+        }
         for (name, value) in [
             ("E", std::f64::consts::E),
             ("LN10", std::f64::consts::LN_10),
@@ -1079,11 +1046,28 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_named_constant(program, math, name, Value::number(value))?;
         }
-        for (name, native) in MATH_FUNCTIONS {
-            self.set_builtin_named(program, math, name, *native)?;
-        }
         self.seal_initialized_intrinsic(math);
         self.global(program, "Math", math)
+    }
+
+    /// Installs `constructor[@@species]`, the accessor every species-reading constructor
+    /// carries (configurable, not enumerable, no setter), whose getter `getter` makes; nothing
+    /// where the realm has no @@species.
+    pub(super) fn install_species(&mut self, constructor: Value, getter: impl FnOnce(&mut Self) -> Value) -> Result<(), JsError> {
+        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else { return Ok(()) };
+        let getter = getter(self);
+        self.set_builtin_function_name(getter, "get [Symbol.species]")?;
+        self.set_symbol_property(constructor, species, Value::UNDEFINED)?;
+        let attributes = PropertyAttributes {
+            writable: false,
+            enumerable: false,
+            configurable: true,
+            accessor: true,
+            getter: Some(getter),
+            setter: None,
+        };
+        self.set_property_attributes(constructor, PropertyKey::symbol(species), attributes);
+        Ok(())
     }
 
     pub(super) fn install_builtin_to_string_tag(
@@ -1177,7 +1161,7 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn object(&mut self) -> Value {
         let prototype = self.realm_object_prototype(self.realm.globals);
-        self.heap.alloc_empty_object(Self::empty_object(prototype))
+        self.heap.alloc_empty_object(prototype)
     }
     pub(super) fn lookup_atom(&self, name: &str) -> Option<Atom> {
         self.find_atom(Self::atom_hash_str(name), |atom| {

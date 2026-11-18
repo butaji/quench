@@ -98,6 +98,9 @@ impl<H: Host> Vm<H> {
         if let Some(value) = self.split_in_place(native, receiver, args) {
             return Some(value);
         }
+        if let Some(value) = self.ascii_text_method(native, receiver, args) {
+            return Some(value);
+        }
         let result = self.call_primitive_native(p, native, receiver, args).ok();
         // A string method reads its receiver as text, which it may make on demand.
         self.heap.charge_materialized_text();
@@ -208,37 +211,13 @@ impl<H: Host> Vm<H> {
             }
             Native::StringCharCodeAt => {
                 let index = self.argument_integer(p, args, 0, 0)?;
-                let Some(text) = self.heap.string(this) else {
-                    return Err(JsError("string method receiver is not a string".into()));
-                };
-                let unit = index
-                    .try_into()
-                    .ok()
-                    .and_then(|index: usize| text.units().get(index));
-                Ok(unit.map_or_else(
-                    || Value::number(f64::NAN),
-                    |unit| Value::number(unit.into()),
-                ))
+                self.string_char_code_at_core(this, Value::number(index as f64))
+                    .ok_or_else(|| JsError("string method receiver is not a string".into()))
             }
             Native::StringCharAt => {
                 let index = self.argument_integer(p, args, 0, 0)?;
-                let Some(receiver) = self.heap.string(this).cloned() else {
-                    return Err(JsError("string method receiver is not a string".into()));
-                };
-                let Some(index) = usize::try_from(index).ok() else {
-                    return Ok(self
-                        .heap
-                        .alloc_string(super::wtf16::JsString::from_units(&[])));
-                };
-                let units = receiver.units();
-                if let Some(value) = units.get(index).and_then(|unit| self.ascii_unit_string(unit)) {
-                    return Ok(value);
-                }
-                let value = units.get_range(index..index + 1).map_or_else(
-                    || super::wtf16::JsString::from_units(&[]),
-                    super::wtf16::JsString::from_unit_run,
-                );
-                Ok(self.heap.alloc_string(value))
+                self.string_char_at_core(this, Value::number(index as f64))
+                    .ok_or_else(|| JsError("string method receiver is not a string".into()))
             }
             Native::StringSlice | Native::StringSubstring => {
                 let text = self.string_receiver_text(this)?;
@@ -330,12 +309,12 @@ impl<H: Host> Vm<H> {
                 };
                 Ok(Value::number(result.map_or(-1.0, |index| index as f64)))
             }
-            Native::StringReplace => match self.replace_in_place(native, this, args) {
-                Some(value) => Ok(value),
+            Native::StringReplace => match self.replace_string_pattern(p, native, this, args) {
+                Some(result) => result,
                 None => self.string_replace_native(p, this, args, false),
             },
-            Native::StringReplaceAll => match self.replace_in_place(native, this, args) {
-                Some(value) => Ok(value),
+            Native::StringReplaceAll => match self.replace_string_pattern(p, native, this, args) {
+                Some(result) => result,
                 None => self.string_replace_native(p, this, args, true),
             },
             Native::StringSplit => self.string_split_native(p, this, args),
@@ -411,7 +390,7 @@ impl<H: Host> Vm<H> {
                     && let Some(super::wtf16::Units::Ascii(bytes)) = receiver.existing_units()
                 {
                     let text: smallvec::SmallVec<[u8; 64]> = bytes.iter().copied().cycle().take(size).collect();
-                    return Ok(self.heap.alloc_string(super::wtf16::JsString::from_ascii_bytes(&text)));
+                    return Ok(self.heap.alloc_ascii_run(&text));
                 }
                 Ok(self.heap.alloc_string(receiver.repeat(count)))
             }
@@ -448,7 +427,7 @@ impl<H: Host> Vm<H> {
                         bytes.extend(padding);
                         bytes.extend_from_slice(text);
                     }
-                    return Ok(self.heap.alloc_string(super::wtf16::JsString::from_ascii_bytes(&bytes)));
+                    return Ok(self.heap.alloc_ascii_run(&bytes));
                 }
                 let receiver_units = receiver.units().to_vec();
                 let fill_len = target - receiver_units.len();
@@ -586,9 +565,8 @@ impl<H: Host> Vm<H> {
             Native::MathAtan2 => {
                 let y = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let x = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                let y = self.to_number(p, y)?;
-                let x = self.to_number(p, x)?;
-                Ok(Value::number(super::fdlibm_math::atan2(y, x)))
+                let numbers = [self.to_number(p, y)?, self.to_number(p, x)?];
+                Ok(Value::number(super::number::math_numbers(native, &numbers).expect("Math.atan2")))
             }
             Native::MathMin | Native::MathMax => {
                 let mut numbers = smallvec::SmallVec::<[f64; super::number::MATH_INLINE_ARGUMENTS]>::new();
@@ -601,9 +579,7 @@ impl<H: Host> Vm<H> {
             Native::MathImul => {
                 let left = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let right = self.to_number(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-                let product = (crate::value::number_to_u32(left) as i32)
-                    .wrapping_mul(crate::value::number_to_u32(right) as i32);
-                Ok(Value::number(product as f64))
+                Ok(Value::number(super::number::math_numbers(native, &[left, right]).expect("Math.imul")))
             }
             Native::MathSumPrecise => self.math_sum_precise(p, args.first().copied()),
             Native::MathRandom => {

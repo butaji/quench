@@ -113,6 +113,9 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
 
     /// `{ statements }` of a function, whose labels, loops and `in` are its own.
     pub(super) fn function_body(&mut self, simple_params: bool) -> Seen {
+        if !simple_params {
+            self.scopes.settle_head();
+        }
         self.expect(Kind::LCurly)?;
         let strict = self.strict;
         let flow = std::mem::take(&mut self.flow);

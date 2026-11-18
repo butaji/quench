@@ -11,7 +11,7 @@ fn ahead_image(source: &str) -> (RelocatableCode, usize) {
     let unit = lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let isa = crate::vm::jit_backend::target_isa().unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Ahead, &[], &Default::default(),
-        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[],
+        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[],
         Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
     let image = crate::vm::jit_backend::compile_function(region.function, &*isa, None, |compiled, function| {
         RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
@@ -27,7 +27,7 @@ fn run_pick(linked: &[u8], registers: usize) {
     let memory = CodeMemory::new(linked).unwrap();
     // SAFETY: the image is a lane entry of the shared ABI, its helpers now this process's.
     let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(memory.pointer()) };
-    let mut frame = super::super::LaneFrame::new();
+    let mut frame = super::super::BodyRunContext::new();
     let mut vm = Vm::new(crate::test_host::TestHost::default());
     frame.dispatch.refresh_object_bases(&vm);
     frame.dispatch.bind_native_storage(&mut vm);
@@ -138,7 +138,7 @@ fn field_reads_calls_and_global_reads_compile_ahead_to_helper_symbols_only() {
         let unit = lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
         let isa = crate::vm::jit_backend::target_isa().unwrap();
         let region = lower(&program, id as u32, &unit, LaneHelpers::Ahead, &[], &Default::default(),
-            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[],
+            VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[],
             Coverage::Full, Completion::Body, ElementViews::Dense, true).expect(source);
         let image = crate::vm::jit_backend::compile_function(region.function, &*isa, None, |compiled, function| {
             RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)

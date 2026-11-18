@@ -53,6 +53,21 @@ impl Drop for StoppedCellDrop {
     }
 }
 
+/// Cells whose payload is always shared: their release takes the shared lock, and they count as
+/// shared at drop.
+fn always_shares_rc_payload(cell: &Cell) -> bool {
+    matches!(
+        cell,
+        Cell::Iterator { .. }
+            | Cell::WasmGc { .. }
+            | Cell::WasmGlobal { .. }
+            | Cell::WasmInstance(_)
+            | Cell::WasmTable { .. }
+            | Cell::WasmTag { .. }
+            | Cell::RegExp { .. }
+    )
+}
+
 pub(super) fn cell_rc_drop_lock(cell: &Cell) -> Option<&'static Mutex<()>> {
     match cell {
         Cell::Array { object } => {
@@ -66,13 +81,7 @@ pub(super) fn cell_rc_drop_lock(cell: &Cell) -> Option<&'static Mutex<()>> {
         Cell::WasmHostFunction { signature, .. } => {
             Some(&RC_DROP_LOCKS[rc_drop_lock_index(Rc::as_ptr(signature) as usize)])
         }
-        Cell::Iterator { .. }
-        | Cell::WasmGc { .. }
-        | Cell::WasmGlobal { .. }
-        | Cell::WasmInstance(_)
-        | Cell::WasmTable { .. }
-        | Cell::WasmTag { .. }
-        | Cell::RegExp { .. } => Some(&SHARED_RC_DROP_LOCK),
+        _ if always_shares_rc_payload(cell) => Some(&SHARED_RC_DROP_LOCK),
         _ => None,
     }
 }
@@ -82,14 +91,7 @@ fn cell_has_shared_rc_payload(cell: &Cell) -> bool {
         Cell::Array { object } => object.elements().owner_count() > 1,
         Cell::ArrayBuffer { bytes, .. } => bytes.is_shared(),
         Cell::WasmHostFunction { signature, .. } => Rc::strong_count(signature) > 1,
-        Cell::Iterator { .. }
-        | Cell::WasmGc { .. }
-        | Cell::WasmGlobal { .. }
-        | Cell::WasmInstance(_)
-        | Cell::WasmTable { .. }
-        | Cell::WasmTag { .. }
-        | Cell::RegExp { .. } => true,
-        _ => false,
+        _ => always_shares_rc_payload(cell),
     }
 }
 

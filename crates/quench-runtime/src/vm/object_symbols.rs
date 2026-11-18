@@ -24,7 +24,7 @@ enum PlainCopyWrite {
 
 impl<H: Host> Vm<H> {
     pub(super) fn is_host_private_symbol(&self, key: Value) -> bool {
-        matches!(self.heap.get(key), Some(Cell::Symbol(data))
+        matches!(self.heap.symbol_data(key), Some(data)
             if data.kind == crate::heap::SymbolKind::HostPrivate)
     }
 
@@ -245,10 +245,7 @@ impl<H: Host> Vm<H> {
         if let (Some(l), Some(r)) = (self.heap.string(left), self.heap.string(right)) {
             return l == r;
         }
-        match (self.heap.get(left), self.heap.get(right)) {
-            (Some(Cell::Symbol(_)), Some(Cell::Symbol(_))) => left == right,
-            _ => false,
-        }
+        self.heap.is_symbol(left) && self.heap.is_symbol(right) && left == right
     }
 
     pub(super) fn copy_data_properties(
@@ -360,7 +357,7 @@ impl<H: Host> Vm<H> {
     /// for `Set`, no accessor or read-only property up the target's chain intercepts it. The
     /// copy then runs no guest code and cannot throw, so it gathers every value first and
     /// writes them in order. `false`, before any effect, leaves the copy to the general path.
-    fn copy_plain_properties(
+    pub(super) fn copy_plain_properties(
         &mut self,
         target: Value,
         source: Value,
@@ -402,6 +399,21 @@ impl<H: Host> Vm<H> {
                 .map(|(shape, _)| shape),
         };
         if memoizes && let Some(shape) = memoized {
+            // A shaped source's values are read straight into a fixed buffer: its shape lists
+            // each enumerable slot it holds (`shape_enumerable_slots`), which
+            // `property_get_shaped` reads with no bounds or deleted-marker test.
+            if slots.len() <= PLAIN_COPY_INLINE_PROPERTIES && !self.shape_is_dictionary(source_shape) {
+                let mut values = [Value::UNDEFINED; PLAIN_COPY_INLINE_PROPERTIES];
+                for (value, (_, slot)) in values.iter_mut().zip(slots.iter()) {
+                    // SAFETY: as above.
+                    let Some(read) = (unsafe { self.heap.property_get_shaped(data, *slot as usize) }) else {
+                        return false;
+                    };
+                    *value = read;
+                }
+                self.initialize_plain_copy(target, shape, &values[..slots.len()], slots.iter().map(|(atom, _)| *atom));
+                return true;
+            }
             let Some(values) = slots
                 .iter()
                 .map(|(_, slot)| self.heap.property_get(data, *slot as usize))
@@ -576,7 +588,7 @@ impl<H: Host> Vm<H> {
     /// `object[key] = value` for a symbol `key` that `set_plain_symbol_property` completes as
     /// a successful write; `false` leaves any other store, unobserved, to the general path.
     pub(super) fn try_plain_symbol_set(&mut self, object: Value, key: Value, value: Value) -> bool {
-        matches!(self.heap.get(key), Some(Cell::Symbol(symbol)) if symbol.kind != crate::heap::SymbolKind::HostPrivate)
+        matches!(self.heap.symbol_data(key), Some(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate)
             && self.set_plain_symbol_property(object, key, value) == Some(true)
     }
 
@@ -792,7 +804,7 @@ impl<H: Host> Vm<H> {
             let values: Vec<Value> = self
                 .object_own_key_values(p, object)?
                 .into_iter()
-                .filter(|key| matches!(self.heap.get(*key), Some(Cell::Symbol(_))))
+                .filter(|key| self.heap.is_symbol(*key))
                 .collect();
             return Ok(self.array_of(&values));
         }

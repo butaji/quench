@@ -16,10 +16,6 @@ impl Heap {
 
     pub(crate) fn weak_value(&self, handle: WeakHandle) -> Option<Value> {
         let live = self.is_live(handle.value);
-        if live {
-            // A cycle's snapshot may not reach what a weak read hands out.
-            self.shade(handle.value);
-        }
         live.then_some(handle.value)
     }
 }
@@ -116,44 +112,33 @@ impl Heap {
         age: PromotionAge,
     ) -> Vec<(Value, Value)> {
         let Self {
-            object_records,
-            array_records,
-            function_records,
-            promise_records,
-            await_records,
-            iterator_records,
-            string_records,
-            small_strings,
-            v128_records,
-            marks,
             aged,
             slots,
             young_weak,
+            weak_cells,
             remembered,
             ..
         } = self;
-        let mark_bits = MarkBits {
-            object_records,
-            array_records,
-            function_records,
-            promise_records,
-            await_records,
-            iterator_records,
-            string_records,
-            small_strings,
-            v128_records,
-            marks,
-        };
+        let mark_bits = mark_bits!(self);
         let mut finalization_jobs = Vec::new();
         let is_marked = |value: Value| mark_bits.is_marked(value);
         if full {
-            for (index, slot) in slots.iter_mut().enumerate() {
-                if is_marked(Value::heap(index as u32))
-                    && let Some(cell) = slot.cell.as_mut()
-                {
-                    Self::prune_weak_cell(cell, &is_marked, &mut finalization_jobs);
+            // A marked index stays, once, while its cell still has weak entries; the sweep
+            // frees the rest. Indices a reused slot repeats are pruned once.
+            weak_cells.sort_unstable();
+            weak_cells.dedup();
+            weak_cells.retain(|&index| {
+                if !is_marked(Value::heap(index)) {
+                    return false;
                 }
-            }
+                match slots.get_mut(index as usize).and_then(|slot| slot.cell.as_mut()) {
+                    Some(cell) if cell.has_weak_entries() => {
+                        Self::prune_weak_cell(cell, &is_marked, &mut finalization_jobs);
+                        true
+                    }
+                    _ => false,
+                }
+            });
         } else {
             for index in young_weak.iter().chain(remembered.iter()).copied() {
                 if let Some(cell) = slots

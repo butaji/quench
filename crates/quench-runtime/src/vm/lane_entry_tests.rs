@@ -47,7 +47,7 @@ const HOT_CALLEE: &str = r#"(function () {
 })();"#;
 
 /// The entries of one lane run bind its words once: the run's VM, program, residual, lane
-/// context, field cache entries, stack limit and payload stand (`LaneFrame::bind_run`), so an
+/// context, field cache entries, stack limit and payload stand (`BodyRunContext::bind_run`), so an
 /// entry that changes any of them is one that bound a run, and the runs are a small fraction of
 /// the entries. What an entry writes itself is its window and the stacks' room.
 #[test]

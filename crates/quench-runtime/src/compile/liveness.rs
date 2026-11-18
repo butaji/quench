@@ -8,6 +8,8 @@ use crate::bytecode::{
 pub(crate) use set::RegisterSet; mod set;
 
 mod solve; mod masks; pub(crate) mod windows; pub(crate) mod budget;
+// The interpreter runs raw webs once their opcode forms land (`raw-registers-design.md`).
+pub(crate) mod raw_webs;
 pub(crate) use solve::{add_suspended_exception_roots, analyze_graph, analyze_transfers, analyze_wide};
 pub(crate) use masks::RegisterMasks;
 use solve::LiveMask;

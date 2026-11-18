@@ -45,6 +45,9 @@ pub(super) struct HeldRead {
     /// The test that no method cache names the atom a store writes: the entry's where the run
     /// calls nothing, made at the store where it does.
     pub(super) admitted: Option<ir::Value>,
+    /// Whether a store the in-place arms miss leaves instead of calling the VM's store
+    /// (`Lowering::store_leaves`).
+    pub(super) leaves: bool,
 }
 
 /// The Stable facts a lowering takes, and where it takes them.
@@ -86,6 +89,16 @@ impl<'a> EmitFrame<'a> {
         }
     }
 
+    /// The other registers that hold `register`'s tagged value, which is one SSA value: copies a
+    /// `Move` made (`register_copy`), not yet redefined. Receivers keep their own proofs.
+    fn copies(&self, register: Register) -> Vec<Register> {
+        let TaggedView::Value(value) = self.state.values[usize::from(register)].tagged else { return Vec::new() };
+        (0..self.state.values.len()).filter(|&other| other != usize::from(register)
+            && self.state.values[other].tagged == TaggedView::Value(value))
+            .filter_map(|other| Register::try_from(other).ok())
+            .filter(|&other| !self.is_receiver(Owner::Register(other))).collect()
+    }
+
     /// The proofs of the probed fast path do not dominate the probe's join: past it only what
     /// held before the read does.
     fn retire_fast_proofs(&mut self, owner: Owner, before: &State) {
@@ -106,6 +119,12 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     /// The semantic type the lowering's state holds of the register: a static fact.
     fn value_fact(&self, register: Register) -> Type { self.state.values[usize::from(register)].value.ty }
 
+    /// The register's float64 view (`operand_number`): a Number by its fact, so no test runs.
+    fn stored_number(&mut self, stage: &mut Emit<'b, 'c>, register: Register, miss: ir::Block) -> Option<ir::Value> {
+        if !self.state.values[usize::from(register)].value.ty.is_subtype(Type::NUMBER) { return None; }
+        super::frame::operand_number(stage.builder, self.registers, self.state, self.constants, crate::bytecode::Operand::register(register), miss)
+    }
+
     fn object_records(&mut self, stage: &mut Emit<'b, 'c>) -> Option<ir::Value> {
         let entry = self.entry().or(self.table_entry)?;
         Some(headers::object_table_base(stage.builder, entry, self.payload))
@@ -121,8 +140,8 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         let entry = self.entry()?;
         if self.is_receiver(owner) {
             let receiver = &entry.receiver;
-            return Some(Reached { record: stage.builder.use_var(receiver.object),
-                shape: Some(stage.builder.use_var(receiver.shape)), inline: Some(stage.builder.use_var(receiver.inline)) });
+            return Some(Reached { shape: Some(stage.builder.use_var(receiver.shape)), inline: Some(stage.builder.use_var(receiver.inline)),
+                ..Reached::bare(stage.builder.use_var(receiver.object)) });
         }
         let header = match owner {
             Owner::Temporary => {
@@ -133,7 +152,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             Owner::This => self.object_header(stage.builder, entry, None, readable, miss),
             Owner::Register(register) => self.object_header(stage.builder, entry, Some(register), readable, miss),
         };
-        Some(Reached { record: header.address, shape: Some(header.shape), inline: Some(header.inline) })
+        Some(Reached { shape: Some(header.shape), inline: Some(header.inline), word: header.word, auxiliary: header.auxiliary, ..Reached::bare(header.address) })
     }
 
     /// The shape the owner's header holds as a constant, or its kept layout's.
@@ -147,11 +166,15 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         let Some(key) = self.proof_key(owner) else { return };
         headers::note_header_shape(stage.builder, self.state, key, shape);
         // A read that proves the receiver a direct object of its shape proves it for the block,
-        // a receiver alias's too.
+        // for each copy of its value too (`copies`).
         if let (true, Owner::Register(register)) = (direct, owner) {
-            self.state.values[usize::from(register)] = RegisterFact::definition(Type::direct_object(shape), Representation::Tagged);
+            for proved in std::iter::once(register).chain(self.copies(register)) {
+                let fact = &mut self.state.values[usize::from(proved)];
+                *fact = RegisterFact { tagged: fact.tagged, ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
+            }
         }
     }
+
 
     fn kept_layout(&self, owner: Owner, shape: u32) -> Option<Layout<ir::Value, ir::Value>> {
         let key = self.proof_key(owner)?;
@@ -159,8 +182,10 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     }
 
     fn keep_layout(&mut self, owner: Owner, shape: u32, layout: Layout<ir::Value, ir::Value>) {
-        if let Some(key) = self.proof_key(owner) {
-            self.state.proofs.layouts.insert((key, shape), CheckedObject::of(layout));
+        let Some(key) = self.proof_key(owner) else { return };
+        let copies = match owner { Owner::Register(register) if key.is_some() => self.copies(register), _ => Vec::new() };
+        for kept in std::iter::once(key).chain(copies.into_iter().map(Some)) {
+            self.state.proofs.layouts.insert((kept, shape), CheckedObject::of(layout));
         }
     }
 
@@ -196,6 +221,10 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
 
     fn field_store_host(&mut self, stage: &mut Emit<'b, 'c>, object: ir::Value, atom: u32, site: u16,
         value: ir::Value, miss: ir::Block) -> Option<()> {
+        if self.fields.as_ref().is_some_and(|fields| fields.held.leaves) {
+            let never = stage.ult(value, value);
+            return stage.guard(never, miss);
+        }
         calls::field_store_miss(self, stage, object, atom, site, value, EmitProof::FieldStoreMiss { miss })
     }
 
@@ -213,6 +242,10 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
 
     fn entry_slot_store(&mut self, stage: &mut Emit<'b, 'c>, site: u16, value: ir::Value, miss: ir::Block) -> Option<()> {
         self.loop_slot_store(stage, site, value, miss)
+    }
+
+    fn entry_slot_raw(&self) -> bool {
+        self.fields.as_ref().and_then(|fields| fields.held.slot).is_some_and(|slot| slot.raw)
     }
 
     /// The direct store, and where it declines (a shape, the barrier or the storage does not

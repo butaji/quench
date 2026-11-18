@@ -55,11 +55,7 @@ fn argument(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
     args.get(index).copied().unwrap_or_else(|| c.undefined())
 }
 
-fn put(c: &mut Context<'_>, target: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let key = c.string_rooted(name);
-    c.define_data_property_rooted(target, key, value, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 
 fn accessor(c: &mut Context<'_>, target: RootId, key: RootId, get: RootId, set: Option<RootId>, enumerable: bool) -> Result<(), RootedError> {
     let fields = DescriptorFields {

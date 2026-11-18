@@ -41,7 +41,7 @@ impl Op {
     /// `lane_new_object_pair`, `lane_new_array`) or a construction by its callee's plan
     /// (`lane_construct`). A due collection leaves before it, so native code never collects.
     pub(crate) const fn allocates(self) -> bool {
-        matches!(self, Op::MakeObject | Op::MakeObject2 | Op::MakeArray | Op::Construct)
+        matches!(self, Op::MakeObject | Op::MakeObject2 | Op::MakeObjectLiteral | Op::MakeArray | Op::Construct)
     }
 
     /// An instruction whose result register a loop region defines natively, as a Number or as a
@@ -129,7 +129,7 @@ mod tests {
     #[test]
     fn every_opcode_answers_the_loop_admission_questions_by_its_family() {
         use crate::bytecode::Class::{self, *};
-        let allocations: &[Class] = &[MakeObject, MakeObject2, MakeArray, Construct];
+        let allocations: &[Class] = &[MakeObject, MakeObject2, MakeObjectLiteral, MakeArray, Construct];
         let defining: &[Class] = &[LoadConst, Move, LoadCapture, Binary, NumericAdd, NumericMultiply, IncDec, Unary,
             ToNumeric, GetIndex, GetField, LoadEnvLocal, LoadName];
         let lowered: &[Class] = &[StoreCapture, RequireObjectCoercible, SetIndex, DefineArrayElement, Return, Jump,

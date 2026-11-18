@@ -67,12 +67,19 @@ impl std::ops::DerefMut for WasmGcFields {
 /// the function does. A row is written with the element,
 /// so each is read from the function once per write, not per call; none of them is a reference
 /// the collector follows, the element being the one that keeps its function and instance alive.
+///
+/// `body` is the address of the function's compiled body in its instance's published code table,
+/// or 0 (`NO_ENTRY` rows, rows of an instance with no published body for the function): a call
+/// that finds 0 takes the VM's slow path. It is a copy, so it is kept coherent by its writers:
+/// a row is written with the body the instance publishes for the function, and an instance's
+/// publication rewrites the rows that name it (`WasmTableElements::refresh_bodies`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub(crate) struct TableTarget {
     pub(crate) signature: CanonicalSignature,
     pub(crate) entry: u32,
     pub(crate) instance: u64,
+    pub(crate) body: usize,
 }
 
 impl TableTarget {
@@ -83,6 +90,7 @@ impl TableTarget {
         signature: CanonicalSignature::FOREIGN,
         entry: Self::NO_ENTRY,
         instance: 0,
+        body: 0,
     };
     /// The row of the null reference.
     pub(crate) const NULL: Self = Self {
@@ -93,6 +101,7 @@ impl TableTarget {
     pub(crate) const SIGNATURE: i32 = std::mem::offset_of!(Self, signature) as i32;
     pub(crate) const ENTRY: i32 = std::mem::offset_of!(Self, entry) as i32;
     pub(crate) const INSTANCE: i32 = std::mem::offset_of!(Self, instance) as i32;
+    pub(crate) const BODY: i32 = std::mem::offset_of!(Self, body) as i32;
 }
 
 /// The words compiled code reads to reach a table's mirror: its first row and its length. They
@@ -152,6 +161,7 @@ impl WasmTableElements {
     }
 
     /// The row of each element, in element order.
+    #[inline]
     pub(crate) fn targets(&self) -> &[TableTarget] {
         &self.targets
     }
@@ -217,6 +227,20 @@ impl WasmTableElements {
         self.values[output..output + values.len()].copy_from_slice(values);
         self.targets[output..output + targets.len()].copy_from_slice(targets);
     }
+
+    /// Rewrites the `body` of each row `refresh` names with `Some`: the rows of an instance whose
+    /// publication changed, which the publisher calls for every table that holds one of its
+    /// functions. `None` leaves the row alone. Rows whose entry is `NO_ENTRY` keep 0 whatever
+    /// `refresh` says, so a body is never attached to a function no module defines.
+    pub(crate) fn refresh_bodies(&mut self, mut refresh: impl FnMut(&TableTarget) -> Option<usize>) {
+        for row in &mut self.targets {
+            if row.entry == TableTarget::NO_ENTRY {
+                row.body = 0;
+            } else if let Some(body) = refresh(&*row) {
+                row.body = body;
+            }
+        }
+    }
 }
 
 macro_rules! deref_to_values {
@@ -247,6 +271,7 @@ mod tests {
         signature: CanonicalSignature::NULL,
         entry: 7,
         instance: 9,
+        body: 11,
     };
 
     fn elements(left: usize) -> WasmTableElements {
@@ -320,10 +345,10 @@ mod tests {
 
     #[test]
     fn a_row_is_laid_out_as_compiled_code_reads_it() {
-        assert_eq!(TableTarget::SIZE, 16);
+        assert_eq!(TableTarget::SIZE, 24);
         assert_eq!(
-            [TableTarget::SIGNATURE, TableTarget::ENTRY, TableTarget::INSTANCE],
-            [0, 4, 8]
+            [TableTarget::SIGNATURE, TableTarget::ENTRY, TableTarget::INSTANCE, TableTarget::BODY],
+            [0, 4, 8, 16]
         );
         assert_eq!([TableWords::BASE, TableWords::LENGTH], [0, 8]);
     }

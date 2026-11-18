@@ -191,18 +191,18 @@ impl<H: Host> Vm<H> {
         // function slots, which end the resource layout; ref.func derives their base.
         values.push(Value::UNDEFINED);
         values.extend(functions);
-        let environment = self.heap.alloc(Cell::Environment {
-            parent: Value::NULL,
-            function: 0,
-            slots: values.into(),
-            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+        let environment = self.heap.alloc_environment(
+            Value::NULL,
+            0,
+            values.into(),
+            crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(id.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
                 dynamic_bindings: crate::heap::EnvironmentBindings::Owned(vec![]),
                 with_objects: Box::default(),
             }),
-        });
+        ).0;
         let root = self.root(environment);
         let previous = self.replace_active_program(id);
         let missing = || JsError::validation("invalid Wasm instance environment".into());
@@ -889,61 +889,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// An i32 operator on a validated i32 register and an i32 right operand.
-    #[inline(always)]
-    pub(super) fn wasm_i32_binary(
-        &mut self,
-        f: usize,
-        i: crate::bytecode::WideInstruction,
-        operator: crate::wasm::integer::I32BinaryOperator,
-        right: i32,
-    ) -> Result<(), JsError> {
-        let left = self.read(f, i.register_b()).wasm_bits32() as i32;
-        let value = operator
-            .evaluate(left, right)
-            .map_err(JsError::wasm_trap_error)?;
-        self.write(f, i.result_register(), Value::integer(value));
-        Ok(())
-    }
-
-    #[inline(always)]
-    pub(super) fn wasm_i32_jump(
-        &mut self,
-        p: &ResidualProgram,
-        f: usize,
-        i: crate::bytecode::WideInstruction,
-        pc: &mut usize,
-        comparison: crate::wasm::integer::I32BinaryOperator,
-    ) -> Result<(), JsError> {
-        let left = self.read(f, i.register_a()).wasm_bits32() as i32;
-        let right = self.read(f, i.register_b()).wasm_bits32() as i32;
-        let taken = comparison
-            .evaluate(left, right)
-            .map_err(JsError::wasm_trap_error)?
-            != 0;
-        self.wasm_jump(p, f, i, pc, taken);
-        Ok(())
-    }
-
-    #[inline(always)]
-    pub(super) fn wasm_i32_constant_jump(
-        &mut self,
-        p: &ResidualProgram,
-        f: usize,
-        i: crate::bytecode::WideInstruction,
-        pc: &mut usize,
-        comparison: crate::wasm::integer::I32BinaryOperator,
-    ) -> Result<(), JsError> {
-        let left = self.read(f, i.register_a()).wasm_bits32() as i32;
-        let right = i32::from(i.b() as i16);
-        let taken = comparison
-            .evaluate(left, right)
-            .map_err(JsError::wasm_trap_error)?
-            != 0;
-        self.wasm_jump(p, f, i, pc, taken);
-        Ok(())
-    }
-
     /// Take a Wasm conditional jump. Backward edges are collection safepoints,
     /// like the unconditional `Jump` that closes every loop iteration.
     #[inline(always)]
@@ -1332,6 +1277,16 @@ impl<H: Host> Vm<H> {
             unreachable!("decoded f64 operand")
         };
         Ok(f64::from_bits(bits))
+    }
+
+    /// The register value of a raw i64 operation's result: an i64 as its word, which a raw
+    /// register holds; anything else (an i32 flag) as `encode_wasm_value`.
+    pub(super) fn encode_raw_wasm_value(&mut self, value: crate::WasmValue) -> Value {
+        match value {
+            crate::WasmValue::I64(word) => Value::from_bits(word as u64),
+            crate::WasmValue::F64(bits) => Value::from_bits(bits),
+            value => self.encode_wasm_value(value),
+        }
     }
 
     pub(super) fn encode_wasm_value(&mut self, value: crate::WasmValue) -> Value {
@@ -5032,11 +4987,7 @@ mod tests {
             .code
             .iter()
             .map(|packed| {
-                if packed.is_wide() {
-                    invalid.function(0).wide[packed.wide_index()]
-                } else {
-                    packed.as_wide()
-                }
+                invalid.function(0).widened(*packed)
             })
             .find(|instruction| instruction.op().is_wasm_memory_address())
             .unwrap();
@@ -5640,7 +5591,7 @@ mod tests {
         let root_instructions = root_code
             .code
             .iter()
-            .map(|packed| super::super::dispatch_fast::decoded_instruction(root_code, *packed))
+            .map(|packed| root_code.widened(*packed))
             .collect::<Vec<_>>();
         assert!(
             root_instructions.iter().any(|instruction| {
@@ -6041,7 +5992,7 @@ mod tests {
         let root_instructions = root_code
             .code
             .iter()
-            .map(|packed| super::super::dispatch_fast::decoded_instruction(root_code, *packed))
+            .map(|packed| root_code.widened(*packed))
             .collect::<Vec<_>>();
         assert!(
             root_instructions

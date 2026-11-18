@@ -7,8 +7,11 @@ impl Heap {
     /// `remember` of `value`'s cell, for a write made through a pointer to its storage.
     #[inline(always)]
     pub(crate) fn remember_cell(&mut self, value: Value) {
-        if let Some(HeapReference::LegacySlot(index)) = value.heap_reference() {
-            self.remember(index as usize);
+        match value.heap_reference() {
+            Some(HeapReference::LegacySlot(index)) => self.remember(index as usize),
+            // An environment record passes the record barrier: unmarked and logged once.
+            Some(HeapReference::EnvironmentRecord(record_id)) => self.environment_records.remember(record_id),
+            _ => {}
         }
     }
 

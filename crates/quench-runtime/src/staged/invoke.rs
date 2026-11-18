@@ -109,6 +109,18 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
+    /// Suspend the activation at `kind` with the value of `value`, resuming into `destination`;
+    /// `None` where the frame cannot, leaving the suspension to the interpreter
+    /// (`dispatch_fast::generator_yields`, `Vm::step`).
+    #[inline(always)]
+    fn suspend(&mut self, stage: &mut S, kind: super::Suspension, destination: Register, value: Register) -> Option<Self::Control> {
+        match kind {
+            super::Suspension::Await => self.suspend_await(stage, destination, value),
+            super::Suspension::Yield => self.suspend_yield(stage, value),
+            super::Suspension::YieldStar { iterator } => self.suspend_yield_star(stage, iterator),
+        }
+    }
+
     /// Make the lane's activations frames, as a native that observes the frame stack needs
     /// (`Native::runs_beside_activations` is false): a native that runs beside them is entered
     /// without. The caller's registers stay where they are.

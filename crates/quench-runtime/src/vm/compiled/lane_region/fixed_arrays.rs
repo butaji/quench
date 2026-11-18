@@ -20,7 +20,7 @@ impl Lowering<'_, '_> {
         let untyped: Vec<Constant> = self.program.constants.iter().map(|_| Constant::untyped(Value::UNDEFINED)).collect();
         let context = crate::staged::DecodeContext { constants: &untyped, ..crate::staged::DecodeContext::of(self.program) };
         instructions.iter().enumerate().all(|(pc, instruction)| {
-            if instruction.op().is_return() { return true; }
+            if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) { return true; }
             let decoded = Operation::<ir::Value, EmitProof>::decode(*instruction, context);
             match decoded {
                 // A constant operand is no proven Number here (its constants are untyped).

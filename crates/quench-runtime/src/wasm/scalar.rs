@@ -110,11 +110,6 @@ impl WasmType {
         Some(if nullable { ty.nullable() } else { ty })
     }
 
-    pub(crate) fn is_subtype_of(self, target: Self) -> bool {
-        let declarations = super::WasmTypes::default();
-        declarations.value_subtype(self, &declarations, target)
-    }
-
     pub fn from_wasm(ty: wasmparser::ValType) -> Option<Self> {
         match ty {
             wasmparser::ValType::I32 => Some(Self::I32),
@@ -286,6 +281,7 @@ impl WasmValue {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn bits(self) -> Option<ScalarBits> {
         Some(match self {
             Self::I32(value) => ScalarBits::Bits32(value as u32),
@@ -556,6 +552,8 @@ impl WasmSignatures {
         self.functions.get(function).copied()
     }
 
+    /// Test probe: a pool function's reference type. Lowering reads `function_type_index` directly.
+    #[cfg(test)]
     pub(crate) fn function_reference_type(&self, function: usize) -> Option<WasmType> {
         let fact = self
             .types

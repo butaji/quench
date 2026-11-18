@@ -34,7 +34,7 @@ unsafe fn vm_operation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let body = code.function(function as usize);
-    let instruction = decoded_instruction(body, body.code[call_pc as usize]);
+    let instruction = body.widened(body.code[call_pc as usize]);
     let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::of(code))
         .and_then(|row| row.call_out()).expect("a call-out record decodes");
     let operands = operation.operands().read(&code.method_arguments, |operand| lane_call_operand(cx, r, operand));
@@ -61,6 +61,8 @@ unsafe fn vm_operation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -
     LANE_CALL_LEFT
 }
 
+// merge: theirs deletes this call-out (its string `+` runs as the denoted row `lane_string_concat`);
+// ours keeps it as `body_string_concat`, which ours' compiled.rs still names.
 /// `+` of the record at `call_pc` whose operands are registers holding strings (or Numbers, one a
 /// string) as `Vm::primitive_concatenation` defines it: `LANE_CALL_COMPLETED` with the result in
 /// its register, or `LANE_CALL_MISSED` before any effect where the operands are no such pair
@@ -70,7 +72,7 @@ pub(in crate::vm) unsafe extern "C" fn body_string_concat<H: Host>(_vm: u64, _re
     let cx = context as usize as *mut LaneContext<H>;
     let vm = unsafe { vm(cx) };
     let r = unsafe { (*cx).registers };
-    let function = match vm.lane_stack.activations.last() {
+    let function = match vm.lane_stack.activations().last() {
         Some(activation) => activation.function,
         None => vm.frames[unsafe { (*cx).frame() }].function,
     };
@@ -96,7 +98,7 @@ pub(super) fn comparison_decision<H: Host>(vm: &mut Vm<H>, operator: u32, left: 
     match crate::vm::operations::equality_operator(operator) {
         Some((strict, negated)) => strict.then(|| vm.strict_equal(left, right) != negated),
         None if operator == INSTANCEOF_OPERATOR => vm.steady_instanceof(left, right),
-        None => vm.plain_in(operator, left, right),
+        None => vm.plain_in(operator, left, right).or_else(|| vm.string_relation(operator, left, right)),
     }
 }
 
@@ -229,7 +231,7 @@ unsafe fn body_general_step_record<H: Host>(_vm: u64, _residual: u64, context: u
 /// As `body_general_step`.
 unsafe fn activation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
     let body = unsafe { &*(*cx).code }.function(lane_running_function(cx) as usize);
-    let record = decoded_instruction(body, body.code[call_pc as usize]);
+    let record = body.widened(body.code[call_pc as usize]);
     if record.without_return().op().steps_on_owner() {
         unsafe { owner_step_in(cx, call_pc, record) }
     } else {
@@ -250,14 +252,14 @@ unsafe fn body_general_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -
     use super::super::compiled::{LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_MISSED};
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run, and `call_pc` is a record of the running frame's function.
-    if !vm.lane_stack.activations.is_empty() {
+    if !vm.lane_stack.activations().is_empty() {
         return unsafe { activation_step_in(cx, call_pc) };
     }
     let (code, frame, ip) = unsafe { (&*(*cx).code, (*cx).frame(), (*cx).base.add(call_pc as usize)) };
     let function = code.function(vm.frames[frame].function as usize);
     // A returning record (`return a + b`) is made as the step that writes its result register: the body's
     // own `Return` row completes the activation with it.
-    let instruction = decoded_instruction(function, function.code[call_pc as usize]).without_return();
+    let instruction = function.widened(function.code[call_pc as usize]).without_return();
     if !(instruction.op().steps_in_body() || instruction.op().makes_script_call()) { return LANE_CALL_MISSED; }
     let following = call_pc as usize + 1;
     let branched = lane_in_place(cx, ip, |vm, code| {

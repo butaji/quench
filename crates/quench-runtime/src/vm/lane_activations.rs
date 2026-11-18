@@ -75,6 +75,7 @@ impl LaneActivations {
 
     /// How many frames on top belong to a running native body, linked or not: those whose
     /// prefix names a callee, which the lane clears when it continues in them.
+    #[inline]
     pub(super) fn native_depth(&self) -> usize {
         let mut slot = self.top;
         // SAFETY: each slot below `top` holds at least its prefix.

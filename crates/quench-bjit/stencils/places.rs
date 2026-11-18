@@ -13,26 +13,19 @@ use crate::codes::*;
 use crate::heap_rows::{payload, word_at};
 use crate::layout::{JS_STEP_ARRAY_RECORD_BASE, JS_STEP_EPOCH, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_RECEIVER};
 use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, value};
+use crate::typed_ir::Representation;
 use crate::words::*;
 
 pub(crate) const DEST: Register = 0;
 pub(crate) const LEFT: Register = HOLE_A as Register;
 pub(crate) const RIGHT: Register = HOLE_B as Register;
 
-/// How a place holds its value: a tagged word, the low 32 bits of an int32, or `f64` bits.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Rep {
-    Tagged,
-    Int32,
-    Float64,
-}
-
 /// The representation of a place.
-const fn rep_of(place: u8) -> Rep {
+const fn rep_of(place: u8) -> Representation {
     match place {
-        MEM | CONST => Rep::Tagged,
-        MEMINT | IMM | PIN..=LAST_INT_PIN => Rep::Int32,
-        _ => Rep::Float64,
+        MEM | CONST => Representation::Tagged,
+        MEMINT | IMM | PIN..=LAST_INT_PIN => Representation::Int32,
+        _ => Representation::Float64,
     }
 }
 
@@ -66,9 +59,9 @@ fn read_place<const P: u8, const H: u8>(s: &S) -> u64 {
 pub(crate) fn tagged_place<const P: u8, const H: u8>(s: &S) -> u64 {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
-        Rep::Tagged => word,
-        Rep::Int32 => int_word(word as u32 as i32),
-        Rep::Float64 => canonical(f64::from_bits(word)),
+        Representation::Tagged => word,
+        Representation::Int32 | Representation::Int64 => int_word(word as u32 as i32),
+        Representation::Float64 => canonical(f64::from_bits(word)),
     }
 }
 
@@ -78,9 +71,9 @@ pub(crate) fn tagged_place<const P: u8, const H: u8>(s: &S) -> u64 {
 fn int_place<const P: u8, const H: u8>(s: &S, proved: bool) -> Option<u64> {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
-        Rep::Int32 => Some(word),
-        Rep::Tagged => (proved || has_int_high(word)).then_some(word as u32 as u64),
-        Rep::Float64 => {
+        Representation::Int32 | Representation::Int64 => Some(word),
+        Representation::Tagged => (proved || has_int_high(word)).then_some(word as u32 as u64),
+        Representation::Float64 => {
             let narrow = truncate32(f64::from_bits(word));
             (widen(narrow as u32 as u64) == word).then_some(narrow as u32 as u64)
         }
@@ -94,10 +87,10 @@ pub(crate) fn number_place<const P: u8, const H: u8>(s: &S) -> Option<u64> {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
         _ if P == CONST => Some(word),
-        Rep::Float64 => Some(word),
-        Rep::Int32 => Some(widen(word)),
-        Rep::Tagged if is_int(word) => Some(widen(word)),
-        Rep::Tagged => is_double(word).then_some(word),
+        Representation::Float64 => Some(word),
+        Representation::Int32 | Representation::Int64 => Some(widen(word)),
+        Representation::Tagged if is_int(word) => Some(widen(word)),
+        Representation::Tagged => is_double(word).then_some(word),
     }
 }
 
@@ -108,17 +101,17 @@ fn bitwise_place<const P: u8, const H: u8>(s: &S, numbers: bool) -> Option<u64> 
     let word = read_place::<P, H>(s);
     let truncated = |bits: u64| f64_to_i32(f64::from_bits(bits)).map(|int| int as u32 as u64);
     match rep_of(P) {
-        Rep::Int32 => Some(word),
-        Rep::Float64 => truncated(word),
-        Rep::Tagged if has_int_high(word) => Some(word as u32 as u64),
-        Rep::Tagged => (numbers && is_double(word)).then(|| truncated(word)).flatten(),
+        Representation::Int32 | Representation::Int64 => Some(word),
+        Representation::Float64 => truncated(word),
+        Representation::Tagged if has_int_high(word) => Some(word as u32 as u64),
+        Representation::Tagged => (numbers && is_double(word)).then(|| truncated(word)).flatten(),
     }
 }
 
 /// The int32 an array index operand holds: an int32, or a double equal to one.
 #[inline(always)]
 pub(crate) fn index_of<const P: u8, const H: u8>(s: &S) -> Option<i32> {
-    if rep_of(P) != Rep::Float64 {
+    if rep_of(P) != Representation::Float64 {
         return int_place::<P, H>(s, false).map(|word| word as u32 as i32);
     }
     let f = f64::from_bits(read_place::<P, H>(s));
@@ -182,12 +175,12 @@ pub(crate) fn deliver<const D: u8>(mut s: S, word: u64) -> Out {
 
 /// Writes `value`, held in `rep`, to the destination; false where the place cannot hold it.
 #[inline(always)]
-fn put<const D: u8>(s: &mut S, value: u64, rep: Rep) -> bool {
+fn put<const D: u8>(s: &mut S, value: u64, rep: Representation) -> bool {
     match rep {
-        Rep::Int32 => put_int::<D>(s, value),
-        Rep::Float64 if D >= PINF => s.f[(D - PINF) as usize] = f64::from_bits(value),
-        Rep::Float64 => return put_tagged::<D>(s, canonical(f64::from_bits(value))),
-        Rep::Tagged => return put_tagged::<D>(s, value),
+        Representation::Int32 | Representation::Int64 => put_int::<D>(s, value),
+        Representation::Float64 if D >= PINF => s.f[(D - PINF) as usize] = f64::from_bits(value),
+        Representation::Float64 => return put_tagged::<D>(s, canonical(f64::from_bits(value))),
+        Representation::Tagged => return put_tagged::<D>(s, value),
     }
     true
 }
@@ -198,9 +191,15 @@ fn put<const D: u8>(s: &mut S, value: u64, rep: Rep) -> bool {
 fn truthy<const P: u8, const H: u8>(s: &S) -> Option<bool> {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
-        Rep::Int32 => Some(word as u32 != 0),
-        Rep::Float64 => Some(stage().number_truthy(word)),
-        Rep::Tagged => {
+        Representation::Int32 | Representation::Int64 => Some(word as u32 != 0),
+        Representation::Float64 => Some(stage().number_truthy(word)),
+        // A boolean, what every comparison and type test gives, decides on one compare; a direct
+        // record on one family test; any other word takes the staged rule.
+        Representation::Tagged if word == crate::layout::words::TRUE => Some(true),
+        Representation::Tagged if word == crate::layout::words::FALSE => Some(false),
+        // A direct object or array, what a `while (node)` walk tests, is truthy on one family test.
+        Representation::Tagged if value::is_direct_object(&mut stage(), word) || value::is_direct_array(&mut stage(), word) => Some(true),
+        Representation::Tagged => {
             let (undecided, truthy) = value::tagged_truthiness(&mut stage(), word);
             (!undecided).then_some(truthy)
         }
@@ -261,11 +260,11 @@ impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
 }
 
 impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> {
-    type Fact = Rep;
+    type Fact = Representation;
     type Control = ();
 
     #[inline(always)]
-    fn fact(&self, register: Register) -> Rep {
+    fn fact(&self, register: Register) -> Representation {
         match register {
             LEFT => rep_of(A),
             RIGHT => rep_of(B),
@@ -284,7 +283,7 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     }
 
     #[inline(always)]
-    fn write(&mut self, _stage: &mut Concrete, _register: Register, value: u64, fact: Rep) {
+    fn write(&mut self, _stage: &mut Concrete, _register: Register, value: u64, fact: Representation) {
         self.refused |= !put::<D>(&mut self.s, value, fact);
     }
 
@@ -294,9 +293,9 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     }
     #[inline(always)]
     fn define_this(&mut self, _stage: &mut Concrete, _destination: Register, this: u64) {
-        self.refused |= !put::<D>(&mut self.s, this, Rep::Tagged);
+        self.refused |= !put::<D>(&mut self.s, this, Representation::Tagged);
     }
-    fn constant(&mut self, _stage: &mut Concrete, _constant: Constant) -> (u64, Rep) {
+    fn constant(&mut self, _stage: &mut Concrete, _constant: Constant) -> (u64, Representation) {
         unreachable!("a Number row's constants are its places")
     }
     #[inline(always)]
@@ -309,15 +308,15 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     }
     fn jump(&mut self, _stage: &mut Concrete) { unreachable!("a row jumps by its kind") }
     #[inline(always)]
-    fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, Rep) {
-        (if condition { crate::Value::TRUE } else { crate::Value::FALSE }.to_bits(), Rep::Tagged)
+    fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, Representation) {
+        (if condition { crate::Value::TRUE } else { crate::Value::FALSE }.to_bits(), Representation::Tagged)
     }
 
     /// The activation's local slot `slot`, where it has locals and the slot is inside them.
     #[inline(always)]
-    fn load_local(&mut self, _stage: &mut Concrete, slot: u16, _miss: Option<()>) -> Option<(u64, Rep)> {
+    fn load_local(&mut self, _stage: &mut Concrete, slot: u16, _miss: Option<()>) -> Option<(u64, Representation)> {
         let locals = local_slot(&self.s, slot)?;
-        Some((word_at(locals, 0), Rep::Tagged))
+        Some((word_at(locals, 0), Representation::Tagged))
     }
 
     /// The array and object record tables and the collection epoch the dispatch payload holds, where
@@ -372,7 +371,7 @@ impl<const D: u8, const A: u8, const B: u8> NumericFrame<Concrete> for Places<D,
     #[inline(always)]
     fn miss(&self) {}
     #[inline(always)]
-    fn int_fact(&self) -> Rep { Rep::Int32 }
+    fn int_fact(&self) -> Representation { Representation::Int32 }
     #[inline(always)]
-    fn number_fact(&self) -> Rep { Rep::Float64 }
+    fn number_fact(&self) -> Representation { Representation::Float64 }
 }

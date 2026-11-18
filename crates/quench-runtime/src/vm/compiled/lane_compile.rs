@@ -26,6 +26,60 @@ pub(super) struct LanePlan {
     pub(super) tiers: &'static Tiers,
 }
 
+/// The VM's facts a lane body's lowering may ask (`OnlineFacts`), answered when it is planned for
+/// the identities, shapes and naming sites its unit names: the constructors its global reads
+/// and frames name (`Vm::instanceof_fact`), the shapes its field loads prove
+/// (`Vm::shape_is_stable`), and its `SetFunctionName` sites (`Vm::native_function_name`). A
+/// question outside them answers that no fact holds, which folds less and stays exact.
+#[derive(Default)]
+pub(super) struct FactTables {
+    instanceofs: std::collections::BTreeMap<u64, crate::code_dependencies::InstanceofFact>,
+    stable_shapes: std::collections::BTreeSet<u32>,
+    names: std::collections::BTreeMap<(u16, Atom), (crate::staged::add_plan::Transition, u64)>,
+}
+
+impl FactTables {
+    fn of<H: Host>(vm: &Vm<H>, unit: &lane_unit::Unit, fields: &[Option<Vec<NativeFieldLoad>>],
+        global_reads: &crate::vm::global_facts::GlobalReads) -> Self {
+        use crate::vm::global_facts::GlobalRead;
+        let mut tables = Self::default();
+        let read_values = (0..unit.instructions.len()).filter_map(|pc| match global_reads.get(&pc)? {
+            GlobalRead::Constant(value) | GlobalRead::Stable { value, .. } | GlobalRead::Frozen { value, .. }
+                | GlobalRead::NativeMember { value, .. } => Some(*value),
+            _ => None,
+        });
+        let frame_values = unit.frames.iter().filter_map(|frame| frame.target.identity());
+        for value in read_values.chain(frame_values) {
+            if tables.instanceofs.contains_key(&value.to_bits()) { continue; }
+            if let Some(fact) = vm.instanceof_fact(value) { tables.instanceofs.insert(value.to_bits(), fact); }
+        }
+        for load in fields.iter().flatten().flatten() {
+            for shape in std::iter::once(load.shape).chain(load.holder) {
+                if vm.shape_is_stable(shape) { tables.stable_shapes.insert(shape); }
+            }
+        }
+        for instruction in &unit.instructions {
+            if instruction.op() == crate::bytecode::Op::SetFunctionName {
+                let key = (instruction.cache_site_index(), instruction.atom_index());
+                if let Some(name) = vm.native_function_name(key.0, key.1) { tables.names.insert(key, name); }
+            }
+        }
+        tables
+    }
+
+    fn instanceof(&self, constructor: Value) -> Option<crate::code_dependencies::InstanceofFact> {
+        self.instanceofs.get(&constructor.to_bits()).copied()
+    }
+
+    fn shape_stable(&self, shape: u32) -> bool {
+        self.stable_shapes.contains(&shape)
+    }
+
+    fn name(&self, site: u16, atom: Atom) -> Option<(crate::staged::add_plan::Transition, u64)> {
+        self.names.get(&(site, atom)).copied()
+    }
+}
+
 /// A plan whose code compiles on the code generator's thread. It holds while the facts it
 /// took hold, under the lifecycle the published method has: `watch` subscribes to its slot
 /// types and Stable facts from the plan on, a collection that frees a callee it names
@@ -75,6 +129,10 @@ enum Unstarted {
     Declined,
 }
 
+/// Whether a plan goes on to its lowering, from its unit, field proofs and direct callees
+/// alone; one that does not records why where the gate's owner reads it.
+type PlanGate<'a, H> = dyn Fn(&Vm<H>, &lane_unit::Unit, &dyn std::fmt::Debug, &[DirectCallee]) -> bool + 'a;
+
 /// What the VM did for it.
 pub(in crate::vm) enum LaneBodyOutcome {
     Compiling(Box<PendingLaneMethod>),
@@ -92,18 +150,7 @@ pub(in crate::vm) enum LaneBodyOutcome {
     Declined,
 }
 
-/// A replanned body inlines with this fraction of the budget whose compile failed.
-const REPLAN_BUDGET_DIVISOR: usize = 2;
-
-/// The IR size above which a lane body's registers are allocated in one pass. The backtracking
-/// allocator's scratch memory grows with the function, and a body this large (JetStream-scale
-/// units of 23k-28k IR instructions) set the process's peak resident size while its code
-/// compiled: V8-v7 raytrace peaked at 40.0 MB with it and 33.0 MB without, richards and
-/// deltablue, whose largest bodies are 17k, keep it and the speed it buys (2026-11-11, lane
-/// mode, 5 interleaved runs). Smaller bodies keep backtracking: single-pass for all lost 20-30%
-/// on richards and deltablue.
-const LANE_BACKTRACKING_MAX_INSTS: usize = 20_000;
-
+use crate::vm::compiled::tier_policy::{REPLAN_BUDGET_DIVISOR, LANE_BACKTRACKING_MAX_INSTS};
 #[cfg(test)] #[path = "lane_compile/ahead.rs"] mod ahead;
 use super::super::dispatch_fast::lane_body_stats::{miss as plan_miss, Miss};
 use lane_facts::{unit_closed, bind_callees, Census, pays_compile, plan_key, amortizes_entry, each_once, entry_pc, numeric_callee, numeric_restartable, unit_direct_calls, unit_leaves};
@@ -164,15 +211,19 @@ impl<H: Host> Vm<H> {
     fn plan_lane_method(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
         trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize), direct: &[DirectCandidates],
         generic: &[LaneExit], budget: usize, entry: Option<u32>,
-        arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)]) -> Option<(LanePlan, ir::Function)> {
+        arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)], view: Option<&super::super::dispatch_fast::LaneView>,
+        gate: &PlanGate<'_, H>) -> Option<(LanePlan, ir::Function)> {
         let unit = self.lane_plan_unit(program, function, targets, trips, generic, budget)?;
         let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(self, Miss::PlanNoEntry); None })?;
         let (left_at, entry_left) = left_places(&unit, generic, entry.unwrap_or(0));
-        let mut fields = self.lane_unit_fields(program, &unit, &left_at);
+        let mut fields = self.lane_unit_fields(program, &unit, &left_at, view);
         // Admitting the stores' writes once, here, widens what they widen; the fields then read the widened slots.
-        if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| lane_region::site_loads(&fields, site).map(Vec::as_slice))) { fields = self.lane_unit_fields(program, &unit, &left_at); }
+        if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| lane_region::site_loads(&fields, site).map(Vec::as_slice))) { fields = self.lane_unit_fields(program, &unit, &left_at, view); }
         let global_reads = self.lane_global_reads(program, function, &unit);
         let (direct, direct_sites) = unit_direct_calls(&unit, direct);
+        // What decides against a plan from its unit alone decides before its lowering, the most
+        // of a plan's cost (`PlanGate`).
+        if !gate(self, &unit, &fields, &direct) { return None; }
         let closed = unit_closed(&unit, function, |pc| direct_sites.contains_key(&pc), targets);
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
@@ -184,13 +235,18 @@ impl<H: Host> Vm<H> {
         let active = self.active_program;
         let constants = self.programs.residual(active).filter(|running| std::ptr::eq(*running, program))
             .map_or(&[][..], |_| self.programs.constants(active));
-        let instanceofs = |constructor: Value| self.instanceof_fact(constructor);
-        let names = |site: u16, atom| self.native_function_name(site, atom);
-        let shape_stable = |shape: u32| self.shape_is_stable(shape);
+        // The VM's facts the lowering may ask, answered from tables taken now: a lowering that
+        // reads no VM state may run off the program's thread (`FactTables`).
+        let tables = FactTables::of(self, &unit, &fields, &global_reads);
+        let instanceofs = |constructor: Value| tables.instanceof(constructor);
+        let names = |site: u16, atom| tables.name(site, atom);
+        let shape_stable = |shape: u32| tables.shape_stable(shape);
+        let construct_plans = |function: u32, pc: u32| targets(function, pc).first().and_then(|target| target.identity())
+            .and_then(|callee| super::dispatch_fast::scalar_construct_plan(self, callee));
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
-            invalidation: invalidation.address(), constants, instanceofs: &instanceofs, shape_stable: &shape_stable, names: Some(&names) }), ..self.vm_facts() };
+            invalidation: invalidation.address(), constants, instanceofs: &instanceofs, shape_stable: &shape_stable, names: Some(&names) }), construct_plans: Some(&construct_plans), ..self.vm_facts() };
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(&unit))).chain(self.adding_stores(&unit)).collect();
-        let number_reads = super::osr_compile::observed_reads(&unit, arrays, &[], &left_at);
+        let number_reads = super::osr_compile::observed_reads(program, &unit, arrays, &[], &left_at);
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
             &leaves, &direct_sites, &frame_captures, entry, &number_reads).or_else(|| { plan_miss(self, Miss::PlanNothingNative); None })?;
         if lowered.region.native == 0 { plan_miss(self, Miss::PlanNothingNative); return None; }
@@ -216,7 +272,7 @@ impl<H: Host> Vm<H> {
         self.host.before_native_compilation();
         let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
         let method = loop {
-            let Some((mut plan, native)) = self.plan_lane_method(program, function, targets, &|_, _| None, captures, &direct, generic, budget, None, &[])
+            let Some((mut plan, native)) = self.plan_lane_method(program, function, targets, &|_, _| None, captures, &direct, generic, budget, None, &[], None, &|_, _, _, _| true)
             else { break None };
             match image::compile(native, plan.lowered.scalar.take(), super::jit_backend::CompileLevel::run_default()) {
                 Ok(code) => break plan.finish(&code.code, code.scalar),
@@ -235,14 +291,34 @@ impl<H: Host> Vm<H> {
     fn plan_lane_method_sized(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &[DirectCandidates], generic: &[LaneExit], mut budget: usize, entry: Option<u32>,
-        arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)]) -> Option<(LanePlan, ir::Function)> {
+        arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)], view: Option<&super::super::dispatch_fast::LaneView>,
+        gate: &PlanGate<'_, H>) -> Option<(LanePlan, ir::Function)> {
+        // The last oversized plan: a smaller budget that inlines the same unit lowers the same
+        // IR, so it is not lowered again but kept at the smaller budget.
+        let mut last: Option<(LanePlan, ir::Function)> = None;
         loop {
+            let unchanged = std::cell::Cell::new(false);
+            // Units compare as their keys do (`plan_key`): their instructions and frames.
+            let shape = |unit: &lane_unit::Unit| format!("{:?}{:?}", unit.instructions, unit.frames);
+            let held = last.as_ref().map(|(plan, _)| shape(&plan.unit));
+            let replan = |vm: &Self, unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug, direct: &[DirectCallee]| {
+                if held.as_ref().is_some_and(|held| *held == shape(unit)) { unchanged.set(true); return false; }
+                gate(vm, unit, fields, direct)
+            };
             self.host.before_native_compilation();
-            let planned = self.plan_lane_method(program, function, targets, trips, captures, direct, generic, budget, entry, arrays);
+            let planned = self.plan_lane_method(program, function, targets, trips, captures, direct, generic, budget, entry, arrays, view, &replan);
             self.host.after_native_compilation();
+            if unchanged.get() && let Some((mut plan, native)) = last.take() {
+                plan.budget = budget;
+                if budget == 0 { return Some((plan, native)); }
+                last = Some((plan, native));
+                budget /= REPLAN_BUDGET_DIVISOR;
+                continue;
+            }
             let (plan, native) = planned?;
-            let oversized = native.dfg.num_insts() * lane_region::LANE_BODY_CODE_BYTES_PER_IR > lane_region::LANE_BODY_MAX_CODE_BYTES;
+            let oversized = native.dfg.num_insts() * lane_region::LANE_BODY_CODE_BYTES_PER_IR > crate::vm::compiled::tier_policy::LANE_BODY_MAX_CODE_BYTES;
             if !oversized || plan.unit.frames.is_empty() || budget == 0 { return Some((plan, native)); }
+            last = Some((plan, native));
             budget /= REPLAN_BUDGET_DIVISOR;
         }
     }
@@ -268,16 +344,48 @@ impl<H: Host> Vm<H> {
         if let Some(entries) = observed
             && !pays_compile(tiers, program, function, entries, planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64)), caller, true, false) { return Err(Unstarted::Unpaid); }
         if let Some((span, taken)) = looped && taken < super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true) { return Err(Unstarted::Unpaid); }
+        super::base_region::count(super::base_region::Event::BodyPlanned);
         let plan_started = std::time::Instant::now();
-        let (mut plan, native) = self.plan_lane_method_sized(program, function, targets, trips, captures, direct, generic, budget, entry, arrays)
-            .ok_or(Unstarted::Declined)?;
+        // A unit too short to amortize its entry, or whose key a published body holds, is known
+        // before its lowering; the same tests after it stay, for the unit a smaller budget made.
+        // A function that calls itself back through other functions runs a call tree per entry,
+        // as a loop does, before any of its calls is direct (`lane_facts::recursion_cycle`).
+        let cycle = super::lane_facts::recursion_cycle(program, function, targets);
+        let recursive = entry.is_none() && !cycle.is_empty();
+        // A member of the cycle is called, not inlined: inlined, its call back to `function`
+        // leaves the body (a direct call runs only from the body's own frame), while called it
+        // is a direct call of its own body once one exists, as `function`'s self calls are.
+        let others: Vec<u32> = cycle.iter().copied().filter(|member| *member != function).collect();
+        let cycle_targets = |caller: u32, pc: u32| -> Vec<CallTarget> {
+            let mut linked = targets(caller, pc);
+            linked.retain(|target| !others.contains(&target.function));
+            linked
+        };
+        let targets: &dyn Fn(u32, u32) -> Vec<CallTarget> = if others.is_empty() { targets } else { &cycle_targets };
+        let stopped: std::cell::RefCell<Option<Unstarted>> = std::cell::RefCell::new(None);
+        let gate = |vm: &Self, unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug, direct: &[DirectCallee]| {
+            if entry.is_none() && !called && !recursive && !amortizes_entry(tiers, unit, function, direct) { *stopped.borrow_mut() = Some(Unstarted::Short); return false; }
+            let key: LaneKey = (vm.active_program.raw(), function, entry, plan_key(unit, fields, direct.len(), generic, entry, budget, arrays));
+            if let Some(published) = vm.programs.installed_lane(&key) { *stopped.borrow_mut() = Some(Unstarted::Installed(published)); return false; }
+            true
+        };
+        let planned = self.plan_lane_method_sized(program, function, targets, trips, captures, direct, generic, budget, entry, arrays, Some(caller), &gate);
+        match stopped.into_inner() {
+            Some(Unstarted::Short) => { plan_miss(self, Miss::PlanNotAmortized); return Err(Unstarted::Short); }
+            Some(stop) => return Err(stop),
+            None => {}
+        }
+        let (mut plan, native) = planned.ok_or(Unstarted::Declined)?;
         let planned_ir = native.dfg.num_insts();
         self.programs.note_planned_lane_ir(site, planned_ir);
         let plan_us = u64::try_from(plan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         // A body that cannot amortize a lane entry would serve native callers only
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
-        if entry.is_none() && !called && !amortizes_entry(plan.tiers, &plan.unit, function, &plan.direct) { plan_miss(self, Miss::PlanNotAmortized); return Err(Unstarted::Short); }
+        if entry.is_none() && !called && !recursive && !amortizes_entry(plan.tiers, &plan.unit, function, &plan.direct) { plan_miss(self, Miss::PlanNotAmortized); return Err(Unstarted::Short); }
+        // A recurrent compile (no observed entries to price) still repays only where one entry of
+        // its unit, inlined callees included, saves more than the entry costs.
+        if entry.is_none() && observed.is_none() && looped.is_none() && !recursive && !super::lane_facts::entry_repays(plan.tiers, &plan.unit, function, &plan.direct) { plan_miss(self, Miss::PlanNotAmortized); return Err(Unstarted::Short); }
         bind_callees(&plan.direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget, arrays));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
@@ -377,8 +485,8 @@ impl<H: Host> Vm<H> {
     /// Registers the writes a unit's raw stores may make (`lane_region::store_domains`) with
     /// the slots' observations; whether every slot already admitted them. A body's slot
     /// dependencies hold its slots at the admitted types, so its runs need not admit again.
-    fn admit_lane_stores(&mut self, domains: Vec<(u32, u16, crate::typed_ir::Type)>) -> bool {
-        domains.into_iter().fold(true, |admitted, (shape, slot, domain)| self.heap.admit_slot_writes(shape, usize::from(slot), domain) && admitted)
+    fn admit_lane_stores(&mut self, domains: Vec<(u32, u16, crate::typed_ir::Type, bool)>) -> bool {
+        domains.into_iter().fold(true, |admitted, (shape, slot, domain, raw)| self.heap.admit_slot_writes_as(shape, usize::from(slot), domain, raw) && admitted)
     }
 }
 
@@ -449,9 +557,9 @@ impl LanePlan {
             fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, exits: ExitTable::of_unit(&self.unit), inlined: self.unit.frames,
-            scratch_width, caller_registers,
+            scratch_width, caller_registers, frame_reach: 0,
             amortizes, direct: self.direct, closed: self.closed,
-            framed: false, _records: Vec::new(), constructors: Box::default(),
+            framed: false, _records: Vec::new(), constructors: Box::default(), realm_bound: false,
         })
     }
 }
@@ -464,13 +572,14 @@ impl LaneMethod {
     /// A leave at a construction inside an inlined frame is the same: a construction no plan
     /// makes is generic only at a caller record (`Lowering::construct`), so the callee that
     /// holds it keeps its own body.
+    #[inline]
     pub(in crate::vm) fn feedback(&self, exit: LaneExit, program: &ResidualProgram) -> LaneExit {
         let LaneExit::Inlined { frame, pc } = exit else { return exit };
         let Some(inlined) = self.inlined.get(frame) else { return exit };
         let calls_here = self.inlined.iter().any(|call| call.parent == Some(frame) && call.call == pc);
         let constructs_here = program.function_get(inlined.target.function as usize)
             .and_then(|body| body.instructions().nth(pc as usize))
-            .is_some_and(|instruction| instruction.op().class() == crate::bytecode::Class::Construct);
+            .is_some_and(|instruction| crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Construct));
         if !calls_here && !constructs_here {
             return exit;
         }

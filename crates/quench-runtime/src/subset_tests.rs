@@ -1659,3 +1659,32 @@ fn unicode_regexp_last_index_inside_a_surrogate_pair_starts_at_its_lead() {
     let expected = expected.trim().lines().map(str::trim).collect::<Vec<_>>();
     assert_eq!(output(source), expected);
 }
+
+#[test]
+fn array_patterns_read_elements_directly_only_while_no_step_is_observable() {
+    let source = r#"
+      let out = [];
+      function t(name, f) { try { out.push(name + "=" + JSON.stringify(f())); } catch (e) { out.push(name + "!" + e.constructor.name); } }
+      for (let round = 0; round < 3; round++) {
+        t("basic", () => { const [a, b] = [1, 2]; return [a, b]; });
+        t("short", () => { const [a, b, c] = [1, 2]; return [a, b, c]; });
+        t("elision", () => { const [, b] = [1, 2, 3]; return b; });
+        t("self", () => { var a = [1, 2], b; [a, b] = a; return [a, b]; });
+        t("swap", () => { let x = 1, y = 2; [x, y] = [y, x]; return [x, y]; });
+        t("hole", () => { const [a, b] = [1, , 3]; return [a, b]; });
+        t("str", () => { const [a, b] = "hi"; return [a, b]; });
+        t("closeObserved", () => { let log = []; const p = Object.getPrototypeOf([][Symbol.iterator]()); p.return = function () { log.push("ret"); return {}; }; const [a] = [1, 2]; delete p.return; return [a, log]; });
+        t("iterPatched", () => { const save = Array.prototype[Symbol.iterator]; Array.prototype[Symbol.iterator] = function* () { yield 9; }; const [a, b] = [1, 2]; Array.prototype[Symbol.iterator] = save; return [a, b]; });
+        t("constAssign", () => { const c = 1; let r; try { [r, c] = [2, 3]; } catch (e) { return [r, e.constructor.name]; } });
+        t("ownIter", () => { const arr = [1, 2]; arr[Symbol.iterator] = function* () { yield 7; }; const [a, b] = arr; return [a, b]; });
+        t("loop", () => { let a = 0, b = 1; for (let i = 0; i < 10; i++) [a, b] = [b, a + b]; return a; });
+        t("protoReturn", () => { let n = 0; Object.defineProperty(Object.prototype, "return", { get() { n++; return undefined; }, configurable: true }); const [a] = [1, 2]; delete Object.prototype.return; return [a, n]; });
+      }
+      console.log(out.slice(0, 13).join("|"));
+      console.log(String(out.slice(13, 26).join("|") === out.slice(0, 13).join("|") && out.slice(26).join("|") === out.slice(0, 13).join("|")));
+    "#;
+    assert_eq!(output(source), vec![
+        r#"basic=[1,2]|short=[1,2,null]|elision=2|self=[1,2]|swap=[2,1]|hole=[1,null]|str=["h","i"]|closeObserved=[1,["ret"]]|iterPatched=[9,null]|constAssign=[2,"TypeError"]|ownIter=[7,null]|loop=55|protoReturn=[1,1]"#.to_string(),
+        "true".to_string(),
+    ]);
+}

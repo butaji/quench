@@ -21,6 +21,9 @@ pub(in crate::vm) struct LaneBodyStats {
     leaves: std::cell::RefCell<Vec<(String, u32)>>,
     /// Entries of the specialized body that ran in the lane instead (`lane_body_admits`).
     pub(in crate::vm) refused: std::cell::Cell<u32>,
+    /// The leaves into a callee that only lacked a body while warming toward one, which count
+    /// toward nothing (`dispatch_fast::lane_leave_counts`).
+    pub(in crate::vm) warming_leaves: std::cell::Cell<u32>,
     /// Why its body declined (`decline`).
     pub(in crate::vm) declined: std::cell::Cell<&'static str>,
     /// The audit's verdict (`LaneView::audit_verdict`): `None` while it runs.
@@ -45,11 +48,12 @@ impl LaneBodyStats {
     }
 
     /// The runs that ended the activation (a return or an exception) and the runs that left it
-    /// to the lane, which a test reads to see that no exception made a frame.
+    /// to the lane, which a test reads to see that no exception made a frame. A leave into a
+    /// warming callee is the callee's warm-up, not the body's leave.
     #[cfg(test)]
     pub(in crate::vm) fn ended_runs(&self) -> (u32, u32) {
-        let left = [Event::LeftAt, Event::LeftInlined, Event::LeftInCallee].map(|end| self.ends[end.end_index()].get()).iter().sum();
-        (self.ends[Event::Completed.end_index()].get(), left)
+        let left: u32 = [Event::LeftAt, Event::LeftInlined, Event::LeftInCallee].map(|end| self.ends[end.end_index()].get()).iter().sum();
+        (self.ends[Event::Completed.end_index()].get(), left - self.warming_leaves.get())
     }
 
     /// `frames`, the body's inlined calls, name the function a leave inside one was in.

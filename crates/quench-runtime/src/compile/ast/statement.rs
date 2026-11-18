@@ -501,23 +501,22 @@ impl FunctionCompiler<'_, '_> {
             }
             _ => false,
         };
-        let per_iteration = matches!(item.init.as_ref(), Some(ForStatementInit::VariableDeclaration(declaration)) if declaration.kind == VariableDeclarationKind::Let);
+        let per_iteration = matches!(item.init.as_ref(), Some(ForStatementInit::VariableDeclaration(declaration)) if declaration.kind == VariableDeclarationKind::Let)
+            && super::iteration::for_loop_may_capture_bindings(item, self.iteration_call_only());
         self.for_initializer(item.init.as_ref());
-        if per_iteration {
-            self.clone_lexical_environment();
-        }
+        let cloned = if per_iteration { self.clone_lexical_environment() } else { None };
         let head = self.code.len() as u32;
         let condition_end = item
             .test
             .as_ref()
             .and_then(|test| self.loop_condition(test));
         self.push_control(ControlKind::Loop, label);
-        self.statement(&item.body);
+        let body_slots = self.iteration_body(&item.body, cloned);
         let control = self.controls.pop().unwrap();
         let update = self.code.len() as u32;
         self.patch_edges(&control.continues, update);
         if per_iteration {
-            self.clone_lexical_environment();
+            self.clone_lexical_iteration_environment(&body_slots);
         }
         if let Some(expression) = &item.update {
             self.effect_expression(expression);

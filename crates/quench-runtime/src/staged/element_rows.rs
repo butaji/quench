@@ -132,7 +132,7 @@ fn write<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, (val
     // both paths dominate.
     let tagged_key = frame.key_word(stage, key)?;
     frame.stored(stage, Owner::Register(base), miss,
-        |stage, frame, general| {
+        #[inline(always)] |stage, frame, general| {
             if !fact.is_subtype(Type::IMMEDIATE) { frame.array_store_gate(stage, object, word, general)?; }
             let view = match frame.proved_view(stage, base, true) {
                 Some(view) => view,
@@ -142,7 +142,7 @@ fn write<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, (val
             let index = stage.uextend32(index);
             replace_present(stage, view, index, word, general)
         },
-        |stage, frame, miss| frame.index_set_host(stage, object, tagged_key, word, miss))?;
+        #[inline(always)] |stage, frame, miss| frame.index_set_host(stage, object, tagged_key, word, miss))?;
     Some(word)
 }
 

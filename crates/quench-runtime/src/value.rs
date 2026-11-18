@@ -19,7 +19,7 @@ mod encoding_bench;
 mod distinct_heap;
 pub(crate) use distinct_heap::DistinctHeapPair;
 mod number_conversion;
-pub use number_conversion::number_to_u32;
+pub use number_conversion::{number_to_i32, number_to_u32, number_to_uint8_clamp};
 pub(crate) use number_conversion::EXACT_I64_TRUNCATION_LIMIT;
 use number_conversion::truncate_to_i32;
 /// The tags occupy one contiguous range of tag-field values, so a tag test
@@ -47,8 +47,8 @@ const _: () = {
     assert!(tags[0] == FIRST_TAG && tags[tags.len() - 1] == LAST_TAG);
 };
 const DIRECT_OBJECT_HANDLE_BIT: u64 = 1 << 47;
-/// The `TAG_DELETED` payload bit of `Value::shared_environment_slot`. Environments are legacy
-/// slot cells, whose payload never sets the direct-handle bits.
+/// The `TAG_DELETED` payload bit of `Value::shared_environment_slot`. An environment's payload
+/// never sets it (`DIRECT_ENVIRONMENT_HANDLE_BITS`).
 const SHARED_ENVIRONMENT_SLOT_BIT: u64 = DIRECT_OBJECT_HANDLE_BIT;
 /// The `TAG_DELETED` payload bit of `Value::environment_index`, distinct from the shared-slot
 /// bit and from the `DELETED`/`UNMATERIALIZED_ARGUMENTS` sentinels.
@@ -63,6 +63,10 @@ const DIRECT_PROMISE_HANDLE_BIT: u64 = 1 << 45;
 const DIRECT_AWAIT_HANDLE_BITS: u64 = DIRECT_PROMISE_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
 /// The iterator record family's code.
 const DIRECT_ITERATOR_HANDLE_BITS: u64 = DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT;
+/// The collection record family's code (a Map or a Set): the vector bit with the promise and
+/// object bits. Like a vector, a collection is never narrow (`to_narrow` finds no upper word
+/// with the vector bit set), so storing one in an object field widens the field.
+const DIRECT_COLLECTION_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT;
 /// The string record family's code: every family bit.
 const DIRECT_STRING_HANDLE_BITS: u64 =
     DIRECT_PROMISE_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
@@ -73,6 +77,14 @@ pub(crate) const HEAP_FAMILY_BITS: u64 = DIRECT_FUNCTION_HANDLE_BITS | DIRECT_PR
 /// (`RECORD_SPACE_CAPACITY`, `MAX_HEAP_CELLS`). No narrow upper word sets it, so a vector is
 /// never narrow.
 const DIRECT_V128_HANDLE_BIT: u64 = 1 << 44;
+/// The environment record family's code: the vector bit with the promise bit. Like a
+/// vector, an environment is never narrow. Not the object bit: a shared environment slot
+/// (`SHARED_ENVIRONMENT_SLOT_BIT`) marks its owner's payload with that one.
+const DIRECT_ENVIRONMENT_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_PROMISE_HANDLE_BIT;
+/// The symbol record family's code: the vector bit with the object bit. Like a vector, a symbol
+/// is never narrow (its upper word sets the vector bit, which `to_narrow` never names), and no
+/// object family tests it, since each family test compares the whole code.
+const DIRECT_SYMBOL_HANDLE_BITS: u64 = DIRECT_V128_HANDLE_BIT | DIRECT_OBJECT_HANDLE_BIT;
 /// The payload bits that code a heap value's reference family (`Value::heap_reference`).
 const HEAP_REFERENCE_BITS: u64 = HEAP_FAMILY_BITS | DIRECT_V128_HANDLE_BIT;
 /// Where a `Value::known_closure` keeps its function id: the payload bits above the 32-bit
@@ -243,8 +255,14 @@ pub(crate) enum HeapReference {
     AwaitRecord(u32),
     /// A Wasm vector's bytes (`Heap::alloc_v128`).
     V128Record(u32),
+    /// An environment (`Heap::alloc_environment`).
+    EnvironmentRecord(u32),
     IteratorRecord(u32),
     StringRecord(u32),
+    /// A Symbol's data (`Heap::alloc_symbol`).
+    SymbolRecord(u32),
+    /// A Map or a Set (`Heap::alloc_map`, `Heap::alloc_set`).
+    CollectionRecord(u32),
 }
 
 #[cfg(feature = "profile-aggregate")]
@@ -298,6 +316,8 @@ impl ValueLayout {
     pub(crate) const DIRECT_PROMISE_TAG: u64 = TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT;
     /// Tag and family bits that distinguish a direct iterator record.
     pub(crate) const DIRECT_ITERATOR_TAG: u64 = TAG_HEAP | DIRECT_ITERATOR_HANDLE_BITS;
+    /// Tag and family bits that distinguish a direct collection (Map or Set) record.
+    pub(crate) const DIRECT_COLLECTION_TAG: u64 = TAG_HEAP | DIRECT_COLLECTION_HANDLE_BITS;
     pub(crate) const HEAP_FAMILY_MASK: u64 = HEAP_FAMILY_MASK;
     /// Tag and family bits that distinguish a direct string record.
     pub(crate) const DIRECT_STRING_TAG: u64 = TAG_HEAP | DIRECT_STRING_HANDLE_BITS;
@@ -367,26 +387,42 @@ impl Value {
 
     /// A call-only closure of `function` over `environment`, made without a function object
     /// (`Function::prototype_unobservable` names the functions whose closure value only ever
-    /// reaches a binding read as a callee): the environment's legacy slot reference with the
-    /// function id in the payload bits between the slot index and the reference family, which
+    /// reaches a binding read as a callee): the environment's record reference with the
+    /// function id in the payload bits between the record index and the reference family, which
     /// no other heap value sets. The collector reads it as the environment it names; a call
     /// enters `function` of the running program over that environment, and any other consumer
     /// first makes the real closure (`Vm::known_closure_function`). `None` when the
-    /// environment is not a legacy slot or the id does not fit.
+    /// value is not an environment or the id does not fit.
     #[inline(always)] pub(crate) fn known_closure(function: u32, environment: Self) -> Option<Self> {
         let fits = function != 0 && u64::from(function) <= KNOWN_CLOSURE_FUNCTION_MASK;
-        (fits && environment.0 & (TAG_MASK | HEAP_REFERENCE_BITS | KNOWN_CLOSURE_FUNCTION_BITS) == TAG_HEAP)
+        (fits && environment.0 & (TAG_MASK | HEAP_REFERENCE_BITS | KNOWN_CLOSURE_FUNCTION_BITS) == TAG_HEAP | DIRECT_ENVIRONMENT_HANDLE_BITS)
             .then(|| Self(environment.0 | (u64::from(function) << KNOWN_CLOSURE_FUNCTION_SHIFT)))
     }
 
     /// The function id and environment of a `known_closure`.
     #[inline(always)] pub(crate) fn as_known_closure(self) -> Option<(u32, Self)> {
         let function = (self.0 >> KNOWN_CLOSURE_FUNCTION_SHIFT) & KNOWN_CLOSURE_FUNCTION_MASK;
-        (self.0 & (TAG_MASK | HEAP_REFERENCE_BITS) == TAG_HEAP && function != 0)
+        (self.0 & (TAG_MASK | HEAP_REFERENCE_BITS) == TAG_HEAP | DIRECT_ENVIRONMENT_HANDLE_BITS && function != 0)
             .then(|| (function as u32, Self(self.0 & !KNOWN_CLOSURE_FUNCTION_BITS)))
     }
 
     /// The owner environment of a `shared_environment_slot`.
+    /// An environment slot word's edge for a collection, branch-free: the owner a shared
+    /// slot names, else the word itself; and whether that edge is a heap value.
+    #[inline(always)] pub(crate) fn environment_slot_edge(self) -> (Self, bool) {
+        // A shared slot is `TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT | payload`; its owner is
+        // `TAG_HEAP | payload`, one xor away.
+        const SHARED_PATTERN: u64 = TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT;
+        const TO_OWNER: u64 = TAG_DELETED ^ TAG_HEAP ^ SHARED_ENVIRONMENT_SLOT_BIT;
+        let shared = self.0 & (TAG_MASK | SHARED_ENVIRONMENT_SLOT_BIT) == SHARED_PATTERN;
+        let edge = self.0 ^ (TO_OWNER & (shared as u64).wrapping_neg());
+        (Self(edge), edge & TAG_MASK == TAG_HEAP)
+    }
+
+    /// Whether this word is a shared environment slot (`shared_environment_slot`).
+    #[inline(always)] pub(crate) fn is_shared_environment_slot(self) -> bool {
+        self.0 & (TAG_MASK | SHARED_ENVIRONMENT_SLOT_BIT) == TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT
+    }
     #[inline(always)] pub(crate) fn shared_environment_owner(self) -> Option<Self> {
         (self.0 & (TAG_MASK | SHARED_ENVIRONMENT_SLOT_BIT) == TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT)
             .then_some(Self(TAG_HEAP | (self.0 & PAYLOAD_MASK & !SHARED_ENVIRONMENT_SLOT_BIT)))
@@ -545,6 +581,10 @@ impl Value {
         Self(TAG_HEAP | DIRECT_ITERATOR_HANDLE_BITS | u64::from(index))
     }
 
+    #[inline(always)] pub(crate) fn direct_collection(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_COLLECTION_HANDLE_BITS | u64::from(index))
+    }
+
     #[inline(always)] pub(crate) fn direct_string(index: u32) -> Self {
         Self(TAG_HEAP | DIRECT_STRING_HANDLE_BITS | u64::from(index))
     }
@@ -623,6 +663,9 @@ impl Value {
                 DIRECT_ITERATOR_HANDLE_BITS => HeapReference::IteratorRecord(index),
                 DIRECT_STRING_HANDLE_BITS => HeapReference::StringRecord(index),
                 DIRECT_V128_HANDLE_BIT => HeapReference::V128Record(index),
+                DIRECT_ENVIRONMENT_HANDLE_BITS => HeapReference::EnvironmentRecord(index),
+                DIRECT_SYMBOL_HANDLE_BITS => HeapReference::SymbolRecord(index),
+                DIRECT_COLLECTION_HANDLE_BITS => HeapReference::CollectionRecord(index),
                 _ => return None,
             },
         )
@@ -638,8 +681,27 @@ impl Value {
             | HeapReference::AwaitRecord(_)
             | HeapReference::IteratorRecord(_)
             | HeapReference::StringRecord(_)
-            | HeapReference::V128Record(_) => None,
+            | HeapReference::V128Record(_)
+            | HeapReference::EnvironmentRecord(_)
+            | HeapReference::SymbolRecord(_) => None,
+            | HeapReference::CollectionRecord(_) => None,
         }
+    }
+
+    #[inline(always)] pub(crate) fn direct_environment(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_ENVIRONMENT_HANDLE_BITS | u64::from(index))
+    }
+
+    #[inline(always)] pub(crate) fn direct_environment_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_ENVIRONMENT_HANDLE_BITS).then_some(self.0 as u32)
+    }
+
+    #[inline(always)] pub(crate) fn direct_symbol(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_SYMBOL_HANDLE_BITS | u64::from(index))
+    }
+
+    #[inline(always)] pub(crate) fn direct_symbol_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_SYMBOL_HANDLE_BITS).then_some(self.0 as u32)
     }
 
     #[inline(always)] pub(crate) fn direct_v128_index(self) -> Option<u32> {
@@ -659,6 +721,10 @@ impl Value {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_ITERATOR_HANDLE_BITS).then_some(self.0 as u32)
     }
 
+    #[inline(always)] pub(crate) fn direct_collection_index(self) -> Option<u32> {
+        (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_COLLECTION_HANDLE_BITS).then_some(self.0 as u32)
+    }
+
     #[inline(always)] pub(crate) fn direct_string_index(self) -> Option<u32> {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_STRING_HANDLE_BITS).then_some(self.0 as u32)
     }
@@ -676,14 +742,15 @@ impl Value {
     }
 
     /// Whether the value names a direct record of an object family: an ordinary object,
-    /// array, function, promise or iterator. Every such value is an object; strings and
-    /// await states, the other direct families, are not.
+    /// array, function, promise, iterator or collection. Every such value is an object; strings
+    /// and await states, the other direct families, are not.
     #[inline(always)] pub(crate) fn is_direct_object_family(self) -> bool {
         self.direct_object_index().is_some()
             || self.direct_array_index().is_some()
             || self.direct_function_index().is_some()
             || self.direct_promise_index().is_some()
             || self.direct_iterator_index().is_some()
+            || self.direct_collection_index().is_some()
     }
 
     #[inline] pub fn is_undefined(self) -> bool {
@@ -918,6 +985,22 @@ mod tests {
         assert_eq!(direct_iterator.direct_object_index(), None);
         assert_eq!(direct_iterator.direct_promise_index(), None);
         assert!(!direct_iterator.is_record());
+        let direct_symbol = Value::direct_symbol(42);
+        assert_eq!(direct_symbol.direct_symbol_index(), Some(42));
+        assert_eq!(direct_symbol.direct_object_index(), None);
+        assert_eq!(direct_symbol.direct_v128_index(), None);
+        assert_eq!(direct_symbol.legacy_heap_index(), None);
+        assert_eq!(direct_symbol.to_narrow(), None);
+        assert!(!direct_symbol.is_record());
+        assert_eq!(
+            direct_symbol.heap_reference(),
+            Some(super::HeapReference::SymbolRecord(42))
+        );
+        let direct_collection = Value::direct_collection(43);
+        assert_eq!(direct_collection.direct_collection_index(), Some(43));
+        assert_eq!(direct_collection.direct_iterator_index(), None);
+        assert!(direct_collection.is_direct_object_family());
+        assert_eq!(direct_collection.to_narrow(), None);
         let direct_await = Value::direct_await(42);
         assert_eq!(direct_await.direct_await_index(), Some(42));
         assert_eq!(direct_await.direct_promise_index(), None);

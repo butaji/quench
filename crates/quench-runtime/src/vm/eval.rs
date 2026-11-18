@@ -76,11 +76,17 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        self.in_native_env_realm(|vm| vm.eval_script_native_in_realm(p, args))
+    }
+
+    /// Runs `body` in the realm of the active native environment, when it has one, and
+    /// switches back after.
+    fn in_native_env_realm(&mut self, body: impl FnOnce(&mut Self) -> Result<Value, JsError>) -> Result<Value, JsError> {
         let previous_global = self
             .active_native_env()
             .filter(|global| self.object_data(*global).is_some())
             .map(|global| self.switch_realm_global(global));
-        let result = self.eval_script_native_in_realm(p, args);
+        let result = body(self);
         if let Some(previous_global) = previous_global {
             self.switch_realm_global(previous_global);
         }
@@ -182,15 +188,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let previous_global = self
-            .active_native_env()
-            .filter(|global| self.object_data(*global).is_some())
-            .map(|global| self.switch_realm_global(global));
-        let result = self.eval_native_in_realm(p, args);
-        if let Some(previous_global) = previous_global {
-            self.switch_realm_global(previous_global);
-        }
-        result
+        self.in_native_env_realm(|vm| vm.eval_native_in_realm(p, args))
     }
 
     fn eval_native_in_realm(
@@ -263,7 +261,7 @@ impl<H: Host> Vm<H> {
             return Ok(Value::UNDEFINED);
         }
         let source_name = format!("<Eval:{}>", self.programs.len());
-        self.eval_global_script_with_cache(p, text, inherited_strict, &source_name, cache_source, false, eval_source::shared_text(&source_text, text))
+        self.eval_global_script_with_cache(p, text, inherited_strict, &source_name, cache_source, false, eval_source::shared_text(source, &source_text, text))
     }
 
     pub(super) fn eval_global_script(
@@ -303,9 +301,9 @@ impl<H: Host> Vm<H> {
         source: &str,
         strict: bool,
         source_name: &str,
-        cache_source: Option<eval_source::EvalSource>,
+        mut cache_source: Option<eval_source::EvalSource>,
         host_script: bool,
-        shared_text: Option<crate::bytecode::SourceText>,
+        shared_text: Option<eval_source::SharedText>,
     ) -> Result<Value, JsError> {
         let host_script = host_script && !self.direct_eval;
         let mode = self.specialization_part();
@@ -369,7 +367,7 @@ impl<H: Host> Vm<H> {
             self.syntax_error_result(p, &message)
                 .expect_err("dynamic eval syntax errors must throw")
         })?;
-        eval_source::keep_shared_text(&mut residual, shared_text);
+        self.keep_eval_text(&mut residual, shared_text, facts.key.as_mut(), cache_source.as_mut());
         let cacheable = eval_source::is_cacheable(&residual, source);
         let strict_code_key = facts.key.as_ref().filter(|_| eval_source::is_strict_code_cacheable(&residual)).cloned();
         let cache_source = cache_source.filter(|_| cacheable && facts.key.is_none());
@@ -517,6 +515,11 @@ impl<H: Host> Vm<H> {
         if !self.host.keeps_compiled_programs() {
             return None;
         }
+        self.encode_compact_program(program)
+    }
+
+    /// `program`'s compact form, when every atom it names is found again by its text.
+    fn encode_compact_program(&self, program: &crate::ResidualProgram) -> Option<Vec<u8>> {
         let (bytes, atoms) = program.encode_compact();
         atoms
             .iter()
@@ -565,6 +568,14 @@ impl<H: Host> Vm<H> {
         &mut self, source: &str, name: &str, goal: &str, origin: Option<(u32, u32)>,
     ) -> Option<crate::PreparedScript> {
         let entry = self.host.kept_compiled_program(name, &[self.specialization_part(), goal, source])?;
+        self.decode_kept_script(entry, source, name, origin)
+    }
+
+    /// The script `source` decoded for this VM from `entry`, its kept form (`append_kept_source`),
+    /// with its origin.
+    fn decode_kept_script(
+        &mut self, entry: crate::KeptBytes, source: &str, name: &str, origin: Option<(u32, u32)>,
+    ) -> Option<crate::PreparedScript> {
         let (bytes, text) = crate::bytecode::split_kept_source(entry, source.len())
             .unwrap_or_else(|entry| (entry, crate::bytecode::SourceText::Shared(std::sync::Arc::from(source))));
         // Checking the kept text's checksum read every page of it, and the run reads it again
@@ -622,10 +633,9 @@ impl<H: Host> Vm<H> {
         // malloc arena.
         let scratch = cache_key.is_some().then(ScratchPhase::begin);
         // A program keeping only static text cannot compile its functions again from it. One
-        // the host's compile cache keeps encodes each record its load releases.
-        let compiled = crate::Engine::specialize_host_script(
-            source, name, &*self, options, self.released_records(cache_key.is_some()),
-        );
+        // that runs from its kept form encodes each record its load releases.
+        let released = if cache_key.is_some() { crate::compile::ReleasedRecords::Encoded } else { crate::compile::ReleasedRecords::Dropped };
+        let compiled = crate::Engine::specialize_host_script(source, name, &*self, options, released, true);
         let mut residual = compiled
             .map_err(|diagnostics| {
                 if diagnostics
@@ -652,20 +662,27 @@ impl<H: Host> Vm<H> {
         // Kept before its records are released: encoding reads every record. Every distinct
         // text a user runs adds an entry; a store that fails (a full disk) keeps the cache
         // as it was, and costs only the compilation it would have saved.
+        crate::compile::compile_phase_boundary(crate::compile::CompilePhase::Encoding);
         if let Some(goal) = &cache_key
-            && let Some(mut bytes) = self.encode_cached_program(&residual)
+            && let Some(mut bytes) = self.encode_compact_program(&residual)
         {
             crate::bytecode::append_kept_source(&mut bytes, source);
             let mode = self.specialization_part();
-            self.host.keep_compiled_program(name, &[mode, goal, source], &bytes);
-            drop(bytes);
-            // The program then runs from its kept form, as every later run of the text does:
-            // its records decode on first call from the host's mapped entry, which the host
-            // can page out, instead of staying compiled in memory for the whole run (V8-v7
-            // MemoryFirst max RSS of a cold entry, static x86_64, 5 pairs, 2026-10-24:
-            // NavierStokes 4708 -> 4172 KiB, RayTrace 3332 -> 3016, Crypto 3480 -> 3292,
-            // RegExp 6228 -> 6028; a whole cold typescript-eslint run's CPU unchanged).
-            if let Some(kept) = self.kept_script(source, name, goal, origin) {
+            if self.host.keeps_compiled_programs() {
+                self.host.keep_compiled_program(name, &[mode, goal, source], &bytes);
+            }
+            // The program then runs from its kept form, as every later run of the text does,
+            // whether or not the host could keep it: one execution path for an entry, never one
+            // for a writable cache and another without (a run with no cache had kept every
+            // recursive function in its unlowered tier, fib(32) 8x slower, all tiers). Its
+            // records decode on first call from the host's mapped entry, which the host can
+            // page out, or from these bytes where the host kept none (V8-v7 MemoryFirst max
+            // RSS of a cold entry, static x86_64, 5 pairs, 2026-10-24: NavierStokes 4708 ->
+            // 4172 KiB, RayTrace 3332 -> 3016, Crypto 3480 -> 3292, RegExp 6228 -> 6028; a
+            // whole cold typescript-eslint run's CPU unchanged).
+            let kept = self.kept_script(source, name, goal, origin)
+                .or_else(|| self.decode_kept_script(Rc::new(bytes) as crate::KeptBytes, source, name, origin));
+            if let Some(kept) = kept {
                 drop(residual);
                 drop(scratch);
                 return Ok(kept);
@@ -673,7 +690,7 @@ impl<H: Host> Vm<H> {
         }
         // Its final source is settled, so a function compiles again from it on first call.
         #[cfg(feature = "profile-aggregate")]
-        let retain_profile_records = std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some();
+        let retain_profile_records = crate::vm::switches::profile_retain_bytecode();
         #[cfg(not(feature = "profile-aggregate"))]
         let retain_profile_records = false;
         if !retain_profile_records {
@@ -949,18 +966,20 @@ impl<H: Host> Vm<H> {
                 } else {
                     Vec::new()
                 };
-                self.heap.alloc(Cell::Environment {
-                    parent,
-                    function: u32::MAX,
-                    slots: Vec::<Value>::new().into_boxed_slice().into(),
-                    scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
-                        program: None,
-                        root_eval_scope: root_scope,
-                        binding_site_pc: None,
-                        dynamic_bindings: dynamic_bindings.into(),
-                        with_objects: Box::default(),
-                    }),
-                })
+                self.heap
+                    .alloc_environment(
+                        parent,
+                        u32::MAX,
+                        Vec::<Value>::new().into_boxed_slice().into(),
+                        crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+                            program: None,
+                            root_eval_scope: root_scope,
+                            binding_site_pc: None,
+                            dynamic_bindings: dynamic_bindings.into(),
+                            with_objects: Box::default(),
+                        }),
+                    )
+                    .0
             } else {
                 parent
             };
@@ -1014,12 +1033,13 @@ impl<H: Host> Vm<H> {
         let Some(binding_site_pc) = site else {
             return Ok(environment);
         };
-        let scope = self.binding_site_environment_cell(environment, binding_site_pc)?;
-        Ok(self.heap.alloc(scope))
+        let crate::heap::EnvironmentRecord { parent, function, slots, scope } =
+            self.binding_site_environment_cell(environment, binding_site_pc)?;
+        Ok(self.heap.alloc_environment(parent, function, slots, scope).0)
     }
 
-    /// The environment cell `site_environment` allocates for a site at `binding_site_pc`.
-    fn binding_site_environment_cell(&mut self, environment: Value, binding_site_pc: u32) -> Result<Cell, JsError> {
+    /// The environment record `site_environment` allocates for a site at `binding_site_pc`.
+    fn binding_site_environment_cell(&mut self, environment: Value, binding_site_pc: u32) -> Result<crate::heap::EnvironmentRecord, JsError> {
         let slots = self
             .heap
             .clone_environment_slots(environment, &[], crate::bytecode::Resets::listed(&[]))
@@ -1028,16 +1048,16 @@ impl<H: Host> Vm<H> {
             .heap
             .environment_binding_owner(environment)
             .ok_or_else(|| JsError("invalid eval scope owner".into()))?;
-        let Some(Cell::Environment {
+        let Some(crate::heap::EnvironmentRecord {
             parent,
             function,
             scope,
             ..
-        }) = self.heap.get(environment)
+        }) = self.heap.environment(environment)
         else {
             return Err(JsError("invalid eval scope environment".into()));
         };
-        let scope = Cell::Environment {
+        let record = crate::heap::EnvironmentRecord {
             parent: *parent,
             function: *function,
             slots,
@@ -1049,7 +1069,7 @@ impl<H: Host> Vm<H> {
                 with_objects: scope.with_objects().into(),
             }),
         };
-        Ok(scope)
+        Ok(record)
     }
 
     fn validate_eval_arguments_context(

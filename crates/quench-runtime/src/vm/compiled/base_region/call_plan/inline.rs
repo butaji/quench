@@ -33,6 +33,7 @@ use super::super::super::lane_unit::{CallRecovery, CallTarget, CalleeBinding, Fr
 use super::super::super::osr_loop::{inlined_returning, renamed};
 use super::super::super::tier_policy::Stitch;
 use super::super::decode::{numeric_row, register_of, Decoded, Numbers, Source};
+use super::super::super::base_rows::Heap;
 use quench_bjit::numeric::Kind;
 
 /// A callee the stitcher may inline, as its function and the call site's records show it.
@@ -49,6 +50,9 @@ pub(in super::super) struct Callee<'f> {
     pub(in super::super) live: &'f RegisterMasks,
     /// The Stable fact the callee register's by-name read took: the global cell holding `identity`.
     pub(in super::super) stable: Option<GlobalFact>,
+    /// The address and length of the closure's own capture slots (its environment's dense run), which
+    /// the site's proof fixes with `identity`: a depth-0 capture read is a read of one slot's address.
+    pub(in super::super) captures: (usize, usize),
 }
 
 /// The activations around a call being planned, and what is left of the stitch's budget.
@@ -179,6 +183,9 @@ struct Emitter<'a> {
     /// The local row index each callee pc starts at, and the end.
     starts: Vec<u32>,
     rows: Vec<SiteRow>,
+    /// The callee pcs control reaches from its entry: the rest (the implicit `return undefined`
+    /// after a last `return x`) emit no rows, as a compiler drops dead code.
+    reached: crate::bitset::BitSet,
 }
 
 impl Emitter<'_> {
@@ -211,16 +218,27 @@ impl Emitter<'_> {
     }
 
     /// The call completes with `value`: moved to the result, then past the site unless this is
-    /// the callee's last instruction.
+    /// the callee's last reached instruction.
     fn complete(&mut self, pc: u32, value: Register) {
         if value != self.shape.result {
             let decoded = Decoded::number(Kind::Move, Some(self.shape.result), Some(Source::Register(value)), None, None);
             self.push(pc, decoded, Some(value));
         }
-        if pc as usize + 1 < self.callee.code.len() {
+        if reached_after(&self.reached, pc as usize, self.callee.code.len()) {
             let end = self.continuation();
             self.push(pc, Decoded::number(Kind::Jump, None, None, None, Some(end)), None);
         }
+    }
+
+    /// A depth-0 capture read of the closure's own environment: the slot's address, which the closure's
+    /// identity fixes (`Heap::CalleeCapture`). A slot past the run is the interpreter's.
+    fn capture_row(&self, instruction: WideInstruction) -> Option<Decoded> {
+        let (values, len) = self.callee.captures;
+        let slot = usize::from(instruction.capture_slot());
+        (instruction.op().class() == Class::LoadCapture && instruction.capture_depth() == 0 && values != 0 && slot < len).then(|| Decoded {
+            hole: (values + slot * std::mem::size_of::<Value>()) as u64,
+            ..Decoded::heap(Heap::CalleeCapture, Some(instruction.result_register()), None, None)
+        })
     }
 
     fn renamed(&self, pc: u32, instruction: WideInstruction) -> Result<WideInstruction, Refused> {
@@ -243,7 +261,7 @@ impl Emitter<'_> {
             instruction
         };
         let renamed = self.renamed(pc, plain)?;
-        let row = numeric_row(self.callee.numbers, renamed).flatten().ok_or(Refused::Row(pc))?;
+        let row = numeric_row(self.callee.numbers, renamed).flatten().or_else(|| self.capture_row(renamed)).ok_or(Refused::Row(pc))?;
         // A leave between the computation and the return resumes at the instruction, which a row
         // reading what it wrote would apply twice.
         if returning && rereads(&row) {
@@ -260,13 +278,15 @@ impl Emitter<'_> {
 /// The local row index each callee pc starts at, and the end: a `Return` is a `Move` unless it
 /// returns the result register already, and a jump unless last; a returning instruction adds the
 /// same.
-fn starts(shape: &CallShape, callee: &Callee, register: &dyn Fn(Register) -> Register, leading: u32) -> Vec<u32> {
+fn starts(shape: &CallShape, callee: &Callee, register: &dyn Fn(Register) -> Register, (leading, reached): (u32, &crate::bitset::BitSet)) -> Vec<u32> {
     let mut at = leading;
     let mut starts = Vec::with_capacity(callee.code.len() + 1);
     for (pc, instruction) in callee.code.iter().enumerate() {
         starts.push(at);
-        let completion = |value: Register| u32::from(value != shape.result) + u32::from(pc + 1 < callee.code.len());
-        at += if instruction.op().class() == Class::Return {
+        let completion = |value: Register| u32::from(value != shape.result) + u32::from(reached_after(reached, pc, callee.code.len()));
+        at += if !reached.contains(pc) {
+            0
+        } else if instruction.op().class() == Class::Return {
             completion(register(instruction.register_a()))
         } else if inlined_returning(*instruction) {
             1 + completion(register(instruction.result_register()))
@@ -276,6 +296,11 @@ fn starts(shape: &CallShape, callee: &Callee, register: &dyn Fn(Register) -> Reg
     }
     starts.push(at);
     starts
+}
+
+/// Whether control reaches a callee instruction after `pc`, so that a completion at `pc` jumps past them.
+fn reached_after(reached: &crate::bitset::BitSet, pc: usize, len: usize) -> bool {
+    (pc + 1..len).any(|later| reached.contains(later))
 }
 
 /// The call of `callee` at `shape`, its window at `base`, as the inlined frame the interpreter
@@ -305,18 +330,22 @@ impl InlineSite {
     pub(in super::super) fn plan(shape: &CallShape, facts: &DirectFacts, callee: &Callee, context: &mut Context) -> Result<Self, Refused> {
         admit(shape, facts, callee, context)?;
         let base = Register::try_from(context.top).map_err(|_| Refused::Registers)?;
-        let written: Vec<Register> = callee.code.iter().flat_map(|instruction| instruction.written_registers()).collect();
+        let reached = crate::bytecode::reachable_from(callee.code, [0]);
+        let live_code = callee.code.iter().enumerate().filter(|(pc, _)| reached.contains(*pc)).map(|(_, instruction)| instruction);
+        let written: Vec<Register> = live_code.flat_map(|instruction| instruction.written_registers()).collect();
         let (copied, aliased): (Vec<_>, Vec<_>) = callee.homes.iter().partition(|(_, home)| written.contains(home));
         let aliases: Vec<(Register, Register)> = aliased.iter().map(|(argument, home)| (*home, shape.window + argument)).collect();
-        let mut emitter = Emitter { shape, callee, base, aliases, starts: Vec::new(), rows: Vec::new() };
-        emitter.starts = starts(shape, callee, &|register| emitter.register(register), copied.len() as u32);
+        let mut emitter = Emitter { shape, callee, base, aliases, starts: Vec::new(), rows: Vec::new(), reached };
+        emitter.starts = starts(shape, callee, &|register| emitter.register(register), (copied.len() as u32, &emitter.reached));
         let mut done = Vec::with_capacity(copied.len());
         for (argument, home) in copied {
             emitter.copy(&done, base + home, shape.window + argument);
             done.push((base + home, shape.window + argument));
         }
         for (pc, instruction) in callee.code.iter().enumerate() {
-            emitter.instruction(pc as u32, *instruction)?;
+            if emitter.reached.contains(pc) {
+                emitter.instruction(pc as u32, *instruction)?;
+            }
         }
         context.reserve(callee.code.len());
         let proof = callee.stable.map_or(Proof::Guard(shape.callee, callee.identity.to_bits()), Proof::Held);
@@ -345,7 +374,7 @@ mod tests {
 
     fn facts() -> DirectFacts {
         let cell = CellFacts { registers: 4, room: 4, params: 2, entry: ENTRY_ACTIVATES as u8 };
-        DirectFacts { callee: IDENTITY, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, registers: 4, construction: false, frame_bytes: 32 }
+        DirectFacts { callee: IDENTITY, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, lexical: false, registers: 4, construction: false, frame_bytes: 32 }
     }
 
     fn operand(register: Register) -> u16 {
@@ -367,7 +396,7 @@ mod tests {
     }
 
     fn callee<'f>(code: &'f [WideInstruction], homes: &'f [(u16, Register)], live: &'f RegisterMasks) -> Callee<'f> {
-        Callee { function: CALLEE, identity: Value::from_bits(IDENTITY), code, registers: 4, homes, numbers: &no_numbers, live, stable: None }
+        Callee { function: CALLEE, identity: Value::from_bits(IDENTITY), code, registers: 4, homes, numbers: &no_numbers, live, stable: None, captures: (0, 0) }
     }
 
     const HOMES: [(u16, Register); 2] = [(0, 0), (1, 1)];
@@ -391,6 +420,7 @@ mod tests {
     #[test]
     fn a_written_parameter_is_copied_and_each_return_moves_and_jumps_past_the_rest() {
         let code = vec![
+            WideInstruction::new(Op::JumpTrue, 1, 0, 0, 2),
             WideInstruction::new(Op::Return, 0, 0, 0, 0),
             WideInstruction::new(Op::Move, 0, 1, 0, 0),
             WideInstruction::new(Op::Return, 0, 0, 0, 0),
@@ -398,7 +428,7 @@ mod tests {
         let (live, mut context) = (parameters_live(), Context::root(CALLER, BASE, &TierRows::Measured.table().stitch));
         let site = InlineSite::plan(&SHAPE, &facts(), &callee(&code, &HOMES, &live), &mut context).expect("inlined");
         let end = site.rows.len() as u32;
-        assert_eq!(rows(&site), [(Kind::Move, None), (Kind::Move, None), (Kind::Jump, Some(end)), (Kind::Move, None), (Kind::Move, None)]);
+        assert_eq!(rows(&site), [(Kind::Move, None), (Kind::JumpTrue, Some(4)), (Kind::Move, None), (Kind::Jump, Some(end)), (Kind::Move, None), (Kind::Move, None)]);
         assert_eq!(site.rows[0].pc, None, "the copy of the written parameter runs before the callee");
         assert_eq!(site.rows[0].decoded.dst, Some(BASE), "only the parameter the callee writes is copied");
         assert_eq!(site.rows[0].live, Vec::<Register>::new());
@@ -413,8 +443,20 @@ mod tests {
         ];
         let (live, mut context) = (parameters_live(), Context::root(CALLER, BASE, &TierRows::Measured.table().stitch));
         let site = InlineSite::plan(&SHAPE, &facts(), &callee(&code, &HOMES, &live), &mut context).expect("inlined");
-        assert_eq!(rows(&site), [(Kind::Jump, Some(3)), (Kind::Move, None), (Kind::Jump, Some(4)), (Kind::Move, None)]);
-        assert_eq!(site.rows.iter().map(|row| row.pc).collect::<Vec<_>>(), [Some(0), Some(1), Some(1), Some(2)]);
+        assert_eq!(rows(&site), [(Kind::Jump, Some(1)), (Kind::Move, None)], "the return the jump skips is dead and makes no rows");
+        assert_eq!(site.rows.iter().map(|row| row.pc).collect::<Vec<_>>(), [Some(0), Some(2)]);
+    }
+
+    /// `function (x) { return x + 1 }` compiles to the returning add and an implicit `return undefined`
+    /// no path reaches: the site is the add and the move, as for a callee without the tail.
+    #[test]
+    fn the_unreachable_implicit_return_after_a_returning_instruction_makes_no_rows() {
+        let mut code = sum();
+        code.push(WideInstruction::new(Op::LoadConst, 2, 0, 0, 0));
+        code.push(WideInstruction::new(Op::Return, 2, 0, 0, 0));
+        let (live, mut context) = (parameters_live(), Context::root(CALLER, BASE, &TierRows::Measured.table().stitch));
+        let site = InlineSite::plan(&SHAPE, &facts(), &callee(&code, &HOMES, &live), &mut context).expect("inlined despite the dead tail");
+        assert_eq!(rows(&site), [(Kind::Add, None), (Kind::Move, None)]);
     }
 
     #[test]

@@ -13,6 +13,8 @@ enum FuseKey {
     /// `next`, of an iterator prototype.
     Next,
     Named(&'static str),
+    /// `@@species`, a getter-only accessor whose slot holds the getter.
+    SpeciesSymbol,
 }
 
 /// Each fuse's key and intrinsic, in `IntactFuse` order.
@@ -29,6 +31,8 @@ const FUSES: [(FuseKey, Native); IntactFuse::COUNT] = [
     (FuseKey::Named("includes"), Native::StringIncludes),
     (FuseKey::Named("test"), Native::RegExpTest),
     (FuseKey::Named("exec"), Native::RegExpExec),
+    (FuseKey::Named("constructor"), Native::Array),
+    (FuseKey::SpeciesSymbol, Native::ArraySpecies),
 ];
 
 impl<H: Host> Vm<H> {
@@ -55,7 +59,10 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn fuse_holder(&self, fuse: IntactFuse) -> Value {
         match fuse {
-            IntactFuse::ArrayIterator => self.array_proto,
+            // `ArraySpecies` is proved for the constructor `Array.prototype.constructor` holds
+            // (`Vm::array_species_is_array_create`, through `fuse_intact_at`); proved for the
+            // prototype, which keeps no `@@species`, it only ever answers `false`.
+            IntactFuse::ArrayIterator | IntactFuse::ArrayConstructor | IntactFuse::ArraySpecies => self.array_proto,
             IntactFuse::ArrayIteratorNext => self.array_iterator_proto,
             IntactFuse::SetIterator => self.set_proto,
             IntactFuse::SetIteratorNext => self.set_iterator_proto,
@@ -78,6 +85,7 @@ impl<H: Host> Vm<H> {
             FuseKey::IteratorSymbol => self.iterator_symbol_key()?,
             FuseKey::Next => PropertyKey::string(self.runtime_atoms.next),
             FuseKey::Named(name) => PropertyKey::string(self.lookup_atom(name)?),
+            FuseKey::SpeciesSymbol => PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::Species)?),
         };
         Some((key, native))
     }
@@ -102,7 +110,15 @@ impl<H: Host> Vm<H> {
         let (key, native) = self.fuse_property(fuse)?;
         let data = self.object_data(holder)?;
         let slot = self.property_shape_slot(data.shape(), key)?;
-        if self.slot_attributes(data, slot)?.accessor {
+        // A getter-only accessor keeps its getter in the slot, as the fuse's intrinsic; a
+        // data property holds its value there.
+        let getter = matches!(FUSES[fuse as usize].0, FuseKey::SpeciesSymbol);
+        let holds = if getter {
+            !self.shape_is_dictionary(data.shape()) && self.shape_slot_attributes(data.shape(), slot).is_some_and(ShapeAttributes::slot_getter)
+        } else {
+            !self.slot_attributes(data, slot)?.accessor
+        };
+        if !holds {
             return None;
         }
         let value = self.heap.property_get(data, slot)?;
@@ -125,6 +141,14 @@ impl<H: Host> Vm<H> {
         (self.array_iteration_shape == Some(shape) || self.array_shape_lacks_iterator(shape))
             && self.fuse_intact(IntactFuse::ArrayIterator)
             && self.fuse_intact(IntactFuse::ArrayIteratorNext)
+    }
+
+    /// Whether spreading an array the VM just made (a rest array: its own present elements on
+    /// the realm's `Array.prototype`, no own `@@iterator`) yields its elements without running
+    /// guest code: the realm's array iterator and its `next` are intact.
+    #[inline]
+    pub(super) fn fresh_array_iteration_intact(&mut self) -> bool {
+        self.fuse_intact(IntactFuse::ArrayIterator) && self.fuse_intact(IntactFuse::ArrayIteratorNext)
     }
 
     /// The length of `list` when spreading it yields its stored elements without running

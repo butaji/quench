@@ -69,7 +69,7 @@ impl Stage for Trace {
     fn eq_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("eq_imm w{a} {}", Self::operand(imm.into()))) }
     fn ne_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("ne_imm w{a} {}", Self::operand(imm.into()))) }
     fn ugt_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("ugt_imm w{a} {}", Self::operand(imm.into()))) }
-    fn store_gate(&mut self, space: super::RecordSpace, record_id: u32, value: u32) -> u32 { self.word(format!("store_gate {space:?} w{record_id} w{value}")) }
+    fn store_gate(&mut self, space: super::StagedRecordSpace, record_id: u32, value: u32) -> u32 { self.word(format!("store_gate {space:?} w{record_id} w{value}")) }
     fn number_operator(&mut self, operator: Imm, passed: u32, constant: u32) -> (u32, u32) {
         let value = self.word(format!("number_operator {} w{passed} w{constant}", Self::operand(operator)));
         (value, value)
@@ -86,6 +86,7 @@ impl Stage for Trace {
     fn load_i32(&mut self, _at: Access, base: u32, offset: i32) -> u32 { self.word(format!("load_i32 w{base}+{offset}")) }
     fn load_f32(&mut self, _at: Access, base: u32, offset: i32) -> u32 { self.word(format!("load_f32 w{base}+{offset}")) }
     fn load_f64(&mut self, _at: Access, base: u32, offset: i32) -> u32 { self.word(format!("load_f64 w{base}+{offset}")) }
+    fn box_number(&mut self, number: u32) -> u32 { self.word(format!("box_number w{number}")) }
     fn store_u8(&mut self, _at: Access, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_u8 w{base}+{offset} w{value}")); }
     fn store_u16(&mut self, _at: Access, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_u16 w{base}+{offset} w{value}")); }
     fn store_f32(&mut self, _at: Access, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_f32 w{base}+{offset} w{value}")); }

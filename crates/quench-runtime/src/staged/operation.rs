@@ -137,15 +137,12 @@ pub(crate) enum Operation<W, P> {
     /// The index of the value in register `source` among the `count` program constants from `start`
     /// (`Frame::case_index`), defined into `destination`: the switch's string-case selector.
     StringCaseIndex { destination: Register, source: Register, start: u32, count: u16 },
-    /// Suspend the promise job the run is rooted in on the value of register `source`, resuming into
-    /// `destination` (`Frame::suspend_await`); the record leaves the lane run (`Edge::Leave`).
-    Await { destination: Register, source: Register },
-    /// The frame's `yield` of the value in register `value` (`Frame::suspend_yield`): the running
-    /// generator's suspension, which the frame transfers control for (`Edge::Transfer`).
-    Yield { value: Register },
-    /// The frame's `yield*` of the iterable in register `iterable` (`Frame::suspend_yield_star`), which
-    /// transfers control the same way.
-    YieldStar { iterable: Register },
+    /// Suspend the activation (`Suspension`: `await`, `yield`, `yield*`) with the value of `value`,
+    /// resuming with what it receives next in `destination` (`suspend::suspend`, which asks the
+    /// frame: `Frame::suspend_await`, `suspend_yield`, `suspend_yield_star`).
+    Suspend { kind: super::Suspension, destination: Register, value: Register },
+    /// Continue: a record a rewrite emptied (`Op::Nop`), which reads and writes nothing.
+    Nop,
     /// The value `base.name` reads through `lookup`'s plan (`property::read_with`); the tier
     /// defines the result register.
     GetField { base: FieldBase, lookup: FieldLookup },
@@ -317,6 +314,7 @@ impl<W, P> Operation<W, P> {
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
             Op::Throw => Self::Throw { source: instruction.register_a() },
+            Op::Nop => Self::Nop,
             _ => Self::Return { source: instruction.register_a() },
         })
     }
@@ -331,7 +329,7 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The property operations of `decode`: a plain named read, a named store and `delete`.
-    fn decode_property(instruction: WideInstruction) -> Option<Self> {
+    pub(crate) fn decode_property(instruction: WideInstruction) -> Option<Self> {
         match instruction.op() {
             Op::GetField => Self::decode_get_field(instruction),
             Op::Delete => Some(Self::Delete { destination: instruction.result_register(), base: instruction.register_b(),
@@ -478,9 +476,7 @@ impl Operation<u64, ()> {
         Some(match instruction.op() {
             Op::StringCaseIndex => Self::StringCaseIndex { destination: instruction.result_register(),
                 source: instruction.register_c(), start: instruction.imm(), count: instruction.element_count() },
-            Op::Await => Self::Await { destination: instruction.result_register(), source: instruction.register_b() },
-            Op::Yield => Self::Yield { value: instruction.register_b() },
-            Op::YieldStar => Self::YieldStar { iterable: instruction.register_c() },
+            Op::Await | Op::Yield | Op::YieldStar => return Self::decode_suspend(instruction),
             _ => return None,
         })
     }
@@ -533,13 +529,13 @@ impl Operation<u64, ()> {
     /// Whether `instruction` yields a value from a generator (`Yield`, a lane row). The interpreter
     /// frame answers no suspension (`Frame::suspend_yield`), so its yield is the general loop's step.
     pub(crate) fn is_yield(instruction: WideInstruction) -> bool {
-        matches!(Self::decode_lane(instruction), Some(Self::Yield { .. }))
+        matches!(Self::decode_lane(instruction), Some(Self::Suspend { kind: super::Suspension::Yield, .. }))
     }
 
     /// Whether `instruction` awaits a value (`Await`, a lane row). The interpreter frame answers no
     /// suspension (`Frame::suspend_await`), so an async frame's await is the general loop's step.
     pub(crate) fn is_await(instruction: WideInstruction) -> bool {
-        matches!(Self::decode_lane(instruction), Some(Self::Await { .. }))
+        matches!(Self::decode_lane(instruction), Some(Self::Suspend { kind: super::Suspension::Await, .. }))
     }
 
     /// Whether `instruction` is a named field read (`GetField`), whatever its result flags.

@@ -19,15 +19,7 @@ pub(super) enum LoopBody {
     Declined,
 }
 
-/// The bodies a loop site plans, each from its predecessors' leaves.
-const ATTEMPTS: u8 = 4;
-/// The runs of a loop's body that leave inside the loop before the next body plans around them.
-const REOPTIMIZE: u16 = 16;
-/// The share of a loop body's runs, in percent, that may leave inside the loop for it to stay.
-const KEEP_SHARE: u64 = 10;
-/// The backedges between looks for a loop body's compiling code.
-const POLL: u16 = 16;
-
+use crate::vm::compiled::tier_policy::{LOOP_BODY_ATTEMPTS, LOOP_BODY_REOPTIMIZE, LOOP_BODY_KEEP_SHARE, LOOP_BODY_POLL};
 impl LoopBody {
     pub(super) const IDLE: Self = Self::Idle { stuck: LaneLeaves::NONE, attempts: 0 };
 
@@ -44,17 +36,17 @@ impl LoopBody {
         let Self::Ready { runs, exits, leaves, stuck, attempts, .. } = self else { return };
         *leaves = leaves.with(exit);
         *exits += 1;
-        if *exits < REOPTIMIZE { return; }
+        if *exits < LOOP_BODY_REOPTIMIZE { return; }
         let next = stuck.union(*leaves);
         // Leaves only where the bodies before it left, those places already generic, would
         // plan the same body again: it stays while most of its runs complete, and its loop
         // has no body otherwise.
         if next == *stuck && next != LaneLeaves::Scattered {
-            if u64::from(*exits) * PERCENT > u64::from(*runs) * KEEP_SHARE { *self = Self::Declined; }
+            if u64::from(*exits) * PERCENT > u64::from(*runs) * LOOP_BODY_KEEP_SHARE { *self = Self::Declined; }
             else { (*exits, *leaves) = (0, LaneLeaves::NONE); }
             return;
         }
-        *self = if *attempts + 1 >= ATTEMPTS || next == LaneLeaves::Scattered { Self::Declined }
+        *self = if *attempts + 1 >= LOOP_BODY_ATTEMPTS || next == LaneLeaves::Scattered { Self::Declined }
             else { Self::Idle { stuck: next, attempts: *attempts + 1 } };
     }
 
@@ -75,7 +67,7 @@ impl LoopBody {
     /// The state after the work for the body (`outcome`), which `stuck` and `attempts` planned.
     fn after(outcome: LaneBodyOutcome, stuck: LaneLeaves, attempts: u8) -> Self {
         match outcome {
-            LaneBodyOutcome::Compiling(pending) => Self::Compiling { pending, wait: POLL, stuck, attempts },
+            LaneBodyOutcome::Compiling(pending) => Self::Compiling { pending, wait: LOOP_BODY_POLL, stuck, attempts },
             LaneBodyOutcome::Published(method) => Self::Ready { method, runs: 0, exits: 0, leaves: LaneLeaves::NONE, stuck, attempts },
             LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred | LaneBodyOutcome::Unpaid => Self::Idle { stuck, attempts },
             LaneBodyOutcome::Declined | LaneBodyOutcome::Short => Self::Declined,
@@ -94,6 +86,45 @@ impl LoopSite {
 impl LoopBody {
     /// Whether the loop may still run a body of its own: one planning, compiling or running.
     pub(super) fn pending(&self) -> bool { !matches!(self, Self::Declined) }
+}
+
+/// Makes `site`'s loop a body's once, where its call boundary has no region (no inlinable
+/// script callee): loop bodies are off where a region runs the loop (`tier_policy::LOOP_BODIES`),
+/// but here none can, and without a body the loop interprets every iteration. Whether it did.
+/// Each call must be one the body runs inline (a Math function, a string builtin) or a script
+/// function's, which it inlines or calls by its entry, by the callee its register holds now: a
+/// body's general native call costs more than the lane's own.
+pub(super) fn offer_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &LoopSite) -> bool {
+    let vm = unsafe { vm(cx) };
+    if (site.call_boundary_pcs.is_empty() && site.analysis_failure.is_none()) || site.body_offered.replace(true) || !vm.programs.js_jit_lane_methods_enabled()
+        || !crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) { return false; }
+    // SAFETY: the context's program outlives the lane run.
+    let Some(function) = unsafe { &*(*cx).code }.function_get(site.function as usize) else { return false };
+    let inline = |pc: usize| function.code.get(pc).is_some_and(|packed| {
+        let call = function.widened(*packed);
+        vm.heap.function(r.get(call.register_b())).is_some_and(|callee| match callee.kind {
+            FunctionKind::Native(native) => super::super::compiled::inlines_keeping_arrays(native),
+            _ => true,
+        })
+    });
+    let calls = (site.header as usize..=site.backedge as usize)
+        .filter(|pc| function.code.get(*pc).is_some_and(|packed| function.widened(*packed).op().is_call()));
+    // A loop no region runs (its analysis rejected an instruction) that holds an inner loop
+    // enters the inner loop's region on every pass: a body runs both natively, its calls
+    // whatever they are, which the tier model prices. Without an inner loop the interpreter
+    // runs it as well as a body that leaves at what the region could not run.
+    if site.analysis_failure.is_some() {
+        let nests = (site.header as usize + 1..site.backedge as usize).any(|pc| function.code.get(pc).is_some_and(|packed| {
+            let instruction = function.widened(*packed);
+            instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget
+                && (instruction.imm() as usize) <= pc && instruction.imm() as usize > site.header as usize
+        }));
+        if !nests { return false; }
+    } else if !calls.into_iter().all(inline) { return false; }
+    let mut body = site.body.borrow_mut();
+    if !matches!(*body, LoopBody::Declined) { return false; }
+    *body = LoopBody::IDLE;
+    true
 }
 
 /// Plans or polls the body of `site`'s loop (its state is `Idle` or `Compiling` and due).

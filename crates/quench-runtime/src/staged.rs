@@ -40,7 +40,18 @@ mod admission;
 mod delete;
 mod operation;
 pub(crate) use operation::Operation;
+
+impl<W, P> Operation<W, P> {
+    /// The destination and constant index of an instruction `decode_flow` reads as `LoadConst`,
+    /// for a tier that holds its constants in a table of its own (the b-jit's Numbers): the
+    /// same decode, with the constant left for the tier to look up.
+    #[inline(always)]
+    pub(crate) fn decode_constant_load(instruction: WideInstruction) -> Option<(Register, usize)> {
+        (instruction.op() == Op::LoadConst).then(|| (instruction.result_register(), instruction.constant_index()))
+    }
+}
 mod decode;
+pub(crate) mod meaning;
 mod captures;
 pub(crate) mod compare;
 pub(crate) use global::{lexical_read, GlobalBinding, GlobalFrame};
@@ -48,7 +59,7 @@ pub(crate) use names::Protocol;
 pub(crate) use callout::{CallOut, OperandValues};
 pub(crate) use spread::Passing;
 pub(crate) use decode::{DecodeContext, Fields};
-pub(crate) use compare::{Comparison, Nullish};
+pub(crate) use compare::{nullish_of, Comparison};
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod builtins;
@@ -73,7 +84,6 @@ pub(crate) mod holder;
 pub(crate) mod iteration;
 pub(crate) mod naming;
 pub(crate) mod call; pub(crate) mod frame;
-pub(crate) mod construct;
 pub(crate) mod forms;
 pub(crate) mod protocol;
 pub(crate) use forms::{Arguments, CallFacts, Callee, FunctionId, Invocation, Receiver, RegisterList};
@@ -85,6 +95,8 @@ pub(crate) use plan::{plan_entry, CalleeKind, CallEntry, DirectPlan, Identity, R
 #[cfg(test)]
 pub(crate) use plan::Bound;
 pub(crate) use invoke::{CallFrame, Entered, Room};
+mod suspend;
+pub(crate) use suspend::Suspension;
 mod allocation;
 pub(crate) use allocation::Allocation;
 pub(crate) mod plan_fields;
@@ -109,6 +121,7 @@ pub(crate) mod wasm_flow;
 pub(crate) mod wasm_instance;
 pub(crate) mod wasm_machine;
 pub(crate) mod wasm_memory;
+pub(crate) mod wasm_table_ops;
 pub(crate) mod wasm_operation;
 pub(crate) mod wasm_simd;
 pub(crate) mod wasm_simd_concrete;
@@ -124,11 +137,11 @@ pub(crate) mod trace;
 pub(crate) use effects::{Effects, Region, RegionSet};
 #[allow(unused_imports)]
 pub(crate) use region::Access;
-pub(crate) use ic::{HINTED_FORM, concrete_hinted_own_field_hit, concrete_own_field_hit, concrete_site_own_chain, concrete_site_own_read, concrete_site_store};
+pub(crate) use ic::{HINTED_FORM, TAGGED_SLOTS, concrete_hinted_own_field_hit, concrete_own_field_hit, concrete_site_own_chain, concrete_site_own_read, concrete_site_store};
 pub(crate) use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
 
 mod stage;
-pub(crate) use stage::{fill_by_rows, Passed, RecordSpace, Stage, Table, word_bytes, word_offset};
+pub(crate) use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, word_bytes, word_offset};
 
 mod register_frame;
 pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, bound_this, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
@@ -967,6 +980,8 @@ mod layout_tests;
 mod property_tests;
 #[cfg(test)]
 mod coverage_tests;
+#[cfg(test)]
+mod stage_coverage_tests;
 #[cfg(test)]
 mod capture_return_tests;
 #[cfg(test)]

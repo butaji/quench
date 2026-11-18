@@ -80,7 +80,7 @@ fn inlined_capture_reads_require_an_admitted_invariant_callee() {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
         let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
-            &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::PrefixFrom(header), Completion::Body, ElementViews::Dense, true).expect("capture loop region");
+            &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::PrefixFrom(header), Completion::Body, ElementViews::Dense, true).expect("capture loop region");
         let function = region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&function);
         let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(&function, &cfg);
@@ -287,11 +287,11 @@ fn comparison_boolean_proofs_survive_branch_joins() {
     let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
+        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
     let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
     // SAFETY: the lowered function uses the shared lane-entry ABI and only live frame/register storage.
     let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
-    let mut frame = super::super::LaneFrame::new();
+    let mut frame = super::super::BodyRunContext::new();
     let mut vm = Vm::new(crate::test_host::TestHost::default());
     frame.dispatch.refresh_object_bases(&vm);
     frame.dispatch.bind_native_storage(&mut vm);
@@ -325,7 +325,7 @@ fn native_to_int32_keeps_number_inputs_unboxed_and_misses_exactly() {
     let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::Number, ElementViews::Dense, true).unwrap();
+        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Full, Completion::Number, ElementViews::Dense, true).unwrap();
     assert_eq!(region.number_result, Some(NativeNumberResult::Int32));
     for instruction in region.function.layout.blocks()
         .flat_map(|block| region.function.layout.block_insts(block)) {

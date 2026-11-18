@@ -13,6 +13,7 @@ pub(super) fn drop_environment_caches<H: Host>(cx: *mut LaneContext<H>) {
     unsafe {
         (*cx).registers.set_capture(std::ptr::null());
         (*cx).outer = NO_OUTER_WALK;
+        (*cx).root_walk = NO_OUTER_WALK;
         (*cx).frame_storage = NO_FRAME_STORAGE;
     }
 }
@@ -20,15 +21,15 @@ pub(super) fn drop_environment_caches<H: Host>(cx: *mut LaneContext<H>) {
 /// The running function, the home a handler's scopes and binding live in, and whether the running
 /// function keeps its locals in its record: the innermost activation's, else the frame's.
 fn handler_home<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>) -> (u32, HandlerHome, bool) {
-    match vm.lane_stack.activations.last().copied() {
+    match vm.lane_stack.activations().last().copied() {
         Some(activation) => {
             let home = HandlerHome::Window(WindowHome {
-                depth: vm.lane_stack.activations.len() - 1,
+                depth: vm.lane_stack.activation_count() - 1,
                 program: unsafe { (*cx).program },
-                function: activation.function,
+                function: activation.function(),
                 window: activation.window_ptr(),
             });
-            (activation.function, home, activation.script().is_some_and(|script| script.environment))
+            (activation.function(), home, activation.script().is_some_and(|script| script.environment))
         }
         None => {
             let frame = unsafe { (*cx).frame() };

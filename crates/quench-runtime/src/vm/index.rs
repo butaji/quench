@@ -20,7 +20,7 @@ impl<H: Host> Vm<H> {
             return Some(self.string_proto);
         }
         let native = match self.heap.get(value) {
-            Some(Cell::Symbol(_)) => Native::Symbol,
+            _ if self.heap.is_symbol(value) => Native::Symbol,
             Some(Cell::BigInt(_)) => Native::BigInt,
             _ if value.as_bool().is_some() => Native::Boolean,
             _ if value.as_number().is_some() => Native::Number,
@@ -113,19 +113,19 @@ impl<H: Host> Vm<H> {
             // A rejected base never invokes a property-key object's conversion hooks.
             let property = if self.is_object_like(key) {
                 None
-            } else if let Some(Cell::Symbol(description)) = self.heap.get(key) {
+            } else if let Some(description) = self.heap.symbol_data(key) {
                 Some(format!("Symbol({})", description.as_deref().unwrap_or("")))
             } else {
                 Some(self.to_string(p, key)?)
             };
             return Err(self.nullish_property_error(p, object, property.as_deref()));
         }
-        let key = if self.heap.is_string(key) || matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+        let key = if self.heap.is_string(key) || self.heap.is_symbol(key) {
             key
         } else {
             self.to_property_key(p, key)?
         };
-        if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+        if self.heap.is_symbol(key) {
             return self.get_symbol_property_with_receiver(p, object, key, object);
         }
         if let Some((target, handler)) = self.proxy_parts(object) {
@@ -181,7 +181,7 @@ impl<H: Host> Vm<H> {
                 && !self.has_own_array_index(object, index)
                 && !self.inherited_index_unclaimed(object, index)
             {
-                let atom = self.intern_atom(&index.to_string());
+                let atom = self.index_key_atom(index);
                 return self.set_property_with_program_mode(p, object, atom, value, strict);
             }
             if self
@@ -206,9 +206,7 @@ impl<H: Host> Vm<H> {
                 if integrity.is_some_and(Object::is_frozen)
                     || integrity.is_some_and(|object| !object.is_extensible()) && !existing
                 {
-                    let atom = self
-                        .lookup_array_index_atom(index)
-                        .unwrap_or_else(|| self.intern_atom(&index.to_string()));
+                    let atom = self.index_key_atom(index);
                     return self.set_property_with_program_mode(p, object, atom, value, strict);
                 }
                 // An array cannot gain an index at or past a non-writable length
@@ -479,12 +477,12 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<(), JsError> {
-        let key = if self.heap.is_string(key) || matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+        let key = if self.heap.is_string(key) || self.heap.is_symbol(key) {
             key
         } else {
             self.to_property_key(p, key)?
         };
-        if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+        if self.heap.is_symbol(key) {
             let succeeded =
                 self.set_symbol_property_with_receiver(p, object, key, value, object)?;
             return if succeeded || !strict {
@@ -840,7 +838,7 @@ mod tests {
     fn array_index_atom_lookup_uses_canonical_decimal_text() {
         let mut vm = Vm::new(TestHost::default());
         for index in [0, 9, 10, 99, 100, 1023, u32::MAX as usize, usize::MAX] {
-            let expected = vm.intern_atom(&index.to_string());
+            let expected = vm.index_key_atom(index);
             assert_eq!(vm.lookup_array_index_atom(index), Some(expected));
         }
     }

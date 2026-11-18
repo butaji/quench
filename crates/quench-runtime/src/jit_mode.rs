@@ -72,6 +72,7 @@ impl JitMode {
     }
 
     /// Whether any of `tiers` may run in this mode.
+    #[inline]
     pub fn allows_any(self, tiers: &[Tier]) -> bool {
         tiers.iter().any(|&tier| self.allows(tier))
     }
@@ -137,6 +138,7 @@ pub(crate) fn with_mode<R>(mode: JitMode, body: impl FnOnce() -> R) -> R {
     result
 }
 
+#[inline]
 fn process_mode() -> JitMode {
     #[cfg(test)]
     if let Some(mode) = THREAD_MODE.with(std::cell::Cell::get) {
@@ -146,14 +148,19 @@ fn process_mode() -> JitMode {
     if let Some(mode) = TEST_MODE.with(std::cell::Cell::get) {
         return mode;
     }
-    [JitMode::Interp, JitMode::BaseOnly, JitMode::UltraOnly, JitMode::QuickOnly, JitMode::Full]
-        .into_iter()
-        .find(|mode| *mode as u8 == PROCESS_MODE.load(std::sync::atomic::Ordering::Relaxed))
-        .unwrap_or_default()
+    match PROCESS_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+        mode if mode == JitMode::Interp as u8 => JitMode::Interp,
+        mode if mode == JitMode::BaseOnly as u8 => JitMode::BaseOnly,
+        mode if mode == JitMode::UltraOnly as u8 => JitMode::UltraOnly,
+        mode if mode == JitMode::QuickOnly as u8 => JitMode::QuickOnly,
+        mode if mode == JitMode::Full as u8 => JitMode::Full,
+        _ => JitMode::default(),
+    }
 }
 
 /// Whether the process's mode lets any of `tiers` run: the mode half of the one tier predicate
 /// (`tier_policy::tier_may_run` adds the memory policy).
+#[inline]
 pub fn tiers_allowed(tiers: &[Tier]) -> bool {
     process_mode().allows_any(tiers)
 }

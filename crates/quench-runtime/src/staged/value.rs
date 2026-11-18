@@ -36,6 +36,38 @@ pub(crate) fn is_int<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     stage.eq_imm(tag, ValueLayout::INT_TAG)
 }
 
+/// Whether `bits` is a heap reference (`Value::is_heap`).
+#[inline(always)]
+pub(crate) fn is_heap<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
+    stage.eq_imm(tag, ValueLayout::HEAP_TAG)
+}
+
+/// Whether `bits` is `true` or `false` (`Value::as_bool`).
+#[inline(always)]
+pub(crate) fn is_boolean<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    let (truthy, falsy) = (stage.eq_imm(bits, crate::Value::TRUE.to_bits()), stage.eq_imm(bits, crate::Value::FALSE.to_bits()));
+    stage.any(truthy, falsy)
+}
+
+/// Whether `bits` is `undefined`.
+#[inline(always)]
+pub(crate) fn is_undefined<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits())
+}
+
+/// Whether `bits` is `null`.
+#[inline(always)]
+pub(crate) fn is_null<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    stage.eq_imm(bits, crate::Value::NULL.to_bits())
+}
+
+/// The value word of an int32 whose 64-bit `payload` is its zero-extended bits (`Value::int`).
+#[inline(always)]
+pub(crate) fn int_word<S: Stage>(stage: &mut S, payload: S::Word) -> S::Word {
+    stage.or_imm(payload, ValueLayout::INT_TAG)
+}
+
 /// Whether `bits` is a direct string reference (`Value::as_direct_string`).
 #[inline(always)]
 pub(crate) fn is_direct_string<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
@@ -109,12 +141,33 @@ pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::C
     (undecided, stage.pick(heap, record, unheaped_truthy))
 }
 
+/// The index in `bytecode::TYPEOF_NAMES` of a name some value's `typeof` is.
+const fn typeof_name_index(name: &str) -> u64 {
+    match crate::bytecode::typeof_name_index(name) {
+        Some(index) => index as u64,
+        None => panic!("a typeof name"),
+    }
+}
+
 /// The indexes in `bytecode::TYPEOF_NAMES` of the names a value's tag alone decides: `typeof` of
-/// `undefined`, of `null` (an object) and a boolean and a Number. A test pins each to its name.
-pub(crate) const TYPEOF_UNDEFINED: u64 = 0;
-pub(crate) const TYPEOF_OBJECT: u64 = 1;
-pub(crate) const TYPEOF_BOOLEAN: u64 = 2;
-pub(crate) const TYPEOF_NUMBER: u64 = 3;
+/// `undefined`, of `null` (an object) and a boolean and a Number.
+pub(crate) const TYPEOF_UNDEFINED: u64 = typeof_name_index("undefined");
+pub(crate) const TYPEOF_OBJECT: u64 = typeof_name_index("object");
+pub(crate) const TYPEOF_BOOLEAN: u64 = typeof_name_index("boolean");
+pub(crate) const TYPEOF_NUMBER: u64 = typeof_name_index("number");
+
+/// The tag classes `typeof` reads from a value's own word: a Number (int32 or double), a boolean,
+/// and `null`. Every `typeof` row selects its name from these.
+#[inline(always)]
+pub(crate) fn typeof_classes<S: Stage>(stage: &mut S, bits: S::Word) -> (S::Cond, S::Cond, S::Cond) {
+    let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
+    let integer = stage.eq_imm(tag, ValueLayout::INT_TAG);
+    let double = is_double(stage, bits);
+    let number = stage.any(integer, double);
+    let boolean = stage.eq_imm(tag, crate::Value::TRUE.to_bits() & ValueLayout::TAG_MASK);
+    let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
+    (number, boolean, null)
+}
 
 /// The kind a heap value's `typeof` name follows from its cell (a string, a BigInt, a symbol, an
 /// object or a function), as its index in `bytecode::TYPEOF_NAMES`: what `Frame::type_of` proves.
@@ -139,14 +192,7 @@ impl TypeofKind {
 /// at `miss`.
 #[inline(always)]
 pub(crate) fn immediate_typeof_index<S: Stage>(stage: &mut S, bits: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
-    let integer = stage.eq_imm(tag, ValueLayout::INT_TAG);
-    let field = stage.shr_imm(bits, ValueLayout::TAG_SHIFT);
-    let offset = stage.add_imm(field, ValueLayout::FIRST_TAG_FIELD.wrapping_neg());
-    let double = stage.ugt_imm(offset, ValueLayout::TAG_FIELD_SPAN);
-    let number = stage.any(integer, double);
-    let boolean = stage.eq_imm(tag, crate::Value::TRUE.to_bits() & ValueLayout::TAG_MASK);
-    let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
+    let (number, boolean, null) = typeof_classes(stage, bits);
     let unset = [crate::Value::UNDEFINED, crate::Value::DELETED].map(|value| stage.eq_imm(bits, value.to_bits()));
     let decided = [number, boolean, null, unset[0], unset[1]].into_iter().reduce(|any, each| stage.any(any, each)).expect("five tag classes");
     stage.guard(decided, miss)?;

@@ -38,3 +38,10 @@ pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, Nu
 #[path = "../../quench-runtime/src/staged/iteration.rs"] pub(crate) mod iteration;
 #[path = "../../quench-runtime/src/staged/add.rs"] pub(crate) mod add;
 #[path = "../../quench-runtime/src/staged/naming.rs"] pub(crate) mod naming;
+// The Wasm rows' machine layer: the staged Wasm rules and the concrete machine they run on, so a
+// Wasm stencil is the interpreter's own rule compiled by rustc.
+#[path = "../../quench-runtime/src/staged/machine.rs"] pub(crate) mod machine;
+#[path = "../../quench-runtime/src/staged/wasm.rs"] pub(crate) mod wasm;
+#[path = "../../quench-runtime/src/staged/wasm_float.rs"] pub(crate) mod wasm_float;
+#[path = "../../quench-runtime/src/staged/wasm_concrete.rs"] pub(crate) mod wasm_concrete;
+#[path = "../../quench-runtime/src/staged/wasm_memory.rs"] pub(crate) mod wasm_memory;

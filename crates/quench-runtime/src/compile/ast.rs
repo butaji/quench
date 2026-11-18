@@ -9,6 +9,7 @@ mod completion;
 pub(in crate::compile) use completion::StatementCompletion;
 mod environment_clones;
 mod expression;
+pub(crate) use expression::fuses_with_jump_operator;
 mod iteration;
 mod literal_template;
 mod object;
@@ -935,14 +936,22 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
     }
 
-    pub(super) fn clone_lexical_environment(&mut self) {
+    /// The plan of the clone emitted; none when the scope has no environment slots.
+    pub(super) fn clone_lexical_environment(&mut self) -> Option<usize> {
         let slots = self.lexical_scope_slots();
-        self.clone_environment_slots(slots);
+        self.clone_environment_slots(slots)
+    }
+
+    /// The next-iteration clone of the innermost (loop head) scope, with the slots its body
+    /// block joined to the head plan (`iteration_body`).
+    pub(super) fn clone_lexical_iteration_environment(&mut self, body: &[u16]) {
+        let slots = self.lexical_scope_slots();
+        self.clone_iteration_environment(slots, body);
     }
 
     pub(super) fn initialize_lexical_scope(&mut self) {
         let slots = self.lexical_scope_slots();
-        self.clone_environment_slots(slots.clone());
+        self.clone_block_environment_slots(slots.clone());
         self.initialize_tdz_slots(slots);
     }
 

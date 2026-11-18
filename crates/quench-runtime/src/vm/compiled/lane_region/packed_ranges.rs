@@ -66,7 +66,7 @@ impl State {
     /// The state on the edge of `instruction` that is taken where its comparison is `truth`;
     /// `None` where no value reaches the edge.
     fn branch(&mut self, program: &ResidualProgram, instruction: WideInstruction, truth: bool) -> Option<()> {
-        if !instruction.op().is_jump_binary_false() { return Some(()); }
+        if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. })) { return Some(()); }
         let Some(relation) = NumberRelation::from_operator(instruction.binary_operator_field()) else { return Some(()) };
         let operands = [instruction.operand_b(), instruction.operand_c()];
         let edge = Edge::of(&|operand| self.operand(program, operand), relation, truth, operands);
@@ -104,7 +104,7 @@ fn record_store(state: &mut State, instruction: WideInstruction, slot: &mut Opti
 /// The registers' ranges after `instruction`: a field `read` yields the field's, a move keeps its
 /// source's range and alias, any other writes what its operands prove.
 fn define(state: &mut State, program: &ResidualProgram, instruction: WideInstruction, read: bool) {
-    let copied = (instruction.op().is_move() && instruction.result_flags() == 0)
+    let copied = (matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Move { .. })) && instruction.result_flags() == 0)
         .then(|| (state.ranges[usize::from(instruction.register_b())], state.current.contains(usize::from(instruction.register_b()))));
     let range = if read { Some(state.field) } else { state.result(program, instruction) };
     for register in writes(instruction) { state.set(register, None, false); }

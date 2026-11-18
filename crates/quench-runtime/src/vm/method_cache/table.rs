@@ -6,7 +6,7 @@
 //! `entries`, which grows by recorded sites. Walks over every cache (collection, invalidation)
 //! visit only recorded sites.
 
-use super::super::site_table::SiteTable;
+use super::super::site_table::CacheSiteTable;
 use super::super::{EMPTY_METHOD_CACHE, MethodCache};
 use super::METHOD_CACHE_WAYS;
 
@@ -17,7 +17,7 @@ const NO_SLOT: u32 = u32::MAX;
 
 #[derive(Default)]
 pub(in crate::vm) struct MethodCacheTable {
-    slots: SiteTable<u32>,
+    slots: CacheSiteTable<u32>,
     entries: Vec<MethodWays>,
     /// The site of each entry of `entries`; `NO_SLOT` for one in `free`.
     entry_sites: Vec<u32>,
@@ -33,7 +33,7 @@ impl MethodCacheTable {
 
     /// A table of `len` sites, none recorded.
     pub(in crate::vm) fn with_empty(len: usize) -> Self {
-        Self { slots: SiteTable::with_empty(len), ..Self::default() }
+        Self { slots: CacheSiteTable::with_empty(len), ..Self::default() }
     }
 
     /// Appends `additional` sites, none recorded.

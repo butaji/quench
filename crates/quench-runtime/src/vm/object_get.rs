@@ -417,9 +417,9 @@ impl<H: Host> Vm<H> {
         if self.heap.string(key).is_some() {
             return None;
         }
-        match self.heap.get(key)? {
+        match self.heap.symbol_data(key) {
             // A host-private symbol names only an own property, which the general path reads.
-            Cell::Symbol(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate => {
+            Some(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate => {
                 match self.heap.array(object) {
                     // No proof records an array's shape; the walk reads it as ordinary.
                     Some(_) => self.plain_property_get(object, PropertyKey::symbol(key)),
@@ -453,7 +453,7 @@ impl<H: Host> Vm<H> {
                 Some(atom) => PropertyKey::string(atom),
                 None => return,
             },
-            None if matches!(self.heap.get(key), Some(Cell::Symbol(_))) => PropertyKey::symbol(key),
+            None if self.heap.is_symbol(key) => PropertyKey::symbol(key),
             None => return,
         };
         if let Some(data) = self.heap.ordinary_object(object) {
@@ -893,6 +893,25 @@ impl<H: Host> Vm<H> {
                     .object(object)
                     .expect("live direct array retains its object header")
                     .proto();
+            } else if let Some(symbol) = self.heap.symbol_data(object) {
+                let description = symbol.clone();
+                match self.atom_name(atom) {
+                    "description" => {
+                        return Ok(description
+                            .as_ref()
+                            .map(|value| {
+                                self.heap.alloc_string(value.as_ref().into())
+                            })
+                            .unwrap_or(Value::UNDEFINED));
+                    }
+                    "toString" => return Ok(self.native_value(Native::SymbolToString)),
+                    "valueOf" => return Ok(self.native_value(Native::SymbolValueOf)),
+                    _ => {
+                        object = self
+                            .primitive_prototype(object)
+                            .unwrap_or(self.object_proto)
+                    }
+                }
             } else {
                 match self.heap.get(object) {
                     Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto(),
@@ -914,26 +933,6 @@ impl<H: Host> Vm<H> {
                             .unwrap_or(self.string_proto);
                         return self.get_property_with_receiver(p, prototype, atom, object);
                     }
-                    Some(Cell::Symbol(description)) => {
-                        let description = description.clone();
-                        match self.atom_name(atom) {
-                            "description" => {
-                                return Ok(description
-                                    .as_ref()
-                                    .map(|value| {
-                                        self.heap.alloc_string(value.as_ref().into())
-                                    })
-                                    .unwrap_or(Value::UNDEFINED));
-                            }
-                            "toString" => return Ok(self.native_value(Native::SymbolToString)),
-                            "valueOf" => return Ok(self.native_value(Native::SymbolValueOf)),
-                            _ => {
-                                object = self
-                                    .primitive_prototype(object)
-                                    .unwrap_or(self.object_proto)
-                            }
-                        }
-                    }
                     Some(Cell::BigInt(_)) => {
                         object = self
                             .primitive_prototype(object)
@@ -950,9 +949,6 @@ impl<H: Host> Vm<H> {
                     Some(Cell::Array { object: x, .. }) => object = x.proto(),
                     Some(Cell::ShadowRealm { object: x, .. }) => object = x.proto(),
                     Some(Cell::RegExp { object: x, .. }) => object = x.proto(),
-                    Some(Cell::Map { object: x, .. }) | Some(Cell::Set { object: x, .. }) => {
-                        object = x.proto()
-                    }
                     Some(Cell::WeakMap { object: x, .. })
                     | Some(Cell::WeakSet { object: x, .. }) => object = x.proto(),
                     Some(Cell::WeakRef { object: x, .. }) => object = x.proto(),
@@ -1236,12 +1232,12 @@ impl<H: Host> Vm<H> {
         }
         let mut environment = start;
         let mut homes = Vec::with_capacity(home_atoms.len());
-        while let Some(Cell::Environment {
+        while let Some(crate::heap::EnvironmentRecord {
             parent,
             function,
             slots,
             scope,
-        }) = self.heap.get(environment)
+        }) = self.heap.environment(environment)
         {
             let program = &scope.program();
             let dynamic_bindings = self.heap.environment_bindings(environment)?;

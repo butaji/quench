@@ -74,19 +74,21 @@ mod program_shape;
 pub(crate) use program_shape::EvalContext;
 use program_shape::ParsedProgramShape;
 mod object_registers;
-pub(crate) mod regexp;
+mod rest_reads;
+pub(crate) mod regexp; mod regexp_memo; mod source_text;
 pub(crate) mod program_profile;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
 pub(crate) mod replay;
 mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIELD_SITE_WINDOW, SUPERINSTRUCTION_WINDOW, settle_deferred_rewrite};
-mod rewrite;
+mod rewrite; mod rest_alias;
 mod sequence;
 pub(crate) mod stack;
 pub(crate) mod statement_stream;
 mod string;
 mod template;
 mod typescript;
+pub use typescript::{CheckedParameters, ParameterSite};
 use ast::{FunctionCompiler, StatementCompletion};
 use atoms::CompilerAtoms;
 pub(crate) use atoms::{AtomPrefix, NoAtomPrefix};
@@ -515,8 +517,10 @@ impl Engine {
         if let Some(error) = semantic.diagnostics.first() {
             return StaticModuleAnalysis { early_error: Some(error.message.to_string()), plan: None };
         }
+        let type_only_imports = typescript::type_only_imports(&parsed.program, semantic.semantic.scoping());
         drop(semantic);
-        Self::erase_type_only_module_syntax(&mut parsed.program);
+        Self::admit_typescript(&allocator, &mut parsed.program);
+        typescript::elide_type_only_imports(&mut parsed.program, &type_only_imports, &mut crate::bytecode::DeclaredTypes::default());
         StaticModuleAnalysis {
             early_error: None,
             plan: Some(StaticModulePlan {
@@ -527,46 +531,43 @@ impl Engine {
         }
     }
 
-    /// Project typed module syntax onto runtime edges and bindings while
-    /// retaining the source positions used by the compiler and replay.
-    pub fn erase_type_only_module_syntax(program: &mut Program<'_>) {
-        if program.source_type.is_typescript() { typescript::erase_module_types(program); }
+    /// Admit a typed tree (`typescript::admit`): its declared environment kept apart from
+    /// code generation, its run-time forms (enums, namespaces, parameter properties) in
+    /// place. Every compile parse admits through `lazy_bodies::parse`; a host that reads
+    /// module structure from its own parse admits here.
+    pub fn admit_typescript<'a>(allocator: &'a Allocator, program: &mut Program<'a>) {
+        if program.source_type.is_typescript() { typescript::admit(allocator, program, &mut crate::bytecode::DeclaredTypes::default()); }
     }
 
-    /// A host that wraps a typed body must erase type-only module declarations
-    /// before placing it in function grammar. Keep byte positions and line breaks;
-    /// the module-declaration verdict comes from the same AST projection as linking.
-    pub fn project_typescript_module_syntax(source: &str) -> Option<(std::borrow::Cow<'_, str>, bool)> {
+    /// Whether typed text keeps module syntax once admitted (type-only imports and exports
+    /// are declarations, not module syntax): a `.ts` file's goal when no package scope
+    /// declares one. None when it does not parse.
+    pub fn typescript_has_module_syntax(source: &str) -> Option<bool> {
         if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
-        let allocator = Allocator::default();
+        let allocator = Allocator::with_capacity(source.len().saturating_mul(4));
         let mut parsed = Parser::new(&allocator, source, SourceType::unambiguous().with_typescript(true))
             .with_options(oxc_parser::ParseOptions { allow_return_outside_function: true, ..Default::default() }).parse();
         if !parsed.diagnostics.is_empty() || stack::validate_parsed(&parsed).is_err() { return None; }
-        let spans: Vec<_> = parsed.program.body.iter().map(GetSpan::span).collect();
-        Self::erase_type_only_module_syntax(&mut parsed.program);
-        let runtime_spans: FxHashSet<_> = parsed.program.body.iter().map(|statement| {
-            let span = statement.span(); (span.start, span.end)
-        }).collect();
-        let has_module_declarations = parsed.program.body.iter().any(Statement::is_module_declaration);
-        let mut erased = spans.into_iter().filter(|span| !runtime_spans.contains(&(span.start, span.end))).peekable();
-        if erased.peek().is_none() { return Some((source.into(), has_module_declarations)); }
-        let mut projected = String::with_capacity(source.len());
-        let mut cursor = 0;
-        for span in erased {
-            let start = span.start as usize;
-            let end = span.end as usize;
-            projected.push_str(&source[cursor..start]);
-            for character in source[start..end].chars() {
-                if oxc_syntax::line_terminator::is_line_terminator(character) { projected.push(character); }
-                else { for _ in 0..character.len_utf8() { projected.push(' '); } }
-            }
-            cursor = end;
-        }
-        projected.push_str(&source[cursor..]);
-        Some((projected.into(), has_module_declarations))
+        Self::admit_typescript(&allocator, &mut parsed.program);
+        Some(parsed.program.body.iter().any(Statement::is_module_declaration))
     }
 
-    /// Runtime requests after type-only module syntax has been erased.
+    /// The functions of TypeScript `source` a checker can give parameter types for, as UTF-8
+    /// offsets into `source`; `None` when it does not parse.
+    pub fn typescript_parameter_sites(source: &str) -> Option<Vec<typescript::ParameterSite>> {
+        let allocator = Allocator::with_capacity(source.len().saturating_mul(4));
+        let parsed = Parser::new(&allocator, source, SourceType::unambiguous().with_typescript(true))
+            .with_options(oxc_parser::ParseOptions { allow_return_outside_function: true, ..Default::default() }).parse();
+        parsed.diagnostics.is_empty().then(|| typescript::parameter_sites(&parsed.program))
+    }
+
+    /// Install a checker's parameter types for `text`, the exact source a later compile
+    /// receives; they narrow its declared parameter facts (`typescript::checked`).
+    pub fn register_checked_typescript_parameters(text: &str, checked: typescript::CheckedParameters) {
+        typescript::register_checked_parameters(text, checked);
+    }
+
+    /// Runtime requests of an admitted tree (type-only module syntax is declarations).
     pub fn module_requests(program: &Program<'_>) -> Vec<ModuleRequest> {
         module_requests(&program.body)
     }
@@ -767,14 +768,19 @@ impl Engine {
         )
     }
 
+    /// A host script's program. Where `first_call`, the host runs it from its kept form,
+    /// which records the room its first-call chunks append in, so a classic script's
+    /// functions may compile on first call (`ParsedProgramShape::FirstCallScript`).
     pub(crate) fn specialize_host_script(
         source: &str, name: &str, prefix: &dyn AtomPrefix,
-        options: HostScriptOptions, released: ReleasedRecords,
+        options: HostScriptOptions, released: ReleasedRecords, first_call: bool,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         if options.typescript {
             Self::specialize_typescript_script_with_atom_prefix(source, name, prefix, options.keep_records, released)
         } else if options.keep_records {
             Self::specialize_kept_script_with_atom_prefix(source, name, prefix)
+        } else if first_call {
+            Self::specialize_script_shaped(source, name, prefix, ParsedProgramShape::FirstCallScript, released, SourceType::script())
         } else {
             Self::specialize_script_with_atom_prefix(source, name, prefix, released)
         }
@@ -956,6 +962,10 @@ impl Engine {
             released,
         )
     }
+    /// Compile a TypeScript module: the typed tree is the program, as for `.ts`/`.mts` files.
+    pub fn specialize_typescript_module(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_module_with_atom_prefix(source, name, true, &NoAtomPrefix, ReleasedRecords::Dropped)
+    }
     pub fn specialize_module(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_module_with_mode(source, name, SpecializationMode::Enabled)
     }
@@ -1122,14 +1132,15 @@ impl Engine {
         .flatten();
         let parsed_text = located.as_ref().map_or(&*normalized, |literal| literal.substituted.as_str());
         let allocator = lazy_bodies::sized_arena(parsed_text);
-        let stubbing = expected_shape.stubbing(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len());
+        let stubbing = expected_shape.stubbing(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len(), source_type.is_module());
         // A recognized body's check needs its call-only facts deferred, or none to find
         // (`BodyFacts::check`): only bodies with no function inside are recognized then.
         let recognize = if stubbing.functions { annex_b_targets::Recognize::All } else { annex_b_targets::Recognize::Flat };
         let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(stubbing.functions, stubbing.arrows));
         #[cfg(feature = "aot")]
         { facts.borrow_mut().native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
-        let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, lazy.then(|| expected_shape.lazy_from()), &facts, inherited_strict, recognize, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
+        let mut declared_types = crate::bytecode::DeclaredTypes::default();
+        let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, &mut declared_types, lazy.then(|| expected_shape.lazy_from()), &facts, inherited_strict, recognize, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
         lazy_bodies::release_parsed_free_pages(&allocator);
         let mut facts = facts.into_inner();
         let data_literal = match &located {
@@ -1216,7 +1227,7 @@ impl Engine {
         let wrapped_eval = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
             if context.home_atom.is_some()) || ordinary_private_context;
         let dynamic_function_shape = match expected_shape {
-            ParsedProgramShape::Any | ParsedProgramShape::KeptRecords | ParsedProgramShape::FirstCallChunk(_) => true,
+            ParsedProgramShape::Any | ParsedProgramShape::FirstCallScript | ParsedProgramShape::KeptRecords | ParsedProgramShape::FirstCallChunk(_) => true,
             ParsedProgramShape::Eval(_, expected_span) => {
                 !wrapped_eval || eval_method_body(&mut parsed.program, ordinary_private_context)
                     .is_some_and(|body| Some(body.span) == expected_span)
@@ -1303,9 +1314,10 @@ impl Engine {
         let native_requests = atom_prefix.native_source_requests().map(|pending| {
             (pending, Self::native_source_requests(&parsed.program, semantic.semantic.scoping(), atom_prefix.specialized(), atom_prefix.native_global_script_calls()))
         });
+        let type_only_imports = if module_goal { typescript::type_only_imports(&parsed.program, semantic.semantic.scoping()) } else { Vec::new() };
         drop(semantic);
         parsed.program.directives.drain(..usize::from(inherited_directive));
-        Self::erase_type_only_module_syntax(&mut parsed.program);
+        typescript::elide_type_only_imports(&mut parsed.program, &type_only_imports, &mut declared_types);
         #[cfg(feature = "aot")]
         let mut native_requests = native_requests;
         if lazy {
@@ -1356,6 +1368,7 @@ impl Engine {
             _ => Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids),
         };
         compiler.data_literal = data_literal;
+        compiler.declared_types = declared_types;
         compiler.prototype_unobservable = prototype_unobservable;
         #[cfg(feature = "verify-replay")]
         {
@@ -1853,6 +1866,10 @@ struct Compiler<'a> {
     /// line's start.
     last_utf16_excess: [std::cell::Cell<usize>; 2],
     source_comments: Vec<Span>,
+    /// The TypeScript declared environment its parse admitted (`typescript::admit`).
+    declared_types: crate::bytecode::DeclaredTypes,
+    /// A TypeScript checker's parameter types for this text (`typescript::checked`).
+    checked_parameters: Option<std::sync::Arc<typescript::CheckedParameters>>,
     /// Byte offset of each non-ASCII character with the running excess of
     /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
     source_utf16_excess: std::borrow::Cow<'a, [(usize, usize)]>,
@@ -2259,14 +2276,18 @@ pub(crate) fn lower_settled<'a>(
     // Renaming a plain slot's operations keeps it plain (validation re-derives the same
     // proof from the specialized code), so frame registers start from the same slots.
     frame_registers::drop_unread_self_binding(function, superinstructions, &atom_name);
-    let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions);
-    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, atom_name);
+    // Specialization renames operations without moving control, so the TDZ analyses of both
+    // passes read one set of blocks.
+    let flow = crate::bytecode::initialization::FlowCell::new();
+    let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions, &flow);
+    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, &atom_name, &flow);
     if specialized {
         if coalescing_repays(function) {
             rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
         }
         object_registers::promote(function, methods, field_sites, superinstructions, object_sites);
     }
+    rest_reads::rewrite(function, methods, field_sites, superinstructions, &|atom| atom_name(atom as usize) == Some("length"));
     if function
         .code
         .iter()
@@ -2444,6 +2465,8 @@ impl<'a> Compiler<'a> {
             last_source_line: std::cell::Cell::new(0),
             last_utf16_excess: Default::default(),
             source_comments: Vec::new(),
+            declared_types: crate::bytecode::DeclaredTypes::default(),
+            checked_parameters: typescript::checked_parameters(text),
             source_utf16_excess,
             mode,
             root_strict: false,
@@ -2608,7 +2631,7 @@ impl<'a> Compiler<'a> {
     /// give it binding sites: its layout then depends on nothing compiled after it.
     fn finish_early(&mut self, id: u32) {
         #[cfg(feature = "profile-aggregate")]
-        if std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some() {
+        if crate::vm::switches::profile_retain_bytecode() {
             // A function-level profile needs each replayable function's instruction records.
             return;
         }
@@ -2640,7 +2663,7 @@ impl<'a> Compiler<'a> {
                 capture_layout::mapped_arguments(&function),
             ),
             dynamic_descendant: false,
-            module_root: false,
+            split_root: false,
         };
         let arguments_slot = function.arguments_slot;
         capture_layout::apply_function(&mut function, id as usize, &layout, &self.atoms);
@@ -2960,7 +2983,7 @@ impl<'a> Compiler<'a> {
         mut context: replay::ObjectMethodContext,
     ) -> u32 {
         // A class method's chunk compiles it as an object literal's (`ChunkText::of`).
-        self.take_outer(context.property_span.start, |scopes, strict| (context.scopes, context.inherited_strict, context.with_depth) = (scopes, strict, 0));
+        self.adopt_outer_method(&mut context);
         if self.replayable_source {
             context.scopes = context.scopes.recording();
         }
@@ -3288,7 +3311,8 @@ impl<'a> Compiler<'a> {
                 immutable: global_immutable_atoms,
             }
             .boxed();
-            if !self.module_goal {
+            // A strict eval's vars are its own bindings, not the global object's.
+            if !self.module_goal && !(self.eval_context.is_some() && strict_script) {
                 fn lower_global_var(
                     op: Op,
                     slot: impl FnOnce() -> usize,
@@ -3410,10 +3434,22 @@ impl<'a> Compiler<'a> {
             && let (Some(plan), Some(inputs), Some(Some(root))) =
                 (&module_link_plan, layout_inputs.first_mut(), functions.first())
         {
-            inputs.module_root = true;
+            inputs.split_root = true;
             inputs.captured.extend(
                 root.module_environment_slots(plan, &module_imports, |atom| self.atoms.get(atom as usize)),
             );
+            inputs.captured.sort_unstable();
+            inputs.captured.dedup();
+        } else if !self.module_goal
+            && let (Some(inputs), Some(Some(root))) = (layout_inputs.first_mut(), functions.first())
+            && !inputs.dynamic_descendant
+            && !root.has_dynamic_scope_access()
+            && root.binding_sites.is_empty()
+        {
+            // A Script's or eval's root splits around its global declarations; without
+            // dynamic name resolution nothing else names its block bindings.
+            inputs.split_root = true;
+            inputs.captured.extend(root.global_declaration_slots(self.eval_context.is_some()));
             inputs.captured.sort_unstable();
             inputs.captured.dedup();
         }
@@ -3538,9 +3574,10 @@ impl<'a> Compiler<'a> {
             module_requests,
             module_imports,
             module_link_plan,
+            declared_types: (!self.declared_types.is_empty()).then(|| Box::new(std::mem::take(&mut self.declared_types))),
             source_name: self.source.to_owned(),
             source: Some(self.first_call.kept_source.cloned().unwrap_or_else(|| crate::bytecode::ProgramSource {
-                text: crate::bytecode::SourceText::Shared(std::sync::Arc::from(self.text)),
+                text: source_text::kept(self.text, self.eval_context.is_some()),
                 typescript: self.source_type.is_typescript(),
                 base: 0,
                 line_offset: 0,
@@ -3726,12 +3763,13 @@ impl<'a> Compiler<'a> {
         index
     }
 
-    fn regexp_literal_site(&mut self, pattern_constant: u32, flags_constant: u32) -> u32 {
+    fn regexp_literal_site(&mut self, pattern_constant: u32, flags_constant: u32, receiver: bool) -> u32 {
         let index = self.regexp_literal_sites.len() as u32;
         self.regexp_literal_sites
             .push(crate::bytecode::RegExpLiteralSite {
                 pattern_constant,
                 flags_constant,
+                receiver,
             });
         index
     }
@@ -3941,12 +3979,21 @@ impl<'a> Compiler<'a> {
             (_, None) => false,
             (_, Some((strict, _))) => strict || unaliased_arguments,
         };
-        // An async body that may suspend keeps its locals in frame slots; one that never
-        // awaits runs to completion as an ordinary body does (`CallPlan::settles_in_loop`).
-        let suspends = async_body && register_local_facts.suspends;
-        if !eligible || suspends || !register_local_facts.safe || !arguments_allow_promotion {
+        // A suspension saves the frame's registers with its locals, so an async or generator
+        // body's locals promote as any other body's do.
+        // A body that makes functions keeps its locals for the capture layout to split
+        // (`capture_layout`, `frame_registers`), but a parameter none of them names is the
+        // body's alone: it arrives in a register as in a body that makes none, where the
+        // later passes, which leave parameters in their slots, would keep it in the frame.
+        // An async or generator body keeps its whole frame for its closures (`capture_layout`
+        // splits none).
+        let parameters_only = !async_body && register_local_facts.makes_closures_only()
+            && own_arguments.is_some_and(|(_, parameters)| register_local_facts.closures_spare(
+                parameters.iter().map(|atom| &self.atoms[*atom as usize])));
+        if !eligible || !(register_local_facts.safe || parameters_only) || !arguments_allow_promotion {
             return PromotedLocalPlan { unaliased_arguments, ..Default::default() };
         }
+        let parameter_count = own_arguments.map_or(0, |(_, parameters)| parameters.len());
         let arguments_atom = self.atom("arguments");
         let mut latest_local_slot = FxHashMap::default();
         for (slot, atom) in locals.iter().copied().enumerate() {
@@ -3960,6 +4007,11 @@ impl<'a> Compiler<'a> {
                 let promotable = if let Some(arguments) = arguments_only {
                     // The hidden argument slots lead the locals, one per parameter.
                     usize::from(slot) < arguments
+                } else if parameters_only {
+                    usize::from(slot) < parameter_count
+                        && own_arguments.is_some_and(|(_, parameters)| parameters.contains(&atom))
+                        && atom != arguments_atom
+                        && self_binding_slot != Some(slot)
                 } else {
                     function_scope.contains(&atom)
                         && !lexical_atoms.contains(&atom)
@@ -4008,7 +4060,8 @@ impl<'a> Compiler<'a> {
         let id = self.functions.reserve();
         let body_lexicals = self.collect_body_lexical_bindings(body);
         let lexical_atoms: Vec<_> = body_lexicals.iter().map(|(atom, _)| *atom).collect();
-        let params: Vec<Atom> = params.iter().map(|name| self.atom(name)).collect();
+        let rest_alias = rest_alias::rest_alias(&options, (parent.is_none(), streamed.is_some(), expression_body.is_some()), body);
+        let params: Vec<Atom> = params[..params.len().saturating_sub(usize::from(rest_alias.is_some()))].iter().map(|name| self.atom(name)).collect();
         let mut locals = params.clone();
         if let Some(formal) = options.defaults {
             for name in FunctionCompiler::parameter_bound_names(formal) {
@@ -4103,7 +4156,6 @@ impl<'a> Compiler<'a> {
             && options.defaults.is_some_and(FunctionCompiler::arguments_promotable_apart);
         let promote_plain_locals = parent.is_some()
             && (direct_parameters || hidden_parameters)
-            && !options.generator
             && !options.derived_constructor
             && !options.class_initializer
             && options.implicit_body.is_none()
@@ -4120,7 +4172,7 @@ impl<'a> Compiler<'a> {
             && !dynamic_eval;
         let PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments } = self.promoted_local_plan(
             promote_plain_locals,
-            options.async_function,
+            options.async_function || options.generator,
             hidden_parameters.then_some(params.len()),
             Some((root_strict, &params)),
             body,
@@ -4133,6 +4185,8 @@ impl<'a> Compiler<'a> {
         let binds_dynamically =
             dynamic_eval || early::body_may_bind_dynamically(body, expression_body);
         self.dynamic_binding_scopes += u32::from(binds_dynamically);
+        let declared_parameters = options.defaults
+            .map_or_else(Vec::new, |formals| typescript::declared_parameters(formals, self.checked_parameters.as_deref()));
         let mut function = FunctionCompiler::new(
             self,
             locals,
@@ -4173,7 +4227,7 @@ impl<'a> Compiler<'a> {
         function.dynamic_eval = dynamic_eval;
         function.literal_singletons = literal_singletons::Owner { parent, binds_dynamically, options: &options }.declarations(&function.owner.atoms, &params, body);
         if arguments_slot.is_some() && parameter_arguments_slot.is_none() {
-            function.arguments_alias = early::arguments_alias(options.defaults, body);
+            function.arguments_alias = rest_alias.clone().or_else(|| early::arguments_alias(options.defaults, body));
         }
         let mut lexical_slots: Vec<_> = lexical_atoms
             .iter()
@@ -4231,6 +4285,11 @@ impl<'a> Compiler<'a> {
                 .unwrap_or_else(|| function.literal(Constant::Undefined))
         };
         function.emit(Op::Return, result, 0, 0, 0);
+        // Block scopes add locals after the function's own were counted (`FunctionCompiler::new`):
+        // a frame's local count is 16-bit, so one more would wrap it to an empty frame.
+        if function.locals.len() > usize::from(u16::MAX) {
+            function.owner.reject(Span::default(), "function exceeds the local-slot limit");
+        }
         let captures_locals = function
             .code
             .iter()
@@ -4282,8 +4341,10 @@ impl<'a> Compiler<'a> {
                 0
             },
             parameter_atoms: parameter_atoms.into(),
+            declared_parameters: declared_parameters.into(),
+            // A rest alias's list is no rest list of the function's own (`rest_alias`).
             rest: options.rest_override
-                || options.defaults.is_some_and(|value| value.rest.is_some()),
+                || options.defaults.is_some_and(|value| value.rest.is_some()) != rest_alias.is_some(),
             is_async: options.async_function,
             is_generator: options.generator,
             is_class_constructor: options.class_constructor,
@@ -4296,7 +4357,7 @@ impl<'a> Compiler<'a> {
             prototype_unobservable: options.prototype_unobservable,
             class_initializer: options.class_initializer,
             parameter_eval_arguments_error: function.parameter_eval_arguments_error,
-            unaliased_arguments,
+            unaliased_arguments, rest_alias: rest_alias.as_ref().and(arguments_slot).is_some(),
             arguments_slot,
             simple_parameters,
             strict: root_strict,
@@ -4319,7 +4380,7 @@ impl<'a> Compiler<'a> {
             decoded: Default::default(),
             plain_locals: Default::default(),
             declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(),
+            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             dynamic_scope_access: Default::default(),
@@ -4490,8 +4551,9 @@ impl<'a> Compiler<'a> {
     fn specialize_plain_local_operations(
         function: &mut BcFunction,
         superinstructions: &[crate::bytecode::Superinstruction],
+        flow: &crate::bytecode::initialization::FlowCell,
     ) -> crate::bitset::BitSet {
-        let plain_slots = function.plain_local_slots(superinstructions);
+        let plain_slots = function.plain_local_slots_in(superinstructions, flow);
         for instruction in &mut function.code {
             match instruction.op() {
                 Op::LoadLocal | Op::StoreLocal

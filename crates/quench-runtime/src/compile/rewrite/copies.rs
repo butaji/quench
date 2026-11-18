@@ -135,7 +135,7 @@ fn move_reader(function: &BcFunction, transfers: &[(RegisterSet, RegisterSet)], 
         if read & destination != 0 {
             return Some(at);
         }
-        let flow = fixed_width(function.code[at], &function.wide).op().control_flow_layout();
+        let flow = function.widened(function.code[at]).op().control_flow_layout();
         if written & (source | destination) != 0
             || !flow.only_falls_through()
         {

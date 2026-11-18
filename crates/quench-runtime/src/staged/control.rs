@@ -2,27 +2,8 @@
 //! interpreter and every tier.
 
 use super::*;
-use crate::bytecode::TYPEOF_NAMES;
-use crate::value::ValueLayout;
 
-/// The index in `TYPEOF_NAMES` of `name`: the one owner of the indices the rows below name.
-const fn name_index(name: &str) -> i32 {
-    let wanted = name.as_bytes();
-    let mut index = 0;
-    while index < TYPEOF_NAMES.len() {
-        let candidate = TYPEOF_NAMES[index].as_bytes();
-        let mut at = 0;
-        while at < wanted.len() && at < candidate.len() && wanted[at] == candidate[at] { at += 1; }
-        if at == wanted.len() && at == candidate.len() { return index as i32; }
-        index += 1;
-    }
-    panic!("a typeof name")
-}
-
-const UNDEFINED_NAME: i32 = name_index("undefined");
-const OBJECT_NAME: i32 = name_index("object");
-const BOOLEAN_NAME: i32 = name_index("boolean");
-const NUMBER_NAME: i32 = name_index("number");
+use super::value::{TYPEOF_BOOLEAN, TYPEOF_NUMBER, TYPEOF_OBJECT, TYPEOF_UNDEFINED, typeof_classes};
 
 /// The `typeof` name index (int32) of `source`, into `destination`, where the value's own
 /// word decides it: a Number, a Boolean, `null`, `undefined` or the deleted marker. A heap
@@ -34,7 +15,7 @@ pub(super) fn typeof_index<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, f
     let bits = frame.tagged(stage, source);
     let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
     let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
-    let name = stage.choose_leaving(heap, |stage| Some(immediate_name(stage, bits, tag)), |stage| {
+    let name = stage.choose_leaving(heap, |stage| Some(immediate_name(stage, bits)), |stage| {
         let kind = frame.type_of(stage, bits)?;
         Some(stage.i32_constant(kind.index() as i32))
     });
@@ -85,20 +66,14 @@ fn name_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, 
     })
 }
 
-/// The name index of the immediate `bits` (of tag `tag`): every immediate that is no Number,
+/// The name index of the immediate `bits`: every immediate that is no Number,
 /// Boolean or `null` is `undefined` or the deleted marker, whose name it is.
 #[inline(always)]
-fn immediate_name<S: NumericStage>(stage: &mut S, bits: S::Word, tag: S::Word) -> S::Word {
-    let field = stage.shr_imm(bits, ValueLayout::TAG_SHIFT);
-    let offset = stage.add_imm(field, ValueLayout::FIRST_TAG_FIELD.wrapping_neg());
-    let double = stage.ugt_imm(offset, ValueLayout::TAG_FIELD_SPAN);
-    let integer = stage.eq_imm(tag, ValueLayout::INT_TAG);
-    let number = stage.either(double, integer);
-    let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
-    let boolean = stage.eq_imm(tag, crate::Value::TRUE.to_bits() & ValueLayout::TAG_MASK);
-    let mut name = stage.i32_constant(UNDEFINED_NAME);
-    for (holds, index) in [(null, OBJECT_NAME), (boolean, BOOLEAN_NAME), (number, NUMBER_NAME)] {
-        let named = stage.i32_constant(index);
+fn immediate_name<S: NumericStage>(stage: &mut S, bits: S::Word) -> S::Word {
+    let (number, boolean, null) = typeof_classes(stage, bits);
+    let mut name = stage.i32_constant(TYPEOF_UNDEFINED as i32);
+    for (holds, index) in [(null, TYPEOF_OBJECT), (boolean, TYPEOF_BOOLEAN), (number, TYPEOF_NUMBER)] {
+        let named = stage.i32_constant(index as i32);
         name = stage.select(holds, named, name);
     }
     name

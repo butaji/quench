@@ -60,6 +60,49 @@ impl<H: Host> Vm<H> {
         self.iterator_lacks_property_proving(iterator, key)
     }
 
+    /// Whether an array pattern of `count` elements (`[a, b] = source`) reads `source`'s
+    /// elements `0..count` with no observable step: the iteration is intact
+    /// (`intact_spread_length`: a plain array of present data elements on the realm's
+    /// `Array.prototype`, whose `@@iterator` and `next` are the intrinsics), it holds at least
+    /// `count` elements, so each of the `count` steps yields its element and none reports
+    /// done, and the array iterator's chain lacks `return`, so the close that follows calls
+    /// nothing. `false` leaves the pattern to the iterator protocol.
+    pub(super) fn array_pattern_fits(&mut self, source: Value, count: usize) -> bool {
+        if !self.intact_spread_length(source).is_some_and(|length| length >= count) {
+            return false;
+        }
+        let key = PropertyKey::string(self.runtime_atoms.iterator_return);
+        let proto = self.array_iterator_proto;
+        if self.iterator_absence_proved(proto, key) {
+            return true;
+        }
+        self.prove_array_iterator_lacks(key)
+    }
+
+    /// `array_pattern_fits`'s proof that the realm's array iterator prototype chain lacks
+    /// `key`, kept for the next ask as `iterator_lacks_property_proving` keeps it.
+    #[cold]
+    #[inline(never)]
+    fn prove_array_iterator_lacks(&mut self, key: PropertyKey) -> bool {
+        let proto = self.array_iterator_proto;
+        let Some(atom) = key.key32() else {
+            return false;
+        };
+        if self.plain_property_lookup(proto, key) != Some(None) {
+            return false;
+        }
+        let epoch = crate::heap::prototype_layout_epoch();
+        let mut link = proto;
+        while !link.is_null() {
+            self.heap.mark_prototype(link);
+            link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
+        }
+        if crate::heap::prototype_layout_epoch() == epoch {
+            self.iterator_absence_proof.set(Some((proto, atom, epoch)));
+        }
+        true
+    }
+
     /// A fresh array iterator of `kind` over the object `source`, as `%Array.prototype.values%`
     /// and its kin make one.
     pub(super) fn array_iterator_of(&mut self, kind: IteratorKind, source: Value) -> Value {
@@ -71,5 +114,101 @@ impl<H: Host> Vm<H> {
             done: false,
             ext: crate::heap::IteratorExt::default(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_host::TestHost;
+    use crate::vm::Vm;
+    use crate::Engine;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    fn run(source: &str) -> String {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.execute(&Engine::specialize(source, "array_patterns.js").unwrap()).unwrap();
+        output.borrow().join("\n")
+    }
+
+    #[test]
+    fn array_patterns_by_index_keep_iterator_semantics() {
+        // Patterns of local names read intact arrays by index; every case where the iterator
+        // form could observe more takes that form.
+        let source = r#"
+"use strict";
+function f() {
+  const out = [];
+  const m = new Map([["a", 1], ["b", 2]]);
+  for (const [k, v] of m) out.push(k + v);
+  let a = 1, b = 2; [a, b] = [b, a]; out.push(a, b);
+  const [x, , z] = [7, 8, 9]; out.push(x, z);
+  const [p, q] = [1]; out.push(String(q));
+  const [h1, h2] = [1, , 3]; out.push(String(h2));
+  const it = [5, 6]; it[Symbol.iterator] = function* () { yield 40; yield 41; };
+  const [i1, i2] = it; out.push(i1, i2);
+  const [c1, c2] = "xy"; out.push(c1, c2);
+  let closed = 0;
+  const ArrIt = Object.getPrototypeOf([][Symbol.iterator]());
+  ArrIt.return = function () { closed++; return {}; };
+  const [r1] = [1, 2]; out.push(r1, closed);
+  delete ArrIt.return;
+  const [r2] = [1, 2]; out.push(r2, closed);
+  Array.prototype[1] = "proto";
+  const [g1, g2] = [1, , 3]; out.push(g2);
+  delete Array.prototype[1];
+  try { const k1 = 0; [k1] = [5]; } catch (e) { out.push(e.constructor.name); }
+  return out;
+}
+print(JSON.stringify(f()));
+"#;
+        assert_eq!(run(source), r#"["a1","b2",2,1,7,9,"undefined","undefined",40,41,"x","y",1,1,1,1,"proto","TypeError"]"#);
+    }
+
+    #[test]
+    fn concat_and_slice_follow_spreadable_and_species() {
+        let source = r#"
+const a = [1, 2, 3, 4, 5], out = [];
+out.push(a.slice(1, 3), a.slice(-2), [1, , 3].slice(0, 3).length, a.concat([6, 7], 8, [[9]]));
+const b = [1, 2]; b[Symbol.isConcatSpreadable] = false; out.push([0].concat(b));
+Array.prototype[Symbol.isConcatSpreadable] = false; out.push([0].concat([1, 2]));
+delete Array.prototype[Symbol.isConcatSpreadable]; out.push([0].concat([1, 2]));
+Object.prototype[Symbol.isConcatSpreadable] = false; out.push([0].concat([1, 2]));
+delete Object.prototype[Symbol.isConcatSpreadable];
+class MyA extends Array {} const m = MyA.from([1, 2, 3]);
+out.push(m.slice(1) instanceof MyA, m.concat([4]) instanceof MyA);
+print(JSON.stringify(out));
+"#;
+        assert_eq!(run(source), r#"[[2,3],[4,5],3,[1,2,3,4,5,6,7,8,[9]],[0,[1,2]],[[0],[1,2]],[0,1,2],[[0],[1,2]],true,true]"#);
+    }
+
+    #[test]
+    fn entry_loops_share_a_pair_only_a_pattern_reads() {
+        // A for-of whose value goes only to an array pattern may reuse one entry pair; any
+        // value that escapes, a manual next(), or a patched array iterator sees fresh pairs.
+        let source = r#"
+"use strict";
+function f() {
+  const out = [], kept = [];
+  const m = new Map([["a", 1], ["b", 2], ["c", 3]]);
+  for (const [k, v] of m) out.push(k + v);
+  for (const e of m) kept.push(e);
+  out.push(kept[0] !== kept[1], JSON.stringify(kept));
+  for (const [k, v] of m) for (const [k2, v2] of m) if (k === "a") out.push(k2 + v);
+  for (const [i, x] of ["p", "q"].entries()) out.push(i + x);
+  const it = m.entries(); for (const [k] of it) { const n = it.next(); if (!n.done) kept.push(n.value); }
+  out.push(JSON.stringify(kept.slice(3)));
+  const fns = []; for (let [k, v] of m) fns.push(() => k + v); out.push(fns.map(g => g()).join());
+  const values = Array.prototype[Symbol.iterator], seen = [];
+  Array.prototype[Symbol.iterator] = function () { seen.push(this); return values.call(this); };
+  for (const [k, v] of m) out.push(k);
+  Array.prototype[Symbol.iterator] = values;
+  out.push(seen.length, seen[0] !== seen[1], JSON.stringify(seen));
+  return out;
+}
+print(JSON.stringify(f()));
+"#;
+        assert_eq!(run(source), r#"["a1","b2","c3",true,"[[\"a\",1],[\"b\",2],[\"c\",3]]","a1","b1","c1","0p","1q","[[\"b\",2]]","a1,b2,c3","a","b","c",3,true,"[[\"a\",1],[\"b\",2],[\"c\",3]]"]"#);
     }
 }

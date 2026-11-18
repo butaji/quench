@@ -120,11 +120,7 @@ fn accessor(context: &mut Context<'_>, object: RootId, name: &str, get: RootId, 
     Ok(())
 }
 
-fn put(context: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let key = context.string_rooted(name);
-    context.define_data_property_rooted(object, key, value, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 
 /// The `builtin_cache` keys of the report object and of the report signal's listener.
 const REPORT: &str = "\0node/process/report";

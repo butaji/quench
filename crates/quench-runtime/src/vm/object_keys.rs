@@ -27,12 +27,16 @@ impl EnumerableOwnPropertyKind {
 }
 
 impl<H: Host> Vm<H> {
-    /// EnumerableOwnProperties of an object whose shape answers it (`shape_enumerable_keys`,
-    /// `shape_enumerable_data_items`): no guest code runs and nothing raises. `None` leaves
-    /// Proxies, accessors and every other object to the general path.
+    /// EnumerableOwnProperties of an object whose shape answers it (`plain_object_keys`'s
+    /// memoized key strings first, then `shape_enumerable_keys`, `shape_enumerable_data_items`):
+    /// no guest code runs and nothing raises. `None` leaves Proxies, accessors and every other
+    /// object to the general path.
     pub(super) fn plain_enumerable_own_properties(&mut self, object: Value, kind: EnumerableOwnPropertyKind) -> Option<Value> {
         if kind != EnumerableOwnPropertyKind::Key {
             return self.shape_enumerable_data_items(object, kind);
+        }
+        if let Some(keys) = self.plain_object_keys(object) {
+            return Some(keys);
         }
         let keys: EnumerableKeys<Value> =
             self.shape_enumerable_keys(object)?.into_iter().map(|atom| self.atom_string(atom)).collect();
@@ -150,19 +154,21 @@ impl<H: Host> Vm<H> {
     fn shape_enumerable_data_items(&mut self, object: Value, kind: EnumerableOwnPropertyKind) -> Option<Value> {
         let slots = self.shape_enumerable_slots(object)?;
         let data = self.object_data(object)?;
+        // A shape whose chain added no accessor (`shape_may_have_accessors`) holds data
+        // properties only, so no slot needs its attributes read.
+        let data_only = !self.shape_may_have_accessors(data.shape());
         let values = slots
             .iter()
             .map(|&(_, slot)| {
                 let slot = slot as usize;
-                self.slot_attributes(data, slot)
-                    .is_some_and(|attributes| !attributes.accessor)
+                (data_only || self.slot_attributes(data, slot).is_some_and(|attributes| !attributes.accessor))
                     .then(|| self.heap.property_get(data, slot))
                     .flatten()
             })
-            .collect::<Option<Vec<Value>>>()?;
+            .collect::<Option<smallvec::SmallVec<[Value; 8]>>>()?;
         let start = self.active_call_roots.len();
         self.active_call_roots.push(object);
-        let mut items = Vec::with_capacity(values.len());
+        let mut items = smallvec::SmallVec::<[Value; 8]>::with_capacity(values.len());
         for (&(atom, _), value) in slots.iter().zip(values) {
             let item = match kind {
                 EnumerableOwnPropertyKind::KeyValue => {

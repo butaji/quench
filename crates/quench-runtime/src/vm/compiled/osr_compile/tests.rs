@@ -18,7 +18,7 @@ fn a_simple_loop_is_planned_by_the_region_specializer() {
     }).expect("the function has a loop");
     let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
         .expect("the loop is admitted");
-    let observation = Observation { native_field_loads: &[], number_arrays: &[], abandoned: &[], int_entries: &[], typed_captures: &[], int_captures: &[], int_registers: &[], double_registers: &[], operand_kinds: &[], entry_bounds: true };
+    let observation = Observation { native_field_loads: &[], store_loads: &[], number_arrays: &[], abandoned: &[], int_entries: &[], typed_captures: &[], int_captures: &[], int_registers: &[], double_registers: &[], operand_kinds: &[], entry_bounds: true, frame_captures: &[], construct_plans: None };
     let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
         (crate::MemoryPolicy::Throughput, super::super::tier_policy::STATIC_ROWS), &program, id,
         super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &mut |_, _| Default::default(), (&[], None), RegionCalls::default())
@@ -230,6 +230,25 @@ fn an_array_length_condition_loop_runs() {
     assert_eq!(thrown, Some(crate::Value::integer(9_900_000)));
     assert!(runs > 0, "the length-bounded loop ran natively");
 }
+/// An append through `this.items[this.items.length]` reads the length its own stores grew,
+/// never the length at the loop's entry.
+#[test]
+fn a_this_field_array_append_reads_the_current_length() {
+    let (thrown, _) = thrown_with_native_runs(
+        "class Bag { constructor(){ this.items=[]; } fill(n){ for(let i=0;i<n;i++) this.items[this.items.length]=i; return this.items.length; } }
+         throw new Bag().fill(200000);", "fill");
+    assert_eq!(thrown, Some(crate::Value::integer(200_000)));
+}
+/// Negating a zero int32 gives `-0`, which no int32 holds: the loop leaves rather than
+/// produce `+0`.
+#[test]
+fn an_int32_negation_of_zero_keeps_negative_zero() {
+    let (thrown, runs) = thrown_with_native_runs(
+        "function count(n){ let s=0; for(let k=0;k<n;k++){ const z=-(k&0); if(1/z===-Infinity) s++; } return s; }
+         throw count(100000);", "count");
+    assert_eq!(thrown, Some(crate::Value::integer(100_000)));
+    assert!(runs > 0, "the negating loop ran natively");
+}
 /// A loop reading a captured binding carries the loop entry's capture view.
 #[test]
 fn a_capture_loop_keeps_its_capture_value() {
@@ -357,7 +376,7 @@ fn an_inlining_region_maps_onto_a_lane_unit() {
         .map(|constant| super::super::facts::immediate(constant).unwrap_or(crate::Value::UNDEFINED)).collect();
     let live = program.register_root_masks(caller_id).unwrap();
     let callee = program.function(callee_id as usize);
-    let mut resolve = |_chain: &[super::super::FieldUse], _capture: Option<u16>| {
+    let mut resolve = |_chain: &[super::super::FieldUse], _source: super::super::osr_loop::CalleeSource| {
         Some(super::super::osr_loop::InlineCallee {
             callee: crate::Value::UNDEFINED,
             function: callee_id,
@@ -398,38 +417,40 @@ fn an_inlined_call_loop_runs_through_the_lane_unit() {
         "the inlining lane OSR path ran");
 }
 
-/// A call in a hot loop is the region's call row, not a leave: the callee's result is the call's
-/// register, which the loop's own rows read, and no run ends at the call.
+/// A call of a small callee in a hot loop is no leave of the region: the callee inlines, its result
+/// is the call's register, which the loop's own rows read, and no run ends at the call. (The sum
+/// stays an int32, so no overflow guard leaves either.)
 #[test]
 fn a_call_in_a_loop_region_runs_as_a_call_row() {
     let (output, osr) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || osr_run(
         "function bump(n) { return n * 3 + 1; }
-         function sum(n) { var s = 0; for (var i = 0; i < n; i++) { s = (s + bump(i)) | 0; } return s; }
+         function sum(n) { var s = 0; for (var i = 0; i < n; i++) { s = (s + bump(i & 1023)) | 0; } return s; }
          print(sum(200000));", "sum"));
-    assert_eq!(output, ["-129642144"]);
+    assert_eq!(output, ["306762080"]);
     assert_eq!(osr.exits, 0, "the call is no exit: {osr:?}");
 }
 
-/// A callee that throws inside a region's loop ends the run at its call (the callee's activation
+/// (Loop regions keep call rows only under `with_region_call_rows` while calls cost more than the
+/// interpreter's, `function::interprets`.) A callee that throws inside a region's loop ends the run at its call (the callee's activation
 /// is the lane's now), and the caller's handler catches it as the interpreter's does.
 #[test]
 fn a_throwing_callee_in_a_loop_region_is_caught_as_in_the_interpreter() {
-    let (output, _) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || osr_run(
+    let (output, _) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || crate::vm::compiled::base_region::function::with_region_call_rows(|| osr_run(
         "function pick(n) { if (n === 150000) throw new Error('at ' + n); return n + 1; }
-         function sum(n) { var s = 0; try { for (var i = 0; i < n; i++) { s = (s + pick(i)) | 0; } } catch (e) { print(e.message + ' after ' + s); } return s; }
-         print(sum(200000));", "sum"));
+         function sum(n, f) { var s = 0; try { for (var i = 0; i < n; i++) { s = (s + f(i)) | 0; } } catch (e) { print(e.message + ' after ' + s); } return s; }
+         print(sum(200000, pick));", "sum")));
     assert_eq!(output.len(), 2);
 }
 
-/// A callee that changes what the loop's entry recorded (a field, an array's length, a capture)
+/// (Under `with_region_call_rows`, as above.) A callee that changes what the loop's entry recorded (a field, an array's length, a capture)
 /// is seen by the rows after the call, which read it live.
 #[test]
 fn a_callee_that_changes_the_loops_snapshot_is_seen_after_the_call() {
-    let (output, _) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || osr_run(
+    let (output, _) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || crate::vm::compiled::base_region::function::with_region_call_rows(|| osr_run(
         "var box = { n: 1 }, xs = [1, 2, 3], shared = 0;
          function grow(i) { box.n = box.n + 1; xs.push(i); shared = shared + 1; return 0; }
          function run(n) { var t = 0; for (var i = 0; i < n; i++) { grow(i); t = (t + box.n + xs.length + shared) | 0; } return t; }
-         print(run(100000));", "run"));
+         print(run(100000));", "run")));
     assert_eq!(output.len(), 1);
 }
 

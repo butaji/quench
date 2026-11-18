@@ -288,6 +288,13 @@ pub(super) fn lane_planned_construction<H: Host>(
 /// for anything else, which `lane_planned_construction` makes.
 #[inline(always)]
 pub(super) fn lane_planned_inline_quick<H: Host>(vm: &mut Vm<H>, callee: Value, r: Registers, i: &LaneInstruction) -> Option<Value> {
+    planned_inline_quick(vm, callee, lane_construct_argument(r, i))
+}
+
+/// `lane_planned_inline_quick` from the parameters' values `argument` gives: any construction
+/// site's quick case, a lane record's or a lane body's (`body_calls::constructed_in_place`).
+#[inline(always)]
+pub(super) fn planned_inline_quick<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
     let plan = &vm.lane_stack.construct_plans[index];
     let len = usize::from(plan.fields);
@@ -295,7 +302,6 @@ pub(super) fn lane_planned_inline_quick<H: Host>(vm: &mut Vm<H>, callee: Value, 
         return None;
     }
     const _: () = assert!(INLINE_PROPERTY_COUNT == 2, "the inline slots are filled one by one");
-    let argument = lane_construct_argument(r, i);
     let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
     if len > 0 { inline[0] = plan.passed_value(0, &argument); }
     if len > 1 { inline[1] = plan.passed_value(1, &argument); }
@@ -426,6 +432,38 @@ pub(super) fn lane_construct_argument(r: Registers, i: &LaneInstruction) -> impl
 #[inline(always)]
 pub(super) fn holding_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -> Option<ConstructPlan> {
     holding_construct_plan_index(vm, callee).map(|index| vm.lane_stack.construct_plans[index])
+}
+
+/// `callee`'s plan while it holds, as a body keeps a receiver it builds as its field values
+/// (`compiled::ScalarConstructPlan`): only a plan of fields passed or constant, with no nested,
+/// forwarded or parent construction, whose shape names each field by a string.
+pub(in crate::vm) fn scalar_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -> Option<super::super::compiled::ScalarConstructPlan> {
+    use super::super::compiled::{ScalarConstructPlan, ScalarField};
+    let plan = &vm.lane_stack.construct_plans[holding_construct_plan_index(vm, callee)?];
+    let len = usize::from(plan.fields);
+    if plan.kind != ConstructPlanKind::Passed || plan.forwarded.is_some() || plan.nested.is_some()
+        || plan.super_parent != Value::UNDEFINED || (plan.defaulted | plan.computed) != 0 || len > CONSTRUCT_PLAN_FIELDS {
+        return None;
+    }
+    let keys = vm.shape_keys(plan.shape);
+    if keys.len() != len { return None; }
+    let fields = keys.iter().enumerate().map(|(field, key)| match key {
+        crate::vm::PropertyKey::String(atom) => Some((*atom, if plan.constant & (1 << field) != 0 {
+            ScalarField::Constant(plan.fallbacks[field])
+        } else {
+            ScalarField::Parameter(plan.parameters[field])
+        })),
+        _ => None,
+    }).collect::<Option<_>>()?;
+    Some(ScalarConstructPlan { callee, shape: plan.shape, fields })
+}
+
+/// Whether `callee`'s plan holds now (`holding_construct_plan_index`) and an allocation by it
+/// would not refuse (`lane_body_construction`): no construction under way, no collection due.
+/// A body that keeps a receiver as its field values (`compiled::ScalarConstructPlan`) tests it
+/// where the construction would run, so the receiver a leave allocates is the plan's.
+pub(in crate::vm) fn construct_plan_holds<H: Host>(vm: &Vm<H>, callee: Value) -> bool {
+    vm.construct_target.is_none() && !vm.heap.should_collect() && holding_construct_plan_index(vm, callee).is_some()
 }
 
 /// The construct plan cache index of `callee`'s plan while it holds (`holding_construct_plan`).

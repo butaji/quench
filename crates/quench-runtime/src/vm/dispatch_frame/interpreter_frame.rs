@@ -52,7 +52,7 @@ pub(in crate::vm) fn runs_row(operation: Operation<u64, ()>) -> bool {
             | Operation::ElementRead { .. } | Operation::ElementWrite { .. } | Operation::GetField { .. }
             | Operation::SetField { .. } | Operation::LoadLocalChecked { .. } | Operation::StoreLocalChecked { .. }
             | Operation::LoadName { .. } | Operation::GlobalTypeof { .. } | Operation::Void { .. }
-            | Operation::Return { .. } | Operation::Throw { .. } | Operation::Await { .. } | Operation::Yield { .. })
+            | Operation::Return { .. } | Operation::Throw { .. } | Operation::Suspend { kind: crate::staged::Suspension::Await | crate::staged::Suspension::Yield, .. })
 }
 
 /// The running frame's register file and local slots, and the VM the row's calls answer through,

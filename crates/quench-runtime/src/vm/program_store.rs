@@ -11,6 +11,7 @@ pub(in crate::vm) mod lane_publication;
 mod chunks;
 mod eval_cache;
 mod js_jit_report;
+mod loops;
 mod residual;
 mod snapshot;
 mod tier_census;
@@ -137,7 +138,7 @@ impl JsJitCallOutcome {
     }
 }
 
-const JS_JIT_MAX_FUNCTIONS: usize = 64;
+use crate::vm::compiled::tier_policy::{JS_JIT_MAX_FUNCTIONS, JS_JIT_MAX_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS, WASM_JIT_MODULE_CLOCK_INTERVAL, WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_BASELINE_MAPPED_BYTES, JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, WASM_MODULE_MIN_COVERAGE, WASM_MODULE_WEIGHED_FUNCTIONS, LANE_VIEW_DEFERRED_RUNS};
 // Tier observations include dynamically generated functions across all retained
 // programs. Web-SSR exposes more than 1,300 functions in one VM; keep a fixed
 // metadata bound large enough to observe that workload without changing the
@@ -146,11 +147,6 @@ const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 2048;
 const JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS: usize = 4096;
 const JS_JIT_MAX_REJECTED_FUNCTIONS: usize = 4096;
 const JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES: u64 = 32;
-// Executable mappings were once page-rounded. A 64 KiB cap then admitted only
-// sixteen tiny JS artifacts on 4 KiB systems, starving later high-frequency
-// helpers; the function-count cap still bounds artifact proliferation.
-const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
-const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
 /// When a Wasm module running under `--jit` compiles whole (`WasmModuleTier`). It starts in
 /// the interpreter with its hot roots promoted, so a module used briefly pays only for them;
 /// one that runs long gets the code eager compilation would have made at its first entry.
@@ -184,24 +180,8 @@ impl WasmModuleCompile {
     }
 }
 
-/// How often, in work, a selective module reads the clock for `WasmModuleCompile::after`:
-/// often enough that a 20 ms bound lands within a few interpreted calls, rarely enough that
-/// the clock stays off an interpreted call's path.
-const WASM_JIT_MODULE_CLOCK_INTERVAL: u32 = 16;
-const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
-/// The eager artifacts of Wasm modules together. A module's eager artifact is all of its code
-/// at once, compiled before its first call: held to the shared ceiling, a module larger than
-/// it compiled and was then discarded, leaving every function interpreted and promoting hot
-/// roots one by one into a tier budget that filled (sqlite3-wasm, a 5.2 MiB artifact: Score
-/// 0.61 against 12.29 kept, first iteration 17.3 s against 3.3 s; max RSS unchanged at 100
-/// MiB, JetStream 3 `--jit`, Linux x86_64, 2026-10-24). This bounds a VM's eager Wasm code
-/// to a few large modules.
-const WASM_JIT_MAX_BASELINE_MAPPED_BYTES: usize = 32 * 1024 * 1024;
 /// The least an artifact holds in the code zone.
 const JIT_MIN_ARTIFACT_BYTES: usize = super::compiled::CODE_GRANULE;
-/// One VM-local admission ceiling shared by JS and Wasm artifacts.
-const JIT_MAX_ARTIFACTS: usize = JS_JIT_MAX_FUNCTIONS + WASM_JIT_MAX_TIER_ROOTS;
-const JIT_MAX_MAPPED_BYTES: usize = WASM_JIT_MAX_TIER_MAPPED_BYTES;
 
 #[derive(Clone, Copy)]
 enum JitArtifactKind {
@@ -389,17 +369,6 @@ enum WasmModuleTier {
     /// lookups and its functions compile no roots (K-TIER T4a).
     Declined,
 }
-
-/// The share of a module's bytecodes, in per mille, its whole compile must hold code for to be
-/// kept. Below it most calls cross between native code and the interpreter, and each crossing
-/// (a general-path activation, a callout) costs more than the native function saves: the Wasm
-/// GC modules of JetStream 3 (j2cl-box2d, Dart-flute) compile a few tiny leaves and run 10-40%
-/// slower than with no JIT.
-const WASM_MODULE_MIN_COVERAGE: usize = 500;
-
-/// The fewest functions a module has for its whole compile's coverage to be weighed: a smaller
-/// module compiles in microseconds and makes few crossings, whatever it holds.
-const WASM_MODULE_WEIGHED_FUNCTIONS: usize = 64;
 
 impl Default for WasmModuleTier {
     fn default() -> Self {
@@ -676,6 +645,9 @@ struct ProgramEntry {
     function_sources: FxHashMap<u32, Value>,
     /// Each RegExp literal site's record, shared by every object it evaluates to.
     regexp_literals: Vec<Option<Rc<crate::heap::RegExpMeta>>>,
+    /// The one object each receiver-only literal site evaluates to while it cannot escape
+    /// (`RegExpLiteralSite::receiver`, `Vm::regexp_literal_receiver`).
+    regexp_receivers: FxHashMap<u32, Value>,
     module_environment: Option<Value>,
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
@@ -684,6 +656,9 @@ struct ProgramEntry {
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
     lane_views: LaneViews,
+    /// Per Wasm function a collection found on the stack: the live registers holding raw
+    /// words at each pc (`raw_webs::raw_live`), `None` for a function with no raw op.
+    raw_masks: std::cell::RefCell<FxHashMap<u32, Option<Rc<crate::compile::liveness::RegisterMasks>>>>,
     /// Per function: what the JavaScript tier found at its entries (`js_entry_facts`).
     js_entry_facts: JsEntryFactsTable,
     /// Per function: the runs it has made without its lane view (`entry_lane_view`,
@@ -1293,7 +1268,7 @@ impl ProgramStore {
         // A function compiles again on its first call; until then it keeps only its header.
         // A program other owners share keeps its records.
         #[cfg(feature = "profile-aggregate")]
-        let retain_profile_records = std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some();
+        let retain_profile_records = crate::vm::switches::profile_retain_bytecode();
         #[cfg(not(feature = "profile-aggregate"))]
         let retain_profile_records = false;
         if !retain_profile_records && let Some(program) = Rc::get_mut(&mut program) {
@@ -1315,12 +1290,14 @@ impl ProgramStore {
             const_arrays: FxHashMap::default(),
             function_sources,
             regexp_literals,
+            regexp_receivers: FxHashMap::default(),
             module_environment: None,
             import_meta: None,
             module_imports: Vec::new(),
             root_slots: std::cell::OnceCell::new(),
             module: false,
             lane_views,
+            raw_masks: Default::default(),
             js_entry_facts: JsEntryFactsTable::default(),
             lane_deferred,
             compiled: None,
@@ -1519,6 +1496,18 @@ impl ProgramStore {
         }
     }
 
+    /// Whether every slot of `id`'s root environment is the binding itself
+    /// (`RootSlotRule::Binding`), as a strict eval's or a function-wrapped script's is: its
+    /// dense slots then serve a closure's captures as any function environment's do
+    /// (`Vm::target_capture`). A module's imports read through their records, so none is.
+    pub(crate) fn root_slots_are_bindings(&self, id: ProgramId) -> bool {
+        let Some(entry) = self.entry(id) else { return false };
+        if entry.module || !entry.module_imports.is_empty() { return false; }
+        let locals = entry.residual.functions.first().map_or(0, |root| root.local_atoms.len());
+        // Past the named locals every slot is a temporary, the binding itself (`root_slot`).
+        (0..locals).all(|slot| self.root_slot(id, slot as u16) == crate::bytecode::RootSlotRule::Binding)
+    }
+
     /// Whether `slot` of `id`'s root environment is the binding itself: no global var,
     /// module-import or (unless `lexical_slots_are_bindings`) global lexical projection reads
     /// through it.
@@ -1603,6 +1592,26 @@ impl ProgramStore {
     /// The decoded residuals of the stored programs, a shared one once per program sharing it.
     pub(crate) fn decoded_residuals(&self) -> impl Iterator<Item = &ResidualProgram> {
         self.programs.iter().flatten().filter_map(|entry| entry.residual.if_decoded().map(|program| &**program))
+    }
+
+    /// The registers of `function` of program `id` live before each pc that hold raw words,
+    /// which a collection reads past (`RegisterMasks::extend_live_except`); `None` for a
+    /// function with no raw op. Derived once per function, when a collection first asks.
+    pub(crate) fn raw_register_masks(&self, id: ProgramId, function: u32) -> Option<Rc<crate::compile::liveness::RegisterMasks>> {
+        let entry = self.entry(id)?;
+        if entry.residual.kind != crate::bytecode::ProgramKind::Wasm {
+            return None;
+        }
+        if let Some(masks) = entry.raw_masks.borrow().get(&function) {
+            return masks.clone();
+        }
+        let masks = entry
+            .residual
+            .function_get(function as usize)
+            .and_then(|record| crate::compile::liveness::raw_webs::raw_live(record))
+            .map(|live| Rc::new(crate::compile::liveness::RegisterMasks::new(live)));
+        entry.raw_masks.borrow_mut().insert(function, masks.clone());
+        masks
     }
 
     #[inline] pub(crate) fn residual(&self, id: ProgramId) -> Option<&ResidualProgram> {
@@ -1820,7 +1829,7 @@ impl ProgramStore {
             .residual
             .function_get(function as usize)
             .is_some_and(|function| {
-                function.code.len() <= super::compiled::MAX_JIT_TIER_BYTECODES_PER_FUNCTION
+                function.code.len() <= crate::vm::compiled::tier_policy::MAX_JIT_TIER_BYTECODES_PER_FUNCTION
             })
         {
             return false;
@@ -1959,10 +1968,12 @@ impl ProgramStore {
     #[cfg(test)]
     pub(super) fn hold_tiers(&mut self, tiers: &'static Tiers) { (self.tiers, self.js_jit_lane_methods_enabled) = (tiers, tiers.stress); }
 
+    #[inline]
     pub(super) fn tier_events(&self) -> &super::tier_events::TierEvents {
         &self.tier_events
     }
 
+    #[inline]
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {
         self.js_jit_diagnostics.is_some()
     }
@@ -2624,7 +2635,9 @@ impl ProgramStore {
     /// and lane calls completed its deferred runs (`LANE_VIEW_DEFERRED_RUNS`), as
     /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
     /// general path.
-    pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32) -> bool {
+    /// An unlowered function derives only where `unlowered` (`Vm::lane_call_may_derive`); where
+    /// `now`, its deferred runs are skipped, uncounted.
+    pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32, unlowered: bool, now: bool) -> bool {
         let Some(entry) = self.lane_entry(id) else {
             return false;
         };
@@ -2633,8 +2646,8 @@ impl ProgramStore {
             || entry
                 .lane_deferred
                 .get(function as usize)
-                .is_some_and(deferred_run_completes)
-                && !entry.residual.runs_tier0(function as usize)
+                .is_some_and(|runs| now || deferred_run_completes(runs))
+                && (unlowered || !entry.residual.runs_tier0(function as usize))
     }
 
     pub(super) fn lane_view<'s>(
@@ -2653,6 +2666,28 @@ impl ProgramStore {
         let code = entry.residual.function_get(function as usize)?;
         let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         Some(derive_lane_view(entry, function, code, view, derive))
+    }
+
+    /// A view of `function` derived afresh from its bytecode and not stored, beside the view
+    /// its runs settled (requickened records) if one was derived: the lane plan
+    /// (`QUENCH_TRACE=bytecode=lanes`, `Vm::report_lane_plan`).
+    pub(super) fn plan_lane_view<'s>(
+        &'s self,
+        id: ProgramId,
+        function: u32,
+        derive: impl FnOnce(
+            &crate::bytecode::Function,
+            &[Value],
+            crate::bytecode::ProgramKind,
+            &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+            &[crate::bytecode::FieldSite],
+        ) -> super::dispatch_fast::LaneView,
+    ) -> Option<(super::dispatch_fast::LaneView, Option<&'s super::dispatch_fast::LaneView>)> {
+        let entry = self.lane_entry(id)?;
+        let code = entry.residual.function_get(function as usize)?;
+        let live = || entry.residual.shared_register_root_masks(function);
+        let fresh = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
+        Some((fresh, entry.lane_views.derived(function)))
     }
 
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {
@@ -2723,6 +2758,18 @@ impl ProgramStore {
         self.entry(id)?.regexp_literals.get(site)?.clone()
     }
 
+    /// The object receiver-only literal `site` of program `id` shares, once one was made.
+    pub(crate) fn regexp_literal_receiver(&self, id: ProgramId, site: usize) -> Option<Value> {
+        self.entry(id)?.regexp_receivers.get(&u32::try_from(site).ok()?).copied()
+    }
+
+    /// Keeps `object` as the one object receiver-only literal `site` evaluates to.
+    pub(crate) fn cache_regexp_literal_receiver(&mut self, id: ProgramId, site: usize, object: Value) {
+        if let (Some(entry), Ok(site)) = (self.entry_mut(id), u32::try_from(site)) {
+            entry.regexp_receivers.insert(site, object);
+        }
+    }
+
     pub(crate) fn cache_regexp_literal_meta(
         &mut self,
         id: ProgramId,
@@ -2770,6 +2817,7 @@ impl ProgramStore {
             }
             roots.extend_from_slice(&entry.constants);
             roots.extend(entry.function_sources.values().copied());
+            roots.extend(entry.regexp_receivers.values().copied());
             roots.extend(entry.module_environment);
             roots.extend(entry.import_meta);
             roots.extend(entry.module_imports.iter().map(|(_, import)| match import {
@@ -2848,20 +2896,13 @@ fn census_label(entry: &ProgramEntry, function: u32) -> String {
     )
 }
 
-/// The runs a function makes on the general path before it derives its lane view, which costs
-/// about a thousand instructions per bytecode instruction, so a function that runs fewer times
-/// costs no view. Measured in instructions against deriving at the second run: four takes 3.3%
-/// from the jiti npm scenario (Babel's many functions that run a few times) and 0.1-0.6% from
-/// semver, ajv, Babel, color-convert and typescript-eslint; eight adds at most 0.3%.
-const LANE_VIEW_DEFERRED_RUNS: u8 = 4;
-
 /// Count one view-less run of a function; true once its deferred runs are complete.
 fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
-    let done = runs.get();
-    if done >= LANE_VIEW_DEFERRED_RUNS {
+    let held = runs.get();
+    if held & loops::DEFERRED_RUNS >= LANE_VIEW_DEFERRED_RUNS {
         return true;
     }
-    runs.set(done + 1);
+    runs.set(held + 1);
     false
 }
 

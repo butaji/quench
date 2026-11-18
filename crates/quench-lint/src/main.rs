@@ -2,7 +2,8 @@
 //! analysis twice (`decision_trees`), when a function or file outgrows the manifesto's size
 //! laws (`shape`), when a hot path hashes, scans or allocates (`hot_path`), when the engine
 //! tests a guest program's own names (`guest_names`) or recognizes a function by its bytecode
-//! shape (`fingerprints`), when a body spells an unnamed number
+//! shape (`fingerprints`), when an engine concept gains a second definition or an analysis a
+//! second run (`concepts`), when a body spells an unnamed number
 //! (`magic`), when data is laid out against data-oriented design (`data_layout`), or when
 //! code tests a function's address for identity (`fn_identity`), or when statements are packed
 //! onto long lines (`line_packing`, reported by `--packing`, never gating).
@@ -12,6 +13,7 @@
 
 mod catalog;
 mod census;
+mod concepts;
 mod census_metrics;
 mod data_layout;
 mod decision_trees;
@@ -164,6 +166,7 @@ fn main() -> ExitCode {
         }
     };
     native_forms::scan(&files, &mut oversized);
+    concepts::scan(&files, &mut oversized);
     if request.packing {
         line_packing::report(&packed);
     }

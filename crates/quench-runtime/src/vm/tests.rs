@@ -615,6 +615,34 @@ fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
     }
 }
 
+/// A closure made in a `for (let ...)` initializer keeps the initializer's binding: the first
+/// iteration's copy, which runs once, separates it from the bindings the test and body write
+/// (test262 language/statements/for/scope-body-lex-open.js), in a Script's root and in a function.
+#[test]
+fn a_for_let_initializer_closure_keeps_the_initializer_binding() {
+    let body = r#"
+      var probeBefore, probeTest, probeIncr, probeBody; var run = true;
+      for (let x = 'outside', _ = probeBefore = function() { return x; };
+           run && (x = 'inside', probeTest = function() { return x; });
+           probeIncr = function() { return x; })
+        probeBody = function() { return x; }, run = false;
+      const got = [probeBefore(), probeTest(), probeBody(), probeIncr()].join();
+      if (got !== 'outside,inside,inside,inside') throw new Error(got);
+    "#;
+    for source in [body.to_owned(), format!("(function () {{ {body} }})();")] {
+        for specialized in [false, true] {
+            let mut vm = Vm::new(TestHost::default());
+            let program = if specialized {
+                Engine::specialize(&source, "for-let-initializer.js")
+            } else {
+                Engine::compile(crate::ExecutionRequest { source: &source, name: "for-let-initializer.js", kind: crate::SourceKind::Script })
+            }
+            .unwrap();
+            vm.execute(&program).unwrap();
+        }
+    }
+}
+
 #[test]
 fn whole_read_per_iteration_copies_keep_their_owners_slots() {
     // Bindings enough that each iteration's copy of the script's root environment is sparse
@@ -645,6 +673,73 @@ fn whole_read_per_iteration_copies_keep_their_owners_slots() {
         }
         .unwrap();
         vm.execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn per_iteration_copies_of_a_wide_environment_keep_loop_and_shared_bindings_apart() {
+    // A function past SPARSE_CLONE_MIN_SLOTS bindings copies its environment sparsely for each
+    // iteration: loop bindings per iteration, every other binding shared (Node's output).
+    let source = "function wide(){ var v0=0,v1=1,v2=2,v3=3,v4=4,v5=5,v6=6,v7=7,v8=8,v9=9,v10=10,v11=11,v12=12,v13=13,v14=14,v15=15,v16=16,v17=17,v18=18,v19=19,v20=20,v21=21,v22=22,v23=23,v24=24,v25=25,v26=26,v27=27,v28=28,v29=29,v30=30,v31=31,v32=32,v33=33,v34=34,v35=35,v36=36,v37=37,v38=38,v39=39,v40=40,v41=41,v42=42,v43=43,v44=44,v45=45,v46=46,v47=47,v48=48,v49=49,v50=50,v51=51,v52=52,v53=53,v54=54,v55=55,v56=56,v57=57,v58=58,v59=59,v60=60,v61=61,v62=62,v63=63,v64=64,v65=65,v66=66,v67=67,v68=68,v69=69; const fs=[];\n\
+         for (let i=0;i<3;i++){ let j=i*10; for (let k=0;k<2;k++){ const m=k+j; fs.push(()=>[i,j,k,m,v0,v69].join('.')); if(k==1) v0++; } fs.push(()=>i+':'+j); j++; }\n\
+         for (const x of ['a','b']) { let y=x+x; fs.push(()=>x+y+v5); } v69=-1; return fs.map(f=>f()).join(' '); }\n\
+         var result = wide();";
+    assert_eq!(
+        global_text(source, "result"),
+        "0.1.0.0.3.-1 0.1.1.1.3.-1 0:1 1.11.0.10.3.-1 1.11.1.11.3.-1 1:11 2.21.0.20.3.-1 2.21.1.21.3.-1 2:21 aaa5 bbb5"
+    );
+}
+
+#[test]
+fn loop_body_bindings_live_in_the_iteration_copy() {
+    // A loop body block's bindings join the loop's per-iteration copy (no copy of their own):
+    // closures still see one binding per iteration, even when the head binding is not captured,
+    // through inner loops, `continue outer`, and before initialization (Node's output).
+    let source = "function f(){ const fs=[];\n\
+         for (let i=0;i<2;i++){ let w; fs.push(()=>w); w=i+100; }\n\
+         for (let i=0;i<2;i++){ let w=i; let j=0; while(j<2){ let u=j*10+i; fs.push(()=>u+':'+w); j++; } }\n\
+         outer: for (let i=0;i<2;i++){ let a=i; for (let j=0;j<3;j++){ let b=j; fs.push(()=>a+'.'+b); if(j==1) continue outer; } }\n\
+         for (let i=0;i<3;i++){ fs.push(()=>{ try { return w } catch(e) { return 'tdz' } }); let w=i; if(i==1) break; }\n\
+         for (const k of ['a','b']){ let w; fs.push(()=>k+w); w=k+k; }\n\
+         return fs.map(f=>f()).join(' '); }\n\
+         var result = f();";
+    assert_eq!(
+        global_text(source, "result"),
+        "100 101 0:0 10:0 1:1 11:1 0.0 0.1 1.0 1.1 0 1 aaa bbb"
+    );
+}
+
+#[test]
+fn closures_that_die_with_their_iteration_share_the_loop_environment() {
+    // A call-only closure declared in a loop's body that makes no closure needs no copy of the
+    // environment per iteration (`IterationClosureFinder`); every other closure keeps its own.
+    let source = r#"
+      "use strict";
+      const out = [];
+      function t(name, v) { out.push(name + "=" + JSON.stringify(v)); }
+      { const fs = []; for (let i = 0; i < 3; i++) { fs.push(() => i); } t("esc", fs.map(f => f())); }
+      { let g; for (let i = 0; i < 3; i++) { g = () => i; } t("outer", g()); }
+      { const fs = []; for (let i = 0; i < 3; i++) { const mk = () => () => i; fs.push(mk()); } t("nested", fs.map(f => f())); }
+      { let s = 0; for (let i = 0; i < 5; i++) { const f = () => i * 2; s += f(); } t("local", s); }
+      { let s = ""; for (const x of ["a", "b"]) { const f = () => x + x; s += f(); } t("forof", s); }
+      { const fs = []; for (const x of [1, 2, 3]) { fs.push(() => x); } t("forofesc", fs.map(f => f())); }
+      { const fs = []; for (let i = 0, h = () => i; i < 3; i++) { fs.push(h()); } t("head", fs); }
+      const o = { v: 7, m() { let s = 0; for (let i = 0; i < 3; i++) { const f = () => this.v + i; s += f(); } return s; } };
+      t("this", o.m());
+      { const r = []; for (let i = 0; i < 6; i++) { const f = () => i; i++; r.push(f()); } t("mut", r); }
+      function* gen() { for (let i = 0; i < 3; i++) { const f = () => i; yield f(); } }
+      t("gen", [...gen()]);
+      { const fs = []; for (let i = 0; i < 3; i++) { const f = () => i; fs.push(() => f()); } t("via", fs.map(g => g())); }
+      { let s = 0; for (let i = 1; i < 4; i++) { const f = (n) => n <= 0 ? 0 : i + f(n - 1); s += f(2); } t("rec", s); }
+      const got = out.join(" ");
+      const want = 'esc=[0,1,2] outer=2 nested=[0,1,2] local=20 forof="aabb" forofesc=[1,2,3] head=[0,0,0] this=24 mut=[1,3,5] gen=[0,1,2] via=[0,1,2] rec=12';
+      if (got !== want) throw new Error(got);
+    "#;
+    let program = Engine::specialize(source, "iteration-closures.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap_or_else(|error| panic!("{mode:?}: {error:?}"));
     }
 }
 
@@ -1166,7 +1261,7 @@ fn nested_reads_follow_their_first_steps_hint_across_shapes() {
 #[test]
 fn inherited_reads_follow_their_hint_and_the_prototype_values() {
     // An inherited read's record keeps the entry that last answered it as its hint, and the
-    // entry its answer while no prototype changes (`Vm::hinted_inherited_field_hit`):
+    // entry its answer while no prototype changes (`Vm::inherited_hint_operands`):
     // instances of sibling and nested subclasses reading one site, a method replaced on the
     // base prototype, shadowed on an intermediate one and deleted again, and a receiver moved
     // to another prototype each read the method the receiver in hand inherits. Expected value
@@ -1815,7 +1910,7 @@ fn lane_math_sites_keep_math_semantics() {
 fn lane_array_push_pop_sites_keep_array_semantics() {
     // A call site of Array.prototype.push or pop appends or removes in place where the receiver's
     // elements are ordinary and dense and no prototype holds an index (`Vm::array_push_one`,
-    // `Vm::array_pop_one`): holes, indexed accessors and values added to Array.prototype and
+    // `Vm::array_pop_dense`): holes, indexed accessors and values added to Array.prototype and
     // Object.prototype after the sites warm, frozen, sealed and non-extensible arrays, a
     // non-writable length, zero and many values, redefined and shadowed methods, and array-like
     // and primitive receivers each keep the generic steps. Expected value is Node's.
@@ -2291,11 +2386,10 @@ fn rootless_shapes_survive_collection_and_shape_compaction() {
 #[test]
 fn shape_roots_keep_symbols_and_active_accessors_alive() {
     use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
-    use crate::heap::Cell;
 
     let program = Engine::specialize("", "shape-roots.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
-    let symbol = vm.heap.alloc(Cell::Symbol(crate::heap::SymbolData::public(None)));
+    let symbol = vm.heap.alloc_symbol(crate::heap::SymbolData::public(None));
     let symbol_weak = vm.heap.weak_handle(symbol).unwrap();
     let symbol_shape = vm.transition_property_shape(0, PropertyKey::symbol(symbol));
     let first =
@@ -3068,6 +3162,30 @@ fn reused_frames_resolve_captures_from_their_own_environment_state() {
 }
 
 #[test]
+fn environment_window_calls_start_locals_undefined_and_keep_captures() {
+    // A function with captured bindings runs in an environment window on each call: its
+    // captured parameter and var, and its uncaptured `fresh`, start `undefined` every time
+    // (the window's locals are filled, not carried over), and the closure keeps the
+    // captures of its own activation. Node agrees.
+    let source = "'use strict';\n\
+         var result = (() => {\n\
+           function make(a, b) {\n\
+             var fresh;\n\
+             var seen;\n\
+             var captured = a + b;\n\
+             var reader = () => captured + (seen === undefined ? 0 : 1000);\n\
+             var first = reader();\n\
+             seen = first;\n\
+             return [fresh === undefined, first, reader() === first + 1000 ? 'kept' : 'reset'].join('/');\n\
+           }\n\
+           var out = [];\n\
+           for (var i = 0; i < 4; i++) out.push(make(i, 10));\n\
+           return out.join(',');\n\
+         })();";
+    assert_eq!(global_text(source, "result"), "true/10/kept,true/11/kept,true/12/kept,true/13/kept");
+}
+
+#[test]
 fn collection_iterators_follow_deletes_compaction_and_clear() {
     // Deletes leave holes and compaction renumbers registered iterators; a `forEach` walk
     // defers compaction and still visits entries added after a `clear`. Node agrees.
@@ -3086,6 +3204,26 @@ fn collection_iterators_follow_deletes_compaction_and_clear() {
     assert_eq!(
         global_text(source, "result"),
         "90,10,95,false,0 45 46 47 48 49 late after,1,3,true,true"
+    );
+}
+
+#[test]
+fn collection_records_back_maps_sets_groups_and_prototypes() {
+    // Maps and Sets live in the collection record family: a group, a prototype, a stored
+    // field and a weak key each reach them through the record, not a legacy slot.
+    let source = "var out = [];\n\
+         var m = new Map([[1, 'a'], [2, 'b']]);\n\
+         var g = Map.groupBy([1, 2, 3], function (x) { return x % 2 ? 'odd' : 'even'; });\n\
+         out.push(m.size, m.get(2), g.get('odd').join('/'), g.size);\n\
+         var proto = Object.create(new Set([7]));\n\
+         out.push(proto.has(7), proto instanceof Set, Object.getPrototypeOf(proto) instanceof Set);\n\
+         out.push(JSON.stringify(m), Object.prototype.toString.call(new Set()));\n\
+         var holder = { inner: m }; holder.inner.set(3, 'c'); out.push(holder.inner.size);\n\
+         var wm = new WeakMap(); wm.set(m, 1); out.push(wm.get(m));\n\
+         var result = out.join();";
+    assert_eq!(
+        global_text(source, "result"),
+        "2,b,1/3,2,true,true,true,{},[object Set],3,1"
     );
 }
 
@@ -4066,30 +4204,30 @@ fn atom_invalidation_drops_only_the_entries_naming_the_atom() {
 #[test]
 fn method_cache_gc_retains_live_and_rejects_reused_handles() {
     let mut vm = Vm::new(TestHost::default());
-    let live = vm.heap.alloc(crate::heap::Cell::Environment {
-        parent: crate::Value::NULL,
-        function: u32::MAX,
-        slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+    let live = vm.heap.alloc_environment(
+        crate::Value::NULL,
+        u32::MAX,
+        Vec::<Value>::new().into_boxed_slice().into(),
+        crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
             dynamic_bindings: vec![].into(),
             with_objects: Box::default(),
         }),
-    });
-    let dead = vm.heap.alloc(crate::heap::Cell::Environment {
-        parent: crate::Value::NULL,
-        function: u32::MAX,
-        slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+    ).0;
+    let dead = vm.heap.alloc_environment(
+        crate::Value::NULL,
+        u32::MAX,
+        Vec::<Value>::new().into_boxed_slice().into(),
+        crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
             dynamic_bindings: vec![].into(),
             with_objects: Box::default(),
         }),
-    });
+    ).0;
     vm.method_caches.push([
         MethodCache {
             shape: 1,
@@ -4125,18 +4263,18 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
     ));
     assert!(vm.method_caches[0][1].target.is_none());
 
-    let reused = vm.heap.alloc(crate::heap::Cell::Environment {
-        parent: crate::Value::NULL,
-        function: u32::MAX,
-        slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+    let reused = vm.heap.alloc_environment(
+        crate::Value::NULL,
+        u32::MAX,
+        Vec::<Value>::new().into_boxed_slice().into(),
+        crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
             dynamic_bindings: vec![].into(),
             with_objects: Box::default(),
         }),
-    });
+    ).0;
     assert_eq!(reused, dead);
     assert!(vm.method_caches[0][1].target.is_none());
 }
@@ -4201,10 +4339,7 @@ fn array_like_list_roots_release_after_callback_completion() {
                     if phase == "invalid" {
                         assert!(values[0].is_undefined());
                     } else if property_keys {
-                        assert!(matches!(
-                            vm.heap.get(values[0]),
-                            Some(super::Cell::Symbol(_))
-                        ));
+                        assert!(vm.heap.is_symbol(values[0]));
                     } else {
                         let rank = vm.intern_atom("rank");
                         assert_eq!(vm.own_property(values[0], rank), Some(Value::number(42.0)));
@@ -5290,20 +5425,20 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 .iter()
                 .position(|candidate| *candidate == atom)
                 .unwrap();
-            let environment = vm.heap.alloc(crate::heap::Cell::Environment {
-                parent: Value::NULL,
-                function: super::ROOT_FUNCTION_ID,
-                slots: vec![Value::DELETED; program.function(0).local_atoms.len()]
+            let environment = vm.heap.alloc_environment(
+                Value::NULL,
+                super::ROOT_FUNCTION_ID,
+                vec![Value::DELETED; program.function(0).local_atoms.len()]
                     .into_boxed_slice()
                     .into(),
-                scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+                crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                     program: Some(super::program_store::ProgramId::MAIN.raw()),
                     root_eval_scope: false,
                     binding_site_pc: None,
                     dynamic_bindings: vec![].into(),
                     with_objects: Box::default(),
                 }),
-            });
+            ).0;
             vm.programs
                 .set_module_environment(super::program_store::ProgramId::MAIN, environment);
             let attributes = super::PropertyAttributes {
@@ -6955,18 +7090,18 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     let mut vm = Vm::new(TestHost::default());
     let program = Engine::specialize("print(0);", "continuation.js").unwrap();
     vm.initialize(&program).unwrap();
-    let live = vm.heap.alloc(crate::heap::Cell::Environment {
-        parent: Value::NULL,
-        function: u32::MAX,
-        slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+    let live = vm.heap.alloc_environment(
+        Value::NULL,
+        u32::MAX,
+        Vec::<Value>::new().into_boxed_slice().into(),
+        crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
             dynamic_bindings: vec![].into(),
             with_objects: Box::default(),
         }),
-    });
+    ).0;
     let held = vm
         .heap
         .alloc(crate::heap::Cell::Error("suspended binding".into()));
@@ -8045,9 +8180,9 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                     .collect::<Vec<_>>();
                 let atom = vm.intern_atom("entry");
                 let property = if symbol {
-                    super::property_key::PropertyKey::symbol(vm.heap.alloc(super::Cell::Symbol(
+                    super::property_key::PropertyKey::symbol(vm.heap.alloc_symbol(
                         crate::heap::SymbolData::public(Some("entry".into())),
-                    )))
+                    ))
                 } else {
                     super::property_key::PropertyKey::string(atom)
                 };
@@ -8116,7 +8251,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                         if symbol {
                             assert_eq!(returned_key, key);
                             assert!(
-                                matches!(vm.heap.get(returned_key), Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref() == "entry")
+                                matches!(vm.heap.symbol_data(returned_key), Some(crate::heap::SymbolData { description: Some(name), .. }) if name.as_ref() == "entry")
                             );
                         } else {
                             assert_eq!(vm.to_string(&program, returned_key).unwrap(), "entry");
@@ -8125,7 +8260,7 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                     }
                     Ok(result) if phase == "result-symbol" => {
                         assert!(
-                            matches!(vm.heap.get(result),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="answer")
+                            matches!(vm.heap.symbol_data(result),Some(crate::heap::SymbolData { description: Some(name), .. }) if name.as_ref()=="answer")
                         );
                         Some(vm.heap.weak_handle(result).unwrap())
                     }
@@ -8522,9 +8657,9 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                         .expect("operands");
                     let key = if symbol {
                         vm.heap
-                            .alloc(super::Cell::Symbol(crate::heap::SymbolData::public(Some(
+                            .alloc_symbol(crate::heap::SymbolData::public(Some(
                                 "entry".into(),
-                            ))))
+                            )))
                     } else if phase == "coercion" {
                         let atom = vm.intern_atom("keyOperand");
                         let factory = vm.own_property(vm.realm.globals, atom).unwrap();
@@ -8591,7 +8726,7 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                             );
                             assert_eq!(vm.heap.weak_value(handles[1]), Some(key));
                             assert!(if symbol {
-                                matches!(vm.heap.get(key),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="entry")
+                                matches!(vm.heap.symbol_data(key),Some(crate::heap::SymbolData { description: Some(name), .. }) if name.as_ref()=="entry")
                             } else {
                                 vm.heap.string(key).is_some_and(|name| name.host_string()=="entry")
                             });
@@ -8816,7 +8951,7 @@ fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
                         assert_eq!(keys.len(), 2);
                         assert_eq!(vm.to_string(&program, keys[0]).unwrap(), "first");
                         assert!(
-                            matches!(vm.heap.get(keys[1]),Some(super::Cell::Symbol(crate::heap::SymbolData { description: Some(name), .. })) if name.as_ref()=="entry")
+                            matches!(vm.heap.symbol_data(keys[1]),Some(crate::heap::SymbolData { description: Some(name), .. }) if name.as_ref()=="entry")
                         );
                         for (handle, value) in handles.iter().zip([proxy, target, handler]) {
                             assert_eq!(
@@ -14543,7 +14678,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
             .filter_map(|(pc, packed)| {
                 (site.header_pc as usize <= pc
                     && pc <= site.backedge_pc as usize
-                    && super::dispatch_fast::decoded_instruction(body, *packed).op()
+                    && body.widened(*packed).op()
                         == crate::bytecode::Op::Call)
                     .then_some(pc as u32)
             })
@@ -14551,8 +14686,8 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
         assert_eq!(call_pcs, site.call_boundary_pcs, "call boundary attribution: {site:?}");
         assert_eq!(call_pcs.len(), 1, "one deferred callback per loop: {site:?}");
         assert!(
-            site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits > 0,
-            "the call-free prefix must execute natively then leave for the callback: {site:?}"
+            site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits == 0,
+            "the loop runs natively and its callback is a step in place, not a leave: {site:?}"
         );
     }
     compiled.programs.record_js_jit_lane_entry(
@@ -14844,10 +14979,12 @@ fn shared_osr_call_result_is_not_an_incoming_number() {
             .and_then(super::program_store::derived_lane_view)
             .unwrap()
             .osr_diagnostics();
+        // The call is a step the region makes in place, so its result enters the region's
+        // registers without a leave.
         assert!(
             diagnostics.compile_successes > 0
                 && diagnostics.native_region_runs > 0
-                && diagnostics.exits > 0,
+                && diagnostics.exits == 0,
             "bypass={bypass}: {diagnostics:?}"
         );
         assert_eq!(
@@ -14988,7 +15125,7 @@ fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
     assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
     let site = &osr.sites[0];
     assert!(site.admitted && site.deferred_call, "the call is a resumable exact-PC boundary: {site:?}");
-    assert!(site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits > 0, "tagged Move should run natively before its call: {site:?}");
+    assert!(site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits == 0, "tagged Move and its call run natively, the call as a step in place: {site:?}");
     assert_eq!(site.call_boundary_pcs.len(), 1, "one dynamic callback site: {site:?}");
 }
 
@@ -14996,7 +15133,7 @@ fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
 #[cfg(not(quench_profiled))]
 fn shared_osr_reads_tagged_dense_values_and_falls_back_on_array_holes() {
     // A dense indexed read may produce any JS value. Native code can carry that boxed word
-    // through a Move, but a hole must leave at GetIndex so prototype lookup stays in the VM.
+    // through a Move; a hole's prototype lookup is the interpreter's GetIndex step, made in place.
     let source = r#"
       let calls = 0;
       let sawHole = false;
@@ -15053,7 +15190,7 @@ fn shared_osr_reads_tagged_dense_values_and_falls_back_on_array_holes() {
     let site = &osr.sites[0];
     assert!(site.admitted && site.deferred_call, "the callback remains an exact-PC boundary: {site:?}");
     assert!(site.compile_attempts > 0 && site.native_region_runs > 0, "tagged indexed reads should execute natively: {site:?}");
-    assert!(site.exits > 0, "the dynamic call and hole fallbacks must leave the native region: {site:?}");
+    assert_eq!(site.exits, 0, "the dynamic call and a hole's prototype lookup are steps in place, not leaves: {site:?}");
     assert_eq!(site.call_boundary_pcs.len(), 1, "one dynamic callback site: {site:?}");
 }
 
@@ -20403,6 +20540,36 @@ check(hot(readG), 12000, 'property after lexical declarations');
 }
 
 #[test]
+fn global_lexical_name_reads_follow_their_binding() {
+    // Scripts share one realm's global lexical scope. The second script reads `x` by name (a
+    // free name there) in a hot loop, reassigns it, declares `y`, and reads `later` in its TDZ;
+    // the third reads `x` after the reassignment. Node prints "2014 ReferenceError 3".
+    let first = Engine::specialize("let x = 1; function f() { return x; } var result = f();", "global-lexical-names.js").unwrap();
+    let later = r#"
+function readX() { return x; }
+let total = 0;
+for (let i = 0; i < 2000; i++) total += readX();
+x = 2;
+total += readX();
+let y = 5;
+total += y;
+let early = 'none';
+function readLater() { return later; }
+try { readLater(); } catch (e) { early = e.constructor.name; }
+let later = 7;
+total += readLater();
+result = [total, early].join(' ');
+"#;
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&first).unwrap();
+    vm.eval_script_source(&first, later, "global-lexical-names-later.js").unwrap();
+    vm.eval_script_source(&first, "let z = readX() + 1; result += ' ' + z;", "global-lexical-names-last.js").unwrap();
+    let name = vm.intern_atom("result");
+    let value = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(vm.to_string(&first, value).unwrap(), "2014 ReferenceError 3");
+}
+
+#[test]
 fn global_declarations_survive_abrupt_script_evaluation() {
     let program = Engine::specialize_unspecialized("", "initial-script.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
@@ -20845,7 +21012,7 @@ const LANE_METHOD_SITES_SOURCE: &str = r#"(function () {
   Cell.prototype.add = function (a, b) { this.sum = (this.sum + a * 3 + b) & MASK; return this.sum; };
   Cell.prototype.pair = function (a, b) { return (this.add(b, a) + this.add(a, b)) & MASK; };
   Cell.prototype.far = function (p, q, r) { return (p - q + r * 2) & MASK; };
-  Cell.prototype.drive = function (n, other) {
+  Cell.prototype.drive = function drive(n, other) {
     let total = 0;
     for (let i = 0; i < n; i++) {
       const x = i & 255, y = (i * 7) & 127, z = (i * 3) & 63;
@@ -23749,9 +23916,9 @@ fn lane_builtin_rows_keep_builtin_semantics() {
     assert_eq!(output.borrow().as_slice(), [LANE_BUILTIN_ROWS_EXPECTED]);
 }
 
-/// The interpreter enters a hot callee's body through its function's one entry word, and a run
-/// binds the dispatch payload once: entries of one lane run find its program, residual, lane
-/// context and interrupt standing, so the runs bound are a small fraction of the entries.
+/// A hot callee's body is entered over and over, and a run binds the dispatch payload once:
+/// entries of one lane run find its program, residual and interrupt standing, so the runs bound
+/// are a small fraction of the entries.
 #[test]
 fn interpreter_calls_cross_into_bodies_with_one_payload_per_lane_run() {
     let source = r#"(function () {
@@ -23761,10 +23928,11 @@ fn interpreter_calls_cross_into_bodies_with_one_payload_per_lane_run() {
       globalThis.answer = total;
     })();"#;
     let events = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED).events;
-    let (entries, binds, crossings) = (events.count(Event::Entered), events.count(Event::RunBound), events.count(Event::CellCrossed));
+    // The caller's loop is compiled too and enters the callee's body by its entry, a nested
+    // lane entry (`Vm::run_nested_lane_method`), so the callee's cell is not crossed here.
+    let (entries, binds) = (events.count(Event::Entered), events.count(Event::RunBound));
     assert!(entries > 1000, "the hot callee runs as a body, entered {entries} times");
     assert!(binds * 200 < entries, "{binds} payload binds for {entries} entries");
-    assert!(crossings > 1000, "the interpreter's calls enter the body through its cell before any activation, {crossings} times");
 }
 
 /// Callees whose cell holds the stub (no body yet, a declined or a retired one) run in the
@@ -23914,4 +24082,120 @@ fn straight_line_body_past_the_stream_size_runs_as_written() {
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["TypeError".to_string(), format!("{count} {expected_sum} 6000")]);
+}
+
+#[test]
+fn hot_loops_keep_planned_receivers_as_their_fields_and_allocate_them_where_needed() {
+    // A loop's `new Pair(...)` whose result only has its fields read is its field values
+    // (`lane_region::virtual_objects`); a branch with the receiver live, a read of a field the
+    // plan does not name, a leave and a prototype setter added mid-run each see the object
+    // the construction would have made.
+    let source = r#"
+      class Pair { constructor(x, y) { this.x = x; this.y = y; } }
+      class K { constructor(a) { this.a = a; this.k = 7; } }
+      function kept(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i, 3); s = (s + p.x + p.y) | 0; } return s; }
+      function escapes(n) { var out = [], s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i, i + 1); if (i % 97 === 0) out.push(p); s = (s + p.y) | 0; }
+        return [s, out.length, out[3].x, out[3].y, out[3] instanceof Pair, Object.keys(out[3]).join()].join(); }
+      function other(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i, 2); s = (s + p.x + (p.z === undefined ? 1 : 0)) | 0; } return s; }
+      function constant(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new K(i); s = (s + p.a + p.k) | 0; } return s; }
+      function missing(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i); s = (s + p.x + (p.y === undefined ? 5 : 0)) | 0; } return s; }
+      function overflow(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i * 100000, 3); s = s + p.x + p.y; } return s; }
+      function setter(n) { var s = 0; for (var i = 0; i < n; i++) {
+          if (i === n - 50) Object.defineProperty(Pair.prototype, 'y', { set(v) { this._y = v * 2; }, get() { return this._y; }, configurable: true });
+          const p = new Pair(i, 1); s = (s + p.x + p.y) | 0; }
+        delete Pair.prototype.y; return s; }
+      var out = [];
+      for (var k = 0; k < 3; k++) { out.push(kept(20000), escapes(20000), other(20000), constant(20000), missing(20000), overflow(20000), setter(20000)); }
+      print(out.join(";"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "kept-receivers.js").unwrap();
+    vm.execute(&program).unwrap();
+    let round = "200050000;200010000,207,291,292,true,x,y;200010000;200130000;200090000;19999000060000;200010050";
+    assert_eq!(output.borrow().as_slice(), [[round, round, round].join(";")]);
+}
+
+#[test]
+fn an_own_constant_hint_answers_for_its_object_until_the_object_is_written() {
+    // `Vm::own_constant_hint_hit`: an enum-like object's member read as the value it held,
+    // for that object only (another object of its layout misses) and until a write to any of
+    // its values or a layout change retires the hint's watch.
+    let source = r#"
+      globalThis.Color = { Red: 0, Green: 1, Blue: 2 };
+      globalThis.Twin = { Red: 0, Green: 1, Blue: 2 };
+    "#;
+    let mut vm = Vm::new(TestHost::default());
+    let program = Engine::specialize(source, "own-constant.js").unwrap();
+    vm.execute(&program).unwrap();
+    let global = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        vm.own_property(vm.realm.globals, atom).expect("a global")
+    };
+    let (color, twin) = (global(&mut vm, "Color"), global(&mut vm, "Twin"));
+    let green: crate::bytecode::Atom = 7;
+    let index = vm.hold_own_constant_hint(None, green, color, Value::integer(1), 8).expect("a hint");
+    assert!(vm.own_constant_hint_live(index));
+    assert_eq!(vm.own_constant_hint_hit(index, green, color), Some(Value::integer(1)));
+    assert_eq!(vm.own_constant_hint_hit(index, green, twin), None, "another object of the layout");
+    assert_eq!(vm.own_constant_hint_hit(index, green + 1, color), None, "another name");
+    let write = Engine::specialize("Color.Blue = 5;", "write.js").unwrap();
+    vm.execute(&write).unwrap();
+    assert!(!vm.own_constant_hint_live(index), "a write to the object retires the hint");
+    assert_eq!(vm.own_constant_hint_hit(index, green, color), None);
+}
+
+#[test]
+fn a_construction_that_ends_a_branch_builds_the_receiver_its_join_reads() {
+    // `inner = new P(..)` as the last instruction of a branch, joined with `inner = null`,
+    // then passed on (JetStream earley-boyer's `rewrite_args_nboyer`): the join reads the
+    // object the construction made, never a receiver kept as its fields.
+    let source = r#"
+      function P(car, cdr) { this.car = car; this.cdr = cdr; }
+      function ra(lst) { if (lst === null) return null; var l2 = lst.cdr; var inner;
+        if (l2 === null) inner = null; else inner = new P(l2.car, ra(l2.cdr)); return new P(lst.car, inner); }
+      function list(n) { var l = null; for (var i = n; i > 0; i--) l = new P(i, l); return l; }
+      function sum(l) { var s = 0; while (l !== null) { s += l.car; l = l.cdr; } return s; }
+      var total = 0;
+      for (var k = 0; k < 3000; k++) total += sum(ra(list(7)));
+      print(total);
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "branch-construct.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["84000"]);
+}
+
+#[test]
+fn declared_number_fields_seed_their_slot_type_at_the_first_add() {
+    let program = Engine::specialize_typescript(
+        "class V { x: number = 0; y: number = 0; }\nvar v = new V();\n",
+        "declared-number-fields.ts",
+    )
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    // Tracking must be on before the first construction for its add to seed the slot.
+    vm.heap.track_slot_representations(&vm.shape_layouts());
+    vm.execute(&program).unwrap();
+    let global = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        vm.own_property(vm.realm.globals, atom).unwrap()
+    };
+    let v = global(&mut vm, "v");
+    let x = vm.intern_atom("x");
+    let shape = vm.heap.object(v).unwrap().shape();
+    let slot = vm.shape_slot(shape, x).unwrap();
+    assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::NUMBER);
+
+    // The seed is not a proof: a string store widens the slot through the ordinary join, and reads
+    // of both fields stay correct.
+    let widen = Engine::specialize_typescript(
+        "v.x = \"text\";\nvar ok = v.x === \"text\" && v.y === 0;\n",
+        "declared-number-fields-widen.ts",
+    )
+    .unwrap();
+    vm.execute(&widen).unwrap();
+    assert_eq!(global(&mut vm, "ok"), Value::TRUE);
+    assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::ANY);
 }

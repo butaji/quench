@@ -113,11 +113,7 @@ struct HandleResource {
     resource: Resource,
     owner: RootId,
 }
-fn put(c: &mut Context<'_>, o: RootId, n: &str, v: RootId) -> Result<(), RootedError> {
-    let k = c.string_rooted(n);
-    c.define_data_property_rooted(o, k, v, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 /// Native constructor owner data retains the original prototype, independently
 /// of guest writes to public constructor properties.
 pub(crate) fn prototype(c: &mut Context<'_>) -> Result<RootId, RootedError> {

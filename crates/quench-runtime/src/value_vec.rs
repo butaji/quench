@@ -1,6 +1,5 @@
 use crate::Value;
-use crate::staged::object::Rep;
-use crate::typed_ir::SlotType;
+use crate::typed_ir::{Representation, SlotType};
 use crate::vm::switches;
 use rustc_hash::FxHashMap;
 
@@ -10,14 +9,16 @@ use buffer::PropertyBuffer;
 pub(crate) use buffer::NATIVE_PROPERTY_BUFFER_LAYOUT;
 
 /// The word of an arena slot that holds `value`, where the slot's owner has type `owner`: the one
-/// place a stored word is encoded. A slot of `Rep::Float64` holds its Number as the IEEE double (an
+/// place a stored word is encoded. A slot of `Representation::Float64` holds its Number as the IEEE double (an
 /// integer as the integral double; NaN is already canonical, so the word is a valid `Value` the
 /// collector reads as a non-reference); any other slot holds the `Value` as it is.
 #[inline(always)]
 pub(crate) fn encode_slot(owner: SlotType, value: Value) -> Value {
     match owner.rep() {
-        Rep::Float64 => value.as_int().map_or(value, |int| Value::from_bits(f64::from(int).to_bits())),
-        Rep::Int32 | Rep::Tagged => value,
+        Representation::Float64 => value.as_int().map_or(value, |int| Value::from_bits(f64::from(int).to_bits())),
+        // Slots never hold Int64 words: `SlotType::rep` yields only Int32, Float64 or Tagged.
+        Representation::Int64 => unreachable!("a slot word is never an Int64"),
+        Representation::Int32 | Representation::Tagged => value,
     }
 }
 
@@ -28,8 +29,14 @@ pub(crate) fn encode_slot(owner: SlotType, value: Value) -> Value {
 #[inline(always)]
 pub(crate) fn decode_slot(owner: SlotType, word: Value) -> Value {
     match owner.rep() {
-        Rep::Float64 => word.as_number().map_or(word, Value::number),
-        Rep::Int32 | Rep::Tagged => word,
+        // A tagged word (an int32, a reference, the deleted marker, a word a packed or narrow form
+        // decoded) is canonical already: one tag test passes it. Only a raw double's bits take
+        // `Value::number`'s canonical form.
+        Representation::Float64 if word.is_tagged() => word,
+        Representation::Float64 => Value::number(f64::from_bits(word.to_bits())),
+        // Slots never hold Int64 words: `SlotType::rep` yields only Int32, Float64 or Tagged.
+        Representation::Int64 => unreachable!("a slot word is never an Int64"),
+        Representation::Int32 | Representation::Tagged => word,
     }
 }
 
@@ -72,7 +79,22 @@ pub(crate) const EXTRAS_FORM: u32 = 1 << 28;
 /// Its payload word carries `NARROW_RUN_TAG` beside the start.
 pub(crate) const NARROW_FORM: u32 = 1 << 27;
 pub(crate) const STORAGE_FORM: u32 = INLINE_FORM | EXTRAS_FORM | NARROW_FORM;
-const SHAPE_MASK: u32 = !(DICTIONARY_STORAGE | EXOTIC_ACCESS | STORAGE_FORM);
+/// An object whose values code holds as constants (`Object::mark_constant`, an own-constant
+/// read): set by the read that takes a value as a constant, cleared by the first write to any
+/// value or any change of the object's layout or storage, which retires that code
+/// (`Object::note_constant_write`). It is part of the raw auxiliary word and so of the layout
+/// id, so every guard that compares the raw word (a lane hint, a generated row's recorded
+/// shape, `formed_plain_start`) misses a marked object and leaves to the VM, whose stores clear
+/// it; the Rust-side shapes (`shape`, `exact_auxiliary`, `ordinary_shape`) leave it out, so a
+/// marked object keeps its shape tables and cache entries. Unlike extras it is cleared once:
+/// a written object returns to every fast store.
+pub(crate) const CONSTANT_FORM: u32 = 1 << 25;
+const SHAPE_MASK: u32 = !(DICTIONARY_STORAGE | EXOTIC_ACCESS | STORAGE_FORM | CONSTANT_FORM | SHAPE_LIMIT_BITS);
+/// The auxiliary bits above `CONSTANT_FORM` no storage form uses (26): no shape reaches them.
+const SHAPE_LIMIT_BITS: u32 = 1 << 26;
+/// Shapes are numbered below `CONSTANT_FORM`.
+const SHAPE_LIMIT: u32 = CONSTANT_FORM - 1;
+const _: () = assert!(CONSTANT_FORM & (STORAGE_FORM | DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0 && SHAPE_MASK == SHAPE_LIMIT);
 const _: () = assert!(STORAGE_FORM & (DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0 && INLINE_FORM & EXTRAS_FORM == 0);
 /// The words a narrow run of `len` values fills.
 #[inline(always)] const fn narrow_words(len: usize) -> usize {
@@ -253,7 +275,7 @@ impl ValueVec {
     /// to `auxiliary` exactly when the vector is neither in dictionary storage nor an exotic
     /// object's, so one comparison with a recorded shape proves all three.
     #[inline(always)] pub(crate) const fn exact_auxiliary(self) -> u32 {
-        self.auxiliary & !STORAGE_FORM
+        self.auxiliary & !(STORAGE_FORM | CONSTANT_FORM)
     }
 
     #[inline] pub(crate) fn has_inline_property_storage(self) -> bool {
@@ -269,7 +291,7 @@ impl ValueVec {
     #[inline] pub(crate) fn set_auxiliary(&mut self, value: u32) {
         // The last shape stays unused, so a dictionary vector's exact auxiliary
         // (`exact_auxiliary`) never equals the all-ones sentinel caches record as "none".
-        assert!(value < SHAPE_MASK, "object shape table exhausted");
+        assert!(value < SHAPE_LIMIT, "object shape table exhausted");
         self.auxiliary = (self.auxiliary & !SHAPE_MASK) | value;
     }
 
@@ -333,23 +355,6 @@ impl ValueVec {
         (self.start & START_MASK) as usize
     }
 
-    /// The arena run a concurrent marker reads for this vector, as `(start, len)` from the
-    /// shape lengths and arena length it snapshotted (`Heap::begin_cycle`): `(0, 0)` for no
-    /// values or inline storage, `None` (the mutator traces it) for dictionary storage or a
-    /// shape or run past the snapshot. The vector may be a torn read: the bounds keep the run
-    /// inside the snapshot, whatever it holds.
-    pub(crate) fn concurrent_run(self, shape_lengths: &[u32], arena_len: usize) -> Option<(usize, usize)> {
-        // The marker reads runs as values; a narrow run's halves are not.
-        if self.is_dictionary() || self.is_narrow() {
-            return None;
-        }
-        if self.has_inline_property_storage() || self.start() == EMPTY_START as usize {
-            return Some((0, 0));
-        }
-        let len = *shape_lengths.get(self.auxiliary() as usize)? as usize;
-        let start = self.start();
-        (start.checked_add(len)? <= arena_len).then_some((start, len))
-    }
 
     pub(crate) fn start_offset(self) -> usize {
         debug_assert!(!self.is_dictionary());
@@ -450,17 +455,7 @@ impl ValueArena {
         (self.values.as_ptr(), self.values.len())
     }
 
-    /// What a concurrent marker reads of the arena: its values' base and length, and a copy
-    /// of the shape lengths, all as of now. Valid while the values stay in place
-    /// (`values_stay_in_place`) and nothing compacts them.
-    pub(crate) fn concurrent_snapshot(&self) -> (*const Value, usize, Box<[u32]>) {
-        (self.values.as_ptr(), self.values.len(), self.shape_lengths.clone().into_boxed_slice())
-    }
 
-    /// Whether the property values never move to another allocation (`PropertyBuffer::stays_in_place`).
-    pub(crate) fn values_stay_in_place(&self) -> bool {
-        self.values.stays_in_place()
-    }
 
     /// The arena as a snapshot keeps it (`crate::snapshot`): storage positions name places in
     /// `values`, so the vector and its free ranges are written as they are.
@@ -543,7 +538,7 @@ impl ValueArena {
 
     pub(crate) fn register_shape(&mut self, shape: u32, length: usize) {
         self.shape_readers.retire(shape);
-        assert!(shape <= SHAPE_MASK, "object shape table exhausted");
+        assert!(shape < SHAPE_LIMIT, "object shape table exhausted");
         assert!(
             length <= u32::MAX as usize,
             "object has too many properties"
@@ -641,9 +636,9 @@ impl ValueArena {
     }
 
     /// Whether the word of `slot` of an object of `shape` is a raw double, which only a native reader
-    /// that knows its owner's type may read (`Rep::Float64`).
+    /// that knows its owner's type may read (`Representation::Float64`).
     #[inline(always)] pub(crate) fn holds_raw_doubles(&self, shape: u32, slot: usize) -> bool {
-        self.word_type(shape, slot).rep() == Rep::Float64
+        self.word_type(shape, slot).rep() == Representation::Float64
     }
 
     /// The type whose encoding the word of `slot` of an object of `shape` has (`encode_slot`): its

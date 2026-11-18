@@ -171,6 +171,11 @@ pub(crate) enum NumberOperation {
     BitwiseNot { destination: Register, source: Operand },
     /// ToNumeric of a Number `source` into `destination`; any other value leaves.
     ToNumeric { destination: Register, source: Register },
+    /// The Math function `operation` (`Math.sqrt`, `Math.abs`, ...) of a Number `source`, a
+    /// double: `staged::math::float_unary`, the one definition the natives run. Any other value leaves.
+    /// The b-jit's stencils run it; the runtime's natives call `float_unary` itself.
+    #[cfg_attr(not(stencil_build), allow(dead_code))]
+    Math { destination: Register, source: Operand, operation: super::math::FloatUnary },
 }
 
 /// Run the Number `operation` on `frame`; its word, or `Unresolved` where it left.
@@ -194,7 +199,21 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         NumberOperation::ToNumeric { destination, source } => to_numeric(stage, frame, destination, source),
         NumberOperation::Unary { destination, source, operation, domain } =>
             unary(stage, frame, destination, source, operation, domain),
+        NumberOperation::Math { destination, source, operation } => math(stage, frame, destination, source, operation),
     }
+}
+
+/// The Math function `operation` of one Number `source`, as a double.
+#[inline(always)]
+fn math<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, source: Operand, operation: super::math::FloatUnary,
+) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    let Some(value) = frame.number_operand(stage, source, miss) else { return Step::Unresolved };
+    let result = super::math::unary(stage, operation, value);
+    let fact = frame.number_fact();
+    frame.write(stage, destination, result, fact);
+    Step::Value(result)
 }
 
 /// `operation` of one Number `source` in `domain`; a negation of `i32::MIN` widens and
@@ -224,9 +243,9 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
                     Step::Value(value)
                 }
                 NumberUnary::Negate => {
-                    // The negation of zero is `-0`, a double: a zero operand leaves.
-                    let is_zero = stage.i32_is_zero(value);
-                    if stage.guard_false(is_zero, miss).is_none() {
+                    // `-0` is no int32: a zero operand leaves, as `i32::MIN`'s overflow does.
+                    let zero_operand = stage.i32_is_zero(value);
+                    if stage.guard_false(zero_operand, miss).is_none() {
                         return Step::Unresolved;
                     }
                     let zero = stage.i32_constant(0);

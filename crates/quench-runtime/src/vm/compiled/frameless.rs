@@ -25,9 +25,7 @@ pub(super) use admission::general_frameless_admit;
 const WINDOW_VALUES: usize = 1 << 16;
 const SHADOW_RECORDS: usize = 1 << 12;
 const CACHE_ENTRIES: usize = 256;
-/// Recoveries of one function's frameless activations in one collection epoch after which
-/// its calls keep frames for the rest of the epoch.
-const MATERIALIZATION_LIMIT: u32 = 16;
+use crate::vm::compiled::tier_policy::MATERIALIZATION_LIMIT;
 /// `CallEntry::meta`'s fields above its function: the register count, then the parameter count.
 const META_REGISTERS: u32 = u32::BITS;
 const META_PARAMS: u32 = META_REGISTERS + u16::BITS;

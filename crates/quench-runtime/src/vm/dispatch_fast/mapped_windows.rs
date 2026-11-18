@@ -81,9 +81,9 @@ impl LaneStack {
 
     /// The function of the environment window activation at `depth` and where its entries start.
     fn window_at<'a>(&self, code: &'a ResidualProgram, depth: usize) -> Option<(&'a Function, *mut Value)> {
-        let activation = self.activations.get(depth)?;
+        let activation = self.activations().get(depth)?;
         activation.script().filter(|script| script.environment)?;
-        let body = code.function_get(activation.function as usize)?;
+        let body = code.function_get(activation.function() as usize)?;
         // SAFETY: an environment activation's window holds its entries after its registers.
         Some((body, unsafe { activation.window_ptr().add(usize::from(body.registers)) }))
     }
@@ -115,3 +115,73 @@ pub(super) fn window_binding<H: Host>(vm: &Vm<H>, r: Registers, body: &Function,
     unsafe { ParameterHome::of(r.0.add(usize::from(body.registers)), body, slot) }.read(&vm.heap)
 }
 
+// merge: theirs' mapped-parameter handlers (`lane_load_mapped_parameter`, `lane_store_mapped_parameter`)
+// are kept under ours-style names. They read the element through `Vm::mapped_window_element`, which
+// only theirs' object_array/arguments.rs defines, and no row of ours requickens to them, so they are
+// unused here until that helper and the row wiring are merged. Ours' `window_arguments` (dispatch_fast.rs)
+// reads the element through `stored_arguments_element`.
+/// The `arguments` object the running window activation made on entry, and the home of its
+/// parameter `slot`, for the window whose entries start at register `registers`; `None` in a
+/// frame's run, which the general path serves.
+fn mapped_window<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    registers: u16,
+    slot: usize,
+) -> Option<(Value, ParameterHome)> {
+    if unsafe { (*cx).registers }.env().is_deleted() {
+        return None;
+    }
+    let vm = unsafe { vm(cx) };
+    let function = vm.lane_stack.activations().last()?.function();
+    // SAFETY: the context's program outlives the lane run.
+    let body = unsafe { &*(*cx).code }.function(function as usize);
+    Some((
+        window_binding(vm, r, body, usize::from(body.arguments_slot?)),
+        // SAFETY: the running window activation's entries start at `registers`.
+        unsafe { ParameterHome::of(r.0.add(usize::from(registers)), body, slot) },
+    ))
+}
+
+script_handler! {
+    /// A local load of a parameter a mapped `arguments` object aliases, in the window
+    /// activation of a suspended function: the element the object maps it to, else the
+    /// parameter's binding. Any other run, a numeric local or an uninitialized binding takes the
+    /// general path.
+    fn load_mapped_parameter<>(cx, r, ip, i, view) {
+        let (slot, registers) = environment_window_fields(i);
+        let Some((arguments, home)) = mapped_window(cx, r, registers, slot).filter(|_| i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0)
+        else {
+            return exit(ip);
+        };
+        let vm = unsafe { vm(cx) };
+        let value = vm.mapped_window_element(arguments, slot).unwrap_or_else(|| home.read(&vm.heap));
+        if value.is_deleted() {
+            return exit(ip);
+        }
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+script_handler! {
+    /// `load_mapped_parameter`'s store: the parameter's binding and, while the mapping
+    /// holds, the element (`Vm::store_mapped_argument`).
+    fn store_mapped_parameter<>(cx, r, ip, i, view) {
+        let (slot, registers) = environment_window_fields(i);
+        let Some((arguments, home)) = mapped_window(cx, r, registers, slot) else {
+            return exit(ip);
+        };
+        let vm = unsafe { vm(cx) };
+        if i.c == 0 && home.read(&vm.heap).is_deleted() {
+            return exit(ip);
+        }
+        let value = r.get(i.a);
+        home.write(vm, value);
+        vm.store_mapped_argument(arguments, slot, value);
+        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
+            r.set(register, value);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}

@@ -64,8 +64,8 @@ struct Counted {
 
 /// The array and index registers of an element access.
 fn access_registers(access: WideInstruction) -> Option<(Register, Register)> {
-    if access.op().is_get_index() { Some((access.operand_b().register_index()?, access.operand_c().register_index()?)) }
-    else if access.op().is_set_index() { Some((access.register_b(), access.register_c())) } else { None }
+    if matches!(crate::vm::compiled::performed(access), Some(crate::staged::Operation::ElementRead { .. })) { Some((access.operand_b().register_index()?, access.operand_c().register_index()?)) }
+    else if matches!(crate::vm::compiled::performed(access), Some(crate::staged::Operation::ElementWrite { .. })) { Some((access.register_b(), access.register_c())) } else { None }
 }
 
 /// The Number arithmetic `instruction` is, where it is a plain binary one.

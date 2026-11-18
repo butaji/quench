@@ -895,7 +895,7 @@ impl<H: Host> Vm<H> {
             .first()
             .copied()
             .ok_or_else(|| self.type_error(p, "Missing options".into()))?;
-        if matches!(self.heap.get(options), Some(Cell::Symbol(_))) {
+        if self.heap.is_symbol(options) {
             return Err(self.type_error(p, "Invalid options".into()));
         }
         let direction = if let Some(value) = self.heap.string(options) {
@@ -906,7 +906,7 @@ impl<H: Host> Vm<H> {
             }
             let direction_atom = self.intern_atom("direction");
             let direction = self.get_property(p, options, direction_atom)?;
-            if matches!(self.heap.get(direction), Some(Cell::Symbol(_))) {
+            if self.heap.is_symbol(direction) {
                 return Err(self.type_error(p, "Invalid direction".into()));
             }
             self.to_string(p, direction)?
@@ -996,7 +996,7 @@ impl<H: Host> Vm<H> {
             .first()
             .copied()
             .ok_or_else(|| self.type_error(p, "Missing rounding options".into()))?;
-        if options.is_null() || matches!(self.heap.get(options), Some(Cell::Symbol(_))) {
+        if options.is_null() || self.heap.is_symbol(options) {
             return Err(self.type_error(p, "Invalid rounding options".into()));
         }
         let (smallest_unit, increment, rounding_mode) =
@@ -1145,7 +1145,7 @@ impl<H: Host> Vm<H> {
             round_zoned_date_time_day(epoch_nanoseconds, &time_zone, "trunc")
                 .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?
         } else {
-            if matches!(self.heap.get(argument), Some(Cell::Symbol(_))) {
+            if self.heap.is_symbol(argument) {
                 return Err(self.type_error(p, "Invalid time".into()));
             }
             if !self.is_string(argument) && !self.is_object_like(argument) {

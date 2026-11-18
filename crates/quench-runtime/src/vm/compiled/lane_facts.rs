@@ -16,7 +16,7 @@ pub(super) fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<u
 pub(super) fn unit_direct_calls(unit: &lane_unit::Unit, direct: &[DirectCandidates])
     -> (Box<[DirectCallee]>, BTreeMap<usize, *const DirectCallee>) {
     let (pcs, direct): (Vec<usize>, Vec<DirectCallee>) = unit.instructions.iter().enumerate()
-        .filter(|(_, instruction)| instruction.op().is_call() || instruction.op().class().eq(crate::bytecode::Class::Construct))
+        .filter(|(_, instruction)| crate::staged::meaning::means(*instruction, crate::staged::meaning::Meaning::Call) || crate::staged::meaning::means(*instruction, crate::staged::meaning::Meaning::Construct))
         .filter_map(|(pc, _)| match unit.origins[pc] {
             lane_unit::Origin::Caller(origin) => {
                 let inlined = |callee: &DirectCallee| unit.frames.iter()
@@ -69,7 +69,70 @@ pub(super) fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
 pub(super) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
     let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
         instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-    loops || !unit.frames.is_empty() || direct.iter().any(|callee| callee.target.function == function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
+    loops || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
+}
+
+/// Whether one entry of `unit` saves more interpreter time than the body's entry costs
+/// (`Priors::body_entry_ns`), its inlined callees' work included: a unit with a loop does, and
+/// so does one that calls itself (`calls_itself`).
+pub(super) fn entry_repays(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
+    let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
+        instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
+    loops || calls_itself(direct, function) || straight_line_repays(&tiers.priors, unit.instructions.len())
+}
+
+/// The call depth `recursion_cycle` follows: a cycle through more functions than this is weighed as
+/// straight-line code.
+const RECURSION_DEPTH: usize = 4;
+
+/// The functions that call `function` back through the targets their call sites linked
+/// (`targets`), each within `RECURSION_DEPTH` calls of it: `function` itself where it recurses
+/// directly, and the other members of a mutual recursion (`f` calling `g` calling `f`). Empty
+/// where `function` does not recurse.
+pub(super) fn recursion_cycle(program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>) -> std::collections::BTreeSet<u32> {
+    let callees = |caller: u32| -> Vec<u32> {
+        let Some(body) = program.function_get(caller as usize) else { return Vec::new() };
+        (0..body.code.len() as u32).flat_map(|pc| targets(caller, pc)).map(|target| target.function).collect()
+    };
+    // The call graph out of `function`, as far as `RECURSION_DEPTH` calls.
+    let mut edges: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    let mut frontier = vec![function];
+    for _ in 0..RECURSION_DEPTH {
+        let mut next = Vec::new();
+        for caller in frontier {
+            if edges.contains_key(&caller) { continue; }
+            let out = callees(caller);
+            next.extend(out.iter().copied().filter(|callee| !edges.contains_key(callee)));
+            edges.insert(caller, out);
+        }
+        frontier = next;
+    }
+    // Those of its nodes from which `function` is reached again.
+    let mut cycle = std::collections::BTreeSet::new();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (caller, out) in &edges {
+            if !cycle.contains(caller) && out.iter().any(|callee| *callee == function || cycle.contains(callee)) {
+                cycle.insert(*caller);
+                changed = true;
+            }
+        }
+    }
+    cycle
+}
+
+/// Whether a body of `function` calls itself directly: one entry then runs a native call tree
+/// rather than one straight line, as a loop does. Recursion through other functions is
+/// `recursion_cycle`'s.
+fn calls_itself(direct: &[DirectCallee], function: u32) -> bool {
+    direct.iter().any(|callee| callee.target.function == function)
+}
+
+/// Whether a straight-line unit of `instructions` instructions repays its entry: the share of
+/// its interpreted time the body keeps exceeds the body's entry cost.
+fn straight_line_repays(priors: &tier_policy::Priors, instructions: usize) -> bool {
+    instructions as u64 * priors.interpreter_ns * (tier_policy::PER_MILLE - priors.body_share) / tier_policy::PER_MILLE > priors.body_entry_ns
 }
 
 /// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was
@@ -77,10 +140,39 @@ pub(super) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u
 pub(super) fn plan_key(unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug,
     direct: usize, generic: &[LaneExit], entry: Option<u32>, budget: usize,
     arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)]) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-    format!("{:?}{:?}{fields:?}{generic:?}{entry:?}{budget}{direct}{arrays:?}", unit.instructions, unit.frames)
-        .bytes().fold(FNV_OFFSET, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME))
+    use std::fmt::Write;
+    // The instructions, most of the key, fold as their words; the rest as its debug text,
+    // written into the hash without a string between.
+    let mut key = Fnv::default();
+    for instruction in &unit.instructions {
+        let (word, imm) = instruction.words();
+        key.word(word);
+        key.word(u64::from(imm));
+    }
+    let _ = write!(key, "{:?}{fields:?}{generic:?}{entry:?}{budget}{direct}{arrays:?}", unit.frames);
+    key.0
+}
+
+/// A 64-bit FNV-1a hash.
+struct Fnv(u64);
+
+impl Default for Fnv {
+    fn default() -> Self { Self(0xcbf2_9ce4_8422_2325) }
+}
+
+impl Fnv {
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    fn word(&mut self, word: u64) {
+        self.0 = (self.0 ^ word).wrapping_mul(Self::PRIME);
+    }
+}
+
+impl std::fmt::Write for Fnv {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        self.0 = text.bytes().fold(self.0, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(Self::PRIME));
+        Ok(())
+    }
 }
 
 /// Whether the tier model admits compiling `function`'s body for the `entries` it has made
@@ -94,7 +186,7 @@ pub(super) fn pays_compile(tiers: &Tiers, program: &ResidualProgram, function: u
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a
 /// declined short callee warms again while the caller publishes at once, calling it through
 /// its entry cell. A callee the plan inlines has no call of it to bind.
-pub(super) fn bind_callees(direct: &[DirectCallee], caller: &super::super::dispatch_fast::LaneView) {
+pub(in crate::vm) fn bind_callees(direct: &[DirectCallee], caller: &super::super::dispatch_fast::LaneView) {
     for callee in direct {
         // SAFETY: a resolved target's view outlives its program.
         if let Some(view) = unsafe { callee.target.view.as_ref() } { view.note_caller(caller); view.demand_body(); }
@@ -123,10 +215,22 @@ impl Census {
 /// under a direct caller's frames.
 pub(super) fn unit_closed(unit: &lane_unit::Unit, function: u32, direct: impl Fn(usize) -> bool,
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>) -> bool {
-    unit.instructions.iter().enumerate().all(|(pc, instruction)| !instruction.op().is_call()
+    unit.instructions.iter().enumerate().all(|(pc, instruction)| !crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Call)
         || direct(pc)
         || match unit.origins[pc] {
             lane_unit::Origin::Caller(origin) => targets(function, origin),
             lane_unit::Origin::Inlined { frame, pc } => targets(unit.frames[frame].target.function, pc),
         }.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_straight_line_unit_repays_its_entry_from_48_instructions() {
+        let priors = &tier_policy::TEST_PRIORS;
+        assert!(!straight_line_repays(priors, 47));
+        assert!(straight_line_repays(priors, 48));
+    }
 }
