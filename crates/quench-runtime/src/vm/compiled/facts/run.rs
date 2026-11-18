@@ -251,6 +251,9 @@ pub(in crate::vm::compiled) fn analyze(entry: usize, initial: &[Type], instructi
 /// `analyze` over `text`.
 pub(in crate::vm::compiled) fn analyze_text(text: &Text<'_>, initial: &[Type], seeds: Seeds<'_>) -> Facts {
     let mut facts = Facts::new(text.instructions.len(), initial.len(), seeds);
+    // Each reachable leader holds one row: room for every leader's (and the entry's) at once,
+    // in place of the doublings the rows' buffers grew through as blocks were reached.
+    facts.reserve_rows(text.leaders.iter().count() + 1, seeds.model.is_some());
     let mut pending = Pending::new();
     if text.entry < text.instructions.len() {
         facts.reach(text.entry, &Point::entering(initial, seeds), &mut pending, seeds);

@@ -164,3 +164,35 @@ impl Verdict {
         format!("{{\"body_ns\":{},\"interpreter_ns\":{},\"retired\":{}}}", self.body_nanos, self.interpreter_nanos, self.retire)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_body_within_the_margin_of_the_interpreter_is_kept() {
+        assert!(!Verdict::of(900, 1000, 20).retire);
+    }
+
+    #[test]
+    fn a_body_less_than_the_margin_below_the_interpreter_retires() {
+        assert!(Verdict::of(990, 1000, 20).retire);
+    }
+
+    #[test]
+    fn an_equal_body_retires() {
+        assert!(Verdict::of(1000, 1000, 20).retire);
+    }
+
+    #[test]
+    fn thread_cpu_nanos_is_monotone() {
+        let first = thread_cpu_nanos();
+        let mut work = 0u64;
+        for i in 0..100_000u64 {
+            work = work.wrapping_add(std::hint::black_box(i));
+        }
+        std::hint::black_box(work);
+        let second = thread_cpu_nanos();
+        assert!(second >= first);
+    }
+}

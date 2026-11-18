@@ -15,8 +15,9 @@ use super::{Owner, PropertyFrame};
 /// object's record keeps those bits current: a function's record is read through `kept_slot`.
 pub(super) fn formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct, shape): (Owner, bool, u32),
     at: &Reached<S::Word, S::Cond>, (slot, rep, storage_len): (u16, Representation, usize), miss: S::Miss) -> Option<S::Word> {
-    let word = super::super::object::header_u32(stage, super::super::region::Region::ShapeWord.mutable(), at.record,
-        crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset);
+    // The word the receiver's header read, where it read one.
+    let word = at.auxiliary.unwrap_or_else(|| super::super::object::header_u32(stage, super::super::region::Region::ShapeWord.mutable(), at.record,
+        crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset));
     let same = { let shape = stage.site(u64::from(shape)); stage.eq_imm(word, shape) };
     stage.guard(same, miss)?;
     frame.prove_shape(stage, owner, shape, direct);

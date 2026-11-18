@@ -77,8 +77,13 @@ pub(super) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u
 pub(super) fn entry_repays(tiers: &Tiers, unit: &lane_unit::Unit) -> bool {
     let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
         instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-    let priors = &tiers.priors;
-    loops || unit.instructions.len() as u64 * priors.interpreter_ns * (tier_policy::PER_MILLE - priors.body_share) / tier_policy::PER_MILLE > priors.body_entry_ns
+    loops || straight_line_repays(&tiers.priors, unit.instructions.len())
+}
+
+/// Whether a straight-line unit of `instructions` instructions repays its entry: the share of
+/// its interpreted time the body keeps exceeds the body's entry cost.
+fn straight_line_repays(priors: &tier_policy::Priors, instructions: usize) -> bool {
+    instructions as u64 * priors.interpreter_ns * (tier_policy::PER_MILLE - priors.body_share) / tier_policy::PER_MILLE > priors.body_entry_ns
 }
 
 /// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was
@@ -167,4 +172,16 @@ pub(super) fn unit_closed(unit: &lane_unit::Unit, function: u32, direct: impl Fn
             lane_unit::Origin::Caller(origin) => targets(function, origin),
             lane_unit::Origin::Inlined { frame, pc } => targets(unit.frames[frame].target.function, pc),
         }.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_straight_line_unit_repays_its_entry_from_48_instructions() {
+        let priors = &tier_policy::TEST_PRIORS;
+        assert!(!straight_line_repays(priors, 47));
+        assert!(straight_line_repays(priors, 48));
+    }
 }

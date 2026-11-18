@@ -10691,6 +10691,9 @@ script_handler! {
             next!(cx, r, header, Carried::script_in(cx, view))
         }
         if site.analysis_failure.is_some_and(|failure| !failure.is_call_boundary()) {
+            // An instruction no region runs leaves the loop to a body, which runs what it can
+            // natively and leaves at the rest (`loop_body::offer_body`).
+            if loop_body::offer_body(cx, r, site) { next!(cx, r, header, Carried::script_in(cx, view)) }
             lane_loop_retire::<H>(cx, ip, site);
             next!(cx, r, header, Carried::script_in(cx, view))
         }
