@@ -139,6 +139,11 @@ impl<H: Host> WasmGc for HeapStage<'_, H> {
 }
 
 impl<H: Host> HeapStage<'_, H> {
+    /// The element storage of the array `reference`, if it is an array.
+    pub(in crate::vm) fn array_element(&self, reference: u64) -> Option<wasmparser::StorageType> {
+        self.array_owner(reference).map(|(field, _)| field.element_type)
+    }
+
     /// The element declaration of the array `reference`, with the declarations that own it, if it
     /// is an array.
     fn array_owner(&self, reference: u64) -> Option<(wasmparser::FieldType, &WasmTypes)> {
