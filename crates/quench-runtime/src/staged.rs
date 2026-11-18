@@ -322,6 +322,14 @@ impl<W, P> Operation<W, P> {
         })
     }
 
+    /// The destination and constant index of an instruction `decode_flow` reads as `LoadConst`,
+    /// for a tier that holds its constants in a table of its own (the b-jit's Numbers): the
+    /// same decode, with the constant left for the tier to look up.
+    #[inline(always)]
+    pub(crate) fn decode_constant_load(instruction: WideInstruction) -> Option<(Register, usize)> {
+        (instruction.op() == Op::LoadConst).then(|| (instruction.result_register(), instruction.constant_index()))
+    }
+
     /// The call operations of `decode`: a call or construction through its forms (`Invocation`),
     /// except `super(...)`, whose arguments the VM gathers (`spread`).
     fn decode_call(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {

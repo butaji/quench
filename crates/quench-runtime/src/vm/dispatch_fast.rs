@@ -7630,7 +7630,15 @@ pub(super) const fn runtime_base(site: u8) -> bool { site == HELD_OTHER_THIS || 
 /// saves the base test (5 Ir per read).
 pub(super) const CELL_OWN_THIS: u8 = own_site(true, OWN_FORMS.len() + 6);
 pub(super) const CELL_OWN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 6);
-pub(super) const fn cell_own_site(site: u8) -> bool { site == CELL_OWN_THIS || site == CELL_OWN_REGISTER }
+/// The cell-own sites whose hint layout keeps its slots in an arena run of tagged words, where
+/// float slots are off for the process (`switches::float_slots`): the row reads the slot
+/// untested and undecoded, as an own-field site of that form does (`OWN_FORMS`), so the read
+/// is the slot load past the layout guard.
+pub(super) const CELL_RUN_THIS: u8 = own_site(true, OWN_FORMS.len() + 7);
+pub(super) const CELL_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 7);
+pub(super) const fn cell_own_site(site: u8) -> bool {
+    site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
+}
 
 /// Whether site `site` reads through the record's inherited hint; of any receiver (`other`).
 pub(super) const fn inherited_site(site: u8) -> bool {
@@ -7649,7 +7657,9 @@ pub(super) const fn own_site_this(site: u8) -> bool { site.wrapping_sub(1) & 1 =
 /// The storage form own-field site `site` fixes (`OWN_FORMS`); `HINTED_FORM` for none.
 pub(super) const fn own_site_form(site: u8) -> u32 {
     let index = (site.wrapping_sub(1) / 2) as usize;
-    if index < OWN_FORMS.len() { OWN_FORMS[index] } else { HINTED_FORM }
+    if index < OWN_FORMS.len() { OWN_FORMS[index] }
+    else if index == OWN_FORMS.len() + 7 { crate::staged::TAGGED_SLOTS }
+    else { HINTED_FORM }
 }
 
 /// Whether the word own-field site `site` reads is a slot word to decode (`decode_staged_word`):
@@ -8215,8 +8225,17 @@ script_handler! {
                 match base.and_then(|object| (unsafe { vm(cx) }).cell_own_hint(object, i.c)) {
                     Some((layout, slot)) if !holds_loop_site(ip) => {
                         set_record_hint(ip, layout, slot);
-                        Some(single_base_handler(i.b, lane_row::<H, FIELD_LEAF_READ, ACC_NONE, CELL_OWN_THIS>,
-                            lane_row::<H, FIELD_LEAF_READ, ACC_NONE, CELL_OWN_REGISTER>, lane_get_field::<H>))
+                        // A tagged arena run is a fixed form: the row folds the layout's form test and the slot decode.
+                        use crate::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
+                        let run = crate::heap::layouts::auxiliary(layout) & (EXTRAS_FORM | INLINE_FORM | NARROW_FORM) == 0
+                            && !crate::vm::switches::float_slots();
+                        Some(if run {
+                            single_base_handler(i.b, lane_row::<H, FIELD_LEAF_READ, ACC_NONE, CELL_RUN_THIS>,
+                                lane_row::<H, FIELD_LEAF_READ, ACC_NONE, CELL_RUN_REGISTER>, lane_get_field::<H>)
+                        } else {
+                            single_base_handler(i.b, lane_row::<H, FIELD_LEAF_READ, ACC_NONE, CELL_OWN_THIS>,
+                                lane_row::<H, FIELD_LEAF_READ, ACC_NONE, CELL_OWN_REGISTER>, lane_get_field::<H>)
+                        })
                     }
                     _ => Some(lane_get_field::<H>),
                 }
