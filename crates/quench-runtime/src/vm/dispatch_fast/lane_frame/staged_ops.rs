@@ -2,14 +2,6 @@
 //! record, steps the operation on the concrete stage, and answers the edge or the written value.
 use super::*;
 
-/// The edge a staged jump test takes, or `None` where the value's heap cell decides it.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_jump_if<const TAKEN: bool>(r: Registers, view: Carried, register: u16) -> Option<Edge> {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    jump_edge(crate::staged::step(&mut stage, &mut frame, Operation::JumpIf { register, taken: TAKEN }))
-}
-
 /// The edge a staged jump's step takes, or `None` where the interpreter's own path decides it.
 #[inline(always)]
 fn jump_edge(step: Step<u64, Edge>) -> Option<Edge> {
@@ -184,13 +176,3 @@ pub(in crate::vm::dispatch_fast) fn staged_store_local_checked<H: Host, const AC
     true
 }
 
-/// The edge a staged unconditional jump takes.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_jump(r: Registers, view: Carried) -> Edge {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    match crate::staged::step(&mut stage, &mut frame, Operation::Jump) {
-        Step::Control(edge) => edge,
-        _ => unreachable!("a jump produces no value"),
-    }
-}

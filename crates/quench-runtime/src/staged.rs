@@ -123,18 +123,39 @@ pub(crate) use stage::{fill_by_rows, Passed, RecordSpace, Stage, Table, word_byt
 mod register_frame;
 pub(crate) use register_frame::{Constant, Frame, Step, bound_this, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
 
-/// Where a row goes when its frame cannot decide a step: the VM's general step, or, for a
-/// capture access whose scopes the frame does not hold, the walk over the scopes from the
-/// activation's environment (a read) or the store into the scope it finds (a write).
+/// Where a row goes when its frame cannot decide a step: the VM's general step; for a capture
+/// access whose scopes the frame does not hold, the walk over the scopes from the activation's
+/// environment (a read) or the store into the scope it finds (a write); for a truth test of a
+/// heap value, its cell's answer.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Miss { General, WalkScopes, StoreThroughScopes }
+pub(crate) enum Miss {
+    General,
+    WalkScopes,
+    StoreThroughScopes,
+    /// A conditional jump on a heap value whose cell decides its truthiness, jumping where the
+    /// truthiness is `taken`.
+    CellTruth { taken: bool },
+}
 
 /// The row of `op`'s miss route (`Miss`).
 pub(crate) const fn miss(op: Op) -> Miss {
     match op {
         Op::LoadCapture => Miss::WalkScopes,
         Op::StoreCapture => Miss::StoreThroughScopes,
-        _ => Miss::General,
+        _ => match truth_jump(op) {
+            Some(taken) => Miss::CellTruth { taken },
+            None => Miss::General,
+        },
+    }
+}
+
+/// The truthiness on which `op` jumps, for a jump on its register's truthiness
+/// (`Operation::JumpIf`'s `taken`).
+pub(crate) const fn truth_jump(op: Op) -> Option<bool> {
+    match op {
+        Op::JumpFalse => Some(false),
+        Op::JumpTrue => Some(true),
+        _ => None,
     }
 }
 

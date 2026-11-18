@@ -39,7 +39,7 @@ fn an_update_fuses_with_its_back_edge_and_test() {
     const OPERATOR: u32 = oxc_ast::ast::BinaryOperator::LessThan as u32;
     let record = |handler: *const (), a: u16| LaneInstruction { handler, operand: LaneOperand { jump: 0 }, a, b: 0, c: 0, call_link: std::cell::Cell::new(NO_CALL_LINK) };
     let update = record(lane_row::<TestHost, { opc::IncDec }, ACC_NONE, FLAG_UNREAD> as Handler as *const (), 0);
-    let jump = record(lane_jump_always::<TestHost, true> as Handler as *const (), 0);
+    let jump = record(jump_row::<TestHost, { opc::Jump }>(true) as *const (), 0);
     let test = record(relation_jump_handler::<TestHost, false>(OPERATOR, false) as *const (), OPERATOR as u16);
     let fused = |test: Option<&LaneInstruction>| update_fusion::<TestHost>(&update, &jump, |offset| if offset == 0 { test } else { None }).map(|handler| handler as *const ());
     assert_eq!(fused(Some(&test)), Some(update_loop_handler::<TestHost>(OPERATOR, false, true) as *const ()));

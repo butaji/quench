@@ -532,7 +532,7 @@ const fn row_miss<H: Host>(op: Op) -> Handler {
     match crate::staged::miss(op) {
         crate::staged::Miss::WalkScopes => super::lane_load_capture_walk::<H>,
         crate::staged::Miss::StoreThroughScopes => super::lane_store_outer_capture::<H>,
-        crate::staged::Miss::General => lane_general_step::<H>,
+        crate::staged::Miss::General | crate::staged::Miss::CellTruth { .. } => lane_general_step::<H>,
     }
 }
 
@@ -556,6 +556,47 @@ fn is_row_flagged<H: Host, const OP: u16, const FLAG: u8>(handler: *const ()) ->
     let rows: [Handler; ACC_POSITIONS] = [lane_row::<H, OP, ACC_NONE, FLAG>, lane_row::<H, OP, ACC_A, FLAG>,
         lane_row::<H, OP, ACC_B, FLAG>, lane_row::<H, OP, ACC_C, FLAG>, lane_row::<H, OP, ACC_PAIR, FLAG>];
     rows.iter().any(|row| *row as *const () == handler)
+}
+
+/// Where opcode `op`'s jump row leaves when its words do not decide the edge: a truth test of a
+/// heap value asks its cell (`lane_jump_test_cell`); any other takes the VM's general step.
+const fn jump_row_miss<H: Host, const BACKWARD: bool>(op: Op) -> Handler {
+    match crate::staged::miss(op) {
+        crate::staged::Miss::CellTruth { taken: false } => super::lane_jump_test_cell::<H, BACKWARD, false>,
+        crate::staged::Miss::CellTruth { taken: true } => super::lane_jump_test_cell::<H, BACKWARD, true>,
+        _ => lane_general_step::<H>,
+    }
+}
+
+/// Whether opcode `op` runs its generated jump row (`row_jump`): a jump the flow decoder
+/// stages (`Decoder::Flow`).
+pub(in crate::vm::dispatch_fast) const fn jumps_by_row(op: Op) -> bool {
+    op.control_flow_layout().jumps() && matches!(op.staged(), Some(crate::bytecode::Decoder::Flow))
+}
+
+/// Opcode `OP`'s jump row in direction `backward`.
+pub(in crate::vm::dispatch_fast) const fn jump_row<H: Host, const OP: u16>(backward: bool) -> Handler {
+    if backward { row_jump::<H, OP, true> } else { row_jump::<H, OP, false> }
+}
+
+lane_handler! {
+    /// The lane handler of every jump `jumps_by_row` admits, generated from its staged row as
+    /// `lane_row` is: the flow decoder reads the record, the row steps on `Concrete`, and its
+    /// edge picks the continuation. A jump to its target runs the lane's jump (`lane_jump`),
+    /// whose backward edge (`BACKWARD`, which the view fixes per record) is a safepoint.
+    pub(super) fn row_jump<OP: u16, BACKWARD: bool>(cx, r, ip, i, view) {
+        let fields = LaneFields::<OP>(i);
+        let Some(operation) = Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY) else {
+            sibling!(lane_general_step::<H>, r, ip, view)
+        };
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
+        match crate::staged::step(&mut stage, &mut frame, operation) {
+            Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(r, ip, BACKWARD, view, None)),
+            Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), view),
+            Step::Unresolved => sibling!(const { jump_row_miss::<H, BACKWARD>(LaneFields::<OP>::OPCODE) }, r, ip, view),
+        }
+    }
 }
 
 lane_handler! {

@@ -3316,7 +3316,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, lane_row, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_property_key, staged_require_iterator_result, staged_typeof_index};
+use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_property_key, staged_require_iterator_result, staged_typeof_index};
 
 
 lane_handler! {
@@ -5088,7 +5088,7 @@ script_handler! {
 
 script_handler! {
     /// `lane_relation_value` whose next record branches on the boolean it writes
-    /// (`lane_jump_false`, or `lane_jump_true` where `WHEN`; `specialize_relation_jumps`), a
+    /// (the `JumpFalse` row, or the `JumpTrue` row where `WHEN`; `row_jump`, `specialize_relation_jumps`), a
     /// comparison kept as a value and also tested, as `return (s & HELD) != 0 || ...`: the
     /// comparison, its value and the branch as one record. Any other pair takes the value's
     /// own path, which continues at the jump record.
@@ -10052,15 +10052,6 @@ script_handler! {
     }
 }
 
-lane_handler! {
-    fn lane_jump_always<BACKWARD: bool>(cx, r, ip, i, view) {
-        match staged_jump(r, view) {
-            crate::staged::Edge::Target => resume!(cx, lane_jump::<H>(r, ip, BACKWARD, view, None)),
-            crate::staged::Edge::Following => unreachable!("an unconditional jump takes its target"),
-        }
-    }
-}
-
 script_handler! {
     /// A loop's backward jump in compiled execution (`LoopSite`): the jump's safepoint, then
     /// the loop's native code once the jump is hot and the region compiled. Native code
@@ -10385,7 +10376,7 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     // field hints again (`holds_loop_site`).
     if site.hookable { unsafe { (*header).call_link.set(NO_CALL_LINK) }; }
     unsafe { (*ip.cast_mut()).operand = LaneOperand { jump: site.jump }; }
-    requicken::<H>(ip, lane_jump_always::<H, true>);
+    requicken::<H>(ip, jump_row::<H, JUMP>(true));
     // The site kept the update before the jump from fusing with it (`install_loop_sites`
     // runs before `specialize_update_jumps`): the plain jump takes the loader's fusion now.
     if site.backedge > site.header {
@@ -10939,33 +10930,6 @@ fn lane_inlined_activation<H: Host>(
     }
     // SAFETY: the activation's view holds a record for each of its function's PCs.
     unsafe { (*cx).base.add(callee_pc as usize) }
-}
-
-script_handler! {
-    /// `JumpFalse` of a value that decides its own truthiness (`Value::truthiness`); a heap
-    /// value whose cell decides it takes `lane_jump_test_cell`.
-    fn lane_jump_false<BACKWARD: bool>(cx, r, ip, i, view) {
-        match staged_jump_if::<false>(r, Carried::script_in(cx, view), i.a) {
-            Some(crate::staged::Edge::Target) =>
-                resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None)),
-            Some(crate::staged::Edge::Following) =>
-                next!(cx, r, following(ip), Carried::script_in(cx, view)),
-            None => sibling!(lane_jump_test_cell::<H, BACKWARD, false>, r, ip, Carried::script_in(cx, view)),
-        }
-    }
-}
-
-script_handler! {
-    /// `JumpTrue` as `lane_jump_false`: ToBoolean runs no guest code.
-    fn lane_jump_true<BACKWARD: bool>(cx, r, ip, i, view) {
-        match staged_jump_if::<true>(r, Carried::script_in(cx, view), i.a) {
-            Some(crate::staged::Edge::Target) =>
-                resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None)),
-            Some(crate::staged::Edge::Following) =>
-                next!(cx, r, following(ip), Carried::script_in(cx, view)),
-            None => sibling!(lane_jump_test_cell::<H, BACKWARD, true>, r, ip, Carried::script_in(cx, view)),
-        }
-    }
 }
 
 script_handler! {
@@ -21165,6 +21129,9 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     } else if MemoryStore::from_direct_op(op).is_some() {
         lane_store::<H, OP, ACC>
     } else {
+        if jumps_by_row(op) {
+            return Some(LaneHandler { handler: row_jump::<H, OP, BACKWARD>, produces: false });
+        }
         if lane_runs_row(op) {
             return Some(LaneHandler { handler: lane_row::<H, OP, ACC, FLAG_UNREAD>, produces: row_produces(op) });
         }
@@ -21205,9 +21172,6 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
 const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
         Class::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
-        Class::Jump => Some(lane_jump_always::<H, BACKWARD>),
-        Class::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
-        Class::JumpTrue => Some(lane_jump_true::<H, BACKWARD>),
         Class::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
         Class::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
         Class::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
@@ -21623,13 +21587,12 @@ fn lane_for_of_step(decoded: &[WideInstruction], pc: usize) -> Option<ForOfTest>
     };
     let done = record(FOR_OF_DONE_READ).filter(|_| reads_result(FOR_OF_DONE_READ))?.result_register();
     let test = record(FOR_OF_DONE_TEST).filter(|test| test.a() == done)?;
-    let form = match test.op().class() {
-        Class::JumpFalse => ForOfTest::Emitted,
-        Class::JumpTrue => ForOfTest::Threaded,
-        _ => return None,
+    let form = match crate::staged::truth_jump(test.op())? {
+        false => ForOfTest::Emitted,
+        true => ForOfTest::Threaded,
     };
     let exit = record(form.exit())?;
-    let leaves = exit.op().class().eq(if form == ForOfTest::Emitted { Class::Jump } else { Class::JumpTrue })
+    let leaves = (if form == ForOfTest::Emitted { exit.op().class().eq(Class::Jump) } else { crate::staged::truth_jump(exit.op()) == Some(true) })
         && exit.jump_target() as usize > pc + form.value_read();
     let enters = form == ForOfTest::Threaded || test.jump_target() as usize == pc + form.value_read();
     (leaves && enters && reads_result(form.value_read())).then_some(form)
@@ -21667,7 +21630,7 @@ fn lane_binding_step(decoded: &[WideInstruction], pc: usize) -> bool {
         && flag.b() == done
         && flag.a() != done
         && flag.a() != result
-        && test.op().class().eq(Class::JumpTrue)
+        && crate::staged::truth_jump(test.op()) == Some(true)
         && test.a() == done
         && test.jump_target() as usize > pc + BINDING_VALUE_READ
         && value.result_register() != done
@@ -22974,7 +22937,7 @@ fn install_loop_sites<'live, H: Host>(
     (diagnostics, tiers): (bool, &'static Tiers),
     records: &mut [LaneInstruction],
 ) -> (Box<[LoopSite]>, Vec<(super::compiled::RegionRejection, usize)>) {
-    let backward = lane_jump_always::<H, true> as Handler as *const ();
+    let backward = jump_row::<H, JUMP>(true) as *const ();
     let table_entries = branch_table_entry_records(decoded);
     // A fused record ahead of a jump runs that jump itself, reading its offset from the jump's
     // record (`JumpFusions::THEN`, a move pair with its jump): a site there would replace the
@@ -23143,7 +23106,7 @@ fn specialize_register_operands<H: Host>(
     let backward_test = lane_jump_binary_false::<H, true> as Handler as *const ();
     let unary = unary_handler::<H>() as *const ();
     let returning_binary = lane_returning::<H, RETURNING_BINARY, NOT_LEAF> as Handler as *const ();
-    let forward_false_jump = lane_jump_false::<H, false> as Handler as *const ();
+    let forward_false_jump = jump_row::<H, JUMP_IF_FALSE>(false) as *const ();
     for (pc, &instruction) in decoded.iter().enumerate() {
         // A forward `JumpFalse` of this record's result follows it (`lane_typeof_test_jump`).
         let tested_next = records.get(pc + 1).is_some_and(|next| next.handler == forward_false_jump && next.a == records[pc].a);
@@ -23770,7 +23733,7 @@ fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut 
 }
 
 /// Gives each integer comparison kept as a value (`lane_relation_value`) whose next record
-/// branches on that value (`lane_jump_false`, `lane_jump_true`) the fused comparison and branch
+/// branches on that value (the `JumpFalse` and `JumpTrue` rows, `row_jump`) the fused comparison and branch
 /// (`lane_relation_value_jump`). The jump record stays, for jumps that enter it and for the
 /// comparisons the fused record leaves to the value's own path.
 fn specialize_relation_jumps<H: Host>(records: &mut [LaneInstruction]) {
@@ -23785,10 +23748,10 @@ fn specialize_relation_jumps<H: Host>(records: &mut [LaneInstruction]) {
             continue;
         }
         let tests: [(*const (), Handler); 4] = [
-            (lane_jump_false::<H, false> as Handler as *const (), if constant { lane_relation_value_jump::<H, true, false, false> } else { lane_relation_value_jump::<H, false, false, false> }),
-            (lane_jump_false::<H, true> as Handler as *const (), if constant { lane_relation_value_jump::<H, true, true, false> } else { lane_relation_value_jump::<H, false, true, false> }),
-            (lane_jump_true::<H, false> as Handler as *const (), if constant { lane_relation_value_jump::<H, true, false, true> } else { lane_relation_value_jump::<H, false, false, true> }),
-            (lane_jump_true::<H, true> as Handler as *const (), if constant { lane_relation_value_jump::<H, true, true, true> } else { lane_relation_value_jump::<H, false, true, true> }),
+            (jump_row::<H, JUMP_IF_FALSE>(false) as *const (), if constant { lane_relation_value_jump::<H, true, false, false> } else { lane_relation_value_jump::<H, false, false, false> }),
+            (jump_row::<H, JUMP_IF_FALSE>(true) as *const (), if constant { lane_relation_value_jump::<H, true, true, false> } else { lane_relation_value_jump::<H, false, true, false> }),
+            (jump_row::<H, JUMP_IF_TRUE>(false) as *const (), if constant { lane_relation_value_jump::<H, true, false, true> } else { lane_relation_value_jump::<H, false, false, true> }),
+            (jump_row::<H, JUMP_IF_TRUE>(true) as *const (), if constant { lane_relation_value_jump::<H, true, true, true> } else { lane_relation_value_jump::<H, false, true, true> }),
         ];
         if let Some(&(_, fused)) = tests.iter().find(|(handler, _)| *handler == jump.handler) {
             records[pc].handler = fused as *const ();
@@ -23830,7 +23793,7 @@ fn specialize_array_literals<H: Host>(decoded: &[WideInstruction], records: &mut
 /// (`lane_jump_back_update_small`). The head's records stay, for the loop's entry and for the
 /// values the fused record leaves to them.
 fn specialize_update_back_edges<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
-    let back = lane_jump_always::<H, true> as Handler as *const ();
+    let back = jump_row::<H, JUMP>(true) as *const ();
     let copy = lane_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
     for pc in 0..records.len() {
         if records[pc].handler != back {
@@ -23857,7 +23820,7 @@ fn specialize_update_back_edges<H: Host>(decoded: &[WideInstruction], records: &
 /// (`lane_jump_nullish_false`) the fused back edge and test (`lane_jump_back_nullish`). The
 /// test record stays, for the loop's entry and for the values it leaves to that record.
 fn specialize_nullish_back_edges<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
-    let back = lane_jump_always::<H, true> as Handler as *const ();
+    let back = jump_row::<H, JUMP>(true) as *const ();
     for pc in 0..records.len() {
         if records[pc].handler != back {
             continue;
@@ -23902,8 +23865,8 @@ fn specialize_update_jumps<H: Host>(decoded: &[WideInstruction], records: &mut [
 fn update_fusion<'a, H: Host>(update: &LaneInstruction, jump: &LaneInstruction, at: impl Fn(usize) -> Option<&'a LaneInstruction>) -> Option<Handler> {
     let decrement = update_direction::<H>(update)?;
     let backward = match jump.handler {
-        plain if plain == lane_jump_always::<H, true> as Handler as *const () => true,
-        plain if plain == lane_jump_always::<H, false> as Handler as *const () => false,
+        plain if plain == jump_row::<H, JUMP>(true) as *const () => true,
+        plain if plain == jump_row::<H, JUMP>(false) as *const () => false,
         _ => return None,
     };
     let looped = || -> Option<Handler> {
@@ -24028,6 +23991,11 @@ fn specialize_environment_window<H: Host>(
     })
 }
 
+/// The jump rows the jump passes fuse and requicken to (`jump_row`).
+const JUMP: u16 = opc::Jump;
+const JUMP_IF_FALSE: u16 = opc::JumpFalse;
+const JUMP_IF_TRUE: u16 = opc::JumpTrue;
+
 /// The capture rows the capture passes fuse (`specialize_captures`, `specialize_capture_updates`,
 /// `specialize_load_branch_pairs`) and whose read a fused update falls back to.
 const CAPTURE_READ: u16 = opc::LoadCapture;
@@ -24139,8 +24107,8 @@ fn specialize_frame_locals<H: Host>(function: &Function, records: &mut [LaneInst
 /// record. The `JumpTrue` record stays for jumps that reach it.
 fn specialize_negated_instanceof<H: Host>(records: &mut [LaneInstruction]) {
     let instanceof = lane_instanceof_value::<H> as Handler as *const ();
-    let forward = lane_jump_true::<H, false> as Handler as *const ();
-    let backward = lane_jump_true::<H, true> as Handler as *const ();
+    let forward = jump_row::<H, JUMP_IF_TRUE>(false) as *const ();
+    let backward = jump_row::<H, JUMP_IF_TRUE>(true) as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         let (test, jump) = (&records[pc], &records[pc + 1]);
         if test.handler != instanceof
