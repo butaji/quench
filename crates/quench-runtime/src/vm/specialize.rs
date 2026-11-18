@@ -78,6 +78,7 @@ fn static_successor(
     pc: usize,
 ) -> Option<usize> {
     let op = instruction.op();
+    // merge: HEAD's decoded Jump match is the derivation's JUMP_ROW test.
     if op as u16 != crate::staged::JUMP_ROW || !division.folds_instruction(op) {
         return None;
     }

@@ -12,7 +12,7 @@
 //! claim. A `with` object can only redirect a name the analysis classified by its syntax,
 //! which hands the binding's value nowhere new.
 
-mod deferred;
+pub(in crate::compile) mod deferred;
 pub(super) use deferred::{compiles_at_load, invoked_where_made};
 
 use oxc_ast::ast::{

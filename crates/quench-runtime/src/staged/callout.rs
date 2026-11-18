@@ -26,6 +26,8 @@ pub(crate) const TAG_DECIDE: u8 = 14;
 pub(crate) const TAG_ENUMERATED_GET: u8 = 15;
 pub(crate) const TAG_CLONE_ENV: u8 = 16;
 pub(crate) const TAG_ARGUMENT_GET: u8 = 17;
+// merge: HEAD's Accessor keeps its variant (used by vm/call_out.rs) under a fresh tag, since theirs took 16 and 17.
+pub(crate) const TAG_ACCESSOR: u8 = 18;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -80,6 +82,12 @@ pub(crate) enum CallOut {
     /// The running activation's environment cloned by environment clone plan `plan`, the copy a
     /// `for (let ...)` iteration's closures capture. It defines no register.
     CloneEnv { plan: u32 } = TAG_CLONE_ENV,
+    /// The `[[Get]]` of `atom` on `receiver` through cache `site` by the VM's field read
+    /// (`Vm::get_field_cached`): where the site cached a getter, the getter runs by the
+    /// interpreter's own activation (`call_value`) with `receiver` as `this`. The getter is the
+    /// site's cached accessor, which no register holds, so the VM resolves it from the site.
+    #[allow(dead_code)]
+    Accessor { receiver: Register, atom: u32, site: u16 } = TAG_ACCESSOR,
 }
 
 /// The registers the VM reads for a `CallOut`: up to two of fixed place, and a list a call
@@ -161,6 +169,7 @@ impl CallOut {
             Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
             Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. }
                 | Self::CloneEnv { .. } => [None, None],
+            Self::Accessor { receiver, .. } => [Some(receiver), None],
             Self::Protocol { operands, .. } => operands,
             Self::Spread { callee, receiver, arguments, .. } =>
                 return Operands { fixed: [Some(Operand::register(callee)), Some(Operand::register(receiver))], list: Some(arguments) },

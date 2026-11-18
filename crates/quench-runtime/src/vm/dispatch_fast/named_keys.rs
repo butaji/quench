@@ -3,7 +3,8 @@
 //! requickened to a specialized handler, so every `GetIndex` runs the generated `ELEMENT_READ` row.
 use super::*;
 
-// merge: theirs requickens a GetIndex site to a name-key-first or string-first handler
-// (`lane_get_index_named`, `lane_get_index_string`, `named_key_read`). Ours runs every
-// GetIndex through the generated ELEMENT_READ row and sets no requickening, so those
-// handlers are not ported. Their results are the same reads, only the per-site order differs.
+/// `base[key]` of a string `key` that names no array index (`Vm::plain_string_keyed_get`).
+#[inline(always)]
+pub(super) fn named_key_element<H: Host>(vm: &mut Vm<H>, base: Value, key: Value) -> Option<Value> {
+    vm.plain_string_keyed_get(base, key)
+}

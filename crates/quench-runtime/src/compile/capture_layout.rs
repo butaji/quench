@@ -417,13 +417,9 @@ fn remove_unobservable_clones(function: &mut Function, captured: &[u16]) {
 /// (target, source): jumps, branch table entries (which are jumps), and exception and
 /// `finally` continuations, taken from the last instruction their range covers.
 fn backward_transfers(function: &Function) -> Vec<(usize, usize)> {
-    let mut transfers = Vec::new();
-    for (pc, instruction) in function.instructions().enumerate() {
-        if instruction.op().control_flow_layout().jumps() && instruction.jump_target() as usize <= pc
-        {
-            transfers.push((instruction.jump_target() as usize, pc));
-        }
-    }
+    // The jumps are the body's back edges, listed by source; the handler edges below are the
+    // transfers `back_edges` does not cover.
+    let mut transfers: Vec<(usize, usize)> = function.back_edges().map(|(source, target)| (target, source)).collect();
     for handler in function.handlers.iter() {
         let last = handler.end.saturating_sub(1) as usize;
         for target in std::iter::once(handler.target).chain(handler.return_target) {

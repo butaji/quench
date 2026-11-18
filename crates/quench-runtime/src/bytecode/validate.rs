@@ -675,16 +675,22 @@ function.plain_local_slots(&self.superinstructions)
                 return Err(format!("function {index} has invalid name bindings"));
             }
             let code_len = function.code.len() as u32;
-            let positions = function.source_positions.iter();
-            if positions
-                .clone()
-                .zip(positions.clone().skip(1))
-                .any(|(first, second)| first.pc >= second.pc)
-                || positions.clone().any(|position| {
-                    position.pc >= code_len || position.line == 0 || position.column == 0
-                })
-                || positions.clone().last() != function.source_positions.last()
-            {
+            // One decoding pass: entries strictly increase in pc, lie within the code and
+            // have a line and column, and the last decoded entry is the table's last.
+            let mut previous_pc = None;
+            let mut decoded_last = None;
+            for position in function.source_positions.iter() {
+                if previous_pc.is_some_and(|pc| pc >= position.pc)
+                    || position.pc >= code_len
+                    || position.line == 0
+                    || position.column == 0
+                {
+                    return Err(format!("function {index} has invalid source positions"));
+                }
+                previous_pc = Some(position.pc);
+                decoded_last = Some(position);
+            }
+            if decoded_last != function.source_positions.last() {
                 return Err(format!("function {index} has invalid source positions"));
             }
             if function
@@ -1055,7 +1061,15 @@ fn selective_capture_scope_unsafe(
     }
     let mut unsafe_layout = vec![false; functions.len()];
     for (id, function) in functions.iter().enumerate() {
-        if !has_dynamic_scope_access(function)
+        // Scanned unvalidated: an instruction whose wide index is out of range is skipped, and
+        // the whole wide table is read, where `Function::has_dynamic_scope_access` decodes only
+        // the code and must not see an unvalidated program.
+        let scanned = function
+            .code
+            .iter()
+            .filter_map(|packed| instruction_at(function, *packed))
+            .chain(function.wide.iter().copied());
+        if !super::dynamic_scope_access_in(function, scanned)
             && !inherited_dynamic_scope[id]
             && !function.contains_with_statement(is_with_enter)
         {
@@ -1068,17 +1082,6 @@ fn selective_capture_scope_unsafe(
         }
     }
     unsafe_layout
-}
-
-fn has_dynamic_scope_access(function: &super::Function) -> bool {
-    function.inherited_with_scope
-        || !function.binding_sites.is_empty()
-        || function
-            .code
-            .iter()
-            .filter_map(|packed| instruction_at(function, *packed))
-            .chain(function.wide.iter().copied())
-            .any(super::WideInstruction::resolves_dynamic_scope)
 }
 
 fn selective_capture_layout_is_eligible(
@@ -1360,6 +1363,7 @@ mod tests {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             dynamic_scope_access: Default::default(),
+            evals_in_scope: Default::default(),
             js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             initializer: Default::default(),

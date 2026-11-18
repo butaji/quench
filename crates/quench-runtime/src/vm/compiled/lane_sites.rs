@@ -64,7 +64,10 @@ impl<H: Host> Vm<H> {
             GlobalTable::Base => {
                 let loads: Vec<(usize, GlobalRead)> = reads.range(0..=usize::MAX).map(|(pc, read)| (pc, *read)).collect();
                 let stores = self.lexical_stores(program, function, unit);
-                loads.into_iter().map(|(pc, read)| (pc, self.slot_load(unit, pc, read))).chain(stores).collect()
+                loads.into_iter().map(|(pc, read)| {
+                    let read = self.slot_load(unit, pc, read);
+                    (pc, self.native_slot(pc, unit, read))
+                }).chain(stores).collect()
             }
         }
     }
@@ -126,6 +129,24 @@ impl<H: Host> Vm<H> {
                 _ => None,
             }
         }).collect()
+    }
+
+    /// The Slot read `read` at `pc` of a global name, where the function the global object holds now is the native `parseInt`
+    /// (`GlobalRead::NativeSlot`: the slot's read, with the function's identity held by the global object's watched shape).
+    /// Any other read is `read`.
+    fn native_slot(&mut self, pc: usize, unit: &lane_unit::Unit, read: GlobalRead) -> GlobalRead {
+        let GlobalRead::Slot(slot) = read else { return read };
+        let atom = unit.instructions[pc].atom_index();
+        let Some(Some(value)) = self.own_plain_data(slot.global, atom) else { return read };
+        let Some(crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(native), .. }) = self.heap.function(value) else { return read };
+        let native = *native;
+        if native != crate::vm::Native::ParseInt {
+            return read;
+        }
+        match self.native_holder(slot.global) {
+            Some(holder) => GlobalRead::NativeSlot { slot, value, native, holder },
+            None => read,
+        }
     }
 
     /// The field read `instruction` of a method of strings or arrays that a call runs inline

@@ -64,6 +64,9 @@ pub struct NodeHost {
         Box<str>,
         rustc_hash::FxHashMap<Box<str>, Rc<crate::host::shared_vm::ImportLocation>>,
     >,
+    /// The files `require(esm)` loaded as modules. Node's module map then serves an `import`
+    /// of one of them, even under an extension the loader has no format for.
+    pub(crate) esm_required: rustc_hash::FxHashSet<std::path::PathBuf>,
 }
 
 impl NodeHost {
@@ -488,6 +491,7 @@ impl NodeHost {
             eval_print: None,
             eval_crypto: false,
             resolved_imports: Default::default(),
+            esm_required: Default::default(),
             net_pending_writes: Vec::new(),
             net_pending_ends: Vec::new(),
             net_pending_destroys: Vec::new(),

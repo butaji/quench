@@ -232,7 +232,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn realm_array_constructor(&self, value: Value) -> bool {
         matches!(
             self.heap.function(value),
-            Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), realm, .. }) if *realm == self.realm.globals
+            Some(record @ FunctionRecord { kind: FunctionKind::Native(Native::Array), .. }) if self.record_realm(record) == self.realm.globals
         )
     }
 }

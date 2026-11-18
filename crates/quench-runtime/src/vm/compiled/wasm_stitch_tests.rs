@@ -76,6 +76,7 @@ fn stitched(vm: &Vm<crate::SystemHost>, module: &crate::WasmModule, index: usize
         globals_offset: 0,
         indirect: &no_indirect,
         table_callout: 0,
+        gc_callout: 0,
         table_bindings: &no_table,
         registers: function.registers,
         vector_constant: &no_vector,

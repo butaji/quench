@@ -1,4 +1,5 @@
 use crate::Value;
+use crate::heap::growth::{GrowthPolicy, grown_capacity};
 use std::{
     mem::ManuallyDrop,
     ops::{Deref, DerefMut},
@@ -151,14 +152,15 @@ impl PropertyBuffer {
                 self.allocation = Allocation::Heap;
             }
         }
-        let extra = if self.capacity < DENSE_GROWTH_THRESHOLD {
-            self.capacity
-        } else {
-            self.capacity / DENSE_GROWTH_DIVISOR
-        };
-        let wanted = required
-            .max(self.capacity.saturating_add(extra))
-            .max(super::MIN_CAPACITY);
+        let wanted = grown_capacity(
+            self.capacity,
+            required,
+            GrowthPolicy::PropertyBuffer {
+                threshold: DENSE_GROWTH_THRESHOLD,
+                divisor: DENSE_GROWTH_DIVISOR,
+                minimum: super::MIN_CAPACITY,
+            },
+        );
         match self.allocation {
             #[cfg(unix)]
             Allocation::Reserved { bytes, page_values } => {

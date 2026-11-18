@@ -24,7 +24,7 @@ use super::{
     ArrayObject, AwaitState, Cell, CellKind, EnvironmentTrace, FunctionRecord, GcTraceKind, Heap,
     CollectionRecord, IteratorRecord, MarkBits, Object, ParallelObjectRootTrace, PromiseCell, SlotArena, SparseElements,
     PARALLEL_MARK_MAX_THREADS, PARALLEL_MARK_SPLIT_THRESHOLD, PARALLEL_MARK_STACK_SIZE_BYTES, mark_bits,
-    mark_word_if_new, weak, PushedProtos,
+    mark_word_if_new, weak, PushedProtos, EnvironmentRecord, SmallParts, SymbolData,
 };
 use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
@@ -47,36 +47,54 @@ pub(super) struct ParallelMark<'a> {
     pub(super) round_minimum: usize,
 }
 
-/// The heap as workers see it while the mutator is stopped for one parallel round. `Cell`
-/// and records contain `Rc` and other `!Sync` payloads, so workers only borrow them and walk
-/// immutable edges: they may not clone or drop an `Rc`, mutate a cell or record, or retain
-/// any reference past the joined Rayon scope. Their only writes are mark bits, through
-/// atomics: legacy slots' (`marks`) and each record family's (`ParallelRecordMarks`).
-#[derive(Clone, Copy)]
-struct ParallelMarkView<'heap> {
-    slots: &'heap SlotArena,
-    properties: &'heap ValueArena,
-    sparse_arrays: Option<&'heap FxHashMap<Value, SparseElements>>,
-    marks: &'heap [AtomicU64],
-    objects: ParallelRecordMarks<'heap, Object>,
-    arrays: ParallelRecordMarks<'heap, ArrayObject>,
-    functions: ParallelRecordMarks<'heap, FunctionRecord>,
-    promises: ParallelRecordMarks<'heap, PromiseCell>,
-    awaits: ParallelRecordMarks<'heap, AwaitState>,
-    iterators: ParallelRecordMarks<'heap, IteratorRecord>,
-    collections: ParallelRecordMarks<'heap, CollectionRecord>,
-    strings: ParallelRecordMarks<'heap, JsString>,
-    small_strings: ParallelRecordMarks<'heap, super::SmallParts>,
-    v128s: ParallelRecordMarks<'heap, [u8; crate::wasm::V128_BYTES]>,
-    environments: ParallelRecordMarks<'heap, super::EnvironmentRecord>,
-    symbols: ParallelRecordMarks<'heap, super::SymbolData>,
-    /// The keys weak map values wait for, which change only between rounds.
-    ephemerons: &'heap weak::EphemeronWork,
-    /// `EnvironmentTrace::reads_closures` for this collection.
-    reads_closures: bool,
-    /// `EnvironmentTrace::projection_function` for this collection.
-    projection_function: Option<u32>,
+/// The record-space fields of `ParallelMarkView`, one per row of `for_each_record_space!` in
+/// that table's order: the view field `$view` holds `$elem`'s records as `$field`'s space
+/// shares them. The struct's other fields and `new` are written here.
+macro_rules! parallel_mark_view {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+        /// The heap as workers see it while the mutator is stopped for one parallel round. `Cell`
+        /// and records contain `Rc` and other `!Sync` payloads, so workers only borrow them and walk
+        /// immutable edges: they may not clone or drop an `Rc`, mutate a cell or record, or retain
+        /// any reference past the joined Rayon scope. Their only writes are mark bits, through
+        /// atomics: legacy slots' (`marks`) and each record family's (`ParallelRecordMarks`).
+        #[derive(Clone, Copy)]
+        struct ParallelMarkView<'heap> {
+            slots: &'heap SlotArena,
+            properties: &'heap ValueArena,
+            sparse_arrays: Option<&'heap FxHashMap<Value, SparseElements>>,
+            marks: &'heap [AtomicU64],
+            $($view: ParallelRecordMarks<'heap, $elem>,)*
+            /// The keys weak map values wait for, which change only between rounds.
+            ephemerons: &'heap weak::EphemeronWork,
+            /// `EnvironmentTrace::reads_closures` for this collection.
+            reads_closures: bool,
+            /// `EnvironmentTrace::projection_function` for this collection.
+            projection_function: Option<u32>,
+        }
+
+        impl<'heap> ParallelMarkView<'heap> {
+            fn new(
+                heap: &'heap mut Heap,
+                ephemerons: &'heap weak::EphemeronWork,
+                reads_closures: bool,
+                projection_function: Option<u32>,
+            ) -> Self {
+                Self {
+                    slots: &heap.slots,
+                    properties: &heap.properties,
+                    sparse_arrays: heap.sparse_arrays.as_deref(),
+                    marks: &heap.marks,
+                    $($view: heap.$field.parallel_marks(),)*
+                    ephemerons,
+                    reads_closures,
+                    projection_function,
+                }
+            }
+        }
+    };
 }
+
+for_each_record_space!(parallel_mark_view,);
 
 // SAFETY: the view is built from the collector's exclusive borrow of the heap and lives only
 // within one stop-the-world round. Slots, records, the property arena and sparse arrays are
@@ -156,35 +174,6 @@ pub(super) fn parallel_mark_pool() -> Option<&'static ThreadPool> {
 }
 
 impl<'heap> ParallelMarkView<'heap> {
-    fn new(
-        heap: &'heap mut Heap,
-        ephemerons: &'heap weak::EphemeronWork,
-        reads_closures: bool,
-        projection_function: Option<u32>,
-    ) -> Self {
-        Self {
-            slots: &heap.slots,
-            properties: &heap.properties,
-            sparse_arrays: heap.sparse_arrays.as_deref(),
-            marks: &heap.marks,
-            objects: heap.object_records.parallel_marks(),
-            arrays: heap.array_records.parallel_marks(),
-            functions: heap.function_records.parallel_marks(),
-            promises: heap.promise_records.parallel_marks(),
-            awaits: heap.await_records.parallel_marks(),
-            iterators: heap.iterator_records.parallel_marks(),
-            collections: heap.collection_records.parallel_marks(),
-            strings: heap.string_records.parallel_marks(),
-            small_strings: heap.small_strings.parallel_marks(),
-            v128s: heap.v128_records.parallel_marks(),
-            environments: heap.environment_records.parallel_marks(),
-            symbols: heap.symbol_records.parallel_marks(),
-            ephemerons,
-            reads_closures,
-            projection_function,
-        }
-    }
-
     fn cell(&self, index: usize) -> Option<&'heap Cell> {
         if index >= self.slots.len() {
             return None;
@@ -437,9 +426,6 @@ impl<'heap> ParallelMarkView<'heap> {
                     return;
                 }
                 Heap::children(value, cell, properties, work, &mut object_roots, trace_kind, last_proto);
-                if matches!(cell, Cell::Array { .. }) {
-                    self.sparse_elements(value, work);
-                }
                 if matches!(cell, Cell::WeakMap { .. }) {
                     batch.ephemeron_owners.push(value);
                 } else {

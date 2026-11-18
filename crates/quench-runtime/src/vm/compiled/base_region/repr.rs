@@ -1,5 +1,5 @@
 use super::*;
-use crate::typed_ir::Representation;
+use crate::typed_ir::{Representation, Type};
 use crate::vm::dispatch_fast::operand_feedback::{OperandClass, OperandKinds};
 
 /// The representation of each web, by its number: `None` is unseen (a web no writer reaches), else
@@ -96,11 +96,21 @@ fn read_doubles(row: &Decoded) -> bool {
 }
 
 /// The representation a non-heap row of `kind` writes, given the greatest representation of its `operands`.
-fn kind_repr(kind: Kind, operands: Option<Representation>, widened: bool) -> Option<Representation> {
+///
+/// `Math.floor`, `Math.ceil`, `Math.trunc` and `Math.round` of any Number, and `Math.abs` of an int32,
+/// speculate an int32 result, as an int32 `+` does: the row computes through doubles (`math_row`) and its
+/// int destination takes the canonical word only where it is an int (`places::put`), else it leaves with
+/// nothing written and the leave widens the row, whose next compile writes a double (`-0`, NaN, a value past
+/// int32, `Math.abs(-2**31)`). The result then stays an unboxed int32 for the rows that use it (an index, a
+/// bitwise operand, an int32 sum), as the interpreter's own Math handlers answer an int word for one.
+fn kind_repr(kind: Kind, operands: Repr, widened: bool) -> Repr {
     match kind {
-        Kind::Not => Some(Representation::Tagged),
-        _ if operands == Some(Representation::Tagged) => Some(Representation::Tagged),
-        Kind::Neg | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round => Some(Representation::Float64),
+        Kind::Not => Repr::Tagged,
+        _ if operands == Repr::Tagged => Repr::Tagged,
+        Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Round if !widened && operands >= Repr::Int => Repr::Int,
+        Kind::Abs if !widened && operands == Repr::Int => Repr::Int,
+        Kind::Neg | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round | Kind::Min | Kind::Max => Repr::Double,
+        Kind::Imul | Kind::Clz32 => Repr::Int,
         Kind::Move | Kind::Const => operands,
         Kind::Div => Some(Representation::Float64),
         Kind::Add | Kind::Sub | Kind::Mul | Kind::Rem => if widened || operands == Some(Representation::Float64) { Some(Representation::Float64) } else { Some(Representation::Int32) },
@@ -120,20 +130,25 @@ fn loads_widened(decoded: &[Decoded], header: u32, widened: &[usize]) -> bool {
     decoded.iter().enumerate().any(|(k, row)| row.heap.is_some() && widened.contains(&(header as usize + k)))
 }
 
-/// Where a web starts: unseen where the region is not entered with it, else what the compile
-/// observed of its register (`seen`: the ints, then the doubles).
-fn entry_repr(entered: bool, register: Register, seen: [&[Register]; SEEN]) -> Option<Representation> {
-    match (entered, seen[0].contains(&register), seen[1].contains(&register)) {
-        (false, ..) => None,
-        (_, true, _) => Some(Representation::Int32),
-        (_, _, true) => Some(Representation::Float64),
-        _ => Some(Representation::Tagged),
+/// Where a web starts: unseen where the region is not entered with it, else the narrowest representation
+/// that holds the type the compile observed of its register (`seen`), tagged where none does.
+fn entry_repr(entered: bool, register: Register, seen: &[Type]) -> Option<Representation> {
+    if !entered {
+        return None;
     }
+    let observed = seen.get(usize::from(register)).copied().unwrap_or(Type::ANY);
+    Some(if Representation::Int32.accepts(observed) {
+        Representation::Int32
+    } else if Representation::Float64.accepts(observed) {
+        Representation::Float64
+    } else {
+        Representation::Tagged
+    })
 }
 
 /// The representation of every web the region names, to a fixed point: where the compile
-/// began (`ints`, `doubles`; dead at the header: none yet), then each writer's result.
-pub(super) fn representations(span: &Span, decoded: &[Decoded], (widened, kinds): (&[usize], &[Option<OperandKinds>]), seen: [&[Register]; SEEN], webs: &Webs) -> Reprs {
+/// began (`seen`, the entry's observed types; dead at the header: none yet), then each writer's result.
+pub(super) fn representations(span: &Span, decoded: &[Decoded], (widened, kinds): (&[usize], &[Option<OperandKinds>]), seen: &[Type], webs: &Webs) -> Reprs {
     let header = span.header;
     // One loaded value that left for its int32 speculation widens every loaded value at once: the
     // next compile need not discover them one leave at a time.

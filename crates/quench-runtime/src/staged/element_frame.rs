@@ -15,6 +15,12 @@ use crate::bytecode::{Operand, Register};
 /// which this trait extends, and refuses there (`None`); `stored` is the same fast-then-slow join as
 /// `element_probed`. Neither is redeclared here, since a second declaration would make the call ambiguous.
 pub(crate) trait ElementFrame<S: Stage>: PropertyFrame<S> {
+    /// The dense view of the array in base register `base` that the frame's array storage proofs
+    /// hold, its readable elements, or its writable ones where `writable` (a store replacing in
+    /// place). A frame that proves no storage answers `None`, and the access takes its own proof.
+    #[inline(always)]
+    fn proved_view(&mut self, _stage: &mut S, _base: Register, _writable: bool) -> Option<DenseView<S::Word>> { None }
+
     /// The VM's store of `value` to `base[key]` where no in-place replacement answers it: an
     /// added element, a typed array, a keyed property, a setter; a failure leaves at `miss`.
     #[inline(always)]

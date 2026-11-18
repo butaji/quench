@@ -67,10 +67,10 @@ pub(super) fn value_fact(place: Place) -> Type {
 /// The row of the by-name access at `pc`, where the table (`Known::globals`) holds one a row takes.
 pub(super) fn global_row(known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     match *known.globals?.get(&(pc as usize))? {
-        GlobalRead::Constant(value) if instruction.op().loads_name() => {
+        GlobalRead::Constant(value) if super::super::meaning_compiled::loads_name(instruction) => {
             Some(word_row(instruction, value))
         }
-        GlobalRead::Slot(slot) => slot_row(known, instruction, Access::of(slot)?),
+        GlobalRead::Slot(slot) | GlobalRead::NativeSlot { slot, .. } => slot_row(known, instruction, Access::of(slot)?),
         GlobalRead::Lexical(slot) => lexical_row(instruction, slot),
         _ => None,
     }
@@ -79,8 +79,8 @@ pub(super) fn global_row(known: Known, pc: u32, instruction: WideInstruction) ->
 /// The row of an access of the global object's slot: a load reads it (a `typeof`'s load too, whose
 /// value the `Unary` after it names), and a store writes it.
 fn slot_row(known: Known, instruction: WideInstruction, access: Access) -> Option<Decoded> {
-    match instruction.op().class() {
-        _ if loads_global(instruction) => Some(Decoded {
+    if loads_global(instruction) {
+        Some(Decoded {
             hole: access.offset(),
             global: Some(access),
             also: receiver(instruction),
@@ -90,19 +90,23 @@ fn slot_row(known: Known, instruction: WideInstruction, access: Access) -> Optio
                 None,
                 None,
             )
-        }),
-        _ if stores_name(instruction) => store_row(known, instruction, access),
-        _ => None,
+        })
+    } else if stores_name(instruction) {
+        store_row(known, instruction, access)
+    } else {
+        None
     }
 }
 
 /// The row of an access of a global lexical binding's word at its address: a load reads it, leaving where it is in its dead zone, and a store
 /// writes it where it is initialized. Any other access is the VM's.
 fn lexical_row(instruction: WideInstruction, slot: LexicalSlot) -> Option<Decoded> {
-    let row = match instruction.op().class() {
-        Class::LoadName | Class::LoadNameCall => Decoded { also: receiver(instruction), ..Decoded::heap(Heap::LexicalRead, Some(instruction.result_register()), None, None) },
-        _ if stores_name(instruction) => Decoded::heap(Heap::LexicalWrite, None, Some(Source::Register(instruction.register_a())), None),
-        _ => return None,
+    let row = if named_load(instruction) {
+        Decoded { also: receiver(instruction), ..Decoded::heap(Heap::LexicalRead, Some(instruction.result_register()), None, None) }
+    } else if stores_name(instruction) {
+        Decoded::heap(Heap::LexicalWrite, None, Some(Source::Register(instruction.register_a())), None)
+    } else {
+        return None;
     };
     Some(Decoded { hole: slot.address as u64, lexical: Some(slot), ..row })
 }
@@ -116,16 +120,20 @@ pub(super) fn stores_name(instruction: WideInstruction) -> bool {
 /// Whether `instruction` loads a global name's value: a plain or call load, or the load a
 /// `typeof` reads (`Operation::GlobalTypeof`).
 fn loads_global(instruction: WideInstruction) -> bool {
-    matches!(instruction.op().class(), Class::LoadName | Class::LoadNameCall)
+    named_load(instruction)
         || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::GlobalTypeof { .. }))
+}
+
+/// Whether `instruction` is a by-name read, `LoadName` or a call's `LoadNameCall`: the decode names both
+/// (`Operation::decode_load_name`), whose proof decides nothing about which opcode it is.
+fn named_load(instruction: WideInstruction) -> bool {
+    crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()).is_some()
 }
 
 /// The register a name call's `undefined` receiver is defined in.
 fn receiver(instruction: WideInstruction) -> Option<Register> {
-    instruction
-        .op()
-        .is_load_name_call()
-        .then(|| instruction.register_b())
+    matches!(crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()),
+        Some(crate::staged::Operation::LoadName { receiver: Some(_), .. })).then(|| instruction.register_b())
 }
 
 /// The row that defines the load's result as the constant `value`, an immutable global's.

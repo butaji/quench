@@ -41,8 +41,8 @@ impl<H: Host> Vm<H> {
         }
         let method = self.regexp_proven_symbol_method(search, symbol)?;
         match self.heap.function(method) {
-            Some(FunctionRecord { kind: FunctionKind::Native(found), realm, .. })
-                if *found == native && *realm == self.realm.globals => {}
+            Some(record @ FunctionRecord { kind: FunctionKind::Native(found), .. })
+                if *found == native && self.record_realm(record) == self.realm.globals => {}
             _ => return None,
         }
         self.regexp_builtin_receiver_matcher(search)
@@ -116,7 +116,7 @@ impl<H: Host> Vm<H> {
         let realm = self.realm.globals;
         let method_is_builtin = matches!(
             self.heap.function(method),
-            Some(FunctionRecord { kind: FunctionKind::Native(found), realm: owner, .. }) if *found == native && *owner == realm
+            Some(record @ FunctionRecord { kind: FunctionKind::Native(found), .. }) if *found == native && self.record_realm(record) == realm
         );
         Some(method_is_builtin && self.is_native_function(exec, Native::RegExpExec))
     }

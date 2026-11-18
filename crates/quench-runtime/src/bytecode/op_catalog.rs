@@ -258,7 +258,7 @@ pub(crate) enum ValueStep {
 
 /// Orthogonal tier traits of an opcode, each declared once by the catalog.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Traits(u32);
+pub(crate) struct Traits(u64);
 
 impl Traits {
     pub(crate) const NONE: Self = Self(0);
@@ -314,7 +314,30 @@ impl Traits {
     pub(crate) const LANE_LOOP_EXIT: Self = Self(1 << 30);
     /// An op whose lane handler is its staged row (`generated_row`), generated rather than written; the
     /// flow rows that fall through have theirs without the trait.
-    pub(crate) const ROW_HANDLER: Self = Self(1u32 << 31);
+    pub(crate) const ROW_HANDLER: Self = Self(1 << 31);
+    /// An op that stores its register A into the frame local slot its immediate names (`LocalSlot`). When its
+    /// optional register B is set, the stored value is also written there, and every tier honours B: the
+    /// interpreter's owner step and plain-store arm, the lane windows' local stores, and the base tier, which
+    /// leaves a store that sets B to the interpreter. `StoreEnvLocal` names an environment slot, so it is not one.
+    /// Tagged: `StoreLocal`, `StoreLocalPlain`.
+    pub(crate) const FRAME_LOCAL_STORE: Self = Self(1 << 32);
+    /// An op that loads the frame local slot its immediate names (`LocalSlot`) into its result register A, and
+    /// writes no other register. `LoadEnvLocal` names an environment slot, so it is not one.
+    /// Tagged: `LoadLocal`, `LoadLocalPlain`.
+    pub(crate) const FRAME_LOCAL_LOAD: Self = Self(1 << 33);
+    /// An op that jumps to its `JumpTarget` when its register A is falsy, and falls through otherwise.
+    /// `JumpTrue` jumps on the opposite test, and `JumpBinaryFalse` fuses its operator into the test, so
+    /// neither is one. Tagged: `JumpFalse`.
+    pub(crate) const JUMPS_ON_FALSE: Self = Self(1 << 34);
+    /// An op that writes the value of its `BinaryOperator` immediate applied to its two operands into its
+    /// result register A, and writes no other register. The arithmetic rows name their operator in their own
+    /// immediate role, so they are not one. Tagged: `Binary`.
+    pub(crate) const BINARY_RESULT: Self = Self(1 << 35);
+    /// An op that stores its register A as the property its immediate atom names on `this`, through the cache
+    /// site in C, and makes no other write. A field read may take it as its field site's sink (`FieldSite.sink`,
+    /// a fused `GetSetThis`). Tagged: `SetThisField` alone. `SetThisFieldStrict` is not: the inlined expansion
+    /// of a sink re-emits it as a `SetThisField`, so the strict variant has no sink in every tier.
+    pub(crate) const THIS_FIELD_SINK: Self = Self(1 << 36);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }

@@ -11,6 +11,9 @@ use crate::staged::wasm_float::{convert, float_binary};
 use crate::staged::wasm_operation::{Operand, WasmOperation};
 use crate::staged::wasm_simd::WasmSimd as _;
 use crate::staged::wasm_simd_concrete::{ConcreteSimd, execute};
+use crate::staged::wasm_instance::Instance;
+use crate::staged::wasm_machine::ConcreteMemory;
+use crate::staged::wasm_memory::{fill as memory_fill_rule, pages as memory_pages_rule, scalar_address};
 use crate::staged::wasm_step::Step;
 use crate::staged::wasm_table_ops::TableOp;
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
@@ -58,12 +61,10 @@ impl<H: Host> Vm<H> {
                 };
                 let length = self.wasm_index_operand(self.read(f, i.register_c()), length_type)?;
                 if i.op() == Op::WasmMemoryFill {
-                    self.wasm_memory_fill(
-                        destination,
-                        output,
-                        Self::wasm_u32_operand(source)?,
-                        length,
-                    )?;
+                    let byte = u64::from(Self::wasm_u32_operand(source)?);
+                    self.wasm_memory_bulk(destination, |stage| {
+                        memory_fill_rule(stage, output, byte, length)
+                    })?;
                 } else {
                     let input = self.wasm_memory_index(source, self.read(f, input))?;
                     self.wasm_copy_bytes(destination, Some(source), output, input, length)?;
@@ -71,15 +72,14 @@ impl<H: Host> Vm<H> {
             }
             Op::WasmMemoryAddress => {
                 let memory = self.read(f, i.register_c());
-                let address = self.wasm_memory_index(memory, self.read(f, i.register_b()))?;
+                let index = self.wasm_memory_index(memory, self.read(f, i.register_b()))?;
                 let Constant::WasmBits64(offset) = p.constants[i.constant_index()] else {
                     return Err(JsError::validation(
                         "invalid Wasm memory offset constant".into(),
                     ));
                 };
-                let effective = address
-                    .checked_add(offset)
-                    .ok_or_else(|| JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsMemory))?;
+                let effective = scalar_address(&mut ConcreteWasm, index, offset)
+                    .map_err(JsError::wasm_trap_error)?;
                 let value = self.encode_wasm_value(crate::WasmValue::I64(effective as i64));
                 self.write(f, i.result_register(), value);
             }
@@ -167,7 +167,8 @@ impl<H: Host> Vm<H> {
                     let delta = self.wasm_memory_index(memory, self.read(f, i.register_c()))?;
                     self.wasm_memory_grow(memory, delta)?
                 } else {
-                    Some(self.wasm_memory_pages(memory)?)
+                    let page_bits = self.wasm_memory_type(memory)?.page_size_log2();
+                    Some(self.wasm_memory_read(memory, |stage| memory_pages_rule(stage, page_bits))?)
                 };
                 let index_type = self.wasm_memory_index_type(memory)?;
                 let value = self.encode_wasm_index_size(index_type, pages);
@@ -212,19 +213,22 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| {
                         JsError::validation("constant index is outside program".into())
                     })?;
-                let window = i.register_window();
-                for offset in 0..window.count {
-                    self.write(f, window.base + offset, value);
+                // The registers the staged fill names (`Instance::Fill`).
+                for register in Instance::Fill.constant_registers(i).into_iter().flatten() {
+                    self.write(f, register, value);
                 }
             }
             Op::WasmSelect => {
+                // `MachineStage::select`, the primitive the Wasm flow stage selects with.
                 let (condition, _) = i.register_pair();
-                let source = if self.read(f, condition).wasm_bits32() != 0 {
-                    i.register_b()
-                } else {
-                    i.register_c()
-                };
-                self.write(f, i.result_register(), self.read(f, source));
+                let flag = u64::from(self.read(f, condition).wasm_bits32());
+                let mut stage = ConcreteWasm;
+                let chosen = stage.select(
+                    flag,
+                    self.read(f, i.register_b()).to_bits(),
+                    self.read(f, i.register_c()).to_bits(),
+                );
+                self.write(f, i.result_register(), Value::from_bits(chosen));
             }
             Op::WasmBranchTable => *pc += self.branch_table_case(f, i),
             Op::WasmReturn64 => {
@@ -303,6 +307,20 @@ impl<H: Host> Vm<H> {
         } else {
             self.encode_wasm_value(value)
         }
+    }
+
+    /// Runs a staged bulk rule over the bytes of the linear memory `memory`, on the interpreter's
+    /// `ConcreteMemory` stage. The rule's trap leaves as the Wasm trap it names.
+    fn wasm_memory_bulk(
+        &self,
+        memory: Value,
+        rule: impl FnOnce(&mut ConcreteMemory<'_>) -> Result<(), crate::WasmTrap>,
+    ) -> Result<(), JsError> {
+        let Some(Cell::WasmMemory { bytes, .. }) = self.heap.get(memory) else {
+            return Err(JsError::validation("invalid mutable Wasm memory binding".into()));
+        };
+        let mut guard = bytes.lock();
+        rule(&mut ConcreteMemory { memory: &mut guard }).map_err(JsError::wasm_trap_error)
     }
 
     /// One Wasm numeric step (`WasmOperation`) on the interpreter's stage: the staged rules

@@ -83,7 +83,7 @@ pub fn wasm_library() -> Vec<WasmCode> {
         (SIMD_MORE_CONVERT, SIMD_MORE_CONVERT_OPS),
         (SIMD_MORE_LOAD, SIMD_MORE_LOAD_OPS),
     ] {
-        for &operator in operators.iter().filter(|operator| !SIMD_RELAXED_MIN_MAX.contains(operator)) {
+        for &operator in operators {
             rows.push((kind, operator, W64, REGISTER));
         }
     }

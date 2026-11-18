@@ -404,7 +404,8 @@ impl LaneView {
                 self.note_dropped_compile();
                 LaneBody::Unspecialized { entries: 0, recompiles, stuck }
             }
-            super::super::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
+            // A b-jit pick the entry did not stitch (it reaches here only without the entry's parameters) counts on.
+            super::super::compiled::LaneBodyOutcome::Deferred | super::super::compiled::LaneBodyOutcome::Base => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
             // Its entries decide when it looks again (`attempts_at`), no hot loop's skip.
             super::super::compiled::LaneBodyOutcome::Unpaid => {
                 self.tier().history.set(LaneBodyHistory { unpaid: true, ..self.tier().history.get() });

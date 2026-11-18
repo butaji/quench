@@ -1,4 +1,4 @@
-//! Darwin arm64 native-entry recovery. Only owned guard/poll faults are ours.
+//! arm64 Darwin and Linux native-entry recovery. Only owned guard/poll faults are ours.
 use super::{ACTIVE_CONTEXT, CallContext, GuardSupport, TERMINATED_STATUS, WasmEntry, trap_status};
 use std::sync::OnceLock;
 
@@ -68,8 +68,13 @@ static SUPPORT: OnceLock<Option<GuardSupport>> = OnceLock::new();
 
 pub(super) fn support() -> Option<&'static GuardSupport> {
     SUPPORT.get_or_init(|| {
+        // Linux installs with the same SA_NODEFER as the x86-64 guard handler.
+        #[cfg(target_os = "macos")]
+        let flags = libc::SA_SIGINFO | libc::SA_ONSTACK;
+        #[cfg(target_os = "linux")]
+        let flags = libc::SA_SIGINFO | libc::SA_ONSTACK | libc::SA_NODEFER;
         super::install_guard_signals(&[(libc::SIGSEGV, &PREVIOUS_SEGV), (libc::SIGBUS, &PREVIOUS_BUS)],
-            fault as *const () as usize, libc::SA_SIGINFO | libc::SA_ONSTACK)?;
+            fault as *const () as usize, flags)?;
         Some(GuardSupport { _code: None, trampoline,
             landing: resume as *const () as usize,
             termination: termination as *const () as usize })
@@ -98,10 +103,20 @@ pub(super) unsafe fn resume_fault(info: *mut libc::siginfo_t, raw_context: *mut 
             } else { None };
             if let Some((landing, status)) = landing {
                 let context = &mut *raw_context.cast::<libc::ucontext_t>();
-                let registers = &mut (*context.uc_mcontext).__ss;
-                registers.__sp = (*active).entry_stack as u64;
-                registers.__pc = landing as u64;
-                if let Some(status) = status { registers.__x[0] = status; }
+                #[cfg(target_os = "macos")]
+                {
+                    let registers = &mut (*context.uc_mcontext).__ss;
+                    registers.__sp = (*active).entry_stack as u64;
+                    registers.__pc = landing as u64;
+                    if let Some(status) = status { registers.__x[0] = status; }
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    let registers = &mut context.uc_mcontext;
+                    registers.sp = (*active).entry_stack as u64;
+                    registers.pc = landing as u64;
+                    if let Some(status) = status { registers.regs[0] = status; }
+                }
                 return true;
             }
         }

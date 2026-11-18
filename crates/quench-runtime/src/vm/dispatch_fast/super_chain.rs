@@ -78,10 +78,11 @@ fn chain_stores<H: Host>(
     stores: &mut ChainStores,
     classes: usize,
 ) -> Option<Value> {
-    let FunctionRecord { kind: FunctionKind::User(program, function), realm, .. } = vm.heap.function(class)? else {
+    let record = vm.heap.function(class)?;
+    let FunctionKind::User(program, function) = &record.kind else {
         return None;
     };
-    if *realm != vm.realm.globals || classes == SUPER_CHAIN_CLASSES {
+    if vm.record_realm(record) != vm.realm.globals || classes == SUPER_CHAIN_CLASSES {
         return None;
     }
     // A class of another program than the running one builds a receiver other than the general

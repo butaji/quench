@@ -53,7 +53,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "PluralRules")?;
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_plural_rules_prototypes
@@ -94,7 +94,7 @@ impl<H: Host> Vm<H> {
                     .unwrap_or_else(|| DEFAULT_PLURAL_RULES_LOCALE.into());
                 let options = vm.plural_rules_options(p, args.get(1).copied())?;
 
-                let instance = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                let instance = vm.heap.alloc_object(Self::empty_object(prototype));
                 vm.set_hidden_string(instance, PLURAL_RULES_LOCALE_SLOT, &locale)?;
                 vm.set_hidden_string(instance, PLURAL_RULES_TYPE_SLOT, &options.rule_type)?;
                 vm.set_hidden_string(instance, PLURAL_RULES_NOTATION_SLOT, &options.notation)?;
@@ -163,7 +163,7 @@ impl<H: Host> Vm<H> {
         let options = match options.filter(|value| !value.is_undefined()) {
             None => self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(Value::NULL))),
+                .alloc_object(Self::empty_object(Value::NULL)),
             Some(value) if value.is_null() => {
                 return Err(self.type_error(p, "options must not be null".into()));
             }
@@ -540,7 +540,7 @@ impl<H: Host> Vm<H> {
         );
         let result = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+            .alloc_object(Self::empty_object(self.object_proto));
         for (key, value) in [
             ("locale", locale.clone()),
             ("type", rule_type.clone()),
@@ -578,12 +578,10 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .map(|category| self.heap.alloc_string(category.into()))
             .collect::<Vec<_>>();
-        let categories = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let categories = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 categories,
-            ),
-        });
+            ));
         self.set_plural_result_property(result, "pluralCategories", categories)?;
         self.set_plural_result_property(
             result,

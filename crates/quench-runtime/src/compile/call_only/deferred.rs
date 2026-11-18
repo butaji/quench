@@ -43,10 +43,10 @@ impl Compiler<'_> {
     pub(in crate::compile) fn find_deferred_call_only_facts(&mut self, function: &Function<'_>, context: &replay::PlainFunctionContext) {
         let span = function.span;
         let found = &mut self.first_call.call_only_found;
-        if !self.first_call.nested_allowed || found.iter().any(|(start, end)| *start <= span.start && span.end <= *end) {
+        if !self.first_call.nested_allowed || spans_contain(found, span.start, span.end) {
             return;
         }
-        found.push((span.start, span.end));
+        insert_span(found, span.start, span.end);
         let snippet = &self.text[span.start as usize..span.end as usize];
         let wrapper = replay::plain_function_wrapper(context);
         let (text, offset) = lazy_bodies::text_alone(snippet, wrapper, context.inherited_strict, self.source_type);
@@ -60,5 +60,53 @@ impl Compiler<'_> {
         let delta = span.start.wrapping_sub(offset);
         let facts = super::prototype_unobservable_functions(&built.semantic, &parsed.program, &Default::default());
         self.prototype_unobservable.extend(facts.into_iter().map(|start| start.wrapping_add(delta)));
+    }
+}
+
+/// `spans` sorted by start with none inside another (`spans_contain` and `insert_span` keep
+/// them so): a lookup per compiled function scanned every span found before it, quadratic in
+/// a bundle's functions (babel-wtb: 67M Ir of its 2.4G load).
+pub(in crate::compile) fn normalize_spans(spans: &mut Vec<(u32, u32)>) {
+    spans.sort_unstable_by_key(|&(start, end)| (start, std::cmp::Reverse(end)));
+    let mut kept: Vec<(u32, u32)> = Vec::with_capacity(spans.len());
+    for &(start, end) in spans.iter() {
+        if kept.last().is_none_or(|&(_, last_end)| end > last_end) {
+            kept.push((start, end));
+        }
+    }
+    *spans = kept;
+}
+
+/// Whether a span of normalized `spans` holds `start..end`. Spans nest or are disjoint, as
+/// functions' do; one that overlaps another only partly can make this answer no, which costs a
+/// second analysis and nothing else.
+pub(in crate::compile) fn spans_contain(spans: &[(u32, u32)], start: u32, end: u32) -> bool {
+    let at = spans.partition_point(|&(span_start, _)| span_start <= start);
+    at > 0 && spans[at - 1].1 >= end
+}
+
+/// Adds `start..end` to normalized `spans`, which no span holds, dropping the spans it holds.
+fn insert_span(spans: &mut Vec<(u32, u32)>, start: u32, end: u32) {
+    let at = spans.partition_point(|&(span_start, _)| span_start < start);
+    let held = spans[at..].iter().take_while(|&&(span_start, span_end)| span_start <= end && span_end <= end).count();
+    spans.splice(at..at + held, [(start, end)]);
+}
+
+#[cfg(test)]
+mod span_tests {
+    use super::{insert_span, normalize_spans, spans_contain};
+
+    #[test]
+    fn spans_answer_containment_as_a_scan_does() {
+        let mut spans = vec![(10, 20), (0, 100), (200, 300), (210, 220), (150, 160)];
+        normalize_spans(&mut spans);
+        assert_eq!(spans, vec![(0, 100), (150, 160), (200, 300)]);
+        assert!(spans_contain(&spans, 30, 40));
+        assert!(spans_contain(&spans, 0, 100));
+        assert!(!spans_contain(&spans, 100, 120));
+        assert!(!spans_contain(&spans, 140, 155));
+        insert_span(&mut spans, 120, 170);
+        assert_eq!(spans, vec![(0, 100), (120, 170), (200, 300)]);
+        assert!(spans_contain(&spans, 151, 159));
     }
 }

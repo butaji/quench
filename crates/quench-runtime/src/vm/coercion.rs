@@ -303,7 +303,7 @@ impl<H: Host> Vm<H> {
             return self.to_string(program, primitive);
         }
         match self.heap.get(value) {
-            Some(Cell::Function(_)) => return Ok("function () { [native code] }".into()),
+            _ if self.heap.is_function_value(value) => return Ok("function () { [native code] }".into()),
             _ if let Some(value) = self.heap.string(value)  => return Ok(value.to_host_owned()),
             Some(Cell::Error(value)) => return Ok(value.clone()),
             Some(Cell::BigInt(value)) => return Ok(value.to_string()),

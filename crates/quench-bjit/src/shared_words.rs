@@ -9,6 +9,19 @@ pub const CAPTURE_ADDRESS_BITS: u32 = 48;
 /// The kind tag of a native frame in the lane's activation stack (`ActivationKind::Native`).
 pub const KIND_NATIVE: u8 = 0;
 
+/// The language bits of a declared parameter's mask (`1 << ValueType`, the order of `ValueType`'s
+/// discriminants). The `Heap::Declared` entry test sets the bit of each language a word's tag alone
+/// decides (`words::tag_languages`) and tests it against the mask; the runtime asserts these values
+/// against its `ValueType`.
+pub mod language {
+    pub const UNDEFINED: u16 = 1 << 0;
+    pub const NULL: u16 = 1 << 1;
+    pub const BOOLEAN: u16 = 1 << 2;
+    pub const NUMBER: u16 = 1 << 3;
+    pub const OBJECT: u16 = 1 << 7;
+    pub const FUNCTION: u16 = 1 << 8;
+}
+
 /// The discriminants of `FlatUnits`, which a string record starts with.
 pub mod string_tag {
     /// Where a record keeps its form's tag: the record is its `FlatUnits`.

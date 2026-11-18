@@ -15,19 +15,22 @@ use crate::vm::global_facts::GlobalTable;
 use crate::bytecode::{Register, WideInstruction};
 use super::lane_region::StableFacts;
 use crate::compile::liveness::RegisterMasks;
+use crate::typed_ir::Type;
 
-/// The registers an entry's parameters hold as int32s, and as other Numbers: the types the body's
-/// entry rows assume (a parameter that is neither is a tagged word the rows test where they read it).
-fn observed(parameters: &[Value]) -> (Vec<Register>, Vec<Register>) {
-    let registers = |wanted: fn(Value) -> bool| (0..parameters.len()).filter(|k| wanted(parameters[*k])).map(|k| k as Register).collect();
-    (registers(|value| value.as_int().is_some()), registers(|value| value.as_int().is_none() && value.as_number().is_some()))
+/// The types an entry's parameters hold, by register: the types the body's entry rows assume (a parameter
+/// that is neither an int32 nor a Number is `Type::immediate`'s own type, which no unboxed row accepts).
+fn observed(parameters: &[Value]) -> Vec<Type> {
+    parameters.iter().map(|value| Type::immediate(*value)).collect()
 }
 
 /// Whether `code` indexes a register an entry's parameter holds a typed array in: a body has no row of a typed
 /// element (its loop regions do), so its first access of one would leave, and every entry after it.
 fn indexes_typed_parameter(code: &[WideInstruction], is_typed: impl Fn(Register) -> bool) -> bool {
-    code.iter().any(|instruction| match crate::staged::Operation::<u64, ()>::of(*instruction) {
-        Some(crate::staged::Operation::ElementRead { base, .. } | crate::staged::Operation::ElementWrite { base, .. }) => is_typed(base),
+    // merge: kept HEAD: decoded_completed sees a result-flagged element access that `Operation::of` declines.
+    code.iter().any(|instruction| match crate::vm::compiled::decoded_completed(instruction) {
+        Some(crate::staged::Operation::ElementRead { base, .. }) => is_typed(base),
+        Some(crate::staged::Operation::ElementWrite { base, .. }) => is_typed(base),
+        // A frame local's base (`ElementReadOperand`) is no register an entry parameter holds.
         _ => false,
     })
 }
@@ -54,12 +57,14 @@ impl LaneMethod {
         }
         // SAFETY: `base_region::function` links its code behind `entry_body`, of the lane body ABI.
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
+        // `entry_rows` follows `entry_body` (`base_region::rows_entry_offset`).
+        let rows = super::base_region::rows_entry_offset().map(|offset| memory.pointer().addr() + offset);
         Some(Self {
             dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, atoms: body.atoms, instanceofs: body.instanceofs, layouts: body.layouts, slots: body.slot_types, ..Default::default() }, invalidation, _code: memory, entry,
             recovery_space: super::super::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: body.names_shapes || !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
             caller_registers: registers, frame_reach: body.scratch, amortizes: body.loops || body.covered >= tiers.amortizing_instructions(super::tier_policy::lane_body_tier()) || !direct.is_empty(),
-            direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, realm_bound,
+            direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, rows, realm_bound,
         })
     }
 }
@@ -85,8 +90,8 @@ impl<H: Host> Vm<H> {
     /// callee register (`Vm::stable_callees`).
     pub(in crate::vm::compiled) fn stitch_callees(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], candidates: &[DirectCandidates]) -> Callees {
         let stable = self.stable_callees(program, function, code, &Callees::recorded(code, candidates));
-        // An arrow inlines as any callee does: a `this` read is no class a site admits (`Stitch::classes`), and a leave
-        // inside it makes its activation with its lexical `this` (`lane_call_this`).
+        // An arrow inlines as any callee does, unless it reads `this`: its lexical `this` is no receiver a site binds
+        // (`inline::Refused::Receiver`), and a leave inside it makes its activation with its lexical `this` (`lane_call_this`).
         let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.callee, callee.target.function);
         Callees::of(code, candidates, &inline_body, stable)
     }
@@ -134,7 +139,7 @@ impl<H: Host> Vm<H> {
         if !super::base_region::covers(&code) { return LaneBodyOutcome::Declined }
         if indexes_typed_parameter(&code, |register| parameters.get(usize::from(register)).is_some_and(|value| self.is_typed_array(*value))) { return LaneBodyOutcome::Declined }
         let Some(region) = LoopRegion::of_function(code.clone(), self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
-        let (ints, doubles) = observed(parameters);
+        let seen = observed(parameters);
         let callees = self.stitch_callees(program, function, &code, &direct(self));
         let invalidation = Invalidation::default();
         // Where the VM and the program run specialized, the code holds Stable facts: stores run in place for the atoms no method cache names, prototype-held reads fold.
@@ -157,7 +162,7 @@ impl<H: Host> Vm<H> {
             globals: globals.as_ref(),
         };
         let speculated = widened(generic);
-        let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: [&ints, &doubles], kinds: &[] };
+        let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: &seen, kinds: &[] };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers::<H>()) }) else { return LaneBodyOutcome::Declined };
         self.publish_base_body(built, (function, body.registers), callees, (&code, invalidation), caller)

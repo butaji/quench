@@ -159,7 +159,7 @@ fn typeof_index_of(value: Value) -> Option<u64> {
 fn staged_typeof_index_names_every_immediate_and_leaves_heap_values() {
     let name = |text: &str| crate::bytecode::typeof_name_index(text).map(|index| index as u64);
     let mut heap = Heap::new();
-    let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+    let object = heap.alloc_object(Object::new(Value::NULL));
     let text = heap.alloc_string("x".into());
     let cases = [
         (Value::number(0.0), "number"), (Value::number(-0.0), "number"), (Value::number(1.5), "number"),
@@ -287,7 +287,7 @@ fn step_jumps_on_the_javascript_truthiness_of_every_value_kind() {
 #[test]
 fn staged_truthiness_agrees_with_the_interpreter() {
     let mut heap = Heap::new();
-    let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+    let object = heap.alloc_object(Object::new(Value::NULL));
     let text = heap.alloc(Cell::Error("text".into()));
     let numbers = [0.0, -0.0, 1.0, -2.5, f64::NAN, f64::INFINITY, 1e300].map(Value::number);
     let values = [Value::TRUE, Value::FALSE, Value::NULL, Value::UNDEFINED, Value::DELETED,
@@ -465,7 +465,7 @@ fn every_host_callout_operation_has_a_concrete_reading() {
 fn the_key_and_iterator_fast_arms_decide_from_the_word_alone() {
     let mut heap = Heap::new();
     let mut stage = Concrete::new(std::ptr::null());
-    let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+    let object = heap.alloc_object(Object::new(Value::NULL));
     let string = heap.alloc_string(crate::vm::wtf16::JsString::from_str("key"));
     for (value, passes) in [(object, true), (string, false), (Value::UNDEFINED, false), (Value::integer(1), false), (Value::number(0.5), false)] {
         let mut frame = ConcreteFrame { registers: vec![value.to_bits()], heap: None };

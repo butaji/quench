@@ -288,7 +288,7 @@ impl<H: Host> Vm<H> {
         let empty = self.heap.alloc_string(JsString::from_str(""));
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_proto)));
+            .alloc_object(Self::empty_object(object_proto));
         self.object_data_mut(prototype)
             .expect("primitive prototype")
             .set_boxed_primitive(empty);
@@ -623,12 +623,10 @@ impl<H: Host> Vm<H> {
                 input.split_runs(separator_string.units(), limit, |run| parts.push(vm.heap.alloc_unit_run(run)));
             }
             let values = crate::heap::ArrayElements::from_slice(&parts);
-            Ok(vm.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            Ok(vm.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(vm.array_proto),
                     values,
-                ),
-            }))
+                )))
         })
     }
 

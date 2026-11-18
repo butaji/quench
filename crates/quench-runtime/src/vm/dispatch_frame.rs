@@ -1,5 +1,6 @@
 use super::*;
-mod interpreter_frame;
+use crate::bytecode::index;
+use crate::staged::frame_arm::FrameArm;
 mod loop_stack;
 pub(super) use interpreter_frame::{InterpreterFrame, RowRun, runs_row};
 mod materialized_stops;
@@ -1040,7 +1041,7 @@ impl<H: Host> Vm<H> {
         if let Some((shape, properties)) = self.arguments_template_properties(context.callee(), args, mapped)? {
             return Ok(self.heap.alloc_array_with_properties(array, shape, &properties));
         }
-        let arguments = self.heap.alloc(Cell::Array { object: array });
+        let arguments = self.heap.alloc_array(array);
         self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
         Ok(arguments)
     }
@@ -1910,10 +1911,11 @@ impl<H: Host> Vm<H> {
                         let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
                         super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
                     }
+                    // merge: is_binary and is_private_in are not Operation constructors on the derivation side; use the Op-level predicates.
                     if matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::CloneEnv { .. } | crate::staged::Operation::Return { .. }
                             | crate::staged::Operation::ElementRead { .. } | crate::staged::Operation::ElementWrite { .. } | crate::staged::Operation::CompareJump { .. }))
                         || crate::staged::Operation::<u64, ()>::decode_load_name(instruction, ()).is_some() || crate::staged::Operation::<u64, ()>::is_field_read(instruction)
-                        || crate::staged::Operation::<u64, ()>::is_binary(instruction) || crate::staged::Operation::<u64, ()>::is_private_in(instruction) || crate::staged::Operation::<u64, ()>::is_field_store(instruction) {
+                        || instruction.op().is_binary() || crate::staged::private_in_family(instruction.op()) || instruction.op().is_field_store() {
                         let function = p.function_get(self.frames[frame].function as usize);
                         let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
@@ -2135,26 +2137,19 @@ impl<H: Host> Vm<H> {
             self.profile.opcode(ins.op() as usize);
             // Register/local moves and field cache hits cannot allocate, collect or throw, so they
             // need neither the published root-map PC nor the general step result.
-            // Register moves, local slot accesses and conditional jumps run as their staged rows on the
-            // running frame's registers. A row that leaves runs the arms below and the general path.
-            self.pending_row = None;
-            if let Some(operation) = Self::decode_row(ins, crate::staged::DecodeContext::of(p))
-                && runs_row(operation)
-                && self.row_admitted(p, frame, operation)
-            {
-                #[cfg(feature = "profile-aggregate")]
-                if let crate::staged::Operation::JumpIf { register, .. } = operation {
-                    let value = self.read(frame, register);
-                    self.profile.branch_value(value.profile_kind() as usize, self.truthy(value));
+            match crate::staged::frame_arm::arm(ins.op()) {
+                FrameArm::LoadLocalPlain => {
+                    // SAFETY: validated bytecode bounds the slot by Function.locals.
+                    let value = unsafe { self.read_validated_local(frame, ins.local_slot()) };
+                    self.write(frame, ins.result_register(), value);
+                    continue;
                 }
-                match InterpreterFrame::step_row(self as *mut Self, p, frame, pc, ins, operation) {
-                    RowRun::Done(crate::staged::Edge::Following) => continue,
-                    RowRun::Done(crate::staged::Edge::Target) => {
-                        pc = ins.jump_target() as usize;
-                        if pc <= instruction_pc {
-                            self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
-                        }
-                        continue;
+                FrameArm::StoreLocalPlain => {
+                    let value = self.read(frame, ins.register_a());
+                    // SAFETY: validated bytecode bounds the slot by Function.locals.
+                    unsafe { self.write_validated_local(frame, ins.local_slot(), value) };
+                    if let Some(register) = ins.optional_register_b() {
+                        self.write(frame, register, value);
                     }
                     RowRun::Done(crate::staged::Edge::Leave | crate::staged::Edge::Transfer | crate::staged::Edge::Entry(_)) =>
                         unreachable!("the interpreter frame neither suspends the lane nor enters a branch table"),
@@ -2175,21 +2170,44 @@ impl<H: Host> Vm<H> {
                     // A return, a raise or a suspension: the step result the run completes with.
                     RowRun::Stop(stop) => self.row_stop = Some(stop),
                 }
-            }
-            match ins.op()  as u16 {
-                crate::staged::LOAD_CONST_ROW => {
+                FrameArm::Move => {
+                    self.write(
+                        frame,
+                        ins.result_register(),
+                        self.read(frame, ins.register_b()),
+                    );
+                    continue;
+                }
+                FrameArm::ConstLoad => {
                     if let Some(value) = self.active_constant(ins.constant_index()) {
                         self.write(frame, ins.result_register(), value);
                         continue;
                     }
                 }
-                _ if crate::staged::reads_capture(ins.op()) => {
-                    if let Some(value) = self.cached_plain_capture(frame, ins.capture_depth(), ins.capture_slot()) {
+                FrameArm::LoadCapture => {
+                    if let (Some(value), _) =
+                        self.cached_plain_capture(frame, ins.capture_depth(), ins.capture_slot())
+                    {
                         self.write(frame, ins.result_register(), value);
                         continue;
                     }
                 }
-                _ if crate::staged::compare_jump(ins.op()) => {
+                FrameArm::JumpIf => {
+                    // ToBoolean runs no guest code.
+                    let value = self.read(frame, ins.register_a());
+                    let truthy = self.truthy(value);
+                    #[cfg(feature = "profile-aggregate")]
+                    self.profile
+                        .branch_value(value.profile_kind() as usize, truthy);
+                    if truthy == crate::staged::frame_arm::jump_taken(ins) {
+                        pc = ins.jump_target() as usize;
+                        if pc <= instruction_pc {
+                            self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
+                        }
+                    }
+                    continue;
+                }
+                FrameArm::CompareJump => {
                     let operator = ins.binary_operator_field();
                     if let (Some(left), Some(right)) = (
                         self.inert_operand(frame, ins.operand_b()),
@@ -2215,7 +2233,7 @@ impl<H: Host> Vm<H> {
                 }
                 // A cached own-data store writes a slot in place: it neither allocates nor throws.
                 // `this.x = v` is the same cached write with an authoritative `this`.
-                crate::bytecode::field_store_op!()
+                FrameArm::FieldStore
                     if let Some(receiver) = ins.field_store_register().map(|register| self.read(frame, register))
                         .or_else(|| self.frames[frame].fixed_this.then(|| self.frames[frame].this)) => {
                     if self.cached_field_write_hit(
@@ -2230,8 +2248,8 @@ impl<H: Host> Vm<H> {
                 }
                 // Number arithmetic on register or constant operands runs no guest code,
                 // allocates nothing and cannot throw.
-                _ if crate::staged::computes_arithmetic(ins.op())
-                    && !ins.returns_from_frame()
+                FrameArm::Binary | FrameArm::NumericArith
+                    if !ins.returns_from_frame()
                         && let (Some(left), Some(right)) = (
                             self.inert_operand(frame, ins.operand_b()),
                             self.inert_operand(frame, ins.operand_c()),
@@ -2257,8 +2275,8 @@ impl<H: Host> Vm<H> {
                 }
                 // Equality decided without conversion, and instanceof reduced to a prototype
                 // walk, run no guest code either.
-                _ if crate::staged::computes_binary(ins.op())
-                    && !ins.returns_from_frame()
+                FrameArm::Binary
+                    if !ins.returns_from_frame()
                         && ins.numeric_local_target().is_none()
                         && let (Some(left), Some(right)) = (
                             self.inert_operand(frame, ins.operand_b()),
@@ -2280,8 +2298,8 @@ impl<H: Host> Vm<H> {
                 // A field cache hit reads a data slot, and an array's length is an own data
                 // property: neither allocates nor throws. Anything else takes the general path.
                 // `this` is a base once the activation fixed it, as for `SetThisField`.
-                _ if crate::staged::reads_named_field(ins.op())
-                    && ins.result_flags() == 0
+                FrameArm::GetField
+                    if ins.result_flags() == 0
                         && let Some(crate::bytecode::FieldLookup::Atom {
                             atom,
                             base,
@@ -2311,8 +2329,8 @@ impl<H: Host> Vm<H> {
                 // A present dense array element is a data property (accessor indices are
                 // stored as holes): reading it, or replacing it in an array without indexed
                 // descriptors or frozen state, runs no guest code and cannot throw.
-                _ if crate::staged::reads_element(ins.op())
-                    && let (Some(base), Some(key)) = (
+                FrameArm::GetIndex
+                    if let (Some(base), Some(key)) = (
                         self.inert_operand(frame, ins.operand_b()),
                         self.inert_operand(frame, ins.operand_c()),
                     ) && let Some(value) = self.dense_array_element(base, key) =>
@@ -2320,7 +2338,7 @@ impl<H: Host> Vm<H> {
                     self.write(frame, ins.result_register(), value);
                     continue;
                 }
-                _ if crate::staged::writes_element(ins.op()) => {
+                FrameArm::SetIndex => {
                     let (object, key) = (
                         self.read(frame, ins.register_b()),
                         self.read(frame, ins.register_c()),
@@ -2335,8 +2353,8 @@ impl<H: Host> Vm<H> {
                 }
                 // Number increments and conversions of Numbers run no guest code, allocate
                 // nothing and cannot throw.
-                _ if crate::staged::increments(ins.op())
-                    && let Some(value) = super::dispatch::number_increment(
+                FrameArm::IncDec
+                    if let Some(value) = super::dispatch::number_increment(
                         self.read(frame, ins.register_b()),
                         ins.boolean_flag().expect("validated boolean immediate"),
                     ) =>
@@ -2344,7 +2362,8 @@ impl<H: Host> Vm<H> {
                     self.write(frame, ins.result_register(), value);
                     continue;
                 }
-                _ if crate::staged::converts_numeric(ins.op()) && self.read(frame, ins.register_b()).as_number().is_some() => {
+                FrameArm::ToNumeric
+                    if self.read(frame, ins.register_b()).as_number().is_some() => {
                     self.write(
                         frame,
                         ins.result_register(),
@@ -2353,7 +2372,7 @@ impl<H: Host> Vm<H> {
                     continue;
                 }
                 // A back edge collects only once the allocation threshold is reached.
-                _ if crate::staged::jumps(ins.op()) && !self.heap.should_collect() => {
+                FrameArm::Jump if !self.heap.should_collect() => {
                     pc = ins.jump_target() as usize;
                     if pc <= instruction_pc {
                         self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
@@ -2370,13 +2389,11 @@ impl<H: Host> Vm<H> {
             self.frames[frame].pc_is_resume = false;
             // Returns and inline calls produce their step result here rather than through the
             // general `step` dispatch.
-            match ins.op()  as u16 {
-                // A row that stopped the run (a return, a raise or a suspension) is the step result.
-                _ if let Some(stop) = self.row_stop.take() => stop,
+            match crate::staged::frame_arm::arm(ins.op()) {
                 // A call the lane made returned its callee's completion from this frame.
                 _ if let Some(value) = lane_returned.take() => Ok(StepResult::Return(value)),
-                _ if let Some(crate::staged::Operation::Return { source }) = crate::staged::Operation::<u64, ()>::of(ins) => Ok(StepResult::Return(self.read(frame, source))),
-                _ if crate::staged::calls(ins.op()) && allow_inline_calls => {
+                FrameArm::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
+                FrameArm::Call if allow_inline_calls => {
                     match self.try_inline_reflect_apply(p, frame, ins, pc) {
                         Some(result) => result,
                         None => match self.try_inline_user_call(p, frame, ins, pc) {
@@ -2890,6 +2907,16 @@ impl<H: Host> Vm<H> {
         unsafe { *self.frames.get_unchecked(frame).locals.get_unchecked(slot) }
     }
 
+}
+
+/// Whether a lane-exit diagnostic reads an element of `instruction`: its decoded element read,
+/// of a register base or of a frame local.
+#[cfg(feature = "profile-lane-exits")]
+fn is_element_read(instruction: WideInstruction) -> bool {
+    matches!(
+        crate::vm::compiled::decoded_completed(instruction),
+        Some(crate::staged::Operation::ElementRead { .. } | crate::staged::Operation::ElementReadOperand { .. })
+    )
 }
 
 /// The slots of the environment a promotion makes of `locals`: those the `selective` capture list

@@ -47,6 +47,16 @@ fn folded(value: &Expression<'_>, depth: u32, names: Names<'_>) -> Option<Consta
     }
 }
 
+/// `value` without the parentheses and TypeScript type-only wrappers around it (`transparent`):
+/// the expression that runs. TypeScript keeps a reference's `this` and `typeof`'s tolerance of
+/// a missing name through `obj.m!()` or `typeof (x as any)`, as through parentheses.
+pub(super) fn evaluated<'a>(mut value: &'a Expression<'a>) -> &'a Expression<'a> {
+    while let Some(operand) = transparent(value) {
+        value = operand;
+    }
+    value
+}
+
 /// The operand of an expression that evaluates to its operand: parentheses and TypeScript's
 /// type-only wrappers.
 fn transparent<'a>(value: &'a Expression<'a>) -> Option<&'a Expression<'a>> {

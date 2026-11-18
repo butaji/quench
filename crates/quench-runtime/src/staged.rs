@@ -34,6 +34,11 @@ mod global;
 pub(crate) mod division;
 pub(crate) mod math;
 mod names;
+pub(crate) mod protocol_literals;
+pub(crate) mod protocol_classes;
+pub(crate) mod protocol_values;
+pub(crate) mod protocol_owned;
+pub(crate) mod protocol_wasm;
 mod callout;
 mod spread;
 mod admission;
@@ -41,19 +46,13 @@ mod delete;
 mod operation;
 pub(crate) use operation::Operation;
 
-impl<W, P> Operation<W, P> {
-    /// The destination and constant index of an instruction `decode_flow` reads as `LoadConst`,
-    /// for a tier that holds its constants in a table of its own (the b-jit's Numbers): the
-    /// same decode, with the constant left for the tier to look up.
-    #[inline(always)]
-    pub(crate) fn decode_constant_load(instruction: WideInstruction) -> Option<(Register, usize)> {
-        (instruction.op() == Op::LoadConst).then(|| (instruction.result_register(), instruction.constant_index()))
-    }
-}
 mod decode;
+pub(crate) mod meaning_fast;
 pub(crate) mod meaning;
 mod captures;
 pub(crate) mod compare;
+pub(crate) mod meaning_dispatch;
+pub(crate) mod frame_arm;
 pub(crate) use global::{lexical_read, GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::{CallOut, OperandValues};
@@ -80,6 +79,8 @@ pub(crate) mod store;
 pub(crate) mod slot_store;
 pub(crate) mod strings;
 pub(crate) mod string_length;
+pub(crate) mod code_units;
+pub(crate) mod parse_int;
 pub(crate) mod holder;
 pub(crate) mod iteration;
 pub(crate) mod naming;
@@ -114,8 +115,10 @@ pub(crate) mod function_plan;
 pub(crate) mod region;
 pub(crate) mod wasm;
 pub(crate) mod wasm_float;
+pub(crate) mod wasm_concrete;
+pub(crate) mod wasm_gc;
+// merge: wasm_concrete stays pub(crate) (vm/wasm_gc and vm/wasm_gc/stage.rs reach it); wasm_int is theirs'.
 pub(crate) mod wasm_int;
-mod wasm_concrete;
 pub(crate) mod wasm_call;
 pub(crate) mod wasm_flow;
 pub(crate) mod wasm_instance;
@@ -953,6 +956,7 @@ pub(crate) mod emit {
     }
 }
 
+
 /// Which of an instruction's two control edges it takes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Edge {
@@ -1004,6 +1008,8 @@ mod wasm_memory_tests;
 mod wasm_flow_tests;
 #[cfg(test)]
 mod wasm_call_tests;
+#[cfg(test)]
+mod wasm_gc_tests;
 #[cfg(test)]
 mod wasm_simd_tests;
 #[cfg(test)]

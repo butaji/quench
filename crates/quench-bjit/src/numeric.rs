@@ -94,6 +94,12 @@ pub enum Kind {
     Trunc,
     Abs,
     Round,
+    /// `Math.min`, `Math.max` of two Numbers and `Math.imul` of two int32s (`codes::MIN..=codes::IMUL`).
+    Min,
+    Max,
+    Imul,
+    /// `Math.clz32` of one Number (`codes::CLZ32`).
+    Clz32,
 }
 
 impl Kind {

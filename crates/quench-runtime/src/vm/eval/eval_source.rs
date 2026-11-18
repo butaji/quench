@@ -12,6 +12,15 @@ pub(super) struct SharedText {
     ascii: Option<(std::rc::Rc<str>, std::ops::Range<usize>)>,
 }
 
+impl SharedText {
+    /// The string's ASCII storage, when the string covers all of it: the text a program
+    /// compiled from the string may keep as it is (`Engine::specialize_eval_with_context`).
+    pub(super) fn whole_ascii(&self) -> Option<std::rc::Rc<str>> {
+        let (storage, range) = self.ascii.as_ref()?;
+        (*range == (0..storage.len())).then(|| storage.clone())
+    }
+}
+
 /// What the program compiled from `text`, all of the eval string `source` (the heap string
 /// `value`), may keep of that string's storage instead of its own copy.
 pub(super) fn shared_text(value: Value, source: &JsString, text: &str) -> Option<SharedText> {

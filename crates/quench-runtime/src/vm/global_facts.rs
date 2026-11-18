@@ -65,10 +65,11 @@ pub(crate) enum GlobalRead {
     /// `holder`, a code dependency (`StableUses::holders`) that keeps the function's identity
     /// from being recycled. A call of the register it defines runs the native's operation
     /// inline while the callee is still that value (`Lowering::intrinsic_call`).
-    /// `folds` where the receiver is that global, so the read itself may fold to the value; a
-    /// method read by name off an unknown receiver (`x.push`) only names the call's candidate,
-    /// and the read still runs: the receiver may hold its own member of that name.
-    NativeMember { value: Value, native: super::Native, holder: u32, folds: bool },
+    NativeMember { value: Value, native: super::Native, holder: u32 },
+    /// A `Slot` read (the b-jit's) of a global name whose function is the native `native` (`parseInt`) when the body was
+    /// compiled, held by the global object's watched exact shape `holder` (`NativeMember`'s code dependency). The read is the
+    /// slot's; a call of the register it defines guards the function's identity (`base_region::function::native_call`).
+    NativeSlot { slot: GlobalSlot, value: Value, native: super::Native, holder: u32 },
 }
 
 /// Which tier a table of by-name global accesses is for (`Vm::global_table`): the lane specializer
@@ -82,7 +83,7 @@ pub(crate) enum GlobalTable {
 
 /// What each by-name global access of a function or unit takes, by PC: a flat table, empty at
 /// a PC that is no such access (`Vm::lane_global_reads`).
-#[derive(Default)]
+#[derive(Clone, Default, PartialEq)]
 pub(crate) struct GlobalReads(Box<[Option<GlobalRead>]>);
 
 impl GlobalReads {

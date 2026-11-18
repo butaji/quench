@@ -235,7 +235,7 @@ impl NativeJsCompiler {
         &mut self, source: &str, name: &str,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let mut program = Engine::specialize_eval_with_context(
-            source, name, self, false, Default::default(), &[], &[],
+            source, name, self, false, Default::default(), &[], &[], None,
         )?;
         self.adopt(&mut program);
         Ok(program)

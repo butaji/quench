@@ -32,4 +32,12 @@ impl<H: Host> Vm<H> {
         (!value.is_deleted()).then_some(value)
     }
 
+
+    /// The element of `arguments` that parameter `slot` aliases, while the mapping holds: its
+    /// stored element, which writes to the parameter update (`stored_arguments_element`).
+    pub(in crate::vm) fn mapped_window_element(&self, arguments: Value, slot: usize) -> Option<Value> {
+        (self.heap.object(arguments)?.mapped_argument_slot(slot) == Some(slot))
+            .then(|| self.stored_arguments_element(arguments, slot))
+            .flatten()
+    }
 }

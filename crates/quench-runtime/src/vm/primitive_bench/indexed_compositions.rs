@@ -250,9 +250,9 @@ fn fractional_stencil(b: &mut Bencher, pattern: StencilPattern, aliased: bool, s
         let view = super::super::program_store::derived_lane_view(&views[function]).unwrap();
         let fused_read = super::super::dispatch_fast::updated_read_add_handler::<TestHost>();
         let kinds = [
-            ("read", super::super::dispatch_fast::proved_read_handler::<TestHost>(), false),
+            ("read", super::super::dispatch_fast::proved_element_read_row::<TestHost>(), false),
             ("update_read_add", fused_read, false),
-            ("store", super::super::dispatch_fast::proved_store_handler::<TestHost>(), true),
+            ("store", super::super::dispatch_fast::proved_element_write_row::<TestHost>(), true),
         ];
         let mut counts = vec![0; kinds.len()];
         for record in view.records.iter() {

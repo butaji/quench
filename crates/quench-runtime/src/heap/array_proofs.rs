@@ -102,8 +102,9 @@ impl ArrayStorageProofs {
         Self {
             readable: [0; ARRAY_PROOF_SLOTS],
             writable: [0; ARRAY_PROOF_SLOTS],
-            bases: [MaybeUninit::uninit(); ARRAY_PROOF_SLOTS],
-            values: [MaybeUninit::uninit(); ARRAY_PROOF_SLOTS],
+            // Initialized, so `dense` reads a retired or never proved slot's words without a branch.
+            bases: [MaybeUninit::zeroed(); ARRAY_PROOF_SLOTS],
+            values: [MaybeUninit::new(NonNull::dangling()); ARRAY_PROOF_SLOTS],
         }
     }
 
@@ -138,6 +139,21 @@ impl ArrayStorageProofs {
         let bound = self.writable[slot];
         // SAFETY: as in `read_span`.
         self.proves(slot, bound, base).then(|| (unsafe { self.values[slot].assume_init() }, bound))
+    }
+
+    /// The dense storage `register`'s slot proves of `base`: its first element and the elements an
+    /// access reaches there, the readable bound for a read and the writable one for a store that
+    /// replaces in place. `(null, 0)` where the slot does not prove `base` at that bound, so the
+    /// access reaches no element.
+    // merge: HEAD's `dense` kept, since lane_frame.rs still calls it; the closing brace below is shared.
+    #[inline(always)]
+    pub(crate) fn dense(&self, register: u16, base: Value, writable: bool) -> (*mut Value, usize) {
+        let slot = Self::slot(register);
+        let bound = if writable { self.writable[slot] } else { self.readable[slot] };
+        // SAFETY: every slot's base and values are initialized (`new`), and a nonzero bound was
+        // written by `prove` with them. A slot of another base selects no element, with no branch.
+        let proved = unsafe { self.bases[slot].assume_init() } == base;
+        (unsafe { self.values[slot].assume_init() }.as_ptr(), if proved { bound } else { 0 })
     }
 
     /// Whether `register`'s slot proves `base`, whether or not an access through it hit.
@@ -299,12 +315,10 @@ impl Drop for LaneProofScope {
 #[cfg(all(test, not(feature = "profile-aggregate")))]
 mod tests {
     use super::*;
-    use crate::heap::{Cell, Object};
+    use crate::heap::Object;
 
     fn array(heap: &mut Heap) -> Value {
-        heap.alloc(Cell::Array {
-            object: ArrayObject::new(Object::new(Value::NULL), [Value::integer(1), Value::integer(2)]),
-        })
+        heap.alloc_array(ArrayObject::new(Object::new(Value::NULL), [Value::integer(1), Value::integer(2)]))
     }
 
     #[test]

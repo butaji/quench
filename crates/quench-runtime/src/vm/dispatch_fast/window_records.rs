@@ -3,6 +3,7 @@
 //! record of a plain slot takes its generated row with `FLAG_WINDOW` (`lane_frame::row_frame` reads
 //! the window's locals there); any other local record takes its miss, which leaves to the general path.
 use super::*;
+// merge: theirs window_record/window_local_handler taken whole (staged queries, op-based); HEAD's class-match helpers and window handlers are dropped with the hand fast paths. meaning_fast import dropped as unused.
 
 /// What an environment window does with one record.
 pub(super) enum WindowRecord {

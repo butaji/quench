@@ -11,6 +11,7 @@
 //! it with what they sampled (`Vm::site_operand_kinds`).
 
 use super::*;
+use oxc_ast::ast::BinaryOperator;
 
 /// The size of one record, which the feedback bytes in front of the records are counted in.
 const RECORD_BYTES: usize = std::mem::size_of::<LaneInstruction>();
@@ -238,6 +239,92 @@ impl<H: Host> Vm<H> {
     /// `site_operand_kinds` of each instruction in `pcs` of `function`, in order.
     pub(crate) fn region_operand_kinds(&self, program: ProgramId, function: u32, pcs: std::ops::RangeInclusive<usize>) -> Vec<OperandKinds> {
         pcs.map(|pc| self.site_operand_kinds(program, function, pc)).collect()
+    }
+}
+
+/// The language set of exactly String, as a declared parameter names it.
+const STRING_LANGUAGES: u16 = crate::typed_ir::language_bit(crate::ValueType::String);
+/// The language set of exactly Number, as a declared parameter names it.
+const NUMBER_LANGUAGES: u16 = crate::typed_ir::language_bit(crate::ValueType::Number);
+
+/// The declared language set (`Function::declared_parameters`) of the parameter that `register`
+/// holds at entry, when it is exactly String or exactly Number.
+fn declared_parameter_languages(function: &crate::bytecode::Function, register: u16) -> Option<u16> {
+    let index = match function.parameter_registers {
+        Some(base) => register.checked_sub(base).filter(|index| *index < function.params)?,
+        None => function.local_registers.iter()
+            .find(|entry| entry.register == register && entry.local < function.params)?.local,
+    };
+    let languages = *function.declared_parameters.get(usize::from(index))?;
+    (languages == STRING_LANGUAGES || languages == NUMBER_LANGUAGES).then_some(languages)
+}
+
+/// The operator (a `BinaryOperator`'s discriminant) of a `Binary`, `NumericAdd` or
+/// `JumpBinaryFalse` instruction; `None` for any other.
+fn site_operator(instruction: WideInstruction) -> Option<u32> {
+    let op = instruction.op();
+    match op.immediate_role() {
+        crate::bytecode::ImmediateRole::AdditionOperator => return Some(BinaryOperator::Addition as u32),
+        crate::bytecode::ImmediateRole::BinaryOperator => return Some(instruction.binary_operator()),
+        _ => {}
+    }
+    crate::bytecode::InstructionField::ALL.iter()
+        .find(|&&field| op.field_layout(field) == crate::bytecode::FieldLayout::BinaryOperator)
+        .map(|&field| u32::from(instruction.field_value(field)))
+}
+
+/// Whether `operator` is the addition or a relation (`<`, `<=`, `>`, `>=`, `==`, `!=`, `===`, `!==`)
+/// whose feedback a declared operand pair seeds.
+fn seeds_operands(operator: u32) -> bool {
+    [BinaryOperator::Addition, BinaryOperator::LessThan, BinaryOperator::LessEqualThan,
+        BinaryOperator::GreaterThan, BinaryOperator::GreaterEqualThan, BinaryOperator::Equality,
+        BinaryOperator::Inequality, BinaryOperator::StrictEquality, BinaryOperator::StrictInequality]
+        .iter()
+        .any(|seeded| *seeded as u32 == operator)
+}
+
+/// The kinds a site's operands would note after one observation, when both of its operands are
+/// declared parameters of exactly String or exactly Number: String when either is a String (a
+/// string operand is what the site notes), else the Number pair an int32 and a double make.
+/// `NONE` for any other site.
+fn declared_operand_kinds(function: &crate::bytecode::Function, instruction: WideInstruction) -> OperandKinds {
+    let Some(operator) = site_operator(instruction).filter(|operator| seeds_operands(*operator)) else {
+        return OperandKinds::NONE;
+    };
+    let languages = |register: Option<u16>| register.and_then(|register| declared_parameter_languages(function, register));
+    let (Some(left), Some(right)) = (
+        languages(instruction.operand_b().register_index()),
+        languages(instruction.operand_c().register_index()),
+    ) else {
+        return OperandKinds::NONE;
+    };
+    if left == STRING_LANGUAGES || right == STRING_LANGUAGES {
+        OperandKinds::STRING
+    } else {
+        OperandKinds::INT32.union(OperandKinds::DOUBLE)
+    }
+}
+
+/// Seeds the feedback of the function's addition and comparison sites whose operands are declared
+/// parameters (`declared_operand_kinds`), so each site's first handler choice is the one its
+/// declared operands call for. A declaration is only a seed, since TypeScript is unsound: a wrong
+/// seed costs one requickening, because the handler's guard checks the operands at run time.
+///
+/// An operand register counts as its parameter at entry; a parameter reassigned before the site
+/// is seeded all the same, which a feedback hint tolerates.
+pub(super) fn seed_declared_feedback(function: &crate::bytecode::Function, records: &Records) {
+    if !records.has_feedback() {
+        return;
+    }
+    let base = records.base();
+    for (pc, instruction) in function.instructions().enumerate().take(records.len()) {
+        let kinds = declared_operand_kinds(function, instruction);
+        if kinds == OperandKinds::NONE {
+            continue;
+        }
+        // SAFETY: `pc` names a record of `records`, which holds feedback bytes (`Records::new`).
+        let cell = unsafe { feedback_cell(base, base.add(pc)) };
+        cell.set(OperandKinds(cell.get()).union(kinds).0);
     }
 }
 

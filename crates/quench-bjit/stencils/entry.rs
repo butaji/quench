@@ -117,6 +117,29 @@ pub unsafe extern "C" fn entry_body() {
     )
 }
 
+/// The body's row entry (`EntryCell::rows`): `entry_body` for a caller of the row ABI, a b-jit direct
+/// call row (`rust-preserve-none`: window r12, context r13, receiver r14, captures r15), which keeps
+/// nothing live across the call, so no callee-saved register is saved. It publishes the captures
+/// and receiver as `entry_body` does, calls the first row, puts the saved words back and returns
+/// the leave routine's (rax word, rdx status) as they are.
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn entry_rows() {
+    core::arch::naked_asm!(
+        "mov rax, [r13 + {payload}]", "push qword ptr [rax + {stores}]", "push qword ptr [rax + {values}]",
+        "push qword ptr [rax + {len}]", "push qword ptr [rax + {receiver}]", "sub rsp, 8", "mov [rax + {receiver}], r14",
+        "mov r8, r15", "shl r8, {pad}", "shr r8, {pad}", "mov r9, r8", "and r9, {stores_bit}",
+        "mov [rax + {stores}], r9", "xor r8, r9", "mov [rax + {values}], r8", "shr r15, {bits}", "mov [rax + {len}], r15",
+        "call {first}",
+        "mov rcx, [r13 + {payload}]", "add rsp, 8", "pop qword ptr [rcx + {receiver}]", "pop qword ptr [rcx + {len}]",
+        "pop qword ptr [rcx + {values}]", "pop qword ptr [rcx + {stores}]",
+        "ret",
+        first = sym HOLE_NEXT, payload = const CALL_CONTEXT_ADAPTER_PAYLOAD, values = const JS_STEP_CAPTURE_VALUES,
+        len = const JS_STEP_CAPTURE_LEN, stores = const JS_STEP_CAPTURE_STORES, stores_bit = const CAPTURE_STORES_BIT,
+        receiver = const JS_STEP_RECEIVER, bits = const CAPTURE_ADDRESS_BITS, pad = const CAPTURE_ADDRESS_PAD
+    )
+}
+
 /// Leaves a body with the word at hole 0 and the status at hole 1.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]

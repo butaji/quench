@@ -11,71 +11,67 @@
 //! end, increments the children of the records it logged and of the young survivors, and
 //! decrements the copied ones. A full collection recounts from scratch.
 use super::*;
-use records::RecordChildren;
 
-/// The record family of a counted value and its id there: the index into
-/// `Heap::record_families`, and the id.
+/// The record space of a counted value and its id there (`RecordSpaceId`, the family numbering
+/// `Heap::record_families` shares).
 #[inline(always)]
-fn locate(value: Value) -> Option<(usize, RecordId)> {
+fn locate(value: Value) -> Option<(RecordSpaceId, RecordId)> {
     if !value.is_heap() {
         None
     } else if let Some(id) = value.direct_object_index() {
-        Some((0, id))
+        Some((RecordSpaceId::Object, id))
     } else if let Some(id) = value.direct_array_index() {
-        Some((1, id))
+        Some((RecordSpaceId::Array, id))
     } else if let Some(id) = value.direct_function_index() {
-        Some((2, id))
+        Some((RecordSpaceId::Function, id))
     } else if let Some(id) = value.direct_promise_index() {
-        Some((3, id))
+        Some((RecordSpaceId::Promise, id))
     } else if let Some(id) = value.direct_await_index() {
-        Some((4, id))
+        Some((RecordSpaceId::Await, id))
     } else if let Some(id) = value.direct_iterator_index() {
-        Some((5, id))
+        Some((RecordSpaceId::Iterator, id))
     } else if let Some(id) = value.direct_collection_index() {
-        Some((9, id))
+        Some((RecordSpaceId::Collection, id))
     } else if let Some(id) = value.direct_string_index() {
         Some(match small_strings::small_string_local(id) {
-            Some(local) => (7, local),
-            None => (6, id),
+            Some(local) => (RecordSpaceId::SmallString, local),
+            None => (RecordSpaceId::String, id),
         })
     } else {
-        value.direct_v128_index().map(|id| (8, id))
+        value.direct_v128_index().map(|id| (RecordSpaceId::V128, id))
     }
+}
+
+/// `with_space!`'s arms, one per record family (`for_each_record_space!`): `$body` runs with
+/// `$space` bound to the family's space, shared.
+macro_rules! with_space_arms {
+    ($heap:tt, $family:tt, $space:tt, $body:tt ; $($family_id:ident = $field:ident : $space_ty:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+        match $family {
+            $(RecordSpaceId::$family_id => { let $space = &$heap.$field; $body })*
+        }
+    };
+}
+
+/// `with_space_mut!`'s arms: as `with_space_arms`, with the space mutable.
+macro_rules! with_space_mut_arms {
+    ($heap:tt, $family:tt, $space:tt, $body:tt ; $($family_id:ident = $field:ident : $space_ty:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+        match $family {
+            $(RecordSpaceId::$family_id => { let $space = &mut $heap.$field; $body })*
+        }
+    };
 }
 
 /// Runs `$body` with `$space` bound to the record space of family `$family` (`locate`).
 macro_rules! with_space {
     ($heap:expr, $family:expr, |$space:ident| $body:expr) => {
-        match $family {
-            0 => { let $space = &$heap.object_records; $body }
-            1 => { let $space = &$heap.array_records; $body }
-            2 => { let $space = &$heap.function_records; $body }
-            3 => { let $space = &$heap.promise_records; $body }
-            4 => { let $space = &$heap.await_records; $body }
-            5 => { let $space = &$heap.iterator_records; $body }
-            6 => { let $space = &$heap.string_records; $body }
-            7 => { let $space = &$heap.small_strings; $body }
-            9 => { let $space = &$heap.collection_records; $body }
-            _ => { let $space = &$heap.v128_records; $body }
-        }
+        for_each_record_space!(with_space_arms, $heap, $family, $space, $body)
     };
 }
 
 /// `with_space!`, mutably.
 macro_rules! with_space_mut {
     ($heap:expr, $family:expr, |$space:ident| $body:expr) => {
-        match $family {
-            0 => { let $space = &mut $heap.object_records; $body }
-            1 => { let $space = &mut $heap.array_records; $body }
-            2 => { let $space = &mut $heap.function_records; $body }
-            3 => { let $space = &mut $heap.promise_records; $body }
-            4 => { let $space = &mut $heap.await_records; $body }
-            5 => { let $space = &mut $heap.iterator_records; $body }
-            6 => { let $space = &mut $heap.string_records; $body }
-            7 => { let $space = &mut $heap.small_strings; $body }
-            9 => { let $space = &mut $heap.collection_records; $body }
-            _ => { let $space = &mut $heap.v128_records; $body }
-        }
+        for_each_record_space!(with_space_mut_arms, $heap, $family, $space, $body)
     };
 }
 
@@ -148,24 +144,14 @@ impl Heap {
     /// snapshot copies (`SatbSnapshot`), or a string's parts. Values that are no records
     /// (legacy cells, numbers) are among them; `locate` skips them.
     fn rc_children(&self, value: Value, out: &mut Vec<Value>) {
-        let properties = &self.properties;
+        // The record families share one dispatch (`Heap::record_children`); a string's parts
+        // are the only other children counts name.
+        if self.record_children(value, out) {
+            return;
+        }
         // SAFETY: the caller names live records.
         unsafe {
-            if let Some(id) = value.direct_object_index() {
-                self.object_records.get_live(id).children(properties, out);
-            } else if let Some(id) = value.direct_array_index() {
-                self.array_records.get_live(id).children(properties, out);
-            } else if let Some(id) = value.direct_function_index() {
-                self.function_records.get_live(id).children(properties, out);
-            } else if let Some(id) = value.direct_promise_index() {
-                self.promise_records.get_live(id).children(properties, out);
-            } else if let Some(id) = value.direct_await_index() {
-                self.await_records.get_live(id).children(properties, out);
-            } else if let Some(id) = value.direct_iterator_index() {
-                self.iterator_records.get_live(id).children(properties, out);
-            } else if let Some(id) = value.direct_collection_index() {
-                self.collection_records.get_live(id).children(properties, out);
-            } else if let Some(id) = value.direct_string_index() {
+            if let Some(id) = value.direct_string_index() {
                 match small_strings::small_string_local(id) {
                     Some(local) => self.small_strings.get_live(local).for_each_text(|part| out.push(Value::direct_string(part))),
                     None => {

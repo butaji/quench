@@ -148,6 +148,11 @@ mod call_printer;
 pub(crate) use call_printer::{freeze_call_sites, freeze_source_call_sites};
 mod call_out;
 mod call_out_calls;
+mod call_out_literals;
+mod call_out_classes;
+mod call_out_values;
+mod call_out_owned;
+mod call_out_wasm;
 mod coercion;
 mod collection_intake;
 mod collections;
@@ -214,6 +219,7 @@ mod number;
 mod object_template;
 mod object;
 mod shape_memo;
+mod cache_epochs;
 mod symbol_write_proof;
 mod symbol_load_proof;
 mod private_site_home;
@@ -296,7 +302,7 @@ mod typed_array_construct;
 mod typed_array_install;
 mod vm_init;
 pub(crate) mod wtf16;
-pub use error::JsError;
+pub use error::{CompileFailureKind, JsError};
 pub use value_serializer::{
     write_double, write_raw_bytes, write_uint32, write_uint64, HostObjectRead, SerializedValue, SharedWireInput, ValueDeserializer,
     ValueSerializer, WireInput, WireOutput, WIRE_FORMAT_VERSION,
@@ -1877,6 +1883,9 @@ pub(crate) struct Vm<H> {
     temporal_plain_month_day_proto: Value,
     temporal_plain_year_month_proto: Value,
     natives: builtins::NativeTable,
+    /// The first realm this VM initialized: the creation realm every function record without a
+    /// realm override carries (`Vm::record_realm`). Set once and kept, rooted by the GC.
+    main_realm: Value,
     // Boxed: frames move between this stack, `frame_pool` and suspended generators by pointer.
     #[allow(clippy::vec_box)]
     frames: Vec<Box<Frame>>,
@@ -1914,7 +1923,7 @@ pub(crate) struct Vm<H> {
     execution_mode: ExecutionMode,
     native_execution_rejections: u64,
     /// Numeric function bodies whose compile runs on the code generator's thread (`Vm::js_tier_compile`).
-    js_tier_pending: FxHashMap<(ProgramId, u32), jit_backend::Pending<Option<compiled::NumericImage>>>,
+    js_tier_pending: FxHashMap<(ProgramId, u32), jit_backend::OffThread<Option<compiled::NumericImage>>>,
     #[cfg(feature = "native-execution")]
     native_program_resolver: Option<Box<native_program::NativeProgramResolver<H>>>,
     execution_interrupt: crate::ExecutionInterrupt,
@@ -1983,9 +1992,10 @@ pub(crate) struct Vm<H> {
     /// `field_base`), re-derived by `refresh_active_field_entries` whenever the active program
     /// changes or the table grows: a site's entry is then one load from it.
     active_field_entries: *const <FieldCache as site_table::SiteEntry>::Stored,
-    /// The number of times the field cache table's mapping moved (`field_caches_moved`): a run
-    /// that kept a pointer into it across code that may install a program compares it.
-    field_entries_epoch: u64,
+    /// The VM's invalidation counters (`cache_epochs`): the collection count caches key on, and
+    /// the field cache table's moves (`CacheEpochs::field_entries`), which a run that kept a
+    /// pointer into the table across code that may install a program compares.
+    cache_epochs: cache_epochs::CacheEpochs,
     active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
@@ -3176,7 +3186,10 @@ impl<H: Host> Vm<H> {
         self.random_state = fresh_random_seed();
         self.realm.globals = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
+        if self.main_realm.is_null() {
+            self.main_realm = self.realm.globals;
+        }
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("vm_shell");
         self.materialize_program_constants(ProgramId::MAIN, program);
@@ -3482,7 +3495,7 @@ impl<H: Host> Vm<H> {
     /// generated code reads (`rebind_lane_field_entries`), and the epoch a run that kept one
     /// across a program install compares (`run_nested_lane_method`).
     fn field_caches_moved(&mut self) {
-        self.field_entries_epoch += 1;
+        self.cache_epochs.bump_field_entries();
         self.refresh_active_field_entries();
         self.rebind_lane_field_entries();
     }
@@ -3748,7 +3761,7 @@ impl<H: Host> Vm<H> {
                 let realm = self
                     .heap
                     .function(callee)
-                    .map_or(self.realm.globals, |function| function.realm);
+                    .map_or(self.realm.globals, |function| self.record_realm(function));
                 let current_global = self.switch_realm_global(realm);
                 let result = if program
                     .function_get(id as usize)
@@ -3797,13 +3810,11 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<(Value, Value), JsError> {
         let (program_id, id, env, realm) = match self.heap.function(callee) {
-            Some(FunctionRecord {
-                kind: FunctionKind::User(program_id, id),
-                env,
-                realm,
-                ..
-            }) => (*program_id, *id, *env, *realm),
-            _ => return Err(self.type_error(p, "constructor is not a user function".into())),
+            Some(record) => match record.kind {
+                FunctionKind::User(program_id, id) => (program_id, id, record.env, self.record_realm(record)),
+                FunctionKind::Native(_) => return Err(self.type_error(p, "constructor is not a user function".into())),
+            },
+            None => return Err(self.type_error(p, "constructor is not a user function".into())),
         };
         let program = self.programs.get(program_id).ok_or_else(|| {
             self.type_error(p, "function belongs to an unavailable program".into())

@@ -3,31 +3,42 @@ use crate::bytecode::{
     Function, Instr, NumericLocalStoreTarget, Op, Operand, REGISTER_MASK, specialized_numeric_op,
 };
 
-use super::rewrite::{protected_positions, relocate};
+use super::rewrite::{LOCAL_READERS, NUMERIC_INDEX_CONSUMERS, NUMERIC_LOCAL_PRODUCERS, OpSet, protected_positions, relocate};
 
 type Rule = fn(&[Instr]) -> Option<NumericLocalStoreTarget>;
 
+/// A pair whose first op is in `first` (a derived set, see `rewrite::OpSet`) and second is `second`.
 struct CompactRule {
-    pattern: [Op; 2],
+    first: &'static OpSet,
+    second: Op,
     replacement: fn(Instr, Instr, RegisterSet) -> Option<Instr>,
 }
 
+/// A window whose ops are each in the matching derived set.
 struct TripleCompactRule {
-    pattern: [Op; 3],
+    pattern: [&'static OpSet; 3],
     replacement: fn(Instr, Instr, Instr, RegisterSet) -> Option<Instr>,
 }
 
+// The window rule `local_inc_store` stays a function: its ends must name the same local, and
+// the `IncDec` update's `BooleanFlag` picks the direction. Both are dataflow, which no row states.
 const RULES: &[Rule] = &[local_inc_store];
+// `binary_local_target` needs the first op's row to admit a numeric local target. The store
+// stays named: `StoreEnvLocal` shares `StoreLocal`'s row fields but stores to an environment slot.
 const NUMERIC_COMPACT_RULES: &[CompactRule] = &[CompactRule {
-    pattern: [Op::Binary, Op::StoreLocal],
+    first: &NUMERIC_LOCAL_PRODUCERS,
+    second: Op::StoreLocal,
     replacement: binary_local_target,
 }];
 const PLAIN_LOCAL_COMPACT_RULES: &[CompactRule] = &[CompactRule {
-    pattern: [Op::Binary, Op::StoreLocalPlain],
+    first: &NUMERIC_LOCAL_PRODUCERS,
+    second: Op::StoreLocalPlain,
     replacement: binary_local_target,
 }];
+// `local_index_sources` reads two local operands into a `GetIndex`: both sources are local reads,
+// and the index op's B and C are index operands.
 const TRIPLE_COMPACT_RULES: &[TripleCompactRule] = &[TripleCompactRule {
-    pattern: [Op::LoadLocal, Op::LoadLocal, Op::GetIndex],
+    pattern: [&LOCAL_READERS, &LOCAL_READERS, &NUMERIC_INDEX_CONSUMERS],
     replacement: local_index_sources,
 }];
 
@@ -49,10 +60,9 @@ pub(super) fn apply(function: &mut Function, live: Option<&[RegisterSet]>) {
     }
 }
 
-pub(super) fn apply_plain_local_stores(function: &mut Function, live: Option<&[RegisterSet]>) {
-    if let Some(live) = live {
-        compact_binary_stores(function, live, PLAIN_LOCAL_COMPACT_RULES, &[]);
-    }
+/// Compacts the plain local stores under `live`, and whether it rewrote any instruction.
+pub(super) fn apply_plain_local_stores(function: &mut Function, live: Option<&[RegisterSet]>) -> bool {
+    live.is_some_and(|live| compact_binary_stores(function, live, PLAIN_LOCAL_COMPACT_RULES, &[]))
 }
 
 fn compact_binary_stores(
@@ -60,8 +70,9 @@ fn compact_binary_stores(
     live: &[RegisterSet],
     rules: &[CompactRule],
     triple_rules: &[TripleCompactRule],
-) {
+) -> bool {
     let old = std::mem::take(&mut function.code);
+    let mut changed = false;
     let protected = protected_positions(
         &old,
         &function.wide,
@@ -81,7 +92,7 @@ fn compact_binary_stores(
                 let live_after = live.get(pc + 3).copied().unwrap_or(RegisterSet::MAX);
                 triple_rules
                     .iter()
-                    .filter(|rule| rule.pattern == [window[0].op(), window[1].op(), window[2].op()])
+                    .filter(|rule| rule.pattern.iter().zip(window).all(|(set, instruction)| set[instruction.op() as usize]))
                     .find_map(|rule| {
                         (rule.replacement)(window[0], window[1], window[2], live_after)
                     })
@@ -90,6 +101,7 @@ fn compact_binary_stores(
             map[pc + 1] = code.len();
             map[pc + 2] = code.len();
             code.push(replacement);
+            changed = true;
             pc += 3;
             continue;
         }
@@ -101,12 +113,13 @@ fn compact_binary_stores(
                 let live_after = live.get(pc + 2).copied().unwrap_or(RegisterSet::MAX);
                 rules
                     .iter()
-                    .filter(|rule| rule.pattern == [first.op(), second.op()])
+                    .filter(|rule| rule.first[first.op() as usize] && rule.second == second.op())
                     .find_map(|rule| (rule.replacement)(first, *second, live_after))
             });
         if let Some(replacement) = replacement {
             map[pc + 1] = code.len();
             code.push(replacement);
+            changed = true;
             pc += 2;
         } else {
             code.push(old[pc]);
@@ -125,6 +138,7 @@ fn compact_binary_stores(
         &old,
     );
     function.code = code;
+    changed
 }
 
 fn local_index_sources(
@@ -262,6 +276,7 @@ mod tests {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             dynamic_scope_access: Default::default(),
+            evals_in_scope: Default::default(),
             js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             initializer: Default::default(),
@@ -349,6 +364,7 @@ mod tests {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             dynamic_scope_access: Default::default(),
+            evals_in_scope: Default::default(),
             js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             initializer: Default::default(),

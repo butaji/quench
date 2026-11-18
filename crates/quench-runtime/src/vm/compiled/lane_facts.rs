@@ -178,9 +178,9 @@ impl std::fmt::Write for Fnv {
 /// Whether the tier model admits compiling `function`'s body for the `entries` it has made
 /// (`tier_model::admits`), its plan charged too where `unplanned`: the gate every lane-body
 /// compile request passes.
-pub(super) fn pays_compile(tiers: &Tiers, program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &super::super::dispatch_fast::LaneView, unplanned: bool, diagnostics: bool) -> bool {
+pub(super) fn pays_compile(tiers: &Tiers, program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &super::super::dispatch_fast::LaneView, unplanned: bool, diagnostics: bool) -> super::tier_model::Pick {
     let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
-    super::tier_model::admits(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir }, unplanned, diagnostics)
+    super::tier_model::decide(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir }, unplanned, diagnostics)
 }
 
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a

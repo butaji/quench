@@ -415,6 +415,12 @@ struct IdentityBranch {
     register: Register,
 }
 
+/// Whether `instruction` is a comparison branch (`JumpBinaryFalse`), by its staged decode.
+fn comparison_jump(instruction: WideInstruction) -> bool {
+    // merge: kept as a helper because several admission arms test it; it now asks the staged query.
+    crate::staged::compare_jump(instruction.op())
+}
+
 /// A nullish comparison branch that can be emitted from the tagged value word. Strict
 /// identity compares one constant. Loose equality against null or undefined matches either
 /// nullish value; Abstract Equality does not coerce an object when the other operand is null.
@@ -441,34 +447,45 @@ fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<
 /// Whether `register` has definitions in `instructions` and every one is a `load`, which may
 /// give an object, or a move of a register only such loads define (`const p = a[i]; p.x`: the
 /// element read's register reaches the receiver through a `Move`) or of an entry value.
-fn loads_alone_define(instructions: &[WideInstruction], register: Register, load: fn(Op) -> bool) -> bool {
+fn loads_alone_define(instructions: &[WideInstruction], register: Register, load: fn(WideInstruction) -> bool) -> bool {
     loads_define(instructions, register, load, &mut Vec::new())
 }
 
 /// `loads_alone_define`, through the moves not yet `followed`.
-fn loads_define(instructions: &[WideInstruction], register: Register, load: fn(Op) -> bool, followed: &mut Vec<Register>) -> bool {
+fn loads_define(instructions: &[WideInstruction], register: Register, load: fn(WideInstruction) -> bool, followed: &mut Vec<Register>) -> bool {
     if followed.contains(&register) {
         return false;
     }
     followed.push(register);
     let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(register)).peekable();
-    definitions.peek().is_some() && definitions.all(|definition| load(definition.op())
-        || (definition.op().is_move() && moved_from_load(instructions, definition.register_b(), load, followed)))
+    definitions.peek().is_some() && definitions.all(|definition| load(*definition)
+        || (matches!(crate::vm::compiled::decoded(*definition), Some(crate::staged::Operation::Move { .. })) && moved_from_load(instructions, definition.register_b(), load, followed)))
 }
 
 /// Whether a move's `source` may hold what a load gives: loads alone define it, or the loop
 /// defines it not at all, so it holds its entry value (`let p = head; while (p) p = p.next`).
-fn moved_from_load(instructions: &[WideInstruction], source: Register, load: fn(Op) -> bool, followed: &mut Vec<Register>) -> bool {
+fn moved_from_load(instructions: &[WideInstruction], source: Register, load: fn(WideInstruction) -> bool, followed: &mut Vec<Register>) -> bool {
     !instructions.iter().any(|candidate| candidate.defined_register() == Some(source)) || loads_define(instructions, source, load, followed)
 }
 
 fn field_reads_alone_define(instructions: &[WideInstruction], register: Register) -> bool {
-    loads_alone_define(instructions, register, crate::staged::reads_named_field)
+    loads_alone_define(instructions, register, is_field_read)
+}
+
+/// A named field read (`GetField`).
+fn is_field_read(instruction: WideInstruction) -> bool {
+    crate::staged::reads_named_field(instruction.op())
+}
+
+/// An element read (`GetIndex`).
+// merge: HEAD also matched `ElementReadOperand`; theirs' staged query covers `GetIndex` only.
+fn is_element_read(instruction: WideInstruction) -> bool {
+    crate::staged::reads_element(instruction.op())
 }
 
 /// A field read or an element read: the loads whose result a field read may take as its receiver.
-fn is_receiver_load(op: Op) -> bool {
-    crate::staged::reads_named_field(op) || crate::staged::reads_element(op)
+fn is_receiver_load(instruction: WideInstruction) -> bool {
+    is_field_read(instruction) || is_element_read(instruction)
 }
 
 /// Traces a tagged-register rejection at `offset` (`QUENCH_TRACE=osr-reject`).
@@ -513,11 +530,12 @@ fn tagged_registers_with_failure(
             if !crate::staged::loads_constant(instruction.op()) {
                 return None;
             }
+            let (destination, index) = (instruction.result_register(), instruction.constant_index());
             constants
-                .get(instruction.constant_index())?
+                .get(index)?
                 .as_number()
                 .is_none()
-                .then_some(instruction.result_register())
+                .then_some(destination)
         }))
         .chain(held.iter().copied())
         // A field receiver the region's field or element reads give holds an object.
@@ -538,7 +556,7 @@ fn tagged_registers_with_failure(
             instructions.iter().any(|candidate| candidate.defined_register() == Some(receiver)))))
         // Any store of a value only field reads give stores it tagged: it may be an object,
         // which the entry's barrier on the receiver covers (`lane_loop_entry`).
-        .chain(instructions.iter().filter(|instruction| admitted_store(instruction.op())).filter_map(|instruction| {
+        .chain(instructions.iter().filter(|instruction| admitted_store(**instruction)).filter_map(|instruction| {
             let value = instruction.register_a();
             field_reads_alone_define(instructions, value).then_some(value)
         }))
@@ -904,10 +922,12 @@ fn array_read(instruction: WideInstruction) -> Option<Register> {
     }
 }
 
-/// Whether a loop region admits `op` as a named field store: every one the opcode table
-/// names (`Op::field_store`) but a strict store to `this`.
-fn admitted_store(op: Op) -> bool {
-    op.field_store().is_some_and(|store| !(store.strict && store.receiver == crate::bytecode::StoreReceiver::This))
+/// Whether a loop region admits `instruction` as a named field store: every named store the
+/// decoder makes (`SetField`, its `base` the receiver register or `None` for `this`) but a strict
+/// store to `this`.
+fn admitted_store(instruction: WideInstruction) -> bool {
+    matches!(crate::vm::compiled::decoded_completed(instruction),
+        Some(crate::staged::Operation::SetField { base, strict, .. }) if !(strict && base.is_none()))
 }
 
 /// Whether `instruction` names `register` (a read or a write); an instruction `renamed`
@@ -1381,14 +1401,14 @@ enum Arithmetic {
     Remainder,
 }
 
-fn arithmetic(instruction: Op, operator: u32) -> Option<Arithmetic> {
-    if crate::staged::computes_binary(instruction) && operator == super::super::operations::REMAINDER {
+fn arithmetic(instruction: WideInstruction, operator: u32) -> Option<Arithmetic> {
+    if crate::staged::computes_binary(instruction.op()) && operator == super::super::operations::REMAINDER {
         return Some(Arithmetic::Remainder);
     }
-    if let Some(operation) = NumberArithmetic::from_js_instruction(instruction, operator) {
+    if let Some(operation) = NumberArithmetic::from_js_instruction(instruction.op(), operator) {
         return Some(Arithmetic::Float(operation));
     }
-    super::super::operations::NumberBitwise::from_js_instruction(instruction, operator)
+    super::super::operations::NumberBitwise::from_js_instruction(instruction.op(), operator)
         .map(Arithmetic::Int32)
 }
 
@@ -1414,11 +1434,11 @@ enum Unary {
     BitwiseNot,
 }
 
-fn unary(instruction: Op, operator: u32) -> Option<Unary> {
-    if let Some(operation) = NumberUnary::from_js_instruction(instruction, operator) {
+fn unary(instruction: WideInstruction, operator: u32) -> Option<Unary> {
+    if let Some(operation) = NumberUnary::from_js_instruction(instruction.op(), operator) {
         return Some(Unary::Number(operation));
     }
-    (crate::staged::computes_unary(instruction) && operator == UnaryOperator::BitwiseNot as u32)
+    (crate::staged::computes_unary(instruction.op()) && operator == UnaryOperator::BitwiseNot as u32)
         .then_some(Unary::BitwiseNot)
 }
 
@@ -1428,6 +1448,30 @@ fn unary(instruction: Op, operator: u32) -> Option<Unary> {
 enum Role {
     Scalar(Representation),
     Array { elements: Representation, written: bool },
+}
+
+impl Role {
+    /// The role that holds both `self` and `other`, or `None` when no single role does. Only
+    /// Float64 and Tagged elements join; a Tagged scalar widens an array, and an array joins a
+    /// Tagged scalar's register as a Tagged array.
+    fn join(self, other: Role) -> Option<Role> {
+        use Representation::{Float64, Tagged};
+        let boxed = |elements: Representation| matches!(elements, Float64 | Tagged);
+        match (self, other) {
+            (Role::Scalar(Float64), Role::Scalar(Float64)) => Some(self),
+            (Role::Scalar(Tagged), Role::Scalar(Tagged)) => Some(self),
+            (Role::Array { elements: a, written }, Role::Array { elements: b, written: more })
+                if boxed(a) && boxed(b) =>
+            {
+                Some(Role::Array { elements: a.join(b), written: written || more })
+            }
+            (Role::Array { elements, written }, Role::Scalar(Tagged)) if boxed(elements) => {
+                Some(Role::Array { elements: Tagged, written })
+            }
+            (Role::Scalar(Tagged), Role::Array { written, .. }) => Some(Role::Array { elements: Tagged, written }),
+            _ => None,
+        }
+    }
 }
 
 struct Admission<'a> {
@@ -1457,30 +1501,11 @@ impl Admission<'_> {
     }
 
     fn note(&mut self, register: Register, role: Role) -> Option<()> {
-        use Representation::{Float64, Tagged};
-        match (self.roles.get(&register).copied(), role) {
-            (None, role) => {
-                self.roles.insert(register, role);
-            }
-            (Some(Role::Scalar(Float64)), Role::Scalar(Float64)) => {}
-            (Some(Role::Scalar(Tagged)), Role::Scalar(Tagged)) => {}
-            (Some(Role::Array { elements: Float64, written }), Role::Array { elements: Float64, written: more }) => {
-                self.roles.insert(register, Role::Array { elements: Float64, written: written || more });
-            }
-            (Some(Role::Array { elements: Float64, written }), Role::Scalar(Tagged))
-            | (Some(Role::Array { elements: Tagged, written }), Role::Scalar(Tagged)) => {
-                self.roles.insert(register, Role::Array { elements: Tagged, written });
-            }
-            (Some(Role::Scalar(Tagged)), Role::Array { written, .. }) => {
-                self.roles.insert(register, Role::Array { elements: Tagged, written });
-            }
-            (Some(Role::Array { elements: Float64, written }), Role::Array { elements: Tagged, written: more })
-            | (Some(Role::Array { elements: Tagged, written }), Role::Array { elements: Float64, written: more })
-            | (Some(Role::Array { elements: Tagged, written }), Role::Array { elements: Tagged, written: more }) => {
-                self.roles.insert(register, Role::Array { elements: Tagged, written: written || more });
-            }
-            _ => return None,
-        }
+        let joined = match self.roles.get(&register).copied() {
+            None => role,
+            Some(old) => old.join(role)?,
+        };
+        self.roles.insert(register, joined);
         Some(())
     }
 
@@ -1680,7 +1705,7 @@ fn admit_register_roles(
     // the path could change: a path through a name the region stores is not held.
     let stored_names: std::collections::BTreeSet<crate::bytecode::Atom> = instructions
         .iter()
-        .filter(|instruction| admitted_store(instruction.op()))
+        .filter(|instruction| admitted_store(**instruction))
         .map(|instruction| instruction.atom_index())
         .collect();
     let rooted: std::collections::BTreeMap<Register, FieldPath> = held_registers(&instructions, sites, header_live, objects)
@@ -1743,7 +1768,7 @@ fn admit_register_roles(
         instructions.iter().filter_map(|instruction| instruction.defined_register()).collect();
     let stored_fixed: std::collections::BTreeSet<(crate::bytecode::Atom, FieldReceiver)> = instructions
         .iter()
-        .filter(|instruction| admitted_store(instruction.op()))
+        .filter(|instruction| admitted_store(**instruction))
         .filter_map(|instruction| match instruction.field_store_register() {
             None => Some((instruction.atom_index(), FieldReceiver::This)),
             Some(receiver) if !written.contains(&receiver) => Some((instruction.atom_index(), FieldReceiver::Register(receiver))),
@@ -1788,7 +1813,7 @@ fn admit_register_roles(
                 }
             }
         }
-        if admitted_store(instruction.op()) {
+        if admitted_store(instruction) {
             if instruction.result_flags() != 0 || instruction.returns_from_frame() {
                 return Err(RegionAnalysisFailure::at(
                     RegionRejection::UnsupportedInstruction(instruction.op() as u16),
@@ -2074,7 +2099,7 @@ fn admit(
                 (instruction.result_flags() == 0).then_some(())?;
                 admission.tagged(instruction.result_register())?;
             } else {
-                arithmetic(instruction.op(), instruction.binary_operator())?;
+                arithmetic(instruction, instruction.binary_operator())?;
                 admission.result(instruction)?;
             }
             admission.source(instruction.operand_b())?;
@@ -2095,7 +2120,7 @@ fn admit(
                 admission.tagged(instruction.result_register())?;
                 admission.tagged(instruction.register_b())?;
             } else {
-                unary(instruction.op(), instruction.unary_operator())?;
+                unary(instruction, instruction.unary_operator())?;
                 admission.result(instruction)?;
                 admission.number(instruction.register_b())?;
             }
@@ -2131,7 +2156,7 @@ fn admit(
             }
             admission.number(instruction.register_c())?;
         }
-        _ if admitted_store(instruction.op()) => {
+        _ if admitted_store(instruction) => {
             let value_register = instruction.register_a();
             // An unchanged entry value can be any tagged value. The VM logs a register
             // receiver in the generational barrier before native writes begin.
@@ -2174,7 +2199,7 @@ fn admit(
         // A return leaves the loop: the lane resumes at it with the state written back, and
         // runs it.
         opcode if crate::staged::returns(opcode) || crate::staged::jumps(opcode) => {}
-        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. })) => {
+        _ if comparison_jump(instruction) => {
             if let Some(branch) = identity_branch(instruction, constants) {
                 admission.tagged(branch.register)?;
             } else if let Some((register, constant)) = match (
@@ -2385,7 +2410,7 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
         };
         if dynamic { reads.push((register, Type::ANY)); }
     }
-    if admitted_store(instruction.op()) {
+    if admitted_store(instruction) {
         let store = region.field_stores.get(&(offset as u32)).map(|index| &region.field_store_sites[*index]);
         let expected = store.map_or(Type::ANY, |store| region.field_store_type(store));
         reads.push((instruction.register_a(), expected));
@@ -2425,7 +2450,7 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
 /// definition, so the tier covers every opcode; analysis and emission keep that boundary.
 fn lowered_natively(instruction: WideInstruction) -> bool {
     let op = instruction.op();
-    admitted_store(op) || if crate::staged::compare_jump(op) {
+    admitted_store(instruction) || if comparison_jump(instruction) {
         // A conditional jump only on a relation or a bitwise and, so one on `in` or
         // `instanceof` is an exit.
         super::super::operations::NumberRelation::from_operator(instruction.binary_operator_field())

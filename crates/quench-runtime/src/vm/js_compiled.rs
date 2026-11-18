@@ -28,7 +28,7 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
 
 /// The numeric function's image, compiling on the code generator's thread (`NumericImage::start`);
 /// `None` where `compile` would decline before compiling.
-pub(super) fn start(program: &ResidualProgram, function_id: u32) -> Option<super::jit_backend::Pending<Option<super::compiled::NumericImage>>> {
+pub(super) fn start(program: &ResidualProgram, function_id: u32) -> Option<super::jit_backend::OffThread<Option<super::compiled::NumericImage>>> {
     admitted(program, function_id)?;
     super::compiled::NumericImage::start(program, function_id)
 }

@@ -36,7 +36,7 @@ impl<H: Host> Vm<H> {
             let next = self.heap.root(next);
             next_root = Some(next);
             let result = match kind {
-                GroupByKind::Object => self.heap.alloc(Cell::Object(Self::empty_object(Value::NULL))),
+                GroupByKind::Object => self.heap.alloc_object(Self::empty_object(Value::NULL)),
                 GroupByKind::Map => self.heap.alloc_map(
                     Self::empty_object(
                         self.realm
@@ -142,12 +142,10 @@ impl<H: Host> Vm<H> {
                 unreachable!("groupBy owns array groups")
             }
         } else {
-            let group = self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            let group = self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
                     vec![value],
-                ),
-            });
+                ));
             match kind {
                 GroupByKind::Object => {
                     if self.heap.is_symbol(key) {

@@ -297,7 +297,7 @@ impl<'v, H: Host> JsonHeapBuilder<'v, H> {
         let object = self
             .vm
             .heap
-            .alloc(Cell::Object(Vm::<H>::empty_object(self.object_prototype)));
+            .alloc_object(Vm::<H>::empty_object(self.object_prototype));
         for (atom, value) in keys.zip(values) {
             let key = PropertyKey::string(atom);
             let stored = match self.vm.object_data(object).map(|data| data.shape()) {

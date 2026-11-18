@@ -21,7 +21,7 @@ impl<H: Host> Vm<H> {
         let grouped = if to_map {
             self.heap.alloc_map(Self::empty_object(self.map_proto), Default::default())
         } else {
-            self.heap.alloc(Cell::Object(Self::empty_object(self.object_proto)))
+            self.heap.alloc_object(Self::empty_object(self.object_proto))
         };
         for index in 0..length {
             let value = self.array_value_at(this, index);
@@ -50,12 +50,10 @@ impl<H: Host> Vm<H> {
                 }
                 continue;
             }
-            let bucket = self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            let bucket = self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
                     vec![value],
-                ),
-            });
+                ));
             if let Some(atom) = key_atom {
                 self.set_property(grouped, atom, bucket)?;
             } else {

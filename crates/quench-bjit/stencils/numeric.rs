@@ -298,6 +298,46 @@ fn remainder_row<const D: u8, const A: u8, const B: u8, const SPEC: bool>(mut fr
     finish(frame, done)
 }
 
+/// `Math.min` (`MIN`) or `Math.max` of the two operands, a double.
+#[inline(always)]
+fn extreme_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    let operation = NumberOperation::Extreme { destination: DEST, left: Operand::register(LEFT), right: Operand::register(RIGHT), maximum: K == MAX };
+    let done = staged(&mut frame, operation).is_some();
+    finish(frame, done)
+}
+
+/// `Math.imul` of the two operands, int32s; a general row proves them first, as the remainder does.
+#[inline(always)]
+fn imul_row<const D: u8, const A: u8, const B: u8, const SPEC: bool>(mut frame: Places<D, A, B>) -> Out {
+    let product = |frame: &mut Places<D, A, B>| staged(frame, NumberOperation::Imul { destination: DEST, left: Operand::register(LEFT), right: Operand::register(RIGHT) }).is_some();
+    let done = if SPEC {
+        product(&mut frame)
+    } else {
+        let ints = frame.both_int();
+        frame.prove_ints();
+        ints && product(&mut frame)
+    };
+    finish(frame, done)
+}
+
+/// `Math.clz32` of the first operand, an int32 (0..=32): `staged::math::leading_zeros` of its ToUint32. An int32 is its own bits;
+/// a Number whose truncation is exact (below 2^63 in magnitude, `value::number_to_u32`'s first step) takes the low 32 bits of
+/// it. Any other word leaves with nothing written, for the interpreter's own conversion.
+#[inline(always)]
+fn clz32_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    let (mut stage, operand) = (Concrete::from_hole(0), Operand::register(LEFT));
+    let uint32 = match frame.int_operand(&mut stage, operand, ()) {
+        Some(word) => Some(word as u32),
+        None => frame.number_operand(&mut stage, operand, ()).and_then(|bits| {
+            let wide = truncate64(f64::from_bits(bits));
+            (wide != i64::MIN).then_some(wide as u32)
+        }),
+    };
+    let Some(uint32) = uint32 else { return Out::Exit(frame.s) };
+    frame.write(&mut stage, DEST, u64::from(crate::staged::math::leading_zeros(uint32)), Rep::Int32);
+    finish(frame, true)
+}
+
 /// The unary rows: logical and Number negation.
 #[inline(always)]
 fn unary_row<const K: u8, const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>) -> Out {
@@ -323,6 +363,9 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
         NOT | NEG => unary_row::<K, D, A, B>(frame),
         REM => remainder_row::<D, A, B, SPEC>(frame),
         MATH_FIRST..=MATH_LAST => math_row::<K, D, A, B>(frame),
+        MIN | MAX => extreme_row::<K, D, A, B>(frame),
+        IMUL => imul_row::<D, A, B, SPEC>(frame),
+        CLZ32 => clz32_row::<D, A, B>(frame),
         _ => tag_init(frame.s),
     }
 }

@@ -55,7 +55,7 @@ impl ResumeTable {
 /// The entry rows of one PC's resume stub.
 pub(super) struct Stub {
     pub(super) pc: u32,
-    rows: Vec<(&'static Stencil, [u64; HOLES])>,
+    rows: Vec<EntryRow>,
     /// The row the stub's jump lands on: the PC's first row.
     target: usize,
 }
@@ -63,7 +63,12 @@ pub(super) struct Stub {
 impl Stub {
     /// The hole values of the stub's rows, its jump last.
     pub(super) fn holes(&self) -> impl Iterator<Item = [u64; HOLES]> + '_ {
-        self.rows.iter().map(|(_, holes)| *holes).chain([[0; HOLES]])
+        self.rows.iter().map(|row| row.holes).chain([[0; HOLES]])
+    }
+
+    /// The exits of the stub's rows, then none for its jump, where a declared test's miss goes to `failed`.
+    pub(super) fn exits(&self, failed: usize) -> impl Iterator<Item = Vec<Target>> + '_ {
+        self.rows.iter().map(move |row| row.exits(failed)).chain([Vec::new()])
     }
 }
 
@@ -100,8 +105,8 @@ pub(super) fn place_stubs<'a>(rows: &mut Vec<Placed<'a>>, stubs: &'a [Stub], jum
     let mut jumps = Vec::with_capacity(stubs.len());
     for stub in stubs {
         let first = rows.len();
-        for (stencil, _) in &stub.rows {
-            rows.push(Placed { stencil, hole: &*holes[hole], taken: Some(failed), cold: false });
+        for row in &stub.rows {
+            rows.push(Placed { stencil: row.stencil, hole: &*holes[hole], taken: row.taken(failed), cold: false });
             hole += 1;
         }
         rows.push(Placed { stencil: jump, hole: &*holes[hole], taken: None, cold: false });
@@ -145,7 +150,7 @@ mod tests {
     fn a_built_region_has_a_stub_at_each_pc() {
         let (program, id, region) = loop_region("function f(n){let s=0;for(let i=0;i<n;i++){s=s+i;}return s;} f(4);", "f");
         let known = Known { program: &program, stitch: &crate::vm::compiled::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None, invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: None };
-        let spec = function::BodySpec { function: id as u32, registers: program.function(id).registers, known, realm: RealmProof::default(), widened: &[], seen: [&[], &[]], kinds: &[] };
+        let spec = function::BodySpec { function: id as u32, registers: program.function(id).registers, known, realm: RealmProof::default(), widened: &[], seen: &[], kinds: &[] };
         let helpers = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
         // SAFETY: the region has no callees, so no entry cell is read.
         let built = unsafe { function::build_region(&region, &spec, ElementViews::Dense, &callees::Callees::default(), helpers) }.expect("the loop has a row for each instruction");

@@ -169,7 +169,7 @@ fn keeps_frame_state(body: &Function) -> bool {
 /// load, a forward jump and the return, of a register, a constant or an operator's value. A
 /// body that keeps frame state (locals, handlers, `arguments`, dynamic scope) is none.
 /// `private` says whether an atom is a private name, whose access the running function
-/// decides (`lane_cached_field_miss`, `lane_private_atom`).
+/// decides (`LaneFrame::cached_miss`, `lane_private_atom`).
 pub(super) fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::bytecode::Atom) -> bool) -> Option<LeafForm> {
     if keeps_frame_state(body) {
         return None;
@@ -196,20 +196,40 @@ pub(super) fn leaf_body(body: &Function, code: &ResidualProgram, private: impl F
 /// when no leaf runs it.
 fn leaf_reads(instruction: WideInstruction, body: &Function, code: &ResidualProgram,
     private: &impl Fn(crate::bytecode::Atom) -> bool) -> Option<LeafForm> {
+    use crate::staged::{NumberOperation, Operation};
+    // The decoded records of the staged table decide their own leaf form first.
+    match crate::vm::compiled::decoded_completed(instruction) {
+        // A register move, a jump, a return, an increment or a nop of registers and constants.
+        Some(Operation::Move { .. } | Operation::Jump | Operation::JumpIf { .. } | Operation::Return { .. } | Operation::Nop
+            | Operation::Number(NumberOperation::IncDec { .. }) | Operation::IncDecLocal { .. }) => return Some(PLAIN_LEAF),
+        Some(Operation::LoadThis { .. }) => return Some(CONTEXT_LEAF),
+        Some(Operation::LoadCapture { .. } | Operation::StoreCapture { .. }) => return Some(CAPTURE_LEAF),
+        // A store past its caches (a setter, a proxy's trap, a frozen target) runs in
+        // place (`lane_set_field_in_place`) or on the general path, either of which makes
+        // the leaf an activation first.
+        Some(Operation::SetField { .. }) => return store_leaf(instruction, private),
+        // A returning read requickens by its site's tier in its leaf form
+        // (`row_returning_field_first`, `LaneView::specialize_leaf_returns`).
+        Some(Operation::GetField { .. }) => return field_leaf(instruction, code, private),
+        _ => {}
+    }
+    // A constant load (the decode of an empty context has none) is a plain leaf record.
+    if Operation::<(), ()>::decode_constant_load(instruction).is_some() {
+        return Some(PLAIN_LEAF);
+    }
+    // Records the decode leaves to the opcode: the other threads' opcodes (a number operation
+    // with a binary form, a unary, a name, a call) and a record the decode rejects.
     Some(match instruction.op() {
         op if crate::staged::leaf_value_or_jump(op) => PLAIN_LEAF,
         op if crate::staged::leaf_binary_operation(op) => return binary_leaf(instruction),
         op if op.traits().has(Traits::THIS_LEAF) => CONTEXT_LEAF,
         op if op.addresses_capture() => CAPTURE_LEAF,
-        // A store past its caches (a setter, a proxy's trap, a frozen target) runs in
-        // place (`lane_set_field_in_place`) or on the general path, either of which makes
-        // the leaf an activation first.
+        // merge: the fallback store arm is kept for stores the decode leaves to the opcode
+        // (the decoded `SetField` arm above covers the rest).
         _ if crate::staged::Operation::<u64, ()>::is_field_store(instruction) => return store_leaf(instruction, private),
         // A global name's first load finds the running function (`name_resolution`),
         // which makes the leaf an activation first; its later loads read the realm alone.
         op if op.traits().has(Traits::NAME_LEAF) && body.names_resolve_statically(code) => PLAIN_LEAF,
-        // A returning read requickens by its site's tier in its leaf form
-        // (`lane_returning_field_first`, `LaneView::specialize_leaf_returns`).
         op if op.traits().has(Traits::FIELD_LEAF) => field_leaf(instruction, code, private)?,
         _ => return None,
     })
@@ -230,7 +250,7 @@ fn store_leaf(instruction: WideInstruction, private: &impl Fn(crate::bytecode::A
 }
 
 /// A field read of no private name through a base a leaf reads; a sink stores the value
-/// to a field of `this` (`lane_get_field_sink`).
+/// to a field of `this` (`row_get_field_sink`).
 fn field_leaf(instruction: WideInstruction, code: &ResidualProgram, private: &impl Fn(crate::bytecode::Atom) -> bool) -> Option<LeafForm> {
     match instruction.field_lookup()? {
         FieldLookup::Atom { atom, base, .. } => if private(atom) { None } else { field_base_leaf(base) },

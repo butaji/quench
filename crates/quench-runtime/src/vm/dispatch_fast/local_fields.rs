@@ -27,7 +27,7 @@ pub(super) fn local_field_handler<H: Host>(cx: *mut LaneContext<H>, i: &LaneInst
 script_handler! {
     /// The miss arm of a `GetField` of a local slot's row (`local_field_handler`): the cached read of
     /// the site's tier of the plain local, which binds the record's own-field hint at the primary
-    /// own entry so the row reads it next time. Any other read goes through `lane_get_field_miss`,
+    /// own entry so the row reads it next time. Any other read goes through `row_get_field_miss`,
     /// which may move the record to a fitting handler and makes the general read.
     pub(super) fn local_field_miss<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
@@ -41,7 +41,7 @@ script_handler! {
             FieldSiteTier::Nested | FieldSiteTier::General | FieldSiteTier::Getter | FieldSiteTier::Polymorphic => None,
         });
         let Some(value) = value else {
-            sibling!(lane_get_field_miss::<H>, r, ip, Carried::script(cx))
+            sibling!(row_get_field_miss::<H>, r, ip, Carried::script(cx))
         };
         if let (FieldSiteTier::Own, Some(object)) = (tier, object) {
             bind_local_field_hint::<H>(cx, ip, object, i.c);

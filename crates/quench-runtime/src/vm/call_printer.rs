@@ -144,6 +144,7 @@ impl<H: Host> Vm<H> {
 }
 
 fn call_kind(instruction: WideInstruction) -> Option<bool> {
+    // merge: HEAD's named_callee_is_construction is replaced by the derivation's construction and makes_call tests.
     if crate::staged::Operation::<u64, ()>::is_construction(instruction) && !instruction.is_super_construct() {
         Some(true)
     } else if crate::staged::makes_call(instruction.op()) {

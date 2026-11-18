@@ -441,7 +441,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn create_wasm_host_reference(&mut self) -> crate::RootId {
         let value = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         self.root(value)
     }
 
@@ -837,12 +837,18 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn wasm_memory_pages(&self, memory: Value) -> Result<u64, JsError> {
-        let Some(Cell::WasmMemory { bytes, header, .. }) = self.heap.get(memory) else {
+    /// Runs a staged read rule over the bytes of the linear memory `memory`, on the
+    /// interpreter's `ConcreteBytes` stage.
+    pub(super) fn wasm_memory_read<R>(
+        &self,
+        memory: Value,
+        rule: impl FnOnce(&mut crate::staged::wasm_machine::ConcreteBytes<'_>) -> R,
+    ) -> Result<R, JsError> {
+        let Some(Cell::WasmMemory { bytes, .. }) = self.heap.get(memory) else {
             return Err(JsError::validation("invalid Wasm memory binding".into()));
         };
-        let ty = &header.ty;
-        Ok((bytes.len() / ty.page_size() as usize) as u64)
+        let guard = bytes.lock();
+        Ok(rule(&mut crate::staged::wasm_machine::ConcreteBytes { memory: &guard }))
     }
 
     #[inline] pub(super) fn wasm_memory_index_type(&self, memory: Value) -> Result<crate::WasmType, JsError> {
@@ -1005,6 +1011,17 @@ impl<H: Host> Vm<H> {
         input: u64,
         length: u64,
     ) -> Result<(), JsError> {
+        if let Some(source) = source
+            && let (Some(Cell::WasmMemory { bytes: destination_bytes, .. }), Some(Cell::WasmMemory { bytes: source_bytes, .. })) =
+                (self.heap.get(destination), self.heap.get(source))
+        {
+            let mut stage = crate::staged::wasm_machine::ConcretePair {
+                destination: destination_bytes,
+                source: source_bytes,
+            };
+            return crate::staged::wasm_memory::copy_across(&mut stage, output, input, length)
+                .map_err(JsError::wasm_trap_error);
+        }
         let length = usize::try_from(length)
             .map_err(|_| JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsMemory))?;
         let available = source
@@ -1023,32 +1040,23 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         let source = source.expect("nonempty source range");
-        if source == destination {
-            self.wasm_memory_mut(destination)?
-                .0
-                .copy_within(input, output.start);
-        } else {
-            let Some(Cell::WasmMemory {
-                bytes: destination, ..
-            }) = self.heap.get(destination)
-            else {
-                unreachable!("validated destination binding")
-            };
-            match self.heap.get(source) {
-                Some(Cell::WasmMemory { bytes: source, .. }) => {
-                    destination.copy_from(source, input, output)
+        let Some(Cell::WasmMemory {
+            bytes: destination, ..
+        }) = self.heap.get(destination)
+        else {
+            unreachable!("validated destination binding")
+        };
+        match self.heap.get(source) {
+            Some(Cell::ArrayBuffer { bytes: source, .. }) => {
+                if source.is_wasm_view_of(destination) {
+                    destination.lock().copy_within(input, output.start);
+                } else if let (crate::wasm::memory::MemoryStorage::Shared(destination), Some(source)) = (&**destination, source.shared_backing()) {
+                    destination.0.copy_from(&source, input, output);
+                } else {
+                    destination.lock()[output].copy_from_slice(&source.read()[input]);
                 }
-                Some(Cell::ArrayBuffer { bytes: source, .. }) => {
-                    if source.is_wasm_view_of(destination) {
-                        destination.lock().copy_within(input, output.start);
-                    } else if let (crate::wasm::memory::MemoryStorage::Shared(destination), Some(source)) = (&**destination, source.shared_backing()) {
-                        destination.0.copy_from(&source, input, output);
-                    } else {
-                        destination.lock()[output].copy_from_slice(&source.read()[input]);
-                    }
-                }
-                _ => unreachable!("validated source binding"),
             }
+            _ => unreachable!("validated source binding"),
         }
         Ok(())
     }
@@ -4666,9 +4674,9 @@ mod tests {
         let binding = vm.wasm_global_binding(&first, 0).unwrap();
         let payload = vm
             .heap
-            .alloc(Cell::Object(Vm::<crate::SystemHost>::empty_object(
+            .alloc_object(Vm::<crate::SystemHost>::empty_object(
                 Value::NULL,
-            )));
+            ));
         vm.wasm_global_store(binding, payload).unwrap();
         let handle = vm.root(binding);
         let second = vm
@@ -4686,9 +4694,9 @@ mod tests {
         );
         let replacement = vm
             .heap
-            .alloc(Cell::Object(Vm::<crate::SystemHost>::empty_object(
+            .alloc_object(Vm::<crate::SystemHost>::empty_object(
                 Value::NULL,
-            )));
+            ));
         vm.wasm_global_store(binding, replacement).unwrap();
         vm.collect_now(importer.residual());
         assert!(!vm.heap.is_live(payload));

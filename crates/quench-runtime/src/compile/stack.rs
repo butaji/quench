@@ -50,8 +50,28 @@ pub(crate) fn validate_parsed(parsed: &oxc_parser::ParserReturn<'_>) -> Result<(
     validate(&parsed.program)
 }
 
+/// Counted nesting levels one source byte can open. Each level (expression, statement, binding
+/// pattern, assignment target) owns at least one byte of its span beyond its child's, except
+/// the byte-free wrapper of an expression statement without its `;`, which occurs only at a
+/// path's leaf.
+const LEVELS_PER_SOURCE_BYTE: usize = 2;
+/// The byte-free levels a path's leaf may add beyond `LEVELS_PER_SOURCE_BYTE`.
+const LEAF_LEVELS: usize = 2;
+
+/// The deepest nesting a program's text admits: `LEVELS_PER_SOURCE_BYTE` levels per byte of its
+/// span, plus the leaf's.
+fn depth_bound(program: &Program<'_>) -> usize {
+    let bytes = program.span.end.saturating_sub(program.span.start) as usize;
+    bytes * LEVELS_PER_SOURCE_BYTE + LEAF_LEVELS
+}
+
 pub(super) fn validate(program: &Program<'_>) -> Result<(), crate::stack::StackExhausted> {
-    let mut validator = Validator { budget: crate::stack::StackBudget::here(), depth: 0, exhausted: false };
+    let budget = crate::stack::StackBudget::here();
+    // A short text cannot nest past the budget, so the walk that would admit every level is skipped.
+    if budget.admits_tree(depth_bound(program)) {
+        return Ok(());
+    }
+    let mut validator = Validator { budget, depth: 0, exhausted: false };
     validator.visit_program(program);
     if validator.exhausted { Err(crate::stack::StackExhausted) } else { Ok(()) }
 }

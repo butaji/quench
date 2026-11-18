@@ -159,6 +159,61 @@ mod tests {
     }
 
     #[test]
+    fn type_only_wrappers_keep_references_and_names() {
+        // TypeScript erases `!`, `as`, `satisfies` and `<T>` at run time: a call through one
+        // keeps `this`, `typeof` through one tolerates a missing name, and an anonymous
+        // function under one takes its binding's name.
+        let source = r#"
+            const obj = { v: 7, m() { return this?.v; } };
+            console.log(obj.m!(), (obj.m as any)(), (<any>obj.m)(), (obj.m satisfies Function)(), obj['m']!());
+            console.log(typeof (missingName as any), typeof missingName!, typeof (<any>missingName));
+            const f = (() => 1) as () => number;
+            const g = (function () {}) satisfies Function;
+            console.log(f.name, g.name);
+        "#;
+        for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled] {
+            let program = Engine::specialize_typescript(source, "wrappers.cts").unwrap();
+            let host = TestHost::default();
+            let view = host.clone();
+            let mut runtime = Runtime::new(host);
+            runtime.set_execution_mode(mode);
+            runtime.execute(&program).unwrap();
+            assert_eq!(&*view.lines(), &["7 7 7 7 7", "undefined undefined undefined", "f g"]);
+        }
+    }
+
+    #[test]
+    fn enums_run_as_typescript_defines_them() {
+        let source = r#"
+            enum Color { Red, Green = 5, Blue }
+            enum S { A = "a", C = A }
+            enum Bits { R = 1 << 0, W = 1 << 1, RW = R | W, Not = ~W }
+            const base = 10;
+            enum Dyn { X = base * 2, Y = X + 1 }
+            enum Color { Black = 100 }
+            declare enum Gone { Q }
+            const enum K { One = 1, Two }
+            function f() { enum Local { P, Q } return Local.Q + Local[0]; }
+            console.log(JSON.stringify(Color), JSON.stringify(S), JSON.stringify(Bits));
+            console.log(JSON.stringify(Dyn), K.Two, f(), typeof Gone);
+        "#;
+        for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled] {
+            let program = Engine::specialize_typescript(source, "enums.cts").unwrap();
+            let host = TestHost::default();
+            let view = host.clone();
+            let mut runtime = Runtime::new(host);
+            runtime.set_execution_mode(mode);
+            runtime.execute(&program).unwrap();
+            assert_eq!(&*view.lines(), &[
+                r#"{"0":"Red","5":"Green","6":"Blue","100":"Black","Red":0,"Green":5,"Blue":6,"Black":100} {"A":"a","C":"a"} {"1":"R","2":"W","3":"RW","R":1,"W":2,"RW":3,"Not":-3,"-3":"Not"}"#,
+                r#"{"20":"X","21":"Y","X":20,"Y":21} 2 1P undefined"#,
+            ]);
+        }
+        // TypeScript rejects a member without initializer after a computed one.
+        assert!(Engine::specialize_typescript("const b = 1; enum E { A = b, B }", "enum-error.cts").is_err());
+    }
+
+    #[test]
     fn declared_parameter_types_are_kept_as_facts() {
         let source = "function add(a: number, c: Shape, d: number | bigint, e, b?: string) { return a; }\nconst f = (x: boolean) => x;\nfunction g(p, q) { return p; }";
         let program = Engine::specialize_typescript(source, "declared.cts").unwrap();
@@ -166,7 +221,7 @@ mod tests {
             .find(|function| function.name.is_some_and(|atom| program.atoms.get(atom as usize) == Some(name)))
             .map(|function| function.declared_parameters.to_vec());
         use crate::ValueType as V;
-        let bit = |kind: V| 1_u16 << kind as u16;
+        let bit = |kind: V| crate::typed_ir::Languages::of(kind).bits();
         assert_eq!(declared("add").unwrap(), vec![bit(V::Number), super::DECLARED_ANY,
             bit(V::Number) | bit(V::BigInt), super::DECLARED_ANY, bit(V::String) | bit(V::Undefined)]);
         assert_eq!(declared("g").unwrap(), Vec::<u16>::new());
@@ -183,7 +238,7 @@ mod tests {
             super::ParameterSite { formals_start: start("(p)"), parameters: vec![start("p)")] },
         ]);
         use crate::ValueType as V;
-        let bit = |kind: V| 1_u16 << kind as u16;
+        let bit = |kind: V| crate::typed_ir::Languages::of(kind).bits();
         // What a checker answers: the alias is a number, the callback parameter is a number,
         // and its `string` answer for `label` agrees with the annotation.
         let mut checked = super::CheckedParameters::default();

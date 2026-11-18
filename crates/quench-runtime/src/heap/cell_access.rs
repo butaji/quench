@@ -11,12 +11,8 @@ impl Cell {
     #[inline]
     pub(crate) fn object(&self) -> Option<&Object> {
         match self {
-            // The hot object kinds keep their object inline; the rest box it so the
-            // cell stays small.
-            Self::Object(object) => Some(object),
-            Self::Array { object } => Some(object),
+            // The rest box their object so the cell stays small.
             Self::RegExp { object, .. } => Some(object),
-            Self::Collection(collection) => Some(&collection.object),
             Self::ArrayBuffer { object, .. }
             | Self::ShadowRealm { object, .. }
             | Self::WeakMap { object, .. }
@@ -38,8 +34,6 @@ impl Cell {
             Self::Promise(promise) => Some(&promise.object),
             Self::WasmGlobal { header, .. } => Some(&header.object),
             Self::WasmMemory { header, .. } => Some(&header.object),
-            Self::Function(function) => Some(&function.object),
-            Self::Iterator(iterator) => Some(&iterator.object),
             Self::TypedArray { object, .. } | Self::DataView { object, .. } => Some(&object.object),
             _ => None,
         }
@@ -48,12 +42,8 @@ impl Cell {
     #[inline]
     pub(crate) fn object_mut(&mut self) -> Option<&mut Object> {
         match self {
-            // The hot object kinds keep their object inline; the rest box it so the
-            // cell stays small.
-            Self::Object(object) => Some(object),
-            Self::Array { object } => Some(object),
+            // The rest box their object so the cell stays small.
             Self::RegExp { object, .. } => Some(object),
-            Self::Collection(collection) => Some(&mut collection.object),
             Self::ArrayBuffer { object, .. }
             | Self::ShadowRealm { object, .. }
             | Self::WeakMap { object, .. }
@@ -75,8 +65,6 @@ impl Cell {
             Self::Promise(promise) => Some(&mut promise.object),
             Self::WasmGlobal { header, .. } => Some(&mut header.object),
             Self::WasmMemory { header, .. } => Some(&mut header.object),
-            Self::Function(function) => Some(&mut function.object),
-            Self::Iterator(iterator) => Some(&mut iterator.object),
             Self::TypedArray { object, .. } | Self::DataView { object, .. } => {
                 Some(&mut object.object)
             }
@@ -108,8 +96,8 @@ impl super::Heap {
         // A DataView's and a buffer's geometry is accessors of their prototypes, so their own
         // names are their shape's too. A typed array is not here: every canonical numeric
         // string, not only an index, is its own element.
-        matches!(cell, Cell::Collection(_) | Cell::WeakMap { .. } | Cell::WeakSet { .. }
-            | Cell::Date { .. } | Cell::RegExp { .. } | Cell::Promise(_) | Cell::Iterator(_)
+        matches!(cell, Cell::WeakMap { .. } | Cell::WeakSet { .. }
+            | Cell::Date { .. } | Cell::RegExp { .. } | Cell::Promise(_)
             | Cell::DataView { .. } | Cell::ArrayBuffer { .. } | Cell::WeakRef { .. } | Cell::FinalizationRegistry { .. })
             .then(|| cell.object()).flatten()
     }

@@ -122,7 +122,7 @@ impl<H: Host> Vm<H> {
         } else {
             self.realm_object_prototype(realm)
         };
-        self.heap.alloc(Cell::Object(Self::empty_object(parent)))
+        self.heap.alloc_object(Self::empty_object(parent))
     }
 
     /// The closure of `parts` over `env`, and the shape its own properties are named under where
@@ -145,7 +145,7 @@ impl<H: Host> Vm<H> {
             None => Self::empty_object(parts.function_object_prototype),
         };
         let kind = FunctionKind::User(self.active_program, parts.id);
-        (self.heap.alloc_function(FunctionRecord { object, realm: parts.realm, kind, env }), named_shape)
+        (self.alloc_function_in(FunctionRecord { object, kind, env }, parts.realm), named_shape)
     }
 
     /// Records `function`, a closure of a program's top level, as found again by plan

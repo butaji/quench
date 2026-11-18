@@ -55,6 +55,14 @@ pub(in crate::vm) fn decoded(instruction: impl std::borrow::Borrow<crate::byteco
     crate::staged::Operation::decode(*instruction.borrow(), crate::staged::DecodeContext::EMPTY)
 }
 
+/// The staged operation a record makes apart from how its result completes the frame (its result
+/// flags), with no constants or sites resolved (`Operation::decode_completed`): what a tier that
+/// completes the result itself asks instead of naming the opcode.
+#[inline]
+pub(in crate::vm) fn decoded_completed(instruction: impl std::borrow::Borrow<crate::bytecode::WideInstruction>) -> Option<crate::staged::Operation<(), ()>> {
+    crate::staged::Operation::decode_completed(*instruction.borrow(), crate::staged::DecodeContext::EMPTY).map(|(operation, _)| operation)
+}
+
 /// The staged operation a record performs, whatever completion its result flags ask (a result
 /// that also returns from the frame or writes `this`): what an analysis asks of a record when the
 /// question is the operation, not how the frame completes. `decoded` declines a flagged record,
@@ -68,6 +76,10 @@ pub(in crate::vm) fn performed(instruction: impl std::borrow::Borrow<crate::byte
     } else { instruction };
     decoded(plain)
 }
+/// What an instruction means to the compiled tiers, classified from the shared decode (`staged/meaning_compiled.rs`).
+#[allow(dead_code)] // each classification is asked by the tier that needs it
+#[path = "../staged/meaning_compiled.rs"]
+pub(in crate::vm) mod meaning_compiled;
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
@@ -133,6 +145,8 @@ mod wasm_flow_stage;
 mod wasm_call_stage;
 mod wasm_table_stage;
 mod wasm_table_ops_stage;
+mod wasm_gc_stage;
+mod wasm_gc_callout;
 mod wasm_instance_switch;
 mod wasm_simd_stage;
 // `--b-jit` enters a module's functions through their stitched rows (`stitched_entry`).
@@ -221,7 +235,7 @@ mod general_store;
 pub(super) use frameless::ChainFrame;
 pub(super) use frameless::Frameless;
 use direct_call::direct_call;
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
 mod guard_aarch64;
 #[cfg(feature = "aot")]
 #[path = "compiled/ahead_entry.rs"]
@@ -276,8 +290,7 @@ fn emit_known_number(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::
     use crate::staged::machine::{Lane, Unary};
     let mut stage = object_slots::emit(builder);
     let integer = crate::staged::value::is_int(&mut stage, bits);
-    let payload = stage.raw_unary(Unary::Narrow(Lane::I32), bits);
-    let int = stage.raw_unary(Unary::FromSigned(Lane::F64), payload);
+    let int = crate::staged::value::int32_as_f64(&mut stage, bits);
     let double = stage.raw_unary(Unary::Bitcast(Lane::F64), bits);
     stage.raw_select(integer, int, double)
 }
@@ -313,8 +326,7 @@ fn emit_js_tagged_number(
     stage.branch_if(double, (join, &[number]), (fallback, &[]));
 
     stage.builder.switch_to_block(integer_block);
-    let low = stage.raw_unary(Unary::Narrow(Lane::I32), bits);
-    let int = stage.raw_unary(Unary::FromSigned(Lane::F64), low);
+    let int = crate::staged::value::int32_as_f64(&mut stage, bits);
     stage.goto(join, &[int]);
     builder.seal_block(nan);
     builder.seal_block(tagged);
@@ -322,19 +334,6 @@ fn emit_js_tagged_number(
     builder.seal_block(join);
     builder.switch_to_block(join);
     builder.block_params(join)[0]
-}
-
-/// An exact int32 projection of a Number, including its zero sign. The predicate
-/// rejects fractions, nonfinite values, saturation and -0 before the view is used.
-fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> (ir::Value, ir::Value) {
-    use crate::staged::machine::{Lane, Relation, Unary};
-    let mut stage = object_slots::emit(builder);
-    let integer = stage.raw_unary(Unary::ToSignedSaturating(Lane::I32), number);
-    let round_trip = stage.raw_unary(Unary::FromSigned(Lane::F64), integer);
-    let bits = stage.raw_unary(Unary::Bitcast(Lane::I64), number);
-    let round_trip_bits = stage.raw_unary(Unary::Bitcast(Lane::I64), round_trip);
-    let exact = stage.raw_compare(Relation::Equal, bits, round_trip_bits);
-    (integer, exact)
 }
 
 // The boxes `emit_js_box_number` made while a lowering records them (`record_boxed_numbers`):
@@ -369,21 +368,16 @@ pub(super) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::
 
 /// `emit_js_box_number` with no branch: the integer, double and NaN encodings, selected.
 fn emit_js_box_number_pure(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
-    use crate::staged::machine::{Binary, Lane, Relation, Unary};
-    let (integer, is_integer) = emit_js_exact_int32(builder, number);
-    let mut stage = object_slots::emit(builder);
-    let bits = stage.raw_unary(Unary::Bitcast(Lane::I64), number);
-    let integer_bits = stage.raw_unary(Unary::ZeroExtend(Lane::I64), integer);
-    let int_tag = stage.raw_const(Lane::I64, crate::value::ValueLayout::INT_TAG as i64);
-    let integer_bits = stage.raw_binary(Binary::Or, integer_bits, int_tag);
-    let encoded = stage.raw_select(is_integer, integer_bits, bits);
-    let is_nan = stage.raw_compare(Relation::FloatUnordered, number, number);
-    let canonical_nan = stage.raw_const(Lane::I64, crate::value::ValueLayout::CANONICAL_NAN as i64);
-    stage.raw_select(is_nan, canonical_nan, encoded)
+    crate::staged::value::number_word(&mut object_slots::emit(builder), number)
+}
+
+/// The int32 a double converts to exactly, and whether it does (`staged::value::exact_int32`).
+fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> (ir::Value, ir::Value) {
+    crate::staged::value::exact_int32(&mut object_slots::emit(builder), number)
 }
 
 fn emit_js_box_number_word(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
-    use crate::staged::machine::{Binary, Lane, Relation, Unary};
+    use crate::staged::machine::{Lane, Relation, Unary};
     let (cold, join) = (builder.create_block(), builder.create_block());
     builder.set_cold_block(cold);
     let result = builder.append_block_param(join, types::I64);
@@ -394,14 +388,7 @@ fn emit_js_box_number_word(builder: &mut FunctionBuilder<'_>, number: ir::Value)
     stage.branch_if(whole_or_nan, (cold, &[]), (join, &[bits]));
     stage.builder.switch_to_block(cold);
     stage.builder.seal_block(cold);
-    let (integer, is_integer) = emit_js_exact_int32(stage.builder, number);
-    let integer_bits = stage.raw_unary(Unary::ZeroExtend(Lane::I64), integer);
-    let int_tag = stage.raw_const(Lane::I64, crate::value::ValueLayout::INT_TAG as i64);
-    let integer_bits = stage.raw_binary(Binary::Or, integer_bits, int_tag);
-    let encoded = stage.raw_select(is_integer, integer_bits, bits);
-    let is_nan = stage.raw_compare(Relation::FloatUnordered, number, number);
-    let canonical_nan = stage.raw_const(Lane::I64, crate::value::ValueLayout::CANONICAL_NAN as i64);
-    let encoded = stage.raw_select(is_nan, canonical_nan, encoded);
+    let encoded = crate::staged::value::number_word(&mut stage, number);
     stage.goto(join, &[encoded]);
     builder.switch_to_block(join);
     builder.seal_block(join);
@@ -411,7 +398,6 @@ fn emit_js_box_number_word(builder: &mut FunctionBuilder<'_>, number: ir::Value)
 /// The ToInt32 of `number`, natively below 2^63 in magnitude; beyond, infinities and NaN
 /// leave through `exit` (`EXACT_I64_TRUNCATION_LIMIT`).
 pub(super) fn emit_number_to_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value, exit: ir::Block) -> ir::Value {
-    use crate::staged::machine::{Lane, Relation, Unary};
     // A double converted from an int32 is that int32's exact value, so its ToInt32 is the
     // int32 itself: no round trip through the double, no range guard.
     let number = builder.func.dfg.resolve_aliases(number);
@@ -423,12 +409,9 @@ pub(super) fn emit_number_to_int32(builder: &mut FunctionBuilder<'_>, number: ir
         return *integer;
     }
     let mut stage = object_slots::emit(builder);
-    let magnitude = stage.raw_unary(Unary::FloatAbsolute, number);
-    let bound = stage.raw_const(Lane::F64, crate::value::EXACT_I64_TRUNCATION_LIMIT.to_bits() as i64);
-    let exact = stage.raw_compare(Relation::FloatLess, magnitude, bound);
+    let (int32, exact) = crate::staged::value::truncate_int32(&mut stage, number);
     stage.guard(exact, exit);
-    let wide = stage.raw_unary(Unary::ToSignedSaturating(Lane::I64), number);
-    stage.raw_unary(Unary::Narrow(Lane::I32), wide)
+    int32
 }
 
 /// Continue native code only when one guard holds. All failures share the exact-PC
@@ -1323,6 +1306,19 @@ pub(super) struct OnlineFacts<'a> {
     /// The naming a cache site recorded for a `SetFunctionName`'s atom and the word of the name's string
     /// (`Vm::native_function_name`), whose staged row names a function; `None` where none may be held.
     pub(super) names: Option<&'a dyn Fn(u16, Atom) -> Option<(crate::staged::add_plan::Transition, u64)>>,
+    /// The own member of a constant-marked object that the VM holds for `atom` (`Vm::own_constant_of`):
+    /// a read of it folds under an identity guard and a dependency on the object's exact shape.
+    pub(super) own_constant: &'a dyn Fn(Atom) -> Option<OwnConstant>,
+}
+
+/// An own member a constant-marked object holds (`Vm::own_constant_of`): the object a lane body
+/// guards by identity, the exact shape it depends on (whose write retires the body), and the
+/// value the member holds while the object is marked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct OwnConstant {
+    pub(super) object: Value,
+    pub(super) shape: u32,
+    pub(super) value: Value,
 }
 
 /// A construct plan whose receiver is its fields alone (`ConstructPlanKind::Passed`): its
@@ -2782,6 +2778,7 @@ fn stitched_entry<H: Host>(
         globals_offset: CONTEXT_GLOBALS as u64,
         indirect: &indirect,
         table_callout: wasm_table_ops_stage::table_op_callout::<H> as *const () as u64,
+        gc_callout: wasm_gc_callout::wasm_gc_callout::<H> as *const () as u64,
         table_bindings: &table_bindings,
         registers: function.registers,
         vector_constant: &vector_constant,
@@ -3251,6 +3248,13 @@ pub(super) struct CompiledOsrRegion {
     parked: std::cell::Cell<Option<Box<JsStepDispatch>>>,
     /// Whether the region has parked its dispatch (`parked`).
     made: std::cell::Cell<bool>,
+    /// Whether the region's instructions call, which decides how its captures bind
+    /// (`osr_lane::bind_captures`): found at its first run, not rescanned at each.
+    region_calls: std::cell::OnceCell<bool>,
+    /// The dense capture copy a run of a region that reads its captures from the entry points
+    /// the dispatch at (`osr_lane::bind_captures`), kept between runs so an entry fills it in
+    /// place instead of allocating it. A run entered while another runs takes an empty one.
+    dense: std::cell::Cell<Vec<crate::Value>>,
 }
 
 
@@ -3324,12 +3328,16 @@ impl CompiledOsrRegion {
         (lane_context, direct_calls): (usize, bool),
     ) -> RegionRun {
         let lend = self.calls.enters_callees().then_some(direct_calls);
-        let mut bind = |dispatch: &mut JsStepDispatch, residual: &Rc<ResidualProgram>, vm: &mut Vm<H>| {
+        let calls = *self.region_calls.get_or_init(|| osr_lane::region_calls(region));
+        // The dense capture copy, which the dispatch reads during the run: put back after it.
+        let mut dense = self.dense.take();
+        // `rebound`: the dispatch was just rebound (`rebind_region`), whose base refresh set the
+        // program's field entries and store specialization already.
+        let mut bind = |dispatch: &mut JsStepDispatch, residual: &Rc<ResidualProgram>, vm: &mut Vm<H>, rebound: bool| {
             osr_lane::bind_loop::<H>(dispatch, region, entry, lane_context);
             // SAFETY: the caller's contract covers the context and `registers`.
-            let captures = unsafe { osr_lane::bind_captures::<H>(dispatch, region, entry, lane_context) };
-            unsafe { osr_lane::bind_frame(dispatch, residual, vm, (program, function, lane_context), registers) };
-            captures
+            unsafe { osr_lane::bind_captures::<H>(dispatch, region, entry, lane_context, calls, &mut dense) };
+            unsafe { osr_lane::bind_frame(dispatch, residual, vm, (program, function, lane_context), registers, rebound) };
         };
         // A region that calls callees by their entries runs on the lane frame's payload, which their
         // own helpers read (`region_lend`).
@@ -3340,7 +3348,7 @@ impl CompiledOsrRegion {
                 match vm.programs.get(program) {
                     Some(residual) => {
                         dispatch.rebind_region(vm, program, &residual, frame);
-                        let _captures = bind(&mut dispatch, &residual, vm);
+                        bind(&mut dispatch, &residual, vm, true);
                         let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
                         self.parked.set(Some(dispatch));
                         run
@@ -3350,7 +3358,7 @@ impl CompiledOsrRegion {
             },
             None => unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
                 native.dispatch.bind_native_storage(vm);
-                let _captures = bind(&mut native.dispatch, &native._program, vm);
+                bind(&mut native.dispatch, &native._program, vm, false);
                 let run = osr_lane::enter(&mut native.dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
                 // The first run of the region parks a dispatch for the runs after it.
                 if self.crossing == Crossing::General && !self.made.replace(true) {
@@ -3359,6 +3367,7 @@ impl CompiledOsrRegion {
                 run
             }) }.unwrap_or(RegionRun::own(LaneExit::Terminated)),
         };
+        self.dense.set(dense);
         // SAFETY: as above; the activation that held `vm` has returned.
         note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, region, self.calls.enters_callees());
         outcome
@@ -3662,6 +3671,9 @@ pub(super) struct LaneMethod {
     /// Where its scalar entry lies in the same code (`lane_region::scalar`), which a native call
     /// that proves its numeric arguments calls by the entry cell's `scalar` word.
     scalar: Option<usize>,
+    /// Where its row entry lies in the same code (`entry_rows`, a b-jit body's), which a b-jit direct
+    /// call calls by the entry cell's `rows` word; none for a Cranelift body.
+    rows: Option<usize>,
     recovery_space: super::dispatch_fast::LaneRecoverySpace,
     /// The lowering requires an owned, resumable poll-page capability.
     fault_poll: bool,
@@ -3725,6 +3737,11 @@ impl LaneMethod {
     /// The address of its scalar entry, if it has one (`EntryCell::scalar`).
     pub(super) fn scalar_address(&self) -> Option<usize> {
         self.scalar
+    }
+
+    /// The address of its row entry, if it has one (`EntryCell::rows`).
+    pub(super) fn rows_address(&self) -> Option<usize> {
+        self.rows
     }
 
     /// Whether an entry, which costs a few hundred instructions the lane's own run of a
@@ -3848,7 +3865,7 @@ unsafe fn cached_field_read<H: Host>(vm: u64, residual: u64, receiver: u64, read
     }
     // A string primitive reads as the lane's does: its `length`, else `String.prototype`.
     if let Some(value) = vm.cached_string_field_hit(residual, Value::from_bits(receiver), atom, site) { return value.to_bits(); }
-    // A typed array's geometry, which no field cache records, as the lane's (`lane_cached_field`).
+    // A typed array's geometry, which no field cache records, as the lane's (`LaneFrame::cached_read`).
     if vm.atom_class(atom).contains(super::object::AtomClass::VIRTUAL_FIELD)
         && let Some(value) = vm.typed_array_geometry_read(Value::from_bits(receiver), atom) { return value.to_bits(); }
     // A read native code has no descriptor for is mostly an inherited method's: its proved
@@ -4231,7 +4248,7 @@ impl<H: Host> Vm<H> {
         let frame = lane_frame();
         // SAFETY: as `run_lane_method`; the caller's entry made the frame.
         let saved = unsafe { LaneEntry::of(&(*frame).dispatch) };
-        let moved_from = self.field_entries_epoch;
+        let moved_from = self.cache_epochs.field_entries;
         // Reentrant entries lend the same TLS context. Preserve the outer
         // recovery landing and its binding before the inner entry overwrites them.
         let binding = unsafe {
@@ -4253,7 +4270,7 @@ impl<H: Host> Vm<H> {
             // binds none of them again (`BodyRunContext::bind_run`); the per-entry words go back.
             let saved = if saved.residual == 0 && saved.field_entries == 0 { saved.keeping_run_of(&(*frame).dispatch) } else { saved };
             saved.install(&mut (*frame).dispatch);
-            if self.field_entries_epoch != moved_from { self.rebind_lane_field_entries(); }
+            if self.cache_epochs.field_entries != moved_from { self.rebind_lane_field_entries(); }
             let context = &mut (*frame).context;
             (context.stack_limit, context.entry_stack, context.interrupt,
                 context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner) = binding;
@@ -4804,7 +4821,8 @@ fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction
             "branch-other-equality"
         };
     }
-    if crate::staged::Operation::<u64, ()>::is_capture_read(instruction) {
+    // merge: `is_capture_read` does not exist on the staged Operation; match the decoded LoadCapture instead.
+    if matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::LoadCapture { .. })) {
         if instruction.capture_depth() != 0 {
             return "capture-outer-depth";
         }
@@ -5085,7 +5103,9 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             }
         }
 
-        if !SINGLE_OPERATION && crate::staged::Operation::<u64, ()>::is_set_field(instruction)
+        // merge: HEAD's js field store is a named store through a register receiver (`base: Some`).
+        if !SINGLE_OPERATION && matches!(crate::staged::Operation::<u64, ()>::of(instruction),
+            Some(crate::staged::Operation::SetField { base: Some(_), .. }))
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
             && next_pc < body.code.len()
@@ -5155,7 +5175,8 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                     current_instruction.op(),
                 );
             let call_sample_started = sample_call.then(std::time::Instant::now);
-            let capture = if crate::staged::Operation::<u64, ()>::is_capture_read(current_instruction) {
+            let capture = if matches!(crate::staged::Operation::<u64, ()>::of(current_instruction),
+                Some(crate::staged::Operation::LoadCapture { .. })) {
                 vm.cached_direct_capture(
                     dispatch.frame,
                     current_instruction.capture_depth(),
@@ -5815,6 +5836,7 @@ impl<H: Host> Analysis<'_, H> {
             Step::Table(op) => {
                 self.transfer_table(function, instruction, state, op, (memory_register, *memory_slot))
             }
+            Step::Gc(op) => self.transfer_gc(function, instruction, state, op),
             Step::Flow(flow) => self.transfer_flow(function, instruction, state, flow, result),
             Step::Call(call) => self.transfer_call(function, instruction, state, call, callable),
             Step::Simd(step) => {
@@ -6940,6 +6962,10 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.table_op(pc, instruction, op);
                 true
             }
+            Step::Gc(op) => {
+                self.gc(instruction, op);
+                true
+            }
             Step::Flow(flow) => self.flow(function, pc, instruction, flow),
             Step::Call(call) => {
                 self.call(pc, instruction, call);
@@ -7397,16 +7423,17 @@ type Trampoline =
 struct GuardSupport {
     _code: Option<CodeMemory>,
     trampoline: Trampoline,
-    #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
+    #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
     landing: usize,
     /// Where a fault on the poll page resumes: the terminated status.
-    #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
+    #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
     termination: usize,
 }
 
 /// The host ABI can recover owned guard/poll faults through a native entry.
 const FAULT_POLL_SUPPORTED: bool = cfg!(any(
     all(target_arch = "x86_64", target_os = "linux"),
+    all(target_arch = "aarch64", target_os = "linux"),
     all(target_arch = "aarch64", target_os = "macos"),
 ));
 
@@ -7494,7 +7521,7 @@ const TRAMPOLINE_TERMINATION: usize = 49;
 static PREVIOUS_SEGV: std::sync::OnceLock<libc::sigaction> = std::sync::OnceLock::new();
 
 /// Publish forwarding before a handler can run; revoke partial installations.
-#[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
+#[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
 fn install_guard_signals(signals: &[(i32, &std::sync::OnceLock<libc::sigaction>)],
     handler: usize, flags: i32) -> Option<()> {
     for (index, (signal, saved)) in signals.iter().enumerate() {
@@ -7525,7 +7552,7 @@ fn install_guard_signals(signals: &[(i32, &std::sync::OnceLock<libc::sigaction>)
     Some(())
 }
 
-#[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
+#[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
 unsafe fn forward_guard_fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void,
     previous: &libc::sigaction) {
     // SAFETY: forwarding the original signal ABI to its published disposition.
@@ -7582,10 +7609,10 @@ fn guard_support() -> Option<&'static GuardSupport> {
         .as_ref()
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+#[cfg(any(all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
 fn guard_support() -> Option<&'static GuardSupport> { guard_aarch64::support() }
 
-#[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos"))))]
+#[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos"))))]
 fn guard_support() -> Option<&'static GuardSupport> {
     None
 }
@@ -7617,28 +7644,41 @@ unsafe fn enter_wasm(
     out: *mut u64,
     entry: WasmEntry,
 ) -> u32 {
-    // A fault resumes here with native frames unreturned, which held roots (`NativeRoots`): the
-    // entry gives back what it found.
-    let roots = context.native_roots;
+    // SAFETY: as the caller promises; the trampoline saves the caller's registers and records
+    // where a fault resumes.
+    let context: *mut CallContext = context;
+    unsafe { enter_compiled(context, |trampoline| match trampoline {
+        Some(trampoline) => trampoline(context, base, length, arguments, out, entry),
+        None => entry(context, base, length, arguments, out),
+    }) }
+}
+
+/// The one way into compiled code, whatever its ABI (`enter_wasm`, `lane_body_abi::enter_body`):
+/// `call` runs the entry through the fault-resuming trampoline where there is one, with
+/// `context` the active one, and a fault's unreturned native frames give back the roots they
+/// held (`NativeRoots`).
+///
+/// # Safety
+/// `call` must enter compiled code of the ABI it types the trampoline with, under `context`.
+pub(super) unsafe fn enter_compiled<R>(context: *mut CallContext, call: impl FnOnce(Option<Trampoline>) -> R) -> R {
+    // SAFETY: the caller's context outlives the call.
+    let roots = unsafe { (*context).native_roots };
     // SAFETY: a context with roots is a Wasm entry's, whose VM outlives the call.
     let depth = (!roots.is_null()).then(|| unsafe { (*roots).depth() });
-    let status = match guard_trampoline() {
+    let returned = match guard_trampoline() {
         Some(trampoline) => {
             let outer = ACTIVE_CONTEXT.with(|active| active.replace(context));
-            // SAFETY: as the caller promises; the trampoline saves the caller's registers
-            // and records where a fault resumes.
-            let status = unsafe { trampoline(context, base, length, arguments, out, entry) };
+            let returned = call(Some(trampoline));
             ACTIVE_CONTEXT.with(|active| active.set(outer));
-            status
+            returned
         }
-        // SAFETY: as the caller promises.
-        None => unsafe { entry(context, base, length, arguments, out) },
+        None => call(None),
     };
     if let Some(depth) = depth {
         // SAFETY: as above.
         unsafe { (*roots).set_depth(depth) };
     }
-    status
+    returned
 }
 
 /// Runs public JS function `entry` through the host trampoline: its ABI is the Wasm entry's,
@@ -8103,7 +8143,7 @@ impl<H: Host> Vm<H> {
         let compile_started = self.programs.js_jit_diagnostics_enabled().then(std::time::Instant::now);
         let key = (program_id, function_id);
         let pending = self.js_tier_pending.remove(&key).or_else(|| super::js_compiled::start(&residual, function_id));
-        let image = match pending.map(|pending| (pending.poll(), pending)) {
+        let image = match pending.map(|mut pending| (pending.poll(), pending)) {
             Some((std::task::Poll::Pending, pending)) => {
                 self.js_tier_pending.insert(key, pending);
                 return None;
@@ -10491,7 +10531,9 @@ mod tests {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
             let writer = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "write")).unwrap();
-            let store = program.function(writer).instructions().find(|i| crate::staged::Operation::<u64, ()>::is_set_field(*i)).unwrap();
+            // merge: HEAD found the register-receiver store (`base: Some`, not strict).
+            let store = program.function(writer).instructions().find(|i| matches!(crate::staged::Operation::<u64, ()>::of(*i),
+                Some(crate::staged::Operation::SetField { base: Some(_), strict: false, .. }))).unwrap();
             let method = vm.compile_lane_method(&program, reader as u32,
                 &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
             assert!(!method.dependencies.slots.is_empty());
@@ -10722,7 +10764,7 @@ mod tests {
         let slots = crate::heap::EnvironmentSlots::from(vec![Value::number(7.0)]);
         vm.frames[0].capture_cache = super::super::CaptureCache {
             env: vm.frames[0].env, captured: vm.frames[0].captured,
-            epoch: vm.heap.collection_epoch(), slots: &slots, root: None,
+            epoch: vm.cache_epochs.gc, slots: &slots, root: None,
         };
         JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
             assert_eq!(activation.dispatch.fixed_this_slot, &vm.frames[0].this as *const Value);
@@ -11281,7 +11323,7 @@ mod tests {
             let mut vm = Vm::new(host);
             vm.initialize_shared(&Rc::new(entry), super::super::builtins::RealmScope::Complete).unwrap();
             let prepared = vm.prepare_embedding_specialized_script_retaining(
-                source, "library", None, None, false, typescript,
+                source, "library", None, None, false, typescript, None,
             ).unwrap();
             for _ in 0..2 {
                 let result = vm.evaluate_embedding_prepared_script(&prepared).unwrap();

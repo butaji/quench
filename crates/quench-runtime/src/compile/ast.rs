@@ -380,6 +380,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.statement_completion = previous;
     }
 
+    #[inline]
     pub(super) fn emit(
         &mut self,
         op: Op,
@@ -389,31 +390,52 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         imm: u32,
     ) -> usize {
         let c = self.owner.emitted_cache_site(op, b, c, imm);
-        let instruction = Instr::try_new(op, a, b, c, imm).unwrap_or_else(|| {
-            self.store_wide_instruction(WideInstruction::new(op, a, b, c, imm))
-                .unwrap_or_else(|| {
-                    self.reject_packed_domain("wide instruction index exceeds its encoded domain");
-                    Instr::new(Op::Nop, 0, 0, 0, 0)
-                })
-        });
+        let instruction = Instr::try_new(op, a, b, c, imm)
+            .unwrap_or_else(|| self.wide_instruction(op, a, b, c, imm));
         self.code.push(instruction);
-        if let Some((line, column)) = self.current_source_position
-            && (self
-                .source_positions
-                .last()
-                .is_none_or(|position| position.line != line || position.column != column)
-                // Calls expose their own source position. An argument Move carrying
-                // the same compressed position may disappear during rewriting.
-                || op.control_flow_layout() == crate::bytecode::ControlFlowLayout::Call)
-            {
-                self.source_positions.push(crate::bytecode::SourcePosition {
-                    pc: u32::try_from(self.code.len() - 1).unwrap_or(u32::MAX),
-                    line,
-                    column,
-                });
-            }
+        let at = self.code.len() - 1;
+        self.record_source_position(op, at);
+        self.record_emitted_sites(op, at, imm);
+        at
+    }
+
+    /// The instruction for a field too wide to pack: a wide entry, or a `Nop` once the wide
+    /// index is exhausted too.
+    #[cold]
+    fn wide_instruction(&mut self, op: Op, a: Register, b: Register, c: Register, imm: u32) -> Instr {
+        self.store_wide_instruction(WideInstruction::new(op, a, b, c, imm))
+            .unwrap_or_else(|| {
+                self.reject_packed_domain("wide instruction index exceeds its encoded domain");
+                Instr::new(Op::Nop, 0, 0, 0, 0)
+            })
+    }
+
+    /// Records the current source position at `at`, unless the last entry already holds it.
+    #[inline]
+    fn record_source_position(&mut self, op: Op, at: usize) {
+        let Some((line, column)) = self.current_source_position else { return };
+        let repeats = self
+            .source_positions
+            .last()
+            .is_some_and(|position| position.line == line && position.column == column);
+        // Calls expose their own source position. An argument Move carrying
+        // the same compressed position may disappear during rewriting.
+        if repeats && op.control_flow_layout() != crate::bytecode::ControlFlowLayout::Call {
+            return;
+        }
+        self.source_positions.push(crate::bytecode::SourcePosition {
+            pc: u32::try_from(at).unwrap_or(u32::MAX),
+            line,
+            column,
+        });
+    }
+
+    /// Records the binding sites of the instruction `op` just emitted at `at`, which resolve
+    /// names by the scope they run in.
+    #[inline]
+    fn record_emitted_sites(&mut self, op: Op, at: usize, imm: u32) {
         if op == Op::MakeClosure && self.with_depth != self.inherited_with_depth {
-            self.record_lexical_binding_site(self.code.len() - 1);
+            self.record_lexical_binding_site(at);
         }
         // Deletion always resolves a binding by name, including block slots
         // whose storage atom differs from their source name.
@@ -428,9 +450,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         | Op::StoreName
                 ))
         {
-            self.record_name_binding_site(self.code.len() - 1, imm);
+            self.record_name_binding_site(at, imm);
         }
-        self.code.len() - 1
     }
 
     pub(super) fn patch(&mut self, at: usize) {
@@ -626,38 +647,15 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     fn collect_binding_names(pattern: &BindingPattern<'_>, names: &mut Vec<String>) {
-        match pattern {
-            BindingPattern::BindingIdentifier(identifier) => {
-                names.push(identifier.name.to_string());
-            }
-            BindingPattern::AssignmentPattern(pattern) => {
-                Self::collect_binding_names(&pattern.left, names);
-            }
-            BindingPattern::ArrayPattern(pattern) => {
-                for element in pattern.elements.iter().flatten() {
-                    Self::collect_binding_names(element, names);
-                }
-                if let Some(rest) = &pattern.rest {
-                    Self::collect_binding_names(&rest.argument, names);
-                }
-            }
-            BindingPattern::ObjectPattern(pattern) => {
-                for property in &pattern.properties {
-                    Self::collect_binding_names(&property.value, names);
-                }
-                if let Some(rest) = &pattern.rest {
-                    Self::collect_binding_names(&rest.argument, names);
-                }
-            }
-        }
+        super::early::collect_pattern_names(pattern, names);
     }
 
     pub(super) fn anonymous_function_definition(expression: &Expression<'_>) -> bool {
-        match expression {
+        // TypeScript's type-only wrappers name as parentheses do: `const f = (() => {}) as T`.
+        match super::binding_time::evaluated(expression) {
             Expression::FunctionExpression(function) => function.id.is_none(),
             Expression::ArrowFunctionExpression(_) => true,
             Expression::ClassExpression(class) => class.id.is_none(),
-            Expression::ParenthesizedExpression(expression) => Self::anonymous_function_definition(&expression.expression),
             _ => false,
         }
     }

@@ -83,7 +83,8 @@ impl Heap {
         let mut direct_records = 0;
         let mut object_headers = 0;
         let mut embedded_object_headers = 0;
-        let mut boxed_object_headers = 0;
+        // Every function is a record, so no object header is boxed.
+        let boxed_object_headers = 0;
         let mut object_property_counts_by_width = Vec::new();
         let mut cell_counts = [0; CellKind::COUNT];
         let mut cell_variant_counts = BTreeMap::new();
@@ -204,12 +205,7 @@ impl Heap {
                     0,
                 );
                 object_property_counts_by_width[property_width] += 1;
-                if cell.is_some_and(|cell| matches!(cell, Cell::Function(_)))
-                {
-                    boxed_object_headers += 1;
-                } else {
-                    embedded_object_headers += 1;
-                }
+                embedded_object_headers += 1;
                 if !object.properties().has_inline_property_storage() {
                     let (used, capacity) = self.properties.vector_stats(object.properties());
                     live_property_used_values += used;

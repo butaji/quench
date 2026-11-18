@@ -59,20 +59,13 @@ impl Compiler<'_> {
             .copied()
             .filter(|atom| function_scope.contains(atom))
             .collect();
-        let dynamic_eval = early::parameters_contain_direct_eval(&value.params)
-            || match &value.body {
-                oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {
-                    early::body_contains_direct_eval(&body.statements)
-                }
-                body => early::expression_contains_direct_eval(
-                    body.as_expression().expect("arrow expression body"),
-                ),
-            };
         let simple_parameters = !FunctionCompiler::has_non_simple_parameters(&value.params);
         let (body_statements, expression_body) = match &value.body {
             oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => (&body.statements[..], None),
             body => (&[][..], body.as_expression()),
         };
+        let direct_eval = early::direct_eval_facts(Some(&*value.params), body_statements, expression_body);
+        let dynamic_eval = direct_eval.eval;
         // An arrow inside a field initializer or static block (`class_initializer`) still
         // owns its parameters and locals: the initializer's restrictions (no `arguments`) are
         // early errors, and direct eval is excluded below.
@@ -97,13 +90,7 @@ impl Compiler<'_> {
             &lexical_atoms,
             None,
         );
-        let binds_dynamically = dynamic_eval
-            || match &value.body {
-                oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {
-                    early::body_may_bind_dynamically(&body.statements, None)
-                }
-                body => early::body_may_bind_dynamically(&[], body.as_expression()),
-            };
+        let binds_dynamically = direct_eval.binds_dynamically();
         self.dynamic_binding_scopes += u32::from(binds_dynamically);
         let declared_parameters = super::typescript::declared_parameters(&value.params, self.checked_parameters.as_deref());
         let mut function = FunctionCompiler::new(
@@ -212,6 +199,7 @@ impl Compiler<'_> {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             dynamic_scope_access: Default::default(),
+            evals_in_scope: Default::default(),
             js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             initializer: Default::default(),

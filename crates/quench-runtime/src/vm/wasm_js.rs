@@ -358,7 +358,7 @@ impl<H: Host> Vm<H> {
         for &(name, native) in WASM_ERRORS {
             let prototype = self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(error_prototype)));
+                .alloc_object(Self::empty_object(error_prototype));
             self.install_error_class(program, native, name, prototype)?;
             let native_function = self.native_value(native);
             self.set_builtin_value_named(namespace, name, native_function)?;
@@ -978,7 +978,12 @@ impl<H: Host> Vm<H> {
         // names dynamically.
         let mut captures = metadata
             .instructions()
-            .filter(|instruction| instruction.op().is_load_capture());
+            .filter(|instruction| {
+                matches!(
+                    crate::vm::compiled::decoded_completed(instruction),
+                    Some(crate::staged::Operation::LoadCapture { .. })
+                )
+            });
         let load = captures.next()?;
         if captures.next().is_some() {
             return None;
@@ -1099,7 +1104,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let exports = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         let exports_root = self.heap.root(exports);
         let outcome = (|| {
             for export in instance.module.exports().to_vec() {
@@ -1491,12 +1496,10 @@ impl<H: Host> Vm<H> {
                     .into_iter()
                     .map(|value| self.encode_wasm_value(value))
                     .collect::<Vec<_>>();
-                Ok(self.heap.alloc(Cell::Array {
-                    object: crate::heap::ArrayObject::new(
+                Ok(self.heap.alloc_array(crate::heap::ArrayObject::new(
                         Self::empty_object(Value::NULL),
                         encoded,
-                    ),
-                }))
+                    )))
             }
         }
     }

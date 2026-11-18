@@ -149,7 +149,9 @@ impl Model<'_> {
                 Some(Operation::Move { .. } | Operation::LoadConst { .. } | Operation::Jump | Operation::JumpIf { .. }
                     | Operation::CompareJump { .. } | Operation::Number(NumberOperation::IncDec { .. })))
             || Operation::<u64, ()>::is_number_binary(instruction)
-            || (matches!(Operation::<u64, ()>::of(instruction), Some(Operation::ElementRead { .. })) && (self.dense)(pc));
+            // merge: HEAD also keeps a dense element read of a frame local's base (`ElementReadOperand`) quiet.
+            || (matches!(Operation::<u64, ()>::of(instruction), Some(Operation::ElementRead { .. } | Operation::ElementReadOperand { .. }))
+                && (self.dense)(pc));
         !quiet || self.generic.contains(&pc)
     }
 }

@@ -382,63 +382,14 @@ impl Compiler<'_> {
         function_scope: &mut FxHashSet<Atom>,
         belongs_to_function_scope: bool,
     ) {
-        match pattern {
-            BindingPattern::BindingIdentifier(id) => {
-                let atom = self.atom(id.name.as_str());
-                if belongs_to_function_scope {
-                    function_scope.insert(atom);
-                }
-                if seen.insert(atom) {
-                    output.push(atom);
-                }
+        super::early::pattern_names(pattern, &mut |name| {
+            let atom = self.atom(name);
+            if belongs_to_function_scope {
+                function_scope.insert(atom);
             }
-            BindingPattern::ObjectPattern(object) => {
-                for property in &object.properties {
-                    self.collect_pattern_names(
-                        &property.value,
-                        output,
-                        seen,
-                        function_scope,
-                        belongs_to_function_scope,
-                    );
-                }
-                if let Some(rest) = &object.rest {
-                    self.collect_pattern_names(
-                        &rest.argument,
-                        output,
-                        seen,
-                        function_scope,
-                        belongs_to_function_scope,
-                    );
-                }
+            if seen.insert(atom) {
+                output.push(atom);
             }
-            BindingPattern::ArrayPattern(array) => {
-                for element in array.elements.iter().flatten() {
-                    self.collect_pattern_names(
-                        element,
-                        output,
-                        seen,
-                        function_scope,
-                        belongs_to_function_scope,
-                    );
-                }
-                if let Some(rest) = &array.rest {
-                    self.collect_pattern_names(
-                        &rest.argument,
-                        output,
-                        seen,
-                        function_scope,
-                        belongs_to_function_scope,
-                    );
-                }
-            }
-            BindingPattern::AssignmentPattern(assignment) => self.collect_pattern_names(
-                &assignment.left,
-                output,
-                seen,
-                function_scope,
-                belongs_to_function_scope,
-            ),
-        }
+        });
     }
 }

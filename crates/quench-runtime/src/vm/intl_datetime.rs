@@ -125,7 +125,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "DateTimeFormat")?;
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_datetime_format_prototypes
@@ -224,7 +224,7 @@ impl<H: Host> Vm<H> {
                         .and_then(|value| vm.string_value(value))
                         .unwrap_or(locale);
 
-                    let formatter = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                    let formatter = vm.heap.alloc_object(Self::empty_object(prototype));
                     let locale_value = vm.heap.alloc_string(locale.into());
                     vm.set_date_time_slot(formatter, DATE_TIME_FORMAT_OPTIONS_SLOT, locale_value)?;
                     vm.set_date_time_slot(
@@ -258,12 +258,12 @@ impl<H: Host> Vm<H> {
             Some(value) => self.box_object(value)?,
             None => self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(Value::NULL))),
+                .alloc_object(Self::empty_object(Value::NULL)),
         };
         let locale = quench_intl::sanitize_datetime_locale(locale);
         let resolved = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+            .alloc_object(Self::empty_object(self.object_proto));
         self.with_call_roots([options, resolved], |vm| {
             vm.date_time_options_from(p, options, defaults, &locale, resolved)
         })
@@ -710,7 +710,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, constructor, prototype_atom)?;
-        let formatter = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let formatter = self.heap.alloc_object(Self::empty_object(prototype));
         let locale = self
             .date_time_option(options.2, "\0locale")
             .and_then(|value| self.string_value(value))
@@ -1456,7 +1456,7 @@ impl<H: Host> Vm<H> {
         for (kind, value, source) in parts {
             let entry = self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+                .alloc_object(Self::empty_object(self.object_proto));
             let kind = self.heap.alloc_string(kind.into());
             let value = self.heap.alloc_string(value.into());
             self.set_date_time_property(entry, "type", kind)?;
@@ -1467,12 +1467,10 @@ impl<H: Host> Vm<H> {
             }
             entries.push(entry);
         }
-        Ok(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        Ok(self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 entries,
-            ),
-        }))
+            )))
     }
 
     fn date_time_resolved_options(
@@ -1485,7 +1483,7 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| self.type_error(p, "incompatible DateTimeFormat receiver".into()))?;
         let result = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+            .alloc_object(Self::empty_object(self.object_proto));
         let locale = self.heap.alloc_string(locale.into());
         let resolved = self
             .date_time_slot(this, DATE_TIME_FORMAT_RESOLVED_SLOT)

@@ -6,7 +6,6 @@
 //! string a kept program atom, so the row tests the function's shape, empty name, storage and gate.
 
 use super::*;
-use crate::bytecode::Class;
 use crate::staged::add_plan::Transition;
 use crate::staged::naming::name_form;
 use quench_bjit::{padded_holes, HOLES};
@@ -40,7 +39,9 @@ impl Name {
 /// The naming `instruction` runs where its site recorded one that a row may hold.
 pub(super) fn of(known: Known, instruction: WideInstruction) -> Option<Name> {
     let names = known.names?;
-    if instruction.op().class() != Class::SetFunctionName || instruction.result_flags() != 0 {
+    if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Protocol {
+        step: crate::staged::Protocol::Class(crate::staged::protocol_classes::ClassStep::SetFunctionName { .. }), .. }))
+        || instruction.result_flags() != 0 {
         return None;
     }
     let (transition, word) = names(instruction.cache_site_index(), instruction.atom_index())?;

@@ -9,6 +9,21 @@
 //! `arguments` object does.
 use super::*;
 
+// merge: HEAD's dispatcher, adapted to theirs' staged queries and handler names. Theirs'
+// window_local_handler does not wire it (its row wiring is not merged), so it stays unused.
+#[allow(dead_code)]
+pub(super) fn mapped_parameter_handler<H: Host>(function: &Function, op: Op, slot: usize) -> Option<Handler> {
+    let handler: Handler = if crate::staged::accesses_local_slot(op) && !crate::staged::stores_local_slot(op) {
+        load_mapped_parameter::<H>
+    } else if crate::staged::stores_local_slot(op) {
+        store_mapped_parameter::<H>
+    } else {
+        return None;
+    };
+    (crate::vm::arguments::mapped_arguments_slot(function, slot).is_some() && function.arguments_ride_window())
+        .then_some(handler)
+}
+
 /// Where a parameter lives in an environment window: its local among the window's locals, or,
 /// for a parameter a closure captured once the window's environment exists, its slot there. A
 /// captured parameter rides the window's locals until a closure makes the environment, which takes

@@ -58,26 +58,101 @@ pub(super) fn net_planned_ns(priors: &Priors, share: u64, (plan_ns_per_ir, compi
     future * saved - outlay_ns(observed.ir, plan_ns_per_ir, compile_ns_per_ir, wall_permille) as i64
 }
 
-/// Whether the model admits the compile of `observed`, whose plan is made already unless
-/// `unplanned` (its plan is then charged too); where `tiers` admits every eligible compile
-/// (`Tiers::admits_all`, the floor row), it is admitted.
-pub(super) fn admits(tiers: &Tiers, observed: &Observed, unplanned: bool, diagnostics: bool) -> bool {
+/// What one entry of `observed` saves in ns in code taking `share` per mille of the interpreter's
+/// time per bytecode behind an `entry_ns` crossing: the interpretation outside native regions,
+/// and the region crossings it makes, less its own entry.
+fn saved_per_entry(priors: &Priors, share: u64, entry_ns: u64, observed: &Observed) -> i64 {
+    let interpreted = (observed.length + observed.loop_work) * priors.interpreter_ns * (PER_MILLE - share) / PER_MILLE;
+    let crossings = observed.region_runs * priors.region_entry_ns / u64::from(observed.entries.max(1));
+    (interpreted + crossings) as i64 - entry_ns as i64
+}
+
+/// The net gain in ns of a b-jit body of `observed`: stencil code at `base_body_share` per
+/// bytecode behind a `base_entry_ns` entry, stitched in microseconds on the program's thread,
+/// so neither a plan nor a compile is charged (`Tiers::amortizing_instructions`' `Tier::Base`).
+pub(super) fn base_net_ns(priors: &Priors, observed: &Observed) -> i64 {
+    let future = (u64::from(observed.entries) / priors.remaining_divisor) as i64;
+    future * saved_per_entry(priors, priors.base_body_share, priors.base_entry_ns, observed).max(0)
+}
+
+/// The tier the model picks for a function.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Pick {
+    /// Neither tier pays yet: it counts on.
+    Interpreter,
+    /// b-jit, for good: each entry of a u-jit body would save no more than a b-jit body's, so
+    /// no number of entries repays a u-jit compile over it.
+    Base,
+    /// u-jit: its net gain is positive and ahead of a b-jit body's.
+    Ultra,
+}
+
+/// The pick from the u-jit body's net gain `ultra` and, where the mode runs b-jit too, the
+/// b-jit body's net gain and each body's saving per entry (`base`: net, b-jit saving, u-jit
+/// saving). A u-jit compile is admitted only where it stays ahead of what b-jit gives the same
+/// entries, at the decision's own lower bound of them; until then it waits, unless it never
+/// gets ahead, when b-jit is the function's tier.
+pub(super) fn pick(ultra: i64, base: Option<(i64, i64, i64)>) -> Pick {
+    match base {
+        Some((net, base_saving, ultra_saving)) if base_saving >= ultra_saving => if net > 0 { Pick::Base } else { Pick::Interpreter },
+        Some((net, ..)) if ultra <= net => Pick::Interpreter,
+        _ if ultra > 0 => Pick::Ultra,
+        _ => Pick::Interpreter,
+    }
+}
+
+/// What the model picks for `observed`, whose u-jit plan is made already unless `unplanned` (its
+/// plan is then charged too). Where `tiers` admits every eligible compile (`Tiers::admits_all`,
+/// the floor row), it picks u-jit.
+pub(super) fn decide(tiers: &Tiers, observed: &Observed, unplanned: bool, diagnostics: bool) -> Pick {
     let priors = &tiers.priors;
     let plan = if unplanned { priors.plan_ns_per_ir } else { 0 };
     let net = net_planned_ns(priors, priors.body_share, (plan, priors.compile_ns_per_ir), compile_wall_permille(priors), observed);
-    if diagnostics { shadow_log(priors, observed, net); }
-    tiers.admits_all || net > 0
+    // In the default mode b-jit is the tier below u-jit: a u-jit compile must beat it.
+    let base = crate::jit_mode::tiers_allowed(&[crate::jit_mode::Tier::Base]).then(|| (base_net_ns(priors, observed),
+        saved_per_entry(priors, priors.base_body_share, priors.base_entry_ns, observed),
+        saved_per_entry(priors, priors.body_share, priors.body_entry_ns, observed)));
+    let picked = if tiers.admits_all { Pick::Ultra } else { pick(net, base) };
+    if diagnostics { shadow_log(priors, observed, net, base.map(|(net, ..)| net), picked); }
+    picked
+}
+
+/// Whether the model admits the u-jit compile of `observed` (`decide` picks u-jit).
+#[cfg(test)]
+pub(super) fn admits(tiers: &Tiers, observed: &Observed, unplanned: bool, diagnostics: bool) -> bool {
+    decide(tiers, observed, unplanned, diagnostics) == Pick::Ultra
 }
 
 /// The decision under `QUENCH_TRACE=js-jit`.
-fn shadow_log(priors: &Priors, observed: &Observed, net: i64) {
-    eprintln!("QUENCH_TIER_MODEL entries={} ir={} region_runs={} compile_ns_per_ir={} net_ns={net} pick={}",
-        observed.entries, observed.ir, observed.region_runs, priors.compile_ns_per_ir, if net > 0 { "u-jit" } else { "interp" });
+fn shadow_log(priors: &Priors, observed: &Observed, net: i64, base: Option<i64>, picked: Pick) {
+    let pick = match picked { Pick::Ultra => "u-jit", Pick::Base => "b-jit", Pick::Interpreter => "interp" };
+    eprintln!("QUENCH_TIER_MODEL entries={} ir={} region_runs={} compile_ns_per_ir={} net_ns={net} base_net_ns={} pick={pick}",
+        observed.entries, observed.ir, observed.region_runs, priors.compile_ns_per_ir, base.map_or(String::from("-"), |base| base.to_string()));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn u_jit_is_picked_only_ahead_of_b_jit() {
+        // u-jit saves more per entry: it waits until its net gain is ahead of b-jit's.
+        assert_eq!(pick(100, Some((50, 5, 9))), Pick::Ultra);
+        assert_eq!(pick(50, Some((100, 5, 9))), Pick::Interpreter);
+        assert_eq!(pick(100, Some((100, 5, 9))), Pick::Interpreter);
+        // u-jit saves no more per entry: b-jit is the tier for good.
+        assert_eq!(pick(100, Some((60, 9, 9))), Pick::Base);
+        assert_eq!(pick(-1, Some((-5, 9, 3))), Pick::Interpreter);
+        assert_eq!(pick(100, None), Pick::Ultra);
+        assert_eq!(pick(-1, None), Pick::Interpreter);
+    }
+
+    #[test]
+    fn a_b_jit_body_charges_no_compile() {
+        // The same entries pay a b-jit body before a u-jit one: it charges no compile.
+        let observed = observed(40, 0, 2000, 0, 5000);
+        assert!(base_net_ns(&PRIORS, &observed) > net(&observed));
+    }
     use super::super::tier_policy::TEST_PRIORS as PRIORS;
 
 

@@ -2,6 +2,9 @@
 //! the heap callbacks of its vector rows. A non-memory instance binding and the SIMD operators run
 //! as their staged rows (`Decoder::WasmState`, `Decoder::WasmVector`).
 use super::*;
+// merge: kept HEAD imports the body still uses (scalar_address, ConcreteWasm); the SIMD imports are dropped, since theirs runs SIMD operators as staged rows and nothing here names them.
+use crate::staged::wasm_memory::scalar_address;
+use crate::staged::ConcreteWasm;
 
 lane_handler! {
     /// Load the memory binding of the function's memory register and install its memory view:

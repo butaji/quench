@@ -425,12 +425,30 @@ pub(crate) enum Rewrite {
 /// The rewrites a program's load left to its functions' first reads.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RewriteRanges {
-    /// Every record the load kept unlowered still awaits its rewrites, which its first read runs
-    /// (`compile::settle_deferred_rewrite`): a program that keeps its records but compiled few.
+    /// Some kept record still awaits its rewrites, which its first read runs
+    /// (`compile::settle_deferred_rewrite`). A program's chunks append only to such a program
+    /// (`ResidualProgram::has_room_for`).
     pub(crate) kept_pending: bool,
+    /// The functions whose rewrites wait for their first read, ascending. Each is kept
+    /// unlowered and unrewritten, so its encoding says so (`binary::encode_program`) and its
+    /// first read settles it; every other kept record was rewritten at load.
+    pub(crate) deferred: Box<[u32]>,
     /// Per function id: where a replay or first read put its rewrites' sites (`Some(Some)`), or
     /// that they stayed unrun (`Some(None)`); `None` before either.
     pub(crate) settled: std::cell::RefCell<Vec<Option<Option<crate::compile::replay::RewriteStart>>>>,
+}
+
+impl RewriteRanges {
+    /// The ranges of a program whose functions `deferred` lists in any order.
+    pub(crate) fn new(kept_pending: bool, mut deferred: Vec<u32>) -> Self {
+        deferred.sort_unstable();
+        Self { kept_pending, deferred: deferred.into_boxed_slice(), settled: Default::default() }
+    }
+
+    /// Whether function `id`'s rewrites wait for its first read.
+    pub(crate) fn defers(&self, id: usize) -> bool {
+        self.deferred.binary_search(&(id as u32)).is_ok()
+    }
 }
 
 /// Lazily derived views of a finished program that its replays share.
@@ -449,6 +467,11 @@ pub(crate) struct ProgramReplay {
     /// The starts of the bodies the load compiled from their source parsed again (`lazy_bodies`),
     /// in order: a replay stands each in, so the code around it compiles as the load did.
     pub(super) lazy_bodies: Box<[u32]>,
+    /// The starts of the functions whose bodies the load's check found free of early errors
+    /// (`BodyFacts::checked`), sorted. A first-call chunk of one skips its own semantic syntax
+    /// check, which repeats the load's. Empty where the load kept no check (a kept form's chunks),
+    /// so the chunk checks itself.
+    pub(super) checked_bodies: Box<[u32]>,
     pub(super) specialized: bool,
     /// Tagged template sites: a global eval of a program with any (own template objects) is never cached.
     pub(crate) template_sites: u32,
@@ -525,6 +548,7 @@ impl ProgramReplay {
             root_strict: false,
             module_goal: false,
             lazy_bodies: Box::default(),
+            checked_bodies: Box::default(),
             specialized,
             template_sites: 0,
             atoms: ProgramAtomIndex { atoms: hashbrown::HashTable::new() },
@@ -544,6 +568,12 @@ impl ProgramReplay {
     /// The ids of the functions a replay can compile.
     pub(crate) fn replayable(&self) -> impl Iterator<Item = &u32> {
         self.functions.keys()
+    }
+
+    /// Whether the load checked the body of the function at `start` alone, with its early errors
+    /// found by the semantic analysis (`checked_bodies`).
+    pub(super) fn checked_at_load(&self, start: u32) -> bool {
+        self.checked_bodies.binary_search(&start).is_ok()
     }
 }
 
@@ -901,12 +931,13 @@ pub(crate) fn recompile(
     capture_layout::apply_function(&mut function, id as usize, &function_replay.layout, &compiler.atoms);
     compiler.rewrite_replayed(program, id, function_replay.rewrite, &mut function);
     let undefined_constant = compiler.constant(Constant::Undefined);
-    compiler.lower_function(&mut function, undefined_constant);
-    liveness::mark_register_roots(
-        std::iter::once(&mut function),
+    let solved = compiler.lower_function(&mut function, undefined_constant);
+    function.register_roots = liveness::register_roots_from(
+        &function,
         compiler.method_arguments(),
         compiler.field_sites.as_slice(),
         compiler.superinstructions.as_slice(),
+        solved,
     );
     function.shrink_to_fit();
     // The function making this one named it after compiling it.

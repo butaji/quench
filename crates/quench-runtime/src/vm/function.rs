@@ -107,9 +107,13 @@ impl<H: Host> Vm<H> {
         if caller.as_known_closure().is_some() {
             caller = self.known_closure_function(caller)?;
         }
-        let Some(&FunctionRecord { kind: FunctionKind::User(program, id), realm, .. }) = self.heap.function(caller) else {
+        let Some(record) = self.heap.function(caller) else {
             return Ok(caller);
         };
+        let FunctionKind::User(program, id) = record.kind else {
+            return Ok(caller);
+        };
+        let realm = self.record_realm(record);
         let deferred = self
             .programs
             .get(program)
@@ -117,7 +121,7 @@ impl<H: Host> Vm<H> {
         let atom = self.intern_atom("prototype");
         if deferred && self.own_property(caller, atom).is_none() {
             let parent = self.realm_object_prototype(realm);
-            let prototype = self.heap.alloc(Cell::Object(Self::empty_object(parent)));
+            let prototype = self.heap.alloc_object(Self::empty_object(parent));
             self.define_instance_prototype(caller, atom, prototype, false, false)?;
         }
         Ok(caller)
@@ -176,16 +180,13 @@ impl<H: Host> Vm<H> {
                         });
                         return if visible { caller } else { Value::NULL };
                     }
-                    let Some(FunctionRecord {
-                        kind:
-                            FunctionKind::User(program_id, id),
-                        realm,
-                        ..
-                    }) = self.heap.function(caller)
-                    else {
+                    let Some(record) = self.heap.function(caller) else {
                         return Value::NULL;
                     };
-                    let visible = *realm == self.realm.globals
+                    let FunctionKind::User(program_id, id) = &record.kind else {
+                        return Value::NULL;
+                    };
+                    let visible = self.record_realm(record) == self.realm.globals
                         && self.programs.get(*program_id).is_some_and(|program| {
                             program.function_get(*id as usize).is_some_and(|metadata| {
                                 !metadata.strict && !metadata.is_async && !metadata.is_generator
@@ -227,12 +228,10 @@ impl<H: Host> Vm<H> {
                 .chain(frame.original_arguments.iter().copied())
                 .collect::<Vec<_>>(),
         );
-        let arguments = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let arguments = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.realm_object_prototype(self.realm.globals)),
                 args.clone(),
-            ),
-        });
+            ));
         self.with_call_roots([arguments], |vm| {
             vm.initialize_arguments_object(arguments, Some(function), &args.values_cow(), expose_callee)?;
             Ok(arguments)
@@ -257,12 +256,10 @@ impl<H: Host> Vm<H> {
         self.heap.release_root(target_root);
         let (prototype, length, name) = metadata?;
         let this = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let bound_args = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let bound_args = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 args.get(1..).unwrap_or_default().to_vec(),
-            ),
-        });
+            ));
         // `name` is "bound " and the target's name, interned as a builtin's name is.
         let name_atom = self.intern_atom(&format!("bound {name}"));
         let name = self.heap.alloc_string(self.atom_value(name_atom));
@@ -274,7 +271,7 @@ impl<H: Host> Vm<H> {
             let env = self.heap.alloc_object(crate::heap::Object::with_property_storage(object_prototype, storage, inline));
             let realm = self.realm.globals;
             let object = self.finished_closure_object(prototype, shape, [Value::number(length), name], None);
-            let function = self.heap.alloc_function(FunctionRecord { object, realm, kind: FunctionKind::Native(Native::FunctionBoundCall), env });
+            let function = self.alloc_function_in(FunctionRecord { object, kind: FunctionKind::Native(Native::FunctionBoundCall), env }, realm);
             self.capture_function_name_for_atom(function, name_atom);
             return Ok(function);
         }

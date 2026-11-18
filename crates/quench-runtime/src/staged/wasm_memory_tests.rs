@@ -9,7 +9,9 @@ use super::wasm_memory::{
 use super::wasm_step::Step;
 use super::wasm_tests::Probe;
 use crate::bytecode::{Op, WideInstruction};
-use crate::wasm::memory::{LinearBytes, MemoryLoad, MemoryStore, WASM_PAGE_BYTES, checked_range};
+use crate::wasm::memory::{
+    LinearBytes, MemoryLoad, MemoryStore, WASM_PAGE_BITS, WASM_PAGE_BYTES, checked_range,
+};
 use crate::{WasmTrap, WasmType, WasmValue};
 
 const MEMORY_BYTES: usize = 24;
@@ -85,8 +87,15 @@ fn a_store_of_the_stage_is_the_declared_write() {
 fn memory_size_is_the_length_in_pages() {
     for pages in [0, 1, 3] {
         let mut bytes = vec![0; pages * WASM_PAGE_BYTES];
-        assert_eq!(size(&mut instance(&mut bytes)), pages as u64);
+        assert_eq!(size(&mut instance(&mut bytes), WASM_PAGE_BITS), pages as u64);
     }
+}
+
+#[test]
+fn memory_size_counts_the_memory_type_pages() {
+    let mut bytes = vec![0; 24];
+    assert_eq!(size(&mut instance(&mut bytes), 0), 24);
+    assert_eq!(size(&mut instance(&mut bytes), 3), 3);
 }
 
 const LENGTHS: [u32; 6] = [0, 4, 5, 24, 25, u32::MAX];

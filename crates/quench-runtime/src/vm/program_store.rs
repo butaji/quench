@@ -2198,6 +2198,7 @@ impl ProgramStore {
                     for instruction in &function.code {
                         let instruction = instruction.as_wide();
                         let op = instruction.op();
+                        // merge: the guard census counts conditional jumps (JumpFalse, JumpTrue, JumpBinaryFalse) and their comparison operator, as HEAD's JumpIf/CompareJump arms did.
                         if crate::staged::conditional_jump(op) {
                             guard_census.0 = guard_census.0.saturating_add(1);
                             if crate::staged::compare_jump(op) {

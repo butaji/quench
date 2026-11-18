@@ -18,6 +18,11 @@ impl<'a> Compiler<'a> {
             self.deferred_rewrite_code += function.code.len();
             return replay::Rewrite::Deferred;
         }
+        self.rewrite_now(function)
+    }
+
+    /// Runs the rewrites of `function` at the load, and says where the sites they add start.
+    fn rewrite_now(&mut self, function: &mut BcFunction) -> replay::Rewrite {
         let start = replay::RewriteStart {
             field_sites: self.field_sites.len() as u32,
             superinstructions: self.superinstructions.len() as u32,
@@ -34,11 +39,20 @@ impl<'a> Compiler<'a> {
     }
 
     /// Whether any record's rewrites may wait for its first read: nothing encodes or compares
-    /// the load's records, and the rewrites run at all.
+    /// the load's records, and the rewrites run at all. A released record's rewrites stay in
+    /// the load while the load encodes it (`load_encoding`), because that encoding is made
+    /// from the lowered record as the load finishes it (`LoadEncoding::add`).
     pub(super) fn may_defer_rewrites(&self) -> bool {
+        self.load_encoding.is_none() && self.may_defer_kept_rewrites()
+    }
+
+    /// Whether the rewrites of a kept function may wait for its first read, as far as the
+    /// load's mode goes. A kept record is not released, so the load's encoding of released
+    /// records does not bind it: its record is encoded when the program is, unlowered and
+    /// unrewritten (`binary::encode_program`), and its first read settles the rewrites.
+    fn may_defer_kept_rewrites(&self) -> bool {
         crate::DYNAMIC_EXECUTION_ENABLED
             && self.mode == SpecializationMode::Enabled
-            && self.load_encoding.is_none()
             && !lowers_at_load()
             && !cfg!(feature = "profile-aggregate")
     }
@@ -46,18 +60,20 @@ impl<'a> Compiler<'a> {
     /// Whether some record of the program awaits its rewrites, which its first read runs: a
     /// kept one's deferred (`defers_kept_rewrites`), or a stub's chunk, appended after the load.
     pub(super) fn rewrites_pend(&self, room: &first_call::ChunkRoom) -> bool {
-        self.kept_rewrites_pending || (room.reserves() && self.may_defer_rewrites())
+        !self.kept_rewrites.is_empty() || (room.reserves() && self.may_defer_rewrites())
     }
 
-    /// Whether function `id`, which the program keeps, leaves its rewrites to its first read: a
-    /// program that compiles most of its functions without ever running them (an eval of a
-    /// bundle) pays for the rewrites of the ones that run. The root runs at once, so its
-    /// rewrites stay in the load.
+    /// Whether function `id`, which the program keeps, leaves its rewrites to its first read.
+    /// A program that keeps most of its functions without running them pays for the rewrites
+    /// of only the ones that run: an eval of a bundle, and a host script's kept form, which
+    /// the load encodes whole (`load_encoding`) and whose records a first read decodes. The
+    /// root runs at once, so its rewrites stay in the load.
     fn defers_kept_rewrites(&mut self, id: usize, function: &BcFunction) -> bool {
-        let defers = self.eval_context.is_some() && id != crate::vm::ROOT_FUNCTION_ID as usize && self.may_defer_rewrites();
+        let kept_form = self.eval_context.is_some() || self.load_encoding.is_some();
+        let defers = kept_form && id != crate::vm::ROOT_FUNCTION_ID as usize && self.may_defer_kept_rewrites();
         if defers {
             self.deferred_rewrite_code += function.code.len();
-            self.kept_rewrites_pending = true;
+            self.kept_rewrites.push(id as u32);
         }
         defers
     }
@@ -72,6 +88,13 @@ impl<'a> Compiler<'a> {
             }
             return None;
         };
+        if self.load_encoding.is_some() {
+            // The load encodes what it releases, so only a function it keeps reaches here: its
+            // rewrites wait as those of a function with no replay do, and it is never released,
+            // as `start_rewrite` would never defer it under the encoding.
+            replay.rewrite = if self.defers_kept_rewrites(id, function) { Rewrite::Deferred } else { self.rewrite_now(function) };
+            return None;
+        }
         replay.rewrite = self.start_rewrite(function);
         matches!(replay.rewrite, Rewrite::Deferred).then(|| slot.take().map(replay::ReleasedFunction::of))?
     }
@@ -86,8 +109,8 @@ impl<'a> Compiler<'a> {
             // Its replay settles it after its rewrites.
         } else if cfg!(feature = "verify-replay") || self.load_encoding.is_some() {
             let undefined_constant = self.constant(Constant::Undefined);
-            self.lower_function(function, undefined_constant);
-            liveness::mark_register_roots(std::iter::once(function), self.method_arguments(), self.field_sites.as_slice(), self.superinstructions.as_slice());
+            let solved = self.lower_function(function, undefined_constant);
+            function.register_roots = liveness::register_roots_from(function, self.method_arguments(), self.field_sites.as_slice(), self.superinstructions.as_slice(), solved);
         } else {
             self.settle_dispatch(function);
         }
@@ -114,6 +137,12 @@ impl<'a> Compiler<'a> {
 /// The rewrites of kept function `id`, which its load deferred (`Compiler::defers_kept_rewrites`),
 /// run as its record is first read: they append their sites to the program's tables, as a
 /// replay's do, or stay unrun when the room the load reserved is short.
+///
+/// The load settled the record's dispatch class before the rewrites ran (`settle_dispatch`, on
+/// the code it had), so the class is taken again here from the code the rewrites leave, as the
+/// load's `settle_dispatch` would have taken it after them; the rewrites that fuse instructions
+/// can change the instruction count the class reads. A record whose rewrites stay unrun keeps
+/// the class the load settled, which is the one a load that skips them takes.
 pub(crate) fn settle_deferred_rewrite(program: &crate::bytecode::ResidualProgram, id: u32, function: &mut BcFunction) {
     if !program.specialized {
         return;
@@ -129,6 +158,7 @@ pub(crate) fn settle_deferred_rewrite(program: &crate::bytecode::ResidualProgram
         ),
         RewritePlan::Append => rewrite::apply(function, program, &mut SiteTable::grow(fields), &mut SiteTable::grow(supers)),
     }
+    function.dispatch = Compiler::dispatch_class(&function.code, &function.wide);
 }
 
 /// How a replay treats the rewrites of one function.

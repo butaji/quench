@@ -5,7 +5,7 @@ use super::property::{read_with, Arm, FieldPlan, Owner, PlanSource, StoreArm, St
 use super::test_words::ANSWER;
 use super::*;
 use crate::bytecode::{FieldBase, Operand};
-use crate::heap::{Cell, Heap, Object};
+use crate::heap::{Heap, Object};
 use crate::typed_ir::Type;
 use crate::{Value, ValueType};
 
@@ -131,7 +131,7 @@ fn heap_of(count: u32) -> Heap {
 
 /// An object holding `values` in slots `0..`, and its exact shape.
 fn object_of(heap: &mut Heap, values: &[Value]) -> (Value, u32) {
-    let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+    let object = heap.alloc_object(Object::new(Value::NULL));
     for (index, value) in values.iter().enumerate() {
         heap.property_add(object, *value, index as u32 + 1);
     }
@@ -228,7 +228,7 @@ fn a_store_plan_chooses_the_adding_or_the_vm_store_and_stores_the_value_it_was_g
         let value = Value::integer(4).to_bits();
         let mut frame = Host::new(0, &plans, vec![0, Value::integer(1).to_bits(), value]);
         let mut stage = Concrete::new(std::ptr::null());
-        let stored = step(&mut stage, &mut frame, Operation::SetField { value: 2, base: Some(1), atom: 7, site: 3 });
+        let stored = step(&mut stage, &mut frame, Operation::SetField { value: 2, base: Some(1), atom: 7, site: 3, strict: false });
         assert!(matches!(stored, Step::Value(word) if word == value));
         assert_eq!(frame.log, [name]);
     }
@@ -241,7 +241,7 @@ fn the_property_instructions_decode_to_their_operations() {
     let get = decode(WideInstruction::new(Op::GetField, 1, 2, 3, 4)).expect("a register-based read decodes");
     assert!(matches!(get, Operation::GetField { base, lookup: FieldLookup::Atom { atom: 4, cache_site: 3, .. } } if base == FieldBase::register(2)));
     let set = decode(WideInstruction::new(Op::SetField, 1, 2, 3, 9)).expect("a store decodes");
-    assert!(matches!(set, Operation::SetField { value: 1, base: Some(2), atom: 9, site: 3 }));
+    assert!(matches!(set, Operation::SetField { value: 1, base: Some(2), atom: 9, site: 3, .. }));
     let this = decode(WideInstruction::new(Op::SetThisField, 1, 0, 3, 9)).expect("a store to this decodes");
     assert!(matches!(this, Operation::SetField { base: None, .. }));
     let delete = decode(WideInstruction::new(Op::Delete, 1, 2, 3, 1)).expect("delete decodes");
@@ -297,7 +297,7 @@ fn store_step(heap: &mut Heap, plan: StorePlan<'static>, registers: Vec<u64>, op
 
 /// `plan` run as the store of `value` to `object`'s field.
 fn store(heap: &mut Heap, plan: StorePlan<'static>, object: Value, value: Value) -> (Option<Value>, Vec<&'static str>) {
-    let operation = Operation::SetField { value: 2, base: Some(1), atom: 7, site: 3 };
+    let operation = Operation::SetField { value: 2, base: Some(1), atom: 7, site: 3, strict: false };
     store_step(heap, plan, vec![0, object.to_bits(), value.to_bits()], operation)
 }
 

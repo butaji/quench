@@ -69,10 +69,7 @@ impl FunctionCompiler<'_, '_> {
     /// The value `typeof` examines: an unresolvable name reads as undefined rather than
     /// throwing (ECMA-262 13.5.3.1 step 2), which `LoadNameTypeof` does.
     pub(super) fn typeof_operand(&mut self, argument: &Expression<'_>) -> Register {
-        let mut operand = argument;
-        while let Expression::ParenthesizedExpression(parenthesized) = operand {
-            operand = &parenthesized.expression;
-        }
+        let operand = super::super::binding_time::evaluated(argument);
         if let Expression::Identifier(identifier) = operand {
             let atom = self.owner.atom(identifier.name.as_str());
             if !self.binds_name(atom) {
@@ -599,7 +596,14 @@ impl FunctionCompiler<'_, '_> {
             Expression::StaticMemberExpression(item) => self.static_member_callee(item),
             Expression::PrivateFieldExpression(item) => self.private_field_callee(item),
             Expression::ChainExpression(item) => self.chain_callee(&item.expression),
-            Expression::ParenthesizedExpression(item) => self.callee(&item.expression),
+            // Parentheses and TypeScript's type-only wrappers keep the reference: `(obj.m)()`
+            // and `obj.m!()` call with `this` = `obj`.
+            Expression::ParenthesizedExpression(_)
+            | Expression::TSAsExpression(_)
+            | Expression::TSSatisfiesExpression(_)
+            | Expression::TSTypeAssertion(_)
+            | Expression::TSNonNullExpression(_)
+            | Expression::TSInstantiationExpression(_) => self.callee(super::super::binding_time::evaluated(value)),
             Expression::ComputedMemberExpression(item) => self.computed_member_callee(item),
             Expression::Identifier(identifier) => {
                 let atom = self.owner.atom(identifier.name.as_str());

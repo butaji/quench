@@ -5,14 +5,37 @@ use super::environment::NameLookup;
 use super::*;
 use crate::bitset::BitSet;
 
-/// Where a by-name read lands (`Vm::resolve_name_source`).
-pub(super) enum NameSource {
-    /// A binding's current value, which an uninitialized one makes an error to read.
-    Value(Value),
+/// Where a by-name read lands (`Vm::locate_name`), in the order the layers of the search are
+/// consulted. Locating runs guest code only for `WithObject`; every other location is read with
+/// no effect in between, so a read applies the location's own rule (`Vm::read_name_location`).
+#[derive(Clone, Copy)]
+pub(super) enum NameLocation {
+    /// A slot of the executing activation's own locals, which keep its bindings.
+    FrameLocal(usize),
+    /// A slot of an environment that holds the executing activation's bindings.
+    EnvironmentSlot(Value, usize),
+    /// A dynamic binding of the executing activation or of an environment outside it.
+    Dynamic(DynamicSlot),
     /// A named binding of the executing activation, read where it lives.
-    Binding(crate::bytecode::EvalBinding),
+    Named(crate::bytecode::EvalBinding),
+    /// A realm global lexical binding.
+    GlobalLexical(Atom),
+    /// The running script's global lexical binding in frame `frame`, at slot `slot`.
+    ActiveGlobalLexical(usize, usize),
+    /// The innermost object environment that has the name, and the key it was found by.
+    WithObject(Value, Value),
+    /// The value an intrinsic name stands for, which no binding can shadow.
+    Intrinsic(Value),
     /// The global object's property, or no binding at all.
-    GlobalObject,
+    Global,
+}
+
+/// A dynamic binding's place: among the executing activation's own, or in an environment
+/// outside it (`Vm::dynamic_binding_slot_in`).
+#[derive(Clone, Copy)]
+pub(super) enum DynamicSlot {
+    Own(usize),
+    Outer(Value, usize),
 }
 
 /// The by-name read a lane record handed to the general path to settle
@@ -54,7 +77,7 @@ impl<H: Host> Vm<H> {
     fn name_lands_on_global_object(&mut self, p: &ResidualProgram, owner: VarOwner, atom: Atom) -> bool {
         let lands = !self.with_scope_entered
             && !self.scope_names.declared(atom)
-            && matches!(self.resolve_name_source(p, owner, atom), NameSource::GlobalObject);
+            && matches!(self.resolve_name_source(p, owner, atom), NameLocation::Global);
         if lands {
             self.scope_names.landed.insert_growing(atom as usize);
         }
@@ -130,41 +153,42 @@ impl<H: Host> Vm<H> {
 
     /// Where a by-name read of `atom` in `owner`, the executing activation, lands once no `with`
     /// object holds it: the layers of the search in order, each of which only reads.
-    pub(super) fn resolve_name_source(&self, p: &ResidualProgram, owner: VarOwner, atom: Atom) -> NameSource {
+    pub(super) fn resolve_name_source(&self, p: &ResidualProgram, owner: VarOwner, atom: Atom) -> NameLocation {
         let internal = self.atom_class(atom).contains(AtomClass::INTERNAL);
-        if !internal && let Some(source) = self.static_scope_name_source(p, owner, atom) {
-            return source;
+        if !internal && let Some(location) = self.static_scope_name_location(p, owner, atom) {
+            return location;
         }
         // One lookup consults the activation's static binding and the outer static owner from
         // more than one rule; each is found once.
         let lookup = NameLookup::new(self.owner_view(owner), atom);
-        if let Some(value) = self.dynamic_binding_in(&lookup) {
-            return NameSource::Value(value);
+        if let Some(slot) = self.dynamic_binding_slot_in(&lookup) {
+            return NameLocation::Dynamic(slot);
         }
         if let Some(binding) = lookup.named(self) {
-            return NameSource::Binding(binding);
+            return NameLocation::Named(binding);
         }
-        if !internal && let Some(value) = self.name_value_beyond_bindings(p, owner, atom, &lookup) {
-            return NameSource::Value(value);
+        if !internal && let Some(location) = self.location_beyond_bindings(p, owner, atom, &lookup) {
+            return location;
         }
-        NameSource::GlobalObject
+        NameLocation::Global
     }
 
-    /// What a by-name read of `atom` finds where names resolve statically: the global object
+    /// Where a by-name read of `atom` lands where names resolve statically: the global object
     /// when no global lexical declaration shadows it, else the realm's binding, which no layer
     /// searched before it can hold the name past.
-    fn static_scope_name_source(&self, p: &ResidualProgram, owner: VarOwner, atom: Atom) -> Option<NameSource> {
+    fn static_scope_name_location(&self, p: &ResidualProgram, owner: VarOwner, atom: Atom) -> Option<NameLocation> {
         if self.names_resolve_to_global_object(p, owner, atom) {
-            return Some(NameSource::GlobalObject);
+            return Some(NameLocation::Global);
         }
-        self.global_scope_names_resolve_statically(p, owner)
-            .then(|| self.realm.global_lexical_bindings.get(&atom).copied().map(NameSource::Value))
-            .flatten()
+        (self.global_scope_names_resolve_statically(p, owner)
+            && self.realm.global_lexical_bindings.contains_key(&atom))
+        .then_some(NameLocation::GlobalLexical(atom))
     }
 
-    /// The value of the layers a by-name read of `atom` searches after the named bindings: the
-    /// activation's own local, the realm's global lexical bindings and the outer static owner.
-    fn name_value_beyond_bindings(&self, p: &ResidualProgram, owner: VarOwner, atom: Atom, lookup: &NameLookup) -> Option<Value> {
+    /// The location of the layers a by-name read of `atom` searches after the named bindings:
+    /// the activation's own local, the realm's global lexical bindings, the outer static owner
+    /// and the running script's global lexical binding.
+    fn location_beyond_bindings(&self, p: &ResidualProgram, owner: VarOwner, atom: Atom, lookup: &NameLookup) -> Option<NameLocation> {
         let view = self.owner_view(owner);
         let function = view.function();
         if (self.function_environment_binding(p, function, atom)
@@ -173,19 +197,21 @@ impl<H: Host> Vm<H> {
             && let Some(slot) = self.local_binding_slot(p, function, atom)
         {
             return Some(if view.owns_environment() {
-                self.heap.environment_slot(view.environment(), slot).unwrap_or(Value::UNDEFINED)
+                NameLocation::EnvironmentSlot(view.environment(), slot)
             } else {
-                self.owner_locals(owner)[slot]
+                NameLocation::FrameLocal(slot)
             });
         }
-        self.realm
-            .global_lexical_bindings
-            .get(&atom)
-            .copied()
-            .or_else(|| {
-                let (env, slot) = lookup.static_owner(self)?;
-                self.heap.environment_slot(env, slot)
-            })
-            .or_else(|| self.active_global_lexical_value(atom))
+        if self.realm.global_lexical_bindings.contains_key(&atom) {
+            return Some(NameLocation::GlobalLexical(atom));
+        }
+        if let Some((env, slot)) = lookup.static_owner(self)
+            && self.heap.environment_slot(env, slot).is_some()
+        {
+            return Some(NameLocation::EnvironmentSlot(env, slot));
+        }
+        let (frame, slot) = self.active_global_lexical_binding(atom)?;
+        self.active_global_lexical_at(frame, slot)?;
+        Some(NameLocation::ActiveGlobalLexical(frame, slot))
     }
 }

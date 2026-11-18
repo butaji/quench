@@ -13,7 +13,7 @@ mod int_range;
 mod int_type;
 mod lattice;
 mod representation;
-pub(crate) use lattice::{ANY_LANGUAGES, Type, TypeKind, language_bit};
+pub(crate) use lattice::{ANY_LANGUAGES, Languages, Type, TypeKind, language_bit};
 pub(crate) use representation::Representation;
 mod slot_type;
 pub(crate) use slot_type::SlotType;
@@ -53,6 +53,8 @@ impl Type {
             Self::language(ValueType::Undefined)
         } else if value.direct_object_index().is_some() {
             Self::DIRECT_OBJECT_FAMILY
+        } else if value.direct_string_index().is_some() {
+            Self::language(ValueType::String)
         } else if value.is_record() {
             Self::language(ValueType::Object)
         } else {

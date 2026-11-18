@@ -31,6 +31,10 @@ pub(crate) struct EntryCellLayoutWords {
     /// status and a number (`NumberReturn`); the stub, which answers a status that entered nothing, where
     /// the body has none. Written with `entry`.
     pub(crate) scalar: u64,
+    /// The published b-jit body's row entry (`entry_rows`, the `rust-preserve-none` row ABI: window,
+    /// context, receiver, captures; answers (word, status)), which a b-jit direct call row calls in
+    /// place of `entry` so the C ABI's callee-saved registers are never saved; 0 for any other body.
+    pub(crate) rows: u64,
 }
 
 pub(crate) struct CellLayout {
@@ -41,6 +45,7 @@ pub(crate) struct CellLayout {
     pub(crate) recovery_offset: i32,
     pub(crate) counters_offset: i32,
     pub(crate) scalar_offset: i32,
+    pub(crate) rows_offset: i32,
 }
 pub(crate) const ENTRY_CELL: CellLayout = CellLayout {
     entry_offset: std::mem::offset_of!(EntryCellLayoutWords, entry) as i32,
@@ -50,16 +55,21 @@ pub(crate) const ENTRY_CELL: CellLayout = CellLayout {
     recovery_offset: std::mem::offset_of!(EntryCellLayoutWords, recovery) as i32,
     counters_offset: std::mem::offset_of!(EntryCellLayoutWords, counters) as i32,
     scalar_offset: std::mem::offset_of!(EntryCellLayoutWords, scalar) as i32,
+    rows_offset: std::mem::offset_of!(EntryCellLayoutWords, rows) as i32,
 };
 #[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/call_rows.rs`), which includes this file
 const CELL: CellLayout = ENTRY_CELL;
 const _: () = assert!(std::mem::size_of::<EntryCellLayoutWords>() == 64 && std::mem::align_of::<EntryCellLayoutWords>() == 64);
-/// The facts word: registers, room and params in 16-bit fields from the low end, then the entry
-/// kind byte (`ENTRY_ACTIVATES` for a plain activation).
+/// The facts word: registers, room and params in 16-bit fields from the low end, then the entry fill
+/// byte (`CellFacts::fill`), then the entry kind byte at the top (`ENTRY_ACTIVATES` for a plain
+/// activation), which a shift alone reads.
 const FACT_BITS: u32 = u16::BITS;
 const ROOM_SHIFT: u32 = FACT_BITS;
 const PARAMS_SHIFT: u32 = 2 * FACT_BITS;
-const ENTRY_SHIFT: u32 = 3 * FACT_BITS;
+const FILL_SHIFT: u32 = 3 * FACT_BITS;
+const ENTRY_SHIFT: u32 = FILL_SHIFT + u8::BITS;
+/// `CellFacts::fill` of a function whose activation starts every register `undefined`.
+pub(crate) const FILL_ALL: u8 = u8::MAX;
 pub(crate) const ENTRY_ACTIVATES: u64 = 0;
 /// The entry kind of a function whose calls take a frame or an environment window, not a plain activation.
 pub(crate) const ENTRY_FRAMED: u8 = ENTRY_ACTIVATES as u8 + 1;
@@ -93,22 +103,28 @@ pub(crate) struct CellFacts {
     pub(crate) registers: u16,
     pub(crate) room: u16,
     pub(crate) params: u16,
+    /// The registers a native call starts `undefined` past its arguments (`RegisterRoots::entry_fill`),
+    /// `FILL_ALL` for every one: the rest are written before any read, as the interpreter's window fill
+    /// leaves them.
+    pub(crate) fill: u8,
     pub(crate) entry: u8,
 }
 
 impl CellFacts {
     /// The facts of a function whose body needs `registers` words and takes `params` parameters: a plain
     /// activation (`plain`) or one whose calls take a frame or a window.
-    pub(crate) const fn of_function(registers: u16, params: u16, plain: bool) -> Self {
-        Self { registers, room: registers, params, entry: if plain { ENTRY_ACTIVATES as u8 } else { ENTRY_FRAMED } }
+    pub(crate) const fn of_function(registers: u16, params: u16, fill: u16, plain: bool) -> Self {
+        let fill = if fill < FILL_ALL as u16 { fill as u8 } else { FILL_ALL };
+        Self { registers, room: registers, params, fill, entry: if plain { ENTRY_ACTIVATES as u8 } else { ENTRY_FRAMED } }
     }
 
     pub(crate) const fn word(self) -> u64 {
-        self.registers as u64 | (self.room as u64) << ROOM_SHIFT | (self.params as u64) << PARAMS_SHIFT | (self.entry as u64) << ENTRY_SHIFT
+        self.registers as u64 | (self.room as u64) << ROOM_SHIFT | (self.params as u64) << PARAMS_SHIFT | (self.fill as u64) << FILL_SHIFT
+            | (self.entry as u64) << ENTRY_SHIFT
     }
 
     pub(crate) const fn of_word(word: u64) -> Self {
-        Self { registers: word as u16, room: (word >> ROOM_SHIFT) as u16, params: (word >> PARAMS_SHIFT) as u16, entry: (word >> ENTRY_SHIFT) as u8 }
+        Self { registers: word as u16, room: (word >> ROOM_SHIFT) as u16, params: (word >> PARAMS_SHIFT) as u16, fill: (word >> FILL_SHIFT) as u8, entry: (word >> ENTRY_SHIFT) as u8 }
     }
 }
 
@@ -128,6 +144,18 @@ pub(crate) fn admit_native<S: Stage>(stage: &mut S, cell: S::Word, expected: S::
     let room = stage.and_imm(room, u64::from(u16::MAX));
     admit_room(stage, free, room, miss)?;
     Some(room)
+}
+
+/// The registers a native call into the cell at `cell` writes: its arguments and `undefined` up to the
+/// cell's fill (`CellFacts::fill`), or the whole `room` where the fill is `FILL_ALL`.
+#[cfg_attr(not(stencil_build), allow(dead_code))] // the b-jit direct row's fill (`stencils/call_rows.rs`)
+#[inline(always)]
+pub(crate) fn window_fill<S: Stage>(stage: &mut S, cell: S::Word, room: S::Word) -> S::Word {
+    let facts = stage.load_u64(Region::EntryCell.readonly(), cell, CELL.facts_offset);
+    let fill = stage.shr_imm(facts, FILL_SHIFT);
+    let fill = stage.and_imm(fill, u64::from(u8::MAX));
+    let all = stage.eq_imm(fill, u32::from(FILL_ALL));
+    stage.select(all, room, fill)
 }
 
 #[cfg(test)]

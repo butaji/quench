@@ -6,7 +6,7 @@ use super::test_words::{ANSWER, READ, WRITE};
 use super::*;
 use crate::bytecode::Operand;
 use crate::typed_ir::Type;
-use crate::heap::{ArrayObject, Cell, Heap, Object};
+use crate::heap::{ArrayObject, Heap, Object};
 use crate::Value;
 
 /// A frame over a few registers and the heap's array records, whose host paths log their name.
@@ -69,7 +69,7 @@ impl NumericFrame<Concrete> for Probe {
 
 /// An array of `elements` in `heap`, and a probe frame holding it in register 0 and `key` in 1.
 fn array_of(heap: &mut Heap, elements: &[Value]) -> Value {
-    heap.alloc(Cell::Array { object: ArrayObject::new(Object::new(Value::NULL), elements.to_vec()) })
+    heap.alloc_array(ArrayObject::new(Object::new(Value::NULL), elements.to_vec()))
 }
 
 fn probe(heap: &Heap, registers: [Value; 3], fact: Type) -> Probe {

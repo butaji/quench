@@ -932,6 +932,27 @@ fn lane_polymorphic_field_hints_keep_lookup_semantics() {
 }
 
 #[test]
+fn eval_vars_bound_by_nested_rest_elements_collide_with_lexicals() {
+    // A direct eval's `var` may not redeclare its caller's lexical binding (ECMA-262
+    // EvalDeclarationInstantiation step 3), including a name a nested rest element binds.
+    let source = r#"
+      const out = [];
+      let x = 1;
+      try { eval("var [...x] = [2]"); out.push("none"); } catch (e) { out.push(e.name); }
+      function g() { let y = 1; try { eval("var {...y} = {}"); out.push("none"); } catch (e) { out.push(e.name); } }
+      g();
+      function h() { eval("var [a, ...z] = [3, 4]"); return z[0]; }
+      out.push(h(), x);
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "eval-rest-collisions.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["SyntaxError SyntaxError 4 1"]);
+}
+
+#[test]
 fn lane_global_undefined_reads_keep_binding_semantics() {
     // A static global read of `undefined` answers its value in the lane, while a direct
     // eval's `var undefined` and a `with` object's property still shadow it, and neither an
@@ -2215,12 +2236,10 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     use crate::heap::Cell;
     let program = Engine::specialize("", "descriptor-owner.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
-    let owner = vm.heap.alloc(Cell::Array {
-        object: crate::heap::ArrayObject::new(
+    let owner = vm.heap.alloc_array(crate::heap::ArrayObject::new(
             Vm::<TestHost>::empty_object(Value::NULL),
             Vec::new(),
-        ),
-    });
+        ));
     let setter = vm.native_with_env(Native::Object, owner);
     let owner_weak = vm.heap.weak_handle(owner).unwrap();
     let setter_weak = vm.heap.weak_handle(setter).unwrap();
@@ -6835,10 +6854,9 @@ fn closure_identity_cache_rejects_reused_function_slots() {
     for _ in 0..allocation_bound {
         let replacement = vm.heap.alloc_function(crate::heap::FunctionRecord {
             object: Vm::<TestHost>::empty_object(Value::NULL),
-            realm: Value::NULL,
             kind: crate::heap::FunctionKind::User(key.0, key.1),
             env: Value::NULL,
-        });
+        }.with_realm(Value::NULL));
         if replacement == old {
             reused = true;
             break;
@@ -6860,14 +6878,14 @@ fn finalization_unregister_does_not_match_a_reused_dead_token_slot() {
     let program = Engine::specialize("", "finalization-token-reuse.js").unwrap();
     let target = vm
         .heap
-        .alloc(crate::heap::Cell::Object(Vm::<TestHost>::empty_object(
+        .alloc_object(Vm::<TestHost>::empty_object(
             Value::NULL,
-        )));
+        ));
     let token = vm
         .heap
-        .alloc(crate::heap::Cell::Object(Vm::<TestHost>::empty_object(
+        .alloc_object(Vm::<TestHost>::empty_object(
             Value::NULL,
-        )));
+        ));
     let target_handle = vm.heap.weak_handle(target).unwrap();
     let token_handle = vm.heap.weak_handle(token).unwrap();
     let registry = vm.heap.alloc(crate::heap::Cell::FinalizationRegistry {
@@ -6897,9 +6915,9 @@ fn finalization_unregister_does_not_match_a_reused_dead_token_slot() {
     let replacement = (0..allocation_bound)
         .map(|_| {
             vm.heap
-                .alloc(crate::heap::Cell::Object(Vm::<TestHost>::empty_object(
+                .alloc_object(Vm::<TestHost>::empty_object(
                     Value::NULL,
-                )))
+                ))
         })
         .find(|value| *value == token)
         .expect("freed token slot is reused");
@@ -7331,7 +7349,7 @@ fn error_data_survives_collection_without_retaining_dead_errors() {
             ));
             let clone = vm
                 .heap
-                .alloc(super::Cell::Object(vm.object_data(error).unwrap().clone()));
+                .alloc_object(vm.object_data(error).unwrap().clone());
             assert!(vm.error_is_error(clone));
             vm.heap.release_root(root);
             vm.collect_now(&program);
@@ -12468,9 +12486,9 @@ fn private_host_weak_roots_clear_before_slot_reuse_without_kept_objects() {
         vm.execute(&program).unwrap();
         let target = vm
             .heap
-            .alloc(super::Cell::Object(Vm::<TestHost>::empty_object(
+            .alloc_object(Vm::<TestHost>::empty_object(
                 Value::NULL,
-            )));
+            ));
         let strong = vm.heap.root(target);
         let weak = vm.embedding_host_weak_root(strong).unwrap();
         vm.collect_now(&program);
@@ -12483,9 +12501,9 @@ fn private_host_weak_roots_clear_before_slot_reuse_without_kept_objects() {
         assert!(vm.embedding_host_weak_value(weak).is_none());
         let replacement = vm
             .heap
-            .alloc(super::Cell::Object(Vm::<TestHost>::empty_object(
+            .alloc_object(Vm::<TestHost>::empty_object(
                 Value::NULL,
-            )));
+            ));
         assert!(vm.heap.is_live(replacement));
         assert!(vm.embedding_host_weak_value(weak).is_none());
         let other = Vm::new(TestHost::default());
@@ -23475,7 +23493,7 @@ fn lane_leaf_calls_read_globals_as_they_change() {
 #[test]
 fn lane_leaf_calls_share_captures_and_store_their_own_receiver() {
     // Closures sharing a capture see each other's stores through leaf calls, and a leaf whose
-    // read stores to `this` (`lane_get_field_sink`) makes its receiver its own, not its
+    // read stores to `this` (`row_get_field_sink`) makes its receiver its own, not its
     // caller's (expected values from Node).
     let source = r#"
       function make() {
@@ -24193,6 +24211,37 @@ fn declared_number_fields_seed_their_slot_type_at_the_first_add() {
     let widen = Engine::specialize_typescript(
         "v.x = \"text\";\nvar ok = v.x === \"text\" && v.y === 0;\n",
         "declared-number-fields-widen.ts",
+    )
+    .unwrap();
+    vm.execute(&widen).unwrap();
+    assert_eq!(global(&mut vm, "ok"), Value::TRUE);
+    assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::ANY);
+}
+
+#[test]
+fn declared_null_fields_seed_their_slot_type_at_the_first_add() {
+    let program = Engine::specialize_typescript(
+        "class N { next: null = null; n: number = 0; }\nvar v = new N();\n",
+        "declared-null-fields.ts",
+    )
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.heap.track_slot_representations(&vm.shape_layouts());
+    vm.execute(&program).unwrap();
+    let global = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        vm.own_property(vm.realm.globals, atom).unwrap()
+    };
+    let v = global(&mut vm, "v");
+    let next = vm.intern_atom("next");
+    let shape = vm.heap.object(v).unwrap().shape();
+    let slot = vm.shape_slot(shape, next).unwrap();
+    assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::language(crate::ValueType::Null));
+
+    // The declared null is a seed, not a proof: a number store widens the slot through the join.
+    let widen = Engine::specialize_typescript(
+        "v.next = 1;\nvar ok = v.next === 1 && v.n === 0;\n",
+        "declared-null-fields-widen.ts",
     )
     .unwrap();
     vm.execute(&widen).unwrap();

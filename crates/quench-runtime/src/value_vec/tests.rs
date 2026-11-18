@@ -351,7 +351,7 @@ fn a_slot_word_decodes_to_the_value_it_encodes() {
     let integers = [0, 1, -1, i32::MAX, i32::MIN, 1 << 30];
     for ty in SlotType::ALL.iter().copied() {
         let values = numbers.map(Value::number).into_iter().chain(integers.map(Value::integer))
-            .chain([Value::NULL, Value::UNDEFINED, Value::TRUE, Value::direct_object(3), Value::DELETED]);
+            .chain([Value::NULL, Value::UNDEFINED, Value::TRUE, Value::direct_object(3), Value::direct_string(3), Value::DELETED]);
         for value in values.filter(|value| crate::typed_ir::Type::immediate(*value).is_subtype(ty.ty()) || ty == SlotType::Tagged) {
             assert_eq!(decode_slot(ty, encode_slot(ty, value)), value, "{ty:?} {value:?}");
         }

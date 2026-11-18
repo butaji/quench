@@ -51,6 +51,11 @@ impl Representation {
         REPRESENTATIONS[self as usize].view
     }
 
+    /// The widest of two representations: the one that holds both values.
+    pub(crate) const fn join(self, other: Self) -> Self {
+        if self as usize >= other as usize { self } else { other }
+    }
+
     /// Implicit views supported by the shared emitter. Narrowing and unboxing
     /// require explicit checked operations, never a register assignment.
     pub(crate) fn can_receive(self, source: Self) -> bool {

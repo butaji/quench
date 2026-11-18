@@ -151,13 +151,11 @@ impl<H: Host> Vm<H> {
     ) -> Option<&'a Object> {
         let class = self.atom_class(atom);
         let kind = match cell {
-            Cell::Object(_) | Cell::Promise(_) => ReceiverKind::Ordinary,
+            Cell::Promise(_) => ReceiverKind::Ordinary,
             Cell::Proxy { .. } => return None,
-            Cell::Array { .. } if class.contains(AtomClass::ARRAY_INDEX) => return None,
             Cell::TypedArray { .. } if class.contains(AtomClass::TYPED_ARRAY_INDEX) => {
                 return None;
             }
-            Cell::Function(function) => return self.shape_property_lookup_function(function, atom),
             _ => ReceiverKind::Exotic,
         };
         self.shape_answers(cell.object()?, atom, kind)

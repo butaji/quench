@@ -86,11 +86,11 @@ fn an_append_in_room_reads_the_capacity_word_and_leaves_where_the_backing_is_ful
 
 #[test]
 fn the_interpreter_appends_in_room_and_leaves_references_holes_and_full_backings() {
-    use crate::heap::{ArrayElements, ArrayObject, Cell, Heap};
+    use crate::heap::{ArrayElements, ArrayObject, Heap};
     let mut heap = Heap::new();
     let mut backing = ArrayElements::from_slice(&[Value::integer(1)]);
     backing.make_mut().reserve(2);
-    let array = heap.alloc(Cell::Array { object: ArrayObject::fresh(Value::NULL, backing) });
+    let array = heap.alloc_array(ArrayObject::fresh(Value::NULL, backing));
     let records = heap.array_record_base().expect("an array record");
     assert!(concrete_append_in_room(records, array, Value::number(2.5)));
     assert!(!concrete_append_in_room(records, array, array), "a reference passes the write barrier");

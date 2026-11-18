@@ -293,10 +293,37 @@ fn completion_capturing_host_scripts_keep_script_declarations() {
         EvalContext::default(),
         &[],
         &[],
+        None,
     )
     .unwrap();
     assert_eq!(eval.kind, crate::bytecode::ProgramKind::Eval);
     assert!(eval.root_variables_are_local());
+}
+
+#[test]
+fn provided_eval_text_is_kept_without_a_copy() {
+    use crate::bytecode::SourceText;
+    let source: std::rc::Rc<str> = std::rc::Rc::from("var kept = 1; kept + 1;");
+    let text_of = |program: &crate::bytecode::ResidualProgram| match &program.source.as_ref().unwrap().text {
+        SourceText::Local(kept) => kept.clone(),
+        other => panic!("expected local eval text, got {other:?}"),
+    };
+    // The text the caller holds is the one the program keeps.
+    let shared = Engine::specialize_eval_with_context(
+        &source, "eval-provided.js", &NoAtomPrefix, false, EvalContext::default(), &[], &[],
+        Some(SourceText::Local(source.clone())),
+    )
+    .unwrap();
+    assert!(std::rc::Rc::ptr_eq(&text_of(&shared), &source));
+    // Other text is copied as it was without one.
+    let other: std::rc::Rc<str> = std::rc::Rc::from("var kept = 2;");
+    let copied = Engine::specialize_eval_with_context(
+        &source, "eval-provided.js", &NoAtomPrefix, false, EvalContext::default(), &[], &[],
+        Some(SourceText::Local(other)),
+    )
+    .unwrap();
+    assert!(!std::rc::Rc::ptr_eq(&text_of(&copied), &source));
+    assert_eq!(&*text_of(&copied), &*source);
 }
 
 #[test]

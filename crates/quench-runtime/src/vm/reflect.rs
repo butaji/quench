@@ -110,7 +110,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     self.realm_object_prototype(self.realm.globals)
                 };
-                Ok(self.heap.alloc(crate::heap::Cell::Object(Self::empty_object(proto))))
+                Ok(self.heap.alloc_object(Self::empty_object(proto)))
             }
             Native::ObjectLiteralPrototype => {
                 let proto = args.get(1).copied().unwrap_or(Value::UNDEFINED);

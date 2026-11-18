@@ -76,6 +76,8 @@ struct Sites<'a> {
     id: u32,
     callees: &'a Callees,
     facts: &'a [Option<DirectFacts>],
+    /// By PC, every callee the call site recorded (`Callees::targets`).
+    targets: &'a [Vec<DirectFacts>],
     context: Context,
     registers: u16,
     /// The first register the rows may write past the function's own (`inline_base`).
@@ -99,8 +101,8 @@ fn lowered(region: &LoopRegion, pc: u32, sites: &Sites, (instruction, returning)
         let shape = CallShape { returning, ..CallShape::of(pc, instruction, form) };
         return Decoded::step(Step::Call(shape), Some(shape.result));
     }
-    match instruction.op().class() {
-        Class::Return if plain && instruction.register_a() < sites.registers => returned(instruction.register_a()),
+    match crate::vm::compiled::decoded(instruction) {
+        Some(crate::staged::Operation::Return { source }) if plain && source < sites.registers => returned(source),
         _ => locals::fast_row(sites.function, sites.id, instruction, sites.ending)
             .unwrap_or_else(|| decode(region, (facts, sites.known), pc, instruction, helpers)),
     }
@@ -145,7 +147,7 @@ fn returned(register: Register) -> Decoded {
 fn call(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstruction) -> Vec<What> {
     let (plain, returning) = instruction.split_return();
     let shape = CallShape { returning, ..CallShape::of(pc, plain, CallForm::Plain) };
-    let first = match math_call(region, sites, &shape) {
+    let first = match math_call(region, sites, &shape).or_else(|| native_call(region, sites, &shape)) {
         Some(rows) => rows.into_iter().map(What::Row).collect(),
         None => match sites.callees.inlined_call(sites.facts, region, &mut sites.context, &shape) {
             Some(site) => vec![What::Site(site)],
@@ -167,7 +169,7 @@ fn call(region: &LoopRegion, pc: u32, sites: &mut Sites, instruction: WideInstru
 fn math_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -> Option<Vec<Decoded>> {
     use crate::vm::global_facts::GlobalRead;
     use crate::vm::Native;
-    (shape.form == CallForm::Plain && shape.argc == 1).then_some(())?;
+    (shape.form == CallForm::Plain && (1..=2).contains(&shape.argc)).then_some(())?;
     let local = (shape.call_pc - region.header) as usize;
     let defined = (0..local).rev().find(|at| region.instructions()[*at].written_registers().any(|register| register == shape.callee))?;
     let GlobalRead::NativeMember { value, native, holder, .. } = *sites.known.globals?.get(&(region.header as usize + defined))? else { return None };
@@ -178,11 +180,52 @@ fn math_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -> Option<Ve
         Native::MathTrunc => Kind::Trunc,
         Native::MathAbs => Kind::Abs,
         Native::MathRound => Kind::Round,
+        Native::MathMin => Kind::Min,
+        Native::MathMax => Kind::Max,
+        Native::MathImul => Kind::Imul,
+        Native::MathClz32 => Kind::Clz32,
+        _ => return None,
+    };
+    let binary = matches!(kind, Kind::Min | Kind::Max | Kind::Imul);
+    (u16::from(binary) + 1 == shape.argc as u16).then_some(())?;
+    let guard = Decoded { hole: value.to_bits(), holder: Some(holder), ..Decoded::heap(Heap::Identity, None, Some(Source::Register(shape.callee)), None) };
+    let second = binary.then(|| Source::Register(shape.window + 1));
+    let operation = Decoded::number(kind, Some(shape.result), Some(Source::Register(shape.window)), second, None);
+    Some(vec![guard, operation])
+}
+
+/// A call of a native a row computes from its arguments, whose callee the call's definition holds by identity: `parseInt(s)` and
+/// `parseInt(s, 10)` (the global name's `GlobalRead::NativeSlot`), and `s.charCodeAt(i)` (the method read's
+/// `GlobalRead::NativeMember`, whose receiver is the call's `this`). The identity is guarded as `math_call` guards it; the row
+/// leaves at the call, where its operands are not the ones it computes, and the definition's own row (the global read, the method
+/// read) stays, so the interpreter's call finds the callee in place.
+fn native_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -> Option<Vec<Decoded>> {
+    use crate::vm::global_facts::GlobalRead;
+    use crate::vm::Native;
+    (shape.form == CallForm::Plain).then_some(())?;
+    let local = (shape.call_pc - region.header) as usize;
+    let defined = (0..local).rev().find(|at| region.instructions()[*at].written_registers().any(|register| register == shape.callee))?;
+    let (value, native, holder) = match *sites.known.globals?.get(&(region.header as usize + defined))? {
+        GlobalRead::NativeSlot { value, native, holder, .. } | GlobalRead::NativeMember { value, native, holder } => (value, native, holder),
+        _ => return None,
+    };
+    let row = match native {
+        Native::ParseInt if shape.argc == 1 || (shape.argc == 2 && radix_is_ten(region, sites, local, shape.window + 1)) =>
+            Decoded::heap(Heap::ParseInt, Some(shape.result), Some(Source::Register(shape.window)), None),
+        Native::StringCharCodeAt if shape.argc == 1 =>
+            Decoded::heap(Heap::CharCodeAt, Some(shape.result), Some(Source::Register(shape.this)), Some(Source::Register(shape.window))),
         _ => return None,
     };
     let guard = Decoded { hole: value.to_bits(), holder: Some(holder), ..Decoded::heap(Heap::Identity, None, Some(Source::Register(shape.callee)), None) };
-    let operation = Decoded::number(kind, Some(shape.result), Some(Source::Register(shape.window)), None, None);
-    Some(vec![guard, operation])
+    Some(vec![guard, row])
+}
+
+/// Whether `register` holds the Number 10 at the instruction `local` of the region: the last write before it is a `LoadConst`
+/// of 10 (`parseInt`'s radix).
+fn radix_is_ten(region: &LoopRegion, sites: &Sites, local: usize, register: Register) -> bool {
+    let Some(at) = (0..local).rev().find(|at| region.instructions()[*at].written_registers().any(|written| written == register)) else { return false };
+    let load = region.instructions()[at];
+    load.op().class() == Class::LoadConst && sites.known.constants.get(load.constant_index()).and_then(|value| value.as_number()) == Some(10.0)
 }
 
 /// The rows of an instruction a body makes in the scratch registers past the function's own (`scratch`): the comparison and the jump on it
@@ -220,6 +263,12 @@ fn decode_facts(region: &LoopRegion, sites: &Sites, calls: &[Option<Vec<What>>])
 /// (`Decoded::completes`); in a region what the loop regions' decode covers. An instruction no row
 /// takes leaves at its PC as it is, flag and all, for the interpreter.
 fn cover(region: &LoopRegion, pc: u32, sites: &Sites, instruction: WideInstruction, (facts, helpers): (Facts, LaneHelpers)) -> What {
+    if let Some(folded) = super::declared::typeof_fold(sites.function, instruction) {
+        return What::Row(folded);
+    }
+    if let Some(folded) = super::declared::branch_fold(sites.function, sites.known.constants, pc, instruction) {
+        return What::Row(folded);
+    }
     if sites.ending == Ending::Region {
         return What::Row(decode(region, (facts, sites.known), pc, instruction, helpers));
     }
@@ -291,7 +340,9 @@ fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Planned>, Str
     if let Some(address) = layout.invalidation.filter(|_| row.holds_stable()) {
         before.push(live_guard(pc, address)?);
     }
-    if row.checked && place == Place::Mem && (body || layout.inlined(pc)) {
+    // A declared Number parameter of this body (not an inlined callee's register) is proved by the entry's guard.
+    let proven = !layout.inlined(pc) && row.a.and_then(register_of).is_some_and(|register| layout.numbers.contains(&register));
+    if row.checked && place == Place::Mem && (body || layout.inlined(pc)) && !proven {
         before.push(number_guard(pc, slot)?);
     }
     if body && row.kind != Kind::Jump && row.target.is_some_and(|target| target <= pc) {
@@ -306,7 +357,7 @@ fn preludes(layout: &Layout, row: &Decoded, pc: u32) -> Result<Vec<Planned>, Str
 fn framed(homes: &Homes, row: &Decoded) -> bool {
     let through = match row.heap {
         Some(Heap::Store | Heap::TypedStore(_) | Heap::SiteStore) => row.base,
-        Some(Heap::Index | Heap::TypedIndex(_) | Heap::TypedLength | Heap::Array | Heap::Site | Heap::SiteChain | Heap::Length | Heap::Held | Heap::Identity) => row.a.and_then(register_of),
+        Some(Heap::Index | Heap::TypedIndex(_) | Heap::TypedLength | Heap::Array | Heap::Site | Heap::SiteChain | Heap::Length | Heap::Held | Heap::Identity | Heap::CharCodeAt | Heap::ParseInt) => row.a.and_then(register_of),
         _ => None,
     };
     through.into_iter().all(|register| homes.place(register) == Place::Mem)
@@ -319,14 +370,14 @@ fn leaves(layout: &Layout, row: &Decoded) -> bool {
 
 /// Whether `row` interprets its instruction rather than running its handler's residue: the general
 /// step a lane helper makes from the instruction's PC (re-decoding it and dispatching on its form,
-/// hundreds of instructions where the interpreter's quickened handler spends tens), or a call (the
-/// region call protocol costs more than the interpreter's own call today). The design is a ladder, b-jit at most the interpreter's instructions on every
-/// operation (b-jit is the interpreter with dispatch and decode folded), so a loop region holding
-/// one on its loop is not built and the interpreter runs the loop: interpreting inside a region is
-/// slower than the interpreter by construction. A fast arm's slow arm (`Step::Fast`), a throw and a
-/// leave are off the loop's steady path. A call leaves this list once its protocol runs in fewer
-/// instructions than the interpreter's call: the tier-ladder gate (`quench-gate --only ir-budget`,
-/// call_direct, call_closure, k03_call_add) says when.
+/// hundreds of instructions where the interpreter's quickened handler spends tens). The design is a
+/// ladder, b-jit at most the interpreter's instructions on every operation (b-jit is the interpreter
+/// with dispatch and decode folded), so a loop region holding one on its loop is not built and the
+/// interpreter runs the loop. A call keeps its call row (`region_call_rows`): a loop that calls is
+/// built, its calls direct rows into the callee's cell or the helper row, and the tier-ladder gate
+/// (`quench-gate --only ir-budget`: call_direct, call_closure, k03_call_add) holds the call protocol
+/// at most the interpreter's. A fast arm's slow arm (`Step::Fast`), a throw and a leave are off the
+/// loop's steady path.
 fn interprets(row: &Decoded) -> bool {
     match row.step {
         Some(Step::Helper | Step::CallOut) => true,
@@ -335,13 +386,11 @@ fn interprets(row: &Decoded) -> bool {
     }
 }
 
-/// Whether loop regions keep their call rows (`interprets` refuses them): never in a build, but a
-/// test of the region call protocol itself (a callee's throw, a callee changing what the entry
-/// recorded) runs under `with_region_call_rows`, so the protocol stays exact for the day calls
-/// leave `interprets`.
+/// Whether loop regions keep their call rows: always in a build; a test chooses (`with_region_call_rows`),
+/// as the protocol tests (a callee's throw, a callee changing what the entry recorded) do.
 #[cfg(not(test))]
 fn region_call_rows() -> bool {
-    false
+    true
 }
 
 #[cfg(test)]
@@ -381,7 +430,7 @@ fn plan_row(layout: &Layout, (reprs, kinds): (&Reprs, Option<&OperandKinds>), re
 }
 
 /// What a body is built for: its function and registers, the rows whose int32 speculation failed
-/// (`widened`, by caller PC), the registers its entry held as ints and doubles (`seen`), and what
+/// (`widened`, by caller PC), the registers its entry held as ints and doubles (`seen`, its declared Numbers joining), and what
 /// the program holds Stable (`Known`), whose invalidation word its code reads where a call may
 /// have changed a fact it folded, and the realm its inlined callees belong to (`RealmProof`).
 pub(in crate::vm::compiled) struct BodySpec<'a> {
@@ -390,7 +439,9 @@ pub(in crate::vm::compiled) struct BodySpec<'a> {
     pub(in crate::vm::compiled) known: Known<'a>,
     pub(in crate::vm::compiled) realm: RealmProof,
     pub(in crate::vm::compiled) widened: &'a [usize],
-    pub(in crate::vm::compiled) seen: [&'a [Register]; SEEN],
+    /// The type each entry register held when the compile observed it, by register (a register past the slice
+    /// is no observation: `Type::ANY`).
+    pub(in crate::vm::compiled) seen: &'a [Type],
     /// What each of the spanned instructions' sites saw of its operands (`OperandKinds`), from the
     /// header: which variant of row an arithmetic or comparison site takes (`variant_of`) and whether it is
     /// widened. Empty where nothing was recorded.
@@ -449,9 +500,9 @@ fn tally(built: &Result<Body, String>, ending: Ending, (span, nanos): (u64, u64)
 unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, Views), callees: &Callees, helpers: LaneHelpers) -> Result<Body, String> {
     let started = std::time::Instant::now();
     // SAFETY: the caller's contract.
-    let facts = unsafe { callees.facts() };
+    let (facts, targets) = unsafe { (callees.facts(), callees.targets()) };
     let function = spec.known.program.function(spec.function as usize);
-    let sites = Sites { function, id: spec.function, callees, facts: &facts, context: Context::root(spec.function, inline_base(function, spec.registers), spec.known.stitch), registers: spec.registers, scratch: inline_base(function, spec.registers), known: spec.known, ending, views };
+    let sites = Sites { function, id: spec.function, callees, facts: &facts, targets: &targets, context: Context::root(spec.function, inline_base(function, spec.registers), spec.known.stitch), registers: spec.registers, scratch: inline_base(function, spec.registers), known: spec.known, ending, views };
     let built = assemble(region, spec, sites, helpers);
     tally(&built, ending, (u64::from(region.backedge - region.header) + 1, started.elapsed().as_nanos() as u64));
     built
@@ -508,20 +559,16 @@ fn parts(region: &LoopRegion, sites: &mut Sites, helpers: LaneHelpers) -> Vec<Pa
         calls[k] = Some(call(region, at(k), sites, instruction));
     }
     let facts = decode_facts(region, sites, &calls);
-    let mut parts: Vec<Part> = region.instructions().iter().enumerate().flat_map(|(k, instruction)| {
+    let parts: Vec<Part> = region.instructions().iter().enumerate().flat_map(|(k, instruction)| {
         let pc = at(k);
         let whats = calls[k].take().or_else(|| expanded(sites, pc, *instruction)).unwrap_or_else(|| vec![cover(region, pc, sites, *instruction, (facts, helpers))]);
         whats.into_iter().map(move |what| Part { pc, what })
     }).collect();
-    if sites.ending == Ending::Region {
-        let mut rows: Vec<&mut Decoded> = parts.iter_mut().filter_map(|part| if let What::Row(row) = &mut part.what { Some(row) } else { None }).collect();
-        settle(&mut rows);
-    }
     parts
 }
 
 fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: LaneHelpers) -> Result<Body, String> {
-    let (ending, callees) = (sites.ending, sites.facts);
+    let (ending, callees, function) = (sites.ending, sites.targets, sites.function);
     let stitched = stitch(region, parts(region, &mut sites, helpers), spec.registers, spec.known.invalidation, ending);
     let scratch = scratch(&stitched.rows, spec.registers);
     let span = Span::of(region, stitched.rows.len(), &stitched.live);
@@ -533,7 +580,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
         .map(|(k, row)| if !reached.contains(k) { Decoded::step(Step::Leave, None) } else { row })
         .collect();
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
-    let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), spec.seen);
+    let [ints, doubles] = super::declared::seen(function, ending, spec.seen);
+    let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), [ints.as_slice(), doubles.as_slice()]);
     proofs::prove(&span, &mut decoded, &reached);
     if ending == Ending::Region && let Some(generic) = decoded.iter().enumerate().find(|(k, row)| reached.contains(*k) && interprets(row)) {
         return Err(format!("interprets in the loop: row {} {:?}", generic.0, generic.1.step));
@@ -543,7 +591,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     // realms enters it only in that one, so a realm switch need not retire it (`LaneMethod::realm_bound`).
     let realm = (ending == Ending::Body || !stitched.frames.is_empty()).then_some(spec.realm).or_else(|| held_realm(&decoded));
     let relies: Vec<bool> = decoded.iter().map(|row| row.relies).collect();
-    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies };
+    let (guards, numbers) = (super::declared::entry_guards(function), super::declared::entry_numbers(function));
+    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, guards, numbers };
     let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
     let (code, resumes) = link(&layout, &planned)?;
@@ -552,7 +601,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
     let covered = reached.count() - exits;
     let bare = realm.is_none() && decoded.iter().all(|row| row.heap.is_none() && !row.makes_calls() && !row.step.is_some_and(Step::reads_payload));
-    let records = planned.iter_mut().filter_map(|row| row.owned.take()).collect();
+    let records = planned.iter_mut().flat_map(|row| std::mem::take(&mut row.owned)).collect();
     let (atoms, holders) = (held_atoms(&decoded), held_holders(&decoded));
     let names_shapes = decoded.iter().any(|row| row.ic.is_some());
     Ok(Body { code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region))), atoms, holders,

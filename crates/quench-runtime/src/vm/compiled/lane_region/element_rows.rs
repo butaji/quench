@@ -28,7 +28,12 @@ impl Lowering<'_, '_> {
     /// The element row at `pc`, lowered by its definition; whether control falls through.
     pub(super) fn element_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         match self.element_row(instruction).expect("an element row decodes") {
-            Operation::ElementRead { base, key } => self.element_read(state, pc, (instruction.result_register(), base, key)),
+            Operation::ElementRead { base, key } => {
+                let destination = instruction.result_register();
+                let falls = self.element_read(state, pc, (destination, base, key));
+                if falls { self.conform_declared_rest_read(state, pc, base, destination); }
+                falls
+            }
             Operation::ElementWrite { value, base, key } => self.element_write(state, (pc, instruction), (value, base, key)),
             _ => unreachable!("an element row is a read or a write"),
         }

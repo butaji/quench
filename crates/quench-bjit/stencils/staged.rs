@@ -1,5 +1,5 @@
 #[path = "../../quench-runtime/src/staged/stage.rs"] mod stage;
-pub(crate) use stage::{RecordSpace, Stage, Table};
+pub(crate) use stage::{word_bytes, Passed, StagedRecordSpace, Stage, Table};
 pub(crate) type Concrete = crate::stage::StencilStage;
 #[path = "../../quench-runtime/src/staged/region.rs"] #[allow(dead_code)] pub(crate) mod region;
 /// The effect vocabulary of the runtime's call protocol, which a stencil row never makes: the frame's default `call` names them.
@@ -13,6 +13,10 @@ pub(crate) trait ElementFrame<S: Stage>: PropertyFrame<S> {}
 pub(crate) trait CallFrame<S: Stage>: Frame<S> {}
 /// The runtime vocabulary the frame's default methods name, which a stencil frame never makes: uninhabited here.
 pub(crate) enum Allocation {}
+/// A call instruction's operands (`forms.rs`, not in the stencil build). `CallOperation::Site` runs
+/// no row in any stage, so a stencil never holds one.
+#[derive(Clone, Copy)]
+pub(crate) enum Invocation {}
 pub(crate) enum Edge {}
 pub(crate) enum CallOut {}
 #[path = "../../quench-runtime/src/staged/register_frame.rs"] mod register_frame;
@@ -29,10 +33,13 @@ pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, Nu
 #[path = "../../quench-runtime/src/staged/elements.rs"] pub(crate) mod elements;
 #[path = "../../quench-runtime/src/staged/environment.rs"] pub(crate) mod environment;
 #[path = "../../quench-runtime/src/staged/string_length.rs"] pub(crate) mod string_length;
+#[path = "../../quench-runtime/src/staged/code_units.rs"] pub(crate) mod code_units;
+#[path = "../../quench-runtime/src/staged/parse_int.rs"] pub(crate) mod parse_int;
 #[path = "../../quench-runtime/src/staged/typed_elements.rs"] pub(crate) mod typed_elements;
 #[path = "../../quench-runtime/src/staged/entry.rs"] pub(crate) mod entry;
 #[path = "../../quench-runtime/src/staged/frame.rs"] #[allow(dead_code)] pub(crate) mod frame;
 #[path = "../../quench-runtime/src/staged/call.rs"] pub(crate) mod call;
+#[path = "../../quench-runtime/src/staged/protocol.rs"] #[allow(dead_code)] pub(crate) mod protocol;
 #[path = "../../quench-runtime/src/staged/ic.rs"] pub(crate) mod ic;
 #[path = "../../quench-runtime/src/staged/slot_store.rs"] pub(crate) mod slot_store;
 #[path = "../../quench-runtime/src/staged/iteration.rs"] pub(crate) mod iteration;

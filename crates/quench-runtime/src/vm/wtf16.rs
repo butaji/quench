@@ -68,6 +68,15 @@ const DEFERRED_DECODE_MIN_BYTES: usize = 64 << 10;
 fn wide_units(text: &str, length: usize) -> Rc<[u16]> {
     let mut storage = Rc::<[u16]>::new_uninit_slice(length);
     let output = Rc::get_mut(&mut storage).expect("a new allocation is unshared");
+    if text.is_ascii() {
+        // One byte per unit throughout: a plain widening copy.
+        for (slot, &byte) in output.iter_mut().zip(text.as_bytes()) {
+            slot.write(u16::from(byte));
+        }
+        assert_eq!(text.len(), length, "the text has the units counted for it");
+        // SAFETY: every unit was written.
+        return unsafe { storage.assume_init() };
+    }
     // Source text is mostly ASCII: each ASCII run widens byte by byte, which the compiler
     // vectorizes, and only the other characters go through UTF-16 encoding (a 250 KB bundle's
     // text: 32 Ir per byte through `encode_utf16` alone).
@@ -94,16 +103,42 @@ fn wide_units(text: &str, length: usize) -> Rc<[u16]> {
     unsafe { storage.assume_init() }
 }
 
+/// The number of UTF-16 units of `text`, counted from its bytes: each character has one
+/// leading byte (a continuation byte is not one), and a four-byte character takes two units.
+/// The same count as `text.encode_utf16().count()`, without encoding.
+fn utf16_len(text: &str) -> usize {
+    text.bytes()
+        .map(|byte| usize::from(byte.is_ascii() || byte >= 0xC0) + usize::from(byte >= 0xF0))
+        .sum()
+}
+
 /// `Units::utf8_len` of UTF-16 units, without decoding them: each unit counts as the bytes
 /// of a character of its size (a surrogate as three, which a lone one's replacement character
 /// is), and a high surrogate followed by a low one is a four-byte character, not two of three.
 /// Both sums vectorize (a bundle's source: 31 Ir per unit through `decode_utf16`).
 fn wide_utf8_len(units: &[u16]) -> usize {
-    let sized: usize = units.iter().map(|&unit| 1 + usize::from(unit >= 0x80) + usize::from(unit >= 0x800)).sum();
-    let pairs = units.windows(2)
-        .filter(|pair| (0xD800..0xDC00).contains(&pair[0]) && (0xDC00..0xE000).contains(&pair[1]))
-        .count();
-    sized - 2 * pairs
+    // Summed per block in 16-bit lanes, which vectorize, with surrogates only noted: the pair
+    // scan runs only for text that has any (a 5.6 MB bundle: 99.7M Ir as one scalar pass
+    // plus a pair window per unit).
+    const BLOCK: usize = 256;
+    let mut extra = 0usize;
+    let mut surrogates = 0u16;
+    for block in units.chunks(BLOCK) {
+        let mut sum = 0u16;
+        for &unit in block {
+            sum += u16::from(unit >= 0x80) + u16::from(unit >= 0x800);
+            surrogates |= u16::from(unit & 0xF800 == 0xD800);
+        }
+        extra += usize::from(sum);
+    }
+    let pairs = if surrogates == 0 {
+        0
+    } else {
+        units.windows(2)
+            .filter(|pair| (0xD800..0xDC00).contains(&pair[0]) && (0xDC00..0xE000).contains(&pair[1]))
+            .count()
+    };
+    units.len() + extra - 2 * pairs
 }
 
 /// Text made on demand and not yet charged, which the caller now charges.
@@ -906,7 +941,7 @@ impl JsString {
         if text.is_ascii() {
             return Self::from_flat(FlatUnits::ascii(text));
         }
-        Self::from_flat(FlatUnits::Wide(wide_units(text, text.encode_utf16().count())))
+        Self::from_flat(FlatUnits::Wide(wide_units(text, utf16_len(text))))
     }
 
     /// Text decoded out of data (a file's or a buffer's bytes). Long non-ASCII text keeps the
@@ -919,7 +954,7 @@ impl JsString {
             return Self::from_str(text);
         }
         charge_materialized_beside(text.len());
-        Self::shared(JsStringInner::decoded(Rc::from(text), text.encode_utf16().count()))
+        Self::shared(JsStringInner::decoded(Rc::from(text), utf16_len(text)))
     }
 
     /// The host text of decoded text whose units are not made yet (`JsString::decoded`): a
@@ -1534,7 +1569,14 @@ impl Hash for JsString {
 
 #[cfg(test)]
 mod tests {
-    use super::JsString;
+    use super::{utf16_len, JsString};
+
+    #[test]
+    fn utf16_length_from_bytes_matches_encoding() {
+        for text in ["", "abc", "é", "€", "𝄞", "a😀b中文\u{10FFFF}", "\u{7FF}\u{800}\u{FFFF}"] {
+            assert_eq!(utf16_len(text), text.encode_utf16().count(), "{text:?}");
+        }
+    }
 
     #[test]
     fn wide_utf8_length_matches_the_lossy_encoding() {

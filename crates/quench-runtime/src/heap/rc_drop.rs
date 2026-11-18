@@ -58,8 +58,7 @@ impl Drop for StoppedCellDrop {
 fn always_shares_rc_payload(cell: &Cell) -> bool {
     matches!(
         cell,
-        Cell::Iterator { .. }
-            | Cell::WasmGc { .. }
+        Cell::WasmGc { .. }
             | Cell::WasmGlobal { .. }
             | Cell::WasmInstance(_)
             | Cell::WasmTable { .. }
@@ -70,9 +69,6 @@ fn always_shares_rc_payload(cell: &Cell) -> bool {
 
 pub(super) fn cell_rc_drop_lock(cell: &Cell) -> Option<&'static Mutex<()>> {
     match cell {
-        Cell::Array { object } => {
-            Some(&RC_DROP_LOCKS[rc_drop_lock_index(object.elements().as_ptr() as usize)])
-        }
         Cell::ArrayBuffer { bytes, .. } => Some(if bytes.holds_external_rc() {
             &SHARED_RC_DROP_LOCK
         } else {
@@ -88,7 +84,6 @@ pub(super) fn cell_rc_drop_lock(cell: &Cell) -> Option<&'static Mutex<()>> {
 
 fn cell_has_shared_rc_payload(cell: &Cell) -> bool {
     match cell {
-        Cell::Array { object } => object.elements().owner_count() > 1,
         Cell::ArrayBuffer { bytes, .. } => bytes.is_shared(),
         Cell::WasmHostFunction { signature, .. } => Rc::strong_count(signature) > 1,
         _ => always_shares_rc_payload(cell),

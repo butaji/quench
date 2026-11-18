@@ -104,14 +104,17 @@ struct PromiseRare {
     host_context: StoredHostContext,
     /// Pending: the first reaction's host context.
     first_context: StoredHostContext,
-    /// Pending: the reactions after the first, in order.
-    more: Vec<PromiseReaction>,
+    /// Pending: the reactions after the first, in order. Boxed behind one word, `None` until
+    /// the second reaction arrives: a `Vec` inline would take 24 bytes from every box.
+    more: Option<Box<Vec<PromiseReaction>>>,
 }
+
+const _: () = assert!(size_of::<PromiseRare>() == 24);
 
 impl PromiseRare {
     /// The box of a promise made under `host_context`, with no reaction kept.
     fn of(host_context: StoredHostContext) -> Self {
-        Self { host_context, first_context: StoredHostContext(NO_HOST_CONTEXT), more: Vec::new() }
+        Self { host_context, first_context: StoredHostContext(NO_HOST_CONTEXT), more: None }
     }
 }
 
@@ -258,7 +261,7 @@ impl PromiseRecord {
     pub(crate) fn push_reaction(&mut self, reaction: PromiseReaction) {
         debug_assert_eq!(self.state, PromiseState::Pending);
         if self.has_first {
-            self.rare_mut().more.push(reaction);
+            self.rare_mut().more.get_or_insert_with(Default::default).push(reaction);
             return;
         }
         let PromiseReaction { on_fulfilled, on_rejected, next, execution_context } = reaction;
@@ -284,8 +287,11 @@ impl PromiseRecord {
     pub(crate) fn reactions(&self) -> impl Iterator<Item = PromiseReaction> + '_ {
         let pending = self.state == PromiseState::Pending;
         let first = (pending && self.has_first).then(|| self.first_reaction());
-        let more = match &self.rare {
-            Some(rare) if pending => rare.more.as_slice(),
+        let more: &[PromiseReaction] = match &self.rare {
+            Some(rare) if pending => match &rare.more {
+                Some(more) => more.as_slice(),
+                None => &[],
+            },
             _ => &[],
         };
         first.into_iter().chain(more.iter().copied())
@@ -300,7 +306,9 @@ impl PromiseRecord {
             reactions.push(self.first_reaction());
         }
         if let Some(mut rare) = self.rare.take() {
-            reactions.extend(rare.more.drain(..));
+            if let Some(more) = rare.more.as_mut() {
+                reactions.extend(more.drain(..));
+            }
             if rare.host_context.get().is_some() {
                 *rare = PromiseRare::of(rare.host_context);
                 self.rare = Some(rare);
@@ -315,7 +323,10 @@ impl PromiseRecord {
     /// Bytes the reactions hold outside the record.
     pub(crate) fn reaction_heap_bytes(&self) -> usize {
         self.rare.as_deref().map_or(0, |rare| {
-            size_of::<PromiseRare>() + rare.more.capacity() * size_of::<PromiseReaction>()
+            let more = rare.more.as_deref().map_or(0, |more| {
+                size_of::<Vec<PromiseReaction>>() + more.capacity() * size_of::<PromiseReaction>()
+            });
+            size_of::<PromiseRare>() + more
         })
     }
 

@@ -41,7 +41,7 @@ pub(crate) unsafe fn concrete_own_constant_read(record: &crate::heap::Object, ex
 mod tests {
     use super::*;
     use crate::staged::stage::Stage;
-    use crate::heap::{Cell, Heap, Object, ProtoLink};
+    use crate::heap::{Heap, Object, ProtoLink};
     use crate::code_dependencies::PublishedCode;
     use crate::Value;
     use std::rc::Rc;
@@ -50,8 +50,8 @@ mod tests {
     fn a_holder_read_needs_the_shape_the_link_and_the_watch() {
         let mut heap = Heap::new();
         heap.register_property_shape(1, 1, None);
-        let prototype = heap.alloc(Cell::Object(Object::new(Value::NULL)));
-        let object = heap.alloc(Cell::Object(Object::new(prototype)));
+        let prototype = heap.alloc_object(Object::new(Value::NULL));
+        let object = heap.alloc_object(Object::new(prototype));
         heap.property_add(object, Value::integer(1), 1);
         let record = heap.object(object).unwrap();
         let guard = record.guard_word();

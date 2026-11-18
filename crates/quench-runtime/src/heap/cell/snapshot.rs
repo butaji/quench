@@ -25,21 +25,15 @@ snapshot_enum!(lexical_binding_kind: crate::bytecode::LexicalBindingKind { Mutab
 
 /// The cell tags, in the order `Cell` declares its variants.
 mod tag {
-    pub(super) const OBJECT: u8 = 0;
-    pub(super) const ARRAY: u8 = 1;
     pub(super) const ARRAY_BUFFER: u8 = 2;
     pub(super) const TYPED_ARRAY: u8 = 3;
     pub(super) const DATA_VIEW: u8 = 4;
-    pub(super) const MAP: u8 = 5;
-    pub(super) const SET: u8 = 6;
     pub(super) const SHADOW_REALM: u8 = 7;
     pub(super) const WEAK_MAP: u8 = 8;
     pub(super) const WEAK_SET: u8 = 9;
     pub(super) const WEAK_REF: u8 = 10;
     pub(super) const FINALIZATION_REGISTRY: u8 = 11;
-    pub(super) const ITERATOR: u8 = 12;
     pub(super) const PROXY: u8 = 13;
-    pub(super) const FUNCTION: u8 = 14;
     pub(super) const BINDING_REFERENCE: u8 = 15;
     /// `WebAssembly.JSTag`, the one Wasm cell every realm holds (`wasm_js::js_tag_cell`).
     pub(super) const JS_TAG: u8 = 17;
@@ -181,6 +175,7 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         brand,
         external_address,
         boxed_primitive,
+        function_realm,
         structured_serialization: serialization,
         structured_transfer_forbidden,
         module_bindings,
@@ -204,6 +199,11 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
     writer.bool(*structured_transfer_forbidden);
     writer.u8(element_facts.0);
     writer.option_value(*boxed_primitive);
+    // Written only for a function of another realm than the main one.
+    writer.bool(function_realm.is_some());
+    if let Some(realm) = function_realm {
+        writer.value(*realm);
+    }
     structured_serialization::write(writer, *serialization);
     writer.len(module_bindings.len());
     for (atom, program, slot) in module_bindings {
@@ -238,6 +238,7 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
     }
     let element_facts = ElementFacts(element_facts);
     let boxed_primitive = reader.option_value()?;
+    let function_realm = if reader.bool()? { Some(reader.value()?) } else { None };
     let structured_serialization = structured_serialization::read(reader)?;
     let module_bindings = read_list(reader, |reader| Ok((reader.u32()?, ProgramId::from_raw(reader.u32()?), reader.u16()?)))?;
     let deferred_module = if reader.bool()? { Some(read_module_source(reader)?) } else { None };
@@ -247,6 +248,7 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
         brand,
         external_address: None,
         boxed_primitive,
+        function_realm,
         structured_serialization,
         structured_transfer_forbidden,
         module_bindings,
@@ -415,9 +417,9 @@ impl Object {
 
 impl FunctionRecord {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        let Self { object, realm, env, kind } = self;
+        let Self { object, env, kind } = self;
+        // The creation realm, when overridden, is written with the object's extras.
         write_object(writer, object)?;
-        writer.value(*realm);
         writer.value(*env);
         kind.write_snapshot(writer);
         Ok(())
@@ -426,7 +428,6 @@ impl FunctionRecord {
     pub(crate) fn read_snapshot(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
         Ok(Self {
             object: read_object(reader)?,
-            realm: reader.value()?,
             env: reader.value()?,
             kind: FunctionKind::read_snapshot(reader)?,
         })
@@ -621,14 +622,6 @@ impl Cell {
     /// Writes this cell, or refuses one a snapshot cannot hold.
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
         match self {
-            Self::Object(object) => {
-                writer.u8(tag::OBJECT);
-                write_object(writer, object)?;
-            }
-            Self::Array { object } => {
-                writer.u8(tag::ARRAY);
-                object.write_snapshot(writer)?;
-            }
             Self::ArrayBuffer { object, bytes, shared, detached, max_byte_length, resizable, immutable } => {
                 let Some((contents, pinned_residue)) = bytes.snapshot_contents() else {
                     return Err(SnapshotError::unsupported("a buffer over Wasm or atomically shared memory"));
@@ -658,13 +651,6 @@ impl Cell {
                 writer.u64(object.offset as u64);
                 writer.value(*buffer);
                 write_view_length(writer, *length);
-            }
-            Self::Collection(collection) => {
-                writer.u8(match collection.entries {
-                    CollectionStorage::Map(_) => tag::MAP,
-                    CollectionStorage::Set(_) => tag::SET,
-                });
-                collection.write_body(writer)?;
             }
             Self::ShadowRealm { object, caller_global, realm_global } => {
                 writer.u8(tag::SHADOW_REALM);
@@ -702,20 +688,12 @@ impl Cell {
                     writer.option_value(entry.token.map(|handle| handle.value));
                 }
             }
-            Self::Iterator(iterator) => {
-                writer.u8(tag::ITERATOR);
-                iterator.write_snapshot(writer)?;
-            }
             Self::Proxy { object, kind, target, handler } => {
                 writer.u8(tag::PROXY);
                 write_object(writer, object)?;
                 proxy_kind::write(writer, *kind);
                 writer.value(*target);
                 writer.value(*handler);
-            }
-            Self::Function(function) => {
-                writer.u8(tag::FUNCTION);
-                function.write_snapshot(writer)?;
             }
             Self::BindingReference { environment, slot, kind } => {
                 writer.u8(tag::BINDING_REFERENCE);
@@ -798,8 +776,6 @@ impl Cell {
     pub(crate) fn read_snapshot(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
         let boxed_object = |reader: &mut Reader<'_>| read_object(reader).map(Box::new);
         Ok(match reader.u8()? {
-            tag::OBJECT => Self::Object(read_object(reader)?),
-            tag::ARRAY => Self::Array { object: ArrayObject::read_snapshot(reader)? },
             tag::ARRAY_BUFFER => Self::ArrayBuffer {
                 object: boxed_object(reader)?,
                 bytes: {
@@ -828,8 +804,6 @@ impl Cell {
                 buffer: reader.value()?,
                 length: read_view_length(reader)?,
             },
-            tag::MAP => Self::Collection(Box::new(CollectionRecord::read_body(reader, true)?)),
-            tag::SET => Self::Collection(Box::new(CollectionRecord::read_body(reader, false)?)),
             tag::SHADOW_REALM => Self::ShadowRealm {
                 object: boxed_object(reader)?,
                 caller_global: reader.value()?,
@@ -857,14 +831,12 @@ impl Cell {
                 })?;
                 Self::FinalizationRegistry { object, callback, entries: Box::new(FinalizationEntries(entries)) }
             }
-            tag::ITERATOR => Self::Iterator(Box::new(IteratorRecord::read_snapshot(reader)?)),
             tag::PROXY => Self::Proxy {
                 object: boxed_object(reader)?,
                 kind: proxy_kind::read(reader)?,
                 target: reader.value()?,
                 handler: reader.value()?,
             },
-            tag::FUNCTION => Self::Function(Box::new(FunctionRecord::read_snapshot(reader)?)),
             tag::BINDING_REFERENCE => Self::BindingReference {
                 environment: reader.value()?,
                 slot: reader.u16()?,

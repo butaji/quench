@@ -295,7 +295,7 @@ impl<H: Host> Vm<H> {
             super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::NativeOrWrongRealmOrNonCallable);
             return;
         };
-        if record.realm != self.realm.globals {
+        if self.record_realm(record) != self.realm.globals {
             super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::NativeOrWrongRealmOrNonCallable);
             return;
         }
@@ -629,7 +629,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     let value = self
                         .heap
-                        .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+                        .alloc_object(Self::empty_object(Value::NULL));
                     if let Some(source_name) = self.programs.source_name(program).map(str::to_owned)
                     {
                         let url = self.host.import_meta_url(&source_name);
@@ -696,24 +696,7 @@ impl<H: Host> Vm<H> {
             }
             Op::MakeClosure => {
                 let env = with_binding_site_pc!(self, VarOwner::Frame(f), *pc, self.capture_binding_environment(VarOwner::Frame(f)))?;
-                let module_root = p.is_module()
-                    && self.frames[f].function == super::ROOT_FUNCTION_ID
-                    && self.programs.module_environment(self.frames[f].program) == Some(env);
-                let v = if module_root {
-                    let cached = self
-                        .cached_functions_in_environment(
-                            self.frames[f].program,
-                            i.closure_function_index(),
-                            env,
-                        )
-                        .next();
-                    match cached {
-                        Some(function) => function,
-                        None => self.closure(p, i.closure_function_index(), env)?,
-                    }
-                } else {
-                    self.closure(p, i.closure_function_index(), env)?
-                };
+                let v = self.closure_over_environment(p, VarOwner::Frame(f), i.closure_function_index(), env)?;
                 self.write(f, i.result_register(), v);
             }
             Op::MakeObject => {
@@ -1042,6 +1025,7 @@ impl<H: Host> Vm<H> {
                 let v = self.frame_string_concat(p, f, i.register_window())?;
                 self.write(f, i.result_register(), v);
             }
+            // merge: HEAD's inline Unary, Jump, JumpFalse/JumpTrue arms are dropped; the derivation runs them as staged rows (step_row_of).
             Op::Unary => {
                 match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
@@ -1137,7 +1121,7 @@ impl<H: Host> Vm<H> {
                     let realm = self
                         .heap
                         .function(callee)
-                        .map_or(self.realm.globals, |function| function.realm);
+                        .map_or(self.realm.globals, |function| self.record_realm(function));
                     let result = self.with_call_roots(
                         [callee, this].into_iter().chain(args.iter().copied()),
                         |vm| {

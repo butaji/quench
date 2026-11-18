@@ -12,7 +12,8 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         property @ (Operation::GetField { .. } | Operation::SetField { .. } | Operation::StoreField { .. } | Operation::FieldGetHost { .. }
             | Operation::FieldAdd { .. } | Operation::IndexGetHost { .. }) => super::property::property_step(stage, frame, property),
-        keyed @ (Operation::Delete { .. } | Operation::ElementRead { .. } | Operation::ElementWrite { .. }) => keyed_step(stage, frame, keyed),
+        keyed @ (Operation::Delete { .. } | Operation::ElementRead { .. } | Operation::ElementReadOperand { .. } | Operation::ElementWrite { .. }) => keyed_step(stage, frame, keyed),
+        Operation::IncDecLocal { .. } => Step::Unresolved,
         Operation::Void { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. } | Operation::Binary { .. }
             | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
         Operation::WasmJump(jump) => super::wasm_jump::step(stage, frame, jump),

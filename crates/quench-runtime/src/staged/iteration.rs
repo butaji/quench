@@ -207,18 +207,18 @@ mod tests {
         for shape in 1..=2 {
             heap.register_property_shape(shape, shape as usize, None);
         }
-        let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let object = heap.alloc_object(Object::new(Value::NULL));
         heap.property_add(object, Value::integer(1), 1);
         heap.property_add(object, Value::integer(2), 2);
         let shape = heap.object(object).expect("an object").exact_shape();
         let snapshot = ArrayElements::from_slice(&[Value::integer(10), Value::integer(20)]);
-        let keys = heap.alloc(Cell::Array { object: ArrayObject::fresh(Value::NULL, snapshot) });
+        let keys = heap.alloc_array(ArrayObject::fresh(Value::NULL, snapshot));
         (heap, object, keys, shape)
     }
 
     fn state(heap: &mut Heap, (object, keys): (Value, Value), memo: [u64; 2]) -> Value {
         let elements = [object, keys, Value::integer(0), Value::from_bits(memo[0]), Value::from_bits(memo[1]), Value::UNDEFINED];
-        heap.alloc(Cell::Array { object: ArrayObject::fresh(Value::NULL, ArrayElements::from_slice(&elements)) })
+        heap.alloc_array(ArrayObject::fresh(Value::NULL, ArrayElements::from_slice(&elements)))
     }
 
     fn step(heap: &Heap, state: Value, epoch: u64) -> Option<Value> {

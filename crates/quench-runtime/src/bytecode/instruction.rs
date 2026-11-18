@@ -225,6 +225,13 @@ macro_rules! layout_accessors {
                 self.a() & !REGISTER_MASK
             }
 
+            /// This record with its result flags cleared: the operation it makes, apart from how
+            /// its result completes the frame (`Operation::decode_completed`).
+            #[allow(dead_code)] #[inline(always)]
+            pub(crate) fn without_result_flags(self) -> Self {
+                Self::new(self.op(), self.a() & REGISTER_MASK, self.b(), self.c(), self.imm())
+            }
+
             #[allow(dead_code)] #[inline]
             pub(crate) fn set_result_register(&mut self, register: Register) {
                 debug_assert_eq!(
