@@ -14,6 +14,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         keyed @ (Operation::Delete { .. } | Operation::ElementRead { .. } | Operation::ElementWrite { .. }) => keyed_step(stage, frame, keyed),
         Operation::Void { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. } | Operation::Binary { .. }
             | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
+        Operation::WasmJump(jump) => super::wasm_jump::step(stage, frame, jump),
         call @ (Operation::Call(_) | Operation::Return { .. }) => call_step(stage, frame, call),
         Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
             | Operation::LoadLocalChecked { .. } | Operation::StoreLocalChecked { .. } | Operation::InitializeLocal { .. }
@@ -183,6 +184,8 @@ pub(crate) enum RowStep {
     WasmInt,
     /// Wasm float, float conversion and select operations (`wasm_float`).
     WasmFloat,
+    /// The Wasm i32 conditional jumps and fused add-and-jump (`wasm_jump::step`).
+    WasmJump,
     /// Any operation: the whole of `step`.
     Full,
 }
@@ -198,6 +201,7 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
         Some(Decoder::Element) => RowStep::Keyed,
         Some(Decoder::WasmFloat) => RowStep::WasmFloat,
         Some(Decoder::Generic) => if matches!(op, Op::Unary) { RowStep::Full } else { RowStep::Generic },
+        Some(Decoder::WasmJump) => RowStep::WasmJump,
         Some(Decoder::Value) => match op {
             Op::LoadCapture | Op::StoreCapture => RowStep::Names,
             Op::IncDec | Op::ToNumeric => RowStep::Number,
@@ -287,4 +291,13 @@ pub(crate) fn step_wasm_float<F: Frame<Concrete>>(stage: &mut Concrete, frame: &
 #[inline(always)]
 pub(crate) fn step_generic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     super::generic::step(stage, frame, operation)
+}
+
+/// `step` of a Wasm i32 jump row (`RowStep::WasmJump`).
+#[inline(always)]
+pub(crate) fn step_wasm_jump<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    match operation {
+        Operation::WasmJump(jump) => super::wasm_jump::step(stage, frame, jump),
+        _ => Step::Unresolved,
+    }
 }

@@ -933,6 +933,7 @@ macro_rules! row_step {
         else if const { matches!(crate::staged::row_step($op), R::Generic) } { crate::staged::step_generic($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::WasmInt) } { crate::staged::step_wasm_int($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::WasmFloat) } { crate::staged::step_wasm_float($stage, $frame, $operation) }
+        else if const { matches!(crate::staged::row_step($op), R::WasmJump) } { crate::staged::step_wasm_jump($stage, $frame, $operation) }
         else { crate::staged::step($stage, $frame, $operation) }
     }};
 }
@@ -955,7 +956,7 @@ const fn jump_row_miss<H: Host, const BACKWARD: bool>(op: Op) -> Handler {
 pub(in crate::vm::dispatch_fast) const fn jumps_by_row(op: Op) -> bool {
     op.control_flow_layout().jumps()
         && (matches!(op.staged(), Some(crate::bytecode::Decoder::Flow)) || op.traits().has(crate::bytecode::Traits::LANE_LOOP_EXIT)
-            || crate::staged::compare_jump(op))
+            || crate::staged::compare_jump(op) || crate::staged::wasm_i32_jump(op))
 }
 
 /// Opcode `OP`'s jump row in direction `backward`.
@@ -976,6 +977,8 @@ lane_handler! {
             Operation::decode_names(crate::staged::Fields::wide(fields))
         } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
             Operation::decode_generic(crate::staged::Fields::wide(fields))
+        } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmJump)) } {
+            Operation::decode_wasm_jump(crate::staged::Fields::wide(fields))
         } else {
             Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY)
         };
@@ -985,7 +988,7 @@ lane_handler! {
         let mut stage = Concrete::new(std::ptr::null());
         // A loop's exit writes its result register, so no producer's accumulator carries past it.
         let carried = if const { LaneFields::<OP>::RESULT_A } { Carried::script_in(cx, view) } else { view };
-        let mut frame = row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, view);
+        let mut frame = row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, i, view);
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(r, ip, BACKWARD, carried, None)),
             Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),

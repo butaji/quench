@@ -90,7 +90,7 @@ pub(crate) mod value;
 mod steps;
 mod control;
 mod generic;
-pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float};
+pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump};
 pub(crate) mod effects;
 #[allow(dead_code)] // the K-PLAN builder; its first consumer is the u-jit lowering (P4, TOD-1700)
 pub(crate) mod function_plan;
@@ -108,6 +108,8 @@ pub(crate) mod wasm_operation;
 pub(crate) mod wasm_simd;
 pub(crate) mod wasm_simd_concrete;
 pub(crate) mod wasm_step;
+pub(crate) mod wasm_jump;
+pub(crate) use wasm_jump::WasmJump;
 pub(crate) use wasm_concrete::ConcreteWasm;
 #[cfg(test)]
 pub(crate) mod trace;
@@ -242,6 +244,17 @@ pub(crate) const COMPARE_JUMP_ROW: u16 = Op::JumpBinaryFalse as u16;
 pub(crate) const fn compare_jump(op: Op) -> bool {
     matches!(op, Op::JumpBinaryFalse)
 }
+
+/// Whether `op` is a Wasm i32 conditional jump or fused add-and-jump (`Operation::WasmJump`): a
+/// jump the lane runs as its generated row.
+pub(crate) const fn wasm_i32_jump(op: Op) -> bool {
+    matches!(op.staged(), Some(Decoder::WasmJump))
+}
+
+/// The opcodes of the Wasm i32 zero tests, which the lane names to give a zero test's row the
+/// handler of its direction (`jump_row`).
+pub(crate) const WASM_JUMP_ZERO_ROW: u16 = Op::WasmJumpI32Zero as u16;
+pub(crate) const WASM_JUMP_NONZERO_ROW: u16 = Op::WasmJumpI32NonZero as u16;
 /// The opcodes of the by-name load rows, one per `NameLoad`, which a tier names to instantiate
 /// the row of a binding it resolved (`lane_frame::name_row`).
 pub(crate) const LOAD_NAME_ROW: u16 = Op::LoadName as u16;
@@ -433,6 +446,8 @@ pub(crate) enum Operation<W, P> {
     CompareJump { comparison: Comparison, left: Operand, right: Operand, negate: bool },
     /// A Wasm i32 or i64 register or immediate operator (`wasm_int`), which the row answers from its words.
     WasmInt(wasm_int::WasmIntOperation),
+    /// A Wasm i32 conditional jump or fused add-and-jump over int32 operands (`wasm_jump`).
+    WasmJump(WasmJump),
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes and the
@@ -453,7 +468,15 @@ impl<W, P> Operation<W, P> {
             Decoder::WasmFloat => Self::decode_wasm_float(instruction),
             Decoder::Proved => None,
             Decoder::WasmInt => Self::decode_wasm_int(instruction),
+            Decoder::WasmJump => Self::decode_wasm_jump(instruction),
         }
+    }
+
+    /// The Wasm i32 jumps of `decode` (`Decoder::WasmJump`), from any record's wide fields
+    /// (`Fields::wide`).
+    #[inline(always)]
+    pub(crate) fn decode_wasm_jump(instruction: WideInstruction) -> Option<Self> {
+        WasmJump::decode(instruction).map(Self::WasmJump)
     }
 
     /// The environment, global and iteration operations of `decode` (`Decoder::Names`), from a

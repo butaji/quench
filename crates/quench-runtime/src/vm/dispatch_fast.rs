@@ -10885,18 +10885,6 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// A counted loop's step and test.
-    fn lane_add_jump_nonzero<BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
-        let sum = read_i32::<ACC, ACC_B>(r, i.b, view).wrapping_add(i32::from(i.c as i16));
-        if sum != 0 {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, view, Some((i.a, view.integers.encode(sum)))));
-        }
-        // Falling through, the step is an accumulator producer.
-        produce!(cx, r, ip, i.a, view.integers.encode(sum), view)
-    }
-}
-
-lane_handler! {
     /// `WasmJumpI32Zero` and `WasmJumpI32NonZero`. With `CARRY`, the taken
     /// jump carries register `c` (a field the instruction leaves unused) as
     /// the accumulator, for a target that reads it there.
@@ -10931,33 +10919,6 @@ impl<H: Host, const CARRY: bool> ZeroJumps<H, CARRY> {
             [positions!(true, false), positions!(true, true)],
         ]
     };
-}
-
-lane_handler! {
-    /// Fused i32 comparison and branch, against a register or a constant.
-    fn lane_compare_jump<OP: u16, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
-        let (comparison, immediate) = const {
-            match I32BinaryOperator::from_jump_op(opcode(OP)) {
-                Some(comparison) => (comparison, false),
-                None => match I32BinaryOperator::from_immediate_jump_op(opcode(OP)) {
-                    Some(comparison) => (comparison, true),
-                    None => panic!("not an i32 comparison jump"),
-                },
-            }
-        };
-        let right = if immediate {
-            i32::from(i.b as i16)
-        } else {
-            read_i32::<ACC, ACC_B>(r, i.b, view)
-        };
-        let Ok(taken) = comparison.evaluate(read_i32::<ACC, ACC_A>(r, i.a, view), right) else {
-            return exit(ip);
-        };
-        if taken != 0 {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, view, None));
-        }
-        next!(cx, r, following(ip), view)
-    }
 }
 
 #[path = "vector_region.rs"]
@@ -20713,11 +20674,7 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     if OP >= 256 && !lane_runs_row(op) && !jumps_by_row(op) {
         return None;
     }
-    let handler: Handler = if I32BinaryOperator::from_jump_op(op).is_some()
-        || I32BinaryOperator::from_immediate_jump_op(op).is_some()
-    {
-        lane_compare_jump::<H, OP, BACKWARD, ACC>
-    } else if MemoryLoad::from_direct_op(op).is_some() {
+    let handler: Handler = if MemoryLoad::from_direct_op(op).is_some() {
         return LaneHandler::producer(lane_load::<H, OP, ACC>);
     } else if MemoryStore::from_direct_op(op).is_some() {
         lane_store::<H, OP, ACC>
@@ -20732,9 +20689,6 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
             Class::WasmI32ShiftRightUnsignedAnd => {
                 return LaneHandler::producer(lane_bit_field::<H, ACC>);
             }
-            Class::WasmI32AddJump => {
-                return LaneHandler::producer(lane_add_jump_nonzero::<H, BACKWARD, ACC>);
-            }
             _ => match other_handler::<H, BACKWARD, ACC>(op) {
                 Some(handler) => handler,
                 None => return None,
@@ -20747,13 +20701,23 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     })
 }
 
+/// The handler of a Wasm i32 zero test's generated row (`jump_row`) in direction `backward`: the test
+/// that jumps where zero (`when_zero`), else where nonzero. A row jump carries no register.
+fn zero_test_row<H: Host>(when_zero: bool, backward: bool) -> *const () {
+    let handler: Handler = match (when_zero, backward) {
+        (true, false) => jump_row::<H, { crate::staged::WASM_JUMP_ZERO_ROW }>(false),
+        (true, true) => jump_row::<H, { crate::staged::WASM_JUMP_ZERO_ROW }>(true),
+        (false, false) => jump_row::<H, { crate::staged::WASM_JUMP_NONZERO_ROW }>(false),
+        (false, true) => jump_row::<H, { crate::staged::WASM_JUMP_NONZERO_ROW }>(true),
+    };
+    handler as *const ()
+}
+
 /// The handlers of the jumps (`other_handler`), whose direction decides whether they run a
 /// safepoint, then of the Wasm GC steps (`wasm_gc_handler`).
 const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
         Class::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
-        Class::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
-        Class::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
         _ => wasm_gc_handler::<H>(opcode),
     }
 }
@@ -21688,9 +21652,10 @@ fn derive_lane_view<'live, H: Host>(
     let plain_zero_jump = |handler: *const ()| {
         let plain = ZeroJumps::<H, false>::HANDLERS;
         (0..2).flat_map(|zero| (0..2).map(move |backward| (zero, backward))).find(|&(zero, backward)| {
-            [ACC_NONE, ACC_A]
-                .into_iter()
-                .any(|acc| handler == plain[zero][backward][usize::from(acc)] as *const ())
+            handler == zero_test_row::<H>(zero == 1, backward == 1)
+                || [ACC_NONE, ACC_A]
+                    .into_iter()
+                    .any(|acc| handler == plain[zero][backward][usize::from(acc)] as *const ())
         })
     };
     // Each record's i32 load with its address field, if it is a plain one.

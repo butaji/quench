@@ -173,6 +173,9 @@ pub(crate) enum Decoder {
     /// The float and conversion operators of Wasm (`staged::wasm_float`): the scalar operators a
     /// `WasmFloat` record names, with `WasmSelect` as its word copy.
     WasmFloat,
+    /// A Wasm i32 conditional jump or fused add-and-jump: int32 operands, and an edge the row
+    /// answers (`staged::WasmJump`).
+    WasmJump,
 }
 
 /// An opcode's general step a lane or a body makes in place, by one helper of the
