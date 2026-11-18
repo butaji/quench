@@ -34,7 +34,7 @@ impl Regex {
             return Some(finder.find(rest).map(|at| start + at..start + at + finder.needle().len()));
         }
         let program = match self.ascii_program(bytes, start, sticky)? {
-            Some(program) => program,
+            Some(program) => complete.bounds.as_ref().unwrap_or(program),
             None => return Some(None),
         };
         Some(program.find_bounds(bytes, start, sticky))

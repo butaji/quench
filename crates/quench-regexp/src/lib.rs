@@ -258,6 +258,10 @@ struct CompleteMatcher {
     required_literal: Box<[u32]>,
     /// The micro-VM's program (`backtrack::Program`): every search of the pattern runs it.
     backtracking: backtrack::Program,
+    /// `backtracking` without its captures, for a search that reads only the match's bounds
+    /// (`Regex::find_range_ascii`): `None` where the pattern has no captures, or has a
+    /// backreference, whose match reads them.
+    bounds: Option<backtrack::Program>,
     /// `required_literal` as bytes, when every unit is ASCII.
     required_bytes: Option<LiteralFinder>,
     /// `required_literal` as the native-endian bytes of its code units, which a UTF-16
@@ -275,6 +279,30 @@ struct CompleteMatcher {
     /// no assertion, lookaround or backreference on it. A search from any position then
     /// succeeds at that position (`Regex::matches_at_every_start`).
     empty_everywhere: bool,
+}
+
+/// Whether `expr` holds a backreference, whose match reads the captures.
+fn has_backreference(expr: &Expr) -> bool {
+    match expr {
+        Expr::Literal(_) | Expr::Dot | Expr::Class(_) | Expr::Assertion(_) => false,
+        Expr::Sequence(parts) | Expr::Alternation(parts) => parts.iter().any(has_backreference),
+        Expr::Capture { body, .. } | Expr::Mode { body, .. } | Expr::Repeat { body, .. } | Expr::Lookaround { body, .. } => has_backreference(body),
+        Expr::Backreference(_) => true,
+    }
+}
+
+/// `expr` with every capture group a plain group: the same matches, with no capture to
+/// record or reset, for a pattern with no backreference.
+fn without_captures(expr: &Expr) -> Expr {
+    match expr {
+        Expr::Sequence(parts) => Expr::Sequence(parts.iter().map(without_captures).collect()),
+        Expr::Alternation(parts) => Expr::Alternation(parts.iter().map(without_captures).collect()),
+        Expr::Capture { body, .. } => without_captures(body),
+        Expr::Repeat { body, min, max, greedy, .. } => Expr::Repeat { body: Box::new(without_captures(body)), min: *min, max: *max, greedy: *greedy, captures: Box::new([]) },
+        Expr::Lookaround { kind, body } => Expr::Lookaround { kind: *kind, body: Box::new(without_captures(body)) },
+        Expr::Mode { body, flags } => Expr::Mode { body: Box::new(without_captures(body)), flags: *flags },
+        other => other.clone(),
+    }
 }
 
 /// Whether some path through `expr` matches empty whatever the subject and position: as
@@ -310,6 +338,8 @@ impl CompleteMatcher {
     fn lower(pattern: &ast::Pattern<'_>, source: &str, names: &[String], flags: Flags) -> Self {
         let program = lower_tree(pattern, source, names);
         let backtracking = backtrack::Program::compile(&program, flags, names.len()).expect("every pattern compiles to the VM");
+        let bounds = (!names.is_empty() && !has_backreference(&program))
+            .then(|| backtrack::Program::compile(&without_captures(&program), flags, 0).expect("every pattern compiles to the VM"));
         let required_literal = required_literal(&program, flags);
         // A program that starts every ASCII search at its prefix finds the same literal
         // there, so the run's own search answers a subject without it; an anchored one tries
@@ -325,6 +355,7 @@ impl CompleteMatcher {
         Self {
             required_literal,
             backtracking,
+            bounds,
             required_bytes,
             required_wide: OnceCell::new(),
             literal_run,
