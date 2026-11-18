@@ -94,6 +94,9 @@ pub(super) trait Stage: MatchStage<Pos = usize, Unit = u32, Flag = bool, Test = 
     /// Writes a register with no restore entry.
     fn assign(&mut self, register: u32, value: usize);
     fn push(&mut self, frame: Frame);
+    /// Puts back the entry `pop` just took, changed: a repeat that can still give or take
+    /// a unit stays on the stack one position on, in the slot it was popped from.
+    fn keep(&mut self, frame: Frame);
     /// The latest backtrack entry, if the stack holds one.
     fn pop(&mut self) -> Option<Frame>;
     /// The positions the body behind guard `guard` can start at.
@@ -176,7 +179,7 @@ pub(super) fn replay<S: Stage>(stage: &mut S) -> Replay {
         Some(Frame::Greedy { pc, floor, position }) => {
             let at = position - 1;
             if at > floor {
-                stage.push(Frame::Greedy { pc, floor, position: at });
+                stage.keep(Frame::Greedy { pc, floor, position: at });
             }
             Replay::Resume(Cursor::at(pc, at))
         }
@@ -188,7 +191,7 @@ pub(super) fn replay<S: Stage>(stage: &mut S) -> Replay {
             }
             let at = position + 1;
             if at < ceiling {
-                stage.push(Frame::Lazy { pc, test, ceiling, position: at });
+                stage.keep(Frame::Lazy { pc, test, ceiling, position: at });
             }
             Replay::Resume(Cursor::at(pc, at))
         }
@@ -238,7 +241,10 @@ fn registers<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
         Inst::EmptyCheck { start } => Step::when(at.position != stage.register(start), at.next()),
         Inst::LoopTail { counter, start, min, head } => loop_tail(stage, (counter, start, min, head), at),
         Inst::Backreference { first, count, ignore_case, unicode } => backreference(stage, (first, count, ignore_case, unicode), at),
-        inst => backward::step(stage, inst, at),
+        inst => match backward::advance(stage, inst, at) {
+            Some(position) => Step::Continue(at.then_at(position)),
+            None => Step::Fail,
+        },
     }
 }
 

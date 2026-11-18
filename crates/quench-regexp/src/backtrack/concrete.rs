@@ -105,6 +105,18 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
     }
 
     #[inline(always)]
+    fn keep(&mut self, frame: Frame) {
+        let length = self.stack.len();
+        debug_assert!(length < self.stack.capacity());
+        // SAFETY: `keep` follows the `pop` that freed this slot, so it lies within the
+        // capacity, and a `Frame` is `Copy`.
+        unsafe {
+            self.stack.as_mut_ptr().add(length).write(frame);
+            self.stack.set_len(length + 1);
+        }
+    }
+
+    #[inline(always)]
     fn pop(&mut self) -> Option<Frame> {
         self.stack.pop()
     }
