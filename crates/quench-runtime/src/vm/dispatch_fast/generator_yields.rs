@@ -3,12 +3,12 @@
 //! suspends the activation in place; any other `yield` or `yield*`, a materialized generator
 //! frame's, takes the general path, which suspends the frame back into its generator.
 use super::*;
-use super::generator_windows::{lane_yield_in_window, lane_yield_star_in_window, running_generator};
+use super::generator_windows::{yield_in_window, yield_star_in_window, running_generator};
 use super::super::activation::SuspendKind;
 
 /// `yield` of the running generator activation, which a `Yield` row transfers to
 /// (`Frame::suspend_yield`): the frame suspends in place and the caller continues with the step's
-/// result (`lane_yield_in_window`). `None` where no generator runs the lane, which `yield_miss` takes.
+/// result (`yield_in_window`). `None` where no generator runs the lane, which `yield_miss` takes.
 ///
 /// # Safety
 /// `cx` is the running lane's context, `record` the running record of its view, and `r` its register file.
@@ -19,11 +19,11 @@ pub(super) unsafe fn yield_in_lane<H: Host>(cx: *mut (), record: Ip, r: Register
         return None;
     }
     // SAFETY: the record lies in the running view.
-    Some(lane_yield_in_window(cx, r, record, unsafe { &*record }, value))
+    Some(yield_in_window(cx, r, record, unsafe { &*record }, value))
 }
 
 /// `yield*` of a generator activation the lane runs over its record, which a `YieldStar` row
-/// transfers to (`Frame::suspend_yield_star`) (`lane_yield_star_in_window`). `None` where no
+/// transfers to (`Frame::suspend_yield_star`) (`yield_star_in_window`). `None` where no
 /// generator runs the lane, which `yield_star_miss` takes.
 ///
 /// # Safety
@@ -35,7 +35,7 @@ pub(super) unsafe fn yield_star_in_lane<H: Host>(cx: *mut (), record: Ip, r: Reg
         return None;
     }
     // SAFETY: the record lies in the running view.
-    Some(lane_yield_star_in_window(cx, r, record, unsafe { &*record }, iterable))
+    Some(yield_star_in_window(cx, r, record, unsafe { &*record }, iterable))
 }
 
 script_handler! {

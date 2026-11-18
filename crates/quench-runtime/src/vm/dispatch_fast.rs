@@ -9939,13 +9939,13 @@ script_handler! {
 script_handler! {
     /// An iteration step (`lane_iteration_step`) of this realm's generator `next` of a
     /// generator that is not running: the generator resumes as an activation over its record
-    /// (`lane_resume_generator_step`), or, where its function has no window, as the native
+    /// (`resume_generator_step_in_lane`), or, where its function has no window, as the native
     /// `next` runs it (`Vm::generator_iteration_step`), with a result only the step's `done`
     /// and `value` reads observe.
     #[inline(never)]
     fn lane_generator_step<>(cx, r, ip, i, view) {
         let (method, iterator) = (r.get(i.b), r.get(i.c));
-        if let Some((registers, start)) = lane_resume_generator_step(cx, r, ip, i, method, iterator) {
+        if let Some((registers, start)) = resume_generator_step_in_lane(cx, r, ip, i, method, iterator) {
             next!(cx, registers, start, Carried::script_in(cx, view))
         }
         let value = lane_call_from_frame(cx, ip, |vm, code| vm.generator_iteration_step(code, method, iterator));
@@ -11162,7 +11162,7 @@ mod scoped_names; mod window_owner; pub(in crate::vm) use window_owner::WindowSc
 mod lane_eval;
 use lane_roots::{LaneRoot, LaneStart};
 pub(in crate::vm) use lane_roots::{JobEnd, ParkedLane};
-mod generator_windows; use generator_windows::{lane_generator_returned, lane_resume_generator_step};
+mod generator_windows; use generator_windows::{generator_returned_in_lane, resume_generator_step_in_lane};
 mod raised_windows;
 mod array_steps;
 mod name_probe; use name_probe::probe_handler; pub(super) use name_probe::settle_name_record;
@@ -14525,7 +14525,7 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
                 return Some(lane_step_array_iteration(cx, &activation, value));
             }
             if script.completion.is_generator() {
-                return Some(lane_generator_returned(cx, &activation, caller_memory, value));
+                return Some(generator_returned_in_lane(cx, &activation, caller_memory, value));
             }
             // [[Construct]] of an ordinary constructor yields its returned object,
             // otherwise the receiver it allocated. A skipped forwarding constructor returns
