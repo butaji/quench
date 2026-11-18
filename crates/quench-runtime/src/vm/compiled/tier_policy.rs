@@ -388,6 +388,7 @@ const MEASURED: Tiers = Tiers {
         classes: &[
             Class::Move, Class::ToNumeric, Class::LoadConst, Class::Binary, Class::NumericAdd, Class::NumericMultiply,
             Class::IncDec, Class::Unary, Class::JumpBinaryFalse, Class::JumpTrue, Class::JumpFalse, Class::Jump, Class::Return,
+            Class::LoadCapture,
         ],
     },
     priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, plan_ns_per_ir: 1500 },

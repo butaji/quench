@@ -382,22 +382,10 @@ unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, 
     // SAFETY: the caller's contract.
     let facts = unsafe { callees.facts() };
     let function = spec.known.program.function(spec.function as usize);
-    let sites = Sites { function, id: spec.function, callees, facts: &facts, context: Context::root(spec.function, inline_base(function, spec.registers, ending), spec.known.stitch), registers: spec.registers, known: spec.known, ending, views };
+    let sites = Sites { function, id: spec.function, callees, facts: &facts, context: Context::root(spec.function, spec.registers, spec.known.stitch), registers: spec.registers, known: spec.known, ending, views };
     let built = assemble(region, spec, sites, helpers);
     tally(&built, ending, (u64::from(region.backedge - region.header) + 1, started.elapsed().as_nanos() as u64));
     built
-}
-
-/// The first register an inlined callee's window may take in a stitch of `function`, which has `registers`
-/// registers: in a region, past the function's locals too, which an activation may keep in its register
-/// file right past its registers (an environment activation, a frame whose own storage does not cover
-/// them; `lane_context_locals_in_window`), so a region's inlined windows never overlap them and the region
-/// runs over every activation. A body is its own activation, whose locals are not in its window.
-fn inline_base(function: &crate::bytecode::Function, registers: u16, ending: Ending) -> u16 {
-    match ending {
-        Ending::Region => registers.saturating_add(function.locals),
-        Ending::Body => registers,
-    }
 }
 
 /// The bit of a widened key that says the instruction is an inlined callee's (`inlined_exit_key`).

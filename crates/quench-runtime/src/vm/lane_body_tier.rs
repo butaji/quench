@@ -214,7 +214,7 @@ impl LaneView {
 
     /// Whether a body compiled a call of this function (`note_caller`): native callers want its
     /// body whatever its length, which only the lane's own entries ask to amortize.
-    fn called_by_bodies(&self) -> bool { !self.tier().callers.borrow().is_empty() || self.tier().history.get().demanded }
+    pub(in crate::vm) fn called_by_bodies(&self) -> bool { !self.tier().callers.borrow().is_empty() || self.tier().history.get().demanded }
 
     /// Warms again a body declined for its length alone, once a caller's compile meets a call to
     /// it: native callers want it whatever its length. Whether it is warming now.
