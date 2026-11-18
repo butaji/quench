@@ -69,7 +69,7 @@ fn record_chain(heap: &mut Heap, keys: [Value; 2]) -> (Value, Vec<Value>) {
         if index == 0 {
             elements.extend(keys);
         }
-        let object = heap.alloc(Cell::Object(plain_object()));
+        let object = heap.alloc_object(plain_object());
         heap.object_mut(object).unwrap().set_inline_property(0, link);
         let property = heap.alloc_string(format!("object:{index}").into());
         heap.object_mut(object).unwrap().set_inline_property(1, property);
@@ -89,10 +89,10 @@ struct Ephemerons {
 }
 
 fn ephemerons(heap: &mut Heap) -> Ephemerons {
-    let object_key = heap.alloc(Cell::Object(plain_object()));
+    let object_key = heap.alloc_object(plain_object());
     let array_key = heap.alloc(Cell::Array { object: ArrayObject::new(plain_object(), Vec::new()) });
-    let lost_key = heap.alloc(Cell::Object(plain_object()));
-    let [object_value, array_value, lost_value] = [(); 3].map(|()| heap.alloc(Cell::Object(plain_object())));
+    let lost_key = heap.alloc_object(plain_object());
+    let [object_value, array_value, lost_value] = [(); 3].map(|()| heap.alloc_object(plain_object()));
     let nested_value = heap.alloc(Cell::Error("nested".into()));
     let mut entries = WeakMapEntries::default();
     for entry in [(object_key, object_value), (array_key, array_value), (lost_key, lost_value), (object_value, nested_value)] {

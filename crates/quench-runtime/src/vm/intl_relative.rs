@@ -17,7 +17,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "RelativeTimeFormat")?;
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_relative_time_format_prototypes
@@ -161,7 +161,7 @@ impl<H: Host> Vm<H> {
                         return Err(vm.type_error(p, "options must not be null".into()));
                     }
                     Some(value) => vm.box_object(value)?,
-                    None => vm.heap.alloc(Cell::Object(Self::empty_object(Value::NULL))),
+                    None => vm.heap.alloc_object(Self::empty_object(Value::NULL)),
                 };
                 vm.with_call_roots([options], |vm| {
                     let locale_matcher = vm.string_option(
@@ -210,7 +210,7 @@ impl<H: Host> Vm<H> {
                     let numeric =
                         vm.string_option(p, options, "numeric", "always", &["always", "auto"])?;
 
-                    let instance = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                    let instance = vm.heap.alloc_object(Self::empty_object(prototype));
                     vm.set_hidden_string(instance, RELATIVE_LOCALE_SLOT, &locale)?;
                     vm.set_hidden_string(instance, RELATIVE_STYLE_SLOT, &style)?;
                     vm.set_hidden_string(instance, RELATIVE_NUMERIC_SLOT, &numeric)?;

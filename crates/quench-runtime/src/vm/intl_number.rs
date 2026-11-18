@@ -84,7 +84,7 @@ impl<H: Host> Vm<H> {
             vm.with_call_roots([prototype], |vm| {
                 let mut locale = vm.number_format_locale(p, args.first().copied())?;
                 let options = vm.number_format_options(p, args.get(1).copied())?;
-                let formatter = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                let formatter = vm.heap.alloc_object(Self::empty_object(prototype));
                 let locale_numbering_system = locale_unicode_keyword(&locale, "nu")
                     .filter(|value| quench_intl::valid_numbering_system(value));
                 let option_numbering_system = options
@@ -897,9 +897,9 @@ impl<H: Host> Vm<H> {
             let Some(style) = vm.hidden_string(this, NUMBER_FORMAT_STYLE_SLOT) else {
                 return Err(vm.type_error(p, "incompatible NumberFormat receiver".into()));
             };
-            let result = vm.heap.alloc(Cell::Object(Self::empty_object(
+            let result = vm.heap.alloc_object(Self::empty_object(
                 vm.realm_object_prototype(vm.realm.globals),
-            )));
+            ));
             let locale_value = vm.heap.alloc_string(locale.clone().into());
             vm.set_named(p, result, "locale", locale_value)?;
             let numbering_system = vm
@@ -1253,9 +1253,9 @@ impl<H: Host> Vm<H> {
         value: &str,
         unit: Option<&str>,
     ) -> Result<Value, JsError> {
-        let object = self.heap.alloc(Cell::Object(Self::empty_object(
+        let object = self.heap.alloc_object(Self::empty_object(
             self.realm_object_prototype(self.realm.globals),
-        )));
+        ));
         self.set_intl_string_property(object, "type", kind)?;
         self.set_intl_string_property(object, "value", value)?;
         if let Some(unit) = unit {

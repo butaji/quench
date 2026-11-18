@@ -441,7 +441,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn create_wasm_host_reference(&mut self) -> crate::RootId {
         let value = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         self.root(value)
     }
 
@@ -4720,9 +4720,9 @@ mod tests {
         let binding = vm.wasm_global_binding(&first, 0).unwrap();
         let payload = vm
             .heap
-            .alloc(Cell::Object(Vm::<crate::SystemHost>::empty_object(
+            .alloc_object(Vm::<crate::SystemHost>::empty_object(
                 Value::NULL,
-            )));
+            ));
         vm.wasm_global_store(binding, payload).unwrap();
         let handle = vm.root(binding);
         let second = vm
@@ -4740,9 +4740,9 @@ mod tests {
         );
         let replacement = vm
             .heap
-            .alloc(Cell::Object(Vm::<crate::SystemHost>::empty_object(
+            .alloc_object(Vm::<crate::SystemHost>::empty_object(
                 Value::NULL,
-            )));
+            ));
         vm.wasm_global_store(binding, replacement).unwrap();
         vm.collect_now(importer.residual());
         assert!(!vm.heap.is_live(payload));

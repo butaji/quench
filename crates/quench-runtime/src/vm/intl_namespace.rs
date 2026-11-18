@@ -11,7 +11,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let intl = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_intl_namespace_for_realm(program, intl, global, object_prototype)?;
         let constructor = self.native_with_realm(Native::IntlNumberFormat, global, global);
         self.realm
@@ -21,7 +21,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "NumberFormat")?;
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_number_format_prototypes
@@ -123,7 +123,7 @@ impl<H: Host> Vm<H> {
         let locale = self.native_with_realm(Native::IntlLocale, global, global);
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_locale_prototypes
@@ -421,7 +421,7 @@ impl<H: Host> Vm<H> {
         prototype: Value,
         locale: String,
     ) -> Result<Value, JsError> {
-        let result = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let result = self.heap.alloc_object(Self::empty_object(prototype));
         self.set_hidden_string(result, INTL_LOCALE_SLOT, &locale)?;
         Ok(result)
     }
@@ -575,7 +575,7 @@ impl<H: Host> Vm<H> {
         match options.filter(|value| !value.is_undefined()) {
             None => Ok(self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(Value::NULL)))),
+                .alloc_object(Self::empty_object(Value::NULL))),
             Some(value) if self.is_object_like(value) => Ok(value),
             Some(_) => Err(self.type_error(p, "options must be an object".into())),
         }

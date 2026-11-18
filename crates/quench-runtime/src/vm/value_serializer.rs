@@ -1386,7 +1386,7 @@ impl<H: Host> Vm<H> {
             }
             tag::BEGIN_JS_OBJECT => {
                 let id = Self::wire_reserve_id(deserializer);
-                let object = self.heap.alloc(Cell::Object(Self::empty_object(self.object_proto)));
+                let object = self.heap.alloc_object(Self::empty_object(self.object_proto));
                 let root = self.wire_add_object(deserializer, id, object);
                 let count = self.wire_read_properties(program, deserializer, hooks, root, tag::END_JS_OBJECT)?;
                 let expected = valid(deserializer.input.borrow_mut().read_uint32())?;
@@ -1690,7 +1690,7 @@ impl<H: Host> Vm<H> {
             tag = next(deserializer)?;
         }
         let prototype = self.intrinsic_builtin_prototype(native);
-        let error = self.heap.alloc(Cell::Object(Object::error(prototype)));
+        let error = self.heap.alloc_object(Object::error(prototype));
         let root = self.wire_add_object(deserializer, id, error);
         self.install_error_stack(program, error, StackData::Formatted(stack))?;
         if let Some(message) = message {
@@ -1914,7 +1914,7 @@ impl<H: Host> Vm<H> {
         let message_value = self.heap.alloc_string(message.into());
         let error = self
             .construct_error_native(program, Native::Error, &[message_value])
-            .unwrap_or_else(|_| self.heap.alloc(Cell::Object(Object::error(self.object_proto))));
+            .unwrap_or_else(|_| self.heap.alloc_object(Object::error(self.object_proto)));
         let name = self.heap.alloc_string("DataCloneError".into());
         let _ = self.set_builtin_value_named(error, "name", name);
         JsError::data_clone(error, message)

@@ -403,7 +403,7 @@ impl<H: Host> Vm<H> {
                 let intrinsics = self.realm.intrinsics.error_intrinsics[&self.realm.globals];
                 let mut object = Self::empty_object(intrinsics.call_site_prototype);
                 self.capture_constructed_name(&mut object, intrinsics.call_site_constructor, true);
-                let site = self.heap.alloc(Cell::Object(object));
+                let site = self.heap.alloc_object(object);
                 let root = self.heap.root(site);
                 roots.push(root);
                 self.object_data_mut(site)
@@ -1070,7 +1070,7 @@ impl<H: Host> Vm<H> {
         // Exhaustion must not invoke guest accessors or constructors.
         let prototype =
             self.realm.intrinsics.builtin_prototypes[&(self.realm.globals, Native::RangeError)];
-        let object = self.heap.alloc(Cell::Object(Object::error(prototype)));
+        let object = self.heap.alloc_object(Object::error(prototype));
         let message = self
             .heap
             .alloc_string(crate::stack::STACK_EXHAUSTED_MESSAGE.into());
@@ -1166,7 +1166,7 @@ impl<H: Host> Vm<H> {
             && value.as_number().is_none() && value.as_bool().is_none()
         { return Ok(self.object()); }
         let prototype = self.primitive_prototype(value).unwrap_or(self.object_proto);
-        let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let object = self.heap.alloc_object(Self::empty_object(prototype));
         // A String wrapper's index properties are its text's (`string_wrapper`).
         // Its length is read without the units: boxing a rope for a sloppy function's `this`
         // left it flat for its life (V8-v7 RegExp's harness check: 491 input variants, 1.6 MB).
@@ -1206,7 +1206,7 @@ impl<H: Host> Vm<H> {
             .copied()
             .or_else(|| self.primitive_prototype(value))
             .unwrap_or(self.object_proto);
-        let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let object = self.heap.alloc_object(Self::empty_object(prototype));
         self.object_data_mut(object)
             .expect("bigint wrapper")
             .set_boxed_primitive(value);
@@ -1651,7 +1651,7 @@ impl<H: Host> Vm<H> {
         let type_error = self.native_with_realm(Native::RealmTypeError, global, global);
         let type_error_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -1675,7 +1675,7 @@ impl<H: Host> Vm<H> {
         // %Object.prototype% ends every prototype chain of the realm.
         let object_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -1710,17 +1710,17 @@ impl<H: Host> Vm<H> {
         let data_view = self.native_with_realm(Native::DataView, global, global);
         let data_view_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_data_view_for_realm(program, global, data_view, data_view_prototype)?;
         let date = self.native_with_realm(Native::Date, global, global);
         let date_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_date_for_realm(program, global, date, date_prototype)?;
         let promise = self.native_with_realm(Native::Promise, global, global);
         let promise_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_promise_for_realm(program, promise, promise_prototype, Some(global))?;
         let disposable_stack = self.native_with_realm(Native::DisposableStack, global, global);
         let async_disposable_stack =
@@ -1735,15 +1735,15 @@ impl<H: Host> Vm<H> {
         self.install_finalization_registry_for_realm(global, object_prototype)?;
         let realm_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_iterator_constructor(global, realm_iterator_proto, Some(global))?;
         self.install_iterator_prototype(realm_iterator_proto, Some(global))?;
         let realm_iterator_helper_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(realm_iterator_proto)));
+            .alloc_object(Self::empty_object(realm_iterator_proto));
         let realm_wrap_for_valid_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(realm_iterator_proto)));
+            .alloc_object(Self::empty_object(realm_iterator_proto));
         self.install_iterator_helper_prototype(realm_iterator_helper_proto, Some(global))?;
         self.install_wrap_for_valid_iterator_prototype(
             realm_wrap_for_valid_iterator_proto,
@@ -1751,10 +1751,10 @@ impl<H: Host> Vm<H> {
         )?;
         let realm_generator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(realm_iterator_proto)));
+            .alloc_object(Self::empty_object(realm_iterator_proto));
         let realm_async_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_async_iterator_prototype(
             realm_async_iterator_proto,
             object_prototype,
@@ -1762,7 +1762,7 @@ impl<H: Host> Vm<H> {
         )?;
         let realm_async_generator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(realm_async_iterator_proto)));
+            .alloc_object(Self::empty_object(realm_async_iterator_proto));
         let native_iterator_next = self.native_value(Native::IteratorNext);
         self.set_builtin_value_named(
             realm_async_generator_proto,
@@ -1783,19 +1783,19 @@ impl<H: Host> Vm<H> {
                 "AsyncFunction",
                 Native::AsyncFunction,
                 self.heap
-                    .alloc(Cell::Object(Self::empty_object(self.function_proto))),
+                    .alloc_object(Self::empty_object(self.function_proto)),
             ),
             (
                 "GeneratorFunction",
                 Native::GeneratorFunction,
                 self.heap
-                    .alloc(Cell::Object(Self::empty_object(self.function_proto))),
+                    .alloc_object(Self::empty_object(self.function_proto)),
             ),
             (
                 "AsyncGeneratorFunction",
                 Native::AsyncGeneratorFunction,
                 self.heap
-                    .alloc(Cell::Object(Self::empty_object(self.function_proto))),
+                    .alloc_object(Self::empty_object(self.function_proto)),
             ),
         ] {
             self.realm
@@ -1972,7 +1972,7 @@ impl<H: Host> Vm<H> {
         let map = self.native_with_realm(Native::Map, global, global);
         let map_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_map(program, global, map, map_prototype)?;
         self.set_builtin_value_named(global, "Map", map)?;
         let prototype_atom = self.prototype_atom();
@@ -1996,7 +1996,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(regexp, "escape", regexp_escape)?;
         let regexp_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_regexp_intrinsics(global, regexp, regexp_prototype)?;
         self.install_regexp_accessors(program, regexp_prototype, global)?;
         self.install_regexp_legacy_accessors(program, regexp, global)?;
@@ -2007,7 +2007,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(global, "ArrayBuffer", array_buffer)?;
         let realm_error_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -2056,7 +2056,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_function_name(constructor, name)?;
             let prototype = self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(realm_error_prototype)));
+                .alloc_object(Self::empty_object(realm_error_prototype));
             self.realm
                 .intrinsics
                 .builtin_prototypes
@@ -2318,7 +2318,7 @@ impl<H: Host> Vm<H> {
                 error_prototype
             } else {
                 self.heap
-                    .alloc(Cell::Object(Self::empty_object(error_prototype)))
+                    .alloc_object(Self::empty_object(error_prototype))
             };
             self.install_error_class(program, native, name, prototype)?;
         }
@@ -2329,7 +2329,7 @@ impl<H: Host> Vm<H> {
         let realm_constructor = self.native_value(Native::RealmTypeError);
         let realm_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(error_prototype)));
+            .alloc_object(Self::empty_object(error_prototype));
         self.set_named(program, realm_constructor, "prototype", realm_prototype)?;
         self.set_named(program, realm_prototype, "constructor", realm_constructor)?;
         let realm_name = self
@@ -2406,9 +2406,9 @@ impl<H: Host> Vm<H> {
                 self.native_with_realm(Native::CallSiteConstructor, Value::NULL, global)
             };
         self.set_builtin_function_name(call_site_constructor, "CallSite")?;
-        let call_site_prototype = self.heap.alloc(Cell::Object(Self::empty_object(
+        let call_site_prototype = self.heap.alloc_object(Self::empty_object(
             self.realm_object_prototype(global),
-        )));
+        ));
         self.set_named_constant(
             program,
             call_site_constructor,
@@ -2542,7 +2542,7 @@ impl<H: Host> Vm<H> {
                 None,
             ),
         };
-        let object = self.heap.alloc(Cell::Object(Object::error(prototype)));
+        let object = self.heap.alloc_object(Object::error(prototype));
         let root = self.heap.root(object);
         let outcome = (|| {
             // Reserve the native stack accessor before message/cause fields,
@@ -2629,7 +2629,7 @@ impl<H: Host> Vm<H> {
                 .ok_or_else(|| {
                     JsError::validation("AggregateError has no intrinsic prototype".into())
                 })?;
-            let value = self.heap.alloc(Cell::Object(Object::error(prototype)));
+            let value = self.heap.alloc_object(Object::error(prototype));
             let root = self.heap.root(value);
             object = Some(root);
             self.define_error_stack_property(program, value)?;

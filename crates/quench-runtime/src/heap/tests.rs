@@ -121,8 +121,8 @@ fn minor_collection_handles_old_weak_maps_and_weak_refs() {
 }
 
 fn minor_collection_handles_old_weak_cells(heap: &mut Heap) {
-    let old_key = heap.alloc(Cell::Object(plain_object()));
-    let old_value = heap.alloc(Cell::Object(plain_object()));
+    let old_key = heap.alloc_object(plain_object());
+    let old_value = heap.alloc_object(plain_object());
     let mut entries = WeakMapEntries::default();
     entries.insert((old_key, old_value));
     let map = heap.alloc(Cell::WeakMap {
@@ -135,12 +135,12 @@ fn minor_collection_handles_old_weak_cells(heap: &mut Heap) {
     });
     heap.collect([map, old_key, weak_ref]);
 
-    let key = heap.alloc(Cell::Object(plain_object()));
-    let value = heap.alloc(Cell::Object(plain_object()));
+    let key = heap.alloc_object(plain_object());
+    let value = heap.alloc_object(plain_object());
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
         entries.insert((key, value));
     }
-    let referent = heap.alloc(Cell::Object(plain_object()));
+    let referent = heap.alloc_object(plain_object());
     let target = heap.weak_handle(referent).unwrap();
     if let Some(Cell::WeakRef { target: slot, .. }) = heap.get_mut(weak_ref) {
         *slot = Some(target);
@@ -167,7 +167,7 @@ fn minor_collection_keeps_records_written_into_old_records_and_frees_young_garba
 }
 
 fn minor_collection_keeps_records_written_into_old_records(heap: &mut Heap, age: PromotionAge) {
-    let owner = heap.alloc(Cell::Object(plain_object()));
+    let owner = heap.alloc_object(plain_object());
     let array = heap.alloc(Cell::Array {
         object: ArrayObject::new(plain_object(), vec![Value::UNDEFINED]),
     });
@@ -177,11 +177,11 @@ fn minor_collection_keeps_records_written_into_old_records(heap: &mut Heap, age:
     assert!(heap.is_old(owner) && heap.is_old(array));
 
     // Young records reachable only through stores into old records.
-    let child = heap.alloc(Cell::Object(plain_object()));
+    let child = heap.alloc_object(plain_object());
     heap.object_mut(owner).unwrap().set_inline_property(0, child);
-    let element = heap.alloc(Cell::Object(plain_object()));
+    let element = heap.alloc_object(plain_object());
     heap.array_elements_mut(array).unwrap().make_mut().set(0, element);
-    let garbage = heap.alloc(Cell::Object(plain_object()));
+    let garbage = heap.alloc_object(plain_object());
     // The barrier logged both owners, so they are young until the minor traces them.
     assert!(!heap.is_old(owner) && !heap.is_old(array));
 
@@ -213,7 +213,7 @@ fn records_written_twice_are_logged_once_per_cycle() {
 }
 
 fn records_written_twice_are_logged_once(heap: &mut Heap) {
-    let owner = heap.alloc(Cell::Object(plain_object()));
+    let owner = heap.alloc_object(plain_object());
     heap.collect([owner]);
     for value in 0..4 {
         heap.object_mut(owner)
@@ -343,7 +343,7 @@ fn array_buffer_backing_is_accounted_until_owner_collection() {
 #[test]
 fn finalization_jobs_are_created_for_unmarked_targets() {
     let mut heap = Heap::new();
-    let target = heap.alloc(Cell::Object(plain_object()));
+    let target = heap.alloc_object(plain_object());
     let target = heap.weak_handle(target).unwrap();
     let registry = heap.alloc(Cell::FinalizationRegistry {
         object: Box::new(plain_object()),
@@ -363,7 +363,7 @@ fn finalization_jobs_are_created_for_unmarked_targets() {
 #[test]
 fn unreachable_finalization_registry_does_not_enqueue_jobs() {
     let mut heap = Heap::new();
-    let target = heap.alloc(Cell::Object(plain_object()));
+    let target = heap.alloc_object(plain_object());
     let target = heap.weak_handle(target).unwrap();
     heap.alloc(Cell::FinalizationRegistry {
         object: Box::new(plain_object()),
@@ -385,7 +385,7 @@ fn weak_map_values_follow_ephemeron_key_reachability() {
         object: Box::new(plain_object()),
         entries: Box::default(),
     });
-    let key = heap.alloc(Cell::Object(plain_object()));
+    let key = heap.alloc_object(plain_object());
     let value = heap.alloc(Cell::Error("value".into()));
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(weak_map) {
         entries.insert((key, value));
@@ -442,8 +442,8 @@ fn object_space_identity_does_not_alias_legacy_slot_identity() {
         object: Box::new(plain_object()),
         entries: Box::default(),
     });
-    let key = heap.alloc(Cell::Object(plain_object()));
-    let value = heap.alloc(Cell::Object(plain_object()));
+    let key = heap.alloc_object(plain_object());
+    let value = heap.alloc_object(plain_object());
 
     assert_eq!(map.legacy_heap_index(), Some(0));
     assert_eq!(key.direct_object_index(), Some(0));
@@ -469,7 +469,7 @@ fn object_space_identity_does_not_alias_legacy_slot_identity() {
 #[test]
 fn weak_ref_target_is_cleared_after_collection() {
     let mut heap = Heap::new();
-    let target = heap.alloc(Cell::Object(plain_object()));
+    let target = heap.alloc_object(plain_object());
     let target_handle = heap.weak_handle(target).unwrap();
     let reference = heap.alloc(Cell::WeakRef {
         object: Box::new(plain_object()),
@@ -536,8 +536,8 @@ fn slab_local_free_bitmap_reuses_slots_across_slab_boundaries() {
 #[test]
 fn finalization_registry_clears_dead_tokens_before_slot_reuse() {
     let mut heap = Heap::new();
-    let target = heap.alloc(Cell::Object(plain_object()));
-    let token = heap.alloc(Cell::Object(plain_object()));
+    let target = heap.alloc_object(plain_object());
+    let token = heap.alloc_object(plain_object());
     let token_slot = token.heap_index().unwrap();
     let target_handle = heap.weak_handle(target).unwrap();
     let token_handle = heap.weak_handle(token).unwrap();
@@ -561,7 +561,7 @@ fn finalization_registry_clears_dead_tokens_before_slot_reuse() {
     assert_eq!(entries[0].token, None);
     assert_eq!(heap.weak_value(target_handle), Some(target));
 
-    let replacement = heap.alloc(Cell::Object(plain_object()));
+    let replacement = heap.alloc_object(plain_object());
     assert_eq!(replacement.heap_index(), Some(token_slot));
     let Some(Cell::FinalizationRegistry { entries, .. }) = heap.get(registry) else {
         panic!("registry remains live");
@@ -610,7 +610,7 @@ fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
 #[test]
 fn direct_array_records_trace_values_and_release_shared_backing() {
     let mut heap = Heap::new();
-    let object = heap.alloc(Cell::Object(plain_object()));
+    let object = heap.alloc_object(plain_object());
     let first_child = heap.alloc(Cell::Error("first".into()));
     let second_child = heap.alloc(Cell::Error("second".into()));
     let shared = ArrayElements::from(vec![first_child, Value::number(1.0)]);
@@ -677,7 +677,7 @@ fn direct_array_records_trace_and_remove_sparse_elements() {
 #[test]
 fn object_integrity_metadata_survives_collection() {
     let mut heap = Heap::new();
-    let object = heap.alloc(Cell::Object(plain_object()));
+    let object = heap.alloc_object(plain_object());
     if let Some(data) = heap.object_record_mut(object) {
         data.set_extensible(false);
         data.set_frozen(true);
@@ -697,7 +697,7 @@ fn object_integrity_metadata_survives_collection() {
 #[test]
 fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     let mut heap = Heap::new();
-    let object = heap.alloc(Cell::Object(plain_object()));
+    let object = heap.alloc_object(plain_object());
     let before = heap.memory_stats().3;
     // An object lives in its record family or a legacy cell; `Heap::object_mut` finds either.
     let data = heap.object_mut(object).unwrap();
@@ -752,7 +752,7 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
         [RegExpLegacyOwner::Enabled, RegExpLegacyOwner::Disabled];
     for owner in owners {
         let mut heap = Heap::new();
-        let constructor = heap.alloc(Cell::Object(plain_object()));
+        let constructor = heap.alloc_object(plain_object());
         let weak_constructor = heap.weak_handle(constructor).unwrap();
         let regexp = heap.alloc(Cell::RegExp {
             object: plain_object(),
@@ -806,8 +806,8 @@ fn resolved_binding_reference_keeps_its_slot_owner_alive() {
 #[test]
 fn weak_map_with_live_key_does_not_activate_an_unreachable_map() {
     let mut heap = Heap::new();
-    let key = heap.alloc(Cell::Object(plain_object()));
-    let value = heap.alloc(Cell::Object(plain_object()));
+    let key = heap.alloc_object(plain_object());
+    let value = heap.alloc_object(plain_object());
     let mut entries = WeakMapEntries::default();
     entries.insert((key, value));
     let map = heap.alloc(Cell::WeakMap {
@@ -823,8 +823,8 @@ fn weak_map_with_live_key_does_not_activate_an_unreachable_map() {
 #[test]
 fn weak_map_cycles_do_not_bootstrap_unreachable_keys() {
     let mut heap = Heap::new();
-    let left = heap.alloc(Cell::Object(plain_object()));
-    let right = heap.alloc(Cell::Object(plain_object()));
+    let left = heap.alloc_object(plain_object());
+    let right = heap.alloc_object(plain_object());
     let mut entries = WeakMapEntries::default();
     entries.insert((left, right));
     entries.insert((right, left));
@@ -845,9 +845,9 @@ fn weak_map_cycles_do_not_bootstrap_unreachable_keys() {
 fn weak_map_activation_observes_keys_marked_before_and_after_the_map() {
     for keys_first in [false, true] {
         let mut heap = Heap::new();
-        let outer_key = heap.alloc(Cell::Object(plain_object()));
-        let inner_key = heap.alloc(Cell::Object(plain_object()));
-        let value = heap.alloc(Cell::Object(plain_object()));
+        let outer_key = heap.alloc_object(plain_object());
+        let inner_key = heap.alloc_object(plain_object());
+        let value = heap.alloc_object(plain_object());
         let mut inner_entries = WeakMapEntries::default();
         inner_entries.insert((inner_key, value));
         let inner = heap.alloc(Cell::WeakMap {
@@ -880,11 +880,11 @@ fn weak_map_activation_observes_keys_marked_before_and_after_the_map() {
 #[test]
 fn weak_map_pending_fan_in_releases_every_value_and_resets_between_collections() {
     let mut heap = Heap::new();
-    let key = heap.alloc(Cell::Object(plain_object()));
+    let key = heap.alloc_object(plain_object());
     let mut maps = Vec::new();
     let mut values = Vec::new();
     for _ in 0..3 {
-        let value = heap.alloc(Cell::Object(plain_object()));
+        let value = heap.alloc_object(plain_object());
         let mut entries = WeakMapEntries::default();
         entries.insert((key, value));
         maps.push(heap.alloc(Cell::WeakMap {
@@ -1007,7 +1007,7 @@ fn aged_survivors_die_at_the_next_minor_collection_or_become_old() {
     let mut heap = heap_at(PromotionAge::Second);
     let allocate = |heap: &mut Heap| {
         let cell = heap.alloc(Cell::Error("aged".into()));
-        let object = heap.alloc(Cell::Object(plain_object()));
+        let object = heap.alloc_object(plain_object());
         assert!(cell.legacy_heap_index().is_some() && object.direct_object_index().is_some());
         [cell, object]
     };
@@ -1083,8 +1083,8 @@ fn promoted_cells_remember_their_young_children() {
 #[test]
 fn promoted_object_records_remember_their_young_children() {
     promoted_owner_remembers_its_young_child(
-        |heap| heap.alloc(Cell::Object(plain_object())),
-        |heap| heap.alloc(Cell::Object(plain_object())),
+        |heap| heap.alloc_object(plain_object()),
+        |heap| heap.alloc_object(plain_object()),
         |heap, owner, child| heap.object_mut(owner).unwrap().set_inline_property(0, child),
     );
 }
@@ -1105,9 +1105,9 @@ fn promoted_array_records_remember_their_young_string_elements() {
 #[test]
 fn old_owners_stay_remembered_until_their_aged_children_are_promoted_or_freed() {
     let mut heap = heap_at(PromotionAge::Second);
-    let [keeper, dropper] = [(); 2].map(|()| heap.alloc(Cell::Object(plain_object())));
+    let [keeper, dropper] = [(); 2].map(|()| heap.alloc_object(plain_object()));
     heap.collect([keeper, dropper]);
-    let [kept, dropped] = [(); 2].map(|()| heap.alloc(Cell::Object(plain_object())));
+    let [kept, dropped] = [(); 2].map(|()| heap.alloc_object(plain_object()));
     heap.object_mut(keeper).unwrap().set_inline_property(0, kept);
     heap.object_mut(dropper).unwrap().set_inline_property(0, dropped);
     collect_minor(&mut heap, [keeper, dropper]);
@@ -1142,7 +1142,7 @@ fn weak_entries_of_aged_keys_and_targets_are_pruned_when_they_die() {
         if old_weak_cells {
             heap.collect([map, weak_ref]);
         }
-        let [key, value, referent] = [(); 3].map(|()| heap.alloc(Cell::Object(plain_object())));
+        let [key, value, referent] = [(); 3].map(|()| heap.alloc_object(plain_object()));
         if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
             entries.insert((key, value));
         }
@@ -1171,7 +1171,7 @@ fn ephemeron_values_of_young_rooted_keys_survive_until_promoted() {
         if old_map {
             heap.collect([map]);
         }
-        let [key, value] = [(); 2].map(|()| heap.alloc(Cell::Object(plain_object())));
+        let [key, value] = [(); 2].map(|()| heap.alloc_object(plain_object()));
         if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
             entries.insert((key, value));
         }
@@ -1189,7 +1189,7 @@ fn ephemeron_values_of_young_rooted_keys_survive_until_promoted() {
 fn full_collection_promotes_aged_survivors() {
     let mut heap = heap_at(PromotionAge::Second);
     let cell = heap.alloc(Cell::Error("aged".into()));
-    let object = heap.alloc(Cell::Object(plain_object()));
+    let object = heap.alloc_object(plain_object());
     collect_minor(&mut heap, [cell, object]);
     heap.collect([cell, object]);
     assert!(heap.is_old(cell) && heap.is_old(object));
@@ -1202,7 +1202,7 @@ fn full_collection_promotes_aged_survivors() {
 fn promotion_age_may_change_between_minor_collections() {
     for (first, second) in [(PromotionAge::Second, PromotionAge::First), (PromotionAge::First, PromotionAge::Second)] {
         let mut heap = heap_at(first);
-        let [dying, surviving] = [(); 2].map(|()| heap.alloc(Cell::Object(plain_object())));
+        let [dying, surviving] = [(); 2].map(|()| heap.alloc_object(plain_object()));
         let cell = heap.alloc(Cell::Error("survivor".into()));
         collect_minor(&mut heap, [dying, surviving, cell]);
         heap.set_promotion_age_for_test(second);
@@ -1242,7 +1242,7 @@ fn restored_sparse_slot_marks_survive_minor_and_full_collection() {
 fn snapshots_restore_aged_survivors_as_old() {
     let mut heap = heap_at(PromotionAge::Second);
     let cell = heap.alloc(Cell::Error("aged".into()));
-    let object = heap.alloc(Cell::Object(plain_object()));
+    let object = heap.alloc_object(plain_object());
     collect_minor(&mut heap, [cell, object]);
     let mut writer = crate::snapshot::Writer::new();
     heap.write_snapshot(&mut writer).unwrap();
@@ -1445,9 +1445,8 @@ fn raw_slot_admission_records_write_domain_before_exposing_storage() {
 #[test]
 fn object_publication_admits_preinitialized_slots_after_census() {
     use crate::typed_ir::Type;
-    let publishers: [(&str, fn(&mut Heap, Object) -> Value); 2] = [
+    let publishers: [(&str, fn(&mut Heap, Object) -> Value); 1] = [
         ("object", Heap::alloc_object),
-        ("cell", |heap, object| heap.alloc(Cell::Object(object))),
     ];
     for (publisher, publish) in publishers {
         for storage in ["inline", "arena", "extras"] {

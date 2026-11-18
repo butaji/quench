@@ -358,7 +358,7 @@ impl<H: Host> Vm<H> {
         for &(name, native) in WASM_ERRORS {
             let prototype = self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(error_prototype)));
+                .alloc_object(Self::empty_object(error_prototype));
             self.install_error_class(program, native, name, prototype)?;
             let native_function = self.native_value(native);
             self.set_builtin_value_named(namespace, name, native_function)?;
@@ -1099,7 +1099,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let exports = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         let exports_root = self.heap.root(exports);
         let outcome = (|| {
             for export in instance.module.exports().to_vec() {

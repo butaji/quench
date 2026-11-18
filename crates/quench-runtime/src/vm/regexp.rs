@@ -2633,7 +2633,7 @@ impl<H: Host> Vm<H> {
         }
         let groups = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         for (name, range) in named {
             let atom = self.intern_atom(name);
             let value = range.as_ref().map_or(Value::UNDEFINED, |range| {
@@ -2665,7 +2665,7 @@ impl<H: Host> Vm<H> {
         let groups = if !named.is_empty() {
             let groups = self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+                .alloc_object(Self::empty_object(Value::NULL));
             for (name, range) in named {
                 let atom = self.intern_atom(name);
                 let pair = self.regexp_index_pair(range.clone());

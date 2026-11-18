@@ -81,7 +81,7 @@ impl<H: Host> Vm<H> {
         let constructor = disposable_stack;
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         for (name, native) in [
             ("use", Native::DisposableStackUse),
@@ -188,7 +188,7 @@ impl<H: Host> Vm<H> {
         let constructor = async_disposable_stack;
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         for (name, native) in [
             ("use", Native::AsyncDisposableStackUse),
             ("adopt", Native::AsyncDisposableStackAdopt),
@@ -290,7 +290,7 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(self.object_proto)
             }
         };
-        let stack = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let stack = self.heap.alloc_object(Self::empty_object(prototype));
         let root = self.heap.root(stack);
         let entries = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), vec![]),
@@ -555,7 +555,7 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .own_property(constructor, prototype_atom)
             .unwrap_or(self.object_proto);
-        let moved_stack = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let moved_stack = self.heap.alloc_object(Self::empty_object(prototype));
         let root = self.heap.root(moved_stack);
         let entries = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), moved),
