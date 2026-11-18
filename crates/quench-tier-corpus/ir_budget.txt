@@ -63,7 +63,7 @@ mixed_int_dbl 7 27 72.1
 neg_op 6 24 97.1
 not_op 5.5 23 65.6
 num_to_str 569 1713 1713
-obj_spread 146 444 1772.5
+obj_spread 146 444 1488.5
 parse_int 196 594 1036.1
 shl_shr 7 27 93
 str_charcodeat 9 33 207.1

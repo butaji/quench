@@ -209,16 +209,15 @@ pub(crate) unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &cra
     let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
     // A fixed form's hint names it (the caller's contract), so equality proves that form
     // and its layout is read without testing the bits; no narrow run's word matches it.
-    let forms = OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form;
     let tagged = FORM != HINTED_FORM && FORM & TAGGED_SLOTS != 0;
     let form = if FORM == HINTED_FORM { FORM } else { FORM & !TAGGED_SLOTS };
-    let named = hint;
-    let hint = stage.site(u64::from(hint));
-    let same = stage.eq_imm(word, hint);
-    stage.guard(same, ())?;
-    debug_assert!(form == HINTED_FORM || named & forms == form, "a fixed form's matched hint names it");
-    let formed = if form == HINTED_FORM { hint } else { stage.constant(u64::from(form)) };
-    let layout = formed_own_layout(&mut stage, record, formed, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, ())?;
+    // The same row a specializer runs (`IcOp::GuardFormed`, then the proved form's layout):
+    // one compare proves shape and form, and the layout tests no form bit.
+    let at = Reached { word: Some(word), ..Reached::bare(record) };
+    let bits = guard_formed(&mut stage, &at, hint, ())?;
+    debug_assert!(form == HINTED_FORM || bits == form, "a fixed form's matched hint names it");
+    let bits = if form == HINTED_FORM { bits } else { form };
+    let layout = slot_layout(&mut stage, &Reached { formed: Some(bits), ..at }, Form::Either, usize::from(slot) + 1, ())?;
     let word = read_slot(&mut stage, layout, slot, Rep::Tagged);
     // Packed and narrow slots hold narrow values, never a raw double (`packed_read`,
     // `narrow_read`), so a fixed one of those forms skips the float-slot decode.
