@@ -47,6 +47,8 @@ mod staged;
 mod supernode_rows;
 mod wasm;
 mod wasm_codes;
+#[cfg(all(fixed_rows, target_arch = "x86_64"))]
+mod wasm_entry;
 mod wasm_rows;
 mod words;
 pub(crate) use facade::{Value, bytecode, heap, operations, typed_ir, units, value, value_vec, vm};

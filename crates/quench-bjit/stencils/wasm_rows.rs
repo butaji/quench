@@ -24,7 +24,16 @@ pub(crate) unsafe fn run<const K: u8, const OP: u32, const W: u8, const SHAPE: u
         match K {
             BINARY => binary::<OP, W, SHAPE>(s),
             UNARY => unary::<OP, W>(s),
-            _ => jump::<OP, W, SHAPE>(s),
+            JUMP_IF => jump::<OP, W, SHAPE>(s),
+            MOVE => {
+                write::<0>(&s, read::<HOLE_A>(&s));
+                Out::Next(s)
+            }
+            CONSTANT => {
+                write::<0>(&s, hole64::<HOLE_B>());
+                Out::Next(s)
+            }
+            _ => Out::Taken(s),
         }
     }
 }

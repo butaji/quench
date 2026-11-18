@@ -8,6 +8,12 @@ pub const BINARY: u8 = 0;
 pub const UNARY: u8 = 1;
 /// A conditional branch on a comparison operator.
 pub const JUMP_IF: u8 = 2;
+/// `D = A`: a register's word.
+pub const MOVE: u8 = 3;
+/// `D = ` the word in the row's hole.
+pub const CONSTANT: u8 = 4;
+/// Continues at the taken successor.
+pub const GOTO: u8 = 5;
 
 /// The width an integer row runs at.
 pub const W32: u8 = 0;
