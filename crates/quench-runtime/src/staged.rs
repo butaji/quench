@@ -46,6 +46,7 @@ pub(crate) mod meaning;
 mod captures;
 pub(crate) mod compare;
 pub(crate) mod meaning_dispatch;
+pub(crate) mod frame_arm;
 pub(crate) use global::{lexical_read, GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::{CallOut, OperandValues};
