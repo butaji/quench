@@ -3239,8 +3239,17 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(entered);
         // SAFETY: the body owns the callee for as long as its code runs.
         let callee = self.direct.get(&pc).map(|callee| unsafe { &**callee });
+        // A construction of a stores-only constructor, whose arguments are a window of the caller's
+        // registers (`CallSite::initializing`): its receiver is allocated finished and its body not entered.
+        let initializing = match (site.arguments, callee) {
+            // A forwarding site's target is the forwarded initializer, whose receiver its forwarder's plan
+            // allocates (`DirectCallee::forwarder`): that path keeps its body.
+            (crate::staged::Arguments::Window { first, count }, Some(callee))
+                if site.constructs() && callee.forwarder.is_none() && self.initializes_on_construction(callee.target.function) => Some((first, count)),
+            _ => None,
+        };
         let call = CallSite { callee, record, context: self.context, registers: self.registers_base, completed, missed, raised,
-            stop: self.call_out_stop(), leave: self.leave_site() };
+            stop: self.call_out_stop(), leave: self.leave_site(), initializing };
         self.step_with(state, frame::Edges::ValueGuarded { miss: generic }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
         self.reentries.push(completed);
         // A returning call's completion is its activation's: the lane completes it with the
