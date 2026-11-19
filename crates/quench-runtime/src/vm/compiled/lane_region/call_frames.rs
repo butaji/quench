@@ -302,16 +302,25 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let record = stage.raw_const(Lane::I64, i64::from(call.record));
         let address = self.helpers.address(&mut stage.builder, which);
         let status = emit_lane_helper_call(stage.builder, self.payload, address, &[context, record]);
-        let (done, other) = (stage.raw_compare_imm(Relation::Equal, status, LANE_CALL_COMPLETED as i64), stage.builder.create_block());
-        stage.branch(done, (call.completed, &[]), (other, &[]));
-        stage.builder.switch_to_block(other);
-        if direct_entry { stage.builder.set_cold_block(other); }
-        let (missed, unmissed) = (stage.raw_compare_imm(Relation::Equal, status, LANE_CALL_MISSED as i64), stage.builder.create_block());
-        stage.branch(missed, (call.missed, &[]), (unmissed, &[]));
-        stage.builder.switch_to_block(unmissed);
-        if direct_entry { stage.builder.set_cold_block(unmissed); }
-        let raised = stage.raw_compare_imm(Relation::Equal, status, LANE_CALL_RAISED as i64);
-        stage.branch(raised, (call.raised, &[]), (call.stop, &[status]));
+        // The status dispatch, generated from the shared outcome table: each test but the first
+        // is cold where a direct entry was emitted; the last miss leaves with the status.
+        let outcomes = crate::staged::protocol::HELPER_OUTCOMES;
+        for (index, (code, outcome)) in outcomes.into_iter().enumerate() {
+            let target = match outcome {
+                crate::staged::protocol::HelperOutcome::Completed => call.completed,
+                crate::staged::protocol::HelperOutcome::Missed => call.missed,
+                crate::staged::protocol::HelperOutcome::Raised => call.raised,
+            };
+            let hit = stage.raw_compare_imm(Relation::Equal, status, i64::from(code));
+            if index + 1 == outcomes.len() {
+                stage.branch(hit, (target, &[]), (call.stop, &[status]));
+            } else {
+                let other = stage.builder.create_block();
+                stage.branch(hit, (target, &[]), (other, &[]));
+                stage.builder.switch_to_block(other);
+                if direct_entry { stage.builder.set_cold_block(other); }
+            }
+        }
         stage.builder.switch_to_block(call.completed);
         Some(stage.constant(0))
     }
