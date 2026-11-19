@@ -290,8 +290,8 @@ impl crate::bytecode::ResidualProgram {
 
     /// `closure_takes_no_environment` before its cache: not for an eval's program, nor a
     /// call-only closure, whose environment rides in its value (`Value::known_closure` takes a
-    /// direct environment only), nor a module's direct child, whose environment its hoisted
-    /// functions are found by (`cached_functions_in_environment`).
+    /// direct environment only). A module's direct children take none like any other: a hoisted
+    /// declaration is found by its instance's table (`ModuleFunctions`) before this applies.
     fn derive_closure_takes_no_environment(&self, id: u32, reads: &ClosureReads) -> bool {
         if self.kind == crate::bytecode::ProgramKind::Eval {
             return false;
@@ -300,9 +300,7 @@ impl crate::bytecode::ResidualProgram {
             return false;
         };
         let header = slot.header();
-        if header.prototype_unobservable
-            || header.parent.is_none_or(|parent| parent == crate::vm::ROOT_FUNCTION_ID && self.is_module())
-        {
+        if header.prototype_unobservable || header.parent.is_none() {
             return false;
         }
         reads.environment_unobservable(id, || crate::bytecode::arrow_chain_reads_implicit_bindings(self, id))

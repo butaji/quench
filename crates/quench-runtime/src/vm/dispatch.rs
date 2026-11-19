@@ -593,6 +593,205 @@ impl<H: Host> Vm<H> {
         allow_inline_calls: bool,
     ) -> Result<StepResult, JsError> {
         match i.op() {
+            Op::Nop => {}
+            Op::CloneEnv => {
+                let clones = &p.function(self.frames[f].function as usize).environment_clones;
+                let plan = &clones[i.environment_clone_index()];
+                self.clone_frame_environment(f, &plan.fresh, clones.resets(plan))?;
+            }
+            Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
+            Op::LoadConst => {
+                debug_assert_eq!(self.frames[f].program, self.active_program);
+                let value = self.active_constant(i.constant_index()).ok_or_else(|| {
+                    JsError::validation("constant index is outside program".into())
+                })?;
+                self.write(f, i.result_register(), value);
+            }
+            Op::CreateRegExpLiteral => {
+                let value = self.regexp_literal(p, f, i.regexp_literal_site_index())?;
+                self.write(f, i.result_register(), value);
+            }
+            Op::LoadLocalPlain => {
+                // SAFETY: validated bytecode bounds the slot by Function.locals,
+                // and frame setup sizes locals to that count.
+                let value = unsafe { self.read_validated_local(f, i.local_slot()) };
+                self.write(f, i.result_register(), value);
+            }
+            Op::LoadLocal | Op::LoadEnvLocal | Op::StoreVarBinding | Op::StoreLocal | Op::StoreEnvLocal
+            | Op::LoadCapture | Op::StoreCapture | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
+            | Op::StoreName | Op::LoadGlobalLexical | Op::StoreGlobalLexical => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
+            Op::StoreLocalPlain => {
+                let value = self.read(f, i.register_a());
+                // SAFETY: validated bytecode bounds the slot by Function.locals,
+                // and frame setup sizes locals to that count.
+                unsafe { self.write_validated_local(f, i.local_slot(), value) };
+                if let Some(register) = i.optional_register_b() {
+                    self.write(f, register, value);
+                }
+            }
+            Op::LoadThis => {
+                let this = self.checked_this_binding(p, f)?;
+                self.write(f, i.result_register(), this);
+            }
+            Op::LoadCallee => {
+                // The function the frame runs, as its activation filled its self binding.
+                let callee = self.frames[f].context.callee().unwrap_or(Value::UNDEFINED);
+                self.write(f, i.result_register(), callee);
+            }
+            Op::CallFirstChunk => self.call_first_chunk(p, f, i, *pc)?,
+            Op::LoadImportMeta => {
+                let program = self.frames[f].program;
+                let import_meta = if let Some(value) = self.programs.import_meta(program) {
+                    value
+                } else {
+                    let value = self
+                        .heap
+                        .alloc_object(Self::empty_object(Value::NULL));
+                    if let Some(source_name) = self.programs.source_name(program).map(str::to_owned)
+                    {
+                        let url = self.host.import_meta_url(&source_name);
+                        let url = self.heap.alloc_string(url.into());
+                        let url_atom = self.intern_atom("url");
+                        self.set_property(value, url_atom, url)?;
+                        if let Some(filename) = self.host.import_meta_filename(&source_name) {
+                            let filename_value = self.heap.alloc_string(filename.as_str().into());
+                            let filename_atom = self.intern_atom("filename");
+                            self.set_property(value, filename_atom, filename_value)?;
+                            let dirname = std::path::Path::new(&filename)
+                                .parent()
+                                .and_then(|path| path.to_str());
+                            if let Some(dirname) = dirname {
+                                let dirname_value = self.heap.alloc_string(dirname.into());
+                                let dirname_atom = self.intern_atom("dirname");
+                                self.set_property(value, dirname_atom, dirname_value)?;
+                            }
+                        }
+                        if self.host.initializes_import_meta() {
+                            let mut context = crate::NativeContext::new(self);
+                            let import_meta = context.scoped_value(value);
+                            H::initialize_import_meta(&mut context, &source_name, import_meta)
+                                .map_err(|error| context.finish_error(error))?;
+                        }
+                    }
+                    self.programs.set_import_meta(program, value);
+                    value
+                };
+                self.write(f, i.result_register(), import_meta);
+            }
+            Op::InitializeThis => {
+                let value = self.read(f, i.register_a());
+                self.initialize_this_binding(p, f, value)?;
+            }
+            Op::CacheTemplateObject => {
+                let key = (
+                    self.frames[f].program,
+                    self.frames[f].function,
+                    i.template_site_index(),
+                );
+                let value = if let Some(value) = self.realm.template_objects.get(&key).copied() {
+                    value
+                } else {
+                    let value = self.read(f, i.register_a());
+                    self.realm.template_objects.insert(key, value);
+                    value
+                };
+                self.write(f, i.register_a(), value);
+            }
+            Op::LoadCachedTemplateObject => {
+                let key = (
+                    self.frames[f].program,
+                    self.frames[f].function,
+                    i.template_site_index(),
+                );
+                let value = self
+                    .realm
+                    .template_objects
+                    .get(&key)
+                    .copied()
+                    .unwrap_or(Value::UNDEFINED);
+                self.write(f, i.result_register(), value);
+            }
+            Op::MakeClosure if self.is_module_root_hoisted(p, f, i.closure_function_index()) => {
+                // A module's hoisted declaration is the closure its instance made at instantiation,
+                // which the body's declaration of it returns.
+                let id = i.closure_function_index();
+                let program = self.frames[f].program;
+                let v = match self.module_function(program, id) {
+                    Some(function) => function,
+                    None => {
+                        let env = with_binding_site_pc!(self, VarOwner::Frame(f), *pc, self.capture_binding_environment(VarOwner::Frame(f)))?;
+                        let function = self.closure(p, id, env)?;
+                        self.record_module_function(program, id, function);
+                        function
+                    }
+                };
+                self.write(f, i.result_register(), v);
+            }
+            Op::MakeClosure if p.closure_takes_no_environment(i.closure_function_index()) => {
+                // Nothing the closure runs reads its environment: it takes none, and the frame
+                // keeps its locals unpromoted (`ResidualProgram::closure_takes_no_environment`).
+                let v = self.closure(p, i.closure_function_index(), Value::NULL)?;
+                self.write(f, i.result_register(), v);
+            }
+            Op::MakeClosure => {
+                // A closure made fresh each evaluation: a module root's expression or arrow too,
+                // even one in a loop whose iterations share the module environment.
+                let env = with_binding_site_pc!(self, VarOwner::Frame(f), *pc, self.capture_binding_environment(VarOwner::Frame(f)))?;
+                let v = self.closure(p, i.closure_function_index(), env)?;
+                self.write(f, i.result_register(), v);
+            }
+            Op::MakeObject => {
+                let v = self.object();
+                self.write(f, i.result_register(), v);
+            }
+            Op::MakeObject2 => {
+                let v = self.object_pair(
+                    p,
+                    i.object_site_index(),
+                    self.read(f, i.register_b()),
+                    self.read(f, i.register_c()),
+                );
+                if i.returns_from_frame() {
+                    return Ok(StepResult::Return(v));
+                }
+                self.write(f, i.result_register(), v);
+            }
+            Op::MakeObjectLiteral => {
+                let site = i.object_site_index();
+                let shape = self.object_site_shape(p, site);
+                let window = i.register_window();
+                let start = usize::from(window.base);
+                let end = start + usize::from(window.count);
+                let prototype = self.object_proto;
+                let properties = &self.frames[f].registers[start..end];
+                let object = self
+                    .heap
+                    .alloc_object_with_properties(prototype, shape, properties);
+                if i.returns_from_frame() {
+                    return Ok(StepResult::Return(object));
+                }
+                self.write(f, i.result_register(), object);
+            }
+            Op::SuperConstArrayObject2 => {
+                if let Some(value) = self.execute_const_array_object2(p, f, i)? {
+                    return Ok(StepResult::Return(value));
+                }
+            }
+            Op::MakeArray => {
+                let v = self.hole_array(i.array_length());
+                self.write(f, i.result_register(), v);
+            }
+            Op::MakeConstArray => {
+                let v = self
+                    .const_array_value(self.frames[f].program, i.constant_index(), usize::from(i.element_count()))
+                    .ok_or_else(|| JsError::validation("constant array is outside program".into()))?;
+                self.write(f, i.result_register(), v);
+            }
+            Op::StringCaseIndex => self.select_string_case(f, i)?,
+            Op::MakeLiteralTemplate => {
+                let v = self.literal_template(p, f, i.literal_template_index())?;
+                self.write(f, i.result_register(), v);
+            }
             Op::GetField => {
                 match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}

@@ -209,6 +209,7 @@ impl<H: Host> Vm<H> {
             object_shapes: _,
             descriptors,
             function_values,
+            module_functions,
             wasm_exported_functions: _,
             private_homes,
             default_collation: _,
@@ -298,6 +299,16 @@ impl<H: Host> Vm<H> {
             key.snap(&mut writer)?;
             let live = handles.iter().filter_map(|handle| heap.weak_value(*handle)).collect::<Vec<_>>();
             writer.values(&live);
+        }
+        let live_module_functions = module_functions
+            .iter()
+            .filter_map(|(program, id, handle)| Some((program, id, heap.weak_value(handle)?)))
+            .collect::<Vec<_>>();
+        writer.len(live_module_functions.len());
+        for (program, id, function) in live_module_functions {
+            program.snap(&mut writer)?;
+            writer.u32(id);
+            writer.value(function);
         }
         private_homes.snap(&mut writer)?;
         let wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag } = wasm_js;
@@ -419,6 +430,7 @@ impl<H: Host> Vm<H> {
         self.runtime_atoms = Snap::unsnap(&mut reader)?;
         self.descriptors = Snap::unsnap(&mut reader)?;
         self.read_function_values(&mut reader)?;
+        self.read_module_functions(&mut reader)?;
         self.private_homes = Snap::unsnap(&mut reader)?;
         let [module, instance, memory, table, global, tag, js_tag] = <[Value; 7]>::unsnap(&mut reader)?;
         self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag };
@@ -446,6 +458,22 @@ impl<H: Host> Vm<H> {
                 })
                 .collect::<SnapshotResult<Vec<_>>>()?;
             self.function_values.record(key, handles);
+        }
+        Ok(())
+    }
+
+    /// Reads the module functions: each module instance's hoisted declarations, held weakly as the
+    /// running VM holds them.
+    fn read_module_functions(&mut self, reader: &mut Reader<'_>) -> SnapshotResult<()> {
+        let functions = read_list(reader, |reader| {
+            Ok((<ProgramId>::unsnap(reader)?, reader.u32()?, reader.value()?))
+        })?;
+        for (program, id, function) in functions {
+            let handle = self
+                .heap
+                .weak_handle(function)
+                .ok_or_else(|| SnapshotError("snapshot module function names a dead value".into()))?;
+            self.module_functions.set(program, id, handle);
         }
         Ok(())
     }

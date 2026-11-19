@@ -372,6 +372,7 @@ impl<H: Host> Vm<H> {
         let reclaimed = reclaimed.into_iter().collect::<FxHashSet<_>>();
         self.function_values
             .retain(|(program, _), _| !reclaimed.contains(program));
+        self.module_functions.drop_programs(&reclaimed);
         self.realm
             .template_objects
             .retain(|(program, _, _), _| !reclaimed.contains(program));
@@ -956,6 +957,7 @@ impl<H: Host> Vm<H> {
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
         // Under reference counts a minor collection frees old closures too.
         self.prune_function_values(full || self.heap.rc_active());
+        self.prune_module_functions();
         self.prune_wasm_exported_functions();
         self.prune_dead_private_homes();
         if full && self.programs.has_unchecked_reclaimable() {

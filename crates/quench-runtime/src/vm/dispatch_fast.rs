@@ -3974,6 +3974,10 @@ fn window_closure_value_in_lane<H: Host>(
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let parent = unsafe { (*cx).registers }.env();
+    // A module's hoisted declaration is its instance's closure, which the interpreter returns.
+    if owner == super::ROOT_FUNCTION_ID && vm.is_module_function(unsafe { (*cx).program }, function) {
+        return None;
+    }
     // A closure that reads nothing of its environment takes none, so the window is not made.
     if code.closure_takes_no_environment(function) {
         let value = lane_closure(vm, code, function, Value::NULL);
