@@ -116,7 +116,7 @@ pub(in crate::vm) unsafe extern "C" fn lane_decide<H: Host>(vm: u64, _residual: 
 /// none (a native callee, a lane callee): the lane's activations become the frames the interpreter would have run
 /// (`Vm::materialize_deferred_lane`), the step is made on the innermost as the general loop makes it, and the body
 /// leaves for the general path past the record (`LANE_CALL_LEFT`), which resumes in those frames. A record that returned
-/// its result is returned from its frame there (`lane_frame_return`), and an error the step raised is stashed for
+/// its result is returned from its frame there (`frame_return`), and an error the step raised is stashed for
 /// the general path to raise at the record (`lane_in_place`). `LANE_CALL_MISSED` where the record is no such step.
 ///
 /// # Safety
@@ -137,7 +137,7 @@ unsafe fn lane_frames_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, re
         Ok((next, record.returns_from_frame().then(|| vm.read(frame, instruction.result_register()))))
     });
     let resume = match made {
-        Some((_, Some(value))) => lane_frame_return(unsafe { vm(cx) }, ip, value),
+        Some((_, Some(value))) => frame_return(unsafe { vm(cx) }, ip, value),
         Some((next, None)) => exit(unsafe { base.add(next) }),
         None => exit(ip),
     };
@@ -182,7 +182,7 @@ unsafe fn lane_owner_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, rec
         Some(None) => LANE_CALL_COMPLETED,
         Some(Some(returned)) => {
             let resume = match returned {
-                Some(value) => lane_frame_return(unsafe { vm(cx) }, ip, value),
+                Some(value) => frame_return(unsafe { vm(cx) }, ip, value),
                 None => exit(unsafe { base.add(pc + 1) }),
             };
             unsafe { lane_left_at(cx, resume) }

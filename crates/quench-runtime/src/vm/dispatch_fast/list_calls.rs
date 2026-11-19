@@ -124,7 +124,7 @@ pub(super) fn lane_spread_native_call<H: Host>(
 ) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     let native = lane_spread_native(vm, callee)?;
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
+    if i.a & crate::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted(cx) {
         return Some(Resumed::Exit(exit(ip)));
     }
     let args = vm.heap.array_elements(list)?.iter().collect::<smallvec::SmallVec<[Value; FRAME_CALL_INLINE_ARGUMENTS]>>();
@@ -162,7 +162,7 @@ pub(super) fn lane_spread_set_native_call<H: Host>(
     if vm.intact_iteration_kind(list) != Some(crate::vm::iterators::IterationSource::Set) {
         return None;
     }
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
+    if i.a & crate::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted(cx) {
         return Some(Resumed::Exit(exit(ip)));
     }
     let args = match vm.heap.get(list)? {

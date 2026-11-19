@@ -123,7 +123,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         // SAFETY: the window is registers of the running function, read before anything runs.
         let window = unsafe { lane_call_window(r, i) };
-        if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
+        if i.a & crate::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted(cx) {
             return exit(ip);
         }
         let read = match window {
