@@ -1,5 +1,5 @@
 //! The stores of a constructor body that only initializes `this` (`Function::initializer_stores`).
-use super::{Constant, FieldLookup, JsDenotation, OperandKind, Register, Traits, WideInstruction};
+use super::{Constant, FieldLookup, OperandKind, Register, Traits, WideInstruction};
 use smallvec::SmallVec;
 
 /// A store of an initializing body (`Function::initializer_stores`): the field `atom`, at
@@ -149,7 +149,7 @@ impl Temporaries {
 /// instructions they take. The registers they write are the body's temporaries, above its
 /// parameters, which nothing else reads.
 fn nested_store(instructions: &[WideInstruction], at: usize, params: u16, constants: &[Constant]) -> Option<(InitializerStore, usize)> {
-    let load = instructions.get(at).filter(|load| matches!(load.op().js_denotation(), JsDenotation::CapturedValue) && temporary(load, params))?;
+    let load = instructions.get(at).filter(|load| load.op().traits().has(Traits::CAPTURE_LOAD) && temporary(load, params))?;
     let (chain, depth, register) = constructor_chain(instructions, at + 1, load.result_register(), params);
     (depth > 0).then_some(())?;
     let pc = at + 1 + depth;

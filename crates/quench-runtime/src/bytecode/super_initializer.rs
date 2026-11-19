@@ -2,7 +2,7 @@
 //! (`Function::super_initializer`).
 use super::{
     AtomTable, Constant, ConstructArguments, Function, ImmediateLayout, InitializerConstant, InitializerStore,
-    InitializerValue, JsDenotation, Op, Register, SUPER_BASE_BINDING, Traits, WideInstruction,
+    InitializerValue, Op, Register, SUPER_BASE_BINDING, Traits, WideInstruction,
 };
 use smallvec::SmallVec;
 
@@ -27,7 +27,7 @@ pub(super) fn calls_super_base(
     [active, base, receiver, call]: [&WideInstruction; 4],
     window: Option<Register>,
 ) -> bool {
-    matches!(active.op().js_denotation(), JsDenotation::CapturedValue)
+    active.op().traits().has(Traits::CAPTURE_LOAD)
         && base.op().traits().has(Traits::NAME_LEAF)
         && usize::try_from(base.atom_index()).ok().and_then(|atom| atoms.get(atom)) == Some(SUPER_BASE_BINDING)
         && receiver.op().traits().has(Traits::CONSTANT_LOAD)
@@ -58,7 +58,7 @@ impl Temporaries<'_> {
             return false;
         }
         let op = instruction.op();
-        let value = if matches!(op.js_denotation(), JsDenotation::PlainLocalLoad) {
+        let value = if op.traits().has(Traits::PLAIN_LOCAL_LOAD) {
             u16::try_from(instruction.local_slot())
                 .ok()
                 .filter(|parameter| *parameter < self.params)
@@ -83,7 +83,7 @@ fn super_base(records: &mut impl Iterator<Item = WideInstruction>, atoms: &AtomT
     let (active, base, receiver, mut call) = (records.next()?, records.next()?, records.next()?, records.next()?);
     // A body that does not start with this shape is not a super initializer; reading a
     // result register before proving the opcode would ask a field the layout does not have.
-    if !matches!(active.op().js_denotation(), JsDenotation::CapturedValue)
+    if !active.op().traits().has(Traits::CAPTURE_LOAD)
         || !base.op().traits().has(Traits::NAME_LEAF)
         || !receiver.op().traits().has(Traits::CONSTANT_LOAD)
     {
@@ -197,7 +197,7 @@ fn binds_parent_construct(parent: Register, [construct, check, binds]: [&WideIns
 fn rest_spread(records: &mut impl Iterator<Item = WideInstruction>) -> Option<Register> {
     let (array, list, append) = (records.next()?, records.next()?, records.next()?);
     (array.op() == Op::MakeArray
-        && matches!(list.op().js_denotation(), JsDenotation::PlainLocalLoad)
+        && list.op().traits().has(Traits::PLAIN_LOCAL_LOAD)
         && list.local_slot() == 0
         && append.op() == Op::AppendArray
         && append.register_a() == array.result_register()

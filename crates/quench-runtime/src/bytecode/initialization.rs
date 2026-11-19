@@ -6,7 +6,7 @@
 use crate::bitset::BitSet;
 
 use super::{
-    ControlEdge, Function, ImmediateRole, InstructionField, JsDenotation, Operand,
+    ControlEdge, Function, ImmediateRole, InstructionField, Operand,
     OperandKind, Superinstruction, Traits, WideInstruction,
 };
 
@@ -220,7 +220,7 @@ fn accesses(instruction: WideInstruction, uninitialized_at_entry: &BitSet, mut a
         // For a slot uninitialized at entry the question is only whether a value was
         // written: a plain slot's assigning store never meets a dead zone
         // (`plain_local_slots`).
-        } else if matches!(op.js_denotation(), JsDenotation::PlainLocalStore) && uninitialized_at_entry.contains(slot) {
+        } else if op.traits().has(Traits::PLAIN_LOCAL_STORE) && uninitialized_at_entry.contains(slot) {
             access(slot, Access::Initialize);
         } else if op.traits().has(Traits::FRAME_LOCAL_STORE) {
             access(

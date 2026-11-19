@@ -1,7 +1,7 @@
 #[path = "activation_layout.rs"] mod activation_layout;
 use super::control_flow::instruction_at;
 use super::{
-    FieldBase, FieldLayout, ImmediateLayout, InstructionField, JsDenotation, Op, Operand, OperandKind,
+    FieldBase, FieldLayout, ImmediateLayout, InstructionField, Op, Operand, OperandKind,
     REGISTER_MASK, Register, ResidualProgram, Traits,
 };
 use rustc_hash::FxHashSet;
@@ -774,10 +774,9 @@ function.plain_local_slots(&self.superinstructions)
                         "function {index} accesses a promoted binding through its local slot"
                     ));
                 }
-                if matches!(
-                    instruction.op().js_denotation(),
-                    JsDenotation::PlainLocalLoad | JsDenotation::PlainLocalStore
-                ) && !plain_local_slots.contains(instruction.local_slot())
+                if (instruction.op().traits().has(Traits::PLAIN_LOCAL_LOAD)
+                    || instruction.op().traits().has(Traits::PLAIN_LOCAL_STORE))
+                    && !plain_local_slots.contains(instruction.local_slot())
                 {
                     return Err(format!(
                         "function {index} has an unproven plain-local operation"
