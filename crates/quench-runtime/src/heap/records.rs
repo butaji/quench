@@ -10,7 +10,7 @@ mod memory_profile;
 mod prefetch;
 mod reservation;
 pub(super) mod sweep_support;
-use reservation::Reservation;
+use reservation::{Reservation, page_bytes, return_pages};
 use crate::vm::wtf16::JsString;
 use crate::value::Value;
 use std::mem::MaybeUninit;
@@ -91,6 +91,10 @@ pub(super) trait RecordFamily {
     fn restore_marks(&mut self, marks: &[u64]);
     #[cfg(debug_assertions)]
     fn for_each_marked(&self, visit: &mut dyn FnMut(RecordId));
+
+    /// After a full collection's sweep: returns the pages of the empty blocks to the kernel and
+    /// lowers the high water mark past the empty top blocks (`RecordSpace::return_free_pages`).
+    fn return_free_pages(&mut self);
 }
 
 impl<T, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T, CAPACITY, HOLE> {
@@ -137,6 +141,9 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T
     fn restore_marks(&mut self, marks: &[u64]) {
         RecordSpace::restore_marks(self, marks);
     }
+    fn return_free_pages(&mut self) {
+        RecordSpace::return_free_pages(self);
+    }
     #[cfg(debug_assertions)]
     fn for_each_marked(&self, visit: &mut dyn FnMut(RecordId)) {
         RecordSpace::for_each_marked(self, visit);
@@ -144,6 +151,9 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T
 }
 
 const RECORDS_PER_BLOCK: usize = 1_024;
+/// The fewest empty blocks, on each side of the high water mark, that keep their pages when a
+/// full collection returns the rest (`RecordSpace::return_free_pages`).
+const RESERVE_MIN_BLOCKS: usize = 8;
 const OCCUPANCY_WORD_BITS: usize = u64::BITS as usize;
 const BLOCK_WORDS: usize = RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS;
 /// Records each typed space holds, one constant per space. A capacity is no longer bounded by
@@ -195,6 +205,10 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize, const HOLE: usize = 0> {
     pub(super) base: NonNull<MaybeUninit<T>>,
     reservation: Reservation,
     blocks: Vec<RecordBlock>,
+    /// Per block, whether a record was written in it since its pages were last returned to the
+    /// kernel (`return_free_pages`); a block not dirty holds no touched record page. Kept in step
+    /// with `blocks`, outside the block so that `RecordBlock` keeps the layout native code reads.
+    dirty: Vec<bool>,
     next_id: u32,
     /// Where the downward scan for reusable IDs continues; 0 once none remain below it.
     free_cursor: RecordId,
@@ -258,6 +272,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> Default for RecordSpace<T, CAP
             base: NonNull::dangling(),
             reservation: Reservation::Unreserved,
             blocks: Vec::new(),
+            dirty: Vec::new(),
             next_id: 0,
             free_cursor: 0,
             free_word: 0,
@@ -469,6 +484,11 @@ impl RecordBlock {
         }
     }
 
+    /// Whether any id of this block is occupied or withheld.
+    fn in_use(&self) -> bool {
+        self.occupied.iter().chain(self.withheld.iter()).any(|&word| word != 0)
+    }
+
     #[inline(always)] fn claim(&mut self, index: usize) -> bool {
         let word_index = index / OCCUPANCY_WORD_BITS;
         let bit = index % OCCUPANCY_WORD_BITS;
@@ -550,7 +570,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         {
             let id = self.next_id;
             let (block_index, record_index) = Self::split_id(id);
-            if !self.blocks[block_index].claim(record_index) {
+            if !self.claim_block(block_index, record_index) {
                 return None;
             }
             self.next_id += 1;
@@ -574,7 +594,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         {
             let id = self.next_id;
             let (block_index, record_index) = Self::split_id(id);
-            if !self.blocks[block_index].claim(record_index) {
+            if !self.claim_block(block_index, record_index) {
                 return None;
             }
             self.next_id += 1;
@@ -637,6 +657,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         self.add_blocks_through(block_index);
         let run = end - start;
         self.blocks[block_index].set_occupancy_range(first, first + run, true);
+        self.dirty[block_index] = true;
         self.cursor = RecordCursor { next: start as RecordId, limit: end as RecordId };
         self.next_id = end as RecordId;
         self.live += run;
@@ -740,7 +761,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         let following = id.checked_add(1)?;
         let (block_index, record_index) = Self::split_id(id);
         self.add_blocks_through(block_index);
-        if !self.blocks[block_index].claim(record_index) {
+        if !self.claim_block(block_index, record_index) {
             return None;
         }
         self.next_id = following;
@@ -753,6 +774,14 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         HOLE != 0 && id as usize >= HOLE && (id as usize) < 2 * HOLE
     }
 
+    /// `RecordBlock::claim` on the block at `block_index`, which marks the block dirty.
+    #[inline(always)]
+    fn claim_block(&mut self, block_index: usize, record_index: usize) -> bool {
+        let claimed = self.blocks[block_index].claim(record_index);
+        self.dirty[block_index] |= claimed;
+        claimed
+    }
+
     /// Adds blocks until `block_index` exists; a block of the hole withholds every id.
     fn add_blocks_through(&mut self, block_index: usize) {
         while self.blocks.len() <= block_index {
@@ -761,7 +790,14 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
                 block.withheld = [u64::MAX; BLOCK_WORDS];
             }
             self.blocks.push(block);
+            self.dirty.push(false);
         }
+    }
+
+    /// Whether the block at `block_index` may give its pages back: no id of it is in use, and a
+    /// record was written in it since its pages were last returned.
+    fn returnable(&self, block_index: usize) -> bool {
+        self.dirty[block_index] && !self.blocks[block_index].in_use()
     }
 
     /// Places `value` at `id`, as a snapshot restores it (`crate::snapshot`): ids arrive in
@@ -773,7 +809,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         }
         let (block_index, record_index) = Self::split_id(id);
         self.add_blocks_through(block_index);
-        if !self.blocks[block_index].claim(record_index) {
+        if !self.claim_block(block_index, record_index) {
             return false;
         }
         // SAFETY: the occupancy bit claims this previously uninitialized id.
@@ -808,6 +844,8 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         let word_index = record_index / OCCUPANCY_WORD_BITS;
         let bit = record_index % OCCUPANCY_WORD_BITS;
         let below_and_at = u64::MAX >> (OCCUPANCY_WORD_BITS - 1 - bit);
+        // A claim from the loaded word writes the id's record without `claim_block`.
+        self.dirty[block_index] = true;
         let block = &mut self.blocks[block_index];
         self.free_word = !(block.occupied[word_index] | block.withheld[word_index]) & below_and_at;
         self.free_word_occupied = &raw mut block.occupied[word_index];
@@ -1491,6 +1529,75 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         self.withheld = 0;
         self.free_cursor = self.next_id;
         self.free_word = 0;
+    }
+
+    /// After a full collection's sweep: gives the pages of the empty record blocks back to the
+    /// kernel, and lowers the high water mark past the empty top blocks, so allocation reuses the
+    /// low ids first. Returns the bytes returned.
+    ///
+    /// The block metadata stays where it is (`blocks` never shrinks, and `free_word_occupied`
+    /// and the native mark pointers name it); only the pages of the records move. A block is
+    /// returned when it is `returnable`, and the `RESERVE_MIN_BLOCKS` (or a quarter of the live
+    /// blocks, if more) nearest the high water mark on each side stay resident: the ids that
+    /// allocation reaches first. The high water mark falls to the end of the last block holding
+    /// an occupied or withheld id; a cursor run is occupied, so no returned page holds one.
+    ///
+    /// A returned page reads back as zero. That is no record: a record is read only where its
+    /// occupancy bit is set, and the sweep, the marks and the drop all read occupancy first.
+    pub(super) fn return_free_pages(&mut self) -> usize {
+        if !self.is_reserved() || self.cursor.next < self.cursor.limit || self.free_word != 0 {
+            return 0;
+        }
+        let end_block = self.blocks.iter().rposition(RecordBlock::in_use).map_or(0, |index| index + 1);
+        let lowered = (end_block * RECORDS_PER_BLOCK).min(self.next_id as usize) as RecordId;
+        self.next_id = lowered;
+        // The sweep set `young_floor` to the old high water mark; the ids between are free now.
+        self.young_floor = lowered;
+        let pivot = self.next_id as usize / RECORDS_PER_BLOCK;
+        let reserve = (self.live.div_ceil(RECORDS_PER_BLOCK) / 4).max(RESERVE_MIN_BLOCKS);
+        let mut released = Vec::new();
+        let mut kept = 0;
+        for index in pivot..self.blocks.len() {
+            if self.returnable(index) {
+                if kept < reserve {
+                    kept += 1;
+                } else {
+                    self.dirty[index] = false;
+                    released.push(index);
+                }
+            }
+        }
+        kept = 0;
+        for index in (0..pivot.min(self.blocks.len())).rev() {
+            if self.returnable(index) {
+                if kept < reserve {
+                    kept += 1;
+                } else {
+                    self.dirty[index] = false;
+                    released.push(index);
+                }
+            }
+        }
+        released.sort_unstable();
+        let block_bytes = RECORDS_PER_BLOCK * size_of::<MaybeUninit<T>>();
+        let mapped_bytes = CAPACITY * size_of::<MaybeUninit<T>>();
+        let page = page_bytes();
+        let mut returned = 0;
+        // Adjacent blocks form one run, returned by one call: whole pages inside the run, so a
+        // page that also holds a block not returned stays resident.
+        for run in released.chunk_by(|&first, &next| first + 1 == next) {
+            let start = (run[0] * block_bytes).next_multiple_of(page);
+            let end = ((run[run.len() - 1] + 1) * block_bytes).min(mapped_bytes);
+            let end = end - end % page;
+            if end > start {
+                // SAFETY: `start` and the length are whole pages inside this space's mapping,
+                // and the blocks named hold no occupied or withheld id, so no live record.
+                unsafe { return_pages(self.base.as_ptr().cast::<u8>().add(start), end - start) };
+                returned += end - start;
+            }
+        }
+        self.free_cursor = if self.live < self.next_id as usize { self.next_id } else { 0 };
+        returned
     }
 
     pub(super) fn reusable_ids(&self) -> usize {
