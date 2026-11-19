@@ -2092,6 +2092,8 @@ fn source_utf16_excess(text: &str) -> Vec<(usize, usize)> {
         table.push((offset, excess));
         offset += character.len_utf8();
     }
+    // A replay keeps the table, so it keeps no doubling slack.
+    table.shrink_to_fit();
     table
 }
 
@@ -3488,6 +3490,10 @@ impl<'a> Compiler<'a> {
         // A replay compiles one function and records no facts; it keeps no program. A class
         // constructor runs its instance initializer on its own environment
         // (`Vm::initialize_this_binding`); a released constructor's link is not at hand.
+        // A private name is found by walking the environment chain from the activation that
+        // uses it (`Vm::private_home`), and no capture records that walk, so a program that names
+        // any private member reads each closure's whole chain.
+        let names_private_members = self.private_name_references != 0;
         let closure_reads = (facts.len() == functions.len()).then(|| {
             let initializers: Vec<capture_layout::InstanceInitializer> = functions
                 .iter()
@@ -3500,7 +3506,8 @@ impl<'a> Compiler<'a> {
                     None => capture_layout::InstanceInitializer::Known(None),
                 })
                 .collect();
-            std::rc::Rc::new(capture_layout::closure_reads(&facts, &reachable, &initializers))
+            let dynamic_scopes = if names_private_members { vec![true; facts.len()] } else { reachable.clone() };
+            std::rc::Rc::new(capture_layout::closure_reads(&facts, &dynamic_scopes, &initializers))
         });
         self.resolve_name_bindings(&mut functions, &reachable);
         let mut layout_inputs = capture_layout::inputs(&facts, &dynamic, |id| {
@@ -3637,6 +3644,14 @@ impl<'a> Compiler<'a> {
             .then(|| replay::ProgramAtomIndex::new(self.atoms.interned(), &atoms));
         let constants = self.constants.into_vec();
         let field_sites = self.field_sites.into_vec();
+        // Built by pushes, so each may hold doubling slack the program would keep for good.
+        let mut module_requests = module_requests;
+        module_requests.shrink_to_fit();
+        let mut module_imports = module_imports;
+        module_imports.shrink_to_fit();
+        let mut declared_types = std::mem::take(&mut self.declared_types);
+        declared_types.declared.shrink_to_fit();
+        declared_types.enum_constants.shrink_to_fit();
         let program = ResidualProgram {
             specialized: self.mode == SpecializationMode::Enabled,
             // Eval code is code compiled for an eval; a host script that only captures its
@@ -3651,7 +3666,7 @@ impl<'a> Compiler<'a> {
             module_requests,
             module_imports,
             module_link_plan,
-            declared_types: (!self.declared_types.is_empty()).then(|| Box::new(std::mem::take(&mut self.declared_types))),
+            declared_types: (!declared_types.is_empty()).then(|| Box::new(declared_types)),
             source_name: self.source.to_owned(),
             source: Some(self.first_call.kept_source.cloned().unwrap_or_else(|| crate::bytecode::ProgramSource {
                 text: source_text::kept_or_provided(self.text, self.eval_context.is_some(), self.provided_text.take()),

@@ -523,6 +523,34 @@ impl<H: Host> Vm<H> {
         function
     }
 
+    /// Whether a closure of function `id` made now takes no environment (`Value::NULL`) for
+    /// the one it closes over: nothing it can run reads an environment's slot or name
+    /// (`ClosureReads::environment_unobservable`), so the scope chain it would keep is
+    /// unobservable and dies with its maker. Not for an eval's program, nor a call-only
+    /// closure, whose environment rides in its value (`Value::known_closure` takes a
+    /// direct environment only), nor where a `with` scope is entered in the running frame,
+    /// whose objects a closure captures. A module's root keeps its own closures' environment:
+    /// its hoisted functions are found again by it (`cached_functions_in_environment`).
+    pub(super) fn closure_needs_no_environment(&self, p: &ResidualProgram, id: u32) -> bool {
+        if p.kind == crate::bytecode::ProgramKind::Eval {
+            return false;
+        }
+        let Some(slot) = p.functions.get(id as usize) else {
+            return false;
+        };
+        let header = slot.header();
+        if header.prototype_unobservable || header.parent.is_none_or(|parent| parent == crate::vm::ROOT_FUNCTION_ID && p.is_module()) {
+            return false;
+        }
+        let with_base = self.frames.last().map_or(0, |frame| frame.with_base);
+        if self.with_stack.len() > with_base {
+            return false;
+        }
+        p.closure_reads.as_deref().is_some_and(|reads| {
+            reads.environment_unobservable(id, || crate::bytecode::arrow_chain_reads_implicit_bindings(p, id))
+        })
+    }
+
     /// A closure of function `id` over `env`, in the scope chain of the innermost VM frame.
     pub(super) fn closure_in_realm(
         &mut self,
@@ -531,10 +559,7 @@ impl<H: Host> Vm<H> {
         env: Value,
         realm: Value,
     ) -> Result<Value, JsError> {
-        // A root closure starts a run of its program's root (`Vm::note_root_run`).
-        if id == super::ROOT_FUNCTION_ID {
-            self.note_root_run();
-        }
+        let env = if self.closure_needs_no_environment(p, id) { Value::NULL } else { env };
         // No `with` was ever entered, so no closure captures a `with` object
         // (`Vm::with_scope_entered`): a recorded closure needs none of the scope work below.
         if !self.with_scope_entered

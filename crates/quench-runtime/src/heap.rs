@@ -541,6 +541,26 @@ pub(crate) const UNIT_STRINGS: usize = 0x100;
 /// before it advances `prototype_layout_epoch` once and frees them all. A withheld id costs one
 /// record's space; each advance retires every cache and proof the VM holds.
 const WITHHELD_PROTOTYPE_IDS: usize = 4096;
+/// A full collection that frees more payload than this returns the allocator's free memory to
+/// the kernel (`release_freed_allocator_memory`).
+const FREED_TRIM_BYTES: usize = 16 << 20;
+/// A full collection that frees more than a quarter of the payload it swept returns it too, once
+/// it frees at least this much: a small heap's share is not worth a trim.
+const FREED_TRIM_SHARE_MIN_BYTES: usize = 1 << 20;
+
+/// Returns the allocator's free memory to the kernel. Quench's small-object allocator, where it
+/// is the global allocator, releases its empty pages and ages its kept large blocks
+/// (`quench_alloc::release_empty_pages`; paced by its own purge delay). Glibc's free heap is
+/// trimmed too (`malloc_trim`): it serves every block past the small classes, which the
+/// allocator's purge does not reach.
+fn release_freed_allocator_memory() {
+    quench_alloc::release_empty_pages();
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: `malloc_trim` only advises the kernel about free allocator memory.
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct Heap {
@@ -2479,6 +2499,20 @@ impl Heap {
         }
     }
 
+    /// After a full collection that swept `payload_before` payload bytes: returns the empty record
+    /// pages (`RecordSpace::return_free_pages`), and the allocator's free memory when the sweep
+    /// freed a lot (`release_freed_allocator_memory`).
+    fn return_freed_memory(&mut self, payload_before: usize) {
+        for (family, _) in self.record_families_mut() {
+            family.return_free_pages();
+        }
+        let freed = payload_before.saturating_sub(self.payload_bytes);
+        let share_freed = freed >= FREED_TRIM_SHARE_MIN_BYTES && freed.saturating_mul(4) > payload_before;
+        if freed > FREED_TRIM_BYTES || share_freed {
+            release_freed_allocator_memory();
+        }
+    }
+
     /// Frees the unallocated rest of each hot space's cursor run and refunds its charge
     /// (`RecordSpace::retire_cursor`), before a collection reads occupancy or `allocated`.
     fn retire_record_cursors(&mut self) {
@@ -2742,6 +2776,7 @@ impl Heap {
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let sweep_started = std::time::Instant::now();
+        let payload_before_sweep = self.payload_bytes;
         let trace_sweep_started = trace_started.map(|_| std::time::Instant::now());
         // Property-arena owners are listed only for a full collection that compacts: the
         // lists hold an entry per live owner at the heap's peak. A compaction that this
@@ -3242,6 +3277,9 @@ impl Heap {
         }
         self.peak_survivors = self.peak_survivors.max(live);
         self.retire_dead_prototypes();
+        if full {
+            self.return_freed_memory(payload_before_sweep);
+        }
         self.collection_state = CollectionState::Idle;
         #[cfg(feature = "profile-memory")]
         self.memory_profile.collection_finished();

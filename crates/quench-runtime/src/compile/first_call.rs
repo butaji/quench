@@ -31,7 +31,13 @@ impl ReplayViews {
     /// replay and a first-call chunk compile with.
     pub(super) fn layout(&self, text: &str) -> (&[usize], &[(usize, usize)]) {
         (
-            self.line_starts.get_or_init(|| crate::bytecode::source_line_starts(text).collect()),
+            self.line_starts.get_or_init(|| {
+                // Kept as long as the program's replays are: its spare capacity from collecting
+                // by doubling stays resident with it.
+                let mut starts: Vec<usize> = crate::bytecode::source_line_starts(text).collect();
+                starts.shrink_to_fit();
+                starts
+            }),
             self.utf16_excess.get_or_init(|| super::source_utf16_excess(text)),
         )
     }
