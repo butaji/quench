@@ -550,8 +550,7 @@ impl<H: Host> Vm<H> {
                             JsonMember { atom, slot, key: (start, w.key_text.len() as u32) }
                         })
                     })
-                })
-                .collect::<Option<std::rc::Rc<[JsonMember]>>>()
+                    .collect::<Option<std::rc::Rc<[JsonMember]>>>()
         });
         plain.object_plans.insert(key, plan.clone());
         plain.note_chain(key.1);
