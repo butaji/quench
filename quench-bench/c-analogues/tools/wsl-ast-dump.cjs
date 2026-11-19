@@ -8,7 +8,8 @@
 // doPrep and stdlib inputs are parsed with the row's Parse.js into a fresh Program; the dump is a
 // canonical pre-order walk (class name, scalar fields, list lengths, "-" for null). doLex inputs
 // are lexed and their dump is the token list. Status is "ok" or "err:<error class>: <message>".
-// Usage: node wsl-ast-dump.cjs [jetstream-root] [--dump N]   (root defaults to ../../jetstream)
+// Usage: node wsl-ast-dump.cjs [jetstream-root] [--dump N] [--bench ITERATIONS]
+// (root defaults to ../../jetstream; --bench times the parse stage only, as wsl-ast-dump.c does)
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -17,6 +18,7 @@ const vm = require("vm");
 const argv = process.argv.slice(2);
 const root = argv[0] && !argv[0].startsWith("--") ? argv[0] : path.join(__dirname, "..", "..", "jetstream");
 const dumpAt = argv.indexOf("--dump") >= 0 ? +argv[argv.indexOf("--dump") + 1] : -1;
+const benchAt = argv.indexOf("--bench") >= 0 ? +argv[argv.indexOf("--bench") + 1] : 0;
 
 function fnv(str) {
     let h = 0x811c9dc5;
@@ -231,6 +233,30 @@ let all = 0x811c9dc5;
 for (const r of rows) all = Math.imul(all ^ parseInt(r.dumpHash, 16), 16777619) >>> 0;
 console.log("summary inputs " + rows.length + " ok " + okCount + " errors " + (rows.length - okCount) +
     " nodes " + totalNodes + " hash " + hex8(all));
+// Timed parse stage (the C side's --bench): every iteration parses all stdlib and doPrep inputs.
+if (benchAt > 0) {
+    const parseable = inputs.filter((input, i) => i === 0 || input.kind !== "doLex");
+    let elapsed = 0, parsed = 0, failed = 0;
+    for (let it = 0; it < benchAt; it++) {
+        const t0 = performance.now();
+        let p = 0, f = 0;
+        parseable.forEach((input, k) => {
+            try {
+                parseInput(input);
+                p++;
+            } catch (e) {
+                f++;
+            }
+        });
+        elapsed += performance.now() - t0;
+        parsed = p;
+        failed = f;
+    }
+    console.log("js parse " + benchAt + " iterations " + elapsed.toFixed(3) + " ms");
+    console.log("parsed " + parsed + " failed " + failed);
+    process.exit(0);
+}
+
 // Lexer totals over every input (the workload of the lexer analogue wsl.c).
 {
     let chars = 0, tokens = 0, errors = 0;

@@ -75,12 +75,19 @@ static int tok_kind_is(Tok t, const char *kind) {
   return t.kind && strcmp(t.kind, kind) == 0;
 }
 
-/* Lexer.fail: a WSyntaxError at the lexer's current position. */
+/* Lexer.fail: a WSyntaxError at the lexer's current position. Inside a backtracking scope the
+ * error is always caught by the innermost scope, so its text is never read and is not built
+ * (msg may then be NULL; callers pass a message only at the top level). */
 static void p_fail(Parser *P, const char *msg) {
+  if (WSL_NH > 1) {
+    WSL_ERR_SYNTAX = 1;
+    longjmp(*WSL_HANDLERS[WSL_NH - 1], 1);
+  }
   char buf[512];
   snprintf(buf, sizeof buf, "Syntax error at %s:%d: %s", P->L.origin, lex_line_of(&P->L, P->L.index), msg);
   wsl_throw(1, "WSyntaxError", buf);
 }
+#define P_FAIL_FMT(P, ...) do { if (WSL_NH > 1) p_fail(P, NULL); else { char m_[512]; snprintf(m_, sizeof m_, __VA_ARGS__); p_fail(P, m_); } } while (0)
 
 /* Lexer.next(): pops the pushed tokens first; a null token is end of input. */
 static Tok P_next(Parser *P) {
@@ -113,10 +120,10 @@ static Tok consume_texts(Parser *P, const char *const *texts) {
   Tok t = P_next(P);
   if (!tok_present(t)) p_fail(P, "Unexpected end of file");
   if (!tok_in(t, texts)) {
-    char expl[256], msg[512];
+    if (WSL_NH > 1) p_fail(P, NULL);
+    char expl[256];
     join_texts(texts, expl, sizeof expl);
-    snprintf(msg, sizeof msg, "Unexpected token: %.*s; expected: %s", t.len, t.text, expl);
-    p_fail(P, msg);
+    P_FAIL_FMT(P, "Unexpected token: %.*s; expected: %s", t.len, t.text, expl);
   }
   return t;
 }
@@ -124,9 +131,7 @@ static Tok consume_kind(Parser *P, const char *kind) {
   Tok t = P_next(P);
   if (!tok_present(t)) p_fail(P, "Unexpected end of file");
   if (!tok_kind_is(t, kind)) {
-    char msg[256];
-    snprintf(msg, sizeof msg, "Unexpected token: %.*s; expected: %s", t.len, t.text, kind);
-    p_fail(P, msg);
+    P_FAIL_FMT(P, "Unexpected token: %.*s; expected: %s", t.len, t.text, kind);
   }
   return t;
 }
@@ -407,11 +412,7 @@ static Ast *parse_term(Parser *P) {
     int canonical = !(t.len > 1 && t.text[0] == '0');
     long long v = 0;
     for (int i = 0; i < t.len; i++) { v = v * 10 + (t.text[i] - '0'); if (v > 0x7fffffffLL * 10) v = 0x7fffffffLL * 10; }
-    if (!canonical || v > 0x7fffffffLL) {
-      char msg[128];
-      snprintf(msg, sizeof msg, "Integer literal is not an integer: %.*s", t.len, t.text);
-      p_fail(P, msg);
-    }
+    if (!canonical || v > 0x7fffffffLL) P_FAIL_FMT(P, "Integer literal is not an integer: %.*s", t.len, t.text);
     Ast *a = ast_new(A_INTLITERAL, t.index);
     a->u.intLit.value = v;
     return a;
@@ -421,11 +422,7 @@ static Ast *parse_term(Parser *P) {
     int canonical = !(digits > 1 && t.text[0] == '0');
     long long v = 0;
     for (int i = 0; i < digits; i++) { v = v * 10 + (t.text[i] - '0'); if (v > 0xffffffffLL * 10) v = 0xffffffffLL * 10; }
-    if (!canonical || v > 0xffffffffLL) {
-      char msg[160];
-      snprintf(msg, sizeof msg, "Integer literal is not 32-bit unsigned integer: %.*s", t.len, t.text);
-      p_fail(P, msg);
-    }
+    if (!canonical || v > 0xffffffffLL) P_FAIL_FMT(P, "Integer literal is not 32-bit unsigned integer: %.*s", t.len, t.text);
     Ast *a = ast_new(A_UINTLITERAL, t.index);
     a->u.intLit.value = v;
     return a;
@@ -447,11 +444,7 @@ static Ast *parse_term(Parser *P) {
         v = v * 16 + (unsigned)d;
       }
       unsigned long long limit = isInt ? 0x7fffffffULL : 0xffffffffULL;
-      if (!canonical || v > limit) {
-        char msg[160];
-        snprintf(msg, sizeof msg, "Hex integer literal is not an integer: %.*s", h.len, h.text);
-        p_fail(P, msg);
-      }
+      if (!canonical || v > limit) P_FAIL_FMT(P, "Hex integer literal is not an integer: %.*s", h.len, h.text);
       Ast *a = ast_new(isInt ? A_INTLITERAL : A_UINTLITERAL, h.index);
       a->u.intLit.value = (long long)v;
       return a;

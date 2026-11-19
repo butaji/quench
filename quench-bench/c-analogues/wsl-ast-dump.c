@@ -2,9 +2,11 @@
  * line as tools/wsl-ast-dump.cjs does for the row's Parse.js:
  *   index kind textFNV status nodes dumpFNV
  * then a summary line. The two outputs must be identical.
- * Usage: wsl-ast-dump [jetstream-root] [--dump N]   (root defaults to ../jetstream) */
+ * Usage: wsl-ast-dump [jetstream-root] [--dump N] [--bench ITERATIONS]
+ * (root defaults to ../jetstream) */
 #include <setjmp.h>
 #include <stdarg.h>
+#include <time.h>
 #include "wsl-lex.h"
 #include "wsl-inputs.h"
 #include "wsl-ast.h"
@@ -64,14 +66,58 @@ static long parse_one(int i, const Input *in, Buf *b, char *status, size_t statu
   return nodes;
 }
 
+static double now_ms(void) {
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return t.tv_sec * 1e3 + t.tv_nsec / 1e6;
+}
+
+/* Timed parse stage: every iteration parses all inputs (stdlib and doPrep) into fresh programs,
+ * the same work as the row's Parse.js loop in tools/wsl-ast-dump.cjs --bench. No dump is built. */
+static void bench_parse(int iterations) {
+  long parsed = 0, failed = 0;
+  double elapsed = 0;
+  for (int it = 0; it < iterations; it++) {
+    double t0 = now_ms();
+    long p = 0, f = 0;
+    for (int i = 0; i < NINPUTS; i++) {
+      const Input *in = &INPUTS[i];
+      if (i > 0 && in->native) continue;   /* doLex inputs are not parsed */
+      arena_reset();
+      static Program prog;
+      memset(&prog, 0, sizeof prog);
+      jmp_buf top;
+      WSL_NH = 0;
+      WSL_HANDLERS[WSL_NH++] = &top;
+      if (setjmp(top) == 0) {
+        parse_program(&prog, i == 0 ? "/internal/stdlib" : "/internal/test", i == 0, i == 0 ? 27 : 0, in->text, in->len);
+        p++;
+      } else
+        f++;
+      WSL_NH = 0;
+    }
+    elapsed += now_ms() - t0;
+    parsed = p;
+    failed = f;
+  }
+  printf("wsl parse %d iterations %.3f ms\n", iterations, elapsed);
+  printf("parsed %ld failed %ld\n", parsed, failed);
+}
+
 int main(int argc, char **argv) {
   const char *root = "../jetstream";
   int dumpAt = -1;
+  int benchIterations = 0;
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dumpAt = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--bench") == 0 && i + 1 < argc) benchIterations = atoi(argv[++i]);
     else root = argv[i];
   }
   collect_inputs(root);
+  if (benchIterations > 0) {
+    bench_parse(benchIterations);
+    return 0;
+  }
 
   uint32_t all = 0x811c9dc5u;
   int ok = 0, nerr = 0;
