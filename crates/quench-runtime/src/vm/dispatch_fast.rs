@@ -9254,7 +9254,8 @@ fn lane_private_field_slot_at<H: Host>(
 }
 
 /// Makes the slot site `ip`'s entry recorded for an object of `shape` (`lane_private_field_slot`)
-/// the hint of its `GetField` record (`lane_get_private_field`), where its home is one value
+/// the hint of its `GetField` or `SetField` record (`lane_get_private_field`,
+/// `lane_private_field_store`), where its home is one value
 /// for good: the entry recorded it under the site's home, in a shape no edit in place changes,
 /// and a shape compaction clears both. A record of a site that recorded none keeps its hint.
 #[inline(never)]
@@ -9300,7 +9301,11 @@ fn lane_field_step<H: Host>(
 
 /// The store of private field `atom` of `object` at the record `ip`, under its brand there
 /// (`lane_private_field_slot`). `false` leaves the store, a private accessor's or method's
-/// included, to the general path.
+/// included, to the general path. A site whose home is one value for good compares the
+/// receiver's shape with the record's hint (`hint_private_field`) first: a private store
+/// record never goes back to the generated own-field store, which reads the hint too
+/// (`lane_set_field_miss` moves it to `lane_set_object_field` or `lane_set_this_field` before
+/// any private hint is written).
 #[inline(never)]
 fn lane_private_field_store<H: Host>(
     cx: *mut LaneContext<H>,
@@ -9310,10 +9315,23 @@ fn lane_private_field_store<H: Host>(
     atom: crate::bytecode::Atom,
     value: Value,
 ) -> bool {
+    {
+        let vm = unsafe { vm(cx) };
+        // SAFETY: `ip` is a `SetField` record of a live view, whose operand is `field`.
+        let hint = unsafe { &*ip }.field_hint();
+        if vm.unique_private_homes() && vm.object_data(object).is_some_and(|data| data.shape() == hint.receiver) {
+            vm.heap.property_set(object, usize::from(hint.slot), value);
+            return true;
+        }
+    }
     let Some(slot) = lane_private_field_slot(cx, ip, code, object, atom) else {
         return false;
     };
-    (unsafe { vm(cx) }).heap.property_set(object, slot, value);
+    let vm = unsafe { vm(cx) };
+    if let Some(shape) = vm.object_data(object).map(|data| data.shape()) {
+        hint_private_field(vm, ip, shape, slot);
+    }
+    vm.heap.property_set(object, slot, value);
     true
 }
 
