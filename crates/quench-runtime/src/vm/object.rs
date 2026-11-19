@@ -134,8 +134,8 @@ pub(super) enum PolymorphicHit {
     Hint,
     /// Another own entry, of the receiver's exact shape.
     Own(FieldCache),
-    /// An entry of the receiver's immediate prototype.
-    Holder,
+    /// An entry of the receiver's immediate prototype, of both exact shapes.
+    Holder(FieldCache),
 }
 
 /// What a walk of an inherited entry's chain proved (`Vm::prove_inherited_chain`).
@@ -1008,6 +1008,7 @@ impl<H: Host> Vm<H> {
         self.keyed_adds.fill(FieldAddCache::EMPTY);
         self.field_add_chains.clear();
         self.megamorphic_fields.clear();
+        self.field_stubs.clear();
         self.heap.dependencies_mut().clear_inherited();
         self.accessor_fields.clear();
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
@@ -2638,7 +2639,7 @@ impl<H: Host> Vm<H> {
             // SAFETY: as for the inline holder entries below.
             let value = unsafe { self.heap.holder_property_get_flat(holder, usize::from(entry.slot)) };
             self.profile.field_cache_hit(2, 1);
-            return Some((value, PolymorphicHit::Holder));
+            return Some((value, PolymorphicHit::Holder(entry)));
         }
         for entry in set.recorded() {
             if entry.receiver != shape {
@@ -2659,7 +2660,7 @@ impl<H: Host> Vm<H> {
             // after confirming an immediate-prototype data property.
             let value = unsafe { self.heap.holder_property_get_flat(holder, usize::from(entry.slot)) };
             self.profile.field_cache_hit(2, 1);
-            return Some((value, PolymorphicHit::Holder));
+            return Some((value, PolymorphicHit::Holder(*entry)));
         }
         None
     }

@@ -173,6 +173,7 @@ mod handler_entry;
 mod equality; mod error; mod eval;
 mod fdlibm_math;
 mod field_cache;
+mod field_stubs;
 mod in_presence;
 mod instanceof_walk;
 mod site_table;
@@ -2232,6 +2233,9 @@ pub(crate) struct Vm<H> {
     /// `FIELD_CACHE_SPARSE_RESET_SHARE` of the sites, and every site resets.
     field_cache_writes: Option<Vec<u32>>,
     megamorphic_fields: Vec<FieldCacheSet>,
+    /// The megamorphic read stub cache (`field_stubs`): copies of the site entries that
+    /// answered reads, by receiver shape and name, shared by every site; cleared with them.
+    field_stubs: field_stubs::FieldStubs,
     /// The prototype-held reads polymorphic `GetField` records keep as their hints, each
     /// record its own, by index (`Vm::holder_hint_hit`). A hint names its prototype by record
     /// id, so a collection that sweeps that prototype drops the hint's value, and one that
@@ -3261,6 +3265,7 @@ impl<H: Host> Vm<H> {
         self.field_add_chains.clear();
         self.megamorphic_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.megamorphic_fields.clear();
+        self.field_stubs.clear();
         self.holder_hints.clear();
         self.length_atom = self.intern_atom("length");
         self.prototype_atom = self.intern_atom("prototype");
