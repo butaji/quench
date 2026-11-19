@@ -260,7 +260,7 @@ pub(crate) enum ValueStep {
 
 /// Orthogonal tier traits of an opcode, each declared once by the catalog.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Traits(u64);
+pub(crate) struct Traits(pub(crate) u64);
 
 impl Traits {
     pub(crate) const NONE: Self = Self(0);
@@ -340,6 +340,39 @@ impl Traits {
     /// a fused `GetSetThis`). Tagged: `SetThisField` alone. `SetThisFieldStrict` is not: the inlined expansion
     /// of a sink re-emits it as a `SetThisField`, so the strict variant has no sink in every tier.
     pub(crate) const THIS_FIELD_SINK: Self = Self(1 << 36);
+    /// The op that does nothing: the canonical filler a rewrite leaves where it removed an instruction.
+    /// Tagged: `Nop`.
+    pub(crate) const NO_OP: Self = Self(1 << 37);
+    /// An op that copies register B into its result register A and writes no other register. Tagged: `Move`.
+    pub(crate) const REGISTER_COPY: Self = Self(1 << 38);
+    /// A pure op whose only effect is writing its result, so a write nothing reads is removable.
+    /// Tagged: `Move`, `LoadConst`.
+    pub(crate) const REMOVABLE_WHEN_DEAD: Self = Self(1 << 39);
+    /// An op that always jumps to its `JumpTarget`. Tagged: `Jump`.
+    pub(crate) const UNCONDITIONAL_JUMP: Self = Self(1 << 40);
+    /// An op that jumps to its `JumpTarget` when its register A is truthy, falling through otherwise: the
+    /// opposite test of `JUMPS_ON_FALSE`, one polarity of a conditional branch. Tagged: `JumpTrue`.
+    pub(crate) const JUMPS_ON_TRUE: Self = Self(1 << 41);
+    /// An op that ends its activation, returning its register A. Tagged: `Return`.
+    pub(crate) const RETURN_VALUE: Self = Self(1 << 42);
+    /// An op that suspends its activation (`await`, `yield`). Tagged: `Await`, `Yield`.
+    pub(crate) const SUSPENDS: Self = Self(1 << 43);
+    /// A property store with sloppy-mode semantics, whose strict form (`STRICT_STORE`) shares its encoding.
+    /// Tagged: `SetField`, `SetThisField`.
+    pub(crate) const SLOPPY_STORE: Self = Self(1 << 44);
+    /// A property store with strict-mode semantics, the strict form of a `SLOPPY_STORE` row of the same
+    /// encoding. Tagged: `SetFieldStrict`, `SetThisFieldStrict`.
+    pub(crate) const STRICT_STORE: Self = Self(1 << 45);
+    /// The fused form of a comparison and the jump that tests it (`BinaryJumpFalse`'s target). Tagged: `JumpBinaryFalse`.
+    pub(crate) const FUSED_BINARY_JUMP: Self = Self(1 << 46);
+    /// The first op of the `[MakeConstArray, Binary, Binary, MakeObject2]` superinstruction pattern. Tagged: `MakeConstArray`.
+    pub(crate) const CONST_ARRAY_OBJECT2_HEAD: Self = Self(1 << 47);
+    /// An element op of the `CONST_ARRAY_OBJECT2` pattern (the two `Binary` rows). Tagged: `Binary`.
+    pub(crate) const CONST_ARRAY_OBJECT2_OPERAND: Self = Self(1 << 48);
+    /// The last op of the `CONST_ARRAY_OBJECT2` pattern. Tagged: `MakeObject2`.
+    pub(crate) const CONST_ARRAY_OBJECT2_TAIL: Self = Self(1 << 49);
+    /// The superinstruction that fuses `CONST_ARRAY_OBJECT2`. Tagged: `SuperConstArrayObject2`.
+    pub(crate) const FUSED_CONST_ARRAY_OBJECT2: Self = Self(1 << 50);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
