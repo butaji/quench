@@ -4,7 +4,7 @@
 //! into records, and its pop unseals them; every reader pairs the frames with the side records
 //! innermost first, so no reader and no writer but emitted code's entry spills.
 use super::*;
-use super::lane_frames::{header_sided, Side};
+use super::lane_frames::{header_sided, Frame, Side};
 
 /// The plain headers a record was pushed over (`LaneStack::seal_plain`): the `PlainFrames` words
 /// as they stood, which come back when the records count `records` again (`unseal_plain`).
@@ -17,28 +17,23 @@ pub(super) struct PlainSegment {
     program: ProgramId,
 }
 
-/// Where a walked frame is.
+/// Where a walked frame is, for a writer that edits it there (`LaneStack::recomplete_at`).
 #[derive(Clone, Copy)]
-enum Walked {
-    /// A plain header below `window`, whose caller runs `program` where it has no side record.
-    Header { window: Registers, program: ProgramId },
+pub(super) enum Walked {
+    /// A plain header below `window`, whose caller runs `program` where it has no side record,
+    /// with its side record where it has one, at `side_at` in `LaneStack::sides`; where it has
+    /// none, `side_at` is the index one inserted for it takes: above every side record of the
+    /// frames below it.
+    Header { window: Registers, program: ProgramId, side: Option<Side>, side_at: usize },
     /// The record at `index` of the records.
     Record { index: usize },
 }
 
-/// A frame of the walk with its side record, where it has one.
-#[derive(Clone, Copy)]
-pub(super) struct WalkedFrame {
-    frame: Walked,
-    pub(super) side: Option<Side>,
-    /// Its side record's index in `LaneStack::sides`, or, where it has none, the index one
-    /// inserted for it takes: above every side record of the frames below it.
-    side_at: usize,
-}
-
 /// The frames innermost first (`LaneStack::walk_innermost`): the innermost plain headers, then
-/// each record followed by the headers it sealed, taking one side record per sided frame.
-pub(super) struct FrameWalk<'a> {
+/// each record followed by the headers it sealed, taking one side record per sided frame. Each
+/// frame is read once, where it is (`plain_frame`, `Frame::of_record`): a header's frame names
+/// the next header down, so the walk advances by the frame it yields.
+pub(super) struct Walk<'a> {
     stack: &'a LaneStack,
     records: &'a [Activation],
     sides: &'a [Side],
@@ -55,7 +50,7 @@ pub(super) struct FrameWalk<'a> {
     next_segment: usize,
 }
 
-impl FrameWalk<'_> {
+impl Walk<'_> {
     /// Takes the next side record down, its frame's.
     fn take_side(&mut self) -> Side {
         self.left -= 1;
@@ -63,10 +58,10 @@ impl FrameWalk<'_> {
     }
 }
 
-impl Iterator for FrameWalk<'_> {
-    type Item = WalkedFrame;
+impl Iterator for Walk<'_> {
+    type Item = (Frame, Walked);
 
-    fn next(&mut self) -> Option<WalkedFrame> {
+    fn next(&mut self) -> Option<(Frame, Walked)> {
         loop {
             if self.headers != 0 {
                 self.headers -= 1;
@@ -74,9 +69,9 @@ impl Iterator for FrameWalk<'_> {
                 let side = header_sided(window).then(|| self.take_side());
                 // Each caller's window and program as the return reads them (an array step's
                 // header names the trampoline's result window, its step the real one).
-                let returned = self.stack.plain_return(window, side, program);
-                (self.window, self.program) = (returned.caller_registers, returned.caller_program);
-                return Some(WalkedFrame { frame: Walked::Header { window, program }, side, side_at: self.left });
+                let frame = self.stack.plain_frame(window, side, program);
+                (self.window, self.program) = (frame.caller_registers(), frame.caller_program());
+                return Some((frame, Walked::Header { window, program, side, side_at: self.left }));
             }
             let sealed = self.next_segment.checked_sub(1).map(|at| self.segments[at]).filter(|segment| segment.records == self.next_record);
             if let Some(segment) = sealed {
@@ -85,8 +80,9 @@ impl Iterator for FrameWalk<'_> {
                 continue;
             }
             self.next_record = self.next_record.checked_sub(1)?;
-            let side = LaneStack::record_sided(&self.records[self.next_record]).then(|| self.take_side());
-            return Some(WalkedFrame { frame: Walked::Record { index: self.next_record }, side, side_at: self.left });
+            let record = &self.records[self.next_record];
+            let payload = if LaneStack::record_sided(record) { self.take_side().payload } else { SidePayload::None };
+            return Some((Frame::of_record(record, payload), Walked::Record { index: self.next_record }));
         }
     }
 }
@@ -100,13 +96,13 @@ impl Completion {
 }
 
 impl LaneStack {
-    /// Every frame innermost first, where it is (`FrameWalk`). The side records, seals and
+    /// Every frame innermost first, where it is (`Walk`). The side records, seals and
     /// records change only through `&mut self` and `spill_plain`, which no walk calls: a reader
     /// calls no `activations` while it walks.
-    pub(super) fn walk_innermost(&self) -> FrameWalk<'_> {
+    pub(super) fn walk_innermost(&self) -> Walk<'_> {
         // SAFETY: the walk's contract above.
         let (records, sides, segments) = unsafe { (&self.records_unspilled()[..], &(*self.sides.get())[..], &(*self.segments.get())[..]) };
-        FrameWalk {
+        Walk {
             stack: self,
             records,
             sides,
@@ -117,24 +113,6 @@ impl LaneStack {
             program: self.plain.program.get(),
             next_record: records.len(),
             next_segment: segments.len(),
-        }
-    }
-
-    /// A walked frame as its record: a header's as its spill would write it (`plain_record`).
-    pub(super) fn walked_record(&self, walked: &WalkedFrame) -> Activation {
-        match walked.frame {
-            Walked::Header { window, program } => self.plain_record(window, walked.side, program).0,
-            // SAFETY: the walk's contract.
-            Walked::Record { index } => unsafe { self.records_unspilled() }[index],
-        }
-    }
-
-    /// A walked frame's return words (`FrameReturn`), its side record's payload with them.
-    pub(super) fn walked_return(&self, walked: &WalkedFrame) -> FrameReturn {
-        match walked.frame {
-            Walked::Header { window, program } => self.plain_return(window, walked.side, program),
-            // SAFETY: the walk's contract.
-            Walked::Record { index } => FrameReturn::of_sided_record(&unsafe { self.records_unspilled() }[index], walked.side),
         }
     }
 
@@ -165,8 +143,14 @@ impl LaneStack {
         // SAFETY: the copy ends the read.
         let record = unsafe { self.records_unspilled() }[index];
         debug_assert!(Self::record_sided(&record), "a record's payload rides with its completion");
+        self.sides.get_mut().push(Self::record_side(&record, payload));
+    }
+
+    /// The side record of `record`, a sided one, carrying `payload`: a record's own words say
+    /// the rest, so its side record is read for its payload alone (`record_sided`).
+    pub(super) fn record_side(record: &Activation, payload: SidePayload) -> Side {
         let completion = record.script().map_or(Completion::Plain, |script| script.completion);
-        self.sides.get_mut().push(Side { payload, ..Side::plain(completion, record.caller_program()) });
+        Side { payload, ..Side::plain(completion, record.caller_program()) }
     }
 
     /// Pop the side record of `record`, the innermost frame just popped, where it owns one: what
@@ -183,7 +167,7 @@ impl LaneStack {
     }
 
     /// Store `side` as the side record of the header below `window`, which `had` one at `at` or
-    /// takes one there (`WalkedFrame::side_at`): the header's flags rewritten
+    /// takes one there (`Walked::Header`'s `side_at`): the header's flags rewritten
     /// (`staged::call_complete::write_side_flags`), then the side record replaced, inserted or
     /// dropped where the flags come to none.
     pub(super) fn store_side(&mut self, window: Registers, had: bool, at: usize, side: Side) {
@@ -205,12 +189,12 @@ impl LaneStack {
     pub(super) fn recomplete_at(&mut self, depth: usize, from: Completion, to: Completion) -> bool {
         let Some(above) = self.activation_count().checked_sub(depth + 1) else { return false };
         if above == 0 {
-            if self.top_return().and_then(|frame| frame.completion) != Some(from) { return false; }
+            if self.top_frame().and_then(|frame| frame.completion()) != Some(from) { return false; }
             self.recomplete_top(to);
             return true;
         }
-        let Some(walked) = self.walk_innermost().nth(above) else { return false };
-        match walked.frame {
+        let Some((frame, walked)) = self.walk_innermost().nth(above) else { return false };
+        match walked {
             Walked::Record { index } => match self.records_mut()[index].kind_mut() {
                 ActivationKind::Script(script) if script.completion == from => {
                     script.completion = to;
@@ -218,11 +202,11 @@ impl LaneStack {
                 }
                 _ => false,
             },
-            Walked::Header { window, program } => {
+            Walked::Header { window, program, side, side_at } => {
                 // A trampoline's header completes through its trampoline, never `from`.
-                if self.plain_return(window, walked.side, program).completion != Some(from) { return false; }
-                let side = Side { completion: to, ..walked.side.unwrap_or_else(|| Side::plain(from, program)) };
-                self.store_side(window, walked.side.is_some(), walked.side_at, side);
+                if frame.completion() != Some(from) { return false; }
+                let edited = Side { completion: to, ..side.unwrap_or_else(|| Side::plain(from, program)) };
+                self.store_side(window, side.is_some(), side_at, edited);
                 true
             }
         }
@@ -267,13 +251,11 @@ impl LaneStack {
         self.sealed.set(0);
     }
 
-    /// Take every frame off the stack, outermost first, each as the record its frame becomes
-    /// reads it (`walked_record`) with what its side record carries: the materialization's
-    /// frames, without a spill. The windows stay in the values for the frames to take.
+    /// Take every frame off the stack, outermost first, each as the record it becomes
+    /// (`Frame::record`) with what its side record carries: the materialization's frames,
+    /// without a spill. The windows stay in the values for the frames to take.
     pub(super) fn take_frames(&mut self) -> Vec<(Activation, SidePayload)> {
-        let mut frames: Vec<(Activation, SidePayload)> = self.walk_innermost()
-            .map(|walked| (self.walked_record(&walked), walked.side.map_or(SidePayload::None, |side| side.payload)))
-            .collect();
+        let mut frames: Vec<(Activation, SidePayload)> = self.frames_innermost().map(|frame| (frame.record(), frame.payload())).collect();
         frames.reverse();
         self.records_mut().truncate(0);
         self.plain.depth.set(0);
@@ -307,7 +289,7 @@ impl LaneStack {
                 window.set_plain_caller(call, relocate(caller), base);
                 // The next header down, as the walk finds it: a trampoline's caller where this
                 // header names its trampoline (a side record changes no caller window).
-                window = self.plain_return(window, None, ProgramId::MAIN).caller_registers;
+                window = self.plain_frame(window, None, ProgramId::MAIN).caller_registers();
             }
         }
     }
@@ -356,14 +338,14 @@ mod tests {
         stack.attach_payload(SidePayload::Settles(None));
         let functions: Vec<u32> = stack.frames().map(|frame| frame.function()).collect();
         assert_eq!(functions, [0, 1, 2, 3]);
-        let completions: Vec<Option<Completion>> = stack.frame_returns_innermost().map(|frame| frame.completion).collect();
+        let completions: Vec<Option<Completion>> = stack.frames_innermost().map(|frame| frame.completion()).collect();
         assert!(completions == [Some(Completion::SettlesPromise), Some(Completion::Generates), Some(Completion::Constructs), Some(Completion::Plain)]);
         let popped = stack.pop_activation().unwrap();
-        assert!(matches!(popped.payload, SidePayload::Settles(None)));
+        assert!(matches!(popped.payload(), SidePayload::Settles(None)));
         let popped = stack.pop_activation().unwrap();
-        assert!(popped.completion == Some(Completion::Generates));
+        assert!(popped.completion() == Some(Completion::Generates));
         assert_eq!((stack.plain.depth.get(), stack.plain.registers.get(), stack.record_count()), (2, windows[1], 0));
-        assert!(stack.top_return().unwrap().completion == Some(Completion::Constructs));
+        assert!(stack.top_frame().unwrap().completion() == Some(Completion::Constructs));
         let records = stack.activations();
         assert_eq!(records.len(), 2);
         assert!(records[1].script().unwrap().completion == Completion::Constructs);

@@ -23,7 +23,7 @@ impl Activation {
     }
 }
 
-impl FrameView {
+impl Frame {
     /// The dynamic bindings its record holds (implicit ones, a direct eval's), which the
     /// environment its window makes for its first closure takes over, as a frame's promotion
     /// takes its own (`Vm::promote_frame_environment`); none once taken, or for an activation
@@ -91,6 +91,67 @@ pub(super) fn lane_resume_generator_step<H: Host>(
         return None;
     }
     lane_resume_generator(cx, r, ip, generator, method, Value::UNDEFINED, Completion::Generates)
+}
+
+/// A `Call` record `i` of `native`, the callee in `b` and the receiver in `c`, that is this realm's
+/// `Generator.prototype.next` of a generator that is not running (`Vm::steps_as_generator`): the
+/// generator resumes as an activation over its record (`lane_resume_generator`), sent the call's
+/// first argument, and its yield or return writes a fresh iterator result to the call's register
+/// (`Completion::Steps`), as the native's call would. No frame is made of the caller's
+/// activations. `None`, before any effect, leaves the call to the native: another callee, a call
+/// that returns its result from the frame, a run that makes no script calls, or a generator with
+/// no window.
+#[inline(never)]
+pub(super) fn resume_called_generator<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    native: Native,
+) -> Option<(Registers, Ip)> {
+    let (method, generator) = (r.get(i.b), r.get(i.c));
+    if native != Native::GeneratorNext
+        || !crate::staged::call_iteration::resumes_at_site(i.a)
+        || !unsafe { (*cx).script_calls }
+        || !unsafe { vm(cx) }.steps_as_generator(generator, method)
+    {
+        return None;
+    }
+    // SAFETY: the call's window is registers of the running function.
+    let sent = unsafe { lane_call_window(r, i) }.first().copied().unwrap_or(Value::UNDEFINED);
+    lane_resume_generator(cx, r, ip, generator, method, sent, Completion::Steps)
+}
+
+/// `lane_frame_call` of a generator function of the running program whose parameters run no code
+/// of their own (`Function::parameter_end_pc` 0): the generator object, made as the general call
+/// makes it (`Vm::call_generator`) beside the caller's activations (`lane_in_place`), since making
+/// it runs no guest code, and the call completed with it (`lane_native_complete`). No frame is made
+/// of the caller's activations. `None`, before any effect, leaves the call to the general path.
+#[inline(never)]
+pub(super) fn start_called_generator<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    callee: Value,
+) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+    if !unsafe { (*cx).script_calls } || vm.with_scope_entered || returns && !lane_returning_call_admitted(cx) {
+        return None;
+    }
+    let (program, function, env) = vm.same_realm_user_target(callee)?;
+    // SAFETY: the context's program outlives the lane run.
+    let body = unsafe { &*(*cx).code }.function_get(function as usize)?;
+    if program != unsafe { (*cx).program } || !body.is_generator || body.parameter_end_pc != 0 {
+        return None;
+    }
+    // SAFETY: the call's window is registers of the running function, copied before the
+    // generator's frame takes them.
+    let arguments = super::super::call_arguments::CallArguments::from_slice(unsafe { lane_call_window(r, i) });
+    let (this, context) = (r.get(i.c), CallContext::user_function(function, callee));
+    let value = lane_in_place(cx, ip, |vm, code| vm.call_generator(code, function, env, this, arguments.as_slice(), context));
+    Some(lane_native_complete(cx, ip, i, value))
 }
 
 /// How a resumed generator's window carries its locals (`FrameRecord::open_environment_window`):
@@ -281,9 +342,9 @@ fn lane_suspend_generator<H: Host>(
     let vm = unsafe { vm(cx) };
     let depth = vm.lane_stack.activation_count() - 1;
     // Read where it is (no spill): a generator's frame is a heap-window record.
-    let running = vm.lane_stack.top_return().expect("a running generator's activation");
-    let completion = running.completion.expect("a generator runs as a script activation");
-    vm.suspend_generator_window(running.callee, pc, destination, value, depth);
+    let running = vm.lane_stack.top_frame().expect("a running generator's activation");
+    let completion = running.completion().expect("a generator runs as a script activation");
+    vm.suspend_generator_window(running.callee(), pc, destination, value, depth);
     let frame = vm.lane_stack.pop_activation().expect("a running generator's activation");
     let (memory, _) = lane_restore_caller(cx, &frame);
     let result = passed_on.unwrap_or_else(|| vm.generator_step_result(value, false, completion == Completion::Generates));
@@ -297,13 +358,13 @@ fn lane_suspend_generator<H: Host>(
 /// step's final result.
 pub(super) fn lane_generator_returned<H: Host>(
     cx: *mut LaneContext<H>,
-    frame: &FrameReturn,
+    frame: &Frame,
     memory: MemoryView,
     value: Value,
 ) -> Resumed {
     let vm = unsafe { vm(cx) };
-    let completion = frame.completion.expect("a generator runs as a script activation");
-    vm.finish_generator_window(frame.callee);
+    let completion = frame.completion().expect("a generator runs as a script activation");
+    vm.finish_generator_window(frame.callee());
     let result = vm.generator_step_result(value, true, completion == Completion::Generates);
     note_allocation(vm);
     lane_resume_generated(frame, memory, result)
@@ -313,11 +374,11 @@ pub(super) fn lane_generator_returned<H: Host>(
 /// `lane_generator_returned`) resumes with the step's `result`: after its call, in the call's
 /// register, or, for a delegate's step, at the `yield*` itself with the result in its state
 /// register.
-fn lane_resume_generated(frame: &FrameReturn, memory: MemoryView, result: Value) -> Resumed {
-    if frame.completion == Some(Completion::Delegates) {
+fn lane_resume_generated(frame: &Frame, memory: MemoryView, result: Value) -> Resumed {
+    if frame.completion() == Some(Completion::Delegates) {
         // SAFETY: the `yield*` record belongs to the caller's live view.
-        let (state, _) = ImmediateLayout::register_pair(unsafe { (*frame.call).imm() });
-        return lane_resume_at(frame, memory, frame.call, Some((state, result)));
+        let (state, _) = ImmediateLayout::register_pair(unsafe { (*frame.call()).imm() });
+        return lane_resume_at(frame, memory, frame.call(), Some((state, result)));
     }
     lane_resume_after_call(frame, memory, result)
 }

@@ -16,20 +16,20 @@ use crate::staged::call_complete::{concrete_call_result, concrete_write_call_res
 /// job to deliver, or a body's callee's, whose call's register takes it, a construction's
 /// receiver (`this`) for a non-object. `None` for any other completion.
 #[inline(always)]
-pub(super) fn ends_run<H: Host>(cx: *mut LaneContext<H>, frame: &FrameReturn, completion: Completion, this: Value, value: Value) -> Option<Resumed> {
+pub(super) fn ends_run<H: Host>(cx: *mut LaneContext<H>, frame: &Frame, completion: Completion, this: Value, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     match completion {
         Completion::ReturnsToNative | Completion::ResumesJob => {}
         Completion::ReturnsToBody | Completion::ConstructsToBody => {
             let value = setters::completed_value(vm, frame, completion, this, value);
             // SAFETY: the call record belongs to the caller's live view, whose registers the context names.
-            let destination = unsafe { (*frame.call).a } & crate::bytecode::REGISTER_MASK;
+            let destination = unsafe { (*frame.call()).a } & crate::bytecode::REGISTER_MASK;
             crate::staged::call_complete::concrete_write_call_result(unsafe { (*cx).registers }.0.expose_provenance() as u64, destination, value);
         }
         _ => return None,
     }
     vm.lane_completion.set(LaneCompletion::NativeReturned(value));
-    Some(Resumed::Exit(exit(frame.call)))
+    Some(Resumed::Exit(exit(frame.call())))
 }
 
 /// Whether `activation`, which becomes the frame at index `frame`, is the entry frame of

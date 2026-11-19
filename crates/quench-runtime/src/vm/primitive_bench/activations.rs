@@ -58,10 +58,10 @@ fn activation_storage_tracks_mixed_push_pop_and_empty_stack() {
         }
         for index in (0..ACTIVATIONS).rev() {
             let entry = stack.pop_activation().unwrap();
-            assert_eq!(entry.function, index as u32);
+            assert_eq!(entry.function(), index as u32);
             assert_eq!(entry.window_ptr(), stack.values.as_mut_ptr().wrapping_add(index * WASM_REGISTERS));
-            assert_eq!(entry.caller_program, ProgramId::MAIN);
-            let bytes = if entry.completion.is_some() { 0 } else { WASM_STORAGE_BYTES };
+            assert_eq!(entry.caller_program(), ProgramId::MAIN);
+            let bytes = if entry.completion().is_some() { 0 } else { WASM_STORAGE_BYTES };
             expected -= bytes;
             assert_eq!(stack.wasm_storage_bytes, expected);
         }

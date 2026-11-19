@@ -1,135 +1,123 @@
-//! The one frame view (`/mnt/project-files/calls-frames/one-frame-one-call.md`, step F1): every
-//! reader of the lane's activations, whether the activation is a record (`Activation`) or a plain
-//! activation's header in the value stack (call protocol v2 stage C), reads it through
-//! `FrameView`. No read through it spills the plain activations (`LaneStack::spill_plain`), and
+//! The one frame (`/mnt/project-files/calls-frames/one-frame-one-call.md`, steps F1 and F4,
+//! Ledger (3)): every reader of the lane's activations and every return, whether the activation
+//! is a record (`Activation`) or a plain activation's header in the value stack (call protocol
+//! v2 stage C), reads it as a `Frame`. No read through it spills the plain activations (`LaneStack::spill_plain`), and
 //! the readers stop naming the record, so a later step can take the record away from the plain
 //! frames' readers without touching them again.
 //!
 //! Writers edit a frame where it is (one-frame-one-call.md F4 (3)): a header's side record
 //! (`LaneStack::recomplete_top`, `name_top_record`, `frame_walk`'s `recomplete_at` and
-//! `attach_payload`) or a record (`records_mut`). A view is a copy.
+//! `attach_payload`) or a record (`records_mut`). A `Frame` is a copy.
 use super::*;
 
-/// One activation as a reader sees it: a record, or a plain header (with its side record, where
-/// its flags name one) read as the record its spill would write (`LaneStack::plain_record`), so
-/// a reader answers the same either way.
+/// One frame, as every reader and every return reads it (one-frame-one-call.md F4 (3),
+/// Ledger (3)): the words every frame has (its native prefix, function, call record and caller
+/// state), what kind it is, and what its side record carries. A plain header's are read from
+/// its header words and side record (`LaneStack::plain_frame`), building no record; a record's
+/// are its own (`Frame::of_record`). The walk (`frame_walk`), the pop
+/// (`LaneStack::pop_activation`) and the innermost's read (`LaneStack::top_frame`) produce it,
+/// and a frame that must become a record again (a spill, a materialization) is `record`. A
+/// frame is a copy: writers edit it where it is.
 #[derive(Clone, Copy)]
-pub(in crate::vm) struct FrameView {
-    record: Activation,
-}
-
-#[allow(dead_code)] // the accessors the remaining readers (F2/F3) take over from `Activation`
-impl FrameView {
-    #[inline(always)]
-    fn of_record(record: &Activation) -> Self { Self { record: *record } }
-
-    /// The function it runs.
-    #[inline(always)] pub(in crate::vm) fn function(&self) -> u32 { self.record.function() }
-    /// The caller's call record, which its return completes.
-    #[inline(always)] pub(super) fn call(&self) -> Ip { self.record.call() }
-    /// The caller's records base.
-    #[inline(always)] pub(super) fn caller_base(&self) -> Ip { self.record.caller_base() }
-    /// The caller's registers.
-    #[inline(always)] pub(super) fn caller_registers(&self) -> Registers { self.record.caller_registers() }
-    /// The program its caller runs.
-    #[inline(always)] pub(in crate::vm) fn caller_program(&self) -> ProgramId { self.record.caller_program() }
-    /// The pc of the call record it was entered from, in its caller's body; `None` for a native
-    /// frame the lane has not linked (`Activation::caller_pc`).
-    #[inline(always)] pub(in crate::vm) fn caller_pc(&self) -> Option<usize> { self.record.caller_pc() }
-    /// What kind of activation it is (a plain header is a `Script` activation that completes
-    /// plainly, returns to a native through the callback trampoline, or steps an array
-    /// iteration through the array steps' trampoline).
-    #[inline(always)] pub(super) fn kind(&self) -> ActivationKind { *self.record.kind() }
-    /// Its JavaScript frame state; `None` for Wasm and an unlinked native frame.
-    #[inline(always)] pub(super) fn script(&self) -> Option<ScriptActivation> { self.record.script().copied() }
-    /// The address of its first register.
-    #[inline(always)] pub(in crate::vm) fn window_ptr(&self) -> *mut Value { self.record.window_ptr() }
-    /// Its prefix's WINDOW word, mark included (`Activation::window_word`).
-    #[inline(always)] pub(in crate::vm) fn window_word(&self) -> usize { self.record.window_word() }
-    /// The Wasm frame payload it accounts for (`Activation::frame_storage_bytes`).
-    #[inline(always)] pub(super) fn frame_storage_bytes(&self) -> usize { self.record.frame_storage_bytes() }
-    /// Its native prefix (`ShadowFrame::EMPTY` but the window for a plain header).
-    #[inline(always)] pub(in crate::vm) fn native(&self) -> super::super::compiled::ShadowFrame { self.record.native }
-}
-
-/// What a Wasm activation's return reads past the words every frame's does.
-#[derive(Clone, Copy)]
-pub(super) enum WasmReturn {
-    /// A Wasm callee's: its caller's memory (`ActivationKind::Wasm`).
-    Inner(MemoryView),
-    /// An export's: the result type its JavaScript caller takes (`ActivationKind::WasmEntry`).
-    Entry(Option<crate::WasmType>),
-}
-
-/// The words a frame's return reads, and no more (one-frame-one-call.md F4): a plain frame's
-/// header words with its side record (`LaneStack::plain_return`), or a record's
-/// (`FrameReturn::of_record`: native frames, Wasm, heap windows). What the pop of a frame
-/// yields (`LaneStack::pop_activation`) and every completion consumer takes
-/// (`lane_restore_caller`, `lane_resume_after_call`, `body_calls::ends_run`,
-/// `setters::completed_value`, the generator and array-step completions), so a plain frame's
-/// return rebuilds no record.
-#[derive(Clone, Copy)]
-pub(super) struct FrameReturn {
-    /// The function it ran.
-    #[allow(dead_code)] // read by the frame tests and the activations bench
-    pub(super) function: u32,
-    /// The caller's call record, which the return completes.
-    pub(super) call: Ip,
-    pub(super) caller_registers: Registers,
-    pub(super) caller_base: Ip,
-    /// The program its caller runs.
-    pub(super) caller_program: ProgramId,
-    /// Its WINDOW word, heap mark included (`Activation::window_word`).
-    pub(super) window: usize,
-    /// What its return yields to its call; `None` for Wasm and an unlinked native frame.
-    pub(super) completion: Option<Completion>,
-    /// A script frame's callee (a generator's, `lane_generator_returned`).
-    pub(super) callee: Value,
-    /// A Wasm frame's own return words.
-    pub(super) wasm: Option<WasmReturn>,
+pub(in crate::vm) struct Frame {
+    /// Its native prefix: a record's own, a header's `ShadowFrame::EMPTY` but its window.
+    native: super::super::compiled::ShadowFrame,
+    function: u32,
+    call: Ip,
+    caller_base: Ip,
+    caller_registers: Registers,
+    caller_program: ProgramId,
+    kind: ActivationKind,
     /// What its completion carries, from its side record (`SidePayload`).
-    pub(super) payload: SidePayload,
+    payload: SidePayload,
 }
 
-impl FrameReturn {
-    /// The return words of a record.
+impl Frame {
+    /// The frame a record holds, with what its side record carries.
     #[inline(always)]
-    pub(super) fn of_record(record: &Activation) -> Self {
-        let (completion, callee) = record.script().map_or((None, Value::UNDEFINED), |script| (Some(script.completion), script.callee));
+    pub(super) fn of_record(record: &Activation, payload: SidePayload) -> Self {
         Self {
+            native: record.native,
             function: record.function(),
             call: record.call(),
-            caller_registers: record.caller_registers(),
             caller_base: record.caller_base(),
+            caller_registers: record.caller_registers(),
             caller_program: record.caller_program(),
-            window: record.window_word(),
-            completion,
-            callee,
-            wasm: match *record.kind() {
-                ActivationKind::Wasm { memory, .. } => Some(WasmReturn::Inner(memory)),
-                ActivationKind::WasmEntry { result, .. } => Some(WasmReturn::Entry(result)),
-                ActivationKind::Native | ActivationKind::Script(_) => None,
-            },
-            payload: SidePayload::None,
+            kind: *record.kind(),
+            payload,
         }
     }
 
-    /// The return words of a record with its side record, where it has one (`LaneStack::record_sided`).
+    /// The record it becomes (a spill's, a materialization's): a record's own again.
     #[inline(always)]
-    pub(super) fn of_sided_record(record: &Activation, side: Option<Side>) -> Self {
-        Self { payload: side.map_or(SidePayload::None, |side| side.payload), ..Self::of_record(record) }
+    pub(super) fn record(&self) -> Activation {
+        Activation::of_parts(self.native, self.function, self.call, self.caller_base, self.caller_registers, self.caller_program, self.kind)
     }
+
+    /// The function it runs.
+    #[inline(always)] pub(in crate::vm) fn function(&self) -> u32 { self.function }
+    /// The caller's call record, which its return completes.
+    #[inline(always)] pub(super) fn call(&self) -> Ip { self.call }
+    /// The caller's records base.
+    #[inline(always)] pub(super) fn caller_base(&self) -> Ip { self.caller_base }
+    /// The caller's registers.
+    #[inline(always)] pub(super) fn caller_registers(&self) -> Registers { self.caller_registers }
+    /// The program its caller runs.
+    #[inline(always)] pub(in crate::vm) fn caller_program(&self) -> ProgramId { self.caller_program }
+    /// What kind of activation it is (a plain header is a `Script` activation that completes
+    /// plainly, returns to a native through the callback trampoline, or steps an array
+    /// iteration through the array steps' trampoline).
+    #[inline(always)] pub(super) fn kind(&self) -> ActivationKind { self.kind }
+    /// What its completion carries (`SidePayload`).
+    #[inline(always)] pub(super) fn payload(&self) -> SidePayload { self.payload }
+    /// Its prefix's WINDOW word, heap mark included (`Activation::window_word`).
+    #[inline(always)] pub(in crate::vm) fn window_word(&self) -> usize { self.native.window }
 
     /// The address of its first register (`Activation::window_ptr`).
     #[inline(always)]
-    pub(super) fn window_ptr(&self) -> *mut Value { (self.window & !HEAP_WINDOW) as *mut Value }
+    pub(in crate::vm) fn window_ptr(&self) -> *mut Value { (self.native.window & !HEAP_WINDOW) as *mut Value }
 
-    /// The memory view its caller runs with (`Activation::caller_memory`).
+    /// Its JavaScript frame state; `None` for Wasm and an unlinked native frame.
+    #[inline(always)]
+    pub(super) fn script(&self) -> Option<ScriptActivation> {
+        match self.kind {
+            ActivationKind::Script(script) => Some(script),
+            ActivationKind::Native | ActivationKind::Wasm { .. } | ActivationKind::WasmEntry { .. } => None,
+        }
+    }
+
+    /// What its return yields to its call; `None` for Wasm and an unlinked native frame.
+    #[inline(always)]
+    pub(super) fn completion(&self) -> Option<Completion> { self.script().map(|script| script.completion) }
+
+    /// A script frame's callee (a generator's, `lane_generator_returned`); `undefined` for any other.
+    #[inline(always)]
+    pub(super) fn callee(&self) -> Value { self.script().map_or(Value::UNDEFINED, |script| script.callee) }
+
+    /// The pc of the call record it was entered from, in its caller's body; `None` for a native
+    /// frame the lane has not linked, which keeps no link state.
+    pub(in crate::vm) fn caller_pc(&self) -> Option<usize> {
+        // SAFETY: a linked activation's call record lies in its caller's body.
+        (!matches!(self.kind, ActivationKind::Native)).then(|| unsafe { self.call.offset_from(self.caller_base) } as usize)
+    }
+
+    /// The memory view its caller runs with: a Wasm callee's caller's memory, else the script
+    /// view (`ActivationKind::Wasm`).
     #[inline(always)]
     pub(super) fn caller_memory<H: Host>(&self, cx: *mut LaneContext<H>) -> MemoryView {
-        match self.wasm {
-            Some(WasmReturn::Inner(memory)) => memory,
-            Some(WasmReturn::Entry(_)) | None => MemoryView::script(cx),
+        match self.kind {
+            ActivationKind::Wasm { memory, .. } => memory,
+            ActivationKind::Native | ActivationKind::Script(_) | ActivationKind::WasmEntry { .. } => MemoryView::script(cx),
+        }
+    }
+
+    /// An export's frame's result type, which its JavaScript caller takes
+    /// (`ActivationKind::WasmEntry`); `None` for any other frame.
+    #[inline(always)]
+    pub(super) fn export_result(&self) -> Option<Option<crate::WasmType>> {
+        match self.kind {
+            ActivationKind::WasmEntry { result, .. } => Some(result),
+            ActivationKind::Native | ActivationKind::Script(_) | ActivationKind::Wasm { .. } => None,
         }
     }
 }
@@ -139,7 +127,7 @@ impl FrameReturn {
 /// (`frame::SIDE_FLAGS`, `staged::call_complete::side_flags`), or, for a record, by its
 /// completion (`LaneStack::record_sided`, which reads only `payload`). A frame finds its own as
 /// the top of the side records while it is the innermost; a walk pairs frames with sides
-/// innermost first, taking one side per sided frame (`frame_walk::FrameWalk`).
+/// innermost first, taking one side per sided frame (`LaneStack::walk_innermost`).
 #[derive(Clone, Copy)]
 pub(super) struct Side {
     /// What its return yields to its call (`frame::COMPLETION_FLAG`, `frame::CROSSES_FLAG`).
@@ -261,45 +249,20 @@ pub(super) fn header_sided(window: Registers) -> bool {
 }
 
 impl LaneStack {
-    /// The record the plain activation whose window is `window` becomes when it spills, and its
-    /// caller's window, the next plain activation's where one remains below it. `side` is its
-    /// side record where its header carries one (`header_sided`), and `program` the program its
-    /// caller runs where it carries none: the innermost's is `PlainFrames::program`, each other's
-    /// the caller program of the frame above it. A native's callback (`CallbackTrampoline`),
-    /// always the outermost plain activation, becomes `PreparedShape::of`'s record. An in-lane
-    /// array step's callback (`steps_return`), whose caller base word is its step's index,
-    /// becomes the `Completion::ArrayStep` record `lane_begin_array_iteration` pushed before,
-    /// with the call record, caller registers and base its step holds. The one definition
-    /// `spill_plain` and the frame view share.
-    pub(super) fn plain_record(&self, window: Registers, side: Option<Side>, program: ProgramId) -> (Activation, Registers) {
-        let returned = self.plain_return(window, side, program);
-        let (function, argc, callee) = window.plain_callee();
-        let (forwards, kept, environment, record) =
-            side.map_or((false, 0, false, std::ptr::null_mut()), |side| (side.forwards, side.kept, side.environment, side.record));
-        let mut activation = Activation::of_parts(
-            crate::vm::compiled::ShadowFrame::EMPTY, function, returned.call, returned.caller_base, returned.caller_registers, returned.caller_program,
-            ActivationKind::Script(ScriptActivation {
-                callee,
-                argc,
-                completion: returned.completion.expect("a plain frame is a script frame"),
-                forwards,
-                kept,
-                environment,
-                record,
-            }),
-        );
-        activation.native.window = window.0.addr();
-        (activation, returned.caller_registers)
-    }
-
-    /// The return words of the plain activation whose window is `window` (`FrameReturn`), read
-    /// from its header and `side`, its side record where its header carries one, and `program`
-    /// as `plain_record` takes it: no record is built. A trampoline's header (a native's
-    /// callback, an array step's) names the call record, caller registers and base its
-    /// trampoline holds, as `plain_record` reads them. The caller registers are the next plain
-    /// activation's window where one remains below.
+    /// The frame of the plain activation whose window is `window` (`Frame`), read from its
+    /// header and `side`, its side record where its header carries one (`header_sided`), and
+    /// `program`, the program its caller runs where it carries none: the innermost's is
+    /// `PlainFrames::program`, each other's the caller program of the frame above it. No record
+    /// is built. A native's callback (`CallbackTrampoline`), always the outermost plain
+    /// activation, reads the call record and caller registers its trampoline holds, as
+    /// `PreparedShape::of`'s record names them. An in-lane array step's callback
+    /// (`steps_return`), whose caller base word is its step's index, reads as the
+    /// `Completion::ArrayStep` record `lane_begin_array_iteration` pushed before, with the call
+    /// record, caller registers and base its step holds. Its caller registers are the next
+    /// plain activation's window where one remains below. The one definition the walk, the
+    /// innermost's read, the pop and the spill share.
     #[inline(always)]
-    pub(super) fn plain_return(&self, window: Registers, side: Option<Side>, program: ProgramId) -> FrameReturn {
+    pub(super) fn plain_frame(&self, window: Registers, side: Option<Side>, program: ProgramId) -> Frame {
         let (call, caller_registers, caller_base) = window.plain_caller();
         let (call, caller_registers, caller_base, completion) = if let Some(side) = side {
             (call, caller_registers, caller_base, side.completion)
@@ -314,45 +277,51 @@ impl LaneStack {
         };
         // SAFETY: the window's header was written at its push (`push_plain`).
         let (packed, callee) = unsafe { (*window.0.sub(CONTEXT_PACKED).cast::<u64>(), *window.0.sub(CONTEXT_CALLEE)) };
-        FrameReturn {
+        let (forwards, kept, environment, record) =
+            side.map_or((false, 0, false, std::ptr::null_mut()), |side| (side.forwards, side.kept, side.environment, side.record));
+        Frame {
+            native: super::super::compiled::ShadowFrame { window: window.0.addr(), ..super::super::compiled::ShadowFrame::EMPTY },
             function: packed as u32,
             call,
-            caller_registers,
             caller_base,
+            caller_registers,
             caller_program: side.map_or(program, |side| side.caller_program),
-            window: window.0.addr(),
-            completion: Some(completion),
-            callee,
-            wasm: None,
+            kind: ActivationKind::Script(ScriptActivation {
+                callee,
+                argc: (packed >> crate::staged::frame::ARGC_SHIFT) as u16,
+                completion,
+                forwards,
+                kept,
+                environment,
+                record,
+            }),
             payload: side.map_or(SidePayload::None, |side| side.payload),
         }
     }
 
-    /// The return words of every activation, innermost first, as `frames().rev()` reads them
-    /// but building no record: the plain headers with their side records (`plain_return`) and
-    /// the records with theirs, where the walk finds them (`walk_innermost`). A reader calls no
+    /// Every frame, innermost first, where it is (`walk_innermost`). A reader calls no
     /// `activations` while it walks.
-    pub(super) fn frame_returns_innermost(&self) -> impl Iterator<Item = FrameReturn> + '_ {
-        self.walk_innermost().map(move |walked| self.walked_return(&walked))
+    pub(super) fn frames_innermost(&self) -> impl Iterator<Item = Frame> + '_ {
+        self.walk_innermost().map(|(frame, _)| frame)
     }
 
-    /// The return words of the innermost activation, read where it is: no spill and no record
-    /// built for a plain one.
+    /// The innermost frame, read where it is: no spill and no record built for a plain one.
     #[inline(always)]
-    pub(super) fn top_return(&self) -> Option<FrameReturn> {
+    pub(in crate::vm) fn top_frame(&self) -> Option<Frame> {
         if self.plain.depth.get() != 0 {
-            return Some(self.plain_return(Registers(self.plain.registers.get()), self.innermost_side(), self.plain.program.get()));
+            return Some(self.plain_frame(Registers(self.plain.registers.get()), self.innermost_side(), self.plain.program.get()));
         }
         // SAFETY: the reference ends here.
         let record = unsafe { self.records_unspilled() }.last()?;
-        Some(FrameReturn::of_sided_record(record, self.innermost_record_side(record)))
+        Some(Frame::of_record(record, self.innermost_record_payload(record)))
     }
 
-    /// The side record of `record`, the innermost record and frame, where it has one.
+    /// What the side record of `record`, the innermost record and frame, carries, where it has one.
     #[inline(always)]
-    fn innermost_record_side(&self, record: &Activation) -> Option<Side> {
+    fn innermost_record_payload(&self, record: &Activation) -> SidePayload {
+        if !Self::record_sided(record) { return SidePayload::None; }
         // SAFETY: as `walk_innermost`; the copy ends the read.
-        Self::record_sided(record).then(|| unsafe { *(*self.sides.get()).last().expect("a sided record has its side record") })
+        unsafe { (*self.sides.get()).last().expect("a sided record has its side record").payload }
     }
 
     /// The side record of the innermost activation, where it is a plain one whose header
@@ -375,7 +344,7 @@ impl LaneStack {
     }
 
     /// Pop the innermost plain activation, header and side record, yielding the words its return
-    /// reads (`FrameReturn`, one-frame-one-call.md F4): the header's pop row
+    /// reads (`Frame`, one-frame-one-call.md F4): the header's pop row
     /// (`staged::protocol::pop_plain`), then the side record its flags select
     /// (`staged::call_complete::side_completion`). No record is built. The window stays for the
     /// caller to release (`lane_restore_caller`), as a popped record's does; the records and
@@ -383,7 +352,7 @@ impl LaneStack {
     ///
     /// # Safety
     /// A plain activation runs (`plain.depth > 0`).
-    pub(super) unsafe fn pop_plain_frame(&mut self) -> FrameReturn {
+    pub(super) unsafe fn pop_plain_frame(&mut self) -> Frame {
         debug_assert!(self.plain.depth.get() != 0, "a plain activation runs");
         let window = Registers(self.plain.registers.get());
         let packed = crate::staged::call_complete::frame_packed(
@@ -391,13 +360,13 @@ impl LaneStack {
         );
         let side = crate::staged::call_complete::concrete_side_completion(packed);
         let side = side.sided.then(|| *self.sides.get_mut().last().expect("a sided header has its side record"));
-        let returned = self.plain_return(window, side, self.plain.program.get());
+        let returned = self.plain_frame(window, side, self.plain.program.get());
         crate::staged::protocol::pop_plain(
             &mut crate::staged::Concrete::new(std::ptr::null()), self.plain_frames_word() as u64, window.0.expose_provenance() as u64,
         );
         // The row named the header's caller window; a trampoline's header names its scratch
         // window, its record the real one, which the next plain activation's walk starts from.
-        self.plain.registers.set(returned.caller_registers.0);
+        self.plain.registers.set(returned.caller_registers().0);
         if let Some(side) = side {
             self.sides.get_mut().pop();
             // The caller program of the plain activation below, where it carries no side record
@@ -441,9 +410,9 @@ impl LaneStack {
         let mut side = if sided {
             *self.sides.get_mut().last().expect("a sided header has its side record")
         } else {
-            let returned = self.plain_return(window, None, self.plain.program.get());
-            window.set_plain_caller(returned.call, returned.caller_registers, returned.caller_base);
-            Side::plain(returned.completion.expect("a plain frame is a script frame"), returned.caller_program)
+            let frame = self.plain_frame(window, None, self.plain.program.get());
+            window.set_plain_caller(frame.call(), frame.caller_registers(), frame.caller_base());
+            Side::plain(frame.completion().expect("a plain frame is a script frame"), frame.caller_program())
         };
         edit(&mut side);
         // The innermost's side record is the top one.
@@ -513,36 +482,20 @@ impl LaneStack {
         unsafe { self.records_unspilled() }.capacity()
     }
 
-    /// The innermost activation, read where it is: no spill.
-    #[inline]
-    pub(in crate::vm) fn top_frame(&self) -> Option<FrameView> {
-        if self.plain.depth.get() != 0 {
-            let (record, _) = self.plain_record(Registers(self.plain.registers.get()), self.innermost_side(), self.plain.program.get());
-            return Some(FrameView { record });
-        }
-        // SAFETY: the reference ends here.
-        unsafe { self.records_unspilled() }.last().map(FrameView::of_record)
-    }
-
     /// The activation `depth` above the outermost, as `activations()[depth]` would read it once
     /// spilled; `None` past the innermost.
-    pub(in crate::vm) fn frame(&self, depth: usize) -> Option<FrameView> {
+    pub(in crate::vm) fn frame(&self, depth: usize) -> Option<Frame> {
         let above = self.activation_count().checked_sub(depth + 1)?;
-        self.walk_innermost().nth(above).map(|walked| self.walked_view(&walked))
+        self.frames_innermost().nth(above)
     }
 
     /// Every activation, outermost first, as `activations().iter()` would yield them once
     /// spilled, without spilling: the walk's frames (`walk_innermost`), reversed. The walk reads
     /// no record a spill could write during it: a reader calls no `activations` while it walks.
-    pub(in crate::vm) fn frames(&self) -> impl Iterator<Item = FrameView> + '_ {
-        let mut frames: Vec<FrameView> = self.walk_innermost().map(|walked| self.walked_view(&walked)).collect();
+    pub(in crate::vm) fn frames(&self) -> impl Iterator<Item = Frame> + '_ {
+        let mut frames: Vec<Frame> = self.frames_innermost().collect();
         frames.reverse();
         frames.into_iter()
-    }
-
-    /// A walked frame as a reader sees it (`FrameView`).
-    fn walked_view(&self, walked: &super::frame_walk::WalkedFrame) -> FrameView {
-        FrameView { record: self.walked_record(walked) }
     }
 
     /// Whether the innermost activation is a native frame the lane has not linked
@@ -613,13 +566,13 @@ mod tests {
             .collect();
         assert!(viewed == vec![(0, Completion::Plain, 0), (1, Completion::Plain, 5), (2, Completion::Cross, 0), (3, Completion::Constructs, 0)]);
         assert!(stack.top_frame().unwrap().script().unwrap().completion == Completion::Constructs);
-        assert!(stack.top_return().unwrap().completion == Some(Completion::Constructs));
-        let returns: Vec<Option<Completion>> = stack.frame_returns_innermost().map(|frame| frame.completion).collect();
+        assert!(stack.top_frame().unwrap().completion() == Some(Completion::Constructs));
+        let returns: Vec<Option<Completion>> = stack.frames_innermost().map(|frame| frame.completion()).collect();
         assert!(returns == vec![Some(Completion::Constructs), Some(Completion::Cross), Some(Completion::Plain), Some(Completion::Plain)]);
         let popped = stack.pop_activation().unwrap();
-        assert!(popped.completion == Some(Completion::Constructs));
+        assert!(popped.completion() == Some(Completion::Constructs));
         assert_eq!(popped.window_ptr(), windows[3]);
-        assert_eq!(popped.caller_registers.0, windows[2]);
+        assert_eq!(popped.caller_registers().0, windows[2]);
         assert_eq!(stack.plain.registers.get(), windows[2]);
         // The rest spill into the records a record push would have written.
         let records = stack.activations();

@@ -21,7 +21,7 @@ pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, 
     // The innermost's completion read where it is: a header's side record names it, or the
     // header alone (`Plain`, or a trampoline's), or a record (no spill and no record built,
     // one-frame-one-call.md F4).
-    let completion = vm.lane_stack.top_return().and_then(|frame| frame.completion);
+    let completion = vm.lane_stack.top_frame().and_then(|frame| frame.completion());
     // An array step, a return per element, is tested first.
     if completion == Some(Completion::ArrayStep) {
         return lane_step_array_iteration_in_place(cx, value);
@@ -52,18 +52,18 @@ pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, 
 fn lane_complete_trapped_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     // The trap's frame read where it is (no spill, one-frame-one-call.md F4).
-    let top = vm.lane_stack.top_return();
-    if proxy_traps::trap_result_needs_general_path(vm, top.map_or(SidePayload::None, |frame| frame.payload), value) {
+    let top = vm.lane_stack.top_frame();
+    if proxy_traps::trap_result_needs_general_path(vm, top.map_or(SidePayload::None, |frame| frame.payload()), value) {
         return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
     }
     // SAFETY: the call record belongs to the caller's live view.
-    if concrete_returns_callee_completion(unsafe { (*top?.call).a }) {
+    if concrete_returns_callee_completion(unsafe { (*top?.call()).a }) {
         return None;
     }
     let frame = vm.lane_stack.pop_activation()?;
     let (caller_memory, _) = lane_restore_caller(cx, &frame);
-    if frame.caller_program != unsafe { (*cx).program } {
-        lane_enter_program(cx, frame.caller_program);
+    if frame.caller_program() != unsafe { (*cx).program } {
+        lane_enter_program(cx, frame.caller_program());
     }
     Some(lane_resume_after_call(&frame, caller_memory, value))
 }
@@ -195,7 +195,7 @@ pub(super) fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value:
     let vm = unsafe { vm(cx) };
     // The run walked where its frames are, headers with their side records, then records: no
     // spill and no record built (one-frame-one-call.md F4).
-    let (above, top, crossed) = returning_chain_outermost(vm.lane_stack.frame_returns_innermost())?;
+    let (above, top, crossed) = returning_chain_outermost(vm.lane_stack.frames_innermost())?;
     // The inner ones go where they are: script activations hold no Wasm storage
     // (`LaneStack::pop_activation`), and their windows lie above the outermost's, which its
     // return releases. What they owned goes with them.
@@ -209,7 +209,7 @@ pub(super) fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value:
         // The outermost runs now: its window is the running one its return pops.
         unsafe { (*cx).registers = Registers(top.window_ptr()) };
     }
-    let completion = top.completion.expect("a chain holds script activations");
+    let completion = top.completion().expect("a chain holds script activations");
     if completion == Completion::ReturnsToBody {
         return lane_end_body_callee(cx, value);
     }
@@ -219,7 +219,7 @@ pub(super) fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value:
         return lane_complete_cross_activation(cx, value);
     }
     if crossed {
-        lane_enter_program(cx, top.caller_program);
+        lane_enter_program(cx, top.caller_program());
         unsafe { (*cx).memory = MemoryView::script(cx) };
     }
     lane_complete_plain_activation::<H, NOT_LEAF>(cx, value)
@@ -231,12 +231,12 @@ pub(super) fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value:
 /// or crossing return, or the frame, ends it. Each test reads the frame's completion and its
 /// call record's return bit (`staged::call_complete::returns_callee_completion`).
 #[inline(always)]
-fn returning_chain_outermost(mut frames: impl Iterator<Item = FrameReturn>) -> Option<(usize, FrameReturn, bool)> {
+fn returning_chain_outermost(mut frames: impl Iterator<Item = Frame>) -> Option<(usize, Frame, bool)> {
     let mut above = 0;
     let mut crossed = false;
     loop {
         let frame = frames.next()?;
-        let completion = frame.completion?;
+        let completion = frame.completion()?;
         // A body's callee (`Completion::ReturnsToBody`) ends the run its call started: it is
         // the outermost, whatever its call's register, and runs in its caller's program.
         if completion == Completion::ReturnsToBody {
@@ -247,7 +247,7 @@ fn returning_chain_outermost(mut frames: impl Iterator<Item = FrameReturn>) -> O
             return None;
         }
         // SAFETY: the call record belongs to the caller's live view.
-        if !concrete_returns_callee_completion(unsafe { (*frame.call).a }) {
+        if !concrete_returns_callee_completion(unsafe { (*frame.call()).a }) {
             return Some((above, frame, crossed));
         }
         above += 1;
@@ -282,13 +282,13 @@ pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, va
     let vm = unsafe { vm(cx) };
     // The callback read where it is, then popped where it is (`LaneStack::pop_activation`): no
     // spill, and a header's pop builds no record.
-    if vm.lane_stack.top_return()?.completion != Some(Completion::ReturnsToNative) {
+    if vm.lane_stack.top_frame()?.completion() != Some(Completion::ReturnsToNative) {
         return None;
     }
     let frame = vm.lane_stack.pop_activation()?;
     lane_restore_caller(cx, &frame);
     vm.lane_completion.set(LaneCompletion::NativeReturned(value));
-    Some(Resumed::Exit(exit(frame.call)))
+    Some(Resumed::Exit(exit(frame.call())))
 }
 
 /// Restore the lane state the caller of the returning frame (`frame`, its return words) runs
@@ -297,16 +297,16 @@ pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, va
 /// caller's memory and the returning frame's receiver (`staged::call_complete::returning_this`),
 /// which the context held while it ran.
 #[inline(always)]
-pub(super) fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, frame: &FrameReturn) -> (MemoryView, Value) {
+pub(super) fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, frame: &Frame) -> (MemoryView, Value) {
     let vm = unsafe { vm(cx) };
     // SAFETY: the values hold no drop glue.
-    unsafe { vm.lane_stack.values.release_window(frame.window) };
+    unsafe { vm.lane_stack.values.release_window(frame.window_word()) };
     let caller_memory = frame.caller_memory(cx);
     // The returning frame's receiver, its window's context word.
     let this = concrete_returning_this(frame.window_ptr().expose_provenance() as u64);
     unsafe {
-        (*cx).registers = frame.caller_registers;
-        (*cx).base = frame.caller_base;
+        (*cx).registers = frame.caller_registers();
+        (*cx).base = frame.caller_base();
         (*cx).memory = caller_memory;
     }
     (caller_memory, this)
@@ -315,26 +315,26 @@ pub(super) fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, frame: &Fram
 /// The caller of the returned `frame`, restored with `memory` (`lane_restore_caller`), resumes
 /// after its call with `value` in the call's result register.
 #[inline(always)]
-pub(super) fn lane_resume_after_call(frame: &FrameReturn, memory: MemoryView, value: Value) -> Resumed {
+pub(super) fn lane_resume_after_call(frame: &Frame, memory: MemoryView, value: Value) -> Resumed {
     // SAFETY: the call record belongs to the caller's live view.
-    let result = unsafe { (*frame.call).a };
-    lane_resume_at(frame, memory, following(frame.call), Some((result, value)))
+    let result = unsafe { (*frame.call()).a };
+    lane_resume_at(frame, memory, following(frame.call()), Some((result, value)))
 }
 
 /// The caller of the returned `frame`, restored with `memory`, resumes at the record `at` of
 /// its view, its register `written.0` taking `written.1` first where one is named: the call's
 /// result register (`staged::call_complete::write_call_result`), or a delegate's state register.
 #[inline(always)]
-pub(super) fn lane_resume_at(frame: &FrameReturn, memory: MemoryView, at: Ip, written: Option<(crate::bytecode::Register, Value)>) -> Resumed {
+pub(super) fn lane_resume_at(frame: &Frame, memory: MemoryView, at: Ip, written: Option<(crate::bytecode::Register, Value)>) -> Resumed {
     if let Some((register, value)) = written {
-        concrete_write_call_result(frame.caller_registers.0.expose_provenance() as u64, register, value);
+        concrete_write_call_result(frame.caller_registers().0.expose_provenance() as u64, register, value);
     }
     let view = Carried {
         memory,
         integers: crate::value::IntegerEncoding::TAG,
         acc: Slot::of(Value::UNDEFINED),
     };
-    Resumed::At(frame.caller_registers, at, view)
+    Resumed::At(frame.caller_registers(), at, view)
 }
 
 /// Whether the caller a returning call completes in turn with `value` returns from its frame
@@ -344,16 +344,16 @@ pub(super) fn lane_resume_at(frame: &FrameReturn, memory: MemoryView, at: Ip, wr
 #[inline(always)]
 pub(super) fn lane_caller_returns_in_frame<H: Host>(vm: &mut Vm<H>, value: Value, then: &mut Value) -> bool {
     // The caller read where it is (no spill, one-frame-one-call.md F4).
-    match vm.lane_stack.top_return() {
+    match vm.lane_stack.top_frame() {
         None => true,
-        Some(caller) if caller.completion == Some(Completion::SettlesPromise) => match lane_settled_then(vm, value) {
+        Some(caller) if caller.completion() == Some(Completion::SettlesPromise) => match lane_settled_then(vm, value) {
             Some(read) => {
                 *then = read;
                 false
             }
             None => true,
         },
-        Some(caller) => proxy_traps::trap_result_needs_general_path(vm, caller.payload, value),
+        Some(caller) => proxy_traps::trap_result_needs_general_path(vm, caller.payload(), value),
     }
 }
 

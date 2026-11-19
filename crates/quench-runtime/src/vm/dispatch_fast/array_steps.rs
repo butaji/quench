@@ -321,9 +321,9 @@ pub(super) fn lane_body_array_iteration<H: Host>(
 /// The return of an array callback method's callback `activation` with `mapped`, its
 /// caller restored (`lane_restore_caller`): the step of the innermost lane iteration, then
 /// the rest of its loop (`lane_finish_array_step`).
-pub(super) fn lane_step_array_iteration<H: Host>(cx: *mut LaneContext<H>, frame: &FrameReturn, mapped: Value) -> Resumed {
+pub(super) fn lane_step_array_iteration<H: Host>(cx: *mut LaneContext<H>, frame: &Frame, mapped: Value) -> Resumed {
     let applied = lane_apply_array_step(cx, mapped);
-    lane_finish_array_step(cx, frame.call, applied)
+    lane_finish_array_step(cx, frame.call(), applied)
 }
 
 /// The step of the innermost lane iteration whose callback returned `mapped`
@@ -374,7 +374,7 @@ pub(super) fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H
             vm.lane_stack.drop_owned_from(depth);
             // The innermost's window read where it is (no spill, one-frame-one-call.md F4): a
             // plain callback's header or its record.
-            let window = vm.lane_stack.top_return().expect("an array step's activation runs").window_ptr();
+            let window = vm.lane_stack.top_frame().expect("an array step's activation runs").window_ptr();
             // SAFETY: the window the activation held, which its return left in place.
             let start = unsafe { lane_enter_array_step::<H, true>(cx, &step.entry, &step.iteration, element, index, window) };
             return Some(Resumed::At(unsafe { (*cx).registers }, start, Carried::script(cx)));
@@ -391,7 +391,7 @@ fn lane_retire_array_step<H: Host>(cx: *mut LaneContext<H>, applied: Option<Valu
     let vm = unsafe { vm(cx) };
     let frame = vm.lane_stack.pop_activation().expect("an array step's activation runs");
     lane_restore_caller(cx, &frame);
-    lane_finish_array_step(cx, frame.call, applied)
+    lane_finish_array_step(cx, frame.call(), applied)
 }
 
 /// The iteration of the call record `call` (its callback's activation's), its caller
