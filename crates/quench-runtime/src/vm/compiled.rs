@@ -287,7 +287,7 @@ fn emit_js_tagged_truthiness(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
 /// Decode an already-proved Number without repeating its semantic type check.
 fn emit_known_number(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::Value {
     let mut stage = object_slots::emit(builder);
-    crate::staged::value::known_number_f64(&mut stage, bits)
+    crate::staged::value_machine::known_number_f64(&mut stage, bits)
 }
 
 /// Unbox a tagged JavaScript Number, branching to the current instruction's
@@ -300,7 +300,7 @@ fn emit_js_tagged_number(
 ) -> ir::Value {
     // The tagged Number row (`tagged_number_f64`): a non-Number word leaves to `fallback`.
     let mut stage = object_slots::emit(builder);
-    let (decided, value) = crate::staged::value::tagged_number_f64(&mut stage, bits);
+    let (decided, value) = crate::staged::value_machine::tagged_number_f64(&mut stage, bits);
     stage.guard(decided, fallback);
     value
 }
@@ -309,7 +309,7 @@ fn emit_js_tagged_number(
 /// rejects fractions, nonfinite values, saturation and -0 before the view is used.
 fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> (ir::Value, ir::Value) {
     let mut stage = object_slots::emit(builder);
-    crate::staged::value::exact_int32(&mut stage, number)
+    crate::staged::value_machine::exact_int32(&mut stage, number)
 }
 
 // The boxes `emit_js_box_number` made while a lowering records them (`record_boxed_numbers`):
@@ -345,7 +345,7 @@ pub(super) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::
 /// `emit_js_box_number` with no branch: the integer, double and NaN encodings, selected.
 fn emit_js_box_number_pure(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
     let mut stage = object_slots::emit(builder);
-    crate::staged::value::number_word(&mut stage, number)
+    crate::staged::value_machine::number_word(&mut stage, number)
 }
 
 fn emit_js_box_number_word(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
@@ -353,11 +353,11 @@ fn emit_js_box_number_word(builder: &mut FunctionBuilder<'_>, number: ir::Value)
     builder.set_cold_block(cold);
     let result = builder.append_block_param(join, types::I64);
     let mut stage = object_slots::emit(builder);
-    let (whole_or_nan, bits) = crate::staged::value::number_bits_unless_whole(&mut stage, number);
+    let (whole_or_nan, bits) = crate::staged::value_machine::number_bits_unless_whole(&mut stage, number);
     stage.branch_if(whole_or_nan, (cold, &[]), (join, &[bits]));
     stage.builder.switch_to_block(cold);
     stage.builder.seal_block(cold);
-    let encoded = crate::staged::value::number_word(&mut stage, number);
+    let encoded = crate::staged::value_machine::number_word(&mut stage, number);
     stage.goto(join, &[encoded]);
     builder.switch_to_block(join);
     builder.seal_block(join);
@@ -379,7 +379,7 @@ pub(super) fn emit_number_to_int32(builder: &mut FunctionBuilder<'_>, number: ir
     }
     // The truncate-to-int32 row: its candidate, leaving to `exit` beyond the exact I64 range.
     let mut stage = object_slots::emit(builder);
-    let (int, exact) = crate::staged::value::truncate_int32(&mut stage, number);
+    let (int, exact) = crate::staged::value_machine::truncate_int32(&mut stage, number);
     stage.guard(exact, exit);
     int
 }
