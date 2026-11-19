@@ -2833,6 +2833,7 @@ impl ProgramStore {
             roots.extend(entry.function_sources.values().copied());
             roots.extend(entry.regexp_receivers.values().copied());
             roots.extend(entry.module_environment);
+            roots.extend(entry.root_constants.environment.get());
             roots.extend(entry.import_meta);
             roots.extend(entry.module_imports.iter().map(|(_, import)| match import {
                 ModuleImport::Value(value) => *value,

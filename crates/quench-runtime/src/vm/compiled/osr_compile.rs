@@ -52,6 +52,12 @@ impl OsrFacts {
             && self.slot_dependencies.iter().all(|dependency| heap.subscribe_slot_observation(*dependency, code))
             && self.calls.subscribe(&self.stable, code, heap, method_atoms)
     }
+
+    /// The programs whose root constants the region's calls fold (`LaneDependencies::root_programs`),
+    /// which its code subscribes to (`ProgramStore::subscribe_root_constants`).
+    pub(in crate::vm) fn root_programs(&self) -> Vec<crate::vm::program_store::ProgramId> {
+        self.calls.root_programs(&self.stable)
+    }
 }
 
 /// A loop region whose code compiles on the code generator's thread, as V8 compiles OSR code
@@ -470,10 +476,11 @@ pub(in crate::vm) fn start_osr_region(
 impl PendingOsrRegion {
 
     /// Subscribes its watch to the facts its code names; whether they hold.
-    pub(in crate::vm) fn watch(&self, heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
+    pub(in crate::vm) fn watch(&self, heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders,
+        programs: &crate::vm::program_store::ProgramStore) -> bool {
         self.watch.hold_roots(self.facts.roots.clone(), heap);
         let watch: Rc<dyn crate::code_dependencies::DependentCode> = self.watch.clone();
-        self.facts.subscribe(&watch, heap, method_atoms)
+        self.facts.subscribe(&watch, heap, method_atoms) && programs.subscribe_root_constants(&self.facts.root_programs(), &watch)
     }
 
     /// The watch a collection that frees any of the callees its code names retires, and those callees
@@ -495,8 +502,8 @@ impl PendingOsrRegion {
     /// region's Stable facts and roots are its lowering's, which the watch takes here: a fact
     /// that changed while it lowered (a method cache naming an atom it stores in place) fails
     /// the subscription and the code is stale.
-    pub(in crate::vm) fn poll(mut self: Box<Self>, heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders)
-        -> Result<OsrCompile, Box<Self>> {
+    pub(in crate::vm) fn poll(mut self: Box<Self>, heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders,
+        programs: &crate::vm::program_store::ProgramStore) -> Result<OsrCompile, Box<Self>> {
         let lowered = match self.code.poll() {
             std::task::Poll::Pending => return Err(self),
             std::task::Poll::Ready(_) if !self.watch.is_published() => return Ok(OsrCompile::Stale),
@@ -516,7 +523,8 @@ impl PendingOsrRegion {
                 self.facts.calls = LaneDependencies::of(std::iter::empty(), &calls.direct);
                 self.watch.hold_roots(self.facts.roots.clone(), heap);
                 let watch: Rc<dyn crate::code_dependencies::DependentCode> = self.watch.clone();
-                if !self.facts.calls.subscribe(&self.facts.stable, &watch, heap, method_atoms) {
+                if !self.facts.calls.subscribe(&self.facts.stable, &watch, heap, method_atoms)
+                    || !programs.subscribe_root_constants(&self.facts.root_programs(), &watch) {
                     return Ok(OsrCompile::Stale);
                 }
                 calls
