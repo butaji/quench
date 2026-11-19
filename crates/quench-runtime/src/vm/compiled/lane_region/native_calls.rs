@@ -18,6 +18,7 @@
 use super::*;
 use crate::staged::math::FloatUnary;
 use crate::vm::Native;
+use crate::vm::number::{MathFunction, math_function};
 use crate::vm::global_facts::GlobalRead;
 use super::builtin_calls::Builtin;
 
@@ -38,17 +39,16 @@ const UNARY_ARGUMENTS: u16 = 1;
 const BINARY_ARGUMENTS: u16 = 2;
 
 impl Inline {
-    /// The operation `native` runs inline, if any.
+    /// The operation `native` runs inline, if any: the machine rows and the Number-only Math
+    /// functions of `number::math_function` that native code lowers, else a builtin's row.
     fn of(native: Native) -> Option<Self> {
-        const INLINE: [(Native, Inline); 10] = [
-            (Native::MathImul, Inline::Imul), (Native::MathFloor, Inline::Unary(FloatUnary::Floor)),
-            (Native::MathCeil, Inline::Unary(FloatUnary::Ceil)), (Native::MathTrunc, Inline::Unary(FloatUnary::Trunc)),
-            (Native::MathAbs, Inline::Unary(FloatUnary::Abs)), (Native::MathSqrt, Inline::Unary(FloatUnary::Sqrt)),
-            (Native::MathFround, Inline::Unary(FloatUnary::Fround)), (Native::MathMax, Inline::Extreme(true)),
-            (Native::MathMin, Inline::Extreme(false)), (Native::MathRound, Inline::Unary(FloatUnary::Round)),
-        ];
-        INLINE.iter().find(|(known, _)| *known == native).map(|(_, inline)| *inline)
-            .or_else(|| Builtin::of(native).map(Self::Builtin))
+        match math_function(native) {
+            Some(MathFunction::Row(operation)) => Some(Self::Unary(operation)),
+            Some(MathFunction::Extreme(maximum)) => Some(Self::Extreme(maximum)),
+            Some(MathFunction::Imul) => Some(Self::Imul),
+            _ => None,
+        }
+        .or_else(|| Builtin::of(native).map(Self::Builtin))
     }
 
     /// The arguments the inline operation reads; a call passing another count takes the native.

@@ -10,7 +10,7 @@
 use crate::heap::Native;
 
 /// The object whose own property a row's function is.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Holder {
     /// `Array.prototype`.
     ArrayPrototype,
@@ -20,6 +20,22 @@ pub(super) enum Holder {
     StringPrototype,
     /// The `Math` namespace.
     Math,
+    /// `Number`: its own `isNaN`, `isFinite`, `isInteger`, `isSafeInteger`, `parseInt`, `parseFloat`.
+    NumberConstructor,
+    /// `Number.prototype`.
+    NumberPrototype,
+    /// The global object: `parseInt`, `parseFloat`, `isNaN`, `isFinite`.
+    GlobalObject,
+    /// `Map.prototype`.
+    MapPrototype,
+    /// `Set.prototype`.
+    SetPrototype,
+    /// `WeakMap.prototype`.
+    WeakMapPrototype,
+    /// `WeakSet.prototype`.
+    WeakSetPrototype,
+    /// `DataView.prototype`.
+    DataViewPrototype,
 }
 
 /// A function of `Math` (`Native::is_math_function`).
@@ -176,6 +192,86 @@ natives! {
     (Math, "tan", MathTan, 1, MATH),
     (Math, "tanh", MathTanh, 1, MATH),
     (Math, "trunc", MathTrunc, 1, MATH),
+    // `Number.prototype`, in installation order.
+    (NumberPrototype, "toString", NumberString, 1),
+    (NumberPrototype, "valueOf", NumberValueOf, 0),
+    (NumberPrototype, "toLocaleString", NumberToLocaleString, 0),
+    (NumberPrototype, "toFixed", NumberFixed, 1),
+    (NumberPrototype, "toExponential", NumberExponential, 1),
+    (NumberPrototype, "toPrecision", NumberPrecision, 1),
+    // `Number`, in installation order: `parseInt` and `parseFloat` are aliases of the global ones.
+    (NumberConstructor, "isNaN", NumberIsNaN, 1),
+    (NumberConstructor, "isFinite", NumberIsFinite, 1),
+    (NumberConstructor, "isInteger", NumberIsInteger, 1),
+    (NumberConstructor, "isSafeInteger", NumberIsSafeInteger, 1),
+    (NumberConstructor, "parseInt", ParseInt, 2),
+    (NumberConstructor, "parseFloat", NumberParseFloat, 1),
+    // The global object, in installation order.
+    (GlobalObject, "parseInt", ParseInt, 2),
+    (GlobalObject, "parseFloat", NumberParseFloat, 1),
+    (GlobalObject, "isNaN", GlobalIsNaN, 1),
+    (GlobalObject, "isFinite", GlobalIsFinite, 1),
+    // `Map.prototype`, in installation order (the `size` getter is not a row).
+    (MapPrototype, "get", MapGet, 1),
+    (MapPrototype, "set", MapSet, 2),
+    (MapPrototype, "has", MapHas, 1),
+    (MapPrototype, "delete", MapDelete, 1),
+    (MapPrototype, "clear", MapClear, 0),
+    (MapPrototype, "keys", MapKeys, 0),
+    (MapPrototype, "values", MapValues, 0),
+    (MapPrototype, "entries", MapEntries, 0),
+    (MapPrototype, "forEach", MapForEach, 1),
+    (MapPrototype, "getOrInsert", MapGetOrInsert, 2),
+    (MapPrototype, "getOrInsertComputed", MapGetOrInsertComputed, 2),
+    // `Set.prototype`, in installation order (`keys` aliases `values` and is not a row).
+    (SetPrototype, "add", SetAdd, 1),
+    (SetPrototype, "has", SetHas, 1),
+    (SetPrototype, "delete", SetDelete, 1),
+    (SetPrototype, "clear", SetClear, 0),
+    (SetPrototype, "values", SetValues, 0),
+    (SetPrototype, "entries", SetEntries, 0),
+    (SetPrototype, "forEach", SetForEach, 1),
+    (SetPrototype, "difference", SetDifference, 1),
+    (SetPrototype, "intersection", SetIntersection, 1),
+    (SetPrototype, "symmetricDifference", SetSymmetricDifference, 1),
+    (SetPrototype, "union", SetUnion, 1),
+    (SetPrototype, "isDisjointFrom", SetIsDisjointFrom, 1),
+    (SetPrototype, "isSubsetOf", SetIsSubsetOf, 1),
+    (SetPrototype, "isSupersetOf", SetIsSupersetOf, 1),
+    // `WeakMap.prototype`, in installation order.
+    (WeakMapPrototype, "get", WeakMapGet, 1),
+    (WeakMapPrototype, "set", WeakMapSet, 2),
+    (WeakMapPrototype, "has", WeakMapHas, 1),
+    (WeakMapPrototype, "delete", WeakMapDelete, 1),
+    (WeakMapPrototype, "getOrInsert", WeakMapGetOrInsert, 2),
+    (WeakMapPrototype, "getOrInsertComputed", WeakMapGetOrInsertComputed, 2),
+    // `WeakSet.prototype`, in installation order.
+    (WeakSetPrototype, "add", WeakSetAdd, 1),
+    (WeakSetPrototype, "has", WeakSetHas, 1),
+    (WeakSetPrototype, "delete", WeakSetDelete, 1),
+    // `DataView.prototype` methods, in installation order.
+    (DataViewPrototype, "getInt8", DataViewGetInt8, 1),
+    (DataViewPrototype, "getUint8", DataViewGetUint8, 1),
+    (DataViewPrototype, "getInt16", DataViewGetInt16, 1),
+    (DataViewPrototype, "getUint16", DataViewGetUint16, 1),
+    (DataViewPrototype, "getInt32", DataViewGetInt32, 1),
+    (DataViewPrototype, "getUint32", DataViewGetUint32, 1),
+    (DataViewPrototype, "getFloat16", DataViewGetFloat16, 1),
+    (DataViewPrototype, "getFloat32", DataViewGetFloat32, 1),
+    (DataViewPrototype, "getFloat64", DataViewGetFloat64, 1),
+    (DataViewPrototype, "getBigInt64", DataViewGetBigInt64, 1),
+    (DataViewPrototype, "getBigUint64", DataViewGetBigUint64, 1),
+    (DataViewPrototype, "setInt8", DataViewSetInt8, 2),
+    (DataViewPrototype, "setUint8", DataViewSetUint8, 2),
+    (DataViewPrototype, "setInt16", DataViewSetInt16, 2),
+    (DataViewPrototype, "setUint16", DataViewSetUint16, 2),
+    (DataViewPrototype, "setInt32", DataViewSetInt32, 2),
+    (DataViewPrototype, "setUint32", DataViewSetUint32, 2),
+    (DataViewPrototype, "setFloat16", DataViewSetFloat16, 2),
+    (DataViewPrototype, "setFloat32", DataViewSetFloat32, 2),
+    (DataViewPrototype, "setFloat64", DataViewSetFloat64, 2),
+    (DataViewPrototype, "setBigInt64", DataViewSetBigInt64, 2),
+    (DataViewPrototype, "setBigUint64", DataViewSetBigUint64, 2),
 }
 
 /// The number of rows `holder` holds.
@@ -242,6 +338,22 @@ pub(super) const STRING_METHODS: &[(&str, Native, f64)] = &STRING_PROTOTYPE_ROWS
 /// `Math`'s functions, in installation order.
 pub(super) const MATH_FUNCTIONS: &[(&str, Native)] = &MATH_ROWS;
 
+/// Whether `left` and `right` spell the same text.
+const fn same_name(left: &str, right: &str) -> bool {
+    let (left, right) = (left.as_bytes(), right.as_bytes());
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut index = 0;
+    while index < left.len() {
+        if left[index] != right[index] {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
 /// Whether some row names `native`.
 const fn has_row(native: Native) -> bool {
     let mut index = 0;
@@ -269,9 +381,14 @@ const _: () = {
             (row.flags & PURE_STRING != 0) == row.native.is_pure_string_method(),
             "PURE_STRING flag disagrees with is_pure_string_method"
         );
+        // A native on two holders is an alias: its rows agree on name, length and flags.
         let mut later = index + 1;
         while later < NATIVE_ROWS.len() {
-            assert!(NATIVE_ROWS[later].native as u16 != row.native as u16, "a native has two rows");
+            let other = NATIVE_ROWS[later];
+            if other.native as u16 == row.native as u16 {
+                assert!(other.length == row.length && other.flags == row.flags, "alias rows disagree on length or flags");
+                assert!(same_name(other.name, row.name), "alias rows disagree on name");
+            }
             later += 1;
         }
         index += 1;

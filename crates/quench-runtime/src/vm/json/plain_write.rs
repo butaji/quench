@@ -3,8 +3,9 @@
 //! the member plan of their (shape, prototype), `JsonMember`) and takes the specification's
 //! steps for any other value (`Vm::json_serialize_property`). The steady call
 //! (`Vm::json_stringify_steady`) runs it with no program, stopping at the first value that
-//! needs those steps; the native (`Vm::json_stringify`) runs it with its replacer and gap. The
-//! plans are kept between calls (`JsonPlainCache`).
+//! needs those steps; the native (`Vm::json_stringify`) tries that call first, and runs the
+//! one writer with its replacer and gap when it declines. The plans are kept between calls
+//! (`JsonPlainCache`).
 
 use super::*;
 

@@ -127,12 +127,18 @@ impl<H: Host> Vm<H> {
         Ok(Value::number(-1.0))
     }
 
+    /// Array.prototype.indexOf: the dense search (`dense_search_call`) first, which decides a
+    /// dense array from an integer or absent `fromIndex`; otherwise the general steps
+    /// (`strict_search`, which resumes the dense walk at a hole and reads the rest by [[Get]]).
     pub(super) fn array_index_of_native(
         &mut self,
         p: &ResidualProgram,
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if let Some(found) = self.dense_search_call(Native::ArrayIndexOf, this, args) {
+            return Ok(found);
+        }
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         if length == 0 {

@@ -1792,13 +1792,17 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    /// JSON.stringify(value, replacer, space): the replacer and the gap, read in order, then
-    /// the one writer (`json_run`) under them.
+    /// JSON.stringify(value, replacer, space): the plain writer (`json_stringify_steady`) first,
+    /// which answers plain data with no replacer or gap; otherwise the replacer and the gap,
+    /// read in order, then the one writer (`json_run`) under them.
     pub(super) fn json_stringify(
         &mut self,
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if let Some(text) = self.json_stringify_steady(args) {
+            return Ok(text);
+        }
         let argument = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);
         let space = argument(JSON_SPACE_ARGUMENT);
         let (replacer, property_list) = self.json_replacer(p, argument(JSON_REPLACER_ARGUMENT))?;

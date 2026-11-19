@@ -885,14 +885,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_named(program, string, "raw", Native::StringRaw)?;
         self.global(program, "String", string)?;
         self.install_iterator_self(program)?;
-        for (name, native) in [
-            ("parseInt", Native::ParseInt),
-            ("parseFloat", Native::NumberParseFloat),
-            ("isNaN", Native::GlobalIsNaN),
-            ("isFinite", Native::GlobalIsFinite),
-        ] {
-            self.set_builtin_named(program, self.realm.globals, name, native)?;
-        }
+        self.install_native_rows(program, self.realm.globals, super::native_rows::Holder::GlobalObject)?;
         self.install_number(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_core_builtins");
@@ -1308,6 +1301,34 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let function = self.native_value(native);
         self.set_builtin_function_value_named(object, name, function)
+    }
+
+    /// Installs `holder`'s rows on `target` as the shared builtin functions, in row order.
+    pub(super) fn install_native_rows(
+        &mut self,
+        program: &ResidualProgram,
+        target: Value,
+        holder: super::native_rows::Holder,
+    ) -> Result<(), JsError> {
+        for row in super::native_rows::NATIVE_ROWS.iter().filter(|row| row.holder == holder) {
+            self.set_builtin_named(program, target, row.name, row.native)?;
+        }
+        Ok(())
+    }
+
+    /// Installs `holder`'s rows on `target` as functions of `global`'s realm, in row order.
+    pub(super) fn install_realm_native_rows(
+        &mut self,
+        target: Value,
+        holder: super::native_rows::Holder,
+        global: Value,
+    ) -> Result<(), JsError> {
+        for row in super::native_rows::NATIVE_ROWS.iter().filter(|row| row.holder == holder) {
+            let function = self.native_with_realm(row.native, global, global);
+            self.set_builtin_function_name(function, row.name)?;
+            self.set_builtin_value_named(target, row.name, function)?;
+        }
+        Ok(())
     }
 
     pub(super) fn set_builtin_function_value_named(

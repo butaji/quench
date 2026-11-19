@@ -526,6 +526,9 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// Array.prototype.concat: the dense body (`array_concat_dense`) first, on the boxed receiver,
+    /// which answers when no step can be observed; otherwise the general steps, which read each
+    /// item's `@@isConcatSpreadable` and length and copy its elements by [[Get]].
     pub(super) fn array_concat_native(
         &mut self,
         p: &ResidualProgram,
@@ -951,12 +954,18 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Array.prototype.slice: the dense body (`plain_array_slice`) first, which answers an array
+    /// of this realm's ArrayCreate whose range is present own data elements, with immediate
+    /// bounds; otherwise the general steps (ArraySpeciesCreate, [[Get]] per index).
     pub(super) fn array_slice_native(
         &mut self,
         p: &ResidualProgram,
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if let Some(sliced) = self.plain_array_slice(this, args) {
+            return Ok(sliced);
+        }
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         let start = args
@@ -974,13 +983,6 @@ impl<H: Host> Vm<H> {
             .transpose()?
             .unwrap_or(length);
         let count = end.saturating_sub(start);
-        // ArraySpeciesCreate is this realm's ArrayCreate and every element of the range is a
-        // present own data element: the result is a new array of those values, made at once
-        // instead of holes that each CreateDataPropertyOrThrow fills.
-        let mut values = smallvec::SmallVec::<[Value; 16]>::new();
-        if self.array_species_is_array_create(object) && self.extend_present_dense(object, start..end.max(start), &mut values) {
-            return Ok(self.array_of(&values));
-        }
         let result = self.array_species_create(p, object, count)?;
         // `result` is held only here while guest code (getters, traps) can collect.
         self.with_call_roots([result], |vm| {
@@ -1147,12 +1149,18 @@ impl<H: Host> Vm<H> {
         Ok(crate::units::relative_index(self.to_number(p, value)?, length))
     }
 
+    /// Array.prototype.includes: the dense search (`dense_search_call`) first, which decides a
+    /// dense array from an immediate or absent `fromIndex`; otherwise the general steps, which
+    /// resume the dense search at a hole a prototype may hold and read the rest by [[Get]].
     pub(super) fn array_includes_native(
         &mut self,
         p: &ResidualProgram,
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if let Some(found) = self.dense_search_call(Native::ArrayIncludes, this, args) {
+            return Ok(found);
+        }
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         if length == 0 {

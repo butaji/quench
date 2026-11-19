@@ -194,6 +194,9 @@ impl<H: Host> Vm<H> {
         Some(result)
     }
 
+    /// The general EnumerableOwnProperties of `object` (boxed first): each own string key's
+    /// enumerability and value through [[Get]]. The plain body (`plain_enumerable_own_properties`)
+    /// is tried by the caller before this, so this is the fallback for what it declines.
     pub(super) fn enumerable_own_properties(
         &mut self,
         p: &ResidualProgram,
@@ -201,9 +204,6 @@ impl<H: Host> Vm<H> {
         kind: EnumerableOwnPropertyKind,
     ) -> Result<Value, JsError> {
         let object = self.box_object(object)?;
-        if let Some(listed) = self.plain_enumerable_own_properties(object, kind) {
-            return Ok(listed);
-        }
         let object = self.heap.root(object);
         let mut keys = Vec::new();
         let mut properties = Vec::new();
