@@ -18,6 +18,8 @@ use super::loop_versions::{Decision, Hoist, Induction, Nest, Resolved, Shape, Ve
 pub(super) struct IntRanges {
     overflow_free: CompoundBitSet,
     in_bounds: CompoundBitSet,
+    /// The string reads whose index the point proves below the string's length (`string_in_bounds`), by PC.
+    string_bounds: CompoundBitSet,
     /// The accesses whose indices their loop's entry compares with the array's length once
     /// (`Lowering::version_loops`), by PC (ascending).
     versioned: Vec<Version>,
@@ -45,6 +47,7 @@ pub(super) struct IntRanges {
 impl IntRanges {
     pub(super) fn new(instructions: usize) -> Self {
         Self { overflow_free: CompoundBitSet::with_capacity(instructions), in_bounds: CompoundBitSet::with_capacity(instructions),
+            string_bounds: CompoundBitSet::with_capacity(instructions),
             versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions),
             non_negative_dividend: CompoundBitSet::with_capacity(instructions), nonzero_divisor: CompoundBitSet::with_capacity(instructions),
             numeric_stores: CompoundBitSet::with_capacity(instructions) }
@@ -81,6 +84,10 @@ impl IntRanges {
     pub(super) fn in_bounds(&self, pc: usize) -> bool {
         self.in_bounds.contains(pc) || self.versioned.binary_search_by_key(&pc, |version| version.pc).is_ok()
     }
+
+    /// Whether the string read at `pc` (a `charCodeAt` call or a `base[index]` of a string) has an
+    /// index below its string's length, so its row takes no bounds test (`Point::string_index_proven`).
+    pub(super) fn string_in_bounds(&self, pc: usize) -> bool { self.string_bounds.contains(pc) }
 
     /// The accesses whose indices their loop's entry compares with the array's length, by PC.
     pub(super) fn versioned(&self) -> &[Version] { &self.versioned }
@@ -192,6 +199,12 @@ impl Lowering<'_, '_> {
             facts::IndexProof::Proven => { proved.in_bounds.insert(pc); }
             proof => seen.shapes.extend(self.shape(instructions, pc, point, proof)),
         }
+        if let Some((receiver, index)) = self.string_read(pc, instruction)
+            && point.int_range(index).is_some_and(|range| range.min >= 0) && point.string_index_proven(receiver, index) {
+            proved.string_bounds.insert(pc);
+        } else {
+            proved.string_bounds.remove(pc);
+        }
         let range = point.index_range(&self.program.constants, instruction, signless.binary_search(&pc).is_ok());
         if let Some(range) = range {
             proved.index_ranges.push((pc, range));
@@ -204,6 +217,18 @@ impl Lowering<'_, '_> {
             if divisor.min > 0 || divisor.max < 0 { proved.nonzero_divisor.insert(pc); }
         }
         if self.decidable(instruction, point) { seen.decisions.push(pc); }
+    }
+
+    /// The string and index register of the read at `pc` that reads a string's units at an index: a
+    /// `charCodeAt` call of an intrinsic (`native_calls::reads_string`) or an element read by a register.
+    fn string_read(&self, pc: usize, instruction: WideInstruction) -> Option<(crate::bytecode::Register, crate::bytecode::Register)> {
+        if super::native_calls::reads_string(&self.intrinsics, pc) {
+            return Some((instruction.register_c(), crate::bytecode::ImmediateLayout::call_window_base(instruction.imm())));
+        }
+        match crate::staged::Operation::<u64, ()>::of(instruction) {
+            Some(crate::staged::Operation::ElementRead { base, key }) => Some((base, key.register_index()?)),
+            _ => None,
+        }
     }
 
     /// The ranges of the operands of the `%` at `instruction` the point proves: a register's integer

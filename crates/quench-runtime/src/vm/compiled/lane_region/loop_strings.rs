@@ -106,8 +106,9 @@ impl Lowering<'_, '_> {
     }
 
     /// `charCodeAt` at the index in `index` of the held string `string`, as its tagged row: the units
-    /// are read from the held record at the call, and the row's miss leaves at `exit`.
-    pub(super) fn held_char_code_at(&mut self, state: &mut State, string: LoopString, index: Register,
+    /// are read from the held record at the call, and the row's miss leaves at `exit`. `within`: the
+    /// index is proved below the length, so the row takes no bounds test.
+    pub(super) fn held_char_code_at(&mut self, state: &mut State, string: LoopString, index: Register, within: bool,
         exit: ir::Block) -> ir::Value {
         let variables = self.string_variables(string.register);
         let record = self.builder.use_var(variables.record);
@@ -119,6 +120,10 @@ impl Lowering<'_, '_> {
         let short = stage.ne_imm(short, 0u32);
         let units = strings::record_units(&mut stage, record, short);
         let flat = strings::FlatString { units, length, wide };
-        continues(strings::string_char_code_at(&mut stage, flat, index, exit))
+        continues(if within {
+            strings::string_char_code_at_within(&mut stage, flat, index, exit)
+        } else {
+            strings::string_char_code_at(&mut stage, flat, index, exit)
+        })
     }
 }

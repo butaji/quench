@@ -70,9 +70,11 @@ impl Lowering<'_, '_> {
             Builtin::CharCodeAt => {
                 // The row answers NaN past the string's end, which leaves at `exit` before the call
                 // changes anything: the result is an int32 wherever the call completes.
+                // A read whose index the point proves below the string's length takes no bounds test.
+                let within = self.ranges.string_in_bounds(pc);
                 let code = match self.loop_string(pc, Some(receiver)) {
-                    Some(string) => self.held_char_code_at(state, string, argument, exit),
-                    None => self.char_code_at(state, receiver, argument, exit),
+                    Some(string) => self.held_char_code_at(state, string, argument, within, exit),
+                    None => self.char_code_at(state, receiver, argument, within, exit),
                 };
                 let integer = is_int_tagged(&mut self.builder, code);
                 emit_js_guard(&mut self.builder, integer, exit);
@@ -124,12 +126,17 @@ impl Lowering<'_, '_> {
         continues(strings::flat_string(&mut stage, records, string, exit))
     }
 
-    /// `charCodeAt` of the string in `receiver` at the index in `index`: a tagged int32, or NaN.
-    fn char_code_at(&mut self, state: &mut State, receiver: Register, index: Register, exit: ir::Block) -> ir::Value {
+    /// `charCodeAt` of the string in `receiver` at the index in `index`: a tagged int32, or NaN. An
+    /// index `within` proved below the length has no NaN, so the row reads the unit alone.
+    fn char_code_at(&mut self, state: &mut State, receiver: Register, index: Register, within: bool, exit: ir::Block) -> ir::Value {
         let string = self.flat_string(state, receiver, exit);
         let index = self.tagged(state, index);
         let mut stage = super::super::object_slots::emit(&mut self.builder);
-        continues(strings::string_char_code_at(&mut stage, string, index, exit))
+        continues(if within {
+            strings::string_char_code_at_within(&mut stage, string, index, exit)
+        } else {
+            strings::string_char_code_at(&mut stage, string, index, exit)
+        })
     }
 
     /// `charAt` of the string in `receiver` at the index in `index`, the unit's shared string.
