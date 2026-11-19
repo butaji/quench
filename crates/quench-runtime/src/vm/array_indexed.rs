@@ -1,5 +1,6 @@
 use super::*;
 use super::array_view::{Match, Search};
+use crate::staged::array_iteration::{self as step_rules, Effect, Kind};
 
 impl<H: Host> Vm<H> {
     pub(super) fn array_indexed_native(

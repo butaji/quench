@@ -8,37 +8,17 @@ use crate::staged::array_iteration::{self as step_rules, Effect, Kind};
 mod tests;
 
 /// The values an array callback method passes its callback: the element, its index and the
-/// array, after a reducer's accumulator (`Native::is_array_reducer`).
+/// array, after a reducer's accumulator (`step_rules::takes_accumulator`).
 fn array_callback_argument_count(native: Native) -> usize {
     const ELEMENT_INDEX_ARRAY: usize = 3;
-    ELEMENT_INDEX_ARRAY + usize::from(step_rules::takes_accumulator(lane_kind(native)))
-}
-
-/// The step kind of the array callback method an iteration runs. Only the eleven natives
-/// `Native::is_array_callback` names reach a lane iteration.
-#[inline(always)]
-fn lane_kind(native: Native) -> Kind {
-    match native {
-        Native::ArrayForEach => Kind::ForEach,
-        Native::ArrayMap => Kind::Map,
-        Native::ArrayFilter => Kind::Filter,
-        Native::ArrayReduce => Kind::Reduce,
-        Native::ArrayReduceRight => Kind::ReduceRight,
-        Native::ArraySome => Kind::Some,
-        Native::ArrayEvery => Kind::Every,
-        Native::ArrayFind => Kind::Find,
-        Native::ArrayFindIndex => Kind::FindIndex,
-        Native::ArrayFindLast => Kind::FindLast,
-        Native::ArrayFindLastIndex => Kind::FindLastIndex,
-        _ => unreachable!("a lane iteration runs an array callback method"),
-    }
+    ELEMENT_INDEX_ARRAY + usize::from(step_rules::takes_accumulator(Kind::of(native)))
 }
 
 /// The next element of `iteration` (`staged::array_iteration::next_index`), counted as visited;
 /// `None` past its last.
 #[inline(always)]
 fn lane_next_index(iteration: &mut ArrayIteration) -> Option<usize> {
-    let (index, visited) = step_rules::next_index(lane_kind(iteration.native), iteration.visited, iteration.length)?;
+    let (index, visited) = step_rules::next_index(Kind::of(iteration.native), iteration.visited, iteration.length)?;
     iteration.visited = visited;
     Some(index)
 }
@@ -46,7 +26,7 @@ fn lane_next_index(iteration: &mut ArrayIteration) -> Option<usize> {
 /// The method's value once `iteration` visited every element (`staged::array_iteration::completion`).
 #[inline(always)]
 fn lane_completion(iteration: &ArrayIteration) -> Value {
-    step_rules::completion(lane_kind(iteration.native), iteration.result)
+    step_rules::completion(Kind::of(iteration.native), iteration.result)
 }
 
 /// An array callback method's iteration a lane runs (`lane_begin_array_iteration`), one
@@ -78,7 +58,7 @@ impl LaneArrayStep {
 /// `undefined`.
 #[inline(always)]
 fn array_callback_arguments(native: Native, args: &[Value]) -> Option<(Value, Value)> {
-    let this_arg = if step_rules::takes_accumulator(lane_kind(native)) { None } else { args.get(1).copied() };
+    let this_arg = if step_rules::takes_accumulator(Kind::of(native)) { None } else { args.get(1).copied() };
     Some((*args.first()?, this_arg.unwrap_or(Value::UNDEFINED)))
 }
 
@@ -229,7 +209,7 @@ fn lane_array_iteration_setup<H: Host>(
     note_allocation(vm);
     // A reducer without an initial value starts from its first element, which a dense
     // array holds present; anything else leaves the call to the native.
-    if step_rules::takes_accumulator(lane_kind(native)) {
+    if step_rules::takes_accumulator(Kind::of(native)) {
         iteration.result = match args.get(1) {
             Some(initial) => *initial,
             None => lane_dense_element(vm, receiver, lane_next_index(&mut iteration)?)?,
@@ -357,7 +337,7 @@ fn lane_apply_array_step<H: Host>(cx: *mut LaneContext<H>, mapped: Value) -> Opt
 /// does not look the entry up again: the step applied to the callback's `mapped`.
 #[inline(always)]
 fn lane_apply_step_value<H: Host>(vm: &mut Vm<H>, step: &mut LaneArrayStep, mapped: Value) -> Option<Value> {
-    let kind = lane_kind(step.iteration.native);
+    let kind = Kind::of(step.iteration.native);
     let effect = step_rules::apply(kind, step.index, step.element, mapped, &mut step.iteration.kept, || vm.truthy(mapped));
     let applied = match effect {
         Effect::Nothing => None,
@@ -390,7 +370,7 @@ pub(super) fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H
     // SAFETY: the entry stays in place while the step, which reads no lane stack, runs and
     // the callback's window is filled again.
     let step = unsafe { &mut *step };
-    let applied = if step_rules::applies_results(lane_kind(step.iteration.native)) {
+    let applied = if step_rules::applies_results(Kind::of(step.iteration.native)) {
         lane_apply_step_value(vm, step, mapped)
     } else {
         None
@@ -460,7 +440,7 @@ unsafe fn lane_enter_array_step<H: Host, const AGAIN: bool>(
 ) -> Ip {
     let (index, receiver) = (Value::length(index), iteration.receiver);
     unsafe {
-        if step_rules::takes_accumulator(lane_kind(iteration.native)) {
+        if step_rules::takes_accumulator(Kind::of(iteration.native)) {
             let values = [iteration.result, element, index, receiver];
             if AGAIN { lane_reenter_prepared_values(cx, entry, values, window) } else { lane_enter_prepared_values(cx, entry, values, window) }
         } else {

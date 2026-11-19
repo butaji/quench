@@ -59,6 +59,13 @@ pub(crate) fn visits_backwards(kind: Kind) -> bool {
     matches!(kind, Kind::FindLast | Kind::FindLastIndex | Kind::ReduceRight)
 }
 
+/// Whether the kind reads every index by [[Get]], holes included, with no HasProperty first: the
+/// finds (`find`, `findIndex`, `findLast`, `findLastIndex`).
+#[inline(always)]
+pub(crate) fn visits_holes(kind: Kind) -> bool {
+    matches!(kind, Kind::Find | Kind::FindIndex | Kind::FindLast | Kind::FindLastIndex)
+}
+
 /// Whether the kind's callback passes a reducer's accumulator first.
 #[inline(always)]
 pub(crate) fn takes_accumulator(kind: Kind) -> bool {
