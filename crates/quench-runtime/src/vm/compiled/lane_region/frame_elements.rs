@@ -25,6 +25,25 @@ pub(super) enum Held {
     Typed(TypedView<ir::Value>),
 }
 
+/// The barrier gate of a store of the reference `value` into the direct array `base`, read from the
+/// dispatch `payload`: continues where the array's record mark bit is clear
+/// (`staged::barrier::unlogged_store` over the array records' mark list, the test `Heap::store_logs`
+/// makes), and leaves at `miss` for a base that is no direct array or a marked record. An immediate
+/// `value` passes the test inline, as `unlogged_store` decides it.
+pub(super) fn store_gate(stage: &mut Emit<'_, '_>, payload: ir::Value, base: ir::Value, value: ir::Value,
+    miss: ir::Block) -> Option<()> {
+    let direct = crate::staged::value::is_direct_array(stage, base);
+    stage.guard(direct, miss)?;
+    let record = stage.and_imm(base, u64::from(u32::MAX));
+    let list = MarkList {
+        blocks: std::mem::offset_of!(JsStepDispatch, head.array_mark_blocks),
+        count: std::mem::offset_of!(JsStepDispatch, head.array_mark_block_count),
+    };
+    unlogged_store(stage, (regions::dispatch(), MemFlagsData::trusted()), payload, list, (record, value),
+        |stage, condition| emit_js_guard(stage.builder, condition, miss));
+    Some(())
+}
+
 /// The VM's element read of the tagged `base` and `key` (`JsStepDispatch::element_get`): the
 /// element the array and its prototypes give a hole or an index past them; the sentinel it answers
 /// where the VM's own step must (`Vm::absent_array_element` declines) leaves at `miss`.
@@ -58,16 +77,7 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     /// the next store of the loop passes here without a call.
     fn array_store_gate(&mut self, stage: &mut Emit<'b, 'c>, base: ir::Value, value: ir::Value, miss: ir::Block)
         -> Option<()> {
-        let direct = crate::staged::value::is_direct_array(stage, base);
-        stage.guard(direct, miss)?;
-        let record = stage.and_imm(base, u64::from(u32::MAX));
-        let list = MarkList {
-            blocks: std::mem::offset_of!(JsStepDispatch, head.array_mark_blocks),
-            count: std::mem::offset_of!(JsStepDispatch, head.array_mark_block_count),
-        };
-        unlogged_store(stage, (regions::dispatch(), MemFlagsData::trusted()), self.payload, list, (record, value),
-            |stage, condition| emit_js_guard(stage.builder, condition, miss));
-        Some(())
+        store_gate(stage, self.payload, base, value, miss)
     }
 
     fn array_records(&mut self, stage: &mut Emit<'b, 'c>) -> Option<ir::Value> {

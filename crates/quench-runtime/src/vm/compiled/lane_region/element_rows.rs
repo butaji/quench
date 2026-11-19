@@ -56,7 +56,10 @@ impl Lowering<'_, '_> {
         self.hole_leaves = array.is_some() && !self.generic.contains(&pc);
         let value = match (array, key.register_index()) {
             // A base no loop array holds, read by a register key: a string's unit (`string_or_row`).
-            (None, Some(index)) => self.string_or_row(state, (base, index, key), exit),
+            (None, Some(index)) => {
+                let string_within = self.ranges.string_in_bounds(pc);
+                self.string_or_row(state, (base, index, key), string_within, exit)
+            }
             _ => {
                 let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key })
                     else { unreachable!("an element read yields a value or leaves at its miss edge") };
@@ -81,7 +84,7 @@ impl Lowering<'_, '_> {
     /// not read (a rope, a wide unit, a unit with no string yet, an index outside the string)
     /// leaves at `exit`, as the row leaves for a value that is no array.
     fn string_or_row(&mut self, state: &mut State, (base, index, key): (Register, Register, crate::bytecode::Operand),
-        exit: ir::Block) -> ir::Value {
+        within: bool, exit: ir::Block) -> ir::Value {
         let bits = self.tagged(state, base);
         let is_string = { let mut stage = super::super::object_slots::emit(&mut self.builder); crate::staged::value::is_direct_string(&mut stage, bits) };
         let (string, row, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
@@ -93,7 +96,12 @@ impl Lowering<'_, '_> {
         let character = {
             let mut stage = super::super::object_slots::emit(&mut self.builder);
             let units = crate::staged::strings::flat_string(&mut stage, records, bits, exit).expect("the emit stage continues past its guards");
-            crate::staged::strings::string_char_at(&mut stage, units, key_word, table, exit).expect("the emit stage continues past its guards")
+            let row = if within {
+                crate::staged::strings::string_char_at_within(&mut stage, units, key_word, table, exit)
+            } else {
+                crate::staged::strings::string_char_at(&mut stage, units, key_word, table, exit)
+            };
+            row.expect("the emit stage continues past its guards")
         };
         let joined = self.builder.append_block_param(join, ir::types::I64);
         self.goto(join, &[character]);
@@ -163,14 +171,20 @@ impl Lowering<'_, '_> {
         }
         let exit = self.guard_exit(state, pc as u32);
         let number = state.values[usize::from(value)].value.ty.is_subtype(Type::NUMBER);
-        let array = self.loop_array(pc, Some(base)).filter(|array| number && array.writable);
+        // A reference is stored through a hoisted dense view too, past its barrier gate (`store_gate`);
+        // a typed view takes a Number alone.
+        let array = self.loop_array(pc, Some(base))
+            .filter(|array| array.writable && (number || array.views == ElementViews::Dense));
         match array {
             Some(array) if array.views == ElementViews::Dense && self.left_here =>
-                self.dense_element_write(state, array, pc as u32, instruction, exit),
+                self.dense_element_write(state, array, pc as u32, instruction, number, exit),
             held => {
                 self.held_view = held.map(|array| self.held_array(array, (false, self.ranges.in_bounds(pc))));
-                self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementWrite { value, base, key, strict: instruction.boolean_flag().unwrap_or(false) });
-                self.reload_dense_arrays(pc);
+                self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementWrite { value, base, key });
+                // A store through a held view leaves where it misses (`index_set_host`) and calls no
+                // helper, so no backing moved and no view is read again. Only the general row may
+                // call the VM's store, which may move any backing.
+                if held.is_none() { self.reload_dense_arrays(pc); }
             }
         }
         state.proofs.arrays.clear();

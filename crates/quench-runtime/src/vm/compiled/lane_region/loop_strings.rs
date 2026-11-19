@@ -72,21 +72,43 @@ impl Lowering<'_, '_> {
         })
     }
 
-    /// Prove the flat strings the loop at `header` holds on its entering edge (`loop_strings`): a
-    /// register that is no flat string, or a length past int32, leaves at the header before the loop runs.
+    /// Prove the flat strings the loop at `header` holds on its entering edge (`loop_strings`). A
+    /// register holding a rope takes its flat form from the VM (`LaneHelper::FlattenString`): the
+    /// same string in a record that holds its units, which the register then holds. A register that
+    /// is no string, whose text has no record form, or a length past int32 leaves at the header
+    /// before the loop runs.
     pub(super) fn hoist_strings(&mut self, state: &mut State, header: usize) {
         let held: Vec<LoopString> = self.loop_strings.iter().copied().filter(|string| string.header == header).collect();
         if held.is_empty() { return; }
         let exit = self.guard_exit(state, header as u32);
         for string in held {
             let bits = self.tagged(state, string.register);
+            let ready = self.builder.create_block();
+            let parts = [(); 3].map(|()| self.builder.append_block_param(ready, types::I64));
+            let rope = cold_block(&mut self.builder);
             let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.string_record_base));
-            let (record, short, wide, length) = {
+            let flat = self.flat_record_words(records, bits, rope);
+            self.goto(ready, &flat);
+            // A rope: the VM's flat copy of it, a new record the register holds from here on. The
+            // helper allocates and so may move the bases the lowering holds (`allocated`); a
+            // record it cannot make flat leaves at the header.
+            self.builder.switch_to_block(rope);
+            self.builder.seal_block(rope);
+            let flattened = self.helper_call(LaneHelper::FlattenString, &[self.payload, bits]);
+            let made = self.raw_compare_imm(Relation::NotEqual, flattened, Value::DELETED.to_bits() as i64);
+            emit_js_guard(&mut self.builder, made, exit);
+            self.allocated(state);
+            self.define(state, string.register, flattened, RegisterFact::definition(Type::language(crate::ValueType::String), Representation::Tagged));
+            let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.string_record_base));
+            let flat = self.flat_record_words(records, flattened, exit);
+            self.goto(ready, &flat);
+            self.builder.switch_to_block(ready);
+            self.builder.seal_block(ready);
+            let [record, short, wide] = parts;
+            let length = {
                 let mut stage = super::super::object_slots::emit(&mut self.builder);
-                let (record, short, wide) = continues(string_length::flat_record(&mut stage, records, bits, exit));
-                let length = strings::record_length(&mut stage, record, short);
-                let (one, zero) = (stage.constant(1), stage.constant(0));
-                (record, stage.select(short, one, zero), stage.select(wide, one, zero), length)
+                let short = stage.ne_imm(short, 0u32);
+                strings::record_length(&mut stage, record, short)
             };
             let fits = self.raw_compare_imm(Relation::UnsignedLessEqual, length, i64::from(i32::MAX));
             emit_js_guard(&mut self.builder, fits, exit);
@@ -98,6 +120,16 @@ impl Lowering<'_, '_> {
         }
     }
 
+    /// The record, form and width words of the flat string `value` names among the string records at
+    /// `records` (`string_length::flat_record`), the form and width as words of 0 or 1; `value` that
+    /// is no flat string leaves at `miss`.
+    fn flat_record_words(&mut self, records: ir::Value, value: ir::Value, miss: ir::Block) -> [ir::Value; 3] {
+        let mut stage = super::super::object_slots::emit(&mut self.builder);
+        let (record, short, wide) = continues(string_length::flat_record(&mut stage, records, value, miss));
+        let (one, zero) = (stage.constant(1), stage.constant(0));
+        [record, stage.select(short, one, zero), stage.select(wide, one, zero)]
+    }
+
     /// The held length of `string` as an int32: a flat string's, proved on the loop's entry.
     pub(super) fn held_length(&mut self, string: LoopString) -> ir::Value {
         let variables = self.string_variables(string.register);
@@ -106,8 +138,9 @@ impl Lowering<'_, '_> {
     }
 
     /// `charCodeAt` at the index in `index` of the held string `string`, as its tagged row: the units
-    /// are read from the held record at the call, and the row's miss leaves at `exit`.
-    pub(super) fn held_char_code_at(&mut self, state: &mut State, string: LoopString, index: Register,
+    /// are read from the held record at the call, and the row's miss leaves at `exit`. `within`: the
+    /// index is proved below the length, so the row takes no bounds test.
+    pub(super) fn held_char_code_at(&mut self, state: &mut State, string: LoopString, index: Register, within: bool,
         exit: ir::Block) -> ir::Value {
         let variables = self.string_variables(string.register);
         let record = self.builder.use_var(variables.record);
@@ -119,6 +152,10 @@ impl Lowering<'_, '_> {
         let short = stage.ne_imm(short, 0u32);
         let units = strings::record_units(&mut stage, record, short);
         let flat = strings::FlatString { units, length, wide };
-        continues(strings::string_char_code_at(&mut stage, flat, index, exit))
+        continues(if within {
+            strings::string_char_code_at_within(&mut stage, flat, index, exit)
+        } else {
+            strings::string_char_code_at(&mut stage, flat, index, exit)
+        })
     }
 }

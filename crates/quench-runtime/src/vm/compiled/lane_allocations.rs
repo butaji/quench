@@ -238,6 +238,23 @@ pub(super) unsafe extern "C" fn new_concat_in_lane<H: Host>(vm: u64, residual: u
     value.to_bits()
 }
 
+/// A rope's flat form as a new string value, for a loop that holds the string's flat facts
+/// (`Lowering::hoist_strings`): the same string in a record that holds its units flat, which the
+/// loop's entry proves. `DELETED` where the value is no string, its text has no record form a row
+/// reads (a wide rope's units are held beside its record), or a collection is due; nothing has
+/// changed then, so the loop's entry leaves.
+pub(super) unsafe extern "C" fn flatten_string_in_lane<H: Host>(vm: u64, _residual: u64, payload: u64, string: u64) -> u64 {
+    // SAFETY: as `concat_pair_in_lane`; the flattening allocates a record and runs no guest code.
+    let (vm, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &mut *(payload as *mut JsStepDispatch)) };
+    if vm.heap.should_collect() { return Value::DELETED.to_bits(); }
+    let Some(flat) = vm.heap.string(Value::from_bits(string)).map(|text| text.unkept_flat()).filter(|flat| flat.holds_record_form())
+        else { return Value::DELETED.to_bits() };
+    let value = vm.heap.alloc_string(flat);
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    value.to_bits()
+}
+
 /// A lane body's `+` of two operands that become strings without guest code (`Vm::primitive_concatenation`,
 /// the interpreter's rule for `+` once a string operand is present): the joined string, which
 /// appends in place where the left operand is the accumulator its buffer ends at. `DELETED` where

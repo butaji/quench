@@ -4241,25 +4241,38 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// A Number's store through a hoisted dense array view at a site that left (`left_here`): in place,
-    /// else appended inline (`dense_append`), else the VM's store. Any other hoisted store is its row.
+    /// A store through a hoisted dense array view at a site that left (`left_here`): a Number in place,
+    /// else appended inline (`dense_append`), else the VM's store. A reference first passes the barrier
+    /// gate (`frame_elements::store_gate`); a gate miss (a marked or non-direct base) takes the VM's
+    /// store directly, and the in-place and appended paths only run past the gate. The VM's store,
+    /// which may move any backing, is followed by the reload of every view around `pc`.
     fn dense_element_write(&mut self, state: &mut State, array: LoopArray, pc: u32, instruction: WideInstruction,
-        exit: ir::Block) {
+        number: bool, exit: ir::Block) {
         let index = self.int(state, instruction.register_c(), exit);
         let (values, length) = self.hoisted_view(array);
         let in_bounds = self.ranges.in_bounds(pc as usize);
         let value = self.tagged(state, instruction.register_a());
         let base = self.tagged(state, instruction.register_b());
         let key = self.tagged(state, instruction.register_c());
-        let (slow, done) = (self.builder.create_block(), self.builder.create_block());
+        let (slow, helper, done) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
         self.builder.set_cold_block(slow);
+        self.builder.set_cold_block(helper);
+        if !number {
+            let mut stage = super::object_slots::emit(&mut self.builder);
+            frame_elements::store_gate(&mut stage, self.payload, base, value, helper)
+                .expect("the emit stage continues past its guards");
+        }
         let view = super::DenseArrayView { values, length, writable: true, uncounted: true, double: None };
-        // The view's backing counts no values (`hoist_arrays`): the store writes the element.
+        // The view's backing counts no values (`hoist_arrays`, reload): the store writes the element,
+        // and the unknown count stays unknown under the store of a reference as under a Number.
         self.index_write(state, index, value, view, slow, in_bounds);
         self.goto(done, &[]);
         self.builder.switch_to_block(slow);
         self.builder.seal_block(slow);
         self.dense_append(array, pc, index, value, base, done);
+        self.goto(helper, &[]);
+        self.builder.switch_to_block(helper);
+        self.builder.seal_block(helper);
         let proof = super::EmitProof::IndexSetHelper { miss: exit };
         self.step(state, frame::Edges::ValueGuarded { miss: exit },
             crate::staged::Operation::IndexSetHelper { base, key, value, proof });

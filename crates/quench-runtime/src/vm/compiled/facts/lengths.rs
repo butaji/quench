@@ -316,6 +316,20 @@ impl Point {
         self.types.get(usize::from(register)).copied().and_then(Type::int_range)
     }
 
+    /// Whether the index register `index` is below the length of the string `receiver` holds here,
+    /// by the relations a string's own `length` read gives (`relate_read`: `length_of`, `atmost`) and
+    /// a loop's bound keeps (`bound_below`). A string's length never changes, and a relation dies with
+    /// either register's write, so a read of `receiver`'s units at `index` needs no bounds test. The
+    /// caller proves `index` non-negative.
+    pub(in crate::vm::compiled) fn string_index_proven(&self, receiver: Register, index: Register) -> bool {
+        let related = |table: &[Option<Register>], register: Register| table.get(usize::from(register)).copied().flatten();
+        match (related(&self.relations.below, index), related(&self.relations.under, index)) {
+            (Some(held), _) if held == receiver => true,
+            (_, Some(bound)) => related(&self.relations.atmost, bound) == Some(receiver),
+            _ => false,
+        }
+    }
+
     /// What proves the index of the element access at `pc` within `0..length` of its array: the
     /// access reads or writes a hoisted view and its index is non-negative, and below the array's
     /// length (`Proven`) or below another register's value (`Versioned`).
