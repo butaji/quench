@@ -431,7 +431,7 @@ pub(crate) fn step_keyed<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fra
 #[inline(always)]
 pub(crate) fn step_wasm_float<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
     match operation {
-        Operation::WasmFloat(operation) => super::wasm_float_row::step(stage, frame, operation),
+        Operation::WasmFloat(operation) => super::wasm_float::step(stage, frame, operation),
         _ => Step::Unresolved,
     }
 }
@@ -459,7 +459,7 @@ pub(crate) fn step_wasm_access<F: Frame<Concrete>>(stage: &mut Concrete, frame: 
 #[inline(always)]
 pub(crate) fn step_wasm_vector<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
     match operation {
-        Operation::WasmVector(operation) => super::wasm_vector_row::step(stage, frame, operation),
+        Operation::WasmVector(operation) => super::wasm_simd::step(stage, frame, operation),
         _ => Step::Unresolved,
     }
 }

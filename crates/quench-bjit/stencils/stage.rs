@@ -159,6 +159,8 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn or(&mut self, a: u64, b: u64) -> u64 { a | b }
     #[inline(always)]
+    fn and(&mut self, a: u64, b: u64) -> u64 { a & b }
+    #[inline(always)]
     #[inline(always)]
     fn add_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { a.wrapping_add(imm.into()) }
     #[inline(always)]

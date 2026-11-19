@@ -3730,21 +3730,6 @@ struct JsStepDispatch {
     /// its word is the encoded link of `Array.prototype` while the held index-free chain proof covers
     /// its chain, else zero. Read at every use, so never stale.
     array_chain_index_free_address: usize,
-    /// The object space's allocation cursor (`Heap::native_object_cursor`), which an inline
-    /// allocation bumps (`NATIVE_RECORD_CURSOR_LAYOUT`); zero where absent. Refreshed with the bases.
-    object_cursor: usize,
-    /// The record words of an empty object made for the realm's prototype `empty_object_proto`
-    /// (`capture_empty_object`): an inline allocation stores them into the record it bumps.
-    /// `empty_object_layout` zero: no template yet, and the allocation is made by its helper.
-    empty_object_layout: u64,
-    empty_object_payload: u64,
-    empty_object_proto: u64,
-    /// The array space's allocation cursor and the record words of an empty, zero-length array made
-    /// for `empty_array_proto` (`capture_empty_array`), as the object's are.
-    array_cursor: usize,
-    empty_array_layout: u64,
-    empty_array_payload: u64,
-    empty_array_proto: u64,
     outcome: Option<JsNativeStep>,
     /// Past every word generated code reads: a feature's field leaves their offsets as they are.
     #[cfg(feature = "native-execution")]

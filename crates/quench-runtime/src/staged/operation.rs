@@ -236,9 +236,6 @@ pub(crate) enum Operation<W, P> {
     LoadCapture { destination: Register, depth: u16, slot: u16, root: bool },
     /// Store `source` to the capture `slot`, `depth` scopes out (`Frame::store_capture`).
     StoreCapture { source: Register, depth: u16, slot: u16 },
-    /// A Wasm float, float conversion or select (`wasm_float`); the frame's Wasm words decide it, and
-    /// a trap or an operand the frame does not hold leaves at the miss edge.
-    WasmFloat(wasm_float_row::WasmFloatOperation),
     /// `left` compared with `right` (`Comparison`), jumping to the target when the comparison
     /// holds, or fails where `negate` (`JumpBinaryFalse`); otherwise continue after it.
     CompareJump { comparison: Comparison, left: Operand, right: Operand, negate: bool },
@@ -256,7 +253,8 @@ pub(crate) enum Operation<W, P> {
     /// A Wasm direct load or store of the function's memory (`wasm_access`).
     WasmAccess(wasm_access::WasmAccessOperation),
     /// A Wasm SIMD operator or byte shuffle on the lane's vector registers (`wasm_simd`).
-    WasmVector(wasm_vector_row::VectorOperation),
+    #[cfg(not(stencil_build))]
+    WasmVector(wasm_simd::VectorOperation),
     /// The tier prologue of a frameless activation of `function` with `parameters` parameters
     /// (`TierPrologue`, a lane's synthetic record): the JavaScript tier enters it, and the activation
     /// continues where that completes it (`prologue::PrologueFrame::tier_prologue`).
@@ -523,12 +521,6 @@ impl<W, P> Operation<W, P> {
     #[inline(always)]
     fn number_unary(destination: Register, source: Register, operation: crate::vm::operations::NumberUnary) -> Self {
         Self::Number(NumberOperation::Unary { destination, source: Operand::register(source), operation, domain: Domain::Int32 })
-    }
-
-    /// The Wasm integer operations of `decode` (`Decoder::WasmInt`), from a record's wide fields.
-    #[inline(always)]
-    pub(crate) fn decode_wasm_int(instruction: WideInstruction) -> Option<Self> {
-        wasm_int::decode(instruction).map(Self::WasmInt)
     }
 
     /// The local-slot operations of `decode`.
