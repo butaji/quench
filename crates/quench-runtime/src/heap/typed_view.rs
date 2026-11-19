@@ -24,20 +24,23 @@ const _: () = assert!(TypedArrayKind::COUNT < NO_KIND as usize);
 #[repr(C)]
 #[derive(Debug)]
 pub(crate) struct NativeView {
-    /// The first element's address.
-    data: usize,
-    /// `buffer_relocations` when `data` and `length` were published.
-    stamp: u64,
-    /// The element count, below 2^31 so an int32 index below zero is no index.
-    length: u32,
-    /// The `TypedArrayKind` discriminant, or `NO_KIND`.
-    kind: u8,
-    detached: u8,
-    /// Whether the buffer's bytes belonged to this view's buffer alone when published
-    /// (`BufferBytes::mut_in_lane`), so a store through `data` writes no other buffer.
-    unshared: u8,
-    /// The table entry that holds this record's address, null while it has none.
-    home: *mut usize,
+    /// What native code reads in place (`staged::record_heads::NativeViewHead`).
+    head: NativeViewHead,
+}
+
+impl std::ops::Deref for NativeView {
+    type Target = NativeViewHead;
+    #[inline(always)]
+    fn deref(&self) -> &NativeViewHead {
+        &self.head
+    }
+}
+
+impl std::ops::DerefMut for NativeView {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut NativeViewHead {
+        &mut self.head
+    }
 }
 
 impl Default for NativeView {
