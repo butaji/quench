@@ -42,6 +42,13 @@ pub(in crate::vm) struct OsrFacts {
 }
 
 impl OsrFacts {
+    /// Releases the capacity its vectors hold past their length, before the region is published.
+    pub(in crate::vm) fn trim(&mut self) {
+        self.shape_dependencies.shrink_to_fit();
+        self.departure_shapes.shrink_to_fit();
+        self.slot_dependencies.shrink_to_fit();
+        self.calls.trim();
+    }
 
     /// Subscribes `code` to the facts; whether all hold. A receiver shape is guarded at each
     /// field use, so only a holder shape's departure discards it; a receiver shape ID still

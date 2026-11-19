@@ -101,6 +101,7 @@ impl ProgramStore {
         method_atoms: &mut crate::code_dependencies::CodeReaders) -> Option<Rc<PublishedLaneMethod>> {
         let calls = !method.inlined.is_empty() || !method.direct.is_empty();
         method.reserve_scratch();
+        method.trim_published();
         let invalidation = method.invalidation.clone();
         let roots = std::mem::take(&mut method.stable.roots);
         let published = Rc::new(PublishedLaneMethod::with_invalidation(method, invalidation));
@@ -121,8 +122,10 @@ impl ProgramStore {
     /// Publishes a loop region's code under the dependencies its code took (`OsrFacts::subscribe`): a
     /// change of one retires it and sets its invalidation word, and a collection that frees a callee
     /// it names does (`NativeCallBinding::Region`).
-    pub(in crate::vm) fn publish_region(&self, region: CompiledOsrRegion, heap: &mut crate::heap::Heap,
+    pub(in crate::vm) fn publish_region(&self, mut region: CompiledOsrRegion, heap: &mut crate::heap::Heap,
         method_atoms: &mut crate::code_dependencies::CodeReaders) -> Rc<PublishedCode<CompiledOsrRegion>> {
+        region.facts.trim();
+        region.calls.trim();
         let invalidation = region.calls.invalidation.clone();
         let published = Rc::new(PublishedCode::with_invalidation(region, invalidation));
         let code: Rc<dyn crate::code_dependencies::DependentCode> = published.clone();

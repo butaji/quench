@@ -3825,6 +3825,14 @@ impl LaneMethod {
     pub(super) fn reserve_scratch(&self) {
         entry_cell::reserve_lane_scratch(self.scratch_width);
     }
+
+    /// Releases the capacity its vectors hold past their length, as its publication keeps them for
+    /// as long as the body is published (`ProgramStore::publish_lane_method`).
+    pub(super) fn trim_published(&mut self) {
+        self.dependencies.trim();
+        self.inlined.shrink_to_fit();
+        self._records.shrink_to_fit();
+    }
 }
 
 /// Publication owns future entry; active runs and direct callers own code leases.

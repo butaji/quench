@@ -41,6 +41,14 @@ impl LaneDependencies {
             && self.subscribe_callees(code, heap, method_atoms)
     }
 
+    /// Releases the capacity a publication's vectors hold past their length: they are built by
+    /// `collect` and `dedup`, and kept for as long as the body is, its callers' too.
+    pub(in crate::vm) fn trim(&mut self) {
+        self.slots.shrink_to_fit();
+        self.departure_shapes.shrink_to_fit();
+        self.callees.shrink_to_fit();
+    }
+
     /// The programs whose root constants the code folds, its own and its direct callees' and theirs
     /// in turn (`StableFacts::root_program`), each once: `ProgramStore::subscribe_root_constants`
     /// subscribes the code to them.
