@@ -130,7 +130,7 @@ fn call_protocol_matches_the_runtime() {
     use compiled::entry_cell::{EntryCell, LANE_BODY_NOT_ENTERED};
     #[allow(dead_code)]
     mod stencil_layout {
-        include!("../../../../../quench-bjit/stencils/layout.rs");
+        include!("../../../../../../quench-bjit/stencils/layout.rs");
     }
     use stencil_layout as mirror;
     assert_eq!(
