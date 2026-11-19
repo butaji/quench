@@ -4,7 +4,7 @@
 
 use crate::layout::{JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_VM, PROPERTY_BUFFER_BASE};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver};
-use crate::words::{hole, hole64, is_int, FIRST_TAG, HOLE_FOURTH};
+use crate::words::{hole, hole64, is_int, FIRST_TAG, HOLE_FOURTH, LAST_HOLE};
 use crate::layout::words::TAG_SHIFT;
 use crate::places::tagged_place;
 use crate::stage::StencilStage;
@@ -41,7 +41,9 @@ fn site_row<const D: u8, const CHAIN: bool>(s: S, payload: usize, object: u64) -
 /// A store of the value operand (hole 1) through the site's cache entry (hole 2) into the object
 /// `object` names (`entry::site_store`), through the store gate where `GATED`. An ungated store
 /// takes a value the plan proved immediate and of the slot's type, or a frame word the slot's int32
-/// type admits once it is an int32 (`StoreArm::holds`): a leave writes nothing.
+/// type admits once it is an int32 (`StoreArm::holds`): a leave writes nothing. That proof is of
+/// the slot of one shape, hole 4 (`Decoded::slot_shape`); the entry is the site's live one, which
+/// may since name another shape, so an ungated store leaves for a receiver of any other shape.
 #[inline(always)]
 fn site_store_row<const A: u8, const GATED: bool>(s: S, payload: usize, object: u64) -> Out {
     let value = tagged_place::<A, HOLE_A>(&s);
@@ -54,7 +56,8 @@ fn site_store_row<const A: u8, const GATED: bool>(s: S, payload: usize, object: 
     let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
     let tables = (word_at(payload, JS_STEP_FIELD_ENTRIES), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
     let offset = stage_site(&mut stage);
-    need!(s, entry::site_store(&mut stage, tables, object, offset, (value, GATED), ()));
+    let proven = if GATED { None } else { Some(hole::<LAST_HOLE>() as u64) };
+    need!(s, entry::site_store(&mut stage, tables, object, offset, (value, GATED, proven), ()));
     Out::Next(s)
 }
 

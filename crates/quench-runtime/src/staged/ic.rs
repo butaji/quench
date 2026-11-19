@@ -408,7 +408,7 @@ pub(crate) unsafe fn concrete_site_own_chain(property_values: *const crate::Valu
 #[cfg(not(stencil_build))]
 pub(crate) unsafe fn concrete_site_store(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64, value: crate::Value) -> bool {
     let mut stage = super::Concrete::storing(heap);
-    super::entry::site_store(&mut stage, (entries, records), object.to_bits(), offset, (value.to_bits(), true), ()).is_some()
+    super::entry::site_store(&mut stage, (entries, records), object.to_bits(), offset, (value.to_bits(), true, None), ()).is_some()
 }
 
 #[cfg(test)]

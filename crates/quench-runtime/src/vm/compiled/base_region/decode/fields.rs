@@ -105,15 +105,19 @@ pub(super) fn field_store_row(known: Known, instruction: WideInstruction) -> Opt
     let value = Some(Source::Register(instruction.register_a()));
     let site = instruction.cache_site_index();
     // A store of a Number into a slot that holds Numbers tries its inline-cache row first (`Decoded::ic`).
-    let ic = (heap == Heap::SiteStore).then(|| own_flat_load(known, site).filter(|load| stores_number(load.ty)).map(ic_hole)).flatten();
-    Some(Decoded { base, hole: entry_offset(site), atom: Some(atom), slot: own_slot_type(known, site), ic, ..Decoded::heap(heap, None, value, None) })
+    // A raw-double slot takes no tagged write: neither row writes its binary64 word, so it stores through the gate.
+    let ic = (heap == Heap::SiteStore).then(|| own_flat_load(known, site).filter(|load| !load.raw_double && stores_number(load.ty)).map(ic_hole)).flatten();
+    let slot = own_slot_load(known, site).filter(|load| !load.raw_double);
+    Some(Decoded { base, hole: entry_offset(site), atom: Some(atom), slot: slot.map(|load| load.ty), slot_shape: slot.map(|load| load.shape), ic, ..Decoded::heap(heap, None, value, None) })
 }
 
 /// Whether an inline-cache store row may write a Number into a slot of observed type `ty`: the
 /// slot holds every Number, so the write widens nothing, or it holds Numbers only, where an int32
 /// slot takes int32 words alone (`Heap::IcSet { int }`).
 fn stores_number(ty: crate::typed_ir::Type) -> bool {
-    crate::typed_ir::Type::NUMBER.is_subtype(ty) || ty.is_subtype(crate::typed_ir::Type::NUMBER)
+    // A slot that holds no int32 (no live value yet) admits none: the int32 row's write would widen it.
+    crate::typed_ir::Type::INT32.is_subtype(ty)
+        && (crate::typed_ir::Type::NUMBER.is_subtype(ty) || ty.is_subtype(crate::typed_ir::Type::NUMBER))
 }
 
 /// The one own load cache `site` proves: what an
@@ -142,8 +146,13 @@ fn ic_hole(load: crate::vm::compiled::object_slots::NativeFieldLoad) -> u64 {
 
 /// The observed type of the own slot cache `site` stores to, where it proves exactly one own load.
 fn own_slot_type(known: Known, site: u16) -> Option<crate::typed_ir::Type> {
+    own_slot_load(known, site).map(|load| load.ty)
+}
+
+/// The one own load cache `site` proves, whose shape and slot type a store's admission stands on.
+fn own_slot_load(known: Known, site: u16) -> Option<crate::vm::compiled::object_slots::NativeFieldLoad> {
     let [load] = known.reads?(site)[..] else { return None };
-    (load.holder.is_none() && load.valid()).then_some(load.ty)
+    (load.holder.is_none() && load.valid()).then_some(load)
 }
 
 /// Whether `instruction` is a field store a row makes (`field_store_row`).
