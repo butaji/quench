@@ -209,18 +209,30 @@ impl Plan {
     }
 }
 
-pub(crate) fn run(f: &mut Function) -> bool {
+/// Unswitches the function's loops on their polls. `analyses` are the context's CFG, dominator
+/// tree and loops of `f` as it is: the first round reads them, and only a round after a change
+/// computes its own (the context had just computed them, and most functions change nothing).
+pub(crate) fn run(f: &mut Function, analyses: (&ControlFlowGraph, &DominatorTree, &LoopAnalysis)) -> bool {
     let mut changed = false;
     loop {
-        let cfg = ControlFlowGraph::with_function(f);
-        let dom = DominatorTree::with_function(f, &cfg);
-        let mut loops = LoopAnalysis::new(); loops.compute(f, &cfg, &dom);
+        let owned;
+        let (cfg, dom, loops) = if changed {
+            let cfg = ControlFlowGraph::with_function(f);
+            let dom = DominatorTree::with_function(f, &cfg);
+            let mut loops = LoopAnalysis::new(); loops.compute(f, &cfg, &dom);
+            owned = (cfg, dom, loops);
+            (&owned.0, &owned.1, &owned.2)
+        } else {
+            analyses
+        };
+        // A function without loops has nothing to unswitch: no use set to gather.
+        if loops.loops().next().is_none() { break; }
         let mut used = CompoundBitSet::with_capacity(f.dfg.num_values());
         for block in f.layout.blocks() { for inst in f.layout.block_insts(block) {
             for value in f.dfg.inst_values(inst) { used.insert(f.dfg.resolve_aliases(value).index()); }
         }}
-        let Some(plan) = loops.loops().find_map(|lp| Plan::find(f, &cfg, &dom, &loops, lp, Choice::Poll(&used))) else { break; };
-        plan.apply(f, &cfg, &dom); changed = true;
+        let Some(plan) = loops.loops().find_map(|lp| Plan::find(f, cfg, dom, loops, lp, Choice::Poll(&used))) else { break; };
+        plan.apply(f, cfg, dom); changed = true;
     }
     // Every gate takes its proved arm first; then each proof no remaining instruction reads goes,
     // the uses gathered once per round rather than once per proof. A removed proof can leave
@@ -277,11 +289,9 @@ pub(crate) fn run(f: &mut Function) -> bool {
 /// Commit loop-carried memory mirrors at the sole exit when the loop has no
 /// observer, trap, or poll. Polling versions deliberately remain write-through:
 /// their fault landing can bypass generated exit blocks.
-pub(crate) fn sink_stores(f: &mut Function) -> bool {
+/// Sinks private stores out of loops; `analyses` are the context's, current for `f`.
+pub(crate) fn sink_stores(f: &mut Function, (cfg, dom, loops): (&ControlFlowGraph, &DominatorTree, &LoopAnalysis)) -> bool {
     if f.private_stores.is_empty() || f.dfg.values_labels.as_ref().is_some_and(|labels| !labels.is_empty()) { return false; }
-    let cfg = ControlFlowGraph::with_function(f);
-    let dom = DominatorTree::with_function(f, &cfg);
-    let mut loops = LoopAnalysis::new(); loops.compute(f, &cfg, &dom);
     let mut changed = false;
     let mut private_stores = CompoundBitSet::<usize>::with_capacity(f.dfg.num_insts());
     for &inst in &f.private_stores { private_stores.insert(inst.index()); }

@@ -404,7 +404,7 @@ impl Context {
             self.compute_domtree();
             self.compute_loop_analysis();
         }
-        if crate::poll_unswitch::run(&mut self.func) {
+        if crate::poll_unswitch::run(&mut self.func, (&self.cfg, &self.domtree, &self.loop_analysis)) {
             self.compute_cfg();
             self.compute_domtree();
             self.eliminate_unreachable_code(fisa)?;
@@ -423,7 +423,7 @@ impl Context {
             }
         }
 
-        if crate::poll_unswitch::sink_stores(&mut self.func) {
+        if crate::poll_unswitch::sink_stores(&mut self.func, (&self.cfg, &self.domtree, &self.loop_analysis)) {
             self.compute_cfg();
             self.compute_domtree();
             self.compute_loop_analysis();
