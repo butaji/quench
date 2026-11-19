@@ -10,6 +10,7 @@
 #include <setjmp.h>
 #include "wsl-synth.h"
 #include "wsl-intrinsics.h"
+#include "wsl-strings.h"
 
 /* ---- classification ---- */
 /* the four GenericLiteralType classes and NullType (a Type) */
@@ -170,54 +171,100 @@ static int proto_inherits(Ast *self, Ast *other);
 static int proto_has_heir(Ast *proto, Ast *type);
 
 /* ---- overload resolution (InferTypesForCall, ResolveOverloadImpl) ---- */
+/* Reasons of the failing checks (the JS {result: false, reason}). A failing check stores its reason and
+ * returns 0; a caller that wraps an inner reason reads it right after the inner call. */
+static const char *UT_REASON = NULL;
+static int ut_fail(const char *reason) { UT_REASON = reason; return 0; }
+
+static const char *str_join(const char **v, int n, const char *sep) {
+  const char *s = "";
+  for (int i = 0; i < n; i++) s = CAT(s, i ? sep : "", v[i]);
+  return s;
+}
+
+/* Overload: a match (func, ctx, targs); a failure of one candidate carries its reason; a failure of
+ * resolve_overload carries the OverloadResolutionFailure strings of every candidate (fails). */
 typedef struct {
   Ast *func;      /* NULL on failure */
   UCtx *ctx;
   Ast **targs;
   int ntargs;
+  const char *reason;
+  const char **fails;
+  int nfails;
 } Overload;
 
 static int uc_verify_pub(UCtx *c);
 
 static Ast *func_ret_for_overload(const Ast *f) { return f->u.func.isCast ? f->u.func.returnType : NULL; }
 
+static Overload overload_fail(const char *reason) {
+  Overload o = {0};
+  o.reason = reason;
+  return o;
+}
+
+/* inferTypesForCall */
 static Overload infer_types_for_call(Ast *func, Ast **targs, int ntargs, Ast **args, int nargs, Ast *ret) {
-  Overload none = {NULL, NULL, NULL, 0};
   AstList *tps = &func->u.func.typeParameters, *params = &func->u.func.parameters;
-  if (ntargs && ntargs != tps->n) return none;
-  if (nargs != params->n) return none;
+  if (ntargs && ntargs != tps->n)
+    return overload_fail(CAT("Wrong number of type arguments (passed ", js_num(ntargs), ", require ", js_num(tps->n), ")"));
+  if (nargs != params->n)
+    return overload_fail(CAT("Wrong number of arguments (passed ", js_num(nargs), ", require ", js_num(params->n), ")"));
   UCtx *c = uc_new(tps->v, tps->n);
   for (int i = 0; i < ntargs; i++)
-    if (!ut_unify(c, targs[i], tps->v[i])) return none;
+    if (!ut_unify(c, targs[i], tps->v[i]))
+      return overload_fail(CAT("Type argument #", js_num(i + 1), " for parameter ", js_tostr(tps->v[i]),
+                               " does not match (passed ", js_tostr(targs[i]), ", require ", js_tostr(tps->v[i]), ")"));
   for (int i = 0; i < nargs; i++) {
     if (!args[i]) fatal_unsupported("null argument type", func);
-    if (!ut_unify(c, args[i], params->v[i]->u.named.type)) return none;
+    Ast *p = params->v[i];
+    if (!ut_unify(c, args[i], p->u.named.type)) {
+      const char *pname = p->u.named.name ? CAT("for parameter ", p->u.named.name, " ") : "";
+      return overload_fail(CAT("Argument #", js_num(i + 1), " ", pname, "does not match (passed ", js_tostr(args[i]),
+                               ", require ", js_tostr(p->u.named.type), ")"));
+    }
   }
-  if (ret && !ut_unify(c, ret, func->u.func.returnType)) return none;
-  if (!uc_verify_pub(c)) return none;
+  if (ret && !ut_unify(c, ret, func->u.func.returnType))
+    return overload_fail(CAT("Return type ", js_tostr(func->u.func.returnType), " does not match ", js_tostr(ret)));
+  if (!uc_verify_pub(c)) return overload_fail(UT_REASON);
   Ast **out = targs;
   int shouldBuild = !ntargs;
   if (shouldBuild) out = arena_alloc(sizeof(Ast *) * (tps->n ? tps->n : 1));
   for (int i = 0; i < tps->n; i++) {
     Ast *ta = uc_find(c, tps->v[i]);
-    if (ta == tps->v[i]) return none;
+    if (ta == tps->v[i]) return overload_fail(CAT("Type parameter ", js_tostr(tps->v[i]), " did not get assigned a type"));
     if (shouldBuild) out[i] = ta;
   }
-  Overload r = {func, c, out, shouldBuild ? tps->n : ntargs};
+  Overload r = {func, c, out, shouldBuild ? tps->n : ntargs, NULL, NULL, 0};
   return r;
 }
 
+/* OverloadResolutionFailure: the declaration and the reason */
+static const char *overload_failure_string(const Ast *f, const char *reason) {
+  return CAT(js_decl(f), " did not match because: ", reason);
+}
+
+/* resolveOverloadImpl */
 static Overload resolve_overload(AstList *fs, Ast **targs, int ntargs, Ast **args, int nargs, Ast *ret, int allowEntry) {
-  Overload none = {NULL, NULL, NULL, 0};
+  Overload none = {0};
   if (!fs) fatal_unsupported("null functions", NULL);
   Overload *succ = arena_alloc(sizeof(Overload) * (fs->n ? fs->n : 1));
-  int ns = 0;
+  const char **fails = arena_alloc(sizeof(const char *) * (fs->n ? fs->n : 1));
+  int ns = 0, nf = 0;
   for (int i = 0; i < fs->n; i++) {
     Ast *f = fs->v[i];
-    if (!allowEntry && f->u.func.shaderType) continue;
+    if (!allowEntry && f->u.func.shaderType) {
+      fails[nf++] = overload_failure_string(f, CAT("Function is a ", f->u.func.shaderType,
+                                                   " shader, so it cannot be called from within an existing shader."));
+      continue;
+    }
     Overload o = infer_types_for_call(f, targs, ntargs, args, nargs, ret);
     if (o.func) succ[ns++] = o;
+    else fails[nf++] = overload_failure_string(f, o.reason);
   }
+  none.fails = fails;
+  none.nfails = nf;
   if (!ns) return none;
   /* conversionCost is 0 for every node reached so far (literal types are not ported), so all survive */
   int anyRestricted = 0;
@@ -247,6 +294,21 @@ static Overload resolve_overload(AstList *fs, Ast **targs, int ntargs, Ast **arg
     if (ok) pruned[np++] = succ[i];
   }
   if (np == 1) return pruned[0];
+  /* ambiguity: every candidate of the list fails with the same message */
+  const char *message;
+  Overload *list = pruned;
+  int nl = np;
+  if (np == 0) {
+    message = "Ambiguous overload - no function can be applied to all others";
+    list = succ;
+    nl = ns;
+  } else {
+    message = "Ambiguous overload - functions mutually applicable";
+  }
+  const char **afails = arena_alloc(sizeof(const char *) * (nl ? nl : 1));
+  for (int i = 0; i < nl; i++) afails[i] = overload_failure_string(list[i].func, message);
+  none.fails = afails;
+  none.nfails = nl;
   return none;
 }
 
@@ -353,13 +415,34 @@ static int ut_unify_inner(UCtx *c, Ast *self, Ast *other) {
 /* GenericLiteralType.verifyAsArgument and NullType.verifyAsArgument, on the root of the literal */
 static int lit_verify_as_argument(UCtx *c, Ast *n) {
   Ast *realThis = uc_find(c, n);
-  if (n->tag == A_NULLTYPE) return realThis->tag == A_PTRTYPE || realThis->tag == A_ARRAYREFTYPE;
+  if (n->tag == A_NULLTYPE) {
+    if (realThis->tag == A_PTRTYPE || realThis->tag == A_ARRAYREFTYPE) return 1;
+    return ut_fail(CAT("Null cannot be used with non-pointer type ", js_tostr(realThis)));
+  }
   double v = lit_value(n);
+  const char *val = js_num(v);
   switch (n->tag) {
-  case A_INTLITERALTYPE: return ty_is_number(realThis) && nt_can_represent(nt_kind(realThis), v);
-  case A_UINTLITERALTYPE: return ty_is_int(realThis) && !ty_is_signed(realThis) && nt_can_represent(nt_kind(realThis), v);
+  case A_INTLITERALTYPE:
+    if (!ty_is_number(realThis)) return ut_fail(CAT("Cannot use int literal with non-number type ", js_tostr(realThis)));
+    if (!nt_can_represent(nt_kind(realThis), v))
+      return ut_fail(CAT("Int literal ", val, " too large to be represented by type ", js_tostr(realThis)));
+    return 1;
+  case A_UINTLITERALTYPE:
+    if (!ty_is_int(realThis)) return ut_fail(CAT("Cannot use uint literal with non-integer type ", js_tostr(realThis)));
+    if (ty_is_signed(realThis)) return ut_fail(CAT("Cannot use uint literal with signed type ", js_tostr(realThis)));
+    if (!nt_can_represent(nt_kind(realThis), v))
+      return ut_fail(CAT("Uint literal ", val, " too large to be represented by type ", js_tostr(realThis)));
+    return 1;
   case A_FLOATLITERALTYPE:
-  case A_DOUBLELITERALTYPE: return ty_is_floating(realThis) && nt_can_represent(nt_kind(realThis), v);
+    if (!ty_is_floating(realThis)) return ut_fail(CAT("Cannot use float literal with non-floating type ", js_tostr(realThis)));
+    if (!nt_can_represent(nt_kind(realThis), v))
+      return ut_fail(CAT("Float literal ", val, " does not fit in type ", js_tostr(realThis)));
+    return 1;
+  case A_DOUBLELITERALTYPE:
+    if (!ty_is_floating(realThis)) return ut_fail(CAT("Cannot use double literal with non-floating type ", js_tostr(realThis)));
+    if (!nt_can_represent(nt_kind(realThis), v))
+      return ut_fail(CAT("Float literal ", val, " does not fit in type ", js_tostr(realThis)));
+    return 1;
   default: fatal_unsupported("verifyAsArgument of a literal type", n);
   }
   return 0;
@@ -372,9 +455,21 @@ static int ut_verify_as_argument(UCtx *c, Ast *n) {
     return lit_verify_as_argument(c, n);
   case A_TYPEVARIABLE: {
     Ast *realThis = uc_find(c, n);
-    if (realThis->tag != A_TYPEVARIABLE) return 0;
-    if (!n->u.typeVariable.protocol) return realThis->u.typeVariable.protocol ? 0 : 1;
-    return proto_inherits(n->u.typeVariable.protocol, realThis->u.typeVariable.protocol);
+    if (realThis->tag != A_TYPEVARIABLE)
+      return ut_fail(CAT("Type variable argument ", js_tostr(n), " cannot be passed to non-type-variable parameter type ",
+                         js_tostr(realThis)));
+    if (!n->u.typeVariable.protocol) {
+      if (realThis->u.typeVariable.protocol)
+        return ut_fail(CAT("Type variable without protocol ", js_tostr(n),
+                           " cannot be passed to parameter type variable with protocol ",
+                           proto_name(realThis->u.typeVariable.protocol)));
+      return 1;
+    }
+    if (proto_inherits(n->u.typeVariable.protocol, realThis->u.typeVariable.protocol)) return 1;
+    const char *inner = UT_REASON;
+    return ut_fail(CAT("Protocol ", proto_name(n->u.typeVariable.protocol), " does not subsume protocol ",
+                       proto_name(realThis->u.typeVariable.protocol), " (passing type ", js_tostr(n), " to type ",
+                       js_tostr(realThis), "): ", inner));
   }
   case A_CONSTEXPRTYPEPARAM:
     return 1;
@@ -389,8 +484,11 @@ static int ut_verify_as_parameter(UCtx *c, Ast *n) {
   case A_TYPEVARIABLE: {
     if (!n->u.typeVariable.protocol) return 1;
     Ast *realThis = uc_find(c, n);
-    if (!is_type_node(realThis)) fatal_unsupported("non-type parameter binding", realThis);
-    return ut_inherits(realThis, n->u.typeVariable.protocol);
+    if (!is_jstype(realThis)) fatal_unsupported("non-type parameter binding", realThis);
+    if (ut_inherits(realThis, n->u.typeVariable.protocol)) return 1;
+    const char *inner = UT_REASON;
+    return ut_fail(CAT("Type ", js_tostr(realThis), " does not inherit protocol ", proto_name(n->u.typeVariable.protocol),
+                       " (passing type ", js_tostr(realThis), " to type ", js_tostr(n), "): ", inner));
   }
   case A_CONSTEXPRTYPEPARAM:
     return 1;
@@ -419,7 +517,8 @@ static int uc_verify_pub(UCtx *c) {
     np++;
   }
   for (int i = 0; i < np; i++)
-    if (!ut_unify(c, preps[i].root, preps[i].pref)) return 0;
+    if (!ut_unify(c, preps[i].root, preps[i].pref))
+      return ut_fail(CAT("Type mismatch between ", js_tostr(uc_find(c, preps[i].root)), " and ", js_tostr(preps[i].pref)));
   for (int i = 0; i < c->ntps; i++)
     if (!ut_verify_as_parameter(c, c->tps[i])) return 0;
   Ast **args = arena_alloc(sizeof(Ast *) * (total ? total : 1));
@@ -435,7 +534,8 @@ static int uc_verify_pub(UCtx *c) {
     if (!seen) set[nset++] = r;
     nvar++;
   }
-  return nset == nvar;
+  if (nset == nvar) return 1;
+  return ut_fail("Type variables used as arguments got unified with each other");
 }
 
 /* Node.equals: a context when the two types unify and verify, else NULL */
@@ -449,7 +549,7 @@ static UCtx *ut_equals(Ast *a, Ast *b) {
 static int ut_inherits(Ast *t, Ast *proto) {
   if (!proto) return 1;
   if (t->tag == A_TYPEVARIABLE) {
-    if (!t->u.typeVariable.protocol) return 0;
+    if (!t->u.typeVariable.protocol) return ut_fail(CAT("Type variable ", js_tostr(t), " does not have a protocol"));
     return proto_inherits(t->u.typeVariable.protocol, proto);
   }
   return proto_has_heir(proto, t);
@@ -462,22 +562,24 @@ static int proto_inherits(Ast *self_proto, Ast *other) {
   other = ut_pdecl(other);
   for (int i = 0; i < other->u.protocolDecl.signatures.n; i++) {
     Ast *os = other->u.protocolDecl.signatures.v[i];
-    int nsig = 0;
-    for (int k = 0; k < self->u.protocolDecl.signatures.n; k++)
-      if (strcmp(self->u.protocolDecl.signatures.v[k]->u.func.name, os->u.func.name) == 0) nsig++;
-    if (!nsig) return 0;
     /* the overload list is the protocol's own signatures with this name, in order */
     AstList named = {0};
     for (int k = 0; k < self->u.protocolDecl.signatures.n; k++) {
       Ast *s = self->u.protocolDecl.signatures.v[k];
       if (strcmp(s->u.func.name, os->u.func.name) == 0) list_push(&named, s);
     }
+    if (!named.n)
+      return ut_fail(CAT("Protocol ", self->u.protocolDecl.name, " does not have a function named ", os->u.func.name,
+                         " (looking at signature ", js_tostr(os), ")"));
     Ast **pts = arena_alloc(sizeof(Ast *) * (os->u.func.parameters.n ? os->u.func.parameters.n : 1));
     for (int k = 0; k < os->u.func.parameters.n; k++) pts[k] = os->u.func.parameters.v[k]->u.named.type;
     Overload o = resolve_overload(&named, NULL, 0, pts, os->u.func.parameters.n, func_ret_for_overload(os), 0);
-    if (!o.func) return 0;
+    if (!o.func)
+      return ut_fail(CAT("Did not find matching signature for ", js_tostr(os), " in ", self->u.protocolDecl.name,
+                         o.nfails ? CAT(" (tried: ", str_join(o.fails, o.nfails, "; "), ")") : ""));
     Ast *sub = subst_unif(o.func->u.func.returnType, o.func->u.func.typeParameters.v, o.func->u.func.typeParameters.n, o.ctx);
-    if (!ut_equals(sub, os->u.func.returnType)) return 0;
+    if (!ut_equals(sub, os->u.func.returnType))
+      return ut_fail(CAT("Return type mismatch between ", js_tostr(os->u.func.returnType), " and ", js_tostr(sub)));
   }
   return 1;
 }
@@ -495,9 +597,14 @@ static int proto_has_heir(Ast *proto, Ast *type) {
     for (int k = 0; k < sig->u.func.parameters.n; k++) pts[k] = sig->u.func.parameters.v[k]->u.named.type;
     Overload o = resolve_overload(sig->u.func.ov, sig->u.func.typeParameters.v, sig->u.func.typeParameters.n,
                                   pts, sig->u.func.parameters.n, func_ret_for_overload(sig), 0);
-    if (!o.func) return 0;
+    if (!o.func)
+      return ut_fail(CAT("Did not find matching signature for ", js_tostr(orig), " (at ", origin_string(orig),
+                         ") with type ", js_tostr(type), o.nfails ? CAT(" (tried: ", str_join(o.fails, o.nfails, "; "), ")") : ""));
     Ast *sub = subst_unif(o.func->u.func.returnType, o.func->u.func.typeParameters.v, o.func->u.func.typeParameters.n, o.ctx);
-    if (!ut_equals(sub, sig->u.func.returnType)) return 0;
+    if (!ut_equals(sub, sig->u.func.returnType))
+      return ut_fail(CAT("At signature ", js_tostr(orig), " (at ", origin_string(orig), "): return type mismatch between ",
+                         js_tostr(sig->u.func.returnType), " and ", js_tostr(sub), " in found function ",
+                         js_decl(o.func)));
   }
   return 1;
 }
@@ -666,6 +773,65 @@ static void intrinsics_harness(Program *p, Buf *b) {
           buf_fmt(b, " %d\n", nt_values_equal(k, VALUES[a], VALUES[c]));
         }
   }
+}
+
+/* --reasons: see __reasonsHarness in tools/wsl-ast-dump.cjs. */
+static void reasons_harness(Program *p, Buf *b) {
+  TypeList tl = harness_types(p);
+  buf_fmt(b, "types %d\n", tl.n);
+  for (int i = 0; i < tl.n; i++) buf_fmt(b, "T %d %s\n", i, js_tostr(tl.out[i]));
+  int np = tl.n < 15 ? tl.n : 15;
+  for (int i = 0; i < np; i++)
+    for (int j = 0; j < np; j++) {
+      const char *r;
+      UT_DEPTH = 0;
+      UT_ARMED = 1;
+      if (setjmp(UT_JMP)) {
+        r = "E";
+      } else {
+        UCtx *c = uc_new(NULL, 0);
+        if (!ut_unify(c, tl.out[i], tl.out[j])) r = "nounify";
+        else r = uc_verify_pub(c) ? "ok" : UT_REASON;
+      }
+      UT_ARMED = 0;
+      buf_fmt(b, "P %d %d %s\n", i, j, r);
+    }
+}
+
+typedef struct { Program *p; Buf *b; } ReasonsCx;
+static void reasons_fn(void *cx, Ast *f) {
+  ReasonsCx *r = cx;
+  AstList ovs = {0};
+  for (int i = 0; i < r->p->statements.n; i++) {
+    Ast *st = r->p->statements.v[i];
+    if ((st->tag == A_FUNCDEF || st->tag == A_NATIVEFUNC) && strcmp(st->u.func.name, f->u.func.name) == 0)
+      list_push(&ovs, st);
+  }
+  int np = f->u.func.parameters.n;
+  Ast **args = arena_alloc(sizeof(Ast *) * (np ? np : 1));
+  int ntp = f->u.func.typeParameters.n;
+  Ast **fresh = arena_alloc(sizeof(Ast *) * (ntp ? ntp : 1));
+  for (int i = 0; i < ntp; i++) {
+    Ast *tp = f->u.func.typeParameters.v[i];
+    fresh[i] = mk_from(A_TYPEVARIABLE, tp);
+    fresh[i]->u.typeVariable.name = tp->u.typeVariable.name;
+    fresh[i]->u.typeVariable.protocol = tp->u.typeVariable.protocol;
+  }
+  for (int i = 0; i < np; i++)
+    args[i] = rw_aw(subst_rw(f->u.func.parameters.v[i]->u.named.type, f->u.func.typeParameters.v, fresh, ntp));
+  UT_DEPTH = 0;
+  UT_ARMED = 1;
+  if (setjmp(UT_JMP)) { UT_ARMED = 0; buf_str(r->b, "E\n"); return; }
+  Overload o = resolve_overload(&ovs, NULL, 0, args, np, NULL, 0);
+  UT_ARMED = 0;
+  if (o.func) return;
+  for (int k = 0; k < o.nfails; k++) buf_fmt(r->b, "F %s\n", o.fails[k]);
+}
+
+static void reasons_harness_all(Program *p, Buf *b) {
+  reasons_harness(p, b);
+  ReasonsCx cx = {p, b};
+  each_func_in_map_order(p, reasons_fn, &cx);
 }
 
 /* ---- resolve harness (--resolve): for each function in map order, resolve its own parameter types

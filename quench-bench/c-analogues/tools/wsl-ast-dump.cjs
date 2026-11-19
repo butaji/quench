@@ -53,7 +53,7 @@ const run = code => vm.runInContext(code, ctx);
 // (functions map order), protocol signature types (statement order). One character per ordered
 // pair: bit 0 is Node.unify, bit 1 is Node.equals.
 const resolveMode = process.argv.includes("--resolve");
-const unifyMode = process.argv.includes("--unify") || resolveMode || process.argv.includes("--literal") || process.argv.includes("--intrinsics");
+const unifyMode = process.argv.includes("--unify") || resolveMode || process.argv.includes("--literal") || process.argv.includes("--intrinsics") || process.argv.includes("--reasons");
 // --resolve: for each function in map order, its own parameter types (AutoWrapped) resolved against
 // its overload list: "index bit" (index -1 with "-" when nothing resolves; bit is whether the
 // substituted return type equals the declared one).
@@ -79,6 +79,7 @@ if (resolveMode) run(`function __resolveHarness(p) {
 }`);
 const literalMode = process.argv.includes("--literal");
 const intrinsicsMode = process.argv.includes("--intrinsics");
+const reasonsMode = process.argv.includes("--reasons");
 run(`function __harnessTypes(p) {
     const plain = t => {
         if (t instanceof TypeRef) return t.typeArguments.every(plain);
@@ -91,6 +92,33 @@ run(`function __harnessTypes(p) {
     for (const funcs of p.functions.values()) for (const f of funcs) { for (const q of f.parameters) push(q.type); push(f.returnType); }
     for (const pr of p.protocols.values()) for (const s of pr.signatures) { for (const q of s.parameters) push(q.type); push(s.returnType); }
     return out;
+}`);
+// --reasons: the toString of the first 60 harness types, the verify reason of unify for the first 15 pairs
+// of them, and the failure list of every function whose own parameters match no overload.
+if (reasonsMode) run(`function __reasonsHarness(p) {
+    const NL = String.fromCharCode(10);
+    const out = __harnessTypes(p);
+    let text = "types " + out.length + NL;
+    for (let i = 0; i < out.length; i++) text += "T " + i + " " + out[i].toString() + NL;
+    const pairs = out.slice(0, 15);
+    for (let i = 0; i < pairs.length; i++) for (let j = 0; j < pairs.length; j++) {
+        let r;
+        try {
+            const ctx = new UnificationContext();
+            if (!pairs[i].unify(ctx, pairs[j])) r = "nounify";
+            else { const v = ctx.verify(); r = v.result ? "ok" : v.reason; }
+        } catch (e) { if (!(e instanceof RangeError)) throw e; r = "E"; }
+        text += "P " + i + " " + j + " " + r + NL;
+    }
+    for (const funcs of p.functions.values()) for (const f of funcs) {
+        const fresh = f.typeParameters.map(t => new TypeVariable(t.origin, t.name, t.protocol));
+        const args = f.parameters.map(q => q.type.visit(new Substitution(f.typeParameters, fresh)).visit(new AutoWrapper()));
+        try {
+            const o = resolveOverloadImpl(p.functions.get(f.name), [], args, null);
+            if (!o.func) for (const failure of o.failures) text += "F " + failure.toString() + NL;
+        } catch (e) { if (!(e instanceof RangeError)) throw e; text += "E" + NL; }
+    }
+    return text;
 }`);
 // --intrinsics: the native types' properties (Intrinsics.js), each value as its IEEE bits, one line per result.
 if (intrinsicsMode) run(`function __intrinsicsHarness(p) {
@@ -381,7 +409,7 @@ const rows = inputs.map((input, i) => {
     try {
         if (unifyMode) {
             if (input.kind === "doLex") { dump = ""; }
-            else { anonRoles.clear(); resolveInput(input, stage); dump = run(resolveMode ? "__resolveHarness(__p)" : literalMode ? "__literalHarness(__p)" : intrinsicsMode ? "__intrinsicsHarness(__p)" : "__unifyHarness(__p)"); }
+            else { anonRoles.clear(); resolveInput(input, stage); dump = run(resolveMode ? "__resolveHarness(__p)" : literalMode ? "__literalHarness(__p)" : intrinsicsMode ? "__intrinsicsHarness(__p)" : reasonsMode ? "__reasonsHarness(__p)" : "__unifyHarness(__p)"); }
         } else if (input.kind === "doLex") {
             const toks = lexTokens(input.text);
             dump = toks.join("\n");
