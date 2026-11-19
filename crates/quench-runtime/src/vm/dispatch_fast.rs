@@ -10630,8 +10630,8 @@ fn lane_loop_run<H: Host>(
         if !tier.is_published() { return LoopContinuation::Compiling; }
     }
     if let Some(budget) = tier.backedge_budget(site.tiers, site.span()) { entry.set_backedge_budget(budget); }
-    let publication = Rc::clone(tier.code.as_ref().expect("compiled above"));
-    let code = publication.lease().expect("compiled above");
+    // The code alone is held for the run (its publication is the tier's): one count, not two.
+    let code = tier.code.as_ref().and_then(|publication| publication.lease()).expect("compiled above");
     drop(tier);
     // The native field probe may access the VM only through its synchronous, cache-only
     // callback. Pass raw pointers so no Rust borrow of the VM overlaps that callback.
