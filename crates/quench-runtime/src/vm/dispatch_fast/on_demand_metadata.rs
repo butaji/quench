@@ -21,7 +21,7 @@ impl<H: Host> Vm<H> {
 /// every instruction of a function that may run once (mandreel's `global_init`: 614K records,
 /// 14 MB; babylonjs's module scope: 124K records, each iteration). Where a return already
 /// `retired`, only a caller that loops takes its view here; any other frame returns at its
-/// call record on the general path (`lane_frame_return`).
+/// call record on the general path (`frame_return_in_lane`).
 pub(super) fn completes_return<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall, frame: usize, retired: bool) -> bool {
     let vm = unsafe { vm(cx) };
     call.caller + 1 == frame

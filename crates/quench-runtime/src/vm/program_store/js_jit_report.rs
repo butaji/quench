@@ -263,7 +263,7 @@ impl ProgramStore {
             let op_at = |function: u32, pc: u32| code.function_get(function as usize)
                 .and_then(|body| body.instructions().nth(pc as usize)).map(|instruction| format!("{:?}", instruction.op()));
             let views = (0..u32::MAX).map_while(|function| code.function_get(function as usize).map(|_| function))
-                .filter_map(|function| entry.lane_views.derived(function).map(|view| (function, view)));
+                .filter_map(|function| entry.views_in_lane.derived(function).map(|view| (function, view)));
             for (function, view) in views {
                 report_lane_body(program, function, view, &op_at);
             }
@@ -275,7 +275,7 @@ impl ProgramStore {
         -> io::Result<()> {
         let entry = self.programs.get(program as usize).and_then(|entry| entry.as_deref());
         let osr = entry
-            .and_then(|entry| entry.lane_views.derived(function))
+            .and_then(|entry| entry.views_in_lane.derived(function))
             .map(LaneView::osr_diagnostics)
             .unwrap_or_default();
         write!(out, "QUENCH_JS_JIT_STATS {{\"program\":{program},\"function\":{function},\"function_name\":")?;

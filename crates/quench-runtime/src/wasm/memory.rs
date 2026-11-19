@@ -524,7 +524,7 @@ pub(super) fn direct_access(
 // Lane accesses compose existing scalar memory access with SIMD lane rules.
 macro_rules! lane_accesses {
     ($($wasm:ident, $op:ident, $access:path, $lane_op:ident;)+) => {
-        fn lane_access(op: &wasmparser::Operator<'_>) -> Option<(crate::bytecode::Op, u32, wasmparser::MemArg, super::simd::SimdOperator, u8)> {
+        fn simd_access_of(op: &wasmparser::Operator<'_>) -> Option<(crate::bytecode::Op, u32, wasmparser::MemArg, super::simd::SimdOperator, u8)> {
             use crate::bytecode::Op;
             match op {
                 $(wasmparser::Operator::$wasm { memarg, lane } => Some((Op::$op, $access as u32, *memarg, super::simd::SimdOperator::$lane_op, *lane)),)+
@@ -554,7 +554,7 @@ pub(super) fn direct_access_memory(
     let index = MemoryLoad::from_wasm(operator)
         .map(|(_, memarg)| memarg)
         .or_else(|| MemoryStore::from_wasm(operator).map(|(_, memarg)| memarg))
-        .or_else(|| lane_access(operator).map(|(_, _, memarg, _, _)| memarg))
+        .or_else(|| simd_access_of(operator).map(|(_, _, memarg, _, _)| memarg))
         .map(|memarg| memarg.memory)
         .or(match operator {
             wasmparser::Operator::MemorySize { mem }
@@ -633,7 +633,7 @@ impl super::Lowering<'_> {
                     .map(|(op, arg)| (Op::WasmMemoryStore, op as u32, arg, None))
             })
             .or_else(|| {
-                lane_access(operator).map(|(op, selector, arg, lane_op, lane)| {
+                simd_access_of(operator).map(|(op, selector, arg, lane_op, lane)| {
                     (op, selector, arg, Some((lane_op, lane)))
                 })
             });

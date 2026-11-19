@@ -32,7 +32,7 @@ pub(in crate::vm) unsafe extern "C" fn vm_operation_step<H: Host>(_vm: u64, _res
 unsafe fn vm_operation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
     use super::super::compiled::{LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_LEFT, LANE_CALL_MISSED};
     let (r, ip) = unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) };
-    let function = lane_running_function(cx);
+    let function = running_function_in_lane(cx);
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let body = code.function(function as usize);
@@ -108,7 +108,7 @@ pub(super) fn comparison_decision<H: Host>(vm: &mut Vm<H>, operator: u32, left: 
 /// needs no record of the VM's: `Value::TRUE` or `Value::FALSE`, or `Value::DELETED` where only
 /// the full algorithm decides, which leaves the body at the test (`comparison_decision`).
 pub(in crate::vm) unsafe extern "C" fn decide_comparison<H: Host>(vm: u64, _residual: u64, left: u64, right: u64, operator: u64) -> u64 {
-    // SAFETY: as `lane_field_set`; the decision reads the heap, runs no guest code and allocates nothing.
+    // SAFETY: as `field_set_in_lane`; the decision reads the heap, runs no guest code and allocates nothing.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
     comparison_decision(vm, operator as u32, Value::from_bits(left), Value::from_bits(right))
         .map_or_else(|| Value::DELETED.to_bits(), |holds| Value::boolean(holds).to_bits())
@@ -120,7 +120,7 @@ pub(in crate::vm) unsafe extern "C" fn decide_comparison<H: Host>(vm: u64, _resi
 /// none (a native callee, a lane callee): the lane's activations become the frames the interpreter would have run
 /// (`Vm::materialize_deferred_lane`), the step is made on the innermost as the general loop makes it, and the body
 /// leaves for the general path past the record (`LANE_CALL_LEFT`), which resumes in those frames. A record that returned
-/// its result is returned from its frame there (`lane_frame_return`), and an error the step raised is stashed for
+/// its result is returned from its frame there (`frame_return_in_lane`), and an error the step raised is stashed for
 /// the general path to raise at the record (`lane_in_place`). `LANE_CALL_MISSED` where the record is no such step.
 ///
 /// # Safety
@@ -141,7 +141,7 @@ unsafe fn frames_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record:
         Ok((next, record.returns_from_frame().then(|| vm.read(frame, instruction.result_register()))))
     });
     let resume = match made {
-        Some((_, Some(value))) => lane_frame_return(unsafe { vm(cx) }, ip, value),
+        Some((_, Some(value))) => frame_return_in_lane(unsafe { vm(cx) }, ip, value),
         Some((next, None)) => exit(unsafe { base.add(next) }),
         None => exit(ip),
     };
@@ -186,7 +186,7 @@ unsafe fn owner_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: 
         Some(None) => LANE_CALL_COMPLETED,
         Some(Some(returned)) => {
             let resume = match returned {
-                Some(value) => lane_frame_return(unsafe { vm(cx) }, ip, value),
+                Some(value) => frame_return_in_lane(unsafe { vm(cx) }, ip, value),
                 None => exit(unsafe { base.add(pc + 1) }),
             };
             unsafe { left_operand_at(cx, resume) }
@@ -235,7 +235,7 @@ unsafe fn body_general_step_record<H: Host>(_vm: u64, _residual: u64, context: u
 /// # Safety
 /// As `body_general_step`.
 unsafe fn activation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
-    let body = unsafe { &*(*cx).code }.function(lane_running_function(cx) as usize);
+    let body = unsafe { &*(*cx).code }.function(running_function_in_lane(cx) as usize);
     let record = body.widened(body.code[call_pc as usize]);
     if record.without_return().op().steps_on_owner() {
         unsafe { owner_step_in(cx, call_pc, record) }

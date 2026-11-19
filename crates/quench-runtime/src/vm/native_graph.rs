@@ -142,12 +142,12 @@ impl CallThreadedExtension for ObjectExtension<'_> {
             name: crate::NATIVE_JS_ABI_SYMBOL.into(),
             signature: ir::Signature::new(self.isa.default_call_conv()),
         }];
-        let lane_bodies = self.lane_bodies(&mut functions)?;
+        let bodies_in_lane = self.bodies_in_lane(&mut functions)?;
         let operations = import_operations(&mut functions, &self.functions, &*self.isa)?;
-        let symbols = self.symbols(functions.len(), &lane_bodies)?;
+        let symbols = self.symbols(functions.len(), &bodies_in_lane)?;
         let mut data = Vec::with_capacity(self.program.function_count());
         let mut pending = Definitions::default();
-        for (id, lane_body) in lane_bodies.into_iter().enumerate() {
+        for (id, lane_body) in bodies_in_lane.into_iter().enumerate() {
             let entry = self.lower_function(id, lane_body, &operations, &symbols, &mut pending)?;
             data.push(self.operand_data(id)?);
             functions.push(NativeFunction::Definition { name: format!("{}_function_{id}", self.namespace), function: entry });
@@ -175,21 +175,21 @@ struct Definitions {
 
 impl ObjectExtension<'_> {
     /// Every function's lane body, importing the lane helper table where any lowers.
-    fn lane_bodies(&self, functions: &mut Vec<NativeFunction>) -> Result<Vec<Option<ir::Function>>, String> {
+    fn bodies_in_lane(&self, functions: &mut Vec<NativeFunction>) -> Result<Vec<Option<ir::Function>>, String> {
         let lane_helpers = u32::try_from(functions.len()).map_err(|_| "native helper symbol count exceeds u32")?;
-        let lane_bodies = lower_lane_bodies(self.program, self.options, &*self.isa, lane_helpers);
-        if lane_bodies.iter().any(Option::is_some) {
+        let bodies_in_lane = lower_lane_bodies(self.program, self.options, &*self.isa, lane_helpers);
+        if bodies_in_lane.iter().any(Option::is_some) {
             functions.push(NativeFunction::Import {
                 name: crate::NATIVE_JS_LANE_HELPERS_SYMBOL.into(),
                 signature: super::compiled::native_lane_helpers_signature(&*self.isa),
             });
         }
-        Ok(lane_bodies)
+        Ok(bodies_in_lane)
     }
 
     /// The symbol layout after `defined` imports: a function's lane body publishes under its own
     /// symbol, after the functions and the private regions; its fallback after the lane bodies.
-    fn symbols(&self, defined: usize, lane_bodies: &[Option<ir::Function>]) -> Result<Symbols, String> {
+    fn symbols(&self, defined: usize, bodies_in_lane: &[Option<ir::Function>]) -> Result<Symbols, String> {
         let first_definition = u32::try_from(defined).map_err(|_| "native symbol count exceeds u32")?;
         let region_count = (0..self.program.function_count())
             .try_fold(0usize, |count, id| count.checked_add(self.options.region_count(self.program.function(id).code.len())))
@@ -198,7 +198,7 @@ impl ObjectExtension<'_> {
             .checked_add(self.program.function_count())
             .and_then(|base| base.checked_add(region_count))
             .ok_or("native lane body symbol count overflow")?;
-        let fallback_base = body_base.checked_add(lane_bodies.iter().flatten().count())
+        let fallback_base = body_base.checked_add(bodies_in_lane.iter().flatten().count())
             .ok_or("native fallback symbol count overflow")?;
         u32::try_from(fallback_base).map_err(|_| "native lane body symbol count exceeds u32")?;
         Ok(Symbols { first_definition, body_base, fallback_base })

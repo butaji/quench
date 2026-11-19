@@ -72,7 +72,7 @@ impl Evidence {
 /// (`EntryCell::stub`), so it has exactly one instance: a tiny function is otherwise inlinable and
 /// each codegen unit may get its own copy at its own address.
 #[inline(never)]
-unsafe extern "C" fn lane_entry_stub(_: *mut CallContext, _: u64, _: u64, _: *const u64) -> BodyReturn {
+unsafe extern "C" fn entry_stub_in_lane(_: *mut CallContext, _: u64, _: u64, _: *const u64) -> BodyReturn {
     BodyReturn { status: LANE_BODY_NOT_ENTERED, value: 0 }
 }
 
@@ -80,7 +80,7 @@ unsafe extern "C" fn lane_entry_stub(_: *mut CallContext, _: u64, _: u64, _: *co
 pub(in crate::vm) type ScalarEntry = unsafe extern "C" fn(*mut CallContext) -> BodyReturn;
 
 /// The scalar entry no body backs: it enters nothing, so its caller restarts the call. One
-/// instance, as `lane_entry_stub`.
+/// instance, as `entry_stub_in_lane`.
 #[inline(never)]
 unsafe extern "C" fn scalar_entry_stub(_: *mut CallContext) -> BodyReturn {
     BodyReturn { status: LANE_BODY_NOT_ENTERED, value: 0 }
@@ -98,7 +98,7 @@ impl EntryCell {
     #[cfg(test)]
     pub(in crate::vm) fn raised_runs(&self) -> u32 { (self.counters.get() >> u32::BITS) as u32 }
 
-    #[inline(always)] pub(in crate::vm) fn stub() -> usize { lane_entry_stub as BodyEntry as usize }
+    #[inline(always)] pub(in crate::vm) fn stub() -> usize { entry_stub_in_lane as BodyEntry as usize }
 
     pub(in crate::vm) fn scalar_stub() -> usize { scalar_entry_stub as ScalarEntry as usize }
 
@@ -182,7 +182,7 @@ pub(in crate::vm) fn capture_word(values: *const Value, len: usize, stores: bool
 /// Grows the scratch window to `width` registers for a body a run may enter: an inlined leave
 /// inside it fills its window. A run finds the window sized by its body's publication.
 pub(super) fn reserve_lane_scratch(width: usize) {
-    let frame = super::lane_frame();
+    let frame = super::frame_in_lane();
     // SAFETY: as `lane_frame`; native code reads the window's address from the dispatch
     // record at each use, so the record follows a resize.
     unsafe {

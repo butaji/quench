@@ -1443,7 +1443,7 @@ Promise.all(runs).then((values) => { print(values.join(" ") + " | " + log.join("
 fn awaits_a_resumed_frame_suspends_from_the_lane_keep_their_order_and_errors() {
     // A resumed async frame whose lane run stops at an `await` suspends without the general
     // loop when the awaited value converts without observing anything
-    // (`Vm::lane_stop_awaits`): native promises and primitives, beside thenables, a `then`
+    // (`Vm::stop_awaits_in_lane`): native promises and primitives, beside thenables, a `then`
     // getter, one that throws into a `try`, a subclass, a patched `constructor`, loops of
     // awaits and an async generator, interleaved with plain reactions. Node 26 prints the
     // same.

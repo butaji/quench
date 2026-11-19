@@ -75,7 +75,7 @@ impl ProgramStore {
 
     /// Whether a compile of `site`'s function from its entry is still within `max`
     /// (`admit_lane_compile`), without counting one: a plan past the bound is not made.
-    pub(in crate::vm) fn lane_compiles_left(&self, site: &(u32, u32, Option<u32>), max: u8) -> bool {
+    pub(in crate::vm) fn compiles_left_in_lane(&self, site: &(u32, u32, Option<u32>), max: u8) -> bool {
         self.lane_compiles.borrow().get(site).is_none_or(|count| *count < max)
     }
 

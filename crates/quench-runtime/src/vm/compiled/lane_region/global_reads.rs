@@ -1,4 +1,4 @@
-//! By-name loads that read the global scope (`Vm::lane_global_reads`).
+//! By-name loads that read the global scope (`Vm::global_reads_in_lane`).
 use super::*;
 use crate::vm::global_facts::{GlobalRead, GlobalSlot};
 use crate::staged::GlobalBinding;

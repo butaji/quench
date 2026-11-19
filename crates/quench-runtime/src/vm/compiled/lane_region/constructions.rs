@@ -4,7 +4,7 @@ use super::*;
 use crate::vm::compiled::regions;
 
 impl Lowering<'_, '_> {
-    /// `new callee(...)` by the callee's construct plan (`compiled::lane_construct`): the
+    /// `new callee(...)` by the callee's construct plan (`compiled::construct_in_lane`): the
     /// arguments pass where the helper reads them (`construct_arguments`); a construction the
     /// plan does not make leaves at the record, before any effect. The allocation may move
     /// the property arena (`allocated`). A construction in the caller's window is the call row

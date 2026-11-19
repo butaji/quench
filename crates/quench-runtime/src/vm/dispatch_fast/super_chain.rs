@@ -106,7 +106,7 @@ fn chain_stores<H: Host>(
     append(stores, program, &initializer.stores, passed).map(|()| root)
 }
 
-/// `stores` made to `this` as cached adds (`lane_add_stores`), each under its class's program,
+/// `stores` made to `this` as cached adds (`add_stores_in_lane`), each under its class's program,
 /// whose field caches its site indexes; the program running before is active again after.
 fn add_chain_stores<H: Host>(
     vm: &mut Vm<H>,
@@ -127,7 +127,7 @@ fn add_chain_stores<H: Host>(
         };
         // SAFETY: the program store keeps a residual for as long as the VM runs it.
         let code = unsafe { &*code };
-        added = lane_add_stores(vm, code, this, std::slice::from_ref(store), argument, |_, _| None, &mut *each);
+        added = add_stores_in_lane(vm, code, this, std::slice::from_ref(store), argument, |_, _| None, &mut *each);
         if !added {
             break;
         }
@@ -157,7 +157,7 @@ fn plan_super_parent<H: Host>(vm: &mut Vm<H>, callee: Value) {
 /// the root's [[Construct]] with `callee` as `new.target`, whose receiver comes from `callee`'s
 /// `prototype`, named by the root as the general path names it
 /// (`Vm::inline_construct_template_by`), and takes the chain's stores as cached adds that run
-/// no guest code (`lane_initialize_stores`), and which every body returns as it is. A plan
+/// no guest code (`initialize_stores_in_lane`), and which every body returns as it is. A plan
 /// recorded under `callee` (`ConstructPlan::super_parent`) makes later constructions at once:
 /// it holds while `callee`'s parent does, and a parent further up changes under a new
 /// prototype layout epoch, being the [[Prototype]] of the class below it. TypeScript's node
@@ -178,14 +178,14 @@ pub(super) fn super_construction<H: Host>(
     }
     if let Some(this) = holding_construct_plan(vm, callee)
         .filter(|plan| !plan.super_parent.is_undefined())
-        .and_then(|_| lane_planned_construction(vm, callee, r, i))
+        .and_then(|_| planned_construction_in_lane(vm, callee, r, i))
     {
         return Some(this);
     }
     let mut stores = ChainStores::new();
     let root = chain_stores(vm, callee, None, &mut stores, 0).filter(|root| *root != callee)?;
-    let argument = lane_construct_argument(r, i);
-    let (this, added) = lane_initialize_stores(vm, callee, root, |vm, this, each| add_chain_stores(vm, this, &stores, &argument, each))?;
+    let argument = construct_argument_in_lane(r, i);
+    let (this, added) = initialize_stores_in_lane(vm, callee, root, |vm, this, each| add_chain_stores(vm, this, &stores, &argument, each))?;
     added.then(|| {
         plan_super_parent(vm, callee);
         this

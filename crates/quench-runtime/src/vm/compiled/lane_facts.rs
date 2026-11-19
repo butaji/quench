@@ -69,7 +69,7 @@ pub(super) fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
 pub(super) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
     let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
         instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-    loops || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
+    loops || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::body_tier_in_lane())
 }
 
 /// Whether one entry of `unit` saves more interpreter time than the body's entry costs

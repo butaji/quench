@@ -3,8 +3,8 @@ use super::*;
 use crate::staged::plan_fields::{field_value, FieldClass};
 mod nested;
 mod adds;
-pub(super) use adds::{lane_add_initializer_fields, lane_add_stores};
-pub(super) use nested::{lane_finish_forwarded, nested_construction, nested_root_holds, NestedField};
+pub(super) use adds::{add_initializer_fields_in_lane, add_stores_in_lane};
+pub(super) use nested::{finish_forwarded_in_lane, nested_construction, nested_root_holds, NestedField};
 
 /// What a constructor's initializer body (`ScriptCallTarget::initializes`) made of a receiver
 /// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
@@ -255,7 +255,7 @@ pub(super) fn initializer_value<H: Host>(vm: &Vm<H>, passed: Value, fallback: Op
 }
 
 /// The value initializer `store` gives its field from the parameters' values `argument`:
-/// `None` where the store leaves it to the body (`lane_add_initializer_fields`). The running
+/// `None` where the store leaves it to the body (`add_initializer_fields_in_lane`). The running
 /// program is the store's (`Vm::active_constant`).
 #[inline(always)]
 pub(super) fn initializer_store_value<H: Host>(vm: &Vm<H>, store: &crate::bytecode::InitializerStore, argument: impl Fn(u16) -> Value) -> Option<Value> {
@@ -274,24 +274,24 @@ pub(super) fn initializer_store_value<H: Host>(vm: &Vm<H>, store: &crate::byteco
 /// `prototype` do: the receiver's template is derived from those alone, and the epoch keeps
 /// the adds it planned free of setters. Apart from the planning, whose frame is larger.
 #[inline(always)]
-pub(super) fn lane_planned_construction<H: Host>(
+pub(super) fn planned_construction_in_lane<H: Host>(
     vm: &mut Vm<H>,
     callee: Value,
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<Value> {
-    planned_construction(vm, callee, lane_construct_argument(r, i))
+    planned_construction(vm, callee, construct_argument_in_lane(r, i))
 }
 
-/// `lane_planned_construction` of a plan of passed fields that fit the inline slots, where it
+/// `planned_construction_in_lane` of a plan of passed fields that fit the inline slots, where it
 /// calls nothing out of line (`Heap::alloc_planned_inline_quick`); `None`, before any effect,
-/// for anything else, which `lane_planned_construction` makes.
+/// for anything else, which `planned_construction_in_lane` makes.
 #[inline(always)]
-pub(super) fn lane_planned_inline_quick<H: Host>(vm: &mut Vm<H>, callee: Value, r: Registers, i: &LaneInstruction) -> Option<Value> {
-    planned_inline_quick(vm, callee, lane_construct_argument(r, i))
+pub(super) fn planned_inline_quick_in_lane<H: Host>(vm: &mut Vm<H>, callee: Value, r: Registers, i: &LaneInstruction) -> Option<Value> {
+    planned_inline_quick(vm, callee, construct_argument_in_lane(r, i))
 }
 
-/// `lane_planned_inline_quick` from the parameters' values `argument` gives: any construction
+/// `planned_inline_quick_in_lane` from the parameters' values `argument` gives: any construction
 /// site's quick case, a lane record's or a lane body's (`body_calls::constructed_in_place`).
 #[inline(always)]
 pub(super) fn planned_inline_quick<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
@@ -309,14 +309,14 @@ pub(super) fn planned_inline_quick<H: Host>(vm: &mut Vm<H>, callee: Value, argum
     vm.heap.alloc_planned_inline_quick(header, inline, len)
 }
 
-/// `lane_planned_construction` from the parameters' values `argument` gives.
+/// `planned_construction_in_lane` from the parameters' values `argument` gives.
 #[inline(always)]
 pub(super) fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
     // The plan in place: the allocation borrows the heap beside it, not a copy.
     let plan = &vm.lane_stack.construct_plans[index];
     if plan.kind != ConstructPlanKind::Passed {
-        return lane_defaulted_construction(vm, index, argument);
+        return defaulted_construction_in_lane(vm, index, argument);
     }
     let len = usize::from(plan.fields);
     if len <= INLINE_PROPERTY_COUNT {
@@ -331,11 +331,11 @@ pub(super) fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argum
 }
 
 /// Whether the running lane's frame constructs in place (`LaneContext::script_constructs`),
-/// which a body's constructions inherit (`lane_body_construction`).
+/// which a body's constructions inherit (`body_construction_in_lane`).
 ///
 /// # Safety
 /// `context` is the running lane's context.
-pub(in crate::vm) unsafe fn lane_context_constructs<H: Host>(context: *mut ()) -> bool {
+pub(in crate::vm) unsafe fn context_constructs_in_lane<H: Host>(context: *mut ()) -> bool {
     if !crate::DYNAMIC_EXECUTION_ENABLED { return false; }
     let cx = context.cast::<LaneContext<H>>();
     unsafe { (*cx).script_calls && (*cx).script_constructs }
@@ -349,7 +349,7 @@ pub(in crate::vm) unsafe fn lane_context_constructs<H: Host>(context: *mut ()) -
 ///
 /// # Safety
 /// `arguments` are the body's `argc` registers.
-pub(in crate::vm) unsafe fn lane_body_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
+pub(in crate::vm) unsafe fn body_construction_in_lane<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
     if vm.construct_target.is_some() || vm.heap.should_collect() {
         return None;
     }
@@ -367,7 +367,7 @@ pub(in crate::vm) unsafe fn lane_body_construction<H: Host>(vm: &mut Vm<H>, code
 /// initializer the body calls by its entry (`DirectCallee::forwarder`): allocated finished
 /// from the plan while it holds, whose forwarding has no fields of its own. `None` leaves
 /// the body to its helper path before any effect.
-pub(in crate::vm) fn lane_body_receiver<H: Host>(vm: &mut Vm<H>, callee: Value) -> Option<Value> {
+pub(in crate::vm) fn body_receiver_in_lane<H: Host>(vm: &mut Vm<H>, callee: Value) -> Option<Value> {
     if vm.construct_target.is_some() || vm.heap.should_collect() || vm.with_scope_entered {
         return None;
     }
@@ -399,12 +399,12 @@ fn initializer_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, cal
     added.then_some(this)
 }
 
-/// `lane_planned_construction` under the plan at `index` with defaulted fields, whose values
+/// `planned_construction_in_lane` under the plan at `index` with defaulted fields, whose values
 /// it computes first; `None` for a forwarding constructor's plan, which holds only with its
 /// forwarding (`lane_forwarded_fields`). Out of line, so plans of plain fields keep their
 /// code.
 #[inline(never)]
-fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, argument: impl Fn(u16) -> Value) -> Option<Value> {
+fn defaulted_construction_in_lane<H: Host>(vm: &mut Vm<H>, index: usize, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let plan = &vm.lane_stack.construct_plans[index];
     if plan.kind == ConstructPlanKind::Forwarding {
         return None;
@@ -416,7 +416,7 @@ fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, argument: 
 /// A construction's parameter `k` as a plain activation sees it: argument `k`, or undefined
 /// when not passed.
 #[inline(always)]
-pub(super) fn lane_construct_argument(r: Registers, i: &LaneInstruction) -> impl Fn(u16) -> Value + '_ {
+pub(super) fn construct_argument_in_lane(r: Registers, i: &LaneInstruction) -> impl Fn(u16) -> Value + '_ {
     let argc = ImmediateLayout::argument_count(i.imm());
     move |parameter| if parameter < argc { r.get(i.c + parameter) } else { Value::UNDEFINED }
 }
@@ -459,7 +459,7 @@ pub(in crate::vm) fn scalar_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -
 }
 
 /// Whether `callee`'s plan holds now (`holding_construct_plan_index`) and an allocation by it
-/// would not refuse (`lane_body_construction`): no construction under way, no collection due.
+/// would not refuse (`body_construction_in_lane`): no construction under way, no collection due.
 /// A body that keeps a receiver as its field values (`compiled::ScalarConstructPlan`) tests it
 /// where the construction would run, so the receiver a leave allocates is the plan's.
 pub(in crate::vm) fn construct_plan_holds<H: Host>(vm: &Vm<H>, callee: Value) -> bool {
@@ -508,7 +508,7 @@ pub(super) fn watch_construct_plan<H: Host>(vm: &mut Vm<H>, index: usize, renew:
 
 /// `initialize_fields_in_lane` of the stores `adds` makes to the receiver it is given, each passed
 /// to its `each` as a cached add runs: the receiver, and whether every store was a cached add.
-pub(super) fn lane_initialize_stores<H: Host>(
+pub(super) fn initialize_stores_in_lane<H: Host>(
     vm: &mut Vm<H>,
     callee: Value,
     constructor: Value,
@@ -545,15 +545,15 @@ pub(super) fn lane_initialize_stores<H: Host>(
 
 /// Where the lane continues after a returned construction (`return new C(...)`) made `this`
 /// in place: the innermost activation completed with it (`complete_activation_in_lane`), else
-/// the frame's own return of it (`lane_frame_return`).
+/// the frame's own return of it (`frame_return_in_lane`).
 #[inline(always)]
-pub(super) fn lane_return_constructed<H: Host>(cx: *mut LaneContext<H>, ip: Ip, this: Value) -> Resumed {
-    // The common return first, as a `Return` record takes it (`lane_complete_plain_activation`),
+pub(super) fn return_constructed_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, this: Value) -> Resumed {
+    // The common return first, as a `Return` record takes it (`complete_plain_activation_in_lane`),
     // where no leaf call runs.
     if unsafe { (*cx).leaf.call }.is_null()
-        && let Some(resumed) = lane_complete_plain_activation::<H, NOT_LEAF>(cx, this)
+        && let Some(resumed) = complete_plain_activation_in_lane::<H, NOT_LEAF>(cx, this)
     {
         return resumed;
     }
-    complete_activation_in_lane(cx, ip, this).unwrap_or_else(|| Resumed::Exit(lane_frame_return(unsafe { vm(cx) }, ip, this)))
+    complete_activation_in_lane(cx, ip, this).unwrap_or_else(|| Resumed::Exit(frame_return_in_lane(unsafe { vm(cx) }, ip, this)))
 }

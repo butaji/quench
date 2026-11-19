@@ -655,14 +655,14 @@ struct ProgramEntry {
     root_slots: std::cell::OnceCell<Box<[crate::bytecode::RootSlotRule]>>,
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
-    lane_views: LaneViews,
+    views_in_lane: LaneViews,
     /// Per Wasm function a collection found on the stack: the live registers holding raw
     /// words at each pc (`raw_webs::raw_live`), `None` for a function with no raw op.
     raw_masks: std::cell::RefCell<FxHashMap<u32, Option<Rc<crate::compile::liveness::RegisterMasks>>>>,
     /// Per function: what the JavaScript tier found at its entries (`js_entry_facts`).
     js_entry_facts: JsEntryFactsTable,
     /// Per function: the runs it has made without its lane view (`entry_lane_view`,
-    /// `lane_call_may_derive`), up to `LANE_VIEW_DEFERRED_RUNS`.
+    /// `call_may_derive_in_lane`), up to `LANE_VIEW_DEFERRED_RUNS`.
     lane_deferred: Vec<std::cell::Cell<u8>>,
     /// The program's compiled functions, once the compiled mode first calls
     /// one; `Some(None)` records that none compile.
@@ -906,7 +906,7 @@ impl ProgramStore {
     }
 
     /// Linked functions have native entries instead of interpreter lane views.
-    fn lane_entry(&self, id: ProgramId) -> Option<&ProgramEntry> {
+    fn entry_in_lane(&self, id: ProgramId) -> Option<&ProgramEntry> {
         let entry = self.entry(id)?;
         #[cfg(feature = "native-execution")]
         if entry.native_js.is_some() { return None; }
@@ -1277,7 +1277,7 @@ impl ProgramStore {
         // Sized by the sites the program has: a chunk's sites, appended later, grow it.
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
         let function_sources = FxHashMap::default();
-        let lane_views = LaneViews::default();
+        let views_in_lane = LaneViews::default();
         let lane_deferred = zeroed_counts(program.functions.capacity());
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.context_epoch += 1;
@@ -1296,7 +1296,7 @@ impl ProgramStore {
             module_imports: Vec::new(),
             root_slots: std::cell::OnceCell::new(),
             module: false,
-            lane_views,
+            views_in_lane,
             raw_masks: Default::default(),
             js_entry_facts: JsEntryFactsTable::default(),
             lane_deferred,
@@ -1626,7 +1626,7 @@ impl ProgramStore {
     /// again. The caller ensures no lane run of `id` holds their records.
     pub(super) fn release_lane_views(&mut self, id: ProgramId) {
         if let Some(entry) = self.entry_mut(id) {
-            entry.lane_views = LaneViews::default();
+            entry.views_in_lane = LaneViews::default();
         }
     }
 
@@ -1636,7 +1636,7 @@ impl ProgramStore {
             entry.const_arrays.clear();
             entry.constants = crate::bytecode::append_vec::AppendVec::with_headroom(constants, headroom);
             // Lane views carry constants, so they derive from the new set.
-            entry.lane_views = LaneViews::default();
+            entry.views_in_lane = LaneViews::default();
         }
     }
 
@@ -2559,27 +2559,27 @@ impl ProgramStore {
         self.context_epoch += 1;
     }
 
-    /// Program `id`'s lane view table if it was made (`lane_program` makes it).
+    /// Program `id`'s lane view table if it was made (`program_in_lane` makes it).
     pub(super) fn made_lane_views(&self, id: ProgramId) -> Option<&[LaneViewCell]> {
-        self.entry(id)?.lane_views.table.get().map(|table| &table[..])
+        self.entry(id)?.views_in_lane.table.get().map(|table| &table[..])
     }
 
     /// What a lane running program `id` reads of it, from one look at its entry: its
-    /// residual, lane views (`lane_views`) and constants (`constants`).
+    /// residual, lane views (`views_in_lane`) and constants (`constants`).
     #[inline(always)]
-    pub(super) fn lane_program(
+    pub(super) fn program_in_lane(
         &self,
         id: ProgramId,
     ) -> Option<(&ResidualProgram, &[LaneViewCell], &[Value])> {
         let entry = self.entry(id)?;
-        Some((&entry.residual, entry.lane_views.of(&entry.residual), &entry.constants[..]))
+        Some((&entry.residual, entry.views_in_lane.of(&entry.residual), &entry.constants[..]))
     }
 
     /// Invalidates every lane view's bindings to shape IDs: compaction renumbered
     /// the IDs held by field hints and native own-field descriptors.
     pub(super) fn invalidate_shape_bindings(&self) {
         for entry in self.programs.iter().flatten() {
-            entry.lane_views.invalidate_shape_bindings();
+            entry.views_in_lane.invalidate_shape_bindings();
         }
     }
 
@@ -2587,19 +2587,19 @@ impl ProgramStore {
     /// (`LaneView::clear_name_hints`): the global lexical names they read past changed.
     pub(super) fn clear_global_name_hints(&self) {
         for entry in self.programs.iter().flatten() {
-            for view in entry.lane_views.arena.borrow().iter().flatten() {
+            for view in entry.views_in_lane.arena.borrow().iter().flatten() {
                 view.clear_name_hints();
             }
         }
     }
 
     /// A program's lane views by function, derived on first use.
-    pub(super) fn lane_views(
+    pub(super) fn views_in_lane(
         &self,
         id: ProgramId,
     ) -> Option<&[LaneViewCell]> {
-        let entry = self.lane_entry(id)?;
-        Some(entry.lane_views.of(&entry.residual))
+        let entry = self.entry_in_lane(id)?;
+        Some(entry.views_in_lane.of(&entry.residual))
     }
 
     /// The lane view a general-loop entry of `function` runs with. A function that may loop
@@ -2620,8 +2620,8 @@ impl ProgramStore {
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
-        let entry = self.lane_entry(id)?;
-        let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
+        let entry = self.entry_in_lane(id)?;
+        let view = entry.views_in_lane.of(&entry.residual).get(function as usize)?;
         if let Some(view) = view.get() {
             return Some(view.as_ptr());
         }
@@ -2636,13 +2636,13 @@ impl ProgramStore {
     /// and lane calls completed its deferred runs (`LANE_VIEW_DEFERRED_RUNS`), as
     /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
     /// general path.
-    /// An unlowered function derives only where `unlowered` (`Vm::lane_call_may_derive`); where
+    /// An unlowered function derives only where `unlowered` (`Vm::call_may_derive_in_lane`); where
     /// `now`, its deferred runs are skipped, uncounted.
-    pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32, unlowered: bool, now: bool) -> bool {
-        let Some(entry) = self.lane_entry(id) else {
+    pub(super) fn call_may_derive_in_lane(&self, id: ProgramId, function: u32, unlowered: bool, now: bool) -> bool {
+        let Some(entry) = self.entry_in_lane(id) else {
             return false;
         };
-        let derived = entry.lane_views.derived(function).is_some();
+        let derived = entry.views_in_lane.derived(function).is_some();
         derived
             || entry
                 .lane_deferred
@@ -2651,7 +2651,7 @@ impl ProgramStore {
                 && (unlowered || !entry.residual.runs_tier0(function as usize))
     }
 
-    pub(super) fn lane_view<'s>(
+    pub(super) fn view_in_lane<'s>(
         &'s self,
         id: ProgramId,
         function: u32,
@@ -2663,9 +2663,9 @@ impl ProgramStore {
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
-        let entry = self.lane_entry(id)?;
+        let entry = self.entry_in_lane(id)?;
         let code = entry.residual.function_get(function as usize)?;
-        let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
+        let view = entry.views_in_lane.of(&entry.residual).get(function as usize)?;
         Some(derive_lane_view(entry, function, code, view, derive))
     }
 
@@ -2684,11 +2684,11 @@ impl ProgramStore {
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<(super::dispatch_fast::LaneView, Option<&'s super::dispatch_fast::LaneView>)> {
-        let entry = self.lane_entry(id)?;
+        let entry = self.entry_in_lane(id)?;
         let code = entry.residual.function_get(function as usize)?;
         let live = || entry.residual.shared_register_root_masks(function);
         let fresh = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
-        Some((fresh, entry.lane_views.derived(function)))
+        Some((fresh, entry.views_in_lane.derived(function)))
     }
 
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {
@@ -2709,7 +2709,7 @@ impl ProgramStore {
         if code.entries().len() != entry.residual.function_count() {
             return Err("native entry count does not match program functions".into());
         }
-        entry.lane_views = LaneViews::default();
+        entry.views_in_lane = LaneViews::default();
         entry.native_js = Some(code);
         Ok(())
     }
@@ -3017,7 +3017,7 @@ fn derive_lane_view<'s>(
             let (start, end) = view.record_range();
             super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
         }
-        entry.lane_views.store(view)
+        entry.views_in_lane.store(view)
     })
     .as_ptr()
 }

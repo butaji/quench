@@ -30,7 +30,7 @@ impl<H: Host> WasmSimd for Emitter<'_, '_, H> {
         left: ir::Value,
         right: Option<ir::Value>,
     ) -> ir::Value {
-        self.lane_operation(native, left, right)
+        self.operation_in_lane(native, left, right)
     }
 
     /// The operator's own kernel (`SimdKernel::apply_bits`), which the interpreter runs too:

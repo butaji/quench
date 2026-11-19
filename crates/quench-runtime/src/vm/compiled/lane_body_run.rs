@@ -34,7 +34,7 @@ pub(in crate::vm) struct BodyRun<'a> {
 impl<H: Host> Vm<H> {
     /// Runs `run`'s body; where it left, or that it returned.
     pub(in crate::vm) fn run_lane_body(&mut self, run: &BodyRun) -> LaneExit {
-        let frame = lane_frame();
+        let frame = frame_in_lane();
         self.programs.tier_events().record(Event::Entered);
         // SAFETY: the activation's capture slots outlive its body's run, which collects nothing.
         let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(super::super::dispatch_fast::capture_reads(run.captures)) }
@@ -93,7 +93,7 @@ impl<H: Host> Vm<H> {
             // frames onto the lane stack's own tops, which the dispatch points at. A body entered
             // through its cell has an activation pending, which a leave pushes first: it makes no
             // direct call, the frames of which would sit above that activation's room.
-            let words = self.lane_stack_words(if run.direct_calls && run.pending == NO_PENDING_ACTIVATIONS { SHADOW_FRAMES } else { 0 });
+            let words = self.stack_words_in_lane(if run.direct_calls && run.pending == NO_PENDING_ACTIVATIONS { SHADOW_FRAMES } else { 0 });
             (*dispatch).lane_frames_end = words.frames_end;
             (*dispatch).lane_values_top = words.values_top;
             (*dispatch).lane_values_end = words.values_end;

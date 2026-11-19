@@ -4,7 +4,7 @@ use super::*;
 
 /// A frame run's depth-0 capture slots, read when its capture walk ran: dense ones become
 /// `LaneContext::capture`; whether they are a root environment's, whose binding slots the
-/// record may read in place (`lane_root_binding_slot`).
+/// record may read in place (`root_binding_slot_in_lane`).
 pub(super) fn frame_capture_at_root<H: Host>(cx: *mut LaneContext<H>, frame: usize) -> bool {
     let vm = unsafe { vm(cx) };
     match vm.current_capture_slots(frame) {
@@ -26,7 +26,7 @@ pub(super) fn frame_capture_at_root<H: Host>(cx: *mut LaneContext<H>, frame: usi
 /// capture walk, as a root binding's records read it (`lane_load_root_binding`,
 /// `lane_store_root_binding`).
 #[inline(always)]
-pub(super) fn lane_root_environment<H: Host>(cx: *mut LaneContext<H>, depth: u16) -> Option<Value> {
+pub(super) fn root_environment_in_lane<H: Host>(cx: *mut LaneContext<H>, depth: u16) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let mut env = unsafe { (*cx).registers }.env();
     if env.is_deleted() {
@@ -39,7 +39,7 @@ pub(super) fn lane_root_environment<H: Host>(cx: *mut LaneContext<H>, depth: u16
     Some(env)
 }
 
-/// `lane_root_environment` of a frame run: the frame's closure environment, past any `with`
+/// `root_environment_in_lane` of a frame run: the frame's closure environment, past any `with`
 /// layers, as its capture walk finds it (`owner_capture_env` of the frame), read from the
 /// frame's fields without the caller view's dynamic calls.
 #[inline(always)]
@@ -61,9 +61,9 @@ fn frame_root_environment<H: Host>(cx: *mut LaneContext<H>, depth: u16) -> Optio
 /// each read and takes each store. The capture walk and the plain parent links must reach
 /// the same environment. Which slots those are is fixed per program, and a record's scope
 /// chain is fixed by its function, so the answer holds for the record.
-pub(super) fn lane_root_binding_slot<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> bool {
+pub(super) fn root_binding_slot_in_lane<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> bool {
     // The parent links first: most captures end at a function's environment.
-    let Some(root) = lane_root_environment(cx, depth) else { return false };
+    let Some(root) = root_environment_in_lane(cx, depth) else { return false };
     let vm = unsafe { vm(cx) };
     let slots = match vm.heap.environment(root) {
         Some(crate::heap::EnvironmentRecord { function, slots, .. }) if *function == super::ROOT_FUNCTION_ID => std::ptr::from_ref(slots),

@@ -344,7 +344,7 @@ impl Tiers {
 
 /// The tier that compiles and publishes lane bodies in this process's mode: `--b-jit`'s stencil
 /// bodies, `--q-jit`'s Quick lowering, or the Ultra lowering of every mode with it.
-pub(in crate::vm) fn lane_body_tier() -> Tier {
+pub(in crate::vm) fn body_tier_in_lane() -> Tier {
     if crate::jit_mode::base_only() {
         Tier::Base
     } else if crate::jit_mode::quick_only() {
@@ -514,7 +514,7 @@ pub(in crate::vm) const LANE_BODY_MAX_CODE_BYTES: usize = 115 * 1024;
 pub(in crate::vm) const MAX_UNIT_INLINED_INSTRUCTIONS: usize =
     LANE_BODY_MAX_CODE_BYTES / super::lane_region::LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
 
-// Lane bodies: history, recurrence and loop views (lane_body_tier, dispatch_frame, program_store)
+// Lane bodies: history, recurrence and loop views (body_tier_in_lane, dispatch_frame, program_store)
 /// The backward jumps a JavaScript activation takes in the general path before its function's
 /// lane view is derived and the lane runs its loop (`Vm::note_back_edge`). Deriving a view
 /// costs some hundreds of instructions per instruction of the function; a module body that

@@ -1098,7 +1098,7 @@ pub(crate) struct ProgramContext {
     /// The program's residual; null for a program the store does not hold.
     code: *const crate::bytecode::ResidualProgram,
     /// Its lane views by function; a null slice until the program's view table exists
-    /// (`Vm::lane_program_context`), which a program the lane never enters never makes.
+    /// (`Vm::program_context_in_lane`), which a program the lane never enters never makes.
     views: *const [program_store::LaneViewCell],
     constants: *const [Value],
     layout: ProgramCacheLayout,
@@ -1814,8 +1814,8 @@ pub(crate) struct Vm<H> {
     /// VM-wide running-job admission for native microtask checkpoints.
     native_microtask_running: bool,
     /// The async function a microtask drain resumed whose activation the running lane run is
-    /// rooted in (`Vm::resume_suspended`), else undefined: its `await` of a settled value continues in
-    /// place when no other job is queued (`lane_await`).
+    /// rooted in (`Vm::resume_job`), else undefined: its `await` of a settled value continues in
+    /// place when no other job is queued (`await_miss`).
     queue_resumed: Value,
     /// Whether the innermost running job queue has entered the host's context for unobserved
     /// Promise jobs (`Host::enter_unobserved_job`): its consecutive jobs share that entry.
@@ -3404,7 +3404,7 @@ impl<H: Host> Vm<H> {
     /// `program_context` of a program the lane runs, whose view table it makes if the
     /// program has none yet. The program is one the store holds.
     #[inline(always)]
-    pub(super) fn lane_program_context(&mut self, program: ProgramId) -> *const ProgramContext {
+    pub(super) fn program_context_in_lane(&mut self, program: ProgramId) -> *const ProgramContext {
         let context = self.program_context(program);
         // SAFETY: a context stays in its box while the VM lives.
         if unsafe { (*context).views.is_null() } {
@@ -3413,11 +3413,11 @@ impl<H: Host> Vm<H> {
         context
     }
 
-    /// `lane_program_context` of a program without its view table yet, out of line.
+    /// `program_context_in_lane` of a program without its view table yet, out of line.
     #[cold]
     #[inline(never)]
     fn make_context_views(&mut self, program: ProgramId) -> *const ProgramContext {
-        let Some((_, views, _)) = self.programs.lane_program(program) else {
+        let Some((_, views, _)) = self.programs.program_in_lane(program) else {
             unreachable!("a lane target names a program the store holds");
         };
         let views = std::ptr::from_ref(views);

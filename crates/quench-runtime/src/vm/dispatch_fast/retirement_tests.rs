@@ -16,7 +16,7 @@ fn osr_shape_retirement_unlinks_actual_code_and_keeps_recovery_alive() {
     let owner = vm.own_property(vm.realm.globals, atom).unwrap();
     let shape = vm.heap.object(owner).unwrap().shape();
     let mut publications = Vec::new();
-    for view in vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap()
+    for view in vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap()
         .iter().filter_map(super::program_store::derived_lane_view) {
         for site in &view.loops {
             let tier = site.tier.borrow();

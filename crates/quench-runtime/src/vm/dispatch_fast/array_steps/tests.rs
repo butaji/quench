@@ -34,7 +34,7 @@ var result = out.join("|");
 "#;
 
 /// `reduce` and `reduceRight` over dense arrays step their callbacks' lane activations
-/// (`lane_begin_array_iteration`) with the accumulator first: initial values and their
+/// (`begin_array_iteration_in_lane`) with the accumulator first: initial values and their
 /// absence, holes and inherited elements, array-likes, strings and typed arrays on the native's
 /// loop, the length read once, a strict callback's `this`, collections inside callbacks,
 /// throws, nesting, callbacks that become frames, and bound and native callbacks behave as

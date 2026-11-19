@@ -100,7 +100,7 @@ fn a_return_inside_a_loop_completes_through_the_lane_unit() {
     assert_eq!(*output.borrow(), *expected.borrow());
     let function_id = program.functions.iter().position(|function|
         function.header().name.is_some_and(|name| &program.atoms[name as usize] == "cmp")).unwrap();
-    let views = vm.programs.lane_views(super::super::program_store::ProgramId::MAIN).unwrap();
+    let views = vm.programs.views_in_lane(super::super::program_store::ProgramId::MAIN).unwrap();
     let osr = views.get(function_id).and_then(super::super::program_store::derived_lane_view)
         .unwrap().osr_diagnostics();
     assert!(osr.native_region_runs > 0, "the return loop ran natively: {osr:?}");
@@ -198,7 +198,7 @@ fn thrown_with_native_runs(source: &str, name: &str) -> (Option<crate::Value>, u
     let thrown = vm.execute(&program).unwrap_err().thrown_value();
     let function_id = program.functions.iter().position(|function|
         function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
-    let views = vm.programs.lane_views(super::super::program_store::ProgramId::MAIN).unwrap();
+    let views = vm.programs.views_in_lane(super::super::program_store::ProgramId::MAIN).unwrap();
     let osr = views.get(function_id).and_then(super::super::program_store::derived_lane_view)
         .unwrap().osr_diagnostics();
     (thrown, osr.native_region_runs)
@@ -280,7 +280,7 @@ fn osr_run(source: &str, function: &str) -> (Vec<String>, crate::vm::dispatch_fa
     assert_eq!(*output.borrow(), *expected.borrow(), "compiled output matches the interpreter");
     let id = program.functions.iter().position(|body|
         body.header().name.is_some_and(|name| &program.atoms[name as usize] == function)).unwrap();
-    let views = vm.programs.lane_views(super::super::program_store::ProgramId::MAIN).unwrap();
+    let views = vm.programs.views_in_lane(super::super::program_store::ProgramId::MAIN).unwrap();
     let osr = views.get(id).and_then(super::super::program_store::derived_lane_view)
         .unwrap().osr_diagnostics();
     assert!(osr.native_region_runs > 0, "the loop ran natively: {osr:?}");

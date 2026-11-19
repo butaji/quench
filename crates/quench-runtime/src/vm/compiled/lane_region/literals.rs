@@ -48,7 +48,7 @@ impl Lowering<'_, '_> {
     }
 
     /// A binary operator a string or BigInt operand takes, by the interpreter's definition
-    /// (`compiled::lane_binary`); an object operand, a throw or a due collection leaves first.
+    /// (`compiled::binary_in_lane`); an object operand, a throw or a due collection leaves first.
     pub(super) fn binary_by_definition(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, ty: Type) -> Option<bool> {
         let left = self.operand_tagged(state, instruction.operand_b())?;
         let right = self.operand_tagged(state, instruction.operand_c())?;
@@ -80,7 +80,7 @@ impl Lowering<'_, '_> {
     }
 
     /// Guards a string or BigInt fact an edge does not prove (`Lowering::conform`) by the VM's
-    /// own `typeof` test (`compiled::lane_typeof_is`); `false` for any other fact.
+    /// own `typeof` test (`compiled::typeof_is_in_lane`); `false` for any other fact.
     pub(super) fn guard_heap_primitive(&mut self, state: &mut State, register: Register, ty: Type, exit: ir::Block) -> bool {
         let Some(name) = [(crate::ValueType::String, "string"), (crate::ValueType::BigInt, "bigint")].into_iter()
             .find(|(kind, _)| ty != Type::NEVER && ty.is_subtype(Type::language(*kind))).map(|(_, name)| name) else { return false };

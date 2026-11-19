@@ -165,7 +165,7 @@ fn typed_array(heap: &mut Heap, kind: Kind, bytes: Vec<u8>) -> (Value, Value) {
 /// Publishes the typed array `array` over `buffer`'s bytes, `unshared` or not, as the VM does.
 fn publish(heap: &mut Heap, (array, buffer): (Value, Value), unshared: bool) {
     let Some(Cell::ArrayBuffer { bytes, .. }) = heap.get_mut(buffer) else { unreachable!("a buffer") };
-    let store = bytes.lane_mut().expect("a buffer no other handle shares");
+    let store = bytes.mut_in_lane().expect("a buffer no other handle shares");
     let (data, length) = (store.as_mut_ptr(), store.len());
     let Some(Cell::TypedArray { object, .. }) = heap.get_mut(array) else { unreachable!("a typed array") };
     let width = object.native.kind().width();

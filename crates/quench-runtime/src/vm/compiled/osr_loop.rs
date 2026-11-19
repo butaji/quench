@@ -553,7 +553,7 @@ fn tagged_registers_with_failure(
         .chain(instructions.iter().filter_map(|instruction| instruction.field_store_register().filter(|&receiver|
             instructions.iter().any(|candidate| candidate.defined_register() == Some(receiver)))))
         // Any store of a value only field reads give stores it tagged: it may be an object,
-        // which the entry's barrier on the receiver covers (`lane_loop_entry`).
+        // which the entry's barrier on the receiver covers (`loop_entry_in_lane`).
         .chain(instructions.iter().filter(|instruction| admitted_store(**instruction)).filter_map(|instruction| {
             let value = instruction.register_a();
             field_reads_alone_define(instructions, value).then_some(value)
@@ -772,7 +772,7 @@ pub(crate) struct Inlining {
     pub(crate) frames: Vec<InlineFrame>,
     /// The captures inlined callees read, by the frame and its depth-0 slot: a callee's
     /// `LoadCapture` reads `CALLEE_CAPTURE` with its index here, which the entry resolves
-    /// in the callee's own environment (`lane_loop_entry`).
+    /// in the callee's own environment (`loop_entry_in_lane`).
     pub(crate) callee_captures: Vec<(usize, u16)>,
     /// The caller's register count: every register from it on is an inlined callee's.
     pub(crate) caller_registers: u16,
@@ -2182,7 +2182,7 @@ fn admit(
             let value = instruction.register_a();
             admit_stored(admission, value, tagged, defined_registers)?;
         }
-        // A global binding's read (`Vm::lane_global_reads`), a Number where arithmetic reads it.
+        // A global binding's read (`Vm::global_reads_in_lane`), a Number where arithmetic reads it.
         opcode if crate::staged::reads_name(opcode) => {
             (instruction.result_flags() == 0).then_some(())?;
             admit_loaded(admission, instruction, tagged)?;

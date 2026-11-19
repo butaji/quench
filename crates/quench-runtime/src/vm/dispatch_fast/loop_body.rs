@@ -1,4 +1,4 @@
-//! A hot loop's lane body: the function's own body planner (`Vm::lane_body_work`) plans a body
+//! A hot loop's lane body: the function's own body planner (`Vm::body_work_in_lane`) plans a body
 //! that starts at the loop's header, inlining the loop's calls as any body does, and the loop's
 //! backward jump enters it on the activation's registers.
 use super::*;
@@ -69,7 +69,7 @@ impl LoopBody {
         match outcome {
             LaneBodyOutcome::Compiling(pending) => Self::Compiling { pending, wait: LOOP_BODY_POLL, stuck, attempts },
             LaneBodyOutcome::Published(method) => Self::Ready { method, runs: 0, exits: 0, leaves: LaneLeaves::NONE, stuck, attempts },
-            // A loop entry's body is a u-jit one: where b-jit would serve the function better, its own entries stitch it (`lane_specialize`).
+            // A loop entry's body is a u-jit one: where b-jit would serve the function better, its own entries stitch it (`specialize_in_lane`).
             LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred | LaneBodyOutcome::Unpaid | LaneBodyOutcome::Base => Self::Idle { stuck, attempts },
             LaneBodyOutcome::Declined | LaneBodyOutcome::Short => Self::Declined,
         }
@@ -162,7 +162,7 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
         Some(pending) => LaneBodyWork::Poll(pending),
         None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, looped: Some((site.span(), site.body_iterations())), called: false, caller: own, arrays: &arrays },
     };
-    let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc),
+    let outcome = vm.body_work_in_lane(code, function, &|function, pc| lane_unit_targets(cx, function, pc),
         &|function, header| lane_unit_trips(cx, function, header), &|callee| lane_callee_captures(cx, callee), &direct, work, Some(site.header));
     // A body its iterations have not paid for waits until they would at its planned size.
     if matches!(outcome, LaneBodyOutcome::Unpaid) {

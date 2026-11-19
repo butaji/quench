@@ -329,7 +329,7 @@ impl<H: Host> Vm<H> {
     /// inlined callee: its call binds what the inlined frame could not. A pure numeric callee
     /// binds its definition at the edge, as AOT does, so fresh closures of it are one case;
     /// one that is not this realm's own definition makes the unit's bindings invalid.
-    fn lane_bindings(&self, program: &ResidualProgram, function: u32, generic: &[LaneExit],
+    fn bindings_in_lane(&self, program: &ResidualProgram, function: u32, generic: &[LaneExit],
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, valid: &std::cell::Cell<bool>, caller: u32, pc: u32) -> Vec<CallTarget> {
         if caller == function && generic.contains(&LaneExit::At(pc as usize)) { return Vec::new(); }
         let mut bound = targets(caller, pc);
@@ -348,16 +348,16 @@ impl<H: Host> Vm<H> {
 
     /// The unit of `function` inlining at most `budget` callee instructions, if each frame
     /// it inlines is admitted.
-    fn lane_plan_unit(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
+    fn plan_unit_in_lane(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
         trips: &dyn Fn(u32, u32) -> Option<u64>, generic: &[LaneExit], budget: usize) -> Option<lane_unit::Unit> {
         let body = program.function_get(function as usize)?;
         let valid = std::cell::Cell::new(true);
         let unit = lane_unit::with_trips(program, function, body, (budget, self.programs.tiers().lane_body.max_inlined_instructions),
-            &|caller, pc| self.lane_bindings(program, function, generic, targets, &valid, caller, pc), trips,
+            &|caller, pc| self.bindings_in_lane(program, function, generic, targets, &valid, caller, pc), trips,
             &|callee| program.function_get(callee as usize)).or_else(|| { plan_miss(self, Miss::PlanNoUnit); None })?;
         if !valid.get() { plan_miss(self, Miss::PlanInvalidBindings); return None; }
         unit.frames.iter().all(|frame| match frame.target.callee {
-            CalleeBinding::Identity(callee) | CalleeBinding::Forwarded { callee, .. } => self.lane_inlined_target_admitted(program, callee, frame.target.function),
+            CalleeBinding::Identity(callee) | CalleeBinding::Forwarded { callee, .. } => self.inlined_target_admitted_in_lane(program, callee, frame.target.function),
             CalleeBinding::Function => frame.recovery == lane_unit::CallRecovery::RestartCall
                 && numeric_restartable(program, frame.target.function),
         }).then_some(unit).or_else(|| { plan_miss(self, Miss::PlanFrameNotAdmitted); None })
@@ -393,13 +393,13 @@ impl<H: Host> Vm<H> {
     fn prepare_lane_plan(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
         trips: &dyn Fn(u32, u32) -> Option<u64>, direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>,
         view: Option<&super::super::dispatch_fast::LaneView>, gate: &PlanGate<'_, H>) -> Option<LanePrepared> {
-        let unit = self.lane_plan_unit(program, function, targets, trips, generic, budget)?;
+        let unit = self.plan_unit_in_lane(program, function, targets, trips, generic, budget)?;
         let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(self, Miss::PlanNoEntry); None })?;
         let (left_at, entry_left) = left_places(&unit, generic, entry.unwrap_or(0));
-        let mut fields = self.lane_unit_fields(program, &unit, &left_at, view);
+        let mut fields = self.unit_fields_in_lane(program, &unit, &left_at, view);
         // Admitting the stores' writes once, here, widens what they widen; the fields then read the widened slots.
-        if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| lane_region::site_loads(&fields, site).map(Vec::as_slice))) { fields = self.lane_unit_fields(program, &unit, &left_at, view); }
-        let global_reads = self.lane_global_reads(program, function, &unit);
+        if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| lane_region::site_loads(&fields, site).map(Vec::as_slice))) { fields = self.unit_fields_in_lane(program, &unit, &left_at, view); }
+        let global_reads = self.global_reads_in_lane(program, function, &unit);
         let (direct, direct_sites) = unit_direct_calls(&unit, direct);
         // What decides against a plan from its unit alone decides before its lowering, the most
         // of a plan's cost (`PlanGate`).
@@ -472,7 +472,7 @@ impl<H: Host> Vm<H> {
         // from it did not pay at its size is not planned again until its entries would pay for that size.
         let site = (self.active_program.raw(), function, entry);
         let tiers = self.programs.tiers();
-        if !self.programs.lane_compiles_left(&site, tiers.lane_body.compile_bound(entry.is_some())) { plan_miss(self, Miss::PlanCompileBound); return Err(Unstarted::Declined); }
+        if !self.programs.compiles_left_in_lane(&site, tiers.lane_body.compile_bound(entry.is_some())) { plan_miss(self, Miss::PlanCompileBound); return Err(Unstarted::Declined); }
         // Before its first plan, a body's size is at least its own bytecodes' (`ir_per_bytecode`
         // each, the loop region's measure): inlining only adds to it.
         let own_ir = |bytecodes: u64| usize::try_from(bytecodes.saturating_mul(tiers.loops.ir_per_bytecode)).unwrap_or(usize::MAX);
@@ -569,13 +569,13 @@ impl<H: Host> Vm<H> {
     /// `direct` gives; publishes a body whose code compiled while its proofs held. An `entry`
     /// (a caller PC) plans the body to start there, as a running loop enters it.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::vm) fn lane_body_work(&mut self, program: &ResidualProgram, function: u32,
+    pub(in crate::vm) fn body_work_in_lane(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         let (mut observed, mut looped, mut called, mut caller, mut arrays) = (None, None, false, None, Vec::new());
         let mut pending = match work {
             LaneBodyWork::Start { generic, shrinks, observed: seen, looped: iterations, called: by_bodies, caller: view, arrays: sampled } => { (observed, looped, called, caller, arrays) = (seen, iterations, by_bodies, Some(view), sampled.to_vec()); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
-            LaneBodyWork::Poll(pending) => match self.lane_body_poll(program, pending) {
+            LaneBodyWork::Poll(pending) => match self.body_poll_in_lane(program, pending) {
                 Ok(outcome) => return outcome,
                 Err(replan) => replan,
             },
@@ -599,7 +599,7 @@ impl<H: Host> Vm<H> {
             // The plan's IR and lowering state, tens of megabytes for the largest bodies, are
             // gone; their pages go back instead of staying this thread's.
             quench_alloc::release_empty_pages();
-            match self.lane_body_poll(program, Box::new(started)) {
+            match self.body_poll_in_lane(program, Box::new(started)) {
                 Ok(outcome) => return outcome,
                 Err(replan) => pending = replan,
             }
@@ -608,7 +608,7 @@ impl<H: Host> Vm<H> {
 
     /// What a pending body's compile came to, or the feedback and budget to plan it again with
     /// where its code needed more memory than a body may take: half the inlining.
-    fn lane_body_poll(&mut self, program: &ResidualProgram, pending: Box<PendingLaneMethod>) -> Result<LaneBodyOutcome, (Vec<LaneExit>, usize)> {
+    fn body_poll_in_lane(&mut self, program: &ResidualProgram, pending: Box<PendingLaneMethod>) -> Result<LaneBodyOutcome, (Vec<LaneExit>, usize)> {
         if !pending.watch.is_published() || pending.plan.direct.iter().any(|callee| callee.method.as_ref().is_some_and(|method| !method.is_published())) {
             return Ok(LaneBodyOutcome::Stale);
         }
@@ -656,8 +656,8 @@ impl<H: Host> Vm<H> {
         let unformed = |fields: &[Option<Vec<NativeFieldLoad>>]| fields.iter()
             .map(|loads| loads.as_ref().map(|loads| loads.iter().map(|load| NativeFieldLoad { formed: None, ..*load }).collect::<Vec<_>>())).collect::<Vec<_>>();
         FactTables::of(self, plan.function, &plan.unit, &plan.fields, &taken.global_reads, &construct) == taken.tables
-            && self.lane_global_reads(program, plan.function, &plan.unit) == taken.global_reads
-            && unformed(&self.lane_unit_fields(program, &plan.unit, &taken.left_at, None)) == unformed(&plan.fields)
+            && self.global_reads_in_lane(program, plan.function, &plan.unit) == taken.global_reads
+            && unformed(&self.unit_fields_in_lane(program, &plan.unit, &taken.left_at, None)) == unformed(&plan.fields)
             && plan.unit.frames.iter().map(|frame| frame.target.identity().map_or((0, 0), |callee| self.lane_callee_captures(callee)))
                 .eq(taken.frame_captures.iter().copied())
             && lowered.region.stable.atoms.iter().all(|atom| !self.method_cache_atoms.bits().contains(*atom as usize))
@@ -740,7 +740,7 @@ impl LanePlan {
         if let (Some(directory), Some(clif)) = (native_dump_directory(), self.lowered.clif.as_deref()) {
             dump_native_code(directory, DumpSite::Body { function: self.function, scalar }, &memory, clif);
         }
-        // SAFETY: the lane region lowers a body with the lane body ABI (`lane_body_signature`).
+        // SAFETY: the lane region lowers a body with the lane body ABI (`body_signature_in_lane`).
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
         let scalar = scalar.map(|at| memory.pointer().addr() + at);
         Some(LaneMethod {
@@ -758,7 +758,7 @@ impl LanePlan {
 impl LaneMethod {
     /// A leave as the next body's feedback (`LaneLeaves`): one at an inlined call whose
     /// callee was none of the alternatives it inlined is the leave of the caller's call that
-    /// inlined its frame, which the next body then makes itself (`Vm::lane_bindings`), so its
+    /// inlined its frame, which the next body then makes itself (`Vm::bindings_in_lane`), so its
     /// callees run in their own bodies instead of the whole caller's remainder in the lane.
     /// A leave at a construction inside an inlined frame is the same: a construction no plan
     /// makes is generic only at a caller record (`Lowering::construct`), so the callee that

@@ -5,8 +5,8 @@ use super::*;
 script_handler! {
     /// A plain call of a leaf target of form `LEAF` (`CallEntry::leaf`): the callee's records
     /// run on a window at the lane stack's top, the call's facts held by `LaneContext::leaf`
-    /// instead of an activation until its return completes the call (`lane_complete_leaf`)
-    /// or anything observing activations makes it one (`lane_materialize_leaf`). The window
+    /// instead of an activation until its return completes the call (`complete_leaf_in_lane`)
+    /// or anything observing activations makes it one (`materialize_leaf_in_lane`). The window
     /// and the stack room are those its activation would take, so the guest-call budget and
     /// a full stack decide as they would. A call of this leaf form the site does not make (a
     /// receiver whose binding reads the heap, values past the parameters, no room) takes
@@ -37,13 +37,13 @@ script_handler! {
             sibling!(other_leaf_form::<H, ARGC>(target.entry), r, ip, Carried::script(cx))
         }
         // Only a leaf reading its receiver binds it here; any other binds it if it
-        // materializes (`lane_materialize_leaf`), which a binding past the receiver's own
+        // materializes (`materialize_leaf_in_lane`), which a binding past the receiver's own
         // bits could not.
         let receiver = r.get(i.c);
         let this = if leaf_binds_this(LEAF) {
-            lane_direct_call_this(vm, target, receiver)
+            direct_call_this_in_lane(vm, target, receiver)
         } else {
-            lane_binds_directly(target, receiver).then_some(receiver)
+            binds_directly_in_lane(target, receiver).then_some(receiver)
         };
         let Some(this) = this else {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
@@ -134,11 +134,11 @@ pub(super) fn leaf_call_handler<H: Host>(entry: CallEntry, i: &LaneInstruction) 
     }
 }
 
-/// Whether `lane_direct_call_this` binds `receiver` for `target`, without the binding: any
+/// Whether `direct_call_this_in_lane` binds `receiver` for `target`, without the binding: any
 /// binding but a sloppy function's, and its of an object in the direct record table, `null`
 /// or `undefined`, the commonest receiver of a plain call, tested first.
 #[inline(always)]
-fn lane_binds_directly(target: &ScriptCallTarget, receiver: Value) -> bool {
+fn binds_directly_in_lane(target: &ScriptCallTarget, receiver: Value) -> bool {
     target.this_binding != ThisBinding::Sloppy
         || receiver.is_undefined()
         || receiver.is_direct_object_family()
@@ -147,9 +147,9 @@ fn lane_binds_directly(target: &ScriptCallTarget, receiver: Value) -> bool {
 
 /// The return of the running leaf with `value` (`LaneContext::leaf`): the caller's registers,
 /// records and context again, and the call's result in its register, as the plain
-/// activation's return makes them (`lane_return_plain`). `None` while no leaf runs.
+/// activation's return makes them (`return_plain_in_lane`). `None` while no leaf runs.
 #[inline(always)]
-pub(super) fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value, form: LeafForm) -> Option<(Registers, Ip)> {
+pub(super) fn complete_leaf_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value, form: LeafForm) -> Option<(Registers, Ip)> {
     // SAFETY: the running lane's context.
     let leaf = unsafe { &mut (*cx).leaf };
     if leaf.call.is_null() {
@@ -171,26 +171,26 @@ pub(super) fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value,
     Some((caller, following(call)))
 }
 
-/// `lane_materialize_leaf` of the running leaf, if one runs: where a leaf's records reach
+/// `materialize_leaf_in_lane` of the running leaf, if one runs: where a leaf's records reach
 /// what observes activations or frames (the lane's exit, a getter's activation, an operation
 /// made in place), a leaf is the activation its call would have pushed. Its records reach
 /// nothing else that does (`leaf_body`).
 #[inline(always)]
-pub(super) fn lane_materialize_running_leaf<H: Host>(cx: *mut LaneContext<H>) {
+pub(super) fn materialize_running_leaf_in_lane<H: Host>(cx: *mut LaneContext<H>) {
     if !unsafe { (*cx).leaf.call }.is_null() {
-        lane_materialize_leaf(cx);
+        materialize_leaf_in_lane(cx);
     }
 }
 
 /// A plain call record `i` of `target`, another program's leaf (`CallEntry::leaf`), run as
 /// `lane_script_call_leaf` runs its own program's: its records on a window at the lane
 /// stack's top without an activation, in its program, which its return leaves
-/// (`lane_complete_leaf`) and its materialization records as a crossing activation's
+/// (`complete_leaf_in_lane`) and its materialization records as a crossing activation's
 /// (`Completion::Cross`). `None`, which changes nothing, for a call the leaf form does not
 /// make (more values than `FIXED_ARGUMENT_COPIES` or past the parameters, a receiver whose
 /// binding reads the heap, no room, a call returning its completion, refused cached calls).
 #[inline(always)]
-pub(super) fn lane_cross_leaf_call<H: Host>(
+pub(super) fn cross_leaf_call_in_lane<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
@@ -208,9 +208,9 @@ pub(super) fn lane_cross_leaf_call<H: Host>(
     }
     let receiver = r.get(i.c);
     let this = if leaf_binds_this(form) {
-        lane_direct_call_this(vm, target, receiver)?
+        direct_call_this_in_lane(vm, target, receiver)?
     } else {
-        lane_binds_directly(target, receiver).then_some(receiver)?
+        binds_directly_in_lane(target, receiver).then_some(receiver)?
     };
     if !lane_admits_window(vm, target, argc) {
         return None;

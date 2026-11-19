@@ -145,7 +145,7 @@ impl Lowering<'_, '_> {
     /// (`Entry::capture_values`) or a published callee's, fixed by the identity its call guards
     /// (`Lowering::frame_captures`), where the slot holds an ordinary value; otherwise, in an
     /// inlined frame, the VM's own projection of the closure the call bound
-    /// (`lane_function_capture_read`), which also resolves shared and statically bound callees'
+    /// (`function_capture_read_in_lane`), which also resolves shared and statically bound callees'
     /// slots, else the lane's own read. Each read loads where it runs, after any call that may
     /// have stored to the slot.
     pub(super) fn capture_site(&mut self, state: &mut State, pc: usize, depth: u16,

@@ -218,7 +218,7 @@ pub(super) enum Declined {
     /// The cell's facts do not describe the callee (not yet published, or another function's).
     Facts,
     /// A returning call: its callee's activation under a host that makes proper tail calls must not
-    /// grow the stack, which only the helper row's own admission (`lane_returning_call_admitted`) knows.
+    /// grow the stack, which only the helper row's own admission (`returning_call_admitted_in_lane`) knows.
     Returning,
 }
 

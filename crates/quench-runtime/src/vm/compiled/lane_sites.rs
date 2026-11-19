@@ -8,12 +8,12 @@ impl<H: Host> Vm<H> {
     /// global and resolve statically, a name no internal binding owns; each with its constant
     /// where the name is an immutable global (`builtins::immutable_globals`), else with the
     /// cell it reads now as a Stable fact (`Vm::stable_global_read`).
-    pub(in crate::vm) fn lane_global_reads(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit)
+    pub(in crate::vm) fn global_reads_in_lane(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit)
         -> crate::vm::global_facts::GlobalReads {
         // Before the loads hold their cells: a store reaches a cell no code holds, and the loads of
         // a name the unit stores read its slot (`stored`), typed by the slot's dependency, not folded
         // as a fact the store would retire each time.
-        let slots = self.lane_global_slots(program, function, unit);
+        let slots = self.global_slots_in_lane(program, function, unit);
         let stored: Vec<(crate::bytecode::Atom, GlobalRead)> = slots.iter().filter(|(_, store, _)| *store)
             .map(|(pc, _, slot)| (unit.instructions[*pc].atom_index(), *slot)).collect();
         let reads: Vec<(usize, GlobalRead)> = self.global_name_loads(program, function, unit)
@@ -54,11 +54,11 @@ impl<H: Host> Vm<H> {
     }
 
     /// The by-name global accesses of `unit` as `table`'s tier takes them: the lane's own
-    /// (`lane_global_reads`), or the b-jit's, where a load of a global object's own data property that
+    /// (`global_reads_in_lane`), or the b-jit's, where a load of a global object's own data property that
     /// is no constant is held as a slot of the object's layout too, which its row reads live.
     pub(in crate::vm) fn global_table(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit, table: GlobalTable)
         -> GlobalReads {
-        let reads = self.lane_global_reads(program, function, unit);
+        let reads = self.global_reads_in_lane(program, function, unit);
         match table {
             GlobalTable::Lane => reads,
             GlobalTable::Base => {
@@ -187,9 +187,9 @@ impl<H: Host> Vm<H> {
     }
 
     /// The PCs of `unit` whose `StoreName` (not a declaration's) or `LoadNameTypeof` reaches the
-    /// global scope as `lane_global_reads` decides for a load, each with the global object's
+    /// global scope as `global_reads_in_lane` decides for a load, each with the global object's
     /// slot it holds (`Vm::stable_global_slot`), where it holds one.
-    fn lane_global_slots(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> Vec<(usize, bool, GlobalRead)> {
+    fn global_slots_in_lane(&mut self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> Vec<(usize, bool, GlobalRead)> {
         let sites = self.global_store_sites(program, function, unit);
         sites.into_iter().filter_map(|(pc, atom, store)| Some((pc, store, GlobalRead::Slot(self.stable_global_slot(atom, store)?)))).collect()
     }

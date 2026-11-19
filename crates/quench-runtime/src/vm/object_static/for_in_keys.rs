@@ -87,7 +87,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `for_in_state` for the lane's `ForInStart` over an object the memo lists.
-    pub(in crate::vm) fn lane_for_in_state(&mut self, object: Value, keys: Value) -> Value {
+    pub(in crate::vm) fn for_in_state_in_lane(&mut self, object: Value, keys: Value) -> Value {
         self.for_in_state(object, keys)
     }
 

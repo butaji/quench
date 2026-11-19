@@ -54,7 +54,7 @@ impl<H: Host> AccessorCall<H> {
         let Some(target) = vm.script_call_entry(getter).map(|entry| unsafe { *entry }) else {
             return;
         };
-        if target.entry != CallEntry::Reads || lane_direct_call_this(vm, &target, object) != Some(object) {
+        if target.entry != CallEntry::Reads || direct_call_this_in_lane(vm, &target, object) != Some(object) {
             return;
         }
         // SAFETY: a `Reads` target of the running program holds its returning record first.
@@ -99,7 +99,7 @@ impl<H: Host> AccessorCall<H> {
         } else if !target.entry.answered_by_read() {
             return None;
         }
-        let this = lane_direct_call_this(unsafe { vm(self.cx) }, target, object)?;
+        let this = direct_call_this_in_lane(unsafe { vm(self.cx) }, target, object)?;
         unsafe { call_read_in_lane(self.cx, target, ReadArguments::NONE, this) }
     }
 
@@ -179,7 +179,7 @@ impl<H: Host> AccessorCall<H> {
     fn getter_field_slot(&self, getter: Value, base: Value) -> Option<u16> {
         let target = lane_script_target(self.cx, getter).filter(|target| target.entry == CallEntry::Reads)?;
         let vm = unsafe { vm(self.cx) };
-        (lane_direct_call_this(vm, &target, base)? == base).then_some(())?;
+        (direct_call_this_in_lane(vm, &target, base)? == base).then_some(())?;
         // SAFETY: a `CallEntry::Reads` target of the running program.
         let LeafRead::Field { base: field_base, kind: RETURNING_FIELD_OWN, cache } = unsafe { LeafRead::of::<H>(&target) }? else {
             return None;
@@ -249,7 +249,7 @@ impl<H: Host> AccessorCall<H> {
             }
             return self.read_forwarded(r, ip, base, atom);
         };
-        lane_materialize_running_leaf(self.cx);
+        materialize_running_leaf_in_lane(self.cx);
         let Some(target) = self.trap_target(trap) else {
             #[cfg(feature = "profile-lane-exits")]
             super::super::lane_exits::record_detail("get trap decline target".into());
@@ -297,7 +297,7 @@ impl<H: Host> AccessorCall<H> {
         vm.proxy_parts(base)?;
         let atom = keyed_trap_atom(vm, key)?;
         let (trap, handler, arguments) = get_trap_call(vm, base, atom)?;
-        lane_materialize_running_leaf(self.cx);
+        materialize_running_leaf_in_lane(self.cx);
         let target = self.trap_target(trap)?;
         Some(self.activate_trap(r, ip, target, handler, &arguments).map(|activated| {
             owe_invariants(vm, Completion::ReadsTrapped, arguments[0], atom, TrapAccess::Read);
@@ -369,7 +369,7 @@ impl<H: Host> AccessorCall<H> {
         let this = lane_call_this(vm, &target, object)?;
         // SAFETY: the record's value register is one of the running function's.
         let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };
-        Some(match lane_activate_kept::<H, false>(self.cx, r, ip, &target, stored, this) {
+        Some(match activate_kept_in_lane::<H, false>(self.cx, r, ip, &target, stored, this) {
             Ok((registers, next)) => {
                 if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations_mut().last_mut().map(|activation| activation.kind_mut()) {
                     script.completion = Completion::Assigns;

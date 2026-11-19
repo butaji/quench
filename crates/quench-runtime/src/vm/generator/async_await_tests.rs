@@ -160,7 +160,7 @@ fn a_throw_no_handler_covers_ends_a_generator_step_without_a_frame() {
 #[test]
 fn an_await_of_a_settled_value_continues_in_place_only_where_no_other_job_waits() {
     // A resumed async function awaiting a settled value whose reaction would be the only queued
-    // job continues without suspending (`lane_await`); with other jobs queued, or on its first
+    // job continues without suspending (`await_miss`); with other jobs queued, or on its first
     // run from a caller, it suspends: the order matches Node's.
     let lines = agree(
         r#"

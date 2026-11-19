@@ -38,7 +38,7 @@ pub(crate) struct LexicalSlot {
     pub(crate) realm_offset: i32,
 }
 
-/// What a lane body's by-name global read takes when it is compiled (`Vm::lane_global_reads`).
+/// What a lane body's by-name global read takes when it is compiled (`Vm::global_reads_in_lane`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GlobalRead {
     /// An immutable global's value (`builtins::immutable_globals`), which no binding changes.
@@ -85,7 +85,7 @@ pub(crate) enum GlobalTable {
 }
 
 /// What each by-name global access of a function or unit takes, by PC: a flat table, empty at
-/// a PC that is no such access (`Vm::lane_global_reads`).
+/// a PC that is no such access (`Vm::global_reads_in_lane`).
 #[derive(Clone, Default, PartialEq)]
 pub(crate) struct GlobalReads(Box<[Option<GlobalRead>]>);
 

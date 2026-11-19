@@ -4808,6 +4808,143 @@ impl<H: Host> Vm<H> {
         self.promise_resolve_for_constructor(p, self.intrinsic_promise_constructor(), value)
     }
 
+    /// `Promise.prototype.then` of a receiver whose species steps provably answer the
+    /// intrinsic `%Promise%` without running guest code (`promise_species_intrinsic`), made
+    /// without a frame for the lane: the reaction promise and `perform_promise_then`, as
+    /// `promise_then`'s intrinsic arm makes them. `None` leaves any other receiver, an
+    /// impure species read, or a lifecycle-observing host, whose hooks run guest code, to
+    /// the general call.
+    pub(super) fn promise_then_in_lane(
+        &mut self,
+        p: &ResidualProgram,
+        promise: Value,
+        on_fulfilled: Value,
+        on_rejected: Value,
+    ) -> Option<Value> {
+        if self.host.observes_promise_lifecycle()
+            || !self.is_promise(promise)
+            || !self.promise_species_intrinsic(promise)
+        {
+            return None;
+        }
+        // Nothing below runs guest code or collects, so the receiver and handlers stay
+        // live in the caller's registers, as `new_array_in_lane`'s arguments do.
+        let next = self.promise_object_with_parent(None).ok()?;
+        self.perform_promise_then(p, promise, on_fulfilled, on_rejected, next);
+        Some(next)
+    }
+
+    /// `Promise.resolve` of the intrinsic `%Promise%` receiver whose steps provably observe
+    /// nothing: a promise whose `constructor` reads as plain data to the receiver is
+    /// returned as is; any other value resolves a fresh promise as `promise_resolve_value`
+    /// resolves one, where its `then` also reads as plain data — fulfilled directly when
+    /// that `then` is not callable, else through the thenable job the general path would
+    /// enqueue. `None` leaves an impure read or a lifecycle-observing host to the general
+    /// call.
+    pub(super) fn promise_resolve_in_lane(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        value: Value,
+    ) -> Option<Value> {
+        if self.host.observes_promise_lifecycle()
+            || receiver != self.intrinsic_promise_constructor()
+        {
+            return None;
+        }
+        if self.is_promise(value) {
+            return self.promise_constructor_is_intrinsic(value, receiver).then_some(value);
+        }
+        let then = self.plain_resolution_then(value)?;
+        let promise = self.promise_object_with_parent(None).ok()?;
+        self.resolve_fresh_promise_plainly(p, promise, value, then).then_some(promise)
+    }
+
+    /// The `then` `promise_resolve_value` would read from a resolution `value`, where the read
+    /// observes nothing: `undefined` for a non-object, else its plain-data `then`
+    /// (`plain_named_load`). `None` where the read could run guest code.
+    pub(super) fn plain_resolution_then(&mut self, value: Value) -> Option<Value> {
+        if self.object_data(value).is_none() {
+            return Some(Value::UNDEFINED);
+        }
+        if let Some(then) = self.memoized_resolution_then(value) {
+            return Some(then);
+        }
+        let then_atom = self.runtime_atoms.then;
+        let then = self.plain_named_load(value, then_atom)?;
+        self.remember_resolution_then(value, then);
+        Some(then)
+    }
+
+    /// The `then` a resolution reads from promise `value` (`PromiseThenMemo`), where the memo
+    /// holds for it: one layout compare and two epoch compares instead of the read.
+    #[inline(always)]
+    fn memoized_resolution_then(&self, value: Value) -> Option<Value> {
+        let memo = self.promise_then_memo.get()?;
+        let object = &self.heap.promise(value)?.object;
+        (object.layout_id() == memo.layout
+            && memo.epochs == (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch())
+            && memo.realm == self.realm.globals)
+            .then_some(memo.then)
+    }
+
+    /// Remembers `then`, which a plain read of promise `value` found inherited as data
+    /// (`plain_named_load`): its prototype becomes a watched prototype whose value writes
+    /// advance the intrinsic epoch. Any other value, an own `then` or no prototype records
+    /// nothing.
+    #[cold]
+    #[inline(never)]
+    fn remember_resolution_then(&mut self, value: Value, then: Value) {
+        let key = PropertyKey::string(self.runtime_atoms.then);
+        let Some(record) = self.heap.promise(value) else { return };
+        let (layout, shape, prototype) = (record.object.layout_id(), record.object.shape(), record.object.proto());
+        // The read found `then` on the prototype itself: the receiver has none of its own.
+        if record.object.has_side_descriptors() || !self.is_function(then) || self.property_shape_slot(shape, key).is_some() {
+            return;
+        }
+        self.heap.mark_prototype(prototype);
+        let Some(holder) = self.heap.object(prototype) else { return };
+        if holder.has_side_descriptors() || holder.watched_subject().is_none() || self.property_shape_slot(holder.shape(), key).is_none() {
+            return;
+        }
+        if crate::heap::watch_prototype_values(holder.exact_shape()).is_none() {
+            return;
+        }
+        self.promise_then_memo.set(Some(PromiseThenMemo {
+            layout,
+            epochs: (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch()),
+            realm: self.realm.globals,
+            then,
+        }));
+    }
+
+    /// `promise_resolve_value` of a promise no one has observed yet, with the `then`
+    /// `plain_resolution_then` read from `value`, under a host that observes no promise
+    /// lifecycle: a callable `then` enqueues the thenable job, anything else fulfills the
+    /// promise, whose lack of reactions enqueues nothing. Neither runs guest code. `false`
+    /// when the promise is no promise record.
+    pub(super) fn resolve_fresh_promise_plainly(
+        &mut self,
+        p: &ResidualProgram,
+        promise: Value,
+        value: Value,
+        then: Value,
+    ) -> bool {
+        debug_assert!(!self.host.observes_promise_lifecycle());
+        if self.is_function(then) {
+            let execution_context = self.host.capture_job_context(None);
+            self.realm.jobs.push_back(super::PendingJob::Thenable(ThenableJob {
+                realm: self.realm.globals,
+                then,
+                thenable: value,
+                promise,
+                execution_context: execution_context.into(),
+            }));
+            return true;
+        }
+        self.promise_settle(p, promise, PromiseState::Fulfilled, value).is_ok()
+    }
+
     /// Whether `promise`'s species steps provably answer the intrinsic `%Promise%`: its
     /// `constructor` reads as plain data (`plain_named_load`) to that constructor — or to
     /// `undefined`, which PromiseSpeciesConstructor answers with the intrinsic — and the

@@ -54,7 +54,7 @@ impl<'a> BodyCall<'a> {
         let code = unsafe { &*(*cx).code };
         // SAFETY: the context names the running activation, which a native callee's frame is while its helper
         // runs (`native_frames::in_innermost_frame`).
-        let (registers, base, function, this) = unsafe { ((*cx).registers, (*cx).base, lane_running_function(cx), (*cx).registers.this()) };
+        let (registers, base, function, this) = unsafe { ((*cx).registers, (*cx).base, running_function_in_lane(cx), (*cx).registers.this()) };
         // The form of this record, decoded once per run: the run's code fixes it.
         let site = match unsafe { (*cx).body_site } {
             Some((decoded_code, decoded_function, decoded_pc, site))

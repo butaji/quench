@@ -194,7 +194,7 @@ impl<H: Host> Vm<H> {
             base,
             pending,
             executing,
-            views: self.programs.lane_views(program).map_or(&[][..], |views| views) as *const _,
+            views: self.programs.views_in_lane(program).map_or(&[][..], |views| views) as *const _,
             constants: self.programs.constants(program) as *const _,
             inline_calls: inline_calls && code.kind == crate::bytecode::ProgramKind::Wasm,
             script_calls,
@@ -361,7 +361,7 @@ impl<H: Host> Vm<H> {
     /// view, and the stack has room. `frame` is the suspended frame of `job`'s owner
     /// (`Vm::job_frame`), looked up by the caller. `None` changes nothing.
     fn admit_job(&mut self, code: &ResidualProgram, job: JobRoot, frame: *const FrameRecord, sent: Value) -> Option<JobWindow> {
-        if !self.lane_admits(code) || code.kind == crate::bytecode::ProgramKind::Wasm {
+        if !self.admits_in_lane(code) || code.kind == crate::bytecode::ProgramKind::Wasm {
             return None;
         }
         // SAFETY: the owner holds the frame boxed, which nothing moves or drops before the resume

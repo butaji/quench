@@ -93,7 +93,7 @@ impl ProgramEntry {
             module_imports,
             root_slots: _,
             module,
-            lane_views: _,
+            views_in_lane: _,
             raw_masks: _,
             js_entry_facts: _,
             lane_deferred: _,
@@ -233,7 +233,7 @@ impl ProgramEntry {
             regexp_receivers: FxHashMap::default(),
             #[cfg(feature = "native-execution")]
             native_js: None,
-            lane_views: super::LaneViews::default(),
+            views_in_lane: super::LaneViews::default(),
             raw_masks: Default::default(),
             js_entry_facts: super::JsEntryFactsTable::default(),
             lane_deferred: super::zeroed_counts(functions),

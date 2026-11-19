@@ -507,10 +507,16 @@ unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, 
     built
 }
 
-/// `body` with the holders its builtin calls' guards depend on (`Callees::native_holders`) among its own.
-fn with_native_holders(mut body: Body, callees: &Callees) -> Body {
-    body.holders = body.holders.iter().copied().chain(callees.native_holders()).collect();
-    body
+/// The first register past `function`'s own (`registers`) that the code's rows may write: an inlined
+/// callee's window and a body's scratch (`expanded`). A region and a body alike run over an activation
+/// that may keep its environment window (its header words, the environment among them, and its
+/// locals) right past its registers, in a lane activation's value stack or a VM frame's register file
+/// (`context_locals_in_window_in_lane`); the rows' registers start past it, so they never overlap it
+/// whatever the activation, and the run is admitted only where the storage reaches them
+/// (`dispatch_fast::frame_holds_window_in_lane`, `lane_body_admits`). A body's scratch written at
+/// `registers` overwrote the environment word (JetStream earley-boyer's "invalid local environment").
+fn inline_base(function: &crate::bytecode::Function, registers: u16) -> u16 {
+    registers.saturating_add(crate::vm::dispatch_fast::WINDOW_LOCALS).saturating_add(function.locals)
 }
 
 /// The bit of a widened key that says the instruction is an inlined callee's (`inlined_exit_key`).

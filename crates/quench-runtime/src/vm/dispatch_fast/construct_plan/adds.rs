@@ -7,7 +7,7 @@ use super::*;
 /// adds made so far are the body's own first stores of the same values, which an activation
 /// of the body then makes again as stores, leaving the object as the activation alone would.
 #[inline(always)]
-pub(in super::super) fn lane_add_initializer_fields<H: Host>(
+pub(in super::super) fn add_initializer_fields_in_lane<H: Host>(
     vm: &mut Vm<H>,
     code: &ResidualProgram,
     this: Value,
@@ -19,12 +19,12 @@ pub(in super::super) fn lane_add_initializer_fields<H: Host>(
     let Some(stores) = code.function(function as usize).initializer_stores(&code.constants) else {
         return false;
     };
-    lane_add_stores(vm, code, this, stores, argument, nested, each)
+    add_stores_in_lane(vm, code, this, stores, argument, nested, each)
 }
 
-/// `lane_add_initializer_fields` of `stores`, a body's or a class chain's (`chain_stores`).
+/// `add_initializer_fields_in_lane` of `stores`, a body's or a class chain's (`chain_stores`).
 #[inline(always)]
-pub(in super::super) fn lane_add_stores<H: Host>(
+pub(in super::super) fn add_stores_in_lane<H: Host>(
     vm: &mut Vm<H>,
     code: &ResidualProgram,
     this: Value,

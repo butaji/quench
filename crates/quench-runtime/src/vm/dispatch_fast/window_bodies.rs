@@ -42,7 +42,7 @@ unsafe fn activation_window<H: Host>(cx: *mut LaneContext<H>) -> Option<BodyLoca
         if vm(cx).lane_stack.activations().is_empty() || (*cx).registers.env().is_deleted() {
             return None;
         }
-        let function = lane_running_function(cx);
+        let function = running_function_in_lane(cx);
         let layout = (&*(*cx).views).get(function as usize).and_then(super::super::program_store::derived_lane_view)?.environment_window?;
         let registers = (*(*cx).code).function(function as usize).registers;
         let entries = (*cx).registers.0.add(usize::from(registers));

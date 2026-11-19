@@ -1,7 +1,7 @@
 //! The memory family of the machine: `MachineAccess` as Cranelift loads, stores and calls. An
 //! `Access` of Wasm memory is a lane, an extension and a result lane over the primitives.
 
-use super::{Builds, lane_of, machine_type};
+use super::{Builds, of_in_lane, machine_type};
 use crate::staged::machine::{Extend, Lane, MachineAccess};
 use crate::staged::wasm_memory::Access;
 use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, types};
@@ -80,10 +80,10 @@ impl<'b, B: Builds<'b>> MachineAccess for B {
 
     fn load_access(&mut self, access: Access, flags: MemFlagsData, address: ir::Value) -> ir::Value {
         let kind = Kind::of(access.ty).expect("a scalar access");
-        let (cell, result) = (cell_lane(access.bytes), lane_of(kind.ir()));
+        let (cell, result) = (cell_lane(access.bytes), of_in_lane(kind.ir()));
         // A float, or a cell as wide as its integer, loads straight into its view.
         if access.ty != kind.integer() || cell == result {
-            return self.raw_load(lane_of(scalar_ir(access.ty)), flags, address, 0);
+            return self.raw_load(of_in_lane(scalar_ir(access.ty)), flags, address, 0);
         }
         let extend = if access.signed { Extend::Sign } else { Extend::Zero };
         self.raw_load_extended(cell, extend, result, flags, address, 0)

@@ -1,7 +1,7 @@
 //! The field stores a loop region writes natively get their slots' addresses at entry.
 use super::*;
 
-/// The slot addresses of `region`'s field stores, for `entry` (`lane_loop_entry`).
+/// The slot addresses of `region`'s field stores, for `entry` (`loop_entry_in_lane`).
 pub(super) fn loop_field_stores<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,

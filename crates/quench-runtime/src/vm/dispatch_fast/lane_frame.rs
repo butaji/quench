@@ -1919,7 +1919,7 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     fn number_fact(&self) -> Boxing { Boxing::Double }
 }
 
-#[path = "lane_frame/staged_ops.rs"]
+#[path = "frame_in_lane/staged_ops.rs"]
 mod staged_ops;
 pub(super) use staged_ops::*;
 #[path = "lane_frame/suspends.rs"]
@@ -2336,6 +2336,7 @@ pub(in crate::vm::dispatch_fast) const fn row_miss<H: Host, const FLAG: u8>(op: 
             _ => super::store_name_first_miss::<H> as Handler,
         },
         crate::staged::Miss::Yield => super::generator_yields::yield_miss::<H>,
+        crate::staged::Miss::Await => super::generator_yields::await_miss::<H>,
         crate::staged::Miss::YieldStar => super::lane_exit::<H>,
         crate::staged::Miss::NameLoad(load) => name_load_miss::<H, FLAG>(load),
         crate::staged::Miss::General | crate::staged::Miss::CompareChain => lane_general_step::<H>,
@@ -3138,7 +3139,7 @@ lane_handler! {
                 // (`lane_return_value!`), so it writes no register.
                 let value = if const { super::own_site_decodes(FLAG) } { crate::value_vec::decode_staged_word(value) } else { Value::from_bits(value) };
                 let script: *mut LaneContext<H> = view.memory.bytes.cast();
-                if let Some(resumed) = by_leaf!(super::returning_leaf(FLAG), |L| super::lane_complete_plain_activation::<H, L>(script, value)) {
+                if let Some(resumed) = by_leaf!(super::returning_leaf(FLAG), |L| super::complete_plain_activation_in_lane::<H, L>(script, value)) {
                     resume!(script, resumed)
                 }
                 resume!(script, super::return_value_general_in_lane(script, ip, value));
@@ -3198,6 +3199,96 @@ lane_handler! {
             // A transfer (`Frame::suspend_yield`) resumes the register file the window switched to.
             Step::Control(Edge::Transfer) => resume!(cx, frame.take_transfer()),
             Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG>(LaneFields::<OP, FLAG>::OPCODE) }, r, ip, view),
+        }
+    }
+}
+
+/// Protocol miss families (`protocol_row`'s `MISS`, high byte): which body completes a
+/// protocol record the lane frame does not answer. The low byte carries the family's own
+/// static parameters (an argument count, a leaf form, a plain bit), which its `*_miss_of`
+/// table turns into the instantiation the record had.
+pub(in crate::vm::dispatch_fast) mod protocol_family {
+    /// Keyed reads and writes, deletes and named reads past their rows (`element_miss_of`).
+    pub(crate) const ELEMENT: u16 = 1 << 8;
+    /// Private names and defined fields (`private_miss_of`).
+    pub(crate) const PRIVATE: u16 = 2 << 8;
+    /// Script calls (`script_call_miss_of`).
+    pub(crate) const SCRIPT_CALL: u16 = 3 << 8;
+    /// Iterator and generator steps (`iteration_miss_of`).
+    pub(crate) const ITERATION: u16 = 4 << 8;
+    /// Native, applied, spread and array calls (`native_call_miss_of`).
+    pub(crate) const NATIVE_CALL: u16 = 5 << 8;
+    /// Loop headers and numeric protocol records (`loop_miss_of`).
+    pub(crate) const LOOP: u16 = 6 << 8;
+    /// Constructions (`construct_miss_of`).
+    pub(crate) const CONSTRUCT: u16 = 7 << 8;
+    /// Forwarded and kept calls, tier prologues and body entries (`entry_miss_of`).
+    pub(crate) const ENTRY: u16 = 8 << 8;
+    /// Returns and returning records (`return_miss_of`).
+    pub(crate) const RETURN: u16 = 9 << 8;
+    /// Frame calls and memoized script calls (`frame_call_miss_of`).
+    pub(crate) const FRAME_CALL: u16 = 10 << 8;
+    /// Leaf, Math and builtin native calls (`leaf_call_miss_of`).
+    pub(crate) const LEAF_CALL: u16 = 11 << 8;
+    /// Vector regions (`vector_miss_of`).
+    pub(crate) const VECTOR: u16 = 12 << 8;
+    /// The family of `miss`.
+    pub(crate) const fn of(miss: u16) -> u16 { miss & 0xff00 }
+    /// The family's static parameters in `miss`.
+    pub(crate) const fn parameters(miss: u16) -> u8 { (miss & 0xff) as u8 }
+}
+
+/// The body that completes protocol record `miss` (`protocol_row`) when its row leaves the record
+/// unresolved: the one place a former hand handler's body remains, named `x_miss`. Each family's
+/// table maps its parameters to the instantiation the record had.
+pub(in crate::vm::dispatch_fast) const fn protocol_miss<H: Host>(miss: u16) -> Handler {
+    use protocol_family as F;
+    match F::of(miss) {
+        F::ELEMENT => super::element_miss_of::<H>(F::parameters(miss)),
+        F::PRIVATE => super::private_miss_of::<H>(F::parameters(miss)),
+        F::SCRIPT_CALL => super::script_call_miss_of::<H>(F::parameters(miss)),
+        F::ITERATION => super::iteration_miss_of::<H>(F::parameters(miss)),
+        F::NATIVE_CALL => super::native_call_miss_of::<H>(F::parameters(miss)),
+        F::LOOP => super::loop_miss_of::<H>(F::parameters(miss)),
+        F::CONSTRUCT => super::construct_miss_of::<H>(F::parameters(miss)),
+        F::ENTRY => super::entry_miss_of::<H>(F::parameters(miss)),
+        F::RETURN => super::return_miss_of::<H>(F::parameters(miss)),
+        F::FRAME_CALL => super::frame_call_miss_of::<H>(F::parameters(miss)),
+        F::LEAF_CALL => super::leaf_call_miss_of::<H>(F::parameters(miss)),
+        F::VECTOR => super::vector_miss_of::<H>(F::parameters(miss)),
+        _ => lane_general_step::<H>,
+    }
+}
+
+lane_handler! {
+    /// The lane handler of a protocol record (a call, a construction, a return, an iterator or
+    /// generator step, a frame or tier protocol record), generated from its staged row as
+    /// `generated_row` is but with no site plan: the record decodes by its opcode's decoder, the row
+    /// steps on `Concrete` over the lane's frame (`CallFrame`), and the step picks the
+    /// continuation. What the lane frame does not answer leaves unresolved to the record's
+    /// protocol body (`protocol_miss(MISS)`), so the body is the row's miss arm, never the record's
+    /// handler. An opcode with no staged decoder decodes to nothing and takes that arm directly
+    /// until its row lands.
+    pub(super) fn protocol_row<OP: u16, ACC: u8, MISS: u16>(cx, r, ip, i, view) {
+        let fields = LaneFields::<OP>(i);
+        let Some(operation) = row_decode!(OP, FLAG_UNREAD, fields) else {
+            sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
+        };
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = row_frame::<H, OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
+        match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
+            Step::Value(value) => {
+                if const { !crate::staged::row_writes_result(LaneFields::<OP>::OPCODE) } {
+                    r.set(i.a, Value::from_bits(value));
+                }
+                next!(cx, r, following(ip), Carried::script_in(cx, view))
+            }
+            Step::Control(Edge::Following) => next!(cx, r, following(ip), Carried::script_in(cx, view)),
+            // A row that suspended or completed its activation ends the run.
+            Step::Control(Edge::Leave) => return exit(ip),
+            // A transfer resumes the register file the frame switched to.
+            Step::Control(Edge::Transfer) => resume!(cx, frame.take_transfer()),
+            Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view),
         }
     }
 }
@@ -3420,7 +3511,7 @@ unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [first, second]: 
         CallOut::Protocol { step: Protocol::ForInStart, .. } => {
             let source = second?;
             let keys = vm.listed_for_in_keys(source)?;
-            let state = vm.lane_for_in_state(source, keys);
+            let state = vm.for_in_state_in_lane(source, keys);
             // A state may be allocated; a due collection runs at the lane's next safepoint.
             note_allocation(vm);
             Some(state)
@@ -3515,6 +3606,6 @@ pub(super) fn staged_delete<H: Host>(cx: *mut LaneContext<H>, r: Registers, [des
 }
 
 // The fusion handlers and their install passes (`fuse_rows`, `fuse_chains`), in their own module.
-#[path = "lane_frame/fused.rs"]
+#[path = "frame_in_lane/fused.rs"]
 mod fused;
 pub(in crate::vm::dispatch_fast) use fused::{chain_row, fused_row, fused_rows, fuse_chains, fuse_rows, is_window_row};

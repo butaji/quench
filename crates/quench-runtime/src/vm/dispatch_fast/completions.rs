@@ -3,15 +3,15 @@
 use super::*;
 
 /// The completion of the innermost activation with `value`, which the record at `ip`
-/// returns, past the common return (`lane_complete_plain_activation`), by what it yields to
-/// its call: a native's callback ends the run (`lane_complete_native_callback`), a plain
+/// returns, past the common return (`complete_plain_activation_in_lane`), by what it yields to
+/// its call: a native's callback ends the run (`complete_native_callback_in_lane`), a plain
 /// activation completes a run of returning calls (`return f(...)`,
-/// `lane_complete_plain_chain`), another program's activation enters its caller's program
-/// (`lane_complete_cross_activation`), and any other completion, or any of these past its
+/// `complete_plain_chain_in_lane`), another program's activation enters its caller's program
+/// (`complete_cross_activation_in_lane`), and any other completion, or any of these past its
 /// common form, completes as `complete_activation_in_lane` completes it. `None` when no
 /// activation runs: the running function is a VM frame.
 #[inline(always)]
-pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
+pub(super) fn complete_returning_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     let completion = match vm.lane_stack.activations().last().map(|activation| activation.kind()) {
         Some(ActivationKind::Script(script)) => Some(script.completion),
@@ -19,16 +19,16 @@ pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, 
     };
     // An array step, a return per element, is tested first.
     if completion == Some(Completion::ArrayStep) {
-        return lane_step_array_iteration_in_place(cx, value);
+        return step_array_iteration_in_place_in_lane(cx, value);
     }
     let common = match completion {
-        Some(Completion::ReturnsToNative) => lane_complete_native_callback(cx, value),
+        Some(Completion::ReturnsToNative) => complete_native_callback_in_lane(cx, value),
         // `complete_activation_in_lane` begins with the same chain.
         Some(Completion::Plain) => None,
-        Some(Completion::Cross) => lane_complete_cross_activation(cx, value),
+        Some(Completion::Cross) => complete_cross_activation_in_lane(cx, value),
         Some(Completion::SettlesPromise) => return_from_in_lane::<H, false, false, false, true>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
         Some(Completion::Constructs) => return_from_in_lane::<H, false, false, true, false>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
-        Some(Completion::ReadsTrapped) => lane_complete_trapped_read(cx, ip, value),
+        Some(Completion::ReadsTrapped) => complete_trapped_read_in_lane(cx, ip, value),
         _ => None,
     };
     if common.is_some() {
@@ -37,24 +37,24 @@ pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, 
     complete_activation_in_lane(cx, ip, value)
 }
 
-/// `lane_complete_returning` of a proxy `get` trap's activation (`Completion::ReadsTrapped`)
+/// `complete_returning_in_lane` of a proxy `get` trap's activation (`Completion::ReadsTrapped`)
 /// whose read keeps its result: the read's register takes the trap's result, in the
 /// caller's program, which a trap of another program's library leaves for. A result the
 /// target's invariants may refuse returns from the trap's frame, whose pending call checks
 /// it; a read that returns its value (`RETURN_REGISTER`) takes `complete_activation_in_lane`.
 #[inline(always)]
-fn lane_complete_trapped_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
+fn complete_trapped_read_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     let top = vm.lane_stack.activations().last();
     if proxy_traps::trap_result_needs_general_path(vm, top, value) {
-        return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
+        return Some(Resumed::Exit(frame_return_in_lane(vm, ip, value)));
     }
     // SAFETY: the call record belongs to the caller's live view.
     if unsafe { (*top?.call()).a } & crate::bytecode::RETURN_REGISTER != 0 {
         return None;
     }
     let activation = vm.lane_stack.pop_activation()?;
-    let (caller_memory, _) = lane_restore_caller(cx, &activation);
+    let (caller_memory, _) = restore_caller_in_lane(cx, &activation);
     if activation.caller_program() != unsafe { (*cx).program } {
         lane_enter_program(cx, activation.caller_program());
     }
@@ -66,68 +66,68 @@ fn lane_complete_trapped_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: V
 /// restores what that completion restores, without moving the activation out of the stack:
 /// the caller's registers, records, receiver and environments, and the call's result. `None`
 /// leaves every other completion to the returns past it, which take another program's
-/// activation the same way (`lane_complete_cross_activation`).
+/// activation the same way (`complete_cross_activation_in_lane`).
 #[inline(always)]
-pub(super) fn lane_return_plain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
+pub(super) fn return_plain_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
     return_from_in_lane::<H, false, false, false, false>(cx, value)
 }
 
-/// `lane_return_plain` into a running lane body's call (`lane_body_call`): a returning
+/// `return_plain_in_lane` into a running lane body's call (`lane_body_call`): a returning
 /// call's register takes the result too, since the body completes its own activation with
 /// it next (`LaneExit::Returned`).
 #[inline(always)]
-pub(super) fn lane_return_to_body<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
+pub(super) fn return_to_body_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
     return_from_in_lane::<H, false, true, false, false>(cx, value)
 }
 
-/// `lane_complete_plain_activation` of an activation of another program than its caller's
+/// `complete_plain_activation_in_lane` of an activation of another program than its caller's
 /// (`Completion::Cross`), which enters the caller's program first, for the returns past the
 /// common one (`lane_return_general`, `return_value_general_in_lane`), so the common return
 /// carries none of the program switch.
 #[inline(always)]
-pub(super) fn lane_complete_cross_activation<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+pub(super) fn complete_cross_activation_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let (registers, next) = return_from_in_lane::<H, true, false, false, false>(cx, value)?;
     Some(Resumed::At(registers, next, Carried::script(cx)))
 }
 
 /// Whether a call record that returns its callee's completion runs in the lane: from an
 /// activation, which completes in turn, or from the frame, which the general loop then
-/// completes with the value (`lane_frame_return`). A host permitting proper tail calls sends
+/// completes with the value (`frame_return_in_lane`). A host permitting proper tail calls sends
 /// a strict caller's terminal calls to the general dispatch path instead.
 #[inline(always)]
-pub(super) fn lane_returning_call_admitted<H: Host>(cx: *mut LaneContext<H>) -> bool {
+pub(super) fn returning_call_admitted_in_lane<H: Host>(cx: *mut LaneContext<H>) -> bool {
     let vm = unsafe { vm(cx) };
     if !vm.host.proper_tail_calls() {
         return true;
     }
-    let function = lane_running_function(cx);
+    let function = running_function_in_lane(cx);
     !unsafe { &*(*cx).code }.function(function as usize).strict
 }
 
 /// The frame's own call record at `call` returns `value`, its callee's completion: the
 /// general loop returns it from the frame at that instruction (`Vm::lane_returned`).
 #[inline(always)]
-pub(super) fn lane_frame_return<H: Host>(vm: &mut Vm<H>, call: Ip, value: Value) -> Ip {
+pub(super) fn frame_return_in_lane<H: Host>(vm: &mut Vm<H>, call: Ip, value: Value) -> Ip {
     vm.lane_completion.set(LaneCompletion::Returned(value));
     exit(call)
 }
 
 /// Complete the innermost lane activation with `value` when it is the common return
-/// (`lane_return_plain`): a JavaScript activation of the running program's caller yielding
+/// (`return_plain_in_lane`): a JavaScript activation of the running program's caller yielding
 /// `value` to its call's result register. Each step loads or stores, so a handler returning
 /// through it saves no registers. `None`, which changes nothing, leaves every other completion
 /// to `complete_activation_in_lane`. A return record of a leaf's records (`LEAF`,
 /// `LaneView::specialize_leaf_returns`) completes the running leaf call first
-/// (`lane_complete_leaf`); no other record runs while one does.
+/// (`complete_leaf_in_lane`); no other record runs while one does.
 #[inline(always)]
-pub(super) fn lane_complete_plain_activation<H: Host, const LEAF: u8>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+pub(super) fn complete_plain_activation_in_lane<H: Host, const LEAF: u8>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let completed = match LEAF {
         NOT_LEAF => None,
-        form => lane_complete_leaf::<H>(cx, value, form),
+        form => complete_leaf_in_lane::<H>(cx, value, form),
     };
     let (registers, next) = match completed {
         Some(completed) => completed,
-        None => lane_return_plain(cx, value)?,
+        None => return_plain_in_lane(cx, value)?,
     };
     let view = Carried {
         memory: MemoryView::script(cx),
@@ -143,7 +143,7 @@ pub(super) fn lane_complete_plain_activation<H: Host, const LEAF: u8>(cx: *mut L
 /// restored: an inner one's would be overwritten by it. `None`, which changes nothing, leaves
 /// any other completion to the activation-by-activation loop.
 #[inline(always)]
-pub(super) fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+pub(super) fn complete_plain_chain_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     let (outermost, crossed) = returning_chain_outermost(vm.lane_stack.activations())?;
     // Script activations hold no Wasm storage (`LaneStack::pop_activation`), so the inner
@@ -157,18 +157,18 @@ pub(super) fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value:
         ActivationKind::Native | ActivationKind::Wasm { .. } | ActivationKind::WasmEntry { .. } => unreachable!("a chain holds script activations"),
     };
     if completion == Completion::ReturnsToBody {
-        return lane_end_body_callee(cx, value);
+        return end_body_callee_in_lane(cx, value);
     }
     // The outermost activation of another program than its caller's enters that program;
     // one of its own, past a crossing one above it, returns to the program it began in.
     if completion == Completion::Cross {
-        return lane_complete_cross_activation(cx, value);
+        return complete_cross_activation_in_lane(cx, value);
     }
     if crossed {
         lane_enter_program(cx, top.caller_program());
         unsafe { (*cx).memory = MemoryView::script(cx) };
     }
-    lane_complete_plain_activation::<H, NOT_LEAF>(cx, value)
+    complete_plain_activation_in_lane::<H, NOT_LEAF>(cx, value)
 }
 
 /// The index of the outermost activation of the run the innermost one completes, each
@@ -200,28 +200,28 @@ fn returning_chain_outermost(activations: &[Activation]) -> Option<(usize, bool)
     }
 }
 
-/// `lane_complete_plain_chain` out of line, for the returns past the common one
+/// `complete_plain_chain_in_lane` out of line, for the returns past the common one
 /// (`lane_return_general`, `return_value_general_in_lane`), whose frames stay small.
 #[inline(never)]
-pub(super) fn lane_complete_returning_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
-    lane_complete_plain_chain(cx, value)
+pub(super) fn complete_returning_chain_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+    complete_plain_chain_in_lane(cx, value)
 }
 
 /// The end of the nested run of a body's callee, the innermost activation (`Completion::ReturnsToBody`),
 /// with `value`: its caller's state restored and the call's register set, as the general loop's
 /// completion of it does (`body_calls::ends_run`).
 #[inline(always)]
-pub(super) fn lane_end_body_callee<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+pub(super) fn end_body_callee_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     let activation = vm.lane_stack.pop_activation()?;
-    let (_, this) = lane_restore_caller(cx, &activation);
+    let (_, this) = restore_caller_in_lane(cx, &activation);
     body_calls::ends_run(cx, &activation, Completion::ReturnsToBody, this, value)
 }
 
 /// `complete_activation_in_lane` of a native's callback (`Completion::ReturnsToNative`): the
 /// native's caller state restored, the run ends with `value`, which the native receives.
 #[inline(always)]
-pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
+pub(super) fn complete_native_callback_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
     let depth = vm.lane_stack.activation_count().checked_sub(1)?;
     let top: *const Activation = &vm.lane_stack.activations()[depth];
@@ -235,7 +235,7 @@ pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, va
     unsafe { vm.lane_stack.activations_mut().set_len(depth) };
     vm.lane_stack.drop_owned_from(depth);
     let activation = unsafe { &*top };
-    lane_restore_caller(cx, activation);
+    restore_caller_in_lane(cx, activation);
     vm.lane_completion.set(LaneCompletion::NativeReturned(value));
     Some(Resumed::Exit(exit(activation.call())))
 }
@@ -245,7 +245,7 @@ pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, va
 /// caller's context words stay below its registers. Returns the caller's memory and the
 /// returning activation's receiver, which the context held while it ran.
 #[inline(always)]
-pub(super) fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: &Activation) -> (MemoryView, Value) {
+pub(super) fn restore_caller_in_lane<H: Host>(cx: *mut LaneContext<H>, activation: &Activation) -> (MemoryView, Value) {
     let vm = unsafe { vm(cx) };
     // SAFETY: the values hold no drop glue.
     unsafe { vm.lane_stack.values.release_window(activation.window_word()) };
@@ -260,18 +260,18 @@ pub(super) fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: 
     (caller_memory, this)
 }
 
-/// The caller of `activation`, restored with `memory` (`lane_restore_caller`), resumes
+/// The caller of `activation`, restored with `memory` (`restore_caller_in_lane`), resumes
 /// after its call with `value` in the call's result register.
 #[inline(always)]
 pub(super) fn lane_resume_after_call(activation: &Activation, memory: MemoryView, value: Value) -> Resumed {
     // SAFETY: the call record belongs to the caller's live view.
     activation.caller_registers().set(unsafe { (*activation.call()).a }, value);
-    lane_resume_at(activation, memory, following(activation.call()))
+    resume_at_in_lane(activation, memory, following(activation.call()))
 }
 
 /// The caller of `activation`, restored with `memory`, resumes at the record `at` of its view.
 #[inline(always)]
-pub(super) fn lane_resume_at(activation: &Activation, memory: MemoryView, at: Ip) -> Resumed {
+pub(super) fn resume_at_in_lane(activation: &Activation, memory: MemoryView, at: Ip) -> Resumed {
     let view = Carried {
         memory,
         integers: crate::value::IntegerEncoding::TAG,
@@ -282,13 +282,13 @@ pub(super) fn lane_resume_at(activation: &Activation, memory: MemoryView, at: Ip
 
 /// Whether the caller a returning call completes in turn with `value` returns from its frame
 /// in the general loop instead: the frame itself, an activation whose promise's settlement
-/// the general path makes (`lane_settled_then` reads the `then` it resolves with into
+/// the general path makes (`settled_then_in_lane` reads the `then` it resolves with into
 /// `then`), or a trap whose result the target's invariants refuse (`proxy_traps::trap_result_needs_general_path`).
 #[inline(always)]
-pub(super) fn lane_caller_returns_in_frame<H: Host>(vm: &mut Vm<H>, value: Value, then: &mut Value) -> bool {
+pub(super) fn caller_returns_in_frame_in_lane<H: Host>(vm: &mut Vm<H>, value: Value, then: &mut Value) -> bool {
     match vm.lane_stack.activations().last() {
         None => true,
-        Some(caller) if settling(caller) => match lane_settled_then(vm, value) {
+        Some(caller) if settling(caller) => match settled_then_in_lane(vm, value) {
             Some(read) => {
                 *then = read;
                 false
@@ -311,7 +311,7 @@ pub(super) fn settling(activation: &Activation) -> bool {
 /// either of which may run guest code. The frame's pending call resolves the promise as
 /// `Vm::promise_resolve_value` does.
 #[inline(always)]
-pub(super) fn lane_settled_then<H: Host>(vm: &mut Vm<H>, value: Value) -> Option<Value> {
+pub(super) fn settled_then_in_lane<H: Host>(vm: &mut Vm<H>, value: Value) -> Option<Value> {
     if vm.host.observes_promise_lifecycle() {
         return None;
     }
@@ -319,10 +319,10 @@ pub(super) fn lane_settled_then<H: Host>(vm: &mut Vm<H>, value: Value) -> Option
 }
 
 /// The completion of a settling activation (`Completion::SettlesPromise`) whose caller the
-/// lane restored, with `value` and the `then` `lane_settled_then` read from it: its promise,
+/// lane restored, with `value` and the `then` `settled_then_in_lane` read from it: its promise,
 /// the innermost of `LaneStack::settling`, resolved with the value, which its call yields.
 #[inline(never)]
-pub(super) fn lane_settle_promise<H: Host>(cx: *mut LaneContext<H>, value: Value, then: Value) -> Value {
+pub(super) fn settle_promise_in_lane<H: Host>(cx: *mut LaneContext<H>, value: Value, then: Value) -> Value {
     let vm = unsafe { vm(cx) };
     let root = match vm.lane_stack.settling.pop().expect("each settling activation has its entry") {
         Some(root) => root,

@@ -3,7 +3,7 @@
 //! for a PC none has and for an operation that stopped.
 use super::*;
 use super::super::specialize::Continuation;
-use super::super::compiled::emit_machine::lane_of;
+use super::super::compiled::emit_machine::of_in_lane;
 use super::super::compiled::{NATIVE_JS_INVALID_PC, NATIVE_JS_STOPPED, native_entry_signature, native_js_start_pc};
 use crate::staged::machine::Unary;
 
@@ -159,7 +159,7 @@ pub(in crate::vm) fn region_call_arguments(
     result: ir::Value,
 ) -> [ir::Value; 5] {
     let length = builder.raw_const(Lane::I64, 0);
-    let arguments = builder.raw_const(lane_of(isa.pointer_type()), 0);
+    let arguments = builder.raw_const(of_in_lane(isa.pointer_type()), 0);
     [context, pc, length, arguments, result]
 }
 

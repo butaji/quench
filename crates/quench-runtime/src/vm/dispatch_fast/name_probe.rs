@@ -10,11 +10,11 @@ script_handler! {
     /// accordingly (`Vm::settle_name_probe`).
     #[inline(never)]
     fn name_probe_miss<KIND: u8>(cx, r, ip, i, view) {
-        lane_materialize_running_leaf(cx);
+        materialize_running_leaf_in_lane(cx);
         let vm = unsafe { vm(cx) };
         vm.scope_names.probe = Some(crate::vm::name_scope::NameProbe {
             program: unsafe { (*cx).program },
-            function: lane_running_function(cx),
+            function: running_function_in_lane(cx),
             pc: unsafe { ip.offset_from((*cx).base) } as u32,
         });
         exit(ip)

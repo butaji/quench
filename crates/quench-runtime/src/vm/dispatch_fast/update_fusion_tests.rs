@@ -16,7 +16,7 @@ fn after_run(mode: JitMode) -> (usize, Vec<*const ()>) {
     let mut vm = Vm::new(TestHost::default());
     vm.set_execution_mode(ExecutionMode::Compiled);
     crate::jit_mode::with_mode(mode, || vm.execute(&program)).unwrap();
-    let views = vm.programs.lane_views(super::super::program_store::ProgramId::MAIN).unwrap();
+    let views = vm.programs.views_in_lane(super::super::program_store::ProgramId::MAIN).unwrap();
     let view = views.get(function).and_then(super::super::program_store::derived_lane_view).expect("the function's view");
     let updates = program.function(function).instructions().enumerate().filter(|(_, instruction)| instruction.op().is_inc_dec()).map(|(pc, _)| pc);
     // SAFETY: each update's PC is inside the view's records.

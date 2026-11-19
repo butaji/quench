@@ -29,15 +29,15 @@ fn scalar(value: WasmValue) -> u64 {
     }
 }
 
-#[inline(always)] pub(crate) fn lane_mask(width: u32) -> u128 {
+#[inline(always)] pub(crate) fn width_mask(width: u32) -> u128 {
     u128::MAX >> (u128::BITS - width)
 }
 #[inline(always)] pub(crate) fn lane(bits: u128, width: u32, index: u8) -> u64 {
-    ((bits >> (width * u32::from(index))) & lane_mask(width)) as u64
+    ((bits >> (width * u32::from(index))) & width_mask(width)) as u64
 }
 #[inline(always)] pub(crate) fn replace(bits: u128, width: u32, index: u8, value: u64) -> u128 {
     let shift = width * u32::from(index);
-    let mask = lane_mask(width);
+    let mask = width_mask(width);
     (bits & !(mask << shift)) | ((u128::from(value) & mask) << shift)
 }
 #[inline(always)]
@@ -75,7 +75,7 @@ macro_rules! float_lane_projection {
                 match value {
                     WasmValue::I32(comparison) => {
                         if comparison != 0 {
-                            lane_mask(<$bits>::BITS) as u64
+                            width_mask(<$bits>::BITS) as u64
                         } else {
                             0
                         }
@@ -201,7 +201,7 @@ fn value_bits(value: WasmValue) -> u128 {
 }
 
 /// The lanes a lane immediate may name, from the operator's lane width when it has one.
-const fn lane_count(widths: &[u32]) -> u32 {
+const fn total_lanes(widths: &[u32]) -> u32 {
     match widths {
         [width] => u128::BITS / *width,
         _ => 1,
@@ -220,7 +220,7 @@ macro_rules! simd_operators {
             const KERNELS: &'static [SimdKernel] = &[$(SimdKernel {
                 left: WasmType::$left,
                 right: $right,
-                lanes: lane_count(&[$($width)?]),
+                lanes: total_lanes(&[$($width)?]),
                 apply: |$a, $b, $l| { let _ = (&$a, &$b, &$l); $body },
                 bits: |left: u128, right: u128, $l: u8| {
                     let $a = bits_value(WasmType::$left, left);
