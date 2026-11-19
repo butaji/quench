@@ -146,9 +146,8 @@ pub(crate) fn enter_context<S: Stage>(stage: &mut S, window: S::Word, this: S::W
 mod tests {
     use super::*;
     use crate::staged::Concrete;
-    use crate::Value;
 
-    const U: u64 = Value::UNDEFINED.to_bits();
+    const U: u64 = crate::value::TAG_UNDEFINED;
 
     fn fill(window: KeepingWindow, passed: &[u64], rest: u64) -> [u64; 8] {
         let mut words = [0_u64; 8];
