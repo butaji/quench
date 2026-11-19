@@ -4554,6 +4554,7 @@ pub(crate) use binary::{decode_static_module_analysis, encode_static_module_anal
 mod disassemble;
 mod flow_view;
 pub use flow_view::{FlowFunction, FlowInstruction};
+pub(crate) use flow_view::used_registers;
 #[cfg(test)]
 mod tests;
 mod validate;
