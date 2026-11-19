@@ -402,7 +402,7 @@ impl<'space, T> ParallelRecordMarks<'space, T> {
     /// for the one caller that set it, as `RecordSpace::mark` answers serially.
     #[inline(always)]
     pub(super) fn mark_if_new(&self, id: RecordId) -> bool {
-        let (block_index, record_index) = RecordSpace::<T>::split_id(id);
+        let (block_index, record_index) = (id as usize / RECORDS_PER_BLOCK, id as usize % RECORDS_PER_BLOCK);
         if block_index >= self.block_count {
             return false;
         }
@@ -428,7 +428,7 @@ impl<'space, T> ParallelRecordMarks<'space, T> {
     /// Whether record `id` is occupied.
     #[inline(always)]
     pub(super) fn occupied(&self, id: RecordId) -> bool {
-        let (block_index, record_index) = RecordSpace::<T>::split_id(id);
+        let (block_index, record_index) = (id as usize / RECORDS_PER_BLOCK, id as usize % RECORDS_PER_BLOCK);
         // SAFETY: the block is in bounds, and no occupancy word is written while marking.
         block_index < self.block_count
             && unsafe {

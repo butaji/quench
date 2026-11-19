@@ -403,8 +403,8 @@ impl<H: Host> Vm<H> {
             PropertyCopyKind::Set => self
                 .plain_assign_shapes
                 .get(target_shape, (source_shape, target_proto))
-                .filter(|(_, cell)| cell.holds())
-                .map(|(shape, _)| shape),
+                .filter(|entry| entry.cell.holds())
+                .map(|entry| entry.shape),
         };
         if memoizes && let Some(shape) = memoized {
             let mut values = smallvec::SmallVec::<[Value; PLAIN_COPY_INLINE_PROPERTIES]>::from_elem(Value::UNDEFINED, slots.len());
@@ -492,7 +492,9 @@ impl<H: Host> Vm<H> {
             if kind == PropertyCopyKind::Set
                 && let Some(cell) = self.chain_cell_to_end(target_proto)
             {
-                self.plain_assign_shapes.record(target_shape, (source_shape, target_proto), (shape, cell));
+                let words = self.plain_copy_words_epoch(source_shape, shape, &slots);
+                let entry = super::shape_memo::PlainAssignShape { shape, cell, words };
+                self.plain_assign_shapes.record(target_shape, (source_shape, target_proto), entry);
             }
         }
         true

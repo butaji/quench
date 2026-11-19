@@ -227,7 +227,7 @@ impl DirectFacts {
             facts: CellFacts::of_word(word(ENTRY_CELL.facts_offset)),
             call: callee.call as u64,
             caller_base: callee.caller_base as u64,
-            function: callee.function,
+            function: callee.target.function,
             captures: callee.capture_word(),
             global_this: callee.sloppy.map(|global| global.to_bits()),
             lexical: callee.lexical,

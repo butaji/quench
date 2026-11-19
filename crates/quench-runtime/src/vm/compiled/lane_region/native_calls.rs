@@ -17,7 +17,7 @@
 
 use super::*;
 use crate::staged::math::FloatUnary;
-use crate::vm::Native;
+use crate::heap::Native;
 use crate::vm::number::{MathFunction, math_function};
 use crate::vm::global_facts::GlobalRead;
 use super::builtin_calls::Builtin;

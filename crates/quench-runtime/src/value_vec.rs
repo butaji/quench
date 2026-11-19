@@ -1,6 +1,6 @@
 use crate::Value;
 use crate::heap::growth::{GrowthPolicy, grown_capacity};
-use crate::staged::object::Rep;
+use crate::typed_ir::Representation;
 use crate::typed_ir::SlotType;
 use crate::vm::switches;
 use rustc_hash::FxHashMap;
@@ -488,7 +488,7 @@ impl ValueArena {
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
-        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, float: _, widened: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _, widened_shapes: _, reservations: _, reservation_cycle: _ } = self;
+        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, float: _, widened: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _, widened_shapes: _, reservations: _, reservation_cycle: _, owner_epoch: _ } = self;
         writer.values(values);
         for bucket in 0..BUCKETS {
             writer.u32s(&self.free_starts(bucket));

@@ -26,12 +26,6 @@ pub(super) enum Search {
     Resume(usize),
 }
 
-/// Where the generic algorithm resumes a search of `range` the view cannot decide: its last
-/// index when `reverse`, else its first.
-fn resume_at(range: &std::ops::Range<usize>, reverse: bool) -> Search {
-    Search::Resume(if reverse { range.end - 1 } else { range.start })
-}
-
 /// How the elements equal to a searched value are recognised, decided once per search. Every
 /// kind but `Content` and `Nan` compares the raw words of the elements.
 #[derive(Clone, Copy)]
@@ -106,6 +100,13 @@ fn find_narrow(words: &[u32], reverse: bool, key: Option<u32>) -> Option<usize> 
     let hole = Value::DELETED.to_narrow();
     let stop = |word: &u32| Some(*word) == hole || key == Some(*word);
     if reverse { words.iter().rposition(stop) } else { words.iter().position(stop) }
+}
+
+
+/// Where the generic algorithm resumes a search of `range` the view cannot decide: its last
+/// index when `reverse`, else its first.
+fn resume_at(range: &std::ops::Range<usize>, reverse: bool) -> Search {
+    Search::Resume(if reverse { range.end - 1 } else { range.start })
 }
 
 impl<H: Host> Vm<H> {

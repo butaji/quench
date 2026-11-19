@@ -8,7 +8,7 @@ use super::*;
 use crate::bytecode::ImmediateLayout;
 use crate::staged::region::Region;
 use crate::staged::{Domain, builtins, elements, strings};
-use crate::vm::Native;
+use crate::heap::Native;
 
 /// A builtin a call runs on its staged row.
 #[derive(Clone, Copy)]

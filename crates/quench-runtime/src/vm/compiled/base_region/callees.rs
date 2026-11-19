@@ -70,7 +70,7 @@ pub(in crate::vm::compiled) struct Callees {
     stable: Vec<Option<Held>>,
     /// By PC, the native function the call site's callee register holds, where a field read defines it
     /// (`Vm::native_callees`), with the holder whose values the code depends on.
-    natives: Vec<Option<(crate::value::Value, crate::vm::Native, u32)>>,
+    natives: Vec<Option<(crate::value::Value, crate::heap::Native, u32)>>,
 }
 
 /// What holds a call site's callee register, so that the register need not be checked: a Stable global cell
@@ -127,7 +127,7 @@ impl Callees {
     /// The callee each call site of `code` calls (`candidates`, by PC), `body_of` the function it
     /// runs, and `stable` the Stable fact holding it by PC.
     pub(in crate::vm::compiled) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(&DirectCallee) -> Option<InlineBody>, stable: Vec<Option<Held>>,
-        natives: Vec<Option<(crate::value::Value, crate::vm::Native, u32)>>) -> Self {
+        natives: Vec<Option<(crate::value::Value, crate::heap::Native, u32)>>) -> Self {
         let mut owned = Vec::new();
         let at = code.iter().zip(candidates).map(|(instruction, site)| {
             let callees = reached(*instruction, site);

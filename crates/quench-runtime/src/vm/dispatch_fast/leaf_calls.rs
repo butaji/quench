@@ -53,7 +53,7 @@ script_handler! {
         };
         // The activation count and the values' room in one compare, the depth loaded only by
         // the exact test past it; a leaf pushes no plain activation, so the bound stands.
-        debug_assert_eq!(vm.lane_stack.plain_room(vm.lane_stack.plain.depth.get(), target.room), lane_activation_room(vm, target));
+        debug_assert_eq!(vm.lane_stack.plain_room(vm.lane_stack.plain.depth.get(), target.room), activation_room_in_lane(vm, target));
         if !vm.lane_stack.plain_room(vm.lane_stack.plain.depth.get(), target.room) {
             sibling!(script_call_full_miss::<H>, r, ip, Carried::script(cx))
         }

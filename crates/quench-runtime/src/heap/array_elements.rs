@@ -11,6 +11,7 @@
 //! survives (`ArrayElements::leave_nursery`), so every young run's owner is a young array
 //! record its sweep shows.
 use crate::staged::record_heads::ArrayHeaderHead;
+use super::growth::{GrowthPolicy, grown_capacity};
 use crate::value::Value;
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error, realloc};
 use std::ptr::NonNull;
@@ -323,10 +324,7 @@ impl ArrayElements {
         // SAFETY: the run starts with room for a header, which no owner counts.
         unsafe {
             header.as_ptr().write(Header {
-                owners: 0,
-                len: len as u32,
-                capacity: len as u32,
-                others: counted,
+                head: ArrayHeaderHead { owners: 0, len: len as u32, capacity: len as u32, others: counted },
             });
         }
         Self { header }

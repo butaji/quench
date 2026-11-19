@@ -2215,9 +2215,9 @@ pub(crate) struct Vm<H> {
     /// That an iterator prototype's chain lacks a name (`Vm::iterator_lacks_property`): the
     /// prototype, the name (`PropertyKey::key32`) and the cell of the chain it was proved over.
     iterator_absence_proof: std::cell::Cell<Option<(Value, u32, crate::heap::ChainCell)>>,
-    /// That the realm's `%Object.prototype%` chain lacks `then` (`Vm::resolve_iterator_result`):
-    /// the prototype and the `prototype_layout_epoch` it was proved under.
-    then_absence_proof: Option<(Value, u64)>,
+    /// That a realm's `%Object.prototype%` chain lacks `then` (`Vm::then_absence_proved`): the
+    /// prototype and the cell of the chain it was proved over.
+    then_absence_proof: Option<(Value, crate::heap::ChainCell)>,
     /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
     promise_species_proof: std::cell::RefCell<Option<promise::PromiseSpeciesProof>>,
     /// The `then` a resolution read from promises of one layout (`Vm::memoized_resolution_then`).

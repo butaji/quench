@@ -177,7 +177,7 @@ impl<H: Host> Vm<H> {
     /// with its identity, which the call guards, and the holder whose values the code depends on (the b-jit's
     /// builtin rows, `base_region::call_plan::builtin`).
     pub(in crate::vm) fn native_callees(&mut self, program: &ResidualProgram, function: u32, code: &[crate::bytecode::WideInstruction])
-        -> Vec<Option<(crate::value::Value, crate::vm::Native, u32)>> {
+        -> Vec<Option<(crate::value::Value, crate::heap::Native, u32)>> {
         let entered = branch_targets(code);
         (0..code.len()).map(|call| {
             if !code[call].op().is_call() { return None; }
@@ -188,7 +188,7 @@ impl<H: Host> Vm<H> {
 
     /// The native a field read at `member` defines, as `native_callees` names it.
     fn native_member_callee(&mut self, program: &ResidualProgram, function: u32, code: &[crate::bytecode::WideInstruction],
-        entered: &cranelift_codegen::bitset::CompoundBitSet, member: usize) -> Option<(crate::value::Value, crate::vm::Native, u32)> {
+        entered: &cranelift_codegen::bitset::CompoundBitSet, member: usize) -> Option<(crate::value::Value, crate::heap::Native, u32)> {
         if let Some(GlobalRead::NativeMember { value, native, holder }) = self.method_native(&code[member]) {
             return Some((value, native, holder));
         }

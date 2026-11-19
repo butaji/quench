@@ -1,9 +1,8 @@
 //! A program's root binding slots written once (`ResidualProgram::root_slots_written_once`),
-//! derived on first read, the runs of its root, and the read records that keep such a slot's
-//! value (`lane_load_root_constant`). A written-once slot a read found initialized holds that
+//! derived on first read, the runs of its root, and the code that folded such a slot's value. A written-once slot a read found initialized holds that
 //! value for every later read, while the root has run at most once, so its root environment
-//! is the program's only one; a lane record keeps it until the next collection.
-use super::{LaneViewCell, ProgramId, ProgramStore, derived_lane_view};
+//! is the program's only one.
+use super::{ProgramId, ProgramStore};
 use crate::Value;
 use crate::code_dependencies::{CodeReaders, DependentCode};
 use std::rc::Rc;
@@ -19,8 +18,6 @@ pub(super) struct RootConstants {
     /// The root closures made for the program (`Vm::note_root_run`), counted up to two: past
     /// one, no root slot is written-once for reads anymore and no record keeps its value.
     root_runs: std::cell::Cell<u8>,
-    /// The (function, pc) of each record that keeps a slot's value since the last collection.
-    sites: std::cell::RefCell<Vec<(u32, u32)>>,
     /// The published code that folded a written-once slot's value (`Identity::Folded`), retired
     /// by the program's second root run (`ProgramStore::note_root_run`).
     readers: std::cell::RefCell<CodeReaders>,
@@ -57,7 +54,7 @@ impl ProgramStore {
 
     /// Notes another run of program `id`'s root (its root closure is made); whether it is its
     /// second. From its second, the code that folded a written-once root slot is retired and
-    /// its records keep no root slot's value (`retire_root_constant_sites`): its root
+    /// its readers retire: its root
     /// environment is no longer the program's only one.
     pub(crate) fn note_root_run(&self, id: ProgramId) -> bool {
         let Some(entry) = self.entry(id) else { return false };
@@ -68,27 +65,6 @@ impl ProgramStore {
             return true;
         }
         false
-    }
-
-    /// Notes that the record at `pc` of function `function`'s view of program `id` keeps a
-    /// root slot's value (`lane_load_root_constant`).
-    pub(crate) fn note_root_constant_site(&self, id: ProgramId, function: u32, pc: u32) {
-        if let Some(entry) = self.entry(id) {
-            entry.root_constants.sites.borrow_mut().push((function, pc));
-        }
-    }
-
-    /// Hands each record that keeps a root slot's value, of program `only` or of every
-    /// program, to `revert` with its view, and forgets it.
-    pub(in crate::vm) fn retire_root_constant_sites(
-        &self,
-        only: Option<ProgramId>,
-        mut revert: impl FnMut(&super::super::dispatch_fast::LaneView, u32),
-    ) {
-        match only {
-            Some(id) => self.entry(id).into_iter().for_each(|entry| retire_entry_sites(entry, &mut revert)),
-            None => self.programs.iter().flatten().for_each(|entry| retire_entry_sites(entry, &mut revert)),
-        }
     }
 
     /// Makes `code`, which folded a written-once root slot of program `id`, retire at the root's
@@ -119,16 +95,5 @@ impl ProgramStore {
     /// activation recorded (`note_root_environment`).
     pub(crate) fn root_environment(&self, id: ProgramId) -> Option<Value> {
         self.module_environment(id).or_else(|| self.entry(id)?.root_constants.environment.get())
-    }
-}
-
-/// `retire_root_constant_sites` of one program.
-fn retire_entry_sites(entry: &super::ProgramEntry, revert: &mut impl FnMut(&super::super::dispatch_fast::LaneView, u32)) {
-    let sites = std::mem::take(&mut *entry.root_constants.sites.borrow_mut());
-    let Some(views) = entry.lane_views.table.get().map(|table| &table[..]) else { return };
-    for (function, pc) in sites {
-        if let Some(view) = views.get(function as usize).and_then(|cell: &LaneViewCell| derived_lane_view(cell)) {
-            revert(view, pc);
-        }
     }
 }

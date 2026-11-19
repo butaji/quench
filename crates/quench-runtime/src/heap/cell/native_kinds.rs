@@ -13,6 +13,12 @@ impl Native {
         }
     }
 
+    /// `derive_intrinsic_species_getter`: a `get [Symbol.species]` accessor that returns its receiver.
+    #[inline(always)]
+    pub(crate) const fn is_intrinsic_species_getter(self) -> bool {
+        self.derive_intrinsic_species_getter()
+    }
+
     /// The `get [Symbol.species]` accessors, each of which returns its receiver.
     pub(super) const fn derive_intrinsic_species_getter(self) -> bool {
         matches!(

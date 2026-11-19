@@ -1094,12 +1094,12 @@ impl<H: Host> Vm<H> {
         // A shape whose `prototype` slot is not yet memoized learns it here, as the first
         // construction of the shape would (`own_function_prototype_data`), so a plain function's
         // first plan is recorded as a class's is.
-        if self.shapes[shape as usize].prototype_slot.get() == PROTOTYPE_SLOT_UNKNOWN
+        if self.shapes[shape as usize].prototype_slot() == PROTOTYPE_SLOT_UNKNOWN
             && let Some(prototype_atom) = self.known_prototype_atom()
         {
             let _ = self.own_function_prototype_data(constructor, prototype_atom);
         }
-        match self.shapes[shape as usize].prototype_slot.get() {
+        match self.shapes[shape as usize].prototype_slot() {
             PROTOTYPE_SLOT_UNKNOWN | PROTOTYPE_SLOT_NONE => None,
             slot => Some((shape, slot as usize)),
         }

@@ -50,7 +50,7 @@ fn fold_at(region: &LoopRegion, known: Known<'_>, plans: &impl Fn(WideInstructio
     let pc = region.header + k as u32;
     (!lands.contains(k) && read.op().is_get_field() && read.result_flags() == 0).then_some(())?;
     let &GlobalRead::NativeMember { native, holder, cell, .. } = known.globals?.get(&(pc as usize))? else { return None };
-    (native == crate::vm::Native::StringCharCodeAt || math_kind(native).is_some()).then_some(())?;
+    (native == crate::heap::Native::StringCharCodeAt || math_kind(native).is_some()).then_some(())?;
     let callee = read.result_register();
     let Some(FieldLookup::Atom { base, .. }) = read.field_lookup() else { return None };
     let receiver = base.register_index()?;
@@ -112,8 +112,8 @@ fn leaving_number(region: &LoopRegion, instruction: WideInstruction) -> Option<D
 }
 
 /// The Number operation a native Math method computes (`math_call`'s row), if it is one.
-pub(super) fn math_kind(native: crate::vm::Native) -> Option<Kind> {
-    use crate::vm::Native;
+pub(super) fn math_kind(native: crate::heap::Native) -> Option<Kind> {
+    use crate::heap::Native;
     Some(match native {
         Native::MathSqrt => Kind::Sqrt,
         Native::MathFloor => Kind::Floor,
@@ -133,8 +133,8 @@ pub(super) fn math_kind(native: crate::vm::Native) -> Option<Kind> {
 
 /// The row a call of `native` with `shape` runs: `charCodeAt`'s `Heap::CharCodeAt` on the receiver and argument, or a Math
 /// method's Number operation on its arguments, if the call takes the arguments it computes.
-fn row_of(native: crate::vm::Native, shape: &CallShape) -> Option<Decoded> {
-    if native == crate::vm::Native::StringCharCodeAt {
+fn row_of(native: crate::heap::Native, shape: &CallShape) -> Option<Decoded> {
+    if native == crate::heap::Native::StringCharCodeAt {
         return (shape.argc == 1).then(|| Decoded::heap(Heap::CharCodeAt, Some(shape.result), Some(Source::Register(shape.this)), Some(Source::Register(shape.window))));
     }
     let kind = math_kind(native)?;

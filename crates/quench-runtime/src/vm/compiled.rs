@@ -136,7 +136,7 @@ mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
-use lane_allocations::{binary_in_lane, concat_pair_in_lane, flatten_string_in_lane, scalar_native_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, new_regexp_in_lane, new_template_in_lane};
+use lane_allocations::{binary_in_lane, concat_pair_in_lane, flatten_string_in_lane, scalar_native_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, lane_new_regexp, new_template_in_lane};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/site_posterior.rs"]
@@ -146,7 +146,7 @@ mod site_posterior;
 pub(super) use numeric_image::NumericImage;
 #[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages;
 #[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{BodyEntry, BodyReturn};
-pub(super) use lane_body_abi::lane_body_signature;
+pub(super) use lane_body_abi::body_signature_in_lane;
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;
 #[path = "compiled/tier_model.rs"] mod tier_model;
@@ -1154,7 +1154,7 @@ lane_helper_inventory! { H;
     /// A rope's flat form as a new string of its own, for a loop's entry (`flatten_string_in_lane`).
     FlattenString => flatten_string_in_lane::<H>,
     /// A regexp literal's fresh object of its site's template (`new_regexp_in_lane`).
-    NewRegExp => new_regexp_in_lane::<H>,
+    NewRegExp => lane_new_regexp::<H>,
     /// A decision of two words the call-out carries, which needs no VM record
     /// (`dispatch_fast::decide_comparison`).
     Decide => super::dispatch_fast::decide_comparison::<H>,
@@ -4688,12 +4688,13 @@ impl JsStepDispatch {
         allow_inline_calls: bool, views: bool, run: impl FnOnce(&mut Self, &mut Vm<H>) -> R) -> Option<R> {
         let program = vm.programs.get(program_id)?;
         let body = program.function_get(function as usize)? as *const _;
+        let vm_word = vm as *mut Vm<H> as usize;
         let activation = &mut vm.frames[frame];
         let mut dispatch = JsStepDispatch {
             head: JsStepHead {
                 native_locals: activation.locals.as_mut_ptr(),
                 local_count: activation.locals.len(),
-                vm: vm as *mut Vm<H> as usize,
+                vm: vm_word,
                 residual: Rc::as_ptr(&program) as usize,
                 ..JsStepDispatch::idle().head
             },
