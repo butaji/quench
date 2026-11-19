@@ -126,6 +126,7 @@ pub(super) mod tier_policy;
 mod stable_fact_tests;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
+pub(in crate::vm) use lane_region::relocs::RelocKind;
 #[path = "compiled/emit_machine.rs"]
 pub(super) mod emit_machine;
 #[path = "compiled/lane_unit.rs"]

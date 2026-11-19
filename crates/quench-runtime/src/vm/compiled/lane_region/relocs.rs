@@ -8,7 +8,7 @@ use crate::staged::machine::{Lane, MachineScalar};
 /// What a run-time address in emitted code addresses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
-pub(super) enum RelocKind {
+pub(in crate::vm) enum RelocKind {
     /// The entry cell of function `key`.
     EntryCell,
     /// The `DirectCallee` descriptor of the call to function `key`.
@@ -23,6 +23,10 @@ pub(super) enum RelocKind {
     ConstantPool,
     /// The atom of the program's table numbered `key`, in the VM that loads the code.
     Atom,
+    /// The heap value numbered `key` of the image's recipes, built in the VM that loads the code.
+    HeapValue,
+    /// The shape numbered `key` of the image's recipes, interned in the VM that loads the code.
+    Shape,
 }
 
 /// The address in this process of the symbol `(namespace, key)` a numeric image names, which is
