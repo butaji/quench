@@ -459,6 +459,7 @@ impl LaneStack {
     #[inline(always)]
     pub(super) fn records_mut(&mut self) -> &mut LaneActivations {
         self.plain.bound.set(0);
+        self.frames_changed();
         self.activation_records.get_mut()
     }
 

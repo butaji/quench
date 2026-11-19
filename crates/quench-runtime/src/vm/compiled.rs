@@ -3506,6 +3506,16 @@ struct JsStepDispatch {
     /// Past every word generated code reads: a feature's field leaves their offsets as they are.
     #[cfg(feature = "native-execution")]
     stop_pc: usize,
+    /// u-jit and b-jit native headers (one-frame-one-call.md F5): the plain frames' words, the admission
+    /// bound, the count of frames below the plain headers, the body table with its top cell, and the
+    /// descriptor table. Each table entry is indexed by the frame's total count, `*activation_count` plus
+    /// the plain depth. Appended, so no existing offset moves.
+    plain_depth: usize,
+    plain_depth_limit: usize,
+    activation_count: usize,
+    body_table: usize,
+    body_top: usize,
+    native_table: usize,
 }
 
 pub(super) struct LaneMethod {
@@ -4450,6 +4460,7 @@ impl JsStepDispatch {
             vm: 0, residual: 0, body: std::ptr::null(), inlined: 0, exit_line: 0, lane_context: 0, returned_pc: 0,
             native_top: 0, native_end: 0, shadow_top: 0, shadow_end: 0,
             lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
+            plain_depth: 0, plain_depth_limit: 0, activation_count: 0, body_table: 0, body_top: 0, native_table: 0,
             outcome: None,
         }
     }

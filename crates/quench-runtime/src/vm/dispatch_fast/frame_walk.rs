@@ -221,6 +221,7 @@ impl LaneStack {
         let records = self.record_count();
         self.segments.get_mut().push(PlainSegment { records, depth, registers: self.plain.registers.get(), program: self.plain.program.get() });
         self.sealed.set(self.sealed.get() + depth);
+        self.frames_changed();
         self.plain.depth.set(0);
         // The records change: the proved calls' bound no longer holds.
         self.plain.bound.set(0);
@@ -235,6 +236,7 @@ impl LaneStack {
         let Some(&segment) = segments.last().filter(|segment| segment.records == records) else { return };
         segments.pop();
         self.sealed.set(self.sealed.get() - segment.depth);
+        self.frames_changed();
         self.plain.depth.set(segment.depth);
         self.plain.registers.set(segment.registers);
         self.plain.program.set(segment.program);
@@ -259,6 +261,7 @@ impl LaneStack {
         let mut frames: Vec<(Activation, SidePayload)> = self.frames_innermost().map(|frame| (frame.record(), frame.payload())).collect();
         frames.reverse();
         self.records_mut().truncate(0);
+        self.frames_changed();
         self.plain.depth.set(0);
         self.sides.get_mut().clear();
         // SAFETY: the walk above ended.

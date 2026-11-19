@@ -2337,6 +2337,22 @@ pub(super) struct LaneStack {
     segments: std::cell::UnsafeCell<Vec<frame_walk::PlainSegment>>,
     /// The headers the segments hold, which `activation_count` counts.
     sealed: std::cell::Cell<usize>,
+    /// The admission bound emitted code checks native headers against (`JsStepDispatch::plain_depth_limit`):
+    /// the activation limit while the frames are bound (`NATIVE_FRAMES_ENABLED`), else 0. Rust's frame
+    /// changes void it (`frames_changed`), so emitted calls take the helper row until the next binding.
+    plain_depth_limit: Box<std::cell::Cell<usize>>,
+    /// The frames below the plain headers, records and sealed alike (`frames_below_plain`), as of the last
+    /// binding: emitted pushes index their tables by it plus the plain depth, which is `activation_count()`.
+    frames_below: Box<std::cell::Cell<usize>>,
+    /// The total frame count emitted native pushes index their body and descriptor tables by
+    /// (`JsStepDispatch::body_top`): `activation_count()` as of the last binding, then moved by emitted
+    /// pushes and pops. Indexing by the total count, not the plain depth, keeps a record's push from
+    /// reusing the entry of a frame it sealed (one-frame-one-call.md F5).
+    body_top: Box<std::cell::Cell<usize>>,
+    /// The running body (`LaneMethod`) of each native header, by its total frame index (`body_table`).
+    body_table: Vec<usize>,
+    /// The descriptor (`DirectCallee`) of each native header, by its total frame index (`native_table`).
+    native_table: Vec<usize>,
     /// The return trampoline of the native callbacks pushed as plain activations
     /// (`CallbackTrampoline`), at an address their headers name.
     callback_return: Box<CallbackTrampoline>,
@@ -2481,7 +2497,20 @@ pub(in crate::vm) struct LaneStackWords {
     pub(in crate::vm) values_end: usize,
     pub(in crate::vm) activations_top: usize,
     pub(in crate::vm) frames_end: usize,
+    /// The plain frames' words (`plain_frames_word`), and the cells of the native header bound, the frames
+    /// below the plain headers, and the body top (`LaneStack::plain_depth_limit` and the rest).
+    pub(in crate::vm) plain_depth: usize,
+    pub(in crate::vm) plain_depth_limit: usize,
+    pub(in crate::vm) activation_count: usize,
+    pub(in crate::vm) body_table: usize,
+    pub(in crate::vm) body_top: usize,
+    pub(in crate::vm) native_table: usize,
 }
+
+/// Whether emitted code may push native headers at all (one-frame-one-call.md F5). Off until the
+/// emitted push, its readers and the body table are verified: the bound stays 0, so every call takes
+/// the helper row.
+const NATIVE_FRAMES_ENABLED: bool = false;
 
 impl LaneStack {
     /// The activation records, every frame among them (call protocol v2 stage C,
@@ -2534,7 +2563,15 @@ impl LaneStack {
 
     /// The address of the plain activations' words (`PlainFrames`).
     #[inline(always)]
-    pub(in crate::vm) fn plain_frames_word(&self) -> usize { (&raw const self.plain).expose_provenance() }
+    pub(in crate::vm) fn plain_frames_word(&self) -> usize {
+        self.frames_changed();
+        (&raw const self.plain).expose_provenance()
+    }
+
+    /// Records that Rust changed the frames: the emitted native push's bound is void until the next
+    /// binding (`Vm::lane_stack_words`), so emitted calls take the helper row meanwhile.
+    #[inline(always)]
+    pub(super) fn frames_changed(&self) { self.plain_depth_limit.set(0); }
 
     /// Make every frame a record, outermost first, as their pushes would have: the plain
     /// headers, innermost and sealed alike, each the record the frame view reads it as
@@ -2563,6 +2600,7 @@ impl LaneStack {
             // SAFETY: as above.
             unsafe { records.push_unchecked(activation) };
         }
+        self.frames_changed();
         self.plain.depth.set(0);
         // SAFETY: as above; `spill_plain` alone writes the seals through a shared reference.
         unsafe { self.clear_segments() };
@@ -2692,6 +2730,11 @@ impl Default for LaneStack {
             sides: std::cell::UnsafeCell::new(Vec::new()),
             segments: std::cell::UnsafeCell::new(Vec::new()),
             sealed: std::cell::Cell::new(0),
+            plain_depth_limit: Box::new(std::cell::Cell::new(0)),
+            frames_below: Box::new(std::cell::Cell::new(0)),
+            body_top: Box::new(std::cell::Cell::new(0)),
+            body_table: vec![0; LANE_STACK_ACTIVATIONS],
+            native_table: vec![0; LANE_STACK_ACTIVATIONS],
             callback_return: Box::new(CallbackTrampoline::new()),
             wasm_storage_bytes: 0,
             call_sites: std::cell::RefCell::default(),
@@ -14975,12 +15018,24 @@ impl<H: Host> Vm<H> {
         let frames_end = stack.activations().top_ptr().wrapping_add(frames).addr();
         // SAFETY: the values' capacity bounds the vector's own allocation.
         let values_end = unsafe { stack.values.as_mut_ptr().add(stack.values.capacity()) }.addr();
-        LaneStackWords {
+        let activations_top = stack.activations_mut().top_word().addr();
+        let words = LaneStackWords {
             values_top: stack.values.top_word().addr(),
             values_end,
-            activations_top: stack.activations_mut().top_word().addr(),
+            activations_top,
             frames_end,
-        }
+            plain_depth: stack.plain_frames_word(),
+            plain_depth_limit: stack.plain_depth_limit.as_ptr().addr(),
+            activation_count: stack.frames_below.as_ptr().addr(),
+            body_table: stack.body_table.as_ptr().addr(),
+            body_top: stack.body_top.as_ptr().addr(),
+            native_table: stack.native_table.as_ptr().addr(),
+        };
+        // The bound is set last: `plain_frames_word` above voids it.
+        stack.frames_below.set(stack.frames_below_plain());
+        stack.body_top.set(stack.activation_count());
+        stack.plain_depth_limit.set(if NATIVE_FRAMES_ENABLED { stack.activation_limit.get().min(LANE_STACK_ACTIVATIONS) } else { 0 });
+        words
     }
 
     /// The lane view a hot loop of `function` runs with (`Vm::note_back_edge`), or null.
