@@ -122,8 +122,7 @@ pub(crate) mod wasm;
 pub(crate) mod wasm_float;
 pub(crate) mod wasm_concrete;
 pub(crate) mod wasm_gc;
-// merge: wasm_concrete stays pub(crate) (vm/wasm_gc and vm/wasm_gc/stage.rs reach it); wasm_int is theirs'.
-pub(crate) mod wasm_int;
+pub(crate) mod wasm_exception;
 pub(crate) mod wasm_call;
 pub(crate) mod wasm_flow;
 pub(crate) mod wasm_instance;

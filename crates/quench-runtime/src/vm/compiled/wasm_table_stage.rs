@@ -9,9 +9,10 @@
 //! compiled, a memory the call cannot be made across) goes through the VM's callout.
 
 use super::wasm_stage::infallible;
+use super::wasm_call_stage::is_tail_call;
 use super::{
-    Analysis, CONTEXT_CALL_REFERENCE, CONTEXT_CALL_REFERENCE_DIAGNOSTIC, CONTEXT_INSTANCE,
-    CONTEXT_TABLE_WORDS, CallContext, Emitter, Host, Kind,
+    Analysis, BODY_CALL_CONV, CONTEXT_CALL_REFERENCE, CONTEXT_CALL_REFERENCE_DIAGNOSTIC,
+    CONTEXT_INSTANCE, CONTEXT_TABLE_WORDS, CallContext, Emitter, Host, Kind,
     Slot, Vm, internal_signature, invariant,
 };
 use crate::bytecode::WideInstruction;
@@ -202,6 +203,8 @@ impl<H: Host> Emitter<'_, '_, H> {
         };
         let signature = self.analysis.type_signature(signature_index).expect("planned").clone();
         let expected = self.analysis.type_canonical(signature_index).expect("planned");
+        // The native fast path of a tail call is a `return_call_indirect`, when results agree.
+        let native_tail = is_tail_call(instruction) && signature.results.first().copied() == self.plan.result;
         let row = self.read(instruction.b(), Kind::I64);
         let words = self.table_words(table);
         // The target checked in this block: its row and id, not loaded again.
@@ -213,7 +216,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let (slow, done) = (builder.create_block(), builder.create_block());
         builder.append_block_param(done, types::I64);
         builder.append_block_param(done, types::I64);
-        self.native_calls(words, row, checked, expected, (instruction, &signature), (slow, done));
+        self.native_calls(words, row, checked, expected, (instruction, &signature), (slow, done), native_tail);
         self.body.core.builder.set_cold_block(slow);
         self.enter(slow);
         let (args, out) = self.spill_arguments(instruction, &signature);
@@ -224,11 +227,13 @@ impl<H: Host> Emitter<'_, '_, H> {
         let (status, bits) = (self.body.core.builder.block_params(done)[0], self.body.core.builder.block_params(done)[1]);
         self.propagate(status);
         self.take_result(instruction, &signature, bits);
+        self.return_if_tail(instruction);
     }
 
     /// The native calls of the row: when it holds the `expected` id, a call of its function in
     /// this instance (the running context's) or in another (the instance's record), each jumping
     /// to `done` with its status; any other row, or a function without a body, leaves for `slow`.
+    /// With `native_tail`, the local call is a `return_call_indirect` that does not reach `done`.
     fn native_calls(
         &mut self,
         words: ir::Value,
@@ -237,6 +242,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         expected: CanonicalSignature,
         (instruction, signature): (WideInstruction, &crate::WasmSignature),
         (slow, done): (ir::Block, ir::Block),
+        native_tail: bool,
     ) {
         let context = self.body.core.context;
         let flags = MemFlagsData::trusted();
@@ -273,8 +279,12 @@ impl<H: Host> Emitter<'_, '_, H> {
             .enumerate()
             .map(|(offset, ty)| self.read(window.base + offset as u16, Kind::of(*ty).expect("planned")))
             .collect();
-        let (status, bits) = self.call_body_values(body, signature, &arguments, (self.base, self.length));
-        self.goto(done, &[status, bits]);
+        if native_tail {
+            self.tail_body_values(body, signature, &arguments, (self.base, self.length));
+        } else {
+            let (status, bits) = self.call_body_values(body, signature, &arguments, (self.base, self.length));
+            self.goto(done, &[status, bits]);
+        }
         self.body.core.builder.set_cold_block(foreign);
         self.enter(foreign);
         let entry = self.load_word(Width::I32, flags, address, TableTarget::ENTRY);
@@ -342,13 +352,8 @@ impl<H: Host> Emitter<'_, '_, H> {
         values: &[ir::Value],
         (base, length): (ir::Value, Option<ir::Value>),
     ) -> (ir::Value, ir::Value) {
-        let mut arguments = vec![self.body.core.context];
-        if self.memory.base {
-            arguments.push(base);
-        }
-        arguments.extend(length);
-        arguments.extend_from_slice(values);
-        let callee = internal_signature(self.memory, &signature.params, signature.results.first().copied(), self.call_conv);
+        let arguments = self.body_arguments(values, (base, length));
+        let callee = internal_signature(self.memory, &signature.params, signature.results.first().copied(), BODY_CALL_CONV);
         let callee = self.body.core.builder.import_signature(callee);
         let roots = self.root();
         let results = self.call_signature(callee, body, &arguments);
@@ -361,6 +366,32 @@ impl<H: Host> Emitter<'_, '_, H> {
             None => self.constant(Width::I64, 0),
         };
         (results[0], bits)
+    }
+
+    /// The arguments of a body: the context, the memory arguments it takes, then `values`.
+    fn body_arguments(&self, values: &[ir::Value], (base, length): (ir::Value, Option<ir::Value>)) -> Vec<ir::Value> {
+        let mut arguments = vec![self.body.core.context];
+        if self.memory.base {
+            arguments.push(base);
+        }
+        arguments.extend(length);
+        arguments.extend_from_slice(values);
+        arguments
+    }
+
+    /// The native tail call of `body` with `values`: a `return_call_indirect` (no roots, as `tail_known`).
+    fn tail_body_values(
+        &mut self,
+        body: ir::Value,
+        signature: &crate::WasmSignature,
+        values: &[ir::Value],
+        (base, length): (ir::Value, Option<ir::Value>),
+    ) {
+        let arguments = self.body_arguments(values, (base, length));
+        let callee = internal_signature(self.memory, &signature.params, signature.results.first().copied(), BODY_CALL_CONV);
+        let callee = self.body.core.builder.import_signature(callee);
+        self.interrupt_safepoint();
+        self.body.core.builder.ins().return_call_indirect(callee, body, &arguments);
     }
 }
 

@@ -30,7 +30,7 @@ pub(crate) enum Leave {
 }
 
 impl Flow {
-    pub(crate) fn of(op: Op) -> Option<Self> {
+    pub(crate) const fn of(op: Op) -> Option<Self> {
         match op.class() {
             Class::Jump => Some(Self::Jump),
             Class::WasmBranchTable => Some(Self::Table),

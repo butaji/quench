@@ -50,6 +50,8 @@ use crate::bytecode::{
 use crate::wasm::float::F64UnaryOperator;
 use crate::wasm::integer::I32BinaryOperator;
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
+use crate::staged::wasm_flow::Flow as WasmFlow;
+use crate::staged::wasm_instance::Instance;
 
 /// The arithmetic operators the lane decides per operator (`lane_operator`,
 /// `lane_returning_operator`): `$pick!(OPERATOR)` of `$operator`'s, else `None`; or with
@@ -8261,6 +8263,582 @@ mod vector_region;
 mod wasm_instance;
 use wasm_instance::lane_instance_binding_memory;
 
+/// `if condition { chosen } else { other }` of two loaded values, picked after both load, so
+/// neither load waits on the condition; the compiler would otherwise load once from a picked
+/// register address, a load the condition delays.
+#[inline(always)]
+fn select_loaded(condition: bool, chosen: Value, other: Value) -> Value {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let mut picked = other.to_bits();
+        // SAFETY: a register-only conditional move; no memory or stack.
+        unsafe {
+            std::arch::asm!(
+                "test {condition:e}, {condition:e}",
+                "cmovnz {picked}, {chosen}",
+                condition = in(reg) u32::from(condition),
+                chosen = in(reg) chosen.to_bits(),
+                picked = inout(reg) picked,
+                options(pure, nomem, nostack),
+            );
+        }
+        Value::from_bits(picked)
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        std::hint::select_unpredictable(condition, chosen, other)
+    }
+}
+
+lane_handler! {
+    fn lane_select<ACC: u8>(cx, r, ip, i, view) {
+        let (condition, _) = ImmediateLayout::register_pair(i.imm());
+        let condition = if ACC == ACC_PAIR {
+            // SAFETY: as for `read`.
+            unsafe { view.acc.get() }.wasm_bits32() as i32
+        } else {
+            r.i32(condition)
+        };
+        let value = select_loaded(condition != 0, r.get(i.b), r.get(i.c));
+        produce!(cx, r, ip, i.a, value, view)
+    }
+}
+
+lane_handler! {
+    /// The registers a fill defines are the staged constant window (`Instance::Fill`).
+    fn lane_fill_registers<>(cx, r, ip, i, view) {
+        let value = i.constant();
+        for register in Instance::Fill.constant_registers(*i).into_iter().flatten() {
+            r.set(register, value);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    fn lane_i32_unary<ACC: u8>(cx, r, ip, i, view) {
+        let Some(operator) = I32UnaryOperator::from_tag(i.imm()) else {
+            return exit(ip);
+        };
+        let value = operator.evaluate(read_i32::<ACC, ACC_B>(r, i.b, view));
+        produce!(cx, r, ip, i.a, view.integers.encode(value), view)
+    }
+}
+
+lane_handler! {
+    /// An i32 operator over two registers or a register and a constant; a
+    /// trap leaves the lane.
+    fn lane_i32_binary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
+        let (operator, immediate) = const {
+            match I32BinaryOperator::from_register_op(opcode(OP)) {
+                Some(operator) => (operator, false),
+                None => match I32BinaryOperator::from_immediate_op(opcode(OP)) {
+                    Some(operator) => (operator, true),
+                    None => panic!("not an i32 binary operator"),
+                },
+            }
+        };
+        let right = if immediate {
+            i.imm() as i32
+        } else {
+            read_i32::<ACC, ACC_C>(r, i.c, view)
+        };
+        let Ok(value) = operator.evaluate(read_i32::<ACC, ACC_B>(r, i.b, view), right) else {
+            return exit(ip);
+        };
+        produce!(cx, r, ip, i.a, view.integers.encode(value), view)
+    }
+}
+
+/// A scalar of static Wasm type `ty` read from a slot value.
+#[inline(always)]
+fn lane_scalar(value: Value, ty: crate::WasmType) -> Option<crate::WasmValue> {
+    Some(match ty {
+        crate::WasmType::I32 => crate::WasmValue::I32(value.as_int()?),
+        crate::WasmType::F32 => crate::WasmValue::F32(value.as_int()? as u32),
+        crate::WasmType::I64 => crate::WasmValue::I64(value.bits64()? as i64),
+        crate::WasmType::F64 => crate::WasmValue::F64(value.bits64()?),
+        _ => return None,
+    })
+}
+
+/// A numeric scalar as a slot value.
+#[inline(always)]
+fn lane_encode(view: Carried, value: crate::WasmValue) -> Option<Value> {
+    Some(match value {
+        crate::WasmValue::I32(value) => view.integers.encode(value),
+        crate::WasmValue::F32(bits) => view.integers.encode(bits as i32),
+        crate::WasmValue::I64(value) => Value::from_bits64(value as u64)?,
+        crate::WasmValue::F64(bits) => Value::from_bits64(bits)?,
+        _ => return None,
+    })
+}
+
+lane_handler! {
+    /// An f32 or f64 operator: each width's selector applies its own
+    /// semantics (`crate::wasm::float`).
+    fn lane_float_binary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
+        let left = read::<ACC, ACC_B>(r, i.b, view);
+        let right = read::<ACC, ACC_C>(r, i.c, view);
+        let raw = const { opcode(OP).class().eq(Class::WasmFloatBinary64Raw) };
+        let value = if const { opcode(OP).class().eq(Class::WasmFloatBinary64) || opcode(OP).class().eq(Class::WasmFloatBinary64Raw) } {
+            let (Some(left), Some(right), Some(operator)) = (
+                if raw { Some(left.to_bits()) } else { left.bits64() },
+                if raw { Some(right.to_bits()) } else { right.bits64() },
+                F64BinaryOperator::from_tag(i.imm()),
+            ) else {
+                return exit(ip);
+            };
+            operator.evaluate(f64::from_bits(left), f64::from_bits(right))
+        } else {
+            let (Some(left), Some(right), Some(operator)) = (
+                left.as_int(),
+                right.as_int(),
+                F32BinaryOperator::from_tag(i.imm()),
+            ) else {
+                return exit(ip);
+            };
+            operator.evaluate(f32::from_bits(left as u32), f32::from_bits(right as u32))
+        };
+        let Some(value) = (if raw { wide_result::<true>(view, value) } else { lane_encode(view, value) }) else {
+            return exit(ip);
+        };
+        produce!(cx, r, ip, i.a, value, view)
+    }
+}
+
+/// The float operators a lane record runs as one hardware operation or
+/// comparison, by index: the operator is part of the handler, not a
+/// selector it decodes.
+const FLOAT_ADD: u8 = 0;
+const FLOAT_SUBTRACT: u8 = 1;
+const FLOAT_MULTIPLY: u8 = 2;
+const FLOAT_DIVIDE: u8 = 3;
+/// Comparisons, whose result is an i32 truth value.
+const FLOAT_EQUAL: u8 = 4;
+const FLOAT_NOT_EQUAL: u8 = 5;
+const FLOAT_LESS: u8 = 6;
+const FLOAT_GREATER: u8 = 7;
+const FLOAT_LESS_EQUAL: u8 = 8;
+const FLOAT_GREATER_EQUAL: u8 = 9;
+const FLOAT_ARITHMETIC: usize = 10;
+
+/// The arithmetic index of a float binary selector, when it has one.
+fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
+    Some(match op.class() {
+        Class::WasmFloatBinary64 | Class::WasmFloatBinary64Raw => match F64BinaryOperator::from_tag(selector)? {
+            F64BinaryOperator::Add => FLOAT_ADD,
+            F64BinaryOperator::Subtract => FLOAT_SUBTRACT,
+            F64BinaryOperator::Multiply => FLOAT_MULTIPLY,
+            F64BinaryOperator::Divide => FLOAT_DIVIDE,
+            F64BinaryOperator::Equal => FLOAT_EQUAL,
+            F64BinaryOperator::NotEqual => FLOAT_NOT_EQUAL,
+            F64BinaryOperator::Less => FLOAT_LESS,
+            F64BinaryOperator::Greater => FLOAT_GREATER,
+            F64BinaryOperator::LessEqual => FLOAT_LESS_EQUAL,
+            F64BinaryOperator::GreaterEqual => FLOAT_GREATER_EQUAL,
+            _ => return None,
+        },
+        Class::WasmFloatBinary32 => match F32BinaryOperator::from_tag(selector)? {
+            F32BinaryOperator::Add => FLOAT_ADD,
+            F32BinaryOperator::Subtract => FLOAT_SUBTRACT,
+            F32BinaryOperator::Multiply => FLOAT_MULTIPLY,
+            F32BinaryOperator::Divide => FLOAT_DIVIDE,
+            F32BinaryOperator::Equal => FLOAT_EQUAL,
+            F32BinaryOperator::NotEqual => FLOAT_NOT_EQUAL,
+            F32BinaryOperator::Less => FLOAT_LESS,
+            F32BinaryOperator::Greater => FLOAT_GREATER,
+            F32BinaryOperator::LessEqual => FLOAT_LESS_EQUAL,
+            F32BinaryOperator::GreaterEqual => FLOAT_GREATER_EQUAL,
+            _ => return None,
+        },
+        _ => return None,
+    })
+}
+
+lane_handler! {
+    /// Float arithmetic `ARITH` of width f64 (`WIDE`) or f32, with the
+    /// operators' own semantics (`crate::wasm::float`): the hardware result.
+    fn lane_float_arithmetic<WIDE: bool, RAW: bool, ARITH: u8, ACC: u8>(cx, r, ip, i, view) {
+        let left = read::<ACC, ACC_B>(r, i.b, view);
+        let right = read::<ACC, ACC_C>(r, i.c, view);
+        /// The arithmetic result, or a comparison's truth value.
+        enum Outcome<F> {
+            Float(F),
+            Truth(bool),
+        }
+        macro_rules! apply {
+            ($left:expr, $right:expr) => {{
+                let (left, right) = ($left, $right);
+                match ARITH {
+                    FLOAT_ADD => Outcome::Float(left + right),
+                    FLOAT_SUBTRACT => Outcome::Float(left - right),
+                    FLOAT_MULTIPLY => Outcome::Float(left * right),
+                    FLOAT_DIVIDE => Outcome::Float(left / right),
+                    FLOAT_EQUAL => Outcome::Truth(left == right),
+                    FLOAT_NOT_EQUAL => Outcome::Truth(left != right),
+                    FLOAT_LESS => Outcome::Truth(left < right),
+                    FLOAT_GREATER => Outcome::Truth(left > right),
+                    FLOAT_LESS_EQUAL => Outcome::Truth(left <= right),
+                    _ => Outcome::Truth(left >= right),
+                }
+            }};
+        }
+        // Registers hold their static Wasm types: an f32 slot an encoded
+        // i32, an f64 slot its bits in place or a box whose bits read as a
+        // NaN, which these operators treat as any other NaN.
+        let value = if WIDE {
+            let left = f64::from_bits(left.float_bits64());
+            let right = f64::from_bits(right.float_bits64());
+            match apply!(left, right) {
+                // A raw register holds any word: no NaN is canonicalized.
+                Outcome::Float(result) if RAW => Value::from_bits(result.to_bits()),
+                Outcome::Float(result) => Value::from_float_bits64(result.to_bits()),
+                Outcome::Truth(truth) => view.integers.encode(i32::from(truth)),
+            }
+        } else {
+            let left = f32::from_bits(left.wasm_bits32());
+            let right = f32::from_bits(right.wasm_bits32());
+            match apply!(left, right) {
+                Outcome::Float(result) => view.integers.encode(result.to_bits() as i32),
+                Outcome::Truth(truth) => view.integers.encode(i32::from(truth)),
+            }
+        };
+        produce!(cx, r, ip, i.a, value, view)
+    }
+}
+
+/// The f64 operator `ARITH` over two operands, as `lane_float_arithmetic`
+/// applies it: the hardware result, or a comparison's truth value.
+#[inline(always)]
+fn f64_operation(arith: u8, left: f64, right: f64) -> Result<f64, bool> {
+    match arith {
+        FLOAT_ADD => Ok(left + right),
+        FLOAT_SUBTRACT => Ok(left - right),
+        FLOAT_MULTIPLY => Ok(left * right),
+        FLOAT_DIVIDE => Ok(left / right),
+        FLOAT_EQUAL => Err(left == right),
+        FLOAT_NOT_EQUAL => Err(left != right),
+        FLOAT_LESS => Err(left < right),
+        FLOAT_GREATER => Err(left > right),
+        FLOAT_LESS_EQUAL => Err(left <= right),
+        _ => Err(left >= right),
+    }
+}
+
+/// The width index of float binary `op` in `FloatArithmetic::HANDLERS`.
+fn float_width_index(op: Op) -> usize {
+    match op.class() {
+        Class::WasmFloatBinary64Raw => 2,
+        Class::WasmFloatBinary64 => 1,
+        _ => 0,
+    }
+}
+
+/// Which operand of the second fused float record the first one's result
+/// is: its left (`b`) or right (`c`) register.
+const FUSED_LEFT: bool = true;
+
+lane_handler! {
+    /// An f64 arithmetic `FIRST` whose result the next record, f64 operator
+    /// `SECOND`, takes as its left (`LEFT`) or right operand: both records
+    /// run here, each result written as its own record writes it (plainly
+    /// when `RAW`, canonicalized otherwise).
+    fn lane_f64_pair<FIRST: u8, SECOND: u8, LEFT: bool, RAW: bool, ACC: u8>(cx, r, ip, i, view) {
+        let first = match f64_operation(
+            FIRST,
+            f64::from_bits(read::<ACC, ACC_B>(r, i.b, view).float_bits64()),
+            f64::from_bits(read::<ACC, ACC_C>(r, i.c, view).float_bits64()),
+        ) {
+            Ok(result) => result,
+            Err(_) => unreachable!("a fused first operator is arithmetic"),
+        };
+        r.set(
+            i.a,
+            if RAW { Value::from_bits(first.to_bits()) } else { Value::from_float_bits64(first.to_bits()) },
+        );
+        let next = following(ip);
+        // SAFETY: the view fuses a float record only with a following one.
+        let second = unsafe { &*next };
+        let (left, right) = if LEFT {
+            (first, f64::from_bits(r.get(second.c).float_bits64()))
+        } else {
+            (f64::from_bits(r.get(second.b).float_bits64()), first)
+        };
+        let value = match f64_operation(SECOND, left, right) {
+            Ok(result) => {
+                if RAW { Value::from_bits(result.to_bits()) } else { Value::from_float_bits64(result.to_bits()) }
+            }
+            Err(truth) => view.integers.encode(i32::from(truth)),
+        };
+        produce!(cx, r, next, second.a, value, view)
+    }
+}
+
+lane_handler! {
+    /// An f64 load whose value the next record, f64 operator `SECOND`,
+    /// takes as its left (`LEFT`) or right operand: both records run here.
+    /// Bits that need a box leave the lane at the load.
+    fn lane_f64_load_pair<SECOND: u8, LEFT: bool>(cx, r, ip, i, view) {
+        // SAFETY: as for `lane_load`.
+        let Some(crate::WasmValue::F64(bits)) = (unsafe { view.memory.read(MemoryLoad::F64Load, lane_address::<ACC_NONE>(r, i, view)) })
+        else {
+            return exit(ip);
+        };
+        let Some(loaded) = Value::from_bits64(bits) else {
+            return exit(ip);
+        };
+        r.set(i.a, loaded);
+        let next = following(ip);
+        // SAFETY: the view fuses a load only with a following record.
+        let second = unsafe { &*next };
+        let first = f64::from_bits(bits);
+        let (left, right) = if LEFT {
+            (first, f64::from_bits(r.get(second.c).float_bits64()))
+        } else {
+            (f64::from_bits(r.get(second.b).float_bits64()), first)
+        };
+        let value = match f64_operation(SECOND, left, right) {
+            Ok(result) => Value::from_float_bits64(result.to_bits()),
+            Err(truth) => view.integers.encode(i32::from(truth)),
+        };
+        produce!(cx, r, next, second.a, value, view)
+    }
+}
+
+lane_handler! {
+    /// An f64 load, the f64 arithmetic `ARITH` taking the loaded value as
+    /// its left (`LEFT`) or right operand, and the f64 store writing the
+    /// arithmetic's result (`mem[x] += v`): three records run here, each
+    /// result written as its own record writes it. An access the general
+    /// path must run exits at its record.
+    fn lane_f64_update<ARITH: u8, LEFT: bool>(cx, r, ip, i, view) {
+        // SAFETY: as for `lane_load`.
+        let Some(crate::WasmValue::F64(bits)) = (unsafe {
+            view.memory.read(MemoryLoad::F64Load, lane_address::<ACC_NONE>(r, i, view))
+        }) else {
+            return exit(ip);
+        };
+        let Some(loaded) = Value::from_bits64(bits) else {
+            return exit(ip);
+        };
+        r.set(i.a, loaded);
+        let operator = following(ip);
+        // SAFETY: the view fuses a load only with a following operator and
+        // store.
+        let o = unsafe { &*operator };
+        let first = f64::from_bits(bits);
+        let (left, right) = if LEFT {
+            (first, f64::from_bits(r.get(o.c).float_bits64()))
+        } else {
+            (f64::from_bits(r.get(o.b).float_bits64()), first)
+        };
+        let Ok(result) = f64_operation(ARITH, left, right) else {
+            unreachable!("a fused update's operator is arithmetic");
+        };
+        let value = Value::from_float_bits64(result.to_bits());
+        r.set(o.a, value);
+        let store = following(operator);
+        // SAFETY: as above.
+        let access = unsafe { &*store };
+        // SAFETY: as for `lane_store`.
+        if unsafe {
+            view.memory.write(
+                MemoryStore::F64Store,
+                lane_address::<ACC_NONE>(r, access, view),
+                crate::WasmValue::F64(value.float_bits64()),
+            )
+        }
+        .is_none()
+        {
+            return exit(store);
+        }
+        next!(cx, r, following(store), view)
+    }
+}
+
+lane_handler! {
+    /// An f64 arithmetic `ARITH` whose result the next record, an f64
+    /// store, writes to memory: both records run here. A store the general
+    /// path must run exits at its record, the result already written.
+    fn lane_f64_store_pair<ARITH: u8, ACC: u8>(cx, r, ip, i, view) {
+        let result = match f64_operation(
+            ARITH,
+            f64::from_bits(read::<ACC, ACC_B>(r, i.b, view).float_bits64()),
+            f64::from_bits(read::<ACC, ACC_C>(r, i.c, view).float_bits64()),
+        ) {
+            Ok(result) => result,
+            Err(_) => unreachable!("a fused store's operator is arithmetic"),
+        };
+        let value = Value::from_float_bits64(result.to_bits());
+        r.set(i.a, value);
+        let next = following(ip);
+        // SAFETY: the view fuses an operator only with a following store.
+        let store = unsafe { &*next };
+        let bits = value.float_bits64();
+        // SAFETY: as for `lane_store`.
+        if unsafe {
+            view.memory.write(
+                MemoryStore::F64Store,
+                lane_address::<ACC_NONE>(r, store, view),
+                crate::WasmValue::F64(bits),
+            )
+        }
+        .is_none()
+        {
+            return exit(next);
+        }
+        next!(cx, r, following(next), view)
+    }
+}
+
+/// The accumulator fields a fused first float record may read: none, its
+/// left operand, or its right operand.
+const FUSED_ACC_FIELDS: [u8; 3] = [ACC_NONE, ACC_B, ACC_C];
+
+macro_rules! float_store_pair_handlers {
+    ($host:ty, $arith:expr) => {
+        [
+            lane_f64_store_pair::<$host, $arith, ACC_NONE> as Handler,
+            lane_f64_store_pair::<$host, $arith, ACC_B> as Handler,
+            lane_f64_store_pair::<$host, $arith, ACC_C> as Handler,
+        ]
+    };
+}
+
+macro_rules! float_load_pair_handlers {
+    ($host:ty; $($second:expr),+) => {
+        [$([
+            lane_f64_load_pair::<$host, $second, false> as Handler,
+            lane_f64_load_pair::<$host, $second, FUSED_LEFT> as Handler,
+        ]),+]
+    };
+}
+
+struct FloatPairs<H>(std::marker::PhantomData<H>);
+
+macro_rules! float_pair_handlers {
+    ($host:ty, $raw:expr) => {
+        [
+            float_pair_handlers!($host, FLOAT_ADD, $raw),
+            float_pair_handlers!($host, FLOAT_SUBTRACT, $raw),
+            float_pair_handlers!($host, FLOAT_MULTIPLY, $raw),
+            float_pair_handlers!($host, FLOAT_DIVIDE, $raw),
+        ]
+    };
+    ($host:ty, $first:expr, $raw:expr) => {
+        [
+            float_pair_handlers!($host, $first, FLOAT_ADD, $raw),
+            float_pair_handlers!($host, $first, FLOAT_SUBTRACT, $raw),
+            float_pair_handlers!($host, $first, FLOAT_MULTIPLY, $raw),
+            float_pair_handlers!($host, $first, FLOAT_DIVIDE, $raw),
+            float_pair_handlers!($host, $first, FLOAT_EQUAL, $raw),
+            float_pair_handlers!($host, $first, FLOAT_NOT_EQUAL, $raw),
+            float_pair_handlers!($host, $first, FLOAT_LESS, $raw),
+            float_pair_handlers!($host, $first, FLOAT_GREATER, $raw),
+            float_pair_handlers!($host, $first, FLOAT_LESS_EQUAL, $raw),
+            float_pair_handlers!($host, $first, FLOAT_GREATER_EQUAL, $raw),
+        ]
+    };
+    ($host:ty, $first:expr, $second:expr, $raw:expr) => {
+        [
+            float_pair_handlers!($host, $first, $second, false, $raw),
+            float_pair_handlers!($host, $first, $second, FUSED_LEFT, $raw),
+        ]
+    };
+    ($host:ty, $first:expr, $second:expr, $left:expr, $raw:expr) => {
+        [
+            lane_f64_pair::<$host, $first, $second, $left, $raw, ACC_NONE> as Handler,
+            lane_f64_pair::<$host, $first, $second, $left, $raw, ACC_B> as Handler,
+            lane_f64_pair::<$host, $first, $second, $left, $raw, ACC_C> as Handler,
+        ]
+    };
+}
+
+/// The f64 arithmetic operators a fused pair can begin with: add,
+/// subtract, multiply and divide, whose results are floats.
+const FLOAT_PAIR_FIRSTS: usize = 4;
+
+impl<H: Host> FloatPairs<H> {
+    /// By first operator, second operator, whether the first result is the
+    /// second's left operand, and the first's accumulator field.
+    const HANDLERS: [[[[Handler; FUSED_ACC_FIELDS.len()]; 2]; FLOAT_ARITHMETIC];
+        FLOAT_PAIR_FIRSTS] = float_pair_handlers!(H, false);
+    /// The same over raw registers (`Class::WasmFloatBinary64Raw`).
+    const RAW_HANDLERS: [[[[Handler; FUSED_ACC_FIELDS.len()]; 2]; FLOAT_ARITHMETIC];
+        FLOAT_PAIR_FIRSTS] = float_pair_handlers!(H, true);
+    /// An f64 load fused with the operator taking its value, by second
+    /// operator and whether the value is its left operand.
+    /// An f64 arithmetic fused with the store of its result, by operator.
+    /// By operator and the operator's accumulator field (none, `b`, `c`).
+    const STORES: [[Handler; FUSED_ACC_FIELDS.len()]; FLOAT_PAIR_FIRSTS] = [
+        float_store_pair_handlers!(H, FLOAT_ADD),
+        float_store_pair_handlers!(H, FLOAT_SUBTRACT),
+        float_store_pair_handlers!(H, FLOAT_MULTIPLY),
+        float_store_pair_handlers!(H, FLOAT_DIVIDE),
+    ];
+    /// An f64 load, arithmetic and store of its result, by operator and
+    /// whether the loaded value is the left operand.
+    const UPDATES: [[Handler; 2]; FLOAT_PAIR_FIRSTS] = [
+        [
+            lane_f64_update::<H, FLOAT_ADD, false>,
+            lane_f64_update::<H, FLOAT_ADD, FUSED_LEFT>,
+        ],
+        [
+            lane_f64_update::<H, FLOAT_SUBTRACT, false>,
+            lane_f64_update::<H, FLOAT_SUBTRACT, FUSED_LEFT>,
+        ],
+        [
+            lane_f64_update::<H, FLOAT_MULTIPLY, false>,
+            lane_f64_update::<H, FLOAT_MULTIPLY, FUSED_LEFT>,
+        ],
+        [
+            lane_f64_update::<H, FLOAT_DIVIDE, false>,
+            lane_f64_update::<H, FLOAT_DIVIDE, FUSED_LEFT>,
+        ],
+    ];
+    const LOADS: [[Handler; 2]; FLOAT_ARITHMETIC] = float_load_pair_handlers!(H;
+        FLOAT_ADD, FLOAT_SUBTRACT, FLOAT_MULTIPLY, FLOAT_DIVIDE, FLOAT_EQUAL,
+        FLOAT_NOT_EQUAL, FLOAT_LESS, FLOAT_GREATER, FLOAT_LESS_EQUAL, FLOAT_GREATER_EQUAL);
+}
+
+struct FloatArithmetic<H>(std::marker::PhantomData<H>);
+
+macro_rules! float_arithmetic_handlers {
+    ($host:ty, $wide:expr, $raw:expr) => {
+        [
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_ADD),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_SUBTRACT),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_MULTIPLY),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_DIVIDE),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_EQUAL),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_NOT_EQUAL),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_LESS),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_GREATER),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_LESS_EQUAL),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_GREATER_EQUAL),
+        ]
+    };
+    ($host:ty, $wide:expr, $raw:expr, $arith:expr) => {
+        [
+            lane_float_arithmetic::<$host, $wide, $raw, $arith, ACC_NONE> as Handler,
+            lane_float_arithmetic::<$host, $wide, $raw, $arith, ACC_A> as Handler,
+            lane_float_arithmetic::<$host, $wide, $raw, $arith, ACC_B> as Handler,
+            lane_float_arithmetic::<$host, $wide, $raw, $arith, ACC_C> as Handler,
+            lane_float_arithmetic::<$host, $wide, $raw, $arith, ACC_PAIR> as Handler,
+        ]
+    };
+}
+
+impl<H: Host> FloatArithmetic<H> {
+    /// By width (f32, then f64, then f64 over raw registers: `FLOAT_RAW_F64`), arithmetic
+    /// index and accumulator field.
+    const HANDLERS: [[[Handler; ACC_POSITIONS]; FLOAT_ARITHMETIC]; 3] = [
+        float_arithmetic_handlers!(H, false, false),
+        float_arithmetic_handlers!(H, true, false),
+        float_arithmetic_handlers!(H, true, true),
+    ];
+}
 
 lane_handler! {
     /// f64 square root: an arithmetic operator, so a NaN operand matters
@@ -16562,15 +17140,48 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     if OP >= 256 && !admits_row(op) && !jumps_by_row(op) {
         return None;
     }
-    if jumps_by_row(op) {
-        return Some(LaneHandler { handler: row_jump::<H, OP, BACKWARD, FLAG_UNREAD, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }>, produces: false });
-    }
-    if admits_row(op) {
-        return Some(LaneHandler { handler: generated_row::<H, OP, ACC, FLAG_UNREAD>, produces: row_produces(op) });
-    }
-    let handler: Handler = match other_handler::<H>(op) {
-        Some(handler) => handler,
-        None => return None,
+    let handler: Handler = if I32BinaryOperator::from_jump_op(op).is_some()
+        || I32BinaryOperator::from_immediate_jump_op(op).is_some()
+    {
+        lane_compare_jump::<H, OP, BACKWARD, ACC>
+    } else if MemoryLoad::from_direct_op(op).is_some() {
+        return LaneHandler::producer(lane_load::<H, OP, ACC>);
+    } else if MemoryStore::from_direct_op(op).is_some() {
+        lane_store::<H, OP, ACC>
+    } else {
+        match op.class() {
+            Class::Move => return LaneHandler::producer(lane_move::<H, ACC>),
+            Class::LoadConst => return LaneHandler::producer(lane_load_const::<H>),
+            Class::WasmI32ShiftRightUnsignedAnd => {
+                return LaneHandler::producer(lane_bit_field::<H, ACC>);
+            }
+            _ if matches!(WasmFlow::of(op), Some(WasmFlow::Select)) => {
+                return LaneHandler::producer(lane_select::<H, ACC>);
+            }
+            Class::WasmI32AddJump => {
+                return LaneHandler::producer(lane_add_jump_nonzero::<H, BACKWARD, ACC>);
+            }
+            Class::WasmI32Unary => return LaneHandler::producer(lane_i32_unary::<H, ACC>),
+            Class::WasmFloatBinary32 | Class::WasmFloatBinary64 | Class::WasmFloatBinary64Raw => {
+                return LaneHandler::producer(lane_float_binary::<H, OP, ACC>);
+            }
+            Class::WasmFloatUnary32 | Class::WasmFloatUnary64 | Class::WasmFloatUnary64Raw => {
+                return LaneHandler::producer(lane_float_unary::<H, OP, ACC>);
+            }
+            Class::WasmI64Binary => return LaneHandler::producer(lane_i64_binary::<H, false, ACC>),
+            Class::WasmI64BinaryImmediate => return LaneHandler::producer(lane_i64_binary_immediate::<H, false, ACC>),
+            Class::WasmI64Unary => return LaneHandler::producer(lane_i64_unary::<H, false, ACC>),
+            Class::WasmI64BinaryRaw => return LaneHandler::producer(lane_i64_binary::<H, true, ACC>),
+            Class::WasmI64BinaryImmediateRaw => return LaneHandler::producer(lane_i64_binary_immediate::<H, true, ACC>),
+            Class::WasmI64UnaryRaw => return LaneHandler::producer(lane_i64_unary::<H, true, ACC>),
+            Class::WasmScalarConvert => {
+                return LaneHandler::producer(lane_scalar_convert::<H, ACC>);
+            }
+            _ => match other_handler::<H, BACKWARD, ACC>(op) {
+                Some(handler) => handler,
+                None => return None,
+            },
+        }
     };
     Some(LaneHandler {
         handler,
@@ -16603,17 +17214,45 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
         _ if crate::staged::copy_properties_family(opcode) => Some(lane_copy_data_properties::<H>),
         _ if opcode.steps_in_lane() => Some(lane_general_step::<H>),
-        _ if crate::staged::element_read_family(opcode) => Some(lane_get_index::<H>),
-        _ if crate::staged::element_write_family(opcode) => Some(lane_set_index::<H>),
-        _ if crate::staged::known_call_family(opcode) => Some(known_call_handler::<H>()),
-        _ if crate::staged::call_family(opcode) => Some(lane_script_call::<H, ANY_ARGC, false>),
-        _ if crate::staged::call_array_family(opcode) => Some(lane_call_array::<H>),
-        _ if crate::staged::call_spread_family(opcode) => Some(lane_call_spread::<H>),
-        _ if crate::staged::delete_family(opcode) => Some(lane_delete::<H>),
-        _ if crate::staged::construction_family(opcode) => Some(lane_script_construct::<H>),
-        _ if crate::staged::forwarded_call_family(opcode) => Some(lane_forward_call::<H>),
-        _ if crate::staged::return_family(opcode) => Some(lane_return::<H, NOT_LEAF>),
-        _ => wasm_gc_handler::<H>(opcode),
+        Class::IncDec => Some(lane_inc_dec::<H, false>),
+        _ if denoted_handler::<H>(opcode).is_some() => denoted_handler::<H>(opcode),
+        Class::GetIndex => Some(lane_get_index::<H>),
+        Class::SetIndex => Some(lane_set_index::<H>),
+        Class::LoadCapture => Some(lane_load_capture::<H>),
+        Class::LoadLocalPlain => Some(lane_load_local_plain::<H>),
+        Class::MakeConstArray => Some(lane_make_const_array::<H>),
+        Class::StringCaseIndex => Some(lane_string_case_index::<H>),
+        Class::LoadLocal | Class::LoadEnvLocal => Some(lane_load_local::<H>),
+        Class::StoreCapture => Some(lane_store_capture::<H>),
+        _ if matches!(Instance::of(opcode), Some(Instance::Binding)) => Some(lane_instance_binding::<H, false>),
+        _ if matches!(Instance::of(opcode), Some(Instance::GlobalGet)) => Some(lane_global_get::<H>),
+        Class::WasmSimd => Some(lane_wasm_simd::<H>),
+        Class::WasmMemoryLoad => Some(lane_wasm_memory_load::<H>),
+        Class::WasmMemoryAddress => Some(lane_wasm_memory_address::<H>),
+        Class::WasmMemoryStore => Some(lane_wasm_memory_store::<H>),
+        Class::WasmSimdShuffle => Some(lane_wasm_simd_shuffle::<H>),
+        _ if matches!(Instance::of(opcode), Some(Instance::GlobalSet)) => Some(lane_global_set::<H>),
+        _ if matches!(Instance::of(opcode), Some(Instance::Fill)) => Some(lane_fill_registers::<H>),
+        Class::CallKnown => Some(known_call_handler::<H>()),
+        Class::Call => Some(lane_script_call::<H, ANY_ARGC, false>),
+        Class::CallArray => Some(lane_call_array::<H>),
+        Class::CallSpread => Some(lane_call_spread::<H>),
+        Class::Delete => Some(lane_delete::<H>),
+        Class::Construct => Some(lane_script_construct::<H>),
+        Class::LoadName => Some(lane_load_name_resolve::<H, LOAD_NAME>),
+        Class::LoadNameCall => Some(lane_load_name_resolve::<H, LOAD_NAME_CALL>),
+        Class::LoadNameTypeof => Some(lane_load_name_resolve::<H, LOAD_NAME_TYPEOF>),
+        Class::MakeObject2 => Some(lane_make_object2::<H>),
+        Class::MakeClosure => Some(lane_make_closure::<H>),
+        Class::MakeObjectLiteral => Some(lane_make_object_literal::<H>),
+        Class::MakeArray => Some(lane_make_array::<H>),
+        Class::MakeObject => Some(lane_make_object::<H>),
+        Class::CreateRegExpLiteral => Some(lane_regexp_literal::<H>),
+        Class::CallForwardingArguments => Some(lane_forward_call::<H>),
+        Class::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
+        Class::Return => Some(lane_return::<H, NOT_LEAF>),
+        _ if suspend_handler::<H>(opcode).is_some() => suspend_handler::<H>(opcode),
+        _ => jump_handler::<H, BACKWARD, ACC>(opcode),
     }
 }
 
