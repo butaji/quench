@@ -45,6 +45,32 @@ pub(super) unsafe extern "C" fn binary_in_lane<H: Host>(vm: u64, residual: u64, 
     value.to_bits()
 }
 
+/// A scalar native's call in a loop region or a body (`lane_region::native_calls::Lowering::scalar_call`): the value its
+/// in-place case answers for the call of `callee` (a scalar native, `global_facts::scalar_native`) with `receiver` and the
+/// `argc` (one or two) arguments `first` and `second`; `DELETED` where that case leaves (an object argument, an error, a due
+/// collection), which the call's own step takes. Nothing is changed before a value is answered: the native runs no guest
+/// code and changes no array.
+pub(super) unsafe extern "C" fn scalar_native_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, callee: u64, argc: u64,
+    receiver: u64, first: u64, second: u64) -> u64 {
+    // SAFETY: as `compiled_new_object`; the residual is the running program.
+    let (vm, residual, dispatch) = unsafe { (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch)) };
+    let callee = Value::from_bits(callee);
+    let Some(crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(native), .. }) = vm.heap.function(callee) else {
+        return Value::DELETED.to_bits();
+    };
+    let native = *native;
+    if !crate::vm::global_facts::scalar_native(native) || !(1..=2).contains(&argc) || vm.heap.should_collect() {
+        return Value::DELETED.to_bits();
+    }
+    let arguments = [Value::from_bits(first), Value::from_bits(second)];
+    let Some(value) = vm.in_place_native_value(residual, native, callee, Value::from_bits(receiver), &arguments[..argc as usize]) else {
+        return Value::DELETED.to_bits();
+    };
+    super::dispatch_fast::note_allocation(vm);
+    dispatch.refresh_object_bases(vm);
+    value.to_bits()
+}
+
 /// A lane body's array literal of the `count` program constants from `constant`, as the lane's
 /// own (the `MakeConstArray` row, `Allocation::ConstArray`); `DELETED` where a collection is due or the
 /// range is outside the constants.

@@ -183,6 +183,24 @@ impl Lowering<'_, '_> {
         self.builder.use_var(variables.length)
     }
 
+    /// Continues where the prototypes of `base` hold no index (`LaneHelper::PrototypesHoldNoIndex`): at once where the flag
+    /// `checked` is set, else by the helper, which leaves at `exit` where a prototype holds one, and sets the flag.
+    fn prototypes_checked(&mut self, base: ir::Value, checked: Variable, exit: ir::Block) {
+        let flag = self.builder.use_var(checked);
+        let (proven, check) = (self.builder.create_block(), self.builder.create_block());
+        self.branch_if(flag, (proven, &[]), (check, &[]));
+        self.builder.switch_to_block(check);
+        self.builder.seal_block(check);
+        let clear = self.helper_call(LaneHelper::PrototypesHoldNoIndex, &[base]);
+        let clear = self.raw_compare_imm(Relation::NotEqual, clear, 0);
+        emit_js_guard(&mut self.builder, clear, exit);
+        let set = self.raw_const(Lane::I8, 1);
+        self.builder.def_var(checked, set);
+        self.goto(proven, &[]);
+        self.builder.switch_to_block(proven);
+        self.builder.seal_block(proven);
+    }
+
     /// The position of the first element of the dense array in `receiver` equal to the int32 in
     /// `argument`, as an int32, or -1. Strict equality and SameValueZero agree on a non-NaN
     /// search, so `includes` and `indexOf` share the scan. The scan reads the array's view (the
@@ -195,16 +213,23 @@ impl Lowering<'_, '_> {
     /// values is nonzero): over [0, k) where pass 1 hit at k, over the whole backing where it missed.
     fn element_search(&mut self, state: &mut State, pc: usize, receiver: Register, argument: Register, exit: ir::Block) -> ir::Value {
         let base = self.tagged(state, receiver);
-        let (values, length) = match self.loop_array(pc, Some(receiver)).filter(|hoisted| hoisted.views == ElementViews::Dense) {
+        let hoisted = self.loop_array(pc, Some(receiver)).filter(|hoisted| hoisted.views == ElementViews::Dense);
+        let (values, length) = match hoisted {
             Some(hoisted) => self.hoisted_view(hoisted),
             None => {
                 let view = emit_dense_array_view(&mut self.builder, self.payload, base, false, exit);
                 (view.values, view.length)
             }
         };
-        let clear = self.helper_call(LaneHelper::PrototypesHoldNoIndex, &[base]);
-        let clear = self.raw_compare_imm(Relation::NotEqual, clear, 0);
-        emit_js_guard(&mut self.builder, clear, exit);
+        // A loop's entry proved the prototypes once (`hoist_arrays`); an invalidation unsets the flag, and the next search re-checks.
+        match hoisted.and_then(|hoisted| self.prototype_clear.get(&hoisted.source).copied()) {
+            Some(checked) => self.prototypes_checked(base, checked, exit),
+            None => {
+                let clear = self.helper_call(LaneHelper::PrototypesHoldNoIndex, &[base]);
+                let clear = self.raw_compare_imm(Relation::NotEqual, clear, 0);
+                emit_js_guard(&mut self.builder, clear, exit);
+            }
+        }
         let populated = self.raw_compare_imm(Relation::NotEqual, length, 0);
         emit_js_guard(&mut self.builder, populated, exit);
         let int = self.int(state, argument, exit);

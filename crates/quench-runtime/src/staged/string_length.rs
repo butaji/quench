@@ -82,6 +82,40 @@ pub(crate) fn string_length<S: Stage>(stage: &mut S, record_base: S::Word, value
     length_value(stage, length, miss)
 }
 
+/// ToBoolean of the string `value` among the string records at `record_base`, read from its
+/// record without leaving: 1 where the flat string's length is nonzero, 0 where it is empty, and
+/// 2 where no flat record reads (a value that is no string, a small string, a rope or a parts
+/// string, or no record base yet), which the caller decides. The record is read only on the path
+/// where `flat_record` would continue, so nothing is loaded from an address it would not read.
+#[inline(always)]
+pub(crate) fn flat_truth<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word) -> S::Word {
+    let is_string = is_direct_string(stage, value);
+    let present = stage.ne_imm(record_base, 0u32);
+    let index = stage.and_imm(value, u64::from(u32::MAX));
+    let small_bits = stage.and_imm(index, u64::from(crate::heap::SMALL_STRING_ID_MASK));
+    let has_record = stage.ne_imm(small_bits, u64::from(crate::heap::SMALL_STRING_ID_BASE));
+    let string = stage.all(is_string, present);
+    let candidate = stage.all(string, has_record);
+    stage.choose(candidate, |stage| {
+        let offset = stage.mul_imm(index, form::RECORD_SIZE as u64);
+        let record = stage.add(record_base, offset);
+        let tag = stage.load_u8(Region::HeapMeta.mutable(), record, form::TAG_OFFSET);
+        let short = stage.eq_imm(tag, u64::from(form::TAG_SHORT));
+        let ascii = stage.eq_imm(tag, u64::from(form::TAG_ASCII));
+        let wide = stage.eq_imm(tag, u64::from(form::TAG_WIDE));
+        let shared = stage.any(ascii, wide);
+        let flat = stage.any(short, shared);
+        stage.choose(flat, |stage| {
+            let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
+            let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
+            let length = stage.select(short, short_length, shared_length);
+            let nonempty = stage.ne_imm(length, 0u32);
+            let (one, zero) = (stage.constant(1), stage.constant(0));
+            stage.select(nonempty, one, zero)
+        }, |stage| stage.constant(2))
+    }, |stage| stage.constant(2))
+}
+
 /// The `length` of `value`, a direct array (among the array records at `arrays`) or a direct
 /// string (among the string records at `strings`): `None` (leaving at `miss`) for any other value
 /// or a form neither row reads.

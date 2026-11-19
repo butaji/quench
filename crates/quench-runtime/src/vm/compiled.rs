@@ -136,7 +136,7 @@ mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
-use lane_allocations::{binary_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, new_regexp_in_lane, new_template_in_lane};
+use lane_allocations::{binary_in_lane, scalar_native_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, new_regexp_in_lane, new_template_in_lane};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/site_posterior.rs"]
@@ -1110,22 +1110,26 @@ lane_helper_inventory! { H;
     /// The exception a callee left in `Vm::lane_raised`, for a handler of the caller's own (`take_raised_in_lane`).
     TakeRaised => take_raised_in_lane::<H>,
     /// An object literal's and an array literal's allocation.
-    NewObject => lane_new_object::<H>,
-    NewArray => lane_new_array::<H>,
-    /// An array literal of program constants (`lane_new_const_array`).
-    NewConstArray => lane_new_const_array::<H>,
-    /// A two-property object literal's allocation (`lane_new_object_pair`).
-    NewObjectPair => lane_new_object_pair::<H>,
-    Binary => lane_binary::<H>,
-    /// A store that may add its property (`lane_field_add`).
-    FieldAdd => lane_field_add::<H>,
-    /// The slow arm of a loop's hoisted typed array view proof (`lane_typed_array_view`).
-    TypedArrayView => lane_typed_array_view::<H>,
-    /// A VM operation a staged row calls out for (`dispatch_fast::lane_vm_step`).
-    VmStep => super::dispatch_fast::lane_vm_step::<H>,
-    /// A fixed-shape object the record defines, made by the lane's allocator (`dispatch_fast::lane_allocate_step`).
-    AllocateStep => super::dispatch_fast::lane_allocate_step::<H>,
-    /// An instruction whose general step runs in place (`dispatch_fast::lane_body_step`), which the b-jit's
+    NewObject => compiled_new_object::<H>,
+    NewArray => new_array_in_lane::<H>,
+    /// An array literal of program constants (`new_const_array_in_lane`).
+    NewConstArray => new_const_array_in_lane::<H>,
+    /// A two-property object literal's allocation (`new_object_pair_in_lane`).
+    NewObjectPair => new_object_pair_in_lane::<H>,
+    Binary => binary_in_lane::<H>,
+    /// A scalar native's call on its in-place case (`lane_allocations::scalar_native_in_lane`).
+    ScalarNative => scalar_native_in_lane::<H>,
+    /// A store that may add its property (`field_add_in_lane`).
+    FieldAdd => field_add_in_lane::<H>,
+    /// The slow arm of a loop's hoisted typed array view proof (`typed_array_view_in_lane`).
+    TypedArrayView => typed_array_view_in_lane::<H>,
+    /// `+` of strings (`dispatch_fast::body_string_concat`), named by the b-jit call planner
+    /// (`base_region::call_plan`), which the whole-function planner will consume.
+    #[allow(dead_code)]
+    StringConcat => super::dispatch_fast::body_string_concat::<H>,
+    /// A VM operation a staged row calls out for (`dispatch_fast::vm_operation_step`).
+    VmStep => super::dispatch_fast::vm_operation_step::<H>,
+    /// An instruction whose general step runs in place (`dispatch_fast::body_general_step`), which the b-jit's
     /// helper steps and stepped calls make (`base_region::steps`).
     Step => super::dispatch_fast::lane_body_step::<H>,
     /// `Step` for an instruction the planner decoded (`CallRow::HelperPacked`): a covered family runs it directly

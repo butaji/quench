@@ -592,6 +592,11 @@ struct Lowering<'a, 'f> {
     /// The calls that run inline as Math operations (`native_calls::intrinsic_calls`).
     intrinsics: native_calls::Intrinsics,
     hoisted: BTreeMap<usize, LoopRead>,
+    /// The scalar native calls a loop's entry computed once, by PC (`native_calls::hoist_scalar_calls`).
+    scalar_values: BTreeMap<usize, native_calls::HoistedScalar>,
+    /// Per dense array a loop searches, whether its prototypes hold no index, proved on the loop's entry
+    /// (`hoist_arrays`) and unset by an invalidation (`forget_append_rooms`).
+    prototype_clear: BTreeMap<ArraySource, Variable>,
     /// The loops whose entering edge tests the construct plan of each callee their kept
     /// constructions build by, once for the loop (`virtual_objects::hoist_constructions`).
     construct_ready: Vec<virtual_objects::ConstructReady>,
@@ -1330,7 +1335,7 @@ fn stays_native(constants: &[Constant], instruction: WideInstruction, intrinsic:
 /// only read or replace existing own fields and array elements. Misses leave before guest effects.
 /// A sole native entry at the header can supply the same entry proofs.
 fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Constant], start: usize,
-    intrinsics: &native_calls::Intrinsics) -> Vec<(usize, usize)> {
+    intrinsics: &native_calls::Intrinsics, global_reads: &crate::vm::global_facts::GlobalReads) -> Vec<(usize, usize)> {
     let instructions = &unit.instructions;
     let target = |instruction: &WideInstruction| instruction.op().control_flow_layout().jumps().then(|| instruction.jump_target() as usize);
     let falls = |instruction: &WideInstruction| instruction.op().control_flow_layout().falls_through();
@@ -1344,7 +1349,10 @@ fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Cons
             && target(candidate).is_some_and(|to| (header + 1..=back).contains(&to) || (to == header && pc > back)));
         if (entries != 1 && !entry_header) || side
             || (header + 1..=back).contains(&start)
-            || !body.iter().enumerate().all(|(offset, candidate)| stays_native(constants, *candidate, native_calls::holds_in_loop(intrinsics, header + offset))) { continue }
+            || !body.iter().enumerate().all(|(offset, candidate)| {
+                let pc = header + offset;
+                stays_native(constants, *candidate, native_calls::holds_in_loop(intrinsics, pc) || native_calls::scalar_name_read(global_reads, pc))
+            }) { continue }
         loops.push((header, back));
     }
     loops
@@ -1859,6 +1867,8 @@ pub(super) fn lower(
         unit_leaders: std::cell::OnceCell::new(),
         intrinsics: Vec::new(),
         hoisted: BTreeMap::new(),
+        scalar_values: BTreeMap::new(),
+        prototype_clear: BTreeMap::new(),
         construct_ready: Vec::new(),
         loop_arrays: Vec::new(), loop_shapes: Vec::new(), arrays_fixed: false,
         array_vars: BTreeMap::new(),
@@ -1907,7 +1917,7 @@ pub(super) fn lower(
     };
     lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &lowering.raises, super::facts::Seeds::observing(observed));
     lowering.intrinsics = native_calls::intrinsic_calls(unit, global_reads, |pc| direct.contains_key(&pc));
-    let loops = local_loops(unit, &program.constants, entry_pc, &lowering.intrinsics);
+    let loops = local_loops(unit, &program.constants, entry_pc, &lowering.intrinsics, global_reads);
     // One entry query of the call depth replaces each binding's helper with its cached
     // target probe (`cached_call_target`). A completed call leaves the depth it found.
     if !numeric && unit.frames.iter().any(|frame| frame.target.callee == CalleeBinding::Function) {
@@ -2221,6 +2231,29 @@ impl Lowering<'_, '_> {
             (pc, register) = next;
         }
         false
+    }
+
+    /// Whether the int32 product written to `register` at `pc` is read only through its ToInt32, by
+    /// a sum or difference as its next instruction whose other operand is another int32 register
+    /// (`state`, the facts before `pc`, prove it int32 and the product does not write it), and then
+    /// through `truncated_through_sums`. Each added int32 keeps the chain's sums exact in binary64
+    /// as an int32 constant does, so the wrapping product and sum give the low 32 bits of the
+    /// exact sum: its ToInt32, as `(a * 3 + i) | 0` (`int_mul`).
+    pub(super) fn truncated_through_int32_sum(&self, state: &State, pc: usize, register: Register) -> bool {
+        let (at, reader) = self.reader(pc + 1, register);
+        if at != pc + 1 || reader != register { return false; }
+        let Some(next) = self.unit.instructions.get(at).copied() else { return false };
+        if !crate::staged::meaning::means(next, crate::staged::meaning::Meaning::Binary) || next.returns_from_frame()
+            || next.writes_current_this() || next.result_flags() != 0 { return false; }
+        let Some(operation) = crate::vm::compiled::number_arithmetic(next, next.binary_operator()) else { return false };
+        if !operation.int32_projection_is_wrapping() { return false; }
+        let int32_register = |operand: Operand| operand.register_index().filter(|other| *other != register)
+            .is_some_and(|other| state.values[usize::from(other)].value.ty.is_subtype(Type::INT32));
+        let [first, second] = [next.operand_b(), next.operand_c()];
+        let paired = (first.register_index() == Some(register) && int32_register(second))
+            || (second.register_index() == Some(register) && int32_register(first));
+        if !paired || !(next.result_register() == register || self.dead_after(at, register)) { return false; }
+        self.truncated_through_sums(at, next.result_register())
     }
 
     /// The sum or difference that next reads `register`, written at `pc`, with an int32 constant
@@ -4070,6 +4103,20 @@ impl Lowering<'_, '_> {
                     self.builder.def_var(variables.length, view.length);
                     let unproved = self.raw_const(Lane::I32, 0);
                     self.builder.def_var(variables.room, unproved);
+                    if (array.header..=array.back).any(|pc| super::native_calls::searches(&self.intrinsics, pc)) {
+                        let base = self.builder.use_var(variables.bits);
+                        let held = self.helper_call(LaneHelper::PrototypesHoldNoIndex, &[base]);
+                        let clear = self.raw_compare_imm(Relation::NotEqual, held, 0);
+                        let checked = match self.prototype_clear.get(&array.source).copied() {
+                            Some(checked) => checked,
+                            None => {
+                                let checked = self.builder.declare_var(types::I8);
+                                self.prototype_clear.insert(array.source, checked);
+                                checked
+                            }
+                        };
+                        self.builder.def_var(checked, clear);
+                    }
                 }
                 ElementViews::Typed(_) => self.hoist_typed_view(array, bits, variables, exit),
                 ElementViews::Double => {

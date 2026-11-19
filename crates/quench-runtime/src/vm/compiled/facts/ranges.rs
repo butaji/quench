@@ -166,6 +166,18 @@ pub(in crate::vm::compiled) fn effective_relation(relation: NumberRelation, trut
     }
 }
 
+/// `range` without the value `other` names when `other` is a singleton, which an interval can
+/// drop only at its end: `range` ≠ v with `range` = [v, max] is [v + 1, max]. `None` where no
+/// value is left (`range` is the singleton v).
+fn without(range: IntRange, other: IntRange) -> Option<IntRange> {
+    if other.min != other.max { return Some(range); }
+    let value = other.min;
+    if range.min == value && range.max == value { return None; }
+    if range.min == value { IntRange::bounds(value + 1, range.max) }
+    else if range.max == value { IntRange::bounds(range.min, value - 1) }
+    else { Some(range) }
+}
+
 /// The ranges of `left` and `right` on an edge where `relation` holds if `truth`; `None` where
 /// no pair of values reaches the edge.
 fn relation_ranges(relation: NumberRelation, truth: bool, left: IntRange, right: IntRange) -> Option<(IntRange, IntRange)> {
@@ -173,7 +185,7 @@ fn relation_ranges(relation: NumberRelation, truth: bool, left: IntRange, right:
     let relation = effective_relation(relation, truth);
     match relation {
         Equal => { let common = left.intersect(right)?; Some((common, common)) }
-        NotEqual => (left != right || left.min != left.max).then_some((left, right)),
+        NotEqual => Some((without(left, right)?, without(right, left)?)),
         GreaterThan | GreaterEqual => relation_ranges(
             if relation == GreaterThan { LessThan } else { LessEqual }, true, right, left).map(|(right, left)| (left, right)),
         LessThan | LessEqual => {
