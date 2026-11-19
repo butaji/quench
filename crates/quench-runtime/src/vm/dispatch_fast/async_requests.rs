@@ -81,11 +81,11 @@ fn take_request_promise<H: Host>(vm: &mut Vm<H>) -> Value {
 }
 
 /// `await` (or, where `yielded`, `yield`) of the in-place request's activation on `value`, the
-/// converted value its row suspends on (`lane_frame::lane_suspension`): the frame suspends back
+/// converted value its row suspends on (`lane_frame::suspension_row_in_lane`): the frame suspends back
 /// into the generator's record, resuming at `pc` with the value it is resumed with in
 /// `destination`, the activation pops, and the caller goes on with the request's promise.
 #[inline(never)]
-pub(super) fn lane_suspend_request<H: Host>(cx: *mut LaneContext<H>, (pc, destination): (usize, crate::bytecode::Register),
+pub(super) fn suspend_request_in_lane<H: Host>(cx: *mut LaneContext<H>, (pc, destination): (usize, crate::bytecode::Register),
     yielded: bool, value: Value) -> Resumed {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.

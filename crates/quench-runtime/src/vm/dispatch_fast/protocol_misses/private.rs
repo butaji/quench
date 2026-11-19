@@ -31,6 +31,6 @@ pub(in crate::vm::dispatch_fast) const fn private_miss_of<H: Host>(parameters: u
         COPY_DATA_PROPERTIES => super::super::copy_data_properties_miss::<H> as Handler,
         PRIVATE_IN => super::super::private_in_miss::<H> as Handler,
         GET_PRIVATE_FIELD => super::super::get_private_field_miss::<H> as Handler,
-        _ => lane_general_step::<H>,
+        _ => general_step_in_lane::<H>,
     }
 }

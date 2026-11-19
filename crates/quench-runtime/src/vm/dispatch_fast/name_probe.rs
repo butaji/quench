@@ -25,7 +25,7 @@ script_handler! {
 /// settled: a hinted global read where the name lands on the global object, else an exit.
 pub(in crate::vm) fn settle_name_record<H: Host>(view: &LaneView, pc: usize, op: Op, lands: bool) {
     let handler = match (lands, crate::staged::name_load(op)) {
-        (false, _) => lane_exit::<H> as Handler,
+        (false, _) => exit_lane::<H> as Handler,
         (true, Some(load)) => name_row::<H, FLAG_NAME_GLOBAL_SCOPED>(load),
         (true, None) => name_row::<H, FLAG_NAME_GLOBAL_SCOPED>(crate::staged::NameLoad::Typeof),
     };

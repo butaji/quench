@@ -3831,7 +3831,7 @@ fn following(ip: Ip) -> Ip {
 
 lane_handler! {
     /// Not a lane instruction: the general path executes it.
-    fn lane_exit<>(cx, r, ip, i, view) {
+    fn exit_lane<>(cx, r, ip, i, view) {
         exit(ip)
     }
 }
@@ -3869,7 +3869,7 @@ unsafe fn window_closure_into<H: Host>(cx: *mut (), r: Registers, _ip: Ip, funct
 
 /// `window_closure_into`'s closure of `function` over the running environment
 /// activation's environment, whose window starts at register `registers`. Out of line, as
-/// `lane_new_object`: making the closure takes stack temporaries.
+/// `compiled_new_object`: making the closure takes stack temporaries.
 #[inline(never)]
 fn window_closure_value_in_lane<H: Host>(
     cx: *mut LaneContext<H>,
@@ -4099,7 +4099,7 @@ lane_handler! {
     /// instruction. Within a frameless activation, which has no frame, the general path runs
     /// it.
     #[inline(never)]
-    fn lane_general_step<>(cx, r, ip, i, view) {
+    fn general_step_in_lane<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         if !vm.lane_stack.activations().is_empty() {
             resume!(cx, step_beside_activations_in_lane(cx, r, ip));
@@ -4130,7 +4130,7 @@ lane_handler! {
     }
 }
 
-/// `lane_general_step` within a frameless activation: a value step (`Vm::call_out`) of
+/// `general_step_in_lane` within a frameless activation: a value step (`Vm::call_out`) of
 /// the activation's registers, made beside the activations as a native runs beside them
 /// (`DeferredLaneCall`), so guest code it reaches makes them frames first; its result lands
 /// in the running function's registers then. Any other step takes the general path.
@@ -4167,7 +4167,7 @@ fn step_beside_activations_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Register
 }
 
 /// Make `operation` of the record at `ip` from the lane, as its general step would: in a
-/// frame's own run with the frame's PC published (`lane_general_step`), or beside frameless
+/// frame's own run with the frame's PC published (`general_step_in_lane`), or beside frameless
 /// activations as a native beside them runs (`DeferredLaneCall`), so guest code it reaches
 /// makes them frames first. A throw is stashed in `Vm::lane_raised`, raised from those
 /// frames, and `None` is returned for the general path to raise it. The running function's
@@ -5160,44 +5160,7 @@ fn object_literal_value_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     value
 }
 
-script_handler! {
-    /// `MakeObject`: an empty ordinary object (`Vm::object`), as the general loop makes it.
-    fn lane_make_object<>(cx, r, ip, i, view) {
-        if !staged_allocate(cx, r, i.a, Allocation::Empty) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-lane_handler! {
-    /// `MakeArray`: a fresh array of the record's length in holes (`Vm::hole_array`).
-    fn lane_make_array<>(cx, r, ip, i, view) {
-        if !staged_allocate(cx, r, i.a, Allocation::Array { length: i.imm(), numbers: i.b == 1 }) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
-
-lane_handler! {
-    /// `MakeArray` whose literal's `DefineArrayElement` records follow it, one per index in
-    /// order (`specialize_array_literals`): the array made with those elements at once, as
-    /// their definitions into its holes would leave it, and the run goes on past them.
-    fn lane_make_array_elements<>(cx, r, ip, i, view) {
-        let length = i.imm() as usize;
-        // SAFETY: `specialize_array_literals` matched the `length` records after this one.
-        let elements = RegisterList::collect(length, |index| unsafe { (*ip.add(index + 1)).a })
-            .expect("a fused literal fits the window");
-        if !staged_allocate(cx, r, i.a, Allocation::ArrayOf { elements }) {
-            return exit(ip);
-        }
-        // SAFETY: as above.
-        next!(cx, r, unsafe { ip.add(length + 1) }, view)
-    }
-}
-
-/// The array of the values in `elements` (`Vm::literal_array`), out of line as `lane_new_object`.
+/// The array of the values in `elements` (`Vm::literal_array`), out of line as `compiled_new_object`.
 #[inline(never)]
 fn literal_array_value_in_lane<H: Host>(vm: &mut Vm<H>, r: Registers, elements: RegisterList) -> Value {
     let registers = elements.registers();
@@ -5216,7 +5179,7 @@ fn new_object_in_lane<H: Host>(vm: &mut Vm<H>) -> Value {
     value
 }
 
-/// `lane_make_array`'s array of `length` holes (`Vm::make_array`), out of line as `lane_new_object`.
+/// The `MakeArray` row's array of `length` holes, out of line as `compiled_new_object`.
 #[inline(never)]
 fn new_hole_array_in_lane<H: Host>(vm: &mut Vm<H>, length: usize) -> Value {
     let value = vm.hole_array(length);
@@ -7184,14 +7147,14 @@ script_handler! {
 script_handler! {
     /// `CheckPrivate` of an object holding the private field under the name's brand at this
     /// record (`private_brand_in_lane`), which proves the check; any other check takes
-    /// `lane_general_step`.
+    /// `general_step_in_lane`.
     #[inline(never)]
     fn check_private_miss<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let present = lane_frame::LaneFrame::<ACC_NONE>::private_slot(cx, ip.addr(), code, r.get(i.a), i.imm()).is_some();
         if !present {
-            sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(general_step_in_lane::<H>, r, ip, Carried::script_in(cx, view))
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -7200,12 +7163,12 @@ script_handler! {
 script_handler! {
     /// `CopyDataProperties` (an object spread or rest) that a plain copy answers
     /// (`Vm::copy_plain_data_properties`), which runs no guest code and cannot throw, so it
-    /// runs beside activations; any other copy takes `lane_general_step`.
+    /// runs beside activations; any other copy takes `general_step_in_lane`.
     #[inline(never)]
     fn copy_data_properties_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         if !vm.copy_plain_data_properties(r.get(i.a), r.get(i.b), r.get(i.c)) {
-            sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(general_step_in_lane::<H>, r, ip, Carried::script_in(cx, view))
         }
         // The copy can allocate property storage.
         note_allocation(vm);
@@ -7216,7 +7179,7 @@ script_handler! {
 script_handler! {
     /// `PrivateIn` (`#x in object`) of an object with its own data (`Vm::object_data`): whether
     /// it carries the name's brand at this record (`private_brand_in_lane`), a field's or a
-    /// method's. Any other operand, which may raise, takes `lane_general_step`.
+    /// method's. Any other operand, which may raise, takes `general_step_in_lane`.
     #[inline(never)]
     fn private_in_miss<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
@@ -7226,7 +7189,7 @@ script_handler! {
             vm.object_data(r.get(i.b)).map(|_| vm.has_private_name(r.get(i.b), brand))
         });
         let Some(carries) = carries else {
-            sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(general_step_in_lane::<H>, r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, Value::boolean(carries));
         next!(cx, r, following(ip), Carried::script_in(cx, view))
@@ -12495,7 +12458,7 @@ script_handler! {
                     requicken::<H>(ip, probing);
                     sibling!(probing, r, ip, Carried::script_in(cx, view))
                 }
-                requicken::<H>(ip, lane_exit::<H>);
+                requicken::<H>(ip, exit_lane::<H>);
                 return exit(ip);
             }
         };
@@ -12570,7 +12533,7 @@ script_handler! {
             requicken::<H>(ip, scoped);
             sibling!(scoped, r, ip, Carried::script(cx))
         }
-        requicken::<H>(ip, lane_exit::<H>);
+        requicken::<H>(ip, exit_lane::<H>);
         exit(ip)
     }
 }
@@ -12587,7 +12550,7 @@ script_handler! {
         // A lexical declaration of the name is never withdrawn, so its stores always take the
         // general path.
         if !vm.global_name_hintable(atom) {
-            requicken::<H>(ip, lane_exit::<H>);
+            requicken::<H>(ip, exit_lane::<H>);
             return exit(ip);
         }
         let Some(hint) = vm
@@ -12618,7 +12581,7 @@ script_handler! {
         // A read the general path found past a scope that could declare the name holds only
         // until some scope does (`Vm::note_dynamic_scope_name`).
         if SCOPED && vm.scope_names.declared(atom) {
-            requicken::<H>(ip, lane_exit::<H>);
+            requicken::<H>(ip, exit_lane::<H>);
             return exit(ip);
         }
         let value = match vm.global_name_read(code, atom, i.c) {
@@ -18875,7 +18838,7 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
         _ if crate::staged::field_definition_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::DefineField as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_FIELD as u16 }> as Handler),
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
         _ if crate::staged::copy_properties_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::CopyDataProperties as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::COPY_DATA_PROPERTIES as u16 }> as Handler),
-        _ if opcode.steps_in_lane() => Some(lane_general_step::<H>),
+        _ if opcode.steps_in_lane() => Some(general_step_in_lane::<H>),
         _ if crate::staged::element_read_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::GetIndex as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_INDEX as u16 }> as Handler),
         _ if crate::staged::element_write_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::SetIndex as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::SET_INDEX as u16 }> as Handler),
         _ if crate::staged::known_call_family(opcode) => Some(known_call_handler::<H>()),
@@ -19588,7 +19551,7 @@ fn derive_lane_view<'live, H: Host>(
                     && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
                     && instruction.a() & !crate::bytecode::REGISTER_MASK != 0;
                 if flagged && row.is_some_and(|row| row.handler as *const () == chosen.handler as *const ()) {
-                    LaneHandler { handler: lane_general_step::<H>, ..chosen }
+                    LaneHandler { handler: general_step_in_lane::<H>, ..chosen }
                 } else {
                     chosen
                 }
@@ -19602,7 +19565,7 @@ fn derive_lane_view<'live, H: Host>(
             accumulator_registers.push(
                 carried.filter(|_| selected.is_some() && acc != ACC_NONE).unwrap_or(NO_ACCUMULATOR),
             );
-            let handler = selected.map_or(lane_exit::<H> as Handler, |selected| selected.handler) as *const ();
+            let handler = selected.map_or(exit_lane::<H> as Handler, |selected| selected.handler) as *const ();
             LaneInstruction {
                 handler,
                 operand: operand.unwrap_or(LaneOperand { imm: 0 }),
@@ -19675,7 +19638,7 @@ fn derive_lane_view<'live, H: Host>(
             if crate::staged::wasm_branch_table(instruction.op())
                 && crate::bytecode::branch_table_entries(pc, instruction).any(|entry| exits[entry])
             {
-                records[pc].handler = lane_exit::<H> as Handler as *const ();
+                records[pc].handler = exit_lane::<H> as Handler as *const ();
                 exits[pc] = true;
                 reads_accumulator[pc] = false;
                 accumulator_registers[pc] = NO_ACCUMULATOR;

@@ -23,6 +23,6 @@ pub(in crate::vm::dispatch_fast) const fn entry_miss_of<H: Host>(parameters: u8)
         CALL_MATH => super::super::call_math_miss::<H> as Handler,
         CALL_ARRAY_CALLBACK_DISCARDING => super::super::call_array_callback_miss::<H, true> as Handler,
         CALL_ARRAY_CALLBACK => super::super::call_array_callback_miss::<H, false> as Handler,
-        _ => lane_general_step::<H>,
+        _ => general_step_in_lane::<H>,
     }
 }

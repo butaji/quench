@@ -246,7 +246,7 @@ impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
     }
 
     /// The row's suspension, which the handler makes in place by the suspender it chose before
-    /// the row ran (`lane_suspension`), so it never declines after the row's effects.
+    /// the row ran (`suspension_row_in_lane`), so it never declines after the row's effects.
     fn suspend(&mut self, _stage: &mut Concrete, suspending: crate::staged::Suspending<u64>) -> Option<LaneControl> {
         self.suspends.map(|_| LaneControl::Suspend(suspending))
     }
@@ -266,7 +266,7 @@ impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
 /// What `await` of `awaited` waits on in the lane context `cx` (registers `r`): the staged
 /// conversion (`staged::await_source`) over the lane's own PromiseResolve. `None` leaves a
 /// conversion that could run guest code, or throw into the frame's handlers, to the general path.
-pub(in crate::vm::dispatch_fast) fn lane_await_source<H: Host>(cx: *mut LaneContext<H>, r: Registers, awaited: Value) -> Option<Value> {
+pub(in crate::vm::dispatch_fast) fn awaited_value_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, awaited: Value) -> Option<Value> {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
     crate::staged::await_source(&mut stage, &mut frame, awaited.to_bits()).map(Value::from_bits)

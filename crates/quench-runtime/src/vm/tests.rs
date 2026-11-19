@@ -21501,7 +21501,7 @@ fn lane_bodies_construct_by_activation() {
 
 #[test]
 fn lane_bodies_allocate_literals() {
-    // A lane body allocates `{}` and `[]` (`compiled::lane_new_object`, `new_array_in_lane`)
+    // A lane body allocates `{}` and `[]` (`compiled::compiled_new_object`, `new_array_in_lane`)
     // across many collections, and the objects it fills read as the interpreter's.
     let source = r#"
      (function () {

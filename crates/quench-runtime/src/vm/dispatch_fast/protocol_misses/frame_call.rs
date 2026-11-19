@@ -16,6 +16,6 @@ pub(in crate::vm::dispatch_fast) const fn frame_call_miss_of<H: Host>(parameters
         _ if parameters == MEMO_FORWARD | MEMO_ELEMENT => script_call_memo_miss::<H, { MEMO_FORWARD | MEMO_ELEMENT }> as Handler,
         _ if parameters == MEMO_FORWARD | MEMO_LENGTH => script_call_memo_miss::<H, { MEMO_FORWARD | MEMO_LENGTH }> as Handler,
         _ if parameters == MEMO_FORWARD | MEMO_NESTED => script_call_memo_miss::<H, { MEMO_FORWARD | MEMO_NESTED }> as Handler,
-        _ => lane_general_step::<H>,
+        _ => general_step_in_lane::<H>,
     }
 }

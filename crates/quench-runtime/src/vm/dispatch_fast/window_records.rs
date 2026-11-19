@@ -49,7 +49,7 @@ pub(super) fn window_local_handler<H: Host>(function: &Function, op: Op, own: us
     // A store to the function's own name is ignored or throws (`Function::strict`), which
     // the general step decides.
     if function.is_self_binding_slot(own) && crate::staged::stores_local_slot(op) {
-        return Some(lane_exit::<H>);
+        return Some(exit_lane::<H>);
     }
     // A function that resolves names at run time may store to a `with` object's binding instead of the
     // local: its environment store takes the scope first (the general step).

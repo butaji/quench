@@ -7,10 +7,10 @@
 //!
 //! The interpreter's frame (`Vm::staged_suspend`) answers every call-out and the effect, so the
 //! general step runs these rows. The lane runs the `yield` and `yield*` rows on its own frame
-//! (`dispatch_fast::lane_frame::lane_suspension`), which answers the effect with its in-place
+//! (`dispatch_fast::lane_frame::suspension_row_in_lane`), which answers the effect with its in-place
 //! suspension and declines, before any effect, a step it cannot finish; it converts an `await`'s
 //! source by the same `await_source` over its own PromiseResolve, which observes nothing
-//! (`dispatch_fast::lane_await_source`). The emit and stencil
+//! (`dispatch_fast::awaited_value_in_lane`). The emit and stencil
 //! frames answer none of the call-outs yet, so the row stays unresolved there and the tier exits at
 //! its exact PC for the interpreter to suspend.
 use super::{CallFrame, Operation, Register, Stage, Step};

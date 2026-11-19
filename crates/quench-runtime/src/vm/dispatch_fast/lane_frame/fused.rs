@@ -39,7 +39,7 @@ lane_handler! {
         // from the record, rather than requickening (`generated_row`).
         macro_rules! step_a { ($flag:expr) => {{
             let fields = LaneFields::<A, { $flag }>(i);
-            let Some(operation) = row_decode!(A, { $flag }, fields) else { sibling!(lane_general_step::<H>, r, ip, view) };
+            let Some(operation) = row_decode!(A, { $flag }, fields) else { sibling!(general_step_in_lane::<H>, r, ip, view) };
             let property_values = if const { matches!(LaneFields::<A>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
                 unsafe { vm(cx) }.heap.arena_values_base()
             } else { std::ptr::null() };
@@ -78,7 +78,7 @@ lane_handler! {
             } else {
                 Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY)
             };
-            let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, ip, view) };
+            let Some(operation) = decoded else { sibling!(general_step_in_lane::<H>, r, ip, view) };
             let mut stage = Concrete::new(std::ptr::null());
             let carried = if const { LaneFields::<B>::RESULT_A } { Carried::script_in(cx, view) } else { view };
             // The jump's direction: a branch table's is its `BACKWARD` (entry edges); any other jump's is the record's `MODE_BACKWARD`.
@@ -105,7 +105,7 @@ lane_handler! {
         }
         macro_rules! step_b { ($flag:expr) => {{
             let fields = LaneFields::<B, { $flag }>(i);
-            let Some(operation) = row_decode!(B, { $flag }, fields) else { sibling!(lane_general_step::<H>, r, ip, view) };
+            let Some(operation) = row_decode!(B, { $flag }, fields) else { sibling!(general_step_in_lane::<H>, r, ip, view) };
             let property_values = if const { matches!(LaneFields::<B>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
                 unsafe { vm(cx) }.heap.arena_values_base()
             } else { std::ptr::null() };
@@ -155,7 +155,7 @@ lane_handler! {
         // Link `$k` at flag `$flag`; its double result is raw where `mode`'s raw mask has bit `$k`.
         macro_rules! link_flag { ($L:ident, $k:literal, $flag:expr) => {{
             let fields = LaneFields::<$L, { $flag }>(i);
-            let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(lane_general_step::<H>, r, ip, view) };
+            let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane::<H>, r, ip, view) };
             let property_values = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
                 unsafe { vm(cx) }.heap.arena_values_base()
             } else { std::ptr::null() };
@@ -181,7 +181,7 @@ lane_handler! {
         }; }
         macro_rules! last_flag { ($L:ident, $flag:expr) => {{
             let fields = LaneFields::<$L, { $flag }>(i);
-            let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(lane_general_step::<H>, r, ip, view) };
+            let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(general_step_in_lane::<H>, r, ip, view) };
             let property_values = if const { matches!(LaneFields::<$L>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
                 unsafe { vm(cx) }.heap.arena_values_base()
             } else { std::ptr::null() };
@@ -218,7 +218,7 @@ lane_handler! {
                 } else {
                     Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY)
                 };
-                let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, ip, view) };
+                let Some(operation) = decoded else { sibling!(general_step_in_lane::<H>, r, ip, view) };
                 let mut stage = Concrete::new(std::ptr::null());
                 // A chain's last link is never a branch table, so its direction is the record's `MODE_BACKWARD`.
                 let backward = mode & crate::staged::MODE_BACKWARD != 0;

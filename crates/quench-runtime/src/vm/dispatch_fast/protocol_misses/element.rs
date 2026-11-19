@@ -25,6 +25,6 @@ pub(in crate::vm::dispatch_fast) const fn element_miss_of<H: Host>(parameters: u
         GET_FIELD_STRING => super::super::get_field_string_miss::<H> as Handler,
         GET_FIELD_NESTED => super::super::get_field_nested_miss::<H> as Handler,
         GET_FIELD_GETTER => super::super::get_field_getter_miss::<H> as Handler,
-        _ => lane_general_step::<H>,
+        _ => general_step_in_lane::<H>,
     }
 }
