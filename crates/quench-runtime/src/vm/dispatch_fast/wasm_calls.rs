@@ -145,13 +145,13 @@ impl<H: Host> WasmActivation for LaneCall<'_, H> {
     #[inline(always)]
     fn activation_room(&mut self) -> bool {
         let vm = unsafe { vm(self.cx) };
-        vm.lane_stack.activations.len() < vm.lane_stack.activation_limit.get()
+        vm.lane_stack.activation_count() < vm.lane_stack.activation_limit.get()
     }
 
     #[inline(always)]
     fn frame_room(&mut self) -> bool {
         let vm = unsafe { vm(self.cx) };
-        vm.frames.len() + vm.lane_stack.activations.len() < super::dispatch_frame::WASM_ACTIVATION_LIMIT
+        vm.frames.len() + vm.lane_stack.activation_count() < super::dispatch_frame::WASM_ACTIVATION_LIMIT
     }
 
     #[inline(always)]
@@ -504,7 +504,7 @@ fn push_import_activation<H: Host>(
     let (registers, start) =
         push_passed_in_lane::<H, true, false>(cx, r, ip, target, args.as_ptr(), argc.min(target.params), this, false);
     let vm = unsafe { vm(cx) };
-    if let Some(Activation { kind: ActivationKind::Script(script), .. }) = vm.lane_stack.activations.last_mut() {
+    if let Some(Activation { kind: ActivationKind::Script(script), .. }) = vm.lane_stack.activations_mut().last_mut() {
         script.completion = Completion::ToWasm;
     }
     vm.lane_stack.to_wasm.push(ToWasmCall { instance, memory, result });
@@ -575,11 +575,11 @@ fn native_import_target<H: Host>(
     let env = vm.heap.function(callee)?.env;
     match vm.heap.get(env) {
         Some(Cell::WasmHostFunction { target, signature }) => match target {
-            crate::heap::WasmHostTarget::Js(target) => Some((*target, None, signature.clone())),
+            crate::heap::WasmHostTarget::Js(target) => Some((*target, None, signature.signature.clone())),
             crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target) => Some((
                 target.function,
                 Some((target.view_environment, target.view_slot)),
-                signature.clone(),
+                signature.signature.clone(),
             )),
             crate::heap::WasmHostTarget::Host(_) => None,
         },

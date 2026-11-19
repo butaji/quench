@@ -8,6 +8,7 @@
 //! (`wasm_instance_switch`), in another; every other target (a host function, code not
 //! compiled, a memory the call cannot be made across) goes through the VM's callout.
 
+use cranelift_codegen::ir::InstBuilder;
 use super::wasm_stage::infallible;
 use super::wasm_call_stage::is_tail_call;
 use super::{
@@ -195,8 +196,7 @@ impl<H: Host> Analysis<'_, H> {
 
 impl<H: Host> Emitter<'_, '_, H> {
     /// Lowers a call of the row an indirect target produced: natively through the function the
-    /// row names where it has one, else through the VM's callout. The arguments reach a native
-    /// callee as values; only the callout's path stores them in memory, and reads its result back.
+    /// row names where it has one, else through the VM's callout.
     pub(super) fn call_reference(&mut self, pc: usize, instruction: WideInstruction) {
         let Slot::IndirectReference { signature: signature_index, table } = self.plan.operand(pc)
         else {
@@ -204,49 +204,44 @@ impl<H: Host> Emitter<'_, '_, H> {
         };
         let signature = self.analysis.type_signature(signature_index).expect("planned").clone();
         let expected = self.analysis.type_canonical(signature_index).expect("planned");
-        let arguments = self.call_arguments(instruction, &signature);
+        // The native fast path of a tail call is a `return_call_indirect`, when results agree.
+        let native_tail = is_tail_call(instruction) && signature.results.first().copied() == self.plan.result;
         let row = self.read(instruction.b(), Kind::I64);
         let words = self.table_words(table);
-        let result = signature.results.first().map(|ty| Kind::of(*ty).expect("planned"));
+        // The target checked in this block: its row and id, not loaded again.
+        let block = self.body.core.builder.current_block();
+        let checked = self.checked_row.take().filter(|checked| checked.block.is_some() && checked.block == block && checked.index == row);
         let builder = &mut self.body.core.builder;
         // `done` takes the status and the result's bits: the native call hands both on in
         // registers; only the cold paths spill the arguments and read the result from memory.
         let (slow, done) = (builder.create_block(), builder.create_block());
         builder.append_block_param(done, types::I64);
-        if let Some(kind) = result {
-            builder.append_block_param(done, kind.ir());
-        }
-        self.native_calls(words, row, expected, &signature, &arguments, (slow, done));
+        builder.append_block_param(done, types::I64);
+        self.native_calls(words, row, checked, expected, (instruction, &signature), (slow, done), native_tail);
         self.body.core.builder.set_cold_block(slow);
         self.enter(slow);
-        let (args, out) = self.spill_arguments(&arguments, &signature);
+        let (args, out) = self.spill_arguments(instruction, &signature);
         let status = self.call_through_vm(pc, table, signature_index, row, (args, out));
-        let mut exit = vec![status];
-        if let Some(kind) = result {
-            exit.push(self.slow_result(out, kind));
-        }
-        self.goto(done, &exit);
+        let bits = self.result_bits(&signature, out);
+        self.goto(done, &[status, bits]);
         self.enter(done);
-        let values = self.body.core.builder.block_params(done).to_vec();
-        self.propagate(values[0]);
-        let destination = instruction.result_register();
-        match result {
-            Some(kind) => self.write(destination, kind, values[1]),
-            None => self.write_constant(destination, Kind::I32, 0),
-        }
+        let (status, bits) = (self.body.core.builder.block_params(done)[0], self.body.core.builder.block_params(done)[1]);
+        self.propagate(status);
+        self.take_result(instruction, &signature, bits);
+        self.return_if_tail(instruction);
     }
 
     /// The native calls of the row: when it holds the `expected` id, a call of its function in
     /// this instance (the running context's) or in another (the instance's record), each jumping
-    /// to `done` with its exit; any other row, or a function without a body, leaves for `slow`.
+    /// to `done` with its status; any other row, or a function without a body, leaves for `slow`.
+    /// With `native_tail`, the local call is a `return_call_indirect` that does not reach `done`.
     fn native_calls(
         &mut self,
         words: ir::Value,
         row: ir::Value,
         checked: Option<CheckedRow>,
         expected: CanonicalSignature,
-        signature: &crate::WasmSignature,
-        arguments: &[ir::Value],
+        (instruction, signature): (WideInstruction, &crate::WasmSignature),
         (slow, done): (ir::Block, ir::Block),
         native_tail: bool,
     ) {
@@ -295,30 +290,17 @@ impl<H: Host> Emitter<'_, '_, H> {
         }
         self.body.core.builder.set_cold_block(foreign);
         self.enter(foreign);
-        self.foreign_call(instance, entry, signature, arguments, (slow, done));
-    }
-
-    /// The call of the function at index `entry` of the running artifact's code table, in the
-    /// running context: its exit jumps to `done`.
-    fn local_call(
-        &mut self,
-        entry: ir::Value,
-        signature: &crate::WasmSignature,
-        arguments: &[ir::Value],
-        (slow, done): (ir::Block, ir::Block),
-    ) {
-        let context = self.body.core.context;
-        let table = self.load_word(Width::I64, invariant(), context, CONTEXT_TABLE);
-        let body = self.entry_body(table, entry, slow);
-        let (status, result) = self.call_body(body, signature, arguments, (self.base, self.length));
-        self.goto_exit(done, status, result);
-    }
-
-    /// Leaves a native call for `done` with its status and, for a result, the result.
-    pub(super) fn goto_exit(&mut self, done: ir::Block, status: ir::Value, result: Option<ir::Value>) {
-        let mut values = vec![status];
-        values.extend(result);
-        self.goto(done, &values);
+        let entry = self.load_word(Width::I32, flags, address, TableTarget::ENTRY);
+        let entry = self.convert(Conversion::ExtendI32Unsigned, entry);
+        let buffers = self.spill_arguments(instruction, signature);
+        let switched = self.body.core.builder.create_block();
+        self.body.core.builder.append_block_param(switched, types::I64);
+        self.foreign_call(instance, entry, signature, buffers, (slow, switched));
+        self.body.core.builder.set_cold_block(switched);
+        self.enter(switched);
+        let status = self.body.core.builder.block_params(switched)[0];
+        let bits = self.result_bits(signature, buffers.1);
+        self.goto(done, &[status, bits]);
     }
 
     /// The body at index `entry` of the code table at `table`; a function without one leaves
@@ -336,25 +318,83 @@ impl<H: Host> Emitter<'_, '_, H> {
         body
     }
 
-    /// The call of `body` with the call's argument values and the memory arguments the callee
-    /// takes, in its native ABI: its status and, for a result, the result, as it returns them.
+    /// The call of `body` with the arguments the call spilled and the memory arguments the
+    /// callee takes: its status, the result stored through `out`.
     pub(super) fn call_body(
         &mut self,
         body: ir::Value,
         signature: &crate::WasmSignature,
-        arguments: &[ir::Value],
+        (args, out): (ir::Value, ir::Value),
         (base, length): (ir::Value, Option<ir::Value>),
-    ) -> (ir::Value, Option<ir::Value>) {
-        let mut values = vec![self.body.core.context];
-        if self.memory.base {
-            values.push(base);
+    ) -> ir::Value {
+        let values: Vec<ir::Value> = signature
+            .params
+            .iter()
+            .enumerate()
+            .map(|(offset, ty)| {
+                let raw = self.load_word_at(args, offset);
+                match Kind::of(*ty).expect("planned") {
+                    Kind::I32 => self.convert(Conversion::WrapI64, raw),
+                    Kind::I64 | Kind::Reference => raw,
+                }
+            })
+            .collect();
+        let (status, bits) = self.call_body_values(body, signature, &values, (base, length));
+        if !signature.results.is_empty() {
+            self.store_word(MemFlagsData::trusted(), bits, out, 0);
         }
-        values.extend(length);
-        values.extend_from_slice(arguments);
-        let callee = internal_signature(self.memory, &signature.params, signature.results.first().copied(), self.call_conv);
+        status
+    }
+
+    /// The call of `body` with `arguments`, each of its parameter's kind, and the memory
+    /// arguments the callee takes: its status and its result as a word of bits (0 for none).
+    fn call_body_values(
+        &mut self,
+        body: ir::Value,
+        signature: &crate::WasmSignature,
+        values: &[ir::Value],
+        (base, length): (ir::Value, Option<ir::Value>),
+    ) -> (ir::Value, ir::Value) {
+        let arguments = self.body_arguments(values, (base, length));
+        let callee = internal_signature(self.memory, &signature.params, signature.results.first().copied(), BODY_CALL_CONV);
         let callee = self.body.core.builder.import_signature(callee);
-        let results = self.call_signature(callee, body, &values);
-        (results[0], results.get(1).copied())
+        let roots = self.root();
+        let results = self.call_signature(callee, body, &arguments);
+        self.unroot(roots);
+        let bits = match signature.results.first() {
+            Some(result) => match Kind::of(*result).expect("planned") {
+                Kind::I32 => self.convert(Conversion::ExtendI32Unsigned, results[1]),
+                Kind::I64 | Kind::Reference => results[1],
+            },
+            None => self.constant(Width::I64, 0),
+        };
+        (results[0], bits)
+    }
+
+    /// The arguments of a body: the context, the memory arguments it takes, then `values`.
+    fn body_arguments(&self, values: &[ir::Value], (base, length): (ir::Value, Option<ir::Value>)) -> Vec<ir::Value> {
+        let mut arguments = vec![self.body.core.context];
+        if self.memory.base {
+            arguments.push(base);
+        }
+        arguments.extend(length);
+        arguments.extend_from_slice(values);
+        arguments
+    }
+
+    /// The native tail call of `body` with `values`: a `return_call_indirect` (no roots, as `tail_known`).
+    fn tail_body_values(
+        &mut self,
+        body: ir::Value,
+        signature: &crate::WasmSignature,
+        values: &[ir::Value],
+        (base, length): (ir::Value, Option<ir::Value>),
+    ) {
+        let arguments = self.body_arguments(values, (base, length));
+        let callee = internal_signature(self.memory, &signature.params, signature.results.first().copied(), BODY_CALL_CONV);
+        let callee = self.body.core.builder.import_signature(callee);
+        self.interrupt_safepoint();
+        self.body.core.builder.ins().return_call_indirect(callee, body, &arguments);
     }
 }
 
@@ -376,29 +416,21 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.load_word(Width::I64, MemFlagsData::trusted(), address, (offset * WORD) as i32)
     }
 
-    /// The values of the call window's arguments, each as its Wasm kind: what a native callee
-    /// takes as it is.
-    fn call_arguments(&mut self, instruction: WideInstruction, signature: &crate::WasmSignature) -> Vec<ir::Value> {
-        let window = instruction.call_window();
-        let mut values = Vec::with_capacity(signature.params.len());
-        for (offset, ty) in signature.params.iter().enumerate() {
-            values.push(self.read(window.base + offset as u16, Kind::of(*ty).expect("planned")));
-        }
-        values
-    }
-
-    /// Stores the arguments, a word each, in a slot with one word more for the result: the
-    /// addresses of the arguments and of the result, which the VM's callout takes.
+    /// Stores the call window's arguments, a word each, in a slot with one word more for the
+    /// result: the addresses of the arguments and of the result.
     fn spill_arguments(
         &mut self,
-        arguments: &[ir::Value],
+        instruction: WideInstruction,
         signature: &crate::WasmSignature,
     ) -> (ir::Value, ir::Value) {
         let slot = self.words_slot(signature.params.len() + 1);
-        for (offset, (value, ty)) in arguments.iter().zip(&signature.params).enumerate() {
-            let value = match Kind::of(*ty).expect("planned") {
-                Kind::I32 => self.convert(Conversion::ExtendI32Unsigned, *value),
-                Kind::I64 => *value,
+        let window = instruction.call_window();
+        for (offset, ty) in signature.params.iter().enumerate() {
+            let kind = Kind::of(*ty).expect("planned");
+            let value = self.read(window.base + offset as u16, kind);
+            let value = match kind {
+                Kind::I32 => self.convert(Conversion::ExtendI32Unsigned, value),
+                Kind::I64 | Kind::Reference => value,
             };
             let address = self.slot_address(slot, (offset * WORD) as i32);
             self.store_word(MemFlagsData::trusted(), value, address, 0);
@@ -441,12 +473,31 @@ impl<H: Host> Emitter<'_, '_, H> {
         status
     }
 
-    /// The result the callout wrote to `out`, as its kind.
-    fn slow_result(&mut self, out: ir::Value, kind: Kind) -> ir::Value {
-        let bits = self.load_word_at(out, 0);
-        match kind {
-            Kind::I32 => self.convert(Conversion::WrapI64, bits),
-            Kind::I64 => bits,
+    /// The bits of the call's result that `out` holds: 0 where the signature has none.
+    fn result_bits(&mut self, signature: &crate::WasmSignature, out: ir::Value) -> ir::Value {
+        if signature.results.is_empty() {
+            return self.constant(Width::I64, 0);
         }
+        self.load_word_at(out, 0)
+    }
+
+    /// Writes the call's result, whose word of bits is `bits`, to the call's register.
+    fn take_result(
+        &mut self,
+        instruction: WideInstruction,
+        signature: &crate::WasmSignature,
+        bits: ir::Value,
+    ) {
+        let destination = instruction.result_register();
+        let Some(ty) = signature.results.first() else {
+            self.write_constant(destination, Kind::I32, 0);
+            return;
+        };
+        let kind = Kind::of(*ty).expect("planned");
+        let value = match kind {
+            Kind::I32 => self.convert(Conversion::WrapI64, bits),
+            Kind::I64 | Kind::Reference => bits,
+        };
+        self.write(destination, kind, value);
     }
 }

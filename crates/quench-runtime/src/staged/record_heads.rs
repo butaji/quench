@@ -106,6 +106,8 @@ pub(crate) struct CallContextHead<E, C, T, D, P, R> {
     /// The artifact containing the currently executing call site. The active
     /// entry (or its caller) keeps this artifact strongly owned for the callout.
     pub(crate) compiled: *const C,
+    /// The program of the code running (the VM's; compiled code never reads it).
+    pub(crate) program: P,
     /// Number of Wasm-to-host callouts made by this native invocation.
     pub(crate) import_callouts: *mut u64,
     /// Number of direct known calls that had to use the VM fallback.

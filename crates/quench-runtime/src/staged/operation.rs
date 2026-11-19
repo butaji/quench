@@ -183,6 +183,9 @@ pub(crate) enum Operation<W, P> {
     /// `left` compared with `right` (`Comparison`), jumping to the target when the comparison
     /// holds, or fails where `negate` (`JumpBinaryFalse`); otherwise continue after it.
     CompareJump { comparison: Comparison, left: Operand, right: Operand, negate: bool },
+    /// A Wasm float, float conversion or select (`wasm_float`); the frame's Wasm words decide it.
+    #[cfg(not(stencil_build))]
+    WasmFloat(wasm_float::WasmFloatOperation),
     /// A Wasm i32 or i64 register or immediate operator (`wasm_int`), which the row answers from its words.
     WasmInt(wasm_int::WasmIntOperation),
     /// A Wasm i32 conditional jump or fused add-and-jump over int32 operands (`wasm_jump`).
@@ -194,6 +197,7 @@ pub(crate) enum Operation<W, P> {
     /// A Wasm direct load or store of the function's memory (`wasm_access`).
     WasmAccess(wasm_access::WasmAccessOperation),
     /// A Wasm SIMD operator or byte shuffle on the lane's vector registers (`wasm_simd`).
+    #[cfg(not(stencil_build))]
     WasmVector(wasm_simd::VectorOperation),
     /// The tier prologue of a frameless activation of `function` with `parameters` parameters
     /// (`TierPrologue`, a lane's synthetic record): the JavaScript tier enters it, and the activation
@@ -223,7 +227,16 @@ impl<W, P> Operation<W, P> {
             Decoder::Element => Self::decode_element(instruction),
             Decoder::Call => Self::decode_call(instruction, context),
             Decoder::Names => names::decode(instruction),
-            Decoder::Proved => None,
+            Decoder::WasmFloat => Self::decode_wasm_float(instruction),
+            // Under the tier's proof of the allocation (`decode_literal`), so none here.
+            Decoder::Proved | Decoder::Literal => None,
+            Decoder::WasmInt => Self::decode_wasm_int(instruction),
+            Decoder::WasmJump => Self::decode_wasm_jump(instruction),
+            Decoder::WasmState => Self::decode_wasm_state(instruction, context),
+            Decoder::WasmMemory => Self::decode_wasm_access(instruction, context),
+            Decoder::WasmVector => Self::decode_wasm_vector(instruction, context),
+            // A lane row is the lane's own (`decode_lane`): the plan keeps its generic or exit route for it.
+            Decoder::Lane => None,
         }
     }
 
@@ -242,6 +255,12 @@ impl<W, P> Operation<W, P> {
     #[inline(always)]
     pub(crate) fn decode_wasm_jump(instruction: WideInstruction) -> Option<Self> {
         WasmJump::decode(instruction).map(Self::WasmJump).or_else(|| BranchTable::decode(instruction).map(Self::BranchTable))
+    }
+
+    /// The Wasm integer operations of `decode` (`Decoder::WasmInt`), from a record's wide fields.
+    #[inline(always)]
+    pub(crate) fn decode_wasm_int(instruction: WideInstruction) -> Option<Self> {
+        wasm_int::decode(instruction).map(Self::WasmInt)
     }
 
     /// The staged operation `instruction` makes apart from how its result completes the frame
