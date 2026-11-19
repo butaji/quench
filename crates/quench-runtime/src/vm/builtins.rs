@@ -694,7 +694,7 @@ mod namespace_tests {
         let program = Engine::specialize("0", "namespace-preparation.js").unwrap();
         let mut vm = Vm::new(TestHost::default());
         vm.initialize(&program).unwrap();
-        for name in ["Math", "Temporal"] {
+        for name in ["Math", "Temporal", "Atomics", "Intl", "WebAssembly"] {
             let atom = vm.lookup_atom(name).unwrap();
             assert!(vm.is_pending_lazy_data_property(vm.realm.globals, PropertyKey::string(atom)), "{name}");
         }
@@ -730,7 +730,7 @@ impl<H: Host> Vm<H> {
         self.report_memory_if_enabled("runtime_object_arrays");
         self.install_typed_array(program)?;
         self.install_data_view(program)?;
-        self.install_atomics(program)?;
+        self.install_lazy_builtin_namespace(program, "Atomics", Native::AtomicsInitialize)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_typed_memory");
         self.install_collections(program)?;
@@ -857,10 +857,6 @@ impl<H: Host> Vm<H> {
             },
         );
         self.install_finalization_registry(program)?;
-        let atomics_name = self.intern_atom("Atomics");
-        if let Some(atomics) = self.own_property(self.realm.globals, atomics_name) {
-            self.install_builtin_to_string_tag(atomics, "Atomics")?;
-        }
         let bigint = self.native_value(Native::BigInt);
         let prototype_atom = self.prototype_atom();
         let bigint_prototype = self.get_property(program, bigint, prototype_atom)?;
@@ -933,7 +929,7 @@ impl<H: Host> Vm<H> {
         self.install_number(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_core_builtins");
-        self.install_intl_for_realm(program, self.realm.globals, self.object_proto)?;
+        self.install_lazy_builtin_namespace(program, "Intl", Native::IntlInitialize)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_intl");
         for (name, native) in [
@@ -956,7 +952,7 @@ impl<H: Host> Vm<H> {
         self.install_promise(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_before_webassembly");
-        self.install_webassembly(program)?;
+        self.install_lazy_builtin_namespace(program, "WebAssembly", Native::WebAssemblyInitialize)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins_before_temporal");
         self.install_lazy_builtin_namespace(program, "Temporal", Native::TemporalInitialize)?;

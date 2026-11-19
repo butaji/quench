@@ -11757,6 +11757,7 @@ fn intl_coerced_option_views_survive_fresh_conversion_callbacks() {
                     let mut vm = Vm::new(TestHost::default().with_test262());
                     vm.execute(&program).unwrap();
                     let intl = vm.intern_atom("Intl");
+                    vm.materialize_lazy_data_property(&program, vm.realm.globals, super::property_key::PropertyKey::string(intl)).unwrap();
                     let intl = vm.own_property(vm.realm.globals, intl).unwrap();
                     let name = vm.intern_atom(kind);
                     let constructor = vm.own_property(intl, name).unwrap();
