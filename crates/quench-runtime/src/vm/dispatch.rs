@@ -687,6 +687,22 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(Value::UNDEFINED);
                 self.write(f, i.result_register(), value);
             }
+            Op::MakeClosure if self.is_module_root_hoisted(p, f, i.closure_function_index()) => {
+                // A module's hoisted declaration is the closure its instance made at instantiation,
+                // which the body's declaration of it returns.
+                let id = i.closure_function_index();
+                let program = self.frames[f].program;
+                let v = match self.module_function(program, id) {
+                    Some(function) => function,
+                    None => {
+                        let env = with_binding_site_pc!(self, VarOwner::Frame(f), *pc, self.capture_binding_environment(VarOwner::Frame(f)))?;
+                        let function = self.closure(p, id, env)?;
+                        self.record_module_function(program, id, function);
+                        function
+                    }
+                };
+                self.write(f, i.result_register(), v);
+            }
             Op::MakeClosure if p.closure_takes_no_environment(i.closure_function_index()) => {
                 // Nothing the closure runs reads its environment: it takes none, and the frame
                 // keeps its locals unpromoted (`ResidualProgram::closure_takes_no_environment`).
@@ -694,25 +710,10 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), v);
             }
             Op::MakeClosure => {
+                // A closure made fresh each evaluation: a module root's expression or arrow too,
+                // even one in a loop whose iterations share the module environment.
                 let env = with_binding_site_pc!(self, VarOwner::Frame(f), *pc, self.capture_binding_environment(VarOwner::Frame(f)))?;
-                let module_root = p.is_module()
-                    && self.frames[f].function == super::ROOT_FUNCTION_ID
-                    && self.programs.module_environment(self.frames[f].program) == Some(env);
-                let v = if module_root {
-                    let cached = self
-                        .cached_functions_in_environment(
-                            self.frames[f].program,
-                            i.closure_function_index(),
-                            env,
-                        )
-                        .next();
-                    match cached {
-                        Some(function) => function,
-                        None => self.closure(p, i.closure_function_index(), env)?,
-                    }
-                } else {
-                    self.closure(p, i.closure_function_index(), env)?
-                };
+                let v = self.closure(p, i.closure_function_index(), env)?;
                 self.write(f, i.result_register(), v);
             }
             Op::MakeObject => {

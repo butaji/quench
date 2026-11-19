@@ -2285,6 +2285,7 @@ impl<H: Host> Vm<H> {
             let closure = self.closure(p, function, environment);
             self.set_active_program(previous);
             let closure = closure?;
+            self.record_module_function(program, function, closure);
             if let Some(binding) = self.heap.environment_slot_mut(environment, slot) {
                 *binding = closure;
             }
@@ -3790,7 +3791,7 @@ impl<H: Host> Vm<H> {
                                 .name
                                 .is_some_and(|name| residual.atoms[name as usize] == local)
                     })
-                    .and_then(|(id, _)| self.cached_functions(program_id, id as u32).next_back());
+                    .and_then(|(id, _)| self.module_function(program_id, id as u32));
                 let slot = residual.function(0)
                     .local_atoms
                     .iter()

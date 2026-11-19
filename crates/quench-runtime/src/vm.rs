@@ -2193,6 +2193,8 @@ pub(crate) struct Vm<H> {
     descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
     // Weak identities; captured environments remain authoritative in function cells.
     function_values: function_cache::FunctionValues,
+    /// The hoisted function declarations of each module instance, by function id (`ModuleFunctions`).
+    module_functions: function_cache::ModuleFunctions,
     /// The JavaScript wrapper of each exported Wasm closure, so every export of one
     /// function is one object. Weak: a wrapper nothing holds is made again on demand.
     wasm_exported_functions: FxHashMap<Value, WeakHandle>,
@@ -3098,6 +3100,7 @@ impl<H: Host> Vm<H> {
         self.object_shapes = site_table::CacheSiteTable::with_empty(program.object_sites.capacity());
         self.descriptors.clear();
         self.function_values.clear();
+        self.module_functions.clear();
         self.wasm_exported_functions.clear();
         self.private_homes.clear();
         self.programs.reset(program.clone());
