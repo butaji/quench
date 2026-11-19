@@ -23,13 +23,17 @@ import path from "node:path";
 
 // ---------- ownership ----------
 // First match wins. Paths are relative to the repository root.
+// Team of plan-2026-11-19 (rebalance/plan-2026-11-19.md).
+const CALL_PROOFS = "Prove call checks once";
 const OWNERS = [
+  [/^crates\/quench-runtime\/src\/(vm\/dispatch_fast\/wasm|wasm\.rs$)/, "Wasm"],
+  [/^crates\/quench-runtime\/src\/vm\/dispatch_fast\/completions\.rs$/, "Calls and frames"],
   [/^crates\/quench-bjit\/.*wasm/, "Wasm"],
   [/^crates\/quench-bjit\//, "b-jit"],
   [/^crates\/quench-runtime\/src\/(wasm\/|vm\/dispatch_wasm|vm\/compiled\/wasm|staged\/wasm|vm\/wasm)/, "Wasm"],
   [/^crates\/quench-runtime\/src\/vm\/compiled\/(lane_region|lane_compile|lane_facts|entry_cell|lane_body_abi|exit_protocol|osr_lane|ahead_entry|frameless)/, "u-jit"],
   [/^crates\/quench-runtime\/src\/vm\/compiled\/(emit_machine|lane_body_run)|^crates\/quench-runtime\/src\/vm\/(jit_backend|tier_policy|native_stencil|native_graph|native_object)/, "Compile pipeline"],
-  [/^crates\/quench-runtime\/src\/vm\/compiled/, "Replace"],
+  [/^crates\/quench-runtime\/src\/vm\/compiled/, CALL_PROOFS],
   [/^crates\/quench-runtime\/src\/vm\/dispatch_fast\/(call|body_calls|native_call|return|lane_stack|activation)|^crates\/quench-runtime\/src\/(vm\/activation|register_file|staged\/(call|protocol|frame))/, "Calls and frames"],
   [/^crates\/quench-runtime\/src\/vm\/(dispatch_fast\/(generator|job|promise|await|completions)|generator|promise|job)/, "No-jit"],
   [/^crates\/quench-runtime\/src\/vm\/(dispatch_fast\/(in_place|builtin|native_rows|array_steps)|inplace|array|string|number|json|collections|object_keys|object_builtins|primitives|builtins|native_rows|native_lengths|intact_fuses|math|date|regexp|typed_array)/, "Builtins"],
@@ -37,12 +41,11 @@ const OWNERS = [
   [/^crates\/quench-runtime\/src\/(vm\/(object|shape|preshaped|method_cache|field)|typed_ir|staged\/object)/, "Fact store"],
   [/^crates\/quench-runtime\/src\/(vm\/dispatch|vm\/lane|staged\/)/, "Derive"],
   [/^crates\/quench-runtime\/src\/(compile|bytecode|parse)/, "Front end"],
-  [/^crates\/quench-node\//, "Node host"],
+  [/^crates\/quench-node\//, "Builtins"], // Node host moved to Builtins
   [/^crates\/quench-runtime\//, "Derive"],
 ];
 // Symbol-level overrides (file, symbol) -> owner, from the owners' own triage.
 const SYMBOL_OWNERS = [
-  [/vm\/dispatch_fast\/completions\.rs$/, /^lane_(complete_|return_|restore_caller|resume_after_call|resume_at|settle_promise|settled_then)/, "Calls and frames"],
   [/vm\/dispatch_fast\/generator_windows\.rs$/, /./, "Derive"],
 ];
 export function ownerOfSymbol(rel, sym) {
@@ -148,7 +151,7 @@ function walk(dir, base, acc) {
 const RUNTIME = "crates/quench-runtime/src/";
 const CATALOG = [ // files allowed to name opcodes: the definition, its binary form, staged decode, emission
   /^crates\/quench-runtime\/src\/bytecode\.rs$/, /^crates\/quench-runtime\/src\/bytecode\/(binary|op_catalog|instruction|opcodes)/,
-  /^crates\/quench-runtime\/src\/staged\//, /^crates\/quench-runtime\/src\/compile\/(ast|emit)/,
+  /^crates\/quench-runtime\/src\/staged(\/|\.rs$)/, /^crates\/quench-runtime\/src\/compile\/(ast|emit)/,
 ];
 const SEMANTIC_NAME = /(box|unbox|tag|truthy|truthiness|int32|to_int|uint32|compare|arith|number|double|f64_op|operation|to_bool|negate|bitwise|shift)/;
 const RECHECK = /\.generation\b|generation\s*!=|\.entry\s*!=|script_calls|activation_limit|activation_count\(|tier_hook|record_js_jit_lane_entry|entry_published|note_site_callee|tier_may_run/;
@@ -174,7 +177,12 @@ function scan(tree, branch, wantOwners) {
     const s = fs.readFileSync(path.join(tree, rel), "utf8");
     for (const m of s.matchAll(/\bfn\s+(is_[a-z0-9_]+)\s*\(\s*&?self\s*\)/g)) preds.add(m[1]);
   }
-  for (const p of ["is_wide", "is_module", "is_shared", "is_operand_field", "is_empty", "is_some", "is_none", "is_ok", "is_err", "is_null", "is_nan", "is_finite", "is_ascii", "is_zero", "is_negative", "is_positive"]) preds.delete(p);
+  // Class predicates the catalog generates (op_catalog.rs, op_classes.rs) are its interface, not opcode names.
+  for (const rel of files.filter(f => /src\/bytecode\/(op_catalog|op_classes)\.rs$/.test(f))) {
+    const s = fs.readFileSync(path.join(tree, rel), "utf8");
+    for (const m of s.matchAll(/\b(is_[a-z0-9_]+)\b/g)) preds.delete(m[1]);
+  }
+  for (const p of ["is_wide_marker", "is_call_with_eval_flags", "is_relocatable_local_access", "is_field_store", "is_wide", "is_module", "is_shared", "is_super_construct", "is_register_field", "is_operand_field", "is_empty", "is_some", "is_none", "is_ok", "is_err", "is_null", "is_nan", "is_finite", "is_ascii", "is_zero", "is_negative", "is_positive"]) preds.delete(p);
 
   // Builtin keys from the Native enum.
   let nativeKeys = [];
@@ -306,6 +314,12 @@ function scan(tree, branch, wantOwners) {
     // P10: optimizations are general, never benchmark-specific.
     if (inRuntime) for (const m of src.matchAll(/\b(richards|deltablue|delta_blue|navier|raytrace|earley|boyer|splay|babylon|nbody|n_body|jetstream|octane|sunspider|crypto_aes|validatorjs|acorn_wtb|babel_wtb)\b/gi))
       if (!inRanges(tests, m.index) && !/^\s*\/\//.test(src.slice(src.lastIndexOf("\n", m.index) + 1, m.index))) add("benchmark-specific", rel, lineOf(starts, m.index), `bench@${lineOf(starts, m.index)}`, `names benchmark "${m[1]}" in engine code (principle 10)`);
+    // P3: one specializer driver. Public compile entry points in vm/compiled are candidates to fold.
+    if (/^crates\/quench-runtime\/src\/vm\/compiled(\.rs|\/)/.test(rel)) for (const f of fns) {
+      const head = s.slice(Math.max(0, f.at - 24), f.at);
+      if (/pub(\([^)]*\))?\s+$/.test(head) && /^(compile|specialize|lower|stitch|build)_(body|bodies|region|loop|unit|function|program|osr|ahead|lane|module|method|native|image|entry)\b/.test(f.name))
+        add("specializer-driver", rel, lineOf(starts, f.at), f.name, `${f.name}: a separate specializer driver (principle 3: one specializer driver for every tier)`, { owner: "u-jit" });
+    }
     // P12: delete dead paths.
     for (const m of s.matchAll(/#\[allow\(dead_code\)\]/g))
       if (!inRanges(tests, m.index)) add("dead-code", rel, lineOf(starts, m.index), `dead@${lineOf(starts, m.index)}`, `#[allow(dead_code)] keeps a dead path (principle 12)`);
@@ -320,7 +334,7 @@ function scan(tree, branch, wantOwners) {
         const ls = f.body.split("\n");
         const hits = [];
         ls.forEach((l, k) => { const m = RECHECK.exec(l); if (m) hits.push(`${lineOf(starts, f.open) + k}:${m[0].trim()}`); });
-        if (hits.length) add("per-call-recheck", rel, lineOf(starts, f.at), f.name, `${f.name} re-checks per call: ${hits.slice(0, 6).join(", ")}${hits.length > 6 ? ", …" : ""} (a link or target should prove these once)`);
+        if (hits.length) add("per-call-recheck", rel, lineOf(starts, f.at), f.name, `${f.name} re-checks per call: ${hits.slice(0, 6).join(", ")}${hits.length > 6 ? ", …" : ""} (a link or target should prove these once)`, { owner: CALL_PROOFS });
       }
     }
   }
@@ -338,6 +352,8 @@ function scan(tree, branch, wantOwners) {
     const keys = [full]; if (tail !== full && (tail.includes("_") || tail.length >= 6)) keys.push(tail);
     const re = new RegExp(`^(?:[a-z0-9]+_)*(?:${keys.join("|")})(?:_[a-z0-9]+)*$`);
     const bodies = fnIndex.filter(f => re.test(f.name) && f.lines >= 4 && !BODY_SKIP_FILE.test(f.rel) && !BODY_SKIP_NAME.test(f.name) && !/^\{\s*[A-Za-z_:.<>]+\([^;]*\)\s*\}$/s.test(f.body.trim()));
+    // A plain_* fast prefix that declines into the generic native is one body with it.
+    for (let i = bodies.length - 1; i >= 0; i--) if (/^plain_/.test(bodies[i].name) && bodies.some(b => b !== bodies[i] && /_native$/.test(b.name))) bodies.splice(i, 1);
     const filesSet = new Set(bodies.map(b => b.rel));
     if (bodies.length >= 2 && filesSet.size >= 2 && bodies.length <= 12 && !seen.has(tail)) {
       seen.add(tail);
@@ -358,6 +374,24 @@ function scan(tree, branch, wantOwners) {
 }
 
 // ---------- gate budgets ----------
+// Budgets only shrink: compare a branch's budget files with v2-merged's.
+function budgets(baseDir, dir, branch, owner) {
+  const items = [];
+  const rel = "crates/quench-tier-corpus/";
+  for (const f of ["ir_budget.txt", "ir_floor.txt", "tier_inversions.txt"]) {
+    let a, b;
+    try { a = fs.readFileSync(path.join(baseDir, rel, f), "utf8"); b = fs.readFileSync(path.join(dir, rel, f), "utf8"); } catch { continue; }
+    const rows = t => new Map(t.split("\n").filter(l => l && !l.startsWith("#")).map(l => [l.trim().split(/\s+/).filter(x => !/^-?[\d.]+$/.test(x)).join(" "), l.trim()]));
+    const A = rows(a), B = rows(b);
+    for (const [k, line] of B) {
+      const old = A.get(k);
+      if (old == null) { if (f === "tier_inversions.txt") items.push({ cat: "budget-grew", owner, file: rel + f, line: 0, symbol: k, branch, key: `budget-grew|${f}|${k}`, detail: `new inversion "${k}" added (shrink-only debt)` }); continue; }
+      const na = old.match(/-?\d+(\.\d+)?/g) || [], nb = line.match(/-?\d+(\.\d+)?/g) || [];
+      if (na.length === nb.length && nb.some((x, i) => +x > +na[i] + 1e-9)) items.push({ cat: "budget-grew", owner, file: rel + f, line: 0, symbol: k, branch, key: `budget-grew|${f}|${k}`, detail: `${k}: ${old} -> ${line} (budgets only shrink)` });
+    }
+  }
+  return items;
+}
 function inversions(file) {
   const items = [];
   for (const line of fs.readFileSync(file, "utf8").split("\n")) {
@@ -380,7 +414,7 @@ function gate(file) {
   // Rows whose fix lives on another branch than the gate's named owner (owners' triage).
   const GATE_OWNER = { bi_set_has: "Builtins", bi_map_get: "Builtins", arr_includes: "Builtins", arr_indexof: "Builtins" };
   for (const m of txt.matchAll(/^([a-z0-9_]+): --(b-jit|u-jit) ([\d.]+) Ir\/iter, ceiling ([\d.]+) \(budget C \+ 6 = ([\d.]+)\) -> (.+)$/gm))
-    items.push({ cat: "budget-over-c6", owner: GATE_OWNER[m[1]] || own(m[6].trim()), file: `ir-budget ${tag}`, line: 0, symbol: `${m[1]} ${m[2]}`, branch: "v2-merged", key: `budget-over-c6|${m[1]}|${m[2]}`,
+    items.push({ cat: "budget-over-c6", owner: GATE_OWNER[m[1]] || m[2], file: `ir-budget ${tag}`, line: 0, symbol: `${m[1]} ${m[2]}`, branch: "v2-merged", key: `budget-over-c6|${m[1]}|${m[2]}`,
       detail: `${m[1]} ${m[2]}: ${m[3]} Ir/iter vs budget C + 6 = ${m[5]} (${(+m[3] / +m[5]).toFixed(1)}x)` });
   for (const m of txt.matchAll(/^([a-z0-9_]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)x\s+over\s+(.*)$/gm)) {
     const first = (m[7].match(/\d+\s+([A-Za-z_:<>]+)/) || [])[1] || "";
@@ -401,16 +435,28 @@ const CAT_TITLE = {
   "budget-over-floor": "Interpreter over its C floor (gate)", "ts-types-unused": "TS types that reach no tier",
   "tier-inversion": "Tier inversions (gate debt)", "exclusion-table": "Opcode exclusion tables", "frame-model": "Frame types beside the one frame model",
   "entry-mechanism": "Hand-made entries into compiled code", "duplicate-lattice": "Extra value lattices", "ts-rejected": "TypeScript syntax refused",
-  "benchmark-specific": "Benchmark-specific code", "dead-code": "Dead code kept alive", "policy-outside-home": "Switches outside the policy home",
+  "benchmark-specific": "Benchmark-specific code", "specializer-driver": "Specializer drivers beside the one driver", "budget-grew": "Budgets that grew (must only shrink)", "dead-code": "Dead code kept alive", "policy-outside-home": "Switches outside the policy home",
 };
 const MEASURED = new Set(["budget-over-c6", "budget-over-floor", "tier-inversion"]);
+// Exemptions: tools/vision-ledger-exemptions.txt, one per line: category<TAB>file regex<TAB>symbol regex<TAB>reason.
+function loadExemptions() {
+  const f = path.join(path.dirname(new URL(import.meta.url).pathname), "vision-ledger-exemptions.txt");
+  let txt = ""; try { txt = fs.readFileSync(f, "utf8"); } catch { return []; }
+  return txt.split("\n").filter(l => l.trim() && !l.startsWith("#")).map(l => { const [cat, file, sym, reason] = l.split("\t"); return { cat, file: new RegExp(file), sym: new RegExp(sym || "."), reason: reason || "" }; });
+}
 const kindOf = it => MEASURED.has(it.cat) ? "measured" : "code";
 function combine(outDir, statePath, inputs) {
   const all = [];
   for (const f of inputs) all.push(...JSON.parse(fs.readFileSync(f, "utf8")));
   const byKey = new Map();
   for (const it of all) if (!byKey.has(it.key)) byKey.set(it.key, it);
-  const items = [...byKey.values()];
+  const ex = loadExemptions();
+  const exempted = [];
+  const items = [...byKey.values()].filter(it => {
+    const e = ex.find(e => (e.cat === "*" || e.cat === it.cat) && e.file.test(it.file) && e.sym.test(it.symbol));
+    if (e) { exempted.push({ ...it, reason: e.reason }); return false; }
+    return true;
+  });
   let prev = { keys: [] };
   try { prev = JSON.parse(fs.readFileSync(statePath, "utf8")); } catch {}
   const prevKeys = new Set(prev.keys), nowKeys = new Set(items.map(i => i.key));
@@ -443,6 +489,7 @@ function combine(outDir, statePath, inputs) {
       md += "\n";
     }
   }
+  if (exempted.length) md += `## Exempted (${exempted.length}), with reasons from tools/vision-ledger-exemptions.txt\n\n${exempted.map(it => `- \`${it.file}${it.line ? ":" + it.line : ""}\` ${it.cat} ${it.symbol}: ${it.reason}`).join("\n")}\n\n`;
   if (closed.length) md += `## Closed since the last run (${closed.length})\n\n${closed.map(k => `- ${k}`).join("\n")}\n`;
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, "ledger.md"), md);
@@ -479,6 +526,10 @@ if (cmd === "scan") {
   const items = scan(path.resolve(tree), branch, owners);
   fs.writeFileSync(out, JSON.stringify(items));
   process.stdout.write(`${branch}: ${items.length} items\n`);
+} else if (cmd === "budgets") {
+  const items = budgets(args[0], args[1], args[2], args[3]);
+  fs.writeFileSync(args[4], JSON.stringify(items));
+  process.stdout.write(`budgets ${args[2]}: ${items.length} items\n`);
 } else if (cmd === "inversions") {
   const items = inversions(args[0]);
   fs.writeFileSync(args[1], JSON.stringify(items));

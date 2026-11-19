@@ -8,8 +8,9 @@ here="$(cd "$(dirname "$0")" && pwd)"
 clone="$1"; work="$2"; out="$3"; gatefile="${4:-}"
 mkdir -p "$work" "$out"
 # owner|branch (owner names match OWNERS in vision-ledger.mjs)
-map='Derive|claude/project-thread-klqkmr
-Replace|claude/project-thread-r2lrq5
+map='unowned|v2-merged
+Derive|claude/project-thread-klqkmr
+Prove call checks once|claude/project-thread-r2lrq5
 b-jit|claude/project-thread-grxu0e
 u-jit|claude/project-thread-4qar6s
 Wasm|claude/project-thread-9m05xy
@@ -19,9 +20,7 @@ Calls and frames|claude/project-thread-bvz0p4
 Fact store|claude/project-thread-wyc2t0
 Env, GC and heap memory|claude/project-thread-404a6x
 No-jit|claude/project-thread-p34pk3
-Compile pipeline|claude/project-thread-cktdr4
-Node host|claude/project-thread-cqybmh
-unowned|v2-merged'
+Compile pipeline|claude/project-thread-cktdr4'
 scans=()
 while IFS='|' read -r owner branch; do
   git -C "$clone" fetch -q origin "$branch" 2>/dev/null || { echo "skip $branch (fetch failed)"; continue; }
@@ -30,6 +29,11 @@ while IFS='|' read -r owner branch; do
   j="$work/scan-$(echo "$owner" | tr ' ,' '__').json"
   node "$here/vision-ledger.mjs" scan "$wt" "$branch@$(git -C "$wt" rev-parse --short=10 HEAD)" "$j" --owner "$owner"
   scans+=("$j")
+  base="$work/v2-merged"
+  if [ "$branch" != v2-merged ] && [ -d "$base" ]; then
+    b="$work/budgets-$(echo "$owner" | tr ' ,' '__').json"
+    node "$here/vision-ledger.mjs" budgets "$base" "$wt" "$branch" "$owner" "$b" && scans+=("$b")
+  fi
 done <<< "$map"
 if [ -n "$gatefile" ] && [ -f "$gatefile" ]; then
   node "$here/vision-ledger.mjs" gate "$gatefile" "$work/scan-gate.json"; scans+=("$work/scan-gate.json")

@@ -1,0 +1,13 @@
+# Vision ledger exemptions: category<TAB>file regex<TAB>symbol regex<TAB>reason. Category * matches any.
+# Owners send false positives to the "Track the full vision gap" thread; only that thread edits this file.
+hand-table	quench-bjit/build/(elf|macho|mach_o)	.	ELF/Mach-O file-format constants, not runtime layout (b-jit triage, plan 2026-11-19 s1)
+hand-table	.	^RUSTC_FLAGS$	compiler flags for the stencil build, not runtime layout (plan s1)
+hand-table	vm/compiled/lane_region/native_calls\.rs$	^INLINE$	pending merge: Builtins a109e34 replaces it with number::math_function (u-jit, plan E18)
+exclusion-table	base_region\.rs$	^REJECTS$	QUENCH_TRACE counter of reject reasons, no opcodes (Replace triage)
+exclusion-table	tier_policy\.rs$	^KERNEL_SHORT_DECLINES$	a scalar limit, not a table (Replace triage)
+dead-code	bytecode/instruction\.rs$	.	layout_accessors! generates each accessor for Instr and WideInstruction; the allow covers the unused twin (front end; per-type generation needs a build)
+builtin-bodies	.	^(ObjectFromEntries|ObjectDefineProperty|ObjectSetPrototypeOf|ObjectPrototypeToLocaleString|ObjectPrototypeValueOf|ReflectDeleteProperty|ReflectOwnKeys|JsonStringify|ArraySplice|ArraySort|ArrayFilter|ArrayIncludes|ArrayIndexOf|TypedArrayLastIndexOf|StringMatch|StringMatchAll|StringNormalize|DateToPrimitive|DateToJSON)$	one shared body; other matches are prefixes or cores it calls (Builtins triage a50f832)
+builtin-bodies	.	^(Error|Boolean|Promise.*|Wasm.*|HostFunction|MathInitialize|TypedArrayToStringTag|Temporal.*|.*Error)$	name collision only (Builtins triage)
+handler-not-row	vm/dispatch_fast/array_steps\.rs$	^lane_(callback_target|admits_activation|array_object|array_complete|run_array_iteration_from_frame|apply_array_step|apply_step_value)$	call protocol and heap access with no value semantics (Builtins triage)
+per-call-recheck	vm/dispatch_fast/array_steps\.rs$	^lane_call_for_each_once$	one context-flag load, not a re-proof (Builtins triage)
+*	.	^default_locale_compare$	wraps host collation (ICU), which has no staged form (Builtins triage)
