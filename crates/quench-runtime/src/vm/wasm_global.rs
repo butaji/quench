@@ -5,7 +5,7 @@
 //! and its registers' encoding (`encode_bits64`) here, at the one boundary.
 
 use super::*;
-use crate::staged::wasm_instance::{Instance, Storage, WasmInstance};
+use crate::staged::wasm_instance::{Instance, Storage, global_get, global_set};
 use crate::staged::wasm_machine::ConcreteInstance;
 
 /// The slot of the one native slot a global access's stage holds.
@@ -78,11 +78,8 @@ impl<H: Host> Vm<H> {
             return Err(JsError::validation("invalid Wasm global binding".into()));
         };
         let (mut bits, storage) = (*bits, Storage::of(*ty));
-        let word = ConcreteInstance {
-            globals: std::slice::from_mut(&mut bits),
-            memory: &mut [],
-        }
-        .global_load(CELL, storage);
+        let mut instance = ConcreteInstance { globals: std::slice::from_mut(&mut bits), memory: &mut [] };
+        let word = global_get(&mut instance, CELL, storage);
         Ok(self.wasm_slot_value(storage, word))
     }
 
@@ -123,11 +120,8 @@ impl<H: Host> Vm<H> {
         let Some(Cell::WasmGlobal { bits, .. }) = self.heap.get_mut(binding) else {
             unreachable!("the binding was a global");
         };
-        ConcreteInstance {
-            globals: std::slice::from_mut(bits),
-            memory: &mut [],
-        }
-        .global_store(CELL, storage, word);
+        let mut instance = ConcreteInstance { globals: std::slice::from_mut(bits), memory: &mut [] };
+        global_set(&mut instance, CELL, storage, word);
         Ok(())
     }
 }

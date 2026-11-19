@@ -3,7 +3,8 @@
 //! `WasmValue` boundary, the kernel table the interpreter reads, and the interpreter's fast paths.
 
 use super::{V128_BYTES, WasmType, WasmValue};
-use crate::bytecode::{Op, Register};
+use crate::bytecode::Register;
+use crate::staged::wasm_emit;
 pub(crate) use crate::staged::wasm_simd_lanes::{SimdOperator, lane, lane_mask, replace};
 
 mod bits;
@@ -77,7 +78,7 @@ const fn lane_count(indexed: &[&str], width: u32) -> u32 {
 
 /// The kernel table, one entry per operator in tag order, generated from the operator list.
 macro_rules! simd_kernels {
-    ($($name:ident $([$lane:ident])? : $width:expr, $left:ident, $right:expr, $result:ident => |$a:ident, $b:ident, $l:ident| $body:expr;)*) => {
+    ($($name:ident $([$lane:ident])? : $width:expr, $left:ident, $right:expr, $result:ident, $family:ident => |$a:ident, $b:ident, $l:ident| $body:expr;)*) => {
         impl SimdOperator {
             const KERNELS: &'static [SimdKernel] = &[$(SimdKernel {
                 left: WasmType::$left,
@@ -94,7 +95,7 @@ crate::staged::wasm_simd_lanes::simd_operator_list!(simd_kernels);
 /// The wasmparser operator of each SIMD operator, generated from the operator list: a lane
 /// operator's lane immediate is read from the instruction.
 macro_rules! wasm_operators {
-    ($($name:ident $([$lane:ident])? : $width:expr, $left:ident, $right:expr, $result:ident => |$a:ident, $b:ident, $l:ident| $body:expr;)*) => {
+    ($($name:ident $([$lane:ident])? : $width:expr, $left:ident, $right:expr, $result:ident, $family:ident => |$a:ident, $b:ident, $l:ident| $body:expr;)*) => {
         impl SimdOperator {
             pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, u8)> {
                 match op {
@@ -192,7 +193,7 @@ impl super::Lowering<'_> {
         left: Register,
         right: Register,
     ) -> Result<(), crate::Diagnostic> {
-        self.emit(Op::WasmSimd, result, left, right, op.selector(lane))
+        self.emit_emission(wasm_emit::simd(result, left, right, op.selector(lane)))
     }
     pub(super) fn simd_operator(
         &mut self,
@@ -238,7 +239,7 @@ impl super::Lowering<'_> {
                 let result = self.push()?;
                 let constant =
                     self.scalar_constant(WasmValue::V128(u128::from_le_bytes(*lanes)))?;
-                self.emit(Op::WasmSimdShuffle, result, left, right, constant)?;
+                self.emit_emission(wasm_emit::simd_shuffle(result, left, right, constant))?;
                 self.produced(result);
             }
             _ => return Ok(false),
