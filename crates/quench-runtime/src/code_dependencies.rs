@@ -264,10 +264,13 @@ pub(crate) enum IntactFuse {
     ArrayConstructor,
     /// `Array[@@species]` is the intrinsic getter, a getter-only accessor.
     ArraySpecies,
+    /// `RegExp[@@species]` is the intrinsic getter, a getter-only accessor: the splitter
+    /// `@@split` constructs is the realm's RegExp (`Vm::regexp_literal_argument_of`).
+    RegExpSpecies,
 }
 
 impl IntactFuse {
-    pub(crate) const COUNT: usize = 14;
+    pub(crate) const COUNT: usize = 15;
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]

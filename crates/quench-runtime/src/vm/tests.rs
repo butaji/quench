@@ -11342,6 +11342,52 @@ fn regexp_literal_sites_share_matchers_but_create_fresh_objects() {
 }
 
 #[test]
+fn regexp_argument_literals_share_an_object_only_while_no_evaluation_can_tell() {
+    // `s.replace(/re/g, y)` and its siblings: while the callee is the realm's String method
+    // and the RegExp builtins are intact, the site answers one object per frame
+    // (`Vm::regexp_literal_argument_of`); each evaluation still behaves as a fresh one.
+    let program = Engine::specialize(
+        r#"
+        function strip(s) { return s.replace(/a/g, ''); }
+        var out = '';
+        for (var i = 0; i < 50; i++) out += strip('banana' + i);
+        if (out.indexOf('a') !== -1 || out.indexOf('bnn49') === -1) throw new Error('global replace: ' + out);
+        function count(s) { return (s.match(/a/g) || []).length + s.search(/n/); }
+        for (var i = 0; i < 20; i++) if (count('banana') !== 5) throw new Error('match/search');
+        function digits(s) { return s.match(/(\d+)/); }
+        digits('x12y');
+        if (RegExp.$1 !== '12') throw new Error('legacy statics ' + RegExp.$1);
+        digits('x345y');
+        if (RegExp.$1 !== '345') throw new Error('legacy statics after a share ' + RegExp.$1);
+        function nest(s, depth) {
+            return s.replace(/b/g, function () { return depth ? nest('bb', depth - 1) : 'x'; });
+        }
+        for (var i = 0; i < 5; i++) if (nest('ab', 2) !== 'axxxx') throw new Error('reentrant replace');
+        function words(s) { return s.split(/,/); }
+        for (var i = 0; i < 5; i++) if (words('a,b,c').join('|') !== 'a|b|c') throw new Error('split');
+        function take(x) { return x.replace(/q/g, ''); }
+        take('aq'); take('aq');
+        var holder = { replace: function (re) { return re; } };
+        var first = take(holder), second = take(holder);
+        if (first === second || first.lastIndex !== 0) throw new Error('an unknown callee saw a shared object');
+        first.lastIndex = 3;
+        if (take('qaq') !== 'a' || second.lastIndex !== 0) throw new Error('an escaped object stayed shared');
+        var seen = [];
+        var original = RegExp.prototype[Symbol.split];
+        RegExp.prototype[Symbol.split] = function (s, n) { seen.push(this); return original.call(this, s, n); };
+        words('a,b'); words('c,d');
+        if (seen.length !== 2 || seen[0] === seen[1]) throw new Error('a replaced @@split saw a shared object');
+        seen[0].lastIndex = 7;
+        if (words('e,f').join('|') !== 'e|f' || seen[2].lastIndex !== 0) throw new Error('state leaked');
+        "#,
+        "regexp-argument-literal.js",
+    )
+    .unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+}
+
+#[test]
 fn native_dispatch_roots_raw_inputs_through_receiver_normalization_and_calls() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,

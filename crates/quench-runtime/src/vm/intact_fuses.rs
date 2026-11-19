@@ -33,6 +33,7 @@ const FUSES: [(FuseKey, Native); IntactFuse::COUNT] = [
     (FuseKey::Named("exec"), Native::RegExpExec),
     (FuseKey::Named("constructor"), Native::Array),
     (FuseKey::SpeciesSymbol, Native::ArraySpecies),
+    (FuseKey::SpeciesSymbol, Native::RegExpSpecies),
 ];
 
 impl<H: Host> Vm<H> {
@@ -71,6 +72,9 @@ impl<H: Host> Vm<H> {
             IntactFuse::StringIterator | IntactFuse::StringCharCodeAt | IntactFuse::StringIncludes => self.string_proto,
             IntactFuse::StringIteratorNext => self.string_iterator_proto,
             IntactFuse::RegExpTest | IntactFuse::RegExpExec => self.regexp_proto,
+            // Proved for the realm's RegExp constructor (`Vm::regexp_literal_argument_of`,
+            // through `fuse_intact_at`); proved for the prototype it only answers `false`.
+            IntactFuse::RegExpSpecies => self.regexp_proto,
         }
     }
 

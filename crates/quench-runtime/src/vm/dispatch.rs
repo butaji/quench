@@ -584,7 +584,16 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::CreateRegExpLiteral => {
-                let value = self.regexp_literal(p, f, i.regexp_literal_site_index())?;
+                let site = i.regexp_literal_site_index();
+                let value = match i.optional_register_b() {
+                    // A callee-argument site: field B names the call's callee.
+                    Some(callee) => {
+                        let callee = self.read(f, callee);
+                        let program = self.frames[f].program;
+                        self.regexp_literal_argument_of(p, program, f, site, callee)?
+                    }
+                    None => self.regexp_literal(p, f, site)?,
+                };
                 self.write(f, i.result_register(), value);
             }
             Op::LoadLocalPlain => {
