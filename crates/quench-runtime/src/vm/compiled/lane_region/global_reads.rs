@@ -1,4 +1,4 @@
-//! By-name loads that read the global scope (`Vm::lane_global_reads`).
+//! By-name loads that read the global scope (`Vm::global_reads_in_lane`).
 use super::*;
 use crate::vm::global_facts::{GlobalRead, GlobalSlot};
 use crate::staged::GlobalBinding;
@@ -15,7 +15,7 @@ impl Lowering<'_, '_> {
         if let (Some((fact, global, realm_offset)), Some(exit)) = (held, exit) {
             self.hold_global(state, exit, fact, (global, realm_offset));
         }
-        if let (GlobalBinding::Typed { .. }, Some(&GlobalRead::Slot(slot)), Some(exit)) = (binding, self.global_reads.get(&pc), exit) {
+        if let (GlobalBinding::Typed { .. }, Some(&(GlobalRead::Slot(slot) | GlobalRead::NativeSlot { slot, .. })), Some(exit)) = (binding, self.global_reads.get(&pc), exit) {
             self.hold_global_slot(state, exit, slot);
         }
         if let (GlobalBinding::Lexical { .. }, Some(&GlobalRead::Lexical(slot)), Some(exit)) = (binding, self.global_reads.get(&pc), exit) {
@@ -28,6 +28,26 @@ impl Lowering<'_, '_> {
         true
     }
 
+    /// The by-name load at `pc` of a loop's callee, read on the entering edge of the loop at `header` (`hoist_scalar_calls`):
+    /// the read `global_read` makes, but a miss leaves at the header, before the loop ran. Its tagged value.
+    pub(super) fn hoist_native_read(&mut self, state: &mut State, header: usize, pc: usize) -> Option<ir::Value> {
+        let instruction = self.unit.instructions[pc];
+        if !matches!(crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()), Some(crate::staged::Operation::LoadName { .. })) { return None; }
+        let (binding, held) = self.global_binding(pc);
+        let exit = (!matches!(binding, GlobalBinding::Constant(_))).then(|| self.guard_exit(state, header as u32));
+        if let (Some((fact, global, realm_offset)), Some(exit)) = (held, exit) {
+            self.hold_global(state, exit, fact, (global, realm_offset));
+        }
+        if let (GlobalBinding::Typed { .. }, Some(&(GlobalRead::Slot(slot) | GlobalRead::NativeSlot { slot, .. })), Some(exit)) = (binding, self.global_reads.get(&pc), exit) {
+            self.hold_global_slot(state, exit, slot);
+        }
+        let proof = super::EmitProof::GlobalRead { miss: exit, binding };
+        let edges = exit.map_or(frame::Edges::Value, |miss| frame::Edges::ValueGuarded { miss });
+        let row = crate::staged::Operation::decode_load_name(instruction, proof)?;
+        self.step(state, edges, row);
+        Some(self.tagged(state, instruction.result_register()))
+    }
+
     /// The binding `pc`'s read takes, and the fact that holds it: what the read's own binding
     /// time (`GlobalBinding::time`) leaves this lowering's division to fold, else the lane's read.
     fn global_binding(&self, pc: usize) -> (GlobalBinding, Option<(crate::heap::GlobalFact, Value, i32)>) {
@@ -37,8 +57,8 @@ impl Lowering<'_, '_> {
                 (GlobalBinding::Held { value, ty }, Some((fact, global, realm_offset))),
             GlobalRead::Frozen { value, ty } => (GlobalBinding::Frozen { value, ty }, None),
             GlobalRead::Lexical(slot) => (GlobalBinding::Lexical { address: slot.address as u64 }, None),
-            GlobalRead::Slot(slot) if slot.dependency.is_some() => (GlobalBinding::Typed { ty: slot.ty }, None),
-            GlobalRead::Slot(_) | GlobalRead::Held(_) | GlobalRead::Dynamic | GlobalRead::NativeMember { .. } => (GlobalBinding::Dynamic, None),
+            GlobalRead::Slot(slot) | GlobalRead::NativeSlot { slot, .. } if slot.dependency.is_some() => (GlobalBinding::Typed { ty: slot.ty }, None),
+            GlobalRead::Slot(_) | GlobalRead::Held(_) | GlobalRead::Dynamic | GlobalRead::NativeMember { .. } | GlobalRead::NativeSlot { .. } => (GlobalBinding::Dynamic, None),
         };
         if self.division().folds(binding.time()) { (binding, held) } else { (GlobalBinding::Dynamic, None) }
     }
@@ -69,19 +89,35 @@ impl Lowering<'_, '_> {
         if !self.division().folds(BindingTime::Stable) { return; }
         let Some(end) = self.loop_end(header) else { return };
         let global = self.loop_realm(header, end);
-        let folds = global.is_some() || self.unit.instructions[header..=end].iter().any(|instruction| instruction.op().is_get_field());
-        let stable = folds && (header..=end).all(|pc| self.keeps_stable_facts(pc, self.unit.instructions[pc]));
+        let stores = self.loop_holds_stores(header, end);
+        let reads = global.is_some() || self.unit.instructions[header..=end].iter().any(|instruction| matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })));
+        // A store may write a prototype's field that a read's folded holder value names, which the inline
+        // store does not retire; a loop that both stores and reads a Stable fact holds none.
+        let folds = reads || stores;
+        let stable = folds && !(stores && reads) && (header..=end).all(|pc| self.keeps_stable_facts(pc, self.unit.instructions[pc]));
         if !(stable || global.is_some()) || !self.enters_only_at_header(header, end) { return; }
         let exit = self.guard_exit(state, header as u32);
         if stable && !state.proofs.stable { self.read_invalidation(state, exit); }
+        // A loop whose stores all leave on a miss runs no store that could unset `stores_specialized`.
+        if stable && stores { self.hold_specialized(state, exit); }
         if let Some(realm) = global.filter(|_| !state.proofs.realm) { self.test_realm(state, exit, realm); }
         self.hold_in_loop(header, end, stable, global.is_some());
+    }
+
+    /// Whether loop `header..=end` holds a field store that leaves on a miss (`store_keeps_facts`),
+    /// the stores whose Stable proofs `hoist_stable` may hold on the entering edge.
+    fn loop_holds_stores(&self, header: usize, end: usize) -> bool {
+        (header..=end).any(|pc| {
+            let instruction = self.unit.instructions[pc];
+            matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. }))
+                && self.store_keeps_facts(pc, instruction)
+        })
     }
 
     /// The last backedge of the loop at `header`, if one closes there.
     pub(super) fn loop_end(&self, header: usize) -> Option<usize> {
         self.unit.instructions.iter().rposition(|instruction|
-            instruction.op().is_jump() && instruction.jump_target() as usize == header).filter(|end| *end >= header)
+            matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump)) && instruction.jump_target() as usize == header).filter(|end| *end >= header)
     }
 
     /// The realm a Stable global read in `header..=end` was compiled against, if any.

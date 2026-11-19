@@ -6,8 +6,8 @@
 use crate::bitset::BitSet;
 
 use super::{
-    ControlEdge, Function, ImmediateRole, InstructionField, Op, Operand,
-    OperandKind, Superinstruction, WideInstruction,
+    ControlEdge, Function, ImmediateRole, InstructionField, Operand,
+    OperandKind, Superinstruction, Traits, WideInstruction,
 };
 
 /// How one instruction member touches a local slot.
@@ -79,18 +79,10 @@ pub(crate) fn initialized_before_reads(function: &Function, superinstructions: &
                 };
                 match instruction.op().immediate_role() {
                     ImmediateRole::SuperinstructionIndex => {
-                        for member in superinstructions[instruction.superinstruction_index()].code {
-                            if member.is_wide() {
-                                // Members are packed without a wide table; an undecodable member
-                                // may touch any slot.
-                                for slot in 0..candidates.len() {
-                                    apply(slot, Access::Opaque, &mut state, &mut abrupt);
-                                }
-                            } else {
-                                accesses(member.as_wide(), uninitialized_at_entry, |slot, access| {
-                                    apply(slot, access, &mut state, &mut abrupt)
-                                });
-                            }
+                        for member in superinstructions[instruction.superinstruction_index()].wide {
+                            accesses(member, uninitialized_at_entry, |slot, access| {
+                                apply(slot, access, &mut state, &mut abrupt)
+                            });
                         }
                     }
                     _ => accesses(instruction, uninitialized_at_entry, |slot, access| {
@@ -212,24 +204,27 @@ fn accesses(instruction: WideInstruction, uninitialized_at_entry: &BitSet, mut a
     }
     if instruction.op().immediate_role() == ImmediateRole::LocalSlot {
         let slot = instruction.local_slot();
-        match instruction.op() {
-            Op::InitializeTdz => access(slot, Access::Uninitialize),
-            Op::LoadLocal | Op::LoadLocalPlain => access(slot, Access::Read),
-            // For a slot uninitialized at entry the question is only whether a value was
-            // written: a plain slot's assigning store never meets a dead zone
-            // (`plain_local_slots`).
-            Op::StoreLocalPlain if uninitialized_at_entry.contains(slot) => {
-                access(slot, Access::Initialize)
-            }
-            Op::StoreLocal | Op::StoreLocalPlain => access(
+        let op = instruction.op();
+        if op.traits().has(Traits::TDZ_INITIALIZE) {
+            access(slot, Access::Uninitialize);
+        } else if op.traits().has(Traits::FRAME_LOCAL_LOAD) {
+            access(slot, Access::Read);
+        // For a slot uninitialized at entry the question is only whether a value was
+        // written: a plain slot's assigning store never meets a dead zone
+        // (`plain_local_slots`).
+        } else if op.traits().has(Traits::PLAIN_LOCAL_STORE) && uninitialized_at_entry.contains(slot) {
+            access(slot, Access::Initialize);
+        } else if op.traits().has(Traits::FRAME_LOCAL_STORE) {
+            access(
                 slot,
                 if instruction.boolean_field(InstructionField::C) == Some(true) {
                     Access::Initialize
                 } else {
                     Access::Read
                 },
-            ),
-            _ => access(slot, Access::Opaque),
+            );
+        } else {
+            access(slot, Access::Opaque);
         }
     }
     if let Some(target) = instruction.numeric_local_target() {

@@ -17,7 +17,7 @@ use oxc_ast_visit::{Visit, walk};
 use super::FunctionCompiler;
 
 /// The least body, in bytes of source, that streams: below it the tree is small.
-const STREAM_MIN_BODY: u32 = 256 << 10;
+pub(in crate::compile) const STREAM_MIN_BODY: u32 = 256 << 10;
 /// The statements, and the arena bytes, of one run.
 const RUN_STATEMENTS: usize = 4096;
 const RUN_BYTES: usize = 1 << 20;

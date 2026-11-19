@@ -36,12 +36,20 @@ pub(in crate::vm) fn generic_operator(instruction: WideInstruction) -> bool {
     instruction.op().immediate_role() == crate::bytecode::ImmediateRole::BinaryOperator
 }
 
+/// Whether `instruction` may run by the interpreter's definition once a string or BigInt operand
+/// takes it (`heap_primitive_binary`): a generic operator, or the `+` row (`NumericAdd`), whose
+/// operands a string makes a concatenation of. Its Number form proves Number operands, which a
+/// string operand must not.
+pub(in crate::vm) fn heap_operator(instruction: WideInstruction) -> bool {
+    generic_operator(instruction) || instruction.op().immediate_role() == crate::bytecode::ImmediateRole::AdditionOperator
+}
+
 /// `transfer` of a numeric binary operator.
 pub(super) fn numeric_binary(types: &mut [Type], instruction: WideInstruction, constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Vec<Register>) -> Flow {
     let operand = |operand| operand_type(constants, operand, |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY));
     let heap = heap_primitive_binary(instruction.binary_operator(), operand(instruction.operand_b()), operand(instruction.operand_c()))
-        .filter(|_| generic_operator(instruction) && !instruction.returns_from_frame());
+        .filter(|_| heap_operator(instruction) && !instruction.returns_from_frame());
     let result = heap.or_else(|| number_result(types, instruction, constants, written));
     if instruction.returns_from_frame() { return Flow::Leaves; }
     if let Some(result) = result { set(types, instruction.result_register(), result); }

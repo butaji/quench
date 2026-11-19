@@ -20,20 +20,10 @@ use crate::vm::operations::{NumberArithmetic, NumberRelation};
 /// The storage width of a flat string's units, a property of the string's form.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum UnitWidth {
-    /// ASCII text, a byte a unit (`Units::Ascii`).
+    /// ASCII or Latin-1 text, a byte a unit (`Units::Ascii`, `Units::Latin1`).
     Narrow,
     /// UTF-16 text (`Units::Wide`).
     Wide,
-}
-
-impl UnitWidth {
-    #[inline(always)]
-    const fn bytes(self) -> u64 {
-        match self {
-            Self::Narrow => size_of::<u8>() as u64,
-            Self::Wide => size_of::<u16>() as u64,
-        }
-    }
 }
 
 /// The largest ASCII code unit.
@@ -55,12 +45,7 @@ fn int32_payload<S: Stage>(stage: &mut S, bits: S::Word, miss: S::Miss) -> Optio
 /// The unit at `index` of the `units` run, which `index` is within.
 #[inline(always)]
 fn unit_at<S: Stage>(stage: &mut S, width: UnitWidth, units: S::Word, index: S::Word) -> S::Word {
-    let offset = stage.mul_imm(index, width.bytes());
-    let address = stage.add(units, offset);
-    match width {
-        UnitWidth::Narrow => stage.load_u8(Region::HeapMeta.mutable(), address, 0),
-        UnitWidth::Wide => stage.load_u16(Region::HeapMeta.mutable(), address, 0),
-    }
+    super::code_units::code_unit(stage, width == UnitWidth::Wide, units, index)
 }
 
 /// `charCodeAt(index)` of the flat string of `length` units at `units`, `index` a value word:
@@ -77,6 +62,17 @@ pub(crate) fn char_code_at<S: Stage>(stage: &mut S, width: UnitWidth, units: S::
     }, |stage| stage.constant(Value::NAN.to_bits())))
 }
 
+/// `charCodeAt(index)` of the flat string of width `width` at `units` for an index the caller proves
+/// an int32 below the string's length: the unit as an int32, with no bounds test (`char_code_at`).
+/// `None` (leaving at `miss`) for an index that is no int32, which the native coerces.
+#[inline(always)]
+pub(crate) fn char_code_at_within<S: Stage>(stage: &mut S, width: UnitWidth, units: S::Word,
+    index: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let index = int32_payload(stage, index, miss)?;
+    let unit = unit_at(stage, width, units, index);
+    Some(super::value::int_word(stage, unit))
+}
+
 /// `charAt(index)` of the flat string at `units` where the unit is ASCII: that unit, whose
 /// one-character string the caller names (a shared string per unit). `None` (leaving at
 /// `miss`) for an index that is no int32 or outside the string, or a unit past ASCII.
@@ -86,6 +82,22 @@ pub(crate) fn char_at_ascii<S: Stage>(stage: &mut S, width: UnitWidth, units: S:
     let index = int32_payload(stage, index, miss)?;
     let inside = stage.ult(index, length);
     stage.guard(inside, miss)?;
+    char_at_unit(stage, width, units, index, miss)
+}
+
+/// `char_at_ascii` for an index the caller proves an int32 below the string's length: the same unit
+/// with no bounds test.
+#[inline(always)]
+pub(crate) fn char_at_ascii_within<S: Stage>(stage: &mut S, width: UnitWidth, units: S::Word,
+    index: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let index = int32_payload(stage, index, miss)?;
+    char_at_unit(stage, width, units, index, miss)
+}
+
+/// The ASCII unit at `index` (inside the string) of the flat string at `units`, leaving at `miss`
+/// for a unit past ASCII in a wide string.
+#[inline(always)]
+fn char_at_unit<S: Stage>(stage: &mut S, width: UnitWidth, units: S::Word, index: S::Word, miss: S::Miss) -> Option<S::Word> {
     let unit = unit_at(stage, width, units, index);
     // A narrow string's units are ASCII by its form.
     if width == UnitWidth::Wide {
@@ -231,7 +243,7 @@ mod tests {
         // Without extras, the object's payload word is the backing's header pointer.
         stage.store_u64(Region::Payload.mutable(), record_address, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32, header);
         let layout = crate::heap::layouts::intern(u64::from(meta) << u32::BITS);
-        stage.store_u32(Region::Records.mutable(), record_address, (ARRAY.object_offset + OBJECT.layout_offset) as i32, u64::from(layout));
+        stage.store_u32(Region::ShapeWord.mutable(), record_address, (ARRAY.object_offset + OBJECT.layout_offset) as i32, u64::from(layout));
         let values = header + ARRAY.header_values_offset as u64;
         let length = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_length_offset as i32);
         (Backing { record: record_address, header, values, length }, capacity)

@@ -1,5 +1,5 @@
 use super::{
-    ArrayObject, AwaitState, Cell, EnvironmentBindings, EnvironmentRecord, FunctionRecord, IteratorRecord,
+    ArrayObject, AwaitState, Cell, CollectionStorage, EnvironmentBindings, EnvironmentRecord, FunctionRecord, IteratorRecord,
     PromiseCell, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
 };
 use crate::bytecode::Atom;
@@ -7,7 +7,7 @@ use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
 use std::collections::HashSet;
 
-mod subscribe; mod function_shapes; mod slot_types; mod remembered;
+mod subscribe; mod function_shapes; mod slot_types; mod remembered; mod collections;
 
 impl Heap {
     /// Return live JavaScript objects whose internal prototype chain contains `prototype`.
@@ -52,10 +52,10 @@ impl Heap {
         collection: Value,
         move_slot: impl Fn(usize) -> usize,
     ) {
-        let mut registered = match self.get_mut(collection) {
-            Some(Cell::Map { entries, .. }) => entries.take_iterators(),
-            Some(Cell::Set { entries, .. }) => entries.take_iterators(),
-            _ => return,
+        let mut registered = match self.collection_storage_mut(collection) {
+            Some(CollectionStorage::Map(entries)) => entries.take_iterators(),
+            Some(CollectionStorage::Set(entries)) => entries.take_iterators(),
+            None => return,
         };
         // A fresh iterator may reuse a collected one's record while the old registration
         // remains: its position moves once.
@@ -85,18 +85,18 @@ impl Heap {
                 running.push(iterator);
             }
         }
-        match self.get_mut(collection) {
-            Some(Cell::Map { entries, .. }) => {
+        match self.collection_storage_mut(collection) {
+            Some(CollectionStorage::Map(entries)) => {
                 running.into_iter().for_each(|it| {
                     entries.register_iterator(it);
                 })
             }
-            Some(Cell::Set { entries, .. }) => {
+            Some(CollectionStorage::Set(entries)) => {
                 running.into_iter().for_each(|it| {
                     entries.register_iterator(it);
                 })
             }
-            _ => {}
+            None => {}
         }
     }
 
@@ -244,32 +244,45 @@ impl Heap {
             // SAFETY: a direct-iterator Value names an initialized iterator record.
             return Some(&unsafe { self.iterator_records.get_live(record_id) }.object);
         }
+        if let Some(record_id) = value.direct_collection_index() {
+            // SAFETY: a direct-collection Value names an initialized collection record.
+            return Some(&unsafe { self.collection_records.get_live(record_id) }.object);
+        }
         self.get(value)?.object()
     }
 
-    /// An iterator, in its record or in a slot (`IteratorRecord`).
+    /// An iterator's record (`IteratorRecord`).
     #[inline(always)]
     pub(crate) fn iterator(&self, value: Value) -> Option<&IteratorRecord> {
-        if let Some(record_id) = value.direct_iterator_index() {
-            // SAFETY: a direct-iterator Value names an initialized iterator record.
-            return Some(unsafe { self.iterator_records.get_live(record_id) });
-        }
-        match self.get(value)? {
-            Cell::Iterator(iterator) => Some(iterator),
-            _ => None,
-        }
+        let record_id = value.direct_iterator_index()?;
+        // SAFETY: a direct-iterator Value names an initialized iterator record.
+        Some(unsafe { self.iterator_records.get_live(record_id) })
     }
 
     /// `iterator`, mutably, past the write barrier.
     #[inline(always)] pub(crate) fn iterator_mut(&mut self, value: Value) -> Option<&mut IteratorRecord> {
-        if let Some(record_id) = value.direct_iterator_index() {
-            // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.iterator_records.get_live_mut(record_id, &self.properties) });
-        }
-        match self.get_mut(value)? {
-            Cell::Iterator(iterator) => Some(iterator),
-            _ => None,
-        }
+        let record_id = value.direct_iterator_index()?;
+        // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
+        Some(unsafe { self.iterator_records.get_live_mut(record_id, &self.properties) })
+    }
+
+    /// Stores `position` as iterator `value`'s position (`IteratorExt::store_position`) past
+    /// the write barrier: a position is no reference, so the store adds no edge and removes
+    /// none, as `get_mut_unbarriered` writes (a built-in iterator's step, one store a step).
+    #[inline(always)]
+    pub(crate) fn store_iterator_position(&mut self, value: Value, position: usize) {
+        let record: &mut IteratorRecord = if let Some(record_id) = value.direct_iterator_index() {
+            // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive; the
+            // store writes no reference.
+            unsafe { self.iterator_records.get_live_mut_unbarriered(record_id) }
+        } else {
+            match self.get_mut_unbarriered(value) {
+                Some(Cell::Iterator(iterator)) => &mut **iterator,
+                _ => return,
+            }
+        };
+        let IteratorRecord { index, ext, .. } = record;
+        ext.store_position(index, position);
     }
 
     /// A promise, in its record or in a slot (`PromiseCell`).
@@ -316,6 +329,24 @@ impl Heap {
         self.environment_records.is_live(record_id).then(|| unsafe { self.environment_records.get_live(record_id) })
     }
 
+    /// `environment` of a value reached from a live root, a register or another live record's
+    /// link, which the collector keeps live: no occupancy test (checked in debug builds). The
+    /// lane's hot capture reads take this; a value of unknown provenance takes `environment`.
+    #[inline(always)] pub(crate) fn reachable_environment(&self, value: Value) -> Option<&EnvironmentRecord> {
+        let record_id = value.direct_environment_index()?;
+        debug_assert!(self.environment_records.is_live(record_id), "a reachable environment is live");
+        // SAFETY: a reachable record is live, so occupied and initialized.
+        Some(unsafe { self.environment_records.get_live(record_id) })
+    }
+
+    /// `reachable_environment`, mutably, past the write barrier.
+    #[inline(always)] pub(crate) fn reachable_environment_mut(&mut self, value: Value) -> Option<&mut EnvironmentRecord> {
+        let record_id = value.direct_environment_index()?;
+        debug_assert!(self.environment_records.is_live(record_id), "a reachable environment is live");
+        // SAFETY: as `reachable_environment`; `&mut self` is exclusive.
+        Some(unsafe { self.environment_records.get_live_mut(record_id, &self.properties) })
+    }
+
     /// `environment`, mutably, past the write barrier.
     #[inline(always)] pub(crate) fn environment_mut(&mut self, value: Value) -> Option<&mut EnvironmentRecord> {
         let record_id = value.direct_environment_index()?;
@@ -349,29 +380,19 @@ impl Heap {
         }
     }
 
-    /// A function, in its record or in a slot (`FunctionRecord`).
+    /// A function, in its function record (`FunctionRecord`).
     #[inline(always)]
     pub(crate) fn function(&self, value: Value) -> Option<&FunctionRecord> {
-        if let Some(record_id) = value.direct_function_index() {
-            // SAFETY: a direct-function Value names an initialized function record.
-            return Some(unsafe { self.function_records.get_live(record_id) });
-        }
-        match self.get(value)? {
-            Cell::Function(function) => Some(function),
-            _ => None,
-        }
+        let record_id = value.direct_function_index()?;
+        // SAFETY: a direct-function Value names an initialized function record.
+        Some(unsafe { self.function_records.get_live(record_id) })
     }
 
     /// `function`, mutably, past the write barrier.
     pub(crate) fn function_mut(&mut self, value: Value) -> Option<&mut FunctionRecord> {
-        if let Some(record_id) = value.direct_function_index() {
-            // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.function_records.get_live_mut(record_id, &self.properties) });
-        }
-        match self.get_mut(value)? {
-            Cell::Function(function) => Some(function),
-            _ => None,
-        }
+        let record_id = value.direct_function_index()?;
+        // SAFETY: direct-function Values name live records; `&mut self` is exclusive.
+        Some(unsafe { self.function_records.get_live_mut(record_id, &self.properties) })
     }
 
     #[inline(always)] pub(crate) fn is_function_value(&self, value: Value) -> bool {
@@ -401,6 +422,10 @@ impl Heap {
         if let Some(record_id) = value.direct_iterator_index() {
             // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
             return Some(&mut unsafe { self.iterator_records.get_live_mut(record_id, &self.properties) }.object);
+        }
+        if let Some(record_id) = value.direct_collection_index() {
+            // SAFETY: direct-collection Values name live records; `&mut self` is exclusive.
+            return Some(&mut unsafe { self.collection_records.get_live_mut(record_id, &self.properties) }.object);
         }
         self.get_mut(value)?.object_mut()
     }
@@ -435,6 +460,13 @@ impl Heap {
             // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
             return Some(
                 &mut unsafe { self.iterator_records.get_live_mut_storing(record_id, stored, &self.properties) }
+                    .object,
+            );
+        }
+        if let Some(record_id) = value.direct_collection_index() {
+            // SAFETY: direct-collection Values name live records; `&mut self` is exclusive.
+            return Some(
+                &mut unsafe { self.collection_records.get_live_mut_storing(record_id, stored, &self.properties) }
                     .object,
             );
         }
@@ -522,6 +554,7 @@ impl Heap {
             function_records,
             promise_records,
             iterator_records,
+            collection_records,
             slots,
             properties,
             ..
@@ -547,7 +580,11 @@ impl Heap {
             HeapReference::IteratorRecord(record_id) => {
                 &mut unsafe { iterator_records.get_live_mut(record_id, properties) }.object
             }
-            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) | HeapReference::EnvironmentRecord(_) => {
+            // SAFETY: direct-collection Values name live records; `&mut self` is exclusive.
+            HeapReference::CollectionRecord(record_id) => {
+                &mut unsafe { collection_records.get_live_mut(record_id, properties) }.object
+            }
+            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) | HeapReference::EnvironmentRecord(_) | HeapReference::SymbolRecord(_) => {
                 return None;
             }
             HeapReference::LegacySlot(index) => {
@@ -581,15 +618,33 @@ impl Heap {
         true
     }
 
+    /// An array, in its array record (`ArrayObject`).
     #[inline]
     pub(crate) fn array(&self, value: Value) -> Option<&ArrayObject> {
-        if let Some(object) = self.record_array(value) {
-            return Some(object);
-        }
-        match self.get(value)? {
-            Cell::Array { object } => Some(object),
-            _ => None,
-        }
+        self.record_array(value)
+    }
+
+    /// The object part of an array, function or ordinary builtin, whose own layout a held
+    /// read guards (`IcOp::Held`): an array's inline, the rest out of line.
+    #[inline(always)]
+    pub(crate) fn held_other_receiver(&self, value: Value) -> Option<&Object> {
+        if let Some(array) = self.record_array(value) { return Some(array); }
+        self.held_cell_receiver(value)
+    }
+
+    /// The object part of a function, inline: the receiver an own read of a function's static
+    /// field guards (`CELL_OWN_SITE`); `None` for any other value.
+    #[inline(always)]
+    pub(crate) fn function_receiver(&self, value: Value) -> Option<&Object> {
+        value.direct_function_index().and_then(|_| self.function(value)).map(|function| &function.object)
+    }
+
+    /// `held_other_receiver` of a function or ordinary builtin.
+    #[cold]
+    #[inline(never)]
+    fn held_cell_receiver(&self, value: Value) -> Option<&Object> {
+        let function = value.direct_function_index().and_then(|_| self.function(value));
+        function.map(|function| &function.object).or_else(|| self.ordinary_builtin_object(value))
     }
 
     /// The array a direct-array Value names; `None` for any other value, including an array
@@ -610,6 +665,13 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn array_record_base(&self) -> Option<*const ArrayObject> {
         self.array_records.base_ptr()
+    }
+
+    /// `array_record_base` untested, for a read that proves its receiver a direct array before
+    /// it addresses the table.
+    #[inline(always)]
+    pub(crate) fn live_array_records(&self) -> *const ArrayObject {
+        self.array_records.live_base()
     }
 
     /// An array's dense element backing, whether it lives in a record or a slot.
@@ -691,27 +753,19 @@ impl Heap {
         Some(unsafe { self.array_records.get_live_mut(record_id, &self.properties) })
     }
 
+    /// An array, mutably, in its array record.
     pub(crate) fn array_mut(&mut self, value: Value) -> Option<&mut ArrayObject> {
-        if value.direct_array_index().is_some() {
-            return self.record_array_mut(value);
-        }
-        match self.get_mut(value)? {
-            Cell::Array { object } => Some(object),
-            _ => None,
-        }
+        self.record_array_mut(value)
     }
 
-    /// An ordinary object (`Cell::Object`, or a promise, whose internal slots change no
-    /// object operation), whether it lives in the object record space or a legacy slot.
+    /// An ordinary object (an object record, or a promise, whose internal slots change no
+    /// object operation). Ordinary objects are always records, so there is no legacy-slot fallback.
     #[inline] pub(crate) fn ordinary_object(&self, value: Value) -> Option<&Object> {
         match self.object_record(value) {
             Some(object) => Some(object),
             None => match self.promise(value) {
                 Some(promise) => Some(&promise.object),
-                None => match self.get(value)? {
-                    Cell::Object(object) => Some(object),
-                    _ => None,
-                },
+                None => None,
             },
         }
     }
@@ -730,6 +784,13 @@ impl Heap {
         self.object_records.base_ptr()
     }
 
+    /// `object_record_base` untested, for a read that proves its receiver a direct object before
+    /// it addresses the table (`object_record_by_id`'s contract).
+    #[inline(always)]
+    pub(crate) fn live_object_records(&self) -> *const Object {
+        self.object_records.live_base()
+    }
+
     /// The base of the function record reservation (`NATIVE_FUNCTION_LAYOUT`).
     pub(crate) fn function_record_base(&self) -> Option<*const FunctionRecord> {
         self.function_records.base_ptr()
@@ -738,6 +799,25 @@ impl Heap {
     /// Object mark blocks used by no-safepoint native write-barrier guards.
     pub(crate) fn native_object_mark_blocks(&self) -> (*const u8, usize) {
         self.object_records.native_mark_blocks()
+    }
+
+    /// The object space's allocation cursor (`records::RecordCursor`), which an inline allocation
+    /// reads and bumps (`NATIVE_RECORD_CURSOR_LAYOUT`). It is a field of this heap, which stays
+    /// where it is while the VM runs; a native entry rereads it with the other record bases.
+    pub(crate) fn native_object_cursor(&self) -> usize {
+        std::ptr::addr_of!(self.object_records.cursor) as usize
+    }
+
+    /// The array space's allocation cursor, read and bumped by an inline empty array allocation,
+    /// as `native_object_cursor` is for objects.
+    pub(crate) fn native_array_cursor(&self) -> usize {
+        std::ptr::addr_of!(self.array_records.cursor) as usize
+    }
+
+    /// Array mark blocks, which a native store of a reference into an array's elements reads
+    /// (`staged::barrier::unlogged_store`, the array records' list in the dispatch head).
+    pub(crate) fn native_array_mark_blocks(&self) -> (*const u8, usize) {
+        self.array_records.native_mark_blocks()
     }
 
     /// Function mark blocks, which a native store into a function's own properties reads.
@@ -778,10 +858,12 @@ impl Heap {
             }
             HeapReference::FunctionRecord(_)
             | HeapReference::IteratorRecord(_)
+            | HeapReference::CollectionRecord(_)
             | HeapReference::AwaitRecord(_)
             | HeapReference::StringRecord(_)
             | HeapReference::V128Record(_)
             | HeapReference::EnvironmentRecord(_)
+            | HeapReference::SymbolRecord(_)
             | HeapReference::LegacySlot(_) => None,
         }
     }
@@ -825,19 +907,11 @@ impl Heap {
     pub(crate) fn is_live(&self, value: Value) -> bool {
         match value.heap_reference() {
             Some(HeapReference::LegacySlot(_)) => self.get(value).is_some(),
-            Some(HeapReference::ObjectRecord(id)) => self.object_records.is_live(id),
-            Some(HeapReference::ArrayRecord(id)) => self.array_records.is_live(id),
-            Some(HeapReference::FunctionRecord(id)) => self.function_records.is_live(id),
-            Some(HeapReference::PromiseRecord(id)) => self.promise_records.is_live(id),
-            Some(HeapReference::AwaitRecord(id)) => self.await_records.is_live(id),
-            Some(HeapReference::IteratorRecord(id)) => self.iterator_records.is_live(id),
             Some(HeapReference::StringRecord(id)) => match super::small_strings::small_string_local(id) {
                 Some(local) => self.small_strings.is_live(local),
                 None => self.string_records.is_live(id),
             },
-            Some(HeapReference::V128Record(id)) => self.v128_records.is_live(id),
-            Some(HeapReference::EnvironmentRecord(id)) => self.environment_records.is_live(id),
-            None => false,
+            reference => record_reference_test!(self, reference, is_live, false),
         }
     }
 

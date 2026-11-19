@@ -60,6 +60,7 @@ impl NativeTable {
         self.functions.clear();
     }
 
+    #[inline(always)]
     fn get(&self, kind: Native) -> Option<Value> {
         self.functions
             .get(kind as usize)
@@ -118,7 +119,7 @@ mod namespace_tests {
         let program = Engine::specialize("0", "namespace-preparation.js").unwrap();
         let mut vm = Vm::new(TestHost::default());
         vm.initialize(&program).unwrap();
-        for name in ["Math", "Temporal"] {
+        for name in ["Math", "Temporal", "Atomics", "Intl", "WebAssembly", "Reflect", "Proxy", "WeakRef", "FinalizationRegistry", "DataView"] {
             let atom = vm.lookup_atom(name).unwrap();
             assert!(vm.is_pending_lazy_data_property(vm.realm.globals, PropertyKey::string(atom)), "{name}");
         }
@@ -153,8 +154,8 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_object_arrays");
         self.install_typed_array(program)?;
-        self.install_data_view(program)?;
-        self.install_atomics(program)?;
+        self.install_lazy_builtin_namespace(program, "DataView", Native::DataViewInitialize)?;
+        self.install_lazy_builtin_namespace(program, "Atomics", Native::AtomicsInitialize)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_typed_memory");
         self.install_collections(program)?;
@@ -204,7 +205,7 @@ impl<H: Host> Vm<H> {
             let name = well_known.name();
             let value = self
                 .heap
-                .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(format!("Symbol.{name}")))));
+                .alloc_symbol(crate::heap::SymbolData::public(Some(format!("Symbol.{name}"))));
             self.well_known_symbols.insert(well_known, value);
             self.set_named_constant(program, symbol, name, value)?;
         }
@@ -279,18 +280,11 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.install_finalization_registry(program)?;
-        let atomics_name = self.intern_atom("Atomics");
-        if let Some(atomics) = self.own_property(self.realm.globals, atomics_name) {
-            self.install_builtin_to_string_tag(atomics, "Atomics")?;
-        }
+        self.install_lazy_builtin_namespace(program, "FinalizationRegistry", Native::FinalizationRegistryInitialize)?;
         let bigint = self.native_value(Native::BigInt);
         let prototype_atom = self.prototype_atom();
         let bigint_prototype = self.get_property(program, bigint, prototype_atom)?;
         self.install_builtin_to_string_tag(bigint_prototype, "BigInt")?;
-        let data_view = self.native_value(Native::DataView);
-        let data_view_prototype = self.get_property(program, data_view, prototype_atom)?;
-        self.install_builtin_to_string_tag(data_view_prototype, "DataView")?;
         let date = self.native_value(Native::Date);
         let date_prototype = self.get_property(program, date, prototype_atom)?;
         let date_to_primitive = self.native_value(Native::DateToPrimitive);
@@ -310,7 +304,6 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        self.install_builtin_to_string_tag(self.weak_ref_proto, "WeakRef")?;
         self.install_array_species()?;
         let native_typed_array = self.native_value(Native::TypedArray);
         self.install_typed_array_species(
@@ -342,7 +335,7 @@ impl<H: Host> Vm<H> {
         self.install_number(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_core_builtins");
-        self.install_intl_for_realm(program, self.realm.globals, self.object_proto)?;
+        self.install_lazy_builtin_namespace(program, "Intl", Native::IntlInitialize)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_intl");
         for (name, native) in [
@@ -360,12 +353,12 @@ impl<H: Host> Vm<H> {
             self.set_builtin_named(program, self.realm.globals, name, native)?;
         }
         self.install_json_for_realm(program, self.realm.globals)?;
-        self.install_reflect(program)?;
+        self.install_lazy_builtin_namespace(program, "Reflect", Native::ReflectInitialize)?;
         self.install_lazy_builtin_namespace(program, "Math", Native::MathInitialize)?;
         self.install_promise(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_before_webassembly");
-        self.install_webassembly(program)?;
+        self.install_lazy_builtin_namespace(program, "WebAssembly", Native::WebAssemblyInitialize)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins_before_temporal");
         self.install_lazy_builtin_namespace(program, "Temporal", Native::TemporalInitialize)?;
@@ -374,19 +367,41 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn install_lazy_builtin_namespace(
+    pub(super) fn install_lazy_builtin_namespace(
         &mut self,
         program: &ResidualProgram,
         name: &str,
         initializer: Native,
     ) -> Result<(), JsError> {
         let initializer = self.native_with_env(initializer, Value::NULL);
+        let global = self.realm.globals;
+        self.define_lazy_builtin_namespace(program, global, name, initializer)
+    }
+
+    /// Materializes the current realm's global `name` when it is still a pending lazy member,
+    /// before a native reads an intrinsic that the global's initializer builds.
+    pub(super) fn materialize_global_intrinsic(&mut self, program: &ResidualProgram, name: &str) -> Result<(), JsError> {
+        let global = self.realm.globals;
+        let atom = self.intern_atom(name);
+        self.materialize_lazy_data_property(program, global, PropertyKey::string(atom))
+    }
+
+    /// Defines `holder.name` as a lazy namespace that the `initializer` function builds when
+    /// first observed. A realm's own initializer is a native of that realm, so it builds the
+    /// namespace in the realm owning `holder`.
+    pub(super) fn define_lazy_builtin_namespace(
+        &mut self,
+        program: &ResidualProgram,
+        holder: Value,
+        name: &str,
+        initializer: Value,
+    ) -> Result<(), JsError> {
         let atom = self.intern_atom(name);
         let key = self.heap.alloc_string(self.atom_value(atom));
-        self.with_call_roots([initializer, key], |vm| {
+        self.with_call_roots([holder, initializer, key], |vm| {
             vm.define_lazy_data_properties(
                 program,
-                vm.realm.globals,
+                holder,
                 &[super::lazy_data_property::LazyMember {
                     key,
                     enumerable: false,
@@ -401,13 +416,12 @@ impl<H: Host> Vm<H> {
     fn install_prototypes(&mut self) {
         self.object_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
-        self.function_proto = self.heap.alloc_function(FunctionRecord {
+            .alloc_object(Self::empty_object(Value::NULL));
+        self.function_proto = self.alloc_function_in(FunctionRecord {
             object: Self::empty_object(self.object_proto),
-            realm: self.realm.globals,
             kind: FunctionKind::Native(Native::FunctionPrototype),
             env: Value::NULL,
-        });
+        }, self.realm.globals);
         for (native, prototype) in [
             (Native::Object, self.object_proto),
             (Native::Function, self.function_proto),
@@ -434,17 +448,18 @@ impl<H: Host> Vm<H> {
         global: Value,
     ) -> Result<(), JsError> {
         let prototype = self.realm_object_prototype(global);
-        let json = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let json = self.heap.alloc_object(Self::empty_object(prototype));
         self.install_builtin_to_string_tag(json, "JSON")?;
         let realm = (global != self.realm.globals).then_some(global);
         self.install_rows_in_realm(program, json, super::native_rows::Holder::Json, realm)?;
         self.set_builtin_value_named(global, "JSON", json)
     }
 
-    fn install_reflect(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+    pub(super) fn install_reflect(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let reflect = self.object();
         self.install_native_rows(program, reflect, super::native_rows::Holder::Reflect)?;
         self.install_builtin_to_string_tag(reflect, "Reflect")?;
+        self.seal_initialized_intrinsic(reflect);
         self.global(program, "Reflect", reflect)
     }
     pub(super) fn install_math(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
@@ -531,6 +546,14 @@ impl<H: Host> Vm<H> {
         let function = self.native_with_realm(kind, Value::NULL, self.natives.realm);
         self.natives.insert(kind, function);
         function
+    }
+
+    /// Whether `value` is the function every realm shares for `native` (`is_shared_native` of
+    /// a function of that native): one comparison with the table's entry, no read of the
+    /// function. The table enters only `native`'s own function under it (`native_value`).
+    #[inline(always)]
+    pub(super) fn is_shared_native_of(&self, value: Value, native: Native) -> bool {
+        self.natives.get(native) == Some(value)
     }
 
     /// Whether `value` is the function every realm shares for its native: one native serves

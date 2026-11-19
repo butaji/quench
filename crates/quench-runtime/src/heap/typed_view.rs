@@ -11,6 +11,7 @@
 
 use super::buffer_bytes::buffer_relocations;
 use super::cell::{TYPED_ARRAYS, TypedArrayKind};
+use crate::staged::record_heads::NativeViewHead;
 
 /// The kind byte of a view that is no typed array (a DataView): no native element has it.
 pub(crate) const NO_KIND: u8 = u8::MAX;
@@ -33,7 +34,7 @@ pub(crate) struct NativeView {
     kind: u8,
     detached: u8,
     /// Whether the buffer's bytes belonged to this view's buffer alone when published
-    /// (`BufferBytes::lane_mut`), so a store through `data` writes no other buffer.
+    /// (`BufferBytes::mut_in_lane`), so a store through `data` writes no other buffer.
     unshared: u8,
     /// The table entry that holds this record's address, null while it has none.
     home: *mut usize,
@@ -54,7 +55,7 @@ impl Clone for NativeView {
 
 impl NativeView {
     fn unpublished(kind: u8) -> Self {
-        Self { data: 0, stamp: u64::MAX, length: 0, kind, detached: 1, unshared: 0, home: std::ptr::null_mut() }
+        Self { head: NativeViewHead { data: 0, stamp: u64::MAX, length: 0, kind, detached: 1, unshared: 0, home: std::ptr::null_mut() } }
     }
 
     /// Publishes the view's elements: `length` of them from `data`, over bytes `unshared` or not.
@@ -107,7 +108,7 @@ impl Drop for NativeView {
 
 /// Entries a page of `TypedViewTable` holds, a power of two so a slot is a page and an entry by shift and mask.
 const PAGE_ENTRIES: usize = 1 << PAGE_SHIFT;
-const PAGE_SHIFT: u32 = 12;
+const PAGE_SHIFT: u32 = crate::staged::layout_offsets::TYPED_PAGE_SHIFT;
 
 /// The view records of a heap's typed arrays, by legacy slot, in zeroed pages of `PAGE_ENTRIES`
 /// words behind a directory of page addresses: zero where the slot is no typed array. Its
@@ -123,6 +124,7 @@ pub(super) struct TypedViewTable {
 
 impl TypedViewTable {
     /// The directory's base and its page count.
+    #[inline]
     pub(super) fn directory(&self) -> (*const usize, usize) {
         (self.directory.as_ptr(), self.directory.len())
     }
@@ -165,12 +167,12 @@ pub(crate) const NATIVE_TYPED_ARRAY_LAYOUT: NativeTypedArrayLayout = NativeTyped
     entry_size: std::mem::size_of::<usize>(),
     page_shift: PAGE_SHIFT,
     page_mask: PAGE_ENTRIES - 1,
-    kind_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, kind),
-    detached_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, detached),
-    unshared_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, unshared),
-    data_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, data),
-    length_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, length),
-    stamp_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, stamp),
+    kind_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, head) + std::mem::offset_of!(NativeViewHead, kind),
+    detached_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, head) + std::mem::offset_of!(NativeViewHead, detached),
+    unshared_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, head) + std::mem::offset_of!(NativeViewHead, unshared),
+    data_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, head) + std::mem::offset_of!(NativeViewHead, data),
+    length_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, head) + std::mem::offset_of!(NativeViewHead, length),
+    stamp_offset: super::cell::NATIVE_VIEW_OFFSET + std::mem::offset_of!(NativeView, head) + std::mem::offset_of!(NativeViewHead, stamp),
 };
 
 #[cfg(test)]

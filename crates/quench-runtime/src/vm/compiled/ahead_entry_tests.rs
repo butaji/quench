@@ -49,7 +49,7 @@ fn trampoline() -> (CodeMemory, crate::NativeJsFunctionEntry) {
     let function = lower_ahead_entry(ENTRY_NAMESPACE, ENTRY_FUNCTION, RECORDS, &*isa, AheadTargets {
         body: &mut |builder, words| {
             let signature = *body_signature.get_or_insert_with(|| builder.import_signature(
-                lane_body_signature(isa.pointer_type(), isa.default_call_conv())));
+                body_signature_in_lane(isa.pointer_type(), isa.default_call_conv())));
             let target = builder.ins().iconst(isa.pointer_type(), stub_body as *const () as usize as i64);
             let call = builder.ins().call_indirect(signature, target, words);
             let results = builder.inst_results(call);

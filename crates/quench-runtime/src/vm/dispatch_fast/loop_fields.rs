@@ -1,8 +1,8 @@
 //! The field stores a loop region writes natively get their slots' addresses at entry.
 use super::*;
 
-/// The slot addresses of `region`'s field stores, for `entry` (`lane_loop_entry`).
-pub(super) fn lane_loop_field_stores<H: Host>(
+/// The slot addresses of `region`'s field stores, for `entry` (`loop_entry_in_lane`).
+pub(super) fn loop_field_stores<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     region: &super::compiled::LoopRegion,
@@ -18,7 +18,7 @@ pub(super) fn lane_loop_field_stores<H: Host>(
     // rejects receiver rewrites and ambiguous same-name aliases. A Number cell's
     // stores remain Numbers; a store-only field may also receive a rooted entry value.
     let receiver = |receiver: super::compiled::FieldReceiver| match receiver {
-        super::compiled::FieldReceiver::This => Some(unsafe { lane_held_this(cx, r) }),
+        super::compiled::FieldReceiver::This => Some(unsafe { held_this_in_lane(cx, r) }),
         super::compiled::FieldReceiver::Register(register) => Some(r.get(register)),
         super::compiled::FieldReceiver::Field(_) | super::compiled::FieldReceiver::Capture(_) => None,
     };

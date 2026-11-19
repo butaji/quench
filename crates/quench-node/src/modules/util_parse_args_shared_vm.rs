@@ -3,9 +3,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 type Context<'a> = NativeContext<'a, NodeHost>;
 
-fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    c.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 fn define(
     c: &mut Context<'_>,
     object: RootId,
@@ -140,7 +138,7 @@ impl Operations {
 }
 
 fn original(c: &mut Context<'_>, holder: RootId, name: &str) -> Result<RootId, RootedError> {
-    c.startup_data_property_rooted(holder, name)
+    c.materialized_startup_data_property_rooted(holder, name)?
         .ok_or_else(|| RootedError::host(format!("missing startup intrinsic {name}")))
 }
 

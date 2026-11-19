@@ -407,6 +407,68 @@ static double NOINL op_str_charcodeat(long n) {
   return a;
 }
 
+static double NOINL op_str_includes(long n) {
+  int32_t N = (int32_t)n;
+  double a = 0;
+  const char *s = S;
+  OPAQUE_P(s);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    const char *h = s; OPAQUE_P(h);
+    if (strstr(h, "lazy")) a = a + 1.0;
+  }
+  return a;
+}
+
+static double NOINL op_str_slice(long n) {
+  int32_t N = (int32_t)n;
+  double a = 0;
+  const char *s = S;
+  OPAQUE_P(s);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    /* A new five-character string: allocated, copied, its length read. */
+    char *buf = malloc(6);
+    memcpy(buf, s + 4, 5); buf[5] = 0;
+    OPAQUE_P(buf);
+    a = a + (double)strlen(buf);
+    free(buf);
+  }
+  return a;
+}
+
+static double NOINL op_arr_isarray(long n) {
+  int32_t N = (int32_t)n;
+  double a = 0;
+  int32_t arr[3] = {1, 2, 3};
+  const int32_t *p = arr;
+  int32_t kind = 1;
+  OPAQUE_P(p); OPAQUE_I(kind);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    if (kind == 1) a = a + 1.0;
+  }
+  return a;
+}
+
+static double NOINL op_arr_slice(long n) {
+  int32_t N = (int32_t)n;
+  double a = 0;
+  int32_t arr[4] = {1, 2, 3, 4};
+  int32_t *p = arr;
+  OPAQUE_P(p);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    /* A new two-element array: allocated, filled from the source, its length read. */
+    int32_t *out = malloc(2 * sizeof *out);
+    memcpy(out, p, 2 * sizeof *out);
+    OPAQUE_P(out);
+    a = a + 2.0;
+    free(out);
+  }
+  return a;
+}
+
 static double NOINL op_str_index(long n) {
   int32_t N = (int32_t)n;
   double a = 0;
@@ -830,6 +892,21 @@ static double NOINL op_alloc_literal(long n) {
     p->x = i; p->y = 1;
     ESCAPE(p);
     s = (int32_t)((uint32_t)s + (uint32_t)p->x + (uint32_t)p->y);
+    free(p);
+  }
+  return s;
+}
+
+struct cell1 { int32_t v; };
+
+static double NOINL op_alloc_literal1(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct cell1 *p = malloc(sizeof *p);
+    p->v = i;
+    ESCAPE(p);
+    s = (int32_t)((uint32_t)s + (uint32_t)p->v);
     free(p);
   }
   return s;
@@ -1600,6 +1677,7 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"math_minmax", op_math_minmax}, {"math_imul", op_math_imul}, {"math_round", op_math_round},
   {"num_to_str", op_num_to_str}, {"str_to_num", op_str_to_num}, {"parse_int", op_parse_int},
   {"str_length", op_str_length}, {"str_charcodeat", op_str_charcodeat},
+  {"str_includes", op_str_includes}, {"str_slice", op_str_slice}, {"arr_isarray", op_arr_isarray}, {"arr_slice", op_arr_slice},
   {"str_index", op_str_index}, {"str_concat", op_str_concat},
   {"str_concat_acc", op_str_concat_acc}, {"str_compare", op_str_compare},
   {"arr_load_int", op_arr_load_int}, {"arr_store_int", op_arr_store_int},
@@ -1612,7 +1690,7 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"typed_load", op_typed_load}, {"typed_store_f64", op_typed_store_f64}, {"typed_store_u8c", op_typed_store_u8c},
   {"k_nbody_pair", op_k_nbody_pair}, {"k_struct_sum", op_k_struct_sum}, {"k_dispatch", op_k_dispatch},
   {"k_dist2", op_k_dist2}, {"k_field_acc", op_k_field_acc}, {"k_list_walk", op_k_list_walk}, {"k_vec_local", op_k_vec_local},
-  {"obj_spread", op_obj_spread}, {"alloc_literal", op_alloc_literal}, {"alloc_ctor", op_alloc_ctor}, {"alloc_class", op_alloc_class},
+  {"obj_spread", op_obj_spread}, {"alloc_literal", op_alloc_literal}, {"alloc_literal1", op_alloc_literal1}, {"alloc_ctor", op_alloc_ctor}, {"alloc_class", op_alloc_class},
   {"k_json", op_k_json}, {"k_regexp", op_k_regexp}, {"k_str_build", op_k_str_build},
   {"date_now", op_date_now}, {"arr_includes", op_arr_includes}, {"arr_indexof", op_arr_indexof},
   {"bi_dv_get_f64", op_bi_dv_get_f64}, {"bi_dv_set_f64", op_bi_dv_set_f64}, {"bi_dv_get_u32", op_bi_dv_get_u32},

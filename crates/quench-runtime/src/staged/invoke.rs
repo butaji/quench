@@ -24,8 +24,49 @@ use super::property::get_field;
 use super::protocol::{bind_this, complete_call, fill_call, guard_callee, guard_received};
 use super::{word_bytes, word_offset, Arguments, CallFacts, CallOperation, Callee, Frame, Invocation, Operation, Passed, PropertyFrame,
     Receiver, Register, RegisterList, Stage, Step};
-use crate::bytecode::{FieldBase, FieldLookup};
+use crate::bytecode::{FieldBase, FieldLookup, Op, WideInstruction};
 use crate::Value;
+
+/// The general forms of the call-family records a frame may run where its staged row declines
+/// (`CallFrame::call_general`): the call's operands are the record's own.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum CallForm {
+    /// A call through a callee register and a receiver register, over a window (`Call`, direct eval included).
+    Plain,
+    /// A call that passes the activation's `arguments` as its last argument (`CallForwardingArguments`).
+    Forwarding,
+    /// A call whose one argument register holds the array to apply (`CallArray`).
+    Array,
+    /// A call whose one argument register holds the iterable to spread (`CallSpread`).
+    Spread,
+    /// A call of a function the record names (`CallKnown`).
+    Known,
+    /// A method call through its receiver register (`CallMethod`).
+    Method,
+    /// A method call on the activation's `this` (`CallThisMethod`).
+    ThisMethod,
+    /// A construction, plain, applied or `super(...)` (`Construct`).
+    Construct,
+    /// A first-call stub's call of its chunk (`CallFirstChunk`).
+    FirstChunk,
+}
+
+/// The general form of the call-family opcode `op`, else `None`: the records the call runner answers
+/// (`vm::dispatch`'s `Runner::Call`).
+pub(crate) const fn general_call_form(op: Op) -> Option<CallForm> {
+    Some(match op {
+        Op::Call => CallForm::Plain,
+        Op::CallForwardingArguments => CallForm::Forwarding,
+        Op::CallArray => CallForm::Array,
+        Op::CallSpread => CallForm::Spread,
+        Op::CallKnown => CallForm::Known,
+        Op::CallMethod => CallForm::Method,
+        Op::CallThisMethod => CallForm::ThisMethod,
+        Op::Construct => CallForm::Construct,
+        Op::CallFirstChunk => CallForm::FirstChunk,
+        _ => return None,
+    })
+}
 
 /// The stacks a direct call is admitted to: the callee's entry cell, its window at `top` (its
 /// end at `next`), and the frame below at `shadow`.
@@ -109,6 +150,51 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
+    /// Suspend the activation as `suspending` names (`suspend`): the control the step ends in;
+    /// `None` where the frame cannot, leaving the suspension to the interpreter. The interpreter's
+    /// frame suspends by the step result (`Vm::staged_suspend`), the lane's in place
+    /// (`dispatch_fast::lane_frame::suspension_row_in_lane`).
+    #[inline(always)]
+    fn suspend(&mut self, _stage: &mut S, _suspending: super::Suspending<S::Word>) -> Option<Self::Control> {
+        None
+    }
+
+    /// Whether the running function is async, a fact of the function the frame runs; `None` where
+    /// the frame does not hold it.
+    #[inline(always)]
+    fn asynchronous(&self) -> Option<bool> {
+        None
+    }
+
+    /// Whether `value` is an object (`Vm::is_object_like`), which its heap cell decides; `None`
+    /// where the frame cannot read the heap.
+    #[inline(always)]
+    fn object_test(&mut self, _stage: &mut S, _value: S::Word) -> Option<S::Cond> {
+        None
+    }
+
+    /// PromiseResolve(%Promise%, `value`); `None` where the frame cannot make it, or it raised.
+    #[inline(always)]
+    fn promise_resolve(&mut self, _stage: &mut S, _value: S::Word) -> Option<S::Word> {
+        None
+    }
+
+    /// The word a step of `yield*`'s delegation defines (`delegation`), with the fact the frame
+    /// keeps of it; `None` where the frame cannot make it, or it raised.
+    #[inline(always)]
+    fn delegation(&mut self, _stage: &mut S, _step: super::DelegationStep<S::Word>) -> Option<(S::Word, Self::Fact)> {
+        None
+    }
+
+    /// The `next` step of a sync `yield*`'s delegate (`DelegationStep::Next`) made by the frame in
+    /// place: the control that runs it, whose result arrives in `state` with this instruction run
+    /// again (`delegation`). `None`, before any effect, where the frame calls `next` instead.
+    #[inline(always)]
+    fn delegation_in_place(&mut self, _stage: &mut S, _step: super::DelegationStep<S::Word>, _state: Register)
+        -> Option<Self::Control> {
+        None
+    }
+
     /// Make the lane's activations frames, as a native that observes the frame stack needs
     /// (`Native::runs_beside_activations` is false): a native that runs beside them is entered
     /// without. The caller's registers stay where they are.
@@ -138,6 +224,14 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
     #[inline(always)]
     fn call_helper(&mut self, _stage: &mut S, _site: &Invocation, direct: Option<S::Word>) -> Option<S::Word> {
         direct
+    }
+
+    /// The general form `form` of the call-family record `instruction` at resume PC `pc`, which the
+    /// call row runner asks where the row declined (the record's operands are read from it, since an
+    /// `Invocation` does not name every form). `None` where the frame runs no general calls.
+    #[inline(always)]
+    fn call_general(&mut self, _form: CallForm, _instruction: WideInstruction, _pc: usize) -> Option<Step<S::Word, Self::Control>> {
+        None
     }
 }
 

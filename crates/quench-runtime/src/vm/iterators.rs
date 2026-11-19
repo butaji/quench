@@ -32,6 +32,9 @@ pub(super) const ITERATOR_RESULT_DONE_SLOT: usize = 1;
 
 #[path = "collection_steps.rs"]
 mod collection_steps;
+#[path = "iterator_in_place.rs"]
+mod iterator_in_place;
+pub(super) use iterator_in_place::InPlaceStep;
 
 /// The stores `Vm::intact_iteration_kind` proves iterate by their own contents.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -130,10 +133,7 @@ impl<H: Host> Vm<H> {
                 let length = self.heap.array(source)?.elements().len();
                 self.present_dense_elements(source, 0..length).map(|values| values.into_owned())
             }
-            IterationSource::Set => match self.heap.get(source)? {
-                Cell::Set { entries, .. } => Some(entries.to_vec()),
-                _ => None,
-            },
+            IterationSource::Set => self.heap.set_entries(source).map(|entries| entries.to_vec()),
             IterationSource::Map => {
                 let pairs = self.intact_map_pairs(source)?;
                 Some(pairs.into_iter().map(|pair| self.iterator_item_value((pair[0], Some(pair[1])))).collect())
@@ -152,10 +152,7 @@ impl<H: Host> Vm<H> {
 
     /// The live entries of a Map that iterates intact (`IterationSource::Map`).
     pub(super) fn intact_map_pairs(&self, source: Value) -> Option<Vec<[Value; 2]>> {
-        match self.heap.get(source)? {
-            Cell::Map { entries, .. } => Some(entries.iter().map(|(key, value)| [key, value]).collect()),
-            _ => None,
-        }
+        self.heap.map_entries(source).map(|entries| entries.iter().map(|(key, value)| [key, value]).collect())
     }
 
     /// What iterating `source` is where every step runs an intrinsic over a store no step's
@@ -175,11 +172,11 @@ impl<H: Host> Vm<H> {
         // or another realm's (a script loaded as its own realm makes its collections there),
         // whose intrinsic the fuse at that prototype proves. The iterators every realm makes
         // share one prototype, the realm's `next` fuse.
-        let (kind, holder, iterator, next) = match self.heap.get(source)? {
-            Cell::Set { object, .. } if !object.has_side_descriptors() => {
+        let (kind, holder, iterator, next) = match self.heap.object(source) {
+            Some(object) if self.heap.is_set(source) && !object.has_side_descriptors() => {
                 (IterationSource::Set, object.proto(), IntactFuse::SetIterator, IntactFuse::SetIteratorNext)
             }
-            Cell::Map { object, .. } if !object.has_side_descriptors() => {
+            Some(object) if self.heap.is_map(source) && !object.has_side_descriptors() => {
                 (IterationSource::Map, object.proto(), IntactFuse::MapIterator, IntactFuse::MapIteratorNext)
             }
             _ => return None,
@@ -281,7 +278,7 @@ impl<H: Host> Vm<H> {
         self.iterator_proto = self.object();
         self.string_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc_object(Self::empty_object(self.iterator_proto));
         self.set_builtin_named(
             program,
             self.string_iterator_proto,
@@ -290,7 +287,7 @@ impl<H: Host> Vm<H> {
         )?;
         self.regexp_string_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc_object(Self::empty_object(self.iterator_proto));
         self.set_builtin_named(
             program,
             self.regexp_string_iterator_proto,
@@ -299,23 +296,23 @@ impl<H: Host> Vm<H> {
         )?;
         self.generator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc_object(Self::empty_object(self.iterator_proto));
         self.async_iterator_proto = self.object();
         self.async_generator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.async_iterator_proto)));
+            .alloc_object(Self::empty_object(self.async_iterator_proto));
         self.async_from_sync_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.async_iterator_proto)));
+            .alloc_object(Self::empty_object(self.async_iterator_proto));
         let generator_function_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.function_proto)));
+            .alloc_object(Self::empty_object(self.function_proto));
         let async_generator_function_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.function_proto)));
+            .alloc_object(Self::empty_object(self.function_proto));
         let async_function_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.function_proto)));
+            .alloc_object(Self::empty_object(self.function_proto));
         self.set_named(
             program,
             generator_function_proto,
@@ -459,10 +456,10 @@ impl<H: Host> Vm<H> {
         )?;
         self.iterator_helper_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc_object(Self::empty_object(self.iterator_proto));
         self.wrap_for_valid_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc_object(Self::empty_object(self.iterator_proto));
         self.install_iterator_helper_prototype(self.iterator_helper_proto, None)?;
         self.install_wrap_for_valid_iterator_prototype(self.wrap_for_valid_iterator_proto, None)?;
         self.realm.intrinsics.iterator_prototypes.insert(
@@ -505,7 +502,7 @@ impl<H: Host> Vm<H> {
         )?;
         self.array_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc_object(Self::empty_object(self.iterator_proto));
         self.set_builtin_named(
             p,
             self.array_iterator_proto,
@@ -999,16 +996,11 @@ impl<H: Host> Vm<H> {
         source: Value,
         kind: IteratorKind,
     ) -> Result<Value, JsError> {
-        let valid = matches!(
-            (kind, self.heap.get(source)),
-            (
-                IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries,
-                Some(Cell::Map { .. })
-            ) | (
-                IteratorKind::SetValues | IteratorKind::SetEntries,
-                Some(Cell::Set { .. })
-            )
-        );
+        let valid = match kind {
+            IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries => self.heap.is_map(source),
+            IteratorKind::SetValues | IteratorKind::SetEntries => self.heap.is_set(source),
+            _ => false,
+        };
         if !valid {
             return Err(JsError("collection iterator receiver is invalid".into()));
         }
@@ -1027,10 +1019,12 @@ impl<H: Host> Vm<H> {
             done: false,
             ext: crate::heap::IteratorExt::default(),
         });
-        let registered = match self.heap.get_mut(source) {
-            Some(Cell::Map { entries, .. }) => entries.register_iterator(iterator),
-            Some(Cell::Set { entries, .. }) => entries.register_iterator(iterator),
-            _ => 0,
+        let registered = if let Some(entries) = self.heap.map_entries_mut(source) {
+            entries.register_iterator(iterator)
+        } else if let Some(entries) = self.heap.set_entries_mut(source) {
+            entries.register_iterator(iterator)
+        } else {
+            0
         };
         // Finished and collected iterators stay registered until the collection compacts or
         // clears; pruning at each doubling bounds the registry by twice its running iterators
@@ -1069,13 +1063,14 @@ impl<H: Host> Vm<H> {
                 || matches!(vm.heap.get(source), Some(Cell::TypedArray { .. }))
             {
                 IteratorKind::Array
+            } else if vm.heap.is_string(source) {
+                IteratorKind::String
+            } else if vm.heap.is_map(source) {
+                IteratorKind::MapEntries
+            } else if vm.heap.is_set(source) {
+                IteratorKind::SetValues
             } else {
-                match vm.heap.get(source) {
-                    _ if vm.heap.is_string(source) => IteratorKind::String,
-                    Some(Cell::Map { .. }) => IteratorKind::MapEntries,
-                    Some(Cell::Set { .. }) => IteratorKind::SetValues,
-                    _ => return Err(vm.type_error(p, "value is not iterable".into())),
-                }
+                return Err(vm.type_error(p, "value is not iterable".into()));
             };
             Ok(vm.heap.alloc_iterator(IteratorRecord {
                 object: Self::empty_object(vm.iterator_proto),
@@ -1390,21 +1385,23 @@ impl<H: Host> Vm<H> {
         if !self.is_function(next) {
             return Err(self.type_error(p, "iterator next method is not callable".into()));
         }
-        self.with_call_roots([source, next], |vm| {
-            let result = vm.call_value(p, next, source, args)?;
-            vm.with_call_roots([result], |vm| -> Result<Option<Value>, JsError> {
-                if !vm.is_object_like(result) {
-                    return Err(vm.type_error(p, "iterator next result is not an object".into()));
-                }
-                let done_atom = vm.runtime_atoms.done;
-                let done = vm.get_property(p, result, done_atom)?;
-                if vm.truthy(done) {
-                    return Ok(None);
-                }
-                let value_atom = vm.runtime_atoms.value;
-                vm.get_property(p, result, value_atom).map(Some)
-            })
-        })
+        let source = self.heap.root_value(source_root).unwrap_or(source);
+        let next = self.heap.root_value(next_root).unwrap_or(next);
+        let result = match self.call_value(p, next, source, args) {
+            Ok(result) => result,
+            Err(error) => {
+                self.heap.release_root(next_root);
+                self.heap.release_root(source_root);
+                return Err(error);
+            }
+        };
+        let result_root = self.heap.root(result);
+        let result = self.heap.root_value(result_root).unwrap_or(result);
+        let step = self.iterator_result_value(p, result);
+        self.heap.release_root(result_root);
+        self.heap.release_root(next_root);
+        self.heap.release_root(source_root);
+        step
     }
 
     fn mark_iterator_done(&mut self, iterator: Value) {
@@ -1974,7 +1971,7 @@ impl<H: Host> Vm<H> {
             for key in keys {
                 let property_key = self.to_property_key(p, key)?;
                 let property_key_root = self.heap.root(property_key);
-                let atom = if matches!(self.heap.get(property_key), Some(Cell::Symbol(_))) {
+                let atom = if self.heap.is_symbol(property_key) {
                     None
                 } else {
                     let name = self.coerce_js_string(p, property_key)?;
@@ -2083,14 +2080,14 @@ impl<H: Host> Vm<H> {
         if let Some(keys) = keys {
             let mut values = Vec::with_capacity(keys.len());
             for key in keys.iter().copied() {
-                let value = match self.heap.get(key) {
-                    _ if let Some(name) = self.heap.string(key)  => {
-                        let name = name.clone();
-                        let atom = self.intern_js_atom(&name);
-                        self.get_property(p, padding, atom)?
-                    }
-                    Some(Cell::Symbol(_)) => self.get_index(p, padding, key)?,
-                    _ => return Err(JsError::validation("invalid zipKeyed property key".into())),
+                let value = if let Some(name) = self.heap.string(key) {
+                    let name = name.clone();
+                    let atom = self.intern_js_atom(&name);
+                    self.get_property(p, padding, atom)?
+                } else if self.heap.is_symbol(key) {
+                    self.get_index(p, padding, key)?
+                } else {
+                    return Err(JsError::validation("invalid zipKeyed property key".into()));
                 };
                 values.push(value);
             }
@@ -2409,7 +2406,7 @@ impl<H: Host> Vm<H> {
             let result = if let Some(keys) = keys {
                 let object = self
                     .heap
-                    .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+                    .alloc_object(Self::empty_object(Value::NULL));
                 for (key, value) in keys.into_iter().zip(values) {
                     self.set_index(p, object, key, value)?;
                 }
@@ -2783,8 +2780,7 @@ impl<H: Host> Vm<H> {
                 return self.async_from_sync_reject(p, iterator, error, close_on_rejection);
             }
         };
-        let env = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let env = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 vec![
                     if done { Value::TRUE } else { Value::FALSE },
@@ -2795,11 +2791,9 @@ impl<H: Host> Vm<H> {
                         Value::FALSE
                     },
                 ],
-            ),
-        });
-        let fulfilled = self.native_with_env(Native::AsyncFromSyncValue, env);
-        let rejected = self.native_with_env(Native::AsyncFromSyncValueRejected, env);
-        self.promise_then_intrinsic(p, value_promise, fulfilled, rejected)
+            ));
+        let natives = [Native::AsyncFromSyncValue, Native::AsyncFromSyncValueRejected];
+        self.then_with_natives(p, value_promise, natives, env, super::promise::ThenCapability::Resolving)
     }
 
     pub(super) fn async_from_sync_value(&mut self, args: &[Value]) -> Result<Value, JsError> {
@@ -3053,22 +3047,27 @@ impl<H: Host> Vm<H> {
 
     /// Whether `value` is the current realm's `native` function: one installed for this realm,
     /// or one every realm shares (`is_shared_native`).
+    /// The shared function itself, the one each realm's prototypes install, answers by its
+    /// identity (`is_shared_native_of`) before any read of the function.
+    #[inline]
     pub(super) fn is_current_realm_native(&self, value: Value, native: Native) -> bool {
+        if self.is_shared_native_of(value, native) {
+            return true;
+        }
         matches!(
             self.heap.function(value),
-            Some(FunctionRecord {
+            Some(record @ FunctionRecord {
                 kind: FunctionKind::Native(kind),
-                realm,
                 ..
             }) if *kind == native
-                && (*realm == self.realm.globals || self.is_shared_native(value))
+                && (self.record_realm(record) == self.realm.globals || self.is_shared_native(value))
         )
     }
 
     /// Every value a values iterator over a plain array would still yield, taken at once and
     /// leaving the iterator exhausted, when each remaining step is a Get of a present data
-    /// element: no indexed descriptors, sparse elements or arguments mapping, and no hole
-    /// (a hole's Get reaches the prototype chain). `None` leaves the steps to run one by one.
+    /// element or of a hole nothing fills (`holes_read_undefined`): no indexed descriptors,
+    /// sparse elements or arguments mapping. `None` leaves the steps to run one by one.
     pub(super) fn take_present_array_values(&mut self, iterator: Value) -> Option<Vec<Value>> {
         let Some(IteratorRecord {
             source,
@@ -3090,10 +3089,12 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let elements = array.elements();
-        if position > elements.len() || elements.range(position..elements.len()).any(|value| value.is_deleted()) {
+        if position > elements.len()
+            || (elements.range(position..elements.len()).any(|value| value.is_deleted()) && !self.holes_read_undefined(source))
+        {
             return None;
         }
-        let rest: Vec<Value> = elements.range(position..elements.len()).collect();
+        let rest: Vec<Value> = elements.range(position..elements.len()).map(|value| if value.is_deleted() { Value::UNDEFINED } else { value }).collect();
         if let Some(IteratorRecord { done, source, .. }) = self.heap.iterator_mut(iterator) {
             *done = true;
             *source = Value::UNDEFINED;
@@ -3108,7 +3109,7 @@ impl<H: Host> Vm<H> {
     /// prototype chain). The result object is the general step's (`iterator_result`); `None`
     /// leaves the call to the general path.
     pub(super) fn plain_array_iterator_next(&mut self, callee: Value, iterator: Value) -> Option<Value> {
-        if !self.is_current_realm_native(callee, Native::ArrayIteratorNext) {
+        if !self.proved_step_native(callee, StepNative::ArrayIteratorNext) {
             return None;
         }
         let (source, kind, position) = match self.heap.iterator(iterator)? {
@@ -3139,9 +3140,7 @@ impl<H: Host> Vm<H> {
         if element.is_deleted() {
             return None;
         }
-        if let Some(IteratorRecord { index, ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.store_position(index, position + 1);
-        }
+        self.heap.store_iterator_position(iterator, position + 1);
         let value = if kind == IteratorKind::ArrayKeys { Value::number(position as f64) } else { element };
         self.iterator_result(value, false).ok()
     }
@@ -3150,7 +3149,7 @@ impl<H: Host> Vm<H> {
     /// its array iterators, so a step may run without the call and its result object.
     pub(super) fn steps_as_array_iterator(&self, iterator: Value, method: Value) -> bool {
         self.heap.iterator(iterator).is_some_and(|record| record.kind.is_array_iterator())
-            && self.is_current_realm_native(method, Native::ArrayIteratorNext)
+            && self.proved_step_native(method, StepNative::ArrayIteratorNext)
     }
 
     /// What a step calling `method` of `iterator` is, from one read of the iterator's record:
@@ -3161,7 +3160,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn iteration_step(&self, iterator: Value, method: Value) -> IterationStep {
         match self.heap.iterator(iterator) {
             Some(IteratorRecord { kind, .. })
-                if kind.is_array_iterator() && self.is_current_realm_native(method, Native::ArrayIteratorNext) =>
+                if kind.is_array_iterator() && self.proved_step_native(method, StepNative::ArrayIteratorNext) =>
             {
                 // A keys or entries step makes its value (`Vm::step_array_entry`), as a
                 // collection's step does.
@@ -3169,7 +3168,7 @@ impl<H: Host> Vm<H> {
             }
             Some(IteratorRecord { kind: IteratorKind::Generator, ext, .. })
                 if ext.generator.as_ref().is_some_and(|record| !record.is_executing())
-                    && self.is_current_realm_native(method, Native::GeneratorNext) =>
+                    && self.proved_step_native(method, StepNative::GeneratorNext) =>
             {
                 IterationStep::Generator
             }
@@ -3180,7 +3179,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Whether a for-of step calling `method` of `iterator` (`lane_iteration_step`) is this
+    /// Whether a for-of step calling `method` of `iterator` (`iteration_step_in_lane`) is this
     /// realm's `Generator.prototype.next` of a generator that is not running, which the step
     /// resumes in place (`generator_iteration_step`).
     pub(super) fn steps_as_generator(&self, iterator: Value, method: Value) -> bool {
@@ -3230,12 +3229,7 @@ impl<H: Host> Vm<H> {
             if index >= length {
                 return Ok(None);
             }
-            if let Some(IteratorRecord {
-                index: next, ext, ..
-            }) = vm.heap.iterator_mut(iterator)
-            {
-                ext.store_position(next, index + 1);
-            }
+            vm.heap.store_iterator_position(iterator, index + 1);
             if kind == IteratorKind::ArrayKeys {
                 return Ok(Some((Value::number(index as f64), None)));
             }
@@ -3251,12 +3245,10 @@ impl<H: Host> Vm<H> {
             Ok(match kind {
                 IteratorKind::ArrayValues | IteratorKind::Array => Some((value, None)),
                 IteratorKind::ArrayEntries => {
-                    let entry = vm.heap.alloc(Cell::Array {
-                        object: crate::heap::ArrayObject::new(
+                    let entry = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                             Self::empty_object(vm.array_proto),
                             vec![Value::number(index as f64), value],
-                        ),
-                    });
+                        ));
                     Some((entry, None))
                 }
                 _ => None,
@@ -3267,10 +3259,10 @@ impl<H: Host> Vm<H> {
     /// CreateIterResultObject: a fresh ordinary object whose `value` and `done` are data
     /// properties, laid out as the literal `{ value, done }`.
     /// One %ArrayIteratorPrototype%.next step of a values iterator over a plain array where
-    /// it runs no guest code: the present data element at its position (`Some(Some(_))`), or
-    /// the iterator done past the end (`Some(None)`), as `take_present_array_values` decides
-    /// for every remaining step. `None` for a hole, an exotic or sparse array, another kind
-    /// or a done iterator, whose step the native makes.
+    /// it runs no guest code (`step_present_element`): the element at its position, a hole
+    /// no prototype fills read as `undefined` (`Some(Some(_))`), or the iterator done past
+    /// the end (`Some(None)`). `None` for a hole some prototype may fill, an exotic or sparse
+    /// array, another kind or a done iterator, whose step the native makes.
     pub(super) fn step_present_array_value(&mut self, iterator: Value) -> Option<Option<Value>> {
         let Some(IteratorRecord {
             source,
@@ -3284,31 +3276,24 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let (source, position) = (*source, ext.position(*index));
-        let array = self.heap.array(source)?;
-        if array.has_indexed_descriptors()
-            || array.is_arguments_object()
-            || self.heap.sparse_length(source).is_some()
-        {
+        self.step_present_element(iterator, source, position)
+    }
+
+    /// `step_present_array_value` for a step calling `method`, when `method` is the shared
+    /// %ArrayIteratorPrototype%.next the native table roots (`NativeTable::get`). That function
+    /// is the one `is_current_realm_native(method, ArrayIteratorNext)` admits (`is_shared_native`),
+    /// so the check is one compare against the table, with no heap read. Any other `method`
+    /// answers `None`, and the caller takes the general dispatch, which makes the full check.
+    #[inline(always)]
+    pub(super) fn array_values_step(&mut self, iterator: Value, method: Value) -> Option<Option<Value>> {
+        if self.natives.get(Native::ArrayIteratorNext) != Some(method) {
             return None;
         }
-        let Some(value) = array.elements().get(position) else {
-            if let Some(IteratorRecord { done, source, .. }) = self.heap.iterator_mut(iterator) {
-                *done = true;
-                *source = Value::UNDEFINED;
-            }
-            return Some(None);
-        };
-        if value.is_deleted() {
-            return None;
-        }
-        if let Some(IteratorRecord { index, ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.store_position(index, position + 1);
-        }
-        Some(Some(value))
+        self.step_present_array_value(iterator)
     }
 
     /// An iterator result `{ value, done }` whose object no code but the step that reads it
-    /// back observes (a `Call` the lane recognises as an iteration step, `lane_iterator_step`):
+    /// back observes (a `Call` the lane recognises as an iteration step, `iterator_step_miss`):
     /// one object, rewritten by each such step, in place of a fresh one per step.
     pub(super) fn reused_iterator_result(&mut self, value: Value, done: bool) -> Value {
         let result = self.reused_iterator_result;
@@ -3351,5 +3336,29 @@ impl<H: Host> Vm<H> {
             prototype,
             [value, if done { Value::TRUE } else { Value::FALSE }],
         ))
+    }
+}
+
+/// The step natives whose identity an iteration proves once (`Vm::proved_step_native`).
+#[derive(Clone, Copy)]
+pub(super) enum StepNative {
+    ArrayIteratorNext,
+    GeneratorNext,
+}
+
+/// How many `StepNative`s there are.
+pub(super) const STEP_NATIVES: usize = 2;
+
+/// One proved step native: the method's bits, the collection epoch and realm it was proved in.
+/// The default proves nothing: no value has the bits `u64::MAX`.
+pub(super) struct StepNativeProof {
+    method: std::cell::Cell<u64>,
+    epoch: std::cell::Cell<u64>,
+    realm: std::cell::Cell<Value>,
+}
+
+impl Default for StepNativeProof {
+    fn default() -> Self {
+        Self { method: std::cell::Cell::new(u64::MAX), epoch: std::cell::Cell::new(0), realm: std::cell::Cell::new(Value::UNDEFINED) }
     }
 }

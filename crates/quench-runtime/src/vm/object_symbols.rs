@@ -25,7 +25,7 @@ enum PlainCopyWrite {
 
 impl<H: Host> Vm<H> {
     pub(super) fn is_host_private_symbol(&self, key: Value) -> bool {
-        matches!(self.heap.get(key), Some(Cell::Symbol(data))
+        matches!(self.heap.symbol_data(key), Some(data)
             if data.kind == crate::heap::SymbolKind::HostPrivate)
     }
 
@@ -246,10 +246,7 @@ impl<H: Host> Vm<H> {
         if let (Some(l), Some(r)) = (self.heap.string(left), self.heap.string(right)) {
             return l == r;
         }
-        match (self.heap.get(left), self.heap.get(right)) {
-            (Some(Cell::Symbol(_)), Some(Cell::Symbol(_))) => left == right,
-            _ => false,
-        }
+        self.heap.is_symbol(left) && self.heap.is_symbol(right) && left == right
     }
 
     pub(super) fn copy_data_properties(
@@ -401,14 +398,13 @@ impl<H: Host> Vm<H> {
         let memoizes = excluded.is_empty()
             && self.shapes[target_shape as usize].storage_len() == 0
             && !target_data.was_used_as_prototype();
-        let epoch = crate::heap::prototype_layout_epoch();
         let memoized = match kind {
             PropertyCopyKind::CreateDataProperty => self.plain_copy_shapes.get(target_shape, source_shape),
             PropertyCopyKind::Set => self
                 .plain_assign_shapes
                 .get(target_shape, (source_shape, target_proto))
-                .filter(|entry| entry.proved == epoch)
-                .map(|entry| entry.shape),
+                .filter(|(_, cell)| cell.holds())
+                .map(|(shape, _)| shape),
         };
         if memoizes && let Some(shape) = memoized {
             let mut values = smallvec::SmallVec::<[Value; PLAIN_COPY_INLINE_PROPERTIES]>::from_elem(Value::UNDEFINED, slots.len());
@@ -491,11 +487,12 @@ impl<H: Host> Vm<H> {
         }
         if memoizes && let Some(shape) = self.object_data(target).map(Object::shape) {
             self.plain_copy_shapes.record(target_shape, source_shape, shape);
-            // The target is no prototype, so its adds left the epoch the chain was proved under.
-            if kind == PropertyCopyKind::Set && epoch == crate::heap::prototype_layout_epoch() {
-                let words = self.plain_copy_words_epoch(source_shape, shape, &slots);
-                let entry = super::shape_memo::PlainAssignShape { shape, proved: epoch, words };
-                self.plain_assign_shapes.record(target_shape, (source_shape, target_proto), entry);
+            // The target is no prototype, so its adds changed no layout of the chain the copy
+            // walked, which holds under the cell made now (each link marked a prototype first).
+            if kind == PropertyCopyKind::Set
+                && let Some(cell) = self.chain_cell_to_end(target_proto)
+            {
+                self.plain_assign_shapes.record(target_shape, (source_shape, target_proto), (shape, cell));
             }
         }
         true
@@ -603,13 +600,12 @@ impl<H: Host> Vm<H> {
             }
             return Some(attributes.writable);
         }
-        let epoch = crate::heap::prototype_layout_epoch();
-        if !self.symbol_write_proofs.holds(proto, key, epoch) {
+        if self.symbol_write_proofs.proof_cell(proto, key).is_none() {
             let guard = self.add_prototype_guard(object, symbol)?;
-            self.mark_prototype_links(proto, guard.prototype_depth);
-            // Marking a link that was no prototype yet leaves the epoch where it was.
-            if crate::heap::prototype_layout_epoch() == epoch {
-                self.symbol_write_proofs.record(proto, key, epoch);
+            // Marking a link that was no prototype yet changes no layout, so the guard holds
+            // under the cell made after it.
+            if let Some(cell) = self.chain_cell(proto, guard.depth) {
+                self.symbol_write_proofs.record(proto, key, cell);
             }
         }
         self.create_shape_data_property(object, symbol, value, DEFAULT_DATA_ATTRIBUTES).ok()?;
@@ -619,7 +615,7 @@ impl<H: Host> Vm<H> {
     /// `object[key] = value` for a symbol `key` that `set_plain_symbol_property` completes as
     /// a successful write; `false` leaves any other store, unobserved, to the general path.
     pub(super) fn try_plain_symbol_set(&mut self, object: Value, key: Value, value: Value) -> bool {
-        matches!(self.heap.get(key), Some(Cell::Symbol(symbol)) if symbol.kind != crate::heap::SymbolKind::HostPrivate)
+        matches!(self.heap.symbol_data(key), Some(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate)
             && self.set_plain_symbol_property(object, key, value) == Some(true)
     }
 
@@ -663,8 +659,7 @@ impl<H: Host> Vm<H> {
         if !data.is_extensible() {
             return false;
         }
-        let epoch = crate::heap::prototype_layout_epoch();
-        match self.symbol_write_proofs.site_step(site, data.shape(), key, epoch) {
+        match self.symbol_write_proofs.site_step(site, data.shape(), key) {
             Some(SymbolWriteStep::Replace(slot)) => self.heap.property_set(object, slot as usize, value),
             Some(SymbolWriteStep::Add { prototype, target }) if data.proto() == prototype => {
                 self.heap.property_add(object, value, target);
@@ -690,8 +685,7 @@ impl<H: Host> Vm<H> {
         if !data.is_extensible() || self.shape_is_dictionary(before) || self.shape_is_dictionary(after) {
             return true;
         }
-        let epoch = crate::heap::prototype_layout_epoch();
-        let step = if after == before {
+        let (step, cell) = if after == before {
             let Some(slot) = self.property_shape_slot(before, PropertyKey::symbol(key)) else {
                 return true;
             };
@@ -701,13 +695,17 @@ impl<H: Host> Vm<H> {
             if !writable {
                 return true;
             }
-            SymbolWriteStep::Replace(slot as u32)
-        } else if self.symbol_write_proofs.holds(prototype, key, epoch) {
-            SymbolWriteStep::Add { prototype, target: after }
+            // An own slot reads no prototype: the cell of no chain.
+            let Some(cell) = self.chain_cell(prototype, 0) else {
+                return true;
+            };
+            (SymbolWriteStep::Replace(slot as u32), cell)
+        } else if let Some(cell) = self.symbol_write_proofs.proof_cell(prototype, key) {
+            (SymbolWriteStep::Add { prototype, target: after }, cell)
         } else {
             return true;
         };
-        self.symbol_write_proofs.record_site_step(site, before, key, epoch, step);
+        self.symbol_write_proofs.record_site_step(site, before, key, cell, step);
         true
     }
 
@@ -835,7 +833,7 @@ impl<H: Host> Vm<H> {
             let values: Vec<Value> = self
                 .object_own_key_values(p, object)?
                 .into_iter()
-                .filter(|key| matches!(self.heap.get(*key), Some(Cell::Symbol(_))))
+                .filter(|key| self.heap.is_symbol(*key))
                 .collect();
             return Ok(self.array_of(&values));
         }

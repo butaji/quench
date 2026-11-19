@@ -20,13 +20,12 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "DataView")?;
         self.data_view_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
-        self.install_data_view_for_realm(
-            program,
-            self.realm.globals,
-            constructor,
-            self.data_view_proto,
-        )
+            .alloc_object(Self::empty_object(self.object_proto));
+        let prototype = self.data_view_proto;
+        self.install_data_view_for_realm(program, self.realm.globals, constructor, prototype)?;
+        self.seal_initialized_intrinsic(constructor);
+        self.seal_initialized_intrinsic(prototype);
+        Ok(())
     }
 
     pub(super) fn install_data_view_for_realm(
@@ -238,7 +237,7 @@ impl<H: Host> Vm<H> {
             let Some(Cell::ArrayBuffer { bytes, detached: false, immutable: false, .. }) = self.heap.buffer_bytes_mut(buffer) else {
                 return None;
             };
-            let bytes = bytes.lane_mut().filter(|bytes| view_end <= bytes.len())?;
+            let bytes = bytes.mut_in_lane().filter(|bytes| view_end <= bytes.len())?;
             store_field(&mut bytes[field..field + width], bits, little_endian);
             return Some(Value::UNDEFINED);
         }

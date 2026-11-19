@@ -3,6 +3,7 @@
 
 use super::{SourceManifest, ModuleFile};
 use crate::host::shared_vm::commonjs;
+use crate::host::shared_vm::typescript_files::TypeScriptFile;
 use oxc_ast::ast::{CallExpression, ComputedMemberExpression, Expression, IdentifierReference, ImportExpression, LogicalExpression, StaticMemberExpression, UnaryExpression};
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::GetSpan;
@@ -230,14 +231,13 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
                 pending_modules.insert(module.name.clone(), module);
                 continue;
             }
-            if matches!(extension, Some("ts" | "cts")) {
+            if extension.and_then(TypeScriptFile::of_extension).is_some_and(TypeScriptFile::loads_as_commonjs) {
                 let text = commonjs::source_text(&bytes);
-                let projected = quench_runtime::Engine::project_typescript_module_syntax(&text).map(|(source, _)| source).unwrap_or_else(|| text.clone());
-                host.record_prepared_module(&path, &projected)?;
+                host.record_prepared_module(&path, &text)?;
             }
             manifest.insert_key(commonjs::native_commonjs_source(&path, &bytes, path == entry)?);
             (path.to_string_lossy().into_owned(), commonjs::source_text(&bytes).into_owned(),
-                oxc_span::SourceType::script().with_typescript(matches!(extension, Some("ts" | "cts" | "mts"))))
+                oxc_span::SourceType::script().with_typescript(extension.and_then(TypeScriptFile::of_extension).is_some()))
         } else {
             let (name, module) = pending_modules.pop_first().expect("pending graph node");
             if !seen_modules.insert(name.clone()) { continue; }
@@ -252,7 +252,7 @@ pub(super) fn discover(manifest: &mut SourceManifest, entry: &Path) -> Result<De
         let mut parsed = oxc_parser::Parser::new(&allocator, body, source_type)
             .with_options(oxc_parser::ParseOptions { allow_return_outside_function: source_type.is_script(), ..Default::default() }).parse();
         if !parsed.diagnostics.is_empty() { return Err(format!("{name}: {:?}", parsed.diagnostics)); }
-        quench_runtime::Engine::erase_type_only_module_syntax(&mut parsed.program);
+        quench_runtime::Engine::admit_typescript(&allocator, &mut parsed.program);
         let semantic = oxc_semantic::SemanticBuilder::new().build(&parsed.program);
         let scoping = semantic.semantic.scoping();
         let demands = quench_runtime::Engine::source_demands(&parsed.program, scoping, true);

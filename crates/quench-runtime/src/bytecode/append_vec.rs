@@ -146,6 +146,19 @@ impl<T> AppendVec<T> {
         }
     }
 
+    /// This table with room for `spare` more entries, where it is still unshared and on the
+    /// heap; `false` where it is mapped (it then keeps its own room).
+    pub(crate) fn reserve_unshared(&mut self, spare: usize) -> bool {
+        match self.0.get_mut() {
+            Storage::Heap(entries) => {
+                let entries = std::mem::take(entries);
+                *self = Self::with_headroom(entries, spare);
+                true
+            }
+            Storage::Mapped { .. } => false,
+        }
+    }
+
     /// How many entries `append` can still add.
     pub(crate) fn spare(&self) -> usize {
         self.capacity() - self.len()

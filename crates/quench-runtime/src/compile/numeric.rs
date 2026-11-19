@@ -1,33 +1,47 @@
 use super::liveness::{RegisterSet, register_dead};
 use crate::bytecode::{
-    Function, Instr, NumericLocalStoreTarget, Op, Operand, REGISTER_MASK, specialized_numeric_op,
+    Function, Instr, NumericLocalStoreTarget, Op, Operand, REGISTER_MASK, Traits, the_op, specialized_numeric_op,
 };
 
-use super::rewrite::{protected_positions, relocate};
+use super::rewrite::{LOCAL_READERS, NOP, NUMERIC_INDEX_CONSUMERS, NUMERIC_LOCAL_PRODUCERS, OpSet, next_live, protected_positions};
+
+const LOCAL_BINDING_STORE_OP: Op = the_op(Traits::LOCAL_BINDING_STORE);
+const PLAIN_LOCAL_STORE_OP: Op = the_op(Traits::PLAIN_LOCAL_STORE);
 
 type Rule = fn(&[Instr]) -> Option<NumericLocalStoreTarget>;
 
+/// A pair whose first op is in `first` (a derived set, see `rewrite::OpSet`) and second is `second`.
 struct CompactRule {
-    pattern: [Op; 2],
+    first: &'static OpSet,
+    second: Op,
     replacement: fn(Instr, Instr, RegisterSet) -> Option<Instr>,
 }
 
+/// A window whose ops are each in the matching derived set.
 struct TripleCompactRule {
-    pattern: [Op; 3],
+    pattern: [&'static OpSet; 3],
     replacement: fn(Instr, Instr, Instr, RegisterSet) -> Option<Instr>,
 }
 
+// The window rule `local_inc_store` stays a function: its ends must name the same local, and
+// the `IncDec` update's `BooleanFlag` picks the direction. Both are dataflow, which no row states.
 const RULES: &[Rule] = &[local_inc_store];
+// `binary_local_target` needs the first op's row to admit a numeric local target. The store
+// takes the binding-store role: `StoreEnvLocal` shares `StoreLocal`'s row fields but stores to an environment slot.
 const NUMERIC_COMPACT_RULES: &[CompactRule] = &[CompactRule {
-    pattern: [Op::Binary, Op::StoreLocal],
+    first: &NUMERIC_LOCAL_PRODUCERS,
+    second: LOCAL_BINDING_STORE_OP,
     replacement: binary_local_target,
 }];
 const PLAIN_LOCAL_COMPACT_RULES: &[CompactRule] = &[CompactRule {
-    pattern: [Op::Binary, Op::StoreLocalPlain],
+    first: &NUMERIC_LOCAL_PRODUCERS,
+    second: PLAIN_LOCAL_STORE_OP,
     replacement: binary_local_target,
 }];
+// `local_index_sources` reads two local operands into a `GetIndex`: both sources are local reads,
+// and the index op's B and C are index operands.
 const TRIPLE_COMPACT_RULES: &[TripleCompactRule] = &[TripleCompactRule {
-    pattern: [Op::LoadLocal, Op::LoadLocal, Op::GetIndex],
+    pattern: [&LOCAL_READERS, &LOCAL_READERS, &NUMERIC_INDEX_CONSUMERS],
     replacement: local_index_sources,
 }];
 
@@ -36,12 +50,22 @@ pub(super) fn apply(function: &mut Function, live: Option<&[RegisterSet]>) {
         compact_binary_stores(function, live, NUMERIC_COMPACT_RULES, TRIPLE_COMPACT_RULES);
     }
     for pc in 0..function.code.len() {
-        if let Some(target) = RULES.iter().find_map(|rule| rule(&function.code[pc..])) {
+        if function.code[pc].op() == NOP {
+            continue;
+        }
+        // The rules read the live instructions from `pc`, the `Nop`s they fall through skipped.
+        let window: smallvec::SmallVec<[Instr; 3]> = function.code[pc..]
+            .iter()
+            .copied()
+            .filter(|instruction| instruction.op() != NOP)
+            .take(3)
+            .collect();
+        if let Some(target) = RULES.iter().find_map(|rule| rule(&window[..])) {
             function.code[pc].set_numeric_local_store_target(Some(target));
         }
     }
     for instruction in &mut function.code {
-        if instruction.op() == Op::Binary
+        if instruction.op().traits().has(Traits::BINARY_RESULT)
             && let Some(op) = specialized_numeric_op(instruction.binary_operator())
         {
             instruction.set_op(op);
@@ -49,10 +73,9 @@ pub(super) fn apply(function: &mut Function, live: Option<&[RegisterSet]>) {
     }
 }
 
-pub(super) fn apply_plain_local_stores(function: &mut Function, live: Option<&[RegisterSet]>) {
-    if let Some(live) = live {
-        compact_binary_stores(function, live, PLAIN_LOCAL_COMPACT_RULES, &[]);
-    }
+/// Compacts the plain local stores under `live`, and whether it rewrote any instruction.
+pub(super) fn apply_plain_local_stores(function: &mut Function, live: Option<&[RegisterSet]>) -> bool {
+    live.is_some_and(|live| compact_binary_stores(function, live, PLAIN_LOCAL_COMPACT_RULES, &[]))
 }
 
 fn compact_binary_stores(
@@ -60,71 +83,68 @@ fn compact_binary_stores(
     live: &[RegisterSet],
     rules: &[CompactRule],
     triple_rules: &[TripleCompactRule],
-) {
-    let old = std::mem::take(&mut function.code);
+) -> bool {
     let protected = protected_positions(
-        &old,
+        &function.code,
         &function.wide,
         &function.handlers,
         function.parameter_end_pc,
         &function.binding_sites,
     );
-    let mut code = Vec::with_capacity(old.len());
-    let mut map = vec![0; old.len() + 1];
+    let mut changed = false;
     let mut pc = 0;
-    while pc < old.len() {
-        map[pc] = code.len();
-        let triple = old
-            .get(pc..pc + 3)
-            .filter(|_| !protected.contains(pc + 1) && !protected.contains(pc + 2))
-            .and_then(|window| {
-                let live_after = live.get(pc + 3).copied().unwrap_or(RegisterSet::MAX);
-                triple_rules
-                    .iter()
-                    .filter(|rule| rule.pattern == [window[0].op(), window[1].op(), window[2].op()])
-                    .find_map(|rule| {
-                        (rule.replacement)(window[0], window[1], window[2], live_after)
-                    })
-            });
-        if let Some(replacement) = triple {
-            map[pc + 1] = code.len();
-            map[pc + 2] = code.len();
-            code.push(replacement);
-            pc += 3;
+    while pc < function.code.len() {
+        let first = function.code[pc];
+        if first.op() == NOP {
+            pc += 1;
             continue;
         }
-        let replacement = old
-            .get(pc + 1)
-            .filter(|_| !protected.contains(pc + 1))
-            .and_then(|second| {
-                let first = old[pc];
-                let live_after = live.get(pc + 2).copied().unwrap_or(RegisterSet::MAX);
+        // The window is the next instructions that are not `Nop`s, each fused one left in place
+        // as a `Nop` by an earlier rewrite falling through.
+        let second = next_live(&function.code, pc);
+        let third = second.and_then(|second| next_live(&function.code, second));
+        let triple_window = match (second, third) {
+            (Some(second), Some(third)) if !(pc + 1..=third).any(|at| protected.contains(at)) => Some((second, third)),
+            _ => None,
+        };
+        let triple = triple_window.and_then(|(second_pc, third_pc)| {
+            let window = [first, function.code[second_pc], function.code[third_pc]];
+            let live_after = live.get(third_pc + 1).copied().unwrap_or(RegisterSet::MAX);
+            triple_rules
+                .iter()
+                .filter(|rule| rule.pattern.iter().zip(window.iter()).all(|(set, instruction)| set[instruction.op() as usize]))
+                .find_map(|rule| (rule.replacement)(window[0], window[1], window[2], live_after))
+                .map(|replacement| (replacement, second_pc, third_pc))
+        });
+        if let Some((replacement, second_pc, third_pc)) = triple {
+            function.code[pc] = replacement;
+            function.code[second_pc] = Instr::new(NOP, 0, 0, 0, 0);
+            function.code[third_pc] = Instr::new(NOP, 0, 0, 0, 0);
+            changed = true;
+            pc = third_pc + 1;
+            continue;
+        }
+        let pair = second
+            .filter(|&second_pc| !(pc + 1..=second_pc).any(|at| protected.contains(at)))
+            .and_then(|second_pc| {
+                let second_instruction = function.code[second_pc];
+                let live_after = live.get(second_pc + 1).copied().unwrap_or(RegisterSet::MAX);
                 rules
                     .iter()
-                    .filter(|rule| rule.pattern == [first.op(), second.op()])
-                    .find_map(|rule| (rule.replacement)(first, *second, live_after))
+                    .filter(|rule| rule.first[first.op() as usize] && rule.second == second_instruction.op())
+                    .find_map(|rule| (rule.replacement)(first, second_instruction, live_after))
+                    .map(|replacement| (replacement, second_pc))
             });
-        if let Some(replacement) = replacement {
-            map[pc + 1] = code.len();
-            code.push(replacement);
-            pc += 2;
+        if let Some((replacement, second_pc)) = pair {
+            function.code[pc] = replacement;
+            function.code[second_pc] = Instr::new(NOP, 0, 0, 0, 0);
+            changed = true;
+            pc = second_pc + 1;
         } else {
-            code.push(old[pc]);
             pc += 1;
         }
     }
-    map[old.len()] = code.len();
-    relocate(
-        &mut code,
-        &mut function.wide,
-        &map,
-        &mut function.handlers,
-        &mut function.parameter_end_pc,
-        &mut function.binding_sites,
-        &mut function.source_positions,
-        &old,
-    );
-    function.code = code;
+    changed
 }
 
 fn local_index_sources(
@@ -160,11 +180,11 @@ fn local_inc_store(code: &[Instr]) -> Option<NumericLocalStoreTarget> {
     let [load, update, store, ..] = code else {
         return None;
     };
-    (load.op() == Op::LoadLocal
-        && update.op() == Op::IncDec
+    (load.op().traits().has(Traits::LOCAL_BINDING_LOAD)
+        && update.op().traits().has(Traits::INCREMENT_UPDATE)
         && update.register_b() == load.result_register()
         && update.boolean_flag().is_some()
-        && store.op() == Op::StoreLocal
+        && store.op().traits().has(Traits::LOCAL_BINDING_STORE)
         && store.register_a() == update.result_register()
         && store.optional_register_b().is_none()
         && store.local_slot() == load.local_slot())
@@ -223,18 +243,19 @@ mod tests {
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
-            declared_parameters: vec![].into(),
+            rare: None,
             rest: false,
             is_async: false,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
             instance_initializer: None,
+            constant_fields: Default::default(),
             super_home_atom: None,
             constructible: true,
             class_initializer: false,
             parameter_eval_arguments_error: false,
-            unaliased_arguments: false,
+            unaliased_arguments: false, rest_alias: false,
             prototype_unobservable: false,
             arguments_slot: None,
             simple_parameters: true,
@@ -243,10 +264,11 @@ mod tests {
             local_atoms: vec![].into(),
             environment_atoms: vec![].into(),
             selective_capture_slots: None,
+            declared_functions: Default::default(),
+            declared_captures: Default::default(),
             local_registers: Vec::new().into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),
@@ -256,15 +278,9 @@ mod tests {
             registers: 3,
             dispatch: crate::bytecode::DispatchClass::Numeric,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: vec![].into(),
             register_roots: Default::default(),
             undefined_register: None,
@@ -278,6 +294,7 @@ mod tests {
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
+        crate::compile::rewrite::remove_nops(&mut dead, &mut None, &mut crate::compile::CompileScratch::default());
         assert_eq!(dead.code.len(), 2);
         assert_eq!(dead.code[0].a(), NUMERIC_LOCAL_TARGET | 3);
 
@@ -288,6 +305,7 @@ mod tests {
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
+        crate::compile::rewrite::remove_nops(&mut live, &mut None, &mut crate::compile::CompileScratch::default());
         assert_eq!(live.code.len(), 3);
     }
 
@@ -310,18 +328,19 @@ mod tests {
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
-            declared_parameters: vec![].into(),
+            rare: None,
             rest: false,
             is_async: false,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
             instance_initializer: None,
+            constant_fields: Default::default(),
             super_home_atom: None,
             constructible: true,
             class_initializer: false,
             parameter_eval_arguments_error: false,
-            unaliased_arguments: false,
+            unaliased_arguments: false, rest_alias: false,
             prototype_unobservable: false,
             arguments_slot: None,
             simple_parameters: true,
@@ -330,10 +349,11 @@ mod tests {
             local_atoms: vec![].into(),
             environment_atoms: vec![].into(),
             selective_capture_slots: None,
+            declared_functions: Default::default(),
+            declared_captures: Default::default(),
             local_registers: Vec::new().into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),
@@ -343,15 +363,9 @@ mod tests {
             registers: 3,
             dispatch: crate::bytecode::DispatchClass::Numeric,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: vec![].into(),
             register_roots: Default::default(),
             undefined_register: None,
@@ -365,6 +379,7 @@ mod tests {
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
+        crate::compile::rewrite::remove_nops(&mut dead, &mut None, &mut crate::compile::CompileScratch::default());
         assert_eq!(dead.code.len(), 2);
         assert_eq!(crate::bytecode::Operand(dead.code[0].b()).tag(), 3);
         assert_eq!(crate::bytecode::Operand(dead.code[0].c()).tag(), 3);
@@ -376,6 +391,7 @@ mod tests {
             NUMERIC_COMPACT_RULES,
             TRIPLE_COMPACT_RULES,
         );
+        crate::compile::rewrite::remove_nops(&mut live, &mut None, &mut crate::compile::CompileScratch::default());
         assert_eq!(live.code.len(), 4);
     }
 }

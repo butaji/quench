@@ -68,14 +68,77 @@ const DEFERRED_DECODE_MIN_BYTES: usize = 64 << 10;
 fn wide_units(text: &str, length: usize) -> Rc<[u16]> {
     let mut storage = Rc::<[u16]>::new_uninit_slice(length);
     let output = Rc::get_mut(&mut storage).expect("a new allocation is unshared");
+    if text.is_ascii() {
+        // One byte per unit throughout: a plain widening copy.
+        for (slot, &byte) in output.iter_mut().zip(text.as_bytes()) {
+            slot.write(u16::from(byte));
+        }
+        assert_eq!(text.len(), length, "the text has the units counted for it");
+        // SAFETY: every unit was written.
+        return unsafe { storage.assume_init() };
+    }
+    // Source text is mostly ASCII: each ASCII run widens byte by byte, which the compiler
+    // vectorizes, and only the other characters go through UTF-16 encoding (a 250 KB bundle's
+    // text: 32 Ir per byte through `encode_utf16` alone).
     let mut written = 0;
-    for (slot, unit) in output.iter_mut().zip(text.encode_utf16()) {
-        slot.write(unit);
-        written += 1;
+    let mut rest = text;
+    while !rest.is_empty() {
+        let ascii = rest.bytes().position(|byte| !byte.is_ascii()).unwrap_or(rest.len());
+        let (run, tail) = rest.split_at(ascii);
+        let slots = output.get_mut(written..written + run.len()).expect("the text has the units counted for it");
+        for (slot, &byte) in slots.iter_mut().zip(run.as_bytes()) {
+            slot.write(u16::from(byte));
+        }
+        written += run.len();
+        let Some(character) = tail.chars().next() else { break };
+        let mut units = [0; 2];
+        for &unit in character.encode_utf16(&mut units).iter() {
+            output.get_mut(written).expect("the text has the units counted for it").write(unit);
+            written += 1;
+        }
+        rest = &tail[character.len_utf8()..];
     }
     assert_eq!(written, length, "the text has the units counted for it");
     // SAFETY: every unit was written.
     unsafe { storage.assume_init() }
+}
+
+/// The number of UTF-16 units of `text`, counted from its bytes: each character has one
+/// leading byte (a continuation byte is not one), and a four-byte character takes two units.
+/// The same count as `text.encode_utf16().count()`, without encoding.
+fn utf16_len(text: &str) -> usize {
+    text.bytes()
+        .map(|byte| usize::from(byte.is_ascii() || byte >= 0xC0) + usize::from(byte >= 0xF0))
+        .sum()
+}
+
+/// `Units::utf8_len` of UTF-16 units, without decoding them: each unit counts as the bytes
+/// of a character of its size (a surrogate as three, which a lone one's replacement character
+/// is), and a high surrogate followed by a low one is a four-byte character, not two of three.
+/// Both sums vectorize (a bundle's source: 31 Ir per unit through `decode_utf16`).
+fn wide_utf8_len(units: &[u16]) -> usize {
+    // Summed per block in 16-bit lanes, which vectorize, with surrogates only noted: the pair
+    // scan runs only for text that has any (a 5.6 MB bundle: 99.7M Ir as one scalar pass
+    // plus a pair window per unit).
+    const BLOCK: usize = 256;
+    let mut extra = 0usize;
+    let mut surrogates = 0u16;
+    for block in units.chunks(BLOCK) {
+        let mut sum = 0u16;
+        for &unit in block {
+            sum += u16::from(unit >= 0x80) + u16::from(unit >= 0x800);
+            surrogates |= u16::from(unit & 0xF800 == 0xD800);
+        }
+        extra += usize::from(sum);
+    }
+    let pairs = if surrogates == 0 {
+        0
+    } else {
+        units.windows(2)
+            .filter(|pair| (0xD800..0xDC00).contains(&pair[0]) && (0xDC00..0xE000).contains(&pair[1]))
+            .count()
+    };
+    units.len() + extra - 2 * pairs
 }
 
 /// Text made on demand and not yet charged, which the caller now charges.
@@ -138,6 +201,12 @@ pub(crate) enum FlatUnits {
     WidePrefix(Rc<AppendBuffer<u16>>, u32),
     /// Parts not yet written out (`parts`); held by a string record only (`Heap::written_out_string`).
     Parts(Parts),
+    /// Latin-1 units: one byte per unit, each at most U+00FF, with at least one unit at or past
+    /// U+0080 (text that is all ASCII is `Short` or `Ascii`). Never held by a string record:
+    /// it is shared, so its host text can be cached beside it, as `Wide` is.
+    Latin1(Rc<[u8]>) = native_string::TAG_LATIN1,
+    /// The first `length` units of a Latin-1 append buffer, as `AsciiPrefix` is for ASCII.
+    Latin1Prefix(Rc<AppendBuffer<u8>>, u32),
 }
 
 /// The units `range` of shared `Wide` storage; never a slice of a slice.
@@ -215,7 +284,8 @@ impl FlatUnits {
             Self::AsciiSlice(slice) => slice.range.len(),
             Self::Wide(units) => units.len(),
             Self::WideSlice(slice) => slice.range.len(),
-            Self::AsciiPrefix(_, length) | Self::WidePrefix(_, length) => *length as usize,
+            Self::AsciiPrefix(_, length) | Self::WidePrefix(_, length) | Self::Latin1Prefix(_, length) => *length as usize,
+            Self::Latin1(units) => units.len(),
             Self::Parts(_) => parts::not_written_out(),
         }
     }
@@ -233,6 +303,8 @@ impl FlatUnits {
                 .then(|| slice.units[slice.range.start + index]),
             Self::AsciiPrefix(buffer, length) => buffer.prefix(*length).get(index).map(|byte| u16::from(*byte)),
             Self::WidePrefix(buffer, length) => buffer.prefix(*length).get(index).copied(),
+            Self::Latin1(units) => units.get(index).map(|byte| u16::from(*byte)),
+            Self::Latin1Prefix(buffer, length) => buffer.prefix(*length).get(index).map(|byte| u16::from(*byte)),
             Self::Parts(_) => parts::not_written_out(),
         }
     }
@@ -248,6 +320,8 @@ impl FlatUnits {
             Self::WideSlice(slice) => Units::Wide(&slice.units[slice.range.clone()]),
             Self::AsciiPrefix(buffer, length) => Units::Ascii(buffer.prefix(*length)),
             Self::WidePrefix(buffer, length) => Units::Wide(buffer.prefix(*length)),
+            Self::Latin1(units) => Units::Latin1(units),
+            Self::Latin1Prefix(buffer, length) => Units::Latin1(buffer.prefix(*length)),
             Self::Parts(_) => parts::not_written_out(),
         }
     }
@@ -261,13 +335,19 @@ impl FlatUnits {
             Self::Ascii(text) => Some(text.len()),
             Self::AsciiSlice(slice) => Some(slice.range.len()),
             Self::AsciiPrefix(_, length) => Some(*length as usize),
-            Self::Wide(_) | Self::WideSlice(_) | Self::WidePrefix(..) | Self::Parts(_) => None,
+            Self::Wide(_) | Self::WideSlice(_) | Self::WidePrefix(..) | Self::Latin1(_) | Self::Latin1Prefix(..) | Self::Parts(_) => None,
         }
     }
 
     /// Whether the units are known to be ASCII; a wide slice may be, but is not known to be.
     #[inline] pub(crate) fn is_ascii(&self) -> bool {
-        !matches!(self, Self::Wide(_) | Self::WideSlice(_) | Self::WidePrefix(..))
+        !matches!(self, Self::Wide(_) | Self::WideSlice(_) | Self::WidePrefix(..) | Self::Latin1(_) | Self::Latin1Prefix(..))
+    }
+
+    /// Whether every unit is at most U+00FF, so the units fit one byte each. Known from the
+    /// form: a wide form may hold narrow units too, which it does not claim.
+    #[inline] pub(crate) fn is_narrow(&self) -> bool {
+        matches!(self, Self::Short(_) | Self::Ascii(_) | Self::AsciiSlice(_) | Self::AsciiPrefix(..) | Self::Latin1(_) | Self::Latin1Prefix(..))
     }
 
     /// The shared wide storage these units view and the units they cover.
@@ -275,7 +355,7 @@ impl FlatUnits {
         match self {
             Self::Wide(units) => Some((units, 0..units.len())),
             Self::WideSlice(slice) => Some((&slice.units, slice.range.clone())),
-            Self::Short(_) | Self::Ascii(_) | Self::AsciiSlice(_) | Self::AsciiPrefix(..) | Self::WidePrefix(..) | Self::Parts(_) => None,
+            Self::Short(_) | Self::Ascii(_) | Self::AsciiSlice(_) | Self::AsciiPrefix(..) | Self::WidePrefix(..) | Self::Latin1(_) | Self::Latin1Prefix(..) | Self::Parts(_) => None,
         }
     }
 
@@ -287,7 +367,7 @@ impl FlatUnits {
             Self::AsciiSlice(slice) => &slice.text[slice.range.clone()],
             // SAFETY: an ASCII buffer holds only ASCII bytes, which are UTF-8.
             Self::AsciiPrefix(buffer, length) => unsafe { std::str::from_utf8_unchecked(buffer.prefix(*length)) },
-            Self::Wide(_) | Self::WideSlice(_) | Self::WidePrefix(..) | Self::Parts(_) => return None,
+            Self::Wide(_) | Self::WideSlice(_) | Self::WidePrefix(..) | Self::Latin1(_) | Self::Latin1Prefix(..) | Self::Parts(_) => return None,
         })
     }
 
@@ -296,7 +376,7 @@ impl FlatUnits {
         match self {
             Self::Ascii(text) => Some((text, 0..text.len())),
             Self::AsciiSlice(slice) => Some((&slice.text, slice.range.clone())),
-            Self::Short(_) | Self::Wide(_) | Self::WideSlice(_) | Self::AsciiPrefix(..) | Self::WidePrefix(..) | Self::Parts(_) => None,
+            Self::Short(_) | Self::Wide(_) | Self::WideSlice(_) | Self::AsciiPrefix(..) | Self::WidePrefix(..) | Self::Latin1(_) | Self::Latin1Prefix(..) | Self::Parts(_) => None,
         }
     }
 
@@ -333,6 +413,7 @@ impl FlatUnits {
         match self.view().slice(range) {
             // SAFETY: ASCII units are UTF-8.
             Units::Ascii(bytes) => Self::ascii(unsafe { std::str::from_utf8_unchecked(bytes) }),
+            Units::Latin1(bytes) => latin1_units(bytes),
             Units::Wide(units) => flat_units(units),
         }
     }
@@ -342,7 +423,11 @@ impl FlatUnits {
             (Self::Ascii(left), Self::Ascii(right)) => Rc::ptr_eq(left, right),
             (Self::AsciiSlice(left), Self::AsciiSlice(right)) => Rc::ptr_eq(left, right),
             (Self::Wide(left), Self::Wide(right)) => Rc::ptr_eq(left, right),
+            (Self::Latin1(left), Self::Latin1(right)) => Rc::ptr_eq(left, right),
             (Self::WideSlice(left), Self::WideSlice(right)) => Rc::ptr_eq(left, right),
+            (Self::Latin1Prefix(left, left_length), Self::Latin1Prefix(right, right_length)) => {
+                Rc::ptr_eq(left, right) && left_length == right_length
+            }
             (Self::AsciiPrefix(left, left_length), Self::AsciiPrefix(right, right_length)) => {
                 Rc::ptr_eq(left, right) && left_length == right_length
             }
@@ -357,14 +442,17 @@ impl FlatUnits {
 /// A borrowed run of a string's code units.
 #[derive(Clone, Copy)]
 pub(crate) enum Units<'a> {
+    /// ASCII units: bytes that are UTF-8 as they stand.
     Ascii(&'a [u8]),
+    /// Latin-1 units: one byte per unit, which is the unit's value, not UTF-8.
+    Latin1(&'a [u8]),
     Wide(&'a [u16]),
 }
 
 impl<'a> Units<'a> {
     pub(crate) fn len(self) -> usize {
         match self {
-            Self::Ascii(bytes) => bytes.len(),
+            Self::Ascii(bytes) | Self::Latin1(bytes) => bytes.len(),
             Self::Wide(units) => units.len(),
         }
     }
@@ -375,7 +463,7 @@ impl<'a> Units<'a> {
 
     pub(crate) fn get(self, index: usize) -> Option<u16> {
         match self {
-            Self::Ascii(bytes) => bytes.get(index).map(|byte| u16::from(*byte)),
+            Self::Ascii(bytes) | Self::Latin1(bytes) => bytes.get(index).map(|byte| u16::from(*byte)),
             Self::Wide(units) => units.get(index).copied(),
         }
     }
@@ -383,7 +471,7 @@ impl<'a> Units<'a> {
     /// The unit at `index`; panics past the end, as slice indexing does.
     pub(crate) fn at(self, index: usize) -> u16 {
         match self {
-            Self::Ascii(bytes) => u16::from(bytes[index]),
+            Self::Ascii(bytes) | Self::Latin1(bytes) => u16::from(bytes[index]),
             Self::Wide(units) => units[index],
         }
     }
@@ -391,6 +479,7 @@ impl<'a> Units<'a> {
     pub(crate) fn iter(self) -> UnitsIter<'a> {
         match self {
             Self::Ascii(bytes) => UnitsIter::Ascii(bytes.iter()),
+            Self::Latin1(bytes) => UnitsIter::Latin1(bytes.iter()),
             Self::Wide(units) => UnitsIter::Wide(units.iter()),
         }
     }
@@ -399,6 +488,7 @@ impl<'a> Units<'a> {
     pub(crate) fn slice(self, range: Range<usize>) -> Self {
         match self {
             Self::Ascii(bytes) => Self::Ascii(&bytes[range]),
+            Self::Latin1(bytes) => Self::Latin1(&bytes[range]),
             Self::Wide(units) => Self::Wide(&units[range]),
         }
     }
@@ -406,6 +496,7 @@ impl<'a> Units<'a> {
     pub(crate) fn get_range(self, range: Range<usize>) -> Option<Self> {
         match self {
             Self::Ascii(bytes) => bytes.get(range).map(Self::Ascii),
+            Self::Latin1(bytes) => bytes.get(range).map(Self::Latin1),
             Self::Wide(units) => units.get(range).map(Self::Wide),
         }
     }
@@ -419,6 +510,7 @@ impl<'a> Units<'a> {
     pub(crate) fn to_utf8(self) -> Vec<u8> {
         match self {
             Self::Ascii(bytes) => bytes.to_vec(),
+            Self::Latin1(bytes) => latin1_text(bytes).into_bytes(),
             Self::Wide(units) => utf16_lossy(units).into_bytes(),
         }
     }
@@ -429,6 +521,7 @@ impl<'a> Units<'a> {
     pub(crate) fn utf8_len(self) -> usize {
         match self {
             Self::Ascii(bytes) => bytes.len(),
+            Self::Latin1(bytes) => bytes.iter().map(|byte| char::from(*byte).len_utf8()).sum(),
             Self::Wide(units) => char::decode_utf16(units.iter().copied())
                 .map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER).len_utf8())
                 .sum(),
@@ -438,14 +531,14 @@ impl<'a> Units<'a> {
     /// The units as UTF-16, borrowed when they already are.
     pub(crate) fn wide(self) -> Cow<'a, [u16]> {
         match self {
-            Self::Ascii(bytes) => Cow::Owned(bytes.iter().map(|byte| u16::from(*byte)).collect()),
+            Self::Ascii(bytes) | Self::Latin1(bytes) => Cow::Owned(bytes.iter().map(|byte| u16::from(*byte)).collect()),
             Self::Wide(units) => Cow::Borrowed(units),
         }
     }
 
     pub(crate) fn extend_into(self, output: &mut Vec<u16>) {
         match self {
-            Self::Ascii(bytes) => output.extend(bytes.iter().map(|byte| u16::from(*byte))),
+            Self::Ascii(bytes) | Self::Latin1(bytes) => output.extend(bytes.iter().map(|byte| u16::from(*byte))),
             Self::Wide(units) => output.extend_from_slice(units),
         }
     }
@@ -459,7 +552,7 @@ impl<'a> Units<'a> {
 impl PartialEq for Units<'_> {
     fn eq(&self, other: &Self) -> bool {
         match (*self, *other) {
-            (Self::Ascii(left), Self::Ascii(right)) => left == right,
+            (Self::Ascii(left) | Self::Latin1(left), Self::Ascii(right) | Self::Latin1(right)) => left == right,
             (Self::Wide(left), Self::Wide(right)) => left == right,
             (left, right) => left.len() == right.len() && left.iter().eq(right.iter()),
         }
@@ -501,7 +594,7 @@ impl PartialEq<Vec<u16>> for Units<'_> {
 impl Ord for Units<'_> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match (*self, *other) {
-            (Self::Ascii(left), Self::Ascii(right)) => left.cmp(right),
+            (Self::Ascii(left) | Self::Latin1(left), Self::Ascii(right) | Self::Latin1(right)) => left.cmp(right),
             (Self::Wide(left), Self::Wide(right)) => left.cmp(right),
             (left, right) => left.iter().cmp(right.iter()),
         }
@@ -523,6 +616,7 @@ impl std::fmt::Debug for Units<'_> {
 #[derive(Clone)]
 pub(crate) enum UnitsIter<'a> {
     Ascii(std::slice::Iter<'a, u8>),
+    Latin1(std::slice::Iter<'a, u8>),
     Wide(std::slice::Iter<'a, u16>),
 }
 
@@ -531,14 +625,14 @@ impl Iterator for UnitsIter<'_> {
 
     fn next(&mut self) -> Option<u16> {
         match self {
-            Self::Ascii(bytes) => bytes.next().map(|byte| u16::from(*byte)),
+            Self::Ascii(bytes) | Self::Latin1(bytes) => bytes.next().map(|byte| u16::from(*byte)),
             Self::Wide(units) => units.next().copied(),
         }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         match self {
-            Self::Ascii(bytes) => bytes.size_hint(),
+            Self::Ascii(bytes) | Self::Latin1(bytes) => bytes.size_hint(),
             Self::Wide(units) => units.size_hint(),
         }
     }
@@ -547,7 +641,7 @@ impl Iterator for UnitsIter<'_> {
 impl DoubleEndedIterator for UnitsIter<'_> {
     fn next_back(&mut self) -> Option<u16> {
         match self {
-            Self::Ascii(bytes) => bytes.next_back().map(|byte| u16::from(*byte)),
+            Self::Ascii(bytes) | Self::Latin1(bytes) => bytes.next_back().map(|byte| u16::from(*byte)),
             Self::Wide(units) => units.next_back().copied(),
         }
     }
@@ -559,7 +653,11 @@ fn is_ascii_unit(unit: u16) -> bool {
     unit < 0x80
 }
 
-/// `units` in their canonical storage.
+/// The largest unit a one-byte (Latin-1) form holds.
+const LATIN1_MAX_UNIT: u16 = 0xFF;
+
+/// `units` in their canonical storage: ASCII, else Latin-1 when every unit is at most U+00FF,
+/// else UTF-16.
 fn flat_units(units: &[u16]) -> FlatUnits {
     if units.iter().all(|unit| is_ascii_unit(*unit)) {
         FlatUnits::ascii_with(units.len(), |bytes| {
@@ -567,9 +665,35 @@ fn flat_units(units: &[u16]) -> FlatUnits {
                 byte.write(*unit as u8);
             }
         })
+    } else if units.iter().all(|unit| *unit <= LATIN1_MAX_UNIT) {
+        FlatUnits::Latin1(units.iter().map(|unit| *unit as u8).collect())
     } else {
         FlatUnits::Wide(Rc::from(units))
     }
+}
+
+/// `bytes`, one Latin-1 unit each, in canonical storage: ASCII text as ASCII, else Latin-1.
+fn latin1_units(bytes: &[u8]) -> FlatUnits {
+    if bytes.is_ascii() {
+        return FlatUnits::ascii_with(bytes.len(), |output| {
+            output.write_copy_of_slice(bytes);
+        });
+    }
+    FlatUnits::Latin1(Rc::from(bytes))
+}
+
+/// The canonical storage of non-ASCII `text`: Latin-1 when every character is at most U+00FF
+/// (one unit each), else UTF-16.
+fn non_ascii_text_units(text: &str) -> FlatUnits {
+    if text.chars().all(|character| u32::from(character) <= u32::from(LATIN1_MAX_UNIT)) {
+        return FlatUnits::Latin1(text.chars().map(|character| character as u32 as u8).collect());
+    }
+    FlatUnits::Wide(wide_units(text, text.encode_utf16().count()))
+}
+
+/// Latin-1 `bytes` as host text: each unit is the character of its value.
+pub(super) fn latin1_text(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| char::from(*byte)).collect()
 }
 
 /// A string is a rope until its units are first read; flattening then releases the halves, so
@@ -579,6 +703,8 @@ struct JsStringInner {
     length: u32,
     /// Every unit is ASCII; known at construction, before a rope flattens.
     ascii: bool,
+    /// Every unit is at most U+00FF, so the flat form is one byte per unit (`Latin1` or ASCII).
+    narrow: bool,
     /// The low half of the units' text hash, made nonzero, once an equality compare
     /// computed it; zero before. Two strings whose halves differ have different units, so
     /// a compare of strings compared before decides inequality without reading units. In
@@ -609,10 +735,11 @@ fn stored_length(length: usize) -> u32 {
 
 impl JsStringInner {
     fn flat(units: FlatUnits) -> Self {
-        let (length, ascii) = (units.view().len(), units.is_ascii());
+        let (length, ascii, narrow) = (units.view().len(), units.is_ascii(), units.is_narrow());
         Self {
             length: stored_length(length),
             ascii,
+            narrow,
             compare_hash: std::cell::Cell::new(0),
             rope_reads: std::cell::Cell::new(0),
             flat: OnceCell::from(units),
@@ -628,6 +755,7 @@ impl JsStringInner {
         Self {
             length: stored_length(length),
             ascii: false,
+            narrow: false,
             compare_hash: std::cell::Cell::new(0),
             rope_reads: std::cell::Cell::new(0),
             flat: OnceCell::new(),
@@ -647,6 +775,7 @@ impl JsStringInner {
         Self {
             length: left.length.saturating_add(right.length),
             ascii: left.ascii && right.ascii,
+            narrow: left.narrow && right.narrow,
             compare_hash: std::cell::Cell::new(0),
             rope_reads: std::cell::Cell::new(0),
             flat: OnceCell::new(),
@@ -708,6 +837,41 @@ impl JsStringInner {
             Some(Aside::Host(host)) => Some(host),
             Some(Aside::Rope(..)) | None => None,
         }
+    }
+
+    /// A rope's host text joined from its parts' own host texts, without making its units:
+    /// ASCII runs, decoded UTF-8 text and wide runs whose host text is already made. `None`
+    /// when a part has no host text yet, or a wide part's ends could pair with a neighbour's
+    /// surrogate (joining lossy texts would then differ from transcoding the joined units).
+    fn joined_host(self: &Rc<Self>) -> Option<String> {
+        let mut text = String::with_capacity(self.length as usize);
+        let mut pending = vec![self.clone()];
+        while let Some(part) = pending.pop() {
+            if let Some(units) = part.flat.get() {
+                match units.view() {
+                    // SAFETY: ASCII units are UTF-8.
+                    Units::Ascii(bytes) => text.push_str(unsafe { std::str::from_utf8_unchecked(bytes) }),
+                    Units::Wide(units) => {
+                        let host = part.cached_host()?;
+                        let pairs_at_ends = units.first().is_some_and(|&u| (0xDC00..=0xDFFF).contains(&u))
+                            || units.last().is_some_and(|&u| (0xD800..=0xDBFF).contains(&u));
+                        if pairs_at_ends {
+                            return None;
+                        }
+                        text.push_str(host);
+                    }
+                }
+                continue;
+            }
+            if let Some(host) = part.unflattened_host() {
+                text.push_str(host);
+                continue;
+            }
+            let (left, right) = part.halves()?;
+            pending.push(right);
+            pending.push(left);
+        }
+        Some(text)
     }
 
     /// Calls `visit` with each flat run of this string, in order.
@@ -783,7 +947,7 @@ impl JsString {
             FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) | FlatUnits::AsciiPrefix(..) => {
                 Repr::Flat(units)
             }
-            FlatUnits::Wide(_) | FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..) => {
+            FlatUnits::Wide(_) | FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..) | FlatUnits::Latin1(_) | FlatUnits::Latin1Prefix(..) => {
                 Repr::Shared(Rc::new(JsStringInner::flat(units)))
             }
             FlatUnits::Parts(_) => parts::not_written_out(),
@@ -841,6 +1005,7 @@ impl JsString {
             Units::Ascii(bytes) => {
                 Self::from_flat(FlatUnits::ascii(unsafe { std::str::from_utf8_unchecked(bytes) }))
             }
+            Units::Latin1(bytes) => Self::from_flat(latin1_units(bytes)),
             Units::Wide(units) => Self::from_units(units),
         }
     }
@@ -880,7 +1045,7 @@ impl JsString {
         if text.is_ascii() {
             return Self::from_flat(FlatUnits::ascii(text));
         }
-        Self::from_flat(FlatUnits::Wide(wide_units(text, text.encode_utf16().count())))
+        Self::from_flat(non_ascii_text_units(text))
     }
 
     /// Text decoded out of data (a file's or a buffer's bytes). Long non-ASCII text keeps the
@@ -893,7 +1058,7 @@ impl JsString {
             return Self::from_str(text);
         }
         charge_materialized_beside(text.len());
-        Self::shared(JsStringInner::decoded(Rc::from(text), text.encode_utf16().count()))
+        Self::shared(JsStringInner::decoded(Rc::from(text), utf16_len(text)))
     }
 
     /// The host text of decoded text whose units are not made yet (`JsString::decoded`): a
@@ -921,7 +1086,7 @@ impl JsString {
         }
         match self.units() {
             Units::Ascii(bytes) => Rc::from(std::str::from_utf8(bytes).expect("ASCII is UTF-8")),
-            Units::Wide(_) => unreachable!("an ASCII string's units are bytes"),
+            Units::Latin1(_) | Units::Wide(_) => unreachable!("an ASCII string's units are bytes"),
         }
     }
 
@@ -1015,6 +1180,12 @@ impl JsString {
         (read.take().expect("read once"))(self.flat_unkept().view())
     }
 
+    /// Whether the string holds the flat form a string record reads in place (`native_string`): its
+    /// units held by the record, short or ASCII or wide, rather than a rope, a slice or parts.
+    pub(crate) fn holds_record_form(&self) -> bool {
+        matches!(&self.repr, Repr::Flat(FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::Wide(_)))
+    }
+
     /// Whether this is a rope of ASCII units not made flat yet.
     pub(crate) fn is_unflattened_ascii_rope(&self) -> bool {
         matches!(&self.repr, Repr::Shared(inner) if inner.ascii && inner.flat.get().is_none() && inner.unflattened_host().is_none())
@@ -1064,7 +1235,7 @@ impl JsString {
             let units = Self::flattened(inner);
             inner.release_halves();
             charge_materialized_units(match units.view() {
-                Units::Ascii(bytes) => bytes.len(),
+                Units::Ascii(bytes) | Units::Latin1(bytes) => bytes.len(),
                 Units::Wide(units) => std::mem::size_of_val(units),
             });
             units
@@ -1135,7 +1306,15 @@ impl JsString {
     fn flattened(inner: &Rc<JsStringInner>) -> FlatUnits {
         let length = inner.length as usize;
         if let Some(host) = inner.unflattened_host() {
-            return FlatUnits::Wide(wide_units(host, length));
+            return non_ascii_text_units(host);
+        }
+        if inner.narrow && !inner.ascii {
+            let mut bytes = Vec::with_capacity(length);
+            inner.for_each_run(|run| match run {
+                Units::Ascii(run) | Units::Latin1(run) => bytes.extend_from_slice(run),
+                Units::Wide(_) => unreachable!("a narrow rope's runs are narrow"),
+            });
+            return FlatUnits::Latin1(Rc::from(bytes));
         }
         if inner.ascii {
             return FlatUnits::ascii_with(length, |output| {
@@ -1168,6 +1347,14 @@ impl JsString {
         if let Some(host) = self.unflattened_host() {
             return host.to_owned();
         }
+        // A rope of host texts (a decoded source with text appended) is joined as host text,
+        // so its units are never made only to be transcoded back.
+        if let Repr::Shared(inner) = &self.repr
+            && inner.flat.get().is_none()
+            && let Some(text) = inner.joined_host()
+        {
+            return text;
+        }
         match (self.flat(), &self.repr) {
             (wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..)), Repr::Shared(inner)) => {
                 inner.cached_host().map_or_else(
@@ -1194,10 +1381,11 @@ impl JsString {
             // SAFETY: an ASCII buffer holds only ASCII bytes, which are UTF-8.
             FlatUnits::AsciiPrefix(buffer, length) => unsafe { std::str::from_utf8_unchecked(buffer.prefix(*length)) },
             FlatUnits::Parts(_) => parts::not_written_out(),
-            wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..)) => match &self.repr {
-                Repr::Shared(inner) => inner.host(|| {
-                    let Units::Wide(units) = wide.view() else { unreachable!("wide units") };
-                    Rc::<str>::from(utf16_lossy(units))
+            wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..) | FlatUnits::Latin1(_) | FlatUnits::Latin1Prefix(..)) => match &self.repr {
+                Repr::Shared(inner) => inner.host(|| match wide.view() {
+                    Units::Wide(units) => Rc::<str>::from(utf16_lossy(units)),
+                    Units::Latin1(bytes) => Rc::<str>::from(latin1_text(bytes)),
+                    Units::Ascii(_) => unreachable!("wide or Latin-1 units"),
                 }),
                 Repr::Flat(_) => unreachable!("a flat string held by value is ASCII"),
             },
@@ -1243,6 +1431,12 @@ impl JsString {
             FlatUnits::WidePrefix(buffer, length) => {
                 buffer.charge(*length) + self.existing_host().map_or(0, |host| host.len())
             }
+            FlatUnits::Latin1(units) => {
+                std::mem::size_of_val(&**units) + self.existing_host().map_or(0, |host| host.len())
+            }
+            FlatUnits::Latin1Prefix(buffer, length) => {
+                buffer.charge(*length) + self.existing_host().map_or(0, |host| host.len())
+            }
             FlatUnits::Parts(_) => parts::not_written_out(),
         }
     }
@@ -1286,8 +1480,13 @@ impl JsString {
                 Rc::as_ptr(&slice.units) as *const u16 as usize,
                 RC_HEADER_BYTES + std::mem::size_of_val(&*slice.units),
             ),
+            FlatUnits::Latin1(units) => (
+                Rc::as_ptr(units) as *const u8 as usize,
+                RC_HEADER_BYTES + std::mem::size_of_val(&**units),
+            ),
             FlatUnits::AsciiPrefix(buffer, _) => buffer.storage(),
             FlatUnits::WidePrefix(buffer, _) => buffer.storage(),
+            FlatUnits::Latin1Prefix(buffer, _) => buffer.storage(),
             FlatUnits::Parts(_) => parts::not_written_out(),
         };
         let host_storage = self.existing_host().map(|host| (Rc::as_ptr(host) as *const u8 as usize, RC_HEADER_BYTES + host.len()));
@@ -1306,10 +1505,20 @@ impl JsString {
         }
         // Wide text built by appends (a decode that met a unit past ASCII) grows the same way.
         if let Repr::Shared(inner) = &self.repr
+            && let Some(FlatUnits::Latin1Prefix(buffer, length)) = inner.flat.get()
+            && let Some(tail) = text.existing_units()
+            && let Some(length) = match tail {
+                Units::Ascii(bytes) | Units::Latin1(bytes) => buffer.append(*length, bytes.iter().copied()),
+                Units::Wide(_) => None,
+            }
+        {
+            return Self::from_flat(FlatUnits::Latin1Prefix(buffer.clone(), length));
+        }
+        if let Repr::Shared(inner) = &self.repr
             && let Some(FlatUnits::WidePrefix(buffer, length)) = inner.flat.get()
             && let Some(tail) = text.existing_units()
             && let Some(length) = match tail {
-                Units::Ascii(bytes) => buffer.append(*length, bytes.iter().map(|byte| u16::from(*byte))),
+                Units::Ascii(bytes) | Units::Latin1(bytes) => buffer.append(*length, bytes.iter().map(|byte| u16::from(*byte))),
                 Units::Wide(units) => buffer.append(*length, units.iter().copied()),
             }
         {
@@ -1377,6 +1586,11 @@ impl JsString {
                 let length = stored_length(buffer.filled());
                 Self::from_flat(FlatUnits::AsciiPrefix(buffer, length))
             }
+            (Units::Ascii(head) | Units::Latin1(head), Units::Ascii(tail) | Units::Latin1(tail)) => {
+                let buffer = AppendBuffer::made_of(head.iter().copied(), tail.iter().copied());
+                let length = stored_length(buffer.filled());
+                Self::from_flat(FlatUnits::Latin1Prefix(buffer, length))
+            }
             (head, tail) => {
                 let buffer = AppendBuffer::made_of(head.iter(), tail.iter());
                 let length = stored_length(buffer.filled());
@@ -1420,11 +1634,22 @@ impl JsString {
         if let (Repr::Flat(FlatUnits::AsciiPrefix(buffer, length)), Units::Ascii(bytes)) = (&mut self.repr, tail) {
             return buffer.append(*length, bytes.iter().copied()).map(|appended| *length = appended).is_some();
         }
+        if let Some(FlatUnits::Latin1Prefix(buffer, length)) = self.existing_flat() {
+            let appended = match tail {
+                Units::Ascii(bytes) | Units::Latin1(bytes) => buffer.append(*length, bytes.iter().copied()),
+                Units::Wide(_) => None,
+            };
+            let Some(length) = appended else {
+                return false;
+            };
+            *self = Self::from_flat(FlatUnits::Latin1Prefix(buffer.clone(), length));
+            return true;
+        }
         let Some(FlatUnits::WidePrefix(buffer, length)) = self.existing_flat() else {
             return false;
         };
         let appended = match tail {
-            Units::Ascii(bytes) => buffer.append(*length, bytes.iter().map(|byte| u16::from(*byte))),
+            Units::Ascii(bytes) | Units::Latin1(bytes) => buffer.append(*length, bytes.iter().map(|byte| u16::from(*byte))),
             Units::Wide(units) => buffer.append(*length, units.iter().copied()),
         };
         let Some(length) = appended else {
@@ -1520,7 +1745,30 @@ impl Hash for JsString {
 
 #[cfg(test)]
 mod tests {
-    use super::JsString;
+    use super::{utf16_len, JsString};
+
+    #[test]
+    fn utf16_length_from_bytes_matches_encoding() {
+        for text in ["", "abc", "é", "€", "𝄞", "a😀b中文\u{10FFFF}", "\u{7FF}\u{800}\u{FFFF}"] {
+            assert_eq!(utf16_len(text), text.encode_utf16().count(), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn wide_utf8_length_matches_the_lossy_encoding() {
+        let samples: [&[u16]; 7] = [&[], &[0x61], &[0xE9, 0x800, 0xFFFF], &[0xD83D, 0xDE00], &[0xD800, 0x62], &[0xDC00, 0xD800], &[0xD83D, 0xD83D, 0xDE00]];
+        for units in samples {
+            assert_eq!(super::wide_utf8_len(units), String::from_utf16_lossy(units).len(), "{units:?}");
+        }
+    }
+
+    #[test]
+    fn wide_units_match_the_standard_encoding() {
+        for text in ["", "abc", "é", "aé\u{1F600}b", "\u{1F600}", "x".repeat(100).as_str(), "мир, 世界 and ascii"] {
+            let expected: Vec<u16> = text.encode_utf16().collect();
+            assert_eq!(&*super::wide_units(text, expected.len()), expected.as_slice(), "{text}");
+        }
+    }
 
     #[test]
     fn concatenation_length_checks_the_limit_and_arithmetic_overflow() {

@@ -173,13 +173,9 @@ pub(crate) const PRIMORDIALS: &[(&str, &[&str])] = &[
     ("mapGet", &["Map", "prototype", "get"]),
 ];
 
-fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    c.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 
-fn type_of(c: &Context<'_>, value: RootId) -> ValueType {
-    c.value_type_rooted(value).unwrap_or(ValueType::Undefined)
-}
+use crate::modules::util_shared_vm::type_of_value as type_of;
 
 fn number_of(c: &Context<'_>, value: RootId) -> Option<f64> {
     c.rooted_value(value).and_then(|value| value.as_number())

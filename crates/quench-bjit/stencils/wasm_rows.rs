@@ -7,15 +7,59 @@
 //! A row continues (`Out::Next`), branches (`Out::Taken`), or leaves through exit 0 with its
 //! status in the first pinned register: a trap's (`WasmTrap::compiled_status`, as the u-jit
 //! leaves), which the exit stub returns. Wasm rows pin nothing else.
+//!
+//! The rows call the staged rules: the operator decoders are `staged::wasm*`, the frame accessors
+//! `wasm_frame.rs`, the stage primitives `wasm_stage.rs`. The one row with no staged rule is
+//! `call_wasm`: a call enters compiled code, which no staged rule describes.
 
 use crate::staged::machine::MachineStage;
-use crate::staged::wasm::{Width, integer_binary};
+use crate::staged::wasm::{binary_operator, integer_binary, unary_operator};
 use crate::staged::wasm_concrete::ConcreteWasm;
+use crate::staged::wasm_float::{float_binary, float_binary_operator, float_unary_operator};
+use crate::staged::wasm_memory::{load, store};
 use crate::wasm::WasmTrap;
-use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
-use crate::words::{HOLE_A, HOLE_B, Out, S, hole64, slot};
+use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S, hole, hole64, slot};
 
-pub(crate) use crate::wasm_codes::*;
+pub(crate) use crate::wasm_kinds::*;
+pub(crate) use crate::wasm_layout::*;
+
+#[path = "wasm_frame.rs"]
+pub(crate) mod wasm_frame;
+use wasm_frame::{access, float_of, read, right, trap, width_of, write};
+#[path = "wasm_stage.rs"]
+mod wasm_stage;
+pub(crate) use wasm_stage::{StencilMemory, StencilSimd};
+#[path = "wasm_call_stage.rs"]
+mod wasm_call_stage;
+use crate::staged::wasm_call::call_entry;
+use wasm_call_stage::{CallStage, leave_with};
+#[path = "wasm_rows_memory.rs"]
+mod wasm_rows_memory;
+use wasm_rows_memory::{memory_copy, memory_fill, memory_size};
+#[path = "wasm_rows_global.rs"]
+mod wasm_rows_global;
+use wasm_rows_global::{global_get, global_set};
+#[path = "wasm_rows_indirect.rs"]
+mod indirect;
+#[path = "wasm_rows_simd.rs"]
+mod simd;
+#[path = "wasm_rows_simd_more.rs"]
+mod simd_more;
+#[path = "wasm_rows_convert.rs"]
+mod wasm_rows_convert;
+use wasm_rows_convert::{COPYSIGN_TAG, convert_row, copysign_row};
+#[path = "wasm_rows_instance.rs"]
+mod wasm_rows_instance;
+use wasm_rows_instance::call_memory_grow;
+#[path = "wasm_rows_call_vm.rs"]
+mod wasm_rows_call_vm;
+use wasm_rows_call_vm::call_vm;
+#[path = "wasm_rows_callout.rs"]
+mod wasm_rows_callout;
+use wasm_rows_callout::{callout, gc_allocate};
+#[path = "wasm_rows_roots.rs"]
+mod wasm_rows_roots;
+use wasm_rows_roots::{root_pop, root_push};
 
 /// The row of codes `K`, `OP`, `W`, `SHAPE` (`wasm_library.rs`).
 #[inline(always)]
@@ -29,59 +73,70 @@ pub(crate) unsafe fn run<const K: u8, const OP: u32, const W: u8, const SHAPE: u
                 write::<0>(&s, read::<HOLE_A>(&s));
                 Out::Next(s)
             }
+            LOAD => memory_load::<OP>(s),
+            CALL => call_wasm::<true>(s),
+            CALL_KEEP => call_wasm::<false>(s),
+            CALL_VM => call_vm(s),
+            CALL_INDIRECT => indirect::call_indirect(s),
+            GLOBAL_GET => global_get::<OP>(s),
+            GLOBAL_SET => global_set::<OP>(s),
+            FLOAT_BINARY if OP == COPYSIGN_TAG => copysign_row::<W>(s),
+            FLOAT_BINARY => {
+                let operator = const { float_binary_operator(OP) };
+                let word = float_binary(&mut ConcreteWasm, operator, const { float_of(W) }, read::<HOLE_A>(&s), read::<HOLE_B>(&s));
+                write::<0>(&s, word);
+                Out::Next(s)
+            }
+            FLOAT_UNARY => {
+                let operator = const { float_unary_operator(OP) };
+                let word = ConcreteWasm.operate_float_unary(operator, const { float_of(W) }, read::<HOLE_A>(&s));
+                write::<0>(&s, word);
+                Out::Next(s)
+            }
+            CONVERT => convert_row::<OP>(s),
+            SELECT => {
+                // The condition is the i32 word in hole FOURTH: `a = (condition ? b : c)`.
+                let condition = u64::from(read::<HOLE_FOURTH>(&s) as u32);
+                write::<0>(&s, ConcreteWasm.select(condition, read::<HOLE_A>(&s), read::<HOLE_B>(&s)));
+                Out::Next(s)
+            }
+            TRAP => trap(s, WasmTrap::Unreachable),
+            STORE => memory_store::<OP>(s),
             CONSTANT => {
                 write::<0>(&s, hole64::<HOLE_B>());
                 Out::Next(s)
             }
+            MEMORY_SIZE => memory_size(s),
+            MEMORY_FILL => memory_fill(s),
+            MEMORY_COPY => memory_copy(s),
+            MEMORY_GROW => call_memory_grow(s),
+            CALLOUT => callout::<OP>(s),
+            GC_ALLOCATE => gc_allocate(s),
+            ROOT_PUSH => root_push(s),
+            ROOT_POP => root_pop(s),
+            SIMD_BINARY => simd::binary::<OP>(s),
+            SIMD_UNARY => simd::unary::<OP>(s),
+            SIMD_SHUFFLE => simd::shuffle(s),
+            SIMD_CONST => simd::constant(s),
+            SIMD_LOAD => simd::load(s),
+            SIMD_STORE => simd::store(s),
+            SIMD_SPLAT => simd::splat::<OP>(s),
+            SIMD_EXTRACT => simd::extract::<OP>(s),
+            SIMD_REPLACE => simd::replace::<OP>(s),
+            SIMD_MOVE => simd::moves(s),
+            SIMD_MORE_BINARY => simd_more::binary::<OP>(s),
+            SIMD_MORE_COMPARE => simd_more::compare::<OP>(s),
+            SIMD_MORE_FLOAT => simd_more::float::<OP>(s),
+            SIMD_MORE_SHIFT => simd_more::shift::<OP>(s),
+            SIMD_MORE_TEST => simd_more::test::<OP>(s),
+            SIMD_MORE_UNARY => simd_more::unary::<OP>(s),
+            SIMD_MORE_WIDEN => simd_more::widen::<OP>(s),
+            SIMD_MORE_WIDE => simd_more::wide::<OP>(s),
+            SIMD_MORE_CONVERT => simd_more::convert::<OP>(s),
+            SIMD_MORE_LOAD => simd_more::load::<OP>(s),
             _ => Out::Taken(s),
         }
     }
-}
-
-// A tag outside the family names no row; the dispatch above never reaches it, but its arms are
-// still instantiated, so the lookups do not panic.
-const fn binary_operator(tag: u32) -> Binary {
-    match Binary::from_tag(tag) {
-        Some(operator) => operator,
-        None => Binary::Add,
-    }
-}
-
-const fn unary_operator(tag: u32) -> Unary {
-    match Unary::from_tag(tag) {
-        Some(operator) => operator,
-        None => Unary::EqualZero,
-    }
-}
-
-const fn width_of(width: u8) -> Width {
-    if width == W32 { Width::I32 } else { Width::I64 }
-}
-
-#[inline(always)]
-unsafe fn read<const H: u8>(s: &S) -> u64 {
-    unsafe { *(slot::<H>(s) as *const u64) }
-}
-
-#[inline(always)]
-unsafe fn write<const H: u8>(s: &S, word: u64) {
-    unsafe { *(slot::<H>(s) as *mut u64) = word }
-}
-
-/// The second operand: a register's word, or the immediate the row's hole holds.
-#[inline(always)]
-unsafe fn right<const SHAPE: u8>(s: &S) -> u64 {
-    if SHAPE == IMMEDIATE { hole64::<HOLE_B>() } else { unsafe { read::<HOLE_B>(s) } }
-}
-
-/// Leaves with `trap`'s status.
-#[inline(always)]
-fn trap(mut s: S, trap: WasmTrap) -> Out {
-    s.p[0] = match trap.compiled_status() {
-        Some(status) => status as usize,
-        None => 0,
-    };
-    Out::Exit(s)
 }
 
 /// `D = A op B` at width `W`: the staged integer rule, its traps included.
@@ -117,6 +172,55 @@ pub(crate) unsafe fn jump<const OP: u32, const W: u8, const SHAPE: u8>(s: S) -> 
     let operator = const { binary_operator(OP) };
     unsafe {
         let (left, right) = (read::<HOLE_A>(&s), right::<SHAPE>(&s));
-        if ConcreteWasm.operate(operator, const { width_of(W) }, left, right) != 0 { Out::Taken(s) } else { Out::Next(s) }
+        // A comparison traps on nothing (`integer_binary` checks only divisions), so its flag is the word.
+        let flag = integer_binary(&mut ConcreteWasm, operator, const { width_of(W) }, left, right).unwrap_or(0);
+        if flag != 0 { Out::Taken(s) } else { Out::Next(s) }
+    }
+}
+
+/// `D = memory[A + B]` of the access `OP` names: the staged rule's check and access.
+#[inline(always)]
+unsafe fn memory_load<const OP: u32>(s: S) -> Out {
+    let access = const { access(OP) };
+    let mut memory = StencilMemory::of(&s);
+    unsafe {
+        match load(&mut memory, access, read::<HOLE_A>(&s), hole::<HOLE_B>() as u32, false) {
+            Ok(word) => {
+                write::<0>(&s, word);
+                Out::Next(s)
+            }
+            Err(error) => trap(s, error),
+        }
+    }
+}
+
+/// `memory[A + B] = D` of the access `OP` names.
+#[inline(always)]
+unsafe fn memory_store<const OP: u32>(s: S) -> Out {
+    let access = const { access(OP) };
+    let mut memory = StencilMemory::of(&s);
+    unsafe {
+        match store(&mut memory, access, read::<HOLE_A>(&s), hole::<HOLE_B>() as u32, read::<0>(&s), false) {
+            Ok(()) => Out::Next(s),
+            Err(error) => trap(s, error),
+        }
+    }
+}
+
+/// Calls the entry in the cell at hole B's address (`call_entry`): the arguments are the registers
+/// from hole A on, the result goes to hole 0's register, and a trap's status leaves. The call
+/// clobbers the pins. `RELOAD` (the callee may grow the memory) reloads the base and length after
+/// it: the length is the context's, read at hole `HOLE_FOURTH`; else they are kept (`CALL_KEEP`).
+#[inline(always)]
+unsafe fn call_wasm<const RELOAD: bool>(mut s: S) -> Out {
+    unsafe {
+        let entry = *(hole64::<HOLE_B>() as *const usize);
+        let (window, destination) = (slot::<HOLE_A>(&s), slot::<0>(&s));
+        let length_at = if RELOAD { hole64::<HOLE_FOURTH>() as usize } else { 0 };
+        let result = {
+            let mut stage = CallStage { s: &mut s };
+            call_entry::<_, RELOAD>(&mut stage, entry, window, destination, length_at)
+        };
+        leave_with(s, result)
     }
 }

@@ -2,10 +2,11 @@
 //! element store helper and a literal allocation's completion.
 
 use super::EmitFrame;
-use super::super::{emit_js_guard, emit_lane_helper_call, Emit, EmitProof, LaneHelper};
+use super::super::{emit_js_guard, emit_js_payload_word, emit_js_record_base, emit_lane_helper_call, Emit, EmitProof,
+    JsStepDispatch, LaneHelper};
 use super::{BindingTime, Fact, Proof, Projection, RegisterFact, Representation, Type};
 use crate::bytecode::{Register, RegisterWindow};
-use crate::staged::Allocation;
+use crate::staged::{Allocation, InlineEmpty};
 use cranelift_codegen::ir;
 use crate::Value;
 use cranelift_codegen::ir::types;
@@ -85,8 +86,7 @@ pub(in super::super) fn index_set(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_
 #[inline(always)]
 pub(super) fn finish_allocation(stage: &mut Emit<'_, '_>, frame: &mut EmitFrame<'_>, destination: Register,
     value: ir::Value, miss: ir::Block) {
-    let made = stage.raw_compare_imm(Relation::NotEqual, value, Value::DELETED.to_bits() as i64);
-    super::super::emit_js_guard(stage.builder, made, miss);
+    crate::staged::protocol::guard_received(stage, value, miss);
     <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, value,
         RegisterFact::definition(Type::ANY, Representation::Tagged));
 }
@@ -114,8 +114,16 @@ fn window_arguments(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, window:
 /// DELETED answer leaves at the proof's miss edge.
 pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register,
     allocation: Allocation, proof: EmitProof) -> Option<ir::Value> {
+    match allocation.inline_empty() {
+        Some(InlineEmpty::Object) => return allocate_template(frame, stage, destination, EMPTY_OBJECT, LaneHelper::NewObject, &[], proof),
+        Some(InlineEmpty::Array) => {
+            let arguments = [stage.raw_const(Lane::I64, 0), stage.raw_const(Lane::I64, 0)];
+            return allocate_template(frame, stage, destination, EMPTY_ARRAY, LaneHelper::NewArray, &arguments, proof);
+        }
+        None => {}
+    }
     let (helper, arguments) = match allocation {
-        Allocation::Empty => (LaneHelper::NewObject, vec![]),
+        Allocation::Empty | Allocation::Array { length: 0 } => unreachable!("an empty allocation is inline"),
         Allocation::Array { length } =>
             (LaneHelper::NewArray, vec![stage.raw_const(Lane::I64, i64::from(length)), stage.raw_const(Lane::I64, 0)]),
         Allocation::ArrayOf { elements } => {
@@ -123,7 +131,15 @@ pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>
             let words = register_words(frame, stage, registers.iter().copied());
             (LaneHelper::NewArray, vec![stage.raw_const(Lane::I64, registers.len() as i64), words])
         }
-        Allocation::RegExp { site } => (LaneHelper::NewRegExp, vec![stage.raw_const(Lane::I64, i64::from(site))]),
+        Allocation::RegExp { site, callee } => {
+            // A callee-argument site passes its call's callee as the register holds it; any other
+            // passes `DELETED`, which is no String method, so the allocator makes a fresh object.
+            let callee = match callee {
+                Some(callee) => <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::tagged(frame, stage, callee),
+                None => stage.raw_const(Lane::I64, Value::DELETED.to_bits() as i64),
+            };
+            (LaneHelper::NewRegExp, vec![stage.raw_const(Lane::I64, i64::from(site)), callee])
+        }
         Allocation::ConstArray { constant, count } =>
             (LaneHelper::NewConstArray, vec![stage.raw_const(Lane::I64, i64::from(constant)), stage.raw_const(Lane::I64, i64::from(count))]),
         Allocation::ObjectPair { site, first, second } => {
@@ -142,6 +158,90 @@ pub(super) fn allocate_value(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>
         }
     };
     frame.allocate(stage, helper, destination, &arguments, proof)
+}
+
+/// Where an inline allocation finds its record: the cursor, the record reservation's base, the record's size and
+/// tag, and the template words (`JsStepDispatch`'s offsets) of one allocation kind.
+#[derive(Clone, Copy)]
+struct Template {
+    cursor: usize,
+    records: usize,
+    record_size: usize,
+    tag: u64,
+    layout: usize,
+    words: usize,
+}
+
+/// An empty ordinary object (`Allocation::Empty`), from the object space's cursor and template.
+const EMPTY_OBJECT: Template = Template {
+    cursor: std::mem::offset_of!(JsStepDispatch, object_cursor),
+    records: std::mem::offset_of!(JsStepDispatch, object_record_base),
+    record_size: crate::heap::NATIVE_OBJECT_LAYOUT.record_size,
+    tag: Value::DIRECT_OBJECT_TAG,
+    layout: std::mem::offset_of!(JsStepDispatch, empty_object_layout),
+    words: std::mem::offset_of!(JsStepDispatch, empty_object_payload),
+};
+
+/// A zero-length array (`Allocation::Array { length: 0 }`), from the array space's cursor and template: its
+/// elements are the static empty header, so its record is its two words alone (`ArrayObject::fresh`).
+const EMPTY_ARRAY: Template = Template {
+    cursor: std::mem::offset_of!(JsStepDispatch, array_cursor),
+    records: std::mem::offset_of!(JsStepDispatch, array_record_base),
+    record_size: crate::heap::NATIVE_ARRAY_LAYOUT.record_size,
+    tag: Value::DIRECT_ARRAY_TAG,
+    layout: std::mem::offset_of!(JsStepDispatch, empty_array_layout),
+    words: std::mem::offset_of!(JsStepDispatch, empty_array_payload),
+};
+
+/// An empty allocation by the kind's cursor (`Template`). While the cursor's run has an id (`next < limit`) and the
+/// kind's record words are captured (`JsStepDispatch::empty_*_layout`), the id is bumped and the record's two words
+/// are stored: no call, and no occupancy write, since the run was occupied and charged when it was claimed.
+/// Otherwise the lane's helper (`helper`, with `arguments`) makes it. That helper checks for a due collection
+/// first, and a spent run is refilled only there, so every run is checked once before it is used.
+fn allocate_template(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register, template: Template,
+    helper: LaneHelper, arguments: &[ir::Value], proof: EmitProof) -> Option<ir::Value> {
+    use crate::heap::{NATIVE_OBJECT_LAYOUT as OBJECT, NATIVE_RECORD_CURSOR_LAYOUT as CURSOR};
+    use crate::staged::region::Region;
+    use crate::staged::Stage;
+    let EmitProof::Allocation { miss } = proof else { return None };
+    let payload = frame.payload;
+    let (next_at, limit_at) = (CURSOR.next_offset as i32, CURSOR.limit_offset as i32);
+    let cursor = emit_js_record_base(stage.builder, payload, template.cursor);
+    let next = stage.load_u32(Region::HeapMeta.mutable(), cursor, next_at);
+    let limit = stage.load_u32(Region::HeapMeta.mutable(), cursor, limit_at);
+    let layout = emit_js_payload_word(stage.builder, payload, template.layout);
+    let words = emit_js_payload_word(stage.builder, payload, template.words);
+    let room = stage.ult(next, limit);
+    let templated = stage.ne_imm(layout, 0u64);
+    let inline = stage.and(room, templated);
+    let fast = stage.builder.create_block();
+    let slow = stage.builder.create_block();
+    let joined = stage.builder.create_block();
+    let made = stage.builder.append_block_param(joined, types::I64);
+    stage.branch_if(inline, (fast, &[]), (slow, &[]));
+
+    stage.builder.switch_to_block(fast);
+    stage.builder.seal_block(fast);
+    let bumped = stage.add_imm(next, 1u64);
+    stage.store_u32(Region::HeapMeta.mutable(), cursor, next_at, bumped);
+    let records = emit_js_record_base(stage.builder, payload, template.records);
+    let stride = stage.mul_imm(next, template.record_size as u64);
+    let record = stage.add(records, stride);
+    stage.store_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32, words);
+    stage.store_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32, layout);
+    let value = stage.or_imm(next, template.tag);
+    stage.goto(joined, &[value]);
+
+    stage.builder.switch_to_block(slow);
+    stage.builder.seal_block(slow);
+    let address = frame.helpers.address(&mut stage.builder, helper);
+    let value = emit_lane_helper_call(stage.builder, payload, address, arguments);
+    stage.goto(joined, &[value]);
+
+    stage.builder.switch_to_block(joined);
+    stage.builder.seal_block(joined);
+    finish_allocation(stage, frame, destination, made, miss);
+    Some(made)
 }
 
 /// The VM's field-store hit (`LaneHelper::FieldSet`): its false answer leaves at the miss edge.

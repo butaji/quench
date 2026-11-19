@@ -39,7 +39,7 @@ fn spares_chunk(instruction: WideInstruction) -> bool {
 
 /// `null !== chunk`, into a register other than the chunk's.
 fn tests_chunk_is_not_null(test: WideInstruction, constants: &[crate::bytecode::Constant]) -> bool {
-    test.op().is_binary()
+    crate::staged::binary(test.op())
         && spares_chunk(test)
         && test.binary_operator() == STRICT_INEQUALITY_OPERATOR
         && test.operand_b().register_index() == Some(CHUNK_PARAMETER)
@@ -49,19 +49,19 @@ fn tests_chunk_is_not_null(test: WideInstruction, constants: &[crate::bytecode::
 
 /// A false test jumps over the append to the result.
 fn skips_append_unless(branch: WideInstruction, test: WideInstruction) -> bool {
-    branch.op().is_jump_false()
+    crate::staged::jumps_when_false(branch.op())
         && branch.register_a() == test.result_register()
         && branch.jump_target() as usize == RESULT_PC
 }
 
 /// A capture of the body's own environment, into a register other than the chunk's.
 fn loads_own_capture(load: WideInstruction) -> bool {
-    load.op().is_load_capture() && spares_chunk(load) && load.capture_depth() == 0
+    crate::staged::reads_capture(load.op()) && spares_chunk(load) && load.capture_depth() == 0
 }
 
 /// `binding + chunk`, in that order.
 fn appends_chunk(add: WideInstruction, load: WideInstruction) -> bool {
-    add.op().is_binary()
+    crate::staged::binary(add.op())
         && add.result_flags() == 0
         && add.binary_operator() == oxc_ast::ast::BinaryOperator::Addition as u32
         && add.operand_b().register_index() == Some(load.result_register())
@@ -70,15 +70,15 @@ fn appends_chunk(add: WideInstruction, load: WideInstruction) -> bool {
 
 /// The sum, stored to the capture the load read.
 fn stores_back(store: WideInstruction, add: WideInstruction, load: WideInstruction) -> bool {
-    store.op().is_store_capture() && store.register_a() == add.result_register() && store.imm() == load.imm()
+    crate::staged::writes_capture(store.op()) && store.register_a() == add.result_register() && store.imm() == load.imm()
 }
 
 /// `return true`, whether or not the append ran.
 fn returns_true(result: WideInstruction, done: WideInstruction, constants: &[crate::bytecode::Constant]) -> bool {
-    result.op().is_load_const()
+    crate::staged::loads_constant(result.op())
         && result.result_flags() & !crate::bytecode::RETURN_REGISTER == 0
         && matches!(constants.get(result.constant_index()), Some(crate::bytecode::Constant::Boolean(true)))
-        && done.op().is_return()
+        && crate::staged::returns(done.op())
         && done.register_a() == result.result_register()
 }
 
@@ -99,11 +99,11 @@ pub(super) unsafe fn run<H: Host>(
     }
     // This leaf allocates, so retain the call's ordinary collection/stack gate even
     // though a hit writes no activation. A due collection must reach the general path.
-    if !lane_activation_room(unsafe { vm(cx) }, target) {
+    if !activation_room_in_lane(unsafe { vm(cx) }, target) {
         return None;
     }
     let (storage, slot, previous) = unsafe { writable_binding(target) }?;
-    let value = lane_concatenation(cx, previous, chunk)?;
+    let value = concat_value(cx, previous, chunk)?;
     // SAFETY: no guest code or collection can have changed this initialized binding.
     unsafe { crate::heap::EnvironmentSlots::write_storage(storage, slot, value) }
         .expect("admitted capture remains initialized without guest effects");

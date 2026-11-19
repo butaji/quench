@@ -103,18 +103,32 @@ pub(crate) struct SlotDependency {
     pub(crate) ty: Type,
 }
 
+/// The prototypes a Stable fact was read through: the `depth` links from the prototype the encoded
+/// link `link` names (`heap::ProtoLink::bits`), nearest first, the holder last. Code holding the
+/// fact holds each one's layout (`Heap::subscribe_prototype_chain`): a change to one of them (its
+/// shape, its prototype link, its integrity, a descriptor its shape does not record) or its death
+/// retires the code, and a change to a prototype off the chain leaves it standing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct PrototypeChain {
+    pub(crate) link: u32,
+    pub(crate) depth: u8,
+}
+
 /// What an `instanceof` of one constructor depends on when its code takes the constructor's
 /// `prototype` as a Stable fact (`Vm::instanceof_fact`): the encoded link of that prototype and the
 /// slot of the constructor's own `prototype` property in its exact shape (a write retires the
-/// code, as does a departure of that shape, which an own `@@hasInstance` would be), and the exact
-/// shape of the holder the constructor inherits the native `@@hasInstance` from (a prototype value
-/// or layout change retires the code).
+/// code, as does a departure of that shape, which an own `@@hasInstance` would be), the exact
+/// shape of the holder the constructor inherits the native `@@hasInstance` from (a change of its
+/// values retires the code), and the chain from the constructor itself to that holder, whose
+/// lookup a new prototype or an `@@hasInstance` added on the way would change (a layout change of
+/// one retires the code).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct InstanceofFact {
     pub(crate) link: u32,
     pub(crate) shape: u32,
     pub(crate) slot: u16,
     pub(crate) holder: u32,
+    pub(crate) chain: PrototypeChain,
 }
 
 impl InstanceofFact {
@@ -208,23 +222,33 @@ impl CodeReaders {
 
     #[inline(never)]
     fn retire_readers(&mut self, owner: u32) {
-        let Some(head) = self.heads.get_mut(owner as usize) else { return };
-        let mut cursor = head.take();
-        while let Some(link) = cursor {
-            if let Some(code) = self.readers[(link.get() - 1) as usize].code.as_ref().and_then(Weak::upgrade) {
-                code.retire();
-            }
-            cursor = self.release(link);
-        }
+        self.take(owner).into_iter().for_each(|code| code.retire());
     }
 
     pub(crate) fn reset(&mut self) {
-        for reader in &mut self.readers {
-            if let Some(code) = reader.code.take().and_then(|code| code.upgrade()) { code.retire(); }
+        self.take_all().into_iter().for_each(|code| code.retire());
+    }
+
+    /// Unlinks `owner`'s readers and gives the code still alive among them, for a caller to
+    /// retire once it no longer holds the table these readers live in (`heap::Dependencies`).
+    pub(crate) fn take(&mut self, owner: u32) -> Vec<Rc<dyn DependentCode>> {
+        let Some(head) = self.heads.get_mut(owner as usize) else { return Vec::new() };
+        let mut cursor = head.take();
+        let mut taken = Vec::new();
+        while let Some(link) = cursor {
+            taken.extend(self.readers[(link.get() - 1) as usize].code.as_ref().and_then(Weak::upgrade));
+            cursor = self.release(link);
         }
+        taken
+    }
+
+    /// `take` of every owner: an event no owner names.
+    pub(crate) fn take_all(&mut self) -> Vec<Rc<dyn DependentCode>> {
+        let taken = self.readers.iter_mut().filter_map(|reader| reader.code.take().and_then(|code| code.upgrade())).collect();
         self.heads.clear();
         self.readers.clear();
         self.free = None;
+        taken
     }
 }
 
@@ -234,66 +258,39 @@ impl Drop for CodeReaders {
 
 /// How a fuse's holder names its method.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FuseKey {
-    IteratorSymbol,
-    /// `next`, of an iterator prototype.
-    Next,
-    Named(&'static str),
-    /// The method a row names: its key is the row's name (`native_rows::row_name`).
-    Method,
-    /// `@@species`, a getter-only accessor whose slot holds the getter.
-    SpeciesSymbol,
-}
-
-/// The one list of fuses: each variant with its holder's key and the realm's intrinsic. The
-/// enum, its count and its key/intrinsic table (`IntactFuse::SPEC`) are derived from it.
-macro_rules! intact_fuses {
-    ($($(#[$doc:meta])* $name:ident => ($key:expr, $native:ident),)*) => {
-        /// A fact about one realm's intrinsic method that fast paths rely on with no check per use
-        /// (a fuse): the realm's holder keeps the fuse's key as an own data property holding the
-        /// realm's intrinsic. A lookup proves it once (`Vm::fuse_intact`); a write to that slot of the
-        /// holder pops it for good (`Fuses::note_slot_write`), and a change of the holder's layout,
-        /// which may move the slot, only sends the next use back to one proof.
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        #[repr(u8)]
-        pub(crate) enum IntactFuse {
-            $($(#[$doc])* $name,)*
-        }
-
-        impl IntactFuse {
-            pub(crate) const COUNT: usize = [$(IntactFuse::$name),*].len();
-            /// Each fuse's key and intrinsic, in variant order.
-            pub(crate) const SPEC: [(FuseKey, crate::heap::Native); IntactFuse::COUNT] =
-                [$(($key, crate::heap::Native::$native)),*];
-        }
-    };
-}
-
-intact_fuses! {
+#[repr(u8)]
+pub(crate) enum IntactFuse {
     /// `Array.prototype[@@iterator]` is the realm's `Array.prototype.values`.
-    ArrayIterator => (FuseKey::IteratorSymbol, ArrayValues),
+    ArrayIterator,
     /// `%ArrayIteratorPrototype%.next` is the realm's intrinsic `next`.
-    ArrayIteratorNext => (FuseKey::Next, ArrayIteratorNext),
+    ArrayIteratorNext,
     /// `Set.prototype[@@iterator]` is the realm's `Set.prototype.values`.
-    SetIterator => (FuseKey::IteratorSymbol, SetValues),
+    SetIterator,
     /// `%SetIteratorPrototype%.next` is the realm's intrinsic `next`.
-    SetIteratorNext => (FuseKey::Next, IteratorNext),
+    SetIteratorNext,
     /// `Map.prototype[@@iterator]` is the realm's `Map.prototype.entries`.
-    MapIterator => (FuseKey::IteratorSymbol, MapEntries),
+    MapIterator,
     /// `%MapIteratorPrototype%.next` is the realm's intrinsic `next`.
-    MapIteratorNext => (FuseKey::Next, IteratorNext),
+    MapIteratorNext,
     /// `String.prototype[@@iterator]` is the realm's intrinsic.
-    StringIterator => (FuseKey::IteratorSymbol, StringValues),
+    StringIterator,
     /// `%StringIteratorPrototype%.next` is the realm's intrinsic `next`.
-    StringIteratorNext => (FuseKey::Next, StringIteratorNext),
-    StringCharCodeAt => (FuseKey::Method, StringCharCodeAt),
-    StringIncludes => (FuseKey::Method, StringIncludes),
-    RegExpTest => (FuseKey::Named("test"), RegExpTest),
-    RegExpExec => (FuseKey::Named("exec"), RegExpExec),
+    StringIteratorNext,
+    StringCharCodeAt,
+    StringIncludes,
+    RegExpTest,
+    RegExpExec,
     /// `Array.prototype.constructor` is the realm's `Array`.
-    ArrayConstructor => (FuseKey::Named("constructor"), Array),
+    ArrayConstructor,
     /// `Array[@@species]` is the intrinsic getter, a getter-only accessor.
-    ArraySpecies => (FuseKey::SpeciesSymbol, ArraySpecies),
+    ArraySpecies,
+    /// `RegExp[@@species]` is the intrinsic getter, a getter-only accessor: the splitter
+    /// `@@split` constructs is the realm's RegExp (`Vm::regexp_literal_argument_of`).
+    RegExpSpecies,
+}
+
+impl IntactFuse {
+    pub(crate) const COUNT: usize = 15;
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]

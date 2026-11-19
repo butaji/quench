@@ -1,5 +1,5 @@
 //! Proved loop kernels: a counted loop whose body is straight-line Number work over record
-//! arrays runs as one record (`lane_loop_kernel`, on the loop's test record) that executes
+//! arrays runs as one record (`loop_kernel_head`, on the loop's test record) that executes
 //! the body column-wise over chunks of iterations in Rust loops, instead of one dispatched
 //! record per operation per iteration.
 //!
@@ -40,9 +40,7 @@ pub(super) use shape::Shape;
 #[thread_local]
 static KERNELS: std::cell::UnsafeCell<Vec<*const LoopKernel>> = std::cell::UnsafeCell::new(Vec::new());
 
-/// Entries declined for too few iterations before the kernel stands down for good.
-const SHORT_DECLINES: u32 = 64;
-
+use crate::vm::compiled::tier_policy::KERNEL_SHORT_DECLINES;
 /// A loop's kernel: its shape, the test record's own handler, and its run state.
 pub(super) struct LoopKernel {
     shape: Shape,
@@ -55,8 +53,9 @@ pub(super) struct LoopKernel {
     /// The run's columns (`run`), kept between runs.
     scratch: std::cell::UnsafeCell<Vec<f64>>,
     /// The run's entry facts and recurrences (`run::State`), kept between runs: an entry
-    /// writes the slots its shape uses and copies nothing.
-    state: std::cell::UnsafeCell<Box<run::State>>,
+    /// writes the slots its shape uses and copies nothing. Made by the first run (`LoopKernel::run`):
+    /// a kernel that never runs keeps none of its roughly 2 KB.
+    state: std::cell::UnsafeCell<Option<Box<run::State>>>,
 }
 
 /// The recurrence pass that runs the loop of `shape`, where the kernel is that loop's tier. A pass
@@ -102,7 +101,7 @@ impl LoopKernel {
             original: std::cell::Cell::new(original),
             declines: std::cell::Cell::new(0),
             scratch: std::cell::UnsafeCell::new(Vec::new()),
-            state: std::cell::UnsafeCell::new(Box::new(run::State::EMPTY)),
+            state: std::cell::UnsafeCell::new(None),
         });
         kernel.slot = register(&kernel)?;
         Some(kernel)
@@ -127,6 +126,14 @@ impl Drop for LoopKernel {
         if let Some(entry) = kernels.get_mut(usize::from(self.slot)) {
             *entry = std::ptr::null();
         }
+        // Trailing free slots name no kernel, so the registry gives them back: it keeps only
+        // as many slots as its live kernels reach, not the peak of every view ever derived.
+        while kernels.last().is_some_and(|entry| entry.is_null()) {
+            kernels.pop();
+        }
+        if kernels.capacity() > 4 * kernels.len().max(8) {
+            kernels.shrink_to_fit();
+        }
     }
 }
 
@@ -143,7 +150,7 @@ fn register(kernel: &LoopKernel) -> Option<u16> {
     Some(slot)
 }
 
-/// Gives each loop that has a kernel its kernel record (`lane_loop_kernel`) on the loop's test
+/// Gives each loop that has a kernel its kernel record (`loop_kernel_head`) on the loop's test
 /// record. Runs after every other pass: the kernel keeps the record's final handler and
 /// leaves the record's operand to it.
 pub(super) fn install_loop_kernels<H: Host>(
@@ -156,7 +163,7 @@ pub(super) fn install_loop_kernels<H: Host>(
     let mut kernels = Vec::new();
     for backedge in 0..decoded.len() {
         let jump = decoded[backedge];
-        if jump.op().class() != Class::Jump {
+        if !matches!(crate::staged::Operation::<(), ()>::decode(jump, crate::staged::DecodeContext::EMPTY), Some(crate::staged::Operation::Jump)) {
             continue;
         }
         let header = jump.jump_target() as usize;
@@ -169,7 +176,7 @@ pub(super) fn install_loop_kernels<H: Host>(
         let Some(kernel) = LoopKernel::of(decoded, constants, function, header, backedge, records[header].handler) else {
             continue;
         };
-        records[header].handler = lane_loop_kernel::<H> as Handler as *const ();
+        records[header].handler = loop_kernel_head::<H> as Handler as *const ();
         records[header].call_link.set(kernel.slot);
         kernels.push(kernel);
     }
@@ -186,7 +193,7 @@ pub(super) fn install_loop_kernels<H: Host>(
 pub(super) unsafe fn requicken_kernel<H: Host>(ip: Ip, handler: Handler) -> bool {
     // SAFETY: the caller's contract.
     let record = unsafe { &*ip };
-    if record.handler != lane_loop_kernel::<H> as Handler as *const () {
+    if record.handler != loop_kernel_head::<H> as Handler as *const () {
         return false;
     }
     // SAFETY: the record names a live kernel of its view (`install_loop_kernels`).
@@ -198,13 +205,13 @@ pub(super) unsafe fn requicken_kernel<H: Host>(ip: Ip, handler: Handler) -> bool
 script_handler! {
     /// A loop's head record holding its kernel (`LoopKernel`): runs the loop as far as the
     /// kernel can, then the record's own handler.
-    fn lane_loop_kernel<>(cx, r, ip, i, view) {
+    fn loop_kernel_head<>(cx, r, ip, i, view) {
         // SAFETY: the record names a live kernel of its view (`install_loop_kernels`).
         let kernel = unsafe { &*(&*KERNELS.get())[usize::from(i.call_link.get())] };
         // The loop's own records continue from where the kernel left the registers: its
         // head runs, then its test, which fails where the kernel ran the whole loop.
         unsafe { kernel.run(cx, r, ip) };
-        if kernel.declines.get() >= SHORT_DECLINES {
+        if kernel.declines.get() >= KERNEL_SHORT_DECLINES {
             kernel.stand_down::<H>(ip);
         }
         sibling!(kernel.original::<H>(), r, ip, Carried::script_in(cx, view))

@@ -49,7 +49,7 @@ fn bitwise_operands_outside_int32_or_unranged_are_any_int32() {
     let operands = [Operand::register(0), Operand::register(1)];
     assert_eq!(bitwise(&outside, NumberBitwise::Or, operands), IntRange::FULL);
     let small = |operand: Operand| (operand.register_index() == Some(0)).then(|| IntRange { min: 0, max: 255 });
-    assert_eq!(bitwise(&small, NumberBitwise::And, operands), IntRange { min: 0, max: 255 }.bitwise_hull(IntRange::FULL));
+    assert_eq!(bitwise(&small, NumberBitwise::And, operands), IntRange { min: 0, max: 255 });
     let zero = |operand: Operand| Some(if operand.register_index() == Some(0) { IntRange { min: 3, max: 9 } } else { IntRange::singleton(0) });
     assert_eq!(bitwise(&zero, NumberBitwise::Or, operands), IntRange { min: 3, max: 9 });
 }

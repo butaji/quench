@@ -165,7 +165,7 @@ fn typed_array(heap: &mut Heap, kind: Kind, bytes: Vec<u8>) -> (Value, Value) {
 /// Publishes the typed array `array` over `buffer`'s bytes, `unshared` or not, as the VM does.
 fn publish(heap: &mut Heap, (array, buffer): (Value, Value), unshared: bool) {
     let Some(Cell::ArrayBuffer { bytes, .. }) = heap.get_mut(buffer) else { unreachable!("a buffer") };
-    let store = bytes.lane_mut().expect("a buffer no other handle shares");
+    let store = bytes.mut_in_lane().expect("a buffer no other handle shares");
     let (data, length) = (store.as_mut_ptr(), store.len());
     let Some(Cell::TypedArray { object, .. }) = heap.get_mut(array) else { unreachable!("a typed array") };
     let width = object.native.kind().width();
@@ -224,7 +224,7 @@ fn the_proof_refuses_another_kind_shared_bytes_to_a_store_a_stale_or_withdrawn_v
     let Some(Cell::TypedArray { object, .. }) = heap.get_mut(array.0) else { unreachable!("a typed array") };
     object.native.retract();
     assert!(proof(&heap, array.0, ViewAccess::READ).is_none(), "a withdrawn view");
-    let plain = heap.alloc(Cell::Array { object: crate::heap::ArrayObject::new(Object::new(Value::NULL), Vec::<Value>::new()) });
+    let plain = heap.alloc_array(crate::heap::ArrayObject::new(Object::new(Value::NULL), Vec::<Value>::new()));
     for other in [Value::integer(1), Value::number(1.5), Value::UNDEFINED, array.1, plain] {
         assert!(proof(&heap, other, ViewAccess::READ).is_none(), "{other:?}");
     }

@@ -11,22 +11,16 @@
 //!
 //! A function body (`entry_body`, the lane body ABI of `lane_body_abi.rs`) is entered as
 //! (rdi = context, rsi = receiver, rdx = captures, rcx = the register file) and returns the
-//! status in eax and its result word in rdx; its receiver is published in the payload for its run. Its leave routines put the word in rax and the
-//! status in rdx, which the thunk swaps on the way out: `leave_stop` (hole 0 the word, hole 1
-//! the status), `leave_stop_pop` (the word an exit stub pushed) and `leave_returned` (the
-//! activation completes with the register slot at hole 0; hole 1 the status, hole 2 the
-//! record that completes it, which the lane reads from the dispatch payload). A body's captures
-//! word is unpacked into the payload's capture words for its run (the slots, their count and whether
-//! they admit every direct store), as a loop region's entry leaves them, and its receiver (rsi) is
-//! published as the payload's receiver; the caller's capture and receiver words are put back when it
-//! returns (a body calls bodies: a callee's entry replaces the words its caller's rows read).
+//! status in eax and its result word in rdx. Its receiver and captures words are the header of its
+//! own window (`CONTEXT_THIS`, `CONTEXT_BODY`), written by whoever enters it (the call row's push, or
+//! the lane's own entry), so the entry saves and restores nothing: a callee's words never replace its
+//! caller's. Its leave routines put the word in rax and the status in rdx, which the thunk swaps on
+//! the way out: `leave_stop` (hole 0 the word, hole 1 the status), `leave_stop_pop` (the word an exit
+//! stub pushed) and `leave_returned` (the activation completes with the register slot at hole 0; hole 1
+//! the status, hole 2 the record that completes it, which the lane reads from the dispatch payload).
 
-use crate::layout::{
-    CALL_CONTEXT_ADAPTER_PAYLOAD, CAPTURE_ADDRESS_PAD, CAPTURE_STORES_BIT, JS_STEP_CAPTURE_LEN, JS_STEP_CAPTURE_STORES, JS_STEP_CAPTURE_VALUES,
-    JS_STEP_RECEIVER, JS_STEP_RETURNED_PC,
-};
+use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_RETURNED_PC};
 use crate::layout::call_record::NATIVE_JS_STOPPED;
-use crate::layout::shared_words::CAPTURE_ADDRESS_BITS;
 use crate::words::HOLE_V0;
 
 unsafe extern "C" {
@@ -96,25 +90,23 @@ pub unsafe extern "C" fn leave_pop() {
     core::arch::naked_asm!("pop rax", "mov edx, {stopped}", "ret", stopped = const NATIVE_JS_STOPPED)
 }
 
-/// The body entry: saves the payload's capture and receiver words (those of the body that entered this one, if a
-/// body did) and publishes in their place its captures word (the dense slots' address below `CAPTURE_ADDRESS_BITS`,
-/// whose low bit says they admit every direct store, and their count above) and the receiver it is entered with
-/// (rsi), calls the first row and puts the saved words back. The pad keeps the stack aligned past the four words.
+/// The body entry (the lane body ABI): calls the first row. The receiver and captures words it is
+/// entered with are in the window's header already (`CONTEXT_THIS`, `CONTEXT_BODY`), written by the
+/// caller, so nothing is saved or restored here.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn entry_body() {
-    thunk!(
-        ["mov rax, [rdi + {payload}]", "push qword ptr [rax + {stores}]", "push qword ptr [rax + {values}]",
-            "push qword ptr [rax + {len}]", "push qword ptr [rax + {receiver}]", "sub rsp, 8", "mov [rax + {receiver}], rsi",
-            "mov r8, rdx", "shl r8, {pad}", "shr r8, {pad}", "mov r9, r8", "and r9, {stores_bit}",
-            "mov [rax + {stores}], r9", "xor r8, r9", "mov [rax + {values}], r8", "shr rdx, {bits}", "mov [rax + {len}], rdx"],
-        "call {first}",
-        ["mov rcx, [r13 + {payload}]", "add rsp, 8", "pop qword ptr [rcx + {receiver}]", "pop qword ptr [rcx + {len}]",
-            "pop qword ptr [rcx + {values}]", "pop qword ptr [rcx + {stores}]"],
-        first = sym HOLE_NEXT, payload = const CALL_CONTEXT_ADAPTER_PAYLOAD, values = const JS_STEP_CAPTURE_VALUES,
-        len = const JS_STEP_CAPTURE_LEN, stores = const JS_STEP_CAPTURE_STORES, stores_bit = const CAPTURE_STORES_BIT,
-        receiver = const JS_STEP_RECEIVER, bits = const CAPTURE_ADDRESS_BITS, pad = const CAPTURE_ADDRESS_PAD
-    )
+    thunk!(["sub rsp, 8"], "call {first}", ["add rsp, 8"], first = sym HOLE_NEXT)
+}
+
+/// The body's row entry (`EntryCell::rows`): a b-jit direct call row (`rust-preserve-none`: window r12,
+/// context r13, receiver r14, captures r15), which keeps nothing live across the call, so no callee-saved
+/// register is saved. The window's header already holds the receiver and captures (the call row's push).
+/// Calls the first row and returns the leave routine's (rax word, rdx status) as they are.
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn entry_rows() {
+    core::arch::naked_asm!("sub rsp, 8", "call {first}", "add rsp, 8", "ret", first = sym HOLE_NEXT)
 }
 
 /// Leaves a body with the word at hole 0 and the status at hole 1.

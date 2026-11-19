@@ -75,10 +75,13 @@ fn array_root(flow: &LoopRegion, values: &Webs, pc: u32, register: Register, vis
     if !visiting.insert((pc, register)) {
         return None;
     }
-    let definitions = values.reaching[(pc - flow.header) as usize].get(&register)?;
+    let definitions = values.reaching((pc - flow.header) as usize, register);
+    if definitions.is_empty() {
+        return None;
+    }
     let mut root = None;
     for definition in definitions {
-        let candidate = definition_root(flow, values, *definition, visiting)?;
+        let candidate = definition_root(flow, values, definition, visiting)?;
         if root.is_some_and(|root| root != candidate) {
             return None;
         }
@@ -97,20 +100,31 @@ fn definition_root(flow: &LoopRegion, values: &Webs, definition: Definition, vis
     }
     let offset = definition.checked_sub(flow.entry_count())?;
     let instruction = *flow.instructions.get(offset)?;
-    if !instruction.op().is_move() || instruction.result_flags() != 0 {
+    if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Move { .. })) || instruction.result_flags() != 0 {
         return None;
     }
     array_root(flow, values, flow.header + offset as u32, instruction.register_b(), visiting)
 }
 
+/// The array access `instruction` is, by its staged row: `Some(true)` for an element read, `Some(false)`
+/// for an element write or the object-coercible check before one, `None` for any other.
+fn element_access(instruction: WideInstruction) -> Option<bool> {
+    use crate::staged::Operation;
+    match Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::EMPTY)? {
+        Operation::ElementRead { .. } => Some(true),
+        Operation::ElementWrite { .. } | Operation::RequireObjectCoercible { .. } => Some(false),
+        _ => None,
+    }
+}
+
 /// Whether every definition of `receiver` reaching `offset` is an element read: a nested array
 /// read, which reads through no entry root.
 fn reads_element_value(flow: &LoopRegion, values: &Webs, offset: usize, receiver: Register) -> bool {
-    values.reaching[offset].get(&receiver).is_some_and(|definitions| {
+    Some(values.reaching(offset, receiver)).is_some_and(|definitions| {
         !definitions.is_empty() && definitions.iter().all(|definition| {
             definition.checked_sub(flow.entry_count())
                 .and_then(|index| flow.instructions.get(index))
-                .is_some_and(|definition| definition.op().is_get_index())
+                .is_some_and(|definition| element_access(*definition) == Some(true))
         })
     })
 }
@@ -120,13 +134,14 @@ fn reads_element_value(flow: &LoopRegion, values: &Webs, offset: usize, receiver
 fn canonical_arrays(flow: &LoopRegion, values: &Webs) -> Option<Vec<WideInstruction>> {
     let mut canonical = flow.instructions.clone();
     for (offset, instruction) in canonical.iter_mut().enumerate() {
-        let Some(receiver) = object_reads(*instruction).filter(|_| instruction.op().is_indexed_access()) else { continue };
+        let Some(reads) = element_access(*instruction) else { continue };
+        let Some(receiver) = object_reads(*instruction) else { continue };
         let root = match array_root(flow, values, flow.header + offset as u32, receiver, &mut BTreeSet::new()) {
             Some(root) => root,
-            None if instruction.op().is_get_index() && reads_element_value(flow, values, offset, receiver) => continue,
+            None if reads && reads_element_value(flow, values, offset, receiver) => continue,
             None => return None,
         };
-        let base = if instruction.op().is_get_index() { Operand::register(root).0 } else { root };
+        let base = if reads { Operand::register(root).0 } else { root };
         *instruction = WideInstruction::new(instruction.op(), instruction.a(), base, instruction.c(), instruction.imm());
     }
     Some(canonical)
@@ -135,7 +150,7 @@ fn canonical_arrays(flow: &LoopRegion, values: &Webs) -> Option<Vec<WideInstruct
 /// The web roots that need an analysis identity: entry values, and the instruction definitions
 /// that define a register (an unused one has none).
 fn analysis_roots(values: &Webs, flow: &LoopRegion) -> Vec<Definition> {
-    let roots: BTreeSet<Definition> = (0..values.parent.len()).map(|definition| values.find(definition)).collect();
+    let roots: BTreeSet<Definition> = (0..values.definitions()).map(|definition| values.find(definition)).collect();
     roots.into_iter().filter(|definition| {
         *definition < flow.entry_count()
             || number_definition(flow.instructions[*definition - flow.entry_count()]).is_some()

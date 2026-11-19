@@ -42,6 +42,7 @@ impl MethodCacheAtoms {
     }
 
     /// The bit words, for generated code that tests a name (`emit_js_own_field_set`).
+    #[inline]
     pub(in crate::vm) fn words(&self) -> &[u64] {
         self.bits.words()
     }

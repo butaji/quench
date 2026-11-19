@@ -20,7 +20,7 @@ pub(crate) trait NumberRelationStage<T> {
 }
 
 macro_rules! number_relations {
-    ($($relation:ident => [$($operator:ident),+ $(,)?], $stage_method:ident;)+) => {
+    ($($relation:ident => [$($operator:ident $symbol:literal),+ $(,)?], $stage_method:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub(crate) enum NumberRelation { $($relation),+ }
 
@@ -54,12 +54,12 @@ macro_rules! number_relations {
 /// Each relation with the operators that denote it; consumers take the table.
 macro_rules! number_relation_rows {
     ($consumer:ident) => { $consumer! {
-        Equal => [Equality, StrictEquality], equal;
-        NotEqual => [Inequality, StrictInequality], not_equal;
-        LessThan => [LessThan], less_than;
-        LessEqual => [LessEqualThan], less_equal;
-        GreaterThan => [GreaterThan], greater_than;
-        GreaterEqual => [GreaterEqualThan], greater_equal;
+        Equal => [Equality "==", StrictEquality "==="], equal;
+        NotEqual => [Inequality "!=", StrictInequality "!=="], not_equal;
+        LessThan => [LessThan "<"], less_than;
+        LessEqual => [LessEqualThan "<="], less_equal;
+        GreaterThan => [GreaterThan ">"], greater_than;
+        GreaterEqual => [GreaterEqualThan ">="], greater_equal;
     }};
 }
 pub(crate) use number_relation_rows;
@@ -163,7 +163,7 @@ macro_rules! number_unary_rows {
     }};
 }
 pub(crate) use number_unary_rows;
-number_unary_rows!(number_unary);
+self::number_unary_rows!(number_unary);
 
 /// The int32 operations used by JavaScript bitwise expressions. Keeping their
 /// operator mapping and operation selection in one stage lets the interpreter
@@ -180,7 +180,7 @@ pub(crate) trait NumberBitwiseStage<T> {
 }
 
 macro_rules! number_bitwise {
-    ($($operation:ident => $operator:ident, $stage_method:ident;)+) => {
+    ($($operation:ident => $operator:ident, $stage_method:ident, $symbol:literal;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub(crate) enum NumberBitwise { $($operation),+ }
 
@@ -203,12 +203,12 @@ macro_rules! number_bitwise {
 /// Each bitwise operation with the operator that denotes it; consumers take the table.
 macro_rules! number_bitwise_rows {
     ($consumer:ident) => { $consumer! {
-        And => BitwiseAnd, and;
-        Or => BitwiseOR, or;
-        Xor => BitwiseXOR, xor;
-        ShiftLeft => ShiftLeft, shift_left;
-        ShiftRight => ShiftRight, shift_right;
-        ShiftRightUnsigned => ShiftRightZeroFill, shift_right_unsigned;
+        And => BitwiseAnd, and, "&";
+        Or => BitwiseOR, or, "|";
+        Xor => BitwiseXOR, xor, "^";
+        ShiftLeft => ShiftLeft, shift_left, "<<";
+        ShiftRight => ShiftRight, shift_right, ">>";
+        ShiftRightUnsigned => ShiftRightZeroFill, shift_right_unsigned, ">>>";
     }};
 }
 pub(crate) use number_bitwise_rows;
@@ -326,11 +326,6 @@ impl NumberTruthinessStage<f64> for NumberF64Stage {
     fn and(&mut self, left: Self::Predicate, right: Self::Predicate) -> Self::Predicate {
         left && right
     }
-}
-
-#[inline(always)]
-pub(crate) fn number_is_truthy(value: f64) -> bool {
-    number_truthiness(&mut NumberF64Stage, value)
 }
 
 pub(crate) struct PartialOrderStage;

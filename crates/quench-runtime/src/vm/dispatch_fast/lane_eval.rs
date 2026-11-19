@@ -19,7 +19,7 @@ impl LaneStack {
     fn own_record(&mut self, depth: usize, record: Box<FrameRecord>) -> *mut FrameRecord {
         self.records.push((depth, record));
         let record: *mut FrameRecord = &mut *self.records.last_mut().expect("the record just pushed").1;
-        if let Some(Activation { kind: ActivationKind::Script(script), .. }) = self.activations.get_mut(depth) {
+        if let Some(ActivationKind::Script(script)) = self.activations_mut().get_mut(depth).map(|activation| activation.kind_mut()) {
             script.record = record;
         }
         record
@@ -49,22 +49,25 @@ fn promote_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, parame
     // SAFETY: the running lane's context, which nothing else accesses.
     let (this, env) = unsafe { ((*cx).registers.this(), (*cx).registers.env()) };
     let record = if scope.record.is_null() {
-        let depth = vm.lane_stack.activations.len() - 1;
-        let callee = vm.lane_stack.activations.last().and_then(Activation::script)?.callee;
+        let depth = vm.lane_stack.activation_count() - 1;
+        let callee = vm.lane_stack.activations().last().and_then(Activation::script)?.callee;
         vm.lane_stack.own_record(depth, FrameRecord::for_eval(scope.program, scope.function, callee, this, env))
     } else {
         scope.record
     };
-    // SAFETY: the window's entries follow the function's registers (`lane_activate_environment`).
+    // SAFETY: the window's entries follow the function's registers (`activate_environment_in_lane`).
     let entries = unsafe { r.0.add(usize::from(body.registers)) };
     // SAFETY: the record is the activation's own, which nothing else accesses during the call;
     // its held bindings pass to the environment, as a closure's creation passes them.
     unsafe {
-        let held = std::mem::take(&mut (*record).dynamic_bindings);
+        let held = (*record).take_dynamic_bindings();
         window_environment(vm, code, entries, scope.function, env, scope.program, this, Some(held));
         (*record).pull_window(entries, usize::from(body.locals));
-        (*record).binding_site_pc = scope.site;
-        (*record).with_objects = scope.chain.into_vec();
+        (*record).replace_binding_site_pc(scope.site);
+        let chain = scope.chain.into_vec();
+        if !chain.is_empty() || !(*record).with_objects().is_empty() {
+            *(*record).with_objects_mut() = chain;
+        }
     }
     Some(EvalWindow { record, entries })
 }
@@ -80,8 +83,7 @@ unsafe fn settle_eval_record(record: *mut FrameRecord, previous_this: Option<Val
         if let Some(this) = previous_this {
             (*record).replace_this(this);
         }
-        (*record).binding_site_pc = None;
-        (*record).with_objects.clear();
+        (*record).end_eval_scope();
         (*record).push_window_locals(entries);
     }
 }
@@ -89,7 +91,7 @@ unsafe fn settle_eval_record(record: *mut FrameRecord, previous_this: Option<Val
 /// The value of the direct eval the call record `i` at `ip` of the innermost window activation
 /// makes, which runs above the activation with the record as its caller (`Vm::eval_callers`).
 /// A raised error is stashed in `Vm::lane_raised` for the frames the general path makes to raise,
-/// and `None` is returned, as for any step the lane makes in place (`lane_in_place`).
+/// and `None` is returned, as for any step the lane makes in place (`in_place_in_lane`).
 fn direct_eval_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let callee = r.get(i.b);
@@ -100,7 +102,7 @@ fn direct_eval_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip,
     let EvalWindow { record, entries } = promote_window(cx, r, ip, parameter_eval)?;
     // SAFETY: the context's program outlives the lane run; the call's window is registers of
     // the running function.
-    let (code, args) = unsafe { (&*(*cx).code, lane_call_window(r, i)) };
+    let (code, args) = unsafe { (&*(*cx).code, call_window_in_lane(r, i)) };
     let receiver = r.get(i.c);
     let previous = (std::mem::replace(&mut vm.direct_eval, true), std::mem::replace(&mut vm.parameter_eval, parameter_eval));
     // SAFETY: as `promote_window`.
@@ -124,19 +126,29 @@ fn direct_eval_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip,
 }
 
 script_handler! {
-    /// A direct eval call of a window activation (`specialize_environment_window`): its value in
-    /// the call's register. Any other callee or activation takes the general path.
+    /// The direct-eval call row of a window record (`window_records`, `WindowRecord::Eval`): the call-out
+    /// the window's activation makes (`direct_eval_in_window`), its value in the call's register. A call the
+    /// window declines, or whose eval raised, leaves to `direct_eval_miss`.
     #[inline(never)]
-    fn lane_direct_eval<>(cx, r, ip, i, view) {
+    fn direct_eval_row<>(cx, r, ip, i, view) {
         let Some(value) = direct_eval_in_window(cx, r, ip, i) else {
-            return exit(ip);
+            sibling!(direct_eval_miss::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
+script_handler! {
+    /// The miss arm of the direct-eval row: the general step runs the call, which makes the eval's
+    /// own frames and raises its errors.
+    #[inline(never)]
+    fn direct_eval_miss<>(cx, r, ip, i, view) {
+        exit(ip)
+    }
+}
+
 /// The handler of a direct eval call in a function whose window activations run it.
-pub(super) const fn direct_eval<H: Host>() -> Handler {
-    lane_direct_eval::<H>
+pub(super) const fn direct_eval_row_handler<H: Host>() -> Handler {
+    direct_eval_row::<H>
 }

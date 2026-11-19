@@ -9,6 +9,10 @@ use super::machine::MachineStage;
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 use crate::{WasmTrap, WasmType};
 
+/// The bytes of a v128: the one definition, which the runtime's and the stencil's `crate::wasm`
+/// re-export.
+pub(crate) const V128_BYTES: usize = core::mem::size_of::<u128>();
+
 /// The integer width an operation runs at; an i32 operator is its i64 namesake at `I32`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Width {
@@ -54,6 +58,7 @@ pub(crate) trait WasmStage: MachineStage {}
 impl<S: MachineStage> WasmStage for S {}
 
 /// Whether `operator` compares: its result is an `I32` flag at either width.
+#[inline(always)]
 pub(crate) const fn is_comparison(operator: Binary) -> bool {
     matches!(
         operator,
@@ -71,6 +76,7 @@ pub(crate) const fn is_comparison(operator: Binary) -> bool {
 }
 
 /// The width of `operator`'s result at `width` operands.
+#[inline(always)]
 pub(crate) const fn binary_result(operator: Binary, width: Width) -> Width {
     if is_comparison(operator) {
         Width::I32
@@ -80,6 +86,7 @@ pub(crate) const fn binary_result(operator: Binary, width: Width) -> Width {
 }
 
 /// The width of `operator`'s result at a `width` operand: a test of zero is a flag.
+#[inline(always)]
 pub(crate) const fn unary_result(operator: Unary, width: Width) -> Width {
     match operator {
         Unary::EqualZero => Width::I32,
@@ -134,4 +141,23 @@ fn check_division<S: WasmStage>(
     let is_negative_one = stage.operate(Binary::Equal, width, right, negative_one);
     let overflow = stage.operate(Binary::And, Width::I32, is_minimum, is_negative_one);
     stage.trap_when(overflow, WasmTrap::IntegerOverflow)
+}
+
+/// The integer operator a tag names. A tag outside the family names no row, so the first operator
+/// stands in (the dispatch never reaches it).
+#[cfg(stencil_build)]
+pub(crate) const fn binary_operator(tag: u32) -> Binary {
+    match Binary::from_tag(tag) {
+        Some(operator) => operator,
+        None => Binary::Add,
+    }
+}
+
+/// The integer unary operator a tag names, as `binary_operator`.
+#[cfg(stencil_build)]
+pub(crate) const fn unary_operator(tag: u32) -> Unary {
+    match Unary::from_tag(tag) {
+        Some(operator) => operator,
+        None => Unary::EqualZero,
+    }
 }

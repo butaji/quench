@@ -487,9 +487,7 @@ fn primitive_array_backing_read_batch(b: &mut Bencher) {
 }
 
 fn record_array(heap: &mut Heap) -> Value {
-    heap.alloc(Cell::Array {
-        object: ArrayObject::new(Object::new(Value::NULL), Inputs::Fractions.values()),
-    })
+    heap.alloc_array(ArrayObject::new(Object::new(Value::NULL), Inputs::Fractions.values()))
 }
 
 #[bench]
@@ -579,9 +577,7 @@ fn array_proved_store_pattern<const DEPENDENT: bool, const INTEGER_INDEX: bool>(
         ArrayStoreKinds::Alternating => [integers, fractions],
     };
     let mut heap = Heap::new();
-    let array = heap.alloc(Cell::Array {
-        object: ArrayObject::new(Object::new(Value::NULL), writes[1]),
-    });
+    let array = heap.alloc_array(ArrayObject::new(Object::new(Value::NULL), writes[1]));
     let mut proofs = Box::new(ArrayStorageProofs::new());
     let _scope = LaneProofScope::enter();
     assert!(heap.prove_array_storage(&mut proofs, 0, array));

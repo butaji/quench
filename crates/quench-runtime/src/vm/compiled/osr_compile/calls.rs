@@ -17,7 +17,7 @@ use quench_bjit::call_record::CallRecord;
 pub(in crate::vm) struct RegionCalls {
     pub(in crate::vm::compiled) callees: Callees,
     pub(in crate::vm::compiled) realm: RealmProof,
-    /// By PC, the callees each call site reached (`lane_direct_callees`): what a Cranelift
+    /// By PC, the callees each call site reached (`direct_callees_in_lane`): what a Cranelift
     /// region calls by their entries, as a lane body does (`unit_direct_calls`).
     pub(in crate::vm::compiled) direct: Vec<DirectCandidates>,
 }
@@ -69,8 +69,16 @@ impl CallCode {
     /// The calls of a region of a function with `caller_registers` registers: `inlined` as their
     /// callees' rows, `direct` by their entries (`records`: those its rows read).
     pub(super) fn of((inlined, direct, records): (Vec<InlinedCall>, Box<[DirectCallee]>, Vec<Box<CallRecord>>), caller_registers: u16, invalidation: Invalidation) -> Self {
-        let recovery = LaneRecoverySpace::inlined(&inlined);
+        // The windows start past the function's environment window (`base_region::function::inline_base`):
+        // the room covers that reach as well as the activations a leave inside a callee pushes.
+        let recovery = LaneRecoverySpace::inlined(&inlined).reaching(window_width(&inlined, caller_registers));
         Self { inlined, direct, records, caller_registers, recovery, invalidation }
+    }
+
+    /// Releases the capacity its vectors hold past their length (`LaneDependencies::trim`).
+    pub(in crate::vm) fn trim(&mut self) {
+        self.inlined.shrink_to_fit();
+        self.records.shrink_to_fit();
     }
 
     /// Whether its code calls a callee by its entry (a b-jit direct row, whose record it owns, or a

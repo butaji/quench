@@ -97,9 +97,7 @@ fn bytes(path: &std::ffi::OsStr) -> Vec<u8> {
         path.to_string_lossy().as_bytes().to_vec()
     }
 }
-fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    c.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 fn encode(
     c: &mut Context<'_>,
     name: &std::ffi::OsStr,

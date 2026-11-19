@@ -5,7 +5,7 @@
 //! fresh zero pages without writing them, so a page becomes resident only once a site on it
 //! records a cache.
 
-/// An entry kind a `SiteTable` holds: its value is stored as `Stored`, and its empty value
+/// An entry kind a `CacheSiteTable` holds: its value is stored as `Stored`, and its empty value
 /// stores as zero words.
 pub(super) trait SiteEntry: Copy {
     /// The stored form: plain `u32` words, so every byte is initialized.
@@ -95,9 +95,20 @@ pub(in crate::vm) mod storage {
     }
 }
 
+/// The host's page size, which `madvise` ranges align to.
+#[cfg(target_os = "linux")]
+fn page_size() -> usize {
+    static PAGE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *PAGE.get_or_init(|| {
+        // SAFETY: a plain query.
+        let bytes = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        usize::try_from(bytes).ok().filter(|bytes| bytes.is_power_of_two()).unwrap_or(MAPPING_GRANULE_BYTES)
+    })
+}
+
 /// One entry per cache site. Entries at and past `len` are zero bits, so growth only
 /// moves the length.
-pub(super) struct SiteTable<T: SiteEntry> {
+pub(super) struct CacheSiteTable<T: SiteEntry> {
     base: std::ptr::NonNull<T::Stored>,
     len: usize,
     /// Entries the mapping holds; zero while there is no mapping.
@@ -105,21 +116,21 @@ pub(super) struct SiteTable<T: SiteEntry> {
 }
 
 // SAFETY: the table owns its mapping as a `Vec` owns its buffer.
-unsafe impl<T: SiteEntry + Send> Send for SiteTable<T> {}
+unsafe impl<T: SiteEntry + Send> Send for CacheSiteTable<T> {}
 
-impl<T: SiteEntry> Default for SiteTable<T> {
+impl<T: SiteEntry> Default for CacheSiteTable<T> {
     fn default() -> Self {
         Self { base: std::ptr::NonNull::dangling(), len: 0, capacity: 0 }
     }
 }
 
-impl<T: SiteEntry> Drop for SiteTable<T> {
+impl<T: SiteEntry> Drop for CacheSiteTable<T> {
     fn drop(&mut self) {
         self.release();
     }
 }
 
-impl<T: SiteEntry> SiteTable<T> {
+impl<T: SiteEntry> CacheSiteTable<T> {
     const ENTRY_BYTES: usize = size_of::<T::Stored>();
 
     /// A table of `len` empty entries.
@@ -204,6 +215,46 @@ impl<T: SiteEntry> SiteTable<T> {
         assert!(index < self.len, "cache site out of range");
         // SAFETY: checked above; an index inside the table names an entry of the mapping.
         unsafe { &mut *self.base.as_ptr().add(index) }
+    }
+
+    /// Empties the entries of `range`, a site range a reclaimed program left. The pages
+    /// wholly inside it go back to the kernel, which reads them as zero, empty, entries
+    /// again and keeps them out of the resident set until a site on them records; only the
+    /// partial pages at its ends are written. Writing every entry empty, as a reused range
+    /// was emptied, made each page of the range resident, though most sites of a large
+    /// bundle never record.
+    pub(super) fn empty_range(&mut self, range: std::ops::Range<usize>) {
+        assert!(range.start <= range.end && range.end <= self.len, "cache site range out of range");
+        if range.is_empty() {
+            return;
+        }
+        // SAFETY: the range lies inside the table's mapping.
+        let start = unsafe { self.base.as_ptr().cast::<u8>().add(range.start * Self::ENTRY_BYTES) };
+        let bytes = range.len() * Self::ENTRY_BYTES;
+        #[cfg(target_os = "linux")]
+        {
+            let page = page_size();
+            let address = start as usize;
+            let head = address.next_multiple_of(page) - address;
+            let tail = (address + bytes) / page * page - address;
+            if head < tail {
+                // SAFETY: whole pages inside the table's own private anonymous mapping, every
+                // entry of which lies in the range and empties.
+                let released = unsafe {
+                    libc::madvise(start.add(head).cast(), tail - head, libc::MADV_DONTNEED)
+                };
+                if released == 0 {
+                    // SAFETY: the partial pages at either end lie in the range.
+                    unsafe {
+                        start.write_bytes(0, head);
+                        start.add(tail).write_bytes(0, bytes - tail);
+                    }
+                    return;
+                }
+            }
+        }
+        // SAFETY: the range lies inside the mapping; zero bytes store empty entries.
+        unsafe { start.write_bytes(0, bytes) };
     }
 
     #[cfg(test)]
@@ -330,7 +381,7 @@ mod tests {
 
     #[test]
     fn empty_entries_read_back_and_growth_keeps_recorded_entries() {
-        let mut table = SiteTable::<u32>::with_empty(3);
+        let mut table = CacheSiteTable::<u32>::with_empty(3);
         assert!(table.iter().all(|entry| entry == u32::MAX));
         table.set(1, 7);
         table.extend_empty(MAPPING_GRANULE_BYTES);

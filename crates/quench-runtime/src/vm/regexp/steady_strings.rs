@@ -41,8 +41,8 @@ impl<H: Host> Vm<H> {
         }
         let method = self.regexp_proven_symbol_method(search, symbol)?;
         match self.heap.function(method) {
-            Some(FunctionRecord { kind: FunctionKind::Native(found), realm, .. })
-                if *found == native && *realm == self.realm.globals => {}
+            Some(record @ FunctionRecord { kind: FunctionKind::Native(found), .. })
+                if *found == native && self.record_realm(record) == self.realm.globals => {}
             _ => return None,
         }
         self.regexp_builtin_receiver_matcher(search)
@@ -87,10 +87,17 @@ impl<H: Host> Vm<H> {
         let realm = self.realm.globals;
         let prototype = self.object_data(proto)?;
         let prototype_shape = prototype.shape();
-        let position = self.regexp_symbol_layouts.iter().position(|layout| {
+        // The layout last proven here is kept last, where the search starts: a program's
+        // steady string method calls meet it at the first compare.
+        let layouts = &mut self.regexp_symbol_layouts;
+        let found = layouts.iter().rposition(|layout| {
             layout.symbol == symbol && layout.realm == realm && layout.prototype_object == proto
                 && layout.receiver == receiver_shape && layout.prototype == prototype_shape
         })?;
+        // Moving it last keeps the others' order, so the first entry is still the one least
+        // recently met, which `remember_shape_proof` evicts.
+        layouts[found..].rotate_left(1);
+        let position = layouts.len() - 1;
         let layout = &self.regexp_symbol_layouts[position];
         if layout.steady.as_ref().is_some_and(|watch| watch.is_published()) {
             return Some(true);
@@ -116,13 +123,13 @@ impl<H: Host> Vm<H> {
         let realm = self.realm.globals;
         let method_is_builtin = matches!(
             self.heap.function(method),
-            Some(FunctionRecord { kind: FunctionKind::Native(found), realm: owner, .. }) if *found == native && *owner == realm
+            Some(record @ FunctionRecord { kind: FunctionKind::Native(found), .. }) if *found == native && self.record_realm(record) == realm
         );
         Some(method_is_builtin && self.is_native_function(exec, Native::RegExpExec))
     }
 
     /// `String.prototype.replace(regexp, string)` when the call runs no guest code, so it
-    /// observes no frame (`lane_regexp_call`): a string receiver and replacement, and a
+    /// observes no frame (`regexp_call_in_lane`): a string receiver and replacement, and a
     /// RegExp whose `@@replace` is this realm's builtin (`regexp_proven_symbol_method`) and
     /// whose exec, flags and lastIndex are builtin (`regexp_builtin_receiver_matcher`).
     /// Those make the native's steps the builtin `@@replace`'s fast path, which this runs;

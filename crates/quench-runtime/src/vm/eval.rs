@@ -2,6 +2,7 @@ use super::object_descriptors::PropertyDescriptorRecord;
 use super::*;
 
 pub(crate) mod eval_source;
+mod owned_host;
 mod private_names;
 
 /// Whether source contains only ECMAScript whitespace and comments. This is a
@@ -176,7 +177,7 @@ impl<H: Host> Vm<H> {
         let result = (|| {
             self.instantiate_global_declarations(&residual)?;
             let root = self.closure(&residual, 0, Value::NULL)?;
-            self.call_value(&residual, root, self.realm.globals, &[])
+            self.call_root(&residual, root, self.realm.globals)
         })();
         self.set_active_program(active_program);
         self.eval_script_context = eval_script_context;
@@ -342,6 +343,9 @@ impl<H: Host> Vm<H> {
         }
         let kept = host_script.then(|| self.kept_host_script(source_name, mode, source)).flatten();
         let compiled = kept.is_none();
+        // The eval string's own ASCII storage, which the program keeps when it compiled exactly
+        // that text, so no copy of the text is made for it.
+        let provided_text = shared_text.as_ref().and_then(eval_source::SharedText::whole_ascii).map(crate::bytecode::SourceText::Local);
         let mut residual = match kept {
             Some(residual) => Ok(residual),
             None => crate::Engine::specialize_eval_with_context(
@@ -352,6 +356,7 @@ impl<H: Host> Vm<H> {
             facts.context,
             &facts.private_names,
             &facts.annex_b_forbidden_names,
+            provided_text,
         ),
         }
         .map_err(|diagnostics| {
@@ -378,8 +383,11 @@ impl<H: Host> Vm<H> {
         };
         if host_script && compiled
             && let Some(program) = self.programs.get(program_id)
-            && let Some(bytes) = self.encode_cached_program(&program)
+            && let Some(mut bytes) = self.encode_cached_program(&program)
         {
+            // The kept entry carries its source, so a later run reads it in place
+            // (`kept_host_script`) instead of copying the host's text into the program.
+            crate::bytecode::append_kept_source(&mut bytes, source);
             self.host.keep_compiled_program(source_name, &[mode, source], &bytes);
         }
         if let Some(key) = direct_key {
@@ -430,7 +438,7 @@ impl<H: Host> Vm<H> {
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>, keep_records: bool,
     ) -> Result<Value, JsError> {
         let prepared = self.prepare_embedding_specialized_script_retaining(
-            source, name, origin, None, keep_records, true,
+            source, name, origin, None, keep_records, true, None,
         )?;
         self.evaluate_embedding_prepared_script(&prepared)
     }
@@ -445,7 +453,7 @@ impl<H: Host> Vm<H> {
         origin: Option<(u32, u32)>,
     ) -> Result<Value, JsError> {
         let prepared =
-            self.prepare_embedding_specialized_script_retaining(source, name, origin, None, true, false)?;
+            self.prepare_embedding_specialized_script_retaining(source, name, origin, None, true, false, None)?;
         self.evaluate_embedding_prepared_script(&prepared)
     }
 
@@ -460,7 +468,7 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("host wrapper origin exceeds compiler positions".into()))?;
         let base = u32::try_from(prefix.len())
             .map_err(|_| JsError("host wrapper prefix exceeds compiler positions".into()))?;
-        self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)), true, false)
+        self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)), true, false, None)
     }
 
     /// `prepare_embedding_library_body` through the host's compile cache
@@ -596,16 +604,22 @@ impl<H: Host> Vm<H> {
     pub(crate) fn prepare_embedding_specialized_script(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
     ) -> Result<crate::PreparedScript, JsError> {
-        self.prepare_embedding_specialized_script_retaining(source, name, origin, None, false, false)
+        self.prepare_embedding_specialized_script_retaining(source, name, origin, None, false, false, None)
     }
 
     /// `retained` names static text the program keeps in place of its compiled source, and
-    /// the compiled byte offset where that text starts.
+    /// the compiled byte offset where that text starts. `provided` is the caller's shared text
+    /// of `source`, which the program keeps when it compiled exactly it (`kept_or_provided`).
+    ///
+    /// A rejected compile returns the SyntaxError it always threw, tagged with its
+    /// `CompileFailureKind`: `Syntax` when the first diagnostic is a syntax error, else
+    /// `Unsupported`. A stack exhaustion is not tagged.
     pub(super) fn prepare_embedding_specialized_script_retaining(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
         retained: Option<(crate::bytecode::SourceText, u32)>,
         keep_records: bool,
         typescript: bool,
+        provided: Option<crate::bytecode::SourceText>,
     ) -> Result<crate::PreparedScript, JsError> {
         let program = self.embedding_program()?;
         // A script compiled from its own text (a package's module, an application's entry) goes
@@ -635,7 +649,7 @@ impl<H: Host> Vm<H> {
         // A program keeping only static text cannot compile its functions again from it. One
         // that runs from its kept form encodes each record its load releases.
         let released = if cache_key.is_some() { crate::compile::ReleasedRecords::Encoded } else { crate::compile::ReleasedRecords::Dropped };
-        let compiled = crate::Engine::specialize_host_script(source, name, &*self, options, released);
+        let compiled = crate::Engine::specialize_host_script_provided(source, name, &*self, options, released, true, provided);
         let mut residual = compiled
             .map_err(|diagnostics| {
                 if diagnostics
@@ -647,8 +661,14 @@ impl<H: Host> Vm<H> {
                 let message = diagnostics
                     .first()
                     .map_or_else(|| "invalid host script".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
+                // The message above comes from the first diagnostic, so its kind classifies the failure.
+                let kind = match diagnostics.first() {
+                    Some(diagnostic) if diagnostic.is_syntax_error() => CompileFailureKind::Syntax,
+                    _ => CompileFailureKind::Unsupported,
+                };
                 self.syntax_error_result(&program, &message)
                     .expect_err("specialized host-script syntax errors must throw")
+                    .with_compile_failure(kind)
             })?;
         if let (Some(source), Some((line_offset, column_offset))) = (&mut residual.source, origin) {
             source.line_offset = line_offset;
@@ -690,7 +710,7 @@ impl<H: Host> Vm<H> {
         }
         // Its final source is settled, so a function compiles again from it on first call.
         #[cfg(feature = "profile-aggregate")]
-        let retain_profile_records = std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some();
+        let retain_profile_records = crate::vm::switches::profile_retain_bytecode();
         #[cfg(not(feature = "profile-aggregate"))]
         let retain_profile_records = false;
         if !retain_profile_records {
@@ -713,6 +733,11 @@ impl<H: Host> Vm<H> {
         &mut self, source: &str, name: &str, origin: (u32, u32),
     ) -> Result<crate::CompiledScript, JsError> {
         let prepared = self.prepare_embedding_specialized_script(source, name, Some(origin))?;
+        self.register_embedding_compiled_script(prepared)
+    }
+
+    /// Makes the compiled Script of `prepared` the state its handle names.
+    fn register_embedding_compiled_script(&mut self, prepared: crate::PreparedScript) -> Result<crate::CompiledScript, JsError> {
         let context = self.embedding_program()?;
         let Some(source) = self.store_prepared_script(&prepared)? else {
             return Err(self.type_error(&context, "dynamic program store is full".into()));
@@ -1027,7 +1052,7 @@ impl<H: Host> Vm<H> {
     /// site resuming at `site`: a copy that names the site, sharing the activation's dynamic
     /// bindings and slots, so the closure's by-name lookups find what the site scopes. The
     /// environment itself where there is no such site. A frame's closure
-    /// (`capture_binding_environment`) and a window activation's (`lane_make_scoped_closure`)
+    /// (`capture_binding_environment`) and a window activation's (`scoped_names::scoped_closure_into`)
     /// make it the same way.
     pub(super) fn site_environment(&mut self, environment: Value, site: Option<u32>) -> Result<Value, JsError> {
         let Some(binding_site_pc) = site else {
@@ -1145,7 +1170,12 @@ impl<H: Host> Vm<H> {
             CallTarget::User(_, function, environment) => (function, environment),
             CallTarget::Native(_) => return Err(JsError("eval body is not a user closure".into())),
         };
-        self.with_call_roots([callee, this], |vm| {
+        // An eval root is a root activation like a script's: global var stores and mirrors find
+        // it through `active_roots` (`store_global_var_binding`), so it must sit at the index
+        // pushed here, with no deferred lane activations materializing above it later.
+        self.materialize_deferred_lane();
+        self.active_roots.push(self.frames.len());
+        let result = self.with_call_roots([callee, this], |vm| {
             vm.call_user(
                 program,
                 function,
@@ -1158,7 +1188,9 @@ impl<H: Host> Vm<H> {
                     CallContext::IndirectEval(callee)
                 },
             )
-        })
+        });
+        self.active_roots.pop();
+        result
     }
 
     pub(super) fn private_home_binding_atom(&mut self, private: Atom) -> Atom {

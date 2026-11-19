@@ -5,6 +5,7 @@
 //! the `throw` to find the handler. One no handler of the function covers leaves the body as
 //! `LANE_BODY_THREW`, the exception in `Vm::lane_raised`, which native callers unwind through
 //! the same way and the lane raises where it resumes: no frame is made for the exception.
+use crate::bytecode::Class;
 use super::*;
 use super::super::object_slots::emit;
 use crate::staged::{Region, Stage};
@@ -31,7 +32,7 @@ pub(super) enum Bind {
     Register(Register),
     /// A frame local no environment owns, stored where the interpreter stores it.
     Local(u16),
-    /// Frame state only the frame's own helper settles (`dispatch_fast::lane_handler_edge`): the
+    /// Frame state only the frame's own helper settles (`dispatch_fast::handler_edge`): the
     /// `with` scopes the exception leaves, and a local the frame's environment owns, which a
     /// captured frame gives a fresh environment per entry; the promoted register, if any.
     Frame(Option<Register>),
@@ -40,7 +41,7 @@ pub(super) enum Bind {
 /// Whether an exception no handler of a body covers unwinds through its native callers alone: a
 /// generator or async function ends in its promise or generator state, and a dynamic scope in the
 /// `with` scopes of its frame, which only the lane's own unwinding settles. A loop region's
-/// exception leaves to the lane, which settles any function's (`dispatch_fast::lane_raised_exit`).
+/// exception leaves to the lane, which settles any function's (`dispatch_fast::raised_exit_in_lane`).
 fn unwinds_natively(function: &Function) -> bool {
     !(function.is_generator || function.is_async || function.has_dynamic_scope_access())
 }
@@ -49,11 +50,11 @@ fn unwinds_natively(function: &Function) -> bool {
 /// register of the unit, or a call or construction, whose callee may throw. A call that returns
 /// its result (`RETURN_REGISTER`) raises as any call: its register is untouched on the raise.
 fn raising_instruction(instruction: WideInstruction, registers: Register) -> bool {
-    let class = instruction.op().class();
-    if class.eq(Class::Throw) {
+    use crate::staged::meaning::{means, Meaning};
+    if means(instruction, Meaning::Throw) {
         instruction.result_flags() == 0 && instruction.register_a() < registers
     } else {
-        (class.eq(Class::Call) || class.eq(Class::Construct))
+        (means(instruction, Meaning::Call) || means(instruction, Meaning::Construct))
             && instruction.result_flags() & !crate::bytecode::RETURN_REGISTER == 0
     }
 }
@@ -88,7 +89,7 @@ struct Admission<'a> {
 impl Admission<'_> {
     /// Whether the frame state a handler's entry settles is the running function's own wherever it
     /// runs: a loop region runs in the innermost frame or activation, which the helper settles
-    /// (`dispatch_fast::lane_handler_edge`), a window's included, and so does a body of any
+    /// (`dispatch_fast::handler_edge`), a window's included, and so does a body of any
     /// function but a registers-only one, whose calls may be native frames no activation names
     /// (`general_frameless_admit`, `DirectCallee`); a window's body is its own activation.
     fn settles_where_it_runs(&self) -> bool {
@@ -261,7 +262,7 @@ impl Lowering<'_, '_> {
     /// The entry of the handler that catches the exception `value` thrown at record `pc`, as
     /// `Vm::exception_handler_target` makes it: the value to its register or its frame local,
     /// or, where the frame holds state to settle, the frame's helper
-    /// (`dispatch_fast::lane_handler_edge`), whose allocation may move the property arena.
+    /// (`dispatch_fast::handler_edge`), whose allocation may move the property arena.
     fn bind_caught(&mut self, state: &mut State, pc: usize, bind: Bind, value: ir::Value) {
         match bind {
             Bind::Nothing => {}
@@ -271,7 +272,7 @@ impl Lowering<'_, '_> {
                 self.store_word(regions::frame(), value, address, 0);
             }
             Bind::Frame(register) => {
-                let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+                let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.lane_context));
                 let record = self.raw_const(Lane::I64, pc as i64);
                 self.helper_call(LaneHelper::HandlerEdge, &[context, record, value]);
                 self.allocated(state);
@@ -288,7 +289,7 @@ impl Lowering<'_, '_> {
         let record = self.raw_const(Lane::I64, i64::from(record));
         let payload = self.payload;
         emit(&mut self.builder).store_u64(Region::Dispatch.mutable(), payload,
-            i32::try_from(std::mem::offset_of!(JsStepDispatch, returned_pc)).expect("dispatch offset fits i32"), record);
+            i32::try_from(std::mem::offset_of!(JsStepDispatch, head.returned_pc)).expect("dispatch offset fits i32"), record);
         let status = self.raw_const(Lane::I32, i64::from(status));
         self.leave_with(status, value);
     }

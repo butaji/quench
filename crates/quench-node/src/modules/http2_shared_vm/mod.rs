@@ -21,8 +21,10 @@ pub(crate) use server::member as server_member;
 pub(crate) use session::member as session_member;
 pub(crate) use stream::member as stream_member;
 
+use crate::modules::buffer_codec;
 use crate::modules::host_members::{current, function, members};
 use crate::modules::stream_shared_vm::{call_method, get, put, Context, Outcome};
+use crate::modules::util_shared_vm::{validate_boolean, validate_function, validate_number};
 use connection::Connection;
 use faults::Fault;
 use quench_runtime::{RootId, RootedError};
@@ -472,27 +474,6 @@ fn types_expectation(types: &str) -> String {
     }
 }
 
-fn validate_function(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(), RootedError> {
-    if c.is_callable_rooted(value)? {
-        return Ok(());
-    }
-    Err(crate::modules::util_shared_vm::argument_type_error(c, value, name, "function")?)
-}
-
-fn validate_boolean(c: &mut Context<'_>, value: RootId, name: &str) -> Result<bool, RootedError> {
-    match c.rooted_value(value).and_then(|value| value.as_bool()) {
-        Some(value) => Ok(value),
-        None => Err(crate::modules::util_shared_vm::argument_type_error(c, value, name, "boolean")?),
-    }
-}
-
-fn validate_number(c: &mut Context<'_>, value: RootId, name: &str) -> Result<f64, RootedError> {
-    match c.rooted_value(value).and_then(|value| value.as_number()) {
-        Some(value) => Ok(value),
-        None => Err(crate::modules::util_shared_vm::argument_type_error(c, value, name, "number")?),
-    }
-}
-
 /// `validateInteger(value, name, minimum, maximum)`.
 fn validate_integer(c: &mut Context<'_>, value: RootId, name: &str, minimum: f64, maximum: f64) -> Result<f64, RootedError> {
     let maximum = c.number(maximum);
@@ -501,12 +482,11 @@ fn validate_integer(c: &mut Context<'_>, value: RootId, name: &str, minimum: f64
 
 /// The octets of a Latin-1 string (Node's header and ALTSVC encoding).
 fn latin1(c: &mut Context<'_>, value: RootId) -> Result<Vec<u8>, RootedError> {
-    Ok(c.to_string_code_units(value)?.into_iter().map(|unit| unit as u8).collect())
+    Ok(buffer_codec::encode_units(&c.to_string_code_units(value)?, "latin1"))
 }
 
 fn latin1_string(c: &mut Context<'_>, bytes: &[u8]) -> RootId {
-    let units: Vec<u16> = bytes.iter().map(|&byte| u16::from(byte)).collect();
-    c.string_units_rooted(&units)
+    c.string_units_rooted(&buffer_codec::decode_units(bytes, "latin1"))
 }
 
 fn buffer(c: &mut Context<'_>, bytes: Vec<u8>) -> Outcome {

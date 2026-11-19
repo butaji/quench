@@ -146,9 +146,9 @@ pub(super) struct PlainAssignShape {
 }
 
 /// `PlainCopyShapeMemo` for `Set` (`Object.assign`): keyed also by the target's prototype,
-/// whose chain the copy proved intercepts none of the keys, and valid while the
-/// `prototype_layout_epoch` it was proved under holds.
-pub(super) type PlainAssignShapeMemo = ShapeMemo<(u32, super::Value), PlainAssignShape>;
+/// whose chain the copy proved intercepts none of the keys, and valid while that chain's cell
+/// holds (`heap::ChainCell`).
+pub(super) type PlainAssignShapeMemo = ShapeMemo<(u32, super::Value), (u32, crate::heap::ChainCell)>;
 
 impl<K: Copy + Eq + Hash, V: Copy> Default for ShapeMemo<K, V> {
     fn default() -> Self {

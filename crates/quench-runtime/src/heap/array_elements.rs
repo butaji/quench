@@ -10,30 +10,37 @@
 //! copies it to an allocation of its own (`make_mut`), as does the collection its array
 //! survives (`ArrayElements::leave_nursery`), so every young run's owner is a young array
 //! record its sweep shows.
+use crate::staged::record_heads::ArrayHeaderHead;
 use crate::value::Value;
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error, realloc};
 use std::ptr::NonNull;
 
+/// A backing's header: its words are `ArrayHeaderHead` (`staged::record_heads`), which the
+/// stencils read by offset. `capacity` takes `BIASED` when the header was moved past values a
+/// front removal dropped (`UniqueElements::remove` of index 0), and `others` is the fold of
+/// every write's int32-ness, which native code reads with one load (`OTHERS_UNKNOWN` once it
+/// stores uncounted values). Field accesses reach the head through `Deref`.
 #[repr(C, align(8))]
 struct Header {
-    /// Owners of this backing; zero where no owner counts it: the shared empty header and
-    /// young runs, which no drop frees.
-    owners: u32,
-    len: u32,
-    /// Room for values after the header, with `BIASED` set when the header was moved past
-    /// values a front removal dropped (`UniqueElements::remove` of index 0): the allocation
-    /// then starts `bias` values earlier, a count kept in the word just before the header.
-    capacity: u32,
-    /// How many values below `len` are not int32s, holes (`Value::DELETED`) included: the
-    /// fold of every write, each adding what it writes and removing what it overwrites, so a
-    /// reader proves every value an int32 with one load instead of a scan. At least the
-    /// true count once native code stored unknown values (`OTHERS_UNKNOWN`).
-    others: u32,
+    head: ArrayHeaderHead,
 }
 
-/// The conservative `others` marker native code stores for uncounted writes. Incremental
-/// updates preserve it until the backing's values are counted again.
-pub(crate) const OTHERS_UNKNOWN: u32 = u32::MAX;
+impl std::ops::Deref for Header {
+    type Target = ArrayHeaderHead;
+    #[inline(always)]
+    fn deref(&self) -> &ArrayHeaderHead {
+        &self.head
+    }
+}
+
+impl std::ops::DerefMut for Header {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut ArrayHeaderHead {
+        &mut self.head
+    }
+}
+
+pub(crate) use crate::staged::encodings::OTHERS_UNKNOWN;
 
 use crate::staged::elements::{concrete_other as other, concrete_recount as recounted};
 
@@ -84,27 +91,21 @@ const _: () = assert!(align_of::<Header>() <= align_of::<Value>());
 const _: () = assert!(VALUES_OFFSET.is_multiple_of(align_of::<Value>()));
 const _: () = assert!(align_of::<Header>() >= align_of::<Value>());
 /// The byte offset from a backing's first value to its `u32` length, which native appends advance.
-pub(crate) const LENGTH_FROM_VALUES: i32 = std::mem::offset_of!(Header, len) as i32 - VALUES_OFFSET as i32;
+pub(crate) const LENGTH_FROM_VALUES: i32 = (std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, len)) as i32 - VALUES_OFFSET as i32;
 /// The byte offset from a backing's first value to its `u32` count of other values
 /// (`Header::others`), which native code reads at entry, and sets to `OTHERS_UNKNOWN` where
 /// it may store uncounted values.
-pub(crate) const OTHERS_FROM_VALUES: i32 = std::mem::offset_of!(Header, others) as i32 - VALUES_OFFSET as i32;
+pub(crate) const OTHERS_FROM_VALUES: i32 = (std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, others)) as i32 - VALUES_OFFSET as i32;
 
 /// The header every empty backing shares: never written, never freed.
 static EMPTY: Header = Header {
-    owners: 0,
-    len: 0,
-    capacity: 0,
-    others: 0,
+    head: ArrayHeaderHead { owners: 0, len: 0, capacity: 0, others: 0 },
 };
 
-/// The `Header::capacity` flag of a backing whose header moved past dropped front values.
-pub(super) const BIASED: u32 = 1 << 31;
-
-/// The `Header::capacity` flag of a wide backing made from a narrow one (`widened`): its
-/// array was read hot or written since it narrowed, so no collection narrows it again
-/// (`may_narrow`), and an array narrows and widens at most once. Front removals may drop it.
-const KEEP_WIDE: u32 = 1 << 30;
+// The `Header::capacity` flags (`staged::object_encoding`): `BIASED` marks a header moved past dropped
+// front values; `KEEP_WIDE` marks a wide backing made from a narrow one (`widened`), which no collection
+// narrows again (`may_narrow`), so an array narrows and widens at most once. Front removals may drop it.
+pub(super) use crate::staged::object_encoding::{BIASED, KEEP_WIDE};
 
 /// The `Header::len` flag of a narrow backing: its values are 4-byte narrow forms
 /// (`Value::to_narrow`) from `VALUES_OFFSET`, read through `ArrayElements::get`. A
@@ -114,7 +115,7 @@ const KEEP_WIDE: u32 = 1 << 30;
 /// decodes (`concrete_record_element`); a length read as an int32 fails its sign test. Only
 /// a collection makes a narrow backing (`leave_nursery`, `narrow_in_place`), never one a
 /// running view holds.
-pub(crate) const NARROW_LEN: u32 = 1 << 31;
+pub(crate) use crate::staged::encodings::NARROW_LEN;
 
 /// The `Header::len` flag of a double backing: every value word is the IEEE-754 bits of a
 /// Number, whole or not (3 as 3.0's bits, never the int32 tag), and a hole is
@@ -127,20 +128,26 @@ pub(crate) const NARROW_LEN: u32 = 1 << 31;
 /// narrow and double. Format: research/nojit/n2-n4/double-kind-format.txt. Native readers
 /// miss on it with the narrow flag (`ENCODED_LEN`), and only `QUENCH_DEV=double-elements`
 /// makes one until compiled tiers guard it.
-pub(crate) const DOUBLE_LEN: u32 = 1 << 30;
+pub(crate) use crate::staged::encodings::DOUBLE_LEN;
 
 /// Either flag of a backing whose values are not 8-byte `Value`s in place.
-pub(crate) const ENCODED_LEN: u32 = NARROW_LEN | DOUBLE_LEN;
+pub(crate) use crate::staged::encodings::ENCODED_LEN;
 
-/// Whether backings may take the double kind (`DOUBLE_LEN`).
+/// Whether backings may take the double kind (`DOUBLE_LEN`): in production unless
+/// `QUENCH_DEV=no-double-elements`; in a test only where it asks (`TEST_DOUBLES`), as tests
+/// slice backings as wide values.
+#[cfg(not(test))]
 #[inline(always)]
 fn double_elements() -> bool {
-    #[cfg(test)]
-    if TEST_DOUBLES.get() {
-        return true;
-    }
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| crate::trace::Dev::DoubleElements.on())
+    *ON.get_or_init(|| !crate::trace::Dev::NoDoubleElements.on())
+}
+
+/// `double_elements` in a test.
+#[cfg(test)]
+#[inline(always)]
+fn double_elements() -> bool {
+    TEST_DOUBLES.get()
 }
 
 #[cfg(test)]
@@ -174,15 +181,9 @@ const TRIM_MIN_LEN: usize = 16;
 /// as it moves values.
 const COMPACT_LIVE_DIVISOR: usize = 2;
 
-/// The smallest capacity a growing backing takes, as `Vec` grows from empty.
+/// The smallest capacity a growing backing takes, as `Vec` grows from empty. The backing
+/// grows by half (`GrowthPolicy::Half`, in `heap::growth`), not doubled as `Vec`.
 const MIN_GROWN_CAPACITY: usize = 4;
-
-/// A full backing grows by its capacity shifted right by this, so by half (as V8 grows
-/// fast elements), not doubled as `Vec`: appending stays amortized constant, and the slack
-/// a grown backing holds drops from up to its length to half of it. V8-v7 Crypto, whose
-/// bignum digit arrays grow by append: median RSS memory-first `--jit` 2844 -> 2728 KiB,
-/// throughput 8316 -> 7292 KiB, with Score within run noise across the suite.
-const GROWTH_SHIFT: u32 = 1;
 
 /// Packed to four bytes: an array record (`ArrayObject`) holds it in its 4-aligned payload word.
 #[repr(C, packed(4))]
@@ -194,13 +195,13 @@ pub(crate) struct ArrayElements {
 /// describe so native code does not maintain a second copy of the storage layout.
 pub(super) const NATIVE_HEADER_POINTER_OFFSET: usize =
     std::mem::offset_of!(ArrayElements, header);
-pub(super) const NATIVE_HEADER_LENGTH_OFFSET: usize = std::mem::offset_of!(Header, len);
-pub(super) const NATIVE_HEADER_OWNERS_OFFSET: usize = std::mem::offset_of!(Header, owners);
+pub(super) const NATIVE_HEADER_LENGTH_OFFSET: usize = std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, len);
+pub(super) const NATIVE_HEADER_OWNERS_OFFSET: usize = std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, owners);
 /// The byte offset of the `u32` capacity word, which only the backing's allocator and growth change.
-pub(super) const NATIVE_HEADER_CAPACITY_OFFSET: usize = std::mem::offset_of!(Header, capacity);
+pub(super) const NATIVE_HEADER_CAPACITY_OFFSET: usize = std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, capacity);
 /// The capacity word's bits that count values: those left once the `BIASED` and `KEEP_WIDE`
 /// flags are dropped.
-pub(super) const NATIVE_HEADER_CAPACITY_MASK: u32 = !(BIASED | KEEP_WIDE);
+pub(super) use crate::staged::object_encoding::HEADER_CAPACITY_MASK as NATIVE_HEADER_CAPACITY_MASK;
 pub(super) const NATIVE_HEADER_VALUES_OFFSET: usize = VALUES_OFFSET;
 
 const _: () = assert!(NATIVE_HEADER_POINTER_OFFSET == 0);
@@ -297,10 +298,7 @@ impl ArrayElements {
         // SAFETY: the run starts with room for a header, which no owner counts.
         unsafe {
             header.as_ptr().write(Header {
-                owners: 0,
-                len: len as u32,
-                capacity: len as u32,
-                others: counted,
+                head: ArrayHeaderHead { owners: 0, len: len as u32, capacity: len as u32, others: counted },
             });
         }
         elements
@@ -412,10 +410,7 @@ impl ArrayElements {
         // SAFETY: the allocation is fresh and sized for a header.
         unsafe {
             header.as_ptr().write(Header {
-                owners: 1,
-                len: len as u32,
-                capacity: capacity_word,
-                others: 0,
+                head: ArrayHeaderHead { owners: 1, len: len as u32, capacity: capacity_word, others: 0 },
             });
         }
         Self { header }
@@ -590,10 +585,7 @@ impl ArrayElements {
                 narrow.add(index).write(word);
             }
             header.as_ptr().write(Header {
-                owners: 1,
-                len: len as u32 | NARROW_LEN,
-                capacity: len as u32,
-                others: self.header().others,
+                head: ArrayHeaderHead { owners: 1, len: len as u32 | NARROW_LEN, capacity: len as u32, others: self.header().others },
             });
         }
         Some(Self { header })
@@ -739,6 +731,7 @@ impl ArrayElements {
         true
     }
 
+    #[cfg(test)]
     /// `UniqueElements::set` through the first value a unique backing gave
     /// (`unique_values`): the count of other values in its header keeps the write.
     ///
@@ -760,10 +753,13 @@ impl ArrayElements {
 
     /// Turns a wide backing of int32 values alone (`holds_only_int32`), which this array
     /// owns alone, into a double one in place: each value's word becomes its double's bits.
+    /// The words stop being `Value`s, so the running lane's array storage proofs, which read
+    /// and write them as such, retire first (`DOUBLE_LEN`).
     #[cold]
     #[inline(never)]
     fn enter_double(&mut self) {
         debug_assert!(self.is_unique() && self.header().others == 0);
+        super::array_proofs::retire_array_storage_proofs();
         let words = self.double_words();
         for index in 0..self.len() {
             // SAFETY: the backing holds `len` initialized int32 values, this array's own.
@@ -780,6 +776,19 @@ impl ArrayElements {
         }
     }
 
+    /// An empty double backing of one owner with room for its first appends, where backings
+    /// take the double kind (`double_elements`); the shared empty header where they do not.
+    /// A TypeScript `number[]` binding's empty literal starts with it (`Vm::make_array`).
+    pub(crate) fn double_with_room() -> Self {
+        if !double_elements() {
+            return Self::new();
+        }
+        let elements = Self::allocate(MIN_GROWN_CAPACITY, 0);
+        // SAFETY: a fresh allocation of one owner, empty.
+        unsafe { (*elements.header.as_ptr()).len = DOUBLE_LEN };
+        elements
+    }
+
     /// Appends the Number `value` to a double backing this array alone owns, or to an empty
     /// or all-int32 one that `value` (not an int32) turns double, growing as `reserve` does.
     /// `false` changes nothing: the caller appends as to any backing, which makes a double
@@ -790,10 +799,8 @@ impl ArrayElements {
                 return false;
             }
             if self.capacity() == 0 {
-                *self = Self::allocate(MIN_GROWN_CAPACITY, 0);
+                *self = Self::double_with_room();
                 *grown = MIN_GROWN_CAPACITY;
-                // SAFETY: a fresh allocation of one owner, empty.
-                unsafe { (*self.header.as_ptr()).len = DOUBLE_LEN };
             } else if self.is_unique() && self.header().others == 0 && self.takes_double() {
                 self.enter_double();
             } else {
@@ -854,6 +861,10 @@ impl ArrayElements {
     /// A wide copy of this backing, of one owner.
     fn widened(&self) -> Self {
         if self.is_encoded() {
+            // An empty double backing (`double_with_room`) widens to no allocation.
+            if self.is_empty() {
+                return Self::new();
+            }
             let mut copy = Self::from_fn(self.len(), |index| self.read(index));
             if self.is_narrow() {
                 copy.make_mut().set_others(self.header().others);
@@ -1071,7 +1082,7 @@ impl UniqueElements {
         }
     }
 
-    /// Room for `additional` more values, growing by `GROWTH_SHIFT`. Inline: a backing with
+    /// Room for `additional` more values, growing by half (`GrowthPolicy::Half`). Inline: a backing with
     /// room, the common append, tests its capacity alone.
     #[inline(always)]
     pub(crate) fn reserve(&mut self, additional: usize) {
@@ -1091,7 +1102,7 @@ impl UniqueElements {
             }
         }
         let capacity = self.0.capacity();
-        let grown = required.max(capacity + (capacity >> GROWTH_SHIFT)).max(MIN_GROWN_CAPACITY);
+        let grown = grown_capacity(capacity, required, GrowthPolicy::Half { minimum: MIN_GROWN_CAPACITY });
         self.grow_to(grown);
     }
 

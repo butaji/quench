@@ -15,10 +15,15 @@ pub enum CallRow {
     /// NEXT (completed), TAKEN (a step that branched), EXIT0 (missed: leave at the pc, no spill),
     /// EXIT1 (leave with (status, word) in the first two pinned ints: `LEAVE_STATUS`).
     Helper,
+    /// `Helper` with the instruction the planner decoded in value holes 2 and 3 (`WideInstruction::from_words`),
+    /// for the helper that runs it without decoding the record again (`call_helper_packed`).
+    HelperPacked,
     /// The direct call of `argc` arguments (at most `MAX_DIRECT_ARGC`) through an entry cell:
     /// value hole 0 is the `CallRecord`'s address; successors NEXT (refused: the helper row),
-    /// TAKEN (completed), EXIT0 (a leave inside the callee, `LEAVE_STATUS`).
-    Direct { argc: u8, sloppy: bool },
+    /// TAKEN (completed), EXIT0 (a leave inside the callee, `LEAVE_STATUS`). `checked` compares the
+    /// callee register with the record's callee; the unchecked row (a callee a Stable fact holds, whose
+    /// change retires the body) does not read the register.
+    Direct { argc: u8, this: ThisRow, checked: bool },
     /// The pinned register `Place::Pin` or `Place::PinF` back from the tagged word a spill wrote
     /// to the frame slot at hole 0; successor NEXT.
     Reload(Place),
@@ -78,6 +83,11 @@ impl BuiltinRow {
     }
 }
 
+/// How a direct row binds the callee's `this`: the receiver as it is (strict), boxed or the
+/// global for nullish (sloppy), or none for an arrow, whose body reads its environment's (lexical).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ThisRow { Strict, Sloppy, Lexical }
+
 /// The routine a leave through a (status, word) pair ends in (`stencils/call_rows.rs`).
 pub const LEAVE_STATUS: &str = "leave_status";
 
@@ -86,9 +96,11 @@ impl CallRow {
     pub fn name(self) -> Result<String, String> {
         match self {
             CallRow::Helper => Ok("call_helper".to_string()),
+            CallRow::HelperPacked => Ok("call_helper_packed".to_string()),
             CallRow::Here => Ok("exit_here".to_string()),
-            CallRow::Direct { argc, sloppy } if usize::from(argc) <= MAX_DIRECT_ARGC => {
-                Ok(format!("call_direct_a{argc}_{}", if sloppy { "sloppy" } else { "strict" }))
+            CallRow::Direct { argc, this, checked } if usize::from(argc) <= MAX_DIRECT_ARGC => {
+                let mode = match this { ThisRow::Strict => "strict", ThisRow::Sloppy => "sloppy", ThisRow::Lexical => "lexical" };
+                Ok(format!("call_direct_a{argc}_{mode}{}", if checked { "" } else { "_unchecked" }))
             }
             CallRow::Reload(place @ (Place::Pin(_) | Place::PinF(_))) => Ok(format!("reload_{}", place.code())),
             CallRow::Builtin(row) => Ok(format!("builtin_{}", row.symbol())),
@@ -117,10 +129,10 @@ mod tests {
     use crate::{EXIT, NEXT, TAKEN};
 
     fn rows() -> Vec<CallRow> {
-        let direct = (0..=MAX_DIRECT_ARGC as u8).flat_map(|argc| [false, true].map(|sloppy| CallRow::Direct { argc, sloppy }));
+        let direct = (0..=MAX_DIRECT_ARGC as u8).flat_map(|argc| [ThisRow::Strict, ThisRow::Sloppy, ThisRow::Lexical].into_iter()
+            .flat_map(move |this| [true, false].map(|checked| CallRow::Direct { argc, this, checked })));
         let pins = (0..crate::PINNED as u8).map(Place::Pin).chain((0..crate::PINNED_F as u8).map(Place::PinF)).map(CallRow::Reload);
-        let builtins = BuiltinRow::ALL.into_iter().map(CallRow::Builtin);
-        [CallRow::Helper, CallRow::Here].into_iter().chain(direct).chain(pins).chain(builtins).collect()
+        [CallRow::Helper, CallRow::HelperPacked, CallRow::Here].into_iter().chain(direct).chain(pins).collect()
     }
 
     /// Every row the planner can name was built, and its successors and holes are the contract's.
@@ -131,9 +143,12 @@ mod tests {
             let successors: Vec<u32> = stencil.relocs.iter().filter(|r| crate::class::is_successor(r.class)).map(|r| r.index).collect();
             let values: Vec<u32> = stencil.relocs.iter().filter(|r| !crate::class::is_successor(r.class)).map(|r| r.index).collect();
             match row {
-                CallRow::Helper => {
+                CallRow::Helper | CallRow::HelperPacked => {
                     assert!([NEXT, TAKEN, EXIT, EXIT + 1].iter().all(|s| successors.contains(s)), "{successors:?}");
                     assert!(values.contains(&0) && values.contains(&1), "{values:?}");
+                    if row == CallRow::HelperPacked {
+                        assert!(values.contains(&2) && values.contains(&3), "{values:?}");
+                    }
                 }
                 CallRow::Here => {
                     assert_eq!(successors, [EXIT]);
@@ -158,7 +173,7 @@ mod tests {
 
     #[test]
     fn rows_beyond_the_contract_do_not_exist() {
-        assert!(CallRow::Direct { argc: MAX_DIRECT_ARGC as u8 + 1, sloppy: false }.name().is_err());
+        assert!(CallRow::Direct { argc: MAX_DIRECT_ARGC as u8 + 1, this: ThisRow::Strict, checked: true }.name().is_err());
         assert!(CallRow::Reload(Place::Mem).name().is_err());
     }
 }

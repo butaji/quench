@@ -104,6 +104,8 @@ ops.k_nbody_pair = function (n) {
 };
 // Allocation: an object literal, a function constructor's instance and a class instance per
 // iteration, each read back; the C twins allocate the same struct on the heap (malloc + free).
+// A one-field object literal per iteration (`{ v: i }`), consumed locally.
+ops.alloc_literal1 = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = { v: i }; s = (s + p.v) | 0; } return s; };
 ops.alloc_literal = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = { x: i, y: 1 }; s = (s + p.x + p.y) | 0; } return s; };
 function Pair(x, y) { this.x = x; this.y = y; }
 ops.alloc_ctor = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = new Pair(i, 1); s = (s + p.x + p.y) | 0; } return s; };
@@ -225,6 +227,12 @@ function nameRead(n, o) { let a = 0; for (let i = 0; i < n; i++) { a = (a + o.na
 function lengthRead(n, o) { let a = 0; for (let i = 0; i < n; i++) { a = (a + o.length) | 0; } return a; }
 ops.field_name = function (n) { return nameRead(n, { id: 3, name: 4 }); };
 ops.field_length = function (n) { return lengthRead(n, { id: 3, length: 4 }); };
+// Builtin method calls outside the lane's builtin rows: the native call protocol plus a small
+// body (a search of a short needle, a short slice, a type test).
+ops.str_includes = function (n) { let a = 0; const s = S; for (let i = 0; i < n; i++) { if (s.includes("lazy")) a++; } return a; };
+ops.str_slice = function (n) { let a = 0; const s = S; for (let i = 0; i < n; i++) { a += s.slice(4, 9).length; } return a; };
+ops.arr_isarray = function (n) { const arr = [1, 2, 3]; let a = 0; for (let i = 0; i < n; i++) { if (Array.isArray(arr)) a++; } return a; };
+ops.arr_slice = function (n) { const arr = [1, 2, 3, 4]; let a = 0; for (let i = 0; i < n; i++) { a += arr.slice(0, 2).length; } return a; };
 // Builtin bodies against their C twins (TOD-1839, rule: C-shaped code runs as C). Each budget in
 // ir_budget.txt is the twin's count plus a call-dispatch allowance, not 3x C: the builtin body
 // itself must cost what C costs, and the interpreter adds only the call's dispatch.

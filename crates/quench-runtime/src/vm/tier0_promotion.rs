@@ -27,14 +27,31 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Whether a lane call may derive `function`'s view now (`ProgramStore::lane_call_may_derive`),
+    /// Whether a lane call may derive `function`'s view now (`ProgramStore::call_may_derive_in_lane`),
     /// lowering it first where its unlowered runs are done, or from its unlowered record where
     /// a live frame of it kept blocking that (`ResidualProgram::tier0_blocked`).
-    pub(super) fn lane_call_may_derive(&self, program: ProgramId, function: u32) -> bool {
+    /// Beside a window activation (`Vm::runs_windows_in_lane`) a call that waits boxes the window's
+    /// record as a frame, which costs more than its view: the callee lowers where nothing keeps
+    /// it unlowered and derives at once, its deferred runs skipped.
+    pub(super) fn call_may_derive_in_lane(&self, program: ProgramId, function: u32) -> bool {
+        let now = self.runs_windows_in_lane();
         let blocked = self.programs.residual(program).is_some_and(|code| {
-            self.promote_tier0_if_due(code, function);
+            if now {
+                self.promote_tier0_now(code, function);
+            } else {
+                self.promote_tier0_if_due(code, function);
+            }
             code.runs_tier0(function as usize) && code.tier0_blocked(function as usize, super::compiled::tier_policy::TIER0_BLOCKED_RUNS)
         });
-        self.programs.lane_call_may_derive(program, function, blocked)
+        self.programs.call_may_derive_in_lane(program, function, blocked, now)
+    }
+
+    /// `promote_tier0_if_due` with no unlowered runs left to wait for: lowers function `id` of
+    /// `code` where it runs unlowered, unpinned, with no frame of it live.
+    fn promote_tier0_now(&self, code: &ResidualProgram, id: u32) {
+        // No runs are counted: an unlowered, unpinned function is due at once.
+        if code.tier0_due(id as usize, 0) && !crate::trace::Dev::Tier0Always.on() {
+            self.promote_tier0_unless_running(code, id);
+        }
     }
 }

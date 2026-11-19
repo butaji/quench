@@ -1,6 +1,7 @@
 use super::*;
-use super::site_table::SiteTable;
+use super::site_table::CacheSiteTable;
 use crate::Engine;
+use crate::bytecode::ReceiverPath;
 use crate::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
 
@@ -78,7 +79,7 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
         cache,
         argument_start: 0,
         argument_count: 0,
-        receiver_path: None,
+        receiver_path: ReceiverPath::NONE,
     });
     let function = program
         .functions
@@ -102,7 +103,7 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
     let methods = program
         .method_sites
         .iter()
-        .map(|site| (site.atom, site.cache, Vec::new(), site.receiver_path))
+        .map(|site| (site.atom, site.cache, Vec::new(), site.receiver_path.get()))
         .collect::<Vec<_>>();
     crate::compile::liveness::mark_register_roots(
         program.functions.iter_mut().map(|function| &mut **function),
@@ -127,6 +128,7 @@ fn third_receiver_promotes_field_site_to_megamorphic() {
                 receiver,
                 holder: NO_FIELD_HOLDER,
                 slot: 0,
+                holder_id: NO_FIELD_HOLDER_LAYOUT,
             },
         );
     }
@@ -180,6 +182,7 @@ fn field_primitive_census_counts_successes_and_preserves_shape_rejections() {
         receiver: vm.heap.object(child).unwrap().exact_shape(),
         holder: hint.receiver,
         slot: hint.slot,
+        holder_id: NO_FIELD_HOLDER_LAYOUT,
     };
     assert_eq!(vm.record_field_entry_hit(holder_hint, child), Some(Value::integer(0)));
     assert_eq!(vm.record_field_entry_hit(holder_hint, other), None);
@@ -282,7 +285,7 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     let shape = vm.heap.object(receiver).unwrap().shape();
     let slot = vm.shape_slot(shape, atom).unwrap();
     vm.record_field_cache(vm.field_cache_index(site), FieldCache {
-        receiver: shape, holder: NO_FIELD_HOLDER, slot: slot as u16,
+        receiver: shape, holder: NO_FIELD_HOLDER, slot: slot as u16, holder_id: NO_FIELD_HOLDER_LAYOUT,
     });
     vm.heap.track_slot_representations(&vm.shape_layouts());
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::INT32);
@@ -1386,16 +1389,16 @@ fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
 fn field_cache_invalidation_resets_every_written_site() {
     const SITES: usize = 64;
     let mut vm = Vm::new(TestHost::default());
-    vm.field_caches = SiteTable::with_empty(SITES);
+    vm.field_caches = CacheSiteTable::with_empty(SITES);
     vm.refresh_active_field_entries();
-    vm.megamorphic_field_indices = SiteTable::with_empty(SITES);
-    vm.field_add_indices = SiteTable::with_empty(SITES);
-    vm.inherited_field_indices = SiteTable::with_empty(SITES);
-    vm.accessor_field_indices = SiteTable::with_empty(SITES);
+    vm.megamorphic_field_indices = CacheSiteTable::with_empty(SITES);
+    vm.field_add_indices = CacheSiteTable::with_empty(SITES);
+    vm.inherited_field_indices = CacheSiteTable::with_empty(SITES);
+    vm.accessor_field_indices = CacheSiteTable::with_empty(SITES);
     vm.field_cache_writes = Some(Vec::new());
     let record = |vm: &mut Vm<TestHost>, site: usize| {
         for receiver in 1..=3 {
-            vm.record_field_cache(site, FieldCache { receiver, holder: NO_FIELD_HOLDER, slot: 0 });
+            vm.record_field_cache(site, FieldCache { receiver, holder: NO_FIELD_HOLDER, slot: 0, holder_id: NO_FIELD_HOLDER_LAYOUT });
         }
     };
     let all_empty = |vm: &Vm<TestHost>| {

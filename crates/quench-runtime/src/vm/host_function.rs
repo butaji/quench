@@ -144,7 +144,7 @@ impl<H: Host> Vm<H> {
         self.create_shape_data_property(function, name_key, name_value, FUNCTION_INFO_ATTRIBUTES)?;
         self.capture_function_name_for_atom(function, name_atom);
         if constructible {
-            let prototype = self.heap.alloc(Cell::Object(Self::empty_object(self.object_proto)));
+            let prototype = self.heap.alloc_object(Self::empty_object(self.object_proto));
             let constructor_atom = self.runtime_atoms.constructor;
             self.set_property_with_attributes(
                 prototype,

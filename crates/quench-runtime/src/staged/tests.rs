@@ -8,6 +8,7 @@ fn window_values(allocation: Allocation) -> i32 {
     match allocation {
         Allocation::ObjectLiteral { window, .. } | Allocation::Concat { window } => i32::from(window.count),
         Allocation::ObjectPair { .. } => 2,
+        Allocation::RegExp { callee: Some(_), .. } => 1,
         Allocation::ArrayOf { elements } => elements.registers().len() as i32,
         Allocation::Empty | Allocation::Array { .. } | Allocation::RegExp { .. } | Allocation::ConstArray { .. } | Allocation::Closure { .. } | Allocation::Template { .. } => 0,
     }
@@ -159,7 +160,7 @@ fn typeof_index_of(value: Value) -> Option<u64> {
 fn staged_typeof_index_names_every_immediate_and_leaves_heap_values() {
     let name = |text: &str| crate::bytecode::typeof_name_index(text).map(|index| index as u64);
     let mut heap = Heap::new();
-    let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+    let object = heap.alloc_object(Object::new(Value::NULL));
     let text = heap.alloc_string("x".into());
     let cases = [
         (Value::number(0.0), "number"), (Value::number(-0.0), "number"), (Value::number(1.5), "number"),
@@ -198,7 +199,8 @@ fn every_staged_opcode_decodes_to_one_operation() {
     let always = [Op::Move, Op::LoadConst, Op::LoadLocalPlain, Op::StoreLocalPlain,
         Op::Jump, Op::JumpFalse, Op::JumpTrue, Op::LoadThis, Op::RequireObjectCoercible,
         Op::ToNumeric, Op::ToPropertyKey, Op::LoadEnvLocal, Op::StoreEnvLocal, Op::ArgumentsLength, Op::LoadNameTypeof,
-        Op::StoreName, Op::ForInNext, Op::ForInStart, Op::GetIterator, Op::IteratorClose, Op::AppendArray,
+        Op::StoreName, Op::LoadGlobalLexical, Op::StoreGlobalLexical, Op::ForInNext, Op::ForInStart, Op::GetIterator,
+        Op::IteratorClose, Op::AppendArray,
         Op::LoadCapture, Op::StoreCapture, Op::JumpBinaryFalse, Op::Return];
     for op in always {
         let instruction = WideInstruction::new(op, 1, 1, 1, 0);
@@ -213,6 +215,30 @@ fn every_staged_opcode_decodes_to_one_operation() {
         if op.staged() == Some(Decoder::Proved) {
             assert!(!decoded && Operation::<u64, ()>::decode_load_name(instruction, ()).is_some(), "{op:?}");
         }
+    }
+}
+
+/// `await`, `yield` and `yield*` decode to their suspension rows, with the registers the general
+/// step reads (`b` the value, `c` the delegate's iterator, the immediate's pair its state and `next`
+/// method) and resumes into (`a`), and a frame that answers none of the call-outs leaves the row to
+/// the interpreter.
+#[test]
+fn suspensions_decode_to_rows_a_plain_frame_leaves_unresolved() {
+    use crate::bytecode::{Op, WideInstruction};
+    let context = crate::staged::DecodeContext::of_constants(&[]);
+    let pair = crate::bytecode::ImmediateLayout::register_pair_immediate(4, 5);
+    let delegation = Suspension::YieldStar { iterator: 3, state: 4, next: 5 };
+    for (op, expected) in [(Op::Await, Suspension::Await), (Op::Yield, Suspension::Yield { conversion: crate::staged::YieldConversion::Resolve }), (Op::YieldStar, delegation)] {
+        let imm = if op == Op::YieldStar { pair } else { 0 };
+        let row = Operation::<u64, ()>::decode(WideInstruction::new(op, 1, 2, 3, imm), context);
+        let Some(Operation::Suspend { kind, destination: 1, value: 2 }) = row else { panic!("{op:?} decodes to a suspension row") };
+        assert_eq!(kind, expected, "{op:?}");
+        if let Suspension::YieldStar { iterator, state, next } = kind {
+            assert_eq!((iterator, state, next), (3, 4, 5), "the delegate's iterator is `c`, its state and method the pair");
+        }
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = ConcreteFrame { registers: vec![0; 6], heap: None };
+        assert!(matches!(step(&mut stage, &mut frame, Operation::Suspend { kind, destination: 1, value: 2 }), Step::Unresolved), "{op:?}");
     }
 }
 
@@ -247,7 +273,13 @@ fn step_jumps_on_the_javascript_truthiness_of_every_value_kind() {
     ];
     for (value, truthy_edge) in cases {
         assert_eq!(jump_if_edge(value, true, &heap), truthy_edge, "JumpTrue {value:?}");
-        let falsy_edge = match truthy_edge { Edge::Target => Edge::Following, Edge::Following => Edge::Target };
+        let falsy_edge = match truthy_edge {
+            Edge::Target => Edge::Following,
+            Edge::Following => Edge::Target,
+            Edge::Entry(_) => unreachable!("a conditional jump takes no table entry"),
+            Edge::Leave => unreachable!("a conditional jump leaves no run"),
+            Edge::Transfer => unreachable!("a conditional jump transfers no control"),
+        };
         assert_eq!(jump_if_edge(value, false, &heap), falsy_edge, "JumpFalse {value:?}");
     }
     let mut stage = Concrete::new(std::ptr::null());
@@ -260,7 +292,7 @@ fn step_jumps_on_the_javascript_truthiness_of_every_value_kind() {
 #[test]
 fn staged_truthiness_agrees_with_the_interpreter() {
     let mut heap = Heap::new();
-    let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+    let object = heap.alloc_object(Object::new(Value::NULL));
     let text = heap.alloc(Cell::Error("text".into()));
     let numbers = [0.0, -0.0, 1.0, -2.5, f64::NAN, f64::INFINITY, 1e300].map(Value::number);
     let values = [Value::TRUE, Value::FALSE, Value::NULL, Value::UNDEFINED, Value::DELETED,
@@ -345,8 +377,9 @@ fn an_allocation_row_defines_its_destination_through_the_frame_or_declines() {
         (Allocation::Closure { function: 1 }, 0),
         (Allocation::Template { template: 0 }, 0),
         (Allocation::Empty, 0),
-        (Allocation::Array { length: 3 }, 0),
-        (Allocation::RegExp { site: 0 }, 0),
+        (Allocation::Array { length: 3, numbers: false }, 0),
+        (Allocation::RegExp { site: 0, callee: None }, 0),
+        (Allocation::RegExp { site: 0, callee: Some(1) }, 1),
         (Allocation::ConstArray { constant: 0, count: 2 }, 0),
         (Allocation::ObjectPair { site: 1, first: 1, second: 2 }, 2),
         (Allocation::ArrayOf { elements: RegisterList::collect(2, |index| 2 - index as u16).expect("two fit") }, 2),
@@ -438,7 +471,7 @@ fn every_host_callout_operation_has_a_concrete_reading() {
 fn the_key_and_iterator_fast_arms_decide_from_the_word_alone() {
     let mut heap = Heap::new();
     let mut stage = Concrete::new(std::ptr::null());
-    let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+    let object = heap.alloc_object(Object::new(Value::NULL));
     let string = heap.alloc_string(crate::vm::wtf16::JsString::from_str("key"));
     for (value, passes) in [(object, true), (string, false), (Value::UNDEFINED, false), (Value::integer(1), false), (Value::number(0.5), false)] {
         let mut frame = ConcreteFrame { registers: vec![value.to_bits()], heap: None };

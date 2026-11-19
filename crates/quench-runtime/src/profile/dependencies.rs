@@ -22,7 +22,7 @@ pub(super) fn binary_pairs(
         let Some([first, second]) = code.get(pc as usize..pc as usize + 2) else {
             continue;
         };
-        if !first.op().is_binary() || !second.op().is_binary() {
+        if first.op() as u16 != crate::staged::BINARY_ROW || second.op() as u16 != crate::staged::BINARY_ROW {
             continue;
         }
         let Some(output) = binary_output(*first) else {

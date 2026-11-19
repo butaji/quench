@@ -529,6 +529,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn preloaded_builtins_are_public_builtins() {
+        for name in PRELOADED_BUILTINS {
+            assert!(crate::modules::module_shared_vm::BUILTIN_MODULES.contains(name), "{name}");
+        }
+    }
+
+    #[test]
     fn automatic_restores_follow_entry_loading_and_platform_policy() {
         use entry_graph::EntryLoading;
         let file = SnapshotEntry::File(std::path::Path::new("/app/main.js"));

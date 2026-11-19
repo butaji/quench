@@ -174,7 +174,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                                 Tristate::False
                             }
                             // If we have "(a," or "(a=" or "(a)" this *could* be an arrow function
-                            Kind::Comma | Kind::Eq | Kind::RParen => Tristate::Maybe,
+                            Kind::Comma | Kind::Eq | Kind::RParen => self.group_may_be_arrow_parameters(),
                             // It is definitely not an arrow function
                             _ => Tristate::False,
                         }
@@ -214,6 +214,44 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 Tristate::Maybe
             }
             _ => unreachable!(),
+        }
+    }
+
+    /// `Tristate::Maybe` where the parenthesized group the worker is in may be arrow parameters,
+    /// and `Tristate::False` where another token follows the group's `)`: an arrow head needs
+    /// `=>` there (or `:`, a return type, in TypeScript), so the speculative head parse would
+    /// fail at it and the parse would return `None` with nothing kept. Called inside the group,
+    /// at the token after its first identifier, from a lookahead. The group is read token by
+    /// token, which is exact only where no token starts a regular expression, a template or JSX
+    /// text, the tokens the parser lexes by its own context; a group holding one stays `Maybe`.
+    fn group_may_be_arrow_parameters(&mut self) -> Tristate {
+        let mut depth = 1u32;
+        loop {
+            match self.cur_kind() {
+                Kind::LParen => depth += 1,
+                Kind::RParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                Kind::Slash
+                | Kind::SlashEq
+                | Kind::NoSubstitutionTemplate
+                | Kind::TemplateHead
+                | Kind::LAngle
+                | Kind::Undetermined
+                | Kind::Eof => return Tristate::Maybe,
+                _ => {}
+            }
+            self.bump_any();
+        }
+        // The group's `)`.
+        self.bump_any();
+        if self.at(Kind::Arrow) || (self.is_ts && self.at(Kind::Colon)) {
+            Tristate::Maybe
+        } else {
+            Tristate::False
         }
     }
 
@@ -299,7 +337,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             ));
         }
 
-        let lazy_params = (!r#async && self.options.lazy_body_skim.is_some() && self.lazy_start(start)).then(|| self.checkpoint());
+        let lazy_params = (!r#async && self.options.lazy_body_skim.is_some() && self.options.lazy_skim_arrows && self.lazy_start(start)).then(|| self.checkpoint());
         let (this_param, params) = self.parse_formal_parameters(
             FunctionKind::Expression,
             FormalParameterKind::ArrowFormalParameters,

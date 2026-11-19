@@ -6,7 +6,7 @@ use super::test_words::{ANSWER, READ, WRITE};
 use super::*;
 use crate::bytecode::Operand;
 use crate::typed_ir::Type;
-use crate::heap::{ArrayObject, Cell, Heap, Object};
+use crate::heap::{ArrayObject, Heap, Object};
 use crate::Value;
 
 /// A frame over a few registers and the heap's array records, whose host paths log their name.
@@ -69,7 +69,7 @@ impl NumericFrame<Concrete> for Probe {
 
 /// An array of `elements` in `heap`, and a probe frame holding it in register 0 and `key` in 1.
 fn array_of(heap: &mut Heap, elements: &[Value]) -> Value {
-    heap.alloc(Cell::Array { object: ArrayObject::new(Object::new(Value::NULL), elements.to_vec()) })
+    heap.alloc_array(ArrayObject::new(Object::new(Value::NULL), elements.to_vec()))
 }
 
 fn probe(heap: &Heap, registers: [Value; 3], fact: Type) -> Probe {
@@ -149,8 +149,8 @@ fn the_element_instructions_decode_to_their_rows() {
     use crate::bytecode::{Op, WideInstruction};
     let read = WideInstruction::new(Op::GetIndex, 3, 4, 5, 0);
     assert!(matches!(Operation::<u64, ()>::decode(read, crate::staged::DecodeContext::EMPTY),
-        Some(Operation::ElementRead { base: 4, key }) if key.register_index() == Some(5)));
+        Some(Operation::ElementRead { base: 4, key, .. }) if key.register_index() == Some(5)));
     let write = WideInstruction::new(Op::SetIndex, 3, 4, 5, 0);
     assert!(matches!(Operation::<u64, ()>::decode(write, crate::staged::DecodeContext::EMPTY),
-        Some(Operation::ElementWrite { value: 3, base: 4, key: 5 })));
+        Some(Operation::ElementWrite { value: 3, base: 4, key: 5, strict: false })));
 }

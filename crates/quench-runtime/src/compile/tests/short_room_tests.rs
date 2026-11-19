@@ -19,7 +19,7 @@ fn a_replay_short_of_reserved_site_room_runs_unrewritten_code_and_later_replays_
     let (fields, supers) = (short.field_sites.len(), short.superinstructions.len());
     let first = crate::compile::replay::recompile(&short, id).unwrap().function;
     let second = crate::compile::replay::recompile(&short, id).unwrap().function;
-    assert!(matches!(short.rewrite_ranges.settled.borrow()[id as usize], Some(None)), "the skip is recorded");
+    assert!(matches!(short.rewrite_ranges.settled.borrow()[id as usize].get(), Some(None)), "the skip is recorded");
     assert_eq!((short.field_sites.len(), short.superinstructions.len()), (fields, supers), "no site was added");
     assert_eq!(format!("{first:?}"), format!("{second:?}"), "later replays agree");
     let run = |program: &crate::bytecode::ResidualProgram| {
@@ -55,7 +55,7 @@ impl crate::compile::AtomPrefix for SpecializedAtoms {
 fn eval_program(source: &str) -> crate::bytecode::ResidualProgram {
     // A caller's context makes the eval's functions keep their records.
     let context = crate::compile::EvalContext { in_function: true, ..Default::default() };
-    Engine::specialize_eval_with_context(source, "eval-rewrites.js", &SpecializedAtoms, false, context, &[], &[]).unwrap()
+    Engine::specialize_eval_with_context(source, "eval-rewrites.js", &SpecializedAtoms, false, context, &[], &[], None).unwrap()
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn an_evals_deferred_rewrites_stay_unrun_in_a_table_with_no_room() {
     let (fields, supers) = (short.field_sites.len(), short.superinstructions.len());
     short.function(1);
     assert_eq!((short.field_sites.len(), short.superinstructions.len()), (fields, supers), "no site was added");
-    assert!(matches!(short.rewrite_ranges.settled.borrow()[1], Some(None)), "the skip is recorded");
+    assert!(matches!(short.rewrite_ranges.settled.borrow()[1].get(), Some(None)), "the skip is recorded");
 }
 
 #[test]

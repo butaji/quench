@@ -1,11 +1,13 @@
 //! Copy propagation over the bytecode: a read of a `Move`'s destination takes its source.
 use super::*;
+use crate::bytecode::{FieldLayout, ImmediateLayout, InstructionField};
+use crate::compile::CompileScratch;
 
 /// Lets the first reader of a `Move`'s destination read the move's source instead when the move
 /// feeds only that reader: `d = Move s; …; x(d)` becomes `Nop; …; x(s)`, the forward
 /// counterpart of `coalesce_distant_producer_moves`. Control reaches the reader only through the
 /// move, by instructions that fall through without writing `s` or `d` (`move_reader`); `d` is
-/// dead after it and not a parameter's register (whose writes legacy `f.arguments` reflection
+/// dead after it and not promoted local storage (whose writes legacy `f.arguments` reflection
 /// reads), and no instruction is inside a handler region. Only register, operand and field-base
 /// fields are rewritten; the reader's use and definition masks confirm the rewrite trades `d`
 /// for `s` and nothing else. A read of a binding a statement copied before evaluating its other
@@ -16,8 +18,9 @@ pub(super) fn forward_move_sources(
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
+    scratch: &mut CompileScratch,
 ) -> bool {
-    if !function.code.iter().any(|instruction| instruction.op() == Op::Move) {
+    if !function.code.iter().any(|instruction| instruction.op() == MOVE) {
         return false;
     }
     let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions) else {
@@ -38,10 +41,32 @@ pub(super) fn forward_move_sources(
             rewritten_readers.insert(at);
             changed.extend([pc, at]);
         }
+        // Why the live sets this scan leaves stale are safe for the next scans. Each rewritten
+        // reader now reads the source where it read the destination, so the source is live from
+        // the move through the last reader: the loop adds it over that range, the only bit a
+        // rewrite could leave under-approximated. The destination is only over-approximated
+        // there, since no reader reads it any more and keeping it live is conservative. Nothing
+        // before the move changes: the move read the source and wrote the destination itself.
+        // Each later scan takes its masks from the code as it now stands (`liveness::uses` and
+        // `definitions` of each instruction), so a rewritten reader or a dropped move is seen at
+        // once, and `hand_on` re-derives the transfer masks of the changed positions.
+        if let Some(&(last, _)) = readers.last() {
+            for live in &mut analysis.live[pc + 1..=last] {
+                *live |= forwarding.source;
+            }
+        }
+        if forwarding.dead && !readers.is_empty() {
+            function.code[pc] = Instr::new(NOP, 0, 0, 0, 0);
+            changed.push(pc);
+        }
     }
+    scratch.readers = readers;
+    scratch.rewritten_readers = rewritten_readers;
     changed.sort_unstable();
     changed.dedup();
-    hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
+    let rewrote = hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current);
+    scratch.changed = changed;
+    rewrote
 }
 
 /// What copy propagation may not cross or rewrite in a function.
@@ -49,7 +74,8 @@ struct Scope {
     protected: crate::bitset::BitSet,
     /// The pcs some handler covers.
     handled: crate::bitset::BitSet,
-    /// The parameters' promoted storage.
+    /// Promoted local storage, and the parameters' part of it.
+    storage: RegisterSet,
     parameters: RegisterSet,
 }
 
@@ -62,19 +88,15 @@ impl Scope {
             protected: protected_positions(&function.code, &function.wide, &function.handlers,
                 function.parameter_end_pc, &function.binding_sites),
             handled: handled_pcs(function),
-            parameters,
+            storage: mask(false),
+            parameters: mask(true),
         }
     }
 
-    /// Whether the instruction at `pc` is a plain `Move` of one register to another that is no
-    /// parameter's storage. A promoted local's register may take it: the move's destination is
-    /// dead after its one reader, so the write is unobservable, as `remove_dead_moves` drops
-    /// such a write; this is the per-iteration copy of `for (let i ...)` that its body reads
-    /// (`a + i` then reads the loop's `i`). Only a parameter's register is reflected
-    /// (`f.arguments`).
+    /// Whether the instruction at `pc` is a plain `Move` of one register to another temporary.
     fn forwards(&self, mov: Instr, pc: usize) -> bool {
         mov.op() == Op::Move && !mov.is_wide() && !self.in_handler(pc)
-            && register_bit(mov.result_register()) & self.parameters == 0 && mov.register_b() != mov.result_register()
+            && register_bit(mov.result_register()) & self.storage == 0 && mov.register_b() != mov.result_register()
     }
 
     fn in_handler(&self, pc: usize) -> bool {
@@ -112,12 +134,7 @@ fn forwarded(function: &BcFunction, analysis: &CodeLiveness, scope: &Scope, pc: 
     {
         return None;
     }
-    let rewritten = substitute_register_read(consumer, destination, source)?;
-    // The reader's masks as it stands: an earlier move of this pass may have rewritten it
-    // already (`t1 = a; t2 = b; x(t1, t2)` forwards both), which the analysis predates.
-    let (read, written) = (uses(consumer), definitions(consumer));
-    let expected = (read & !register_bit(destination)) | register_bit(source);
-    (uses(rewritten) == expected && definitions(rewritten) == written).then_some((at, rewritten))
+    Some(Forwarding { source: source_bit, dead })
 }
 
 /// The first instruction after the `Move` at `pc` that reads its destination, when control
@@ -135,7 +152,7 @@ fn move_reader(function: &BcFunction, transfers: &[(RegisterSet, RegisterSet)], 
         if read & destination != 0 {
             return Some(at);
         }
-        let flow = function.widened(function.code[at]).op().control_flow_layout();
+        let flow = fixed_width(function.code[at], &function.wide).op().control_flow_layout();
         if written & (source | destination) != 0
             || !flow.only_falls_through()
         {

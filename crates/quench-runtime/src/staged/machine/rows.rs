@@ -52,7 +52,41 @@ pub(crate) enum Relation {
     FloatUnorderedEqual,
 }
 
+/// What a language operator is on the machine: a comparison row, a two-operand row, or the
+/// signed remainder, a row behind the guard of its overflowing quotient.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MachineOperator {
+    Relation(Relation),
+    Binary(Binary),
+    SignedRemainder,
+}
+
+/// The order a comparison tests, apart from the domain it reads its operands in: a backend
+/// builds its condition codes from it (`Relation::order`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Order { Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, Unordered, UnorderedEqual }
+
 impl Relation {
+    /// The order the relation tests, and whether it reads its operands as floats.
+    pub(crate) const fn order(self) -> (Order, bool) {
+        match self {
+            Self::Equal => (Order::Equal, false),
+            Self::NotEqual => (Order::NotEqual, false),
+            Self::SignedLess | Self::UnsignedLess => (Order::Less, false),
+            Self::SignedLessEqual | Self::UnsignedLessEqual => (Order::LessEqual, false),
+            Self::SignedGreater | Self::UnsignedGreater => (Order::Greater, false),
+            Self::SignedGreaterEqual | Self::UnsignedGreaterEqual => (Order::GreaterEqual, false),
+            Self::FloatEqual => (Order::Equal, true),
+            Self::FloatNotEqual => (Order::NotEqual, true),
+            Self::FloatLess => (Order::Less, true),
+            Self::FloatLessEqual => (Order::LessEqual, true),
+            Self::FloatGreater => (Order::Greater, true),
+            Self::FloatGreaterEqual => (Order::GreaterEqual, true),
+            Self::FloatUnordered => (Order::Unordered, true),
+            Self::FloatUnorderedEqual => (Order::UnorderedEqual, true),
+        }
+    }
+
     /// Whether the integer relation reads its operands as signed.
     pub(crate) const fn is_signed(self) -> bool {
         matches!(self, Self::SignedLess | Self::SignedLessEqual | Self::SignedGreater | Self::SignedGreaterEqual)

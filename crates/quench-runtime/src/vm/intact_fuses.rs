@@ -4,7 +4,37 @@
 
 use super::property_key::PropertyKey;
 use super::*;
-use crate::code_dependencies::{FuseKey, IntactFuse};
+use crate::code_dependencies::IntactFuse;
+
+/// How a fuse's holder names its method.
+#[derive(Clone, Copy)]
+enum FuseKey {
+    IteratorSymbol,
+    /// `next`, of an iterator prototype.
+    Next,
+    Named(&'static str),
+    /// `@@species`, a getter-only accessor whose slot holds the getter.
+    SpeciesSymbol,
+}
+
+/// Each fuse's key and intrinsic, in `IntactFuse` order.
+const FUSES: [(FuseKey, Native); IntactFuse::COUNT] = [
+    (FuseKey::IteratorSymbol, Native::ArrayValues),
+    (FuseKey::Next, Native::ArrayIteratorNext),
+    (FuseKey::IteratorSymbol, Native::SetValues),
+    (FuseKey::Next, Native::IteratorNext),
+    (FuseKey::IteratorSymbol, Native::MapEntries),
+    (FuseKey::Next, Native::IteratorNext),
+    (FuseKey::IteratorSymbol, Native::StringValues),
+    (FuseKey::Next, Native::StringIteratorNext),
+    (FuseKey::Named("charCodeAt"), Native::StringCharCodeAt),
+    (FuseKey::Named("includes"), Native::StringIncludes),
+    (FuseKey::Named("test"), Native::RegExpTest),
+    (FuseKey::Named("exec"), Native::RegExpExec),
+    (FuseKey::Named("constructor"), Native::Array),
+    (FuseKey::SpeciesSymbol, Native::ArraySpecies),
+    (FuseKey::SpeciesSymbol, Native::RegExpSpecies),
+];
 
 impl<H: Host> Vm<H> {
     /// Whether `fuse` holds in the current realm: its holder keeps the key as an own data
@@ -42,6 +72,9 @@ impl<H: Host> Vm<H> {
             IntactFuse::StringIterator | IntactFuse::StringCharCodeAt | IntactFuse::StringIncludes => self.string_proto,
             IntactFuse::StringIteratorNext => self.string_iterator_proto,
             IntactFuse::RegExpTest | IntactFuse::RegExpExec => self.regexp_proto,
+            // Proved for the realm's RegExp constructor (`Vm::regexp_literal_argument_of`,
+            // through `fuse_intact_at`); proved for the prototype it only answers `false`.
+            IntactFuse::RegExpSpecies => self.regexp_proto,
         }
     }
 

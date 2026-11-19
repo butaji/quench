@@ -3,6 +3,7 @@
 //! and every stack a nested run parked (`Vm::lane_roots`).
 use super::*;
 use crate::vm::program_store::ProgramStore;
+use super::super::activation::extend_this_env_roots;
 
 impl LaneStack {
     /// Appends to `out` every value the stack's activations hold; `programs` hold the liveness
@@ -10,7 +11,7 @@ impl LaneStack {
     pub(in crate::vm) fn extend_roots(&self, programs: &ProgramStore, out: &mut Vec<Value>) {
         self.extend_window_roots(programs, out);
         out.extend(
-            self.activations
+            self.activations()
                 .iter()
                 .filter_map(Activation::script)
                 .map(|script| script.callee),
@@ -31,16 +32,16 @@ impl LaneStack {
     /// which its callee keeps alive.
     fn extend_window_roots(&self, programs: &ProgramStore, out: &mut Vec<Value>) {
         let (span, top) = (self.values.span(), self.values.top().addr());
-        let mut windows = self.activations.iter().enumerate().filter(|(_, activation)| span.contains(&activation.window_word())).peekable();
+        let mut windows = self.activations().iter().enumerate().filter(|(_, activation)| span.contains(&activation.window_word())).peekable();
         while let Some((depth, activation)) = windows.next() {
             let end = windows.peek().map_or(top, |(_, next)| next.window_word());
             let len = end.wrapping_sub(activation.window_word()) / std::mem::size_of::<Value>() - lane_values::CONTEXT;
             // SAFETY: the values `base..top` are initialized, and the span lies within them.
             let window = unsafe { std::slice::from_raw_parts(activation.window_ptr(), len) };
-            match activation.kind {
+            match *activation.kind() {
                 ActivationKind::Script(_) => {
                     let registers = Registers(activation.window_ptr());
-                    out.extend([registers.this(), registers.env()]);
+                    extend_this_env_roots(out, registers.this(), registers.env());
                     out.extend_from_slice(window);
                 }
                 ActivationKind::Wasm { .. } => self.extend_wasm_roots(programs, depth, window, out),
@@ -54,16 +55,32 @@ impl LaneStack {
         }
     }
 
+    /// Records `pc` as the record the top activation, if a Wasm one, is at for a callout that may
+    /// run code (`lane_in_place`): the collector reads its registers' liveness there
+    /// (`extend_wasm_roots`). A Wasm activation's callouts all note it before they run.
+    pub(in crate::vm) fn note_wasm_pc(&mut self, pc: usize) {
+        let pc = pc as u32;
+        if let Some(Activation { kind: ActivationKind::Wasm { pc: at, .. } | ActivationKind::WasmEntry { pc: at, .. }, .. }) = self.activations.last_mut() {
+            *at = pc;
+        }
+    }
+
     /// The registers of the Wasm activation at `depth` that `window` holds and the function's
-    /// liveness keeps at the call its callee resumes at, as its frame's registers are scanned
-    /// (`Vm::collect_slow`): every register where no activation is above it or the function
-    /// has no liveness. Its registers hold Wasm values the collector reads as it reads a frame's.
+    /// liveness keeps at the record it is at: the record its callee resumes at, or, for the
+    /// innermost activation or one whose callee is native, the record it last noted
+    /// (`note_wasm_pc`). Its registers hold Wasm values the collector reads as it reads a frame's.
+    /// A function with no masks has its whole window scanned, so its window is initialized whole.
     fn extend_wasm_roots(&self, programs: &ProgramStore, depth: usize, window: &[Value], out: &mut Vec<Value>) {
         let activation = &self.activations[depth];
-        let masks = programs.residual(activation.caller_program).and_then(|program| program.register_root_masks(activation.function));
-        let call_pc = self.activations.get(depth + 1).and_then(Activation::caller_pc);
-        match masks.zip(call_pc) {
-            Some((masks, pc)) => masks.extend_live(pc, window, out),
+        let Some((program, noted)) = activation.wasm_site() else {
+            out.extend_from_slice(window);
+            return;
+        };
+        let call_pc = self.activations.get(depth + 1).and_then(Activation::caller_pc).unwrap_or(noted);
+        let masks = programs.residual(program).and_then(|program| program.register_root_masks(activation.function));
+        let raw = programs.raw_register_masks(program, activation.function);
+        match masks {
+            Some(masks) => masks.extend_live_except(call_pc, raw.as_deref(), window, out),
             None => out.extend_from_slice(window),
         }
     }
@@ -77,7 +94,9 @@ mod tests {
 
     #[test]
     fn a_collection_in_a_nested_run_keeps_the_references_of_a_parked_wasm_activation() {
-        let program = Engine::specialize("globalThis.seed = 1;", "parked-wasm.js").unwrap();
+        let mut program = Engine::specialize("globalThis.seed = 1;", "parked-wasm.js").unwrap();
+        // An uncovered function's window is scanned whole, as a parked Wasm window with no masks is.
+        program.functions[0].register_roots = crate::bytecode::RegisterRoots::new(false);
         let mut vm = Vm::new(TestHost::default());
         vm.execute(&program).unwrap();
         let held = vm.heap.alloc_object(Vm::<TestHost>::empty_object(vm.object_proto));
@@ -89,7 +108,7 @@ mod tests {
             caller_base: std::ptr::null(),
             caller_registers: Registers(std::ptr::null_mut()),
             caller_program: ProgramId::MAIN,
-            kind: ActivationKind::Wasm { memory: MemoryView::NONE, frame_storage_bytes: std::mem::size_of_val(&registers) },
+            kind: ActivationKind::Wasm { memory: MemoryView::NONE, frame_storage_bytes: std::mem::size_of_val(&registers), program: ProgramId::MAIN, pc: 0 },
         };
         let window = vm.lane_stack.values.top();
         // SAFETY: the fresh stack's capacity holds the window, the next one's context words and

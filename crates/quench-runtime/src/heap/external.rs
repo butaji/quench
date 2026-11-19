@@ -1,5 +1,4 @@
 use super::{Cell, Heap};
-use crate::value::Value;
 
 impl Cell {
     pub(super) fn external_bytes(&self) -> usize {
@@ -10,15 +9,9 @@ impl Cell {
     }
 
     /// The memory a cell owns beyond its slot, which allocation weight and live weight
-    /// charge: array element storage, Map and Set entries, and external buffers. A string
-    /// record's units are charged by `JsString::flat_unit_bytes` (`Heap::alloc_string`).
+    /// charge: external buffers. Array element storage is a record's (`array_payload_bytes`).
     pub(super) fn payload_bytes(&self) -> usize {
-        match self {
-            Self::Array { object } => array_payload_bytes(object),
-            Self::Map { entries, .. } => entries.payload_bytes(),
-            Self::Set { entries, .. } => entries.payload_bytes(),
-            cell => cell.external_bytes(),
-        }
+        self.external_bytes()
     }
 }
 
@@ -29,7 +22,7 @@ impl Cell {
 
 impl Heap {
     /// Allocation, collection, peak and threshold counts, for the tests.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "profile-aggregate"))]
     pub(crate) fn stats(&self) -> (u64, u64, usize, usize, usize, usize) {
         (
             self.allocated as u64,
@@ -41,19 +34,6 @@ impl Heap {
         )
     }
 
-
-    /// Changes the legacy cell `cell` through `change`, charging what its payload
-    /// (`Cell::payload_bytes`) grew toward the next collection, as `alloc` charges a new
-    /// cell's: a Map or Set filled after it was made makes collections due like its
-    /// allocation would have.
-    pub(crate) fn grow_cell_payload<R>(&mut self, cell: Value, change: impl FnOnce(&mut Cell) -> R) -> Option<R> {
-        let cell = self.get_mut(cell)?;
-        let before = cell.payload_bytes();
-        let result = change(cell);
-        let grown = cell.payload_bytes().saturating_sub(before);
-        self.charge_payload_growth(grown);
-        Some(result)
-    }
 
     /// Records a buffer, Wasm memory or table resizing outside `alloc`. Growth counts toward
     /// the next collection like any other payload (TOD-125).

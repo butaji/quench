@@ -24,7 +24,7 @@ impl<H: Host> Vm<H> {
         } else {
             match self.heap.get(value) {
                 Some(Cell::BigInt(_)) => T::BigInt,
-                Some(Cell::Symbol(_)) => T::Symbol,
+                _ if self.heap.is_symbol(value) => T::Symbol,
                 _ if self.is_function(value) => T::Function,
                 _ => T::Object,
             }

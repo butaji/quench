@@ -73,6 +73,16 @@ impl WasmTable for Probe {
     fn signature_accepts(&mut self, _: usize, _: usize, _: usize) -> usize {
         self.note("accepts")
     }
+
+    fn unless_equal(
+        &mut self,
+        _: usize,
+        _: usize,
+        otherwise: impl FnOnce(&mut Self) -> Result<usize, Self::Exit>,
+    ) -> Result<usize, Self::Exit> {
+        self.note("unless equal");
+        otherwise(self)
+    }
 }
 
 /// The signatures of a probed table's functions and of a call: a function, another, a host's.
@@ -92,7 +102,7 @@ fn ids() -> [CanonicalSignature; 3] {
 }
 
 #[test]
-fn an_indirect_target_checks_the_index_then_null_then_the_signature() {
+fn an_indirect_target_checks_the_index_then_an_unequal_signature_for_null_then_relates() {
     let mut probe = Probe::default();
     let [expected, ..] = ids();
     indirect_target(&mut probe, 0, expected).expect("the probe never traps");
@@ -103,11 +113,12 @@ fn an_indirect_target_checks_the_index_then_null_then_the_signature() {
             "range".to_owned(),
             "trap UndefinedElement".to_owned(),
             "signature".to_owned(),
+            "element".to_owned(),
+            format!("constant I64 {}", expected.word()),
+            "unless equal".to_owned(),
             format!("constant I64 {}", CanonicalSignature::NULL.word()),
             "Equal I64".to_owned(),
             "trap UninitializedElement".to_owned(),
-            "element".to_owned(),
-            format!("constant I64 {}", expected.word()),
             "accepts".to_owned(),
             "EqualZero I32".to_owned(),
             "trap IndirectCallTypeMismatch".to_owned(),

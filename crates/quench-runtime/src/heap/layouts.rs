@@ -32,7 +32,7 @@ pub(crate) const LAYOUT_CAPACITY: usize = 1 << 22;
 /// and below 2 GiB, the reach of a sign-extended 32-bit displacement; a break that grows into
 /// it only sends `malloc` to `mmap`.
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-const FIXED_TABLE: usize = 0x7000_0000;
+const FIXED_TABLE: usize = crate::staged::layout_offsets::LAYOUT_TABLE_BASE as usize;
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 extern "C" fn map_fixed_table() {
@@ -92,6 +92,18 @@ pub(crate) fn word(id: u32) -> u64 {
     // SAFETY: every id came from `intern`, below the capacity, and its entry was written
     // before the id was handed out and never changes (`Table`).
     unsafe { *table_base().add(id as usize) }
+}
+
+/// The auxiliary word (shape and storage form) of layout `id`: the low half of its header word
+/// (`NATIVE_OBJECT_AUXILIARY_OFFSET`). A specializer reads it at compile time from an id it
+/// guards, so the residual tests none of its bits. A word past the table (a cleared hint's
+/// sentinel) names no layout: its auxiliary word is 0.
+#[inline(always)]
+pub(crate) fn auxiliary(id: u32) -> u32 {
+    if id as usize >= LAYOUT_CAPACITY {
+        return 0;
+    }
+    word(id) as u32
 }
 
 /// The layout id of the header `word`.

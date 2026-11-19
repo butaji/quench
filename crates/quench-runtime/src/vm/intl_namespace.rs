@@ -9,9 +9,21 @@ impl<H: Host> Vm<H> {
         global: Value,
         object_prototype: Value,
     ) -> Result<(), JsError> {
+        let intl = self.install_intl_intrinsics(program, global, object_prototype)?;
+        self.set_builtin_value_named(global, "Intl", intl)
+    }
+
+    /// Makes `global`'s Intl namespace and the constructor intrinsics its natives build from,
+    /// without binding `Intl` on the global.
+    fn install_intl_intrinsics(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+        object_prototype: Value,
+    ) -> Result<Value, JsError> {
         let intl = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_intl_namespace_for_realm(program, intl, global, object_prototype)?;
         let constructor = self.native_with_realm(Native::IntlNumberFormat, global, global);
         self.realm
@@ -21,16 +33,16 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "NumberFormat")?;
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_number_format_prototypes
             .insert(global, prototype);
         let fallback_symbol = self
             .heap
-            .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(
+            .alloc_symbol(crate::heap::SymbolData::public(Some(
                 "IntlLegacyConstructedSymbol".into(),
-            ))));
+            )));
         self.realm
             .intrinsics
             .intl_number_format_fallback_symbols
@@ -99,8 +111,26 @@ impl<H: Host> Vm<H> {
         self.install_intl_duration_format_for_realm(intl, global, object_prototype)?;
         self.install_intl_list_format_for_realm(intl, global, object_prototype)?;
         self.install_intl_segmenter_for_realm(intl, global, object_prototype)?;
-        self.set_builtin_value_named(global, "Intl", intl)?;
-        Ok(())
+        Ok(intl)
+    }
+
+    /// Makes the current realm's Intl intrinsics exist before a `toLocaleString` native builds
+    /// from them, since such a native runs without observing the global `Intl`. The Intl group
+    /// materializes while its global property is still pending. When script has removed or
+    /// replaced that property first, the group is unreachable, so the intrinsics are built
+    /// without binding `Intl`.
+    pub(super) fn ensure_intl_intrinsics(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        let global = self.realm.globals;
+        if self.realm.intrinsics.intl_number_format_constructors.contains_key(&global) {
+            return Ok(());
+        }
+        let atom = self.intern_atom("Intl");
+        self.materialize_lazy_data_property(program, global, PropertyKey::string(atom))?;
+        if self.realm.intrinsics.intl_number_format_constructors.contains_key(&global) {
+            return Ok(());
+        }
+        let object_prototype = self.object_proto;
+        self.install_intl_intrinsics(program, global, object_prototype).map(|_| ())
     }
 
     pub(super) fn install_intl_namespace_for_realm(
@@ -123,7 +153,7 @@ impl<H: Host> Vm<H> {
         let locale = self.native_with_realm(Native::IntlLocale, global, global);
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .intl_locale_prototypes
@@ -421,7 +451,7 @@ impl<H: Host> Vm<H> {
         prototype: Value,
         locale: String,
     ) -> Result<Value, JsError> {
-        let result = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let result = self.heap.alloc_object(Self::empty_object(prototype));
         self.set_hidden_string(result, INTL_LOCALE_SLOT, &locale)?;
         Ok(result)
     }
@@ -575,7 +605,7 @@ impl<H: Host> Vm<H> {
         match options.filter(|value| !value.is_undefined()) {
             None => Ok(self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(Value::NULL)))),
+                .alloc_object(Self::empty_object(Value::NULL))),
             Some(value) if self.is_object_like(value) => Ok(value),
             Some(_) => Err(self.type_error(p, "options must be an object".into())),
         }
@@ -677,12 +707,10 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .map(|value| self.heap.alloc_string(value.into()))
             .collect::<Vec<_>>();
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
                 elements,
-            ),
-        })
+            ))
     }
 
     fn intl_supported_values_of(

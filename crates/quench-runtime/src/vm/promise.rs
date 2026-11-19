@@ -15,24 +15,31 @@ use rustc_hash::FxHashSet;
 /// that proved it found `constructor` in a data slot of a prototype and the constructor's own
 /// `@@species` holding the intrinsic getter, and both objects are watched prototypes whose
 /// values it watches (`heap::watch_prototype_values`, holder then constructor): a write to their
-/// slots advances the intrinsic epoch, a change to any prototype's layout the chain epoch, and
-/// either retires it, as does a collection. A use reads no slot: a layout id and two epochs.
+/// slots advances the intrinsic epoch, and a change to the layout of a prototype up to the
+/// holder, or of the constructor, retires one of its cells (`Vm::chain_cell`); either retires
+/// it, as does a collection that frees one. A use reads no slot: a layout id, an epoch and two
+/// cells.
 pub(super) struct PromiseSpeciesProof {
     layout: u32,
-    epochs: (u64, u64),
+    intrinsic_epoch: u64,
+    /// The cells of the chain from the receiver's prototype to the holder, and of the
+    /// constructor, whose own `@@species` the proof read.
+    cells: [crate::heap::ChainCell; 2],
     realm: Value,
     /// Keeps the subscriptions whose retirement advances the intrinsic epoch.
     _watches: [crate::heap::PrototypeValueWatch; 2],
 }
 
 /// That promises of one layout read `then` as plain data inherited from their prototype,
-/// holding `then`: the receiver's layout fixes its own keys and prototype link, the chain epoch
-/// every prototype's layout, and the intrinsic epoch the prototype's values, which a write to
-/// them advances while the prototype's values are watched (`heap::watch_prototype_values`).
+/// holding `then`: the receiver's layout fixes its own keys and prototype link, the
+/// prototype's cell its layout (`Vm::chain_cell`), and the intrinsic epoch the prototype's
+/// values, which a write to them advances while the prototype's values are watched
+/// (`heap::watch_prototype_values`).
 #[derive(Clone, Copy)]
 pub(super) struct PromiseThenMemo {
     layout: u32,
-    epochs: (u64, u64),
+    intrinsic_epoch: u64,
+    cell: crate::heap::ChainCell,
     realm: Value,
     then: Value,
 }
@@ -315,6 +322,9 @@ pub(super) fn native_length(kind: Native) -> Option<f64> {
 #[path = "native_lengths.rs"]
 mod native_lengths;
 mod constructor_read;
+mod resolution;
+mod then;
+pub(super) use then::ThenCapability;
 
 pub(super) const fn native_length_definition(kind: Native) -> Option<f64> {
     if let Some(length) = super::string::string_native_length(kind) {
@@ -543,10 +553,10 @@ impl<H: Host> Vm<H> {
         // A realm's own natives run in that realm; a native shared by every realm runs in
         // its caller's, which is the realm whose objects it builds.
         let realm = match self.heap.function(callee) {
-            Some(FunctionRecord { realm, .. })
-                if *realm == self.realm.globals || !self.is_shared_native(callee) =>
+            Some(record)
+                if self.record_realm(record) == self.realm.globals || !self.is_shared_native(callee) =>
             {
-                *realm
+                self.record_realm(record)
             }
             _ => self.realm.globals,
         };
@@ -592,11 +602,10 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let native = match self.heap.function(method) {
-            Some(FunctionRecord {
+            Some(record @ FunctionRecord {
                 kind: FunctionKind::Native(native),
-                realm,
                 ..
-            }) if *realm == self.realm.globals
+            }) if self.record_realm(record) == self.realm.globals
                 && matches!(
                     native,
                     Native::RegExpSymbolMatch
@@ -651,14 +660,13 @@ impl<H: Host> Vm<H> {
         if promise_resolver && let Some(shape) = self.resolver_function_shape {
             let name = self.atom_string(self.runtime_atoms.empty);
             let object = self.finished_closure_object(function_prototype, shape, [Value::number(1.0), name], None);
-            return self.heap.alloc_function(FunctionRecord { object, realm, kind: FunctionKind::Native(kind), env });
+            return self.alloc_function_in(FunctionRecord { object, kind: FunctionKind::Native(kind), env }, realm);
         }
-        let function = self.heap.alloc_function(FunctionRecord {
+        let function = self.alloc_function_in(FunctionRecord {
             object: Self::empty_object(function_prototype),
-            realm,
             kind: FunctionKind::Native(kind),
             env,
-        });
+        }, realm);
         let anonymous_capability_executor =
             !env.is_null() && kind == Native::PromiseCapabilityExecutor;
         let anonymous_proxy_revoke = !env.is_null() && kind == Native::ProxyRevoke;
@@ -729,6 +737,7 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .builtin_prototypes
             .insert((global, Native::Promise), prototype);
+        self.note_realm_promise(global, promise, prototype);
         self.set_builtin_function_name(promise, "Promise")?;
         self.set_builtin_value_named(promise, "prototype", prototype)?;
         let prototype_atom = self.prototype_atom();
@@ -760,13 +769,9 @@ impl<H: Host> Vm<H> {
         &mut self,
         parent: Option<HostExecutionContext>,
     ) -> Result<Value, JsError> {
-        let prototype = self
-            .realm
-            .intrinsics
-            .builtin_prototypes
-            .get(&(self.realm.globals, Native::Promise))
-            .copied()
-            .unwrap_or(Value::NULL);
+        // The active realm's `%Promise.prototype%`, null before its `Promise` is installed, as
+        // the intrinsics table's absent entry read (`Vm::note_realm_promise`).
+        let prototype = self.promise_proto;
         let host_context = if self.host.observes_promise_lifecycle() {
             self.host.create_promise_context(parent)
         } else {
@@ -1012,7 +1017,6 @@ impl<H: Host> Vm<H> {
                     native == Native::ArrayFromAsyncFulfilled,
                     args.first().copied().unwrap_or(Value::UNDEFINED),
                 ),
-            Native::AsyncFromSyncValue => self.async_from_sync_value(args),
             Native::AsyncGeneratorDelegateFulfilled => self.async_generator_delegate_fulfilled(
                 p,
                 this,
@@ -1023,8 +1027,6 @@ impl<H: Host> Vm<H> {
                 this,
                 args.first().copied().unwrap_or(Value::UNDEFINED),
             ),
-            Native::AsyncGeneratorReturnFulfilled => self.async_generator_return_fulfilled(p, args),
-            Native::AsyncGeneratorReturnRejected => self.async_generator_return_rejected(p, args),
             _ => unreachable!(),
         }
     }
@@ -1574,7 +1576,7 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .own_property(constructor, prototype_atom)
             .unwrap_or(self.object_proto);
-        let value = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let value = self.heap.alloc_object(Self::empty_object(prototype));
         self.realm.promise.module_sources.insert(identity, value);
         Ok(value)
     }
@@ -1970,15 +1972,18 @@ impl<H: Host> Vm<H> {
             )?;
             return Ok(namespace);
         }
-        if let Some(exports) = crate::Engine::static_module_exports(&module.source, &module.name) {
-            let exports = exports
-                .into_iter()
-                .map(|(name, value)| (name, self.module_static_value(value)))
-                .collect();
-            return self.module_namespace(exports);
-        }
-        if let Some(reason) = crate::Engine::static_module_throw(&module.source) {
-            return self.evaluate_static_module_throw(p, reason);
+        match crate::Engine::static_module_outcome(&module.source, &module.name) {
+            Some(crate::compile::StaticModuleOutcome::Exports(exports)) => {
+                let exports = exports
+                    .into_iter()
+                    .map(|(name, value)| (name, self.module_static_value(value)))
+                    .collect();
+                return self.module_namespace(exports);
+            }
+            Some(crate::compile::StaticModuleOutcome::Throw(reason)) => {
+                return self.evaluate_static_module_throw(p, reason);
+            }
+            None => {}
         }
         if self.static_module_plan(module).is_some_and(|plan| {
             plan.link_plan
@@ -2256,6 +2261,7 @@ impl<H: Host> Vm<H> {
             let closure = self.closure(p, function, environment);
             self.set_active_program(previous);
             let closure = closure?;
+            self.record_module_function(program, function, closure);
             if let Some(binding) = self.heap.environment_slot_mut(environment, slot) {
                 *binding = closure;
             }
@@ -3761,7 +3767,7 @@ impl<H: Host> Vm<H> {
                                 .name
                                 .is_some_and(|name| residual.atoms[name as usize] == local)
                     })
-                    .and_then(|(id, _)| self.cached_functions(program_id, id as u32).next_back());
+                    .and_then(|(id, _)| self.module_function(program_id, id as u32));
                 let slot = residual.function(0)
                     .local_atoms
                     .iter()
@@ -4648,7 +4654,7 @@ impl<H: Host> Vm<H> {
         for key in keys {
             let key_name = match self.heap.get(key) {
                 _ if let Some(value) = self.heap.string(key)  => Some(value.host_string().to_owned()),
-                Some(Cell::Symbol(_)) => continue,
+                _ if self.heap.is_symbol(key) => continue,
                 _ => return Err(JsError("invalid import attribute key".into())),
             };
             let descriptor = self.object_get_own_property_descriptor(p, &[attributes, key])?;
@@ -4688,7 +4694,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let namespace = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         if let Some(object) = self.object_data_mut(namespace) {
             object.set_module_namespace();
         }
@@ -4744,7 +4750,7 @@ impl<H: Host> Vm<H> {
             Constant::StringUnits(value) => {
                 self.heap.alloc_string(JsString::from_units(&value))
             }
-            Constant::BigInt(value) => self.heap.alloc(Cell::bigint(value)),
+            Constant::BigInt(value) => self.heap.alloc(Cell::bigint(*value)),
             Constant::Boolean(true) => Value::TRUE,
             Constant::Boolean(false) => Value::FALSE,
             Constant::Null => Value::NULL,
@@ -4768,63 +4774,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn promise_resolve_value(
-        &mut self,
-        p: &ResidualProgram,
-        promise: Value,
-        value: Value,
-    ) -> Result<(), JsError> {
-        if promise == value {
-            let error = self.type_error(p, "Promise cannot resolve to itself".into());
-            return self.promise_settle(
-                p,
-                promise,
-                PromiseState::Rejected,
-                error.thrown_value().unwrap_or(Value::UNDEFINED),
-            );
-        }
-        if self.object_data(value).is_none() {
-            return self.promise_settle(p, promise, PromiseState::Fulfilled, value);
-        }
-        let then_atom = self.runtime_atoms.then;
-        // A `then` that reads as plain data (`plain_named_load`), as an intrinsic promise's
-        // does, is the value [[Get]] would answer, without its general lookup.
-        let read = match self.memoized_resolution_then(value) {
-            Some(then) => Ok(then),
-            None => match self.plain_named_load(value, then_atom) {
-                Some(then) => {
-                    self.remember_resolution_then(value, then);
-                    Ok(then)
-                }
-                None => self.get_property(p, value, then_atom),
-            },
-        };
-        let then = match read {
-            Ok(then) => then,
-            // Cancellation must unwind the active job, not become a guest
-            // rejection or an allocated Error during thenable assimilation.
-            Err(error) if error.is_execution_terminated() => return Err(error),
-            Err(error) => {
-                let reason = self.thrown_value_for(p, error);
-                return self.promise_settle(p, promise, PromiseState::Rejected, reason);
-            }
-        };
-        if !self.is_function(then) {
-            return self.promise_settle(p, promise, PromiseState::Fulfilled, value);
-        }
-        let execution_context = self
-            .host
-            .capture_job_context(self.promise_record(promise).and_then(|record| record.host_context().get()));
-        self.realm.jobs.push_back(super::PendingJob::Thenable(ThenableJob {
-            realm: self.realm.globals,
-            then,
-            thenable: value,
-            promise,
-            execution_context: execution_context.into(),
-        }));
-        Ok(())
-    }
-
     pub(super) fn promise_for_value(
         &mut self,
         p: &ResidualProgram,
@@ -4839,7 +4788,7 @@ impl<H: Host> Vm<H> {
     /// `promise_then`'s intrinsic arm makes them. `None` leaves any other receiver, an
     /// impure species read, or a lifecycle-observing host, whose hooks run guest code, to
     /// the general call.
-    pub(super) fn lane_promise_then(
+    pub(super) fn promise_then_in_lane(
         &mut self,
         p: &ResidualProgram,
         promise: Value,
@@ -4853,7 +4802,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         // Nothing below runs guest code or collects, so the receiver and handlers stay
-        // live in the caller's registers, as `lane_new_array`'s arguments do.
+        // live in the caller's registers, as `new_array_in_lane`'s arguments do.
         let next = self.promise_object_with_parent(None).ok()?;
         self.perform_promise_then(p, promise, on_fulfilled, on_rejected, next);
         Some(next)
@@ -4866,7 +4815,7 @@ impl<H: Host> Vm<H> {
     /// that `then` is not callable, else through the thenable job the general path would
     /// enqueue. `None` leaves an impure read or a lifecycle-observing host to the general
     /// call.
-    pub(super) fn lane_promise_resolve(
+    pub(super) fn promise_resolve_in_lane(
         &mut self,
         p: &ResidualProgram,
         receiver: Value,
@@ -4902,13 +4851,14 @@ impl<H: Host> Vm<H> {
     }
 
     /// The `then` a resolution reads from promise `value` (`PromiseThenMemo`), where the memo
-    /// holds for it: one layout compare and two epoch compares instead of the read.
+    /// holds for it: one layout compare, an epoch compare and a cell's instead of the read.
     #[inline(always)]
     fn memoized_resolution_then(&self, value: Value) -> Option<Value> {
         let memo = self.promise_then_memo.get()?;
         let object = &self.heap.promise(value)?.object;
         (object.layout_id() == memo.layout
-            && memo.epochs == (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch())
+            && memo.intrinsic_epoch == crate::heap::intrinsic_epoch()
+            && memo.cell.holds()
             && memo.realm == self.realm.globals)
             .then_some(memo.then)
     }
@@ -4935,9 +4885,11 @@ impl<H: Host> Vm<H> {
         if crate::heap::watch_prototype_values(holder.exact_shape()).is_none() {
             return;
         }
+        let Some(cell) = self.chain_cell(prototype, 1) else { return };
         self.promise_then_memo.set(Some(PromiseThenMemo {
             layout,
-            epochs: (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch()),
+            intrinsic_epoch: crate::heap::intrinsic_epoch(),
+            cell,
             realm: self.realm.globals,
             then,
         }));
@@ -4995,7 +4947,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether the `PromiseSpeciesProof` answers `promise`: a receiver of the proved layout
-    /// (shape and prototype), with no side descriptors, under the epochs the proof was made in.
+    /// (shape and prototype), with no side descriptors, under the epoch and cells the proof was
+    /// made in.
     #[inline]
     fn promise_species_proved(&self, promise: Value) -> bool {
         let proofs = self.promise_species_proof.borrow();
@@ -5006,7 +4959,8 @@ impl<H: Host> Vm<H> {
             return false;
         };
         data.layout_id() == proof.layout
-            && proof.epochs == (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch())
+            && proof.intrinsic_epoch == crate::heap::intrinsic_epoch()
+            && proof.cells.iter().all(|cell| cell.holds())
             && !data.has_side_descriptors()
             && proof.realm == self.realm.globals
     }
@@ -5020,7 +4974,7 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.heap.ordinary_object(promise) else {
             return;
         };
-        let (layout, key) = (data.layout_id(), PropertyKey::string(self.runtime_atoms.constructor));
+        let (layout, key, prototype) = (data.layout_id(), PropertyKey::string(self.runtime_atoms.constructor), data.proto());
         let Some(SymbolLoadAnswer::Inherited { hops, .. }) =
             self.symbol_load_proofs.answer(data.layout_id(), key)
         else {
@@ -5032,107 +4986,29 @@ impl<H: Host> Vm<H> {
             let Some(link) = self.heap.object(holder) else { return };
             holder = link.proto();
         }
-        self.heap.mark_prototype(holder);
-        self.heap.mark_prototype(constructor);
+        let (Some(chain), Some(own)) = (self.chain_cell(prototype, hops), self.chain_cell(constructor, 1)) else {
+            *self.promise_species_proof.borrow_mut() = None;
+            return;
+        };
         let watch = |object| self.heap.object(object).and_then(|data| crate::heap::watch_prototype_values(data.exact_shape()));
         *self.promise_species_proof.borrow_mut() = watch(holder).zip(watch(constructor))
             .map(|(holder, constructor)| PromiseSpeciesProof {
                 layout,
-                epochs: (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch()),
+                intrinsic_epoch: crate::heap::intrinsic_epoch(),
+                cells: [chain, own],
                 realm: self.realm.globals,
                 _watches: [holder, constructor],
             });
     }
 
-    pub(super) fn promise_then(
-        &mut self,
-        p: &ResidualProgram,
-        promise: Value,
-        on_fulfilled: Value,
-        on_rejected: Value,
-    ) -> Result<Value, JsError> {
-        self.with_call_roots([promise, on_fulfilled, on_rejected], |vm| {
-            if !vm.is_promise(promise) {
-                return Err(
-                    vm.type_error(p, "Promise.prototype method called on non-Promise".into())
-                );
-            }
-            let constructor = vm.promise_species_constructor(p, promise)?;
-            // A %Promise% capability has no guest executor (see `promise_resolve_for_constructor`):
-            // its promise is settled directly when the reaction runs.
-            let next = if constructor == vm.intrinsic_promise_constructor() {
-                vm.promise_object_with_parent(vm.promise_record(promise).expect("promise record").host_context().get())?
-            } else {
-                let (next, resolve, reject) = vm.new_promise_capability(p, constructor)?;
-                vm.realm
-                    .promise
-                    .reaction_capabilities
-                    .insert(next, (resolve, reject));
-                next
-            };
-            vm.perform_promise_then(p, promise, on_fulfilled, on_rejected, next);
-            Ok(next)
-        })
-    }
-
-    pub(super) fn promise_then_intrinsic(
-        &mut self,
-        p: &ResidualProgram,
-        promise: Value,
-        on_fulfilled: Value,
-        on_rejected: Value,
-    ) -> Result<Value, JsError> {
-        if !self.is_promise(promise) {
-            return Err(self.type_error(p, "Promise.prototype method called on non-Promise".into()));
-        }
-        let next = self.with_call_roots([promise, on_fulfilled, on_rejected], |vm| {
-            vm.promise_object_with_parent(vm.promise_record(promise).expect("promise record").host_context().get())
-        })?;
-        let (resolve, reject) = self.promise_resolving_functions(next);
-        self.realm
-            .promise
-            .reaction_capabilities
-            .insert(next, (resolve, reject));
-        self.perform_promise_then(p, promise, on_fulfilled, on_rejected, next);
-        Ok(next)
-    }
-
-    pub(super) fn perform_promise_then(
-        &mut self,
-        p: &ResidualProgram,
-        promise: Value,
-        on_fulfilled: Value,
-        on_rejected: Value,
-        next: Value,
-    ) {
-        self.observe_promise_rejection(promise);
-        let reaction = PromiseReaction {
-            on_fulfilled: if self.is_function(on_fulfilled) {
-                on_fulfilled
-            } else {
-                Value::UNDEFINED
-            },
-            on_rejected: if self.is_function(on_rejected) {
-                on_rejected
-            } else {
-                Value::UNDEFINED
-            },
-            next,
-            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context().get())).into(),
-        };
-        // Species selection and capability construction may settle the source.
-        // Read its authoritative state only when installing this reaction.
-        let record = self.promise_record_mut(promise).unwrap();
-        if record.state() == PromiseState::Pending {
-            record.push_reaction(reaction);
-        } else {
-            let (state, result) = (record.state(), record.result());
-            self.enqueue_promise_reaction(p, reaction, state, result);
-        }
-    }
-
+    /// The active realm's `%Promise%`, which its field follows (`Vm::note_realm_promise`)
+    /// without hashing the intrinsics table.
     pub(super) fn intrinsic_promise_constructor(&self) -> Value {
-        self.realm.intrinsics.promise_constructors[&self.realm.globals]
+        debug_assert_eq!(
+            self.realm.intrinsics.promise_constructors.get(&self.realm.globals).copied(),
+            Some(self.promise_constructor)
+        );
+        self.promise_constructor
     }
 
     pub(super) fn promise_species_constructor(

@@ -1,8 +1,11 @@
 //! GC operations use the common heap and activation registers.
+use crate::staged::wasm_gc::{Aggregate, ArrayConstruction, GcStep};
 use wasmparser::{FieldType, StorageType};
 
 mod field;
-pub(crate) use field::GcField;
+mod layout;
+pub(crate) use field::{GcField, GcFieldValue};
+pub(crate) use layout::ObjectLayout;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GcFieldAccess {
@@ -13,57 +16,6 @@ pub(crate) enum GcFieldAccess {
 }
 
 impl GcFieldAccess {
-    const OPS: &[(Self, Op, Op)] = &[
-        (Self::Read, Op::WasmStructGet, Op::WasmArrayGet),
-        (Self::ReadSigned, Op::WasmStructGetS, Op::WasmArrayGetS),
-        (Self::ReadUnsigned, Op::WasmStructGetU, Op::WasmArrayGetU),
-        (Self::Write, Op::WasmStructSet, Op::WasmArraySet),
-    ];
-
-    /// Whether `op` reads a value field (`Read`): `Some(false)` for a struct's, `Some(true)`
-    /// for an array's element, `None` for any other opcode. A lane handler selects its read by
-    /// this table fact rather than naming the opcodes.
-    pub(crate) const fn plain_read(op: Op) -> Option<bool> {
-        let (_, structure, array) = Self::OPS[0];
-        if structure as u16 == op as u16 {
-            Some(false)
-        } else if array as u16 == op as u16 {
-            Some(true)
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn op(self) -> Op {
-        Self::OPS
-            .iter()
-            .find(|(access, _, _)| *access == self)
-            .unwrap()
-            .1
-    }
-
-    fn array_op(self) -> Op {
-        Self::OPS
-            .iter()
-            .find(|(access, _, _)| *access == self)
-            .unwrap()
-            .2
-    }
-
-    /// A plain loop over `OPS`, so a constant opcode folds to its access where this inlines.
-    #[inline(always)]
-    pub(crate) const fn from_op(op: Op) -> Option<Self> {
-        let mut at = 0;
-        while at < Self::OPS.len() {
-            let (access, structure, array) = Self::OPS[at];
-            if structure as u16 == op as u16 || array as u16 == op as u16 {
-                return Some(access);
-            }
-            at += 1;
-        }
-        None
-    }
-
     pub(crate) fn supports(self, field: FieldType) -> bool {
         match self {
             Self::Write => field.mutable,
@@ -98,38 +50,13 @@ pub(crate) fn storage_subtype(
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum ArraySegmentKind {
     Data,
     Element,
 }
 
 impl ArraySegmentKind {
-    const OPS: &[(Self, Op, Op)] = &[
-        (Self::Data, Op::WasmArrayNewData, Op::WasmArrayInitData),
-        (Self::Element, Op::WasmArrayNewElem, Op::WasmArrayInitElem),
-    ];
-
-    pub(crate) fn new_op(self) -> Op {
-        Self::OPS
-            .iter()
-            .find(|(kind, _, _)| *kind == self)
-            .unwrap()
-            .1
-    }
-    fn init_op(self) -> Op {
-        Self::OPS
-            .iter()
-            .find(|(kind, _, _)| *kind == self)
-            .unwrap()
-            .2
-    }
-    pub(crate) fn from_op(op: Op) -> Option<Self> {
-        Self::OPS
-            .iter()
-            .find(|(_, constructor, initializer)| *constructor == op || *initializer == op)
-            .map(|(kind, _, _)| *kind)
-    }
     pub(crate) fn accepts(self, storage: StorageType) -> bool {
         match self {
             Self::Data => Self::data_load(storage).is_some(),
@@ -170,21 +97,6 @@ pub(crate) enum StructConstruction {
     DefaultDescribed,
 }
 impl StructConstruction {
-    const OPS: &[(Self, Op)] = &[
-        (Self::New, Op::WasmStructNew),
-        (Self::Default, Op::WasmStructNewDefault),
-        (Self::Described, Op::WasmStructNewDesc),
-        (Self::DefaultDescribed, Op::WasmStructNewDefaultDesc),
-    ];
-    pub(crate) fn from_op(op: Op) -> Option<Self> {
-        Self::OPS
-            .iter()
-            .find(|(_, candidate)| *candidate == op)
-            .map(|(mode, _)| *mode)
-    }
-    pub(crate) fn op(self) -> Op {
-        Self::OPS.iter().find(|(mode, _)| *mode == self).unwrap().1
-    }
     pub(crate) fn defaulted(self) -> bool {
         matches!(self, Self::Default | Self::DefaultDescribed)
     }
@@ -208,7 +120,7 @@ use super::*;
 impl Lowering<'_> {
     fn array_constructor(
         &mut self,
-        op: Op,
+        construction: ArrayConstruction,
         index: u32,
         fixed: Option<u32>,
     ) -> Result<(), Diagnostic> {
@@ -225,7 +137,7 @@ impl Lowering<'_> {
                 .declarations
                 .callable_value_type(ty)
                 .is_none()
-                || op == Op::WasmArrayNewDefault && !ty.is_defaultable())
+                || construction == ArrayConstruction::Default && !ty.is_defaultable())
             {
                 return Err(Diagnostic::unsupported(
                     self.name,
@@ -253,7 +165,7 @@ impl Lowering<'_> {
                 }
                 None => {
                     let count = self.pop()?;
-                    if op == Op::WasmArrayNew {
+                    if construction == ArrayConstruction::Repeated {
                         (self.pop()?, count)
                     } else {
                         (count, 0)
@@ -261,7 +173,7 @@ impl Lowering<'_> {
                 }
             };
             let result = self.push()?;
-            self.emit(op, result, base, extra, index)?;
+            self.emit(GcStep::ArrayNew { construction }.op(), result, base, extra, index)?;
         }
         Ok(())
     }
@@ -315,7 +227,7 @@ impl Lowering<'_> {
                     Some(value) => (reference, element, value),
                     None => (self.push()?, reference, element),
                 };
-                self.emit(access.array_op(), a, b, c, GcField::new(0, field.element_type).expect("index 0 fits").tag())?;
+                self.emit(GcStep::field_step(Aggregate::Array, access).op(), a, b, c, GcField::new(0, field.element_type).expect("index 0 fits").tag())?;
             }
             return Ok(true);
         }
@@ -381,12 +293,12 @@ impl Lowering<'_> {
             }
             Operator::ArrayNew { array_type_index } => {
                 return self
-                    .array_constructor(Op::WasmArrayNew, array_type_index, None)
+                    .array_constructor(ArrayConstruction::Repeated, array_type_index, None)
                     .map(|()| true);
             }
             Operator::ArrayNewDefault { array_type_index } => {
                 return self
-                    .array_constructor(Op::WasmArrayNewDefault, array_type_index, None)
+                    .array_constructor(ArrayConstruction::Default, array_type_index, None)
                     .map(|()| true);
             }
             Operator::ArrayNewFixed {
@@ -394,14 +306,14 @@ impl Lowering<'_> {
                 array_size,
             } => {
                 return self
-                    .array_constructor(Op::WasmArrayNewFixed, array_type_index, Some(array_size))
+                    .array_constructor(ArrayConstruction::Fixed, array_type_index, Some(array_size))
                     .map(|()| true);
             }
             Operator::ArrayLen => {
                 if self.path == Reachability::Live {
                     let input = self.pop()?;
                     let result = self.push()?;
-                    self.emit(Op::WasmArrayLen, result, input, 0, 0)?;
+                    self.emit(GcStep::ArrayLen.op(), result, input, 0, 0)?;
                 }
                 return Ok(true);
             }
@@ -444,7 +356,7 @@ impl Lowering<'_> {
             if self.path == Reachability::Live {
                 let source = self.pop()?;
                 let result = self.push()?;
-                self.emit(Op::WasmRefGetDesc, result, source, 0, type_index)?;
+                self.emit(GcStep::GetDescriptor.op(), result, source, 0, type_index)?;
             }
             return Ok(true);
         }
@@ -513,7 +425,7 @@ impl Lowering<'_> {
             self.depth = base;
             let result = self.push()?;
             self.emit(
-                mode.op(),
+                GcStep::StructNew { default: mode.defaulted(), descriptor: mode.described() }.op(),
                 result,
                 if mode == StructConstruction::Default {
                     0
@@ -571,7 +483,7 @@ impl Lowering<'_> {
                 self.depth = input;
                 let result = self.push()?;
                 self.emit(
-                    kind.new_op(),
+                    GcStep::ArraySegment { kind, init: false }.op(),
                     result,
                     input,
                     ArraySegmentInput::COUNT,
@@ -584,7 +496,7 @@ impl Lowering<'_> {
                 self.depth = count + 1;
                 let segment = self.instance_binding(usize::from(slot))?;
                 self.emit(
-                    kind.init_op(),
+                    GcStep::ArraySegment { kind, init: true }.op(),
                     array,
                     segment,
                     count,
@@ -633,9 +545,9 @@ impl Lowering<'_> {
             let destination = self.pop()?;
             self.emit(
                 if source.is_some() {
-                    Op::WasmArrayCopy
+                    GcStep::ArrayCopy.op()
                 } else {
-                    Op::WasmArrayFill
+                    GcStep::ArrayFill.op()
                 },
                 destination,
                 source_value,
@@ -690,7 +602,7 @@ impl Lowering<'_> {
             };
             // Subtype prefixes keep packed types, so the storage holds for every live object.
             let field = GcField::new(field, declaration.element_type).ok_or_else(|| Diagnostic::unsupported(self.name, "invalid Wasm struct field"))?;
-            self.emit(access.op(), a, b, 0, field.tag())?;
+            self.emit(GcStep::field_step(Aggregate::Struct, access).op(), a, b, 0, field.tag())?;
         }
         Ok(())
     }

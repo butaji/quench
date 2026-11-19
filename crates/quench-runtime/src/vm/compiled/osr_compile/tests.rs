@@ -16,12 +16,12 @@ fn a_simple_loop_is_planned_by_the_region_specializer() {
             && (instruction.jump_target() as usize) <= pc)
             .then(|| (instruction.jump_target(), pc as u32))
     }).expect("the function has a loop");
-    let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
+    let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner, &|_| false)
         .expect("the loop is admitted");
-    let observation = Observation { native_field_loads: &[], store_loads: &[], number_arrays: &[], abandoned: &[], int_entries: &[], typed_captures: &[], int_captures: &[], int_registers: &[], double_registers: &[], operand_kinds: &[], entry_bounds: true, frame_captures: &[] };
+    let observation = Observation { native_field_loads: &[], store_loads: &[], number_arrays: &[], abandoned: &[], int_entries: &[], typed_captures: &[], int_captures: &[], entry_types: &[], operand_kinds: &[], entry_bounds: true, frame_captures: &[], construct_plans: None };
     let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
         (crate::MemoryPolicy::Throughput, super::super::tier_policy::STATIC_ROWS), &program, id,
-        super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &mut |_, _| Default::default(), (&[], None), RegionCalls::default())
+        super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &mut |_, _| Default::default(), (&[], None), RegionCalls::default(), false)
         .expect("the loop plans");
     assert_eq!(pending.header, region.header, "the loop goes through RegionSpecializer");
 }
@@ -100,7 +100,7 @@ fn a_return_inside_a_loop_completes_through_the_lane_unit() {
     assert_eq!(*output.borrow(), *expected.borrow());
     let function_id = program.functions.iter().position(|function|
         function.header().name.is_some_and(|name| &program.atoms[name as usize] == "cmp")).unwrap();
-    let views = vm.programs.lane_views(super::super::program_store::ProgramId::MAIN).unwrap();
+    let views = vm.programs.views_in_lane(super::super::program_store::ProgramId::MAIN).unwrap();
     let osr = views.get(function_id).and_then(super::super::program_store::derived_lane_view)
         .unwrap().osr_diagnostics();
     assert!(osr.native_region_runs > 0, "the return loop ran natively: {osr:?}");
@@ -198,7 +198,7 @@ fn thrown_with_native_runs(source: &str, name: &str) -> (Option<crate::Value>, u
     let thrown = vm.execute(&program).unwrap_err().thrown_value();
     let function_id = program.functions.iter().position(|function|
         function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
-    let views = vm.programs.lane_views(super::super::program_store::ProgramId::MAIN).unwrap();
+    let views = vm.programs.views_in_lane(super::super::program_store::ProgramId::MAIN).unwrap();
     let osr = views.get(function_id).and_then(super::super::program_store::derived_lane_view)
         .unwrap().osr_diagnostics();
     (thrown, osr.native_region_runs)
@@ -265,7 +265,7 @@ fn a_capture_loop_keeps_its_capture_value() {
 }
 /// Runs `source` interpreted and compiled with lane OSR, and returns the compiled output,
 /// equal to the interpreter's, and the OSR diagnostics of the function named `function`.
-fn osr_run(source: &str, function: &str) -> (Vec<String>, crate::vm::dispatch_fast::OsrDiagnostics) {
+pub(super) fn osr_run(source: &str, function: &str) -> (Vec<String>, crate::vm::dispatch_fast::OsrDiagnostics) {
     let program = crate::Engine::specialize(source, "lane-osr-admission.js").unwrap();
     let expected = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     crate::vm::Vm::new(crate::test_host::TestHost::writing_to(expected.clone()))
@@ -280,7 +280,7 @@ fn osr_run(source: &str, function: &str) -> (Vec<String>, crate::vm::dispatch_fa
     assert_eq!(*output.borrow(), *expected.borrow(), "compiled output matches the interpreter");
     let id = program.functions.iter().position(|body|
         body.header().name.is_some_and(|name| &program.atoms[name as usize] == function)).unwrap();
-    let views = vm.programs.lane_views(super::super::program_store::ProgramId::MAIN).unwrap();
+    let views = vm.programs.views_in_lane(super::super::program_store::ProgramId::MAIN).unwrap();
     let osr = views.get(id).and_then(super::super::program_store::derived_lane_view)
         .unwrap().osr_diagnostics();
     assert!(osr.native_region_runs > 0, "the loop ran natively: {osr:?}");
@@ -417,15 +417,16 @@ fn an_inlined_call_loop_runs_through_the_lane_unit() {
         "the inlining lane OSR path ran");
 }
 
-/// A call in a hot loop is the region's call row, not a leave: the callee's result is the call's
-/// register, which the loop's own rows read, and no run ends at the call.
+/// A call of a small callee in a hot loop is no leave of the region: the callee inlines, its result
+/// is the call's register, which the loop's own rows read, and no run ends at the call. (The sum
+/// stays an int32, so no overflow guard leaves either.)
 #[test]
 fn a_call_in_a_loop_region_runs_as_a_call_row() {
     let (output, osr) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || osr_run(
         "function bump(n) { return n * 3 + 1; }
-         function sum(n) { var s = 0; for (var i = 0; i < n; i++) { s = (s + bump(i)) | 0; } return s; }
+         function sum(n) { var s = 0; for (var i = 0; i < n; i++) { s = (s + bump(i & 1023)) | 0; } return s; }
          print(sum(200000));", "sum"));
-    assert_eq!(output, ["-129642144"]);
+    assert_eq!(output, ["306762080"]);
     assert_eq!(osr.exits, 0, "the call is no exit: {osr:?}");
 }
 
@@ -435,8 +436,8 @@ fn a_call_in_a_loop_region_runs_as_a_call_row() {
 fn a_throwing_callee_in_a_loop_region_is_caught_as_in_the_interpreter() {
     let (output, _) = crate::jit_mode::with_mode(crate::JitMode::BaseOnly, || osr_run(
         "function pick(n) { if (n === 150000) throw new Error('at ' + n); return n + 1; }
-         function sum(n) { var s = 0; try { for (var i = 0; i < n; i++) { s = (s + pick(i)) | 0; } } catch (e) { print(e.message + ' after ' + s); } return s; }
-         print(sum(200000));", "sum"));
+         function sum(n, f) { var s = 0; try { for (var i = 0; i < n; i++) { s = (s + f(i)) | 0; } } catch (e) { print(e.message + ' after ' + s); } return s; }
+         print(sum(200000, pick));", "sum"));
     assert_eq!(output.len(), 2);
 }
 

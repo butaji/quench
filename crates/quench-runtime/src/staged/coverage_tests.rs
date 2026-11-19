@@ -47,14 +47,19 @@ fn staged_coverage_layout_decodes_outside_staged_only_shrink() {
 // the catalog's opcode predicates (`.is_get_field()` ...), and the family tags `Class::X` and
 // `JsDenotation::X`; plus every hand-written lane handler (`fn lane_*` outside a macro), and every
 // opcode with no staged row. Only `staged/`, the catalog (`bytecode/`) and the compiler that
-// emits opcodes (`compile/`) may name an opcode. `staged/derivation_debt.txt` lists the debt per
+// emits opcodes (`compile/`, apart from the peephole rewriter) may name an opcode. `staged/derivation_debt.txt` lists the debt per
 // file and token; it may only shrink. `QUENCH_DEBT_WRITE=1` rewrites it after a shrink.
 // ---------------------------------------------------------------------------------------------
 
 /// Every directory whose code executes, lowers, profiles or links opcodes, the interpreters
 /// included: their handlers are to be generated from the rows too.
 const DEBT_DIRECTORIES: &[&str] = &["vm", "profile", "typed_ir", "native_link", "memory_edge", "../../quench-bjit/src",
-    "../../quench-bjit/stencils"];
+    "../../quench-bjit/stencils", "wasm"];
+
+/// Single files outside those directories that single out opcodes: the peephole rewriter, the
+/// validator and the Wasm front module. The catalog files that define the vocabulary
+/// (`bytecode.rs`, `bytecode/op_catalog.rs`, `bytecode/op_classes.rs`) are its source, not debt.
+const DEBT_FILES: &[&str] = &["compile/rewrite.rs", "compile/deferred_rewrite.rs", "bytecode/validate.rs", "wasm.rs"];
 
 /// Whether `file` (relative to `src`) holds only tests: a `tests` or `*_tests` module file or directory.
 fn is_test_file(file: &str) -> bool {
@@ -152,6 +157,37 @@ fn count_decisions(code: &str, file: &str, words: &Vocabulary, debt: &mut std::c
     for (at, _) in code.match_indices("fn lane_") {
         if !code[..at].ends_with(ident_char) { add("fn:lane_*".to_owned()); }
     }
+    // Hand-written b-jit stencil rows: a function of a `stencils/*_rows.rs` file whose body runs
+    // no staged row. The stencils name rows by code numbers, not opcodes, so the terms above
+    // cannot see them.
+    if file.contains("quench-bjit/stencils/") && file.ends_with("_rows.rs") {
+        for body in function_bodies(code) {
+            if !body.contains("staged::") { add("fn:stencil_hand".to_owned()); }
+        }
+    }
+}
+
+/// The bodies (from the opening brace to its match) of the functions `code` defines.
+fn function_bodies(code: &str) -> Vec<&str> {
+    let mut bodies = Vec::new();
+    for (at, _) in code.match_indices("fn ") {
+        if code[..at].ends_with(ident_char) { continue; }
+        // The signature ends at the first `{` or `;` (a trait item with no body).
+        let Some(open) = code[at..].find(['{', ';']).map(|n| at + n) else { continue };
+        if code.as_bytes()[open] == b';' { continue; }
+        let mut depth = 0usize;
+        for (offset, c) in code[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 { bodies.push(&code[open..open + offset + 1]); break; }
+                }
+                _ => {}
+            }
+        }
+    }
+    bodies
 }
 
 /// The derivation debt of the tree, per (file, token).
@@ -160,11 +196,17 @@ fn derivation_debt() -> std::collections::BTreeMap<(String, String), usize> {
     let words = vocabulary();
     let mut pending: Vec<std::path::PathBuf> = DEBT_DIRECTORIES.iter().map(|directory| root.join(directory)).collect();
     let mut debt = std::collections::BTreeMap::new();
+    let mut files: Vec<std::path::PathBuf> = DEBT_FILES.iter().map(|file| root.join(file)).collect();
     while let Some(directory) = pending.pop() {
         let Ok(entries) = std::fs::read_dir(&directory) else { continue };
         for entry in entries.map(Result::unwrap) {
             let path = entry.path();
             if path.is_dir() { pending.push(path); continue; }
+            files.push(path);
+        }
+    }
+    for path in files {
+        {
             let file = path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
             if !file.ends_with(".rs") || is_test_file(&file) { continue; }
             let source = std::fs::read_to_string(&path).unwrap();

@@ -27,7 +27,9 @@
 //! could carry one past a change: entering a nested run, ending its own, and restoring a
 //! context a native's callback copied.
 
-use super::{ArrayElements, ArrayObject, Heap};
+use super::{ArrayObject, Heap};
+#[cfg(test)]
+use super::ArrayElements;
 use crate::value::Value;
 use std::mem::MaybeUninit;
 use std::ptr::NonNull;
@@ -55,45 +57,7 @@ pub(crate) struct ArrayStorageProofs {
 }
 
 impl ArrayStorageProofs {
-    /// No proofs.
-    #[inline(always)]
-    pub(crate) const fn new() -> Self {
-        Self {
-            readable: [0; ARRAY_PROOF_SLOTS],
-            writable: [0; ARRAY_PROOF_SLOTS],
-            bases: [MaybeUninit::uninit(); ARRAY_PROOF_SLOTS],
-            values: [MaybeUninit::uninit(); ARRAY_PROOF_SLOTS],
-        }
-    }
-
-    /// The slot of base register `register`.
-    #[inline(always)]
-    pub(crate) fn slot(register: u16) -> usize {
-        usize::from(register) % ARRAY_PROOF_SLOTS
-    }
-
-    /// Whether `register`'s slot proves `base` at a bound of `bound`, which is nonzero.
-    #[inline(always)]
-    fn proves(&self, slot: usize, bound: usize, base: Value) -> bool {
-        // SAFETY: a nonzero bound was written by `prove` with the slot's base.
-        bound != 0 && unsafe { self.bases[slot].assume_init() } == base
-    }
-
-    /// The present element `base[index]` through the proof in `register`'s slot; `None`
-    /// where the slot does not prove `base`, past the length, or at a hole.
-    #[inline(always)]
-    pub(crate) fn element(&self, register: u16, base: Value, index: usize) -> Option<Value> {
-        let slot = Self::slot(register);
-        let bound = self.readable[slot];
-        if index >= bound || !self.proves(slot, bound, base) {
-            return None;
-        }
-        // SAFETY: the proof holds (module documentation): `index` is below the length of
-        // the backing whose first element `values` names.
-        let value = unsafe { *self.values[slot].assume_init().as_ptr().add(index) };
-        (!value.is_deleted()).then_some(value)
-    }
-
+    #[cfg(test)]
     /// Replaces the present element `base[index]` with `value` through the proof in
     /// `register`'s slot, as `Vm::try_replace_record_element` would; `false` stores nothing:
     /// a slot that does not prove `base` writable, an index past the length, a hole, or a
@@ -116,24 +80,80 @@ impl ArrayStorageProofs {
         true
     }
 
-    /// `replace` of a value whatever its kind, for a store the write barrier admitted unlogged
-    /// (`Heap::array_store_unlogged`): a heap value into a proved array (`arr[i] = o`).
+    #[cfg(test)]
+    /// The present element `base[index]` through the proof in `register`'s slot; `None`
+    /// where the slot does not prove `base`, past the length, or at a hole.
     #[inline(always)]
-    pub(crate) fn replace_admitted(&mut self, register: u16, base: Value, index: usize, value: Value) -> bool {
+    pub(crate) fn element(&self, register: u16, base: Value, index: usize) -> Option<Value> {
+        let slot = Self::slot(register);
+        let bound = self.readable[slot];
+        if index >= bound || !self.proves(slot, bound, base) {
+            return None;
+        }
+        // SAFETY: the proof holds (module documentation): `index` is below the length of
+        // the backing whose first element `values` names.
+        let value = unsafe { *self.values[slot].assume_init().as_ptr().add(index) };
+        (!value.is_deleted()).then_some(value)
+    }
+
+    /// No proofs.
+    #[inline(always)]
+    pub(crate) const fn new() -> Self {
+        Self {
+            readable: [0; ARRAY_PROOF_SLOTS],
+            writable: [0; ARRAY_PROOF_SLOTS],
+            // Initialized, so `dense` reads a retired or never proved slot's words without a branch.
+            bases: [MaybeUninit::zeroed(); ARRAY_PROOF_SLOTS],
+            values: [MaybeUninit::new(NonNull::dangling()); ARRAY_PROOF_SLOTS],
+        }
+    }
+
+    /// The slot of base register `register`.
+    #[inline(always)]
+    pub(crate) fn slot(register: u16) -> usize {
+        usize::from(register) % ARRAY_PROOF_SLOTS
+    }
+
+    /// Whether `register`'s slot proves `base` at a bound of `bound`, which is nonzero.
+    #[inline(always)]
+    fn proves(&self, slot: usize, bound: usize, base: Value) -> bool {
+        // SAFETY: a nonzero bound was written by `prove` with the slot's base.
+        bound != 0 && unsafe { self.bases[slot].assume_init() } == base
+    }
+
+    /// The first element and the elements a read through the proof in `register`'s slot may reach,
+    /// for a staged element row (`ElementFrame::proved_view`); `None` where the slot does not prove `base`.
+    #[inline(always)]
+    pub(crate) fn read_span(&self, register: u16, base: Value) -> Option<(NonNull<Value>, usize)> {
+        let slot = Self::slot(register);
+        let bound = self.readable[slot];
+        // SAFETY: a proved slot's values were written by `prove` with its bound.
+        self.proves(slot, bound, base).then(|| (unsafe { self.values[slot].assume_init() }, bound))
+    }
+
+    /// `read_span` for a store: the elements the proof in `register`'s slot lets a store replace in
+    /// place; `None` where the slot proves no in-place replacement of `base`.
+    #[inline(always)]
+    pub(crate) fn write_span(&self, register: u16, base: Value) -> Option<(NonNull<Value>, usize)> {
         let slot = Self::slot(register);
         let bound = self.writable[slot];
-        if index >= bound || !self.proves(slot, bound, base) {
-            return false;
-        }
-        // SAFETY: as in `element`; a nonzero writable bound proves the backing this array's
-        // own and in-place replacement its whole store.
-        let values = unsafe { self.values[slot].assume_init() };
-        if unsafe { *values.as_ptr().add(index) }.is_deleted() {
-            return false;
-        }
-        // SAFETY: as above.
-        unsafe { ArrayElements::replace_through(values, index, value) };
-        true
+        // SAFETY: as in `read_span`.
+        self.proves(slot, bound, base).then(|| (unsafe { self.values[slot].assume_init() }, bound))
+    }
+
+    /// The dense storage `register`'s slot proves of `base`: its first element and the elements an
+    /// access reaches there, the readable bound for a read and the writable one for a store that
+    /// replaces in place. `(null, 0)` where the slot does not prove `base` at that bound, so the
+    /// access reaches no element.
+    // merge: HEAD's `dense` kept, since lane_frame.rs still calls it; the closing brace below is shared.
+    #[inline(always)]
+    pub(crate) fn dense(&self, register: u16, base: Value, writable: bool) -> (*mut Value, usize) {
+        let slot = Self::slot(register);
+        let bound = if writable { self.writable[slot] } else { self.readable[slot] };
+        // SAFETY: every slot's base and values are initialized (`new`), and a nonzero bound was
+        // written by `prove` with them. A slot of another base selects no element, with no branch.
+        let proved = unsafe { self.bases[slot].assume_init() } == base;
+        (unsafe { self.values[slot].assume_init() }.as_ptr(), if proved { bound } else { 0 })
     }
 
     /// Whether `register`'s slot proves `base`, whether or not an access through it hit.
@@ -149,7 +169,7 @@ impl ArrayStorageProofs {
         let replaces = !array.has_indexed_descriptors() && !array.is_frozen() && array.arguments_map().is_none()
             && !array.was_used_as_prototype();
         // A bound below 2^31 lets an int32 key reach `element` and `replace` as its u32 bits
-        // (`dispatch_fast::proof_int_index`): a negative key lands at or above 2^31, past
+        // (`ElementFrame::index_offset`): a negative key lands at or above 2^31, past
         // every bound, so the bounds test is also the sign test. No dense backing is that long.
         // A narrow backing proves no index (`ArrayElements::is_narrow`): reads take the long way.
         let length = if array.elements().is_encoded() { 0 } else { array.elements().len().min(i32::MAX as usize) };
@@ -177,11 +197,12 @@ impl ArrayStorageProofs {
 impl Heap {
     /// Whether a store of `stored` into the record array `base` names logs nothing in the write
     /// barrier, as `record_array_store_mut_unlogged` admits it: the gate of a proved heap-value
-    /// replacement (`ArrayStorageProofs::replace_admitted`).
+    /// replacement (`ElementFrame::array_store_gate`).
     #[inline(always)]
     pub(crate) fn array_store_unlogged(&self, base: Value, stored: Value) -> bool {
         base.direct_array_index().is_some_and(|record_id| !self.array_records.store_logs(record_id, stored))
     }
+
 
     /// Proves the storage of `base` in `register`'s slot of `proofs` when `base` names a
     /// record array; `false` for any other value.
@@ -327,12 +348,10 @@ impl Drop for LaneProofScope {
 #[cfg(all(test, not(feature = "profile-aggregate")))]
 mod tests {
     use super::*;
-    use crate::heap::{Cell, Object};
+    use crate::heap::Object;
 
     fn array(heap: &mut Heap) -> Value {
-        heap.alloc(Cell::Array {
-            object: ArrayObject::new(Object::new(Value::NULL), [Value::integer(1), Value::integer(2)]),
-        })
+        heap.alloc_array(ArrayObject::new(Object::new(Value::NULL), [Value::integer(1), Value::integer(2)]))
     }
 
     #[test]

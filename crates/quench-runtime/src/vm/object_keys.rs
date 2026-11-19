@@ -49,6 +49,11 @@ impl<H: Host> Vm<H> {
         if let Some(keys) = self.own_enumerable_key_values_cached(object) {
             return Some(self.array_of(&keys));
         }
+        // The shape's key strings, made once per shape, copied into the result in one part; the
+        // allocation does not collect, so the memo's strings stay live through the copy.
+        if let Some(keys) = self.own_enumerable_key_values_cached(object) {
+            return Some(self.array_of(&keys));
+        }
         let keys: EnumerableKeys<Value> =
             self.shape_enumerable_keys(object)?.into_iter().map(|atom| self.atom_string(atom)).collect();
         Some(self.array_of(&keys))
@@ -289,12 +294,10 @@ impl<H: Host> Vm<H> {
                         )?,
                 };
                 let property = match kind {
-                    EnumerableOwnPropertyKind::KeyValue => self.heap.alloc(Cell::Array {
-                        object: crate::heap::ArrayObject::new(
+                    EnumerableOwnPropertyKind::KeyValue => self.heap.alloc_array(crate::heap::ArrayObject::new(
                             Self::empty_object(self.array_proto),
                             vec![self.heap.root_value(*key).unwrap(), item],
-                        ),
-                    }),
+                        )),
                     EnumerableOwnPropertyKind::Key | EnumerableOwnPropertyKind::Value => item,
                 };
                 properties.push(self.heap.root(property));
@@ -303,12 +306,10 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .map(|root| self.heap.root_value(*root).unwrap())
                 .collect::<Vec<_>>();
-            Ok(self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            Ok(self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
                     elements,
-                ),
-            }))
+                )))
         })();
         for root in keys.into_iter().chain(properties) {
             self.heap.release_root(root);
@@ -328,11 +329,9 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .filter(|key| self.heap.is_string(*key))
             .collect::<Vec<_>>();
-        Ok(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        Ok(self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 values,
-            ),
-        }))
+            )))
     }
 }

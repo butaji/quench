@@ -48,14 +48,24 @@ impl<'a> BodyCall<'a> {
     ///
     /// # Safety
     /// `cx` is the running lane's context and `call_pc` a record of the running body's function.
+    #[inline(always)]
     pub(super) unsafe fn at<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> Option<Self> {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         // SAFETY: the context names the running activation, which a native callee's frame is while its helper
         // runs (`native_frames::in_innermost_frame`).
-        let (registers, base, function, this) = unsafe { ((*cx).registers, (*cx).base, lane_running_function(cx), (*cx).registers.this()) };
-        let body = code.function(function as usize);
-        let site = Invocation::of(body.widened(body.code[call_pc as usize]), DecodeContext::of(code))?;
+        let (registers, base, function, this) = unsafe { ((*cx).registers, (*cx).base, running_function_in_lane(cx), (*cx).registers.this()) };
+        // The form of this record, decoded once per run: the run's code fixes it.
+        let site = match unsafe { (*cx).body_site } {
+            Some((decoded_code, decoded_function, decoded_pc, site))
+                if std::ptr::eq(decoded_code, code) && decoded_function == function && decoded_pc == call_pc => site,
+            _ => {
+                let body = code.function(function as usize);
+                let site = Invocation::of(body.widened(body.code[call_pc as usize]), DecodeContext::of(code))?;
+                unsafe { (*cx).body_site = Some((std::ptr::from_ref(code), function, call_pc, site)) };
+                site
+            }
+        };
         let list = match site.arguments {
             Arguments::List(list) => list.registers(&code.method_arguments),
             Arguments::Window { .. } => &[],
@@ -65,17 +75,19 @@ impl<'a> BodyCall<'a> {
     }
 
     /// How many arguments the call passes.
+    #[inline]
     pub(super) fn argc(&self) -> u16 {
         self.site.arguments.count()
     }
 
     /// The record's hint of the script call target that answered it last.
+    #[inline]
     pub(super) fn link(&self) -> &'a std::cell::Cell<u16> {
         // SAFETY: `ip` is a record of the running view.
         unsafe { &(*self.ip).call_link }
     }
 
-    /// Whether the call's record may be requickened to its read memo (`lane_memoize_read`): only a
+    /// Whether the call's record may be requickened to its read memo (`memoize_read_in_lane`): only a
     /// register call's record has the layout the memo's handlers read.
     pub(super) fn memoizes(&self) -> bool {
         matches!((self.site.callee, self.site.arguments), (Callee::Register(_), Arguments::Window { .. }))
@@ -103,6 +115,7 @@ impl<'a> BodyCall<'a> {
     /// The callee: a register's value, a method the site's caches load from `receiver`
     /// (`Vm::method_cache_load`), or the function a known call names, which its site linked. `None`
     /// where the method is not cached or the site linked no such function.
+    #[inline(always)]
     pub(super) fn callee<H: Host>(&self, vm: &mut Vm<H>, receiver: Value) -> Option<Value> {
         match self.site.callee {
             Callee::Register(register) => Some(self.registers.get(register)),
@@ -113,8 +126,9 @@ impl<'a> BodyCall<'a> {
 
     /// Parameter `k` of a plain activation as this call passes it: argument `k`, or `undefined`
     /// where it is not passed.
+    #[inline(always)]
     pub(super) fn argument(&self) -> impl Fn(u16) -> Value + '_ {
-        move |parameter| match self.site.arguments {
+        #[inline(always)] move |parameter| match self.site.arguments {
             Arguments::Window { first, count } if parameter < count => self.registers.get(first + parameter),
             Arguments::Window { .. } => Value::UNDEFINED,
             Arguments::List(_) => self.list.get(usize::from(parameter)).map_or(Value::UNDEFINED, |&register| self.registers.get(register)),
@@ -147,13 +161,13 @@ impl<'a> BodyCall<'a> {
 
     /// The plain activation of `target` this call makes: its window of registers filled with the
     /// arguments, then `undefined`. The call passes at most `target`'s parameters and the lane stack
-    /// has room (`lane_activation_room`).
+    /// has room (`activation_room_in_lane`).
     pub(super) fn push_plain<H: Host>(&self, cx: *mut LaneContext<H>, target: &ScriptCallTarget, this: Value, constructs: bool) -> Registers {
         match self.site.arguments {
             Arguments::Window { first, count } => {
                 // SAFETY: the record's window of the registers holds its values.
                 let passed = unsafe { self.registers.0.add(usize::from(first)).cast_const() };
-                lane_push_passed::<H, false, false>(cx, self.registers, self.ip, target, passed, count, this, constructs).0
+                push_passed_in_lane::<H, false, false>(cx, self.registers, self.ip, target, passed, count, this, constructs).0
             }
             Arguments::List(_) => self.push_listed(cx, target, this, constructs),
         }
@@ -172,7 +186,7 @@ impl<'a> BodyCall<'a> {
             stack.values.set_top(top.add(usize::from(target.registers) + super::super::lane_values::CONTEXT));
             Registers(top)
         };
-        lane_enter_window::<H, false, false>(cx, self.registers, self.ip, target, window, self.argc(), this, constructs, None).0
+        enter_window_in_lane::<H, false, false>(cx, self.registers, self.ip, target, window, self.argc(), this, constructs, None, None).0
     }
 }
 

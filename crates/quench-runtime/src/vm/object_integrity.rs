@@ -85,7 +85,7 @@ impl<H: Host> Vm<H> {
             if vm.is_wasm_gc_object(target) {
                 return Err(vm.wasm_gc_opaque_error(p));
             }
-            let property_key = if matches!(vm.heap.get(key), Some(Cell::Symbol(_))) {
+            let property_key = if vm.heap.is_symbol(key) {
                 vm.materialize_watched_lazy_member(p, target, PropertyKey::symbol(key))?;
                 PropertyKey::symbol(key)
             } else {

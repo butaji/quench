@@ -7,11 +7,7 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 use std::ffi::CStr;
 type Context<'a> = NativeContext<'a, NodeHost>;
 
-fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let key = c.string_rooted(name);
-    c.define_data_property_rooted(object, key, value, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 fn text(c: &mut Context<'_>, object: RootId, name: &str, value: &str) -> Result<(), RootedError> {
     let value = c.string_rooted(value);
     put(c, object, name, value)

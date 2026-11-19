@@ -47,14 +47,14 @@ impl PropertyKey {
     }
 
     /// The key's one-word image (K-ENTRY's key32): a string's atom below `1 << 30`, a
-    /// symbol's heap slot with bit 30 set. `None` for a private name and any key outside
+    /// symbol's record id with bit 30 set (symbols are records, so no slot index can name one). `None` for a private name and any key outside
     /// those ranges, which the fact table does not hold.
     #[inline(always)]
     pub(crate) fn key32(self) -> Option<u32> {
         const SYMBOL_CLASS: u32 = 1 << 30;
         match self {
             Self::String(atom) => (atom < SYMBOL_CLASS).then_some(atom),
-            Self::Symbol(value) => value.legacy_heap_index().filter(|index| *index < SYMBOL_CLASS).map(|index| index | SYMBOL_CLASS),
+            Self::Symbol(value) => value.direct_symbol_index().filter(|index| *index < SYMBOL_CLASS).map(|index| index | SYMBOL_CLASS),
             Self::Private(..) => None,
         }
     }

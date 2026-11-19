@@ -1,6 +1,6 @@
 //! The native readers' views of the fixed record layouts: where an array, function, object or environment
 //! record keeps the words generated code reads, each derived from the storage types themselves.
-use super::{RECORD_SPACE_CAPACITY, array_elements, cell, records, thin_slice};
+use super::{array_elements, cell, records, thin_slice};
 use crate::value::Value;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 
@@ -43,7 +43,7 @@ pub(crate) struct NativeArrayLayout {
 /// The native reader's view of a function record: its own properties are the `Object` at
 /// `object_offset`, whose words `NATIVE_OBJECT_LAYOUT` names. The record is `repr(C)`, so the layout
 /// is the declaration's. Generated code reads and, through the function space's barrier
-/// (`RecordSpace::Function`, `emit_unlogged_property_store_guard`), stores them.
+/// (`StagedRecordSpace::Function`, `emit_unlogged_property_store_guard`), stores them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeFunctionLayout {
     pub(crate) record_size: usize,
@@ -57,7 +57,7 @@ pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLa
 
 /// Layout facts for code generators which emit read-only ordinary-array accesses.
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
-    record_capacity: RECORD_SPACE_CAPACITY,
+    record_capacity: records::ARRAY_RECORD_CAPACITY,
     record_size: cell::NATIVE_ARRAY_RECORD_SIZE,
     record_align: cell::NATIVE_ARRAY_RECORD_ALIGN,
     elements_offset: cell::NATIVE_ARRAY_ELEMENTS_OFFSET,
@@ -72,6 +72,29 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     frozen_mask: crate::value_vec::VALUE_VEC_FROZEN,
     integrity_mask: crate::value_vec::VALUE_VEC_INTEGRITY_BITS,
 };
+
+/// The native view of a hot record space's allocation cursor (`records::RecordCursor`): the run
+/// `[next, limit)` of fresh ids whose occupancy is already set. An inline allocation loads
+/// `next` and `limit`, and when `next < limit` stores `next + 1`, takes the old `next` as the
+/// record id, and writes the record at the space's base plus `id * record_size`. Otherwise it
+/// calls out to `Heap::alloc_*`, which refills the run (`RecordSpace::cursor_refill`), then
+/// `retire_cursor` at each collection frees the unallocated rest. Its words are `u32`s.
+/// Generated code reads only the two offsets; the cursor's size is pinned below.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeRecordCursorLayout {
+    pub(crate) next_offset: usize,
+    pub(crate) limit_offset: usize,
+}
+
+pub(crate) const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCursorLayout {
+    next_offset: std::mem::offset_of!(records::RecordCursor, next),
+    limit_offset: std::mem::offset_of!(records::RecordCursor, limit),
+};
+
+const _: () = assert!(
+    std::mem::size_of::<records::RecordCursor>() == 8 && std::mem::align_of::<records::RecordCursor>() == 4,
+    "generated code reads a record cursor as two u32 words"
+);
 
 /// Which invariants an existing-slot store must preserve. Native views cannot
 /// replace property storage; typed native regions also leave on content widening.
@@ -131,7 +154,7 @@ pub(crate) struct NativeObjectLayout {
 
 /// Layout facts for code generators which emit read-only ordinary-object field accesses.
 pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
-    record_capacity: RECORD_SPACE_CAPACITY,
+    record_capacity: records::OBJECT_RECORD_CAPACITY,
     record_size: cell::NATIVE_OBJECT_RECORD_SIZE,
     record_align: cell::NATIVE_OBJECT_RECORD_ALIGN,
     layout_offset: cell::NATIVE_OBJECT_LAYOUT_OFFSET,

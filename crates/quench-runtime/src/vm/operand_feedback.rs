@@ -11,6 +11,7 @@
 //! it with what they sampled (`Vm::site_operand_kinds`).
 
 use super::*;
+use oxc_ast::ast::BinaryOperator;
 
 /// The size of one record, which the feedback bytes in front of the records are counted in.
 const RECORD_BYTES: usize = std::mem::size_of::<LaneInstruction>();
@@ -44,6 +45,11 @@ impl OperandKinds {
     pub(crate) const OTHER: Self = Self(1 << 4);
     /// Two int32 operands whose int32 step declined: the result left the int32 range.
     pub(crate) const WIDENED: Self = Self(1 << 5);
+    /// An element access met a present dense element (`GetIndex`, `SetIndex`).
+    pub(crate) const DENSE: Self = Self(1 << 6);
+    /// An element read met a number of a typed array.
+    pub(crate) const TYPED: Self = Self(1 << 7);
+    const ELEMENTS: Self = Self(Self::DENSE.0 | Self::TYPED.0);
     /// The kinds past Numbers.
     const BEYOND_NUMBER: Self = Self(Self::STRING.0 | Self::BIGINT.0 | Self::OTHER.0);
     /// The kinds that make a Number site's int32 step fail.
@@ -79,6 +85,11 @@ impl OperandKinds {
 
     pub(crate) const fn has_string(self) -> bool {
         self.contains(Self::STRING)
+    }
+
+    /// Whether an element site met a dense or typed element.
+    pub(crate) const fn element_admitted(self) -> bool {
+        self.intersects(Self::ELEMENTS)
     }
 
     /// The kind of one operand: int32 and double by their tags, a string or record by its handle's
@@ -122,7 +133,7 @@ impl OperandKinds {
 /// Whether an instruction's record has a feedback byte: the arithmetic and comparison
 /// instructions whose lane handlers quicken on int32 operands.
 pub(super) fn has_operand_feedback(op: Op) -> bool {
-    op.is_binary_arithmetic() || op.compares_and_jumps()
+    op.is_binary_arithmetic() || op.compares_and_jumps() || matches!(op, Op::GetIndex | Op::SetIndex)
 }
 
 /// The feedback byte of the record at `ip` of the view whose first record is `base`.
@@ -153,74 +164,6 @@ pub(super) unsafe fn note_operands<H: Host>(cx: *mut LaneContext<H>, ip: Ip, lef
     }
 }
 
-/// Adds both Number kinds to the feedback byte of the record at `ip`, for a handler that
-/// stops noting Number pairs (`requicken_number_relation`).
-///
-/// # Safety
-/// As `note_operands`.
-pub(super) unsafe fn note_number_kinds<H: Host>(cx: *mut LaneContext<H>, ip: Ip) {
-    // SAFETY: as the function's own.
-    let cell = unsafe { feedback_cell((*cx).base, ip) };
-    cell.set(OperandKinds(cell.get()).union(OperandKinds::INT32).union(OperandKinds::DOUBLE).0);
-}
-
-/// Adds `kind` to the feedback byte of the record at `ip`: what `note_operands` adds for an
-/// operand pair already known to be of that kind (two BigInts, two strings), without
-/// classifying them again.
-///
-/// # Safety
-/// As `note_operands`.
-#[inline(always)]
-pub(super) unsafe fn note_kind<H: Host>(cx: *mut LaneContext<H>, ip: Ip, kind: OperandKinds) {
-    // SAFETY: as the function's own.
-    let cell = unsafe { feedback_cell((*cx).base, ip) };
-    let kinds = OperandKinds(cell.get()).union(kind);
-    if kinds.0 != cell.get() {
-        cell.set(kinds.0);
-    }
-}
-
-/// `note_operands` for a handler's first miss, out of line so the handler's own code stays as it is.
-///
-/// # Safety
-/// As `note_operands`.
-#[cold]
-#[inline(never)]
-pub(super) unsafe fn note_first_miss<H: Host>(cx: *mut LaneContext<H>, ip: Ip, left: Value, right: Value) {
-    // SAFETY: the caller's.
-    unsafe { note_operands(cx, ip, left, right) }
-}
-
-/// Notes on the record at `ip` that its int32 step declined two int32s: `result`, a Number an
-/// int32 handler completed itself (an overflowing sum, difference or product, a `-0`) or a
-/// division or remainder the lane's Number step computed, is no int32.
-///
-/// # Safety
-/// As `note_operands`.
-#[inline(always)]
-pub(super) unsafe fn note_widened<H: Host>(cx: *mut LaneContext<H>, ip: Ip, result: Value) {
-    if result.as_int().is_none() {
-        // SAFETY: the caller's.
-        let cell = unsafe { feedback_cell((*cx).base, ip) };
-        cell.set(cell.get() | OperandKinds::WIDENED.0);
-    }
-}
-
-/// `note_widened` of the Number step of `left` and `right` (any operator), which only two int32
-/// operands can widen; any other operand pair notes nothing.
-///
-/// # Safety
-/// As `note_operands`.
-#[inline(always)]
-pub(super) unsafe fn note_pair_result<H: Host>(cx: *mut LaneContext<H>, ip: Ip, left: Value, right: Value, result: Value) {
-    // Per operand on the tag field the Number step already tested, not `Value::int_pair`'s
-    // xor of both words: that recomputed both tags after every double operation.
-    if left.has_int_tag_field() && right.has_int_tag_field() {
-        // SAFETY: the caller's.
-        unsafe { note_widened(cx, ip, result) };
-    }
-}
-
 /// A view's records, with the feedback bytes of its sites in front of them: one byte per record,
 /// counted back from the first.
 pub(super) struct Records {
@@ -241,14 +184,21 @@ impl Records {
             b: 0,
             c: 0,
             call_link: std::cell::Cell::new(0),
+            mode: 0,
         }
     }
 
     /// `records`, with feedback bytes (all `NONE`) in front of them where `feedback`.
     pub(super) fn new(records: Box<[LaneInstruction]>, feedback: bool) -> Self {
         let front = if feedback { records.len().div_ceil(RECORD_BYTES) } else { 0 };
+        // The records move into their own allocation, grown by the feedback records in front
+        // (`reserve_exact`, so no slack), instead of being copied into a second one: a derivation
+        // holds one copy of its records at its peak, not two.
+        let mut vector = Vec::from(records);
+        vector.reserve_exact(front);
+        vector.splice(0..0, std::iter::repeat_with(Self::blank).take(front));
         let cells: Box<[std::cell::UnsafeCell<LaneInstruction>]> =
-            std::iter::repeat_with(Self::blank).take(front).chain(records).map(std::cell::UnsafeCell::new).collect();
+            vector.into_iter().map(std::cell::UnsafeCell::new).collect::<Vec<_>>().into_boxed_slice();
         // SAFETY: `front` records lie before the end of `cells`; the pointer keeps the whole
         // allocation's provenance, which the feedback bytes before it need, and the boxed
         // records never move.
@@ -270,6 +220,7 @@ impl Records {
 impl std::ops::Deref for Records {
     type Target = [std::cell::UnsafeCell<LaneInstruction>];
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         &self.cells[self.front..]
     }
@@ -286,9 +237,28 @@ impl LaneView {
         // SAFETY: `pc` names a record of this view, which holds feedback bytes.
         OperandKinds(unsafe { feedback_cell(base, base.add(pc)) }.get())
     }
+
+    /// Adds `kind` to the feedback byte of the element record at `pc` (`note_element_kind`), unless it holds it.
+    pub(crate) fn note_element(&self, pc: usize, kind: OperandKinds) {
+        if self.records.has_feedback() && pc < self.records.len() {
+            let base = self.records.base();
+            // SAFETY: `pc` names a record of this view, which holds feedback bytes.
+            let cell = unsafe { feedback_cell(base, base.add(pc)) };
+            cell.set(cell.get() | (kind.0 & !cell.get()));
+        }
+    }
 }
 
 impl<H: Host> Vm<H> {
+    /// Notes that the element access at `pc` of frame `f` met `kind`, in the frame function's lane view.
+    pub(crate) fn note_element_kind(&self, f: usize, pc: usize, kind: OperandKinds) {
+        let function = self.frames[f].function as usize;
+        let view = self.programs.lane_views(self.active_program).and_then(|views| views.get(function));
+        if let Some(view) = view.and_then(super::super::program_store::derived_lane_view) {
+            view.note_element(pc, kind);
+        }
+    }
+
     /// The kinds the instruction at `pc` of `function` met where its int32 handler declined,
     /// for the specializers that choose int32, double, string or generic variants: `NONE` for
     /// a function with no lane view (the kinds are recorded by it only), an instruction with
@@ -296,7 +266,7 @@ impl<H: Host> Vm<H> {
     /// sampled.
     pub(crate) fn site_operand_kinds(&self, program: ProgramId, function: u32, pc: usize) -> OperandKinds {
         self.programs
-            .lane_views(program)
+            .views_in_lane(program)
             .and_then(|views| views.get(function as usize))
             .and_then(super::super::program_store::derived_lane_view)
             .map_or(OperandKinds::NONE, |view| view.operand_kinds(pc))
@@ -305,6 +275,92 @@ impl<H: Host> Vm<H> {
     /// `site_operand_kinds` of each instruction in `pcs` of `function`, in order.
     pub(crate) fn region_operand_kinds(&self, program: ProgramId, function: u32, pcs: std::ops::RangeInclusive<usize>) -> Vec<OperandKinds> {
         pcs.map(|pc| self.site_operand_kinds(program, function, pc)).collect()
+    }
+}
+
+/// The language set of exactly String, as a declared parameter names it.
+const STRING_LANGUAGES: u16 = crate::typed_ir::language_bit(crate::ValueType::String);
+/// The language set of exactly Number, as a declared parameter names it.
+const NUMBER_LANGUAGES: u16 = crate::typed_ir::language_bit(crate::ValueType::Number);
+
+/// The declared language set (`Function::declared_parameters`) of the parameter that `register`
+/// holds at entry, when it is exactly String or exactly Number.
+fn declared_parameter_languages(function: &crate::bytecode::Function, register: u16) -> Option<u16> {
+    let index = match function.parameter_registers {
+        Some(base) => register.checked_sub(base).filter(|index| *index < function.params)?,
+        None => function.local_registers.iter()
+            .find(|entry| entry.register == register && entry.local < function.params)?.local,
+    };
+    let languages = *function.declared_parameters.get(usize::from(index))?;
+    (languages == STRING_LANGUAGES || languages == NUMBER_LANGUAGES).then_some(languages)
+}
+
+/// The operator (a `BinaryOperator`'s discriminant) of a `Binary`, `NumericAdd` or
+/// `JumpBinaryFalse` instruction; `None` for any other.
+fn site_operator(instruction: WideInstruction) -> Option<u32> {
+    let op = instruction.op();
+    match op.immediate_role() {
+        crate::bytecode::ImmediateRole::AdditionOperator => return Some(BinaryOperator::Addition as u32),
+        crate::bytecode::ImmediateRole::BinaryOperator => return Some(instruction.binary_operator()),
+        _ => {}
+    }
+    crate::bytecode::InstructionField::ALL.iter()
+        .find(|&&field| op.field_layout(field) == crate::bytecode::FieldLayout::BinaryOperator)
+        .map(|&field| u32::from(instruction.field_value(field)))
+}
+
+/// Whether `operator` is the addition or a relation (`<`, `<=`, `>`, `>=`, `==`, `!=`, `===`, `!==`)
+/// whose feedback a declared operand pair seeds.
+fn seeds_operands(operator: u32) -> bool {
+    [BinaryOperator::Addition, BinaryOperator::LessThan, BinaryOperator::LessEqualThan,
+        BinaryOperator::GreaterThan, BinaryOperator::GreaterEqualThan, BinaryOperator::Equality,
+        BinaryOperator::Inequality, BinaryOperator::StrictEquality, BinaryOperator::StrictInequality]
+        .iter()
+        .any(|seeded| *seeded as u32 == operator)
+}
+
+/// The kinds a site's operands would note after one observation, when both of its operands are
+/// declared parameters of exactly String or exactly Number: String when either is a String (a
+/// string operand is what the site notes), else the Number pair an int32 and a double make.
+/// `NONE` for any other site.
+fn declared_operand_kinds(function: &crate::bytecode::Function, instruction: WideInstruction) -> OperandKinds {
+    let Some(operator) = site_operator(instruction).filter(|operator| seeds_operands(*operator)) else {
+        return OperandKinds::NONE;
+    };
+    let languages = |register: Option<u16>| register.and_then(|register| declared_parameter_languages(function, register));
+    let (Some(left), Some(right)) = (
+        languages(instruction.operand_b().register_index()),
+        languages(instruction.operand_c().register_index()),
+    ) else {
+        return OperandKinds::NONE;
+    };
+    if left == STRING_LANGUAGES || right == STRING_LANGUAGES {
+        OperandKinds::STRING
+    } else {
+        OperandKinds::INT32.union(OperandKinds::DOUBLE)
+    }
+}
+
+/// Seeds the feedback of the function's addition and comparison sites whose operands are declared
+/// parameters (`declared_operand_kinds`), so each site's first handler choice is the one its
+/// declared operands call for. A declaration is only a seed, since TypeScript is unsound: a wrong
+/// seed costs one requickening, because the handler's guard checks the operands at run time.
+///
+/// An operand register counts as its parameter at entry; a parameter reassigned before the site
+/// is seeded all the same, which a feedback hint tolerates.
+pub(super) fn seed_declared_feedback(function: &crate::bytecode::Function, records: &Records) {
+    if !records.has_feedback() {
+        return;
+    }
+    let base = records.base();
+    for (pc, instruction) in function.instructions().enumerate().take(records.len()) {
+        let kinds = declared_operand_kinds(function, instruction);
+        if kinds == OperandKinds::NONE {
+            continue;
+        }
+        // SAFETY: `pc` names a record of `records`, which holds feedback bytes (`Records::new`).
+        let cell = unsafe { feedback_cell(base, base.add(pc)) };
+        cell.set(OperandKinds(cell.get()).union(kinds).0);
     }
 }
 

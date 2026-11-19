@@ -3,7 +3,7 @@
 //! store's totals.
 use super::*;
 use super::super::compiled::RegionRejection;
-use super::super::dispatch_fast::{LaneView, OsrDiagnostics, OsrSiteDiagnostics, OsrSiteStatus};
+use super::super::dispatch_fast::{LaneView, OsrDiagnostics, OsrSiteDiagnostics, OsrSiteStatus, RegionDecline};
 use std::fmt::Display;
 use std::io::{self, Write};
 
@@ -149,7 +149,21 @@ fn write_osr(out: &mut impl Write, osr: &OsrDiagnostics) -> io::Result<()> {
         ("tier_ups", &osr.tier_ups), ("body_runs", &osr.body_runs),
         ("entry_guard_misses", &osr.entry_guard_misses), ("exits", &osr.exits), ("widenings", &osr.widenings),
     ], false)?;
+    write_declines(out, &osr.declines)?;
     write_list(out, "sites", &osr.sites, write_osr_site)?;
+    write!(out, "}}")
+}
+
+/// Why loop regions were not entered at their headers, by reason (`RegionDecline`): only the
+/// reasons that occurred.
+fn write_declines(out: &mut impl Write, declines: &[u64; RegionDecline::COUNT]) -> io::Result<()> {
+    write!(out, ",\"declines\":{{")?;
+    let mut first = true;
+    for (reason, count) in RegionDecline::ALL.iter().zip(declines) {
+        if *count == 0 { continue; }
+        write!(out, "{}\"{}\":{count}", if first { "" } else { "," }, reason.name())?;
+        first = false;
+    }
     write!(out, "}}")
 }
 
@@ -161,6 +175,7 @@ fn write_osr_site(out: &mut impl Write, site: &OsrSiteDiagnostics) -> io::Result
         ("admitted", &site.admitted), ("deferred_call", &site.deferred_call),
         ("tier_threshold_reached", &site.tier_threshold_reached), ("lane_backedge_count", &site.lane_backedge_count),
     ], false)?;
+    write_declines(out, &site.declines)?;
     write_list(out, "call_boundary_pcs", &site.call_boundary_pcs, |out, pc| write!(out, "{pc}"))?;
     write!(out, ",\"failure_pc\":")?;
     match site.failure {
@@ -229,10 +244,10 @@ fn write_tables(out: &mut impl Write, counters: &JsJitCounters, osr: &OsrDiagnos
 
 /// A lane body's report line, or its state where it has no stats.
 fn report_lane_body(program: usize, function: u32, view: &LaneView, op_at: &dyn Fn(u32, u32) -> Option<String>) {
-    if let Some(line) = view.tier().body_stats.report(program, view.lane_body_state(), op_at) {
+    if let Some(line) = view.tier().body_stats.report(program, view.body_state_in_lane(), op_at) {
         eprintln!("{line}");
     } else {
-        let (state, entries, claimed, warming) = view.lane_body_detail();
+        let (state, entries, claimed, warming) = view.body_detail_in_lane();
         eprintln!("QUENCH_LANE_STATE {{\"program\":{program},\"function\":{function},\"state\":\"{state}\",\"entries\":{},\"claimed\":{claimed},\"warming\":{warming},\"declined\":\"{}\"}}", entries.map_or(String::from("null"), |entries| entries.to_string()), view.tier().body_stats.declined.get());
     }
 }
@@ -263,7 +278,7 @@ impl ProgramStore {
             let op_at = |function: u32, pc: u32| code.function_get(function as usize)
                 .and_then(|body| body.instructions().nth(pc as usize)).map(|instruction| format!("{:?}", instruction.op()));
             let views = (0..u32::MAX).map_while(|function| code.function_get(function as usize).map(|_| function))
-                .filter_map(|function| entry.lane_views.derived(function).map(|view| (function, view)));
+                .filter_map(|function| entry.views_in_lane.derived(function).map(|view| (function, view)));
             for (function, view) in views {
                 report_lane_body(program, function, view, &op_at);
             }
@@ -275,7 +290,7 @@ impl ProgramStore {
         -> io::Result<()> {
         let entry = self.programs.get(program as usize).and_then(|entry| entry.as_deref());
         let osr = entry
-            .and_then(|entry| entry.lane_views.derived(function))
+            .and_then(|entry| entry.views_in_lane.derived(function))
             .map(LaneView::osr_diagnostics)
             .unwrap_or_default();
         write!(out, "QUENCH_JS_JIT_STATS {{\"program\":{program},\"function\":{function},\"function_name\":")?;

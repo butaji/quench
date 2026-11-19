@@ -610,7 +610,7 @@ pub(super) const THROUGHPUT_PACING: GenerationalPacing = GenerationalPacing {
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
     minimum_external_budget: THROUGHPUT_MINIMUM_EXTERNAL_BUDGET,
-    minimum_program_growth: MINIMUM_PROGRAM_GROWTH,
+    minimum_program_growth: PACING_MINIMUM_PROGRAM_GROWTH,
     arena_growth: Ratio::new(1, 8),
     minimum_arena_growth: MINIMUM_ARENA_GROWTH,
     promotion_age: THROUGHPUT_PROMOTION_AGE,
@@ -658,7 +658,7 @@ pub(super) const MEMORY_FIRST_PACING: GenerationalPacing = GenerationalPacing {
     probe_interval: 4,
     weight_growth: Ratio::new(0, 1),
     minimum_external_budget: MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET,
-    minimum_program_growth: MINIMUM_PROGRAM_GROWTH,
+    minimum_program_growth: PACING_MINIMUM_PROGRAM_GROWTH,
     arena_growth: Ratio::new(1, 8),
     minimum_arena_growth: MINIMUM_ARENA_GROWTH,
     promotion_age: MEMORY_FIRST_PROMOTION_AGE,
@@ -685,13 +685,16 @@ const THROUGHPUT_MINIMUM_EXTERNAL_BUDGET: usize = 4 << 20;
 /// collections for it.
 const MEMORY_FIRST_MINIMUM_EXTERNAL_BUDGET: usize = 512 << 10;
 
-/// The program growth floor (`GenerationalPacing::minimum_program_growth`) under either policy.
+/// The program growth floor (`GenerationalPacing::minimum_program_growth`) under either policy,
+/// checked by `program_growth_reached` in `Heap::should_full_collect`. It is not the 256 KiB
+/// floor of `Heap::charge_reclaimable_program`, which requests a full collection on charge
+/// (`CHARGE_MINIMUM_PROGRAM_GROWTH`); the two floors are kept apart on purpose.
 /// At Throughput's 4 MiB external budget, a test that evaluates its source each iteration kept
 /// every iteration's program (0.5-0.7 MB of footprint each) until one full collection a run
 /// (JetStream 3 no-JIT max RSS, x86_64, 2026-11-15, 5-9 runs: mobx-startup 21.8 -> 18.4 MB,
 /// web-ssr 46.0 -> 40.6, prismjs 18.6 -> 18.1; typescript-lib, jsdom, threejs, inspectors and
 /// octane-code-load equal; scores within noise). At 768 KiB mobx-startup kept them.
-const MINIMUM_PROGRAM_GROWTH: usize = 512 << 10;
+const PACING_MINIMUM_PROGRAM_GROWTH: usize = 512 << 10;
 
 /// The fewest allocations between collections under memory-first, whatever survived: the
 /// pre-generational minimum headroom.

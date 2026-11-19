@@ -1,8 +1,8 @@
 #[path = "activation_layout.rs"] mod activation_layout;
 use super::control_flow::instruction_at;
 use super::{
-    FieldBase, FieldLayout, ImmediateLayout, InstructionField, Op, Operand, OperandKind,
-    REGISTER_MASK, Register, ResidualProgram,
+    FieldBase, FieldLayout, ImmediateLayout, InstructionField, Operand, OperandKind,
+    REGISTER_MASK, Register, ResidualProgram, Traits,
 };
 use rustc_hash::FxHashSet;
 
@@ -152,23 +152,14 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
         .filter_map(|instruction| instruction_at(function, *instruction))
         .chain(function.wide.iter().copied())
         .any(|instruction| {
-            matches!(
-                instruction.op(),
-                Op::LoadName
-                    | Op::LoadNameCall
-                    | Op::LoadNameTypeof
-                    | Op::ResolveName
-                    | Op::StoreName
-                    | Op::DeleteName
-            ) && promoted.iter().any(|entry| {
+            instruction.op().traits().has(Traits::BY_NAME_ACCESS) && promoted.iter().any(|entry| {
                 function.local_atoms.get(usize::from(entry.local)) == Some(&instruction.imm())
             })
         });
+    let makes_closures = function.code.iter().any(|instruction| instruction.op().makes_closure())
+        || function.wide.iter().any(|instruction| instruction.op().makes_closure());
     let eligible_function = function.parent.is_some()
-        // An async body that never suspends runs to completion as an ordinary one does
-        // (`Compiler::promoted_local_plan`'s `async_body`).
-        && !(function.is_async && function.suspends())
-        && !function.is_generator
+        // A suspension saves the frame's registers, so async and generator bodies promote too.
         && !function.derived_constructor
         // An arrow inside an initializer owns its locals (`compile/arrow.rs`).
         && !(function.class_initializer && !function.is_arrow)
@@ -181,14 +172,16 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
         && !function.inherited_with_scope
         && function.binding_sites.is_empty()
         && !has_dynamic_local_resolution
+        // A function that makes closures promotes only parameters, under a selective capture
+        // layout that captures none of them (checked per entry below): its closures reach
+        // its environment's slots alone (`Compiler::promoted_local_plan`'s `parameters_only`).
+        && (!makes_closures || function.selective_capture_slots.is_some() && promoted.iter().all(|entry| entry.local < function.params))
         && !function.code.iter().any(|instruction| {
-            instruction.op() == Op::MakeClosure
-                || instruction.op().is_call_with_eval_flags() && instruction.direct_eval()
+            instruction.op().is_call_with_eval_flags() && instruction.direct_eval()
         })
         && !function.wide.iter().any(|instruction| {
-            instruction.op() == Op::MakeClosure
-                || instruction.op().is_call_with_eval_flags()
-                    && ImmediateLayout::direct_eval(instruction.imm())
+            instruction.op().is_call_with_eval_flags()
+                && ImmediateLayout::direct_eval(instruction.imm())
         });
     eligible_function
         && promoted.iter().enumerate().all(|(index, entry)| {
@@ -240,6 +233,7 @@ struct ValidationBounds {
     regexp_literal_sites: usize,
     literal_templates: usize,
     superinstructions: usize,
+    global_lexical: usize,
     code_len: u32,
 }
 
@@ -259,17 +253,20 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             }
             FieldLayout::RegisterWindowBase => {
                 let window = instruction.register_window();
-                (instruction.op() != super::Op::WasmAtomicAccess
+                (!instruction.op().traits().has(Traits::WASM_ATOMIC_WINDOW)
                     || crate::wasm::atomic::AtomicOperator::from_tag(instruction.imm())
                         .is_some_and(|operator| window.count == operator.input_count()))
-                    && (instruction.op() != super::Op::WasmExceptionNew
+                    && (!instruction.op().traits().has(Traits::WASM_EXCEPTION_WINDOW)
                         || window.count >= crate::wasm::tag::ExceptionInput::MIN_COUNT)
-                    && crate::wasm::gc::StructConstruction::from_op(instruction.op())
-                        .is_none_or(|mode| window.count >= u16::from(mode.described()))
+                    && crate::staged::wasm_gc::GcStep::of(instruction.op()).is_none_or(|step| match step {
+                        crate::staged::wasm_gc::GcStep::StructNew { descriptor, .. } => window.count >= u16::from(descriptor),
+                        _ => true,
+                    })
                     && register_window_in_bounds(value, u32::from(window.count), bounds.registers)
             }
             FieldLayout::RegisterCount => true, // The associated window base owns the bounds check.
             FieldLayout::SignedConstant => true,
+            FieldLayout::WasmPayloadType => crate::staged::wasm_exception::PayloadType::of_code(value).is_some(),
             FieldLayout::OptionalRegister | FieldLayout::OptionalReadRegister => instruction
                 .optional_register_b()
                 .is_none_or(|register| register_in_bounds(register, bounds.registers, 0)),
@@ -334,6 +331,7 @@ fn immediate_domains_in_bounds(
             (instruction.closure_function_index() as usize) < bounds.functions
         }
         super::ImmediateRole::LocalSlot => instruction.local_slot() < usize::from(bounds.locals),
+        super::ImmediateRole::GlobalLexicalIndex => (instruction.imm() as usize) < bounds.global_lexical,
         super::ImmediateRole::AtomIndex => atom_in_bounds(instruction.atom_index(), bounds.atoms),
         super::ImmediateRole::BooleanFlag => instruction.boolean_flag().is_some(),
         super::ImmediateRole::ArrayIndex => {
@@ -489,16 +487,18 @@ fn object_site_instruction_valid(
     registers: u16,
 ) -> bool {
     match instruction.op() {
-        Op::MakeObject2 => object_sites
+        op if op.traits().has(Traits::RETURNING_OBJECT) => object_sites
             .get(instruction.object_site_index())
             .is_some_and(|site| site.atoms.len() == super::INLINE_OBJECT_SITE_ATOMS),
-        Op::MakeObjectLiteral => {
+        op if op.traits().has(Traits::RETURNING_OBJECT_LITERAL) => {
             let Some(site) = object_sites.get(instruction.object_site_index()) else {
                 return false;
             };
             let window = instruction.register_window();
             let mut atoms = FxHashSet::default();
-            usize::from(window.count) > super::INLINE_OBJECT_SITE_ATOMS
+            // `MakeObject2` holds the two-field literal; any other nonempty width up to the
+            // window is this one's.
+            (window.count == 1 || usize::from(window.count) > super::INLINE_OBJECT_SITE_ATOMS)
                 && site.atoms.len() == usize::from(window.count)
                 && site.atoms.iter().all(|atom| atoms.insert(*atom))
                 && register_window_in_bounds(window.base, u32::from(window.count), registers)
@@ -519,6 +519,9 @@ impl ResidualProgram {
 
     pub(crate) fn validate(&self) -> Result<(), String> {
         if let Some(source) = &self.source { source.validate_call_sites()?; }
+        // The compiled-source bytes a position may name: those of the kept text, after its
+        // wrapper prefix. A program that keeps no text has none to bound them by.
+        let source_end = self.source.as_ref().map(|source| source.base as usize + source.text.len());
         if self.functions.is_empty() && self.kind != super::ProgramKind::Wasm {
             return Err("program has no entry function".into());
         }
@@ -551,21 +554,6 @@ impl ResidualProgram {
             // function's own derivation, as is every other fact an encoding keeps.
             if !function.derived_facts_hold(self) {
                 return Err(format!("function {index} carries facts its code does not derive"));
-            }
-            // A lane lets the callee of a dead result skip building it, so each claim is the
-            // compiler's own derivation (`liveness::register_roots`).
-            // An activation fills only the registers below the live entry bound, so that bound
-            // is the compiler's own derivation too.
-            if !function.register_roots.dead_call_results().is_empty()
-                || function.register_roots.entry_fill(function.registers) < function.registers
-            {
-                let derived = crate::compile::liveness::register_roots(function, self, &self.field_sites, &self.superinstructions);
-                if derived.dead_call_results() != function.register_roots.dead_call_results() {
-                    return Err(format!("function {index} claims dead call results its liveness does not prove"));
-                }
-                if derived.entry_fill(function.registers) > function.register_roots.entry_fill(function.registers) {
-                    return Err(format!("function {index} claims an entry liveness its liveness does not prove"));
-                }
             }
             if function
                 .self_binding_slot
@@ -612,8 +600,12 @@ impl ResidualProgram {
                 .then_some(self.module_link_plan.as_ref())
                 .flatten()
                 .map(|plan| (plan, &self.module_imports[..]));
+            let script_root = matches!(self.kind, super::ProgramKind::Script | super::ProgramKind::Eval)
+                && index == 0
+                && function.parent.is_none();
+            let script_root = script_root.then_some(self.kind == super::ProgramKind::Eval);
             if let Some(captured) = &function.selective_capture_slots
-                && ((module_body.is_none() && (index == 0 || function.parent.is_none()))
+                && ((module_body.is_none() && script_root.is_none() && (index == 0 || function.parent.is_none()))
                     || captured.iter().any(|slot| *slot >= function.locals)
                     || captured.windows(2).any(|pair| pair[0] >= pair[1]))
             {
@@ -623,7 +615,7 @@ impl ResidualProgram {
             }
             if function.selective_capture_slots.is_some()
                 && (selective_capture_scope_unsafe[index]
-                    || !selective_capture_layout_is_eligible(function, index, module_body, &self.atoms))
+                    || !selective_capture_layout_is_eligible(function, index, module_body, script_root, &self.atoms))
             {
                 return Err(format!(
                     "function {index} has an ineligible selective capture layout"
@@ -641,7 +633,7 @@ impl ResidualProgram {
             } else {
 function.plain_local_slots(&self.superinstructions)
             };
-            if let Some(initializer) = function.instance_initializer {
+            if let Some(initializer) = function.instance_initializer() {
                 let valid = self
                     .functions
                     .get(initializer as usize)
@@ -651,7 +643,7 @@ function.plain_local_slots(&self.superinstructions)
                             && plan.parent == function.parent
                             && plan.class_initializer
                             && !plan.constructible
-                            && plan.instance_initializer.is_none()
+                            && plan.instance_initializer().is_none()
                     });
                 if !valid {
                     return Err(format!(
@@ -668,16 +660,21 @@ function.plain_local_slots(&self.superinstructions)
                 return Err(format!("function {index} has invalid name bindings"));
             }
             let code_len = function.code.len() as u32;
-            let positions = function.source_positions.iter();
-            if positions
-                .clone()
-                .zip(positions.clone().skip(1))
-                .any(|(first, second)| first.pc >= second.pc)
-                || positions.clone().any(|position| {
-                    position.pc >= code_len || position.line == 0 || position.column == 0
-                })
-                || positions.clone().last() != function.source_positions.last()
-            {
+            // One decoding pass: entries strictly increase in pc, lie within the code and
+            // within the compiled source, and the last decoded entry is the table's last.
+            let mut previous_pc = None;
+            let mut decoded_last = None;
+            for entry in function.source_positions.iter() {
+                if previous_pc.is_some_and(|pc| pc >= entry.pc)
+                    || entry.pc >= code_len
+                    || source_end.is_some_and(|end| entry.offset as usize > end)
+                {
+                    return Err(format!("function {index} has invalid source positions"));
+                }
+                previous_pc = Some(entry.pc);
+                decoded_last = Some(entry);
+            }
+            if decoded_last != function.source_positions.last() {
                 return Err(format!("function {index} has invalid source positions"));
             }
             if function
@@ -725,12 +722,13 @@ function.plain_local_slots(&self.superinstructions)
                 regexp_literal_sites: self.regexp_literal_sites.len(),
                 literal_templates: self.literal_templates.len(),
                 superinstructions: self.superinstructions.len(),
+                global_lexical: self.function_get(0).map_or(0, |root| root.global_lexical_atoms().len()),
                 code_len,
             };
             if function
                 .arguments_slot
                 .is_some_and(|slot| slot >= function.locals)
-                || function.rest && function.simple_parameters
+                || !function.parameter_flags_agree()
             {
                 return Err(format!("function {index} has invalid argument metadata"));
             }
@@ -761,33 +759,24 @@ function.plain_local_slots(&self.superinstructions)
                         "function {index} accesses a promoted binding through its local slot"
                     ));
                 }
-                if matches!(
-                    instruction.op(),
-                    super::Op::LoadLocalPlain | super::Op::StoreLocalPlain
-                ) && !plain_local_slots.contains(instruction.local_slot())
+                if (instruction.op().traits().has(Traits::PLAIN_LOCAL_LOAD)
+                    || instruction.op().traits().has(Traits::PLAIN_LOCAL_STORE))
+                    && !plain_local_slots.contains(instruction.local_slot())
                 {
                     return Err(format!(
                         "function {index} has an unproven plain-local operation"
                     ));
                 }
                 if let Some(captured) = &function.selective_capture_slots {
-                    let local_slot = matches!(
-                        instruction.op(),
-                        super::Op::LoadLocal
-                            | super::Op::StoreLocal
-                            | super::Op::LoadLocalPlain
-                            | super::Op::StoreLocalPlain
-                            | super::Op::LoadEnvLocal
-                            | super::Op::StoreEnvLocal
-                    )
+                    let op = instruction.op();
+                    let local_slot = (op.traits().has(Traits::FRAME_LOCAL_LOAD)
+                        || op.traits().has(Traits::FRAME_LOCAL_STORE)
+                        || op.addresses_env_local())
                     .then(|| instruction.local_slot());
                     let slot_is_captured = local_slot.is_some_and(|slot| {
                         u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
                     });
-                    let environment_op = matches!(
-                        instruction.op(),
-                        super::Op::LoadEnvLocal | super::Op::StoreEnvLocal
-                    );
+                    let environment_op = op.addresses_env_local();
                     if environment_op && !slot_is_captured {
                         return Err(format!(
                             "function {index} has an environment-local operation for an uncaptured slot"
@@ -797,12 +786,12 @@ function.plain_local_slots(&self.superinstructions)
                         .numeric_local_target()
                         .is_some_and(|target| captured.binary_search(&target).is_ok())
                         || function.dispatch == super::DispatchClass::Numeric
-                            && ((instruction.op() == super::Op::StoreLocal && slot_is_captured)
-                                || instruction.op() == super::Op::LoadLocal
+                            && ((op.is_relocatable_local_access() && op.traits().has(Traits::LOCAL_SLOT_STORE) && slot_is_captured)
+                                || op.is_relocatable_local_access() && !op.traits().has(Traits::LOCAL_SLOT_STORE)
                                     && instruction.numeric_local_store_target().is_some()
                                     && slot_is_captured)
                         || function.dispatch == super::DispatchClass::Numeric
-                            && instruction.op() == super::Op::GetIndex
+                            && op.traits().has(Traits::ELEMENT_ACCESS) && !op.traits().has(Traits::ELEMENT_STORE)
                             && [instruction.operand_b(), instruction.operand_c()]
                                 .into_iter()
                                 .any(|operand| {
@@ -815,7 +804,7 @@ function.plain_local_slots(&self.superinstructions)
                         ));
                     }
                 }
-                if instruction.op() == super::Op::Binary
+                if instruction.op().traits().has(Traits::BINARY_RESULT)
                     && instruction.numeric_local_target().is_some_and(|slot| {
                         function.dispatch != super::DispatchClass::Numeric
                             && !plain_local_slots.contains(usize::from(slot))
@@ -848,7 +837,7 @@ function.plain_local_slots(&self.superinstructions)
                         instruction.op()
                     ));
                 }
-                if instruction.op() == super::Op::WasmMemoryAddress
+                if instruction.op().traits().has(Traits::WASM_MEMORY_OFFSET_CONSTANT)
                     && !matches!(
                         self.constants.get(instruction.constant_index()),
                         Some(super::Constant::WasmBits64(_))
@@ -858,7 +847,7 @@ function.plain_local_slots(&self.superinstructions)
                         "function {index} has an invalid Wasm memory offset constant"
                     ));
                 }
-                if instruction.op() == super::Op::WasmSimdShuffle
+                if instruction.op().traits().has(Traits::WASM_SHUFFLE_CONSTANT)
                     && !matches!(self.constants.get(instruction.constant_index()), Some(super::Constant::WasmV128(indices)) if crate::wasm::simd::shuffle_indices_valid(indices))
                 {
                     return Err(format!("function {index} has invalid SIMD shuffle indices"));
@@ -898,7 +887,7 @@ function.plain_local_slots(&self.superinstructions)
                 || (site.argument_start as usize)
                     .checked_add(site.argument_count as usize)
                     .is_none_or(|end| end > self.method_arguments.len())
-                || site.receiver_path.is_some_and(|(atom, cache)| {
+                || site.receiver_path.get().is_some_and(|(atom, cache)| {
                     !atom_in_bounds(atom, self.atoms.len())
                         || !cache_in_bounds(cache, self.cache_sites.get())
                 })
@@ -907,7 +896,7 @@ function.plain_local_slots(&self.superinstructions)
             }
         }
         for site in &self.field_sites {
-            if site.sources.iter().flatten().any(|(line, column)| *line == 0 || *column == 0)
+            if site.source_offsets().into_iter().flatten().any(|offset| source_end.is_some_and(|end| offset as usize > end))
                 || !field_base_in_bounds(site.base.0, REGISTER_MASK, 0)
                 || !atom_in_bounds(site.first.0, self.atoms.len())
                 || !cache_in_bounds(site.first.1, self.cache_sites.get())
@@ -997,10 +986,7 @@ function.plain_local_slots(&self.superinstructions)
                 .filter_map(|packed| instruction_at(function, *packed))
                 .chain(function.wide.iter().copied())
             {
-                if !matches!(
-                    instruction.op(),
-                    super::Op::LoadCapture | super::Op::StoreCapture
-                ) {
+                if !instruction.op().addresses_capture() {
                     continue;
                 }
                 let mut owner = function_id;
@@ -1048,7 +1034,15 @@ fn selective_capture_scope_unsafe(
     }
     let mut unsafe_layout = vec![false; functions.len()];
     for (id, function) in functions.iter().enumerate() {
-        if !has_dynamic_scope_access(function)
+        // Scanned unvalidated: an instruction whose wide index is out of range is skipped, and
+        // the whole wide table is read, where `Function::has_dynamic_scope_access` decodes only
+        // the code and must not see an unvalidated program.
+        let scanned = function
+            .code
+            .iter()
+            .filter_map(|packed| instruction_at(function, *packed))
+            .chain(function.wide.iter().copied());
+        if !super::dynamic_scope_access_in(function, scanned)
             && !inherited_dynamic_scope[id]
             && !function.contains_with_statement(is_with_enter)
         {
@@ -1063,21 +1057,11 @@ fn selective_capture_scope_unsafe(
     unsafe_layout
 }
 
-fn has_dynamic_scope_access(function: &super::Function) -> bool {
-    function.inherited_with_scope
-        || !function.binding_sites.is_empty()
-        || function
-            .code
-            .iter()
-            .filter_map(|packed| instruction_at(function, *packed))
-            .chain(function.wide.iter().copied())
-            .any(super::WideInstruction::resolves_dynamic_scope)
-}
-
 fn selective_capture_layout_is_eligible(
     function: &super::Function,
     index: usize,
     module_body: Option<(&super::ModuleLinkPlan, &[super::ModuleImportBinding])>,
+    script_root: Option<bool>,
     atoms: &super::AtomTable,
 ) -> bool {
     let has_closure = function
@@ -1085,7 +1069,7 @@ fn selective_capture_layout_is_eligible(
         .iter()
         .filter_map(|packed| instruction_at(function, *packed))
         .chain(function.wide.iter().copied())
-        .any(|instruction| instruction.op() == super::Op::MakeClosure);
+        .any(|instruction| instruction.op().makes_closure());
     let captured = function
         .selective_capture_slots
         .as_deref()
@@ -1110,9 +1094,14 @@ fn selective_capture_layout_is_eligible(
             .is_none_or(|slot| captured.binary_search(&slot).is_ok());
 
     // A module body (`module_body` given: its link plan and imports) splits whether or not it makes closures, keeping
-    // its module-scope bindings in the module environment; a nested function splits only
-    // around closures.
-    let activation_splits = if let Some((plan, imports)) = module_body {
+    // its module-scope bindings in the module environment; a Script's or eval's root
+    // without dynamic name resolution splits keeping its global declarations in its
+    // environment; a nested function splits only around closures.
+    let activation_splits = if let Some(eval) = script_root {
+        !function.has_dynamic_scope_access()
+            && function.binding_sites.is_empty()
+            && function.global_declaration_slots(eval).all(|slot| captured.binary_search(&slot).is_ok())
+    } else if let Some((plan, imports)) = module_body {
         function
             .module_environment_slots(plan, imports, |atom| {
                 usize::try_from(atom).ok().filter(|atom| *atom < atoms.len()).map(|atom| &atoms[atom])
@@ -1164,9 +1153,9 @@ mod tests {
     }
 
     #[test]
-    fn non_suspending_async_promoted_locals_are_validated() {
-        // A non-suspending async body promotes its locals as an ordinary one does; one that
-        // awaits keeps them in frame slots. The validator accepts what the compiler emits, for
+    fn async_promoted_locals_are_validated() {
+        // An async body promotes its locals as an ordinary one does, awaiting or not: a
+        // suspension saves the frame's registers. The validator accepts what the compiler emits, for
         // default and trailing-comma parameter lists too (Test262 async dflt-params-*,
         // params-trailing-comma-*).
         let program = crate::Engine::specialize(
@@ -1190,7 +1179,7 @@ mod tests {
             program.functions.iter().any(|function| function.is_async && function.is_arrow && !function.local_registers.is_empty()),
             "a non-suspending async arrow with defaults and a trailing comma promotes its locals"
         );
-        assert!(!promoted("waits"), "an awaiting body keeps its locals in frame slots");
+        assert!(promoted("waits"), "an awaiting body promotes its locals too");
     }
 
     #[test]
@@ -1308,18 +1297,19 @@ mod tests {
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
-            declared_parameters: vec![].into(),
+            rare: None,
             rest: false,
             is_async: false,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
             instance_initializer: None,
+            constant_fields: Default::default(),
             super_home_atom: None,
             constructible: true,
             class_initializer: false,
             parameter_eval_arguments_error: false,
-            unaliased_arguments: false,
+            unaliased_arguments: false, rest_alias: false,
             prototype_unobservable: false,
             arguments_slot: None,
             simple_parameters: true,
@@ -1328,10 +1318,11 @@ mod tests {
             local_atoms: vec![].into(),
             environment_atoms: vec![].into(),
             selective_capture_slots: None,
+            declared_functions: Default::default(),
+            declared_captures: Default::default(),
             local_registers: vec![].into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),
@@ -1341,15 +1332,9 @@ mod tests {
             registers,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: vec![].into(),
             register_roots: crate::bytecode::RegisterRoots::new(root != u32::MAX),
             undefined_register: None,
@@ -1365,6 +1350,7 @@ mod tests {
             module_requests: Vec::new(),
             module_imports: Vec::new(),
             module_link_plan: None,
+            declared_types: None,
             source_name: String::new(),
             source: None,
             atoms: AtomTable::default(),

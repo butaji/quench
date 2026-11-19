@@ -97,6 +97,7 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_builtin_named(program, atomics, name, native)?;
         }
+        self.install_builtin_to_string_tag(atomics, "Atomics")?;
         self.global(program, "Atomics", atomics)
     }
 

@@ -91,7 +91,7 @@ pub(in crate::compile) fn parse_chunk<'a>(
     let mut skim = |body: oxc_parser::SkimmedBody<'_>| names.borrow_mut().skim(body, text);
     // SAFETY: `skim` lives through the parse, which alone calls it.
     let skim = unsafe { oxc_parser::LazyBodySkim::new(&mut skim) };
-    parse(allocator, text, SourceType::script(), Some(offset + 1), None, Some(skim), inherited_strict, false, crate::compile::annex_b_targets::Recognize::No, None)
+    parse(allocator, text, SourceType::script(), Some(offset + 1), None, Some(skim), inherited_strict, false, crate::compile::annex_b_targets::Recognize::No, None, None)
 }
 
 /// The bodies of `program`, a function's text parsed again at `offset`, which the load released
@@ -148,7 +148,7 @@ pub(in crate::compile) fn reparse<'a>(
     // SAFETY: `check` and `skim` live through the parse, which alone calls them.
     let check = lazy_from.filter(|_| checks).map(|_| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) });
     let skim = lazy_from.filter(|_| !checks).map(|_| unsafe { oxc_parser::LazyBodySkim::new(&mut skim) });
-    let mut parsed = parse(allocator, text, source_type, lazy_from, check, skim, false, false, crate::compile::annex_b_targets::Recognize::All, skips);
+    let mut parsed = parse(allocator, text, source_type, lazy_from, check, skim, false, false, crate::compile::annex_b_targets::Recognize::All, skips, None);
     if let Some(starts) = recorded {
         stand_in_recorded(allocator, &mut parsed.program, starts.iter().copied(), (offset, delta), text.len());
     }

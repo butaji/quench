@@ -77,14 +77,15 @@ pub(super) struct RegExpIntrinsics {
 }
 
 /// Where RegExps of one shape, whose prototype is the realm's `%RegExp.prototype%`, find
-/// their `exec` under one `prototype_layout_epoch`: no own `exec`, and the prototype's in a
-/// data slot. The prototype was marked when the proof was made, so a change to its layout
-/// advances the epoch; shape compaction advances it too, so a proof never names a renumbered
-/// shape. The slot's value may change in place, so each use reads it.
+/// their `exec` while `cell` holds: no own `exec`, and the prototype's in a data slot. The
+/// prototype was marked when the proof was made and the cell is its own (`Vm::chain_cell`),
+/// so a change to its layout retires the proof, and another prototype's leaves it; shape
+/// compaction retires every cell, so a proof never names a renumbered shape. The slot's value
+/// may change in place, so each use reads it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct RegExpExecProof {
     pub(super) shape: u32,
-    pub(super) epoch: u64,
+    pub(super) cell: crate::heap::ChainCell,
     exec_slot: usize,
 }
 
@@ -945,8 +946,10 @@ impl<H: Host> Vm<H> {
             }
             FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) | FlatUnits::Wide(_) => &*flat,
             // A matcher subject owns whole storage, so a run of shared storage is copied into
-            // one, once per run (`SubjectCache::run`).
-            FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..) | FlatUnits::AsciiPrefix(..) => {
+            // one, once per run (`SubjectCache::run`). Latin-1 text is widened there too: the
+            // engine reads UTF-16 or ASCII subjects only.
+            FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..) | FlatUnits::AsciiPrefix(..)
+            | FlatUnits::Latin1(_) | FlatUnits::Latin1Prefix(..) => {
                 return self.regexp_subjects.run(&flat);
             }
             FlatUnits::Parts(_) => unreachable!("a string of parts is written out before it is read"),
@@ -1037,48 +1040,55 @@ impl<H: Host> Vm<H> {
         }
 
         let mut output = super::wtf16::JsStringBuilder::default();
-        let mut next_source = 0;
-        for found in &matches {
-            let position = found.range.start;
-            let matched = JsString::from_unit_run(input.units().slice(found.range.clone()));
-            let captures = found
-                .captures
-                .iter()
-                .map(|range| {
-                    range.clone().map_or(Value::UNDEFINED, |range| {
-                        self.heap.alloc_string(JsString::from_unit_run(
-                            input.units().slice(range),
-                        ))
+        let callee = match replacement {
+            FastReplacement::Template(_) => Value::UNDEFINED,
+            FastReplacement::Function(function) => function,
+        };
+        self.with_prepared_callback(callee, Value::UNDEFINED, |vm, prepared| -> Result<(), JsError> {
+            let mut next_source = 0;
+            for found in &matches {
+                let position = found.range.start;
+                let matched = JsString::from_unit_run(input.units().slice(found.range.clone()));
+                let captures = found
+                    .captures
+                    .iter()
+                    .map(|range| {
+                        range.clone().map_or(Value::UNDEFINED, |range| {
+                            vm.heap.alloc_string(JsString::from_unit_run(
+                                input.units().slice(range),
+                            ))
+                        })
                     })
-                })
-                .collect::<Vec<_>>();
-            let named = regexp_named_capture_ranges(found);
-            let groups = self.regexp_groups_object(&named, input.units())?;
-            let text = self.with_call_roots(captures.iter().copied().chain([groups]), |vm| {
-                match replacement {
-                    FastReplacement::Template(template) => vm.replacement_substitution(
-                        p, template, input, position, &matched, &captures, groups,
-                    ),
-                    FastReplacement::Function(function) => {
-                        let matched = vm.heap.alloc_string(matched.clone());
-                        let mut args = Vec::with_capacity(captures.len() + 4);
-                        args.push(matched);
-                        args.extend(captures.iter().copied());
-                        args.push(Value::number(position as f64));
-                        args.push(input_value);
-                        if !groups.is_undefined() {
-                            args.push(groups);
+                    .collect::<Vec<_>>();
+                let named = regexp_named_capture_ranges(found);
+                let groups = vm.regexp_groups_object(&named, input.units())?;
+                let text = vm.with_call_roots(captures.iter().copied().chain([groups]), |vm| {
+                    match replacement {
+                        FastReplacement::Template(template) => vm.replacement_substitution(
+                            p, template, input, position, &matched, &captures, groups,
+                        ),
+                        FastReplacement::Function(_) => {
+                            let matched = vm.heap.alloc_string(matched.clone());
+                            let mut args = Vec::with_capacity(captures.len() + 4);
+                            args.push(matched);
+                            args.extend(captures.iter().copied());
+                            args.push(Value::number(position as f64));
+                            args.push(input_value);
+                            if !groups.is_undefined() {
+                                args.push(groups);
+                            }
+                            let value = vm.call_prepared(p, prepared, &args)?;
+                            vm.coerce_js_string(p, value)
                         }
-                        let value = vm.call_value(p, function, Value::UNDEFINED, &args)?;
-                        vm.coerce_js_string(p, value)
                     }
-                }
-            })?;
-            output.append_slice(input, next_source..position);
-            output.append(&text);
-            next_source = found.range.end;
-        }
-        output.append_slice(input, next_source..input.units().len());
+                })?;
+                output.append_slice(input, next_source..position);
+                output.append(&text);
+                next_source = found.range.end;
+            }
+            output.append_slice(input, next_source..input.units().len());
+            Ok(())
+        })?;
         let output = self.string_build_result(p, output.finish())?;
         Ok(self.heap.alloc_string(output))
     }
@@ -1462,8 +1472,8 @@ impl<H: Host> Vm<H> {
     /// The matcher of `regexp` when `RegExpExec(regexp, …)` resolves to the builtin exec:
     /// a RegExp of this realm with the intrinsic prototype, no own `exec`, and the native
     /// `exec` data property on that prototype. While no guest code runs, that resolution
-    /// cannot change. A proof for the RegExp's shape under the current
-    /// `prototype_layout_epoch` names the slot to read (`RegExpExecProof`).
+    /// cannot change. A proof for the RegExp's shape while the prototype's cell holds names the
+    /// slot to read (`RegExpExecProof`).
     fn regexp_builtin_exec_matcher(&self, regexp: Value) -> Option<Rc<quench_regexp::Regex>> {
         let Some(Cell::RegExp { meta, .. }) = self.heap.get(regexp) else {
             return None;
@@ -1473,11 +1483,11 @@ impl<H: Host> Vm<H> {
     }
 
     /// `regexp_builtin_exec_matcher`'s lookups past its proof, recording where they found
-    /// `exec` while the prototype they read is a marked prototype, so a later change to its
-    /// layout advances the epoch and retires the proof.
+    /// `exec` while the prototype they read is a watched prototype, under its cell, so a later
+    /// change to its layout retires the proof.
     #[cold]
     #[inline(never)]
-    fn prove_regexp_exec(&self, intrinsics: &RegExpIntrinsics, shape: u32, epoch: u64) -> Option<RegExpExecProof> {
+    fn prove_regexp_exec(&self, intrinsics: &RegExpIntrinsics, shape: u32) -> Option<usize> {
         let exec = PropertyKey::string(self.runtime_atoms.regexp_exec);
         if self.property_shape_slot(shape, exec).is_some() {
             return None;
@@ -1487,12 +1497,12 @@ impl<H: Host> Vm<H> {
         if self.slot_attributes(prototype, exec_slot)?.accessor {
             return None;
         }
-        let proof = RegExpExecProof { shape, epoch, exec_slot };
-        // Allocating a RegExp marks its prototype, so the proof is recorded from the first.
-        if prototype.was_used_as_prototype() {
-            intrinsics.exec_proof.set(Some(proof));
+        // Allocating a RegExp marks its prototype, so the proof is recorded from the first; an
+        // unwatched prototype's slot answers this call alone.
+        if let Some(cell) = self.watched_chain_cell(intrinsics.prototype, 1) {
+            intrinsics.exec_proof.set(Some(RegExpExecProof { shape, cell, exec_slot }));
         }
-        Some(proof)
+        Some(exec_slot)
     }
 
     /// `RegExp.prototype[@@split]` steps 19–25 for a sticky `splitter` this call created,
@@ -2507,7 +2517,7 @@ impl<H: Host> Vm<H> {
                     &properties.values(index, input_value, groups),
                 ),
                 None => {
-                    let result = vm.heap.alloc(Cell::Array { object: array });
+                    let result = vm.heap.alloc_array(array);
                     vm.initialize_regexp_result(result, index, input_value, groups)?;
                     result
                 }
@@ -2549,7 +2559,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     match units {
                         super::wtf16::Units::Ascii(bytes) => self.heap.alloc_ascii_run(&bytes[range]),
-                        super::wtf16::Units::Wide(_) => self.heap.alloc_string(JsString::from_unit_run(units.slice(range))),
+                        super::wtf16::Units::Latin1(_) | super::wtf16::Units::Wide(_) => self.heap.alloc_string(JsString::from_unit_run(units.slice(range))),
                     }
                 }
             })
@@ -2667,7 +2677,7 @@ impl<H: Host> Vm<H> {
         }
         let groups = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         for (name, range) in named {
             let atom = self.intern_atom(name);
             let value = range.as_ref().map_or(Value::UNDEFINED, |range| {
@@ -2690,16 +2700,14 @@ impl<H: Host> Vm<H> {
             .chain(matched.captures.iter().cloned())
             .map(|range| self.regexp_index_pair(range))
             .collect::<Vec<_>>();
-        let indices = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let indices = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 entries,
-            ),
-        });
+            ));
         let groups = if !named.is_empty() {
             let groups = self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+                .alloc_object(Self::empty_object(Value::NULL));
             for (name, range) in named {
                 let atom = self.intern_atom(name);
                 let pair = self.regexp_index_pair(range.clone());
@@ -2722,12 +2730,10 @@ impl<H: Host> Vm<H> {
             Value::number(range.start as f64),
             Value::number(range.end as f64),
         ];
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 pair,
-            ),
-        })
+            ))
     }
 
     /// `meta`'s matcher, compiled now if it has none (`RegExpMatcher`): the pattern compiled

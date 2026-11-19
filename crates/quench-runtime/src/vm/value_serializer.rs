@@ -816,8 +816,8 @@ impl<H: Host> Vm<H> {
             Some(Cell::Date { milliseconds, .. }) => Kind::Date(*milliseconds),
             Some(Cell::RegExp { meta, .. }) => Kind::RegExp(meta.source.clone(), meta.flags.text()),
             // Copy the entries first: serializing them can run guest code.
-            Some(Cell::Map { entries, .. }) => Kind::Map(entries.iter().flat_map(|(key, value)| [key, value]).collect()),
-            Some(Cell::Set { entries, .. }) => Kind::Set(entries.iter().collect()),
+            _ if let Some(entries) = self.heap.map_entries(value) => Kind::Map(entries.iter().flat_map(|(key, value)| [key, value]).collect()),
+            _ if let Some(entries) = self.heap.set_entries(value) => Kind::Set(entries.iter().collect()),
             Some(Cell::ArrayBuffer { .. }) => Kind::ArrayBuffer,
             Some(Cell::TypedArray { .. } | Cell::DataView { .. }) => Kind::View,
             _ => Kind::Other,
@@ -839,7 +839,7 @@ impl<H: Host> Vm<H> {
                 Ok(())
             }
             Kind::Map(entries) | Kind::Set(entries) => {
-                let map = matches!(self.heap.get(value), Some(Cell::Map { .. }));
+                let map = self.heap.is_map(value);
                 let roots: Vec<RootId> = entries.into_iter().map(|entry| self.heap.root(entry)).collect();
                 put_tag(&output, if map { tag::BEGIN_JS_MAP } else { tag::BEGIN_JS_SET });
                 let written = self.wire_rooted_sequence(program, serializer, hooks, &roots);
@@ -1386,7 +1386,7 @@ impl<H: Host> Vm<H> {
             }
             tag::BEGIN_JS_OBJECT => {
                 let id = Self::wire_reserve_id(deserializer);
-                let object = self.heap.alloc(Cell::Object(Self::empty_object(self.object_proto)));
+                let object = self.heap.alloc_object(Self::empty_object(self.object_proto));
                 let root = self.wire_add_object(deserializer, id, object);
                 let count = self.wire_read_properties(program, deserializer, hooks, root, tag::END_JS_OBJECT)?;
                 let expected = valid(deserializer.input.borrow_mut().read_uint32())?;
@@ -1480,10 +1480,10 @@ impl<H: Host> Vm<H> {
                 let id = Self::wire_reserve_id(deserializer);
                 let collection = if map {
                     let prototype = self.intrinsic_builtin_prototype(Native::Map);
-                    self.heap.alloc(Cell::Map { object: Self::empty_object(prototype), entries: Default::default() })
+                    self.heap.alloc_map(Self::empty_object(prototype), Default::default())
                 } else {
                     let prototype = self.intrinsic_builtin_prototype(Native::Set);
-                    self.heap.alloc(Cell::Set { object: Self::empty_object(prototype), entries: Default::default() })
+                    self.heap.alloc_set(Self::empty_object(prototype), Default::default())
                 };
                 let root = self.wire_add_object(deserializer, id, collection);
                 let end = if map { tag::END_JS_MAP } else { tag::END_JS_SET };
@@ -1570,9 +1570,7 @@ impl<H: Host> Vm<H> {
 
     fn new_wire_array(&mut self) -> Value {
         let prototype = self.array_prototype_for_realm(self.realm.globals);
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()),
-        })
+        self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()))
     }
 
     fn wire_read_array_trailer(&mut self, deserializer: &mut ValueDeserializer, count: u32, length: u32) -> Read<()> {
@@ -1646,6 +1644,8 @@ impl<H: Host> Vm<H> {
             return Err(ReadFailure::Invalid);
         }
         let view = if subtag == DATA_VIEW_TAG {
+            let program = self.embedding_program()?;
+            self.materialize_global_intrinsic(&program, "DataView")?;
             let prototype = self.intrinsic_builtin_prototype(Native::DataView);
             self.heap.alloc(Cell::DataView {
                 object: Box::new(crate::heap::BufferViewObject { native: Default::default(), object: Self::empty_object(prototype), offset }),
@@ -1690,7 +1690,7 @@ impl<H: Host> Vm<H> {
             tag = next(deserializer)?;
         }
         let prototype = self.intrinsic_builtin_prototype(native);
-        let error = self.heap.alloc(Cell::Object(Object::error(prototype)));
+        let error = self.heap.alloc_object(Object::error(prototype));
         let root = self.wire_add_object(deserializer, id, error);
         self.install_error_stack(program, error, StackData::Formatted(stack))?;
         if let Some(message) = message {
@@ -1809,7 +1809,7 @@ impl<H: Host> Vm<H> {
         while let Some((target, _)) = self.proxy_parts(value) {
             value = target;
         }
-        if let Some(Cell::Symbol(description)) = self.heap.get(value) {
+        if let Some(description) = self.heap.symbol_data(value) {
             let description = description.as_deref().map(|text| shorten(text.to_string(), DESCRIPTION_END, DESCRIPTION_END));
             return format!("Symbol({})", description.unwrap_or_default());
         }
@@ -1899,8 +1899,8 @@ impl<H: Host> Vm<H> {
             Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
             Some(Cell::Date { .. }) => "Date",
             Some(Cell::RegExp { .. }) => "RegExp",
-            Some(Cell::Map { .. }) => "Map",
-            Some(Cell::Set { .. }) => "Set",
+            _ if self.heap.is_map(value) => "Map",
+            _ if self.heap.is_set(value) => "Set",
             Some(Cell::WeakMap { .. }) => "WeakMap",
             Some(Cell::WeakSet { .. }) => "WeakSet",
             _ if self.is_function(value) => "Function",
@@ -1914,7 +1914,7 @@ impl<H: Host> Vm<H> {
         let message_value = self.heap.alloc_string(message.into());
         let error = self
             .construct_error_native(program, Native::Error, &[message_value])
-            .unwrap_or_else(|_| self.heap.alloc(Cell::Object(Object::error(self.object_proto))));
+            .unwrap_or_else(|_| self.heap.alloc_object(Object::error(self.object_proto)));
         let name = self.heap.alloc_string("DataCloneError".into());
         let _ = self.set_builtin_value_named(error, "name", name);
         JsError::data_clone(error, message)

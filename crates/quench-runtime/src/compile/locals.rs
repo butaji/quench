@@ -25,6 +25,21 @@ impl Compiler<'_> {
         function_scope
     }
 
+    /// The local slots of the function declarations a body declares at its top level, which hoist into its scope. A
+    /// parameter's slot is none: an `arguments` object aliases it, and a write through that is no store to the slot.
+    pub(super) fn declared_function_slots(&mut self, body: &[Statement<'_>], locals: &[Atom], params: usize) -> Vec<u16> {
+        let mut slots = Vec::new();
+        for statement in body {
+            let Statement::FunctionDeclaration(function) = statement else { continue };
+            let Some(identifier) = function.id.as_ref() else { continue };
+            let atom = self.atom(identifier.name.as_str());
+            if let Some(slot) = locals.iter().position(|local| *local == atom).filter(|slot| *slot >= params) {
+                slots.extend(u16::try_from(slot).ok());
+            }
+        }
+        slots
+    }
+
     fn collect_locals_into(
         &mut self,
         body: &[Statement<'_>],
@@ -382,63 +397,14 @@ impl Compiler<'_> {
         function_scope: &mut FxHashSet<Atom>,
         belongs_to_function_scope: bool,
     ) {
-        match pattern {
-            BindingPattern::BindingIdentifier(id) => {
-                let atom = self.atom(id.name.as_str());
-                if belongs_to_function_scope {
-                    function_scope.insert(atom);
-                }
-                if seen.insert(atom) {
-                    output.push(atom);
-                }
+        super::early::pattern_names(pattern, &mut |name| {
+            let atom = self.atom(name);
+            if belongs_to_function_scope {
+                function_scope.insert(atom);
             }
-            BindingPattern::ObjectPattern(object) => {
-                for property in &object.properties {
-                    self.collect_pattern_names(
-                        &property.value,
-                        output,
-                        seen,
-                        function_scope,
-                        belongs_to_function_scope,
-                    );
-                }
-                if let Some(rest) = &object.rest {
-                    self.collect_pattern_names(
-                        &rest.argument,
-                        output,
-                        seen,
-                        function_scope,
-                        belongs_to_function_scope,
-                    );
-                }
+            if seen.insert(atom) {
+                output.push(atom);
             }
-            BindingPattern::ArrayPattern(array) => {
-                for element in array.elements.iter().flatten() {
-                    self.collect_pattern_names(
-                        element,
-                        output,
-                        seen,
-                        function_scope,
-                        belongs_to_function_scope,
-                    );
-                }
-                if let Some(rest) = &array.rest {
-                    self.collect_pattern_names(
-                        &rest.argument,
-                        output,
-                        seen,
-                        function_scope,
-                        belongs_to_function_scope,
-                    );
-                }
-            }
-            BindingPattern::AssignmentPattern(assignment) => self.collect_pattern_names(
-                &assignment.left,
-                output,
-                seen,
-                function_scope,
-                belongs_to_function_scope,
-            ),
-        }
+        });
     }
 }

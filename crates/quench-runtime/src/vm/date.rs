@@ -111,7 +111,7 @@ impl<H: Host> Vm<H> {
         let date = self.native_value(Native::Date);
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+            .alloc_object(Self::empty_object(self.object_proto));
         self.install_date_for_realm(program, self.realm.globals, date, prototype)
     }
 

@@ -5,9 +5,14 @@
 
 use super::wasm::WasmStage;
 use crate::WasmType;
+#[cfg(not(stencil_build))]
 use crate::bytecode::{Class, Op, WideInstruction};
+#[cfg(not(stencil_build))]
 use std::ops::Range;
 
+/// The binding-time decisions the interpreter and the u-jit make per instruction; the stencil
+/// build does not decode instructions, so it has none of them.
+#[cfg(not(stencil_build))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Instance {
     /// `a = b`.
@@ -22,10 +27,23 @@ pub(crate) enum Instance {
     GlobalGet,
     /// The global bound in `b` `= a`.
     GlobalSet,
+    /// `a = frame local imm`: a block's saved input, or the thrown value a handler binds.
+    LoadLocal,
+    /// `frame local imm = a`.
+    StoreLocal,
 }
 
+/// The register holding frame local `slot` of a function with `registers` registers: the u-jit
+/// keeps its locals after its registers, in the same register file. A slot past the file's end
+/// saturates to the last register, which no state holds, so its use is rejected.
+#[cfg(not(stencil_build))]
+pub(crate) fn local_register(registers: u16, slot: u32) -> u16 {
+    u16::try_from(slot).map_or(u16::MAX, |slot| registers.saturating_add(slot))
+}
+
+#[cfg(not(stencil_build))]
 impl Instance {
-    pub(crate) fn of(op: Op) -> Option<Self> {
+    pub(crate) const fn of(op: Op) -> Option<Self> {
         match op.class() {
             Class::Move => Some(Self::Move),
             Class::LoadConst => Some(Self::Constant),
@@ -33,6 +51,8 @@ impl Instance {
             Class::WasmInstanceBinding => Some(Self::Binding),
             Class::WasmGlobalGet => Some(Self::GlobalGet),
             Class::WasmGlobalSet => Some(Self::GlobalSet),
+            Class::LoadLocal => Some(Self::LoadLocal),
+            Class::StoreLocal => Some(Self::StoreLocal),
             _ => None,
         }
     }
@@ -87,4 +107,33 @@ pub(crate) trait WasmInstance: WasmStage {
     /// The word of the global bound at environment slot `slot`.
     fn global_load(&mut self, slot: u32, storage: Storage) -> Self::Word;
     fn global_store(&mut self, slot: u32, storage: Storage, value: Self::Word);
+}
+
+/// `global.get`: the word of the global bound at `slot`, as its storage holds it. Every tier's
+/// global read is this rule over its own stage.
+#[inline(always)]
+pub(crate) fn global_get<S: WasmInstance>(stage: &mut S, slot: u32, storage: Storage) -> S::Word {
+    stage.global_load(slot, storage)
+}
+
+/// `global.set`: `value` into the global bound at `slot`, narrowed by its storage.
+#[inline(always)]
+pub(crate) fn global_set<S: WasmInstance>(stage: &mut S, slot: u32, storage: Storage, value: S::Word) {
+    stage.global_store(slot, storage, value);
+}
+
+/// The instance fields a binding step reads: the environment slots its function's instance
+/// holds, each a handle the binding step copies into a register (`Instance::Binding`).
+#[cfg(not(stencil_build))]
+pub(crate) trait WasmBindings: WasmStage {
+    /// The word of the environment slot `slot`, or `None` where the instance holds no field there.
+    fn binding_word(&mut self, slot: u32) -> Option<Self::Word>;
+}
+
+/// `binding`: the word of the instance field at environment slot `slot`. A slot with no field
+/// is `None`, which the caller leaves for the general path to raise.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+pub(crate) fn binding_get<S: WasmBindings>(stage: &mut S, slot: u32) -> Option<S::Word> {
+    stage.binding_word(slot)
 }

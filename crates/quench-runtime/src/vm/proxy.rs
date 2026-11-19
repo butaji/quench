@@ -99,12 +99,10 @@ impl<H: Host> Vm<H> {
                     if !vm.is_function(trap) {
                         return Err(vm.type_error(p, "proxy apply trap is not callable".into()));
                     }
-                    let arguments = vm.heap.alloc(Cell::Array {
-                        object: crate::heap::ArrayObject::new(
+                    let arguments = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                             Self::empty_object(vm.array_proto),
                             args.to_vec(),
-                        ),
-                    });
+                        ));
                     return vm.call_value(p, trap, handler, &[target, this, arguments]);
                 }
                 vm.call_value(p, target, this, args)
@@ -143,12 +141,10 @@ impl<H: Host> Vm<H> {
                     if !vm.is_function(trap) {
                         return Err(vm.type_error(p, "proxy construct trap is not callable".into()));
                     }
-                    let arguments = vm.heap.alloc(Cell::Array {
-                        object: crate::heap::ArrayObject::new(
+                    let arguments = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                             Self::empty_object(vm.array_proto),
                             args.to_vec(),
-                        ),
-                    });
+                        ));
                     let result =
                         vm.call_value(p, trap, handler, &[target, arguments, new_target])?;
                     if !vm.is_object_like(result) {

@@ -1,4 +1,20 @@
 use super::*;
+use crate::bytecode::{CALL_INVOKE, ELEMENT_STORE, JUMP_IF_FALSE, OBJECT_FIELD_STORE, REGISTER_MOVE, Traits, the_op};
+
+/// The op that reads a template site cache.
+const TEMPLATE_CACHE_LOAD: Op = the_op(Traits::TEMPLATE_CACHE_LOAD);
+/// The op that fills a template site cache.
+const TEMPLATE_CACHE_STORE: Op = the_op(Traits::TEMPLATE_CACHE_STORE);
+/// The op that builds an array from a register window.
+const ARRAY_MAKE: Op = the_op(Traits::ARRAY_MAKE);
+/// The op that allocates a plain object.
+const OBJECT_MAKE: Op = the_op(Traits::OBJECT_MAKE);
+/// The op that loads a constant.
+const CONSTANT_LOAD: Op = the_op(Traits::CONSTANT_LOAD);
+/// The op that applies a unary operator to a register.
+const UNARY_OP: Op = the_op(Traits::RETURNING_UNARY);
+/// The op that joins a window of string parts.
+const STRING_CONCAT: Op = the_op(Traits::STRING_CONCAT);
 
 impl FunctionCompiler<'_, '_> {
     pub(super) fn tagged_template(
@@ -8,16 +24,16 @@ impl FunctionCompiler<'_, '_> {
         let (tag, this) = self.callee(&value.tag);
         let strings = self.reg();
         let site = self.owner.template_site();
-        self.emit(Op::LoadCachedTemplateObject, strings, 0, 0, site);
+        self.emit(TEMPLATE_CACHE_LOAD, strings, 0, 0, site);
         let undefined = self.literal(Constant::Undefined);
         let missing = self.emit_binary(
             BinaryOperator::StrictEquality as u32,
             Operand::register(strings),
             Operand::register(undefined),
         );
-        let cached_template = self.emit(Op::JumpFalse, missing, 0, 0, 0);
+        let cached_template = self.emit(JUMP_IF_FALSE, missing, 0, 0, 0);
         self.emit(
-            Op::MakeArray,
+            ARRAY_MAKE,
             strings,
             0,
             0,
@@ -25,7 +41,7 @@ impl FunctionCompiler<'_, '_> {
         );
         let raw_strings = self.reg();
         self.emit(
-            Op::MakeArray,
+            ARRAY_MAKE,
             raw_strings,
             0,
             0,
@@ -39,12 +55,12 @@ impl FunctionCompiler<'_, '_> {
                 .as_ref()
                 .map(|cooked| self.literal(Constant::String(cooked.as_str().into())))
                 .unwrap_or_else(|| self.literal(Constant::Undefined));
-            self.emit(Op::SetIndex, string, strings, key, 0);
+            self.emit(ELEMENT_STORE, string, strings, key, 0);
             let raw = self.literal(Constant::String(quasi.value.raw.as_str().into()));
-            self.emit(Op::SetIndex, raw, raw_strings, key, 0);
+            self.emit(ELEMENT_STORE, raw, raw_strings, key, 0);
         }
         let descriptor = self.reg();
-        self.emit(Op::MakeObject, descriptor, 0, 0, 0);
+        self.emit(OBJECT_MAKE, descriptor, 0, 0, 0);
         self.set_template_descriptor_field(descriptor, "value", raw_strings);
         for field in ["writable", "enumerable", "configurable"] {
             let value = self.literal(Constant::Boolean(false));
@@ -57,7 +73,7 @@ impl FunctionCompiler<'_, '_> {
         );
         self.call_template_intrinsic("\0quench:object-freeze", &[raw_strings]);
         self.call_template_intrinsic("\0quench:object-freeze", &[strings]);
-        self.emit(Op::CacheTemplateObject, strings, 0, 0, site);
+        self.emit(TEMPLATE_CACHE_STORE, strings, 0, 0, site);
         self.patch(cached_template);
         // Evaluate substitutions before reserving the contiguous call-argument
         // window. Each expression may allocate temporaries; reserving a slot
@@ -70,14 +86,14 @@ impl FunctionCompiler<'_, '_> {
             .collect::<Vec<_>>();
         let base = self.next_reg;
         let strings_arg = self.reg();
-        self.emit(Op::Move, strings_arg, strings, 0, 0);
+        self.emit(REGISTER_MOVE, strings_arg, strings, 0, 0);
         for value in substitutions {
             let argument = self.reg();
-            self.emit(Op::Move, argument, value, 0, 0);
+            self.emit(REGISTER_MOVE, argument, value, 0, 0);
         }
         let result = self.reg();
         self.emit(
-            Op::Call,
+            CALL_INVOKE,
             result,
             tag,
             this,
@@ -130,23 +146,23 @@ impl FunctionCompiler<'_, '_> {
             match (text, operand) {
                 (Some(constant), _) => {
                     let constant = self.owner.constant(constant.clone());
-                    self.emit(Op::LoadConst, slot, 0, 0, constant);
+                    self.emit(CONSTANT_LOAD, slot, 0, 0, constant);
                 }
                 (None, Some(operand)) => {
                     let value = self.expression(operand);
-                    self.emit(Op::Unary, slot, value, 0, crate::bytecode::UNARY_ADD_OPERAND_STRING);
+                    self.emit(UNARY_OP, slot, value, 0, crate::bytecode::UNARY_ADD_OPERAND_STRING);
                 }
                 (None, None) => unreachable!("a part is a constant or an operand"),
             }
         }
-        self.emit(Op::StringConcat, base, base, parts.len() as Register, 0);
+        self.emit(STRING_CONCAT, base, base, parts.len() as Register, 0);
         base
     }
 
     fn set_template_descriptor_field(&mut self, descriptor: Register, name: &str, value: Register) {
         let atom = self.owner.atom(name);
         let cache = self.owner.cache_site();
-        self.emit(Op::SetField, value, descriptor, cache, atom);
+        self.emit(OBJECT_FIELD_STORE, value, descriptor, cache, atom);
     }
 
     fn call_template_intrinsic(&mut self, name: &str, arguments: &[Register]) -> Register {
@@ -155,11 +171,11 @@ impl FunctionCompiler<'_, '_> {
         let base = self.next_reg;
         for argument in arguments {
             let slot = self.reg();
-            self.emit(Op::Move, slot, *argument, 0, 0);
+            self.emit(REGISTER_MOVE, slot, *argument, 0, 0);
         }
         let result = self.reg();
         self.emit(
-            Op::Call,
+            CALL_INVOKE,
             result,
             callee,
             this,
@@ -178,7 +194,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn bigint_literal(&mut self, value: &oxc_ast::ast::BigIntLiteral<'_>) -> Register {
-        self.literal(Constant::BigInt(crate::bigint::decimal_literal(&value.value)))
+        self.literal(Constant::BigInt(Box::new(crate::bigint::decimal_literal(&value.value))))
     }
 
     pub(super) fn template_literal(
@@ -205,7 +221,7 @@ impl FunctionCompiler<'_, '_> {
         for (index, text) in template.quasis.iter().map(|quasi| &quasi.value).enumerate() {
             if text.cooked.as_ref().is_some_and(|text| !text.is_empty()) {
                 let constant = self.owner.constant(super::string::template_constant(text));
-                self.emit(Op::LoadConst, slot, 0, 0, constant);
+                self.emit(CONSTANT_LOAD, slot, 0, 0, constant);
                 slot += 1;
             }
             let Some(expression) = template.expressions.get(index) else {
@@ -215,14 +231,14 @@ impl FunctionCompiler<'_, '_> {
             // The last substitution is converted by `StringConcat` itself: no evaluation
             // follows it, so nothing can observe when its ToString runs.
             if index == last {
-                self.emit(Op::Move, slot, value, 0, 0);
+                self.emit(REGISTER_MOVE, slot, value, 0, 0);
             } else {
-                self.emit(Op::Unary, slot, value, 0, crate::bytecode::UNARY_TO_STRING_PRIMITIVE);
+                self.emit(UNARY_OP, slot, value, 0, crate::bytecode::UNARY_TO_STRING_PRIMITIVE);
             }
             slot += 1;
         }
         debug_assert_eq!(usize::from(slot - base), parts);
-        self.emit(Op::StringConcat, base, base, parts as Register, 0);
+        self.emit(STRING_CONCAT, base, base, parts as Register, 0);
         base
     }
 }

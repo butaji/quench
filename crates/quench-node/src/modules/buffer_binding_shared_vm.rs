@@ -1,6 +1,7 @@
 //! `internalBinding('buffer')` (src/node_buffer.cc): the byte, string and search
 //! primitives Node's lib/buffer.js and lib/internal/buffer.js build `Buffer` from.
 use super::buffer_codec as codec;
+use super::buffer_shared_vm::view_bytes;
 use super::string_decoder_codec::ENCODINGS;
 use crate::host::NodeHost;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
@@ -100,11 +101,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     })
 }
 
-fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let key = c.string_rooted(name);
-    c.define_data_property_rooted(object, key, value, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 
 fn arg(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
     match args.get(index) {
@@ -395,11 +392,6 @@ fn copy_bytes(c: &mut Context<'_>, source: RootId, source_start: usize, target: 
         count
     });
     written.unwrap_or_default()
-}
-
-/// The bytes of a view for comparing against another buffer's.
-fn view_bytes(c: &mut Context<'_>, value: RootId) -> Vec<u8> {
-    c.view_bytes_rooted(value).unwrap_or_default()
 }
 
 /// `normalizeCompareVal`: memcmp's sign, or the length order when the prefix is equal.

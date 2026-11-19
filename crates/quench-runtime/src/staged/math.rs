@@ -22,6 +22,10 @@ mod machine {
     pub(super) fn trunc(value: f64) -> f64 { value.trunc() }
     #[inline(always)]
     pub(super) fn sqrt(value: f64) -> f64 { value.sqrt() }
+    #[inline(always)]
+    pub(super) fn abs(value: f64) -> f64 { value.abs() }
+    #[inline(always)]
+    pub(super) fn constant(value: f64) -> f64 { value }
 }
 /// Baseline x86-64 has no `roundsd` (SSE4.1), so the standard library's rounding is a libm
 /// call (~23 instructions for `floor`). Below 2^52 in magnitude a value truncates exactly
@@ -59,6 +63,10 @@ mod machine {
     }
     #[inline(always)]
     pub(super) fn sqrt(value: f64) -> f64 { value.sqrt() }
+    #[inline(always)]
+    pub(super) fn abs(value: f64) -> f64 { value.abs() }
+    #[inline(always)]
+    pub(super) fn constant(value: f64) -> f64 { value }
 }
 #[cfg(stencil_build)]
 mod machine {
@@ -70,6 +78,19 @@ mod machine {
     pub(super) fn trunc(value: f64) -> f64 { core::f64::math::trunc(value) }
     #[inline(always)]
     pub(super) fn sqrt(value: f64) -> f64 { core::f64::math::sqrt(value) }
+    /// The magnitude: the sign bit cleared through a mask in a register, which LLVM would otherwise load
+    /// from a constant pool a stencil cannot reach.
+    #[inline(always)]
+    pub(super) fn abs(value: f64) -> f64 { f64::from_bits(value.to_bits() & constant_bits(!(1 << 63))) }
+    /// `value` materialized as an immediate (`movabs`): a stencil holds no constant pool.
+    #[inline(always)]
+    pub(super) fn constant(value: f64) -> f64 { f64::from_bits(constant_bits(value.to_bits())) }
+    #[inline(always)]
+    fn constant_bits(mut bits: u64) -> u64 {
+        // SAFETY: an empty template: the value passes through a register unchanged, opaque to constant folding.
+        unsafe { core::arch::asm!("/* {0} */", inout(reg) bits, options(pure, nomem, nostack, preserves_flags)) };
+        bits
+    }
 }
 
 /// A Math function of one Number that is a machine primitive or a short composition of them.
@@ -84,6 +105,8 @@ pub(crate) enum FloatUnary {
     Fround,
     /// The nearest integer, halves toward `+Infinity`, `-0` for a negative that rounds to zero.
     Round,
+    /// `Math.sign`: the sign of a Number, with NaN and the zeros returned as they are.
+    Sign,
 }
 
 /// The value of `operation` on `value`.
@@ -93,10 +116,23 @@ pub(crate) fn float_unary(operation: FloatUnary, value: f64) -> f64 {
         FloatUnary::Floor => machine::floor(value),
         FloatUnary::Ceil => machine::ceil(value),
         FloatUnary::Trunc => machine::trunc(value),
-        FloatUnary::Abs => value.abs(),
+        FloatUnary::Abs => machine::abs(value),
         FloatUnary::Sqrt => machine::sqrt(value),
         FloatUnary::Fround => f64::from(value as f32),
         FloatUnary::Round => round_half_up(value),
+        FloatUnary::Sign => sign(value),
+    }
+}
+
+/// `Math.sign`: `-1` or `1` by the sign bit, NaN and both zeros as they are.
+#[inline(always)]
+fn sign(value: f64) -> f64 {
+    if value.is_nan() || value == machine::constant(0.0) {
+        value
+    } else if value.is_sign_negative() {
+        machine::constant(-1.0)
+    } else {
+        machine::constant(1.0)
     }
 }
 
@@ -107,13 +143,14 @@ pub(crate) const ROUND_HALF: f64 = 0.5;
 /// `Math.round`: the nearest integer, halves toward `+Infinity`, `-0` for a negative that rounds to zero.
 #[inline(always)]
 fn round_half_up(value: f64) -> f64 {
-    if value.is_nan() || value == 0.0 || value.is_infinite() {
+    let (half, zero) = (machine::constant(ROUND_HALF), machine::constant(0.0));
+    if value.is_nan() || value == zero || machine::abs(value) == machine::constant(f64::INFINITY) {
         value
-    } else if (-ROUND_HALF..0.0).contains(&value) {
-        -0.0
+    } else if machine::constant(-ROUND_HALF) <= value && value < zero {
+        machine::constant(-0.0)
     } else {
         let floor = machine::floor(value);
-        if value - floor < ROUND_HALF { floor } else { floor + 1.0 }
+        if value - floor < half { floor } else { floor + machine::constant(1.0) }
     }
 }
 
@@ -122,7 +159,7 @@ fn round_half_up(value: f64) -> f64 {
 #[inline(always)]
 pub(crate) fn float_extreme(maximum: bool, left: f64, right: f64) -> f64 {
     if left.is_nan() || right.is_nan() {
-        return f64::NAN;
+        return machine::constant(f64::NAN);
     }
     if left == 0.0 && right == 0.0 {
         let negative = if maximum {
@@ -130,7 +167,7 @@ pub(crate) fn float_extreme(maximum: bool, left: f64, right: f64) -> f64 {
         } else {
             left.is_sign_negative() || right.is_sign_negative()
         };
-        return if negative { -0.0 } else { 0.0 };
+        return if negative { machine::constant(-0.0) } else { machine::constant(0.0) };
     }
     if maximum { left.max(right) } else { left.min(right) }
 }
@@ -141,68 +178,17 @@ pub(crate) fn int_multiply(left: i32, right: i32) -> i32 {
     left.wrapping_mul(right)
 }
 
-/// `Math.max` (`maximum`) or `Math.min` of two int32 values: an int32 is never -0.
+/// `Math.clz32`: the leading zero bits of the ToUint32 of a Number, given as that ToUint32 (`value::number_to_u32`
+/// in the interpreter, the stencil's exact truncation in a row).
 #[inline(always)]
-pub(crate) fn int_extreme(maximum: bool, left: i32, right: i32) -> i32 {
-    if maximum { left.max(right) } else { left.min(right) }
+pub(crate) fn leading_zeros(uint32: u32) -> u32 {
+    uint32.leading_zeros()
 }
 
-/// `Math.abs` of an int32, whose magnitude is an int32 except at -2^31 (`None`, for the double path).
+/// `Math.clz32` of the int32 word `value`, on `stage`: its unsigned low 32 bits' leading zeros.
 #[inline(always)]
-pub(crate) fn int_abs(value: i32) -> Option<i32> {
-    (value != i32::MIN).then(|| value.abs())
-}
-
-/// `Math.sign`: `NaN` and the zeros unchanged, otherwise -1 or 1 by the sign.
-#[inline(always)]
-pub(crate) fn sign(value: f64) -> f64 {
-    if value.is_nan() || value == 0.0 {
-        value
-    } else if value.is_sign_negative() {
-        -1.0
-    } else {
-        1.0
-    }
-}
-
-/// `Math.clz32`: the leading zero bits of the ToUint32 of `value`, as a Number.
-#[inline(always)]
-#[cfg(not(stencil_build))]
-pub(crate) fn clz32(value: f64) -> f64 {
-    f64::from(to_uint32(value).leading_zeros())
-}
-
-/// The modulus of ToUint32, 2^32.
-#[cfg(not(stencil_build))]
-const UINT32_MODULUS: f64 = 4_294_967_296.0;
-
-/// ToUint32 of `value`: its integer part modulo 2^32, zero for NaN and the infinities. Here
-/// rather than in `value`, since this module also builds into the baseline JIT's stencils.
-#[cfg(not(stencil_build))]
-#[inline(always)]
-fn to_uint32(value: f64) -> u32 {
-    if !value.is_finite() {
-        return 0;
-    }
-    value.trunc().rem_euclid(UINT32_MODULUS) as u32
-}
-
-/// `Math.hypot` of Numbers: infinite if any is (even beside a NaN), NaN if any is, else the
-/// root of the sum of squares, scaled by the largest magnitude so the squares do not overflow.
-#[cfg(not(stencil_build))]
-pub(crate) fn hypot(values: &[f64]) -> f64 {
-    if values.iter().any(|value| value.is_infinite()) {
-        return f64::INFINITY;
-    }
-    if values.iter().any(|value| value.is_nan()) {
-        return f64::NAN;
-    }
-    let largest = values.iter().copied().map(f64::abs).fold(0.0, f64::max);
-    if largest == 0.0 {
-        return 0.0;
-    }
-    let squares = values.iter().map(|value| value / largest).map(|ratio| ratio * ratio).sum::<f64>();
-    largest * squares.sqrt()
+pub(crate) fn count_leading_zeros<S: NumericStage>(stage: &mut S, value: S::Word) -> S::Word {
+    stage.int_leading_zeros(value)
 }
 
 /// `operation` of the binary64 word `value`, on `stage`.

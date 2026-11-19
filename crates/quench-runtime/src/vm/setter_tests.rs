@@ -1,4 +1,4 @@
-//! Stores that meet a setter, as the lane activates it (`setters::lane_store_setter`),
+//! Stores that meet a setter, as the lane activates it (`AccessorCall::store_setter`),
 //! against Node's output.
 use crate::test_host::printed;
 
@@ -72,8 +72,8 @@ print(run(8) + ":" + cnt);
     assert_eq!(printed(source, "setter_frame.js"), ["8:8"]);
 }
 
-/// A store's setter is cached at its site under the receiver's shape, prototype and the
-/// prototype layout epoch (`Vm::cached_field_accessor`): a receiver that gains a field, an own
+/// A store's setter is cached at its site under the receiver's shape, prototype and the cell
+/// of its chain to the holder (`Vm::cached_field_accessor`): a receiver that gains a field, an own
 /// property that shadows the setter, a prototype whose accessor is redefined or deleted or
 /// gains a getter-only form, an accessor defined after data stores, `Object.setPrototypeOf`
 /// moving the receiver or its prototype, a pair redefined in its slot, a proxy inserted up the

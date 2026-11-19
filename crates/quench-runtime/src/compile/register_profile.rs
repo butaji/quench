@@ -1,4 +1,4 @@
-use crate::bytecode::{FieldSite, Function, Op, Register, Superinstruction};
+use crate::bytecode::{FieldSite, Function, Register, Superinstruction, Traits};
 
 type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
 type Excluded = (usize, usize, usize, usize);
@@ -36,7 +36,7 @@ fn collect(
         let moves = function
             .code
             .iter()
-            .filter(|ins| ins.op() == Op::Move)
+            .filter(|ins| ins.op().traits().has(Traits::REGISTER_COPY))
             .count();
         census.buckets[bucket(registers)] += 1;
         census.total_registers += registers;

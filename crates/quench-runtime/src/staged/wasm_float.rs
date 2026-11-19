@@ -4,7 +4,7 @@
 
 use super::wasm::{WasmStage, Width};
 use crate::wasm::conversion::ScalarConversionOperator;
-use crate::wasm::float::F64BinaryOperator as FloatBinary;
+use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::numeric::canonical_nan_bits;
 use crate::{WasmTrap, WasmType};
 
@@ -97,4 +97,159 @@ pub(crate) fn convert<S: WasmStage>(
         stage.trap_when(overflows, WasmTrap::IntegerOverflow)?;
     }
     Ok(stage.convert(operator, value))
+}
+
+/// The float operator a tag names, as `binary_operator` (`wasm::integer`): a tag outside the family
+/// names no row.
+#[cfg(stencil_build)]
+pub(crate) const fn float_binary_operator(tag: u32) -> FloatBinary {
+    match FloatBinary::from_tag(tag) {
+        Some(operator) => operator,
+        None => FloatBinary::Add,
+    }
+}
+
+/// The float unary operator a tag names, as `float_binary_operator`.
+#[cfg(stencil_build)]
+pub(crate) const fn float_unary_operator(tag: u32) -> crate::wasm::float::F64UnaryOperator {
+    use crate::wasm::float::F64UnaryOperator as FloatUnary;
+    match FloatUnary::from_tag(tag) {
+        Some(operator) => operator,
+        None => FloatUnary::Absolute,
+    }
+}
+
+/// The conversion a tag names. A tag outside the family names `WrapI64`, the family's first
+/// conversion that is not a trapping truncation.
+#[cfg(stencil_build)]
+pub(crate) const fn conversion_operator(tag: u32) -> ScalarConversionOperator {
+    match ScalarConversionOperator::from_tag(tag) {
+        Some(operator) => operator,
+        None => ScalarConversionOperator::WrapI64,
+    }
+}
+
+/// The sign bit of an f32 word, zero-extended, and of an f64 word.
+const SIGN32: u64 = 0x8000_0000;
+const SIGN64: u64 = 1 << 63;
+/// The mask of an i32 or u32 word, zero-extended: the bits a 32-bit result keeps.
+const WORD32: u64 = u32::MAX as u64;
+/// The exponent bias and the stored mantissa bits of an f64: `2^e` has the biased exponent `e +
+/// BIAS` in its field and no mantissa.
+const EXPONENT_BIAS: u64 = (f64::MAX_EXP - 1) as u64;
+const MANTISSA_BITS: u32 = f64::MANTISSA_DIGITS - 1;
+
+/// `2^exponent` as f64 bits.
+pub(crate) const fn pow2_bits(exponent: u32) -> u64 {
+    (EXPONENT_BIAS + exponent as u64) << MANTISSA_BITS
+}
+
+/// The f64 with IEEE bits `bits`. The black box keeps LLVM from folding the bits back into a float
+/// constant, so the value is an integer immediate in a register (`movabs`, `movq`), not a
+/// constant-pool load.
+#[inline(always)]
+pub(crate) fn float_of_bits(bits: u64) -> f64 {
+    f64::from_bits(opaque(bits))
+}
+
+/// The bounds of a `bits`-wide integer as f64: a truncated value is kept when `lower <= value <
+/// limit`.
+#[inline(always)]
+pub(crate) fn truncation_limits(bits: u32, signed: bool) -> (f64, f64) {
+    if signed {
+        let limit = pow2_bits(bits - 1);
+        (float_of_bits(SIGN64 | limit), float_of_bits(limit))
+    } else {
+        (float_of_bits(0), float_of_bits(pow2_bits(bits)))
+    }
+}
+
+/// A float operand widened to f64, exactly.
+#[inline(always)]
+pub(crate) fn widen(float: Float, word: u64) -> f64 {
+    match float {
+        Float::F32 => f64::from(f32::from_bits(word as u32)),
+        Float::F64 => f64::from_bits(word),
+    }
+}
+
+/// `value` truncated toward zero and clamped to the `bits`-wide integer, as the word a conversion
+/// leaves: a NaN is 0, and a 32-bit result is its low word, zero-extended. The trapping
+/// truncations clamp too, once their range check has passed, where it is the same truncation.
+#[inline(always)]
+pub(crate) fn saturated(value: f64, bits: u32, signed: bool) -> u64 {
+    if value.is_nan() {
+        return 0;
+    }
+    let (lower, limit) = truncation_limits(bits, signed);
+    let (min, max, mask) = match (bits, signed) {
+        (32, true) => (SIGN32, i32::MAX as u64, WORD32),
+        (32, false) => (0, WORD32, WORD32),
+        (_, true) => (SIGN64, i64::MAX as u64, u64::MAX),
+        (_, false) => (0, u64::MAX, u64::MAX),
+    };
+    if value <= lower {
+        return min;
+    }
+    if value >= limit {
+        return max;
+    }
+    let integer = if !signed && bits == 64 && value >= float_of_bits(pow2_bits(63)) {
+        let above = value - float_of_bits(pow2_bits(63));
+        // SAFETY: `above` is in [0, 2^63), and its truncation fits an i64.
+        (unsafe { above.to_int_unchecked::<i64>() } as u64) | SIGN64
+    } else {
+        // SAFETY: the value is in (lower, limit), so its truncation fits an i64.
+        unsafe { value.to_int_unchecked::<i64>() as u64 }
+    };
+    integer & mask
+}
+
+/// `value as f64` for an unsigned 64-bit `value`, correctly rounded, without the expansion LLVM
+/// uses for an unsigned conversion (which loads a constant). A value under 2^63 converts as
+/// signed. A larger one halves with its low bit kept as a sticky bit, converts as signed, and adds
+/// to itself: the same rounding, exact.
+#[inline(always)]
+pub(crate) fn unsigned_to_f64(value: u64) -> f64 {
+    if (value as i64) >= 0 {
+        value as i64 as f64
+    } else {
+        let half = opaque((value >> 1) | (value & 1)) as i64 as f64;
+        half + half
+    }
+}
+
+/// `value as f32` for an unsigned 64-bit `value`: `unsigned_to_f64`'s halving, at f32.
+#[inline(always)]
+pub(crate) fn unsigned_to_f32(value: u64) -> f32 {
+    if (value as i64) >= 0 {
+        value as i64 as f32
+    } else {
+        let half = opaque((value >> 1) | (value & 1)) as i64 as f32;
+        half + half
+    }
+}
+
+/// CopySign at `float`: A's bits below the sign, B's sign bit. An f32 word is zero-extended.
+#[inline(always)]
+pub(crate) fn copysign_bits(float: Float, left: u64, right: u64) -> u64 {
+    match float {
+        Float::F32 => (left & !SIGN32 & WORD32) | (right & SIGN32),
+        Float::F64 => (left & !SIGN64) | (right & SIGN64),
+    }
+}
+
+/// A word the optimizer may not fold: in the stencil build a constant would become a constant-pool
+/// load (a relocation stencils may not carry), so the word is hidden behind `black_box`. The
+/// interpreter and u-jit builds fold it freely.
+#[inline(always)]
+fn opaque(word: u64) -> u64 {
+    #[cfg(stencil_build)]
+    {
+        core::hint::black_box(word)
+    }
+    #[cfg(not(stencil_build))]
+    {
+        word
+    }
 }

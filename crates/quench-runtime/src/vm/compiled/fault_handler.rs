@@ -1,6 +1,6 @@
 //! Native-fault recovery composed with a host's POSIX signal delivery.
 
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
 use super::guard_aarch64;
 use super::guard_support;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
@@ -27,7 +27,7 @@ impl NativeFaultHandler {
     pub unsafe fn resume(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void) -> bool {
         #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
         if signal == libc::SIGSEGV { return unsafe { resume_guard_fault(info, context) }; }
-        #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+        #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
         if is_guard_fault(signal) { return unsafe { guard_aarch64::resume_fault(info, context) }; }
         let _ = (signal, info, context);
         false

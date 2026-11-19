@@ -1,4 +1,5 @@
 use super::*;
+use super::promise::ThenCapability;
 use crate::heap::{ArrayFromAsyncAwait, ArrayFromAsyncState};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -57,9 +58,7 @@ impl<H: Host> Vm<H> {
         values: Vec<Value>,
         prototype: Value,
     ) -> Value {
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), values),
-        })
+        self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(prototype), values))
     }
 
     fn array_to_string_native(
@@ -184,12 +183,10 @@ impl<H: Host> Vm<H> {
             return Err(self.range_error(p, "invalid array length".into()));
         }
         let prototype = self.array_prototype_for_realm(self.realm.globals);
-        let array = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let array = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(prototype),
                 Vec::new(),
-            ),
-        });
+            ));
         self.heap.sparse_set_length(array, length);
         Ok(array)
     }
@@ -581,9 +578,8 @@ impl<H: Host> Vm<H> {
                     .heap
                     .root_value(state_root)
                     .expect("rooted Array.fromAsync continuation remains live");
-                let fulfilled = vm.native_with_env(Native::ArrayFromAsyncFulfilled, state_value);
-                let rejected = vm.native_with_env(Native::ArrayFromAsyncRejected, state_value);
-                vm.promise_then(p, promise, fulfilled, rejected)?;
+                let natives = [Native::ArrayFromAsyncFulfilled, Native::ArrayFromAsyncRejected];
+                vm.then_with_natives(p, promise, natives, state_value, ThenCapability::Species)?;
                 Ok(())
             })
         })();
@@ -633,14 +629,10 @@ impl<H: Host> Vm<H> {
                 if !self.is_object_like(value) {
                     return Err(self.type_error(p, "iterator result is not an object".into()));
                 }
-                let done_atom = self.runtime_atoms.done;
-                let done = self.get_property(p, value, done_atom)?;
-                if self.truthy(done) {
+                let Some(item) = self.iterator_result_value(p, value)? else {
                     self.set_array_from_async_length(p, state.result, state.index)?;
                     return self.promise_resolve_value(p, state.output, state.result);
-                }
-                let value_atom = self.runtime_atoms.value;
-                let item = self.get_property(p, value, value_atom)?;
+                };
                 self.array_from_async_map_or_store(p, state_value, state, item)
             }
             ArrayFromAsyncAwait::ArrayLikeValue => {

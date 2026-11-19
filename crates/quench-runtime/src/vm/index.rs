@@ -20,7 +20,7 @@ impl<H: Host> Vm<H> {
             return Some(self.string_proto);
         }
         let native = match self.heap.get(value) {
-            Some(Cell::Symbol(_)) => Native::Symbol,
+            _ if self.heap.is_symbol(value) => Native::Symbol,
             Some(Cell::BigInt(_)) => Native::BigInt,
             _ if value.as_bool().is_some() => Native::Boolean,
             _ if value.as_number().is_some() => Native::Number,
@@ -113,19 +113,19 @@ impl<H: Host> Vm<H> {
             // A rejected base never invokes a property-key object's conversion hooks.
             let property = if self.is_object_like(key) {
                 None
-            } else if let Some(Cell::Symbol(description)) = self.heap.get(key) {
+            } else if let Some(description) = self.heap.symbol_data(key) {
                 Some(format!("Symbol({})", description.as_deref().unwrap_or("")))
             } else {
                 Some(self.to_string(p, key)?)
             };
             return Err(self.nullish_property_error(p, object, property.as_deref()));
         }
-        let key = if self.heap.is_string(key) || matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+        let key = if self.heap.is_string(key) || self.heap.is_symbol(key) {
             key
         } else {
             self.to_property_key(p, key)?
         };
-        if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+        if self.heap.is_symbol(key) {
             return self.get_symbol_property_with_receiver(p, object, key, object);
         }
         if let Some((target, handler)) = self.proxy_parts(object) {
@@ -477,12 +477,12 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<(), JsError> {
-        let key = if self.heap.is_string(key) || matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+        let key = if self.heap.is_string(key) || self.heap.is_symbol(key) {
             key
         } else {
             self.to_property_key(p, key)?
         };
-        if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+        if self.heap.is_symbol(key) {
             let succeeded =
                 self.set_symbol_property_with_receiver(p, object, key, value, object)?;
             return if succeeded || !strict {
@@ -549,14 +549,26 @@ impl<H: Host> Vm<H> {
     /// replacing a present one, appending at the dense length, or filling a hole no prototype
     /// claims (`set_index_mode`, `general_elements`); `false` before any effect.
     pub(super) fn store_plain_element(&mut self, object: Value, index: usize, value: Value) -> bool {
+        if self.store_present_element(object, index, value) { return true; }
         let Some(data) = self.heap.array(object) else { return false };
         if data.has_indexed_descriptors() || data.is_frozen() { return false; }
         match data.elements().get(index) {
-            Some(present) if !present.is_deleted() => { self.replace_dense_element(object, index, value); true }
             Some(_) => !data.is_arguments_object() && self.inherited_index_unclaimed(object, index)
                 && self.set_array_element(object, index, value),
             None => self.append_dense_element(object, index, value),
         }
+    }
+
+    /// Replaces the present dense element `index` of the plain array `object` with `value`: no guest code
+    /// and no allocation, so the direct helper runs it too (`family_helpers`). `false`, before any effect,
+    /// where the element is absent or the array's descriptors or integrity govern the store.
+    #[inline(always)]
+    pub(in crate::vm) fn store_present_element(&mut self, object: Value, index: usize, value: Value) -> bool {
+        let Some(data) = self.heap.array(object) else { return false };
+        if data.has_indexed_descriptors() || data.is_frozen() { return false; }
+        if !data.elements().get(index).is_some_and(|present| !present.is_deleted()) { return false; }
+        self.replace_dense_element(object, index, value);
+        true
     }
 
     pub(super) fn set_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {
@@ -697,12 +709,10 @@ mod tests {
     #[test]
     fn high_array_index_stays_out_of_dense_storage() {
         let mut vm = Vm::new(TestHost::default());
-        let array = vm.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let array = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                 Vm::<TestHost>::empty_object(Value::NULL),
                 vec![],
-            ),
-        });
+            ));
         assert!(vm.set_array_element(array, 1_000_000, Value::TRUE));
         let Some(array_object) = vm.heap.array(array) else {
             panic!("array cell")
@@ -739,12 +749,10 @@ mod tests {
     #[test]
     fn bounded_sparse_write_promotes_to_dense_storage() {
         let mut vm = Vm::new(TestHost::default());
-        let array = vm.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let array = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                 Vm::<TestHost>::empty_object(Value::NULL),
                 Vec::new(),
-            ),
-        });
+            ));
 
         assert!(vm.set_array_element(array, 2_048, Value::TRUE));
 
@@ -761,12 +769,10 @@ mod tests {
     #[test]
     fn shrinking_large_sparse_array_promotes_and_preserves_values() {
         let mut vm = Vm::new(TestHost::default());
-        let array = vm.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let array = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                 Vm::<TestHost>::empty_object(Value::NULL),
                 Vec::new(),
-            ),
-        });
+            ));
         vm.heap.sparse_set_length(array, 1_000_000);
         vm.heap.sparse_set(array, 3, Value::TRUE);
         vm.heap.sparse_set(array, 999_999, Value::FALSE);
@@ -787,12 +793,10 @@ mod tests {
     fn ordinary_indexed_writes_do_not_intern_property_names() {
         let program = crate::Engine::specialize("", "array-index-atoms.js").unwrap();
         let mut vm = Vm::new(TestHost::default());
-        let array = vm.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let array = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                 Vm::<TestHost>::empty_object(Value::NULL),
                 Vec::new(),
-            ),
-        });
+            ));
         let atom_count = vm.atom_sequence.len();
         vm.heap.retain_allocations_for_test();
         let cell_count = vm.heap.occupied_cell_count_for_test();
@@ -815,12 +819,10 @@ mod tests {
     #[test]
     fn deleting_an_uninterned_present_index_does_not_create_an_atom() {
         let mut vm = Vm::new(TestHost::default());
-        let array = vm.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let array = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                 Vm::<TestHost>::empty_object(Value::NULL),
                 vec![Value::FALSE; 1024],
-            ),
-        });
+            ));
         let atom_count = vm.atom_sequence.len();
 
         assert_eq!(vm.delete_array_index(array, 1023), Value::TRUE);

@@ -5,6 +5,7 @@
 //! dense captures are the payload's, bound once per activation (`JsStepDispatch::bind_captures`).
 use super::*;
 use super::lane_region::DISPATCH;
+use crate::staged::frame::{CONTEXT_BODY, CONTEXT_THIS};
 use crate::staged::{flow::FlowStage, NumericStage, Stage};
 
 /// The positions of the entry ABI's words the trampoline reads (`native_entry_signature`):
@@ -37,17 +38,15 @@ pub(in crate::vm) fn lower_ahead_entry(
         native_entry_signature(isa.pointer_type(), isa.default_call_conv()),
     );
     regions::declare_regions(&mut native);
-    let mut context = FunctionBuilderContext::new();
+    let mut context = crate::vm::jit_backend::builder::take_context();
     let mut builder = FunctionBuilder::new(&mut native, &mut context);
-    let entry = builder.create_block();
-    builder.append_block_params_for_function_params(entry);
-    builder.switch_to_block(entry);
-    let params = builder.block_params(entry).to_vec();
+    let (_, params) = crate::vm::jit_backend::builder::enter(&mut builder);
     let blocks = AheadBlocks::new(&mut builder);
     emit_dispatch(&mut builder, &params, &blocks, targets.body);
     emit_steps(&mut builder, &params, &blocks, count, targets.fallback);
     builder.seal_all_blocks();
     builder.finalize(isa.frontend_config());
+    crate::vm::jit_backend::builder::keep_context(context);
     Ok(native)
 }
 
@@ -76,7 +75,7 @@ fn emit_dispatch(
     body: &mut dyn FnMut(&mut FunctionBuilder<'_>, &[ir::Value]) -> (ir::Value, ir::Value),
 ) {
     let mut stage = super::object_slots::emit(builder);
-    let payload = stage.load_u64(DISPATCH, params[ENTRY_CONTEXT], std::mem::offset_of!(CallContext, adapter_payload) as i32);
+    let payload = stage.load_u64(DISPATCH, params[ENTRY_CONTEXT], std::mem::offset_of!(CallContext, head.adapter_payload) as i32);
     let start_pc = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, start_pc));
     let stop_pc = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, stop_pc));
     let starts = stage.eq_imm(start_pc, 0u32);
@@ -84,11 +83,10 @@ fn emit_dispatch(
     let whole = stage.both(starts, unbounded);
     stage.branch(whole, (blocks.body, &[]), (blocks.step, &[start_pc]));
     stage.builder.switch_to_block(blocks.body);
-    let this = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, receiver));
-    let values = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, capture_values));
-    let length = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, capture_len));
-    let length = stage.mul_imm(length, 1u64 << entry_cell::CAPTURE_ADDRESS_BITS);
-    let captures = stage.or(values, length);
+    // The body's receiver and captures word are its window's header (`CONTEXT_THIS`, `CONTEXT_BODY`), which its entry's caller wrote.
+    let window = crate::staged::Region::Frame.mutable();
+    let this = stage.load_u64(window, params[ENTRY_ARGUMENTS], -(8 * CONTEXT_THIS as i32));
+    let captures = stage.load_u64(window, params[ENTRY_ARGUMENTS], -(8 * CONTEXT_BODY as i32));
     let (status, word) = body(stage.builder, &[params[ENTRY_CONTEXT], this, captures, params[ENTRY_ARGUMENTS]]);
     emit_body_status(builder, params, blocks, payload, (status, word));
 }
@@ -109,7 +107,7 @@ fn emit_body_status(
     stage.ret(&[status]);
     stage.builder.switch_to_block(returned);
     stage.store_u64(DISPATCH, params[ENTRY_RESULT], 0, word);
-    let record = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, returned_pc));
+    let record = emit_js_payload_word(stage.builder, payload, std::mem::offset_of!(JsStepDispatch, head.returned_pc));
     let record = stage.and_imm(record, u64::from(u32::MAX));
     let wide = stage.add_imm(record, u64::from(RETURN_STATUS_BASE));
     let status = stage.narrow(wide);

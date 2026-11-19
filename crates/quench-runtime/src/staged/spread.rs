@@ -25,6 +25,7 @@ pub(crate) enum Passing {
 
 /// The call-out row of a spread call or a super construction; `None` for any other instruction,
 /// and for a direct eval, which the host decides.
+#[inline(always)]
 pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>> {
     let destination = || instruction.result_register();
     Some(match instruction.op() {
@@ -80,7 +81,7 @@ mod tests {
             assert_eq!(call, CallOut::Spread { callee: 5, receiver: 6, arguments, passing }, "{op:?}");
             assert_eq!(result, Some(4));
             let operands = call.operands();
-            assert_eq!((operands.fixed, operands.list), ([Some(5), Some(6)], Some(arguments)));
+            assert_eq!((operands.fixed, operands.list), ([Some(crate::bytecode::Operand::register(5)), Some(crate::bytecode::Operand::register(6))], Some(arguments)));
             assert_eq!(operands.registers(&[]).collect::<Vec<_>>(), [5, 6, 7]);
         }
         let eval = ImmediateLayout::call_immediate(7, 1, true, false);

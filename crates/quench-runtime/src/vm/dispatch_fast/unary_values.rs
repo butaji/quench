@@ -8,7 +8,7 @@ use super::*;
 /// # Safety
 /// `cx` is the running lane's context and `r` its registers.
 #[inline(always)]
-pub(super) unsafe fn lane_unary_value<H: Host>(
+pub(super) unsafe fn unary_value<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     i: &LaneInstruction,
@@ -29,7 +29,7 @@ pub(super) unsafe fn lane_unary_value<H: Host>(
     {
         return Some(Value::number(result));
     }
-    if let Some(answer) = lane_value_query(vm, operator, operand) {
+    if let Some(answer) = unary_query(vm, operator, operand) {
         return Some(answer);
     }
     if operand.as_number().is_some() && super::coercion::numeric_unary(operator) {
@@ -49,7 +49,7 @@ pub(super) unsafe fn lane_unary_value<H: Host>(
 /// Logical not and the `typeof` operators: they read any value's truthiness or type, so no
 /// operand runs guest code. `None` for every other operator.
 #[inline(always)]
-fn lane_value_query<H: Host>(vm: &mut Vm<H>, operator: u32, operand: Value) -> Option<Value> {
+fn unary_query<H: Host>(vm: &mut Vm<H>, operator: u32, operand: Value) -> Option<Value> {
     if operator == super::coercion::LOGICAL_NOT {
         return Some(vm.logical_not(operand));
     }
@@ -60,7 +60,7 @@ fn lane_value_query<H: Host>(vm: &mut Vm<H>, operator: u32, operand: Value) -> O
         return Some(vm.typeof_index_value(operand));
     }
     if let Some(elements) = crate::bytecode::array_pattern_test(operator) {
-        return Some(Value::boolean(vm.array_pattern_reads_elements(operand, elements)));
+        return Some(Value::boolean(vm.array_pattern_fits(operand, elements)));
     }
     if operator == super::coercion::TYPEOF {
         let name = vm.typeof_value(operand);

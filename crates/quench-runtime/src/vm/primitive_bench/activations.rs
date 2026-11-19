@@ -23,13 +23,14 @@ fn activation(kinds: Kinds, index: usize) -> Activation {
         caller_registers: Registers(std::ptr::null_mut()),
         caller_program: ProgramId::MAIN,
         kind: if wasm {
-            ActivationKind::Wasm { memory: MemoryView::NONE, frame_storage_bytes: WASM_STORAGE_BYTES }
+            ActivationKind::Wasm { memory: MemoryView::NONE, frame_storage_bytes: WASM_STORAGE_BYTES, program: ProgramId::MAIN, pc: 0 }
         } else {
             ActivationKind::Script(ScriptActivation {
                 callee: Value::UNDEFINED,
                 argc: 0,
                 completion: Completion::Plain,
                 forwards: false,
+                kept: 0,
                 environment: false,
                 record: std::ptr::null_mut(),
             })
@@ -44,7 +45,7 @@ fn activation_storage_tracks_mixed_push_pop_and_empty_stack() {
         size_of::<ScriptActivation>(), size_of::<MemoryView>(), ACTIVATIONS * size_of::<Activation>());
     for kinds in [Kinds::Script, Kinds::Wasm, Kinds::Mixed] {
         let mut stack = LaneStack::default();
-        stack.activations.reserve(ACTIVATIONS);
+        stack.activations_mut().reserve(ACTIVATIONS);
         let mut expected = 0;
         for index in 0..ACTIVATIONS {
             let entry = activation(kinds, index);
@@ -78,7 +79,7 @@ mod measurements {
 
     fn batch(b: &mut Bencher, kinds: Kinds) {
         let mut stack = LaneStack::default();
-        stack.activations.reserve(ACTIVATIONS);
+        stack.activations_mut().reserve(ACTIVATIONS);
         b.iter(|| {
             let stack = black_box(&mut stack);
             for index in 0..ACTIVATIONS {
@@ -86,13 +87,13 @@ mod measurements {
                 let at = stack.values.as_mut_ptr().wrapping_add(index * WASM_REGISTERS);
                 unsafe { stack.push_activation(activation(kinds, index), at) };
             }
-            black_box(&stack.activations[..]);
+            black_box(&stack.activations()[..]);
             black_box(stack.wasm_storage_bytes);
             for _ in 0..ACTIVATIONS {
                 black_box(stack.pop_activation().unwrap());
             }
         });
-        assert!(stack.activations.is_empty());
+        assert!(stack.activations().is_empty());
         assert_eq!(stack.wasm_storage_bytes, 0);
     }
 

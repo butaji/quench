@@ -454,29 +454,33 @@ fn json_text_str(text: &[u8]) -> &str {
 fn write_json_string(value: &JsString, output: &mut JsonText) {
     match value.units() {
         Units::Ascii(bytes) => write_json_utf8(bytes, output),
-        Units::Wide(units) => {
-            output.push(b'"');
-            let mut index = 0;
-            while index < units.len() {
-                let unit = units[index];
-                let scalar = if let Some(code_point) = units
-                    .get(index + 1)
-                    .and_then(|low| unicode::decode_surrogate_pair(unit, *low))
-                {
-                    index += 2;
-                    Some(char::from_u32(code_point).expect("valid surrogate pair"))
-                } else {
-                    index += 1;
-                    char::from_u32(u32::from(unit))
-                };
-                match scalar {
-                    Some(scalar) => write_json_scalar(scalar, output),
-                    None => write_unicode_escape(u32::from(unit), output),
-                }
-            }
-            output.push(b'"');
+        Units::Latin1(bytes) => write_json_units(&bytes.iter().map(|byte| u16::from(*byte)).collect::<Vec<u16>>(), output),
+        Units::Wide(units) => write_json_units(units, output),
+    }
+}
+
+/// QuoteJSONString of UTF-16 `units`, each lone surrogate escaped as `\uXXXX`.
+fn write_json_units(units: &[u16], output: &mut JsonText) {
+    output.push(b'"');
+    let mut index = 0;
+    while index < units.len() {
+        let unit = units[index];
+        let scalar = if let Some(code_point) = units
+            .get(index + 1)
+            .and_then(|low| unicode::decode_surrogate_pair(unit, *low))
+        {
+            index += 2;
+            Some(char::from_u32(code_point).expect("valid surrogate pair"))
+        } else {
+            index += 1;
+            char::from_u32(u32::from(unit))
+        };
+        match scalar {
+            Some(scalar) => write_json_scalar(scalar, output),
+            None => write_unicode_escape(u32::from(unit), output),
         }
     }
+    output.push(b'"');
 }
 
 /// QuoteJSONString of UTF-8 `text`. Every byte QuoteJSONString escapes is ASCII and no
@@ -925,6 +929,7 @@ fn parse_json_text<B: JsonBuilder>(text: &JsString, builder: &mut B) -> Result<B
     }
     match text.units() {
         Units::Ascii(bytes) => JsonParser::new(bytes, builder).parse(),
+        Units::Latin1(bytes) => JsonParser::new(&bytes.iter().map(|byte| u16::from(*byte)).collect::<Vec<u16>>(), builder).parse(),
         Units::Wide(units) => JsonParser::new(units, builder).parse(),
     }
 }
@@ -1604,7 +1609,7 @@ fn hex_digit(unit: u16) -> Option<u16> {
 impl<H: Host> Vm<H> {
     fn json_object(&mut self) -> Value {
         let prototype = self.realm_object_prototype(self.realm.globals);
-        self.heap.alloc(Cell::Object(Self::empty_object(prototype)))
+        self.heap.alloc_object(Self::empty_object(prototype))
     }
 
     pub(super) fn json_raw_json(
@@ -2096,7 +2101,78 @@ impl<H: Host> Vm<H> {
             w.output.extend_from_slice(raw.as_bytes());
             return Ok(true);
         }
-        self.json_serialize_heap_value(p, value, w)
+        if self.heap.object_record(value).is_some()
+            || self.heap.promise(value).is_some()
+            || self.heap.is_map(value)
+            || self.heap.is_set(value)
+        {
+            return self.json_serialize_object(p, value, state).map(|()| true);
+        }
+        if let Some(array) = self.heap.array(value) {
+            // An arguments object is an ordinary object to IsArray, so it serializes as one.
+            return if array.is_arguments_object() {
+                self.json_serialize_object(p, value, state)
+            } else {
+                self.json_serialize_array(p, value, state)
+            }
+            .map(|()| true);
+        }
+        match self.heap.get(value).cloned() {
+            _ if let Some(text) = self.heap.string(value).cloned()  => {
+                write_json_string(&text, &mut state.output);
+                Ok(true)
+            }
+            _ if self.heap.is_symbol(value) => Ok(false),
+            Some(Cell::BigInt(_)) => {
+                Err(self.type_error(p, "Do not know how to serialize a BigInt".into()))
+            }
+            None => Ok(false),
+            Some(Cell::Promise(_)) => {
+                unreachable!("heap.array, heap.promise and the collection accessors classify their values before this match")
+            }
+            _ if self.is_array(p, value)? => {
+                self.json_serialize_array(p, value, state).map(|()| true)
+            }
+            Some(Cell::Proxy { .. })
+            | Some(Cell::Date { .. })
+            | Some(Cell::Error(_))
+            | Some(Cell::ShadowRealm { .. })
+            | Some(Cell::WeakMap { .. })
+            | Some(Cell::WeakSet { .. })
+            | Some(Cell::WeakRef { .. })
+            | Some(Cell::FinalizationRegistry { .. })
+            | Some(Cell::RegExp { .. })
+            | Some(Cell::TypedArray { .. })
+            | Some(Cell::ArrayBuffer { .. })
+            | Some(Cell::DataView { .. })
+            | Some(Cell::TemporalDuration { .. })
+            | Some(Cell::TemporalPlainDate { .. })
+            | Some(Cell::TemporalPlainDateTime { .. })
+            | Some(Cell::TemporalPlainMonthDay { .. })
+            | Some(Cell::TemporalPlainYearMonth { .. })
+            | Some(Cell::TemporalZonedDateTime { .. })
+            | Some(Cell::TemporalInstant { .. })
+            | Some(Cell::WasmObject { .. })
+            | Some(Cell::WasmGlobal { .. })
+            | Some(Cell::WasmMemory { .. })
+            | Some(Cell::WasmTable { .. }) => {
+                self.json_serialize_object(p, value, state).map(|()| true)
+            }
+            Some(Cell::ArrayFromAsyncState(_))
+            | Some(Cell::AwaitState(_))
+            | Some(Cell::PromiseResolvingState { .. })
+            | Some(Cell::WasmElements(_))
+            | Some(Cell::WasmBits64(_))
+            | Some(Cell::WasmInstance(_))
+            | Some(Cell::WasmGc { .. })
+            | Some(Cell::WasmExtern(_))
+            | Some(Cell::AccessorPair { .. })
+            | Some(Cell::WasmTag { .. })
+            | Some(Cell::WasmException { .. })
+            | Some(Cell::WasmV128(_))
+            | Some(Cell::BindingReference { .. })
+            | Some(Cell::WasmHostFunction { .. }) => Ok(false),
+        }
     }
 
     /// SerializeJSONValue's last steps, for a value no earlier step writes: an object or
@@ -2108,7 +2184,15 @@ impl<H: Host> Vm<H> {
         value: Value,
         w: &mut JsonWriter,
     ) -> JsonStep {
-        let is_array = if self.heap.object_record(value).is_some() || self.heap.promise(value).is_some() {
+        if let Some(text) = self.heap.string(value).cloned() {
+            write_json_string(&text, &mut w.output);
+            return Ok(true);
+        }
+        if self.heap.is_symbol(value) {
+            return Ok(false);
+        }
+        let is_array = if self.heap.object_record(value).is_some() || self.heap.promise(value).is_some()
+            || self.heap.is_map(value) || self.heap.is_set(value) {
             false
         } else if let Some(array) = self.heap.array(value) {
             // An arguments object is an ordinary object to IsArray, so it serializes as one.
@@ -2235,7 +2319,7 @@ fn json_cell_form(cell: Option<&Cell>) -> JsonForm {
         Some(C::BigInt(_)) => JsonForm::BigInt,
         Some(
             C::Object(_) | C::Array { .. } | C::Promise(_) | C::Proxy { .. } | C::Date { .. } | C::Error(_)
-            | C::Map { .. } | C::Set { .. } | C::ShadowRealm { .. } | C::WeakMap { .. } | C::WeakSet { .. }
+            | C::Collection(_) | C::ShadowRealm { .. } | C::WeakMap { .. } | C::WeakSet { .. }
             | C::WeakRef { .. } | C::FinalizationRegistry { .. } | C::RegExp { .. } | C::TypedArray { .. }
             | C::ArrayBuffer { .. } | C::DataView { .. } | C::TemporalDuration { .. }
             | C::TemporalPlainDate { .. } | C::TemporalPlainDateTime { .. } | C::TemporalPlainMonthDay { .. }
@@ -2244,7 +2328,7 @@ fn json_cell_form(cell: Option<&Cell>) -> JsonForm {
         ) => JsonForm::Object,
         None
         | Some(
-            C::Symbol(_) | C::Function(_) | C::Iterator(_) | C::ArrayFromAsyncState(_) | C::AwaitState(_)
+            C::Function(_) | C::Iterator(_) | C::ArrayFromAsyncState(_) | C::AwaitState(_)
             | C::PromiseResolvingState { .. } | C::WasmElements(_) | C::WasmBits64(_) | C::WasmInstance(_)
             | C::WasmGc { .. } | C::WasmExtern(_) | C::AccessorPair { .. } | C::WasmTag { .. }
             | C::WasmException { .. } | C::WasmV128(_) | C::BindingReference { .. }
