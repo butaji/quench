@@ -24,7 +24,9 @@ typedef enum {
   /* literal types (GenericLiteralType and NullType): the type of a literal expression, see lit_type_new */
   A_INTLITERALTYPE, A_UINTLITERALTYPE, A_FLOATLITERALTYPE, A_DOUBLELITERALTYPE, A_NULLTYPE,
   /* ConvertPtrToArrayRefExpression (made by the checker for @ on a pointer; becomes the expression) */
-  A_CONVERTPTR
+  A_CONVERTPTR,
+  /* instances (FuncInstantiator.getUnique, wsl-inline.h): NativeFuncInstance; FunctionLikeBlock (the inliner) */
+  A_NATIVEFUNCINST, A_FUNCTIONLIKEBLOCK
 } AstTag;
 
 typedef struct Ast Ast;
@@ -49,7 +51,8 @@ struct Ast {
     /* FuncDef, NativeFunc, ProtocolFuncDecl */
     struct { const char *name; int isCast; const char *shaderType; int isRestricted;
              Ast *returnType; AstList typeParameters; AstList parameters; Ast *body;
-             int hasOv; AstList *ov; Ast *protocolDecl; } func;   /* ov: possibleOverloads (ProtocolFuncDecl), live; protocolDecl: ProtocolFuncDecl.protocolDecl */
+             int hasOv; AstList *ov; Ast *protocolDecl;   /* ov: possibleOverloads (ProtocolFuncDecl), live; protocolDecl: ProtocolFuncDecl.protocolDecl */
+             Ast *orig; Ast *uninstRet; int inlined; } func;   /* orig: the generic function of an instance; uninstRet: uninstantiatedReturnType; inlined: Func.inlined */
     /* TypeRef */
     struct { const char *name; AstList typeArguments; Ast *type; } typeRef;   /* type: resolved target */
     /* PtrType, ArrayRefType */
@@ -97,7 +100,8 @@ struct Ast {
     /* CallExpression; func, resultType, argTypes, actualTA: the checker's results (wsl-check.h) */
     struct { const char *name; AstList typeArguments; AstList argumentList;
              int hasOv; AstList *ov; int isCast; Ast *returnType;
-             Ast *func; Ast *resultType; AstList argTypes; AstList actualTA; } call;
+             Ast *func; Ast *resultType; AstList argTypes; AstList actualTA;
+             Ast *nfi; AstList instTA; } call;   /* nfi: nativeFuncInstance; instTA: instantiatedActualTypeArguments */
     /* DotExpression, IndexExpression: the checker's results are in pc (PropChk, wsl-check.h) */
     struct { const char *fieldName; Ast *base;
              int hasGet, hasSet, hasAnd; AstList *getOv, *setOv, *andOv; PropChk pc; } dot;
@@ -358,6 +362,8 @@ static const char *ast_class_name(const Ast *n) {
   case A_ENUMLITERAL: return "EnumLiteral";
   case A_ANONVAR: return "AnonymousVariable";
   case A_CONVERTPTR: return "ConvertPtrToArrayRefExpression";
+  case A_NATIVEFUNCINST: return "NativeFuncInstance";
+  case A_FUNCTIONLIKEBLOCK: return "FunctionLikeBlock";
   case A_INTLITERALTYPE: return "IntLiteralType";
   case A_UINTLITERALTYPE: return "UintLiteralType";
   case A_FLOATLITERALTYPE: return "FloatLiteralType";
@@ -375,10 +381,11 @@ static void dump_node(Buf *b, const Ast *n, int depth) {
   case A_FUNCDEF:
   case A_NATIVEFUNC:
   case A_PROTOCOLFUNCDECL:
+  case A_NATIVEFUNCINST:
     buf_scalar_str(b, "name", n->u.func.name);
     buf_scalar_bool(b, "isCast", n->u.func.isCast);
     buf_scalar_str(b, "shaderType", n->u.func.shaderType);
-    if (n->tag != A_PROTOCOLFUNCDECL) buf_scalar_bool(b, "isRestricted", n->u.func.isRestricted);
+    if (n->tag == A_FUNCDEF || n->tag == A_NATIVEFUNC) buf_scalar_bool(b, "isRestricted", n->u.func.isRestricted);
     end_scalars(b, n);
     dump_child(b, n->u.func.returnType, depth + 1);
     dump_list(b, &n->u.func.typeParameters, depth + 1);

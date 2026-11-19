@@ -249,6 +249,8 @@ const LIT = n => Object.keys(LITS).find(k => n instanceof LITS[k]);
 const SPEC = {
     FuncDef: { s: [S("name", n => n._name), S("isCast", n => n._isCast), S("shaderType", n => n._shaderType), S("isRestricted", n => n.isRestricted)],
         k: [K("returnType", n => n._returnType), K("typeParameters", n => n._typeParameters), K("parameters", n => n._parameters), K("body", n => n._body)] },
+    NativeFuncInstance: { s: [S("name", n => n._name), S("isCast", n => n._isCast), S("shaderType", n => n._shaderType)],
+        k: [K("returnType", n => n._returnType), K("typeParameters", n => n._typeParameters), K("parameters", n => n._parameters)] },
     NativeFunc: { s: [S("name", n => n._name), S("isCast", n => n._isCast), S("shaderType", n => n._shaderType), S("isRestricted", n => n.isRestricted)],
         k: [K("returnType", n => n._returnType), K("typeParameters", n => n._typeParameters), K("parameters", n => n._parameters)] },
     ProtocolFuncDecl: { s: [S("name", n => n._name), S("isCast", n => n._isCast), S("shaderType", n => n._shaderType)],
@@ -329,8 +331,9 @@ const classOf = n => (n.constructor.name === "GenericLiteral" ? LITCLASS[LIT(n)]
 const LITCLASS = { int: "IntLiteral", uint: "UintLiteral", double: "DoubleLiteral", float: "FloatLiteral" };
 const scalarText = v => (v === null || v === undefined ? "-" : typeof v === "string" ? JSON.stringify(v) : String(v));
 
-function dumpProgram(program) {
-    const lines = ["program"];
+// The tree of each root (a statement, or any node), one root after another, from depth 1; no trailing newline.
+function dumpRoots(roots) {
+    const lines = [];
     const walk = (x, depth) => {
         const indent = " ".repeat(depth);
         if (x === null || x === undefined) { lines.push(indent + "-"); return; }
@@ -351,8 +354,28 @@ function dumpProgram(program) {
         lines.push(indent + c + (scalars.length ? " " + scalars.join(" ") : ""));
         for (const kid of [...spec.k, ...rs.k]) walk(kid.get(x), depth + 1);
     };
-    for (const statement of program._topLevelStatements) walk(statement, 1);
+    for (const root of roots) walk(root, 1);
     return lines.join("\n");
+}
+
+function dumpProgram(program) {
+    const body = dumpRoots(program._topLevelStatements);
+    return body.length ? "program\n" + body : "program";
+}
+
+// --instantiate: inline()'s first loop (getUnique(f, []) for each non-generic function, in the order of
+// program.functions), then every instance in the order of the funcInstantiator's _instances Map: a header
+// (instance index, the generic function's class, its type argument count) and the instance's tree.
+function instanceDump(program) {
+    for (const funcList of program.functions.values())
+        for (const f of funcList)
+            if (!f.typeParameters.length) program.funcInstantiator.getUnique(f, []);
+    const out = [];
+    let k = 0;
+    for (const [orig, list] of program.funcInstantiator._instances)
+        for (const inst of list)
+            out.push("instance " + k++ + " " + classOf(orig) + " " + inst.typeArguments.length + "\n" + dumpRoots([inst.func]) + "\n\n");
+    return out.join("").slice(0, -1);   // the row's dump has no trailing newline
 }
 
 // The prepare pipeline (Prepare.js) up to and including name resolution: the standard library is
@@ -410,8 +433,9 @@ function parseInput(input) {
 // overload and result ("C name overload -> type"). A type error stops the input: its status carries the message.
 const propsMode = process.argv.includes("--props");   // --props: check, the literal check and resolveProperties, then the stage-6 dump
 const postMode = process.argv.includes("--post");   // --post: the checker and the post-check passes, status only
+const instantiateMode = process.argv.includes("--instantiate");   // --instantiate: the post-check passes, then the instances
 const checkMode = process.argv.includes("--check") || postMode;
-if (postMode) run(`function __postHarness(p) {
+if (postMode || instantiateMode) run(`function __postHarness(p) {
     check(p);
     checkLiteralTypes(p);
     resolveProperties(p);
@@ -448,7 +472,9 @@ const rows = inputs.map((input, i) => {
     let dump = "";
     let nodes = 0;
     try {
-        if (checkMode) {
+        if (instantiateMode) {
+            if (input.kind !== "doLex") { anonRoles.clear(); resolveInput(input, 6); run("__postHarness(__p)"); dump = instanceDump(ctx.__p); nodes = dump.split("\n").length - 1; }
+        } else if (checkMode) {
             if (input.kind !== "doLex") { anonRoles.clear(); resolveInput(input, 6); dump = run(postMode ? "__postHarness(__p)" : "__checkHarness(__p)"); }
         } else if (unifyMode) {
             if (input.kind === "doLex") { dump = ""; }
