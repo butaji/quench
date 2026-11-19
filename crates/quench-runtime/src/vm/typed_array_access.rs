@@ -1156,7 +1156,7 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    /// `typed_set_quick` through the cached entry of `object` (as `typed_cached_element`), of
+    /// A typed element store through the cached entry of `object` (as `typed_cached_element`), of
     /// a writable view: an integer, or any Number into a float kind. False leaves the store to
     /// the caller's slower path (`typed_cached_store_number` first).
     #[inline(always)]
