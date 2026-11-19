@@ -200,8 +200,19 @@ pub(crate) struct EntryCellLayoutWords {
     /// context, receiver, captures; answers (word, status)), which a b-jit direct call row calls in
     /// place of `entry` so the C ABI's callee-saved registers are never saved; 0 for any other body.
     pub(crate) rows: u64,
+    /// The published b-jit body's proven-arguments row entry: `entry_rows` past its Number guards (the
+    /// guards `numbers` names), which a direct row calls when every argument `numbers` covers is proved a
+    /// Number at the call; 0 where the body has none. The row entry (`rows`) otherwise.
+    pub(crate) proven: u64,
+    /// The parameter registers whose Number guards the proven entry skips, one bit each (a register at or past
+    /// 64 sets all bits, so no call covers it). Zero where the entry guards no Number.
+    pub(crate) numbers: u64,
+    /// Whether the body reads its `this` from the activation's context header (`CONTEXT_THIS`): a direct row
+    /// writes the receiver there only for such a body (1), never for another (0).
+    pub(crate) uses_this: u64,
 }
 
+/// The entry cell's word offsets in the designed layout (`EntryCellLayoutWords`).
 pub(crate) struct CellLayout {
     pub(crate) entry_offset: i32,
     pub(crate) body_offset: i32,
@@ -211,6 +222,9 @@ pub(crate) struct CellLayout {
     pub(crate) counters_offset: i32,
     pub(crate) scalar_offset: i32,
     pub(crate) rows_offset: i32,
+    pub(crate) proven_offset: i32,
+    pub(crate) numbers_offset: i32,
+    pub(crate) uses_this_offset: i32,
 }
 pub(crate) const ENTRY_CELL: CellLayout = CellLayout {
     entry_offset: std::mem::offset_of!(EntryCellLayoutWords, entry) as i32,
@@ -221,10 +235,13 @@ pub(crate) const ENTRY_CELL: CellLayout = CellLayout {
     counters_offset: std::mem::offset_of!(EntryCellLayoutWords, counters) as i32,
     scalar_offset: std::mem::offset_of!(EntryCellLayoutWords, scalar) as i32,
     rows_offset: std::mem::offset_of!(EntryCellLayoutWords, rows) as i32,
+    proven_offset: std::mem::offset_of!(EntryCellLayoutWords, proven) as i32,
+    numbers_offset: std::mem::offset_of!(EntryCellLayoutWords, numbers) as i32,
+    uses_this_offset: std::mem::offset_of!(EntryCellLayoutWords, uses_this) as i32,
 };
 #[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/call_rows.rs`), which includes this file
 const CELL: CellLayout = ENTRY_CELL;
-const _: () = assert!(std::mem::size_of::<EntryCellLayoutWords>() == 64 && std::mem::align_of::<EntryCellLayoutWords>() == 64);
+const _: () = assert!(std::mem::size_of::<EntryCellLayoutWords>() == 128 && std::mem::align_of::<EntryCellLayoutWords>() == 64);
 /// The facts word: registers, room and params in 16-bit fields from the low end, then the entry fill
 /// byte (`CellFacts::fill`), then the entry kind byte at the top (`ENTRY_ACTIVATES` for a plain
 /// activation), which a shift alone reads.
@@ -333,17 +350,18 @@ mod tests {
 
     fn cell(validity: u64, registers: u64, room: u64, params: u64, entry: u64) -> EntryCellLayoutWords {
         let facts = registers | room << ROOM_SHIFT | params << PARAMS_SHIFT | entry << ENTRY_SHIFT;
-        EntryCellLayoutWords { entry: 1, body: 0, facts, epoch: validity, recovery: 0, counters: 0, scalar: 0, rows: 0 }
+        EntryCellLayoutWords { entry: 1, body: 0, facts, epoch: validity, recovery: 0, counters: 0, scalar: 0, rows: 0, proven: 0, numbers: 0, uses_this: 0 }
     }
 
-    /// Each word sits at the offset the layout names, in one 64-byte line, and the layout's words are
+    /// Each word sits at the offset the layout names, in two 64-byte lines, and the layout's words are
     /// the order the contract lists.
     #[test]
     fn the_entry_cell_is_one_line_with_the_contract_offsets() {
         let offsets = [ENTRY_CELL.entry_offset, ENTRY_CELL.body_offset, ENTRY_CELL.facts_offset, ENTRY_CELL.validity_offset,
-            ENTRY_CELL.recovery_offset, ENTRY_CELL.counters_offset, ENTRY_CELL.scalar_offset];
-        assert_eq!(offsets, [0, 8, 16, 24, 32, 40, 48]);
-        assert_eq!((std::mem::size_of::<EntryCellLayoutWords>(), std::mem::align_of::<EntryCellLayoutWords>()), (64, 64));
+            ENTRY_CELL.recovery_offset, ENTRY_CELL.counters_offset, ENTRY_CELL.scalar_offset, ENTRY_CELL.rows_offset,
+            ENTRY_CELL.proven_offset, ENTRY_CELL.numbers_offset, ENTRY_CELL.uses_this_offset];
+        assert_eq!(offsets, [0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80]);
+        assert_eq!((std::mem::size_of::<EntryCellLayoutWords>(), std::mem::align_of::<EntryCellLayoutWords>()), (128, 64));
     }
 
     #[test]

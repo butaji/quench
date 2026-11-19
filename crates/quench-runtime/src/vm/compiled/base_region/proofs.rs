@@ -16,7 +16,9 @@ use super::*;
 /// so `objects` minus `established` is the entry seed's alone), the copies still holding their source's value, and the
 /// class-typed receivers whose exact shape and prototype link hold here: the entry proved them, or a held read checked
 /// them, and no row since may change an object's shape (`may_reshape`). `flats`: the loop-invariant receivers whose entry
-/// proved their exact shape in flat form too, held and killed with `shapes`. `stores`: the entry checked that the run stores
+/// proved their exact shape in flat form too, held and killed with `shapes`. `loop_held`: every loop-invariant receiver whose
+/// entry checked its exact shape (`flats` among them), killed with `shapes`; the only shapes an access may leave unkilled
+/// (`shape_hit`). `stores`: the entry checked that the run stores
 /// specialized (`guard::stores`), and no row since has run code that could rewrite that word (`runs_code`): a store the
 /// proofs admit needs no test of its own. `released`: a call on some path cleared `stores`, and no store re-read the word
 /// since (`Decoded::recheck`).
@@ -27,6 +29,7 @@ struct Proved {
     copies: Vec<(Register, Register)>,
     shapes: Vec<Register>,
     flats: Vec<Register>,
+    loop_held: Vec<Register>,
     stores: bool,
     released: bool,
 }
@@ -47,6 +50,7 @@ impl Proved {
         self.established.retain(|held| *held != register);
         self.shapes.retain(|held| *held != register);
         self.flats.retain(|held| *held != register);
+        self.loop_held.retain(|held| *held != register);
         self.copies.retain(|(copy, source)| *copy != register && *source != register);
     }
 }
@@ -85,11 +89,12 @@ fn copied(row: &Decoded) -> Option<Register> {
 }
 
 /// Whether `row` is an inline-cache access the plan runs with its cache row (`Decoded::takes_ic_row`) whose receiver `held`
-/// proves an object of a held shape, class (`shapes`) or loop (`flats`). Such a row cannot reshape: its cache hit compares
-/// the shape the entry checked, and the site row on a miss reads or writes an existing data slot. This assumes the cache
-/// entry's shape is the held one, which the loop receivers' merged reads establish (`osr_compile::loop_shapes`).
+/// proves an object of a loop receiver's shape (`loop_held`). Such a row cannot reshape: its cache hit compares the shape
+/// the entry checked, and the site row on a miss reads or writes an existing data slot. Only loop receivers qualify: their
+/// cache entry's shape is the one every read of the register saw (`osr_compile::loop_shapes`). A class receiver's entry shape
+/// is not recorded in the row, so it gets no exemption.
 fn shape_hit(row: &Decoded, held: &Proved) -> bool {
-    row.takes_ic_row() && receiver(row).is_some_and(|register| held.holds(register) && (held.shapes.contains(&register) || held.flats.contains(&register)))
+    row.takes_ic_row() && receiver(row).is_some_and(|register| held.holds(register) && held.loop_held.contains(&register))
 }
 
 /// What holds after `row`, given what held before it.
@@ -99,6 +104,7 @@ fn after(row: &Decoded, before: &Proved) -> Proved {
         if !shape_hit(row, before) {
             proved.shapes.clear();
             proved.flats.clear();
+            proved.loop_held.clear();
         } else if matches!(row.heap, Some(Heap::SiteStore)) {
             // A store writes a slot a folded prototype read (`constant_read`) may hold, so the class shapes go; the
             // loop receivers' flat shapes stay, the write changing no shape or form.
@@ -145,6 +151,7 @@ fn meet(a: &Proved, b: &Proved) -> Proved {
         copies: a.copies.iter().filter(|copy| b.copies.contains(copy)).copied().collect(),
         shapes: a.shapes.iter().filter(|held| b.shapes.contains(held)).copied().collect(),
         flats: a.flats.iter().filter(|held| b.flats.contains(held)).copied().collect(),
+        loop_held: a.loop_held.iter().filter(|held| b.loop_held.contains(held)).copied().collect(),
         stores: a.stores && b.stores,
         released: a.released || b.released,
     }
@@ -207,7 +214,7 @@ fn rechecks(rows: &[Decoded], span: &Span, before: &[Option<Proved>]) -> Vec<boo
 /// in flat form too (`Known::shapes`): a proven access of one of them is `Decoded::flat`, with no compare. Each proven store the run-level stores test admits, with no
 /// call since the entry, is marked `Decoded::admitted`; a store a call cleared the test for re-reads the word (`Decoded::recheck`)
 /// where a proven store follows it before the next such clear.
-pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits, entry: &[Register], shaped: &[Register], flat: &[Register]) {
+pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits, entry: &[Register], shaped: &[Register], loops: &[Register], flat: &[Register]) {
     let count = rows.len();
     // `None`: no path reaches the row yet (the top of the meet).
     let mut before: Vec<Option<Proved>> = vec![None; count];
@@ -215,7 +222,7 @@ pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits, entry: &[
         return;
     }
     // The entry tests the run's stores (`Heap::Stores`) wherever a row is admitted, so the seed holds it.
-    before[0] = Some(Proved { objects: entry.to_vec(), shapes: shaped.to_vec(), flats: flat.to_vec(), stores: true, ..Proved::default() });
+    before[0] = Some(Proved { objects: entry.to_vec(), shapes: shaped.to_vec(), flats: flat.to_vec(), loop_held: loops.to_vec(), stores: true, ..Proved::default() });
     let mut pending = vec![0];
     while let Some(k) = pending.pop() {
         let Some(held) = before[k].clone() else { continue };

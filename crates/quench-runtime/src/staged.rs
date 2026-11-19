@@ -82,6 +82,7 @@ pub(crate) mod entry;
 pub(crate) mod environment;
 pub(crate) mod ic;
 pub(crate) mod ic_flat;
+pub(crate) mod ic_read;
 pub(crate) mod object;
 mod narrow;
 pub(crate) mod store;
