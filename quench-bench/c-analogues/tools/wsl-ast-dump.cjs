@@ -410,7 +410,10 @@ const checkMode = process.argv.includes("--check") || postMode;
 if (postMode) run(`function __postHarness(p) {
     check(p);
     checkLiteralTypes(p);
+    checkReturns(p);
+    checkUnreachableCode(p);
     checkLoops(p);
+    checkRecursion(p);
     return "";
 }`);
 if (checkMode) run(`function __checkHarness(p) {

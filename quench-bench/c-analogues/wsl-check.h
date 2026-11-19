@@ -1268,11 +1268,146 @@ static void loopchk_visit(LoopChk *s, Ast *n) {
   }
 }
 
-/* The post-check passes ported so far, in Prepare.js order (checkLiteralTypes, then checkLoops). */
+/* ---- ReturnChecker.js: which statements definitely return. 0 is undefined in JS (a visit that returned
+ * nothing), which the merges and the loop cases treat as "no style". ---- */
+enum { RS_NONE = 0, RS_RET, RS_NORET, RS_HAS };
+static Program *RR_PROG;
+
+static int rs_merge(int a, int b) {
+  if (!a) return b;
+  if (!b) return a;
+  switch (a) {
+  case RS_RET: case RS_NORET: return a == b ? a : RS_HAS;
+  case RS_HAS: return RS_HAS;
+  default: chk_error("Bad return style");
+  }
+  return RS_NONE;
+}
+
+static int rr_visit(Ast *n);
+static void rr_ignore_child(void *cx, Ast *c) { (void)cx; rr_visit(c); }
+static void rr_default_walk(Ast *n) {
+  /* the Visitor default: visit the children, ignoring what they return */
+  visit_children(n, rr_ignore_child, NULL);
+}
+
+static int rr_is_bool_cast_true(const Ast *n) {
+  if (!(n->tag == A_CALL && n->u.call.isCast)) return 0;
+  if (!n->u.call.returnType || n->u.call.returnType->tag != A_TYPEREF) return 0;
+  if (!ut_equals(n->u.call.returnType, native_named(RR_PROG, "bool"))) return 0;
+  return n->u.call.argumentList.n == 1 && n->u.call.argumentList.v[0]->tag == A_BOOLLITERAL
+         && n->u.call.argumentList.v[0]->u.boolLit.value;
+}
+
+static int rr_visit(Ast *n) {
+  switch (n->tag) {
+  case A_FUNCDEF: {
+    if (ut_equals(n->u.func.returnType, native_named(RR_PROG, "void"))) return RS_NONE;
+    int bv = rr_visit(n->u.func.body);
+    if (bv == RS_NORET || bv == RS_HAS) wtype_error(origin_string(n), "Function does not return");
+    return RS_NONE;
+  }
+  case A_BLOCK:
+    for (int i = 0; i < n->u.block.statements.n; i++) {
+      int st = rr_visit(n->u.block.statements.v[i]);
+      if (st == RS_RET) return RS_RET;
+      if (st == RS_NORET) return RS_NORET;
+    }
+    return RS_HAS;
+  case A_IF: {
+    if (!n->u.ifStmt.elseBody) return RS_HAS;
+    int b = rr_visit(n->u.ifStmt.body);
+    int e = rr_visit(n->u.ifStmt.elseBody);
+    return rs_merge(b, e);
+  }
+  case A_WHILE: {
+    int b = rr_visit(n->u.loop.body);
+    if (n->u.loop.conditional->tag == A_CALL && rr_is_bool_cast_true(n->u.loop.conditional) && b == RS_RET)
+      return RS_RET;
+    return RS_HAS;
+  }
+  case A_DOWHILE:
+    rr_visit(n->u.loop.body);   /* the JS switch falls through, so the result is always HasntReturnedYet */
+    return RS_HAS;
+  case A_FOR: {
+    int b = rr_visit(n->u.forLoop.body);
+    if (!n->u.forLoop.condition || rr_is_bool_cast_true(n->u.forLoop.condition)) {
+      if (b == RS_RET) return RS_RET;
+      if (b == RS_NORET || b == RS_HAS) return RS_HAS;
+    }
+    return RS_NONE;
+  }
+  case A_SWITCHSTATEMENT: {
+    int rs = RS_NONE;
+    for (int i = 0; i < n->u.switchStmt.cases.n; i++) {
+      int bs = rr_visit(n->u.switchStmt.cases.v[i]->u.switchCase.body);
+      if (bs == RS_NORET) bs = RS_HAS;   /* the FIXME: a break does not end the function */
+      rs = rs_merge(rs, bs);
+    }
+    return rs;
+  }
+  case A_RETURN: case A_TRAP: return RS_RET;
+  case A_BREAK: case A_CONTINUE: return RS_NORET;
+  default:
+    rr_default_walk(n);
+    return RS_NONE;
+  }
+}
+
+/* ---- UnreachableCodeChecker.js: a statement after one that returns or breaks ---- */
+static void unreach_visit(Ast *n);
+static void unreach_child(void *cx, Ast *c) { (void)cx; unreach_visit(c); }
+static void unreach_visit(Ast *n) {
+  visit_children(n, unreach_child, NULL);   /* super.visitBlock, and the default walk */
+  if (n->tag != A_BLOCK) return;
+  for (int i = 0; i + 1 < n->u.block.statements.n; i++) {
+    int st = rr_visit(n->u.block.statements.v[i]);
+    if (st == RS_RET || st == RS_NORET) wtype_error(origin_string(n->u.block.statements.v[i + 1]), "Unreachable code");
+  }
+}
+
+/* ---- RecursionChecker.js: a function that calls itself, through the functions being visited ---- */
+static Ast **RR_STACK;
+static int RR_NSTACK, RR_CAP;
+static void rec_visit(Ast *n);
+static void rec_child(void *cx, Ast *c) { (void)cx; rec_visit(c); }
+static void rec_visit(Ast *n) {
+  switch (n->tag) {
+  case A_FUNCDEF:
+    for (int i = 0; i < RR_NSTACK; i++)
+      if (RR_STACK[i] == n) wtype_error(origin_string(n), "Recursive Func");
+    if (RR_NSTACK == RR_CAP) {
+      int cap = RR_CAP ? 2 * RR_CAP : 64;
+      Ast **nv = arena_alloc(sizeof(Ast *) * cap);
+      for (int i = 0; i < RR_NSTACK; i++) nv[i] = RR_STACK[i];
+      RR_STACK = nv;
+      RR_CAP = cap;
+    }
+    RR_STACK[RR_NSTACK++] = n;
+    visit_children(n, rec_child, NULL);
+    RR_NSTACK--;
+    return;
+  case A_CALL:   /* visitCallExpression visits only the callee, not the arguments */
+    if (!n->u.call.func) wsl_throw(0, "TypeError", "Cannot read properties of undefined (reading 'visit')");
+    rec_visit(n->u.call.func);
+    return;
+  default:
+    visit_children(n, rec_child, NULL);
+  }
+}
+
+/* The post-check passes ported so far, in Prepare.js order: checkLiteralTypes, checkReturns,
+ * checkUnreachableCode, checkLoops, checkRecursion (resolveProperties, the wrapped and zombie checks
+ * and inline are not ported yet). */
 static void post_check_passes(Program *p) {
   for (int i = 0; i < p->statements.n; i++) littype_visit(p->statements.v[i]);
+  RR_PROG = p;
+  for (int i = 0; i < p->statements.n; i++) rr_visit(p->statements.v[i]);
+  for (int i = 0; i < p->statements.n; i++) unreach_visit(p->statements.v[i]);
   LoopChk lc = {0, 0};
   for (int i = 0; i < p->statements.n; i++) loopchk_visit(&lc, p->statements.v[i]);
+  RR_NSTACK = 0;
+  for (int i = 0; i < p->statements.n; i++) rec_visit(p->statements.v[i]);
 }
 
 static void check_program(Program *p) {
