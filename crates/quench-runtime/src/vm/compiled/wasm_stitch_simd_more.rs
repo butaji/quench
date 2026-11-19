@@ -10,9 +10,9 @@
 
 use super::wasm_stitch_simd::{vector_row, vector_slot};
 use super::{Planned, World, codes, slot};
-use crate::bytecode::{Op, WideInstruction};
+use crate::bytecode::WideInstruction;
 use crate::staged::wasm_simd::Simd;
-use crate::staged::wasm_step::Step;
+use crate::staged::wasm_step::{Family, Step};
 use crate::wasm::memory::MemoryLoad;
 use crate::wasm::simd::SimdOperator;
 
@@ -109,7 +109,7 @@ const KINDS: &[(u8, &[u32])] = &[
 pub(super) fn simd_more(_pc: usize, instruction: WideInstruction, world: &World<'_>) -> Option<Vec<Planned>> {
     match Step::of(instruction.op(), instruction.imm()) {
         Some(Step::Simd(Simd::Operator { selector })) => operator(instruction, selector, world),
-        None if matches!(instruction.op(), Op::WasmMemoryLoad) => load(instruction, world),
+        None if Family::of(instruction.op()) == Some(Family::MemoryLoad) => load(instruction, world),
         _ => None,
     }
 }
@@ -151,5 +151,5 @@ fn load(instruction: WideInstruction, world: &World<'_>) -> Option<Vec<Planned>>
 /// Whether `instruction` is a V128 splat, extend or zero load: a vector step with no `Step`, which
 /// `uses_vectors` must count for the frame's vector area.
 pub(super) fn is_vector_load(instruction: WideInstruction) -> bool {
-    matches!(instruction.op(), Op::WasmMemoryLoad) && codes::SIMD_MORE_LOAD_OPS.contains(&instruction.imm())
+    Family::of(instruction.op()) == Some(Family::MemoryLoad) && codes::SIMD_MORE_LOAD_OPS.contains(&instruction.imm())
 }
