@@ -376,7 +376,7 @@ mod tests {
         let read = |entry: [u32; 4]| concrete_read_entry(&heap, object, &entry);
         assert_eq!(read(stored(shape + 1, ENTRY.own_holder, 0)), None, "another shape");
         assert_eq!(read(stored(shape, 7, 0)), None, "a holder entry");
-        assert_eq!(read([0; 3]).is_some(), shape == ENTRY.receiver_complement, "the empty entry names no shape");
+        assert_eq!(read([0; 4]).is_some(), shape == ENTRY.receiver_complement, "the empty entry names no shape");
     }
 
     /// A holder entry reads the prototype's slot through the receiver's link, in both of a

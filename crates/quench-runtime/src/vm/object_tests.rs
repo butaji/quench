@@ -1421,7 +1421,10 @@ fn field_cache_invalidation_resets_every_written_site() {
 #[test]
 fn an_empty_field_cache_stores_as_zero_words() {
     use super::site_table::SiteEntry;
-    assert_eq!(EMPTY_CACHE.store(), [0; 3]);
+    assert_eq!(
+        EMPTY_CACHE.store(),
+        crate::staged::field_cache_layout::FieldCacheWords { receiver: 0, holder: 0, slot: 0, holder_id: 0 }
+    );
     assert_eq!(NO_MEGAMORPHIC_FIELD.store(), 0);
     assert_eq!(NO_FIELD_ADD_SET.store(), 0);
     assert_eq!(NO_INHERITED_FIELD.store(), 0);
