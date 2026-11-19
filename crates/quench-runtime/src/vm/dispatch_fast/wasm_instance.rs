@@ -2,9 +2,39 @@
 //! globals.
 use super::*;
 use crate::staged::wasm_memory::scalar_address;
+use crate::staged::machine::{Machine, MachineStage};
+use crate::staged::wasm_instance::{WasmBindings, binding_get};
 use crate::staged::wasm_simd::WasmSimd as _;
 use crate::staged::wasm_simd_concrete::ConcreteSimd;
 use crate::staged::ConcreteWasm;
+use crate::vm::JsError;
+
+/// The environment of a running instance, as the interpreter's stage for its binding rule: the
+/// fields the heap holds in `env` (`Vm::wasm_binding`).
+struct InstanceBindings<'a, H: Host> {
+    vm: &'a Vm<H>,
+    env: Value,
+}
+
+impl<H: Host> Machine for InstanceBindings<'_, H> {
+    type Word = u64;
+}
+
+impl<H: Host> MachineStage for InstanceBindings<'_, H> {
+    type Exit = JsError;
+
+    crate::staged::wasm_concrete::scalar_operators! {}
+
+    fn trap_when(&mut self, flag: u64, trap: crate::WasmTrap) -> Result<(), JsError> {
+        if flag == 0 { Ok(()) } else { Err(JsError::wasm_trap_error(trap)) }
+    }
+}
+
+impl<H: Host> WasmBindings for InstanceBindings<'_, H> {
+    fn binding_word(&mut self, slot: u32) -> Option<u64> {
+        self.vm.wasm_binding(self.env, slot as usize).map(|value| value.to_bits())
+    }
+}
 
 lane_handler! {
     /// Load an instance binding; loading the function's memory register
@@ -21,7 +51,7 @@ lane_handler! {
         } else {
             None
         };
-        let Some(value) = cached.or_else(|| lane_instance_slot_miss(cx, env, slot as usize)) else {
+        let Some(value) = cached.or_else(|| lane_instance_slot_miss(cx, env, slot)) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -192,12 +222,12 @@ lane_handler! {
 /// hold as a plain value): the heap's read, after which the run keeps `env`'s dense storage.
 #[cold]
 #[inline(never)]
-fn lane_instance_slot_miss<H: Host>(cx: *mut LaneContext<H>, env: Value, slot: usize) -> Option<Value> {
+fn lane_instance_slot_miss<H: Host>(cx: *mut LaneContext<H>, env: Value, slot: u32) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     if let Some(Cell::Environment { slots, .. }) = vm.heap.get(env)
         && let Some(storage) = slots.dense_storage()
     {
         unsafe { (*cx).instance_slots = (env, storage) };
     }
-    vm.wasm_binding(env, slot)
+    binding_get(&mut InstanceBindings { vm, env }, slot).map(Value::from_bits)
 }

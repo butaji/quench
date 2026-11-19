@@ -54,6 +54,8 @@ macro_rules! enter_wasm_function {
         let stack = &mut vm.lane_stack;
         if let Some(lane_view) = views.get(usize::from($function)).and_then(super::program_store::derived_lane_view)
             && let Some(shape) = lane_view.activation
+            // Depth and room are per call: each activation the lane pushes or pops moves them, so
+            // they are not facts a link proves once.
             && usize::from(shape.registers)
                 .saturating_mul(std::mem::size_of::<Value>())
                 <= crate::stack::GuestCallGuard::remaining_storage_bytes()

@@ -362,8 +362,6 @@ pub(crate) fn checked_range(
     Ok(start..end)
 }
 
-/// The loads of the scalar rows run `staged::wasm_memory`'s access (`Access::of_load`); the
-/// vector rows, whose widening and splatting are SIMD semantics, decode their own bytes.
 #[macro_use]
 #[path = "../staged/wasm_lists.rs"]
 mod wasm_lists;
@@ -381,6 +379,8 @@ macro_rules! define_memory_loads {
 }
 memory_load_list!(define_memory_loads);
 
+/// The loads of the scalar rows run `staged::wasm_memory`'s access (`Access::of_load`); the
+/// vector rows, whose widening and splatting are SIMD semantics, decode their own bytes.
 macro_rules! loads {
     ($value:ident; scalar { $($scalar:ident, $swidth:ty;)+ } vector { $($name:ident, $word:ty => $result:expr;)+ }) => {
         impl MemoryLoad {
