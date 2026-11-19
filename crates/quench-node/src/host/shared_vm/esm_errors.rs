@@ -9,7 +9,7 @@ const SUPPORTED_SCHEMES: [&str; 2] = ["file", "data"];
 /// Extensions the default ESM loader has a format for (`extensionFormatMap`), plus
 /// TypeScript, which it strips outside node_modules.
 const LOADABLE_EXTENSIONS: [&str; 5] = ["js", "mjs", "cjs", "json", "wasm"];
-const TYPESCRIPT_EXTENSIONS: [&str; 3] = ["ts", "mts", "cts"];
+use super::typescript_files::TypeScriptFile;
 use crate::modules::keys::NODE_MODULES;
 
 /// `ERR_UNKNOWN_BUILTIN_MODULE`.
@@ -187,13 +187,16 @@ pub(super) fn unresolved<Fs: FileSystem>(
 }
 
 /// The failure for loading a resolved file whose extension the loader has no format for.
-pub(super) fn unloadable(path: &Path) -> Option<ModuleLoadError> {
+/// `require` loads such a file as `.js` (`from_require`). An `import` finds one only when
+/// `require(esm)` already loaded it as a module in this process (`loaded_by_require`):
+/// Node's module map then serves the import, and otherwise refuses the extension.
+pub(super) fn unloadable(path: &Path, from_require: bool, loaded_by_require: bool) -> Option<ModuleLoadError> {
     let extension = path.extension().and_then(|extension| extension.to_str())?;
-    if TYPESCRIPT_EXTENSIONS.contains(&extension) {
+    if TypeScriptFile::of_extension(extension).is_some() {
         let url = url::Url::from_file_path(path).map(String::from).unwrap_or_else(|_| path.display().to_string());
         return node_modules_typescript(path).then(|| type_stripping_unsupported(&url));
     }
-    if LOADABLE_EXTENSIONS.contains(&extension) {
+    if from_require || loaded_by_require || LOADABLE_EXTENSIONS.contains(&extension) {
         return None;
     }
     Some(ModuleLoadError::new(
@@ -236,7 +239,7 @@ pub(super) fn validate_type(url: &str, requested: &str) -> Result<(), ModuleLoad
 
 /// A TypeScript file Node will not strip: one under node_modules.
 pub(super) fn node_modules_typescript(path: &Path) -> bool {
-    path.extension().and_then(|extension| extension.to_str()).is_some_and(|extension| TYPESCRIPT_EXTENSIONS.contains(&extension))
+    TypeScriptFile::of(path).is_some()
         && path.components().any(|component| component.as_os_str() == NODE_MODULES)
 }
 

@@ -65,6 +65,9 @@ pub(super) struct EmitFrame<'a> {
     /// The view of a loop's hoisted dense array the element row reads through, proved at the loop's
     /// entering edge (`ElementFrame::kept_view`).
     pub(super) held: Option<super::frame_elements::Held>,
+    /// Whether a read through `held` leaves at a hole or past the backing instead of calling
+    /// the VM's read, whose call would spill every value live across the loop.
+    pub(super) hole_leaves: bool,
     /// Whether no operation of the unit may move an array's backing or the record table
     /// (`fixed_arrays`), so the table's base word is read-only.
     pub(super) arrays_fixed: bool,
@@ -87,7 +90,7 @@ pub(super) struct EmitFrame<'a> {
 /// instruction or a handler's entry reads or writes.
 pub(super) fn local_slot_address(builder: &mut FunctionBuilder<'_>, payload: ir::Value, slot: u16) -> ir::Value {
     let locals = super::super::emit_js_payload_word(builder, payload,
-        std::mem::offset_of!(super::super::JsStepDispatch, native_locals));
+        std::mem::offset_of!(super::super::JsStepDispatch, head.native_locals));
     emit(builder).raw_binary_imm(Binary::Add, locals, i64::from(slot) * std::mem::size_of::<Value>() as i64)
 }
 
@@ -222,6 +225,26 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     fn allocate_value(&mut self, stage: &mut Emit<'_, '_>, destination: Register, allocation: crate::staged::Allocation,
         proof: EmitProof) -> Option<ir::Value> { calls::allocate_value(self, stage, destination, allocation, proof) }
 
+    /// The heap's array and object record tables and collection epoch, read from the dispatch
+    /// payload as the lane frame reads them (`LaneFrame::heap_records`). A table the dispatch holds
+    /// as zero is absent, which leaves at the miss edge; a row without one takes its call-out.
+    #[inline(always)]
+    fn heap_records(&mut self, stage: &mut Emit<'_, '_>) -> Option<(ir::Value, ir::Value, ir::Value)> {
+        let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = self.edges else { return None };
+        let at = if self.arrays_fixed { crate::staged::Region::RecordBases.readonly() } else { crate::staged::Region::RecordBases.mutable() };
+        let arrays = crate::staged::Stage::load_u64(stage, at, self.payload,
+            std::mem::offset_of!(super::super::JsStepDispatch, array_record_base) as i32);
+        let objects = super::super::emit_js_payload_word(stage.builder, self.payload,
+            std::mem::offset_of!(super::super::JsStepDispatch, object_record_base));
+        let epoch = super::super::emit_js_payload_word(stage.builder, self.payload,
+            std::mem::offset_of!(super::super::JsStepDispatch, epoch));
+        for table in [arrays, objects] {
+            let present = stage.raw_compare_imm(crate::staged::machine::Relation::NotEqual, table, 0);
+            super::super::emit_js_guard(stage.builder, present, miss);
+        }
+        Some((arrays, objects, epoch))
+    }
+
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {
         let (Edges::Branch { miss, .. } | Edges::ValueGuarded { miss }) = self.edges else { unreachable!("truthiness needs a miss edge") };
@@ -244,9 +267,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn boolean(&mut self, stage: &mut Emit<'_, '_>, holds: ir::Value)
         -> (ir::Value, RegisterFact) {
-        let (yes, no) = (stage.raw_const(Lane::I64, Value::TRUE.to_bits() as i64),
-            stage.raw_const(Lane::I64, Value::FALSE.to_bits() as i64));
-        let value = stage.raw_select(holds, yes, no);
+        let value = super::boolean_word(stage.builder, holds);
         (value, RegisterFact::definition(Type::language(crate::ValueType::Boolean),
             Representation::Tagged))
     }

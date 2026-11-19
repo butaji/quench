@@ -32,7 +32,7 @@ fn atom_bytes(function: &Function) -> usize {
     .into_iter()
     .map(slice_bytes::<Atom>)
     .sum::<usize>()
-        + function.global_declarations.as_deref().map_or(0, |declarations| {
+        + function.rare.as_deref().and_then(|rare| rare.global_declarations.as_deref()).map_or(0, |declarations| {
             size_of::<crate::bytecode::GlobalDeclarations>()
                 + [
                     &declarations.lexical,
@@ -83,7 +83,8 @@ impl ProgramFootprint {
                 + source.call_sites.get().map_or(0, |sites| size_of_val(sites.as_ref())
                     + sites.iter().map(|site| site.callee.capacity()).sum::<usize>())),
             function_records: slots.capacity() * size_of::<FunctionSlot>()
-                + records().count() * size_of::<Function>(),
+                + records().count() * size_of::<Function>()
+                + sum(|function| function.rare.as_ref().map_or(0, |_| size_of::<crate::bytecode::FunctionRare>())),
             code: sum(|function| bytes::<Instr>(&function.code)),
             wide: sum(|function| bytes::<WideInstruction>(&function.wide)),
             positions: sum(|function| function.source_positions.capacity_bytes()),
@@ -102,7 +103,7 @@ impl ProgramFootprint {
                     .map(|steps| slice_bytes::<crate::bytecode::LiteralStep>(steps))
                     .sum::<usize>()
                 + slice_bytes::<Superinstruction>(&program.superinstructions),
-            register_roots: sum(|function| function.register_roots.capacity_bytes()),
+            register_roots: sum(|function| function.register_masks_bytes()),
         }
     }
 

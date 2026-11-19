@@ -1,8 +1,8 @@
 //! The field stores a loop region writes natively get their slots' addresses at entry.
 use super::*;
 
-/// The slot addresses of `region`'s field stores, for `entry` (`lane_loop_entry`).
-pub(super) fn lane_loop_field_stores<H: Host>(
+/// The slot addresses of `region`'s field stores, for `entry` (`loop_entry_in_lane`).
+pub(super) fn loop_field_stores<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     region: &super::compiled::LoopRegion,
@@ -18,7 +18,7 @@ pub(super) fn lane_loop_field_stores<H: Host>(
     // rejects receiver rewrites and ambiguous same-name aliases. A Number cell's
     // stores remain Numbers; a store-only field may also receive a rooted entry value.
     let receiver = |receiver: super::compiled::FieldReceiver| match receiver {
-        super::compiled::FieldReceiver::This => Some(unsafe { lane_held_this(cx, r) }),
+        super::compiled::FieldReceiver::This => Some(unsafe { held_this_in_lane(cx, r) }),
         super::compiled::FieldReceiver::Register(register) => Some(r.get(register)),
         super::compiled::FieldReceiver::Field(_) | super::compiled::FieldReceiver::Capture(_) => None,
     };
@@ -29,9 +29,7 @@ pub(super) fn lane_loop_field_stores<H: Host>(
     for field in &region.field_store_sites {
         let object = receiver(field.receiver)?;
         let writes = region.field_store_type(field);
-        let pointer = unsafe {
-            vm.cached_field_store_pointer(code, object, field.atom, field.cache_site, writes)
-        }?;
+        let pointer = vm.cached_field_store_admission(code, object, field.atom, field.cache_site, writes)?;
         // Numeric cells cannot create heap edges. Reference-capable stores log their
         // owner once at admission; nothing collects before the run ends.
         if !writes.is_subtype(crate::typed_ir::Type::NUMBER) {

@@ -15,9 +15,8 @@ use crate::bytecode::{ConstructArguments, ImmediateLayout, Op, Register, WideIns
 /// A function of the running program, by its index (`CallKnown`).
 pub(crate) type FunctionId = u16;
 
-/// The registers a method call passes: `count` entries of the call records from `start`
-/// (`DecodeContext::call_records`), in the order the arguments are passed, not necessarily
-/// consecutive.
+/// The registers a method call passes: `count` entries of the program's method arguments from
+/// `start`, in the order the arguments are passed, not necessarily consecutive.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct RegisterList {
     pub(crate) start: u32,
@@ -43,6 +42,7 @@ pub(crate) enum Arguments {
 
 impl Arguments {
     /// How many arguments the call passes.
+    #[inline]
     pub(crate) const fn count(self) -> u16 {
         match self {
             Self::Window { count, .. } | Self::List(RegisterList { count, .. }) => count,
@@ -175,7 +175,7 @@ impl Invocation {
         let site = context.method_site(index)?;
         let receiver = match instruction.op() {
             Op::CallMethod => Receiver::Register(instruction.register_b()),
-            _ => Receiver::This { path: site.receiver_path },
+            _ => Receiver::This { path: site.receiver_path.get() },
         };
         Some((Callee::Method { atom: site.atom, site: u32::try_from(index).ok()? }, receiver,
             Arguments::List(RegisterList { start: site.argument_start, count: site.argument_count })))
@@ -183,6 +183,7 @@ impl Invocation {
 
     /// Whether the call allocates its callee's receiver (a construction) instead of binding the
     /// `this` of a receiver.
+    #[inline(always)]
     pub(crate) fn constructs(&self) -> bool {
         self.receiver == Receiver::Allocated
     }
@@ -218,7 +219,7 @@ impl Invocation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytecode::{MethodSite, SET_THIS_REGISTER};
+    use crate::bytecode::{MethodSite, ReceiverPath, SET_THIS_REGISTER};
     use crate::staged::test_words::FACTS;
 
     fn call_instruction(op: Op, constructs: bool) -> WideInstruction {
@@ -234,13 +235,13 @@ mod tests {
     }
 
     const SITES: [MethodSite; 2] = [
-        MethodSite { atom: 8, cache: 3, argument_start: 0, argument_count: 2, receiver_path: None },
-        MethodSite { atom: 9, cache: 4, argument_start: 2, argument_count: 1, receiver_path: Some((11, 6)) },
+        MethodSite { atom: 8, cache: 3, argument_start: 0, argument_count: 2, receiver_path: ReceiverPath::NONE },
+        MethodSite { atom: 9, cache: 4, argument_start: 2, argument_count: 1, receiver_path: ReceiverPath::at(11, 6) },
     ];
     const RECORDS: [Register; 3] = [4, 2, 7];
 
     fn methods() -> DecodeContext<'static> {
-        DecodeContext { method_sites: &SITES, call_records: &RECORDS, ..DecodeContext::EMPTY }
+        DecodeContext { method_sites: &SITES, ..DecodeContext::EMPTY }
     }
 
     #[test]

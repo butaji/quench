@@ -27,12 +27,32 @@ impl EnumerableOwnPropertyKind {
 }
 
 impl<H: Host> Vm<H> {
-    /// EnumerableOwnProperties of an object whose shape answers it (`shape_enumerable_keys`,
-    /// `shape_enumerable_data_items`): no guest code runs and nothing raises. `None` leaves
+    /// EnumerableOwnProperties of an object whose shape answers it: `Object.keys` takes the key
+    /// memo first (`plain_key_list`), `Object.values` and `Object.entries` the shape's data items
+    /// (`shape_enumerable_data_items`). No guest code runs and nothing raises. `None` leaves
     /// Proxies, accessors and every other object to the general path.
     pub(super) fn plain_enumerable_own_properties(&mut self, object: Value, kind: EnumerableOwnPropertyKind) -> Option<Value> {
-        if kind != EnumerableOwnPropertyKind::Key {
-            return self.shape_enumerable_data_items(object, kind);
+        if kind == EnumerableOwnPropertyKind::Key {
+            return self.plain_key_list(object);
+        }
+        self.shape_enumerable_data_items(object, kind)
+    }
+
+    /// `Object.keys` of an object whose shape answers it: the memoized key strings of its shape
+    /// (`plain_object_keys`) on a hit, else the shape's enumerable keys made into strings.
+    fn plain_key_list(&mut self, object: Value) -> Option<Value> {
+        if let Some(keys) = self.plain_object_keys(object) {
+            return Some(keys);
+        }
+        // The shape's key strings, made once per shape, copied into the result in one part; the
+        // allocation does not collect, so the memo's strings stay live through the copy.
+        if let Some(keys) = self.own_enumerable_key_values_cached(object) {
+            return Some(self.array_of(&keys));
+        }
+        // The shape's key strings, made once per shape, copied into the result in one part; the
+        // allocation does not collect, so the memo's strings stay live through the copy.
+        if let Some(keys) = self.own_enumerable_key_values_cached(object) {
+            return Some(self.array_of(&keys));
         }
         let keys: EnumerableKeys<Value> =
             self.shape_enumerable_keys(object)?.into_iter().map(|atom| self.atom_string(atom)).collect();
@@ -71,6 +91,54 @@ impl<H: Host> Vm<H> {
         self.shape_enumerable_key_walk(object).map(EnumerableKeys::from_vec)
     }
 
+    /// The own enumerable string keys of `object` as atoms, in OrdinaryOwnPropertyKeys order,
+    /// memoized per shape (`enumerable_key_lists`). Shapes never change, so an entry holds for
+    /// the shape's life; compaction and `invalidate_field_caches` clear the list. `None` for
+    /// every object `shape_enumerable_slots` declines (Proxy, array, typed array, String
+    /// wrapper, module namespace, side descriptors, dictionary shapes), which keep the general path.
+    pub(crate) fn own_enumerable_keys_cached(&mut self, object: Value) -> Option<std::rc::Rc<[Atom]>> {
+        let data = self.object_data(object)?;
+        let shape = data.shape();
+        if data.has_side_descriptors() || self.shape_is_dictionary(shape) {
+            return None;
+        }
+        if let Some(Some(keys)) = self.enumerable_key_lists.get(shape as usize) {
+            return Some(keys.clone());
+        }
+        let keys: std::rc::Rc<[Atom]> = self.shape_enumerable_slots(object)?.iter().map(|&(atom, _)| atom).collect();
+        let index = shape as usize;
+        if self.enumerable_key_lists.len() <= index {
+            self.enumerable_key_lists.resize(index + 1, None);
+        }
+        self.enumerable_key_lists[index] = Some(keys.clone());
+        Some(keys)
+    }
+
+    /// The same keys as `own_enumerable_keys_cached`, as string values, memoized per shape
+    /// (`enumerable_key_value_lists`). The heap does not keep an atom's string, so the memo
+    /// holds no string across a collection: `collect_inner` clears it with the constructed-shape
+    /// memo, as do compaction, `invalidate_field_caches` and program reset. A value is valid
+    /// until the next collection, and a caller that holds one across a collection roots it as
+    /// it would any other value. `None` wherever `own_enumerable_keys_cached` is `None`.
+    pub(crate) fn own_enumerable_key_values_cached(&mut self, object: Value) -> Option<std::rc::Rc<[Value]>> {
+        let data = self.object_data(object)?;
+        let shape = data.shape();
+        if data.has_side_descriptors() || self.shape_is_dictionary(shape) {
+            return None;
+        }
+        if let Some(Some(values)) = self.enumerable_key_value_lists.get(shape as usize) {
+            return Some(values.clone());
+        }
+        let keys = self.own_enumerable_keys_cached(object)?;
+        let values: std::rc::Rc<[Value]> = keys.iter().map(|&atom| self.atom_string(atom)).collect();
+        let index = shape as usize;
+        if self.enumerable_key_value_lists.len() <= index {
+            self.enumerable_key_value_lists.resize(index + 1, None);
+        }
+        self.enumerable_key_value_lists[index] = Some(values.clone());
+        Some(values)
+    }
+
     /// `shape_enumerable_keys` with each key's slot, for an object whose shape alone decides
     /// them (`enumerable_key_memo`): a non-dictionary shape without side-table descriptors.
     pub(super) fn shape_enumerable_slots(
@@ -89,13 +157,15 @@ impl<H: Host> Vm<H> {
             return Some(slots);
         }
         let keys = self.shape_enumerable_key_walk(object)?;
-        let slots = keys
+        let entries = keys
             .into_iter()
             .map(|atom| {
                 let slot = self.property_shape_slot(shape, PropertyKey::string(atom))?;
                 Some((atom, u32::try_from(slot).ok()?))
             })
-            .collect::<Option<super::enumerable_key_memo::EnumerableSlots>>()?;
+            .collect::<Option<Vec<(Atom, u32)>>>()?;
+        let storage_len = self.shapes[shape as usize].storage_len();
+        let slots = super::enumerable_key_memo::EnumerableSlots::new(entries.into(), storage_len);
         self.enumerable_keys.record(shape, slots.clone());
         Some(slots)
     }
@@ -150,19 +220,21 @@ impl<H: Host> Vm<H> {
     fn shape_enumerable_data_items(&mut self, object: Value, kind: EnumerableOwnPropertyKind) -> Option<Value> {
         let slots = self.shape_enumerable_slots(object)?;
         let data = self.object_data(object)?;
+        // A shape whose chain added no accessor (`shape_may_have_accessors`) holds data
+        // properties only, so no slot needs its attributes read.
+        let data_only = !self.shape_may_have_accessors(data.shape());
         let values = slots
             .iter()
             .map(|&(_, slot)| {
                 let slot = slot as usize;
-                self.slot_attributes(data, slot)
-                    .is_some_and(|attributes| !attributes.accessor)
+                (data_only || self.slot_attributes(data, slot).is_some_and(|attributes| !attributes.accessor))
                     .then(|| self.heap.property_get(data, slot))
                     .flatten()
             })
-            .collect::<Option<Vec<Value>>>()?;
+            .collect::<Option<smallvec::SmallVec<[Value; 8]>>>()?;
         let start = self.active_call_roots.len();
         self.active_call_roots.push(object);
-        let mut items = Vec::with_capacity(values.len());
+        let mut items = smallvec::SmallVec::<[Value; 8]>::with_capacity(values.len());
         for (&(atom, _), value) in slots.iter().zip(values) {
             let item = match kind {
                 EnumerableOwnPropertyKind::KeyValue => {
@@ -180,6 +252,9 @@ impl<H: Host> Vm<H> {
         Some(result)
     }
 
+    /// The general EnumerableOwnProperties of `object` (boxed first): each own string key's
+    /// enumerability and value through [[Get]]. The plain body (`plain_enumerable_own_properties`)
+    /// is tried by the caller before this, so this is the fallback for what it declines.
     pub(super) fn enumerable_own_properties(
         &mut self,
         p: &ResidualProgram,
@@ -187,9 +262,6 @@ impl<H: Host> Vm<H> {
         kind: EnumerableOwnPropertyKind,
     ) -> Result<Value, JsError> {
         let object = self.box_object(object)?;
-        if let Some(listed) = self.plain_enumerable_own_properties(object, kind) {
-            return Ok(listed);
-        }
         let object = self.heap.root(object);
         let mut keys = Vec::new();
         let mut properties = Vec::new();
@@ -222,12 +294,10 @@ impl<H: Host> Vm<H> {
                         )?,
                 };
                 let property = match kind {
-                    EnumerableOwnPropertyKind::KeyValue => self.heap.alloc(Cell::Array {
-                        object: crate::heap::ArrayObject::new(
+                    EnumerableOwnPropertyKind::KeyValue => self.heap.alloc_array(crate::heap::ArrayObject::new(
                             Self::empty_object(self.array_proto),
                             vec![self.heap.root_value(*key).unwrap(), item],
-                        ),
-                    }),
+                        )),
                     EnumerableOwnPropertyKind::Key | EnumerableOwnPropertyKind::Value => item,
                 };
                 properties.push(self.heap.root(property));
@@ -236,12 +306,10 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .map(|root| self.heap.root_value(*root).unwrap())
                 .collect::<Vec<_>>();
-            Ok(self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            Ok(self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
                     elements,
-                ),
-            }))
+                )))
         })();
         for root in keys.into_iter().chain(properties) {
             self.heap.release_root(root);
@@ -261,11 +329,9 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .filter(|key| self.heap.is_string(*key))
             .collect::<Vec<_>>();
-        Ok(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        Ok(self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 values,
-            ),
-        }))
+            )))
     }
 }

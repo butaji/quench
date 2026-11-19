@@ -15,6 +15,7 @@ impl Heap {
     /// family's range; each can move the block list `native_object_mark_blocks` names).
     /// Equal values mean the four record bases and the mark blocks are as last read. A
     /// snapshot restore or another heap draws a new `layout_id`, so equal values are never a different layout.
+    #[inline]
     pub(crate) fn native_layout_epoch(&self) -> u64 {
         self.collections + (self.layout_id << Self::LAYOUT_ID_SHIFT)
             + (self.object_records.block_count() + self.function_records.block_count() + self.array_records.block_count()
@@ -28,6 +29,13 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn string_record_base(&self) -> Option<*const JsString> {
         self.string_records.base_ptr()
+    }
+
+    /// `string_record_base` untested, for a read that proves its receiver a direct string with a
+    /// record before it addresses the table.
+    #[inline(always)]
+    pub(crate) fn live_string_records(&self) -> *const JsString {
+        self.string_records.live_base()
     }
 
     /// The table of one-unit ASCII strings by unit (`ascii_unit_strings`), `UNDEFINED` for a

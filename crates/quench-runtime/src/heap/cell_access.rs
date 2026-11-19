@@ -11,11 +11,8 @@ impl Cell {
     #[inline]
     pub(crate) fn object(&self) -> Option<&Object> {
         match self {
-            // The hot object kinds keep their object inline; the rest box it so the
-            // cell stays small.
-            Self::Object(object) => Some(object),
-            Self::Array { object } => Some(object),
-            Self::RegExp { object, .. } | Self::Map { object, .. } | Self::Set { object, .. } => Some(object),
+            // The rest box their object so the cell stays small.
+            Self::RegExp { object, .. } => Some(object),
             Self::ArrayBuffer { object, .. }
             | Self::ShadowRealm { object, .. }
             | Self::WeakMap { object, .. }
@@ -37,8 +34,6 @@ impl Cell {
             Self::Promise(promise) => Some(&promise.object),
             Self::WasmGlobal { header, .. } => Some(&header.object),
             Self::WasmMemory { header, .. } => Some(&header.object),
-            Self::Function(function) => Some(&function.object),
-            Self::Iterator(iterator) => Some(&iterator.object),
             Self::TypedArray { object, .. } | Self::DataView { object, .. } => Some(&object.object),
             _ => None,
         }
@@ -47,11 +42,8 @@ impl Cell {
     #[inline]
     pub(crate) fn object_mut(&mut self) -> Option<&mut Object> {
         match self {
-            // The hot object kinds keep their object inline; the rest box it so the
-            // cell stays small.
-            Self::Object(object) => Some(object),
-            Self::Array { object } => Some(object),
-            Self::RegExp { object, .. } | Self::Map { object, .. } | Self::Set { object, .. } => Some(object),
+            // The rest box their object so the cell stays small.
+            Self::RegExp { object, .. } => Some(object),
             Self::ArrayBuffer { object, .. }
             | Self::ShadowRealm { object, .. }
             | Self::WeakMap { object, .. }
@@ -73,8 +65,6 @@ impl Cell {
             Self::Promise(promise) => Some(&mut promise.object),
             Self::WasmGlobal { header, .. } => Some(&mut header.object),
             Self::WasmMemory { header, .. } => Some(&mut header.object),
-            Self::Function(function) => Some(&mut function.object),
-            Self::Iterator(iterator) => Some(&mut iterator.object),
             Self::TypedArray { object, .. } | Self::DataView { object, .. } => {
                 Some(&mut object.object)
             }
@@ -85,7 +75,8 @@ impl Cell {
 
 impl super::Heap {
     /// The object part of a builtin whose named properties are all ordinary: a collection,
-    /// date, regexp, promise or iterator. No proxy, exotic or integer-indexed object.
+    /// date, regexp, promise, iterator, DataView, buffer, weak ref or finalization registry.
+    /// No proxy, exotic or integer-indexed object.
     #[inline(never)]
     pub(crate) fn ordinary_builtin_object(&self, value: crate::Value) -> Option<&Object> {
         // A record family reads its record at once, past `object`'s tests of the others.
@@ -97,9 +88,17 @@ impl super::Heap {
             // SAFETY: a direct-promise Value names an initialized promise record.
             return Some(&unsafe { self.promise_records.get_live(record_id) }.object);
         }
+        if let Some(record_id) = value.direct_collection_index() {
+            // SAFETY: a direct-collection Value names an initialized collection record.
+            return Some(&unsafe { self.collection_records.get_live(record_id) }.object);
+        }
         let cell = self.get(value)?;
-        matches!(cell, Cell::Map { .. } | Cell::Set { .. } | Cell::WeakMap { .. } | Cell::WeakSet { .. }
-            | Cell::Date { .. } | Cell::RegExp { .. } | Cell::Promise(_) | Cell::Iterator(_))
+        // A DataView's and a buffer's geometry is accessors of their prototypes, so their own
+        // names are their shape's too. A typed array is not here: every canonical numeric
+        // string, not only an index, is its own element.
+        matches!(cell, Cell::WeakMap { .. } | Cell::WeakSet { .. }
+            | Cell::Date { .. } | Cell::RegExp { .. } | Cell::Promise(_)
+            | Cell::DataView { .. } | Cell::ArrayBuffer { .. } | Cell::WeakRef { .. } | Cell::FinalizationRegistry { .. })
             .then(|| cell.object()).flatten()
     }
 }

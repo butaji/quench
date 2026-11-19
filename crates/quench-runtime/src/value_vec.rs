@@ -1,4 +1,5 @@
 use crate::Value;
+use crate::heap::growth::{GrowthPolicy, grown_capacity};
 use crate::staged::object::Rep;
 use crate::typed_ir::SlotType;
 use crate::vm::switches;
@@ -10,14 +11,16 @@ use buffer::PropertyBuffer;
 pub(crate) use buffer::NATIVE_PROPERTY_BUFFER_LAYOUT;
 
 /// The word of an arena slot that holds `value`, where the slot's owner has type `owner`: the one
-/// place a stored word is encoded. A slot of `Rep::Float64` holds its Number as the IEEE double (an
+/// place a stored word is encoded. A slot of `Representation::Float64` holds its Number as the IEEE double (an
 /// integer as the integral double; NaN is already canonical, so the word is a valid `Value` the
 /// collector reads as a non-reference); any other slot holds the `Value` as it is.
 #[inline(always)]
 pub(crate) fn encode_slot(owner: SlotType, value: Value) -> Value {
     match owner.rep() {
-        Rep::Float64 => value.as_int().map_or(value, |int| Value::from_bits(f64::from(int).to_bits())),
-        Rep::Int32 | Rep::Tagged => value,
+        Representation::Float64 => value.as_int().map_or(value, |int| Value::from_bits(f64::from(int).to_bits())),
+        // Slots never hold Int64 words: `SlotType::rep` yields only Int32, Float64 or Tagged.
+        Representation::Int64 => unreachable!("a slot word is never an Int64"),
+        Representation::Int32 | Representation::Tagged => value,
     }
 }
 
@@ -28,8 +31,14 @@ pub(crate) fn encode_slot(owner: SlotType, value: Value) -> Value {
 #[inline(always)]
 pub(crate) fn decode_slot(owner: SlotType, word: Value) -> Value {
     match owner.rep() {
-        Rep::Float64 => word.as_number().map_or(word, Value::number),
-        Rep::Int32 | Rep::Tagged => word,
+        // A tagged word (an int32, a reference, the deleted marker, a word a packed or narrow form
+        // decoded) is canonical already: one tag test passes it. Only a raw double's bits take
+        // `Value::number`'s canonical form.
+        Representation::Float64 if word.is_tagged() => word,
+        Representation::Float64 => Value::number(f64::from_bits(word.to_bits())),
+        // Slots never hold Int64 words: `SlotType::rep` yields only Int32, Float64 or Tagged.
+        Representation::Int64 => unreachable!("a slot word is never an Int64"),
+        Representation::Int32 | Representation::Tagged => word,
     }
 }
 
@@ -48,31 +57,25 @@ fn read_type() -> SlotType {
     if switches::float_slots() { SlotType::Number } else { SlotType::Tagged }
 }
 
-pub(crate) const START_MASK: u32 = 0x3fff_ffff;
-const NON_EXTENSIBLE: u32 = 1 << 30;
-const FROZEN: u32 = 1 << 31;
-pub(crate) const DICTIONARY_STORAGE: u32 = 1 << 31;
-/// An object whose property access is not the ordinary one its shape describes (a module
-/// namespace, an arguments object): set once when it becomes so, and never cleared, it keeps
-/// the object's exact auxiliary (`exact_auxiliary`) from every shape a cache records, so a
-/// shape match proves the object ordinary with no further test.
-pub(crate) const EXOTIC_ACCESS: u32 = 1 << 30;
-/// An object record's storage form, kept in its auxiliary word beside the shape, so the word a
-/// field hit loads to prove the shape also tells where the values live, with no load of the
-/// header or test of the payload (`staged::object::storage_form`): its values are inline
-/// (`Object::meta`'s inline flag) ...
-pub(crate) const INLINE_FORM: u32 = 1 << 29;
-/// ... or behind extras (`Object::payload`'s extras tag). Every writer of either keeps these
-/// current (`Object::storage_form`); no shape a cache records carries them (`exact_auxiliary`
-/// and `auxiliary` mask them off).
-pub(crate) const EXTRAS_FORM: u32 = 1 << 28;
-/// ... or in a narrow run (`ValueArena`): an arena run of narrow values (`Value::to_narrow`),
-/// two to a word, slot `i` in the `i % 2` half (the lower first) of word `start + i / 2`,
-/// which a plain object's values take where all have a narrow form (`ValueArena::compact_vector`).
-/// Its payload word carries `NARROW_RUN_TAG` beside the start.
-pub(crate) const NARROW_FORM: u32 = 1 << 27;
+// The storage-form and integrity bits are the shared object encoding (`staged::object_encoding`).
+pub(crate) use crate::staged::object_encoding::{DICTIONARY_STORAGE, EXOTIC_ACCESS, EXTRAS_FORM, FROZEN, INLINE_FORM, NARROW_FORM, NON_EXTENSIBLE, START_MASK};
 pub(crate) const STORAGE_FORM: u32 = INLINE_FORM | EXTRAS_FORM | NARROW_FORM;
-const SHAPE_MASK: u32 = !(DICTIONARY_STORAGE | EXOTIC_ACCESS | STORAGE_FORM);
+/// An object whose values code holds as constants (`Object::mark_constant`, an own-constant
+/// read): set by the read that takes a value as a constant, cleared by the first write to any
+/// value or any change of the object's layout or storage, which retires that code
+/// (`Object::note_constant_write`). It is part of the raw auxiliary word and so of the layout
+/// id, so every guard that compares the raw word (a lane hint, a generated row's recorded
+/// shape, `formed_plain_start`) misses a marked object and leaves to the VM, whose stores clear
+/// it; the Rust-side shapes (`shape`, `exact_auxiliary`, `ordinary_shape`) leave it out, so a
+/// marked object keeps its shape tables and cache entries. Unlike extras it is cleared once:
+/// a written object returns to every fast store.
+pub(crate) const CONSTANT_FORM: u32 = 1 << 25;
+const SHAPE_MASK: u32 = !(DICTIONARY_STORAGE | EXOTIC_ACCESS | STORAGE_FORM | CONSTANT_FORM | SHAPE_LIMIT_BITS);
+/// The auxiliary bits above `CONSTANT_FORM` no storage form uses (26): no shape reaches them.
+const SHAPE_LIMIT_BITS: u32 = 1 << 26;
+/// Shapes are numbered below `CONSTANT_FORM`.
+const SHAPE_LIMIT: u32 = CONSTANT_FORM - 1;
+const _: () = assert!(CONSTANT_FORM & (STORAGE_FORM | DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0 && SHAPE_MASK == SHAPE_LIMIT);
 const _: () = assert!(STORAGE_FORM & (DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0 && INLINE_FORM & EXTRAS_FORM == 0);
 /// The words a narrow run of `len` values fills.
 #[inline(always)] const fn narrow_words(len: usize) -> usize {
@@ -90,10 +93,10 @@ const _: () = assert!(STORAGE_FORM & (DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0 &
 const EMPTY_START: u32 = START_MASK;
 const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
 const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
-/// Properties an object keeps in its record. The Score lane (`v2-cloud-c`, a2deff57a) runs
-/// three for RayTrace's vectors at the cost of max RSS (Splay 162 -> 204 MB); the integration
-/// branch keeps memory-first defaults (the owner's direction, 2026-10-17 and 2026-10-18).
-pub(crate) const INLINE_PROPERTY_COUNT: usize = 2;
+/// Properties an object keeps in its record (`staged::object_encoding`). The Score lane runs three for
+/// RayTrace's vectors at the cost of max RSS (Splay 162 -> 204 MB); the integration branch keeps
+/// memory-first defaults (the owner's direction, 2026-10-17 and 2026-10-18).
+pub(crate) use crate::staged::object_encoding::INLINE_PROPERTY_COUNT;
 /// The smallest arena range. An object reaches the arena by outgrowing its inline slots, or
 /// by storing a value they cannot hold before that; a range for its first values would regrow
 /// as it grows past them.
@@ -104,14 +107,20 @@ const BUCKETS: usize = 128;
 /// A size class's released runs, linked through each run's first value: a released run's
 /// values are dead, so its list costs no memory of its own. As a `Vec<u32>` per class, the
 /// lists held 2.2 MB at TypeScript's peak, the full collection that releases millions of runs.
+///
+/// The list is `unreleased` runs at the head, then released ones: a run is pushed at the head
+/// unreleased, `pop_free` takes the head, and `return_free_pages` gives back the pages of the
+/// first `unreleased` runs and then counts them released. So a run whose pages are already
+/// given back is never walked again, and every link stays the one `push_free` wrote.
 #[derive(Clone, Copy, Debug)]
 struct FreeRuns {
     head: u32,
     len: u32,
+    unreleased: u32,
 }
 
 impl FreeRuns {
-    const EMPTY: Self = Self { head: u32::MAX, len: 0 };
+    const EMPTY: Self = Self { head: u32::MAX, len: 0, unreleased: 0 };
 
     fn is_empty(self) -> bool {
         self.len == 0
@@ -126,7 +135,7 @@ impl FreeRuns {
 /// that holds them. Quarter steps leave a range at most a fifth unused where three-quarter
 /// steps left a third (ai-astar: 250K nodes of 9 values held 12 each, 6 MB idle), and every
 /// class is a multiple of `CAPACITY_CLASS_STEP`, which `young_run_padded` copies by.
-#[inline] const fn capacity_class(len: usize) -> usize {
+#[inline] pub(crate) const fn capacity_class(len: usize) -> usize {
     if len <= MIN_CAPACITY {
         return MIN_CAPACITY;
     }
@@ -157,6 +166,10 @@ const COMPACTION_RELEASED_SHARE_DIVISOR: usize = 4;
 /// peak 40.7 -> 37.8 MB (median of 8 rounds, bombardier, board phases, plain x86_64 build,
 /// 2026-10-26); V8-v7 RSS and Score and the npm-perf fastify workload were unchanged.
 const COMPACTED_CAPACITY_FACTOR: usize = 2;
+/// The arena size from which a full collection that leaves over half its values released gives
+/// the pages of those released runs back (`ValueArena::return_free_pages`). Below it the
+/// resident waste is small and the next compaction recovers it.
+const FREE_PAGES_MIN_BYTES: usize = 16 << 20;
 /// The values the nursery (`Nursery`) adds to its range at a time once its runs reach the end
 /// of it, while it ends the arena: one resize and one fill of `undefined` per that many values
 /// rather than per run. A range keeps its size across collections, so it grows to the largest
@@ -206,6 +219,33 @@ impl YoungRuns {
     }
 }
 
+/// Entries in the direct-mapped `ValueArena::reservations` table; a power of two.
+const RESERVATIONS: usize = 16;
+
+/// A young run taken past the class of its length for a constructor's receiver
+/// (`ValueArena::young_reserved_run`): `[start, end)` was bumped from the nursery whole, so no
+/// other run holds any of it until the young cycle ends, and the run's owner may grow into it
+/// without moving (`ValueArena::reserved_room`). A run's capacity is otherwise a fact of its
+/// length (`ordered_capacity`), which every other reader still sees: the words past it are
+/// only the owner's to append into, and a release, an evacuation or a compaction moves or
+/// frees no more than that capacity, leaving the rest as dead nursery words. Valid while
+/// `cycle` is the arena's `reservation_cycle`, which every event that frees or moves young
+/// runs advances; an entry another reservation evicts only loses the room, never a value.
+#[derive(Clone, Copy, Debug, Default)]
+struct Reservation {
+    start: u32,
+    end: u32,
+    cycle: u32,
+}
+
+impl Reservation {
+    #[inline(always)]
+    fn index(start: usize) -> usize {
+        // Fibonacci hashing: reserved runs lie a few classes apart.
+        ((start as u32).wrapping_mul(0x9E37_79B9) >> (32 - RESERVATIONS.trailing_zeros())) as usize
+    }
+}
+
 /// Compact per-object shape, integrity, and property-storage metadata.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ValueVec {
@@ -216,10 +256,9 @@ pub(crate) struct ValueVec {
 /// `ValueVec::start` bits that hold the storage position: an arena offset, a dictionary id,
 /// or one of the empty and inline markers.
 pub(crate) const VALUE_VEC_START_BITS: u32 = START_MASK;
-/// `ValueVec::start` bits that hold the object's integrity level.
-pub(crate) const VALUE_VEC_INTEGRITY_BITS: u32 = NON_EXTENSIBLE | FROZEN;
-/// The integrity bit of a frozen object, whose elements no store replaces.
-pub(crate) const VALUE_VEC_FROZEN: u32 = FROZEN;
+/// `ValueVec::start` bits that hold the object's integrity level, and the integrity bit of a frozen
+/// object, whose elements no store replaces (`staged::object_encoding`).
+pub(crate) use crate::staged::object_encoding::{VALUE_VEC_FROZEN, VALUE_VEC_INTEGRITY_BITS};
 
 impl ValueVec {
     /// The two words, for an owner that stores them apart.
@@ -253,7 +292,7 @@ impl ValueVec {
     /// to `auxiliary` exactly when the vector is neither in dictionary storage nor an exotic
     /// object's, so one comparison with a recorded shape proves all three.
     #[inline(always)] pub(crate) const fn exact_auxiliary(self) -> u32 {
-        self.auxiliary & !STORAGE_FORM
+        self.auxiliary & !(STORAGE_FORM | CONSTANT_FORM)
     }
 
     #[inline] pub(crate) fn has_inline_property_storage(self) -> bool {
@@ -269,7 +308,7 @@ impl ValueVec {
     #[inline] pub(crate) fn set_auxiliary(&mut self, value: u32) {
         // The last shape stays unused, so a dictionary vector's exact auxiliary
         // (`exact_auxiliary`) never equals the all-ones sentinel caches record as "none".
-        assert!(value < SHAPE_MASK, "object shape table exhausted");
+        assert!(value < SHAPE_LIMIT, "object shape table exhausted");
         self.auxiliary = (self.auxiliary & !SHAPE_MASK) | value;
     }
 
@@ -333,23 +372,6 @@ impl ValueVec {
         (self.start & START_MASK) as usize
     }
 
-    /// The arena run a concurrent marker reads for this vector, as `(start, len)` from the
-    /// shape lengths and arena length it snapshotted (`Heap::begin_cycle`): `(0, 0)` for no
-    /// values or inline storage, `None` (the mutator traces it) for dictionary storage or a
-    /// shape or run past the snapshot. The vector may be a torn read: the bounds keep the run
-    /// inside the snapshot, whatever it holds.
-    pub(crate) fn concurrent_run(self, shape_lengths: &[u32], arena_len: usize) -> Option<(usize, usize)> {
-        // The marker reads runs as values; a narrow run's halves are not.
-        if self.is_dictionary() || self.is_narrow() {
-            return None;
-        }
-        if self.has_inline_property_storage() || self.start() == EMPTY_START as usize {
-            return Some((0, 0));
-        }
-        let len = *shape_lengths.get(self.auxiliary() as usize)? as usize;
-        let start = self.start();
-        (start.checked_add(len)? <= arena_len).then_some((start, len))
-    }
 
     pub(crate) fn start_offset(self) -> usize {
         debug_assert!(!self.is_dictionary());
@@ -404,6 +426,9 @@ pub(crate) struct ValueArena {
     /// entered that type wait in `widened` for the heap to recode them (`recode_owned_run`).
     float: bool,
     widened: Vec<u32>,
+    /// Bumped whenever an owner's type or shape assignment changes: slots of two shapes encode
+    /// alike only under one epoch, as `encodings_match` proved them.
+    owner_epoch: u64,
     dictionaries: FxHashMap<u32, FxHashMap<u32, Value>>,
     free_dictionaries: Vec<u32>,
     next_dictionary: u32,
@@ -411,6 +436,10 @@ pub(crate) struct ValueArena {
     /// Values the arena held, past its idle nursery and released runs, after the last full
     /// collection (`GenerationalPacing::arena_growth_reached`).
     settled_values: usize,
+    /// Young runs reserved for constructors' receivers (`Reservation`).
+    reservations: [Reservation; RESERVATIONS],
+    /// The young cycle the valid `reservations` belong to (`Reservation::cycle`).
+    reservation_cycle: u32,
 }
 
 impl Default for ValueArena {
@@ -430,11 +459,14 @@ impl Default for ValueArena {
             tracking: false,
             float: false,
             widened: Vec::new(),
+            owner_epoch: 0,
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
             next_dictionary: 0,
             nursery: Nursery::default(),
             settled_values: 0,
+            reservations: [Reservation::default(); RESERVATIONS],
+            reservation_cycle: 0,
         }
     }
 }
@@ -450,23 +482,13 @@ impl ValueArena {
         (self.values.as_ptr(), self.values.len())
     }
 
-    /// What a concurrent marker reads of the arena: its values' base and length, and a copy
-    /// of the shape lengths, all as of now. Valid while the values stay in place
-    /// (`values_stay_in_place`) and nothing compacts them.
-    pub(crate) fn concurrent_snapshot(&self) -> (*const Value, usize, Box<[u32]>) {
-        (self.values.as_ptr(), self.values.len(), self.shape_lengths.clone().into_boxed_slice())
-    }
 
-    /// Whether the property values never move to another allocation (`PropertyBuffer::stays_in_place`).
-    pub(crate) fn values_stay_in_place(&self) -> bool {
-        self.values.stays_in_place()
-    }
 
     /// The arena as a snapshot keeps it (`crate::snapshot`): storage positions name places in
     /// `values`, so the vector and its free ranges are written as they are.
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // Slot owners and representations are derived where they are kept (`Heap::track_slot_representations`).
-        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, float: _, widened: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _, widened_shapes: _ } = self;
+        let Self { values, free, released_values, shape_lengths, shape_chains: _, chain_owners: _, owner_types: _, slot_readers: _, shape_readers: _, tracking: _, float: _, widened: _, dictionaries, free_dictionaries, next_dictionary, nursery: _, narrowed_words: _, settled_values: _, widened_shapes: _, reservations: _, reservation_cycle: _ } = self;
         writer.values(values);
         for bucket in 0..BUCKETS {
             writer.u32s(&self.free_starts(bucket));
@@ -503,7 +525,7 @@ impl ValueArena {
                     return Err(crate::snapshot::SnapshotError("free run past the arena".into()));
                 }
                 values[start as usize] = Value::from_bits(u64::from(list.head));
-                *list = FreeRuns { head: start, len: list.len + 1 };
+                *list = FreeRuns { head: start, len: list.len + 1, unreleased: list.unreleased + 1 };
             }
         }
         let shape_lengths = reader.u32s()?;
@@ -539,11 +561,12 @@ impl ValueArena {
         self.free_dictionaries.clear();
         self.next_dictionary = 0;
         self.nursery = Nursery::default();
+        self.forget_reservations();
     }
 
     pub(crate) fn register_shape(&mut self, shape: u32, length: usize) {
         self.shape_readers.retire(shape);
-        assert!(shape <= SHAPE_MASK, "object shape table exhausted");
+        assert!(shape < SHAPE_LIMIT, "object shape table exhausted");
         assert!(
             length <= u32::MAX as usize,
             "object has too many properties"
@@ -567,6 +590,7 @@ impl ValueArena {
         self.shape_chains.clear();
         self.chain_owners.clear();
         self.owner_types.clear();
+        self.owner_epoch += 1;
     }
 
     /// Registers `shape`, of `length` slots, made from `parent` (of `parent_length`): one slot
@@ -583,6 +607,7 @@ impl ValueArena {
         }
         self.slot_readers.retire(shape);
         self.owner_types[index] = SlotType::None;
+        self.owner_epoch += 1;
         // A parent's chain covers its length once registered; one that does not (a parent the
         // heap never registered at that length) lends no owners, and the child owns its slots.
         let covered = parent.filter(|(parent, parent_length)| self.shape_chains.get(*parent as usize)
@@ -633,6 +658,7 @@ impl ValueArena {
         self.float = switches::float_slots();
         self.widened.clear();
         self.owner_types.fill(SlotType::None);
+        self.owner_epoch += 1;
     }
 
     /// Whether slots of Number owners hold raw doubles.
@@ -640,10 +666,24 @@ impl ValueArena {
         self.float
     }
 
+    /// The epoch of the owners' types (`owner_epoch`): an `encodings_match` proof holds while it is current.
+    #[inline(always)] pub(crate) fn owner_epoch(&self) -> u64 {
+        self.owner_epoch
+    }
+
+    /// Whether the first `len` slots of an object of `source` shape and of `target` shape each have
+    /// one encoding (`word_type`), so a word of one shape's slot is the word of the other's. Both
+    /// shapes must hold `len` slots; the proof holds under the current `owner_epoch`.
+    pub(crate) fn encodings_match(&self, source: u32, target: u32, len: usize) -> bool {
+        self.shape_length(source) == len
+            && self.shape_length(target) == len
+            && (0..len).all(|slot| self.word_type(source, slot) == self.word_type(target, slot))
+    }
+
     /// Whether the word of `slot` of an object of `shape` is a raw double, which only a native reader
-    /// that knows its owner's type may read (`Rep::Float64`).
+    /// that knows its owner's type may read (`Representation::Float64`).
     #[inline(always)] pub(crate) fn holds_raw_doubles(&self, shape: u32, slot: usize) -> bool {
-        self.word_type(shape, slot).rep() == Rep::Float64
+        self.word_type(shape, slot).rep() == Representation::Float64
     }
 
     /// The type whose encoding the word of `slot` of an object of `shape` has (`encode_slot`): its
@@ -700,6 +740,7 @@ impl ValueArena {
 
     #[inline(never)]
     fn widen_owner(&mut self, owner: u32, class: SlotType) -> bool {
+        self.owner_epoch += 1;
         self.slot_readers.retire(owner);
         let held = std::mem::replace(&mut self.owner_types[owner as usize], class);
         if self.float && (held == SlotType::Number) != (class == SlotType::Number) {
@@ -1034,6 +1075,19 @@ impl ValueArena {
         vector
     }
 
+    /// A new arena run for an object of `shape`, holding the `len` words of `source`, an arena
+    /// vector outside dictionary storage and not narrow. Its words are copied as they are: no value
+    /// is decoded or recoded, so the caller proved `encodings_match` for the source and `shape`
+    /// under the current `owner_epoch`. `None` once the arena's positions are spent.
+    pub(crate) fn copy_run(&mut self, source: ValueVec, len: usize, shape: u32) -> Option<ValueVec> {
+        debug_assert!(len > 0 && source.has_compact_range() && !source.is_narrow());
+        debug_assert_eq!(self.len(source), len);
+        let target = self.allocate(capacity_class(len), MAX_ARENA_START)?;
+        let from = source.start();
+        self.values.copy_within(from..from + len, target);
+        Some(ValueVec { start: target as u32, auxiliary: shape })
+    }
+
     /// The start of a new arena run holding `values`, of the capacity their count derives
     /// (`ordered_capacity`); `None` once the arena's positions are spent, where storage takes
     /// a dictionary.
@@ -1064,6 +1118,45 @@ impl ValueArena {
         }
         self.recode_run(start, shape, len);
         Some(start as u32)
+    }
+
+    /// The start of an empty young run reserved for `slots` values (`Reservation`): the run
+    /// of a constructor's receiver whose fields its learned count says will reach `slots`,
+    /// bumped from the nursery's range whole, so the adds that follow append in place up to
+    /// that count (`reserved_room`) where the class of each length would move the run. Its
+    /// owner must be a direct object record, as for every young run. `None`, taking nothing,
+    /// where the nursery's range lacks the room: a reservation never grows the arena.
+    #[inline(always)]
+    pub(crate) fn young_reserved_run(&mut self, slots: usize) -> Option<u32> {
+        let capacity = capacity_class(slots);
+        let start = self.nursery.top;
+        if capacity > self.nursery.end - start {
+            return None;
+        }
+        self.nursery.top = start + capacity;
+        self.reservations[Reservation::index(start)] =
+            Reservation { start: start as u32, end: (start + capacity) as u32, cycle: self.reservation_cycle };
+        Some(start as u32)
+    }
+
+    /// Whether `vector`, a young run outside dictionary and narrow storage, may hold `len`
+    /// values in place, past the capacity its current length gives it: its reservation
+    /// (`young_reserved_run`) still holds, from its start, the whole capacity of `len` values
+    /// (`ordered_capacity`), which every later reader takes as the run's.
+    #[inline(always)]
+    pub(crate) fn reserved_room(&self, vector: ValueVec, len: usize) -> bool {
+        if vector.is_narrow() || vector.is_dictionary() || vector.has_inline_property_storage() || !self.holds_young_run(vector) {
+            return false;
+        }
+        let start = vector.start();
+        let entry = self.reservations[Reservation::index(start)];
+        entry.cycle == self.reservation_cycle && entry.start as usize == start && start + capacity_class(len) <= entry.end as usize
+    }
+
+    /// Ends every reservation (`Reservation`): the young runs they name may move or be reused.
+    #[inline(always)]
+    fn forget_reservations(&mut self) {
+        self.reservation_cycle = self.reservation_cycle.wrapping_add(1);
     }
 
     /// A young run of `capacity`, bumped from the nursery's range.
@@ -1126,6 +1219,7 @@ impl ValueArena {
         let tail = self.values.len();
         if self.nursery.end == self.nursery.floor {
             self.nursery = Nursery { floor: tail, top: tail, end: tail };
+            self.forget_reservations();
         }
         let end = self.nursery.top + capacity.max(NURSERY_GROWTH);
         // Every young run is written whole before it is read, as a range reused after a young
@@ -1158,6 +1252,8 @@ impl ValueArena {
     /// one moved to the floor lands at or below its source.
     pub(crate) fn evacuate_young(&mut self, vector: &mut ValueVec, narrows: bool) {
         debug_assert!(self.holds_young_run(*vector));
+        // Survivors land below their sources, perhaps at a reserved run's start.
+        self.forget_reservations();
         let length = self.len(*vector);
         let source = vector.start();
         if narrows && length > 0 && self.narrows_to_fewer_words(*vector, length) {
@@ -1253,6 +1349,7 @@ impl ValueArena {
     /// dead young runs are free at once.
     pub(crate) fn finish_young_cycle(&mut self) {
         self.nursery.top = self.nursery.floor;
+        self.forget_reservations();
     }
 
     /// The heap references among a vector's values: the edges a collector traces. Numbers,
@@ -1383,7 +1480,7 @@ impl ValueArena {
     fn push_free(&mut self, bucket: usize, start: u32) {
         let list = &mut self.free[bucket];
         self.values[start as usize] = Value::from_bits(u64::from(list.head));
-        *list = FreeRuns { head: start, len: list.len + 1 };
+        *list = FreeRuns { head: start, len: list.len + 1, unreleased: list.unreleased + 1 };
     }
 
     /// The last run released into `bucket`, unlinked.
@@ -1394,7 +1491,8 @@ impl ValueArena {
             return None;
         }
         let next = self.values[list.head as usize].to_bits() as u32;
-        self.free[bucket] = FreeRuns { head: next, len: list.len - 1 };
+        // The head is one of the `unreleased` runs at the front while there are any (`FreeRuns`).
+        self.free[bucket] = FreeRuns { head: next, len: list.len - 1, unreleased: list.unreleased.saturating_sub(1) };
         Some(list.head)
     }
 
@@ -1524,6 +1622,7 @@ impl ValueArena {
         self.released_values = 0;
         // Compaction moved every live run below `length`, young ones too.
         self.nursery = Nursery::default();
+        self.forget_reservations();
     }
 
     pub(crate) fn memory_bytes(&self) -> usize {
@@ -1562,8 +1661,12 @@ impl ValueArena {
         assert!(!vector.is_narrow(), "growth widens a narrow vector first");
         let len = self.len(*vector);
         let capacity = self.capacity(*vector);
-        let next = capacity_class(capacity + 1);
+        let next = grown_capacity(capacity, capacity + 1, GrowthPolicy::SizeClass);
         let young = self.holds_young_run(*vector);
+        // A reserved run (`Reservation`) takes the next class from its reservation.
+        if young && self.reserved_room(*vector, capacity + 1) {
+            return;
+        }
         if young && vector.start() + capacity == self.nursery.top && vector.start() + next <= self.nursery.end {
             self.nursery.top = vector.start() + next;
             return;
@@ -1666,6 +1769,19 @@ impl ValueArena {
         unsafe { self.set_flat_at(vector.start(), len, value, self.word_type(shape, len)) };
     }
 
+    /// `push` of `value` to `vector` of `len` values, moving to `shape`, where its reservation
+    /// has the room (`reserved_room` of `len + 1`): the store alone.
+    ///
+    /// # Safety
+    /// `vector` is a young arena run outside dictionary storage of `len` values whose
+    /// reservation holds the capacity of `len + 1`.
+    #[inline(always)]
+    pub(crate) unsafe fn push_reserved(&mut self, vector: ValueVec, len: usize, value: Value, shape: u32) {
+        debug_assert!(len == self.len(vector) && self.reserved_room(vector, len + 1));
+        // SAFETY: the reservation holds the range from `start` past `len`, reserved in `values`.
+        unsafe { self.set_flat_at(vector.start(), len, value, self.word_type(shape, len)) };
+    }
+
     /// A range of `capacity`: a released one of its size class, else, out of line, one past
     /// the arena's end (`allocate_fresh`).
     #[inline(always)]
@@ -1726,6 +1842,47 @@ impl ValueArena {
         };
         assert!(bucket < BUCKETS, "property arena bucket overflow");
         bucket
+    }
+
+    /// The size class `bucket` holds: the inverse of `bucket`, so a released run's length
+    /// follows from its list alone.
+    #[inline] fn bucket_capacity(bucket: usize) -> usize {
+        match bucket {
+            0 => MIN_CAPACITY,
+            1 => MIN_CAPACITY + MIN_CAPACITY / 2,
+            _ => {
+                let octave = 3 + (bucket - 2) / 4;
+                let floor = 1usize << octave;
+                floor + (bucket - 2) % 4 * (floor / 4)
+            }
+        }
+    }
+
+    /// Gives back the whole pages inside each released run (`return_free_pages`'s contract).
+    /// A run's first value links its free list and stays; the values after it are dead, so
+    /// every page wholly inside the run is released, and a page that shares a value with a
+    /// live range or another run is kept. A run already given back is not given back again
+    /// (`FreeRuns::unreleased`).
+    pub(crate) fn return_free_pages(&mut self) {
+        let bytes = self.values.capacity() * size_of::<Value>();
+        if bytes < FREE_PAGES_MIN_BYTES || self.released_values * 2 <= self.values.len() {
+            return;
+        }
+        for bucket in 0..BUCKETS {
+            let list = self.free[bucket];
+            if list.unreleased == 0 {
+                continue;
+            }
+            let capacity = Self::bucket_capacity(bucket);
+            let mut start = list.head;
+            for _ in 0..list.unreleased {
+                let next = self.values[start as usize].to_bits() as u32;
+                let first = start as usize + 1;
+                self.values.release_pages(first, start as usize + capacity);
+                start = next;
+            }
+            self.free[bucket].unreleased = 0;
+        }
     }
 }
 

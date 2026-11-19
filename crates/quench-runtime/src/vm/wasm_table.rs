@@ -96,7 +96,7 @@ impl<H: Host> Vm<H> {
             .get(function as usize)
             .ok_or_else(|| JsError::validation("Wasm function index out of bounds".into()))?;
         let Some(function) = signatures.defined_index(function) else {
-            let Some(Cell::Environment { slots, .. }) = self.heap.get(env) else {
+            let Some(crate::heap::EnvironmentRecord { slots, .. }) = self.heap.environment(env) else {
                 return Err(JsError::validation(
                     "invalid Wasm import environment".into(),
                 ));

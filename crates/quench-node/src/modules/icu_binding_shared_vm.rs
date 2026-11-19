@@ -14,11 +14,7 @@ struct Entry {
     identity: HostWeakRoot,
     converter: Converter,
 }
-fn put(c: &mut Context<'_>, o: RootId, name: &str, v: RootId) -> Result<(), RootedError> {
-    let key = c.string_rooted(name);
-    c.define_data_property_rooted(o, key, v, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     const CACHE: &str = "\0binding:icu";
     let shared = c.host_mut().shared_state();

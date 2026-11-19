@@ -6,13 +6,18 @@ use std::cmp::Ordering;
 /// input merges few runs and ordered input keeps its single run.
 const MIN_RUN_LENGTH: usize = 32;
 
+/// The runs each merge pass joins into one.
+const RUNS_PER_MERGE: usize = 2;
+
 /// Sorts `values` stably by `compare`, which may fail or be inconsistent: whatever it
 /// answers, the result is a permutation of `values`.
 ///
-/// A natural merge sort: each maximal non-descending run, or strictly descending run
-/// reversed (which keeps equal values in order), is extended to `MIN_RUN_LENGTH` by binary
-/// insertion, then adjacent runs merge pairwise until one remains. Already ordered or
-/// reversed input costs one comparison per value.
+/// Input of at most `MIN_RUN_LENGTH` values is its leading natural run extended by binary
+/// insertion over the rest, with no run or scratch allocation. Longer input is a natural merge sort: each maximal
+/// non-descending run, or strictly descending run reversed (which keeps equal values in
+/// order), is extended to `MIN_RUN_LENGTH` by binary insertion, then adjacent runs merge
+/// pairwise until one remains. Already ordered or reversed input costs one comparison per
+/// value.
 pub(super) fn try_stable_sort_by<T, E>(
     values: &mut [T],
     mut compare: impl FnMut(&T, &T) -> Result<Ordering, E>,
@@ -20,13 +25,34 @@ pub(super) fn try_stable_sort_by<T, E>(
 where
     T: Copy,
 {
+    let len = values.len();
+    if len <= MIN_RUN_LENGTH {
+        // Its leading natural run first, so ordered or reversed input still costs one
+        // comparison per value, then the rest inserted into it.
+        if len < 2 {
+            return Ok(());
+        }
+        let run = natural_run_end(values, 0, &mut compare)?;
+        return binary_insertion(values, 0, run, len, &mut compare);
+    }
+    merge_natural_runs(values, &mut compare)
+}
+
+/// The natural merge sort of `try_stable_sort_by` for input longer than `MIN_RUN_LENGTH`.
+fn merge_natural_runs<T, E>(
+    values: &mut [T],
+    compare: &mut impl FnMut(&T, &T) -> Result<Ordering, E>,
+) -> Result<(), E>
+where
+    T: Copy,
+{
     let mut runs = Vec::new();
     let mut start = 0;
     while start < values.len() {
-        let mut end = natural_run_end(values, start, &mut compare)?;
+        let mut end = natural_run_end(values, start, compare)?;
         let extended = start.saturating_add(MIN_RUN_LENGTH).min(values.len());
         if end < extended {
-            binary_insertion(values, start, end, extended, &mut compare)?;
+            binary_insertion(values, start, end, extended, compare)?;
             end = extended;
         }
         runs.push(end);
@@ -34,12 +60,12 @@ where
     }
     let mut scratch = Vec::with_capacity(values.len());
     while runs.len() > 1 {
-        let mut merged = Vec::with_capacity(runs.len().div_ceil(2));
+        let mut merged = Vec::with_capacity(runs.len().div_ceil(RUNS_PER_MERGE));
         let mut start = 0;
-        for pair in runs.chunks(2) {
+        for pair in runs.chunks(RUNS_PER_MERGE) {
             let end = pair[pair.len() - 1];
             if let [middle, _] = *pair {
-                merge_runs(values, &mut scratch, start, middle, end, &mut compare)?;
+                merge_runs(values, &mut scratch, start, middle, end, compare)?;
             }
             merged.push(end);
             start = end;
@@ -142,7 +168,10 @@ fn merge_runs<T: Copy, E>(
 
 impl<H: Host> Vm<H> {
     /// The order a prepared comparator (`Vm::with_prepared_callback`, receiver `undefined`)
-    /// gives `left` and `right`, which the caller keeps reachable.
+    /// gives `left` and `right`, which the caller keeps reachable. An int32 result, as `x - y`
+    /// gives on integers, maps its sign directly; a double is compared as a Number, and any
+    /// other result is converted by ToNumber.
+    #[inline(always)]
     pub(super) fn compare_sort_callback(
         &mut self,
         p: &ResidualProgram,
@@ -151,7 +180,14 @@ impl<H: Host> Vm<H> {
         right: Value,
     ) -> Result<Ordering, JsError> {
         let result = self.call_prepared(p, comparator, &[left, right])?;
-        let number = self.with_call_roots([result], |vm| vm.to_number(p, result))?;
+        if let Some(int) = result.as_int() {
+            return Ok(int.cmp(&0));
+        }
+        // A Number result, nearly every comparator's, is its own ToNumber: no roots, no call.
+        let number = match result.as_number() {
+            Some(number) => number,
+            None => self.with_call_roots([result], |vm| vm.to_number(p, result))?,
+        };
         Ok(if number < 0.0 {
             Ordering::Less
         } else if number > 0.0 {
@@ -159,6 +195,51 @@ impl<H: Host> Vm<H> {
         } else {
             Ordering::Equal
         })
+    }
+
+    /// The present values of `object` for sorting, as `array_sort_rooted` reads them, with
+    /// the count of undefineds: a dense array with no hole in `0..length` is read with one
+    /// copy of its non-undefined values. `None` leaves the array to `read_sort_values`.
+    pub(super) fn dense_sort_values(&self, object: Value, length: usize) -> Option<(Vec<Value>, usize)> {
+        // SortIndexedProperties reads each present own data element, observing nothing.
+        let elements = self.present_dense_elements(object, 0..length)?;
+        let values: Vec<Value> = elements.iter().copied().filter(|value| !value.is_undefined()).collect();
+        let undefined_count = length - values.len();
+        Some((values, undefined_count))
+    }
+
+    /// SortIndexedProperties through HasProperty and Get for each index of `object` below
+    /// `length` (every index, unless sorting a copy, has to be present for the read): the
+    /// values are pushed as call roots and returned with the count of undefineds.
+    pub(super) fn read_sort_values(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        length: usize,
+        mutate: bool,
+    ) -> Result<(Vec<Value>, usize), JsError> {
+        let roots = self.active_call_roots.len();
+        let mut undefined_count = 0;
+        for index in 0..length {
+            let key = Value::number(index as f64);
+            if !mutate || self.has_property(p, object, key)? {
+                match self.get_index(p, object, key)? {
+                    Value::UNDEFINED => undefined_count += 1,
+                    value => self.active_call_roots.push(value),
+                }
+            }
+        }
+        Ok((self.active_call_roots[roots..].to_vec(), undefined_count))
+    }
+
+    /// Whether the sorted values of `object`, a dense array of `length`, may be written back
+    /// as one copy: it is still dense of `length` with every index present, and no prototype
+    /// holds an index, so each Set is an OrdinarySet of an own writable element. The
+    /// comparator is guest code, so this is asked after the sort.
+    pub(super) fn can_copy_back(&self, object: Value, length: usize) -> bool {
+        self.dense_array_length(object) == Some(length)
+            && self.object_data(object).is_some_and(|data| self.chain_holds_no_index(data.proto()))
+            && self.present_dense_elements(object, 0..length).is_some()
     }
 }
 

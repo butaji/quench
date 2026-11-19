@@ -6,7 +6,7 @@
 //! declarations rather than a copy of every outer name.
 
 use super::{Atom, EvalBinding, EvalBindingLocation, Function};
-use super::Op;
+use super::{Op, Traits};
 #[cfg(feature = "aot")]
 use super::WideInstruction;
 use std::rc::Rc;
@@ -156,7 +156,7 @@ impl Function {
     #[cfg(all(test, feature = "aot"))]
     pub(crate) fn stored_slot(&self, instruction: WideInstruction) -> Option<usize> {
         match instruction.op() {
-            Op::StoreLocal | Op::StoreEnvLocal => Some(instruction.local_slot()),
+            op if op.traits().has(Traits::LOCAL_SLOT_STORE) => Some(instruction.local_slot()),
             op if op.stores_name() => self.local_atoms.iter().position(|atom| *atom == instruction.atom_index()),
             _ => None,
         }
@@ -171,16 +171,7 @@ pub(super) fn reads_hidden_name(instruction: super::WideInstruction, tables: &im
 
 /// The ops that read the implicit bindings an environment holds, by their form.
 pub(super) fn reads_binding_op(op: Op) -> bool {
-    matches!(
-        op,
-        Op::ResolveName
-            | Op::LoadResolvedName
-            | Op::DeleteName
-            | Op::StoreResolvedName
-            | Op::StoreVarBinding
-            | Op::InitializeThis
-            | Op::SuperCallCheck
-    )
+    op.traits().has(Traits::BINDING_FORM)
 }
 
 /// The ops `body_binding_reads_beside_clones` examines: those that name a binding, read one by

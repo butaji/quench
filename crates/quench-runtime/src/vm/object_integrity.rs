@@ -85,7 +85,7 @@ impl<H: Host> Vm<H> {
             if vm.is_wasm_gc_object(target) {
                 return Err(vm.wasm_gc_opaque_error(p));
             }
-            let property_key = if matches!(vm.heap.get(key), Some(Cell::Symbol(_))) {
+            let property_key = if vm.heap.is_symbol(key) {
                 vm.materialize_watched_lazy_member(p, target, PropertyKey::symbol(key))?;
                 PropertyKey::symbol(key)
             } else {
@@ -206,6 +206,13 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
+        // An ordinary object's prototype is its own link; proxies and primitives decline to the
+        // spec path below, unless the fast call already declined.
+        if self.declined_fast.take() != Some(Native::ObjectGetPrototypeOf)
+            && let Some(proto) = self.plain_object_get_prototype_of(std::slice::from_ref(&value))
+        {
+            return Ok(proto);
+        }
         let _stack = self.enter_stack()?;
         if let Some((target, handler)) = self.proxy_parts(value) {
             if handler.is_null() {

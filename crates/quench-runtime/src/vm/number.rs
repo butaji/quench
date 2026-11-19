@@ -1,3 +1,4 @@
+use super::native_rows::Holder;
 use super::property_key::PropertyKey;
 use super::*;
 use crate::staged::math::FloatUnary;
@@ -6,63 +7,81 @@ use num_bigint::{BigInt, Sign};
 const MINIMUM_SUBNORMAL_BIT_PATTERN: u64 = 1;
 const MINIMUM_POSITIVE_SUBNORMAL: f64 = f64::from_bits(MINIMUM_SUBNORMAL_BIT_PATTERN);
 const NUMBER_RADIX_PREFIX_LENGTH: usize = 2;
-use crate::float_layout::{BINARY16, BINARY64, power_of_two};
-use crate::units::{BINARY_RADIX, DECIMAL_RADIX, HEXADECIMAL_RADIX, OCTAL_RADIX};
+use crate::float_layout::{BINARY64, power_of_two};
+pub(super) use crate::staged::math::{f64_to_half, half_to_f64};
+use crate::units::{BINARY_RADIX, HEXADECIMAL_RADIX, OCTAL_RADIX};
+use super::number_parse::{
+    INFINITY_LITERAL, decimal_value, radix_digit_run, radix_digits_value, scan_decimal, split_sign, trim_ascii_space,
+    trim_leading_space, with_ascii_units,
+};
+use super::wtf16::Units;
 const MAX_NUMBER_FORMAT_DIGITS: usize = 100;
 
-pub(super) fn parse_number_string(text: &str) -> f64 {
-    let text = text.trim_matches(super::primitives::is_ecma_whitespace_character);
+/// StringToNumber of wide or ASCII `units` (the ToNumber of a string), read in place.
+pub(super) fn string_to_number_units(units: Units<'_>) -> f64 {
+    with_ascii_units(units, string_to_number_bytes)
+}
+
+/// StringToNumber of ASCII `bytes`: the text with its whitespace trimmed, as a
+/// StringNumericLiteral. Empty text is 0; `0x`, `0o` and `0b` take no sign; Infinity takes one.
+pub(super) fn string_to_number_bytes(bytes: &[u8]) -> f64 {
+    let text = trim_ascii_space(bytes);
     if text.is_empty() {
         return 0.0;
     }
-    if matches!(text, "INFINITY" | "infinity" | "+infinity" | "-infinity") {
-        return f64::NAN;
+    if let Some(radix) = radix_prefix(text) {
+        return radix_literal_value(&text[NUMBER_RADIX_PREFIX_LENGTH..], radix);
     }
-    let Some((prefix, digits)) = text
-        .get(..NUMBER_RADIX_PREFIX_LENGTH)
-        .map(|prefix| (prefix, &text[NUMBER_RADIX_PREFIX_LENGTH..]))
-    else {
-        return text.parse().unwrap_or(f64::NAN);
-    };
-    let radix = match prefix {
-        "0b" | "0B" => Some(BINARY_RADIX),
-        "0o" | "0O" => Some(OCTAL_RADIX),
-        "0x" | "0X" => Some(HEXADECIMAL_RADIX),
-        _ => None,
-    };
-    radix.map_or_else(
-        || text.parse().unwrap_or(f64::NAN),
-        |radix| {
-            if digits.is_empty() || !digits.chars().all(|digit| digit.is_digit(radix)) {
-                f64::NAN
-            } else {
-                integer_digits_value(digits, radix)
-            }
-        },
-    )
+    match text {
+        b"Infinity" | b"+Infinity" => return f64::INFINITY,
+        b"-Infinity" => return f64::NEG_INFINITY,
+        _ => {}
+    }
+    match scan_decimal(text) {
+        Some(decimal) if decimal.len == text.len() => decimal_value(&decimal),
+        _ => f64::NAN,
+    }
 }
 
-/// The Number nearest the non-negative integer that `digits` (all valid in `radix`) spell.
-/// Values that stay at or below 2^53 accumulate exactly in binary64; larger values in
-/// radix 10 or a power of two are rounded once from the exact integer, as StringToNumber
-/// and parseInt require, and other radices keep the accumulated approximation parseInt
-/// permits (ECMA-262 19.2.5).
-pub(super) fn integer_digits_value(digits: &str, radix: u32) -> f64 {
-    let mut value = 0.0;
-    for digit in digits.chars().filter_map(|digit| digit.to_digit(radix)) {
-        value = value * f64::from(radix) + f64::from(digit);
+/// The radix a `0b`, `0o` or `0x` prefix (either case) selects, `None` for other text.
+fn radix_prefix(text: &[u8]) -> Option<u32> {
+    match text.get(..NUMBER_RADIX_PREFIX_LENGTH)? {
+        b"0b" | b"0B" => Some(BINARY_RADIX),
+        b"0o" | b"0O" => Some(OCTAL_RADIX),
+        b"0x" | b"0X" => Some(HEXADECIMAL_RADIX),
+        _ => None,
     }
-    if value <= MAX_SAFE_INTEGER + 1.0 {
-        return value;
+}
+
+/// The value of the digits after a radix prefix: NaN when there are none or one is invalid.
+fn radix_literal_value(digits: &[u8], radix: u32) -> f64 {
+    if digits.is_empty() || radix_digit_run(digits, radix) != digits.len() {
+        f64::NAN
+    } else {
+        radix_digits_value(digits, radix)
     }
-    if radix == DECIMAL_RADIX {
-        return digits.parse().unwrap_or(value);
+}
+
+/// parseFloat of `text`: the longest StrDecimalLiteral prefix after its leading whitespace.
+pub(super) fn parse_float(text: &str) -> f64 {
+    let text = text.trim_start_matches(super::primitives::is_ecma_whitespace_character);
+    parse_float_bytes(text.as_bytes())
+}
+
+/// parseFloat of wide or ASCII `units`, read in place.
+pub(super) fn parse_float_units(units: Units<'_>) -> f64 {
+    with_ascii_units(units, parse_float_bytes)
+}
+
+/// parseFloat of ASCII `bytes`: the longest StrDecimalLiteral prefix after leading whitespace,
+/// or an Infinity literal, with its sign.
+pub(super) fn parse_float_bytes(bytes: &[u8]) -> f64 {
+    let text = trim_leading_space(bytes);
+    let (negative, unsigned) = split_sign(text);
+    if unsigned.starts_with(INFINITY_LITERAL) {
+        return if negative { f64::NEG_INFINITY } else { f64::INFINITY };
     }
-    if radix.is_power_of_two() {
-        return num_bigint::BigUint::parse_bytes(digits.as_bytes(), radix)
-            .map_or(value, |exact| crate::bigint::to_f64(&BigInt::from(exact)));
-    }
-    value
+    scan_decimal(text).map_or(f64::NAN, |decimal| decimal_value(&decimal))
 }
 
 /// `fixed_decimal` when the exact product significand * 10^digits, and its shift by the
@@ -144,6 +163,7 @@ fn fixed_decimal(number: f64, digits: usize) -> String {
 }
 
 impl<H: Host> Vm<H> {
+    /// Installs the `Number` constructor, its prototype and their constants in the main realm.
     pub(super) fn install_number(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let number = self.native_value(Native::Number);
         self.set_builtin_function_name(number, "Number")?;
@@ -171,32 +191,8 @@ impl<H: Host> Vm<H> {
             .expect("primitive prototype")
             .set_boxed_primitive(Value::number(0.0));
         self.set_builtin_value_named(prototype, "constructor", number)?;
-        self.set_builtin_named(program, prototype, "toString", Native::NumberString)?;
-        self.set_builtin_named(program, prototype, "valueOf", Native::NumberValueOf)?;
-        self.set_builtin_named(
-            program,
-            prototype,
-            "toLocaleString",
-            Native::NumberToLocaleString,
-        )?;
-        self.set_builtin_named(program, prototype, "toFixed", Native::NumberFixed)?;
-        self.set_builtin_named(
-            program,
-            prototype,
-            "toExponential",
-            Native::NumberExponential,
-        )?;
-        self.set_builtin_named(program, prototype, "toPrecision", Native::NumberPrecision)?;
-        for (name, native) in [
-            ("isNaN", Native::NumberIsNaN),
-            ("isFinite", Native::NumberIsFinite),
-            ("isInteger", Native::NumberIsInteger),
-            ("isSafeInteger", Native::NumberIsSafeInteger),
-            ("parseInt", Native::ParseInt),
-            ("parseFloat", Native::NumberParseFloat),
-        ] {
-            self.set_builtin_named(program, number, name, native)?;
-        }
+        self.install_native_rows(program, prototype, Holder::NumberPrototype)?;
+        self.install_native_rows(program, number, Holder::NumberConstructor)?;
         for (name, value) in [
             ("EPSILON", f64::EPSILON),
             ("MAX_SAFE_INTEGER", MAX_SAFE_INTEGER),
@@ -223,7 +219,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "Number")?;
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -246,38 +242,8 @@ impl<H: Host> Vm<H> {
         self.object_data_mut(prototype)
             .expect("primitive prototype")
             .set_boxed_primitive(Value::number(0.0));
-        let methods = [
-            ("toString", Native::NumberString),
-            ("valueOf", Native::NumberValueOf),
-            ("toLocaleString", Native::NumberToLocaleString),
-            ("toFixed", Native::NumberFixed),
-            ("toExponential", Native::NumberExponential),
-            ("toPrecision", Native::NumberPrecision),
-            ("isNaN", Native::NumberIsNaN),
-            ("isFinite", Native::NumberIsFinite),
-            ("isInteger", Native::NumberIsInteger),
-            ("isSafeInteger", Native::NumberIsSafeInteger),
-            ("parseInt", Native::ParseInt),
-            ("parseFloat", Native::NumberParseFloat),
-        ];
-        for (name, native) in methods {
-            let function = self.native_with_realm(native, global, global);
-            self.set_builtin_function_name(function, name)?;
-            let target = if matches!(
-                name,
-                "toString"
-                    | "valueOf"
-                    | "toLocaleString"
-                    | "toFixed"
-                    | "toExponential"
-                    | "toPrecision"
-            ) {
-                prototype
-            } else {
-                constructor
-            };
-            self.set_builtin_value_named(target, name, function)?;
-        }
+        self.install_realm_native_rows(prototype, Holder::NumberPrototype, global)?;
+        self.install_realm_native_rows(constructor, Holder::NumberConstructor, global)?;
         for (name, value) in [
             ("EPSILON", f64::EPSILON),
             ("MAX_SAFE_INTEGER", MAX_SAFE_INTEGER),
@@ -527,143 +493,139 @@ fn normalize_exponent_sign(text: &str) -> String {
     format!("{mantissa}e{exponent:+}")
 }
 
-pub(super) fn parse_float(text: &str) -> f64 {
-    let text = text.trim_start_matches(super::primitives::is_ecma_whitespace_character);
-    if text.starts_with('+') || text.starts_with('-') {
-        if text[1..].starts_with("Infinity") {
-            return if text.starts_with('-') {
-                f64::NEG_INFINITY
-            } else {
-                f64::INFINITY
-            };
-        }
-    } else if text.starts_with("Infinity") {
-        return f64::INFINITY;
-    }
-    let bytes = text.as_bytes();
-    let mut end = usize::from(
-        bytes
-            .first()
-            .is_some_and(|byte| *byte == b'+' || *byte == b'-'),
-    );
-    let mut digits = 0;
-    while bytes.get(end).is_some_and(u8::is_ascii_digit) {
-        end += 1;
-        digits += 1;
-    }
-    if bytes.get(end) == Some(&b'.') {
-        end += 1;
-        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
-            end += 1;
-            digits += 1;
-        }
-    }
-    if digits == 0 {
-        return f64::NAN;
-    }
-    if bytes
-        .get(end)
-        .is_some_and(|byte| *byte == b'e' || *byte == b'E')
-    {
-        let exponent_start = end;
-        end += 1;
-        if bytes
-            .get(end)
-            .is_some_and(|byte| *byte == b'+' || *byte == b'-')
-        {
-            end += 1;
-        }
-        let exponent_digits = end;
-        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
-            end += 1;
-        }
-        if exponent_digits == end {
-            end = exponent_start;
-        }
-    }
-    text[..end].parse().unwrap_or(f64::NAN)
-}
-
-// The log1p forms meet at this magnitude. Below it, retain the correction
-// separately from 2x to avoid cancellation; above it, use 2x / (1 - x).
-const ATANH_LOG_REDUCTION_BOUNDARY: f64 = 0.5;
-const ATANH_DOMAIN_ENDPOINT: f64 = 1.0;
-const ATANH_LOG_SCALE: f64 = 0.5;
-
-fn math_atanh(value: f64) -> f64 {
-    if value.is_nan() || value == 0.0 {
-        return value;
-    }
-    let magnitude = value.abs();
-    if magnitude > ATANH_DOMAIN_ENDPOINT {
-        return f64::NAN;
-    }
-    if magnitude == ATANH_DOMAIN_ENDPOINT {
-        return f64::INFINITY.copysign(value);
-    }
-    let doubled = magnitude + magnitude;
-    let argument = if magnitude < ATANH_LOG_REDUCTION_BOUNDARY {
-        doubled + doubled * magnitude / (1.0 - magnitude)
-    } else {
-        doubled / (1.0 - magnitude)
-    };
-    (ATANH_LOG_SCALE * argument.ln_1p()).copysign(value)
-}
-
 /// Arguments a Math call of Numbers keeps inline (`math_numbers`); longer calls allocate.
 pub(super) const MATH_INLINE_ARGUMENTS: usize = 4;
 
-/// The value of a Math function of Number arguments that may read more than its first
-/// (`Math.max`, `Math.min`, `Math.pow`, `Math.atan2`, `Math.imul`), a missing argument being
-/// NaN as `undefined` converts; `None` for any other native. Each runs no guest code once its
-/// arguments are Numbers.
-#[inline(always)]
-pub(super) fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
-    let argument = |index: usize| values.get(index).copied().unwrap_or(f64::NAN);
+/// How a Math function of Numbers computes its value: the one table every tier reads
+/// (`math_function`). Each body is written once, in `staged::math` or in the libm it names.
+#[derive(Clone, Copy)]
+pub(super) enum MathFunction {
+    /// A machine row (`staged::math::float_unary`), which native code lowers inline.
+    Row(FloatUnary),
+    /// Any other Math function of one Number.
+    Unary(fn(f64) -> f64),
+    /// `Math.max` (true) or `Math.min` of Numbers, of any count.
+    Extreme(bool),
+    /// `Math.imul`: the wrapping product of the two arguments' ToInt32.
+    Imul,
+    /// `Math.pow` or `Math.atan2`: a function of two Numbers.
+    Binary(fn(f64, f64) -> f64),
+}
+
+/// The Math function `native` computes on Numbers; `None` for any other native.
+pub(super) fn math_function(native: Native) -> Option<MathFunction> {
+    math_operator(native).or_else(|| math_unary_function(native))
+}
+
+/// The Math functions that are machine rows or take several Numbers.
+fn math_operator(native: Native) -> Option<MathFunction> {
+    use MathFunction::{Binary, Extreme, Imul, Row};
     Some(match native {
-        Native::MathMin | Native::MathMax => {
-            let maximum = native == Native::MathMax;
-            let start = if maximum { f64::NEG_INFINITY } else { f64::INFINITY };
-            values.iter().fold(start, |result, &number| crate::staged::math::float_extreme(maximum, result, number))
-        }
-        Native::MathPow => super::operations::exponentiate(argument(0), argument(1)),
-        Native::MathAtan2 => super::fdlibm_math::atan2(argument(0), argument(1)),
-        Native::MathImul => {
-            let [left, right] = [argument(0), argument(1)].map(|number| crate::value::number_to_u32(number) as i32);
-            f64::from(crate::staged::math::int_multiply(left, right))
-        }
+        Native::MathFloor => Row(FloatUnary::Floor),
+        Native::MathAbs => Row(FloatUnary::Abs),
+        Native::MathCeil => Row(FloatUnary::Ceil),
+        Native::MathRound => Row(FloatUnary::Round),
+        Native::MathTrunc => Row(FloatUnary::Trunc),
+        Native::MathSqrt => Row(FloatUnary::Sqrt),
+        Native::MathFround => Row(FloatUnary::Fround),
+        Native::MathMax => Extreme(true),
+        Native::MathMin => Extreme(false),
+        Native::MathImul => Imul,
+        Native::MathPow => Binary(crate::staged::math::power),
+        Native::MathAtan2 => Binary(crate::staged::math::atan2),
         _ => return None,
     })
 }
 
-/// Whether a call of `native` with Number arguments is a Math function's value that
-/// `math_inline_call` computes: one of `math_numbers`' or `math_unary`'s.
-pub(super) fn math_numbers_inline(native: Native) -> bool {
-    matches!(native, Native::MathMin | Native::MathMax | Native::MathPow | Native::MathAtan2 | Native::MathImul)
-        || math_unary_operation(native).is_some()
+/// The Math functions of one Number that are not machine rows: staged bodies, or libm's.
+fn math_unary_function(native: Native) -> Option<MathFunction> {
+    use crate::staged::math::{atan, atanh, cbrt, clz32, f16_round, sign};
+    use MathFunction::Unary;
+    Some(match native {
+        Native::MathSign => Unary(sign),
+        Native::MathClz32 => Unary(clz32),
+        Native::MathF16Round => Unary(f16_round),
+        Native::MathAtanh => Unary(atanh),
+        Native::MathAtan => Unary(atan),
+        Native::MathCbrt => Unary(cbrt),
+        Native::MathAcos => Unary(f64::acos),
+        Native::MathAsin => Unary(f64::asin),
+        Native::MathCos => Unary(f64::cos),
+        Native::MathExp => Unary(f64::exp),
+        Native::MathSin => Unary(f64::sin),
+        Native::MathTan => Unary(f64::tan),
+        Native::MathAcosh => Unary(f64::acosh),
+        Native::MathAsinh => Unary(f64::asinh),
+        Native::MathCosh => Unary(f64::cosh),
+        Native::MathExpm1 => Unary(f64::exp_m1),
+        Native::MathLog10 => Unary(f64::log10),
+        Native::MathLog1p => Unary(f64::ln_1p),
+        Native::MathLog => Unary(f64::ln),
+        Native::MathLog2 => Unary(f64::log2),
+        Native::MathSinh => Unary(f64::sinh),
+        Native::MathTanh => Unary(f64::tanh),
+        _ => return None,
+    })
 }
 
-/// The value of a call of the Math function `native` (`math_numbers_inline`) with at most
-/// two Number arguments, none of whose conversions runs guest code: `Math.max` and
-/// `Math.min` of two int32s compare them, whose result is that int32 (an int32 is never
-/// -0); any other call takes `math_unary` or `math_numbers`. `None` for another native, any
-/// other argument or more arguments, which the native's call converts.
+/// The value of a Math function of Number arguments that may read more than its first
+/// (`Math.max`, `Math.min`, `Math.pow`, `Math.atan2`, `Math.imul`), a missing argument being
+/// NaN as `undefined` converts; `None` for any other function. Each runs no guest code once its
+/// arguments are Numbers.
+#[inline(always)]
+pub(super) fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
+    let argument = |index: usize| values.get(index).copied().unwrap_or(f64::NAN);
+    Some(match math_function(native)? {
+        MathFunction::Extreme(maximum) => {
+            let start = if maximum { f64::NEG_INFINITY } else { f64::INFINITY };
+            values.iter().fold(start, |result, &number| crate::staged::math::float_extreme(maximum, result, number))
+        }
+        MathFunction::Binary(operation) => operation(argument(0), argument(1)),
+        MathFunction::Imul => {
+            let [left, right] = [argument(0), argument(1)].map(|number| crate::value::number_to_i32(number));
+            f64::from(crate::staged::math::int_multiply(left, right))
+        }
+        MathFunction::Row(_) | MathFunction::Unary(_) => return None,
+    })
+}
+
+/// Whether a call of `native` with Number arguments is a Math function's value that
+/// `math_inline_call` computes (`math_function`).
+pub(super) fn math_numbers_inline(native: Native) -> bool {
+    math_function(native).is_some()
+}
+
+/// The value of a call of the Math function `native` (`math_function`) with at most two Number
+/// arguments, none of whose conversions runs guest code: `Math.max` and `Math.min` of two
+/// int32s compare them, whose result is that int32 (an int32 is never -0); `Math.imul` of two
+/// int32s is their staged product; `Math.abs` of an int32 is an int32 but at -2^31. Any other
+/// call takes `math_unary` or `math_numbers`. `None` for another native, any other argument or
+/// more arguments, which the native's call converts.
 #[inline(always)]
 pub(super) fn math_inline_call(native: Native, args: &[Value]) -> Option<Value> {
+    let function = math_function(native)?;
     match *args {
         [first, second] => {
             if let (Some(x), Some(y)) = (first.as_int(), second.as_int()) {
-                match native {
-                    Native::MathMax => return Some(Value::integer(x.max(y))),
-                    Native::MathMin => return Some(Value::integer(x.min(y))),
+                match function {
+                    MathFunction::Extreme(maximum) =>
+                        return Some(Value::integer(crate::staged::math::int_extreme(maximum, x, y))),
                     // ToInt32 of an int32 is itself: the product's low 32 bits.
-                    Native::MathImul => return Some(Value::integer(x.wrapping_mul(y))),
+                    MathFunction::Imul => return Some(Value::integer(crate::staged::math::int_multiply(x, y))),
                     _ => {}
                 }
             }
             math_numbers(native, &[first.as_number()?, second.as_number()?]).map(Value::number)
         }
         [only] => {
+            // The integral functions keep their double path: their arguments are doubles far more
+            // often, and a test first costs those.
+            if matches!(function, MathFunction::Row(FloatUnary::Abs))
+                && let Some(x) = only.as_int()
+                && let Some(absolute) = crate::staged::math::int_abs(x)
+            {
+                return Some(Value::integer(absolute));
+            }
             let number = only.as_number()?;
             math_unary(native, number).or_else(|| math_numbers(native, &[number])).map(Value::number)
         }
@@ -678,10 +640,15 @@ pub(super) fn math_unary_call(native: Native, args: &[Value]) -> Option<Value> {
     math_unary(native, args.first()?.as_number()?).map(Value::number)
 }
 
-/// The shared numeric operation after argument conversion or a Number-only guard.
+/// The value of a Math function of one Number (`math_function`): a machine row's `float_unary`,
+/// or the one-Number body. `None` for any other function.
 #[inline(always)]
 pub(super) fn math_unary(native: Native, value: f64) -> Option<f64> {
-    math_unary_operation(native).map(|operation| operation(value))
+    match math_function(native)? {
+        MathFunction::Row(operation) => Some(crate::staged::math::float_unary(operation, value)),
+        MathFunction::Unary(operation) => Some(operation(value)),
+        MathFunction::Extreme(_) | MathFunction::Imul | MathFunction::Binary(_) => None,
+    }
 }
 
 /// Select the numeric operation before entering its implementation, so rejection
@@ -714,17 +681,9 @@ fn math_unary_operation(native: Native) -> Option<fn(f64) -> f64> {
         Native::MathLog2 => f64::log2,
         Native::MathSinh => f64::sinh,
         Native::MathTanh => f64::tanh,
-        Native::MathClz32 => |value| f64::from(crate::value::number_to_u32(value).leading_zeros()),
+        Native::MathClz32 => |value| f64::from(crate::staged::math::leading_zeros(crate::value::number_to_u32(value))),
         Native::MathF16Round => f16_round,
-        Native::MathSign => |value| {
-            if value.is_nan() || value == 0.0 {
-                value
-            } else if value.is_sign_negative() {
-                -1.0
-            } else {
-                1.0
-            }
-        },
+        Native::MathSign => |value| crate::staged::math::float_unary(FloatUnary::Sign, value),
         _ => return None,
     })
 }
@@ -740,21 +699,7 @@ impl<H: Host> Vm<H> {
             .copied()
             .map(|value| self.to_number(p, value))
             .collect::<Result<Vec<_>, _>>()?;
-        if numbers.iter().any(|value| value.is_infinite()) {
-            return Ok(Value::number(f64::INFINITY));
-        }
-        if numbers.iter().any(|value| value.is_nan()) {
-            return Ok(Value::number(f64::NAN));
-        }
-        let largest = numbers.iter().copied().map(f64::abs).fold(0.0, f64::max);
-        if largest == 0.0 {
-            return Ok(Value::number(0.0));
-        }
-        let squares = numbers
-            .iter()
-            .map(|value| (value / largest).powi(2))
-            .sum::<f64>();
-        Ok(Value::number(largest * squares.sqrt()))
+        Ok(Value::number(crate::staged::math::hypot(&numbers)))
     }
 
     pub(super) fn math_sum_precise(
@@ -774,24 +719,15 @@ impl<H: Host> Vm<H> {
                     return Err(error);
                 }
             };
-            let done_atom = self.runtime_atoms.done;
-            let done = match self.get_property(p, step, done_atom) {
-                Ok(done) => self.truthy(done),
+            let item = match self.iterator_result_value(p, step) {
+                Ok(item) => item,
                 Err(error) => {
                     let _ = self.iterator_close(p, iterator);
                     return Err(error);
                 }
             };
-            if done {
+            let Some(value) = item else {
                 return Ok(Value::number(state.finish(exact_sum)));
-            }
-            let value_atom = self.runtime_atoms.value;
-            let value = match self.get_property(p, step, value_atom) {
-                Ok(value) => value,
-                Err(error) => {
-                    let _ = self.iterator_close(p, iterator);
-                    return Err(error);
-                }
             };
             let Some(number) = value.as_number() else {
                 let error = self.type_error(p, "Math.sumPrecise requires Number values".into());
@@ -882,65 +818,4 @@ fn scaled_binary_sum(sum: BigInt) -> f64 {
         significand.to_string().parse::<f64>().unwrap_or(f64::NAN) * power_of_two(shift as i32 + least)
     };
     if negative { -rounded } else { rounded }
-}
-
-fn f16_round(value: f64) -> f64 {
-    half_to_f64(f64_to_half(value))
-}
-
-pub(super) fn f64_to_half(value: f64) -> u16 {
-    let (wide, half) = (BINARY64, BINARY16);
-    let narrowing = wide.fraction_bits - half.fraction_bits;
-    let bits = value.to_bits();
-    let sign = ((bits >> wide.sign_shift()) as u16) << half.sign_shift();
-    let exponent = (bits >> wide.fraction_bits) & wide.exponent_mask();
-    let fraction = bits & wide.fraction_mask();
-    let infinity = half.infinity() as u16;
-    if exponent == wide.exponent_mask() {
-        // A NaN keeps its top payload bits, and at least one so it stays a NaN.
-        return sign
-            | if fraction == 0 { infinity } else { infinity | ((fraction >> narrowing) as u16).max(1) };
-    }
-    let absolute = value.abs();
-    if absolute < power_of_two(half.min_normal_exponent()) {
-        // Rounding up past the subnormals gives the smallest normal.
-        let rounded = round_half(absolute * power_of_two(-half.subnormal_exponent()));
-        return sign | rounded.min(half.implicit_bit() as u16);
-    }
-    let unbiased = exponent as i32 - wide.bias();
-    if unbiased > half.bias() {
-        return sign | infinity;
-    }
-    let mut significand = (fraction >> narrowing) as u16;
-    let remainder = fraction & ((1 << narrowing) - 1);
-    let halfway = 1 << (narrowing - 1);
-    if remainder > halfway || (remainder == halfway && significand & 1 != 0) {
-        significand += 1;
-    }
-    // A significand rounded up to the implicit bit carries into the exponent, and from the
-    // largest exponent into infinity.
-    let encoded = (((unbiased + half.bias()) as u16) << half.fraction_bits) + significand;
-    sign | encoded.min(infinity)
-}
-
-fn round_half(value: f64) -> u16 {
-    let lower = value.floor() as u64;
-    let fraction = value - lower as f64;
-    (lower + u64::from(fraction > 0.5 || (fraction == 0.5 && lower & 1 != 0))) as u16
-}
-
-pub(super) fn half_to_f64(bits: u16) -> f64 {
-    let (wide, half) = (BINARY64, BINARY16);
-    let bits = u64::from(bits);
-    let sign = (bits >> half.sign_shift()) << wide.sign_shift();
-    let magnitude = bits & !(1 << half.sign_shift());
-    let magnitude = if magnitude >= half.infinity() {
-        // Infinity and NaN keep their payload in the top fraction bits.
-        let payload = (magnitude & half.fraction_mask()) << (wide.fraction_bits - half.fraction_bits);
-        f64::from_bits(wide.infinity() | payload)
-    } else {
-        let (significand, exponent) = half.parts(magnitude);
-        significand as f64 * power_of_two(exponent)
-    };
-    f64::from_bits(magnitude.to_bits() | sign)
 }

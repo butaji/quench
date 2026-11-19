@@ -3,41 +3,109 @@
 //! Instructions keep their original unit PCs, origins and recovery homes.
 
 use super::{facts, lane_unit::Unit};
-use crate::{Value, bytecode::{Class, ControlFlowLayout, Op, Operand, OperandKind, ResidualProgram, WideInstruction}};
+use crate::{Value, bytecode::{ControlFlowLayout, Operand, OperandKind, ResidualProgram, WideInstruction}};
+use crate::staged::{emit, DecodeContext, NumberOperation, Operation};
 use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberF64Stage, NumberRelation, PartialOrderStage};
-use cranelift_codegen::bitset::CompoundBitSet;
 
 /// Small functions keep transient register facts on the compiler's stack.
 const INLINE_CONSTANT_REGISTERS: usize = 16;
 
-/// Flat constant rows. An unreached PC has no row; `None` in a row is dynamic.
+/// One constant row: `None` is dynamic.
+type Row = smallvec::SmallVec<[Option<Value>; INLINE_CONSTANT_REGISTERS]>;
+
+/// Constant rows at block heads. An unreached head has no row.
 struct Constants {
-    offsets: Vec<Option<usize>>,
-    values: Vec<Option<Value>>,
-    registers: usize,
+    heads: Vec<usize>,
+    rows: Vec<Option<Row>>,
 }
 
 impl Constants {
     fn at(&self, pc: usize) -> Option<&[Option<Value>]> {
-        let offset = self.offsets.get(pc).copied().flatten()?;
-        Some(&self.values[offset..offset + self.registers])
+        let block = self.heads.binary_search(&pc).ok()?;
+        self.rows[block].as_deref()
+    }
+}
+
+/// `constants` as a forward problem of `dataflow::solve`. Blocks start at the region's leaders
+/// and at every admission marker, so a marker's alternative edge leaves from the head of its
+/// own block carrying the block's input, the row before the frame's entry rewrites it.
+struct ConstantFlow<'a> {
+    program: &'a ResidualProgram,
+    unit: &'a Unit,
+    instructions: &'a [WideInstruction],
+    registers: usize,
+    entry: Option<usize>,
+    /// Each block's first instruction, ascending, and one past its last.
+    heads: Vec<usize>,
+    ends: Vec<usize>,
+    /// Each block's successors at `successor_starts[block]..[block + 1]`.
+    successors: Vec<usize>,
+    successor_starts: Vec<usize>,
+    /// The frame a block's head admits, when its head is a marker, and that frame's
+    /// alternative block with whether the block also reaches it by its own control.
+    frames: Vec<Option<(usize, Option<(usize, bool)>)>>,
+    /// The input of the block `transfer` last ran, which a marker's alternative edge carries.
+    input: Row,
+}
+
+impl crate::dataflow::Dataflow for ConstantFlow<'_> {
+    type State = Row;
+
+    fn blocks(&self) -> usize {
+        self.heads.len()
     }
 
-    fn merge(&mut self, pc: usize, incoming: &[Option<Value>]) -> bool {
-        let Some(slot) = self.offsets.get_mut(pc) else { return false; };
-        let Some(offset) = *slot else {
-            *slot = Some(self.values.len());
-            self.values.extend_from_slice(incoming);
-            return true;
-        };
+    fn edges(&self, block: usize) -> &[usize] {
+        &self.successors[self.successor_starts[block]..self.successor_starts[block + 1]]
+    }
+
+    fn entry_state(&self, block: usize) -> Option<Row> {
+        (self.entry == Some(block)).then(|| {
+            let mut row = Row::new();
+            row.resize(self.registers, None);
+            row
+        })
+    }
+
+    fn join(&self, into: &mut Row, incoming: &Row) -> bool {
         let mut changed = false;
-        for (known, incoming) in self.values[offset..offset + self.registers].iter_mut().zip(incoming) {
+        for (known, incoming) in into.iter_mut().zip(incoming) {
             if known.is_some() && known.map(Value::to_bits) != incoming.map(Value::to_bits) {
                 *known = None;
                 changed = true;
             }
         }
         changed
+    }
+
+    fn transfer(&mut self, block: usize, state: &Row) -> Row {
+        let mut values = state.clone();
+        let (head, end) = (self.heads[block], self.ends[block]);
+        let mut from = head;
+        if let Some((frame, alternative)) = self.frames[block] {
+            if alternative.is_some() { self.input.clone_from(state); }
+            let frame = self.unit.frames[frame];
+            values[usize::from(frame.base)..usize::from(frame.base + frame.registers)].fill(Some(Value::UNDEFINED));
+            for (destination, source) in frame.passed_registers(self.program.function(frame.target.function as usize)) {
+                values[usize::from(destination)] = values[usize::from(source)];
+            }
+            from = head + 1;
+        }
+        for pc in from..end {
+            scalar(self.program, &mut values, self.instructions[pc]);
+        }
+        values
+    }
+
+    fn transfer_edge(&self, block: usize, target: usize, out: &Row) -> Row {
+        match self.frames[block] {
+            Some((_, Some((alternative, also_reached)))) if alternative == target => {
+                let mut row = self.input.clone();
+                if also_reached { crate::dataflow::Dataflow::join(self, &mut row, out); }
+                row
+            }
+            _ => out.clone(),
+        }
     }
 }
 
@@ -52,24 +120,26 @@ fn operand(program: &ResidualProgram, values: &[Option<Value>], operand: Operand
 /// Static evaluation uses the interpreter's Number denotations. Unknown operands
 /// remain dynamic; no guest conversion or effect is executed by the compiler.
 fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: WideInstruction) {
-    if !scalar_body(instruction) {
-        if instruction.op().loads_frame_local() && instruction.numeric_local_target().is_none() {
+    if !scalar_body(program, instruction) {
+        if matches!(Operation::<u64, ()>::of(instruction), Some(Operation::LoadLocalPlain { .. } | Operation::LoadLocalChecked { .. }))
+            && instruction.numeric_local_target().is_none() {
             // Reading a guest local defines its result without changing other
             // register homes. Its contents remain dynamic, including TDZ exits.
             for register in super::lane_region::writes(instruction) { values[usize::from(register)] = None; }
-        } else if !instruction.op().is_nop() && !instruction.op().control_flow_layout().jumps() {
+        } else if !Operation::<u64, ()>::is_nop(instruction) && !instruction.op().control_flow_layout().jumps() {
             values.fill(None);
         }
         return;
     }
-    let value = match instruction.op().class() {
-        Class::LoadConst => program.constants.get(instruction.constant_index()).and_then(facts::immediate),
-        Class::Move => values.get(usize::from(instruction.register_b())).copied().flatten(),
-        Class::IncDec if instruction.numeric_local_target().is_none() => {
+    let value = match () {
+        _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() =>
+            program.constants.get(instruction.constant_index()).and_then(facts::immediate),
+        _ if matches!(decoded, Some(crate::staged::Operation::Move { .. })) => values.get(usize::from(instruction.register_b())).copied().flatten(),
+        _ if matches!(decoded, Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. }))) => {
             values.get(usize::from(instruction.register_b())).copied().flatten().and_then(Value::as_number)
                 .zip(instruction.boolean_flag()).map(|(value, decrement)| Value::number(if decrement { value - 1.0 } else { value + 1.0 }))
         }
-        _ if instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
+        _ if super::meaning_compiled::is_numeric_binary(instruction) && instruction.numeric_local_target().is_none() => {
             let inputs = operand(program, values, instruction.operand_b()).and_then(Value::as_number)
                 .zip(operand(program, values, instruction.operand_c()).and_then(Value::as_number));
             inputs.and_then(|(left, right)| {
@@ -78,7 +148,7 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
                     Some(Value::number(operation.apply(&mut NumberF64Stage, left, right)))
                 } else if let Some(operation) = NumberBitwise::from_js_instruction(instruction.op(), operator) {
                     Some(crate::vm::operations::number_bitwise_result(operation,
-                        crate::value::number_to_u32(left) as i32, crate::value::number_to_u32(right) as i32))
+                        crate::value::number_to_i32(left), crate::value::number_to_i32(right)))
                 } else {
                     NumberRelation::from_operator(operator).map(|operation|
                         Value::boolean(operation.apply(&mut PartialOrderStage, left, right)))
@@ -92,10 +162,12 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
     }
 }
 
-fn scalar_body(instruction: WideInstruction) -> bool {
+fn scalar_body(_program: &ResidualProgram, instruction: WideInstruction) -> bool {
     instruction.result_flags() == 0 && instruction.numeric_local_target().is_none()
-        && (matches!(instruction.op().class(), Class::LoadConst | Class::Move | Class::IncDec)
-            || (instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
+        && (crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some()
+            || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Move { .. }))
+            || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. })))
+            || (super::meaning_compiled::is_numeric_binary(instruction)
                 && (NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()).is_some()
                     || NumberBitwise::from_js_instruction(instruction.op(), instruction.binary_operator()).is_some()
                     || NumberRelation::from_operator(instruction.binary_operator()).is_some())))
@@ -113,74 +185,76 @@ fn test(program: &ResidualProgram, values: &[Option<Value>], instruction: WideIn
 /// the redirection against every incoming state, including enclosing backedges.
 fn constants(program: &ResidualProgram, unit: &Unit, instructions: &[WideInstruction], entry: usize,
     latch: usize, exit: usize) -> Constants {
-    let count = usize::from(unit.registers);
-    let mut known = Constants { offsets: vec![None; instructions.len()], values: Vec::new(), registers: count };
-    let mut pending = Vec::new();
-    let mut queued: CompoundBitSet = CompoundBitSet::with_capacity(instructions.len());
+    let length = instructions.len();
     let mut leaders = super::lane_region::leaders(instructions);
     leaders.insert(entry);
     leaders.insert(instructions[latch].jump_target() as usize);
     leaders.insert(latch);
-    let mut markers = vec![None; instructions.len()];
-    for (frame, pc) in unit.markers.iter().copied().enumerate() {
-        markers[pc] = Some(frame);
-        if let Some(next) = unit.frames[frame].alternative { leaders.insert(next); }
+    for frame in &unit.frames {
+        if let Some(next) = frame.alternative { leaders.insert(next); }
     }
-    let mut values = smallvec::SmallVec::<[Option<Value>; INLINE_CONSTANT_REGISTERS]>::new();
-    values.resize(count, None);
-    if known.merge(entry, &values) { pending.push(entry); queued.insert(entry); }
-    while let Some(leader) = pending.pop() {
-        queued.remove(leader);
-        values.clear();
-        values.extend_from_slice(known.at(leader).expect("pending constant row"));
-        let mut pc = leader;
+    for pc in unit.markers.iter().copied() { leaders.insert(pc); }
+    let heads: Vec<usize> = leaders.iter().filter(|&pc| pc < length).collect();
+    let block_of = |pc: usize| heads.binary_search(&pc).ok();
+    let mut markers = vec![None; heads.len()];
+    for (frame, pc) in unit.markers.iter().copied().enumerate() {
+        if let Some(block) = block_of(pc) { markers[block] = Some(frame); }
+    }
+    let (mut ends, mut successors, mut successor_starts, mut frames) =
+        (Vec::with_capacity(heads.len()), Vec::new(), vec![0], Vec::with_capacity(heads.len()));
+    for (block, &head) in heads.iter().enumerate() {
+        let mut targets = smallvec::SmallVec::<[usize; 2]>::new();
+        let mut pc = head;
         loop {
-            if let Some(frame) = markers[pc] {
-                let frame = unit.frames[frame];
-                if let Some(next) = frame.alternative
-                    && known.merge(next, &values) && !queued.contains(next) {
-                    pending.push(next);
-                    queued.insert(next);
-                }
-                values[usize::from(frame.base)..usize::from(frame.base + frame.registers)].fill(Some(Value::UNDEFINED));
-                for (destination, source) in frame.passed_registers(program.function(frame.target.function as usize)) {
-                    values[usize::from(destination)] = values[usize::from(source)];
-                }
-            } else {
-                scalar(program, &mut values, instructions[pc]);
-            }
-            let mut add = |target| {
-                if known.merge(target, &values) && !queued.contains(target) { pending.push(target); queued.insert(target); }
-            };
-            if pc == latch { add(exit); break; }
+            if pc == latch { targets.push(exit); break; }
             let instruction = instructions[pc];
             if instruction.returns_from_frame() { break; }
             match instruction.op().control_flow_layout() {
-                ControlFlowLayout::Jump => { add(instruction.jump_target() as usize); break; }
-                ControlFlowLayout::ConditionalJump => { add(instruction.jump_target() as usize); add(pc + 1); break; }
+                ControlFlowLayout::Jump => { targets.push(instruction.jump_target() as usize); break; }
+                ControlFlowLayout::ConditionalJump => { targets.push(instruction.jump_target() as usize); targets.push(pc + 1); break; }
                 ControlFlowLayout::Fallthrough => {
+                    if pc + 1 >= length { break; }
+                    if block_of(pc + 1).is_some() { targets.push(pc + 1); break; }
                     pc += 1;
-                    if pc >= instructions.len() { break; }
-                    if leaders.contains(pc) { add(pc); break; }
                 }
                 _ => break,
             }
         }
+        ends.push(pc + 1);
+        let first = successors.len();
+        for target in targets.into_iter().filter_map(block_of) {
+            if !successors[first..].contains(&target) { successors.push(target); }
+        }
+        frames.push(markers[block].map(|frame| {
+            let alternative = unit.frames[frame].alternative.and_then(block_of).map(|alternative| {
+                let also_reached = successors[first..].contains(&alternative);
+                if !also_reached { successors.push(alternative); }
+                (alternative, also_reached)
+            });
+            (frame, alternative)
+        }));
+        successor_starts.push(successors.len());
     }
-    known
+    let mut flow = ConstantFlow {
+        program, unit, instructions, registers: usize::from(unit.registers), entry: block_of(entry),
+        heads: Vec::new(), ends, successors, successor_starts, frames, input: Row::new(),
+    };
+    flow.heads = heads;
+    let rows = crate::dataflow::solve(&mut flow);
+    Constants { heads: flow.heads, rows }
 }
 
 pub(super) fn specialize(program: &ResidualProgram, unit: &Unit, entry: usize) -> Option<Vec<WideInstruction>> {
     let mut residual: Option<Vec<WideInstruction>> = None;
     for (latch, instruction) in unit.instructions.iter().copied().enumerate() {
-        if !instruction.op().is_jump() || instruction.result_flags() != 0 { continue; }
+        if !matches!(Operation::<u64, ()>::of(instruction), Some(Operation::Jump)) || instruction.result_flags() != 0 { continue; }
         let header = instruction.jump_target() as usize;
         if header >= latch { continue; }
         let instructions = residual.as_deref().unwrap_or(&unit.instructions);
         let condition = instructions[header];
-        if !condition.op().is_jump_binary_false() || condition.result_flags() != 0 { continue; }
+        if !matches!(Operation::<u64, ()>::of(condition), Some(Operation::CompareJump { .. })) || condition.result_flags() != 0 { continue; }
         let exit = condition.jump_target() as usize;
-        if exit <= latch || !instructions[header + 1..latch].iter().copied().all(scalar_body)
+        if exit <= latch || !instructions[header + 1..latch].iter().copied().all(|instruction| scalar_body(program, instruction))
             || unit.markers.iter().any(|pc| *pc > header && *pc < latch) { continue; }
         if instructions.iter().enumerate().any(|(pc, instruction)|
             !(header..=latch).contains(&pc)
@@ -190,8 +264,8 @@ pub(super) fn specialize(program: &ResidualProgram, unit: &Unit, entry: usize) -
         if known.at(header).and_then(|values| test(program, values, condition)) != Some(true)
             || known.at(latch).and_then(|values| test(program, values, condition)) != Some(false) { continue; }
         let residual = residual.get_or_insert_with(|| unit.instructions.clone());
-        residual[header] = WideInstruction::new(Op::Nop, 0, 0, 0, 0);
-        residual[latch] = WideInstruction::new(Op::Jump, 0, 0, 0, exit as u32);
+        residual[header] = super::meaning_compiled::nop_record();
+        residual[latch] = super::meaning_compiled::jump_record(exit as u32);
     }
     residual
 }
@@ -209,7 +283,7 @@ mod tests {
             .is_some_and(|atom| &program.atoms[atom as usize] == "step")).unwrap();
         let body = program.function(caller);
         let unit = lane_unit::unit(&program, caller as u32, body, &|owner, pc|
-            (owner == caller as u32 && body.instructions().nth(pc as usize).is_some_and(|op| op.op().is_call()))
+            (owner == caller as u32 && body.instructions().nth(pc as usize).is_some_and(|op| Operation::<u64, ()>::is_plain_call(op)))
                 .then_some(CallTarget { function: callee as u32, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1);
@@ -224,9 +298,9 @@ mod tests {
         let changed: Vec<_> = residual.iter().zip(&unit.instructions).enumerate()
             .filter(|(_, (after, before))| after.imm() != before.imm()).collect();
         assert_eq!(changed.len(), 2);
-        assert_eq!(changed[0].1.0.op(), Op::Nop);
+        assert!(Operation::<u64, ()>::is_nop(*changed[0].1.0));
         let (pc, (after, before)) = changed[1];
-        assert_eq!(after.op(), Op::Jump);
+        assert!(matches!(Operation::<u64, ()>::of(*after), Some(Operation::Jump)));
         assert!((before.jump_target() as usize) < pc && after.jump_target() as usize > pc);
         assert!(matches!(unit.origins[pc], lane_unit::Origin::Inlined { .. }));
     }
@@ -257,7 +331,7 @@ mod tests {
         let program = crate::Engine::specialize("function one(){return 1;}function two(){return 2;}function pipe(fn){let count=fn();let value=0;for(let i=0;i<count;i=(i+1)|0)value=(value+1)|0;return value;}", "static-alternatives.js").unwrap();
         let body = program.function(3);
         let unit = lane_unit::unit(&program, 3, body, &|owner, pc| {
-            if owner == 3 && body.instructions().nth(pc as usize).is_some_and(|op| op.op().is_call()) {
+            if owner == 3 && body.instructions().nth(pc as usize).is_some_and(|op| Operation::<u64, ()>::is_plain_call(op)) {
                 [1, 2].map(|function| CallTarget { function, callee: CalleeBinding::Function }).to_vec()
             } else { Vec::new() }
         }, &|id| program.function_get(id as usize)).unwrap();

@@ -1,5 +1,7 @@
 //! Copy propagation over the bytecode: a read of a `Move`'s destination takes its source.
 use super::*;
+use crate::bytecode::{FieldLayout, ImmediateLayout, InstructionField};
+use crate::compile::CompileScratch;
 
 /// Lets the first reader of a `Move`'s destination read the move's source instead when the move
 /// feeds only that reader: `d = Move s; …; x(d)` becomes `Nop; …; x(s)`, the forward
@@ -16,8 +18,9 @@ pub(super) fn forward_move_sources(
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
+    scratch: &mut CompileScratch,
 ) -> bool {
-    if !function.code.iter().any(|instruction| instruction.op() == Op::Move) {
+    if !function.code.iter().any(|instruction| instruction.op() == MOVE) {
         return false;
     }
     let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions) else {
@@ -38,8 +41,32 @@ pub(super) fn forward_move_sources(
             rewritten_readers.insert(at);
             changed.extend([pc, at]);
         }
+        // Why the live sets this scan leaves stale are safe for the next scans. Each rewritten
+        // reader now reads the source where it read the destination, so the source is live from
+        // the move through the last reader: the loop adds it over that range, the only bit a
+        // rewrite could leave under-approximated. The destination is only over-approximated
+        // there, since no reader reads it any more and keeping it live is conservative. Nothing
+        // before the move changes: the move read the source and wrote the destination itself.
+        // Each later scan takes its masks from the code as it now stands (`liveness::uses` and
+        // `definitions` of each instruction), so a rewritten reader or a dropped move is seen at
+        // once, and `hand_on` re-derives the transfer masks of the changed positions.
+        if let Some(&(last, _)) = readers.last() {
+            for live in &mut analysis.live[pc + 1..=last] {
+                *live |= forwarding.source;
+            }
+        }
+        if forwarding.dead && !readers.is_empty() {
+            function.code[pc] = Instr::new(NOP, 0, 0, 0, 0);
+            changed.push(pc);
+        }
     }
-    hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
+    scratch.readers = readers;
+    scratch.rewritten_readers = rewritten_readers;
+    changed.sort_unstable();
+    changed.dedup();
+    let rewrote = hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current);
+    scratch.changed = changed;
+    rewrote
 }
 
 /// What copy propagation may not cross or rewrite in a function.
@@ -54,8 +81,8 @@ struct Scope {
 
 impl Scope {
     fn of(function: &BcFunction) -> Self {
-        let mask = |parameters_only: bool| function.local_registers.iter()
-            .filter(|entry| !parameters_only || entry.local < function.params)
+        let parameters = function.local_registers.iter()
+            .filter(|entry| entry.local < function.params)
             .fold(RegisterSet::default(), |mask, entry| mask | register_bit(entry.register));
         Self {
             protected: protected_positions(&function.code, &function.wide, &function.handlers,
@@ -107,10 +134,7 @@ fn forwarded(function: &BcFunction, analysis: &CodeLiveness, scope: &Scope, pc: 
     {
         return None;
     }
-    let rewritten = substitute_register_read(consumer, destination, source)?;
-    let (read, written) = analysis.transfers[at];
-    let expected = (read & !register_bit(destination)) | register_bit(source);
-    (uses(rewritten) == expected && definitions(rewritten) == written).then_some((at, rewritten))
+    Some(Forwarding { source: source_bit, dead })
 }
 
 /// The first instruction after the `Move` at `pc` that reads its destination, when control

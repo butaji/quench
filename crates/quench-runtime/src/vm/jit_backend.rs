@@ -19,7 +19,8 @@ pub(super) mod relocatable_code;
 #[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) mod symbol_words;
 mod worker;
-pub(super) use worker::{Pending, run_in_background};
+pub(super) mod builder;
+pub(super) use worker::{OffThread, run_in_background};
 
 type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 
@@ -120,6 +121,17 @@ pub(super) fn declare_symbol(function: &mut cranelift_codegen::ir::Function, nam
     })
 }
 
+/// The function's reference to `signature`: the one it imported already, or a new import.
+/// Cranelift keeps one `SigRef` per imported signature and lowers each one's ABI, so the call
+/// sites of one shape share a reference instead of importing the signature again each.
+#[cfg(any(feature = "jit", feature = "aot"))]
+pub(super) fn signature_ref(function: &mut cranelift_codegen::ir::Function, signature: cranelift_codegen::ir::Signature) -> cranelift_codegen::ir::SigRef {
+    match function.dfg.signatures.iter().find(|(_, imported)| **imported == signature) {
+        Some((reference, _)) => reference,
+        None => function.import_signature(signature),
+    }
+}
+
 /// The address of symbol `(namespace, key)`, as a 64-bit value built at `builder`.
 #[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'_>, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
@@ -145,7 +157,7 @@ pub(super) fn target_isa() -> Option<Arc<TargetIsa>> {
 }
 
 /// The executable-memory ISA at `opt_level`: the Wasm tier's, which picks its own level.
-pub(super) fn target_isa_at(_opt_level: &str) -> Option<Arc<TargetIsa>> {
+pub(super) fn target_isa_at(_opt_level: &'static str) -> Option<Arc<TargetIsa>> {
     #[cfg(feature = "jit")]
     { target_isa_for(_opt_level, CodePublication::ExecutableMemory) }
     #[cfg(not(feature = "jit"))]
@@ -154,7 +166,7 @@ pub(super) fn target_isa_at(_opt_level: &str) -> Option<Arc<TargetIsa>> {
 
 #[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) fn target_isa_for(
-    opt_level: &str,
+    opt_level: &'static str,
     publication: CodePublication,
 ) -> Option<Arc<TargetIsa>> {
     target_isa_with(opt_level, publication, CompileLevel::Optimized)
@@ -168,14 +180,15 @@ pub(super) fn target_isa_level(level: CompileLevel) -> Option<Arc<TargetIsa>> {
 
 #[cfg(any(feature = "jit", feature = "aot"))]
 fn target_isa_with(
-    opt_level: &str,
+    opt_level: &'static str,
     publication: CodePublication,
     level: CompileLevel,
 ) -> Option<Arc<TargetIsa>> {
-    type IsaCache = HashMap<(String, CodePublication, CompileLevel), Arc<TargetIsa>>;
+    // Keyed by the level's static name: every compile asks, and an owned key allocated a string each time.
+    type IsaCache = HashMap<(&'static str, CodePublication, CompileLevel), Arc<TargetIsa>>;
     static CACHE: OnceLock<Mutex<IsaCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = (opt_level.to_owned(), publication, level);
+    let key = (opt_level, publication, level);
     let mut entries = cache.lock().ok()?;
     if let Some(isa) = entries.get(&key) {
         return Some(Arc::clone(isa));
@@ -251,7 +264,6 @@ pub(super) fn compile_function<T>(
     super::compiled::regions::declare_regions(&mut function);
     select::convert(&mut function);
     let mut context = COMPILE_CONTEXT.with(|held| held.take()).unwrap_or_else(cranelift_codegen::Context::new);
-    let instructions = function.dfg.num_insts();
     context.clear();
     context.func = function;
     let compiled = context.compile(isa, &mut cranelift_codegen::control::ControlPlane::default()).map(|compiled| compiled.code_buffer().len());
@@ -265,20 +277,14 @@ pub(super) fn compile_function<T>(
         Ok(size) if max_code_bytes.is_some_and(|limit| size > limit) => Err(NativeCompileRejection::CodeSizeBudget),
         Ok(_) => consume(context.compiled_code().expect("successful compilation"), &context.func),
     };
-    // One context per compiling thread keeps its scratch for the next compile; a function
-    // past `RETAINED_COMPILE_INSTRUCTIONS` took scratch no later one needs, so it goes back.
-    if instructions <= RETAINED_COMPILE_INSTRUCTIONS {
-        context.clear();
-        COMPILE_CONTEXT.with(|held| held.set(Some(context)));
-    } else {
-        drop(context);
-    }
+    // One context per compiling thread keeps its scratch for the next compile, as Cranelift
+    // means a `Context` to be reused: `clear` keeps every table's capacity, so the next
+    // compile of a body of the same size allocates nothing anew (lane bodies are 8k to 17k
+    // instructions, and dropping their scratch after each compile reallocated all of it).
+    context.clear();
+    COMPILE_CONTEXT.with(|held| held.set(Some(context)));
     outcome
 }
-
-/// The IR instructions of the largest function whose compile scratch a thread keeps.
-#[cfg(any(feature = "jit", feature = "aot"))]
-const RETAINED_COMPILE_INSTRUCTIONS: usize = 4096;
 
 #[cfg(any(feature = "jit", feature = "aot"))]
 thread_local! {

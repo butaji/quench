@@ -82,6 +82,49 @@ pub(in crate::vm) fn repays(tiers: &Tiers, span: u64, entries: u64, iterations: 
     repays_entries(&tiers.priors, &tiers.loops, span, entries, iterations)
 }
 
+/// What one iteration of a loop `span` bytecodes long saves, in ns, in stencil code (b-jit).
+fn base_saved_per_iteration(priors: &Priors, span: u64) -> u64 {
+    span * priors.interpreter_ns * (PER_MILLE - priors.base_body_share) / PER_MILLE
+}
+
+/// Whether a u-jit region of a loop `span` bytecodes long is ahead of a b-jit region after
+/// `taken` iterations: each region's iterations to come (`taken / remaining_divisor`) at its own
+/// saving, the u-jit region's less its compile and entry (`outlay_ns`), the b-jit region's less
+/// its entry alone, as its stencils stitch in microseconds.
+pub(super) fn ultra_ahead_of_base(priors: &Priors, loops: &Loops, span: u64, taken: u64, compile_ns_per_ir: u64, wall_permille: u64) -> bool {
+    let future = taken / priors.remaining_divisor;
+    let ultra = future.saturating_mul(saved_per_iteration(priors, span)) as i128 - outlay_ns(priors, loops, span, compile_ns_per_ir, wall_permille) as i128;
+    let base = future.saturating_mul(base_saved_per_iteration(priors, span)) as i128 - priors.region_entry_ns as i128;
+    ultra > base
+}
+
+/// Whether a loop `span` bytecodes long that took `taken` iterations compiles to a b-jit region
+/// (stencils) rather than a u-jit one: under `--b-jit` (or `QUENCH_DEV=bjit`) always, under
+/// `--u-jit`/`--q-jit` never, and in the default mode where the u-jit region is not yet ahead of
+/// it (`ultra_ahead_of_base`): u-jit stays ahead of b-jit by construction, and a loop takes
+/// u-jit once its iterations repay that compile over the stencil region (`promotes`).
+pub(in crate::vm) fn base_region(tiers: &Tiers, span: u64, taken: u64) -> bool {
+    use crate::jit_mode::{base_regions, tiers_allowed, Tier};
+    if base_regions() { return true; }
+    if !tiers_allowed(&[Tier::Base]) || tiers.admits_all { return false; }
+    !ultra_ahead_of_base(&tiers.priors, &tiers.loops, span, taken, tiers.priors.compile_ns_per_ir, compile_wall_permille(&tiers.priors))
+}
+
+/// The fewest iterations in all after which a u-jit region of a loop `span` bytecodes long is
+/// ahead of its b-jit region (`ultra_ahead_of_base`), or `None` where it never is.
+pub(in crate::vm) fn promotion_taken(tiers: &Tiers, span: u64) -> Option<u64> {
+    let priors = &tiers.priors;
+    let gain = saved_per_iteration(priors, span).checked_sub(base_saved_per_iteration(priors, span)).filter(|gain| *gain > 0)?;
+    let outlay = outlay_ns(priors, &tiers.loops, span, priors.compile_ns_per_ir, compile_wall_permille(priors)).saturating_sub(priors.region_entry_ns);
+    Some((outlay / gain + 1).saturating_mul(priors.remaining_divisor))
+}
+
+/// Whether a loop running a b-jit region in the default mode moves to a u-jit region after
+/// `taken` iterations in all: where `base_region` no longer picks b-jit for it.
+pub(in crate::vm) fn promotes(tiers: &Tiers, span: u64, taken: u64) -> bool {
+    !crate::jit_mode::base_regions() && !base_region(tiers, span, taken)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,6 +134,22 @@ mod tests {
     const COST: u64 = PRIORS.compile_ns_per_ir;
 
     fn required(span: u64, wall: u64) -> u32 { required_taken(&PRIORS, &LOOPS, span, COST, wall) }
+
+    #[test]
+    fn promotion_is_where_u_jit_gets_ahead() {
+        let tiers = super::super::tier_policy::STATIC_ROWS;
+        let at = promotion_taken(tiers, 10).expect("u-jit saves more per iteration");
+        let ahead = |taken| ultra_ahead_of_base(&tiers.priors, &tiers.loops, 10, taken, tiers.priors.compile_ns_per_ir, compile_wall_permille(&tiers.priors));
+        assert!(ahead(at));
+    }
+
+    #[test]
+    fn a_u_jit_region_gets_ahead_of_a_b_jit_one_with_iterations() {
+        // Few iterations: the stencil region, which costs no compile, is ahead.
+        assert!(!ultra_ahead_of_base(&PRIORS, &LOOPS, 10, 100, COST, PER_MILLE));
+        // Enough iterations repay the u-jit compile over the stencil region.
+        assert!(ultra_ahead_of_base(&PRIORS, &LOOPS, 10, 1 << 30, COST, PER_MILLE));
+    }
 
     #[test]
     fn the_requirement_is_where_the_net_turns_positive() {

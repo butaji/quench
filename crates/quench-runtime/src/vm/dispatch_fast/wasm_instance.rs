@@ -1,5 +1,6 @@
-//! Lane handlers of a Wasm instance's state: its bindings, linear memory, SIMD values and
-//! globals.
+//! Lane handlers of a Wasm instance's state: its memory bindings, linear memory and globals, and
+//! the heap callbacks of its vector rows. A non-memory instance binding and the SIMD operators run
+//! as their staged rows (`Decoder::WasmState`, `Decoder::WasmVector`).
 use super::*;
 use crate::staged::wasm_instance::{Storage, binding_get, global_get, global_set};
 use crate::staged::wasm_machine::ConcreteInstance;
@@ -10,15 +11,15 @@ use crate::staged::ConcreteWasm;
 use crate::vm::wasm_global::InstanceBindings;
 
 lane_handler! {
-    /// Load an instance binding; loading the function's memory register
-    /// resolves the memory view.
-    pub(super) fn lane_instance_binding<MEMORY: bool>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let env = lane_instance_env(cx);
+    /// Load the memory binding of the function's memory register and install its memory view:
+    /// the row answers the value, but the carried view and the lane context's memory are this
+    /// handler's to update, so the memory binding keeps its own body.
+    pub(super) fn lane_instance_binding_memory<>(cx, r, ip, i, view) {
+        let env = instance_env_in_lane(cx);
         let (known, storage) = unsafe { (*cx).instance_slots };
         let slot = i.imm();
         // SAFETY: `storage` is the dense storage of `known`, found this run, which no
-        // collection has run since (`lane_after_nested_collection` drops it).
+        // collection has run since (`after_nested_collection_in_lane` drops it).
         let cached = if known == env && slot <= u32::from(u16::MAX) {
             unsafe { crate::heap::EnvironmentSlots::read_storage(storage, slot as u16) }
         } else {
@@ -28,37 +29,22 @@ lane_handler! {
             return exit(ip);
         };
         r.set(i.a, value);
-        let view = if MEMORY {
-            let memory = resolve_memory(cx, value);
-            unsafe { (*cx).memory = memory };
-            Carried { memory, ..view }
-        } else {
-            view
-        };
+        let memory = resolve_memory(cx, value);
+        unsafe { (*cx).memory = memory };
+        let view = Carried { memory, ..view };
         next!(cx, r, following(ip), view)
     }
 }
 
-lane_handler! {
-    /// A Wasm effective address: the index operand in the memory's index type plus the
-    /// record's constant offset, as an i64. An overflow, which traps, or an operand of another
-    /// representation takes the general path.
-    pub(super) fn lane_wasm_memory_address<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let (Ok(address), Some(offset)) = (
-            vm.wasm_memory_index(r.get(i.c), r.get(i.b)),
-            vm.decode_bits64(i.constant()),
-        ) else {
-            return exit(ip);
-        };
-        let Ok(effective) = scalar_address(&mut ConcreteWasm, address, offset) else {
-            return exit(ip);
-        };
-        let value = vm.encode_bits64(effective);
-        note_allocation(vm);
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
+/// The global bound in `binding` as its register encoding (`Vm::wasm_global_load`, the staged
+/// rule), for the instance-state row of the lane context `context` (`WasmGlobals`). Anything but a
+/// global binding answers `None`, which leaves the row to its general step.
+///
+/// # Safety
+/// `context` is the running lane's context.
+pub(super) unsafe fn wasm_global_load<H: Host>(context: *mut (), binding: Value) -> Option<Value> {
+    let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+    vm.wasm_global_load(binding).ok()
 }
 
 lane_handler! {
@@ -129,34 +115,16 @@ fn lane_simd_operand<H: Host>(vm: &Vm<H>, value: Value, ty: crate::WasmType) -> 
     )
 }
 
-lane_handler! {
-    /// A Wasm SIMD operator (`crate::wasm::simd::SimdOperator`), which neither traps nor runs
-    /// guest code: its operands decoded by their static types and its result encoded, a
-    /// vector in a fresh cell (`Vm::encode_wasm_value`). An operand of another
-    /// representation takes the general path, which raises its validation error.
-    pub(super) fn lane_wasm_simd<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let Some((kernel, _)) = crate::wasm::simd::SimdKernel::of(i.imm()) else {
-            return exit(ip);
-        };
-        let Some(left) = lane_simd_operand(vm, r.get(i.b), kernel.left) else {
-            return exit(ip);
-        };
-        let right = match kernel.right {
-            None => None,
-            Some(ty) => match lane_simd_operand(vm, r.get(i.c), ty) {
-                Some(right) => Some(right),
-                None => return exit(ip),
-            },
-        };
-        let value = match crate::staged::wasm_simd_concrete::execute(i.imm(), left, right) {
-            crate::WasmValue::V128(bits) => vm.heap.alloc_v128(bits.to_le_bytes()),
-            value => vm.encode_wasm_value(value),
-        };
-        note_allocation(vm);
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
+/// A fresh vector cell holding `bytes` for the vector rows of the lane context `context`
+/// (`Heap::alloc_v128`), noting the allocation as the hand handlers did.
+///
+/// # Safety
+/// `context` is the running lane's context.
+pub(super) unsafe fn wasm_vector_alloc<H: Host>(context: *mut (), bytes: [u8; 16]) -> Option<Value> {
+    let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+    let value = vm.heap.alloc_v128(bytes);
+    note_allocation(vm);
+    Some(value)
 }
 
 
@@ -232,7 +200,7 @@ lane_handler! {
 #[inline(never)]
 fn lane_instance_slot_miss<H: Host>(cx: *mut LaneContext<H>, env: Value, slot: u32) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    if let Some(Cell::Environment { slots, .. }) = vm.heap.get(env)
+    if let Some(crate::heap::EnvironmentRecord { slots, .. }) = vm.heap.environment(env)
         && let Some(storage) = slots.dense_storage()
     {
         unsafe { (*cx).instance_slots = (env, storage) };

@@ -79,6 +79,18 @@ struct ErrorPayload {
     description: ErrorDescription,
     thrown: Option<Value>,
     source_location: Option<ErrorSourceLocation>,
+    /// Set only on the error a script compile returns: why the compile rejected the source.
+    compile_failure: Option<CompileFailureKind>,
+}
+
+/// Why a script compile failed, as the host's compile diagnostics classify it. The thrown
+/// SyntaxError is the same for both; only the embedder can tell them apart from this.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompileFailureKind {
+    /// Parsing or ECMAScript early-error validation rejected the source (`Diagnostic::is_syntax_error`).
+    Syntax,
+    /// A backend limit or unsupported syntax rejected the source: the source may be valid.
+    Unsupported,
 }
 
 #[derive(Debug)]
@@ -114,6 +126,7 @@ impl From<String> for ErrorMessage {
                 description: ErrorDescription::Text { message },
                 thrown: None,
                 source_location: None,
+                compile_failure: None,
             }),
         }
     }
@@ -136,7 +149,22 @@ impl fmt::Display for JsError {
 
 impl JsError {
     fn described(description: ErrorDescription, thrown: Option<Value>) -> Self {
-        Self(ErrorMessage { payload: Box::new(ErrorPayload { description, thrown, source_location: None }) })
+        Self(ErrorMessage {
+            payload: Box::new(ErrorPayload { description, thrown, source_location: None, compile_failure: None }),
+        })
+    }
+
+    /// Mark this error as a script compile's failure of `kind`. The message and the thrown
+    /// value are unchanged.
+    pub(crate) fn with_compile_failure(mut self, kind: CompileFailureKind) -> Self {
+        self.0.payload.compile_failure = Some(kind);
+        self
+    }
+
+    /// Why the script compile that returned this error failed; `None` for any error that is
+    /// not a compile's diagnostic (a host failure, a stack exhaustion, a thrown guest error).
+    pub fn compile_failure(&self) -> Option<CompileFailureKind> {
+        self.0.payload.compile_failure
     }
 
     pub(crate) fn execution_terminated() -> Self {
@@ -403,7 +431,7 @@ impl<H: Host> Vm<H> {
                 let intrinsics = self.realm.intrinsics.error_intrinsics[&self.realm.globals];
                 let mut object = Self::empty_object(intrinsics.call_site_prototype);
                 self.capture_constructed_name(&mut object, intrinsics.call_site_constructor, true);
-                let site = self.heap.alloc(Cell::Object(object));
+                let site = self.heap.alloc_object(object);
                 let root = self.heap.root(site);
                 roots.push(root);
                 self.object_data_mut(site)
@@ -411,12 +439,10 @@ impl<H: Host> Vm<H> {
                     .set_stack_data(StackData::CallSite(record.clone()));
                 sites.push(self.heap.root_value(root).unwrap());
             }
-            Ok(self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            Ok(self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
                     sites,
-                ),
-            }))
+                )))
         };
         for root in roots {
             self.heap.release_root(root);
@@ -546,22 +572,12 @@ impl<H: Host> Vm<H> {
         let residual = self.programs.get(frame.program)?;
         let function = residual.function_get(frame.function as usize)?;
         let pc = u32::try_from(frame.source_instruction_pc()).unwrap_or(u32::MAX);
-        let position = if let Some((site, part)) = frame.source_field {
-            if let Some((line, column)) = residual
-                .field_sites
-                .get(site)
-                .and_then(|site| site.source(part))
-            {
-                residual.adjust_source_position(crate::bytecode::SourcePosition {
-                    pc,
-                    line,
-                    column,
-                })?
-            } else {
-                residual.source_position(frame.function, pc)?
-            }
-        } else {
-            residual.source_position(frame.function, pc)?
+        let field_offset = frame
+            .source_field
+            .and_then(|(site, part)| residual.field_sites.get(site)?.source(part));
+        let position = match field_offset {
+            Some(offset) => residual.offset_position(offset)?,
+            None => residual.source_position(frame.function, pc)?,
         };
         // A call-only closure (`Value::known_closure`) has no function object to name it.
         let name = frame.context.callable().filter(|callee| callee.as_known_closure().is_none()).map_or_else(
@@ -1070,7 +1086,7 @@ impl<H: Host> Vm<H> {
         // Exhaustion must not invoke guest accessors or constructors.
         let prototype =
             self.realm.intrinsics.builtin_prototypes[&(self.realm.globals, Native::RangeError)];
-        let object = self.heap.alloc(Cell::Object(Object::error(prototype)));
+        let object = self.heap.alloc_object(Object::error(prototype));
         let message = self
             .heap
             .alloc_string(crate::stack::STACK_EXHAUSTED_MESSAGE.into());
@@ -1162,11 +1178,11 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn box_primitive_object(&mut self, value: Value) -> Result<Value, JsError> {
         if !self.heap.is_string(value)
-            && !matches!(self.heap.get(value), Some(Cell::Symbol(_) | Cell::BigInt(_)))
+            && !(self.heap.is_symbol(value) || matches!(self.heap.get(value), Some(Cell::BigInt(_))))
             && value.as_number().is_none() && value.as_bool().is_none()
         { return Ok(self.object()); }
         let prototype = self.primitive_prototype(value).unwrap_or(self.object_proto);
-        let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let object = self.heap.alloc_object(Self::empty_object(prototype));
         // A String wrapper's index properties are its text's (`string_wrapper`).
         // Its length is read without the units: boxing a rope for a sloppy function's `this`
         // left it flat for its life (V8-v7 RegExp's harness check: 491 input variants, 1.6 MB).
@@ -1206,7 +1222,7 @@ impl<H: Host> Vm<H> {
             .copied()
             .or_else(|| self.primitive_prototype(value))
             .unwrap_or(self.object_proto);
-        let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let object = self.heap.alloc_object(Self::empty_object(prototype));
         self.object_data_mut(object)
             .expect("bigint wrapper")
             .set_boxed_primitive(value);
@@ -1277,13 +1293,7 @@ impl<H: Host> Vm<H> {
         let symbol_prototype = self.object();
         self.set_named_constant(program, symbol, "prototype", symbol_prototype)?;
         self.set_builtin_value_named(symbol_prototype, "constructor", symbol)?;
-        self.set_builtin_named(program, symbol_prototype, "valueOf", Native::SymbolValueOf)?;
-        self.set_builtin_named(
-            program,
-            symbol_prototype,
-            "toString",
-            Native::SymbolToString,
-        )?;
+        self.install_native_rows(program, symbol_prototype, super::native_rows::Holder::SymbolPrototype)?;
         let description = self.native_value(Native::SymbolDescriptionGetter);
         self.install_symbol_description(symbol_prototype, description)?;
         for native in [Native::String, Native::Number] {
@@ -1651,7 +1661,7 @@ impl<H: Host> Vm<H> {
         let type_error = self.native_with_realm(Native::RealmTypeError, global, global);
         let type_error_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -1675,7 +1685,7 @@ impl<H: Host> Vm<H> {
         // %Object.prototype% ends every prototype chain of the realm.
         let object_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -1710,17 +1720,17 @@ impl<H: Host> Vm<H> {
         let data_view = self.native_with_realm(Native::DataView, global, global);
         let data_view_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_data_view_for_realm(program, global, data_view, data_view_prototype)?;
         let date = self.native_with_realm(Native::Date, global, global);
         let date_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_date_for_realm(program, global, date, date_prototype)?;
         let promise = self.native_with_realm(Native::Promise, global, global);
         let promise_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_promise_for_realm(program, promise, promise_prototype, Some(global))?;
         let disposable_stack = self.native_with_realm(Native::DisposableStack, global, global);
         let async_disposable_stack =
@@ -1735,15 +1745,15 @@ impl<H: Host> Vm<H> {
         self.install_finalization_registry_for_realm(global, object_prototype)?;
         let realm_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_iterator_constructor(global, realm_iterator_proto, Some(global))?;
         self.install_iterator_prototype(realm_iterator_proto, Some(global))?;
         let realm_iterator_helper_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(realm_iterator_proto)));
+            .alloc_object(Self::empty_object(realm_iterator_proto));
         let realm_wrap_for_valid_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(realm_iterator_proto)));
+            .alloc_object(Self::empty_object(realm_iterator_proto));
         self.install_iterator_helper_prototype(realm_iterator_helper_proto, Some(global))?;
         self.install_wrap_for_valid_iterator_prototype(
             realm_wrap_for_valid_iterator_proto,
@@ -1751,10 +1761,10 @@ impl<H: Host> Vm<H> {
         )?;
         let realm_generator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(realm_iterator_proto)));
+            .alloc_object(Self::empty_object(realm_iterator_proto));
         let realm_async_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_async_iterator_prototype(
             realm_async_iterator_proto,
             object_prototype,
@@ -1762,7 +1772,7 @@ impl<H: Host> Vm<H> {
         )?;
         let realm_async_generator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(realm_async_iterator_proto)));
+            .alloc_object(Self::empty_object(realm_async_iterator_proto));
         let native_iterator_next = self.native_value(Native::IteratorNext);
         self.set_builtin_value_named(
             realm_async_generator_proto,
@@ -1783,19 +1793,19 @@ impl<H: Host> Vm<H> {
                 "AsyncFunction",
                 Native::AsyncFunction,
                 self.heap
-                    .alloc(Cell::Object(Self::empty_object(self.function_proto))),
+                    .alloc_object(Self::empty_object(self.function_proto)),
             ),
             (
                 "GeneratorFunction",
                 Native::GeneratorFunction,
                 self.heap
-                    .alloc(Cell::Object(Self::empty_object(self.function_proto))),
+                    .alloc_object(Self::empty_object(self.function_proto)),
             ),
             (
                 "AsyncGeneratorFunction",
                 Native::AsyncGeneratorFunction,
                 self.heap
-                    .alloc(Cell::Object(Self::empty_object(self.function_proto))),
+                    .alloc_object(Self::empty_object(self.function_proto)),
             ),
         ] {
             self.realm
@@ -1915,39 +1925,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        for (name, native) in [
-            ("defineProperty", Native::ObjectDefineProperty),
-            ("defineProperties", Native::ObjectDefineProperties),
-            ("setPrototypeOf", Native::ObjectSetPrototypeOf),
-            ("getPrototypeOf", Native::ObjectGetPrototypeOf),
-            ("create", Native::ObjectCreate),
-            ("keys", Native::ObjectKeys),
-            ("values", Native::ObjectValues),
-            ("entries", Native::ObjectEntries),
-            ("getOwnPropertyNames", Native::ObjectGetOwnPropertyNames),
-            ("getOwnPropertySymbols", Native::ObjectGetOwnPropertySymbols),
-            (
-                "getOwnPropertyDescriptor",
-                Native::ObjectGetOwnPropertyDescriptor,
-            ),
-            (
-                "getOwnPropertyDescriptors",
-                Native::ObjectGetOwnPropertyDescriptors,
-            ),
-            ("fromEntries", Native::ObjectFromEntries),
-            ("assign", Native::ObjectAssign),
-            ("is", Native::ObjectIs),
-            ("hasOwn", Native::ObjectHasOwn),
-            ("preventExtensions", Native::ObjectPreventExtensions),
-            ("isExtensible", Native::ObjectIsExtensible),
-            ("groupBy", Native::ObjectGroupBy),
-            ("seal", Native::ObjectSeal),
-            ("isSealed", Native::ObjectIsSealed),
-            ("freeze", Native::ObjectFreeze),
-            ("isFrozen", Native::ObjectIsFrozen),
-        ] {
-            self.set_realm_builtin_named(program, object, name, native, Some(global))?;
-        }
+        self.install_realm_native_rows(object, super::native_rows::Holder::ObjectConstructor, global)?;
         self.set_builtin_value_named(global, "Object", object)?;
         let object_name = self.intern_atom("Object");
         self.set_property_attributes(
@@ -1962,17 +1940,15 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let array_prototype = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let array_prototype = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(object_prototype),
                 Vec::new(),
-            ),
-        });
+            ));
         self.install_array_for_realm(program, global, array_prototype)?;
         let map = self.native_with_realm(Native::Map, global, global);
         let map_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_map(program, global, map, map_prototype)?;
         self.set_builtin_value_named(global, "Map", map)?;
         let prototype_atom = self.prototype_atom();
@@ -1996,7 +1972,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(regexp, "escape", regexp_escape)?;
         let regexp_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_regexp_intrinsics(global, regexp, regexp_prototype)?;
         self.install_regexp_accessors(program, regexp_prototype, global)?;
         self.install_regexp_legacy_accessors(program, regexp, global)?;
@@ -2007,7 +1983,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(global, "ArrayBuffer", array_buffer)?;
         let realm_error_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -2056,7 +2032,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_function_name(constructor, name)?;
             let prototype = self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(realm_error_prototype)));
+                .alloc_object(Self::empty_object(realm_error_prototype));
             self.realm
                 .intrinsics
                 .builtin_prototypes
@@ -2072,18 +2048,24 @@ impl<H: Host> Vm<H> {
                 .unwrap()
                 .set_proto(realm_error_constructor);
         }
-        for (name, native) in [
-            ("parseFloat", Native::NumberParseFloat),
-            ("parseInt", Native::ParseInt),
-        ] {
-            let intrinsic = self.native_with_realm(native, global, global);
-            self.set_builtin_function_name(intrinsic, name)?;
+        // The realm's Number constructor installs parseFloat/parseInt once (install_number_for_realm);
+        // the global bindings reuse those function objects, since Number.parseInt === parseInt.
+        let number_atom = self.intern_atom("Number");
+        let number = self
+            .own_property(global, number_atom)
+            .expect("realm Number constructor");
+        for name in ["parseFloat", "parseInt"] {
+            let atom = self.intern_atom(name);
+            let intrinsic = self
+                .own_property(number, atom)
+                .expect("realm Number parse function");
             self.set_builtin_value_named(global, name, intrinsic)?;
         }
         self.install_realm_default_bindings(program, global)?;
         self.install_json_for_realm(program, global)?;
         self.install_symbol_for_realm(program, global, object_prototype)?;
-        self.install_intl_for_realm(program, global, object_prototype)?;
+        let intl = self.native_with_realm(Native::IntlInitialize, Value::NULL, global);
+        self.define_lazy_builtin_namespace(program, global, "Intl", intl)?;
         Ok(global)
     }
 
@@ -2204,12 +2186,11 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let prototype = self.heap.alloc_function(FunctionRecord {
+        let prototype = self.alloc_function_in(FunctionRecord {
             object: Self::empty_object(object_prototype),
-            realm: global,
             kind: FunctionKind::Native(Native::FunctionPrototype),
             env: Value::NULL,
-        });
+        }, global);
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -2319,7 +2300,7 @@ impl<H: Host> Vm<H> {
                 error_prototype
             } else {
                 self.heap
-                    .alloc(Cell::Object(Self::empty_object(error_prototype)))
+                    .alloc_object(Self::empty_object(error_prototype))
             };
             self.install_error_class(program, native, name, prototype)?;
         }
@@ -2330,7 +2311,7 @@ impl<H: Host> Vm<H> {
         let realm_constructor = self.native_value(Native::RealmTypeError);
         let realm_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(error_prototype)));
+            .alloc_object(Self::empty_object(error_prototype));
         self.set_named(program, realm_constructor, "prototype", realm_prototype)?;
         self.set_named(program, realm_prototype, "constructor", realm_constructor)?;
         let realm_name = self
@@ -2386,7 +2367,7 @@ impl<H: Host> Vm<H> {
         let global = self
             .heap
             .function(constructor)
-            .map_or(self.realm.globals, |function| function.realm);
+            .map_or(self.realm.globals, |function| self.record_realm(function));
         let (stack_getter, stack_setter) = if constructor == self.native_value(Native::Error) {
             (
                 self.native_value(Native::ErrorStackGetter),
@@ -2407,9 +2388,9 @@ impl<H: Host> Vm<H> {
                 self.native_with_realm(Native::CallSiteConstructor, Value::NULL, global)
             };
         self.set_builtin_function_name(call_site_constructor, "CallSite")?;
-        let call_site_prototype = self.heap.alloc(Cell::Object(Self::empty_object(
+        let call_site_prototype = self.heap.alloc_object(Self::empty_object(
             self.realm_object_prototype(global),
-        )));
+        ));
         self.set_named_constant(
             program,
             call_site_constructor,
@@ -2500,8 +2481,8 @@ impl<H: Host> Vm<H> {
     // callable forms. Our intrinsic constructor has no JS activation to find.
     fn error_constructor_stack_target(&self, native: Native, new_target: Value) -> Option<Value> {
         match self.heap.function(new_target) {
-            Some(FunctionRecord { kind: FunctionKind::Native(target), realm, .. })
-                if *target == native && *realm == self.realm.globals => None,
+            Some(record @ FunctionRecord { kind: FunctionKind::Native(target), .. })
+                if *target == native && self.record_realm(record) == self.realm.globals => None,
             Some(FunctionRecord { kind, .. })
                 if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) => Some(new_target),
             _ => None,
@@ -2543,7 +2524,7 @@ impl<H: Host> Vm<H> {
                 None,
             ),
         };
-        let object = self.heap.alloc(Cell::Object(Object::error(prototype)));
+        let object = self.heap.alloc_object(Object::error(prototype));
         let root = self.heap.root(object);
         let outcome = (|| {
             // Reserve the native stack accessor before message/cause fields,
@@ -2630,7 +2611,7 @@ impl<H: Host> Vm<H> {
                 .ok_or_else(|| {
                     JsError::validation("AggregateError has no intrinsic prototype".into())
                 })?;
-            let value = self.heap.alloc(Cell::Object(Object::error(prototype)));
+            let value = self.heap.alloc_object(Object::error(prototype));
             let root = self.heap.root(value);
             object = Some(root);
             self.define_error_stack_property(program, value)?;

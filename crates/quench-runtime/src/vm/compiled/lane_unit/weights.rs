@@ -36,9 +36,8 @@ impl Default for Choice {
 /// Per PC of `code`, the executions per entry of its function: the product of the trip counts
 /// of the loops (backward jumps) holding it. `trip` gives a loop's measured mean by its header.
 pub(super) fn loop_weights(code: &[WideInstruction], trip: &dyn Fn(u32) -> Option<u64>) -> Vec<u64> {
-    let loops: Vec<(usize, usize, u64)> = code.iter().enumerate()
-        .filter(|(pc, instruction)| instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && instruction.imm() as usize <= *pc)
-        .map(|(pc, instruction)| (instruction.imm() as usize, pc, trip(instruction.imm()).unwrap_or(super::super::tier_policy::ASSUMED_LOOP_TRIP).max(1)))
+    let loops: Vec<(usize, usize, u64)> = crate::bytecode::back_edges_of(code.iter().copied())
+        .map(|(backedge, header)| (header, backedge, trip(header as u32).unwrap_or(super::super::tier_policy::ASSUMED_LOOP_TRIP).max(1)))
         .collect();
     (0..code.len()).map(|pc| loops.iter().filter(|(header, backedge, _)| (*header..=*backedge).contains(&pc))
         .fold(1, |weight: u64, (_, _, trips)| weight.saturating_mul(*trips))).collect()

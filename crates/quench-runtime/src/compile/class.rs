@@ -2,6 +2,39 @@ mod method_name;
 pub(super) use method_name::class_method_function_name;
 
 use super::*;
+use crate::bytecode::{CALL_INVOKE, ELEMENT_STORE, JUMP_IF_FALSE, OBJECT_FIELD_STORE, REGISTER_MOVE, Traits, the_op};
+
+/// The op that puts a block-scoped binding into its TDZ.
+const TDZ_INIT: Op = the_op(Traits::TDZ_INITIALIZE);
+/// The op that checks a class `extends` value.
+const CLASS_HERITAGE_CHECK: Op = the_op(Traits::CLASS_HERITAGE_CHECK);
+/// The op that makes a closure of a function id.
+const CLOSURE_MAKER: Op = the_op(Traits::MAKES_CLOSURE);
+/// The op that reads a named field.
+const FIELD_READ: Op = the_op(Traits::FIELD_LEAF);
+/// The op that marks a private name onto a home object.
+const PRIVATE_NAME_MARK: Op = the_op(Traits::PRIVATE_NAME_MARK);
+/// The op that always jumps.
+const JUMP: Op = the_op(Traits::UNCONDITIONAL_JUMP);
+/// The op that converts a computed key to a property key.
+const PROPERTY_KEY_CONVERT: Op = the_op(Traits::PROPERTY_KEY_CONVERT);
+/// The op that sets a function name from a computed key.
+const FUNCTION_NAME_KEY_SET: Op = the_op(Traits::FUNCTION_NAME_KEY_SET);
+/// The op that defines a private field on an instance.
+const PRIVATE_FIELD_DEFINE: Op = the_op(Traits::PRIVATE_FIELD_DEFINE);
+/// The op that defines a computed-key field on an instance.
+const COMPUTED_FIELD_DEFINE: Op = the_op(Traits::COMPUTED_FIELD_DEFINE);
+/// The op that defines a named field on an instance.
+const FIELD_DEFINE: Op = the_op(Traits::FIELD_DEFINE);
+/// The op that stores a value into a local binding slot.
+const LOCAL_BINDING_STORE: Op = the_op(Traits::LOCAL_BINDING_STORE);
+/// The op that defines a property from a definition record.
+const PROPERTY_RECORD_DEFINE: Op = the_op(Traits::PROPERTY_RECORD_DEFINE);
+/// The op that loads `this`.
+const THIS_LOAD: Op = the_op(Traits::THIS_LEAF);
+
+/// The rejection for a class field key the compiler does not lower.
+const CLASS_FIELD_KEY_UNSUPPORTED: &str = "class field key is unsupported";
 
 impl FunctionCompiler<'_, '_> {
     pub(super) fn class_expression(&mut self, class: &Class<'_>) -> Register {
@@ -34,7 +67,7 @@ impl FunctionCompiler<'_, '_> {
                 self.function_id
             ));
             let slot = self.local_slots[&binding];
-            self.emit(Op::InitializeTdz, 0, 0, 0, u32::from(slot));
+            self.emit(TDZ_INIT, 0, 0, 0, u32::from(slot));
             self.push_immutable_lexical_bindings(
                 FxHashMap::from_iter([(source, binding)]),
                 FxHashSet::from_iter([source]),
@@ -48,7 +81,7 @@ impl FunctionCompiler<'_, '_> {
             value
         });
         if let Some(heritage) = heritage {
-            self.emit(Op::ValidateClassHeritage, heritage, 0, 0, 0);
+            self.emit(CLASS_HERITAGE_CHECK, heritage, 0, 0, 0);
         }
         let super_atom = heritage.map(|_| {
             let atom = self.hidden_local(&format!("\0quench:class-super:{}", class.span.start));
@@ -191,7 +224,7 @@ impl FunctionCompiler<'_, '_> {
                 },
             );
             let initializer = self.reg();
-            self.emit(Op::MakeClosure, initializer, 0, 0, id);
+            self.emit(CLOSURE_MAKER, initializer, 0, 0, id);
             let atom = self.owner.atom(&class_field_initializer_name(
                 class_field_span(*field).start,
             ));
@@ -275,11 +308,11 @@ impl FunctionCompiler<'_, '_> {
             // A replay of the function enclosing the class finds the constructor as the load
             // left it.
             if let Some(constructor) = self.owner.functions.get_mut(constructor_id) {
-                constructor.instance_initializer = Some(initializer);
+                constructor.set_instance_initializer(initializer);
             }
         }
         let class_value = self.reg();
-        self.emit(Op::MakeClosure, class_value, 0, 0, constructor_id);
+        self.emit(CLOSURE_MAKER, class_value, 0, 0, constructor_id);
         if let Some(super_atom) = super_atom {
             self.store_atom(super_atom, class_value);
         }
@@ -297,7 +330,7 @@ impl FunctionCompiler<'_, '_> {
         let prototype_atom = self.owner.atom("prototype");
         let prototype_cache = self.owner.cache_site();
         self.emit(
-            Op::GetField,
+            FIELD_READ,
             prototype,
             FieldBase::register(class_value).0,
             prototype_cache,
@@ -331,7 +364,7 @@ impl FunctionCompiler<'_, '_> {
                 {
                     continue;
                 }
-                self.emit(Op::MarkPrivateName, 0, class_value, class_value, atom);
+                self.emit(PRIVATE_NAME_MARK, 0, class_value, class_value, atom);
             }
         }
 
@@ -343,14 +376,14 @@ impl FunctionCompiler<'_, '_> {
                 Operand::register(base),
                 Operand::register(null),
             );
-            let get_constructor_prototype = self.emit(Op::JumpFalse, is_null, 0, 0, 0);
-            self.emit(Op::Move, base_prototype, null, 0, 0);
-            let skip_constructor_prototype = self.emit(Op::Jump, 0, 0, 0, 0);
+            let get_constructor_prototype = self.emit(JUMP_IF_FALSE, is_null, 0, 0, 0);
+            self.emit(REGISTER_MOVE, base_prototype, null, 0, 0);
+            let skip_constructor_prototype = self.emit(JUMP, 0, 0, 0, 0);
             self.patch(get_constructor_prototype);
             let prototype_atom = self.owner.atom("prototype");
             let prototype_cache = self.owner.cache_site();
             self.emit(
-                Op::GetField,
+                FIELD_READ,
                 base_prototype,
                 FieldBase::register(base).0,
                 prototype_cache,
@@ -358,8 +391,8 @@ impl FunctionCompiler<'_, '_> {
             );
             self.patch(skip_constructor_prototype);
             self.set_prototype(prototype, base_prototype);
-            let set_constructor_parent = self.emit(Op::JumpFalse, is_null, 0, 0, 0);
-            let skip_constructor_parent = self.emit(Op::Jump, 0, 0, 0, 0);
+            let set_constructor_parent = self.emit(JUMP_IF_FALSE, is_null, 0, 0, 0);
+            let skip_constructor_parent = self.emit(JUMP, 0, 0, 0, 0);
             self.patch(set_constructor_parent);
             self.set_prototype(class_value, base);
             self.patch(skip_constructor_parent);
@@ -387,7 +420,7 @@ impl FunctionCompiler<'_, '_> {
             let raw_key = self.expression(key);
             self.strict = outer_strict;
             let key_value = self.reg();
-            self.emit(Op::ToPropertyKey, key_value, raw_key, 0, 0);
+            self.emit(PROPERTY_KEY_CONVERT, key_value, raw_key, 0, 0);
             let key_atom = self.owner.atom(&computed_field_key_name(span.start));
             self.store_atom(key_atom, key_value);
         }
@@ -436,9 +469,9 @@ impl FunctionCompiler<'_, '_> {
                     ),
                 ] {
                     let function = self.reg();
-                    self.emit(Op::MakeClosure, function, 0, 0, function_id);
+                    self.emit(CLOSURE_MAKER, function, 0, 0, function_id);
                     if let Some(key) = computed_key {
-                        self.emit(Op::SetFunctionNameKey, function, key, 0, prefix);
+                        self.emit(FUNCTION_NAME_KEY_SET, function, key, 0, prefix);
                     } else if let Some(name) = name_text.as_deref() {
                         let visible_name = match &accessor.key {
                             PropertyKey::PrivateIdentifier(identifier) => {
@@ -524,7 +557,7 @@ impl FunctionCompiler<'_, '_> {
                 },
             );
             let function = self.reg();
-            self.emit(Op::MakeClosure, function, 0, 0, function_id);
+            self.emit(CLOSURE_MAKER, function, 0, 0, function_id);
             if let Some(accessor) = accessor_name {
                 if let Some(key) = computed_key {
                     let prefix = match accessor {
@@ -532,7 +565,7 @@ impl FunctionCompiler<'_, '_> {
                         "set" => crate::bytecode::FUNCTION_NAME_PREFIX_SETTER,
                         _ => crate::bytecode::FUNCTION_NAME_PREFIX_NONE,
                     };
-                    self.emit(Op::SetFunctionNameKey, function, key, 0, prefix);
+                    self.emit(FUNCTION_NAME_KEY_SET, function, key, 0, prefix);
                 }
                 self.define_class_accessor(
                     target,
@@ -575,7 +608,7 @@ impl FunctionCompiler<'_, '_> {
                         Some(backing)
                     } else if computed_key.is_none() {
                         let Some(name) = class_field_storage_name(self.owner, key) else {
-                            self.owner.reject(span, "class field key is unsupported");
+                            self.owner.reject(span, CLASS_FIELD_KEY_UNSUPPORTED);
                             continue;
                         };
                         Some(self.owner.atom(&name))
@@ -588,7 +621,7 @@ impl FunctionCompiler<'_, '_> {
                         let atom = self.owner.atom(&class_field_initializer_name(span.start));
                         let callee = self.load_atom(atom);
                         let value = self.reg();
-                        self.emit(Op::Call, value, callee, class_value, 0);
+                        self.emit(CALL_INVOKE, value, callee, class_value, 0);
                         value
                     } else {
                         self.literal(Constant::Undefined)
@@ -597,7 +630,7 @@ impl FunctionCompiler<'_, '_> {
                     if matches!(field, ClassField::Property(field) if matches!(&field.key, PropertyKey::PrivateIdentifier(_)))
                     {
                         self.emit(
-                            Op::DefinePrivateField,
+                            PRIVATE_FIELD_DEFINE,
                             value,
                             class_value,
                             class_value,
@@ -606,10 +639,10 @@ impl FunctionCompiler<'_, '_> {
                     } else if let Some(key) =
                         computed_key.filter(|_| matches!(field, ClassField::Property(_)))
                     {
-                        self.emit(Op::SetIndex, value, class_value, key, 1);
+                        self.emit(ELEMENT_STORE, value, class_value, key, 1);
                     } else {
                         let cache = self.owner.cache_site();
-                        self.emit(Op::SetField, value, class_value, cache, name.unwrap());
+                        self.emit(OBJECT_FIELD_STORE, value, class_value, cache, name.unwrap());
                     }
                 }
                 ClassElement::StaticBlock(block) => {
@@ -621,9 +654,9 @@ impl FunctionCompiler<'_, '_> {
                         self.with_depth,
                     );
                     let function = self.reg();
-                    self.emit(Op::MakeClosure, function, 0, 0, function_id);
+                    self.emit(CLOSURE_MAKER, function, 0, 0, function_id);
                     let result = self.reg();
-                    self.emit(Op::Call, result, function, class_value, 0);
+                    self.emit(CALL_INVOKE, result, function, class_value, 0);
                 }
                 _ => {}
             }
@@ -651,7 +684,7 @@ impl FunctionCompiler<'_, '_> {
 
     fn initialize_class_binding(&mut self, binding: Atom, value: Register) {
         let slot = self.local_slots[&binding];
-        self.emit(Op::StoreLocal, value, 0, u16::from(true), u32::from(slot));
+        self.emit(LOCAL_BINDING_STORE, value, 0, u16::from(true), u32::from(slot));
     }
 
     fn define_class_method(
@@ -663,7 +696,7 @@ impl FunctionCompiler<'_, '_> {
     ) {
         if let Some(key) = computed_key {
             self.emit(
-                Op::SetFunctionNameKey,
+                FUNCTION_NAME_KEY_SET,
                 function,
                 key,
                 0,
@@ -677,7 +710,7 @@ impl FunctionCompiler<'_, '_> {
         } else {
             crate::bytecode::PropertyDefinitionMode::Method
         };
-        self.emit(Op::DefinePropertyRecord, function, target, key, mode.word());
+        self.emit(PROPERTY_RECORD_DEFINE, function, target, key, mode.word());
     }
 
     fn define_class_accessor(
@@ -696,7 +729,7 @@ impl FunctionCompiler<'_, '_> {
             "set" => crate::bytecode::PropertyDefinitionMode::Setter,
             _ => unreachable!("class accessor kind"),
         };
-        self.emit(Op::DefinePropertyRecord, function, target, key, mode.word());
+        self.emit(PROPERTY_RECORD_DEFINE, function, target, key, mode.word());
     }
 
     fn set_prototype(&mut self, target: Register, prototype: Register) {
@@ -704,12 +737,12 @@ impl FunctionCompiler<'_, '_> {
         let setter = self.load_name(crate::bytecode::INTRINSIC_SET_PROTOTYPE_OF_BINDING);
         let base = self.next_reg;
         let target_arg = self.reg();
-        self.emit(Op::Move, target_arg, target, 0, 0);
+        self.emit(REGISTER_MOVE, target_arg, target, 0, 0);
         let prototype_arg = self.reg();
-        self.emit(Op::Move, prototype_arg, prototype, 0, 0);
+        self.emit(REGISTER_MOVE, prototype_arg, prototype, 0, 0);
         let result = self.reg();
         self.emit(
-            Op::Call,
+            CALL_INVOKE,
             result,
             setter,
             setter,
@@ -717,16 +750,22 @@ impl FunctionCompiler<'_, '_> {
         );
     }
 
+    /// The instance elements' initialization: private methods' brands, then each field's define
+    /// in order. `fresh_receiver` where the receiver is the one the constructor's own [[Construct]]
+    /// just allocated (a base class constructor's), which may hold the leading constant fields
+    /// already (`vm::preshaped_receiver`): a run of two or more is then skipped where it does
+    /// (`Op::ConstantFieldsHeld`).
     pub(super) fn emit_instance_fields(
         &mut self,
         fields: &[ClassField<'_>],
         private_methods: &[Atom],
+        fresh_receiver: bool,
     ) {
         if fields.is_empty() && private_methods.is_empty() {
             return;
         }
         let this = self.reg();
-        self.emit(Op::LoadThis, this, 0, 0, 0);
+        self.emit(THIS_LOAD, this, 0, 0, 0);
         let private_field = |field: &ClassField<'_>| {
             matches!(
                 field,
@@ -745,9 +784,17 @@ impl FunctionCompiler<'_, '_> {
             self.load_name(&home_name)
         };
         for atom in private_methods {
-            self.emit(Op::MarkPrivateName, 0, this, home, *atom);
+            self.emit(PRIVATE_NAME_MARK, 0, this, home, *atom);
         }
-        for field in fields {
+        // The leading run of fields whose defines evaluate no code (`bytecode::ConstantField`):
+        // nothing before them observes the receiver, so its allocation may hold them already.
+        let mut leading = true;
+        self.constant_fields.clear();
+        // The skip over the run's first `PRESHAPED_FIELDS` defines, where it is taken: the jump to
+        // patch, the first define's own cache site, which the test reads (`Op::ConstantFieldsHeld`),
+        // and the PC after the last define it covers.
+        let mut skip: Option<(usize, u16, u32)> = None;
+        for (index, field) in fields.iter().enumerate() {
             let span = class_field_span(*field);
             let initializer = class_field_value(*field);
             let backing = match field {
@@ -766,13 +813,25 @@ impl FunctionCompiler<'_, '_> {
                     match class_field_storage_name(self.owner, &field.key) {
                         Some(name) => Some(self.owner.atom(&name)),
                         None => {
-                            self.owner.reject(span, "class field key is unsupported");
+                            self.owner.reject(span, CLASS_FIELD_KEY_UNSUPPORTED);
                             continue;
                         }
                     }
                 }
                 _ => backing,
             };
+            // Whether this field continues the run, decided before its code: a define of a plain
+            // name with a constant (`leading_constant_field`).
+            let constant = match name {
+                Some(atom) if leading && computed_key.is_none() => self.leading_constant_field(*field, atom),
+                _ => None,
+            };
+            if constant.is_none() {
+                leading = false;
+                self.end_constant_skip(&mut skip);
+            } else if self.constant_fields.is_empty() && fresh_receiver {
+                skip = self.open_constant_skip(this, fields.get(index + 1).copied());
+            }
             let value = if let Some(initializer) = initializer.filter(|initializer| {
                 observes_nothing(initializer) || self.initializer_inlines(initializer)
             }) {
@@ -782,7 +841,7 @@ impl FunctionCompiler<'_, '_> {
                 let atom = self.owner.atom(&class_field_initializer_name(span.start));
                 let callee = self.load_atom(atom);
                 let value = self.reg();
-                self.emit(Op::Call, value, callee, this, 0);
+                self.emit(CALL_INVOKE, value, callee, this, 0);
                 value
             } else {
                 self.literal(Constant::Undefined)
@@ -795,19 +854,99 @@ impl FunctionCompiler<'_, '_> {
             );
             if private {
                 let field_atom = name.unwrap();
-                self.emit(Op::DefinePrivateField, value, this, home, field_atom);
+                self.emit(PRIVATE_FIELD_DEFINE, value, this, home, field_atom);
             } else if let Some(key) = computed_key {
-                self.emit(Op::DefineComputedField, value, this, key, 0);
+                self.emit(COMPUTED_FIELD_DEFINE, value, this, key, 0);
             } else if matches!(field, ClassField::AutoAccessor { .. }) {
                 let field_atom = name.unwrap();
                 let cache = self.owner.cache_site();
-                self.emit(Op::SetField, value, this, cache, field_atom);
+                self.emit(OBJECT_FIELD_STORE, value, this, cache, field_atom);
             } else {
                 let field_atom = name.unwrap();
-                let cache = self.owner.cache_site();
+                // The run's first define takes the site its skip's test reads.
+                let cache = match skip {
+                    Some((_, site, _)) if constant.is_some() && self.constant_fields.is_empty() => site,
+                    _ => self.owner.cache_site(),
+                };
                 self.emit(Op::DefineField, value, this, cache, field_atom);
+                if let Some(constant) = constant {
+                    self.constant_fields.push(constant);
+                    if let Some((_, _, end)) = skip.as_mut() {
+                        *end = self.code.len() as u32;
+                    }
+                    if self.constant_fields.len() == crate::bytecode::PRESHAPED_FIELDS {
+                        // A receiver holds no more of the run than this (`vm::preshaped_receiver`).
+                        self.end_constant_skip(&mut skip);
+                    }
+                    continue;
+                }
             }
+            leading = false;
+            self.end_constant_skip(&mut skip);
         }
+        self.end_constant_skip(&mut skip);
+    }
+
+    /// The skip over a run of constant fields that starts at the field being emitted, whose next
+    /// field is `next`, emitted before the field's code where the next may extend the run (a run
+    /// of one would not repay the test): the test of the receiver in `this`
+    /// (`Op::ConstantFieldsHeld`) through a cache site reserved for the run's first define, and
+    /// the jump past the run, patched where the run ends (`end_constant_skip`). `None` where no
+    /// unique site is left, whose shared entries would prove nothing of this run.
+    fn open_constant_skip(&mut self, this: Register, next: Option<ClassField<'_>>) -> Option<(usize, u16, u32)> {
+        if !next.is_some_and(may_extend_constant_run) {
+            return None;
+        }
+        let site = self.owner.cache_site();
+        if site == crate::bytecode::SHARED_UNCACHED_SITE {
+            return None;
+        }
+        let held = self.reg();
+        self.emit(Op::ConstantFieldsHeld, held, this, site, 0);
+        let jump = self.emit(Op::JumpTrue, held, 0, 0, 0);
+        Some((jump, site, 0))
+    }
+
+    /// Ends the skip over the run of constant fields, if one is open: its jump lands after the
+    /// last define the run's test covers.
+    fn end_constant_skip(&mut self, skip: &mut Option<(usize, u16, u32)>) {
+        if let Some((jump, _, end)) = skip.take() {
+            self.patch_instruction(jump, end);
+        }
+    }
+
+    /// The `ConstantField` a field whose `DefineField` of `atom` the run of leading constant
+    /// fields has reached adds to it: a public, non-computed, undecorated property whose key
+    /// is neither `__proto__` nor a numeric string and not already in the run, whose
+    /// initializer is absent (`undefined`) or folds to a primitive constant other than a
+    /// BigInt or a string with lone surrogates (`binding_time::expression`). Evaluating such an
+    /// initializer runs no code and its define (CreateDataPropertyOrThrow on the fresh,
+    /// extensible receiver) can neither fail nor run code; `None` ends the run.
+    fn leading_constant_field(&mut self, field: ClassField<'_>, atom: Atom) -> Option<crate::bytecode::ConstantField> {
+        use crate::bytecode::{ConstantField, FieldConstant};
+        let ClassField::Property(property) = field else { return None };
+        if property.computed || property.r#static || !property.decorators.is_empty() {
+            return None;
+        }
+        if !matches!(property.key, PropertyKey::StaticIdentifier(_) | PropertyKey::StringLiteral(_)) {
+            return None;
+        }
+        let key = &self.owner.atoms[atom as usize];
+        if key == "__proto__" || numeric_like_key(key) || self.constant_fields.iter().any(|constant| constant.atom == atom) {
+            return None;
+        }
+        let value = match class_field_value(field) {
+            None => FieldConstant::Undefined,
+            Some(initializer) => match super::binding_time::expression(initializer)? {
+                Constant::Undefined => FieldConstant::Undefined,
+                Constant::Null => FieldConstant::Null,
+                Constant::Boolean(value) => FieldConstant::Boolean(value),
+                Constant::Number(value) => FieldConstant::Number(value),
+                Constant::String(text) => FieldConstant::String(self.owner.atom(&text)),
+                _ => return None,
+            },
+        };
+        Some(ConstantField { atom, value })
     }
 
     fn set_class_field_function_name(&mut self, field: ClassField<'_>, value: Register) {
@@ -822,7 +961,7 @@ impl FunctionCompiler<'_, '_> {
         };
         if let Some(key) = computed_key {
             self.emit(
-                Op::SetFunctionNameKey,
+                FUNCTION_NAME_KEY_SET,
                 value,
                 key,
                 0,
@@ -1236,6 +1375,26 @@ fn class_field_storage_name(compiler: &mut Compiler<'_>, key: &PropertyKey<'_>) 
         }
         _ => class_method_name(key),
     }
+}
+
+/// Whether `field` may extend a run of leading constant fields (`leading_constant_field`), judged
+/// by its syntax alone: a public, non-computed, undecorated property of a plain key whose
+/// initializer is absent or folds to a constant. Only whether the run's skip is emitted rests on
+/// it; what the run holds is `leading_constant_field`'s, as each field is reached.
+fn may_extend_constant_run(field: ClassField<'_>) -> bool {
+    let ClassField::Property(property) = field else { return false };
+    !property.computed
+        && !property.r#static
+        && property.decorators.is_empty()
+        && matches!(property.key, PropertyKey::StaticIdentifier(_) | PropertyKey::StringLiteral(_))
+        && property.value.as_ref().is_none_or(|value| binding_time::expression(value).is_some())
+}
+
+/// Whether a field key could name an array index or another canonical numeric string, which
+/// a receiver's layout of constant fields leaves out: every one starts with a digit or `-`,
+/// or is `Infinity` or `NaN`.
+fn numeric_like_key(key: &str) -> bool {
+    key.starts_with(|first: char| first.is_ascii_digit() || first == '-') || key == "Infinity" || key == "NaN"
 }
 
 pub(super) fn computed_field_key_name(start: u32) -> String {

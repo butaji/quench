@@ -16,7 +16,7 @@ impl Heap {
 
 #[cfg(test)]
 mod tests {
-    use crate::heap::{Cell, FunctionKind, FunctionRecord, Heap, Object};
+    use crate::heap::{FunctionKind, FunctionRecord, Heap, Object};
     use crate::Value;
 
     #[test]
@@ -26,9 +26,9 @@ mod tests {
         heap.alloc_object_with_properties(Value::NULL, 1, &[Value::integer(1)]);
         let (properties, inline) = heap.initial_object_storage(2, &[Value::integer(1), Value::integer(2)], false);
         let object = Object::with_property_storage(Value::NULL, properties, inline);
-        heap.alloc(Cell::Function(Box::new(FunctionRecord {
-            object, realm: Value::NULL, env: Value::NULL, kind: FunctionKind::User(crate::vm::ProgramId::MAIN, 0),
-        })));
+        heap.alloc_function(FunctionRecord {
+            object, env: Value::NULL, kind: FunctionKind::User(crate::vm::ProgramId::MAIN, 0),
+        }.with_realm(Value::NULL));
         let shapes = heap.function_shapes();
         assert!(shapes.contains(2), "the function record's shape");
         assert!(!shapes.contains(1), "an object record's shape");

@@ -1,4 +1,39 @@
-use super::name_scope::NameSource;
+//! # Name resolution entry points
+//!
+//! By-name reads walk one chain, the layers `locate_name` searches in order: `with` objects
+//! (`find_with_binding`), then the static layers (`resolve_name_source`: dynamic bindings,
+//! named bindings, locals, global lexicals, outer static owner, active global lexical). The
+//! shared walk is `locate_name` / `locate_name_without_with` (location) followed by
+//! `read_name_location` (value); the entries below differ only in what they do with it.
+//!
+//! - `load_name`: value of a by-name read; unresolvable global throws `ReferenceError`.
+//! - `load_name_call`: value and the `with` object it came from (the call's `this`); throws like `load_name`.
+//! - `load_name_typeof`: `load_name_call` with unresolvable globals read as `undefined`.
+//! - `locate_name`: the core; the `with` object if one holds the name, else the static location. Runs guest code only for `with` has/unscopables.
+//! - `locate_name_without_with`: the core minus `with`; intrinsics first, then `resolve_name_source`.
+//! - `resolve_name_source` (name_scope.rs): static layers only, returns a `NameLocation`, never reads or throws.
+//! - `read_name_location`: the read each location implies (TDZ via `checked_binding_read`, global `ReferenceError`/`undefined`).
+//! - `load_resolved_name`: value of a reference from `resolve_name`; strict unresolvable throws.
+//! - `resolve_name` / `resolve_name_reference`: ResolveName, producing the reference base (object, sentinel or `UNRESOLVABLE_NAME_REFERENCE`); no read.
+//! - `has_name_binding`: boolean existence for strict ResolveName; only guest `has` traps can run.
+//! - `name_binding`: the static `EvalBinding` the caller's metadata or capture chain declares; no value, no guest code.
+//! - `dynamic_binding_slot_in` / `dynamic_binding_in` / `dynamic_binding`: the dynamic record binding (own or outer) as a slot or value.
+//! - `outer_dynamic_binding` / `outer_dynamic_binding_in`: the owning environment and index of an outer dynamic binding.
+//! - `outer_environment_binding`: the static slot of an enclosing environment that declares the name.
+//! - `with_objects_before_binding`, `find_with_binding`, `first_with_binding`, `plain_first_with_binding`, `with_binding`: the `with` objects in scope before the binding, and their has test.
+//! - `store_name`: PutValue by name; creates a sloppy global property when nothing binds the name. `store_resolved_name` does the same for a resolved reference.
+//! - `store_with_binding`, `store_outer_dynamic_binding`, `store_direct_eval_var_binding`, `store_catch_binding`: the write-side layers of the same chain.
+//! - `direct_eval_variable_caller`, `direct_eval_catch_binding`, `direct_eval_var_binding`: a sloppy direct eval's variable scope and Annex B catch bindings.
+//! - `delete_environment_binding`: `delete name`; returns `None` where no layer declares it.
+//! - `lexical_this_owner`, `check_super_call`: the `this` binding, stored under the reserved lexical-this atom.
+//! - `load_global_object_name`, `has_global_object_binding`, `load_global_lexical_binding`, `store_global_lexical_assignment`: the global object and global lexical ends of the chain.
+//! - `dispatch_fast::lane_name_resolution`: a JIT lane's compile-time classifier (global, intrinsic, or general); it reads no bindings and does not walk the chain.
+//!
+//! Not merged into the core on purpose: the write paths (`store_name`, `store_resolved_name`)
+//! interleave PutValue ordering, mapped arguments and `with` side effects that a read does not
+//! have; `resolve_name` produces a reference, not a value, so its result is not a location to read.
+
+use super::name_scope::{DynamicSlot, NameLocation};
 use super::caller_view::CallerView;
 use super::property_key::PropertyKey;
 use super::*;
@@ -10,15 +45,6 @@ const UNRESOLVABLE_NAME_REFERENCE: Value = Value::UNDEFINED;
 // cannot be replaced by a new object property or a binding created by the RHS.
 // ResolveName's other bases are objects, so null names this allocation-free base.
 const GLOBAL_LEXICAL_NAME_REFERENCE: Value = Value::NULL;
-
-/// Where a root projection's plain read found its value (`Vm::plain_capture`): a global var's
-/// property on the global object, or a retained global lexical binding at its index in the
-/// realm's bindings.
-#[derive(Clone, Copy)]
-pub(super) enum RootRead {
-    GlobalVar(Atom),
-    GlobalLexical(Atom, usize),
-}
 
 impl<H: Host> Vm<H> {
     pub(super) fn root_global_var_atom(
@@ -75,32 +101,15 @@ impl<H: Host> Vm<H> {
             .and_then(|atom| self.realm.global_lexical_bindings.get(&atom).copied())
     }
 
-    fn active_global_lexical_binding(&self, atom: Atom) -> Option<(usize, usize)> {
-        self.frames.iter().enumerate().rev().find_map(|(index, frame)| {
-            if frame.function != super::ROOT_FUNCTION_ID || frame.this != self.realm.globals {
-                return None;
-            }
-            let program = self.programs.get(frame.program)?;
-            if program.kind != crate::bytecode::ProgramKind::Script {
-                return None;
-            }
-            let root = program.functions.first()?;
-            if !root.declares_global_lexical(atom) {
-                return None;
-            }
-            let slot = root.local_slot(atom)?;
-            Some((index, slot))
-        })
-    }
-
-    pub(super) fn active_global_lexical_value(&self, atom: Atom) -> Option<Value> {
-        let (index, slot) = self.active_global_lexical_binding(atom)?;
-        let frame = &self.frames[index];
-        if frame.captured {
-            self.heap.environment_slot(frame.env, slot)
-        } else {
-            frame.locals.get(slot).copied()
-        }
+    /// Runs the root activation `root` of `p` to completion, recorded in `active_roots` while it
+    /// runs. The root's frame is pushed at the frame count taken here, so deferred lane activations
+    /// are materialized first: they would otherwise land below the root.
+    pub(super) fn call_root(&mut self, p: &ResidualProgram, root: Value, this: Value) -> Result<Value, JsError> {
+        self.materialize_deferred_lane();
+        self.active_roots.push(self.frames.len());
+        let result = self.call_value(p, root, this, &[]);
+        self.active_roots.pop();
+        result
     }
 
     fn root_declares_binding(&self, program: &ResidualProgram, atom: Atom) -> bool {
@@ -135,15 +144,12 @@ impl<H: Host> Vm<H> {
             ));
         }
         let (env, _) = self.outer_dynamic_binding(caller, atom)?;
-        let Cell::Environment {
+        let crate::heap::EnvironmentRecord {
             function,
             parent,
             scope,
             ..
-        } = self.heap.get(env)?
-        else {
-            return None;
-        };
+        } = self.heap.environment(env)?;
         Some((
             super::ProgramId::from_raw(scope.program()?),
             *function,
@@ -190,7 +196,7 @@ impl<H: Host> Vm<H> {
                 .programs
                 .get(program_id)
                 .ok_or_else(|| JsError("constructor program is unavailable".into()))?;
-            if let Some(initializer) = program.function(function as usize).instance_initializer {
+            if let Some(initializer) = program.function(function as usize).instance_initializer() {
                 let previous = self.replace_active_program(program_id);
                 let result = self.call_user(
                     &program,
@@ -272,12 +278,12 @@ impl<H: Host> Vm<H> {
         // Its lexical fallback remains authoritative after that parent returns.
         let mut depth = 0u16;
         let mut environment = self.caller_capture_env(caller, depth)?;
-        while let Some(Cell::Environment {
+        while let Some(crate::heap::EnvironmentRecord {
             parent,
             function,
             scope,
             ..
-        }) = self.heap.get(environment)
+        }) = self.heap.environment(environment)
         {
             let (program, binding_site_pc) = (&scope.program(), &scope.binding_site_pc());
             if let Some(program) = program.and_then(|id| {
@@ -582,7 +588,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn captured_lexical_this(&self, mut env: Value) -> Option<Value> {
-        while let Some(Cell::Environment { parent, .. }) = self.heap.get(env) {
+        while let Some(crate::heap::EnvironmentRecord { parent, .. }) = self.heap.environment(env) {
             let dynamic_bindings = self.heap.environment_bindings(env)?;
             if let Some((_, value)) = dynamic_bindings
                 .iter()
@@ -674,7 +680,7 @@ impl<H: Host> Vm<H> {
         let mut inherited_count = 0;
         let mut before_binding = !local;
         let mut environment = parent;
-        while let Some(Cell::Environment { parent, scope, .. }) = self.heap.get(environment) {
+        while let Some(crate::heap::EnvironmentRecord { parent, scope, .. }) = self.heap.environment(environment) {
             let with_objects = scope.with_objects();
             inherited_count += with_objects.len();
             before_binding &= boundary != Some(environment);
@@ -696,7 +702,7 @@ impl<H: Host> Vm<H> {
         let declaration_depth = named.filter(|_| local || boundary == named_owner)
             .map_or(0, |binding| {
                 let owner_depth = named_owner.and_then(|owner| {
-                    let Cell::Environment { function, scope, .. } = self.heap.get(owner)? else { return None; };
+                    let crate::heap::EnvironmentRecord { function, scope, .. } = self.heap.environment(owner)?;
                     let pc = &scope.binding_site_pc()?;
                     let program = self.programs.get(super::ProgramId::from_raw(scope.program()?))?;
                     let metadata = program.function_get(*function as usize)?;
@@ -822,12 +828,12 @@ impl<H: Host> Vm<H> {
         mut env: Value,
         atom: Atom,
     ) -> Option<(Value, usize)> {
-        while let Some(Cell::Environment {
+        while let Some(crate::heap::EnvironmentRecord {
             parent,
             function,
             slots,
             scope,
-        }) = self.heap.get(env)
+        }) = self.heap.environment(env)
         {
             let program = &scope.program();
             if *function != u32::MAX
@@ -1034,7 +1040,7 @@ impl<H: Host> Vm<H> {
                 && binding.kind != crate::bytecode::LexicalBindingKind::FunctionName
         });
         let static_owner = lookup.static_owner(self).map(|(env, _)| env);
-        while let Some(Cell::Environment { parent, .. }) = self.heap.get(env) {
+        while let Some(crate::heap::EnvironmentRecord { parent, .. }) = self.heap.environment(env) {
             if lexical_capture && named_owner == Some(env) {
                 return None;
             }
@@ -1074,23 +1080,32 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn dynamic_binding_in(&self, lookup: &NameLookup) -> Option<Value> {
+        self.dynamic_slot_value(lookup.caller, self.dynamic_binding_slot_in(lookup)?)
+    }
+
+    /// The dynamic binding `lookup`'s name has: the activation's own (last declared), else the
+    /// outer one, unless the activation declares the name statically.
+    pub(super) fn dynamic_binding_slot_in(&self, lookup: &NameLookup) -> Option<DynamicSlot> {
         let (caller, atom) = (lookup.caller, lookup.atom);
-        if let Some(value) = self.own_dynamic_bindings(caller).and_then(|bindings| {
-            bindings
-                .iter()
-                .rev()
-                .find_map(|(candidate, value)| (*candidate == atom).then_some(*value))
-        }) {
-            return Some(value);
+        if let Some(index) = self
+            .own_dynamic_bindings(caller)
+            .and_then(|bindings| bindings.iter().rposition(|(candidate, _)| *candidate == atom))
+        {
+            return Some(DynamicSlot::Own(index));
         }
         if self.activation_has_static_binding(caller, atom) {
             return None;
         }
         let (env, index) = self.outer_dynamic_binding_in(lookup)?;
-        self.heap
-            .environment_bindings(env)?
-            .get(index)
-            .map(|(_, value)| *value)
+        Some(DynamicSlot::Outer(env, index))
+    }
+
+    /// The value at `slot` of the dynamic bindings `caller` reads it from (`dynamic_binding_slot_in`).
+    pub(super) fn dynamic_slot_value(&self, caller: &dyn CallerView, slot: DynamicSlot) -> Option<Value> {
+        match slot {
+            DynamicSlot::Own(index) => self.own_dynamic_bindings(caller)?.get(index).map(|(_, value)| *value),
+            DynamicSlot::Outer(env, index) => self.heap.environment_bindings(env)?.get(index).map(|(_, value)| *value),
+        }
     }
 
     fn activation_has_static_binding(&self, caller: &dyn CallerView, atom: Atom) -> bool {
@@ -1135,7 +1150,7 @@ impl<H: Host> Vm<H> {
         }
         let mut env = self.frames[frame].env;
         let static_owner = self.outer_environment_binding(env, atom).map(|(env, _)| env);
-        while let Some(Cell::Environment { parent, .. }) = self.heap.get(env) {
+        while let Some(crate::heap::EnvironmentRecord { parent, .. }) = self.heap.environment(env) {
             let dynamic_bindings = self.heap.environment_bindings(env)?;
             if static_owner == Some(env) {
                 return Some(false);
@@ -1200,7 +1215,8 @@ impl<H: Host> Vm<H> {
         }
         if object == self.realm.globals {
             let owner = self.running_owner();
-            return self.load_name_without_with(p, owner, atom, None, false);
+            let location = self.locate_name_without_with(p, owner, atom);
+            return self.read_name_location(p, owner, atom, location, None, false);
         }
         let key = self.heap.alloc_string(self.atom_name(atom).into());
         if !self.has_property(p, object, key)? {
@@ -1296,8 +1312,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn load_global_lexical_binding(&mut self, p: &ResidualProgram, atom: Atom) -> Result<Value, JsError> {
-        let Some(value) = self.active_global_lexical_value(atom)
-            .or_else(|| self.realm.global_lexical_bindings.get(&atom).copied()) else {
+        let Some(value) = self.realm.global_lexical_bindings.get(&atom).copied() else {
             return Err(self.uninitialized_binding_error(p, atom));
         };
         self.checked_binding_read(p, atom, value)
@@ -1308,19 +1323,7 @@ impl<H: Host> Vm<H> {
         if self.realm.immutable_global_lexical_bindings.contains(&atom) {
             return Err(self.type_error(p, "assignment to constant binding".into()));
         }
-        let active = self.active_global_lexical_binding(atom);
-        if let Some((index, slot)) = active {
-            let frame = &mut self.frames[index];
-            if frame.captured {
-                *self.heap.environment_slot_mut(frame.env, slot)
-                    .ok_or_else(|| JsError("invalid global lexical environment".into()))? = value;
-            } else {
-                frame.locals[slot] = value;
-            }
-        }
-        if active.is_none() || self.realm.global_lexical_bindings.contains_key(&atom) {
-            self.bind_global_lexical(atom, value);
-        }
+        self.bind_global_lexical(atom, value);
         Ok(())
     }
 
@@ -1333,18 +1336,16 @@ impl<H: Host> Vm<H> {
         depth: u16,
     ) -> Option<Value> {
         let mut env = if captured {
-            match self.heap.get(env)? {
-                Cell::Environment { parent, .. } => *parent,
-                _ => return None,
+            match self.heap.reachable_environment(env)? {
+                crate::heap::EnvironmentRecord { parent, .. } => *parent,
             }
         } else {
             env
         };
         env = self.skip_with_environment_layers(env)?;
         for _ in 0..depth {
-            env = match self.heap.get(env)? {
-                Cell::Environment { parent, .. } => *parent,
-                _ => return None,
+            env = match self.heap.reachable_environment(env)? {
+                crate::heap::EnvironmentRecord { parent, .. } => *parent,
             };
             env = self.skip_with_environment_layers(env)?;
         }
@@ -1356,8 +1357,8 @@ impl<H: Host> Vm<H> {
         // With-object and lexical-this wrappers are allocated function-less, and environment
         // clones keep their source's function, so a function's own layer ends the walk before
         // its boxed scope is read.
-        match self.heap.get(env) {
-            Some(Cell::Environment { function, .. }) if *function == u32::MAX => {
+        match self.heap.reachable_environment(env) {
+            Some(crate::heap::EnvironmentRecord { function, .. }) if *function == u32::MAX => {
                 self.skip_function_less_layers(env)
             }
             _ => Some(env),
@@ -1366,12 +1367,12 @@ impl<H: Host> Vm<H> {
 
     #[inline(never)]
     fn skip_function_less_layers(&self, mut env: Value) -> Option<Value> {
-        while let Some(Cell::Environment {
+        while let Some(crate::heap::EnvironmentRecord {
             parent,
             function,
             slots,
             scope,
-        }) = self.heap.get(env)
+        }) = self.heap.environment(env)
         {
             if *function != u32::MAX {
                 debug_assert!(scope.with_objects().is_empty());
@@ -1459,24 +1460,22 @@ impl<H: Host> Vm<H> {
         slots: &crate::heap::EnvironmentSlots,
         root: Option<Option<u32>>,
         slot: u16,
-    ) -> (Option<Value>, Option<RootRead>) {
+    ) -> Option<Value> {
         use crate::bytecode::RootSlotRule;
         let Some(program) = root else {
-            return (self.slot_binding(slots, slot), None);
+            return self.slot_binding(slots, slot);
         };
         let owner = program.map_or(self.active_program, super::ProgramId::from_raw);
         match self.programs.root_slot(owner, slot) {
-            RootSlotRule::Binding => (self.slot_binding(slots, slot), None),
-            RootSlotRule::GlobalLexical(atom) => match self.realm.global_lexical_bindings.get_full(&atom) {
-                Some((index, _, value)) => {
-                    ((!value.is_deleted()).then_some(*value), Some(RootRead::GlobalLexical(atom, index)))
-                }
-                None => (self.slot_binding(slots, slot), None),
+            RootSlotRule::Binding => self.slot_binding(slots, slot),
+            RootSlotRule::GlobalLexical(atom) => match self.realm.global_lexical_bindings.get(&atom) {
+                Some(value) => (!value.is_deleted()).then_some(*value),
+                None => self.slot_binding(slots, slot),
             },
             RootSlotRule::GlobalVar(atom) if self.direct_eval_var_program != Some(owner) => {
-                (self.plain_named_get(self.realm.globals, atom), Some(RootRead::GlobalVar(atom)))
+                self.plain_named_get(self.realm.globals, atom)
             }
-            RootSlotRule::GlobalVar(_) | RootSlotRule::Import => (None, None),
+            RootSlotRule::GlobalVar(_) | RootSlotRule::Import => None,
         }
     }
 
@@ -1488,25 +1487,20 @@ impl<H: Host> Vm<H> {
         captured: bool,
         depth: u16,
     ) -> Option<(&crate::heap::EnvironmentSlots, Option<Option<u32>>)> {
-        let mut cell = self.heap.get(env)?;
+        let mut cell = self.heap.environment(env)?;
         if captured {
-            let Cell::Environment { parent, .. } = cell else {
-                return None;
-            };
-            cell = self.heap.get(*parent)?;
+            let crate::heap::EnvironmentRecord { parent, .. } = cell;
+            cell = self.heap.environment(*parent)?;
         }
         let mut remaining = depth;
         loop {
-            let Cell::Environment {
+            let crate::heap::EnvironmentRecord {
                 parent,
                 function,
                 slots,
                 scope,
                 ..
-            } = cell
-            else {
-                return None;
-            };
+            } = cell;
             if *function == u32::MAX {
                 return None;
             }
@@ -1517,30 +1511,30 @@ impl<H: Host> Vm<H> {
                 ));
             }
             remaining -= 1;
-            cell = self.heap.get(*parent)?;
+            cell = self.heap.environment(*parent)?;
         }
     }
 
     /// Links each function environment's dense storage on the walk from `env` to `depth` to
     /// its parent's (`EnvironmentSlots::link`), for an activation's later outer captures
-    /// (`lane_load_outer_capture`): only where both are function environments other than a
+    /// (`Reads::of_captures`): only where both are function environments other than a
     /// root, whose dense slots a capture walk reads as they are.
     #[inline(never)]
     pub(super) fn link_capture_chain(&self, env: Value, depth: u16) {
         let epoch = self.heap.collection_epoch();
-        let function_storage = |cell: Option<&Cell>| match cell {
-            Some(Cell::Environment { parent, function, slots, .. })
+        let function_storage = |cell: Option<&crate::heap::EnvironmentRecord>| match cell {
+            Some(crate::heap::EnvironmentRecord { parent, function, slots, .. })
                 if *function != u32::MAX && *function != super::ROOT_FUNCTION_ID =>
             {
                 slots.dense_storage().map(|storage| (*parent, storage))
             }
             _ => None,
         };
-        let Some((mut parent, mut storage)) = function_storage(self.heap.get(env)) else {
+        let Some((mut parent, mut storage)) = function_storage(self.heap.environment(env)) else {
             return;
         };
         for _ in 0..depth {
-            let Some((next_parent, parent_storage)) = function_storage(self.heap.get(parent)) else {
+            let Some((next_parent, parent_storage)) = function_storage(self.heap.environment(parent)) else {
                 return;
             };
             // SAFETY: both are dense storages of live heap environments in this collection.
@@ -1563,7 +1557,7 @@ impl<H: Host> Vm<H> {
         if walk.depth != depth
             || walk.cache.env != env
             || walk.cache.captured != captured
-            || walk.cache.epoch != self.heap.collection_epoch()
+            || walk.cache.epoch != self.cache_epochs.gc
             || walk.cache.slots.is_null()
             || walk.cache.root.is_some()
         {
@@ -1583,7 +1577,7 @@ impl<H: Host> Vm<H> {
         captured: bool,
         depth: u16,
     ) -> Option<(*const crate::heap::EnvironmentSlots, Option<Option<u32>>)> {
-        let epoch = self.heap.collection_epoch();
+        let epoch = self.cache_epochs.gc;
         let index = capture_walk_index(env, depth)?;
         let walk = &self.capture_walks[index];
         if walk.depth == depth
@@ -1627,7 +1621,7 @@ impl<H: Host> Vm<H> {
         let cache = &frame.capture_cache;
         (cache.env == frame.env
             && cache.captured == frame.captured
-            && cache.epoch == self.heap.collection_epoch()
+            && cache.epoch == self.cache_epochs.gc
             && !cache.slots.is_null())
         .then_some((cache.slots, cache.root))
     }
@@ -1649,8 +1643,8 @@ impl<H: Host> Vm<H> {
     /// `cached_direct_capture` that also answers a root projection's plain read
     /// (`plain_capture`), for the interpreter's reads, which take the value however held.
     #[inline(always)]
-    pub(super) fn cached_plain_capture(&mut self, frame: usize, depth: u16, slot: u16) -> (Option<Value>, Option<RootRead>) {
-        self.cached_capture(frame, depth, slot, Self::plain_capture).unwrap_or((None, None))
+    pub(super) fn cached_plain_capture(&mut self, frame: usize, depth: u16, slot: u16) -> Option<Value> {
+        self.cached_capture(frame, depth, slot, Self::plain_capture).flatten()
     }
 
     #[inline(always)]
@@ -1670,7 +1664,7 @@ impl<H: Host> Vm<H> {
         let (slots, root) = if let Some(current) = self.current_capture_slots(frame) {
             current
         } else {
-            let epoch = self.heap.collection_epoch();
+            let epoch = self.cache_epochs.gc;
             let (env, captured) = (self.frames[frame].env, self.frames[frame].captured);
             let (slots, root) = self.environment_capture_slots(env, captured, 0)?;
             let slots: *const crate::heap::EnvironmentSlots = slots;
@@ -1712,9 +1706,9 @@ impl<H: Host> Vm<H> {
         // Global var, global lexical and module-import projections exist only for a program's
         // root function, so any other initialized environment slot, and a root slot of a
         // program without projections, is the binding itself.
-        if let Some(Cell::Environment {
+        if let Some(crate::heap::EnvironmentRecord {
             function, scope, ..
-        }) = self.heap.get(env)
+        }) = self.heap.environment(env)
             && (*function != super::ROOT_FUNCTION_ID
                 || self.root_environment_slot_is_binding(scope.program(), slot))
             && let Some(value) = self.heap.environment_slot(env, usize::from(slot))
@@ -1747,9 +1741,7 @@ impl<H: Host> Vm<H> {
     /// lexical binding (`root_global_lexical_value`). `None` for any other projection or
     /// read.
     pub(super) fn plain_projected_root_binding(&self, env: Value, slot: u16) -> Option<Value> {
-        let Cell::Environment { function, scope, .. } = self.heap.get(env)? else {
-            return None;
-        };
+        let crate::heap::EnvironmentRecord { function, scope, .. } = self.heap.environment(env)?;
         let owner_id = scope
             .program()
             .map_or(self.active_program, super::ProgramId::from_raw);
@@ -1770,15 +1762,12 @@ impl<H: Host> Vm<H> {
         env: Value,
         slot: u16,
     ) -> Result<Value, JsError> {
-        let Cell::Environment {
+        let crate::heap::EnvironmentRecord {
             function, scope, ..
         } = self
             .heap
-            .get(env)
-            .ok_or_else(|| JsError("invalid capture".into()))?
-        else {
-            return Err(JsError("invalid capture".into()));
-        };
+            .environment(env)
+            .ok_or_else(|| JsError("invalid capture".into()))?;
         let program = scope.program();
         let slot = usize::from(slot);
         let owner_id = program
@@ -1859,9 +1848,9 @@ impl<H: Host> Vm<H> {
         slot: u16,
         value: Value,
     ) -> bool {
-        let Some(Cell::Environment {
+        let Some(crate::heap::EnvironmentRecord {
             function, scope, ..
-        }) = self.heap.get(env)
+        }) = self.heap.environment(env)
         else {
             return false;
         };
@@ -1894,12 +1883,12 @@ impl<H: Host> Vm<H> {
         slot: u16,
         value: Value,
     ) -> bool {
-        let Some(Cell::Environment {
+        let Some(crate::heap::EnvironmentRecord {
             function,
             scope,
             slots,
             ..
-        }) = self.heap.get_mut(env)
+        }) = self.heap.environment_mut(env)
         else {
             return false;
         };
@@ -1925,9 +1914,9 @@ impl<H: Host> Vm<H> {
         program: super::ProgramId,
         env: Value,
     ) -> bool {
-        let Some(Cell::Environment {
+        let Some(crate::heap::EnvironmentRecord {
             function, scope, ..
-        }) = self.heap.get(env)
+        }) = self.heap.environment(env)
         else {
             return false;
         };
@@ -1942,8 +1931,8 @@ impl<H: Host> Vm<H> {
         slot: u16,
         value: Value,
     ) -> Result<(), JsError> {
-        let (function, program, deleted) = match self.heap.get(env) {
-            Some(Cell::Environment {
+        let (function, program, deleted) = match self.heap.environment(env) {
+            Some(crate::heap::EnvironmentRecord {
                 function, scope, ..
             }) => (
                 *function,
@@ -2006,25 +1995,6 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("invalid capture slot".into()))?;
         *slot = value;
         self.store_environment_mapped_argument(owner, function, env, slot_index, value);
-        if let Some(atom) = self.root_global_lexical_atom(owner, function, slot_index) {
-            if self.realm.global_lexical_bindings.contains_key(&atom) {
-                self.bind_global_lexical(atom, value);
-            }
-            let owner = self.frames.iter().rposition(|active| {
-                active.function == super::ROOT_FUNCTION_ID && active.program == owner_id
-            });
-            if let Some(owner) = owner {
-                let (owner_env, captured) = (self.frames[owner].env, self.frames[owner].captured);
-                if captured && owner_env != env {
-                    if let Some(slot) = self.heap.environment_slot_mut(owner_env, slot_index) {
-                        *slot = value;
-                    }
-                } else if !captured
-                    && let Some(slot) = self.frames[owner].locals.get_mut(slot_index) {
-                        *slot = value;
-                    }
-            }
-        }
         if function == 0
             && let Some(atom) = atom
             && !owner.function(0).declares_global_lexical(atom)
@@ -2057,23 +2027,65 @@ impl<H: Host> Vm<H> {
         Some(self.native_value(native))
     }
 
-    fn load_name_without_with(
+    /// Where a by-name read of `atom` in `owner` lands, with the `with` objects searched first.
+    /// This is the one lookup the by-name loads share (`load_name_call`).
+    pub(super) fn locate_name(
         &mut self,
         p: &ResidualProgram,
         owner: VarOwner,
         atom: Atom,
+    ) -> Result<NameLocation, JsError> {
+        if let Some((object, key)) = self.find_with_binding(p, owner, atom)? {
+            return Ok(NameLocation::WithObject(object, key));
+        }
+        Ok(self.locate_name_without_with(p, owner, atom))
+    }
+
+    /// `locate_name` without the object environments: an internal name's intrinsic, else the
+    /// static and dynamic layers (`resolve_name_source`).
+    pub(super) fn locate_name_without_with(&mut self, p: &ResidualProgram, owner: VarOwner, atom: Atom) -> NameLocation {
+        if self.atom_class(atom).contains(AtomClass::INTERNAL)
+            && let Some(value) = self.intrinsic_name_value(atom)
+        {
+            return NameLocation::Intrinsic(value);
+        }
+        self.resolve_name_source(p, owner, atom)
+    }
+
+    /// The value a located by-name read of `atom` yields. `cache` and `allow_unresolvable` apply
+    /// to the global object only (`load_global_object_name`).
+    fn read_name_location(
+        &mut self,
+        p: &ResidualProgram,
+        owner: VarOwner,
+        atom: Atom,
+        location: NameLocation,
         cache: Option<u16>,
         allow_unresolvable: bool,
     ) -> Result<Value, JsError> {
-        if self.atom_class(atom).contains(AtomClass::INTERNAL)
-            && let Some(value) = self.intrinsic_name_value(atom) {
-                return Ok(value);
+        let value = match location {
+            NameLocation::WithObject(object, key) => {
+                return self.get_with_binding_value(p, owner, object, key, atom);
             }
-        match self.resolve_name_source(p, owner, atom) {
-            NameSource::Value(value) => self.checked_binding_read(p, atom, value),
-            NameSource::Binding(binding) => self.load_name_binding(p, owner, binding),
-            NameSource::GlobalObject => self.load_global_object_name(p, atom, cache, allow_unresolvable),
-        }
+            NameLocation::Intrinsic(value) => return Ok(value),
+            NameLocation::Named(binding) => return self.load_name_binding(p, owner, binding),
+            NameLocation::Global => {
+                return self.load_global_object_name(p, atom, cache, allow_unresolvable);
+            }
+            NameLocation::FrameLocal(slot) => self.owner_locals(owner)[slot],
+            NameLocation::EnvironmentSlot(env, slot) => {
+                self.heap.environment_slot(env, slot).unwrap_or(Value::UNDEFINED)
+            }
+            NameLocation::Dynamic(slot) => self
+                .dynamic_slot_value(self.owner_view(owner), slot)
+                .ok_or_else(|| JsError("invalid dynamic binding".into()))?,
+            NameLocation::GlobalLexical(name) => *self
+                .realm
+                .global_lexical_bindings
+                .get(&name)
+                .ok_or_else(|| JsError("invalid global lexical binding".into()))?,
+        };
+        self.checked_binding_read(p, atom, value)
     }
 
     /// Whether `atom` loaded by name in the executing activation can only denote a global
@@ -2081,7 +2093,7 @@ impl<H: Host> Vm<H> {
     /// dynamic scope access, so the compiler resolved every lexical binding statically; the
     /// code runs in the global environment, as script code or a global-scope eval; and the
     /// realm declares no global lexical binding of that name, which every started script
-    /// records before it runs. None of the dynamic layers `load_name_without_with` searches
+    /// records before it runs. None of the dynamic layers `locate_name_without_with` searches
     /// can then hold the name.
     #[inline(always)]
     pub(super) fn names_resolve_to_global_object(&self, p: &ResidualProgram, owner: VarOwner, atom: Atom) -> bool {
@@ -2139,15 +2151,17 @@ impl<H: Host> Vm<H> {
         if self.scope_names.probe.is_some() {
             self.settle_name_probe(p, atom);
         }
-        if let Some((object, key)) = self.find_with_binding(p, owner, atom)? {
-            return Ok((self.get_with_binding_value(p, owner, object, key, atom)?, object));
-        }
-        Ok((
-            self.load_name_without_with(p, owner, atom, cache, allow_unresolvable)?,
-            Value::UNDEFINED,
-        ))
+        let location = self.locate_name(p, owner, atom)?;
+        let this = match location {
+            NameLocation::WithObject(object, _) => object,
+            _ => Value::UNDEFINED,
+        };
+        let value = self.read_name_location(p, owner, atom, location, cache, allow_unresolvable)?;
+        Ok((value, this))
     }
 
+    /// `load_name_call` where an unresolvable global reads as `undefined` (`typeof name`). It
+    /// shares `load_name_call`'s single locate-then-read, so nothing is looked up twice.
     pub(super) fn load_name_typeof(
         &mut self,
         p: &ResidualProgram,
@@ -2332,7 +2346,10 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<bool, JsError> {
-        let Some(()) = self.frames.iter().rev().find_map(|frame| {
+        // Script and eval roots are the only ROOT_FUNCTION_ID activations whose `this` is the
+        // global object; both are recorded in `active_roots` (`call_root`, `call_eval_closure`).
+        let Some(()) = self.active_roots.iter().rev().find_map(|&index| {
+            let frame = self.frames.get(index)?;
             if frame.function != super::ROOT_FUNCTION_ID || frame.this != self.realm.globals {
                 return None;
             }
@@ -2370,7 +2387,11 @@ impl<H: Host> Vm<H> {
         }
         // Each script/eval activation has its own local layout. The global
         // object owns the binding; refresh every active projection in this realm.
-        for frame in self.frames.iter_mut() {
+        // Only script and eval roots (`active_roots`) project global vars into their locals.
+        for &index in &self.active_roots {
+            let Some(frame) = self.frames.get_mut(index) else {
+                continue;
+            };
             if frame.function != super::ROOT_FUNCTION_ID || frame.this != object {
                 continue;
             }

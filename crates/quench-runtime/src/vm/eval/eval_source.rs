@@ -1,34 +1,77 @@
 //! What an eval's program is compiled with and keeps of its source.
 use super::*;
 
-/// What an eval's program keeps of `source`, the eval's string, when `text`, the text it
-/// compiles, is all of it: the string's shared ASCII storage, or the rope itself when the
-/// string is an unflattened ASCII rope (`SourceText::Rope`), whose text the eval compiled
-/// from a copy it did not keep in the string.
-pub(super) fn shared_text(source: &JsString, text: &str) -> Option<crate::bytecode::SourceText> {
-    if let Some(rope) = crate::bytecode::RopeText::of(source) {
-        return (source.len() == text.len()).then_some(crate::bytecode::SourceText::Rope(rope));
-    }
-    source
-        .existing_flat()
-        .and_then(crate::vm::wtf16::FlatUnits::shared_ascii)
-        .filter(|(shared, range)| *range == (0..shared.len()) && shared.len() == text.len())
-        .map(|(shared, _)| crate::bytecode::SourceText::Local(shared.clone()))
+/// The storage of an eval's string `value` that its program may keep in place of a copy of
+/// the text it compiled (`Vm::keep_eval_text`).
+pub(super) struct SharedText {
+    value: Value,
+    /// The string as an unflattened ASCII rope, which the program keeps as it is when it
+    /// compiled the rope's whole text (`SourceText::Rope`).
+    rope: Option<crate::bytecode::RopeText>,
+    /// The string's shared ASCII storage and the bytes of it the string covers.
+    ascii: Option<(std::rc::Rc<str>, std::ops::Range<usize>)>,
 }
 
-/// Makes `residual` keep `shared` (`shared_text`) in place of its copy of the same text, as
-/// V8's Script keeps its source string (inspector code-load: 2 MB per eval, each kept by the
-/// function it defines). A rope is compared by length: its text is the compiled text, and a
-/// compare would make it flat.
-pub(super) fn keep_shared_text(residual: &mut ResidualProgram, shared: Option<crate::bytecode::SourceText>) {
-    if let (Some(shared), Some(source)) = (shared, residual.source.as_mut())
-        && source.base == 0
-        && match &shared {
-            crate::bytecode::SourceText::Rope(_) => source.text.len() == shared.len(),
-            _ => *source.text == *shared,
+impl SharedText {
+    /// The string's ASCII storage, when the string covers all of it: the text a program
+    /// compiled from the string may keep as it is (`Engine::specialize_eval_with_context`).
+    pub(super) fn whole_ascii(&self) -> Option<std::rc::Rc<str>> {
+        let (storage, range) = self.ascii.as_ref()?;
+        (*range == (0..storage.len())).then(|| storage.clone())
+    }
+}
+
+/// What the program compiled from `text`, all of the eval string `source` (the heap string
+/// `value`), may keep of that string's storage instead of its own copy.
+pub(super) fn shared_text(value: Value, source: &JsString, text: &str) -> Option<SharedText> {
+    if let Some(rope) = crate::bytecode::RopeText::of(source) {
+        return (source.len() == text.len()).then_some(SharedText { value, rope: Some(rope), ascii: None });
+    }
+    let ascii = source.existing_flat().and_then(crate::vm::wtf16::FlatUnits::shared_ascii)?;
+    (ascii.1.len() == text.len()).then(|| SharedText { value, rope: None, ascii: Some((ascii.0.clone(), ascii.1)) })
+}
+
+/// Longest compiler wrapper around an eval's text (a method eval's strict directive and
+/// method head, `Engine::specialize_eval_with_context`) whose text `keep_eval_text` finds.
+const WRAPPER_BYTES: usize = 64;
+
+/// Where `body` sits in `text`, a compiler wrapper of at most `WRAPPER_BYTES` around it.
+fn wrapped_offset(text: &str, body: &str) -> Option<usize> {
+    let extra = text.len().checked_sub(body.len()).filter(|extra| *extra <= WRAPPER_BYTES)?;
+    let head = &body.as_bytes()[..body.len().min(WRAPPER_BYTES)];
+    (0..=extra).find(|&start| text.as_bytes()[start..].starts_with(head) && text.get(start..start + body.len()) == Some(body))
+}
+
+impl<H: Host> Vm<H> {
+    /// Makes `residual`, compiled from all of an eval string's text, and that string keep one
+    /// buffer, as V8's Script keeps its source string (inspector code-load: 2 MB per eval;
+    /// babylonjs-startup: 8.5 MB per iteration, each program kept to the end of the job by a
+    /// WeakRef target). The program keeps the string's storage when it compiled exactly that
+    /// text (a rope by length: comparing would make it flat); a program that compiled the text
+    /// inside a wrapper (an eval in a method) keeps its own text, and the string, with the
+    /// eval caches' copies of it in `key` and `cached`, views the text inside it instead.
+    pub(super) fn keep_eval_text(&mut self, residual: &mut ResidualProgram, shared: Option<SharedText>, key: Option<&mut DirectEvalKey>, cached: Option<&mut EvalSource>) {
+        let (Some(shared), Some(source)) = (shared, residual.source.as_mut()) else { return };
+        if source.base != 0 {
+            return;
         }
-    {
-        source.text = shared;
+        if let Some(rope) = shared.rope {
+            if source.text.len() == rope.len_units() {
+                source.text = crate::bytecode::SourceText::Rope(rope);
+            }
+            return;
+        }
+        let Some((storage, range)) = shared.ascii else { return };
+        if *source.text == *storage {
+            source.text = crate::bytecode::SourceText::Local(storage);
+            return;
+        }
+        let crate::bytecode::SourceText::Local(own) = &source.text else { return };
+        let Some(start) = (range == (0..storage.len())).then(|| wrapped_offset(own, &storage)).flatten() else { return };
+        let view = JsString::from_shared_text(own).substring(start..start + storage.len());
+        if self.heap.share_string_storage(shared.value, view.clone()) {
+            key.into_iter().map(|key| &mut key.source).chain(cached).for_each(|source| source.text = view.clone());
+        }
     }
 }
 
@@ -72,6 +115,10 @@ impl<H: Host> Vm<H> {
         } else {
             Vec::new()
         };
+        // Eval code that can name private names is shared by every caller of its key (the
+        // direct eval cache), whatever class evaluation made the caller: its sites may meet
+        // more than one home, so the names it sees are shared (`PrivateClasses::share`).
+        self.share_eval_private_names(&private_names);
         let caller_has_global_variables = self.eval_caller().is_none() || self.running_global_code();
         // Annex B only concerns function declarations, which the text then names.
         let annex_b_forbidden_names = if source.contains("function") {
@@ -96,8 +143,11 @@ impl<H: Host> Vm<H> {
     /// The host's kept compilation of the script `source`, which compiles from its text alone:
     /// it is no direct eval, so it has no caller context, private names or Annex B restrictions.
     pub(super) fn kept_host_script(&mut self, source_name: &str, mode: &str, source: &str) -> Option<ResidualProgram> {
-        let bytes = self.host.kept_compiled_program(source_name, &[mode, source])?;
-        let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(source));
+        let entry = self.host.kept_compiled_program(source_name, &[mode, source])?;
+        // An entry that keeps its source (`append_kept_source`) is read in place, as a
+        // compiled host script's is; any other holds none, and the program keeps one copy.
+        let (bytes, text) = crate::bytecode::split_kept_source(entry, source.len())
+            .unwrap_or_else(|entry| (entry, crate::bytecode::SourceText::Shared(std::sync::Arc::from(source))));
         let specialized = self.specialized;
         self.decode_cached_program(bytes, text, 0, source_name, specialized).ok()
     }

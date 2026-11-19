@@ -80,7 +80,9 @@ setting! {
         StorageCensus = "storage-census",
         Shapes = "shapes",
         Rewrite = "rewrite",
-        /// Every loaded program's finished bytecode, printed at exit.
+        /// Every loaded program's finished bytecode, printed at exit; `bytecode=lanes` prints
+        /// each function's lane view instead (`Vm::report_lane_plan`), the static input of the
+        /// instruction-count predictor (`quench-gate --only ir-predict`).
         Bytecode = "bytecode",
         JsJit = "js-jit",
         /// BaseJIT region exits by instruction, most frequent first (printed at exit).
@@ -119,11 +121,9 @@ setting! {
     "QUENCH_DEV", Dev {
         /// The memory-first heap policy in place of the default.
         MemoryFirst = "memory-first",
-        /// Array backings take the double element kind (`heap::array_elements::DOUBLE_LEN`):
-        /// for the readers that consume it while compiled tiers do not guard its flag yet.
-        DoubleElements = "double-elements",
-        /// The lane prologue specializes declined functions into frameless lane bodies.
-        JsLaneMethods = "js-lane-methods",
+        /// Array backings never take the double element kind (`heap::array_elements::DOUBLE_LEN`),
+        /// which they otherwise take on their first Number that is no int32.
+        NoDoubleElements = "no-double-elements",
         /// A requested compile runs on the requesting thread and installs at once, as in tests:
         /// instruction counts then see the code a run installs.
         SyncCompile = "sync-compile",
@@ -146,10 +146,6 @@ setting! {
         WasmRootOnly = "wasm-root-only",
         /// Tiering starts at the selected root and promotes hot fallback callees.
         WasmRootFirst = "wasm-root-first",
-        /// Full collections that pass the concurrent-cycle gates (`Heap::concurrent_cycle_refusal`)
-        /// may mark concurrently with the mutator: always (`=on`, or no value), where measured to
-        /// pay (`=adaptive`), or never (`=off`).
-        ConcurrentGc = "concurrent-gc",
         /// Functions of a direct eval's source compile on first call.
         DirectEvalStubs = "direct-eval-stubs",
         /// Old records keep reference counts, and minor collections free the records whose

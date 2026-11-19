@@ -1,5 +1,5 @@
 //! Per-iteration `let` bindings that closures capture, across yields and awaits: the window's
-//! `CloneEnv` copies the environment its closures made (`lane_clone_window_env`), the closures of
+//! `CloneEnv` copies the environment its closures made (`clone_environment_of`), the closures of
 //! earlier iterations keeping theirs, and no resume makes a frame. Compiled runs agree with the
 //! interpreter's.
 use super::window_steps::tests::{agree, run};

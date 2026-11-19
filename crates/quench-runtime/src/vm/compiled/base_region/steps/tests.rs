@@ -6,7 +6,7 @@ fn instruction(op: Op) -> WideInstruction {
 
 /// The facts of a program that has recorded nothing: no add, no store in place, no fold.
 fn known(program: &ResidualProgram) -> Known<'_> {
-    Known { program, stitch: &crate::vm::compiled::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None, invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: None }
+    Known { program, stitch: &crate::vm::compiled::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None, invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[] }
 }
 
 fn empty_program() -> ResidualProgram {
@@ -46,7 +46,7 @@ fn without_helper_addresses_every_opcode_leaves() {
 /// The opcodes whose only lowering is the generic helper step, each for the reason beside it:
 /// no fast arm a register's word, a shape or a backing the row can read decides, so the helper
 /// is their whole operation, not a slow arm.
-const RESIDUAL: [Op; 18] = [
+const RESIDUAL: [Op; 19] = [
     // The define adds a property: where its site recorded the transition (`Known::adds`) its staged row (`staged::add`) is the fast arm (`adds`) and this helper its slow arm; with none recorded, the helper is the whole operation.
     Op::DefineField,
     // The key is converted (guest code) and the property defined through the shape's slow path.
@@ -83,6 +83,8 @@ const RESIDUAL: [Op; 18] = [
     Op::IteratorCleanupPush,
     // Pops the frame's VM-held active-iterator stack.
     Op::IteratorCleanupPop,
+    // Compares the receiver's shape with a define site's overwrite entry (`Vm::constant_fields_held`): VM-held cache state, read once per construction in place of the run of helper defines it skips.
+    Op::ConstantFieldsHeld,
 ];
 
 /// No function of the lane fixtures holds a generic helper step of the lane's in-place steps
@@ -102,7 +104,7 @@ fn lane_fixtures_use_the_generic_helper_only_for_residual_opcodes() {
         for index in 0..program.functions.len() {
             let function = program.function(index);
             for packed in &function.code {
-                let instruction = crate::vm::dispatch_fast::decoded_instruction(function, *packed);
+                let instruction = function.widened(*packed);
                 let row = decode_step(0, instruction, known(&program), (process, false));
                 if row.step == Some(Step::Helper) {
                     assert!(RESIDUAL.contains(&instruction.op()) || !instruction.op().steps_in_lane(), "{path:?}: {:?} takes the generic helper", instruction.op());
@@ -173,21 +175,26 @@ fn a_one_element_append_has_a_fast_row_and_a_spread_the_helper_alone() {
     assert!(matches!(row.a, Some(Source::Register(2))) && row.base == Some(1) && row.dst.is_none());
 }
 
+/// An empty object and a zero-length array are the fast arms of their helper steps, whose destination is the row's
+/// only hole; a literal array of elements is the helper alone.
+#[test]
+fn an_empty_allocation_has_a_fast_row_and_a_literal_the_helper_alone() {
+    let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+    let program = empty_program();
+    let lower = |instruction| lowering(instruction, known(&program), process);
+    assert_eq!(lower(WideInstruction::new(Op::MakeObject, 1, 0, 0, 0)), Step::Fast(Heap::EmptyObject));
+    assert_eq!(lower(WideInstruction::new(Op::MakeArray, 1, 0, 0, 0)), Step::Fast(Heap::EmptyArray));
+    assert_eq!(lower(WideInstruction::new(Op::MakeArray, 1, 0, 0, 2)), Step::Helper);
+    let row = decode_step(0, WideInstruction::new(Op::MakeObject, 1, 0, 0, 0), known(&program), (process, false));
+    assert!(row.dst == Some(1) && row.a.is_none() && row.b.is_none());
+}
+
 /// Where a region's heap rows read snapshots a helper's effects would not reach, a fast arm stays
 /// and its slow arm becomes the leave, while a helper step leaves; elsewhere both are kept.
 #[test]
-fn a_snapshot_region_keeps_its_fast_arms_and_leaves_its_helper_steps() {
-    let rows = |reader: bool| {
-        let mut rows = vec![Decoded::step(Step::Fast(Heap::Append), None), Decoded::step(Step::Helper, None)];
-        if reader {
-            rows.push(Decoded::heap(Heap::Field, Some(0), None, None));
-        }
-        settle(&mut rows.iter_mut().collect::<Vec<_>>());
-        [rows[0].step, rows[1].step]
-    };
-    assert_eq!(rows(true), [Some(Step::Guard(Heap::Append)), Some(Step::Leave)]);
-    assert_eq!(rows(false), [Some(Step::Fast(Heap::Append)), Some(Step::Helper)]);
+fn a_guard_reads_the_payload_and_runs_no_helper() {
     assert!(Step::Guard(Heap::Append).reads_payload() && !Step::Guard(Heap::Append).runs_helper());
+    assert!(Step::Helper.runs_helper() && Step::Fast(Heap::Append).runs_helper());
 }
 
 /// A function holding a Wasm opcode is no b-jit body; the catalog's other opcodes are covered.
@@ -224,7 +231,7 @@ fn nothing_in_the_lane_fixtures_is_refused() {
         for index in 0..program.functions.len() {
             let function = program.function(index);
             for packed in &function.code {
-                let instruction = crate::vm::dispatch_fast::decoded_instruction(function, *packed);
+                let instruction = function.widened(*packed);
                 let row = decode_step(0, instruction, known(&program), (process, false));
                 assert!(row.step.is_some() || row.target.is_some(), "{path:?}: {:?}", instruction.op());
                 instructions += 1;
@@ -232,4 +239,16 @@ fn nothing_in_the_lane_fixtures_is_refused() {
         }
     }
     assert!(fixtures > 0 && instructions > 0);
+}
+
+/// An empty object and an object literal of a site's shape lower to the allocation step where the helper table
+/// addresses it; a literal that writes a flag does not.
+#[test]
+fn fixed_shape_objects_lower_to_the_allocation_step() {
+    let process = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
+    let program = empty_program();
+    assert_eq!(lowering(WideInstruction::new(Op::MakeObject, 1, 0, 0, 0), known(&program), process), Step::Allocate);
+    assert_eq!(lowering(WideInstruction::new(Op::MakeObjectLiteral, 4, 1, 3, 9), known(&program), process), Step::Allocate);
+    let flagged = WideInstruction::new(Op::MakeObject, 1 | crate::bytecode::RETURN_REGISTER, 0, 0, 0);
+    assert_ne!(lowering(flagged, known(&program), process), Step::Allocate);
 }

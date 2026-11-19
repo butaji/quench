@@ -1,27 +1,40 @@
 use super::*;
 use crate::bytecode::{
-    FieldLayout, ImmediateRole, InstructionField, Superinstruction, WideInstruction,
+    ControlFlowLayout, FieldLayout, ImmediateRole, InstructionField, Superinstruction, Traits, WideInstruction,
+    negated_jump, op_table, row_ops, strict_variant, the_op, widen, OPCODE_COUNT,
 };
 use super::liveness::{RegisterSet, register_bit};
 mod copies;
 use copies::forward_move_sources;
+mod loop_constants;
+pub(super) use loop_constants::hoist_loop_constants;
+pub(super) use crate::bytecode::OpSet;
 
-#[derive(Clone, Copy)]
-struct Rule {
-    pattern: [Op; 2],
-    recipe: Recipe,
-}
+/// The one op each role names, derived from the catalog. The rewriter spells its ops by role,
+/// never by name: `NOP` is the filler of removed instructions, `MOVE` the register copy.
+pub(super) const NOP: Op = the_op(Traits::NO_OP);
+const MOVE: Op = the_op(Traits::REGISTER_COPY);
+const RETURN: Op = the_op(Traits::RETURN_VALUE);
+const JUMP: Op = the_op(Traits::UNCONDITIONAL_JUMP);
+const JUMP_BINARY_FALSE: Op = the_op(Traits::FUSED_BINARY_JUMP);
+const SUPER_CONST_ARRAY_OBJECT2: Op = the_op(Traits::FUSED_CONST_ARRAY_OBJECT2);
+/// The `[MakeConstArray, Binary, Binary, MakeObject2]` window `SUPER_CONST_ARRAY_OBJECT2` fuses,
+/// in order, each element named by its trait.
+pub(super) const CONST_ARRAY_OBJECT2: [Op; 4] = [
+    the_op(Traits::CONST_ARRAY_OBJECT2_HEAD),
+    the_op(Traits::CONST_ARRAY_OBJECT2_OPERAND),
+    the_op(Traits::CONST_ARRAY_OBJECT2_OPERAND),
+    the_op(Traits::CONST_ARRAY_OBJECT2_TAIL),
+];
+/// Each jump's opposite-polarity twin (`JumpTrue` and `JumpFalse`), and each sloppy property store's
+/// strict form, both derived from the rows' traits and encodings.
+const NEGATED_JUMPS: [Option<Op>; OPCODE_COUNT] = op_table!(None, op => negated_jump(op));
+const STRICT_VARIANTS: [Option<Op>; OPCODE_COUNT] = op_table!(None, op => strict_variant(op));
 
 macro_rules! fusion_recipes {
-    ($($recipe:ident: [$($first:ident, $second:ident);+ $(;)?] => $handler:expr;)+) => {
+    ($($recipe:ident => $handler:expr;)+) => {
         #[derive(Clone, Copy)]
         enum Recipe { $($recipe),+ }
-
-        const RULES: &[Rule] = &[
-            $($(Rule {
-                pattern: [Op::$first, Op::$second], recipe: Recipe::$recipe,
-            }),+),+
-        ];
 
         fn apply_recipe(
             recipe: Recipe,
@@ -38,8 +51,12 @@ macro_rules! fusion_recipes {
 
 // Ordered recipe entries are the complete overlap and semantic policy. The
 // macro derives recipe identity, pattern rows, and recipe dispatch together.
+// An empty pattern list means the recipe's pairs are derived from the opcode rows
+// (`rules_for`), never listed by hand.
 fusion_recipes! {
-    ConstantLeft: [LoadConst, Binary] =>
+    // Derived: a `CONSTANT_PRODUCERS` op, then an op whose B and C are `Operand` slots
+    // (`CONSTANT_LEFT_SITES`). Left is tried before right, as the listed pairs were.
+    ConstantLeft =>
         |first: Instr, mut second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             let result = first.result_register();
             let constant = Operand::constant(first.constant_index() as u32)?;
@@ -50,19 +67,23 @@ fusion_recipes! {
             }
             Some(second)
         };
-    ConstantRight: [LoadConst, Binary] =>
+    // Derived: a `CONSTANT_PRODUCERS` op, then any op whose C is an `Operand` (`CONSTANT_RIGHT_SITES`).
+    ConstantRight =>
         |first: Instr, mut second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if second.operand_c().register_index() != Some(first.result_register()) { return None; }
             second.set_operand_c(Operand::constant(first.constant_index() as u32)?)?;
             Some(second)
         };
-    StoreLoadLocal: [StoreLocal, LoadLocal] =>
+    // Derived: a `FRAME_LOCAL_STORE` op, then a `FRAME_LOCAL_LOAD` op of the same slot. The slot
+    // check stays here, a per-instruction condition.
+    StoreLoadLocal =>
         |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if first.optional_register_b().is_some() || first.local_slot() != second.local_slot() { return None; }
             first.set_optional_register_b(Some(second.result_register()));
             Some(first)
         };
-    LocalField: [LoadLocal, GetField; LoadLocalPlain, GetField] =>
+    // Derived: a `LOCAL_READERS` op, then a `FIELD_LOOKUPS` op reading its result as the base.
+    LocalField =>
         |first: Instr, mut second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if first.numeric_local_store_target().is_some() || second.writes_current_this() {
                 return None;
@@ -78,37 +99,38 @@ fusion_recipes! {
             second.try_set_b(crate::bytecode::FieldBase::local(local)?.0)?;
             Some(second)
         };
-    ProducerMove: [
-        LoadConst, Move; LoadLocal, Move; LoadEnvLocal, Move; LoadCapture, Move;
-        LoadName, Move; Binary, Move; Unary, Move; GetField, Move; IncDec, Move;
-        Call, Move; CallKnown, Move; CallMethod, Move; CallThisMethod, Move; Construct, Move;
-        LoadThis, Move; MakeObject2, Move; SuperConstArrayObject2, Move
-    ] => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
+    // Derived like `ReturnResult`: every op whose row writes one plain result (`plain_producer`).
+    ProducerMove => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
         if second.register_b() != first.result_register() { return None; }
         first.set_result_register(second.result_register());
         Some(first)
     };
-    BinaryJumpFalse: [Binary, JumpFalse] =>
+    // Derived: a `BINARY_RESULT` op, then a `JUMPS_ON_FALSE` op. The comparison-only condition is a
+    // property of the operator (`fuses_with_jump_operator`), a per-instruction check kept here.
+    BinaryJumpFalse =>
         |first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if first.result_register() != second.register_a() { return None; }
+            // Only a comparison fuses (`ast::fuses_with_jump`): an arithmetic or bitwise
+            // result stays a Number row whose truthiness the jump tests.
+            if !super::ast::fuses_with_jump_operator(first.binary_operator()) { return None; }
             Some(Instr::new(
-                Op::JumpBinaryFalse,
+                JUMP_BINARY_FALSE,
                 first.binary_operator() as u16,
                 first.operand_b().0,
                 first.operand_c().0,
                 second.jump_target(),
             ))
         };
-    ReturnResult: [
-        Binary, Return; Unary, Return; GetField, Return; Call, Return; CallKnown, Return;
-        CallMethod, Return; CallThisMethod, Return; Construct, Return;
-        MakeObject2, Return; MakeObjectLiteral, Return; SuperConstArrayObject2, Return
-    ] => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
+    // Its pairs are derived, not listed: every op whose row declares a returnable result
+    // (`ResultLayout::allows_return`) followed by the `Return` of that result (`rules_for`).
+    ReturnResult => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
         if first.result_register() != second.register_a() { return None; }
         first.set_returns_from_frame();
         Some(first)
     };
-    GetSetThis: [GetField, SetThisField] =>
+    // Derived: a `ReturnableAndThis` op (`allows_this_write`, which is `GetField` alone), then a
+    // `THIS_FIELD_SINK` op. `SetThisFieldStrict` is untagged, so a strict store stays a separate op.
+    GetSetThis =>
         |mut first: Instr, second: Instr, fields: &mut SiteTable<'_, FieldSite>| {
             if first.result_register() != second.register_a() { return None; }
             let sink = (second.atom_index(), second.cache_site_index());
@@ -127,7 +149,7 @@ fusion_recipes! {
                         first: (atom, cache_site),
                         second: None,
                         sink: Some(sink),
-                        sources: [None; 3],
+                        sources: [FieldSite::NO_SOURCE; 3],
                     });
                     first.set_field_lookup_site(fields.len() - 1);
                 }
@@ -142,6 +164,7 @@ pub(super) fn apply(
     methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &mut SiteTable<'_, FieldSite>,
     superinstructions: &mut SiteTable<'_, Superinstruction>,
+    scratch: &mut CompileScratch,
 ) {
     let input = function.code.len();
     thread_jumps(function);
@@ -152,14 +175,17 @@ pub(super) fn apply(
     }
     // Each pass hands the liveness of the code it leaves unchanged to the next.
     let mut liveness = None;
-    if coalesce_distant_producer_moves(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness) {
+    if coalesce_distant_producer_moves(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness, scratch) {
         changed_passes += 1;
     }
-    if forward_move_sources(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness) {
+    if forward_move_sources(function, methods, field_sites.as_slice(), superinstructions.as_slice(), &mut liveness, scratch) {
         changed_passes += 1;
     }
-    if rewrite_once(function, methods, field_sites, superinstructions.as_slice(), &mut liveness) {
+    if rewrite_once(function, methods, field_sites, superinstructions.as_slice(), &mut liveness, scratch) {
         changed_passes += 1;
+    }
+    if let Some(facts) = liveness {
+        facts.recycle(scratch);
     }
     if crate::trace::Channel::Rewrite.on() {
         eprintln!(
@@ -179,13 +205,15 @@ pub(super) fn coalesce_promoted_moves(
     methods: &(impl liveness::MethodArguments + ?Sized),
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
+    scratch: &mut CompileScratch,
 ) {
+    // The `Nop`s the passes leave in place are dropped by the one compaction `lower_settled` ends with.
     let mut liveness = None;
-    let mut changed = coalesce_distant_producer_moves(function, methods, field_sites, superinstructions, &mut liveness);
-    changed |= forward_move_sources(function, methods, field_sites, superinstructions, &mut liveness);
-    changed |= remove_dead_moves(function, methods, field_sites, superinstructions, &mut liveness);
-    if changed {
-        remove_nops(function, &mut liveness);
+    coalesce_distant_producer_moves(function, methods, field_sites, superinstructions, &mut liveness, scratch);
+    forward_move_sources(function, methods, field_sites, superinstructions, &mut liveness, scratch);
+    remove_dead_moves(function, methods, field_sites, superinstructions, &mut liveness, scratch);
+    if let Some(facts) = liveness {
+        facts.recycle(scratch);
     }
 }
 
@@ -200,12 +228,13 @@ fn remove_dead_moves(
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
+    scratch: &mut CompileScratch,
 ) -> bool {
-    let removable = |i: Instr| matches!(i.op(), Op::Move | Op::LoadConst) && !i.is_wide() && i.result_flags() == 0;
+    let removable = |i: Instr| i.op().traits().has(Traits::REMOVABLE_WHEN_DEAD) && !i.is_wide() && i.result_flags() == 0;
     if !function.code.iter().any(|&instruction| removable(instruction)) {
         return false;
     }
-    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
+    let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions, scratch)
     else {
         return false;
     };
@@ -227,7 +256,7 @@ fn remove_dead_moves(
         {
             continue;
         }
-        function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
+        function.code[pc] = Instr::new(NOP, 0, 0, 0, 0);
         changed.push(pc);
     }
     hand_on(analysis, &changed, function, methods, field_sites, superinstructions, current)
@@ -253,40 +282,33 @@ fn hand_on(
 }
 
 /// Drops every `Nop`, relocating jumps, handlers and source positions onto the instruction
-/// that followed it. The transfer masks of the instructions that stay are handed on with them,
-/// and so are their live sets: a `Nop` passes its successor's live set through unchanged, so
-/// only the handler roots `add_suspended_exception_roots` adds after a call move, to the
-/// instruction that now follows it.
-fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
-    let (mut transfers, mut live, successors) = match liveness.take() {
-        Some(CodeFacts::Live(analysis)) => (Some(analysis.transfers), Some(analysis.live), Some(analysis.successors)),
-        Some(CodeFacts::Transfers(transfers)) => (Some(transfers), None, None),
-        None => (None, None, None),
-    };
+/// that followed it. The per-pc live sets, when given, are compacted with the same map: a `Nop`
+/// passes its successor's live set through, so a dropped entry loses nothing.
+pub(super) fn remove_nops(function: &mut BcFunction, live: &mut Option<Vec<RegisterSet>>, scratch: &mut CompileScratch) {
+    if !function.code.iter().any(|instruction| instruction.op() == NOP) {
+        return;
+    }
     let old = std::mem::take(&mut function.code);
-    let mut code = Vec::with_capacity(old.len());
-    let mut map = vec![0usize; old.len() + 1];
+    let mut code = scratch.code_buffer(old.len());
+    let map = scratch.remap(old.len());
     for (pc, &instruction) in old.iter().enumerate() {
         map[pc] = code.len();
-        if instruction.op() != Op::Nop {
-            if let Some(transfers) = &mut transfers {
-                transfers[code.len()] = transfers[pc];
-            }
-            if let Some(live) = &mut live {
+        if instruction.op() != NOP {
+            if let Some(live) = live.as_mut() {
                 live[code.len()] = live[pc];
             }
             code.push(instruction);
         }
     }
     map[old.len()] = code.len();
-    if let Some(live) = &mut live {
+    if let Some(live) = live.as_mut() {
         live[code.len()] = live[old.len()];
         live.truncate(code.len() + 1);
     }
     relocate(
         &mut code,
         &mut function.wide,
-        &map,
+        &*map,
         &mut function.handlers,
         &mut function.parameter_end_pc,
         &mut function.binding_sites,
@@ -294,20 +316,7 @@ fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
         &old,
     );
     function.code = code;
-    *liveness = match (transfers, live) {
-        (Some(mut transfers), Some(mut live)) => {
-            transfers.truncate(function.code.len());
-            liveness::add_suspended_exception_roots(function, &mut live);
-            let successors = successors.expect("live facts carry their successors").relocated(&map);
-            debug_assert!(liveness::analyze_transfers(function, &transfers) == live && successors == crate::bytecode::Successors::of_code(function), "facts handed past dropped Nops match the code");
-            Some(CodeFacts::Live(CodeLiveness { successors, transfers, live }))
-        }
-        (Some(mut transfers), None) => {
-            transfers.truncate(function.code.len());
-            Some(CodeFacts::Transfers(transfers))
-        }
-        _ => None,
-    };
+    scratch.recycle_code(old);
 }
 
 /// The liveness of a function's code as it stands: each instruction's transfer masks and the
@@ -328,14 +337,26 @@ enum CodeFacts {
     Transfers(Vec<(RegisterSet, RegisterSet)>),
 }
 
+impl CodeFacts {
+    /// Recycles the tables of the facts a pass chain ends with into `scratch`.
+    fn recycle(self, scratch: &mut CompileScratch) {
+        match self {
+            CodeFacts::Live(analysis) => analysis.recycle(scratch),
+            CodeFacts::Transfers(transfers) => scratch.recycle_transfers(transfers),
+        }
+    }
+}
+
 impl CodeLiveness {
-    /// The liveness `current` hands on or completes, otherwise derived from the code.
+    /// The liveness `current` hands on or completes, otherwise derived from the code, with its
+    /// transfer and successor tables taken from `scratch`.
     fn of(
         current: &mut Option<CodeFacts>,
         function: &BcFunction,
         methods: &(impl liveness::MethodArguments + ?Sized),
         field_sites: &[FieldSite],
         superinstructions: &[Superinstruction],
+        scratch: &mut CompileScratch,
     ) -> Option<Self> {
         let transfers = match current.take() {
             Some(CodeFacts::Live(analysis)) => return Some(analysis),
@@ -347,11 +368,25 @@ impl CodeLiveness {
                 );
                 transfers
             }
-            None => liveness::transfers(function, methods, field_sites, superinstructions)?,
+            None => {
+                let mut transfers = std::mem::take(&mut scratch.transfers);
+                if !liveness::buffers::transfers_into(function, methods, field_sites, superinstructions, &mut transfers) {
+                    scratch.recycle_transfers(transfers);
+                    return None;
+                }
+                transfers
+            }
         };
-        let successors = crate::bytecode::Successors::of_code(function);
-        let live = liveness::analyze_wide(function, &transfers, &successors);
+        let mut successors = std::mem::take(&mut scratch.successors);
+        successors.refill(function);
+        let live = liveness::analyze_wide_with(function, &transfers, &successors, scratch);
         Some(Self { transfers, live, successors })
+    }
+
+    /// Keeps this analysis's tables as the buffers of the next one.
+    fn recycle(self, scratch: &mut CompileScratch) {
+        scratch.recycle_transfers(self.transfers);
+        scratch.recycle_successors(self.successors);
     }
 
     /// Updates the facts for one span `coalesce_distant_producer_moves` coalesced. A span is a
@@ -405,7 +440,7 @@ fn update_transfers(
     superinstructions: &[Superinstruction],
 ) {
     for &pc in changed {
-        let instruction = fixed_width(function.code[pc], &function.wide);
+        let instruction = function.widened(function.code[pc]);
         transfers[pc] = liveness::transfer(instruction, methods, field_sites, superinstructions);
     }
 }
@@ -417,7 +452,7 @@ fn thread_jumps(function: &mut BcFunction) {
     let length = function.code.len();
     for pc in 0..length {
         let mut instruction = function.code[pc];
-        if instruction.op() != Op::Jump || instruction.is_wide() {
+        if instruction.op() != JUMP || instruction.is_wide() {
             continue;
         }
         let mut target = instruction.jump_target();
@@ -425,7 +460,7 @@ fn thread_jumps(function: &mut BcFunction) {
         for _ in 0..length {
             match function.code.get(target as usize) {
                 Some(next)
-                    if next.op() == Op::Jump && !next.is_wide() && next.jump_target() != target =>
+                    if next.op() == JUMP && !next.is_wide() && next.jump_target() != target =>
                 {
                     target = next.jump_target();
                 }
@@ -455,13 +490,11 @@ fn invert_branches_over_jumps(function: &mut BcFunction) {
         if branch.is_wide() || skipped.is_wide() {
             continue;
         }
-        let inverted = match branch.op() {
-            Op::JumpTrue => Op::JumpFalse,
-            Op::JumpFalse => Op::JumpTrue,
-            _ => continue,
+        let Some(inverted) = NEGATED_JUMPS[branch.op() as usize] else {
+            continue;
         };
         if protected.contains(pc + 1)
-            || skipped.op() != Op::Jump
+            || skipped.op() != JUMP
             || branch.jump_target() as usize != pc + 2
             || skipped.jump_target() as usize <= pc + 1
         {
@@ -469,7 +502,7 @@ fn invert_branches_over_jumps(function: &mut BcFunction) {
         }
         let target = skipped.jump_target();
         function.code[pc] = Instr::new(inverted, branch.register_a(), 0, 0, target);
-        function.code[pc + 1] = Instr::new(Op::Nop, 0, 0, 0, 0);
+        function.code[pc + 1] = Instr::new(NOP, 0, 0, 0, 0);
     }
 }
 
@@ -489,16 +522,17 @@ fn coalesce_distant_producer_moves(
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
+    scratch: &mut CompileScratch,
 ) -> bool {
     // Liveness is the expensive part; a function without a `Move` has nothing to coalesce.
     if !function
         .code
         .iter()
-        .any(|instruction| instruction.op() == Op::Move)
+        .any(|instruction| instruction.op() == MOVE)
     {
         return false;
     }
-    let Some(mut analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
+    let Some(mut analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions, scratch)
     else {
         return false;
     };
@@ -519,13 +553,13 @@ fn coalesce_distant_producer_moves(
     let mut live_exact = true;
     for target in 0..function.code.len() {
         let mov = function.code[target];
-        if mov.op() != Op::Move || mov.is_wide() || protected.contains(target) {
+        if mov.op() != MOVE || mov.is_wide() || protected.contains(target) {
             continue;
         }
         let (source, destination) = (mov.register_b(), mov.result_register());
         let pair = register_bit(source) | register_bit(destination);
         if source == destination {
-            function.code[target] = Instr::new(Op::Nop, 0, 0, 0, 0);
+            function.code[target] = Instr::new(NOP, 0, 0, 0, 0);
             changed.push(target);
             live_exact = false;
             continue;
@@ -556,7 +590,7 @@ fn coalesce_distant_producer_moves(
         let mut retargeted = instruction;
         retargeted.set_result_register(destination);
         function.code[producer] = retargeted;
-        function.code[target] = Instr::new(Op::Nop, 0, 0, 0, 0);
+        function.code[target] = Instr::new(NOP, 0, 0, 0, 0);
         changed.extend([producer, target]);
         let span = CoalescedSpan {
             producer,
@@ -592,7 +626,7 @@ fn block_producer(
         if protected.contains(pc + 1) {
             return None;
         }
-        let instruction = fixed_width(function.code[pc], &function.wide);
+        let instruction = function.widened(function.code[pc]);
         if !instruction.op().control_flow_layout().only_falls_through() || instruction.returns_from_frame()
         {
             return None;
@@ -646,20 +680,26 @@ pub(super) fn return_through_shared_returns(function: &mut BcFunction) {
     // Only a return's producer is decoded, and the region boundaries are found once one is.
     let mut boundaries = None;
     for pc in 1..function.code.len() {
-        if function.instruction_at(pc).op() != Op::Return {
+        if function.instruction_at(pc).op() != RETURN {
             continue;
         }
-        let (producer, next) = (function.instruction_at(pc - 1), function.instruction_at(pc));
-        if !fuses(producer.op(), Op::Return, |recipe| matches!(recipe, Recipe::ReturnResult))
+        // The producer is the nearest instruction before the `Return` that is not a `Nop`.
+        let Some(producer_pc) = (0..pc).rev().find(|&at| function.code[at].op() != NOP) else {
+            continue;
+        };
+        let (producer, next) = (function.instruction_at(producer_pc), function.instruction_at(pc));
+        if !fuses(producer.op(), RETURN, |recipe| matches!(recipe, Recipe::ReturnResult))
             || producer.result_flags() != 0
             || producer.result_register() != next.register_a()
-            || boundaries
-                .get_or_insert_with(|| region_boundaries(function.code.len(), &function.handlers, function.parameter_end_pc, &[]))
-                .contains(pc)
         {
             continue;
         }
-        let packed = &mut function.code[pc - 1];
+        let boundaries = boundaries
+            .get_or_insert_with(|| region_boundaries(function.code.len(), &function.handlers, function.parameter_end_pc, &[]));
+        if (producer_pc + 1..=pc).any(|at| boundaries.contains(at)) {
+            continue;
+        }
+        let packed = &mut function.code[producer_pc];
         if packed.is_wide() {
             function.wide[packed.wide_index()].set_returns_from_frame();
         } else {
@@ -674,11 +714,7 @@ pub(super) fn express_strict_sets(function: &mut BcFunction) {
     if !function.strict {
         return;
     }
-    let strict_op = |op| match op {
-        Op::SetField => Some(Op::SetFieldStrict),
-        Op::SetThisField => Some(Op::SetThisFieldStrict),
-        _ => None,
-    };
+    let strict_op = |op: Op| STRICT_VARIANTS[op as usize];
     for packed in &mut function.code {
         if packed.is_wide() {
             let wide = &mut function.wide[packed.wide_index()];
@@ -691,39 +727,147 @@ pub(super) fn express_strict_sets(function: &mut BcFunction) {
     }
 }
 
-/// Whether some rule's pattern starts with each op: a pair whose first op starts none fuses
-/// with nothing, as most pairs do.
-const RULE_FIRSTS: [bool; Op::COUNT] = {
-    let mut firsts = [false; Op::COUNT];
-    let mut index = 0;
-    while index < RULES.len() {
-        firsts[RULES[index].pattern[0] as usize] = true;
-        index += 1;
+/// Whether `op`'s row makes one value into its result register and nothing else of its
+/// registers: field A is the result, which it does not read; no other field writes a register
+/// or names a window the result might fall in; it falls through or calls. Writing that value to
+/// another register is then the same operation, which `ProducerMove` retargets to a `Move`'s
+/// destination. A suspension (`Await`, `Yield`) writes its result on resume, from a frame the
+/// tiers rebuild, so it keeps its register.
+pub(super) const fn plain_producer(op: Op) -> bool {
+    const fn other_field_plain(layout: FieldLayout) -> bool {
+        !matches!(
+            layout,
+            FieldLayout::ResultRegister | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister
+                | FieldLayout::OptionalRegister | FieldLayout::RegisterWindowBase | FieldLayout::RegisterCount
+        )
     }
-    firsts
-};
-
-/// The rules whose pattern is `[first, second]`, in rule order.
-fn rules_for(first: Op, second: Op) -> impl Iterator<Item = &'static Rule> {
-    let candidates: &'static [Rule] = if RULE_FIRSTS[first as usize] { RULES } else { &[] };
-    candidates.iter().filter(move |rule| rule.pattern == [first, second])
+    matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
+        && other_field_plain(op.field_layout(InstructionField::B))
+        && other_field_plain(op.field_layout(InstructionField::C))
+        && !op.result_layout().reads_result_register()
+        && matches!(op.control_flow_layout(), ControlFlowLayout::Fallthrough | ControlFlowLayout::Call)
+        && !op.traits().has(Traits::REGISTER_COPY)
+        && !op.traits().has(Traits::SUSPENDS)
 }
 
-/// Whether a rule of the selected recipe fuses `[first, second]`.
+/// Which ops are `plain_producer`s: the rows that make one value into their result (`ProducerMove`).
+const PLAIN_PRODUCERS: OpSet = row_ops!(op => plain_producer(op));
+
+/// Whether `op`'s row makes a constant its result: the immediate is a constant-pool index, read
+/// into the result register alone. `MakeConstArray` and `StringCaseIndex` also name an element
+/// count, so they are not constant producers.
+const fn constant_producer(op: Op) -> bool {
+    matches!(op.immediate_role(), ImmediateRole::ConstantIndex)
+        && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
+        && matches!(op.field_layout(InstructionField::B), FieldLayout::Unused)
+        && matches!(op.field_layout(InstructionField::C), FieldLayout::Unused)
+}
+
+/// Which ops are `constant_producer`s (`ConstantLeft` and `ConstantRight`'s first op): `LoadConst`.
+const CONSTANT_PRODUCERS: OpSet = row_ops!(op => constant_producer(op));
+
+/// Ops whose B and C fields are both `Operand` slots. A constant can fill either, and the
+/// `ConstantLeft` handler rewrites C as well as B, so it needs both to be operand slots.
+const CONSTANT_LEFT_SITES: OpSet = row_ops!(op =>
+    matches!(op.field_layout(InstructionField::B), FieldLayout::Operand)
+        && matches!(op.field_layout(InstructionField::C), FieldLayout::Operand));
+
+/// Ops whose C field is an `Operand` slot, which `ConstantRight` rewrites.
+const CONSTANT_RIGHT_SITES: OpSet = row_ops!(op => matches!(op.field_layout(InstructionField::C), FieldLayout::Operand));
+
+/// Ops whose row reads a local into its result: a `ResultRegister` with a `NumericLocalTarget`
+/// in B (`LoadLocal` and `LoadLocalPlain`). `LoadEnvLocal` reads an environment slot and has no
+/// such B field.
+pub(super) const LOCAL_READERS: OpSet = row_ops!(op =>
+    matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
+        && matches!(op.field_layout(InstructionField::B), FieldLayout::NumericLocalTarget));
+
+/// Ops whose B field is a `FieldBase` looked up by a `FieldLookup` immediate: the base of a field
+/// read (`GetField`). `LocalField`'s second op.
+const FIELD_LOOKUPS: OpSet = row_ops!(op =>
+    matches!(op.field_layout(InstructionField::B), FieldLayout::FieldBase)
+        && matches!(op.immediate_role(), ImmediateRole::FieldLookup));
+
+/// Ops tagged `FRAME_LOCAL_STORE`: the first op of `StoreLoadLocal`.
+const FRAME_LOCAL_STORES: OpSet = row_ops!(op => op.traits().has(Traits::FRAME_LOCAL_STORE));
+
+/// Ops tagged `FRAME_LOCAL_LOAD`: the second op of `StoreLoadLocal`.
+const FRAME_LOCAL_LOADS: OpSet = row_ops!(op => op.traits().has(Traits::FRAME_LOCAL_LOAD));
+
+/// Ops tagged `BINARY_RESULT`: the first op of `BinaryJumpFalse`.
+const BINARY_RESULTS: OpSet = row_ops!(op => op.traits().has(Traits::BINARY_RESULT));
+
+/// Ops tagged `JUMPS_ON_FALSE`: the second op of `BinaryJumpFalse`.
+const JUMPS_ON_FALSE: OpSet = row_ops!(op => op.traits().has(Traits::JUMPS_ON_FALSE));
+
+/// Ops whose result may be written to `this` (`ResultLayout::allows_this_write`): the first op of `GetSetThis`.
+const THIS_WRITE_SOURCES: OpSet = row_ops!(op => op.result_layout().allows_this_write());
+
+/// Ops tagged `THIS_FIELD_SINK`: the second op of `GetSetThis`.
+const THIS_FIELD_SINKS: OpSet = row_ops!(op => op.traits().has(Traits::THIS_FIELD_SINK));
+
+/// Ops whose result may carry a numeric local target (`ResultLayout::allows_numeric_local`):
+/// the arithmetic rows `Binary`, `NumericAdd`, `NumericMultiply`. Their store-compaction rules
+/// use it as the first op.
+pub(super) const NUMERIC_LOCAL_PRODUCERS: OpSet = row_ops!(op => op.result_layout().allows_numeric_local());
+
+/// Ops whose B and C are both `NumericIndexOperand` slots: the element read `GetIndex`, which
+/// takes two local operands as indices.
+pub(super) const NUMERIC_INDEX_CONSUMERS: OpSet = row_ops!(op =>
+    matches!(op.field_layout(InstructionField::B), FieldLayout::NumericIndexOperand)
+        && matches!(op.field_layout(InstructionField::C), FieldLayout::NumericIndexOperand));
+
+/// The recipes a pair's rows imply, in recipe order. Each set above states one row property the
+/// recipe relies on, so the recipe holds for every op that has it.
+fn rules_for(first: Op, second: Op) -> &'static [Recipe] {
+    let (first_index, second_index) = (first as usize, second as usize);
+    if second == RETURN {
+        // An op whose row declares a returnable result completes its function itself when a
+        // `Return` of that result follows it.
+        if first.result_layout().allows_return() { &[Recipe::ReturnResult] } else { &[] }
+    } else if second == MOVE {
+        if PLAIN_PRODUCERS[first_index] { &[Recipe::ProducerMove] } else { &[] }
+    } else if CONSTANT_PRODUCERS[first_index] && CONSTANT_LEFT_SITES[second_index] {
+        &[Recipe::ConstantLeft, Recipe::ConstantRight]
+    } else if CONSTANT_PRODUCERS[first_index] && CONSTANT_RIGHT_SITES[second_index] {
+        &[Recipe::ConstantRight]
+    } else if LOCAL_READERS[first_index] && FIELD_LOOKUPS[second_index] {
+        &[Recipe::LocalField]
+    } else if FRAME_LOCAL_STORES[first_index] && FRAME_LOCAL_LOADS[second_index] {
+        &[Recipe::StoreLoadLocal]
+    } else if BINARY_RESULTS[first_index] && JUMPS_ON_FALSE[second_index] {
+        &[Recipe::BinaryJumpFalse]
+    } else if THIS_WRITE_SOURCES[first_index] && THIS_FIELD_SINKS[second_index] {
+        &[Recipe::GetSetThis]
+    } else {
+        &[]
+    }
+}
+
+/// Whether a recipe of the selected kind fuses `[first, second]`.
 fn fuses(first: Op, second: Op, recipe: impl Fn(Recipe) -> bool) -> bool {
-    rules_for(first, second).any(|rule| recipe(rule.recipe))
+    rules_for(first, second).iter().any(|&rule| recipe(rule))
 }
 
+/// Whether `op` may compute its result straight into a later `Move`'s destination when nothing
+/// between them touches either register (`coalesce_distant_producer_moves`): the adjacent
+/// `ProducerMove` producers, and the `DISTANT_PRODUCER` rows. Some rows are not `ProducerMove`
+/// producers (`MakeObjectLiteral` and `StringConcat` take a register window, which
+/// `plain_producer` excludes), and the adjacent recipe keeps its own list, since it also lets a
+/// producer read its new destination. The pass refuses a producer that reads either register,
+/// so no row here reads the register it writes.
+fn coalesces_at_a_distance(op: Op) -> bool {
+    fuses(op, MOVE, |recipe| matches!(recipe, Recipe::ProducerMove)) || op.traits().has(Traits::DISTANT_PRODUCER)
+}
 
 struct SuperRule {
     pattern: &'static [Op],
     fuse: fn(&[Instr], &mut SiteTable<'_, Superinstruction>) -> Option<Instr>,
 }
 
-pub(super) const CONST_ARRAY_OBJECT2: [Op; 4] = [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2];
 
 const SUPER_RULES: &[SuperRule] = &[SuperRule {
-    pattern: &[Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2],
+    pattern: &CONST_ARRAY_OBJECT2,
     fuse: fuse_const_array_object2,
 }];
 
@@ -731,68 +875,53 @@ fn rewrite_super_window(
     function: &mut BcFunction,
     superinstructions: &mut SiteTable<'_, Superinstruction>,
 ) -> bool {
-    // Code holding no rule's op sequence keeps every instruction where it is.
+    // The windows are over the live instructions: a `Nop` an earlier fusion left in place is
+    // skipped, and the pcs it occupies are covered by the protected check of the window.
+    let live = live_positions(&function.code);
     let matches_rule = |rule: &SuperRule| {
-        function
-            .code
-            .windows(rule.pattern.len())
-            .any(|window| window.iter().map(|instruction| instruction.op()).eq(rule.pattern.iter().copied()))
+        live.windows(rule.pattern.len()).any(|window| {
+            window.iter().map(|&pc| function.code[pc].op()).eq(rule.pattern.iter().copied())
+        })
     };
     if !SUPER_RULES.iter().any(matches_rule) {
         return false;
     }
-    let old = std::mem::take(&mut function.code);
     let protected = protected_positions(
-        &old,
+        &function.code,
         &function.wide,
         &function.handlers,
         function.parameter_end_pc,
         &function.binding_sites,
     );
-    let mut code = Vec::with_capacity(old.len());
-    let mut map = vec![0; old.len() + 1];
-    let mut index = 0;
     let mut changed = false;
-    while index < old.len() {
-        map[index] = code.len();
-        let replacement = SUPER_RULES.iter().find_map(|rule| {
+    let mut at = 0;
+    while at < live.len() {
+        let fused = SUPER_RULES.iter().find_map(|rule| {
             let width = rule.pattern.len();
-            let window = old.get(index..index + width)?;
-            if (1..width).any(|offset| protected.contains(index + offset))
-                || window.iter().any(|instruction| instruction.is_wide())
-                || window
-                    .iter()
-                    .map(|instruction| instruction.op())
-                    .ne(rule.pattern.iter().copied())
+            let positions = live.get(at..at + width)?;
+            let (first, last) = (positions[0], positions[width - 1]);
+            if (first + 1..=last).any(|pc| protected.contains(pc))
+                || positions.iter().any(|&pc| function.code[pc].is_wide())
+                || positions.iter().map(|&pc| function.code[pc].op()).ne(rule.pattern.iter().copied())
             {
                 return None;
             }
-            (rule.fuse)(window, superinstructions).map(|instruction| (instruction, width))
+            let window: Vec<Instr> = positions.iter().map(|&pc| function.code[pc]).collect();
+            (rule.fuse)(&window, superinstructions).map(|instruction| (instruction, width))
         });
-        if let Some((instruction, width)) = replacement {
-            for offset in 1..width {
-                map[index + offset] = code.len();
+        match fused {
+            Some((instruction, width)) => {
+                let positions = &live[at..at + width];
+                function.code[positions[0]] = instruction;
+                for &pc in &positions[1..] {
+                    function.code[pc] = Instr::new(NOP, 0, 0, 0, 0);
+                }
+                at += width;
+                changed = true;
             }
-            code.push(instruction);
-            index += width;
-            changed = true;
-        } else {
-            code.push(old[index]);
-            index += 1;
+            None => at += 1,
         }
     }
-    map[old.len()] = code.len();
-    relocate(
-        &mut code,
-        &mut function.wide,
-        &map,
-        &mut function.handlers,
-        &mut function.parameter_end_pc,
-        &mut function.binding_sites,
-        &mut function.source_positions,
-        &old,
-    );
-    function.code = code;
     changed
 }
 
@@ -817,12 +946,28 @@ fn fuse_const_array_object2(
     let site = superinstructions.len() as u32;
     superinstructions.push(Superinstruction::new(code));
     Some(Instr::new(
-        Op::SuperConstArrayObject2,
+        SUPER_CONST_ARRAY_OBJECT2,
         object.result_register(),
         0,
         0,
         site,
     ))
+}
+
+/// The pcs of `code`'s instructions that are not `Nop`s, in order.
+pub(super) fn live_positions(code: &[Instr]) -> Vec<usize> {
+    (0..code.len()).filter(|&pc| code[pc].op() != NOP).collect()
+}
+
+/// The first pc after `pc` whose instruction is not a `Nop`: the instruction control reaches
+/// next, since a `Nop` falls through. `None` past the end.
+pub(super) fn next_live(code: &[Instr], pc: usize) -> Option<usize> {
+    (pc + 1..code.len()).find(|&next| code[next].op() != NOP)
+}
+
+/// How many of `code`'s instructions are not `Nop`s: the count the code would have compacted.
+pub(super) fn live_count(code: &[Instr]) -> usize {
+    code.iter().filter(|instruction| instruction.op() != NOP).count()
 }
 
 /// `protected_positions` of `function` as it stands.
@@ -839,7 +984,7 @@ pub(super) fn protected_positions(
 ) -> crate::bitset::BitSet {
     let mut protected = region_boundaries(code.len(), handlers, parameter_end_pc, binding_sites);
     for instruction in code {
-        let instruction = fixed_width(*instruction, wide);
+        let instruction = widen(*instruction, wide);
         if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
             protected.insert(instruction.jump_target() as usize);
         }
@@ -847,14 +992,6 @@ pub(super) fn protected_positions(
     protected
 }
 
-/// `instruction` in fixed-width form: a wide one through the function's wide table.
-pub(super) fn fixed_width(instruction: Instr, wide: &[WideInstruction]) -> WideInstruction {
-    if instruction.is_wide() {
-        wide[instruction.wide_index()]
-    } else {
-        instruction.as_wide()
-    }
-}
 
 /// Positions that open or close a handler or parameter region, or resume a binding site.
 fn region_boundaries(
@@ -889,137 +1026,118 @@ fn rewrite_once(
     field_sites: &mut SiteTable<'_, FieldSite>,
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
+    scratch: &mut CompileScratch,
 ) -> bool {
     let rewrites_pair = |first: &Instr, second: &Instr| {
         !first.is_wide()
             && !second.is_wide()
-            && rules_for(first.op(), second.op()).next().is_some()
+            && !rules_for(first.op(), second.op()).is_empty()
     };
-    // A pass without a rule-shaped pair or a `Nop` changes nothing, and liveness is needed
-    // only to judge pairs.
-    let has_pair = function.code.windows(2).any(|pair| rewrites_pair(&pair[0], &pair[1]));
-    if !has_pair && !function.code.iter().any(|instruction| instruction.op() == Op::Nop) {
+    // A pass without a rule-shaped pair changes nothing, and liveness is needed only to judge
+    // pairs. A pair is an instruction and the next one that is not a `Nop`.
+    let has_pair = (0..function.code.len()).any(|pc| {
+        next_live(&function.code, pc)
+            .is_some_and(|next| rewrites_pair(&function.code[pc], &function.code[next]))
+    });
+    if !has_pair {
         return false;
     }
-    let analysis = has_pair
-        .then(|| CodeLiveness::of(current, function, methods, field_sites.as_slice(), superinstructions))
-        .flatten();
-    let (mut transfers, live) = analysis.map_or((None, None), |CodeLiveness { transfers, live, successors }| (Some(transfers), Some((live, successors))));
-    let old = std::mem::take(&mut function.code);
+    let Some(CodeLiveness { mut transfers, live, successors }) =
+        CodeLiveness::of(current, function, methods, field_sites.as_slice(), superinstructions, scratch)
+    else {
+        return false;
+    };
     let protected = protected_positions(
-        &old,
+        &function.code,
         &function.wide,
         &function.handlers,
         function.parameter_end_pc,
         &function.binding_sites,
     );
-    // Decoded at most once, for the rules that record their sources.
-    let positions = std::cell::OnceCell::new();
-    let positions = || positions.get_or_init(|| function.source_positions.iter().collect::<Vec<_>>()).as_slice();
-    let mut code = Vec::with_capacity(old.len());
-    // A kept instruction keeps its transfer masks, which name registers and not positions, and
-    // moves to a pc no later than its old one, so the masks move down in place; only a pair's
-    // replacement, at these pcs, derives its own (mandreel `global_init`: a second table of
-    // 20 MB at a cold load's peak).
-    let mut replaced = Vec::new();
-    let mut map = vec![0usize; old.len() + 1];
-    let mut index = 0;
-    let mut changed = false;
-    while index < old.len() {
-        map[index] = code.len();
-        if old[index].op() == Op::Nop {
-            index += 1;
-            changed = true;
+    // A pair fuses in place: the replacement takes the first pc and the second becomes a `Nop`
+    // that `remove_nops` drops once lowering ends. No pc moves, so the live sets, indexed by pc,
+    // stay those of the code each pair is judged on.
+    let mut rewritten = Vec::new();
+    for index in 0..function.code.len() {
+        let first = function.code[index];
+        if first.op() == NOP || first.is_wide() {
             continue;
         }
-        let rewritten = old
-            .get(index + 1)
-            .filter(|second| !protected.contains(index + 1) && !old[index].is_wide() && !second.is_wide())
-            .and_then(|second| {
-                let first = old[index];
-                let mut rules = rules_for(first.op(), second.op()).peekable();
-                rules.peek()?;
-                // The same control-flow facts justify frame roots and every
-                // removed register write. An unavailable map keeps the pair.
-                let (live, successors) = live.as_ref()?;
-                let original_definitions =
-                    liveness::definitions(first.as_wide(), superinstructions)
-                        | liveness::definitions(second.as_wide(), superinstructions);
-                let live_out = liveness::live_out(successors, live, index + 1);
-                rules.find_map(|rule| {
-                    let replacement = apply_rule(*rule, first, *second, field_sites, &positions, index)?;
-                    let removed_definitions = original_definitions
-                        & !liveness::definitions(replacement.as_wide(), superinstructions);
-                    (live_out & removed_definitions == 0).then_some(replacement)
-                })
-            });
-        if let Some(instruction) = rewritten {
-            map[index + 1] = code.len();
-            replaced.push(code.len());
-            code.push(instruction);
-            index += 2;
-            changed = true;
-        } else {
-            transfers.iter_mut().for_each(|transfers| transfers[code.len()] = transfers[index]);
-            code.push(old[index]);
-            index += 1;
+        let Some(second_pc) = next_live(&function.code, index) else {
+            continue;
+        };
+        let second = function.code[second_pc];
+        // Every pc the pair swallows, the `Nop`s between included, must be a plain fallthrough.
+        if second.is_wide() || (index + 1..=second_pc).any(|pc| protected.contains(pc)) {
+            continue;
+        }
+        let rules = rules_for(first.op(), second.op());
+        if rules.is_empty() {
+            continue;
+        }
+        // The same control-flow facts justify frame roots and every removed register write.
+        let original_definitions = liveness::definitions(first.as_wide(), superinstructions)
+            | liveness::definitions(second.as_wide(), superinstructions);
+        let live_out = liveness::live_out(&successors, &live, second_pc);
+        let replacement = rules.iter().find_map(|&rule| {
+            let replacement = apply_rule(
+                rule,
+                first,
+                second,
+                field_sites,
+                &function.source_positions,
+                index,
+                second_pc,
+            )?;
+            let removed_definitions =
+                original_definitions & !liveness::definitions(replacement.as_wide(), superinstructions);
+            (live_out & removed_definitions == 0).then_some(replacement)
+        });
+        if let Some(instruction) = replacement {
+            function.code[index] = instruction;
+            function.code[second_pc] = Instr::new(NOP, 0, 0, 0, 0);
+            rewritten.extend([index, second_pc]);
         }
     }
-    map[old.len()] = code.len();
-    if !changed {
-        function.code = old;
-        if let (Some(transfers), Some((live, successors))) = (transfers, live) {
-            *current = Some(CodeFacts::Live(CodeLiveness { transfers, live, successors }));
-        }
+    if rewritten.is_empty() {
+        *current = Some(CodeFacts::Live(CodeLiveness { transfers, live, successors }));
         return false;
     }
     drop(live);
-    relocate(
-        &mut code,
-        &mut function.wide,
-        &map,
-        &mut function.handlers,
-        &mut function.parameter_end_pc,
-        &mut function.binding_sites,
-        &mut function.source_positions,
-        &old,
+    scratch.recycle_successors(successors);
+    update_transfers(
+        &mut transfers,
+        &rewritten,
+        function,
+        methods,
+        field_sites.as_slice(),
+        superinstructions,
     );
-    function.code = code;
-    *current = transfers.map(|mut transfers| {
-        transfers.truncate(function.code.len());
-        for pc in replaced {
-            let replacement = fixed_width(function.code[pc], &function.wide);
-            transfers[pc] = liveness::transfer(replacement, methods, field_sites.as_slice(), superinstructions);
-        }
-        CodeFacts::Transfers(transfers)
-    });
+    *current = Some(CodeFacts::Transfers(transfers));
     true
 }
 
-fn apply_rule<'p>(
-    rule: Rule,
+fn apply_rule(
+    recipe: Recipe,
     first: Instr,
     second: Instr,
     field_sites: &mut SiteTable<'_, FieldSite>,
-    positions: &impl Fn() -> &'p [crate::bytecode::SourcePosition],
+    source_positions: &crate::bytecode::SourcePositions,
     pc: usize,
+    second_pc: usize,
 ) -> Option<Instr> {
-    let replacement = apply_recipe(rule.recipe, first, second, field_sites)?;
+    let replacement = apply_recipe(recipe, first, second, field_sites)?;
     let replacement = sound_replacement(first, second, replacement)?;
-    if matches!(rule.recipe, Recipe::GetSetThis)
+    if matches!(recipe, Recipe::GetSetThis)
         && let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
-            let positions = positions();
-            let at = |pc: usize| {
-                positions
-                    .partition_point(|p| p.pc as usize <= pc)
-                    .checked_sub(1)
-                    .map(|index| (positions[index].line, positions[index].column))
-            };
+            // The source offset in effect at a pc, found by the table's own lookup rather than a
+            // decoded copy of the whole table.
+            let at = |pc: usize| u32::try_from(pc).ok().and_then(|pc| source_positions.at(pc));
             let site = &mut field_sites[index];
-            if site.sources[0].is_none() {
-                site.sources[0] = at(pc);
+            if site.sources[0] == FieldSite::NO_SOURCE {
+                site.sources[0] = FieldSite::source_word(at(pc));
             }
-            site.sources[2] = at(pc + 1);
+            site.sources[2] = FieldSite::source_word(at(second_pc));
         }
     Some(replacement)
 }
@@ -1043,7 +1161,7 @@ pub(super) fn relocate(
     old_code: &[Instr],
 ) {
     for instruction in code.iter_mut() {
-        let decoded = fixed_width(*instruction, wide);
+        let decoded = widen(*instruction, wide);
         if decoded.op().immediate_role() != ImmediateRole::JumpTarget {
             continue;
         }
@@ -1081,13 +1199,25 @@ fn relocate_source_positions(
     wide: &[WideInstruction],
     map: &[usize],
 ) {
-    let surviving_positions = source_positions
+    let relocated = relocated_source_positions(code_len, source_positions, old_code, wide, map);
+    *source_positions = relocated.freeze();
+}
+
+/// The table `source_positions` becomes once the code is relocated through `map`. Surviving
+/// entries stream in pc order, one ahead of the cursor, so no list of them is built.
+fn relocated_source_positions(
+    code_len: usize,
+    source_positions: &crate::bytecode::SourcePositions,
+    old_code: &[Instr],
+    wide: &[WideInstruction],
+    map: &[usize],
+) -> crate::bytecode::SourcePositionsBuilder {
+    let mut survivors = source_positions
         .iter()
         .filter(|position| source_instruction_survives(position.pc as usize, old_code, map))
-        .collect::<Vec<_>>();
+        .peekable();
     // Relocation keeps or drops entries, so the old coding bounds the new one's.
-    let mut relocated = crate::bytecode::SourcePositions::with_capacity(source_positions.coded_len());
-    let mut position_index = 0;
+    let mut relocated = crate::bytecode::SourcePositionsBuilder::with_capacity(source_positions.coded_len());
     let mut origin_pc = 0;
     let mut effective = None;
     let mut previous_location = None;
@@ -1104,39 +1234,37 @@ fn relocate_source_positions(
         }
         let anchor = origin_pc;
         origin_pc += 1;
-        while surviving_positions
-            .get(position_index)
+        while survivors
+            .peek()
             .is_some_and(|position| position.pc as usize <= anchor)
         {
-            effective = surviving_positions.get(position_index).copied();
-            position_index += 1;
+            effective = survivors.next();
         }
-        let Some(position) = effective else {
+        let Some(entry) = effective else {
             continue;
         };
-        let location = (position.line, position.column);
+        let location = entry.offset;
         // Call anchors are observable even when their location matches a
         // preceding Move that a later pass may remove.
         if previous_location == Some(location)
-            && fixed_width(old_code[anchor], wide)
+            && widen(old_code[anchor], wide)
                 .op()
                 .control_flow_layout()
-                != crate::bytecode::ControlFlowLayout::Call
+                != ControlFlowLayout::Call
         {
             continue;
         }
-        relocated.push(crate::bytecode::SourcePosition {
+        relocated.push(crate::bytecode::SourceOffset {
             pc: new_pc as u32,
-            line: position.line,
-            column: position.column,
+            offset: location,
         });
         previous_location = Some(location);
     }
-    *source_positions = relocated;
+    relocated
 }
 
 fn source_instruction_survives(old_pc: usize, old_code: &[Instr], map: &[usize]) -> bool {
-    old_code[old_pc].op() != Op::Nop || map[old_pc] != map[old_pc + 1]
+    old_code[old_pc].op() != NOP || map[old_pc] != map[old_pc + 1]
 }
 
 #[cfg(test)]
@@ -1246,7 +1374,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
             Instr::new(Op::Move, 5, 3, 0, 0),
             Instr::new(Op::Return, 5, 0, 0, 0),
         ];
-        assert!(!coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None));
+        assert!(!coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None, &mut CompileScratch::default()));
         assert_eq!(function.code[0].result_register(), 3);
         assert_eq!(function.code[2].op(), Op::Move);
     }
@@ -1364,7 +1492,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
                 register,
             })
             .collect();
-        while coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None) {}
+        while coalesce_distant_producer_moves(function, &[] as &[MethodSiteSpec], &[], &[], &mut None, &mut CompileScratch::default()) {}
         function
             .code
             .iter()
@@ -1470,7 +1598,8 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
         let function = &mut program.functions[0];
         function.code = code;
         function.registers = registers;
-        rewrite_once(function, &[] as &[MethodSiteSpec], &mut SiteTable::default(), &[], &mut None);
+        rewrite_once(function, &[] as &[MethodSiteSpec], &mut SiteTable::default(), &[], &mut None, &mut CompileScratch::default());
+        remove_nops(function, &mut None, &mut CompileScratch::default());
         std::mem::take(&mut function.code)
     }
 
@@ -1547,46 +1676,59 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
     }
 
     #[test]
-    fn recipe_schema_generates_ordered_pattern_rows() {
-        assert_eq!(RULES.len(), 35);
-        assert_eq!(RULES[0].pattern, [Op::LoadConst, Op::Binary]);
-        assert_eq!(RULES[1].pattern, [Op::LoadConst, Op::Binary]);
-        assert!(matches!(RULES[0].recipe, Recipe::ConstantLeft));
-        assert!(matches!(RULES[1].recipe, Recipe::ConstantRight));
+    fn role_constants_name_the_rows_they_derive() {
+        assert_eq!(NOP, Op::Nop);
+        assert_eq!(MOVE, Op::Move);
+        assert_eq!(RETURN, Op::Return);
+        assert_eq!(JUMP, Op::Jump);
+        assert_eq!(JUMP_BINARY_FALSE, Op::JumpBinaryFalse);
+        assert_eq!(SUPER_CONST_ARRAY_OBJECT2, Op::SuperConstArrayObject2);
+        assert_eq!(CONST_ARRAY_OBJECT2, [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2]);
+        assert_eq!(NEGATED_JUMPS[Op::JumpTrue as usize], Some(Op::JumpFalse));
+        assert_eq!(NEGATED_JUMPS[Op::JumpFalse as usize], Some(Op::JumpTrue));
+        assert_eq!(NEGATED_JUMPS[Op::Jump as usize], None);
+        assert_eq!(STRICT_VARIANTS[Op::SetField as usize], Some(Op::SetFieldStrict));
+        assert_eq!(STRICT_VARIANTS[Op::SetThisField as usize], Some(Op::SetThisFieldStrict));
+        assert_eq!(STRICT_VARIANTS[Op::Move as usize], None);
     }
 
     #[test]
-    fn fuses_local_four_instruction_window_as_data() {
-        let code = [
-            Instr::new(Op::MakeConstArray, 1, 3, 0, 7),
-            Instr::new(
-                Op::Binary,
-                2,
-                Operand::constant(1).unwrap().0,
-                Operand::local(0).0,
-                8,
-            ),
-            Instr::new(
-                Op::Binary,
-                3,
-                Operand::register(2).0,
-                Operand::constant(2).unwrap().0,
-                8,
-            ),
-            Instr::new(Op::MakeObject2, 4, 1, 3, 0),
-        ];
-        let mut sites = SiteTable::default();
-        let fused = fuse_const_array_object2(&code, &mut sites).unwrap();
-        assert_eq!(fused.op(), Op::SuperConstArrayObject2);
-        assert_eq!(
-            sites[0].code.map(|instruction| instruction.op()),
-            CONST_ARRAY_OBJECT2
-        );
+    fn derived_rules_follow_row_properties_in_recipe_order() {
+        let recipes = |first: Op, second: Op| rules_for(first, second).iter().copied().collect::<Vec<_>>();
+        // A constant producer fuses into any op with operand B and C slots, left before right.
+        for second in [Op::Binary, Op::NumericAdd, Op::NumericMultiply, Op::JumpBinaryFalse] {
+            assert!(matches!(recipes(Op::LoadConst, second).as_slice(), [Recipe::ConstantLeft, Recipe::ConstantRight]));
+        }
+        // A `GetIndex` has index operands, not operands, so no constant reaches it.
+        assert!(recipes(Op::LoadConst, Op::GetIndex).is_empty());
+        assert!(matches!(recipes(Op::LoadLocal, Op::GetField).as_slice(), [Recipe::LocalField]));
+        assert!(matches!(recipes(Op::LoadLocalPlain, Op::GetField).as_slice(), [Recipe::LocalField]));
+        assert!(recipes(Op::LoadEnvLocal, Op::GetField).is_empty());
+        assert!(matches!(recipes(Op::Binary, Op::Move).as_slice(), [Recipe::ProducerMove]));
+        assert!(matches!(recipes(Op::Binary, Op::Return).as_slice(), [Recipe::ReturnResult]));
+        // A frame local store fuses into a frame local load of the same slot, plain or not. Env stores and
+        // env loads name another slot space, so they keep their pair.
+        assert!(matches!(recipes(Op::StoreLocal, Op::LoadLocal).as_slice(), [Recipe::StoreLoadLocal]));
+        assert!(matches!(recipes(Op::StoreLocalPlain, Op::LoadLocalPlain).as_slice(), [Recipe::StoreLoadLocal]));
+        assert!(matches!(recipes(Op::StoreLocal, Op::LoadLocalPlain).as_slice(), [Recipe::StoreLoadLocal]));
+        assert!(recipes(Op::StoreEnvLocal, Op::LoadLocal).is_empty());
+        assert!(recipes(Op::StoreLocal, Op::LoadEnvLocal).is_empty());
+        // A binary result fuses into a false jump only: `JumpTrue` jumps on the other test, and the
+        // arithmetic rows name their operator in another immediate role.
+        assert!(matches!(recipes(Op::Binary, Op::JumpFalse).as_slice(), [Recipe::BinaryJumpFalse]));
+        assert!(recipes(Op::Binary, Op::JumpTrue).is_empty());
+        assert!(recipes(Op::NumericAdd, Op::JumpFalse).is_empty());
+        // A field read's result fuses into a `this` write's sink. `SetThisFieldStrict` is untagged.
+        assert!(matches!(recipes(Op::GetField, Op::SetThisField).as_slice(), [Recipe::GetSetThis]));
+        assert!(recipes(Op::GetField, Op::SetThisFieldStrict).is_empty());
+        assert!(recipes(Op::Binary, Op::SetThisField).is_empty());
+        // An untagged first op keeps its pair with a local load.
+        assert!(recipes(Op::Nop, Op::LoadLocal).is_empty());
     }
 
     #[test]
     fn source_positions_follow_compaction_and_skip_removed_instructions() {
-        use crate::bytecode::SourcePosition;
+        use crate::bytecode::SourceOffset;
 
         let mut code = vec![Instr::new(Op::Return, 0, 0, 0, 0); 2];
         let old_code = vec![
@@ -1596,21 +1738,9 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
             Instr::new(Op::Return, 0, 0, 0, 0),
         ];
         let mut source_positions: crate::bytecode::SourcePositions = vec![
-            SourcePosition {
-                pc: 0,
-                line: 1,
-                column: 1,
-            },
-            SourcePosition {
-                pc: 1,
-                line: 1,
-                column: 5,
-            },
-            SourcePosition {
-                pc: 2,
-                line: 1,
-                column: 9,
-            },
+            SourceOffset { pc: 0, offset: 0 },
+            SourceOffset { pc: 1, offset: 4 },
+            SourceOffset { pc: 2, offset: 8 },
         ]
         .into_iter()
         .collect();
@@ -1633,30 +1763,22 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
         assert_eq!(
             source_positions.iter().collect::<Vec<_>>(),
             vec![
-                SourcePosition {
-                    pc: 0,
-                    line: 1,
-                    column: 1,
-                },
-                SourcePosition {
-                    pc: 1,
-                    line: 1,
-                    column: 5,
-                },
+                SourceOffset { pc: 0, offset: 0 },
+                SourceOffset { pc: 1, offset: 4 },
             ]
         );
     }
 
     #[test]
     fn wide_call_source_anchors_survive_later_argument_move_removal() {
-        use crate::bytecode::SourcePosition;
+        use crate::bytecode::SourceOffset;
         let wide = [WideInstruction::new(Op::Call, 0, 0, 0, 0)];
         let load = Instr::new(Op::LoadConst, 0, 0, 0, 0);
         let call = Instr::wide(0).unwrap();
         let mut positions = vec![
-            SourcePosition { pc: 0, line: 1, column: 74 },
-            SourcePosition { pc: 1, line: 1, column: 69 },
-            SourcePosition { pc: 2, line: 1, column: 69 },
+            SourceOffset { pc: 0, offset: 73 },
+            SourceOffset { pc: 1, offset: 68 },
+            SourceOffset { pc: 2, offset: 68 },
         ]
         .into_iter()
         .collect();
@@ -1666,8 +1788,8 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
         let second = [load, Instr::new(Op::Nop, 0, 0, 0, 0), call];
         relocate_source_positions(2, &mut positions, &second, &wide, &[0, 1, 1, 2]);
         assert_eq!(positions.iter().collect::<Vec<_>>(), vec![
-            SourcePosition { pc: 0, line: 1, column: 74 },
-            SourcePosition { pc: 1, line: 1, column: 69 },
+            SourceOffset { pc: 0, offset: 73 },
+            SourceOffset { pc: 1, offset: 68 },
         ]);
     }
 }

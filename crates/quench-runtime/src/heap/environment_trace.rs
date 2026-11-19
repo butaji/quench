@@ -14,7 +14,7 @@
 //! clear_unread`): no code can read it, and its old value may be swept. An environment read
 //! whole that holds no projection is marked and traced as any other cell, without an entry.
 
-use super::{Cell, EnvironmentBindings, EnvironmentSlotState, EnvironmentSlots, FunctionKind, Heap, SlotUse};
+use super::{EnvironmentBindings, EnvironmentRecord, EnvironmentSlotState, EnvironmentSlots, FunctionKind, Heap, SlotUse};
 use crate::bytecode::{Atom, ClosureReads, EnvironmentDemand};
 use crate::value::Value;
 use smallvec::SmallVec;
@@ -242,7 +242,7 @@ impl<'s> EnvironmentTrace<'s> {
     pub(super) fn closure(&mut self, environment: Value, kind: &FunctionKind, work: &mut Vec<Value>) {
         match (self.source, kind) {
             (Some(_), FunctionKind::User(program, function))
-                if self.reads == EnvironmentReads::Closures && environment.legacy_heap_index().is_some() =>
+                if self.reads == EnvironmentReads::Closures && environment.direct_environment_index().is_some() =>
             {
                 self.pending.push(EnvironmentEdge::Closure {
                     environment,
@@ -324,20 +324,22 @@ fn read_initialization(
 impl Heap {
     /// Follows the pending environment edges of `trace`, pushing the values they read onto
     /// `work`, with the environments read whole that need no entry.
-    pub(super) fn trace_environment_edges(&self, trace: &mut EnvironmentTrace<'_>, work: &mut Vec<Value>) {
+    pub(super) fn trace_environment_edges(&mut self, trace: &mut EnvironmentTrace<'_>, work: &mut Vec<Value>) {
         while let Some(edge) = trace.pending.pop() {
             self.trace_environment_edge(trace, edge, work);
         }
     }
 
-    fn trace_environment_edge(&self, trace: &mut EnvironmentTrace<'_>, edge: EnvironmentEdge, work: &mut Vec<Value>) {
+    fn trace_environment_edge(&mut self, trace: &mut EnvironmentTrace<'_>, edge: EnvironmentEdge, work: &mut Vec<Value>) {
         let environment = edge.environment();
-        let (Some(index), Some(Cell::Environment { parent, function, slots, scope })) =
-            (environment.legacy_heap_index(), self.get(environment))
-        else {
+        let Some(index) = environment.direct_environment_index().filter(|&index| self.environment_records.is_live(index)) else {
             work.push(environment);
             return;
         };
+        // SAFETY: live, so initialized; records never move while they live, and marking
+        // writes only the space's mark words, apart from the record.
+        let EnvironmentRecord { parent, function, slots, scope } =
+            unsafe { &*std::ptr::from_ref(self.environment_records.get_live(index)) };
         let (parent, function, program) = (*parent, *function, scope.program());
         if let EnvironmentEdge::Closure { program, function: closure, distance, .. } = edge
             && (trace.entry(index).is_some_and(|entry| trace.partial[entry].whole)
@@ -370,18 +372,15 @@ impl Heap {
         let entry = match trace.entry(index) {
             Some(entry) => entry,
             None => {
-                if !Self::mark_serial(&self.marks, index as usize) {
+                if !self.environment_records.mark(index) {
                     // Marked without an entry: already traced whole.
                     return;
                 }
                 // What every traced environment keeps whatever its readers: the environments it
                 // names stay allocated, and `with` objects and dynamic bindings other than the
                 // lexical `this` stay traced. Closure and whole edges go on to the parent.
-                let unmarked = |value: Value| {
-                    value
-                        .legacy_heap_index()
-                        .is_some_and(|index| !Self::marked(&self.marks, index as usize))
-                };
+                let records = &self.environment_records;
+                let unmarked = |value: Value| value.direct_environment_index().is_some_and(|index| !records.is_marked(index));
                 if !matches!(edge, EnvironmentEdge::Closure { .. } | EnvironmentEdge::Whole { .. }) && unmarked(parent) {
                     trace.pending.push(EnvironmentEdge::Keep { environment: parent });
                 }
@@ -407,7 +406,7 @@ impl Heap {
         };
         let partial = &mut trace.partial[entry];
         let pending = &mut trace.pending;
-        let has_parent = parent.legacy_heap_index().is_some();
+        let has_parent = parent.direct_environment_index().is_some();
         let read_lexical_this = match edge {
             EnvironmentEdge::Closure { program, function: closure, distance, .. } => {
                 let walked = match demand {
@@ -515,11 +514,12 @@ impl Heap {
         let lexical_this = trace.source.map(|source| source.lexical_this());
         for (&index, &entry) in &trace.entries {
             let partial = &trace.partial[entry as usize];
-            let Some(Cell::Environment { slots, scope, .. }) =
-                self.slots.get_mut(index as usize).and_then(|slot| slot.cell.as_mut())
-            else {
+            if !self.environment_records.is_live(index) {
                 continue;
-            };
+            }
+            // SAFETY: live, so initialized; `&mut self` is exclusive, and clearing reads
+            // writes no reference.
+            let EnvironmentRecord { slots, scope, .. } = unsafe { self.environment_records.get_live_mut_unbarriered(index) };
             slots.clear_unread(|slot| partial.use_of(slot));
             if partial.lexical_this {
                 continue;

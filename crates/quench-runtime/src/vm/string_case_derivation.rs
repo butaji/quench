@@ -53,7 +53,7 @@ fn kept_group(group: &[(u64, Case)], cases: &mut Vec<Case>) -> Option<Bucket> {
 }
 
 impl StringCaseFilter {
-    fn new(heap: &crate::heap::Heap, start: usize, values: &[Value]) -> Option<Self> {
+    fn new(heap: &crate::heap::Heap, values: &[Value]) -> Option<Self> {
         let Candidates { mut cases, short_lengths, max_length } = candidates(heap, values)?;
         // Stable, so each group keeps its source order.
         cases.sort_by_key(|&(key, _)| key);
@@ -64,7 +64,7 @@ impl StringCaseFilter {
         for group in cases.chunk_by(same_signature) {
             place(&mut buckets, kept_group(group, &mut kept)?)?;
         }
-        Some(Self { start, short_lengths, max_length, buckets, cases: kept.into_boxed_slice() })
+        Some(Self { short_lengths, max_length, buckets, cases: kept.into_boxed_slice() })
     }
 }
 
@@ -82,10 +82,10 @@ pub(in super::super) fn specialize<H: Host>(
         if !instruction.op().is_string_case_index() {
             continue;
         }
-        // The range `lane_operand` validated before installing the selector.
+        // The range `operand_in_lane` validated before installing the selector.
         let start = instruction.imm() as usize;
         let Some(filter) = start.checked_add(usize::from(instruction.b())).and_then(|end| constants.get(start..end))
-            .and_then(|cases| StringCaseFilter::new(heap, start, cases)) else {
+            .and_then(|cases| StringCaseFilter::new(heap, cases)) else {
             continue;
         };
         filters.push(filter);
@@ -94,7 +94,7 @@ pub(in super::super) fn specialize<H: Host>(
     let filters = filters.into_boxed_slice();
     for (pc, filter) in sites.into_iter().zip(filters.iter()) {
         records[pc].operand = LaneOperand { string_case_filter: filter };
-        records[pc].handler = lane_string_case_filtered::<H> as *const ();
+        records[pc].handler = super::super::lane_frame::generated_row::<H, { crate::staged::STRING_CASE_INDEX_ROW }, { super::super::ACC_NONE }, { super::super::lane_frame::FLAG_CASE_FILTER }> as *const ();
     }
     filters
 }

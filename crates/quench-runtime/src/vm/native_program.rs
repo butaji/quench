@@ -38,7 +38,7 @@ pub struct NativeJsPublicationCounts {
     /// Functions in the program.
     pub functions: usize,
     /// Functions whose entry runs a lane body, leaving to per-PC semantic entries.
-    pub lane_bodies: usize,
+    pub bodies_in_lane: usize,
     /// Functions left on the call-threaded body (per-PC semantic entries).
     pub call_threaded: usize,
     /// Instruction sites whose continuation is a folded static transfer.
@@ -138,37 +138,37 @@ impl<H: Host> NativeJsProgram<H> {
     pub fn publication_counts(&self) -> NativeJsPublicationCounts { self.counts }
 
     /// The whole-program globals the image folded (tests).
-    #[cfg(test)]
+    #[cfg(all(test, feature = "aot"))]
     pub(crate) fn frozen_global_atoms_for_test(&self) -> &[crate::bytecode::Atom] {
         self.frozen.as_ref().map_or(&[], |frozen| &frozen.globals)
     }
 
     /// Retire the image's stable facts, as a changed assumption would (tests).
-    #[cfg(test)]
+    #[cfg(all(test, feature = "aot"))]
     pub(crate) fn invalidate_frozen(&self) {
         if let Some(frozen) = &self.frozen { frozen.watch.retire() }
     }
 
     /// How many constants the image materializes (tests).
-    #[cfg(test)]
+    #[cfg(all(test, feature = "aot"))]
     pub(crate) fn materialized_constants(&self) -> usize {
         self.frozen.as_ref().map_or(0, |frozen| frozen.constants.borrow().len())
     }
 
     /// The whole-program prototype values the image folded (tests).
-    #[cfg(test)]
+    #[cfg(all(test, feature = "aot"))]
     pub(crate) fn frozen_field_atoms_for_test(&self) -> &[crate::bytecode::Atom] {
         self.frozen.as_ref().map_or(&[], |frozen| &frozen.fields)
     }
 
     /// The method atoms the image holds unnamed, replayed at load.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "aot"))]
     pub(crate) fn frozen_atoms(&self) -> &[crate::bytecode::Atom] {
         self.frozen.as_ref().map_or(&[], |frozen| &frozen.atoms)
     }
 
     /// Whether a replayed assumption retired the image's stable facts.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "aot"))]
     pub(crate) fn frozen_invalidated(&self) -> bool {
         self.frozen.as_ref().is_some_and(|frozen| frozen.invalidation.is_set())
     }

@@ -1,3 +1,4 @@
+use super::native_rows::Holder;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -70,6 +71,15 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
+    /// The `Proxy` constructor, built when script first observes the global `Proxy`.
+    pub(super) fn install_proxy(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        let proxy = self.native_value(Native::Proxy);
+        self.set_builtin_function_name(proxy, "Proxy")?;
+        self.set_builtin_named(program, proxy, "revocable", Native::ProxyRevocable)?;
+        self.seal_initialized_intrinsic(proxy);
+        self.global(program, "Proxy", proxy)
+    }
+
     pub(super) fn install_object(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let object = self.native_value(Native::Object);
         self.set_builtin_function_name(object, "Object")?;
@@ -88,15 +98,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_named(program, self.object_proto, "constructor", Native::Object)?;
-        self.set_builtin_named(program, self.function_proto, "call", Native::FunctionCall)?;
-        self.set_builtin_named(program, self.function_proto, "apply", Native::FunctionApply)?;
-        self.set_builtin_named(program, self.function_proto, "bind", Native::FunctionBind)?;
-        self.set_builtin_named(
-            program,
-            self.function_proto,
-            "toString",
-            Native::FunctionToString,
-        )?;
+        self.install_native_rows(program, self.function_proto, Holder::FunctionPrototype)?;
         let throw_type_error = self.throw_type_error_for_current_realm();
         for name in ["caller", "arguments"] {
             let atom = self.intern_atom(name);
@@ -114,28 +116,12 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        self.set_builtin_named(program, object, "keys", Native::ObjectKeys)?;
         let proxy = self.native_value(Native::Proxy);
         self.set_builtin_function_name(proxy, "Proxy")?;
-        self.set_builtin_named(program, proxy, "revocable", Native::ProxyRevocable)?;
+        self.install_native_rows(program, proxy, Holder::ProxyConstructor)?;
         self.global(program, "Proxy", proxy)?;
-        self.install_object_extra(program, object)?;
-        for (name, native) in [
-            ("create", Native::ObjectCreate),
-            ("groupBy", Native::ObjectGroupBy),
-            ("assign", Native::ObjectAssign),
-            ("getPrototypeOf", Native::ObjectGetPrototypeOf),
-            ("setPrototypeOf", Native::ObjectSetPrototypeOf),
-            ("hasOwn", Native::ObjectHasOwn),
-            ("preventExtensions", Native::ObjectPreventExtensions),
-            ("isExtensible", Native::ObjectIsExtensible),
-            ("seal", Native::ObjectSeal),
-            ("isSealed", Native::ObjectIsSealed),
-            ("freeze", Native::ObjectFreeze),
-            ("isFrozen", Native::ObjectIsFrozen),
-        ] {
-            self.set_builtin_named(program, object, name, native)?;
-        }
+        self.install_object_prototype_methods(program, self.object_proto, None)?;
+        self.install_native_rows(program, object, Holder::ObjectConstructor)?;
         self.global(program, "Object", object)
     }
 }

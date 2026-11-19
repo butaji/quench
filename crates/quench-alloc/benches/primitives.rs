@@ -2,7 +2,7 @@
 
 extern crate test;
 
-use quench_alloc::{class_of, owns, QuenchAlloc, GRANULE_BYTES};
+use quench_alloc::{granule_class_of, owns, QuenchAlloc, GRANULE_BYTES};
 use std::alloc::{handle_alloc_error, GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::ptr::NonNull;
@@ -142,7 +142,7 @@ macro_rules! allocation_cases {
         #[bench]
         fn $quench(b: &mut Bencher) {
             QuenchAlloc::enable();
-            allocation(b, &QuenchAlloc::new(), $bytes, class_of($bytes).is_some());
+            allocation(b, &QuenchAlloc::new(), $bytes, granule_class_of($bytes).is_some());
         }
 
         #[bench]
@@ -157,7 +157,7 @@ macro_rules! resize_cases {
         #[bench]
         fn $quench(b: &mut Bencher) {
             QuenchAlloc::enable();
-            resize_cycle(b, &QuenchAlloc::new(), $initial, $other, |bytes| class_of(bytes).is_some());
+            resize_cycle(b, &QuenchAlloc::new(), $initial, $other, |bytes| granule_class_of(bytes).is_some());
         }
 
         #[bench]

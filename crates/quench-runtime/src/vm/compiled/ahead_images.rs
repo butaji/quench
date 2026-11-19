@@ -56,7 +56,7 @@ fn image(program: &ResidualProgram, function: u32) -> Option<Image> {
     if lowered.region.native == 0 { return None; }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = crate::vm::jit_backend::target_isa()?;
-    let code = crate::vm::jit_backend::compile_function(native, &*isa, Some(lane_region::LANE_BODY_MAX_CODE_BYTES), |compiled, function| {
+    let code = crate::vm::jit_backend::compile_function(native, &*isa, Some(crate::vm::compiled::tier_policy::LANE_BODY_MAX_CODE_BYTES), |compiled, function| {
         RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
     }).ok()?;
     let atoms = code.relocations.iter().filter_map(|relocation| lane_region::relocs::atom_key(relocation.namespace, relocation.key))

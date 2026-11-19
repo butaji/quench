@@ -299,12 +299,10 @@ impl<H: Host> Vm<H> {
             Ok(match values.as_slice() {
                 [] => Value::UNDEFINED,
                 [value] => *value,
-                _ => self.heap.alloc(Cell::Array {
-                    object: crate::heap::ArrayObject::new(
+                _ => self.heap.alloc_array(crate::heap::ArrayObject::new(
                         Self::empty_object(Value::NULL),
                         values,
-                    ),
-                }),
+                    )),
             })
         })();
         for root in roots {
@@ -338,10 +336,10 @@ impl<H: Host> Vm<H> {
         self.profile.call_target(0, args.len());
 
         let realm = match self.heap.function(wrapper) {
-            Some(FunctionRecord { realm, .. })
-                if *realm == self.realm.globals || !self.is_shared_native(wrapper) =>
+            Some(record)
+                if self.record_realm(record) == self.realm.globals || !self.is_shared_native(wrapper) =>
             {
-                *realm
+                self.record_realm(record)
             }
             _ => self.realm.globals,
         };
@@ -989,6 +987,8 @@ mod tests {
         expired_gc: Option<RootId>,
     }
     impl Host for EchoHost {
+        // Its tests exercise no lane behaviour (`Host::RUNS_LANE`).
+        const RUNS_LANE: bool = false;
         fn write_line(&mut self, _: &str) {}
         fn clock_millis(&mut self) -> f64 {
             0.0
@@ -1123,7 +1123,7 @@ mod tests {
         assert!(vm.heap.is_live(descriptor));
         let payload = vm
             .heap
-            .alloc(Cell::Object(Vm::<EchoHost>::empty_object(Value::NULL)));
+            .alloc_object(Vm::<EchoHost>::empty_object(Value::NULL));
         let payload_root = vm.root(payload);
         let args = [
             WasmValue::ExternRef(payload),

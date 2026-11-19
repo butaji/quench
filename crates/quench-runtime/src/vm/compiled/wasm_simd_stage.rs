@@ -36,7 +36,7 @@ impl<H: Host> WasmSimd for Emitter<'_, '_, H> {
         left: ir::Value,
         right: Option<ir::Value>,
     ) -> ir::Value {
-        self.lane_operation(native, left, right)
+        self.operation_in_lane(native, left, right)
     }
 
     /// The operator's own kernel (`SimdKernel::apply_bits`), which the interpreter runs too.
@@ -78,9 +78,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         if let Some(right) = right {
             self.spill_operand(slot, SIMD_KERNEL_RIGHT, right);
         }
-        let mut signature = Signature::new(self.call_conv);
-        signature.params.push(AbiParam::new(types::I64));
-        signature.params.push(AbiParam::new(types::I64));
+        let signature = crate::vm::compiled::call_signature::typed_signature(self.call_conv, &[types::I64, types::I64], &[]);
         let signature = self.body.core.builder.import_signature(signature);
         let target = self.constant(Width::I64, compiled_simd_kernel as *const () as usize as i64);
         let selector = self.constant(Width::I64, i64::from(selector));

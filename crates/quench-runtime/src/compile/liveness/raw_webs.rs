@@ -26,7 +26,7 @@
 //! (`RawWebs::raw_ops`).
 
 use super::RegisterSet;
-use crate::bytecode::{Class, Function, Op, Successors, WideInstruction};
+use crate::bytecode::{Function, Op, Successors, Traits, WideInstruction};
 use crate::compile::liveness::MethodSite;
 use crate::staged::wasm_operation::{Operand, WasmOperation};
 use crate::WasmType;
@@ -44,17 +44,54 @@ const fn wide(ty: WasmType) -> bool {
     matches!(ty, WasmType::I64 | WasmType::F64)
 }
 
-/// The raw form of `op`: the opcode that runs the same operation over raw i64 registers.
-pub(crate) const fn raw_form(op: Op) -> Option<Op> {
-    Some(match op {
-        Op::WasmI64Binary => Op::WasmI64BinaryRaw,
-        Op::WasmI64BinaryImmediate => Op::WasmI64BinaryImmediateRaw,
-        Op::WasmI64Unary => Op::WasmI64UnaryRaw,
-        Op::WasmF64Binary => Op::WasmF64BinaryRaw,
-        Op::WasmF64Unary => Op::WasmF64UnaryRaw,
-        Op::Return => Op::WasmReturn64,
-        _ => return None,
-    })
+/// The families a boxed op and its raw form share (their catalog rows' family traits).
+const RAW_FAMILIES: u128 = Traits::I64_BINARY_FAMILY
+    .union(Traits::I64_BINARY_IMMEDIATE_FAMILY)
+    .union(Traits::I64_UNARY_FAMILY)
+    .union(Traits::F64_BINARY_FAMILY)
+    .union(Traits::F64_UNARY_FAMILY)
+    .union(Traits::RETURN_FAMILY)
+    .0;
+
+/// The raw form of `op`: the opcode that runs the same operation over raw i64 registers, the
+/// raw row of `op`'s family. A raw op has none.
+pub(crate) fn raw_form(op: Op) -> Option<Op> {
+    RAW_FORMS[op as usize]
+}
+
+/// `raw_form_scan` of every op, tabled once at compile time.
+const RAW_FORMS: [Option<Op>; Op::COUNT] = {
+    let mut table = [None; Op::COUNT];
+    let mut index = 0;
+    while index < Op::COUNT {
+        if let Some(op) = Op::from_index(index) {
+            table[index] = raw_form_scan(op);
+        }
+        index += 1;
+    }
+    table
+};
+
+/// The raw row of `op`'s family, found by scanning the catalog.
+const fn raw_form_scan(op: Op) -> Option<Op> {
+    if is_raw(op) {
+        return None;
+    }
+    let family = op.traits().0 & RAW_FAMILIES;
+    if family == 0 {
+        return None;
+    }
+    let mut index = 0;
+    while index < Op::COUNT {
+        if let Some(candidate) = Op::from_index(index)
+            && is_raw(candidate)
+            && candidate.traits().0 & RAW_FAMILIES == family
+        {
+            return Some(candidate);
+        }
+        index += 1;
+    }
+    None
 }
 
 /// Whether `operation` is an f64 operator whose result depends on a NaN operand only through
@@ -71,7 +108,7 @@ fn nan_agnostic(operation: WasmOperation) -> bool {
 
 /// Whether `op` is a raw form: analyzing code the lowering already switched finds its webs again.
 const fn is_raw(op: Op) -> bool {
-    matches!(op, Op::WasmI64BinaryRaw | Op::WasmI64BinaryImmediateRaw | Op::WasmI64UnaryRaw | Op::WasmF64BinaryRaw | Op::WasmF64UnaryRaw | Op::WasmReturn64)
+    op.traits().has(Traits::RAW_FORM)
 }
 
 /// How an instruction touches its registers, where it is not all boxed.
@@ -133,55 +170,56 @@ fn roles(instruction: WideInstruction, constant_neutral: &dyn Fn(usize) -> bool,
         }
         return (!uses.is_empty() || !definitions.is_empty()).then_some(Roles::Wide { uses, definitions, neutral_uses: vec![] });
     }
-    match op.class() {
-        Class::Move => Some(Roles::Copy { destination: a, sources: vec![b] }),
-        Class::WasmSelect => Some(Roles::Copy { destination: a, sources: vec![b, instruction.c()] }),
-        Class::LoadConst | Class::WasmFillRegisters if rewritten || constant_neutral(instruction.constant_index()) => Some(Roles::Neutral),
-        Class::Return if returns_wide && !rewritten && op == Op::Return => Some(Roles::Wide { uses: vec![a], definitions: vec![], neutral_uses: vec![] }),
-        Class::WasmReturn64 => Some(Roles::Wide { uses: vec![a], definitions: vec![], neutral_uses: vec![] }),
-        _ => None,
+    let traits = op.traits();
+    if traits.has(Traits::REGISTER_COPY) {
+        Some(Roles::Copy { destination: a, sources: vec![b] })
+    } else if traits.has(Traits::WASM_SELECT) {
+        Some(Roles::Copy { destination: a, sources: vec![b, instruction.c()] })
+    } else if (traits.has(Traits::CONSTANT_LOAD) || traits.has(Traits::REGISTER_FILL))
+        && (rewritten || constant_neutral(instruction.constant_index()))
+    {
+        Some(Roles::Neutral)
+    } else if traits.has(Traits::RETURN_VALUE) && returns_wide && !rewritten {
+        Some(Roles::Wide { uses: vec![a], definitions: vec![], neutral_uses: vec![] })
+    } else if traits.has(Traits::RETURN_FAMILY) && traits.has(Traits::RAW_FORM) {
+        Some(Roles::Wide { uses: vec![a], definitions: vec![], neutral_uses: vec![] })
+    } else {
+        None
     }
 }
 
 /// Union-find over value nodes.
+/// The web classes: the shared union-find (`crate::webs::DefSets`), and per root whether the
+/// class is touched boxed.
 struct Classes {
-    parent: Vec<u32>,
+    sets: crate::webs::DefSets,
     boxed: Vec<bool>,
 }
 
 impl Classes {
     fn add(&mut self) -> u32 {
-        let id = self.parent.len() as u32;
-        self.parent.push(id);
         self.boxed.push(false);
-        id
+        self.sets.add() as u32
     }
 
-    fn find(&mut self, mut node: u32) -> u32 {
-        while self.parent[node as usize] != node {
-            let parent = self.parent[node as usize];
-            self.parent[node as usize] = self.parent[parent as usize];
-            node = parent;
-        }
-        node
+    fn len(&self) -> usize {
+        self.sets.len()
     }
 
     fn union(&mut self, left: u32, right: u32) {
-        let (left, right) = (self.find(left), self.find(right));
-        if left != right {
-            self.parent[left as usize] = right;
-            self.boxed[right as usize] |= self.boxed[left as usize];
+        if let Some((kept, absorbed)) = self.sets.union(right as usize, left as usize) {
+            self.boxed[kept] |= self.boxed[absorbed];
         }
     }
 
     fn mark_boxed(&mut self, node: u32) {
-        let root = self.find(node);
-        self.boxed[root as usize] = true;
+        let root = self.sets.root(node as usize);
+        self.boxed[root] = true;
     }
 
     fn is_boxed(&mut self, node: u32) -> bool {
-        let root = self.find(node);
-        self.boxed[root as usize]
+        let root = self.sets.root(node as usize);
+        self.boxed[root]
     }
 }
 
@@ -227,13 +265,13 @@ fn webs(
     if !function.handlers.is_empty() || live.len() < count || transfers.len() < count {
         return RawWebs::default();
     }
-    let mut classes = Classes { parent: Vec::new(), boxed: Vec::new() };
+    let mut classes = Classes { sets: crate::webs::DefSets::default(), boxed: Vec::new() };
     // The node of each live-in register at each pc.
     let mut live_in: Vec<Vec<Option<u32>>> = Vec::with_capacity(count);
     for set in &live[..count] {
         let row = (0..registers).map(|register| set.contains(register).then(|| classes.add())).collect();
         live_in.push(row);
-        if classes.parent.len() > NODE_BUDGET {
+        if classes.len() > NODE_BUDGET {
             return RawWebs::default();
         }
     }

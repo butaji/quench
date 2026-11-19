@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use std::ffi::{c_char, c_int, c_void};
 include!("cares_constants.rs");
 #[repr(C)]
@@ -13,12 +12,16 @@ pub struct DnsRecord {
 pub struct Rr {
     _opaque: [u8; 0],
 }
+/// `ares_server_failover_options`: its fields exist for the C layout; Rust never reads them.
 #[repr(C)]
+#[expect(dead_code, reason = "C ABI layout of ares_server_failover_options")]
 pub struct Failover {
     pub retry_chance: u16,
     pub retry_delay: usize,
 }
+/// `ares_options`: every field exists for the C layout; Rust only writes the ones it sets.
 #[repr(C)]
+#[expect(dead_code, reason = "C ABI layout of ares_options")]
 pub struct Options {
     pub flags: c_int,
     pub timeout: c_int,

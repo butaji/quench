@@ -85,47 +85,71 @@ impl<H: Host> WasmActivation for LaneCall<'_, H> {
             Some(FunctionRecord { kind: FunctionKind::Native(Native::WasmHost), .. }) => CallTarget::Import,
             _ => CallTarget::Other,
         }
-    }
-
-    #[inline(always)]
-    fn inline_calls(&mut self) -> bool {
-        unsafe { (*self.cx).inline_calls }
-    }
-
-    #[inline(always)]
-    fn native_mode(&mut self) -> bool {
-        let vm = unsafe { vm(self.cx) };
-        vm.execution_mode == super::ExecutionMode::Compiled && self.i.a & crate::bytecode::RETURN_REGISTER == 0
-    }
-
-    #[inline(always)]
-    fn has_native(&mut self, function: u32) -> bool {
-        let vm = unsafe { vm(self.cx) };
-        let (program, function) = (unsafe { (*self.cx).program }, function as usize);
-        vm.programs.has_compiled_function_or_note_fallback(program, function)
-            || vm.programs.has_wasm_tier_containing(program, function)
-    }
-
-    #[inline(always)]
-    fn note_tier_entry(&mut self, function: u32) -> bool {
-        let vm = unsafe { vm(self.cx) };
-        let program = unsafe { (*self.cx).program };
-        vm.programs.note_wasm_tier_lane_entry(program, function)
-    }
-
-    #[inline(always)]
-    fn enter_compiled(&mut self, function: u32) -> NativeCall {
-        // SAFETY: the window is the caller's registers, read into raw words before native code
-        // runs, so before guest code could make the activations frames.
-        let args = unsafe { lane_call_window(self.r, self.i) };
-        let (program, env) = (unsafe { (*self.cx).program }, lane_instance_env(self.cx));
-        let called = lane_in_place(self.cx, self.ip, |vm, _| {
-            vm.run_compiled(program, env, function, args).transpose()
-        });
-        match called {
-            None => NativeCall::Left,
-            Some(None) => NativeCall::Declined,
-            Some(Some(value)) => NativeCall::Ran(value.to_bits()),
+        // SAFETY: the program's views outlive the lane run.
+        let views = unsafe { &*(*cx).views };
+        let stack: &mut LaneStack = &mut vm.lane_stack;
+        if let Some(lane_view) = views.get(usize::from($function)).and_then(super::program_store::derived_lane_view)
+            && let Some(shape) = lane_view.activation
+            && usize::from(shape.registers)
+                .saturating_mul(std::mem::size_of::<Value>())
+                <= crate::stack::GuestCallGuard::remaining_storage_bytes()
+                    .saturating_sub(stack.wasm_storage_bytes)
+            && stack.admits_activations(1)
+            && vm.frames.len() + stack.activation_count()
+                < super::dispatch_frame::WASM_ACTIVATION_LIMIT
+            && stack.values.room()
+                >= fill_room::<ACTIVATION_FILL_BLOCK>(usize::from(shape.registers))
+        {
+            let window = stack.values.len();
+            let count = usize::from(shape.registers);
+            let frame_storage_bytes = count.saturating_mul(std::mem::size_of::<Value>());
+            let arguments = ImmediateLayout::call_window_base(i.imm());
+            let passed = ImmediateLayout::argument_count(i.imm()).min(shape.params);
+            // SAFETY: capacity holds the window; each slot is written before
+            // the length covers it, and no activation's window moves.
+            let callee_registers = unsafe {
+                let registers = stack.values.as_mut_ptr().add(window);
+                fill_window(registers, count, shape.initial);
+                let mut offset = 0;
+                while offset < passed {
+                    registers
+                        .add(usize::from(shape.parameters + offset))
+                        .write(r.get(arguments + offset));
+                    offset += 1;
+                }
+                stack.values.set_len(window + count + lane_values::CONTEXT);
+                // A Wasm activation runs with its caller's receiver and environment (`ActivationState::of`).
+                Registers(registers).set_this(r.this());
+                Registers(registers).set_env(r.env());
+                Registers(registers).set_capture(r.capture());
+                Registers(registers)
+            };
+            // SAFETY: capacity holds the activation.
+            unsafe {
+                let at = stack.values.as_mut_ptr().wrapping_add(window);
+                stack.push_activation(Activation::of_parts(
+                    crate::vm::compiled::ShadowFrame::EMPTY, u32::from($function),
+                    ip,
+                    (*cx).base,
+                    r,
+                    (*cx).program,
+                    ActivationKind::Wasm { memory: view.memory, frame_storage_bytes },
+                ), at);
+            }
+            // A fresh activation's memory register holds no memory until
+            // the function's instance binding loads it.
+            let base = lane_view.records();
+            unsafe {
+                (*cx).registers = callee_registers;
+                (*cx).base = base;
+                (*cx).memory = MemoryView::NONE;
+            }
+            let view = Carried {
+                memory: MemoryView::NONE,
+                integers: crate::value::IntegerEncoding::TAG,
+                acc: Slot::of(Value::UNDEFINED),
+            };
+            next!(cx, callee_registers, base, view)
         }
     }
 
@@ -540,7 +564,7 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
         return None;
     }
     // SAFETY: the window is the caller's registers.
-    let window = unsafe { lane_call_window(r, i) };
+    let window = unsafe { call_window_in_lane(r, i) };
     if window.len() != usize::from(plan.argc) {
         return None;
     }
@@ -612,5 +636,5 @@ fn js_import_plan<H: Host>(vm: &Vm<H>, wrapper: Value) -> Option<JsImportPlan> {
             _ => return None,
         };
     }
-    Some(JsImportPlan { wrapper, realm: record.realm, callee: *callee, argc: signature.params.len() as u8, kinds, result })
+    Some(JsImportPlan { wrapper, realm: vm.record_realm(record), callee: *callee, argc: signature.params.len() as u8, kinds, result })
 }

@@ -1,5 +1,5 @@
 //! The name, environment-local, capture and `with` steps of a compiled callee that runs as a
-//! native callee's activation (`dispatch_fast::vm_steps::lane_owner_step_in`, `Vm::running_owner`)
+//! native callee's activation (`dispatch_fast::vm_steps::owner_step_in`, `Vm::running_owner`)
 //! are made over the activation's window: a chain of compiled callees whose innermost ones make
 //! them leaves none of its runs, and prints what the interpreter prints.
 use crate::vm::catch_tests::{bodies_match_interpreter, BodyRuns};

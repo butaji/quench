@@ -811,6 +811,7 @@ impl Engine {
             module_requests: vec![],
             module_imports: vec![],
             module_link_plan: None,
+            declared_types: None,
             source_name: name.into(),
             source: None,
             atoms: AtomTable::default(),
@@ -1504,17 +1505,19 @@ impl ModuleBindings<'_> {
             length: params,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
+            rare: None,
             rest: false,
             is_async: false,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
             instance_initializer: None,
+            constant_fields: Default::default(),
             super_home_atom: None,
             constructible: false,
             class_initializer: false,
             parameter_eval_arguments_error: false,
-            unaliased_arguments: false,
+            unaliased_arguments: false, rest_alias: false,
         prototype_unobservable: false,
             arguments_slot: None,
             simple_parameters: true,
@@ -1523,10 +1526,11 @@ impl ModuleBindings<'_> {
             local_atoms: vec![].into(),
             environment_atoms: vec![].into(),
             selective_capture_slots: None,
+            declared_functions: Default::default(),
+            declared_captures: Default::default(),
             local_registers: Vec::new().into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),
@@ -1536,15 +1540,9 @@ impl ModuleBindings<'_> {
             registers: lowering.registers,
             dispatch: Default::default(),
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(),
-            live_parameter_reflection: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: lowering.handlers.into(),
             register_roots: Default::default(),
             undefined_register: None,
@@ -1889,11 +1887,7 @@ impl Lowering<'_> {
     }
 
     pub(super) fn instruction(&self, pc: usize) -> WideInstruction {
-        if self.code[pc].is_wide() {
-            self.wide[self.code[pc].wide_index()]
-        } else {
-            self.code[pc].as_wide()
-        }
+        crate::bytecode::widen(self.code[pc], &self.wide)
     }
 
     /// Write `value` into `local`: redirect its producer when it was the

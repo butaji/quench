@@ -9,12 +9,12 @@ script_handler! {
     /// decides whether the name lands on the global object and quickens the record
     /// accordingly (`Vm::settle_name_probe`).
     #[inline(never)]
-    fn lane_load_name_probe<KIND: u8>(cx, r, ip, i, view) {
-        lane_materialize_running_leaf(cx);
+    fn name_probe_miss<KIND: u8>(cx, r, ip, i, view) {
+        materialize_running_leaf_in_lane(cx);
         let vm = unsafe { vm(cx) };
         vm.scope_names.probe = Some(crate::vm::name_scope::NameProbe {
             program: unsafe { (*cx).program },
-            function: lane_running_function(cx),
+            function: running_function_in_lane(cx),
             pc: unsafe { ip.offset_from((*cx).base) } as u32,
         });
         exit(ip)
@@ -24,17 +24,16 @@ script_handler! {
 /// Quickens the record of the by-name read at `pc` of `view`, which `Vm::settle_name_probe`
 /// settled: a hinted global read where the name lands on the global object, else an exit.
 pub(in crate::vm) fn settle_name_record<H: Host>(view: &LaneView, pc: usize, op: Op, lands: bool) {
-    let handler = match (lands, op.class()) {
-        (false, _) => lane_exit::<H> as Handler,
-        (true, Class::LoadName) => lane_load_global_name::<H, LOAD_NAME, true> as Handler,
-        (true, Class::LoadNameCall) => lane_load_global_name::<H, LOAD_NAME_CALL, true> as Handler,
-        (true, _) => lane_load_global_name::<H, LOAD_NAME_TYPEOF, true> as Handler,
+    let handler = match (lands, crate::staged::name_load(op)) {
+        (false, _) => exit_lane::<H> as Handler,
+        (true, Some(load)) => name_row::<H, FLAG_NAME_GLOBAL_SCOPED>(load),
+        (true, None) => name_row::<H, FLAG_NAME_GLOBAL_SCOPED>(crate::staged::NameLoad::Typeof),
     };
     // SAFETY: `pc` is a record of the view, whose records live while its program does.
     requicken::<H>(unsafe { view.records().add(pc) }, handler);
 }
 
-/// The handler of a by-name read of kind `KIND` whose scope is left to the general path's read.
+/// The miss arm of a by-name read of kind `KIND` at `FLAG_PROBE`: its scope is left to the general path's read.
 pub(super) const fn probe_handler<H: Host, const KIND: u8>() -> Handler {
-    lane_load_name_probe::<H, KIND>
+    name_probe_miss::<H, KIND>
 }

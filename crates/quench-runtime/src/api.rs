@@ -8,7 +8,7 @@ pub use embedding::RootedError;
 mod native;
 pub(crate) use native::CompiledScriptState;
 pub use native::{
-    CollectionContext, BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostCallback, HostFunction, HostFunctionDescriptor, HostFunctionId, HostWeakRoot, IntactBuiltin, PreparedScript, NativeArithmetic,
+    CollectionContext, BufferStorage, Detach, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, HostCallback, HostFunction, HostFunctionDescriptor, HostFunctionId, HostWeakRoot, IntactBuiltin, PreparedScript, NativeArithmetic,
     CompiledScript, NativeContext, RootScopeMark, RootedIterator, ErrorSourcePosition, SourceStackFrame, SynchronousModule,
     ModuleAcceptArguments, ModuleAcceptCallback,
     DeserializerDelegate, SerializerDelegate,
@@ -270,6 +270,7 @@ impl<H: Host> Runtime<H> {
         self.vm.initialize_for_snapshot(program).map_err(|error| error.to_string())?;
         // A restored heap starts as a full collection leaves it, every cell old: garbage the
         // snapshot kept would stay until the next full collection.
+        self.vm.forget_spare_await_state();
         self.vm.collect_now(program);
         self.vm.write_snapshot(write_host).map_err(|error| error.0)
     }
@@ -679,10 +680,10 @@ mod tests {
         let snapshot = builder.build_snapshot(&program, |_, _| Ok(())).unwrap();
         let mut restored = Runtime::new(TestHost::default());
         restored.set_execution_mode(crate::ExecutionMode::Compiled);
-        assert!(restored.vm.lane_methods_enrolled(), "the mode enrolls the lane-body tier");
+        assert!(restored.vm.methods_enrolled_in_lane(), "the mode enrolls the lane-body tier");
         restored.restore_snapshot(std::rc::Rc::new(snapshot), &program, |_, _| Ok(())).unwrap();
         assert_eq!(restored.execution_mode(), crate::ExecutionMode::Compiled);
-        assert!(restored.vm.lane_methods_enrolled(), "a restore carries the realm, not the tier enrollment");
+        assert!(restored.vm.methods_enrolled_in_lane(), "a restore carries the realm, not the tier enrollment");
     }
 
     fn assert_output_in_execution_modes(source: &str, expected: &[&str]) {

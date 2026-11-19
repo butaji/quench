@@ -37,7 +37,7 @@ fn admit<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDi
 fn admitted_function<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDispatch,
     (owner, function, env): (crate::vm::ProgramId, u32, Value)) -> Option<CallEntry> {
     let &(admitted, admitted_env, entry) = vm.frameless.functions.get(function as usize)?;
-    if admitted != owner.raw() || owner != dispatch.program_id || entry.code == 0 || entry.epoch != vm.heap.collection_epoch() {
+    if admitted != owner.raw() || owner != dispatch.program_id || entry.code == 0 || entry.epoch != vm.cache_epochs.gc {
         return None;
     }
     Some(if env == admitted_env { entry } else { captures(vm, program, owner, env, entry) })
@@ -63,7 +63,7 @@ fn admit_function<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: 
     let body = program.function_get(function as usize)?;
     let plan = body.call_plan(program);
     if !plan.in_loop || !plan.registers_only || body.rest { return None; }
-    let epoch = vm.heap.collection_epoch();
+    let epoch = vm.cache_epochs.gc;
     if vm.frameless.materializations.get(&(owner.raw(), function))
         .is_some_and(|&(leaves, counted)| leaves >= MATERIALIZATION_LIMIT && counted == epoch) {
         return None;

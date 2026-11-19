@@ -3,7 +3,6 @@
 //! specializer reads them to keep facts across operations (a fact about a region survives
 //! until an operation that writes the region), and the interpreter ignores them.
 
-#![allow(dead_code)] // Stage v2 vocabulary; first consumers are the rows moving under `Concrete` next.
 
 use super::{Allocation, CallOperation, Operation};
 pub(crate) use super::region::Region;
@@ -101,16 +100,23 @@ impl<W, P> Operation<W, P> {
             Self::IndexWrite { .. } => Effects::writes(Region::Elements),
             Self::ElementRead { .. } => Effects { reads: RegionSet::of(Region::Elements), may_call_js: true, may_throw: true, ..Effects::NONE },
             Self::ElementWrite { .. } => Effects::ANY,
+            Self::DefineElement { .. } => Effects::writes(Region::Elements),
             // A closure promotes the activation's captured locals into its environment.
             Self::Allocate { allocation: Allocation::Closure { .. }, .. } => Effects {
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots).with(Region::Frame)
-                .with(Region::Records).with(Region::Payload), may_alloc: true, ..Effects::NONE },
-            Self::Allocate { allocation: Allocation::Empty | Allocation::Array { .. } | Allocation::RegExp { .. } | Allocation::ConstArray { .. }, .. } => Effects {
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+            // A callee-argument regexp literal reads its callee register, and its shared object's
+            // `lastIndex` and the proofs it is kept under (`Vm::regexp_literal_argument_of`).
+            Self::Allocate { allocation: Allocation::RegExp { callee: Some(_), .. }, .. } => Effects {
+                reads: RegionSet::of(Region::Frame).with(Region::ObjectSlots).with(Region::ShapeWord).with(Region::Records),
                 writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
-                .with(Region::Records).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+            Self::Allocate { allocation: Allocation::Empty | Allocation::Array { .. } | Allocation::RegExp { callee: None, .. } | Allocation::ConstArray { .. }, .. } => Effects {
+                writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
             Self::Allocate { allocation: Allocation::ObjectLiteral { .. } | Allocation::ObjectPair { .. } | Allocation::ArrayOf { .. } | Allocation::Template { .. }, .. } => Effects {
                 reads: RegionSet::of(Region::Frame), writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
-                .with(Region::Records).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+                .with(Region::Records).with(Region::ShapeWord).with(Region::Payload), may_alloc: true, ..Effects::NONE },
             _ => return self.property_effects(),
         })
     }
@@ -132,11 +138,16 @@ impl<W, P> Operation<W, P> {
             Self::Move { .. } | Self::LoadConst { .. } | Self::LoadThis { .. } => Effects::NONE,
             Self::LoadLocalPlain { .. } => Effects::reads(Region::Frame),
             Self::StoreLocalPlain { .. } => Effects::writes(Region::Frame),
+            Self::LoadLocalChecked { .. } => Effects::reads(Region::Frame),
+            Self::StoreLocalChecked { .. } | Self::InitializeLocal { .. } => Effects::writes(Region::Frame),
             Self::Jump | Self::JumpIf { .. } | Self::LogicalNot { .. } | Self::Number(_) | Self::Return { .. } => Effects::NONE,
             Self::CompareJump { comparison, .. } if !comparison.runs_guest_code() => Effects::NONE,
             Self::RequireObjectCoercible { .. } | Self::RequireIteratorResult { .. } => Effects { may_throw: true, ..Effects::NONE },
             Self::Safepoint { .. } => Effects { may_collect: true, ..Effects::NONE },
             Self::Call(operation) => operation.effects(),
+            // A suspension resumes the activation after anything: an `await` may run guest code
+            // through PromiseResolve, and the frame's state is the generator's again.
+            Self::Suspend { .. } => Effects::ANY,
             // The memory operations answered in `memory_effects`; anything else is conservative.
             _ => Effects::ANY,
         }
@@ -151,11 +162,11 @@ mod tests {
     #[test]
     fn only_operations_that_store_allocate_or_run_guest_code_move_arrays() {
         type Row = Operation<u64, ()>;
-        let stay: [Row; 5] = [Operation::ElementRead { base: 0, key: Operand(1) }, Operation::Move { destination: 0, source: 1 },
+        let stay: [Row; 5] = [Operation::ElementRead { base: 0, key: Operand(1), destination: 0 }, Operation::Move { destination: 0, source: 1 },
             Operation::Jump, Operation::Safepoint { proof: () }, Operation::LoadThis { destination: 0 }];
         assert!(stay.iter().all(|row| !row.moves_arrays()));
-        let move_arrays: [Row; 4] = [Operation::ElementWrite { value: 0, base: 1, key: 2 }, Operation::IndexWrite { index: 0, value: 0, proof: () },
-            Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () }, Operation::Binary { destination: 0, left: 1, right: 2, operator: 0 }];
+        let move_arrays: [Row; 4] = [Operation::ElementWrite { value: 0, base: 1, key: 2, strict: false }, Operation::IndexWrite { index: 0, value: 0, proof: () },
+            Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () }, Operation::Binary { destination: 0, left: crate::bytecode::Operand::register(1), right: crate::bytecode::Operand::register(2), operator: 0 }];
         assert!(move_arrays.iter().all(Row::moves_arrays));
     }
 }

@@ -6,6 +6,7 @@
 
 use super::{RegisterSet, register_bit};
 use crate::bytecode::{ControlEdge, ControlFlowLayout, Function, Op};
+use crate::compile::CompileScratch;
 use std::ops::{BitAnd, BitOr, BitOrAssign, Not};
 
 /// A set of registers, one bit each, at a width that holds every register of the function.
@@ -63,20 +64,40 @@ pub(crate) fn analyze_transfers<M: LiveMask>(function: &Function, transfers: &[(
 pub(crate) fn analyze_wide(
     function: &Function, transfers: &[(RegisterSet, RegisterSet)], successors: &crate::bytecode::Successors,
 ) -> Vec<RegisterSet> {
+    analyze_wide_with(function, transfers, successors, &mut CompileScratch::default())
+}
+
+/// `analyze_wide`, narrowing its transfers into `scratch`'s buffers.
+pub(crate) fn analyze_wide_with(
+    function: &Function, transfers: &[(RegisterSet, RegisterSet)], successors: &crate::bytecode::Successors,
+    scratch: &mut CompileScratch,
+) -> Vec<RegisterSet> {
     match usize::from(function.registers) {
-        registers if registers <= u64::BITS as usize => analyze_narrowed::<u64>(function, transfers, successors),
-        registers if registers <= u128::BITS as usize => analyze_narrowed::<u128>(function, transfers, successors),
+        registers if registers <= u64::BITS as usize => {
+            let mut narrowed = std::mem::take(&mut scratch.narrowed_word);
+            let live = analyze_narrowed::<u64>(function, transfers, successors, &mut narrowed);
+            scratch.narrowed_word = narrowed;
+            live
+        }
+        registers if registers <= u128::BITS as usize => {
+            let mut narrowed = std::mem::take(&mut scratch.narrowed_pair);
+            let live = analyze_narrowed::<u128>(function, transfers, successors, &mut narrowed);
+            scratch.narrowed_pair = narrowed;
+            live
+        }
         _ => analyze_successors(function, transfers, successors),
     }
 }
 
 /// `analyze_successors` of `transfers` at the width `M`, which holds every register of the
-/// function, widened back to sets.
+/// function, widened back to sets. `narrowed` is the buffer the narrowed transfers are written to.
 fn analyze_narrowed<M: LiveMask>(
     function: &Function, transfers: &[(RegisterSet, RegisterSet)], successors: &crate::bytecode::Successors,
+    narrowed: &mut Vec<(M, M)>,
 ) -> Vec<RegisterSet> {
-    let narrowed: Vec<(M, M)> = transfers.iter().map(|&(read, written)| (M::narrow(read), M::narrow(written))).collect();
-    analyze_successors(function, &narrowed, successors).into_iter().map(Into::into).collect()
+    narrowed.clear();
+    narrowed.extend(transfers.iter().map(|&(read, written)| (M::narrow(read), M::narrow(written))));
+    analyze_successors(function, narrowed.as_slice(), successors).into_iter().map(Into::into).collect()
 }
 
 /// `analyze_transfers` over the function's successor table, `successors`.
@@ -105,35 +126,148 @@ pub(crate) fn analyze_successors<M: LiveMask>(
 /// instruction an abrupt completion may leave by a handler reaches the handler's live-in set
 /// whatever the instruction writes, since the write is not made on that edge: it is live
 /// before every instruction the handler covers.
+///
+/// A backward problem of the one driver, `dataflow::solve`, over basic blocks: a block ends at
+/// every instruction that does not just fall through to the next (a branch, an exit, or one a
+/// handler covers), so a handler edge leaves from the end of its block. A block's state is the
+/// pair (live after its last instruction, live into the handlers it may leave by); blocks are
+/// numbered from the function's end, so the driver's lowest-first order is a reverse sweep.
 pub(crate) fn analyze_graph<M: LiveMask, P: Pc>(
     transfers: &[(M, M)], starts: &[P], successors: &[P], kinds: &[ControlEdge], required: impl Fn(usize) -> M,
 ) -> Vec<M> {
     let length = transfers.len();
     assert_eq!(starts.len(), length + 1);
-    let edges = |pc: usize| &successors[starts[pc].index()..starts[pc + 1].index()];
-    let has_backward_successor = (0..length).any(|pc| edges(pc).iter().any(|successor| successor.index() <= pc));
-    let mut live: Vec<_> = (0..=length).map(&required).collect();
-    loop {
-        let mut changed = false;
-        for pc in (0..length).rev() {
-            let (mut output, mut thrown) = (M::default(), M::default());
-            for edge in starts[pc].index()..starts[pc + 1].index() {
-                let reached = live.get(successors[edge].index()).copied().unwrap_or_default();
-                output |= reached;
-                if kinds.get(edge) == Some(&ControlEdge::Handler) { thrown |= reached; }
-            }
-            let (read, written) = transfers[pc];
-            let next = required(pc) | read | thrown | (output & !written);
-            if live[pc] != next {
-                live[pc] = next;
-                changed = true;
+    let mut graph = LiveGraph::new(transfers, starts, successors, kinds, required);
+    crate::dataflow::solve(&mut graph);
+    graph.live
+}
+
+/// `analyze_graph`'s block graph. `heads` holds each block's first instruction in ascending
+/// order; block `b` is `heads[heads.len() - 1 - b]`.
+struct LiveGraph<'a, M, F> {
+    transfers: &'a [(M, M)],
+    required: F,
+    heads: Vec<usize>,
+    /// Each block's predecessors, sorted, at `predecessor_starts[block]..[block + 1]`.
+    predecessors: Vec<usize>,
+    predecessor_starts: Vec<usize>,
+    /// Whether the predecessor at the same index reaches the block by a handler edge.
+    handler: Vec<bool>,
+    /// What each block's last instruction reaches past the function's end: its output and
+    /// thrown halves.
+    exits: Vec<(M, M)>,
+    /// The live set before each instruction and after the last, recorded by `transfer`.
+    live: Vec<M>,
+}
+
+impl<'a, M: LiveMask, F: Fn(usize) -> M> LiveGraph<'a, M, F> {
+    fn new<P: Pc>(transfers: &'a [(M, M)], starts: &[P], successors: &[P], kinds: &[ControlEdge], required: F) -> Self {
+        let length = transfers.len();
+        let is_handler = |edge: usize| kinds.get(edge) == Some(&ControlEdge::Handler);
+        let mut head = vec![false; length + 1];
+        if length > 0 { head[0] = true; }
+        for pc in 0..length {
+            let (first, last) = (starts[pc].index(), starts[pc + 1].index());
+            let falls_through = last == first + 1 && successors[first].index() == pc + 1 && !is_handler(first);
+            if !falls_through { head[pc + 1] = true; }
+            for successor in &successors[first..last] {
+                if successor.index() < length { head[successor.index()] = true; }
             }
         }
-        if !changed || !has_backward_successor {
-            break;
+        let heads: Vec<usize> = (0..length).filter(|&pc| head[pc]).collect();
+        drop(head);
+        let count = heads.len();
+        let block_of = |pc: usize| count - heads.partition_point(|&start| start <= pc);
+        let end_of = |block: usize| heads.get(count - block).copied().unwrap_or(length);
+        let mut live: Vec<M> = vec![M::default(); length + 1];
+        live[length] = required(length);
+        let mut exits = vec![(M::default(), M::default()); count];
+        let mut pairs: Vec<(usize, usize, bool)> = Vec::new();
+        for block in 0..count {
+            let last = end_of(block) - 1;
+            for edge in starts[last].index()..starts[last + 1].index() {
+                let target = successors[edge].index();
+                if target < length {
+                    pairs.push((block_of(target), block, is_handler(edge)));
+                } else if target == length {
+                    exits[block].0 |= live[length];
+                    if is_handler(edge) { exits[block].1 |= live[length]; }
+                }
+            }
         }
+        pairs.sort_unstable();
+        let mut predecessors = Vec::with_capacity(pairs.len());
+        let mut handler: Vec<bool> = Vec::with_capacity(pairs.len());
+        let mut predecessor_starts = vec![0; count + 1];
+        let mut previous: Option<(usize, usize)> = None;
+        for (target, block, by_handler) in pairs {
+            if previous == Some((target, block)) {
+                if let Some(flag) = handler.last_mut() { *flag |= by_handler; }
+                continue;
+            }
+            previous = Some((target, block));
+            predecessors.push(block);
+            handler.push(by_handler);
+            predecessor_starts[target + 1] += 1;
+        }
+        for block in 0..count {
+            predecessor_starts[block + 1] += predecessor_starts[block];
+        }
+        LiveGraph { transfers, required, heads, predecessors, predecessor_starts, handler, exits, live }
     }
-    live
+
+    /// The instructions of `block`, first and one past its last.
+    fn span(&self, block: usize) -> (usize, usize) {
+        let count = self.heads.len();
+        let index = count - 1 - block;
+        (self.heads[index], self.heads.get(index + 1).copied().unwrap_or(self.transfers.len()))
+    }
+}
+
+impl<M: LiveMask, F: Fn(usize) -> M> crate::dataflow::Dataflow for LiveGraph<'_, M, F> {
+    /// Live after the block's last instruction, and live into the handlers it may leave by.
+    type State = (M, M);
+
+    fn blocks(&self) -> usize {
+        self.heads.len()
+    }
+
+    fn edges(&self, block: usize) -> &[usize] {
+        &self.predecessors[self.predecessor_starts[block]..self.predecessor_starts[block + 1]]
+    }
+
+    fn entry_state(&self, block: usize) -> Option<Self::State> {
+        Some(self.exits[block])
+    }
+
+    fn join(&self, into: &mut Self::State, incoming: &Self::State) -> bool {
+        let joined = (into.0 | incoming.0, into.1 | incoming.1);
+        let changed = joined != *into;
+        *into = joined;
+        changed
+    }
+
+    fn transfer(&mut self, block: usize, state: &Self::State) -> Self::State {
+        let (start, end) = self.span(block);
+        let last = end - 1;
+        let (read, written) = self.transfers[last];
+        let mut live = (self.required)(last) | read | state.1 | (state.0 & !written);
+        self.live[last] = live;
+        for pc in (start..last).rev() {
+            let (read, written) = self.transfers[pc];
+            live = (self.required)(pc) | read | (live & !written);
+            self.live[pc] = live;
+        }
+        (live, M::default())
+    }
+
+    fn transfer_edge(&self, block: usize, target: usize, out: &Self::State) -> Self::State {
+        let (first, last) = (self.predecessor_starts[block], self.predecessor_starts[block + 1]);
+        let by_handler = self.predecessors[first..last]
+            .binary_search(&target)
+            .is_ok_and(|index| self.handler[first + index]);
+        (out.0, if by_handler { out.0 } else { M::default() })
+    }
 }
 
 /// Whether a frame paused at `op` can resume with an abrupt completion that enters the

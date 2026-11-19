@@ -1,6 +1,6 @@
 //! Parameters a mapped `arguments` object aliases, in the window of a suspended function
 //! (`Function::arguments_ride_window`). The window holds the parameters; the object made
-//! on entry is the function's local `arguments_slot` (`window_binding`), and its elements are the parameters' values
+//! on entry is the function's local `arguments_slot` (`ParameterHome`), and its elements are the parameters' values
 //! while the mapping holds, as the general path keeps them (`Vm::mapped_argument_load`,
 //! `Vm::mapped_argument_store`). A read answers the element, a write goes to the parameter's
 //! binding and the element, and an element's write reaches the binding
@@ -8,27 +8,6 @@
 //! closure makes the environment, and its slot there after (`ParameterHome`), as a captured
 //! `arguments` object does.
 use super::*;
-
-/// The handler of `class`'s record of parameter `slot` when the parameter is one a mapped
-/// `arguments` object aliases in a suspended function's window; `None` for any other record.
-pub(super) fn mapped_parameter_handler<H: Host>(
-    function: &Function,
-    class: Class,
-    slot: usize,
-) -> Option<Handler> {
-    let handler: Handler = match class {
-        Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal => {
-            lane_load_mapped_parameter::<H>
-        }
-        Class::StoreLocal | Class::StoreLocalPlain | Class::StoreEnvLocal => {
-            lane_store_mapped_parameter::<H>
-        }
-        _ => return None,
-    };
-    (crate::vm::arguments::mapped_arguments_slot(function, slot).is_some()
-        && function.arguments_ride_window())
-    .then_some(handler)
-}
 
 /// Where a parameter lives in an environment window: its local among the window's locals, or,
 /// for a parameter a closure captured once the window's environment exists, its slot there. A
@@ -45,7 +24,7 @@ impl ParameterHome {
     ///
     /// # Safety
     /// `entries` starts the entries of a live environment window of `function`
-    /// (`lane_activate_environment`), which holds a local for each of its slots.
+    /// (`activate_environment_in_lane`), which holds a local for each of its slots.
     pub(super) unsafe fn of(entries: *mut Value, function: &Function, slot: usize) -> Self {
         // SAFETY: as the caller guarantees.
         let environment = unsafe { *entries.add(usize::from(WINDOW_ENVIRONMENT)) };
@@ -102,9 +81,9 @@ impl LaneStack {
 
     /// The function of the environment window activation at `depth` and where its entries start.
     fn window_at<'a>(&self, code: &'a ResidualProgram, depth: usize) -> Option<(&'a Function, *mut Value)> {
-        let activation = self.activations.get(depth)?;
+        let activation = self.activations().get(depth)?;
         activation.script().filter(|script| script.environment)?;
-        let body = code.function_get(activation.function as usize)?;
+        let body = code.function_get(activation.function() as usize)?;
         // SAFETY: an environment activation's window holds its entries after its registers.
         Some((body, unsafe { activation.window_ptr().add(usize::from(body.registers)) }))
     }
@@ -126,78 +105,5 @@ impl<H: Host> Vm<H> {
         if let Some(object) = self.heap.object_mut(arguments) {
             object.set_window_depth(depth);
         }
-    }
-}
-
-/// The binding of local `slot` of `body`, the function of the running window activation whose
-/// registers are `r`: its window's local, or its environment's slot once a closure made one.
-pub(super) fn window_binding<H: Host>(vm: &Vm<H>, r: Registers, body: &Function, slot: usize) -> Value {
-    // SAFETY: the running window activation's entries follow its function's registers.
-    unsafe { ParameterHome::of(r.0.add(usize::from(body.registers)), body, slot) }.read(&vm.heap)
-}
-
-/// The `arguments` object the running window activation made on entry, and the home of its
-/// parameter `slot`, for the window whose entries start at register `registers`; `None` in a
-/// frame's run, which the general path serves.
-fn mapped_window<H: Host>(
-    cx: *mut LaneContext<H>,
-    r: Registers,
-    registers: u16,
-    slot: usize,
-) -> Option<(Value, ParameterHome)> {
-    if unsafe { (*cx).registers }.env().is_deleted() {
-        return None;
-    }
-    let vm = unsafe { vm(cx) };
-    let function = vm.lane_stack.activations.last()?.function;
-    // SAFETY: the context's program outlives the lane run.
-    let body = unsafe { &*(*cx).code }.function(function as usize);
-    Some((
-        window_binding(vm, r, body, usize::from(body.arguments_slot?)),
-        // SAFETY: the running window activation's entries start at `registers`.
-        unsafe { ParameterHome::of(r.0.add(usize::from(registers)), body, slot) },
-    ))
-}
-
-script_handler! {
-    /// A local load of a parameter a mapped `arguments` object aliases, in the window
-    /// activation of a suspended function: the element the object maps it to, else the
-    /// parameter's binding. Any other run, a numeric local or an uninitialized binding takes the
-    /// general path.
-    fn lane_load_mapped_parameter<>(cx, r, ip, i, view) {
-        let (slot, registers) = environment_window_fields(i);
-        let Some((arguments, home)) = mapped_window(cx, r, registers, slot).filter(|_| i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0)
-        else {
-            return exit(ip);
-        };
-        let vm = unsafe { vm(cx) };
-        let value = vm.mapped_window_element(arguments, slot).unwrap_or_else(|| home.read(&vm.heap));
-        if value.is_deleted() {
-            return exit(ip);
-        }
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
-}
-
-script_handler! {
-    /// `lane_load_mapped_parameter`'s store: the parameter's binding and, while the mapping
-    /// holds, the element (`Vm::store_mapped_argument`).
-    fn lane_store_mapped_parameter<>(cx, r, ip, i, view) {
-        let (slot, registers) = environment_window_fields(i);
-        let Some((arguments, home)) = mapped_window(cx, r, registers, slot) else {
-            return exit(ip);
-        };
-        let vm = unsafe { vm(cx) };
-        if i.c == 0 && home.read(&vm.heap).is_deleted() {
-            return exit(ip);
-        }
-        let value = r.get(i.a);
-        home.write(vm, value);
-        vm.store_mapped_argument(arguments, slot, value);
-        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
-            r.set(register, value);
-        }
-        next!(cx, r, following(ip), view)
     }
 }

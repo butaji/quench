@@ -12,7 +12,7 @@ use cranelift_codegen::{
     ir::{self, MemFlagsData},
     isa::TargetIsa,
 };
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+use cranelift_frontend::FunctionBuilder;
 use std::{num::NonZeroUsize, ops::Range};
 
 #[path = "native_graph/object_parts.rs"]
@@ -22,9 +22,7 @@ mod dispatch;
 pub(super) use dispatch::{lower_body, lower_region_dispatch, region_call_arguments};
 use object_parts::{entry_table_data, import_operations, lower_lane_bodies, lower_object_entry, lower_object_regions};
 
-// Bounds the working CFG, not the source function. Large unpartitioned native
-// graphs exhausted 14 GiB on a 50 KiB input; callers may choose any nonzero budget.
-const DEFAULT_REGION_INSTRUCTION_BUDGET: NonZeroUsize = NonZeroUsize::new(1024).unwrap();
+use crate::vm::compiled::tier_policy::DEFAULT_REGION_INSTRUCTION_BUDGET;
 /// The image's ABI header import is its first function symbol.
 const ABI_SYMBOL_INDEX: u32 = 0;
 /// Data records an image publishes between its functions' operands and the fallback tables: the narrow table, then the atom table.
@@ -144,12 +142,12 @@ impl CallThreadedExtension for ObjectExtension<'_> {
             name: crate::NATIVE_JS_ABI_SYMBOL.into(),
             signature: ir::Signature::new(self.isa.default_call_conv()),
         }];
-        let lane_bodies = self.lane_bodies(&mut functions)?;
+        let bodies_in_lane = self.bodies_in_lane(&mut functions)?;
         let operations = import_operations(&mut functions, &self.functions, &*self.isa)?;
-        let symbols = self.symbols(functions.len(), &lane_bodies)?;
+        let symbols = self.symbols(functions.len(), &bodies_in_lane)?;
         let mut data = Vec::with_capacity(self.program.function_count());
         let mut pending = Definitions::default();
-        for (id, lane_body) in lane_bodies.into_iter().enumerate() {
+        for (id, lane_body) in bodies_in_lane.into_iter().enumerate() {
             let entry = self.lower_function(id, lane_body, &operations, &symbols, &mut pending)?;
             data.push(self.operand_data(id)?);
             functions.push(NativeFunction::Definition { name: format!("{}_function_{id}", self.namespace), function: entry });
@@ -177,21 +175,21 @@ struct Definitions {
 
 impl ObjectExtension<'_> {
     /// Every function's lane body, importing the lane helper table where any lowers.
-    fn lane_bodies(&self, functions: &mut Vec<NativeFunction>) -> Result<Vec<Option<ir::Function>>, String> {
+    fn bodies_in_lane(&self, functions: &mut Vec<NativeFunction>) -> Result<Vec<Option<ir::Function>>, String> {
         let lane_helpers = u32::try_from(functions.len()).map_err(|_| "native helper symbol count exceeds u32")?;
-        let lane_bodies = lower_lane_bodies(self.program, self.options, &*self.isa, lane_helpers);
-        if lane_bodies.iter().any(Option::is_some) {
+        let bodies_in_lane = lower_lane_bodies(self.program, self.options, &*self.isa, lane_helpers);
+        if bodies_in_lane.iter().any(Option::is_some) {
             functions.push(NativeFunction::Import {
                 name: crate::NATIVE_JS_LANE_HELPERS_SYMBOL.into(),
                 signature: super::compiled::native_lane_helpers_signature(&*self.isa),
             });
         }
-        Ok(lane_bodies)
+        Ok(bodies_in_lane)
     }
 
     /// The symbol layout after `defined` imports: a function's lane body publishes under its own
     /// symbol, after the functions and the private regions; its fallback after the lane bodies.
-    fn symbols(&self, defined: usize, lane_bodies: &[Option<ir::Function>]) -> Result<Symbols, String> {
+    fn symbols(&self, defined: usize, bodies_in_lane: &[Option<ir::Function>]) -> Result<Symbols, String> {
         let first_definition = u32::try_from(defined).map_err(|_| "native symbol count exceeds u32")?;
         let region_count = (0..self.program.function_count())
             .try_fold(0usize, |count, id| count.checked_add(self.options.region_count(self.program.function(id).code.len())))
@@ -200,7 +198,7 @@ impl ObjectExtension<'_> {
             .checked_add(self.program.function_count())
             .and_then(|base| base.checked_add(region_count))
             .ok_or("native lane body symbol count overflow")?;
-        let fallback_base = body_base.checked_add(lane_bodies.iter().flatten().count())
+        let fallback_base = body_base.checked_add(bodies_in_lane.iter().flatten().count())
             .ok_or("native fallback symbol count overflow")?;
         u32::try_from(fallback_base).map_err(|_| "native lane body symbol count exceeds u32")?;
         Ok(Symbols { first_definition, body_base, fallback_base })
@@ -394,7 +392,7 @@ fn object_fallback_table(
     let size = function.code.len().checked_mul(pointer_bytes).ok_or("native fallback table size overflow")?;
     let mut addresses = Vec::with_capacity(function.code.len());
     for (pc, packed) in function.code.iter().copied().enumerate() {
-        let op = super::dispatch_fast::decoded_instruction(function, packed).op();
+        let op = function.widened(packed).op();
         addresses.push(NativeFunctionAddress {
             offset: u32::try_from(pc * pointer_bytes).map_err(|_| "native fallback table offset exceeds u32")?,
             function: operations[op as usize].expect("collected operation"),
@@ -425,7 +423,7 @@ fn lower_object_fallback(
 ) -> Result<ir::Function, String> {
     let count = u32::try_from(function.code.len()).map_err(|_| "native instruction count exceeds u32")?;
     let mut native = native_function(function_id, super::compiled::native_js_operation_signature(isa));
-    let mut context = FunctionBuilderContext::new();
+    let mut context = crate::vm::jit_backend::builder::take_context();
     let mut builder = FunctionBuilder::new(&mut native, &mut context);
     let params = enter_native_entry(&mut builder);
     let pc = params[1];
@@ -449,6 +447,7 @@ fn lower_object_fallback(
     builder.leave(&[status]);
     builder.seal_all();
     builder.finalize(isa.frontend_config());
+    crate::vm::jit_backend::builder::keep_context(context);
     Ok(native)
 }
 

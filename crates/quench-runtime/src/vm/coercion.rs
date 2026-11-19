@@ -140,14 +140,14 @@ impl<H: Host> Vm<H> {
         } else {
             value
         };
-        if self.heap.is_string(primitive) || matches!(self.heap.get(primitive), Some(Cell::Symbol(_))) {
+        if self.heap.is_string(primitive) || self.heap.is_symbol(primitive) {
             return Ok(primitive);
         }
         // An array index's key, as a native's loop over a proxy or an array-like makes one per
         // element: the string its atom keeps, which a later ToPropertyKey of it reads back as
         // that atom (`string_key_atom`) instead of parsing it.
         if let Some(index) = primitive.as_int().and_then(|index| usize::try_from(index).ok()) {
-            let atom = self.lookup_array_index_atom(index).unwrap_or_else(|| self.intern_atom(&index.to_string()));
+            let atom = self.index_key_atom(index);
             return Ok(self.atom_string(atom));
         }
         let text = self.coerce_js_string(program, primitive)?;
@@ -236,6 +236,9 @@ impl<H: Host> Vm<H> {
                 self.typeof_test_value(value, index, negated)
             }
             crate::bytecode::UNARY_TYPEOF_INDEX => self.typeof_index_value(value),
+            op if let Some(elements) = crate::bytecode::array_pattern_test(op) => {
+                Value::boolean(self.array_pattern_fits(value, elements))
+            }
             op @ (crate::bytecode::UNARY_TO_STRING_PRIMITIVE | crate::bytecode::UNARY_ADD_OPERAND_STRING) => return self.string_primitive(p, op, value),
             _ => return Err(JsError("unsupported unary operator".into())),
         })
@@ -246,7 +249,7 @@ impl<H: Host> Vm<H> {
     #[inline] pub(super) fn primitive_to_number(&self, value: Value) -> Option<f64> {
         value
             .immediate_number()
-            .or_else(|| self.heap.string(value).map(|text| super::number::parse_number_string(text.host_string())))
+            .or_else(|| self.heap.string(value).map(|text| text.read_units(super::number::string_to_number_units)))
     }
 
     #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
@@ -264,7 +267,7 @@ impl<H: Host> Vm<H> {
         }
         match self.heap.get(value) {
             Some(Cell::Date { milliseconds, .. }) => return Ok(*milliseconds),
-            Some(Cell::Symbol(_)) => {
+            _ if self.heap.is_symbol(value) => {
                 return Err(
                     self.type_error(program, "Cannot convert a Symbol value to a number".into())
                 );
@@ -300,11 +303,11 @@ impl<H: Host> Vm<H> {
             return self.to_string(program, primitive);
         }
         match self.heap.get(value) {
-            Some(Cell::Function(_)) => return Ok("function () { [native code] }".into()),
+            _ if self.heap.is_function_value(value) => return Ok("function () { [native code] }".into()),
             _ if let Some(value) = self.heap.string(value)  => return Ok(value.to_host_owned()),
             Some(Cell::Error(value)) => return Ok(value.clone()),
             Some(Cell::BigInt(value)) => return Ok(value.to_string()),
-            Some(Cell::Symbol(_)) => {
+            _ if self.heap.is_symbol(value) => {
                 return Err(
                     self.type_error(program, "Cannot convert a Symbol value to a string".into())
                 );

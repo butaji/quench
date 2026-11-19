@@ -5,15 +5,30 @@
 //! holds exactly what the slot would; opening its dead zone writes nothing anyone reads.
 
 use super::liveness::ROOT_MAP_REGISTERS;
-use super::rewrite::{fixed_width, relocate};
+use super::rewrite::relocate;
+use super::CompileScratch;
 /// The binding legacy argument reflection looks for.
 const ARGUMENTS_NAME: &str = "arguments";
 
 use crate::bytecode::initialization;
 use crate::bytecode::{
-    WITH_ENTER_BINDING, EvalBindingLocation, Function, ImmediateRole, Instr, InstructionField, Op,
-    Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, ThrownValueSlot, WideInstruction,
+    REGISTER_MOVE, WITH_ENTER_BINDING, EvalBindingLocation, Function, ImmediateRole, Instr, InstructionField, Op,
+    Operand, OperandKind, REGISTER_MASK, Superinstruction, ThrownValueSlot, Traits, WideInstruction, the_op,
 };
+
+const LOAD_CONST_OP: Op = the_op(Traits::CONSTANT_LOAD);
+const NOP_OP: Op = the_op(Traits::NO_OP);
+/// The ops that reach a closure's or an environment's slots, which a frame's own accesses do not see.
+const ENVIRONMENT_REACHING: Traits = Traits::MAKES_CLOSURE
+    .union(Traits::ENV_LOCAL_LOAD)
+    .union(Traits::ENV_LOCAL_STORE)
+    .union(Traits::ENVIRONMENT_CLONE);
+
+/// The by-name accesses of an identifier: a name operation whose atom immediate names the identifier.
+/// `NAME_OPERATION` alone also covers operations naming no atom, which the immediate role tells apart.
+fn names_binding(op: Op) -> bool {
+    op.traits().has(Traits::NAME_OPERATION) && op.immediate_role() == ImmediateRole::AtomIndex
+}
 
 /// Forgets `function`'s own name binding slot (`Function::self_binding_slot`) when nothing
 /// can read it: its body reads the name as `LoadCallee`, no instruction or handler names the
@@ -40,15 +55,15 @@ pub(super) fn drop_unread_self_binding<'a>(
         Some(captured) => captured.binary_search(&slot).is_ok(),
         // Without a selective layout a closure or environment access may reach any slot.
         None => function.instructions().any(|instruction| {
-            matches!(instruction.op(), Op::MakeClosure | Op::LoadEnvLocal | Op::StoreEnvLocal | Op::CloneEnv)
+            instruction.op().traits().has(ENVIRONMENT_REACHING)
         }),
     };
     let named = function.instructions().any(|instruction| {
         if instruction.op().immediate_role() == ImmediateRole::SuperinstructionIndex {
             return superinstructions[instruction.superinstruction_index()]
-                .code
+                .wide
                 .iter()
-                .any(|member| member.is_wide() || member.as_wide().addressed_local_slots().any(|addressed| addressed == slot));
+                .any(|member| member.addressed_local_slots().any(|addressed| addressed == slot));
         }
         instruction.addressed_local_slots().any(|addressed| addressed == slot)
     }) || function.handlers.iter().any(|handler| {
@@ -70,6 +85,8 @@ pub(super) fn promote<'a>(
     superinstructions: &[Superinstruction],
     undefined_constant: u32,
     atom_name: impl Fn(usize) -> Option<&'a str>,
+    flow: &initialization::FlowCell,
+    scratch: &mut CompileScratch,
 ) {
     // A by-name read inside `with` resolves a local through its frame slot.
     if eligible.is_empty()
@@ -101,12 +118,12 @@ pub(super) fn promote<'a>(
                 })
                 .flat_map(|instruction| {
                     superinstructions[instruction.superinstruction_index()]
-                        .code
+                        .wide
                         .iter()
-                        .map(|member| member.as_wide())
+                        .copied()
                 }),
         )
-        .filter(|instruction| instruction.op() == Op::CloneEnv)
+        .filter(|instruction| instruction.op().traits().has(Traits::ENVIRONMENT_CLONE))
         .map(|instruction| instruction.environment_clone_index());
     let named = function
         .arguments_slot
@@ -130,31 +147,18 @@ pub(super) fn promote<'a>(
     }
     let mut exclude = |slot: usize| eligible.remove(slot);
     // The atoms by-name accesses resolve; a local of one of them keeps its slot.
-    let mut by_name = Vec::new();
+    let mut by_name = std::mem::take(&mut scratch.by_name);
+    by_name.clear();
     for instruction in function.instructions() {
         if instruction.op().immediate_role() == ImmediateRole::SuperinstructionIndex {
-            for member in superinstructions[instruction.superinstruction_index()].code {
-                if member.is_wide() {
-                    return;
-                }
+            for member in superinstructions[instruction.superinstruction_index()].wide {
                 member
-                    .as_wide()
                     .addressed_local_slots()
                     .for_each(|slot| exclude(usize::from(slot)));
             }
             continue;
         }
-        if matches!(
-            instruction.op(),
-            Op::LoadName
-                | Op::LoadNameCall
-                | Op::LoadNameTypeof
-                | Op::ResolveName
-                | Op::LoadResolvedName
-                | Op::DeleteName
-                | Op::StoreName
-                | Op::StoreResolvedName
-        ) {
+        if names_binding(instruction.op()) {
             by_name.push(instruction.atom_index());
         }
         if let Some(target) = instruction.numeric_local_target() {
@@ -164,16 +168,16 @@ pub(super) fn promote<'a>(
             continue;
         }
         let slot = instruction.local_slot();
-        let promotable = match instruction.op() {
-            Op::InitializeTdz => true,
-            // The move keeps the load's result flags.
-            Op::LoadLocalPlain => {
-                instruction.numeric_local_target().is_none()
-                    && instruction.numeric_local_store_target().is_none()
-                    && WideInstruction::new(Op::Move, instruction.a(), 0, 0, 0).result_flags_valid()
-            }
-            Op::StoreLocalPlain => true,
-            _ => false,
+        let op = instruction.op();
+        let promotable = if op.traits().has(Traits::TDZ_INITIALIZE) {
+            true
+        // The move keeps the load's result flags.
+        } else if op.traits().has(Traits::PLAIN_LOCAL_LOAD) {
+            instruction.numeric_local_target().is_none()
+                && instruction.numeric_local_store_target().is_none()
+                && WideInstruction::new(REGISTER_MOVE, instruction.a(), 0, 0, 0).result_flags_valid()
+        } else {
+            op.traits().has(Traits::PLAIN_LOCAL_STORE)
         };
         if !promotable {
             exclude(slot);
@@ -181,6 +185,7 @@ pub(super) fn promote<'a>(
     }
     by_name.sort_unstable(); by_name.dedup();
     function.local_atoms.iter().enumerate().filter(|(_, local)| by_name.binary_search(local).is_ok()).for_each(|(slot, _)| exclude(slot));
+    scratch.by_name = by_name;
     // New registers follow the existing ones while liveness still covers the function and
     // operands can name them. A function whose registers already outnumber what liveness
     // covers has no root map to keep (`ROOT_MAP_REGISTERS`), so only the operand domain
@@ -189,7 +194,8 @@ pub(super) fn promote<'a>(
     let uncovered = function.registers >= ROOT_MAP_REGISTERS;
     // A slot no instruction or handler names (a local compilation already promoted) needs no
     // register: nothing reads or writes it, and each register costs every activation a fill.
-    let mut accessed = crate::bitset::BitSet::new(eligible.len());
+    let mut accessed = std::mem::take(&mut scratch.accessed);
+    accessed.reset(eligible.len());
     let mut access = |slot: usize| {
         accessed.checked_insert(slot);
     };
@@ -202,7 +208,9 @@ pub(super) fn promote<'a>(
         }
     }
     let mut next = function.registers;
-    let mut registers: Vec<Option<Register>> = vec![None; eligible.len()];
+    let mut registers = std::mem::take(&mut scratch.registers);
+    registers.clear();
+    registers.resize(eligible.len(), None);
     for (slot, register) in registers.iter_mut().enumerate() {
         if eligible.contains(slot)
             && accessed.contains(slot)
@@ -214,7 +222,9 @@ pub(super) fn promote<'a>(
             next += 1;
         }
     }
+    scratch.accessed = accessed;
     if next == function.registers {
+        scratch.registers = registers;
         return;
     }
     function.registers = next;
@@ -222,35 +232,31 @@ pub(super) fn promote<'a>(
     // A frame slot starts undefined, a register only once written (`prepare_registers_for`):
     // a promoted slot some read can reach before any store gets `undefined` on entry.
     let promoted = crate::bitset::BitSet::from_fn(registers.len(), |slot| registers[slot].is_some());
-    let written_first = initialization::initialized_before_reads(
-        function,
-        superinstructions,
-        &promoted,
-        &promoted,
-    );
-    let old = function.code.clone();
-    let mut code = Vec::with_capacity(old.len());
+    let written_first = initialization::initialized_before_reads(function, superinstructions, &promoted, &promoted, flow);
+    // The code is moved out, not copied: nothing below reads `function.code` before it is set back.
+    let old = std::mem::take(&mut function.code);
+    let mut code = scratch.code_buffer(old.len());
     for (slot, target) in registers.iter().enumerate() {
         if let Some(target) = *target
             && !written_first.contains(slot)
         {
-            let load = WideInstruction::new(Op::LoadConst, target, 0, 0, undefined_constant);
-            code.push(encode(load, Instr::new(Op::Nop, 0, 0, 0, 0), &mut function.wide));
+            let load = WideInstruction::new(LOAD_CONST_OP, target, 0, 0, undefined_constant);
+            code.push(encode(load, Instr::new(NOP_OP, 0, 0, 0, 0), &mut function.wide));
         }
     }
-    let mut map = vec![0; old.len() + 1];
+    let map = scratch.remap(old.len());
     for (pc, &packed) in old.iter().enumerate() {
         map[pc] = code.len();
-        let mut instruction = fixed_width(packed, &function.wide);
+        let mut instruction = function.widened(packed);
         let promoted = (instruction.op().immediate_role() == ImmediateRole::LocalSlot)
             .then(|| register(instruction.local_slot()))
             .flatten();
         match (instruction.op(), promoted) {
-            (Op::InitializeTdz, Some(_)) => continue,
-            (Op::LoadLocalPlain, Some(source)) => {
-                instruction = WideInstruction::new(Op::Move, instruction.a(), source, 0, 0);
+            (op, Some(_)) if op.traits().has(Traits::TDZ_INITIALIZE) => continue,
+            (op, Some(source)) if op.traits().has(Traits::PLAIN_LOCAL_LOAD) => {
+                instruction = WideInstruction::new(REGISTER_MOVE, instruction.a(), source, 0, 0);
             }
-            (Op::StoreLocalPlain, Some(target)) => {
+            (op, Some(target)) if op.traits().has(Traits::PLAIN_LOCAL_STORE) => {
                 let source = instruction.register_a();
                 // A store that also keeps its value in a register becomes two moves.
                 if let Some(copy) = instruction.optional_register_b() {
@@ -258,7 +264,7 @@ pub(super) fn promote<'a>(
                     code.push(encode(store, Instr::new(Op::Nop, 0, 0, 0, 0), &mut function.wide));
                     instruction = WideInstruction::new(Op::Move, copy, source, 0, 0);
                 } else {
-                    instruction = WideInstruction::new(Op::Move, target, source, 0, 0);
+                    instruction = WideInstruction::new(REGISTER_MOVE, target, source, 0, 0);
                 }
             }
             _ => {
@@ -298,7 +304,7 @@ pub(super) fn promote<'a>(
     relocate(
         &mut code,
         &mut function.wide,
-        &map,
+        &*map,
         &mut function.handlers,
         &mut function.parameter_end_pc,
         &mut function.binding_sites,
@@ -313,6 +319,8 @@ pub(super) fn promote<'a>(
         }
     }
     function.code = code;
+    scratch.recycle_code(old);
+    scratch.registers = registers;
 }
 
 /// `instruction` in the slot `packed` held: packed when it fits, else in the wide table,
@@ -333,4 +341,47 @@ fn encode(instruction: WideInstruction, packed: Instr, wide: &mut Vec<WideInstru
         wide.push(instruction);
         Instr::wide(wide.len() - 1).expect("wide table index fits the packed domain")
     })
+}
+
+#[cfg(test)]
+mod role_tests {
+    use super::*;
+
+    /// The catalog's ops, in row order, that a predicate selects.
+    fn selected(predicate: impl Fn(Op) -> bool) -> Vec<Op> {
+        (0..Op::COUNT).filter_map(Op::from_index).filter(|&op| predicate(op)).collect()
+    }
+
+    /// Each role selects exactly the ops its emitters and matches replaced.
+    #[test]
+    fn roles_select_the_ops_they_replaced() {
+        assert_eq!(selected(|op| op.traits().has(Traits::LOCAL_BINDING_LOAD)), [Op::LoadLocal]);
+        assert_eq!(selected(|op| op.traits().has(Traits::LOCAL_BINDING_STORE)), [Op::StoreLocal]);
+        assert_eq!(selected(|op| op.traits().has(Traits::PLAIN_LOCAL_LOAD)), [Op::LoadLocalPlain]);
+        assert_eq!(selected(|op| op.traits().has(Traits::PLAIN_LOCAL_STORE)), [Op::StoreLocalPlain]);
+        assert_eq!(selected(|op| op.traits().has(Traits::INCREMENT_UPDATE)), [Op::IncDec]);
+        assert_eq!(selected(|op| op.traits().has(Traits::BINARY_RESULT)), [Op::Binary]);
+        assert_eq!(selected(|op| op.traits().has(Traits::PAIR_LITERAL_MAKE)), [Op::MakeObject2]);
+        assert_eq!(selected(|op| op.traits().has(Traits::WINDOW_LITERAL_MAKE)), [Op::MakeObjectLiteral]);
+        assert_eq!(selected(|op| op.traits().has(Traits::NAMED_FIELD_WRITE)), [Op::SetField, Op::SetFieldStrict]);
+        assert_eq!(
+            selected(|op| op.traits().has(Traits::FRAME_SLOT_READ)),
+            [Op::LoadLocal, Op::ArgumentsLength, Op::ArgumentGet],
+        );
+        assert_eq!(
+            selected(|op| op.traits().has(ENVIRONMENT_REACHING)),
+            [Op::CloneEnv, Op::LoadEnvLocal, Op::StoreEnvLocal, Op::MakeClosure],
+        );
+        assert_eq!(
+            selected(names_binding),
+            [
+                Op::LoadName, Op::LoadNameCall, Op::LoadNameTypeof, Op::ResolveName,
+                Op::LoadResolvedName, Op::DeleteName, Op::StoreName, Op::StoreResolvedName,
+            ],
+        );
+        assert_eq!(selected(|op| op.traits().has(Traits::CONSTANT_LOAD)), [Op::LoadConst]);
+        assert_eq!(selected(|op| op.traits().has(Traits::NO_OP)), [Op::Nop]);
+        assert_eq!(selected(|op| op.traits().has(Traits::TDZ_INITIALIZE)), [Op::InitializeTdz]);
+        assert_eq!(selected(|op| op.traits().has(Traits::REGISTER_COPY)), [Op::Move]);
+    }
 }

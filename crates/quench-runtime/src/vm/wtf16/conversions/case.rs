@@ -15,6 +15,9 @@ impl JsString {
     pub(crate) fn default_case(&self, upper: bool) -> Option<Cow<'_, JsString>> {
         let mapped = match self.units() {
             Units::Ascii(bytes) => ascii_case(bytes, upper),
+            // Latin-1 text maps through the wide mapping: its result may leave Latin-1 (U+00FF
+            // uppercases to U+0178), and `from_units` stores whatever it makes in canonical form.
+            Units::Latin1(bytes) => wide_case(&bytes.iter().map(|byte| u16::from(*byte)).collect::<Vec<u16>>(), upper)?,
             Units::Wide(units) => wide_case(units, upper)?,
         };
         Some(mapped.map_or(Cow::Borrowed(self), Cow::Owned))

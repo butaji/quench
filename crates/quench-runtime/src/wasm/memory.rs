@@ -539,7 +539,7 @@ pub(super) fn direct_access_memory(
     let index = MemoryLoad::from_wasm(operator)
         .map(|(_, memarg)| memarg)
         .or_else(|| MemoryStore::from_wasm(operator).map(|(_, memarg)| memarg))
-        .or_else(|| lane_access(operator).map(|(_, _, memarg, _, _)| memarg))
+        .or_else(|| simd_access_of(operator).map(|(_, _, memarg, _, _)| memarg))
         .map(|memarg| memarg.memory)
         .or(match operator {
             wasmparser::Operator::MemorySize { mem }

@@ -14,7 +14,7 @@
 //! skipping it made the four 8K-17K-instruction functions of an Air run 25% dearer to run
 //! (warm, 1943M to 2054M instructions).
 
-use crate::bytecode::{Function, ImmediateRole};
+use crate::bytecode::Function;
 
 /// The instructions a function without a backward jump may have before its optional
 /// finishing passes decline.
@@ -22,18 +22,7 @@ pub(crate) const STRAIGHT_LINE_LIMIT: usize = 4096;
 
 /// Whether `function` is within the budget: short, or looping.
 pub(crate) fn admits(function: &Function) -> bool {
-    function.code.len() <= STRAIGHT_LINE_LIMIT || has_backward_jump(function)
-}
-
-fn has_backward_jump(function: &Function) -> bool {
-    function.code.iter().enumerate().any(|(pc, &packed)| {
-        if packed.is_wide() {
-            let wide = function.wide[packed.wide_index()];
-            wide.op().immediate_role() == ImmediateRole::JumpTarget && wide.jump_target() as usize <= pc
-        } else {
-            packed.op().immediate_role() == ImmediateRole::JumpTarget && packed.jump_target() as usize <= pc
-        }
-    })
+    function.code.len() <= STRAIGHT_LINE_LIMIT || function.loops()
 }
 
 #[cfg(test)]

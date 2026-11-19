@@ -13,9 +13,10 @@ impl<W, P> Operation<W, P> {
             Self::Move { destination, source } | Self::LogicalNot { destination, source }
                 | Self::Number(NumberOperation::ToNumeric { destination, source } | NumberOperation::IncDec { destination, source, .. }) =>
                 [Some(destination), Some(source)],
-            Self::LoadLocalPlain { destination, .. } | Self::LoadThis { destination } | Self::Void { destination } =>
-                [Some(destination), None],
-            Self::StoreLocalPlain { source, result, .. } => [Some(source), result],
+            Self::LoadLocalPlain { destination, .. } | Self::LoadLocalChecked { destination, .. } | Self::LoadThis { destination }
+                | Self::Void { destination } => [Some(destination), None],
+            Self::StoreLocalPlain { source, result, .. } | Self::StoreLocalChecked { source, result, .. } => [Some(source), result],
+            Self::InitializeLocal { .. } => [None, None],
             Self::RequireObjectCoercible { register } => [Some(register), None],
             _ => return None,
         })
@@ -24,7 +25,8 @@ impl<W, P> Operation<W, P> {
     /// Whether the row reads or writes the activation's local slots (`Frame::load_local`), which a
     /// numeric region's activation has none of.
     pub(crate) const fn uses_locals(&self) -> bool {
-        matches!(self, Self::LoadLocalPlain { .. } | Self::StoreLocalPlain { .. })
+        matches!(self, Self::LoadLocalPlain { .. } | Self::StoreLocalPlain { .. } | Self::LoadLocalChecked { .. }
+            | Self::StoreLocalChecked { .. } | Self::InitializeLocal { .. })
     }
 
     /// Whether a frame's step of the row can leave at its miss edge: a row that only copies or
@@ -35,11 +37,11 @@ impl<W, P> Operation<W, P> {
 }
 
 impl Op {
-    /// An allocation the lane makes in place, running no guest code: a literal (`lane_new_object`,
-    /// `lane_new_object_pair`, `lane_new_array`) or a construction by its callee's plan
-    /// (`lane_construct`). A due collection leaves before it, so native code never collects.
+    /// An allocation the lane makes in place, running no guest code: a literal (`compiled_new_object`,
+    /// `new_object_pair_in_lane`, `new_array_in_lane`) or a construction by its callee's plan
+    /// (`construct_in_lane`). A due collection leaves before it, so native code never collects.
     pub(crate) const fn allocates(self) -> bool {
-        matches!(self, Op::MakeObject | Op::MakeObject2 | Op::MakeArray | Op::Construct)
+        matches!(self, Op::MakeObject | Op::MakeObject2 | Op::MakeObjectLiteral | Op::MakeArray | Op::Construct)
     }
 
     /// An instruction whose result register a loop region defines natively, as a Number or as a
@@ -127,7 +129,7 @@ mod tests {
     #[test]
     fn every_opcode_answers_the_loop_admission_questions_by_its_family() {
         use crate::bytecode::Class::{self, *};
-        let allocations: &[Class] = &[MakeObject, MakeObject2, MakeArray, Construct];
+        let allocations: &[Class] = &[MakeObject, MakeObject2, MakeObjectLiteral, MakeArray, Construct];
         let defining: &[Class] = &[LoadConst, Move, LoadCapture, Binary, NumericAdd, NumericMultiply, IncDec, Unary,
             ToNumeric, GetIndex, GetField, LoadEnvLocal, LoadName];
         let lowered: &[Class] = &[StoreCapture, RequireObjectCoercible, SetIndex, DefineArrayElement, Return, Jump,

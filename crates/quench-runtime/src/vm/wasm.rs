@@ -191,18 +191,18 @@ impl<H: Host> Vm<H> {
         // function slots, which end the resource layout; ref.func derives their base.
         values.push(Value::UNDEFINED);
         values.extend(functions);
-        let environment = self.heap.alloc(Cell::Environment {
-            parent: Value::NULL,
-            function: 0,
-            slots: values.into(),
-            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+        let environment = self.heap.alloc_environment(
+            Value::NULL,
+            0,
+            values.into(),
+            crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(id.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
                 dynamic_bindings: crate::heap::EnvironmentBindings::Owned(vec![]),
                 with_objects: Box::default(),
             }),
-        });
+        ).0;
         let root = self.root(environment);
         let previous = self.replace_active_program(id);
         let missing = || JsError::validation("invalid Wasm instance environment".into());
@@ -441,7 +441,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn create_wasm_host_reference(&mut self) -> crate::RootId {
         let value = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         self.root(value)
     }
 
@@ -4668,9 +4668,9 @@ mod tests {
         let binding = vm.wasm_global_binding(&first, 0).unwrap();
         let payload = vm
             .heap
-            .alloc(Cell::Object(Vm::<crate::SystemHost>::empty_object(
+            .alloc_object(Vm::<crate::SystemHost>::empty_object(
                 Value::NULL,
-            )));
+            ));
         vm.wasm_global_store(binding, payload).unwrap();
         let handle = vm.root(binding);
         let second = vm
@@ -4688,9 +4688,9 @@ mod tests {
         );
         let replacement = vm
             .heap
-            .alloc(Cell::Object(Vm::<crate::SystemHost>::empty_object(
+            .alloc_object(Vm::<crate::SystemHost>::empty_object(
                 Value::NULL,
-            )));
+            ));
         vm.wasm_global_store(binding, replacement).unwrap();
         vm.collect_now(importer.residual());
         assert!(!vm.heap.is_live(payload));
@@ -4989,11 +4989,7 @@ mod tests {
             .code
             .iter()
             .map(|packed| {
-                if packed.is_wide() {
-                    invalid.function(0).wide[packed.wide_index()]
-                } else {
-                    packed.as_wide()
-                }
+                invalid.function(0).widened(*packed)
             })
             .find(|instruction| instruction.op().is_wasm_memory_address())
             .unwrap();
@@ -5279,6 +5275,8 @@ mod tests {
     fn compiled_wasm_loop_backedge_polls_execution_interrupt() {
         struct StartHost(std::sync::mpsc::Sender<()>);
         impl crate::Host for StartHost {
+            // Its test runs compiled Wasm only (`Host::RUNS_LANE`).
+            const RUNS_LANE: bool = false;
             fn write_line(&mut self, _: &str) {}
             fn clock_millis(&mut self) -> f64 {
                 0.0
@@ -5595,7 +5593,7 @@ mod tests {
         let root_instructions = root_code
             .code
             .iter()
-            .map(|packed| super::super::dispatch_fast::decoded_instruction(root_code, *packed))
+            .map(|packed| root_code.widened(*packed))
             .collect::<Vec<_>>();
         assert!(
             root_instructions.iter().any(|instruction| {
@@ -5756,7 +5754,7 @@ mod tests {
     /// Builds a list of `nodes` words from `LIST_HEAD`, each holding the next one's address
     /// and the last zero, then runs `walk` over it (locals: 0 the node count, 1 the address,
     /// 2 and 3 the walk's) and returns local 2: run in a selective
-    /// module, whose lane run raises the floor (`Vm::lane_credits_backedges`), so every
+    /// module, whose lane run raises the floor (`Vm::credits_backedges_in_lane`), so every
     /// backward jump takes the safepoint.
     fn walk_list_at_safepoints(name: &str, nodes: i32, walk: Vec<Operator<'static>>) -> Option<crate::WasmValue> {
         const WORD: i32 = 4;
@@ -5996,7 +5994,7 @@ mod tests {
         let root_instructions = root_code
             .code
             .iter()
-            .map(|packed| super::super::dispatch_fast::decoded_instruction(root_code, *packed))
+            .map(|packed| root_code.widened(*packed))
             .collect::<Vec<_>>();
         assert!(
             root_instructions

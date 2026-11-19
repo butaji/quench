@@ -26,11 +26,11 @@ pub enum Event {
     LeftInCallee,
     /// A run was irreversibly terminated.
     Terminated,
-    /// A body's entry the lane could not make the activations of a leave for (`lane_body_admits`).
+    /// A body's entry the lane could not make the activations of a leave for (`body_admits_in_lane`).
     Refused,
     /// A lane body entered through its entry cell before any activation.
     CellCrossed,
-    /// An entry that bound a different run into the lane frame (`LaneFrame::bind_run`).
+    /// An entry that bound a different run into the lane frame (`BodyRunContext::bind_run`).
     RunBound,
     /// A run that completed with its body's `Return`, as opposed to an exception.
     Returned,
@@ -65,6 +65,7 @@ impl Event {
     /// How a run that ended at `exit` ended: completed, left at its own PC (its entry, or the
     /// stub of an entry cell that ran no body, included), inside an inlined call, into a
     /// callee, or terminated.
+    #[inline]
     pub(in crate::vm) fn ended(exit: LaneExit) -> Self {
         match exit {
             LaneExit::Returned { .. } | LaneExit::Threw { .. } => Self::Completed,
@@ -89,8 +90,10 @@ impl Default for TierEvents {
 }
 
 impl TierEvents {
+    #[inline]
     pub(in crate::vm) fn record(&self, event: Event) { self.add(event, 1); }
 
+    #[inline]
     pub(in crate::vm) fn add(&self, event: Event, count: usize) {
         let counter = &self.events[event as usize];
         counter.set(counter.get() + count as u64);

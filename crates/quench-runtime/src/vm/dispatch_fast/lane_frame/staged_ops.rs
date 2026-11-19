@@ -2,19 +2,13 @@
 //! record, steps the operation on the concrete stage, and answers the edge or the written value.
 use super::*;
 
-/// The edge a staged jump test takes, or `None` where the value's heap cell decides it.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_jump_if<const TAKEN: bool>(r: Registers, view: Carried, register: u16) -> Option<Edge> {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    jump_edge(crate::staged::step(&mut stage, &mut frame, Operation::JumpIf { register, taken: TAKEN }))
-}
 
 /// The edge a staged jump's step takes, or `None` where the interpreter's own path decides it.
 #[inline(always)]
-fn jump_edge(step: Step<u64, Edge>) -> Option<Edge> {
+fn jump_edge(step: Step<u64, LaneControl>) -> Option<Edge> {
     match step {
-        Step::Control(edge) => Some(edge),
+        Step::Control(LaneControl::Edge(edge)) => Some(edge),
+        Step::Control(LaneControl::Resumed(_) | LaneControl::Suspend(_)) => unreachable!("a jump suspends nothing"),
         Step::Unresolved => None,
         Step::Value(_) => unreachable!("a jump produces no value"),
     }
@@ -187,15 +181,6 @@ pub(in crate::vm::dispatch_fast) fn staged_load_capture<H: Host>(cx: *mut LaneCo
         || staged_load_capture_walked::<H>(cx, r, view, destination, at, root)
 }
 
-/// `staged_load_capture` of a slot of the running function's own (depth 0, not the root's),
-/// which the remembered walks never answer (`lane_capture_read`): the row alone, so a miss
-/// leaves for the caller's walk with nothing spilled for a second run.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_load_own_capture<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried,
-    destination: u16, slot: u16) -> bool {
-    load_capture_with::<H>(cx, r, view, (destination, (0, slot), false), Reads::NONE)
-}
-
 /// `staged_load_capture` through the lane's remembered walks (`Reads::of_captures`).
 #[cold]
 #[inline(never)]
@@ -216,58 +201,108 @@ fn load_capture_with<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carri
     matches!(crate::staged::step(&mut stage, &mut frame, Operation::LoadCapture { destination, depth, slot, root }), Step::Value(_))
 }
 
-/// `LoadLocal` and `LoadEnvLocal` of `slot` into `destination` by `staged::read_initialized_local`, over the binding
-/// the frame owns (`Vm::owner_binding_mut`: its environment's slot once the environment is captured, else its local)
-/// as a one-slot window; false, writing nothing, for a root body's frame, a slot outside the frame or a binding in
-/// its temporal dead zone, which the general path raises. A slot a mapped `arguments` aliases reads the argument.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_load_local_checked<H: Host, const ACC: u8>(cx: *mut LaneContext<H>,
-    r: Registers, view: Carried, destination: u16, slot: usize) -> bool {
-    let vm = unsafe { vm(cx) };
-    let (code, frame) = (unsafe { &*(*cx).code }, unsafe { (*cx).frame() });
-    let function = code.function(vm.frames[frame].function as usize);
-    if vm.frames[frame].function == super::super::ROOT_FUNCTION_ID {
-        return false;
-    }
-    let Some(binding) = vm.owner_binding_mut(code, VarOwner::Frame(frame), slot).map(std::ptr::from_mut) else { return false };
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut window = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, binding, 1);
-    let Some(word) = read_initialized_local(&mut stage, &mut window, destination, 0, ()) else { return false };
-    if crate::vm::arguments::mapped_arguments_slot(function, slot).is_some() {
-        r.set(destination, vm.mapped_argument_load(code, VarOwner::Frame(frame), slot, Value::from_bits(word)));
-    }
-    true
+/// What the staged `await` conversion (`staged::await_source`) asks the lane context, erased of
+/// its host so the frame names no `H`: whether a value is an object, and PromiseResolve where it
+/// observes nothing (`Vm::intrinsic_promise_resolve`).
+#[derive(Clone, Copy)]
+pub(in crate::vm::dispatch_fast) struct AwaitSource {
+    object_like: fn(*mut (), Value) -> bool,
+    resolve: fn(*mut (), Value) -> Option<Value>,
 }
 
-/// `StoreLocal` and `StoreEnvLocal` of `source` to `slot` over the binding the frame owns, by
-/// `staged::write_initialized_local` (`staged::write_local` for the store that initializes its binding), mirrored
-/// into a mapped `arguments` (`Vm::mapped_argument_store`); false, writing nothing, for a root
-/// body's frame, a self binding, a slot outside the frame or an assignment to a binding in its temporal dead zone.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_store_local_checked<H: Host, const ACC: u8>(cx: *mut LaneContext<H>,
-    r: Registers, view: Carried, (source, slot): (u16, usize), initializing: bool) -> bool {
-    let vm = unsafe { vm(cx) };
-    let (code, frame) = (unsafe { &*(*cx).code }, unsafe { (*cx).frame() });
-    let function = code.function(vm.frames[frame].function as usize);
-    if vm.frames[frame].function == super::super::ROOT_FUNCTION_ID || function.is_self_binding_slot(slot) {
-        return false;
+impl AwaitSource {
+    /// The conversion of a lane context of host `H`.
+    pub(in crate::vm::dispatch_fast) fn of<H: Host>() -> Self {
+        Self {
+            object_like: |context, value| unsafe { vm(context.cast::<LaneContext<H>>()) }.is_object_like(value),
+            resolve: |context, value| {
+                let cx = context.cast::<LaneContext<H>>();
+                let vm = unsafe { vm(cx) };
+                // SAFETY: the context's program outlives the lane run.
+                vm.intrinsic_promise_resolve(unsafe { &*(*cx).code }, value)
+            },
+        }
     }
-    let Some(binding) = vm.owner_binding_mut(code, VarOwner::Frame(frame), slot).map(std::ptr::from_mut) else { return false };
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut window = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, binding, 1);
-    let stored = if initializing { write_local(&mut stage, &mut window, source, 0, Some(())) } else { write_initialized_local(&mut stage, &mut window, source, 0, ()) };
-    let Some(word) = stored else { return false };
-    vm.mapped_argument_store(code, VarOwner::Frame(frame), slot, Value::from_bits(word));
-    true
 }
 
-/// The edge a staged unconditional jump takes.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_jump(r: Registers, view: Carried) -> Edge {
+impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
+    /// Whether `value` is an object, by the lane context's VM; `None` without a context.
+    fn object_like(&mut self, _stage: &mut Concrete, value: u64) -> Option<bool> {
+        // A value outside the heap is no object; only a cell asks the lane context.
+        if !Value::from_bits(value).is_heap() {
+            return Some(false);
+        }
+        let host = self.host?;
+        Some((host.awaits.object_like)(host.cx, Value::from_bits(value)))
+    }
+
+    /// PromiseResolve(%Promise%, `value`) where it observes nothing; `None` leaves a resolution
+    /// that could run guest code, or throw into the frame's handlers, to the general path.
+    fn promise_resolve(&mut self, _stage: &mut Concrete, value: u64) -> Option<u64> {
+        let host = self.host?;
+        (host.awaits.resolve)(host.cx, Value::from_bits(value)).map(Value::to_bits)
+    }
+
+    /// Whether the activation that suspends in place is async; `None` on a frame that suspends nothing.
+    fn asynchronous(&self) -> Option<bool> {
+        self.suspends.map(LaneSuspends::asynchronous)
+    }
+
+    /// The row's suspension, which the handler makes in place by the suspender it chose before
+    /// the row ran (`suspension_row_in_lane`), so it never declines after the row's effects.
+    fn suspend(&mut self, _stage: &mut Concrete, suspending: crate::staged::Suspending<u64>) -> Option<LaneControl> {
+        self.suspends.map(|_| LaneControl::Suspend(suspending))
+    }
+
+    /// The delegation's reads the lane finishes without guest code (`LaneSuspends::delegation`).
+    fn delegation(&mut self, _stage: &mut Concrete, step: crate::staged::DelegationStep<u64>) -> Option<(u64, ())> {
+        self.suspends?.delegation(step).map(|word| (word, ()))
+    }
+
+    /// A delegate generator's step made in place (`LaneSuspends::in_place`).
+    fn delegation_in_place(&mut self, _stage: &mut Concrete, step: crate::staged::DelegationStep<u64>, _state: Register)
+        -> Option<LaneControl> {
+        self.suspends?.in_place(self.registers, step).map(LaneControl::Resumed)
+    }
+}
+
+/// What `await` of `awaited` waits on in the lane context `cx` (registers `r`): the staged
+/// conversion (`staged::await_source`) over the lane's own PromiseResolve. `None` leaves a
+/// conversion that could run guest code, or throw into the frame's handlers, to the general path.
+pub(in crate::vm::dispatch_fast) fn awaited_value_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, awaited: Value) -> Option<Value> {
     let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    match crate::staged::step(&mut stage, &mut frame, Operation::Jump) {
-        Step::Control(edge) => edge,
-        _ => unreachable!("a jump produces no value"),
+    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
+    crate::staged::await_source(&mut stage, &mut frame, awaited.to_bits()).map(Value::from_bits)
+}
+
+/// The activation entries of the running lane context, erased of its host so the frame names no `H`
+/// (`PrologueFrame`): the tier prologue and the body entry the prologue records run
+/// (`tier_prologue_resumed`, `body_entry_resumed`), each answering where the lane resumes. `ip` is the
+/// body entry's record.
+#[derive(Clone, Copy)]
+pub(in crate::vm::dispatch_fast) struct EntryHost {
+    pub(in crate::vm::dispatch_fast) cx: *mut (),
+    pub(in crate::vm::dispatch_fast) ip: super::super::Ip,
+    pub(in crate::vm::dispatch_fast) tier: unsafe fn(*mut (), Registers, Carried, u32, usize) -> super::super::Resumed,
+    pub(in crate::vm::dispatch_fast) body: unsafe fn(*mut (), super::super::Ip, Registers, Carried, u32, bool) -> super::super::Resumed,
+}
+
+impl<const ACC: u8> crate::staged::PrologueFrame<Concrete> for LaneFrame<ACC> {
+    /// The tier prologue's entry: the function is entered in the lane context, which resumes where
+    /// the activation continues (`tier_prologue_resumed`).
+    fn tier_prologue(&mut self, _stage: &mut Concrete, function: u32, parameters: u16) -> Option<LaneControl> {
+        let entry = self.entry?;
+        // SAFETY: the row runs in the lane context `entry` names, whose views outlive the run.
+        let resumed = unsafe { (entry.tier)(entry.cx, self.registers, self.view, function, usize::from(parameters)) };
+        Some(LaneControl::Resumed(resumed))
+    }
+
+    /// The specialized body's prologue: the body runs on the activation's registers, and the lane
+    /// resumes where it leaves (`body_entry_resumed`).
+    fn body_entry(&mut self, _stage: &mut Concrete, function: u32, binds_this: bool) -> Option<LaneControl> {
+        let entry = self.entry?;
+        // SAFETY: as `tier_prologue`; `entry.ip` is the prologue record the row runs at.
+        let resumed = unsafe { (entry.body)(entry.cx, entry.ip, self.registers, self.view, function, binds_this) };
+        Some(LaneControl::Resumed(resumed))
     }
 }

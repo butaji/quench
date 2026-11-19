@@ -1,5 +1,6 @@
 //! Value-word reads every tier shares: which heap family a value names.
 
+use super::machine::{Binary, Lane, MachineScalar, Relation, Unary};
 use super::region::Region;
 use super::Stage;
 use crate::value::ValueLayout;
@@ -34,6 +35,90 @@ pub(crate) fn direct_object_id<S: Stage>(stage: &mut S, bits: S::Word) -> S::Wor
 pub(crate) fn is_int<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
     stage.eq_imm(tag, ValueLayout::INT_TAG)
+}
+
+/// Whether `bits` is a heap reference (`Value::is_heap`).
+#[inline(always)]
+pub(crate) fn is_heap<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
+    stage.eq_imm(tag, ValueLayout::HEAP_TAG)
+}
+
+/// The language bits of a declared parameter's mask (`quench_bjit::shared_words::language`, the
+/// order of `ValueType`'s discriminants; the runtime's `vm/compiled/base_region/declared.rs` asserts
+/// they are these types' bits).
+pub(crate) mod language {
+    pub(crate) const UNDEFINED: u16 = 1 << 0;
+    pub(crate) const NULL: u16 = 1 << 1;
+    pub(crate) const BOOLEAN: u16 = 1 << 2;
+    pub(crate) const NUMBER: u16 = 1 << 3;
+    pub(crate) const OBJECT: u16 = 1 << 7;
+    pub(crate) const FUNCTION: u16 = 1 << 8;
+    pub(crate) const ARRAY: u16 = 1 << 9;
+    pub(crate) const OBJECT_PLAIN: u16 = 1 << 10;
+}
+
+const FIRST_TAG: u64 = ValueLayout::FIRST_TAG_FIELD << ValueLayout::TAG_SHIFT;
+/// The span of the double tags, from `FIRST_TAG` (a word in it is a double).
+const TAG_SPAN: u64 = (ValueLayout::TAG_FIELD_SPAN + 1) << ValueLayout::TAG_SHIFT;
+
+/// The language bits (`language`) a word's tag alone sets: a Number (an int32 or a double), a Boolean,
+/// `null`, `undefined`, a direct object family record (`OBJECT`, and `OBJECT_PLAIN` for a plain one), a
+/// direct array (`ARRAY`, with the `OBJECT` bit, as the family test the object family makes), a direct
+/// function (`FUNCTION`). A heap value no tag decides (a string, a symbol, a BigInt) sets none.
+#[inline(always)]
+pub(crate) fn tag_languages<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
+    let mut object = family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG);
+    for tag in [ValueLayout::DIRECT_ARRAY_TAG, ValueLayout::DIRECT_FUNCTION_TAG, ValueLayout::DIRECT_PROMISE_TAG, ValueLayout::DIRECT_ITERATOR_TAG] {
+        let family = family_is(stage, bits, tag);
+        object = stage.any(object, family);
+    }
+    let int = is_int(stage, bits);
+    let shifted = stage.add_imm(bits, FIRST_TAG.wrapping_neg());
+    let double = stage.ugt_imm(shifted, TAG_SPAN - 1);
+    let number = stage.any(int, double);
+    let unflagged = stage.and_imm(bits, !(crate::Value::TRUE.to_bits() ^ crate::Value::FALSE.to_bits()));
+    let boolean = stage.eq_imm(unflagged, crate::Value::FALSE.to_bits());
+    let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
+    let undefined = stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits());
+    let plain = family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG);
+    let array = family_is(stage, bits, ValueLayout::DIRECT_ARRAY_TAG);
+    let function = family_is(stage, bits, ValueLayout::DIRECT_FUNCTION_TAG);
+    let classes = [(number, language::NUMBER), (boolean, language::BOOLEAN), (null, language::NULL), (undefined, language::UNDEFINED),
+        (object, language::OBJECT), (plain, language::OBJECT_PLAIN), (array, language::ARRAY), (function, language::FUNCTION)];
+    let mut languages = stage.constant(0);
+    for (hit, bit) in classes {
+        let flag = stage.constant(u64::from(bit));
+        let none = stage.constant(0);
+        let added = stage.select(hit, flag, none);
+        languages = stage.or(languages, added);
+    }
+    languages
+}
+
+/// Whether `bits` is `true` or `false` (`Value::as_bool`).
+#[inline(always)]
+pub(crate) fn is_boolean<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    let (truthy, falsy) = (stage.eq_imm(bits, crate::Value::TRUE.to_bits()), stage.eq_imm(bits, crate::Value::FALSE.to_bits()));
+    stage.any(truthy, falsy)
+}
+
+/// Whether `bits` is `undefined`.
+#[inline(always)]
+pub(crate) fn is_undefined<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits())
+}
+
+/// Whether `bits` is `null`.
+#[inline(always)]
+pub(crate) fn is_null<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    stage.eq_imm(bits, crate::Value::NULL.to_bits())
+}
+
+/// The value word of an int32 whose 64-bit `payload` is its zero-extended bits (`Value::int`).
+#[inline(always)]
+pub(crate) fn int_word<S: Stage>(stage: &mut S, payload: S::Word) -> S::Word {
+    stage.or_imm(payload, ValueLayout::INT_TAG)
 }
 
 /// Whether `bits` is a direct string reference (`Value::as_direct_string`).
@@ -80,11 +165,11 @@ pub(crate) fn is_double<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     stage.ugt_imm(offset, ValueLayout::TAG_FIELD_SPAN)
 }
 
-/// ToBoolean of `bits` as far as its own word decides it (`Value::truthiness`):
-/// `(undecided, truthy)`. A heap value other than an object or array record is undecided, its
-/// cell deciding (a string's length, a BigInt, the IsHTMLDDA object); `truthy` holds for any
-/// other truthy value: a record, a nonzero int32 or Number, or an immediate but `null`,
-/// `undefined`, `false` and the deleted marker.
+/// ToBoolean of `bits` as far as its own word decides it: `(undecided, truthy)`. A heap value
+/// other than an object or array record is undecided, its cell deciding (a string's length, a
+/// BigInt, the IsHTMLDDA object); `truthy` holds for any other truthy value: a record, a nonzero
+/// int32 or Number, or an immediate but `null`, `undefined`, `false` and the deleted marker.
+/// `Value::truthiness` is this at `Concrete`, so every stage decides the same cases.
 #[inline(always)]
 pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::Cond, S::Cond) {
     let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
@@ -94,27 +179,87 @@ pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::C
     let unheaped = stage.not(heap);
     let decided = stage.any(unheaped, record);
     let undecided = stage.not(decided);
-    let integer = stage.eq_imm(tag, ValueLayout::INT_TAG);
-    let payload = stage.and_imm(bits, u64::from(u32::MAX));
-    let integer_truthy = stage.ne_imm(payload, 0u32);
-    let past = is_double(stage, bits);
-    let tagged = stage.not(past);
-    let falsy = [crate::Value::NULL, crate::Value::UNDEFINED, crate::Value::DELETED, crate::Value::FALSE]
-        .map(|value| stage.eq_imm(bits, value.to_bits()));
-    let falsy = falsy.into_iter().reduce(|any, each| stage.any(any, each)).expect("four falsy immediates");
-    let immediate_truthy = stage.not(falsy);
-    let double_truthy = stage.number_truthy(bits);
-    let tagged_truthy = stage.pick(integer, integer_truthy, immediate_truthy);
-    let unheaped_truthy = stage.pick(tagged, tagged_truthy, double_truthy);
-    (undecided, stage.pick(heap, record, unheaped_truthy))
+    // A heap word's truth is its record's test alone, so the immediate and Number ladder below
+    // runs only where the word is not a heap value: an object's ToBoolean costs its tag and
+    // record tests, not every arm of the ladder. The arms compute the same truth as before.
+    let truthy = stage.choose(heap, |stage| {
+        let (yes, no) = (stage.constant(1), stage.constant(0));
+        stage.select(record, yes, no)
+    }, |stage| {
+        let integer = stage.eq_imm(tag, ValueLayout::INT_TAG);
+        let payload = stage.and_imm(bits, u64::from(u32::MAX));
+        let integer_truthy = stage.ne_imm(payload, 0u32);
+        let past = is_double(stage, bits);
+        let tagged = stage.not(past);
+        let falsy = [crate::Value::NULL, crate::Value::UNDEFINED, crate::Value::DELETED, crate::Value::FALSE]
+            .map(|value| stage.eq_imm(bits, value.to_bits()));
+        let falsy = falsy.into_iter().reduce(|any, each| stage.any(any, each)).expect("four falsy immediates");
+        let immediate_truthy = stage.not(falsy);
+        let double_truthy = stage.number_truthy(bits);
+        let tagged_truthy = stage.pick(integer, integer_truthy, immediate_truthy);
+        let unheaped_truthy = stage.pick(tagged, tagged_truthy, double_truthy);
+        let (yes, no) = (stage.constant(1), stage.constant(0));
+        stage.select(unheaped_truthy, yes, no)
+    });
+    (undecided, stage.ne_imm(truthy, 0u32))
+}
+
+/// ToBoolean of a Boolean's `bits`: `true` alone is truthy.
+#[inline(always)]
+pub(crate) fn boolean_truthy<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    stage.eq_imm(bits, crate::Value::TRUE.to_bits())
+}
+
+/// ToBoolean of an integer word (an int32 or a 64-bit integer, as held): nonzero.
+#[inline(always)]
+pub(crate) fn int_truthy<S: Stage>(stage: &mut S, word: S::Word) -> S::Cond {
+    stage.ne_imm(word, 0u32)
+}
+
+/// The index in `bytecode::TYPEOF_NAMES` of a name some value's `typeof` is.
+const fn typeof_name_index(name: &str) -> u64 {
+    match crate::bytecode::typeof_name_index(name) {
+        Some(index) => index as u64,
+        None => panic!("a typeof name"),
+    }
 }
 
 /// The indexes in `bytecode::TYPEOF_NAMES` of the names a value's tag alone decides: `typeof` of
-/// `undefined`, of `null` (an object) and a boolean and a Number. A test pins each to its name.
-pub(crate) const TYPEOF_UNDEFINED: u64 = 0;
-pub(crate) const TYPEOF_OBJECT: u64 = 1;
-pub(crate) const TYPEOF_BOOLEAN: u64 = 2;
-pub(crate) const TYPEOF_NUMBER: u64 = 3;
+/// `undefined`, of `null` (an object) and a boolean and a Number.
+pub(crate) const TYPEOF_UNDEFINED: u64 = typeof_name_index("undefined");
+pub(crate) const TYPEOF_OBJECT: u64 = typeof_name_index("object");
+pub(crate) const TYPEOF_BOOLEAN: u64 = typeof_name_index("boolean");
+pub(crate) const TYPEOF_NUMBER: u64 = typeof_name_index("number");
+
+/// The tag classes `typeof` reads from a value's own word: a Number (int32 or double), a boolean,
+/// and `null`. Every `typeof` row selects its name from these.
+#[inline(always)]
+pub(crate) fn typeof_classes<S: Stage>(stage: &mut S, bits: S::Word) -> (S::Cond, S::Cond, S::Cond) {
+    let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
+    let integer = stage.eq_imm(tag, ValueLayout::INT_TAG);
+    let double = is_double(stage, bits);
+    let number = stage.any(integer, double);
+    let boolean = stage.eq_imm(tag, crate::Value::TRUE.to_bits() & ValueLayout::TAG_MASK);
+    let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
+    (number, boolean, null)
+}
+
+/// The kind a heap value's `typeof` name follows from its cell (a string, a BigInt, a symbol, an
+/// object or a function), as its index in `bytecode::TYPEOF_NAMES`: what `Frame::type_of` proves.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct TypeofKind(u64);
+
+impl TypeofKind {
+    /// The kind whose `typeof` name is `bytecode::TYPEOF_NAMES[index]`.
+    pub(crate) const fn of_index(index: u64) -> Self {
+        Self(index)
+    }
+
+    /// The index in `bytecode::TYPEOF_NAMES` of this kind's name.
+    pub(crate) const fn index(self) -> u64 {
+        self.0
+    }
+}
 
 /// The index in `bytecode::TYPEOF_NAMES` of `typeof` of the value `bits` where its tag alone decides
 /// it (`undefined` and the deleted marker, `null`, a boolean, an int32 or a double): a heap value,
@@ -122,14 +267,7 @@ pub(crate) const TYPEOF_NUMBER: u64 = 3;
 /// at `miss`.
 #[inline(always)]
 pub(crate) fn immediate_typeof_index<S: Stage>(stage: &mut S, bits: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
-    let integer = stage.eq_imm(tag, ValueLayout::INT_TAG);
-    let field = stage.shr_imm(bits, ValueLayout::TAG_SHIFT);
-    let offset = stage.add_imm(field, ValueLayout::FIRST_TAG_FIELD.wrapping_neg());
-    let double = stage.ugt_imm(offset, ValueLayout::TAG_FIELD_SPAN);
-    let number = stage.any(integer, double);
-    let boolean = stage.eq_imm(tag, crate::Value::TRUE.to_bits() & ValueLayout::TAG_MASK);
-    let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
+    let (number, boolean, null) = typeof_classes(stage, bits);
     let unset = [crate::Value::UNDEFINED, crate::Value::DELETED].map(|value| stage.eq_imm(bits, value.to_bits()));
     let decided = [number, boolean, null, unset[0], unset[1]].into_iter().reduce(|any, each| stage.any(any, each)).expect("five tag classes");
     stage.guard(decided, miss)?;
@@ -148,6 +286,107 @@ pub(crate) fn immediate_typeof_string<S: Stage>(stage: &mut S, bits: S::Word, na
     let offset = stage.mul_imm(index, core::mem::size_of::<crate::Value>() as u64);
     let entry = stage.add(names, offset);
     Some(stage.load_table(Region::HeapMeta.readonly(), entry))
+}
+
+/// The binary64 value of the int32 whose tagged word is `bits`: its low half, sign-extended and
+/// converted (`Value::as_int` read as a Number). Both int32 unboxing rows share it.
+#[inline(always)]
+pub(crate) fn int32_as_f64<M: MachineScalar>(machine: &mut M, bits: M::Word) -> M::Word {
+    let low = machine.raw_unary(Unary::Narrow(Lane::I32), bits);
+    machine.raw_unary(Unary::FromSigned(Lane::F64), low)
+}
+
+/// The exact int32 projection of the binary64 `number` (`Value::number`'s integer test): its
+/// saturating truncation, and whether that truncation round-trips to the same bits, which rejects
+/// fractions, nonfinite values, saturation and -0. Returns `(integer, exact)`.
+#[inline(always)]
+pub(crate) fn exact_int32<M: MachineScalar>(machine: &mut M, number: M::Word) -> (M::Word, M::Word) {
+    let integer = machine.raw_unary(Unary::ToSignedSaturating(Lane::I32), number);
+    let round_trip = machine.raw_unary(Unary::FromSigned(Lane::F64), integer);
+    let bits = machine.raw_unary(Unary::Bitcast(Lane::I64), number);
+    let round_trip_bits = machine.raw_unary(Unary::Bitcast(Lane::I64), round_trip);
+    let exact = machine.raw_compare(Relation::Equal, bits, round_trip_bits);
+    (integer, exact)
+}
+
+/// The tagged word of the binary64 `number` under `Value::number`'s encoding, without a branch: an
+/// exact int32 takes the int tag, a NaN the canonical NaN, and anything else its own bits.
+#[inline(always)]
+pub(crate) fn number_word<M: MachineScalar>(machine: &mut M, number: M::Word) -> M::Word {
+    let (integer, is_integer) = exact_int32(machine, number);
+    let bits = machine.raw_unary(Unary::Bitcast(Lane::I64), number);
+    let integer_bits = machine.raw_unary(Unary::ZeroExtend(Lane::I64), integer);
+    let int_tag = machine.raw_const(Lane::I64, ValueLayout::INT_TAG as i64);
+    let integer_bits = machine.raw_binary(Binary::Or, integer_bits, int_tag);
+    let encoded = machine.raw_select(is_integer, integer_bits, bits);
+    let is_nan = machine.raw_compare(Relation::FloatUnordered, number, number);
+    let canonical_nan = machine.raw_const(Lane::I64, ValueLayout::CANONICAL_NAN as i64);
+    machine.raw_select(is_nan, canonical_nan, encoded)
+}
+
+/// Whether the word `bits` is an int32 by its tag (`is_int`), as a machine flag.
+#[inline(always)]
+fn machine_is_int<M: MachineScalar>(machine: &mut M, bits: M::Word) -> M::Word {
+    let tag = machine.raw_binary_imm(Binary::And, bits, ValueLayout::TAG_MASK as i64);
+    machine.raw_compare_imm(Relation::Equal, tag, ValueLayout::INT_TAG as i64)
+}
+
+/// Whether the word `bits` is a binary64 Number by its tag field (`is_double`), as a machine flag.
+#[inline(always)]
+fn machine_is_double<M: MachineScalar>(machine: &mut M, bits: M::Word) -> M::Word {
+    let field = machine.raw_binary_imm(Binary::ShiftRightUnsigned, bits, i64::from(ValueLayout::TAG_SHIFT));
+    let offset = machine.raw_binary_imm(Binary::Add, field, ValueLayout::FIRST_TAG_FIELD.wrapping_neg() as i64);
+    machine.raw_compare_imm(Relation::UnsignedGreater, offset, ValueLayout::TAG_FIELD_SPAN as i64)
+}
+
+/// The binary64 value of a Number the caller proved numeric, whose tagged word is `bits`: an int32
+/// converts (`int32_as_f64`), any other word is its own double.
+#[inline(always)]
+pub(crate) fn known_number_f64<M: MachineScalar>(machine: &mut M, bits: M::Word) -> M::Word {
+    let integer = machine_is_int(machine, bits);
+    let int = int32_as_f64(machine, bits);
+    let double = machine.raw_unary(Unary::Bitcast(Lane::F64), bits);
+    machine.raw_select(integer, int, double)
+}
+
+/// The tagged Number test and unboxing of `bits`: `(decided, value)`. A non-NaN word is its own
+/// double; a NaN-space word is an int32 (its tag) or a double NaN, and any other tag is not a Number
+/// (`decided` is false). `value` is meaningful where `decided` holds.
+#[inline(always)]
+pub(crate) fn tagged_number_f64<M: MachineScalar>(machine: &mut M, bits: M::Word) -> (M::Word, M::Word) {
+    let number = machine.raw_unary(Unary::Bitcast(Lane::F64), bits);
+    let ordered = machine.raw_compare(Relation::FloatEqual, number, number);
+    let nan = machine.raw_compare_imm(Relation::Equal, ordered, 0);
+    let integer = machine_is_int(machine, bits);
+    let double = machine_is_double(machine, bits);
+    let tagged = machine.raw_binary(Binary::Or, integer, double);
+    let decided = machine.raw_binary(Binary::Or, ordered, tagged);
+    let integer_nan = machine.raw_binary(Binary::And, nan, integer);
+    let int = int32_as_f64(machine, bits);
+    let value = machine.raw_select(integer_nan, int, number);
+    (decided, value)
+}
+
+/// The double bits of `number` and whether they are its cold encoding: a whole, signed-zero or NaN
+/// result takes `number_word` (`truncated == number`, or unordered). Returns `(cold, bits)`.
+#[inline(always)]
+pub(crate) fn number_bits_unless_whole<M: MachineScalar>(machine: &mut M, number: M::Word) -> (M::Word, M::Word) {
+    let bits = machine.raw_unary(Unary::Bitcast(Lane::I64), number);
+    let truncated = machine.raw_unary(Unary::Truncate, number);
+    let cold = machine.raw_compare(Relation::FloatUnorderedEqual, truncated, number);
+    (cold, bits)
+}
+
+/// The ToInt32 candidate of the binary64 `number` by the exact I64 truncation: the low 32 bits of its
+/// saturating I64 truncation, and whether `number` lies inside the exact range
+/// (`EXACT_I64_TRUNCATION_LIMIT`); a caller leaves when the range does not hold. Returns `(int32, exact)`.
+#[inline(always)]
+pub(crate) fn truncate_int32<M: MachineScalar>(machine: &mut M, number: M::Word) -> (M::Word, M::Word) {
+    let magnitude = machine.raw_unary(Unary::FloatAbsolute, number);
+    let bound = machine.raw_const(Lane::F64, crate::value::EXACT_I64_TRUNCATION_LIMIT.to_bits() as i64);
+    let exact = machine.raw_compare(Relation::FloatLess, magnitude, bound);
+    let wide = machine.raw_unary(Unary::ToSignedSaturating(Lane::I64), number);
+    (machine.raw_unary(Unary::Narrow(Lane::I32), wide), exact)
 }
 
 /// The interpreter's `immediate_typeof_index` of `value`.

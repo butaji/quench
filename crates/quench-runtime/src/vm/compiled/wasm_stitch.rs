@@ -23,7 +23,7 @@ use super::CONTEXT_MEMORY_LENGTH;
 
 /// The frame word a register is, past the header words.
 const fn slot(register: u16) -> u64 {
-    8 * (codes::FRAME_HEADER_WORDS + register as u64)
+    8 * (quench_bjit::FRAME_HEADER_WORDS + register as u64)
 }
 
 /// The word an integer constant is at `width`: an i32 zero-extended.
@@ -422,7 +422,7 @@ pub(super) struct IndirectSite {
 
 pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &World<'_>) -> Option<Vec<u8>> {
     let instructions: Vec<WideInstruction> =
-        function.code.iter().map(|packed| super::super::dispatch_fast::decoded_instruction(function, *packed)).collect();
+        function.code.iter().map(|packed| function.widened(*packed)).collect();
     let mut planned = Vec::with_capacity(instructions.len());
     for pc in 0..instructions.len() {
         let Some(rows) = plan(pc, &instructions, returns, world) else {
@@ -472,7 +472,7 @@ pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &
         .iter()
         .zip(&stencils)
         .zip(&holes)
-        .map(|((planned, stencil), hole)| Row { stencil, hole: &**hole, taken: planned.taken.map(|target| row_index(target, &first)) })
+        .map(|((planned, stencil), hole)| Row { stencil, hole: &**hole, taken: planned.taken.map(|target| row_index(target, &first)), cold: false })
         .collect();
 
     let trap = stencil("leave_wasm_trap")?;

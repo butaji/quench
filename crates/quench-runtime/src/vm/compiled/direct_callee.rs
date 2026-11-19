@@ -17,13 +17,20 @@ pub(in crate::vm) struct DirectCallee {
     pub(in crate::vm) body: Option<Rc<LaneMethod>>,
     /// The caller's call record, which the callee's activation returns to.
     pub(in crate::vm) call: usize,
+    /// The caller's base instruction pointer (its view's records), which the callee's header saves for the return.
+    pub(in crate::vm) caller_base: usize,
+    /// The callee's function index, which its header's packed word names.
+    pub(in crate::vm) function: u32,
     pub(in crate::vm) cell: usize,
     pub(in crate::vm) callee: Value,
     pub(in crate::vm) registers: u16,
     /// The global object a sloppy callee binds for an `undefined` or `null` receiver, which
-    /// binds a direct object itself (`lane_receiver_this`); `None` for a strict callee, which
+    /// binds a direct object itself (`receiver_this_in_lane`); `None` for a strict callee, which
     /// takes any receiver as it is.
     pub(in crate::vm) sloppy: Option<Value>,
+    /// An arrow, which binds no receiver: its body reads its environment's `this`, so a call
+    /// passes the deleted marker (`body_call_helper`). Only BaseJIT's direct rows call one.
+    pub(in crate::vm) lexical: bool,
     /// The callee's dense capture slots (`EnvironmentSlots::native_dense_view`).
     pub(in crate::vm) capture_values: *const Value,
     pub(in crate::vm) capture_len: usize,
@@ -32,7 +39,7 @@ pub(in crate::vm) struct DirectCallee {
     /// For a construction site, the forwarding constructor whose activation the call skips:
     /// `callee` is that constructor, which the call guards, and `target` its forwarded
     /// initializer, which runs with the receiver the constructor's plan allocates and
-    /// whose result the construction ignores (`lane_construct_keeping_activation`).
+    /// whose result the construction ignores (`construct_keeping_activation_in_lane`).
     pub(in crate::vm) forwarder: Option<super::super::dispatch_fast::SkippedForwarder>,
 }
 
@@ -55,7 +62,7 @@ pub(in crate::vm) fn names_dead_callee(inlined: &[InlinedCall], direct: &[Direct
 }
 
 /// The registers past the caller's `caller_registers` that `inlined` occupy: the scratch window a
-/// leave inside one reads (`Vm::lane_scratch`), and the room the frames past the caller's registers
+/// leave inside one reads (`Vm::scratch_in_lane`), and the room the frames past the caller's registers
 /// need.
 pub(in crate::vm) fn window_width(inlined: &[InlinedCall], caller_registers: u16) -> usize {
     inlined.iter().map(|frame| usize::from(frame.base - caller_registers) + usize::from(frame.registers)).max().unwrap_or(0)

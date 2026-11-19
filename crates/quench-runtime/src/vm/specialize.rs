@@ -78,7 +78,8 @@ fn static_successor(
     pc: usize,
 ) -> Option<usize> {
     let op = instruction.op();
-    if !op.is_jump() || !division.folds_instruction(op) {
+    // merge: HEAD's decoded Jump match is the derivation's JUMP_ROW test.
+    if op as u16 != crate::staged::JUMP_ROW || !division.folds_instruction(op) {
         return None;
     }
     let stops_here = function.parameter_end_pc != 0 && function.parameter_end_pc as usize == pc;
@@ -94,7 +95,7 @@ pub(crate) fn instruction_sites(division: Division, function: &Function) -> Vec<
         .copied()
         .enumerate()
         .map(|(pc, packed)| {
-            let instruction = super::dispatch_fast::decoded_instruction(function, packed);
+            let instruction = function.widened(packed);
             let op = instruction.op();
             let continuation = if let Some(target) = static_successor(division, function, instruction, pc) {
                 Continuation::Static(target)

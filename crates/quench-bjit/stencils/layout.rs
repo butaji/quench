@@ -1,86 +1,50 @@
-// The numbers the runtime's heap and value layouts fix, as the staged rows read them. A
-// stencil is compiled before the runtime, so it cannot read `offset_of!` of the real records:
-// these are the same facts as literals, and the runtime's `stencil_layout_matches` test fails
-// when any differs (it compares the `Debug` of each struct and every constant with the
-// runtime's own).
+//! The stencils' layout numbers. The values live in `quench-runtime/src/staged/layout_offsets.rs`,
+//! which both builds include (`#[path]`), so a stencil and the runtime read one set of literals; the
+//! runtime checks them against its own `offset_of!` values in `vm/compiled/base_rows.rs`.
+//! The dispatch payload's head (`JS_STEP_*`) is `offset_of!` of one `#[repr(C)]` struct,
+//! `staged/js_step_head.rs`, which the runtime embeds in `JsStepDispatch`. The two words shared
+//! with the host (`call_record`, `shared_words`) are mounted here.
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeObjectLayout {
-    pub(crate) record_capacity: usize,
-    pub(crate) record_size: usize,
-    pub(crate) record_align: usize,
-    pub(crate) layout_offset: usize,
-    pub(crate) meta_offset: usize,
-    pub(crate) auxiliary_offset: usize,
-    pub(crate) payload_offset: usize,
-    pub(crate) extras_arena_start_offset: usize,
-    pub(crate) extras_inline_values_offset: usize,
-    pub(crate) inline_storage_mask: u32,
-    pub(crate) array_mask: u32,
-    pub(crate) storage_start_mask: u32,
-    pub(crate) dictionary_mask: u32,
-    pub(crate) inline_form: u32,
-    pub(crate) extras_form: u32,
-    pub(crate) narrow_form: u32,
-    pub(crate) narrow_run_tag: u64,
-    pub(crate) integrity_mask: u32,
-    pub(crate) inline_property_count: usize,
-    pub(crate) extras_tag: u64,
-    pub(crate) extras_tag_mask: u64,
-    pub(crate) proto_mask: u32,
-    pub(crate) proto_record_base: u32,
-    pub(crate) proto_record_end: u32,
-    pub(crate) mark_records_per_block: usize,
-    pub(crate) mark_word_bits: usize,
-    pub(crate) mark_block_size: usize,
-    pub(crate) mark_offset: usize,
-    pub(crate) property_value_size: usize,
-    pub(crate) property_value_align: usize,
-}
+#[path = "../../quench-runtime/src/staged/js_step_head.rs"]
+pub(crate) mod js_step_head;
 
-pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
-    record_capacity: 16777216,
-    record_size: 12,
-    record_align: 4,
-    layout_offset: 8,
-    meta_offset: 4,
-    auxiliary_offset: 0,
-    payload_offset: 0,
-    extras_arena_start_offset: 24,
-    extras_inline_values_offset: 8,
-    inline_storage_mask: 536870912,
-    array_mask: 268435456,
-    storage_start_mask: 1073741823,
-    dictionary_mask: 2147483648,
-    inline_form: 536870912,
-    extras_form: 268435456,
-    narrow_form: 134217728,
-    narrow_run_tag: 4294967296,
-    integrity_mask: 3221225472,
-    inline_property_count: 2,
-    extras_tag: 9223090561878065152,
-    extras_tag_mask: 18446462598732840960,
-    proto_mask: 268435455,
-    proto_record_base: 134217728,
-    proto_record_end: 150994944,
-    mark_records_per_block: 1024,
-    mark_word_bits: 64,
-    mark_block_size: 512,
-    mark_offset: 128,
-    property_value_size: 8,
-    property_value_align: 8,
-};
+#[path = "../../quench-runtime/src/staged/record_heads.rs"]
+pub(crate) mod record_heads;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NativeFunctionLayout {
-    pub(crate) record_size: usize,
-    pub(crate) object_offset: usize,
-}
+#[path = "../../quench-runtime/src/staged/encodings.rs"]
+pub(crate) mod encodings;
 
-pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLayout {
-    record_size: 40,
-    object_offset: 0,
-};
+/// The value encoding: tags, handle bits and the narrow layout (`words`, `ValueLayout`, `NarrowLayout`).
+#[path = "../../quench-runtime/src/staged/value_encoding.rs"]
+pub(crate) mod value_encoding;
+
+/// The object, array and record words (storage forms, tags, prototype ranges, record blocks).
+#[path = "../../quench-runtime/src/staged/object_encoding.rs"]
+pub(crate) mod object_encoding;
+
+/// The head of an object's extras record, instantiated with words (`ObjectExtrasWords`).
+#[path = "../../quench-runtime/src/staged/object_extras.rs"]
+pub(crate) mod object_extras;
+
+/// The head of a property buffer, instantiated with a word base (`PropertyBufferHead`).
+#[path = "../../quench-runtime/src/staged/property_buffer.rs"]
+pub(crate) mod property_buffer;
+
+/// The flat string forms' heads and offsets (`string_form`), the runtime's `native_string` reads the same.
+#[path = "../../quench-runtime/src/staged/string_form.rs"]
+pub(crate) mod string_form;
+
+/// The field cache entry's stored words and their empty values.
+#[path = "../../quench-runtime/src/staged/field_cache_layout.rs"]
+pub(crate) mod field_cache_layout;
+
+/// The typed-array kinds, the runtime's own enum (`TypedArrayKind`).
+#[path = "../../quench-runtime/src/heap/cell/typed_array_catalog.rs"]
+pub(crate) mod typed_array_catalog;
+
+#[path = "../../quench-runtime/src/staged/layout_offsets.rs"]
+mod offsets;
+pub(crate) use offsets::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeArrayLayout {
@@ -100,8 +64,21 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) integrity_mask: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeRecordCursorLayout {
+    pub(crate) next_offset: usize,
+    pub(crate) limit_offset: usize,
+}
+
+/// The runtime's `records::RecordCursor`: two `u32` words, `next` then `limit`. Read by the
+/// runtime's `stencil_layout_matches` test and by the empty-allocation rows (`heap_rows::empty_row`).
+pub(crate) const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCursorLayout {
+    next_offset: 0,
+    limit_offset: 4,
+};
+
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
-    record_capacity: 16777216,
+    record_capacity: 1073741824,
     record_size: 12,
     record_align: 4,
     elements_offset: 0,
@@ -196,6 +173,7 @@ pub(crate) struct NativeFieldCacheLayout {
     pub(crate) receiver_offset: usize,
     pub(crate) holder_offset: usize,
     pub(crate) slot_offset: usize,
+    pub(crate) holder_id_offset: usize,
     pub(crate) receiver_complement: u32,
     pub(crate) holder_complement: u32,
     pub(crate) slot_complement: u32,
@@ -203,10 +181,11 @@ pub(crate) struct NativeFieldCacheLayout {
 }
 
 pub(crate) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeFieldCacheLayout {
-    entry_size: 12,
+    entry_size: 16,
     receiver_offset: 0,
     holder_offset: 4,
     slot_offset: 8,
+    holder_id_offset: 12,
     receiver_complement: 4294967295,
     holder_complement: 4294967295,
     slot_complement: 0,
@@ -263,7 +242,7 @@ pub(crate) mod words {
 pub(crate) const CALL_CONTEXT_ADAPTER_PAYLOAD: usize = 240;
 /// The lane-call protocol, shared with the host (`quench_bjit::call_record`).
 #[path = "../src/call_record.rs"]
-pub(crate) mod call_record;
+pub mod call_record;
 /// The words shared with the host (`quench_bjit::shared_words`).
 #[path = "../src/shared_words.rs"]
 pub(crate) mod shared_words;
@@ -279,6 +258,13 @@ pub(crate) const JS_STEP_CAPTURE_STORES: usize = 96;
 /// (`JsStepDispatch::environment_storage`), which the environment rows read their slots through
 /// (`staged::environment::environment_slot`).
 pub(crate) const JS_STEP_ENV_STORAGE: usize = 440;
+/// The address of the thread's armed array proofs word (`JsStepDispatch::armed_array_proofs`): the word it
+/// names is nonzero while a lane run's proofs are armed.
+pub(crate) const JS_STEP_ARMED_ARRAY_PROOFS: usize = 448;
+/// The address of the thread's index-free chain link word (`JsStepDispatch::array_chain_index_free_address`):
+/// the word it names is the encoded link of `Array.prototype` while the held index-free chain proof covers
+/// its chain, else zero.
+pub(crate) const JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS: usize = 456;
 /// The running activation's receiver (`this`) word, `DELETED` where it has none: the entry of a
 /// lane body or loop region publishes the one it is entered with, for its run.
 pub(crate) const JS_STEP_RECEIVER: usize = 192;
@@ -302,12 +288,29 @@ pub(crate) const JS_STEP_SLOTS_TRACKED: usize = 184;
 pub(crate) const JS_STEP_EPOCH: usize = 336;
 /// The string record range's base, which a string `length` read finds the record from.
 pub(crate) const JS_STEP_STRING_RECORD_BASE: usize = 376;
+/// The table of one-unit ASCII strings `charAt` answers from (`JsStepDispatch::ascii_unit_strings`), zero before the
+/// first exists; it follows the string record base in the dispatch payload.
+pub(crate) const JS_STEP_ASCII_UNIT_STRINGS: usize = 384;
 /// What a store into a function's own properties reads (`RecordSpace::Function`): the function
 /// records' mark blocks and their count, as the object records' (`JS_STEP_OBJECT_MARK_BLOCKS`); and the
 /// empty string's word, which a function's inferred name replaces (`staged::naming`).
 pub(crate) const JS_STEP_FUNCTION_MARK_BLOCKS: usize = 416;
 pub(crate) const JS_STEP_FUNCTION_MARK_BLOCK_COUNT: usize = 424;
 pub(crate) const JS_STEP_EMPTY_STRING: usize = 432;
+/// The allocation words `JsStepDispatch` declares after `environment_storage` (440, 8 bytes) and before `outcome`,
+/// each 8 bytes and 8-aligned, so at 440 + 8k in declaration order: the object cursor (448), the empty object's
+/// template layout (456), payload (464) and prototype (472); then the array cursor (480) and the empty array's
+/// template layout (488), payload (496) and prototype (504). `outcome` follows at 512. Checked by `stencil_layout_matches`.
+pub(crate) const JS_STEP_OBJECT_CURSOR: usize = 448;
+pub(crate) const JS_STEP_EMPTY_OBJECT_LAYOUT: usize = 456;
+pub(crate) const JS_STEP_EMPTY_OBJECT_PAYLOAD: usize = 464;
+#[allow(dead_code)]
+pub(crate) const JS_STEP_EMPTY_OBJECT_PROTO: usize = 472;
+pub(crate) const JS_STEP_ARRAY_CURSOR: usize = 480;
+pub(crate) const JS_STEP_EMPTY_ARRAY_LAYOUT: usize = 488;
+pub(crate) const JS_STEP_EMPTY_ARRAY_PAYLOAD: usize = 496;
+#[allow(dead_code)]
+pub(crate) const JS_STEP_EMPTY_ARRAY_PROTO: usize = 504;
 /// The function record reservation's base (`JsStepDispatch::function_record_base`).
 pub(crate) const JS_STEP_FUNCTION_RECORD_BASE: usize = 120;
 pub(crate) const JS_STEP_FIELD_ENTRIES: usize = 152;
@@ -323,15 +326,15 @@ pub(crate) const JS_STEP_RETURNED_PC: usize = 248;
 pub(crate) const JS_STEP_VM: usize = 200;
 pub(crate) const JS_STEP_RESIDUAL: usize = 208;
 pub(crate) const JS_STEP_LANE_CONTEXT: usize = 240;
-/// The lane stack's words (`Vm::lane_stack_words`): the addresses of the values' and the activations' tops,
+/// The lane stack's words (`Vm::stack_words_in_lane`): the addresses of the values' and the activations' tops,
 /// the end of the values' room and the end of the frames' room.
 pub(crate) const JS_STEP_LANE_VALUES_TOP: usize = 288;
 pub(crate) const JS_STEP_LANE_VALUES_END: usize = 296;
 pub(crate) const JS_STEP_LANE_ACTIVATIONS_TOP: usize = 304;
 pub(crate) const JS_STEP_LANE_FRAMES_END: usize = 312;
 /// An activation's size, and where its kind tag lies; `KIND_NATIVE` marks a frame a direct call wrote.
-pub(crate) const ACTIVATION_BYTES: usize = 128;
-pub(crate) const ACTIVATION_KIND_OFFSET: usize = 72;
+pub(crate) const ACTIVATION_BYTES: usize = crate::staged::frame::ACTIVATION_BYTES;
+pub(crate) const ACTIVATION_KIND_OFFSET: usize = crate::staged::frame::ACTIVATION_KIND_OFFSET;
 /// The entry cell's run counters, and the unit a raised run adds (`entry_cell::RAISED_RUN`).
 pub(crate) const CELL_COUNTERS_AT: usize = crate::staged::call::ENTRY_CELL.counters_offset as usize;
 pub(crate) const RAISED_RUN: u64 = 1 << 32;
@@ -339,13 +342,14 @@ pub(crate) const RAISED_RUN: u64 = 1 << 32;
 /// The context words below every lane window's register 0 (the runtime's
 /// `register_file::FRAME_CONTEXT`): a pushed window leaves them free past its registers for the
 /// next. Checked against the runtime by `stencil_layout_matches`.
-pub(crate) const FRAME_CONTEXT_WORDS: usize = 3;
+pub(crate) const FRAME_CONTEXT_WORDS: usize = crate::staged::frame::CONTEXT_WORDS;
 
 /// The entry cell's entry, recovery and body words (`EntryCell`), and the recovery space's
 /// values and activations (`LaneRecoverySpace`).
 pub(crate) const CELL_ENTRY_AT: usize = crate::staged::call::ENTRY_CELL.entry_offset as usize;
 pub(crate) const CELL_RECOVERY_AT: usize = crate::staged::call::ENTRY_CELL.recovery_offset as usize;
 pub(crate) const CELL_BODY_AT: usize = crate::staged::call::ENTRY_CELL.body_offset as usize;
+pub(crate) const CELL_ROWS_AT: usize = crate::staged::call::ENTRY_CELL.rows_offset as usize;
 pub(crate) const RECOVERY_VALUES_AT: usize = 0;
 pub(crate) const RECOVERY_ACTIVATIONS_AT: usize = 8;
 

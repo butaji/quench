@@ -2,12 +2,38 @@
 
 use crate::host::NodeHost;
 use crate::modules::event_constructor_shared_vm::get;
-use quench_runtime::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError, ValueType};
 
 // Node src/node_util.cc validates the native stack-frame request against this limit.
 const NODE_CALL_SITE_FRAME_LIMIT: usize = 200;
 
 pub(crate) use quench_runtime::units::MAX_SAFE_INTEGER;
+
+/// Named property read on the object, as `get_named_property_rooted`.
+pub(crate) fn named_get(
+    c: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+) -> Result<RootId, RootedError> {
+    c.get_named_property_rooted(object, name)
+}
+
+/// Defines a writable, enumerable, configurable data property under `name`.
+pub(crate) fn named_put(
+    c: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+    value: RootId,
+) -> Result<(), RootedError> {
+    let key = c.string_rooted(name);
+    c.define_data_property_rooted(object, key, value, true, true, true)?;
+    Ok(())
+}
+
+/// The value's type tag, or `Undefined` when the root is no longer live.
+pub(crate) fn type_of_value(c: &NativeContext<'_, NodeHost>, value: RootId) -> ValueType {
+    c.value_type_rooted(value).unwrap_or(ValueType::Undefined)
+}
 
 /// The public module and original inspector share one canonical function identity.
 #[derive(Clone, Copy)]
@@ -132,6 +158,42 @@ pub(crate) fn validate_string(
         Some(text) => Ok(text),
         None => Err(argument_type_error(context, value, name, "string")?),
     }
+}
+
+/// Node's `validateBoolean(value, name)`: the flag, or `ERR_INVALID_ARG_TYPE`.
+pub(crate) fn validate_boolean(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    name: &str,
+) -> Result<bool, RootedError> {
+    match context.rooted_value(value).and_then(|value| value.as_bool()) {
+        Some(flag) => Ok(flag),
+        None => Err(argument_type_error(context, value, name, "boolean")?),
+    }
+}
+
+/// Node's `validateNumber(value, name)`: the number, or `ERR_INVALID_ARG_TYPE`.
+pub(crate) fn validate_number(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    name: &str,
+) -> Result<f64, RootedError> {
+    match context.rooted_value(value).and_then(|value| value.as_number()) {
+        Some(number) => Ok(number),
+        None => Err(argument_type_error(context, value, name, "number")?),
+    }
+}
+
+/// Node's `validateFunction(value, name)`: a callable, or `ERR_INVALID_ARG_TYPE`.
+pub(crate) fn validate_function(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    name: &str,
+) -> Result<(), RootedError> {
+    if context.is_callable_rooted(value)? {
+        return Ok(());
+    }
+    Err(argument_type_error(context, value, name, "function")?)
 }
 
 pub(crate) fn argument_type_error(
@@ -941,7 +1003,7 @@ pub(crate) fn guess_handle_type(
 ) -> Result<RootId, RootedError> {
     let missing = context.undefined();
     let value = context.to_number(args.first().copied().unwrap_or(missing))?;
-    let fd = quench_runtime::units::to_uint32(value) as i32;
+    let fd = quench_runtime::units::to_int32(value);
     Ok(context.number(super::fd_handle_type::guess(fd) as u8 as f64))
 }
 

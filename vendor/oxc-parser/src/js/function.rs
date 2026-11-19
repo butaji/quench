@@ -100,7 +100,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         r#async: bool,
         head: Option<ParserCheckpoint<'a>>,
     ) -> ArenaBox<'a, FunctionBody<'a>> {
-        if !r#async && self.options.lazy_body_skim.is_some() && self.lazy_start(start) {
+        if !r#async && self.options.lazy_body_skim.is_some() && self.options.lazy_skim_arrows && self.lazy_start(start) {
             let arrow = LazyFunction { start, id: None, params, r#async, generator: false, expression: false, form: LazyForm::Arrow, method: false };
             if let Some(body) = self.skim_lazy_function_body(&arrow, head) {
                 return body;
@@ -402,7 +402,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// Otherwise the parser is as it was and the body parses whole.
     fn skim_lazy_function_body(&mut self, function: &LazyFunction<'_, 'a>, head: Option<ParserCheckpoint<'a>>) -> Option<ArenaBox<'a, FunctionBody<'a>>> {
         let skim = self.options.lazy_body_skim?;
-        if function.r#async || function.generator || function.method || function.expression && function.id.is_some() || !self.at(Kind::LCurly) {
+        // A body inside a lazily parsed one is checked, not skimmed: its skim would leave the
+        // enclosing body's early verdict unsure, which its own check then cannot take.
+        if self.lazy_depth > 0 || function.r#async || function.generator || function.method || function.expression && function.id.is_some() || !self.at(Kind::LCurly) {
             return None;
         }
         let allocator = self.allocator();
@@ -421,10 +423,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 end,
                 id: function.id.map(|id| id.name.as_str()),
                 free_names: &skimmed.free_names,
-                names_exact: skimmed.names_exact,
                 // A method is a function whatever lies around its class.
                 in_function: self.ctx.has_return() || function.form == LazyForm::Method,
                 arrow: function.form == LazyForm::Arrow,
+                names_super: skimmed.names_super,
             };
             // SAFETY: `ParseOptions::lazy_body_skim` outlives the parse.
             unsafe { skim.call(body) }

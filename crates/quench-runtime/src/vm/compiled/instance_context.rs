@@ -69,27 +69,35 @@ pub(super) struct MemoryBinding {
 /// offsets in the two structs with the machine type of each, which generated code copies to
 /// enter another instance, and `CallContext::enter`, which the VM copies them with.
 macro_rules! switched {
-    ($($field:ident: $ty:expr),+ $(,)?) => {
+    (head: { $($field:ident: $ty:expr),+ $(,)? }, tail: { $($tail:ident: $tail_ty:expr),+ $(,)? }) => {
         /// The offset in a call context, the offset in a record and the machine type of each
         /// field that belongs to an instance.
-        pub(super) const SWITCHED: &[(i32, i32, ir::Type)] = &[$((
-            std::mem::offset_of!(CallContext, $field) as i32,
-            std::mem::offset_of!(InstanceContext, $field) as i32,
-            $ty,
-        )),+];
+        pub(super) const SWITCHED: &[(i32, i32, ir::Type)] = &[
+            $((
+                std::mem::offset_of!(CallContext, head.$field) as i32,
+                std::mem::offset_of!(InstanceContext, $field) as i32,
+                $ty,
+            ),)+
+            $((
+                std::mem::offset_of!(CallContext, $tail) as i32,
+                std::mem::offset_of!(InstanceContext, $tail) as i32,
+                $tail_ty,
+            ),)+
+        ];
 
         impl CallContext {
             /// Enters the instance of `record`: the context takes its words.
             pub(super) fn enter(&mut self, record: &InstanceContext) {
                 $(self.$field = record.$field;)+
+                $(self.$tail = record.$tail;)+
             }
         }
     };
 }
 
 switched! {
+    head: {
     env: types::I64,
-    instance: types::I64,
     globals: types::I64,
     table_words: types::I64,
     table: types::I64,
@@ -104,6 +112,8 @@ switched! {
     reference_call_site_count: types::I64,
     import_callout_counts: types::I64,
     import_callout_count: types::I64,
+    },
+    tail: { instance: types::I64 },
 }
 
 impl InstanceContext {
@@ -278,7 +288,7 @@ impl<H: Host> Vm<H> {
     /// The environment slot of `env`'s instance record: the last before the imported functions,
     /// which end the layout (`wasm_function_reference` derives their base from the end).
     pub(crate) fn wasm_context_slot(&self, env: Value, program: ProgramId) -> Option<usize> {
-        let Some(Cell::Environment { slots, .. }) = self.heap.get(env) else {
+        let Some(crate::heap::EnvironmentRecord { slots, .. }) = self.heap.environment(env) else {
             return None;
         };
         let imports = self.programs.wasm_signatures(program)?.imports().len();
@@ -303,7 +313,7 @@ impl<H: Host> Vm<H> {
     /// function of the instance.
     pub(crate) fn install_wasm_instance(&mut self, env: Value, program: ProgramId) -> Option<()> {
         let slot = self.wasm_context_slot(env, program)?;
-        let Some(Cell::Environment { slots, .. }) = self.heap.get(env) else {
+        let Some(crate::heap::EnvironmentRecord { slots, .. }) = self.heap.environment(env) else {
             return None;
         };
         let record = InstanceRecord::new(env, program, slots.len());

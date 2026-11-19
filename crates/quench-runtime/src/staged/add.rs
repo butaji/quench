@@ -15,9 +15,10 @@
 
 use super::region::Region;
 use super::entry::direct_record;
-use super::object::{Form, Rep, plain_payload, proto_link};
+use super::object::{Form, plain_payload, proto_link};
+use crate::typed_ir::Representation;
 use super::slot_store::store_slot;
-use super::{RecordSpace, Stage};
+use super::{StagedRecordSpace, Stage};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
 /// One resolved transition as the words a stage computes on: the layout id the object must hold,
@@ -36,7 +37,7 @@ pub(crate) struct Edge<W> {
 /// shape reader or method cache can name it) and an open store gate (no slot representation
 /// observes the write, no barrier log is due). Answers the payload word the storage reads from.
 #[inline(always)]
-pub(super) fn admitted<S: Stage>(stage: &mut S, space: RecordSpace, record: S::Word, record_id: S::Word, before: S::Word,
+pub(super) fn admitted<S: Stage>(stage: &mut S, space: StagedRecordSpace, record: S::Word, record_id: S::Word, before: S::Word,
     value: S::Word, miss: S::Miss) -> Option<S::Word> {
     let layout = stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32);
     let moved = stage.sub(layout, before);
@@ -59,8 +60,8 @@ pub(super) fn admitted<S: Stage>(stage: &mut S, space: RecordSpace, record: S::W
 #[inline(always)]
 pub(crate) fn add_property<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, edge: Edge<S::Word>,
     form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
-    let payload = admitted(stage, RecordSpace::Object, record, record_id, edge.before, value, miss)?;
-    store_slot(stage, record, payload, edge.slot, form, (value, Rep::Tagged), miss)?;
+    let payload = admitted(stage, StagedRecordSpace::Object, record, record_id, edge.before, value, miss)?;
+    store_slot(stage, record, payload, edge.slot, form, (value, Representation::Tagged), miss)?;
     stage.store_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32, edge.after);
     Some(())
 }
@@ -69,10 +70,9 @@ pub(crate) fn add_property<S: Stage>(stage: &mut S, record: S::Word, record_id: 
 /// compiled site holds it: the word is a direct object (else `None`, leaving at `miss`), and where
 /// `link` is given (an add the prototype chain can intercept, whose chain proof the code holds as
 /// a Stable fact for exactly that prototype) the object's prototype link is it. The chain's own
-/// shapes are not read: a change to any prototype's layout retires the code
-/// (`heap::subscribe_prototype_values`), so only what varies per receiver, its link, is tested.
+/// shapes are not read: a change to the layout of a prototype on it retires the code
+/// (`Heap::subscribe_prototype_chain`), so only what varies per receiver, its link, is tested.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn site_add<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, (edge, link): (Edge<S::Word>, Option<S::Word>),
     form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
     let present = stage.ne_imm(records, 0u32);

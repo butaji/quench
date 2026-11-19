@@ -216,10 +216,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn optional_call(&mut self, value: &CallExpression<'_>) -> Register {
-        let position = self.owner.source_position(self.call_source_offset(value));
-        let previous = self
-            .current_source_position
-            .replace((position.line, position.column));
+        let previous = self.current_source_position.replace(self.owner.source_offset(self.call_source_offset(value)));
         let result = self.optional_call_at_current_position(value);
         self.current_source_position = previous;
         result

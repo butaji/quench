@@ -10,7 +10,7 @@ use cranelift_codegen::ir::{self, InstBuilder, MemFlagsData, types};
 
 /// The machine type a vector is viewed as for a lane-wise operation: the lanes' integer type
 /// repeated to fill the vector.
-fn lane_type(lanes: Lanes) -> ir::Type {
+fn type_in_lane(lanes: Lanes) -> ir::Type {
     let width = lanes.width();
     match lanes {
         Lanes::Bits => VECTOR_IR,
@@ -21,7 +21,7 @@ fn lane_type(lanes: Lanes) -> ir::Type {
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
-    fn lane_shift(&mut self, op: NativeOp, left: ir::Value, count: ir::Value) -> ir::Value {
+    fn shift_in_lane(&mut self, op: NativeOp, left: ir::Value, count: ir::Value) -> ir::Value {
         let ins = self.body.core.builder.ins();
         match op {
             NativeOp::ShiftLeft => ins.ishl(left, count),
@@ -30,7 +30,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         }
     }
 
-    fn lane_binary(&mut self, op: NativeOp, left: ir::Value, right: ir::Value) -> ir::Value {
+    fn binary_in_lane(&mut self, op: NativeOp, left: ir::Value, right: ir::Value) -> ir::Value {
         let ins = self.body.core.builder.ins();
         match op {
             NativeOp::And => ins.band(left, right),
@@ -49,24 +49,24 @@ impl<H: Host> Emitter<'_, '_, H> {
 }
 
 impl<H: Host> MachineVector for Emitter<'_, '_, H> {
-    fn lane_operation(&mut self, native: Native, left: ir::Value, right: Option<ir::Value>) -> ir::Value {
+    fn operation_in_lane(&mut self, native: Native, left: ir::Value, right: Option<ir::Value>) -> ir::Value {
         let left = self.vector_view(native.lanes, left);
         match (native.op, right) {
             (NativeOp::Not, _) => self.body.core.builder.ins().bnot(left),
             (
                 NativeOp::ShiftLeft | NativeOp::ShiftRightUnsigned | NativeOp::ShiftRightSigned,
                 Some(count),
-            ) => self.lane_shift(native.op, left, count),
+            ) => self.shift_in_lane(native.op, left, count),
             (op, Some(right)) => {
                 let right = self.vector_view(native.lanes, right);
-                self.lane_binary(op, left, right)
+                self.binary_in_lane(op, left, right)
             }
             (op, None) => unreachable!("{op:?} takes a second operand"),
         }
     }
 
     fn vector_view(&mut self, shape: Lanes, value: ir::Value) -> ir::Value {
-        let ty = lane_type(shape);
+        let ty = type_in_lane(shape);
         if self.body.core.builder.func.dfg.value_type(value) == ty {
             return value;
         }

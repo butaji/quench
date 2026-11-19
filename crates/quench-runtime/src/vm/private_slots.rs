@@ -106,6 +106,12 @@ impl<H: Host> Vm<H> {
         atom: Atom,
     ) -> Option<usize> {
         let shape = self.object_data(object)?.shape();
+        // A site whose name belongs to a class evaluated once answers from the shape alone.
+        if self.private_classes.unique_name(atom)
+            && let Some(slot) = self.private_site_homes.unique_field_slot(site, shape)
+        {
+            return Some(slot);
+        }
         if let Some(slot) = self.private_site_homes.field_slot(site, scope.0, shape) {
             return Some(slot);
         }
@@ -125,7 +131,8 @@ impl<H: Host> Vm<H> {
         let brand = self.site_private_brand(code, site, environment, function, frame, atom)?;
         let slot = self.private_field_slot(object, brand)?;
         if self.private_shape_cacheable(shape) {
-            self.private_site_homes.record_field_slot(site, brand.home, shape, slot);
+            let unique = self.private_classes.register(atom, brand.home);
+            self.private_site_homes.record_field_slot(site, brand.home, shape, slot, unique);
         }
         Some(slot)
     }

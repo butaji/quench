@@ -15,7 +15,6 @@ members = [
     "crates/quench-runtime",
     "crates/quench-stack",
     "crates/quench-tier-corpus",
-    "crates/quench-stencil-mine",
     "crates/quench-bjit",
     "crates/quench-alloc",
     "crates/quench-regexp",
@@ -51,6 +50,8 @@ oxc_regular_expression = "=0.153.0"
 oxc_semantic = "=0.153.0"
 oxc_span = "=0.153.0"
 oxc_syntax = "=0.153.0"
+turso_core = { version = "=0.9.0-pre.5", default-features = false }
+turso_parser = "=0.9.0-pre.5"
 
 [profile.dev]
 # Minimize compiler work for the default edit/compile cycle. Use `iteration`

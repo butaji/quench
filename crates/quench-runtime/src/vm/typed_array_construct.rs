@@ -314,30 +314,8 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let species = self.well_known_symbols.get(WellKnownSymbol::Species).unwrap();
-        let getter = self.native_with_realm(Native::ArraySpecies, realm, realm);
-        self.set_builtin_function_name(getter, "get [Symbol.species]")?;
-        self.set_symbol_property(constructor, species, Value::UNDEFINED)?;
-        self.set_property_attributes(
-            constructor,
-            PropertyKey::symbol(species),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(getter),
-                setter: None,
-            },
-        );
-        for (name, native) in [
-            ("from", Native::TypedArrayFrom),
-            ("of", Native::TypedArrayOf),
-        ] {
-            let method = self.native_with_realm(native, Value::NULL, realm);
-            self.set_builtin_function_name(method, name)?;
-            self.set_builtin_value_named(constructor, name, method)?;
-        }
+        self.install_species(constructor, |vm| vm.native_with_realm(Native::ArraySpecies, realm, realm))?;
+        self.install_realm_native_rows(constructor, super::native_rows::Holder::TypedArrayConstructor, realm)?;
         Ok(())
     }
 

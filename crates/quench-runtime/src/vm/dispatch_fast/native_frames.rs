@@ -25,7 +25,7 @@ impl CallerState {
     }
 
     /// What the body `frame` runs with, which a lane call into its callee would have made the
-    /// context's (`lane_enter_window`). A direct callee runs in its caller's program.
+    /// context's (`enter_window_in_lane`). A direct callee runs in its caller's program.
     fn of_frame(frame: &ShadowFrame) -> Self {
         // SAFETY: a frame names the caller-owned callee, whose view outlives the run.
         let callee = unsafe { &*frame.callee };
@@ -49,14 +49,14 @@ impl<H: Host> Vm<H> {
     /// that observes the lane stack makes before it does.
     #[inline(always)]
     pub(super) fn link_natives(&mut self, cx: *mut LaneContext<H>) {
-        if self.lane_stack.activations.top_is_native() { link_unlinked(cx); }
+        if self.lane_stack.activations().top_is_native() { link_unlinked(cx); }
     }
 }
 
 #[cold]
 #[inline(never)]
 fn link_unlinked<H: Host>(cx: *mut LaneContext<H>) {
-    let activations = &unsafe { vm(cx) }.lane_stack.activations;
+    let activations = unsafe { vm(cx) }.lane_stack.activations();
     let (unlinked, len) = (activations.unlinked(), activations.len());
     for depth in len - unlinked..len { link_on_observe(cx, depth); }
 }
@@ -67,33 +67,34 @@ fn link_unlinked<H: Host>(cx: *mut LaneContext<H>) {
 pub(super) fn link_on_observe<H: Host>(cx: *mut LaneContext<H>, depth: usize) {
     let vm = unsafe { vm(cx) };
     // SAFETY: each slot below the top holds at least its prefix.
-    let below = depth.checked_sub(1).map(|below| unsafe { (*vm.lane_stack.activations.slot(below)).native }).filter(|frame| !frame.callee.is_null());
+    let below = depth.checked_sub(1).map(|below| unsafe { (*vm.lane_stack.activations_mut().slot(below)).native }).filter(|frame| !frame.callee.is_null());
     let caller = below.map_or_else(|| CallerState::of_context(cx), |frame| CallerState::of_frame(&frame));
-    let slot = vm.lane_stack.activations.slot(depth);
+    let slot = vm.lane_stack.activations_mut().slot(depth);
     // SAFETY: the frame names the caller-owned callee, whose call record lies in its caller's view.
     let (frame, callee) = unsafe { let frame = (*slot).native; (frame, &*frame.callee) };
     let argc = ImmediateLayout::argument_count(unsafe { (*(callee.call as Ip)).imm() });
     let completion = if callee.forwarder.is_some() { Completion::Forwarder } else { Completion::Plain };
     // SAFETY: the slot lies within the activations' capacity, below the top.
     unsafe {
-        slot.write(Activation {
-            native: frame,
-            function: callee.target.function,
-            call: callee.call as Ip,
-            caller_base: caller.base,
-            caller_registers: caller.registers,
-            caller_program: caller.program,
-            kind: ActivationKind::Script(ScriptActivation {
+        slot.write(Activation::of_parts(
+            frame,
+            callee.target.function,
+            callee.call as Ip,
+            caller.base,
+            caller.registers,
+            caller.program,
+            ActivationKind::Script(ScriptActivation {
                 callee: callee.target.callee,
                 argc,
                 completion,
                 forwards: false,
+            kept: 0,
                 environment: false,
                 record: std::ptr::null_mut(),
             }),
-        });
+        ));
     }
-    // The frame's window takes the context words its call would have written (`lane_enter_window`).
+    // The frame's window takes the context words its call would have written (`enter_window_in_lane`).
     let window = Registers(frame.window as *mut Value);
     window.set_this(Value::from_bits(frame.this));
     window.set_env(callee.target.env);
@@ -104,22 +105,22 @@ pub(super) fn link_on_observe<H: Host>(cx: *mut LaneContext<H>, depth: usize) {
 /// Runs `helper`, which pushes activations or runs guest code, with the context of the
 /// innermost native frame's body, as the lane's own calls run: they take their caller's state
 /// from the context. The frames are linked first, then a body entered through its cell, which has
-/// no activation yet, becomes one (`lane_materialize_running_leaf`): the record the helper runs
+/// no activation yet, becomes one (`materialize_running_leaf_in_lane`): the record the helper runs
 /// is that activation's, not the frame below it. The owner's state returns unless the helper left
 /// the lane in an activation of its own or ended the run.
 #[inline(always)]
 pub(super) fn in_innermost_frame<H: Host>(cx: *mut LaneContext<H>, helper: impl FnOnce() -> u64) -> u64 {
     let vm = unsafe { vm(cx) };
     vm.link_natives(cx);
-    lane_materialize_running_leaf(cx);
-    let Some(frame) = vm.lane_stack.activations.top_native() else { return helper() };
+    materialize_running_leaf_in_lane(cx);
+    let Some(frame) = vm.lane_stack.activations().top_native() else { return helper() };
     let owner = CallerState::of_context(cx);
-    let depth = vm.lane_stack.activations.len();
+    let depth = vm.lane_stack.activation_count();
     CallerState::of_frame(&frame).install(cx);
     let status = helper();
     if status == LANE_CALL_LEFT {
         // The lane continues above the frames, which return into the interpreter.
-        vm.lane_stack.activations.retire_bodies(depth);
+        vm.lane_stack.activations_mut().retire_bodies(depth);
     } else if status != LANE_CALL_TERMINATED {
         owner.install(cx);
     }
@@ -130,20 +131,36 @@ pub(super) fn in_innermost_frame<H: Host>(cx: *mut LaneContext<H>, helper: impl 
 /// closure's, which no lane activation holds; `None` in the activation's own.
 pub(super) fn innermost_callee_env<H: Host>(cx: *mut LaneContext<H>) -> Option<Value> {
     // SAFETY: a frame names the caller-owned callee, whose descriptor outlives the run.
-    unsafe { vm(cx) }.lane_stack.activations.top_native().map(|frame| unsafe { (*frame.callee).target.env })
+    unsafe { vm(cx) }.lane_stack.activations().top_native().map(|frame| unsafe { (*frame.callee).target.env })
 }
 
 /// Continues the lane in the innermost native frame a run left inside: the frames become
 /// the lane's own activations (their prefix no longer names a callee, and a skipped
 /// forwarding constructor joins `LaneStack::forwarders`), and the context becomes the
 /// innermost's. Its view and the body it ran, where the run left inside frames.
+#[inline(always)]
 pub(super) fn advance_into_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&'static LaneView, &'static super::super::compiled::LaneMethod)> {
+    // A run that left no native frame, the common completion, has nothing to link or advance.
+    if !left_native_frames(cx) { return None; }
+    advance_into_native_frames(cx)
+}
+
+/// Whether the run that just ended left native frames on the lane stack, linked or not.
+#[inline(always)]
+pub(super) fn left_native_frames<H: Host>(cx: *mut LaneContext<H>) -> bool {
+    let activations = unsafe { vm(cx) }.lane_stack.activations();
+    activations.top_is_native() || activations.native_depth() != 0
+}
+
+/// `advance_into_frames` past its test: the native frames to link and advance into.
+#[inline(never)]
+fn advance_into_native_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&'static LaneView, &'static super::super::compiled::LaneMethod)> {
     let vm = unsafe { vm(cx) };
     vm.link_natives(cx);
-    let (count, len) = (vm.lane_stack.activations.native_depth(), vm.lane_stack.activations.len());
+    let (count, len) = (vm.lane_stack.activations().native_depth(), vm.lane_stack.activation_count());
     let mut innermost = None;
     for depth in len - count..len {
-        let slot = vm.lane_stack.activations.slot(depth);
+        let slot = vm.lane_stack.activations_mut().slot(depth);
         // SAFETY: a linked frame holds its prefix; its callee outlives the run.
         let frame = unsafe { (*slot).native };
         if let Some(skipped) = unsafe { &*frame.callee }.forwarder { vm.lane_stack.forwarders.push(skipped); }
@@ -163,12 +180,12 @@ pub(super) fn advance_into_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&
 /// Drops the native frames a terminated run left, with their windows.
 pub(super) fn discard_frames<H: Host>(cx: *mut LaneContext<H>) {
     let vm = unsafe { vm(cx) };
-    let (count, len) = (vm.lane_stack.activations.native_depth(), vm.lane_stack.activations.len());
+    let (count, len) = (vm.lane_stack.activations().native_depth(), vm.lane_stack.activation_count());
     if count == 0 { return; }
     // SAFETY: the values hold no drop glue.
     unsafe {
-        let window = (*vm.lane_stack.activations.slot(len - count)).window_word();
-        vm.lane_stack.activations.set_len(len - count);
+        let window = (*vm.lane_stack.activations_mut().slot(len - count)).window_word();
+        vm.lane_stack.activations_mut().set_len(len - count);
         vm.lane_stack.values.release_window(window);
     }
 }

@@ -1,6 +1,6 @@
 //! Entering an exception handler: the state settled before the handler's block runs, shared by
 //! the interpreter's unwinding (`Vm::exception_handler_target`) and a compiled body's or loop
-//! region's native catch (`dispatch_fast::lane_handler_edge`), in a VM frame or in the
+//! region's native catch (`dispatch_fast::handler_edge`), in a VM frame or in the
 //! environment window of a lane activation (`HandlerHome`): one implementation of each step.
 use super::dispatch_fast::{WINDOW_ENVIRONMENT, WINDOW_LOCALS, WINDOW_SLOTS};
 use super::*;
@@ -17,7 +17,7 @@ pub(in crate::vm) enum HandlerHome {
 /// A lane activation a handler is entered in: its index on the lane stack, which owns its `with`
 /// objects (`LaneStack::with_objects`), the function and program it runs, and its window's first
 /// register, after whose function's registers its environment entries and locals follow
-/// (`lane_activate_environment`).
+/// (`activate_environment_in_lane`).
 #[derive(Clone, Copy)]
 pub(in crate::vm) struct WindowHome {
     pub(in crate::vm) depth: usize,
@@ -99,7 +99,7 @@ impl<H: Host> Vm<H> {
         let function = program.function(window.function as usize);
         let slot = usize::from(local);
         // SAFETY: an environment activation's window holds its entries after its registers
-        // (`lane_activate_environment`), which nothing else writes while the handler enters.
+        // (`activate_environment_in_lane`), which nothing else writes while the handler enters.
         let entries = unsafe { window.window.add(usize::from(function.registers)) };
         let own = unsafe { *entries.add(usize::from(WINDOW_ENVIRONMENT)) };
         if own.is_deleted() || !function.local_slot_uses_environment(slot) {
@@ -108,7 +108,7 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         let environment = self.iteration_environment(own, window.program, window.function, &[local], crate::bytecode::Resets::listed(&[]))?;
-        let Some(crate::heap::Cell::Environment { slots, .. }) = self.heap.get(environment) else {
+        let Some(crate::heap::EnvironmentRecord { slots, .. }) = self.heap.environment(environment) else {
             return Err(JsError("invalid handler binding".into()));
         };
         let storage = std::ptr::from_ref(slots);

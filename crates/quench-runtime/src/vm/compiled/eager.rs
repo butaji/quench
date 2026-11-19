@@ -5,7 +5,7 @@
 //! addressed directly because nothing is linked.
 use super::*;
 #[cfg(feature = "aot")]
-use super::emit_machine::lane_of;
+use super::emit_machine::of_in_lane;
 #[cfg(feature = "aot")]
 use super::object_slots::emit;
 #[cfg(feature = "aot")]
@@ -152,7 +152,7 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
         let program = self.program;
         let unnamed_atoms = super::method_cache::AtomBits::default();
         let facts = VmFacts { frozen: true, frozen_fields: Some(self.fields), frozen_constants: Some(self.constants),
-            online: Some(OnlineFacts { method_cache_atoms: &unnamed_atoms, invalidation: self.invalidation.address(), constants: &[], instanceofs: &|_| None, shape_stable: &|_| false, names: None }),
+            online: Some(OnlineFacts { method_cache_atoms: &unnamed_atoms, invalidation: self.invalidation.address(), constants: &[], instanceofs: &|_| None, shape_stable: &|_| false, names: None, own_constant: &|_| None, root_constant: &|_| None }),
             ..VmFacts::STATIC };
         let reads = frozen_global_reads(program, program.function_get(function_id as usize)?, self.globals);
         let (body, atoms) = lower_lane_body(program, function_id, isa,
@@ -173,21 +173,21 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
             super::ahead_entry::AheadTargets {
                 body: &mut |builder, words| {
                     let signature = *body_signature.get_or_insert_with(|| builder.import_signature(
-                        lane_body_signature(isa.pointer_type(), isa.default_call_conv())));
+                        body_signature_in_lane(isa.pointer_type(), isa.default_call_conv())));
                     let mut stage = emit(builder);
-                    let target = stage.raw_const(lane_of(isa.pointer_type()), body.pointer() as usize as i64);
+                    let target = stage.raw_const(of_in_lane(isa.pointer_type()), body.pointer() as usize as i64);
                     let results = stage.call_signature(signature, target, words);
                     (results[0], results[1])
                 },
                 fallback: &mut |builder, [context, pc, result]| {
                     let signature = *fallback_signature.get_or_insert_with(|| builder.import_signature(native_js_operation_signature(isa)));
                     let mut stage = emit(builder);
-                    let target = stage.raw_const(lane_of(isa.pointer_type()), fallback.pointer() as usize as i64);
+                    let target = stage.raw_const(of_in_lane(isa.pointer_type()), fallback.pointer() as usize as i64);
                     stage.call_signature(signature, target, &[context, pc, result, result])[0]
                 },
             })?;
         let entry = publish_eager_graph(entry, isa)?;
-        self.counts.lane_bodies += 1;
+        self.counts.bodies_in_lane += 1;
         self.owners.operand_arrays.push(operands);
         self.owners.entry_tables.push(table);
         Ok(vec![body, fallback, entry])
@@ -206,7 +206,7 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
             |builder, index, context, pc, result| {
                 let signature = *signature.get_or_insert_with(|| builder.import_signature(
                     native_entry_signature(isa.pointer_type(), isa.default_call_conv())));
-                let target = emit(builder).raw_const(lane_of(isa.pointer_type()), code[index].pointer() as usize as i64);
+                let target = emit(builder).raw_const(of_in_lane(isa.pointer_type()), code[index].pointer() as usize as i64);
                 let arguments = super::native_graph::region_call_arguments(builder, isa, context, pc, result);
                 emit(builder).call_signature(signature, target, &arguments)[0]
             })?;
@@ -243,12 +243,9 @@ fn lower_eager_fallback(
         ir::UserFuncName::user(super::native_object::NATIVE_FUNCTION_NAMESPACE, u32::MAX - 1),
         native_js_operation_signature(isa),
     );
-    let mut context = FunctionBuilderContext::new();
+    let mut context = crate::vm::jit_backend::builder::take_context();
     let mut builder = FunctionBuilder::new(&mut native, &mut context);
-    let entry = builder.create_block();
-    builder.append_block_params_for_function_params(entry);
-    builder.switch_to_block(entry);
-    let params = builder.block_params(entry).to_vec();
+    let (_, params) = crate::vm::jit_backend::builder::enter(&mut builder);
     let pc = params[1];
     let valid_pc = builder.create_block();
     let invalid = builder.create_block();
@@ -262,6 +259,7 @@ fn lower_eager_fallback(
     stage.leave(&[status]);
     builder.seal_all_blocks();
     builder.finalize(isa.frontend_config());
+    crate::vm::jit_backend::builder::keep_context(context);
     Ok(native)
 }
 
@@ -277,7 +275,7 @@ fn emit_eager_fallback_call(
     const PC_PARAMETER: usize = 1;
     const RESULT_PARAMETER: usize = 3;
     let pc = params[PC_PARAMETER];
-    let pointer = lane_of(isa.pointer_type());
+    let pointer = of_in_lane(isa.pointer_type());
     let signature = builder.import_signature(native_js_operation_signature(isa));
     let mut stage = emit(builder);
     let table = stage.raw_const(pointer, entries as usize as i64);
@@ -300,7 +298,7 @@ fn compile_eager_body<H: Host>(
     let native = super::native_graph::lower_body(sites, function_id, isa, region,
         |builder, site, context, result| {
             let signature = *signature.get_or_insert_with(|| builder.import_signature(native_js_operation_signature(isa)));
-            let pointer = lane_of(isa.pointer_type());
+            let pointer = of_in_lane(isa.pointer_type());
             let mut stage = emit(builder);
             let target = stage.raw_const(pointer, site.op.native_semantic_entry::<H>() as usize as i64);
             let arguments = stage.raw_const(pointer, site.operands.as_ptr() as i64);

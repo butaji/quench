@@ -1,4 +1,4 @@
-use super::promise::PromiseState;
+use super::promise::{PromiseState, ThenCapability};
 use super::property_key::PropertyKey;
 
 const ENTRIES: &str = "\0quench:disposable-stack:entries";
@@ -81,7 +81,7 @@ impl<H: Host> Vm<H> {
         let constructor = disposable_stack;
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         for (name, native) in [
             ("use", Native::DisposableStackUse),
@@ -188,7 +188,7 @@ impl<H: Host> Vm<H> {
         let constructor = async_disposable_stack;
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         for (name, native) in [
             ("use", Native::AsyncDisposableStackUse),
             ("adopt", Native::AsyncDisposableStackAdopt),
@@ -275,7 +275,7 @@ impl<H: Host> Vm<H> {
             let realm = self
                 .heap
                 .function(new_target)
-                .map_or(self.realm.globals, |function| function.realm);
+                .map_or(self.realm.globals, |function| self.record_realm(function));
             let constructor_atom = self.intern_atom(if async_stack {
                 "AsyncDisposableStack"
             } else {
@@ -290,11 +290,9 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(self.object_proto)
             }
         };
-        let stack = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let stack = self.heap.alloc_object(Self::empty_object(prototype));
         let root = self.heap.root(stack);
-        let entries = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), vec![]),
-        });
+        let entries = self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), vec![]));
         let entries_atom = self.intern_atom(ENTRIES);
         let disposed_atom = self.intern_atom(DISPOSED);
         self.set_property(stack, entries_atom, entries)?;
@@ -555,11 +553,9 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .own_property(constructor, prototype_atom)
             .unwrap_or(self.object_proto);
-        let moved_stack = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let moved_stack = self.heap.alloc_object(Self::empty_object(prototype));
         let root = self.heap.root(moved_stack);
-        let entries = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), moved),
-        });
+        let entries = self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), moved));
         let entries_atom = self.intern_atom(ENTRIES);
         self.set_property(moved_stack, entries_atom, entries)?;
         self.set_property(moved_stack, disposed_atom, Value::FALSE)?;
@@ -688,14 +684,12 @@ impl<H: Host> Vm<H> {
         await_result: bool,
     ) -> Result<(), JsError> {
         let entries = self.stack_entries(stack)?;
-        let entry = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), vec![
+        let entry = self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), vec![
                 callback,
                 value,
                 Value::integer(mode),
                 if await_result { Value::TRUE } else { Value::FALSE },
-            ]),
-        });
+            ]));
         let Some(elements) = self.heap.array_elements_mut(entries) else {
             return Err(JsError("DisposableStack entries are invalid".into()));
         };
@@ -829,18 +823,14 @@ impl<H: Host> Vm<H> {
         };
         let values = std::mem::take(elements);
         let resource_count = values.len();
-        let resources = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), values),
-        });
+        let resources = self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), values));
         let result = self.with_call_roots([resources], |vm| vm.promise_object())?;
-        let state = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), vec![
+        let state = self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), vec![
                 resources,
                 Value::number(resource_count as f64),
                 completion,
                 result,
-            ]),
-        });
+            ]));
         self.continue_async_disposal(p, state)?;
         Ok(result)
     }
@@ -954,16 +944,11 @@ impl<H: Host> Vm<H> {
                     }
                     Ok(value) if await_result => {
                         let promise = self.promise_for_value(p, value)?;
-                        let fulfilled = self
-                            .native_with_env(Native::DisposableStackAsyncDisposalFulfilled, state);
-                        let rejected = self
-                            .native_with_env(Native::DisposableStackAsyncDisposalRejected, state);
-                        let _ = self.call_promise_native(
-                            p,
-                            Native::PromiseThen,
-                            promise,
-                            &[fulfilled, rejected],
-                        )?;
+                        let natives = [
+                            Native::DisposableStackAsyncDisposalFulfilled,
+                            Native::DisposableStackAsyncDisposalRejected,
+                        ];
+                        self.then_with_natives(p, promise, natives, state, ThenCapability::Species)?;
                         return Ok(Value::UNDEFINED);
                     }
                     Ok(_) => {}

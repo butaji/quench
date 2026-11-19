@@ -1,9 +1,11 @@
 //! Stable facts in a lane region: what its code folds under code dependencies, and the
 //! invalidation points where it learns that one changed.
 
+use crate::bytecode::Class;
 use super::*;
 use super::super::object_slots::emit;
 use crate::staged::machine::{Lane, MachineScalar, Relation};
+use crate::staged::property::StoreJoin;
 use crate::staged::{Region, Stage};
 
 /// The Stable facts a region's code folded (`typed_ir::BindingTime::Stable`), each the subject
@@ -12,6 +14,9 @@ use crate::staged::{Region, Stage};
 pub(crate) struct StableFacts {
     /// Exact shapes of prototypes whose values it holds (`heap::subscribe_prototype_values`).
     pub(crate) holders: Box<[u32]>,
+    /// The chains it read those values through, whose prototypes' layouts it holds
+    /// (`Heap::subscribe_prototype_chain`).
+    pub(crate) chains: Box<[crate::code_dependencies::PrototypeChain]>,
     /// Atoms it stores without a method-cache test (`MethodCacheAtoms::readers`).
     pub(crate) atoms: Box<[Atom]>,
     /// Global cells whose values it holds (`heap::subscribe_global_value`).
@@ -28,6 +33,9 @@ pub(crate) struct StableFacts {
     /// Exact shapes of objects whose layout it holds past a call (`Vm::shape_is_stable`): the
     /// first object to leave one retires it (`Heap::subscribe_shape`).
     pub(crate) shapes: Box<[u32]>,
+    /// The program whose root constant the code folds (`Lowering::root_constant_read`): its
+    /// publication subscribes the program's second root run (`ProgramStore::subscribe_root_constants`).
+    pub(crate) root_program: Option<crate::vm::program_store::ProgramId>,
 }
 
 /// The Stable facts a lowering folded so far.
@@ -35,6 +43,8 @@ pub(crate) struct StableFacts {
 pub(super) struct StableUses {
     /// Holder shapes whose prototypes' values the code took as constants.
     pub(super) holders: crate::bitset::BitSet,
+    /// The chains the code read those values through (`field_plans::embed_inherited`).
+    pub(super) chains: BTreeSet<crate::code_dependencies::PrototypeChain>,
     /// Exact shapes of the objects whose shape the code held past a call (`StableHold::hold_shape`).
     pub(super) shapes: crate::bitset::BitSet,
     /// Atoms it stores directly because no method cache named them.
@@ -49,6 +59,8 @@ pub(super) struct StableUses {
     slots: Vec<crate::code_dependencies::SlotDependency>,
     /// Constructors whose `prototype` the code took as a constant for an `instanceof`.
     instanceofs: BTreeSet<crate::code_dependencies::InstanceofFact>,
+    /// The program whose root constant the code folded, if any (`StableFacts::root_program`).
+    pub(super) root_program: Option<crate::vm::program_store::ProgramId>,
     /// Loops, by header and backedge, entered only through forward edges that proved the realm
     /// (`Lowering::hoist_stable`): their blocks hold the proof.
     realm_loops: Vec<(usize, usize)>,
@@ -64,11 +76,12 @@ impl StableUses {
     pub(super) fn take(&mut self) -> StableFacts {
         StableFacts { holders: std::mem::take(&mut self.holders).iter().map(|holder| holder as u32).collect(),
             shapes: std::mem::take(&mut self.shapes).iter().map(|shape| shape as u32).collect(),
+            chains: std::mem::take(&mut self.chains).into_iter().collect(),
             atoms: std::mem::take(&mut self.atoms).into_iter().collect(),
             globals: std::mem::take(&mut self.globals).into_iter().collect(), roots: std::mem::take(&mut self.roots),
             layouts: std::mem::take(&mut self.layouts).into_iter().collect(),
             slots: std::mem::take(&mut self.slots).into_iter().collect(),
-            instanceofs: std::mem::take(&mut self.instanceofs).into_iter().collect() }
+            instanceofs: std::mem::take(&mut self.instanceofs).into_iter().collect(), root_program: self.root_program.take() }
     }
 }
 
@@ -226,7 +239,7 @@ impl Lowering<'_, '_> {
 
     /// The realm test of `prove_realm`, made here.
     pub(super) fn test_realm(&mut self, state: &mut State, exit: ir::Block, (global, realm_offset): (Value, i32)) {
-        let vm = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, vm));
+        let vm = emit_js_payload_fixed_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.vm));
         let active = emit(&mut self.builder).load_u64(Region::Dispatch.mutable(), vm, realm_offset);
         let same = self.raw_compare_imm(Relation::Equal, active, global.to_bits() as i64);
         emit_js_guard(&mut self.builder, same, exit);
@@ -244,16 +257,108 @@ impl Lowering<'_, '_> {
         Some(emit(&mut self.builder).all(specialized, held))
     }
 
+    /// `store_held_unnamed` in a block: the run's stores proved specialized once per block (a
+    /// constant of the run) and the invalidation word read once since the last call or once at
+    /// the entry of a loop that keeps Stable facts (`hold_stable`), each leaving through `exit`
+    /// where it fails, rather than each store testing both and joining the VM's store.
+    pub(super) fn online_store_held(&mut self, state: &mut State, atom: Atom, exit: ir::Block) -> Option<ir::Value> {
+        self.vm.online.filter(|online| !online.names(atom))?;
+        self.hold_specialized(state, exit);
+        self.hold_stable(state, exit);
+        self.stable.atoms.insert(atom);
+        Some(self.builder.ins().iconst(types::I8, 1))
+    }
+
+    /// The run's stores proved specialized (`stores_specialized`) where no block proof of it holds
+    /// yet: a guard leaving through `exit` where the run does not. The loop's entering edge makes
+    /// this proof once for a loop whose stores all hold it (`hoist_stable`).
+    pub(super) fn hold_specialized(&mut self, state: &mut State, exit: ir::Block) {
+        if state.proofs.specialized { return; }
+        let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.stores_specialized));
+        let specialized = self.raw_compare_imm(Relation::NotEqual, specialized, 0);
+        emit_js_guard(&mut self.builder, specialized, exit);
+        state.proofs.specialized = true;
+    }
+
+    /// Whether the field store `instruction` at `pc` keeps every Stable fact in a loop: its join is
+    /// the host's (no entry binding, no adding entry) and its region is a loop not widened at `pc`,
+    /// so a store the in-place arms miss leaves (`store_leaves`, `field_store_host`) and runs no
+    /// guest code; the store changes no fact the loop holds beyond the invalidation word it reads.
+    pub(super) fn store_keeps_facts(&self, pc: usize, instruction: WideInstruction) -> bool {
+        let (_, join) = self.site_store_plan(instruction.cache_site_index(), Type::ANY);
+        join == StoreJoin::Host && matches!(self.coverage, Coverage::Loop { .. }) && !self.generic.contains(&pc)
+    }
+
+    /// Where offline code holds `atom` unnamed (`VmFacts::held_atoms`), the admission of its stores
+    /// in a run that makes no call: true. The code was compiled for a specialized run, a cache
+    /// naming the atom retires it before its next entry, and a run that calls nothing meets no
+    /// cache that could name it (`entry_store_atoms`); a run that calls tests the caches.
+    pub(super) fn loop_held_atom(&mut self, atom: Atom) -> Option<ir::Value> {
+        if self.vm.online.is_some() || self.native_calls || self.helpers.links() { return None; }
+        self.vm.held_atoms.filter(|held| !held.names.contains(atom as usize))?;
+        self.stable.atoms.insert(atom);
+        Some(self.builder.ins().iconst(types::I8, 1))
+    }
+
+    /// `loop_held_atom` in a run that calls: a call may have named the atom, which sets the
+    /// code's invalidation word, so the block reads the word once after its last call
+    /// (`State::proofs.stable`) and leaves through `exit` where it is set.
+    pub(super) fn called_held_atom(&mut self, state: &mut State, atom: Atom, exit: ir::Block) -> Option<ir::Value> {
+        if self.vm.online.is_some() || self.helpers.links() { return None; }
+        let held = self.vm.held_atoms.filter(|held| !held.names.contains(atom as usize))?;
+        self.stable.atoms.insert(atom);
+        self.read_region_invalidation(state, held, exit);
+        Some(self.builder.ins().iconst(types::I8, 1))
+    }
+
+    /// Reads offline code's invalidation word (`HeldAtoms::invalidation`) once per block after
+    /// its last call (`State::proofs.stable`), leaving through `exit` where it is set.
+    fn read_region_invalidation(&mut self, state: &mut State, held: super::super::HeldAtoms<'_>, exit: ir::Block) {
+        if state.proofs.stable { return; }
+        let address = emit(&mut self.builder).raw_const(Lane::I64, held.invalidation as i64);
+        let invalidated = emit(&mut self.builder).load_u64(Region::Invalidation.mutable(), address, 0);
+        let unchanged = self.raw_compare_imm(Relation::Equal, invalidated, 0);
+        emit_js_guard(&mut self.builder, unchanged, exit);
+        state.proofs.stable = true;
+    }
+
+    /// Whether offline code holds Stable facts under its own code dependencies 
+    /// (`VmFacts::held_atoms`: an OSR region, whose publication subscribes them and sets its
+    /// invalidation word when one changes), as online code does under its plan's.
+    pub(super) fn region_holds_stable(&self) -> bool {
+        self.vm.online.is_none() && !self.helpers.links() && self.vm.held_atoms.is_some()
+    }
+
+    /// `hold_holder` for offline code that holds Stable facts (`region_holds_stable`): the
+    /// prototype's values are a dependency of its publication, read through its invalidation word.
+    pub(super) fn region_hold_holder(&mut self, state: &mut State, exit: ir::Block, holder: u32) {
+        let held = self.vm.held_atoms.expect("a region that holds Stable facts");
+        self.stable.holders.insert_growing(holder as usize);
+        self.read_region_invalidation(state, held, exit);
+    }
+
+    /// Holds prototype `holder`'s values by whichever dependency the code takes (`hold_holder`,
+    /// `region_hold_holder`); false where it takes none.
+    pub(super) fn holds_holders(&self) -> bool {
+        self.division().folds(BindingTime::Stable) || self.region_holds_stable()
+    }
+
+    /// `hold_holder` or `region_hold_holder`, as the code's division allows (`holds_holders`).
+    pub(super) fn hold_holder_any(&mut self, state: &mut State, exit: ir::Block, holder: u32) {
+        if self.division().folds(BindingTime::Stable) { self.hold_holder(state, exit, holder); }
+        else { self.region_hold_holder(state, exit, holder); }
+    }
+
     /// Whether a run enters loop `header..=end` only at its header, by edges that each make the
     /// proofs hoisted there: no start lies past its header (a start at it hoists on its entry
     /// edge), every edge from outside it is a forward edge to its header (`continue_at`, which
-    /// hoists), and no branch table hides an edge.
+    /// hoists), and every branch table's entry is one.
     pub(super) fn enters_only_at_header(&self, header: usize, end: usize) -> bool {
         let inside = header..=end;
+        // A branch table's entries are among its successors, so an edge it makes is seen here too.
         let entered_within = self.unit.instructions.iter().enumerate().any(|(pc, instruction)|
-            instruction.op().control_flow_layout() == ControlFlowLayout::BranchTable
-                || (!inside.contains(&pc) && successors(pc, *instruction).into_iter().flatten()
-                    .any(|target| (target > header && target <= end) || (target == header && pc > end))));
+            !inside.contains(&pc) && successors(pc, *instruction).into_iter()
+                .any(|target| (target > header && target <= end) || (target == header && pc > end)));
         !entered_within && !(header < self.stable.start && self.stable.start <= end)
     }
 
@@ -262,10 +367,11 @@ impl Lowering<'_, '_> {
     /// or reads the global scope (`global_read`); calls, stores and constructions do not qualify.
     pub(super) fn keeps_stable_facts(&self, pc: usize, instruction: WideInstruction) -> bool {
         match instruction.op().class() {
-            Class::LoadName | Class::LoadNameCall => self.global_reads.contains_key(&pc),
-            Class::GetField => !instruction.writes_current_this(),
-            Class::GetIndex => true,
-            Class::Call => super::native_calls::keeps_arrays(&self.intrinsics, pc),
+            _ if matches!(crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()), Some(crate::staged::Operation::LoadName { .. })) => self.global_reads.contains_key(&pc),
+            _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) => !instruction.writes_current_this(),
+            _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) => true,
+            _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. })) => self.store_keeps_facts(pc, instruction),
+            _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Call) => super::native_calls::keeps_arrays(&self.intrinsics, pc),
             _ if instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary => true,
             _ => reads_only(&self.program.constants, instruction),
         }

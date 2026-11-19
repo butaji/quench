@@ -1,3 +1,4 @@
+use super::enumerable_key_memo::EnumerableSlots;
 use super::operations::ArrayLikeElementKind;
 use super::property_key::PropertyKey;
 use super::*;
@@ -12,7 +13,7 @@ pub(super) enum PropertyCopyKind {
 
 /// Properties a plain copy (`Vm::copy_plain_properties`) gathers before it writes any, without
 /// allocating their list.
-const PLAIN_COPY_INLINE_PROPERTIES: usize = 16;
+pub(super) const PLAIN_COPY_INLINE_PROPERTIES: usize = 16;
 
 /// Where a plain copy writes one property of its target: a new property, or the slot of the
 /// target's own property of that key.
@@ -24,13 +25,13 @@ enum PlainCopyWrite {
 
 impl<H: Host> Vm<H> {
     pub(super) fn is_host_private_symbol(&self, key: Value) -> bool {
-        matches!(self.heap.get(key), Some(Cell::Symbol(data))
+        matches!(self.heap.symbol_data(key), Some(data)
             if data.kind == crate::heap::SymbolKind::HostPrivate)
     }
 
-    /// A new array of `elements`, in a young run where one is free (`Heap::alloc_literal_array`).
+    /// A new array of `elements`, in a young run where one is free (`Heap::alloc_literal_array_from_parts`).
     pub(super) fn array_of(&mut self, elements: &[Value]) -> Value {
-        self.heap.alloc_literal_array(self.array_proto, elements.len(), |index| elements[index])
+        self.heap.alloc_literal_array_from_parts(self.array_proto, &[elements])
     }
 
     fn is_internal_property_name(&self, atom: Atom) -> bool {
@@ -245,10 +246,7 @@ impl<H: Host> Vm<H> {
         if let (Some(l), Some(r)) = (self.heap.string(left), self.heap.string(right)) {
             return l == r;
         }
-        match (self.heap.get(left), self.heap.get(right)) {
-            (Some(Cell::Symbol(_)), Some(Cell::Symbol(_))) => left == right,
-            _ => false,
-        }
+        self.heap.is_symbol(left) && self.heap.is_symbol(right) && left == right
     }
 
     pub(super) fn copy_data_properties(
@@ -274,6 +272,9 @@ impl<H: Host> Vm<H> {
     /// `copy_data_properties` when a plain copy (`copy_plain_properties`) answers it, or the
     /// source is null or undefined; `false`, before any effect, for any other copy.
     pub(super) fn copy_plain_data_properties(&mut self, target: Value, source: Value, exclusions: Value) -> bool {
+        if self.adopt_source_shape(target, source, exclusions) {
+            return true;
+        }
         if source.is_null() || source.is_undefined() {
             return true;
         }
@@ -360,13 +361,18 @@ impl<H: Host> Vm<H> {
     /// for `Set`, no accessor or read-only property up the target's chain intercepts it. The
     /// copy then runs no guest code and cannot throw, so it gathers every value first and
     /// writes them in order. `false`, before any effect, leaves the copy to the general path.
-    fn copy_plain_properties(
+    pub(super) fn copy_plain_properties(
         &mut self,
         target: Value,
         source: Value,
         excluded: &[Value],
         kind: PropertyCopyKind,
     ) -> bool {
+        // `Object.assign` onto an empty target takes the source's shape when no key could meet
+        // `__proto__`, an accessor or a read-only property on the target's chain.
+        if matches!(kind, PropertyCopyKind::Set) && excluded.is_empty() && self.adopt_source_shape_for_set(target, source) {
+            return true;
+        }
         let Some(slots) = self.shape_enumerable_slots(source) else {
             return false;
         };
@@ -392,27 +398,24 @@ impl<H: Host> Vm<H> {
         let memoizes = excluded.is_empty()
             && self.shapes[target_shape as usize].storage_len() == 0
             && !target_data.was_used_as_prototype();
-        let epoch = crate::heap::prototype_layout_epoch();
         let memoized = match kind {
             PropertyCopyKind::CreateDataProperty => self.plain_copy_shapes.get(target_shape, source_shape),
             PropertyCopyKind::Set => self
                 .plain_assign_shapes
                 .get(target_shape, (source_shape, target_proto))
-                .filter(|&(_, proved)| proved == epoch)
+                .filter(|(_, cell)| cell.holds())
                 .map(|(shape, _)| shape),
         };
         if memoizes && let Some(shape) = memoized {
-            let Some(values) = slots
-                .iter()
-                .map(|(_, slot)| self.heap.property_get(data, *slot as usize))
-                .collect::<Option<smallvec::SmallVec<[Value; PLAIN_COPY_INLINE_PROPERTIES]>>>()
-            else {
+            let mut values = smallvec::SmallVec::<[Value; PLAIN_COPY_INLINE_PROPERTIES]>::from_elem(Value::UNDEFINED, slots.len());
+            if !self.read_shaped_values(data, &slots, &mut values) {
                 return false;
-            };
+            }
             self.initialize_plain_copy(target, shape, &values, slots.iter().map(|(atom, _)| *atom));
             return true;
         }
-        if self.shape_entries(source_shape).any(|(key, _)| matches!(key, PropertyKey::Symbol(_))) {
+        // One shape fact, not a scan of its keys (private names count too, which only declines more).
+        if self.shape_may_have_symbol_keys(source_shape) {
             return false;
         }
         // A rest pattern's excluded keys are strings or symbols; the source has no symbol key,
@@ -423,6 +426,8 @@ impl<H: Host> Vm<H> {
             .collect::<smallvec::SmallVec<[Option<Atom>; PLAIN_COPY_INLINE_PROPERTIES]>>();
         let mut copies =
             smallvec::SmallVec::<[(Atom, Value, PlainCopyWrite); PLAIN_COPY_INLINE_PROPERTIES]>::new();
+        // The target's record is one lookup for every key of the loop.
+        let target_object = self.object_data(target);
         for (atom, slot) in slots.iter() {
             if excluded.contains(&Some(*atom)) {
                 continue;
@@ -437,8 +442,7 @@ impl<H: Host> Vm<H> {
             let key = PropertyKey::string(*atom);
             let write = match self.property_shape_slot(target_shape, key) {
                 Some(slot) => {
-                    let Some(attributes) = self.object_data(target).and_then(|object| self.slot_attributes(object, slot))
-                    else {
+                    let Some(attributes) = target_object.and_then(|object| self.slot_attributes(object, slot)) else {
                         return false;
                     };
                     // CreateDataProperty keeps a default data property's attributes; `Set` writes
@@ -483,9 +487,12 @@ impl<H: Host> Vm<H> {
         }
         if memoizes && let Some(shape) = self.object_data(target).map(Object::shape) {
             self.plain_copy_shapes.record(target_shape, source_shape, shape);
-            // The target is no prototype, so its adds left the epoch the chain was proved under.
-            if kind == PropertyCopyKind::Set && epoch == crate::heap::prototype_layout_epoch() {
-                self.plain_assign_shapes.record(target_shape, (source_shape, target_proto), (shape, epoch));
+            // The target is no prototype, so its adds changed no layout of the chain the copy
+            // walked, which holds under the cell made now (each link marked a prototype first).
+            if kind == PropertyCopyKind::Set
+                && let Some(cell) = self.chain_cell_to_end(target_proto)
+            {
+                self.plain_assign_shapes.record(target_shape, (source_shape, target_proto), (shape, cell));
             }
         }
         true
@@ -493,13 +500,46 @@ impl<H: Host> Vm<H> {
 
     /// Gives an empty `target` the properties `values` of `atoms` under `shape`, the shape their
     /// adds in order reach (`plain_copy_shapes`).
-    fn initialize_plain_copy(&mut self, target: Value, shape: u32, values: &[Value], atoms: impl Iterator<Item = Atom>) {
+    pub(super) fn initialize_plain_copy(&mut self, target: Value, shape: u32, values: &[Value], atoms: impl Iterator<Item = Atom>) {
         self.heap.initialize_object_properties(target, shape, values);
+        self.note_plain_copy_atoms(target, atoms);
+    }
+
+    /// Invalidates the method caches that a plain copy's adds of `atoms` to `target` may name.
+    pub(super) fn note_plain_copy_atoms(&mut self, target: Value, atoms: impl Iterator<Item = Atom>) {
         for atom in atoms {
             if self.method_caches_may_name(atom) {
                 self.invalidate_method_caches_for_prototype_add(target, atom);
             }
         }
+    }
+
+    /// The owner epoch under which the source's `slots`, a shape's whole storage in order, encode as
+    /// the words of `shape` (`Heap::slot_encodings_match`); `None` where the slots are not contiguous
+    /// or some slot's encoding differs.
+    fn plain_copy_words_epoch(&self, source_shape: u32, shape: u32, slots: &EnumerableSlots) -> Option<u64> {
+        (slots.contiguous() && self.heap.slot_encodings_match(source_shape, shape, slots.len()))
+            .then(|| self.heap.slot_encoding_epoch())
+    }
+
+    /// Reads the values of `slots` of `data` into `values`, one per slot in order (`values` holds
+    /// as many as `slots`). `slots` came from `shape_enumerable_slots`, so `data` is a shaped
+    /// object outside dictionary storage whose listed slots all exist and none is deleted; a
+    /// contiguous `slots` reads the storage's first values in order. `false` for a read the
+    /// storage declines, before any value is used.
+    pub(super) fn read_shaped_values(&self, data: &Object, slots: &EnumerableSlots, values: &mut [Value]) -> bool {
+        values.iter_mut().enumerate().all(|(index, value)| {
+            let slot = if slots.contiguous() { index } else { slots[index].1 as usize };
+            // SAFETY: `slots` lists slots of `data`'s non-dictionary shape, which the shape
+            // guarantees exist, so the shaped read is in bounds and undeleted.
+            match unsafe { self.heap.property_get_shaped(data, slot) } {
+                Some(read) => {
+                    *value = read;
+                    true
+                }
+                None => false,
+            }
+        })
     }
 
     /// Whether `[[Set]]` of `key` on an object without it that inherits from `prototype` would
@@ -560,13 +600,12 @@ impl<H: Host> Vm<H> {
             }
             return Some(attributes.writable);
         }
-        let epoch = crate::heap::prototype_layout_epoch();
-        if !self.symbol_write_proofs.holds(proto, key, epoch) {
+        if self.symbol_write_proofs.proof_cell(proto, key).is_none() {
             let guard = self.add_prototype_guard(object, symbol)?;
-            self.mark_prototype_links(proto, guard.prototype_depth);
-            // Marking a link that was no prototype yet leaves the epoch where it was.
-            if crate::heap::prototype_layout_epoch() == epoch {
-                self.symbol_write_proofs.record(proto, key, epoch);
+            // Marking a link that was no prototype yet changes no layout, so the guard holds
+            // under the cell made after it.
+            if let Some(cell) = self.chain_cell(proto, guard.depth) {
+                self.symbol_write_proofs.record(proto, key, cell);
             }
         }
         self.create_shape_data_property(object, symbol, value, DEFAULT_DATA_ATTRIBUTES).ok()?;
@@ -576,7 +615,7 @@ impl<H: Host> Vm<H> {
     /// `object[key] = value` for a symbol `key` that `set_plain_symbol_property` completes as
     /// a successful write; `false` leaves any other store, unobserved, to the general path.
     pub(super) fn try_plain_symbol_set(&mut self, object: Value, key: Value, value: Value) -> bool {
-        matches!(self.heap.get(key), Some(Cell::Symbol(symbol)) if symbol.kind != crate::heap::SymbolKind::HostPrivate)
+        matches!(self.heap.symbol_data(key), Some(symbol) if symbol.kind != crate::heap::SymbolKind::HostPrivate)
             && self.set_plain_symbol_property(object, key, value) == Some(true)
     }
 
@@ -620,8 +659,7 @@ impl<H: Host> Vm<H> {
         if !data.is_extensible() {
             return false;
         }
-        let epoch = crate::heap::prototype_layout_epoch();
-        match self.symbol_write_proofs.site_step(site, data.shape(), key, epoch) {
+        match self.symbol_write_proofs.site_step(site, data.shape(), key) {
             Some(SymbolWriteStep::Replace(slot)) => self.heap.property_set(object, slot as usize, value),
             Some(SymbolWriteStep::Add { prototype, target }) if data.proto() == prototype => {
                 self.heap.property_add(object, value, target);
@@ -647,8 +685,7 @@ impl<H: Host> Vm<H> {
         if !data.is_extensible() || self.shape_is_dictionary(before) || self.shape_is_dictionary(after) {
             return true;
         }
-        let epoch = crate::heap::prototype_layout_epoch();
-        let step = if after == before {
+        let (step, cell) = if after == before {
             let Some(slot) = self.property_shape_slot(before, PropertyKey::symbol(key)) else {
                 return true;
             };
@@ -658,13 +695,17 @@ impl<H: Host> Vm<H> {
             if !writable {
                 return true;
             }
-            SymbolWriteStep::Replace(slot as u32)
-        } else if self.symbol_write_proofs.holds(prototype, key, epoch) {
-            SymbolWriteStep::Add { prototype, target: after }
+            // An own slot reads no prototype: the cell of no chain.
+            let Some(cell) = self.chain_cell(prototype, 0) else {
+                return true;
+            };
+            (SymbolWriteStep::Replace(slot as u32), cell)
+        } else if let Some(cell) = self.symbol_write_proofs.proof_cell(prototype, key) {
+            (SymbolWriteStep::Add { prototype, target: after }, cell)
         } else {
             return true;
         };
-        self.symbol_write_proofs.record_site_step(site, before, key, epoch, step);
+        self.symbol_write_proofs.record_site_step(site, before, key, cell, step);
         true
     }
 
@@ -792,7 +833,7 @@ impl<H: Host> Vm<H> {
             let values: Vec<Value> = self
                 .object_own_key_values(p, object)?
                 .into_iter()
-                .filter(|key| matches!(self.heap.get(*key), Some(Cell::Symbol(_))))
+                .filter(|key| self.heap.is_symbol(*key))
                 .collect();
             return Ok(self.array_of(&values));
         }

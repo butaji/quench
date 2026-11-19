@@ -1,25 +1,9 @@
 //! How an environment window specializes the records that read its locals or make its closures
-//! (`specialize_environment_window`): which records it takes and the handler each gets.
+//! (`specialize_environment_window`): which records it takes and the handler each gets. A local
+//! record of a plain slot takes its generated row with `FLAG_WINDOW` (`lane_frame::row_frame` reads
+//! the window's locals there); any other local record takes its miss, which leaves to the general path.
 use super::*;
-
-/// The handlers derivation gives the records an environment window specializes, which no other
-/// pass changed.
-pub(super) fn plain_window_handlers<H: Host>() -> [Handler; 12] {
-    [
-        lane_clone_env::<H>,
-        lane_load_local::<H>,
-        lane_load_local_plain::<H>,
-        lane_load_frame_local::<H, true>,
-        lane_load_frame_local::<H, false>,
-        lane_store_local::<H>,
-        lane_store_local_plain::<H>,
-        lane_store_frame_local::<H, true>,
-        lane_store_frame_local::<H, false>,
-        lane_initialize_tdz::<H>,
-        lane_make_closure::<H>,
-        lane_exit::<H>,
-    ]
-}
+// merge: theirs window_record/window_local_handler taken whole (staged queries, op-based); HEAD's class-match helpers and window handlers are dropped with the hand fast paths. meaning_fast import dropped as unused.
 
 /// What an environment window does with one record.
 pub(super) enum WindowRecord {
@@ -33,66 +17,63 @@ pub(super) enum WindowRecord {
 
 pub(super) fn window_record(function: &Function, instruction: WideInstruction) -> WindowRecord {
     let op = instruction.op();
-    if op.class().eq(Class::Call) && instruction.direct_eval() {
+    if crate::staged::calls(op) && instruction.direct_eval() {
         return WindowRecord::Eval;
     }
-    WindowRecord::Local(match op.class() {
-        Class::MakeClosure => instruction.imm(),
-        Class::CloneEnv => 0,
-        Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal | Class::StoreLocal | Class::StoreLocalPlain
-        | Class::StoreEnvLocal | Class::InitializeTdz => instruction.local_slot() as u32,
-        // A function's Annex B store to its `var` binding is a store to the slot
-        // (`Function::window_reads_locals`).
-        Class::StoreVarBinding if function.parent.is_some() => instruction.local_slot() as u32,
-        _ => return WindowRecord::Keeps,
-    })
+    // A closure's immediate names its function; a clone's is its plan, which the row reads
+    // (`staged::Operation::CloneEnv`).
+    if crate::staged::makes_closure(op) || crate::staged::clones_environment(op) {
+        return WindowRecord::Local(instruction.imm());
+    }
+    // A function's Annex B store to its `var` binding is a store to the slot
+    // (`Function::window_reads_locals`).
+    let slot_access = crate::staged::accesses_local_slot(op) || (crate::staged::stores_var_binding(op) && function.parent.is_some());
+    if slot_access {
+        return WindowRecord::Local(crate::staged::window_slot(instruction.imm()) as u32);
+    }
+    WindowRecord::Keeps
 }
 
-/// The handler of the window record of `op` on local slot `own`: the mapped parameter's, the program
-/// root's, one that leaves for a store to the function's own name, the scoped one of a function
-/// that resolves names at run time (`scoped`), else the plain window's.
-pub(super) fn window_local_handler<H: Host>(function: &Function, op: Op, own: usize, scoped: bool) -> Handler {
-    let class = op.class();
-    let environment = !op.captures_environment() && function.local_slot_uses_environment(own);
-    if let Some(mapped) = mapped_windows::mapped_parameter_handler::<H>(function, class, own) {
-        return mapped;
+/// The handler of the window record of `op` on local slot `own`, or `None` where the record keeps its
+/// own (a `LoadEnvLocal` or `StoreEnvLocal` of a slot the window does not hold in its locals, which its
+/// environment row answers and misses from in a window run). `scoped` marks a function that resolves
+/// names at run time, whose environment stores go through its scope first (`scoped_names`).
+pub(super) fn window_local_handler<H: Host>(function: &Function, op: Op, own: usize, scoped: bool) -> Option<Handler> {
+    // A clone is its generated row, which clones the window's environment (`CallOut::CloneEnv`).
+    if op as u16 == crate::staged::CLONE_ENV_ROW {
+        return Some(generated_row::<H, { crate::staged::CLONE_ENV_ROW }, ACC_NONE, FLAG_UNREAD> as Handler);
     }
-    // A program's root, whose slots may stand for bindings outside its window (`root_windows`).
-    if function.parent.is_none() && !scoped && let Some(root) = root_windows::root_local_handler::<H>(class, environment) {
-        return root;
+    if crate::staged::makes_closure(op) {
+        return Some(if scoped { super::lane_frame::closure_row::<H, { super::lane_frame::FLAG_SCOPE }>() } else { super::lane_frame::closure_row::<H, { super::lane_frame::FLAG_WINDOW_CLOSURE }>() });
     }
     // A store to the function's own name is ignored or throws (`Function::strict`), which
     // the general step decides.
-    if function.is_self_binding_slot(own) && matches!(class, Class::StoreLocal | Class::StoreLocalPlain | Class::StoreEnvLocal) {
-        return lane_exit::<H>;
+    if function.is_self_binding_slot(own) && crate::staged::stores_local_slot(op) {
+        return Some(exit_lane::<H>);
     }
-    if scoped && let Some(scoped_handler) = scoped_window_handler::<H>(class, environment) {
-        return scoped_handler;
+    // A function that resolves names at run time may store to a `with` object's binding instead of the
+    // local: its environment store takes the scope first (the general step).
+    let environment = !op.captures_environment() && function.local_slot_uses_environment(own);
+    if scoped && crate::staged::stores_environment_slot(op) {
+        return Some(if environment { super::lane_frame::scoped_local_row::<H, { super::lane_frame::FLAG_SCOPE_ENVIRONMENT }>() } else { super::lane_frame::scoped_local_row::<H, { super::lane_frame::FLAG_SCOPE }>() });
     }
-    plain_window_handler::<H>(class, environment)
-}
-
-/// The handler a function that resolves names at run time gives a closure or an environment store.
-fn scoped_window_handler<H: Host>(class: Class, environment: bool) -> Option<Handler> {
-    match (class, environment) {
-        (Class::MakeClosure, _) => Some(scoped_names::scoped_closure::<H>()),
-        (Class::StoreEnvLocal, true) => Some(scoped_names::scoped_store_local::<H, true>()),
-        (Class::StoreEnvLocal, false) => Some(scoped_names::scoped_store_local::<H, false>()),
-        _ => None,
+    let environment_slot = crate::staged::addresses_environment_slot(op);
+    // A plain slot of a non-root function: the frame's own local, which the window holds too
+    // (`plain_frame_local`). A program's root is not one: its slots may stand for bindings outside
+    // its window (`Vm::root_binding`).
+    let plain = function.parent.is_some() && plain_frame_local(function, own);
+    if !plain {
+        // The record leaves for the general store, load or initialization (`row_miss`), which takes the
+        // binding rules of the activation it runs in. An environment slot keeps its own row.
+        return if environment_slot { None } else { Some(row_miss::<H, FLAG_UNREAD>(op)) };
     }
-}
-
-/// The handler of an environment window's record of `class`, `environment` where the local lives
-/// in the window's environment once a closure made one.
-fn plain_window_handler<H: Host>(class: Class, environment: bool) -> Handler {
-    match class {
-        Class::MakeClosure => lane_make_window_closure::<H>,
-        Class::CloneEnv => lane_clone_window_env::<H>,
-        Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal if environment => lane_load_window_local::<H, true>,
-        Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal => lane_load_window_local::<H, false>,
-        Class::InitializeTdz if environment => lane_initialize_window_tdz::<H, true>,
-        Class::InitializeTdz => lane_initialize_window_tdz::<H, false>,
-        _ if environment => lane_store_window_local::<H, true>,
-        _ => lane_store_window_local::<H, false>,
-    }
+    let row = crate::staged::local_access_row(op)?;
+    Some(match row {
+        crate::staged::LOCAL_LOAD_ROW => generated_row::<H, { crate::staged::LOCAL_LOAD_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
+        crate::staged::LOAD_LOCAL_PLAIN_ROW => generated_row::<H, { crate::staged::LOAD_LOCAL_PLAIN_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
+        crate::staged::LOCAL_STORE_ROW => generated_row::<H, { crate::staged::LOCAL_STORE_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
+        crate::staged::STORE_LOCAL_PLAIN_ROW => generated_row::<H, { crate::staged::STORE_LOCAL_PLAIN_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
+        crate::staged::LOCAL_INITIALIZE_ROW => generated_row::<H, { crate::staged::LOCAL_INITIALIZE_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
+        _ => return None,
+    })
 }

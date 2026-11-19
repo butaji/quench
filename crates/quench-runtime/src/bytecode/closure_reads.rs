@@ -35,12 +35,27 @@ pub(crate) struct FunctionReadFacts<'a> {
 
 #[derive(Clone, Debug)]
 pub(super) struct FunctionReads {
-    pub(super) parent: Option<u32>,
+    /// The function it is nested in, or `NO_PARENT` for a program's root.
+    parent: u32,
     pub(super) is_arrow: bool,
     /// The (distance, slot) pairs the function and every function nested in it read of the
     /// environments outside the function, sorted; `None` for the whole chain.
     pub(super) reads: Option<Box<[(u32, u16)]>>,
     pub(super) named_slots: Box<[u16]>,
+}
+
+impl FunctionReads {
+    /// The `parent` of a program's root function, which nests in none.
+    pub(super) const NO_PARENT: u32 = u32::MAX;
+
+    pub(super) fn new(parent: Option<u32>, is_arrow: bool, reads: Option<Box<[(u32, u16)]>>, named_slots: Box<[u16]>) -> Self {
+        Self { parent: parent.unwrap_or(Self::NO_PARENT), is_arrow, reads, named_slots }
+    }
+
+    /// The function this one is nested in, if any.
+    pub(super) fn enclosing(&self) -> Option<u32> {
+        (self.parent != Self::NO_PARENT).then_some(self.parent)
+    }
 }
 
 /// Each function's closure reads (`FunctionReads`), indexed by function id. A program's
@@ -49,7 +64,17 @@ pub(super) struct FunctionReads {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ClosureReads {
     pub(super) functions: Box<[FunctionReads]>,
+    /// Each function's `ResidualProgram::closure_takes_no_environment`, filled per function on its
+    /// first closure creation and read after; never serialized.
+    pub(super) environment_elision: std::cell::OnceCell<Box<[std::cell::Cell<u64>]>>,
 }
+
+/// Each function's elision answer takes two bits: whether it is known, and whether it takes none.
+const ELISION_BITS_PER_FUNCTION: usize = 2;
+const ELISION_FUNCTIONS_PER_WORD: usize = u64::BITS as usize / ELISION_BITS_PER_FUNCTION;
+const ELISION_KNOWN: u64 = 0b01;
+const ELISION_TAKES_NONE: u64 = 0b10;
+const ELISION_FIELD: u64 = ELISION_KNOWN | ELISION_TAKES_NONE;
 
 /// What a closure needs of the environment `distance` activations out.
 #[derive(Clone, Copy, Debug)]
@@ -137,17 +162,18 @@ impl ClosureReads {
             functions: functions
                 .iter()
                 .zip(reads)
-                .map(|(function, reads)| FunctionReads {
-                    parent: function.parent,
-                    is_arrow: function.is_arrow,
-                    reads: reads.map(|mut reads| {
+                .map(|(function, reads)| FunctionReads::new(
+                    function.parent,
+                    function.is_arrow,
+                    reads.map(|mut reads| {
                         reads.sort_unstable();
                         reads.dedup();
                         reads.into_boxed_slice()
                     }),
-                    named_slots: function.named_slots.into(),
-                })
+                    function.named_slots.into(),
+                ))
                 .collect(),
+            environment_elision: Default::default(),
         }
     }
 
@@ -171,6 +197,14 @@ impl ClosureReads {
         }
     }
 
+    /// The (distance, slot) pairs `function` and the functions nested in it capture, sorted, and
+    /// its parent; `None` where the table does not describe the function or it reads its whole
+    /// chain (`FunctionReads::reads`).
+    pub(crate) fn captures(&self, function: u32) -> Option<(&[(u32, u16)], Option<u32>)> {
+        let reads = self.functions.get(function as usize)?;
+        Some((reads.reads.as_deref()?, reads.parent))
+    }
+
     /// What a closure of `function` needs of the environment `distance` (at least 1)
     /// activations out of its own.
     pub(crate) fn demand(&self, function: u32, distance: u32) -> EnvironmentDemand<'_> {
@@ -188,7 +222,7 @@ impl ClosureReads {
             if level != 0 {
                 lexical_this &= self.functions.get(owner as usize).is_some_and(|function| function.is_arrow);
             }
-            match self.functions.get(owner as usize).and_then(|function| function.parent) {
+            match self.functions.get(owner as usize).and_then(FunctionReads::enclosing) {
                 Some(parent) => owner = parent,
                 None => return EnvironmentDemand::Whole,
             }
@@ -196,7 +230,7 @@ impl ClosureReads {
         let Some(owner_reads) = self.functions.get(owner as usize) else {
             return EnvironmentDemand::Whole;
         };
-        if owner_reads.parent.is_none() {
+        if owner_reads.enclosing().is_none() {
             return EnvironmentDemand::Whole;
         }
         let start = reads.partition_point(|&(at, _)| at < distance);
@@ -207,6 +241,40 @@ impl ClosureReads {
             named_slots: &owner_reads.named_slots,
             lexical_this,
         }
+    }
+}
+
+impl crate::bytecode::ResidualProgram {
+    /// Whether a closure of function `id` takes `Value::NULL` for its environment: nothing it
+    /// can run reads its environment, so the scope chain it would keep is unobservable and dies
+    /// with its maker. Only the program's facts decide it, so it is one cached bit per function.
+    /// No `with` check is made at the creation site: a `with` entered in a frame belongs to that
+    /// frame's function, whose `contains_with` makes every function nested in it dynamic
+    /// (`capture_layout::dynamic_name_resolution`), so the closure's reads are the whole chain
+    /// and it is not elided.
+    #[inline(always)]
+    pub(crate) fn closure_takes_no_environment(&self, id: u32) -> bool {
+        self.closure_reads.as_deref().is_some_and(|reads| {
+            reads.takes_no_environment(id, || self.derive_closure_takes_no_environment(id, reads))
+        })
+    }
+
+    /// `closure_takes_no_environment` before its cache: not for an eval's program, nor a
+    /// call-only closure, whose environment rides in its value (`Value::known_closure` takes a
+    /// direct environment only). A module's direct children take none like any other: a hoisted
+    /// declaration is found by its instance's table (`ModuleFunctions`) before this applies.
+    fn derive_closure_takes_no_environment(&self, id: u32, reads: &ClosureReads) -> bool {
+        if self.kind == crate::bytecode::ProgramKind::Eval {
+            return false;
+        }
+        let Some(slot) = self.functions.get(id as usize) else {
+            return false;
+        };
+        let header = slot.header();
+        if header.prototype_unobservable || header.parent.is_none() {
+            return false;
+        }
+        reads.environment_unobservable(id, || crate::bytecode::arrow_chain_reads_implicit_bindings(self, id))
     }
 }
 
@@ -263,6 +331,33 @@ mod tests {
         functions[2].instance_initializer = Some(3);
         let reads = ClosureReads::derive(&functions);
         assert_eq!(slots(reads.demand(2, 1)), Some((1, vec![1], false)));
+    }
+
+    #[test]
+    fn closures_reading_nothing_take_no_environment() {
+        // 0 root { 1 reads nothing; 2 captures root's slot 0 } and 3 nests 4 which reads nothing
+        let mut functions = vec![
+            function(None, false, &[]),
+            function(Some(0), false, &[]),
+            function(Some(0), false, &[(1, 0)]),
+            function(Some(0), false, &[]),
+            function(Some(3), false, &[]),
+        ];
+        let reads = ClosureReads::derive(&functions);
+        assert!(reads.environment_unobservable(1, || false));
+        assert!(reads.environment_unobservable(4, || false));
+        assert!(!reads.environment_unobservable(2, || false));
+        // The root is no closure, and an arrow reading implicit bindings keeps its environment.
+        assert!(!reads.environment_unobservable(0, || false));
+        functions[1].is_arrow = true;
+        let reads = ClosureReads::derive(&functions);
+        assert!(!reads.environment_unobservable(1, || true));
+        assert!(reads.environment_unobservable(1, || false));
+        // A named slot of an ancestor, which a by-name lookup of the chain finds, keeps it.
+        let named = [1u16];
+        functions[0].named_slots = &named;
+        let reads = ClosureReads::derive(&functions);
+        assert!(!reads.environment_unobservable(4, || false));
     }
 
     #[test]

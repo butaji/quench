@@ -75,7 +75,7 @@ impl ProgramStore {
 
     /// Whether a compile of `site`'s function from its entry is still within `max`
     /// (`admit_lane_compile`), without counting one: a plan past the bound is not made.
-    pub(in crate::vm) fn lane_compiles_left(&self, site: &(u32, u32, Option<u32>), max: u8) -> bool {
+    pub(in crate::vm) fn compiles_left_in_lane(&self, site: &(u32, u32, Option<u32>), max: u8) -> bool {
         self.lane_compiles.borrow().get(site).is_none_or(|count| *count < max)
     }
 
@@ -101,13 +101,15 @@ impl ProgramStore {
         method_atoms: &mut crate::code_dependencies::CodeReaders) -> Option<Rc<PublishedLaneMethod>> {
         let calls = !method.inlined.is_empty() || !method.direct.is_empty();
         method.reserve_scratch();
+        method.trim_published();
         let invalidation = method.invalidation.clone();
         let roots = std::mem::take(&mut method.stable.roots);
         let published = Rc::new(PublishedLaneMethod::with_invalidation(method, invalidation));
         published.hold_roots(roots, heap);
         let code: Rc<dyn crate::code_dependencies::DependentCode> = published.clone();
         let method = published.lease().expect("new publication");
-        if !method.dependencies.subscribe(&method.stable, &code, heap, method_atoms) {
+        let root_constants = self.subscribe_root_constants(&method.dependencies.root_programs(&method.stable), &code);
+        if !root_constants || !method.dependencies.subscribe(&method.stable, &code, heap, method_atoms) {
             published.retire();
             return None;
         }
@@ -120,13 +122,15 @@ impl ProgramStore {
     /// Publishes a loop region's code under the dependencies its code took (`OsrFacts::subscribe`): a
     /// change of one retires it and sets its invalidation word, and a collection that frees a callee
     /// it names does (`NativeCallBinding::Region`).
-    pub(in crate::vm) fn publish_region(&self, region: CompiledOsrRegion, heap: &mut crate::heap::Heap,
+    pub(in crate::vm) fn publish_region(&self, mut region: CompiledOsrRegion, heap: &mut crate::heap::Heap,
         method_atoms: &mut crate::code_dependencies::CodeReaders) -> Rc<PublishedCode<CompiledOsrRegion>> {
+        region.facts.trim();
+        region.calls.trim();
         let invalidation = region.calls.invalidation.clone();
         let published = Rc::new(PublishedCode::with_invalidation(region, invalidation));
         let code: Rc<dyn crate::code_dependencies::DependentCode> = published.clone();
         let region = published.lease().expect("new publication");
-        if !region.facts.subscribe(&code, heap, method_atoms) {
+        if !region.facts.subscribe(&code, heap, method_atoms) || !self.subscribe_root_constants(&region.facts.root_programs(), &code) {
             published.retire();
         } else if !region.calls.inlined.is_empty() || !region.calls.direct.is_empty() {
             self.native_call_bindings.borrow_mut().push(NativeCallBinding::Region(Rc::downgrade(&published)));
@@ -154,6 +158,30 @@ impl ProgramStore {
             bindings.retain(|binding| binding.stands(&live));
             if bindings.len() == before { break; }
         }
+    }
+
+    /// `retire_native_calls` at a switch of the active realm, which keeps the bodies bound to
+    /// their own realm (`LaneMethod::realm_bound`): each proves it at entry and names no other.
+    ///
+    /// # Safety
+    /// As `retire_native_calls`.
+    pub(in crate::vm) unsafe fn retire_native_calls_across_realms(&self) {
+        let mut bindings = self.native_call_bindings.borrow_mut();
+        bindings.retain(|binding| {
+            if let NativeCallBinding::Published(weak) = binding
+                && let Some(code) = weak.upgrade()
+            {
+                if code.lease().is_some_and(|method| method.realm_bound) { return true; }
+                code.retire();
+                return false;
+            }
+            match binding {
+                NativeCallBinding::Published(_) => {}
+                NativeCallBinding::Region(weak) => if let Some(code) = weak.upgrade() { code.retire() },
+                NativeCallBinding::Pending { watch, .. } => if let Some(watch) = watch.upgrade() { watch.retire() },
+            }
+            false
+        });
     }
 
     /// # Safety

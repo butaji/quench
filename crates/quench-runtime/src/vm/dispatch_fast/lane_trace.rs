@@ -3,6 +3,7 @@
 //! and every stack a nested run parked (`Vm::lane_roots`).
 use super::*;
 use crate::vm::program_store::ProgramStore;
+use super::super::activation::extend_this_env_roots;
 
 impl LaneStack {
     /// Appends to `out` every value the stack's activations hold; `programs` hold the liveness
@@ -10,7 +11,7 @@ impl LaneStack {
     pub(in crate::vm) fn extend_roots(&self, programs: &ProgramStore, out: &mut Vec<Value>) {
         self.extend_window_roots(programs, out);
         out.extend(
-            self.activations
+            self.activations()
                 .iter()
                 .filter_map(Activation::script)
                 .map(|script| script.callee),
@@ -31,16 +32,16 @@ impl LaneStack {
     /// which its callee keeps alive.
     fn extend_window_roots(&self, programs: &ProgramStore, out: &mut Vec<Value>) {
         let (span, top) = (self.values.span(), self.values.top().addr());
-        let mut windows = self.activations.iter().enumerate().filter(|(_, activation)| span.contains(&activation.window_word())).peekable();
+        let mut windows = self.activations().iter().enumerate().filter(|(_, activation)| span.contains(&activation.window_word())).peekable();
         while let Some((depth, activation)) = windows.next() {
             let end = windows.peek().map_or(top, |(_, next)| next.window_word());
             let len = end.wrapping_sub(activation.window_word()) / std::mem::size_of::<Value>() - lane_values::CONTEXT;
             // SAFETY: the values `base..top` are initialized, and the span lies within them.
             let window = unsafe { std::slice::from_raw_parts(activation.window_ptr(), len) };
-            match activation.kind {
+            match *activation.kind() {
                 ActivationKind::Script(_) => {
                     let registers = Registers(activation.window_ptr());
-                    out.extend([registers.this(), registers.env()]);
+                    extend_this_env_roots(out, registers.this(), registers.env());
                     out.extend_from_slice(window);
                 }
                 ActivationKind::Wasm { .. } => self.extend_wasm_roots(programs, depth, window, out),

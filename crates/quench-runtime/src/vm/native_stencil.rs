@@ -38,7 +38,7 @@ use cranelift_codegen::{
     ir::{self, MemFlagsData, types},
     isa::{CallConv, TargetIsa},
 };
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+use cranelift_frontend::FunctionBuilder;
 use std::{rc::Rc, sync::OnceLock};
 
 /// Stencils are compiled in isolation, so every external name they declare is
@@ -288,15 +288,7 @@ fn stencil_function(
     body: impl FnOnce(&mut FunctionBuilder<'_>, &[ir::Value]),
 ) -> ir::Function {
     let mut function = ir::Function::with_name_signature(ir::UserFuncName::default(), signature);
-    let mut context = FunctionBuilderContext::new();
-    let mut builder = FunctionBuilder::new(&mut function, &mut context);
-    let entry = builder.create_block();
-    builder.append_block_params_for_function_params(entry);
-    builder.switch_to_block(entry);
-    let parameters = builder.block_params(entry).to_vec();
-    body(&mut builder, &parameters);
-    builder.seal_all_blocks();
-    builder.finalize(isa.frontend_config());
+    crate::vm::jit_backend::builder::build(&mut function, isa, body);
     function
 }
 

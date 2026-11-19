@@ -34,9 +34,9 @@ impl ResidualProgram {
         }
         for (id, site) in self.superinstructions.iter().enumerate() {
             let _ = writeln!(output, "superinstruction {id}");
-            for instruction in site.code {
+            for instruction in site.wide {
                 let _ = write!(output, "  ");
-                let _ = write_instruction(&mut output, instruction.as_wide());
+                let _ = write_instruction(&mut output, instruction);
                 let _ = writeln!(output);
             }
         }
@@ -230,6 +230,7 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         | ImmediateRole::EnvironmentCloneIndex
         | ImmediateRole::AtomIndex
         | ImmediateRole::LocalSlot
+        | ImmediateRole::GlobalLexicalIndex
         | ImmediateRole::TemplateSiteIndex
         | ImmediateRole::RegExpLiteralSiteIndex
         | ImmediateRole::LiteralTemplateIndex
@@ -320,6 +321,7 @@ fn write_index_immediate(output: &mut String, instruction: WideInstruction) -> f
                 instruction.superinstruction_index()
             )
         }
+        ImmediateRole::GlobalLexicalIndex => write!(output, " global-lexical={}", instruction.imm()),
         _ => Ok(()),
     }
 }
@@ -459,5 +461,14 @@ impl fmt::Display for DisplayOperand {
             Some(OperandKind::Local) => write!(output, "local:{}", operand.payload()),
             None => write!(output, "invalid:{}", operand.0),
         }
+    }
+}
+
+impl WideInstruction {
+    /// The instruction as `QUENCH_TRACE=bytecode` prints it (the lane plan's column).
+    pub(crate) fn text(self) -> String {
+        let mut output = String::new();
+        let _ = write_instruction(&mut output, self);
+        output
     }
 }
