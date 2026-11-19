@@ -3,11 +3,9 @@
 //! (`CompiledOsrRegion::run_lane`).
 use super::*;
 
-/// The loop's own words: its receiver (in its window's header, `registers`), the entry's counter and the
-/// scratch a leave inside an inlined callee writes the callee's live registers to.
-pub(super) fn bind_loop<H: Host>(
-    dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &mut LoopEntry, lane_context: usize, registers: *mut crate::value::Value,
-) {
+/// The loop's own words: its receiver, the entry's counter and the scratch a leave inside an
+/// inlined callee writes the callee's live registers to.
+pub(super) fn bind_loop<H: Host>(dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &mut LoopEntry, lane_context: usize) {
     dispatch.lane_context = lane_context;
     // A region's `THIS`-based reads take the running activation's receiver, as a lane
     // body's do (`run_loop_body`); `with` leaves it `DELETED`. A frameless activation's
@@ -39,30 +37,31 @@ pub(super) fn region_calls(region: &LoopRegion) -> bool {
     region.instructions().iter().any(|instruction| instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call)
 }
 
-/// Binds the capture view: a region that stores a capture or `calls` (`region_calls`) reads the
-/// activation's own slots, as a lane body does; otherwise the dense view in `captures`, which
-/// the dispatch points at and the caller keeps alive, unchanged, for the run.
+/// Binds the capture view into the window's captures word: a region that stores a capture or
+/// `calls` reads the activation's own slots live, as a lane body does (`context_captures`);
+/// otherwise the dense copy, refilled in place in `captures`. The caller owns `captures` and keeps
+/// it alive, unchanged, until the run returns: the word points at its buffer.
 ///
 /// # Safety
-/// `lane_context` is the running lane's context for `H`.
+/// `lane_context` is the running lane's context for `H`; `registers` is the live window the run
+/// executes in, whose header is its own.
 pub(super) unsafe fn bind_captures<H: Host>(
-    dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &LoopEntry, lane_context: usize, registers: *mut crate::value::Value,
-) -> Vec<crate::Value> {
+    region: &LoopRegion, entry: &LoopEntry, lane_context: usize, registers: *mut crate::value::Value, calls: bool,
+    captures: &mut Vec<crate::Value>,
+) {
     // A region that reads and stores no capture binds no view.
     if region.captures.is_empty() && region.stored_captures.is_empty() { return; }
     // A region that calls reads its captures live too where the lane has them: a callee may
     // store one, which a copy would not see. Where it has none, the copy as before.
     let live = (calls || !region.stored_captures.is_empty())
         // SAFETY: the caller's contract.
-        .then(|| unsafe { super::dispatch_fast::lane_context_captures::<H>(lane_context) }).flatten();
-    let none = region.captures.is_empty() && region.stored_captures.is_empty();
-    let captures = if live.is_some() || none { Vec::new() } else { dense_captures(region, entry) };
-    // The window's captures word: the live slots, else the copy's (which admit no direct store).
+        .then(|| unsafe { super::dispatch_fast::context_captures::<H>(lane_context) }).flatten();
     if let Some(((values, len), stores)) = live {
-        // SAFETY: `registers` is the live window the dispatch runs in, whose header is its own.
+        // SAFETY: as the caller promises.
         unsafe { super::dispatch_fast::set_frame_word(registers, crate::staged::frame::CONTEXT_BODY, super::entry_cell::capture_word(values, len, stores)) };
-    } else if !captures.is_empty() {
-        // SAFETY: as above; the caller keeps the copy alive for the run.
+    } else {
+        dense_captures(region, entry, captures);
+        // SAFETY: as the caller promises; the caller keeps `captures` alive for the run.
         unsafe { super::dispatch_fast::set_frame_word(registers, crate::staged::frame::CONTEXT_BODY, super::entry_cell::capture_word(captures.as_ptr(), captures.len(), false)) };
     }
 }
@@ -134,6 +133,12 @@ pub(super) unsafe fn enter<H: Host>(
     // The region's call rows reload its payload's heap bases after the callee ran (`region_call_in_lane`).
     // SAFETY: `lane_context` is the running lane's.
     let outer = unsafe { super::dispatch_fast::region_payload_in_lane::<H>(lane_context, payload.addr()) };
+    // The region's entry takes no receiver (its `this` is the dispatch's), its resume stub's address
+    // as the capture word, and the register file.
+    let descriptor = super::entry_protocol::EntryDescriptor {
+        kind: super::entry_protocol::EntryKind::Region { header_pc }, receiver: 0, captures: resume,
+        registers: registers.cast::<u64>().cast_const(), entry: code,
+    };
     // SAFETY: as the caller promises; the code reads the register file and returns
     // its status and result word.
     let returned = unsafe { super::entry_protocol::enter(&mut context, &descriptor) };
@@ -146,7 +151,7 @@ pub(super) unsafe fn enter<H: Host>(
     if let Some(Raised::Panic(panic)) = context.raised.take() {
         std::panic::resume_unwind(panic);
     }
-    let exit = super::entry_protocol::exit(&descriptor, returned, || native.dispatch.returned_pc);
+    let exit = super::entry_protocol::exit(&descriptor, returned, || dispatch.returned_pc);
     // A leave with native frames on the lane stack is read in the innermost of them.
     RegionRun { exit, nested: vm.lane_stack.activations().native_depth() != 0 }
 }
