@@ -1005,11 +1005,11 @@ impl Snap for CallContext {
     }
 }
 
-/// `Completion` tags, in declaration order.
+/// `Completion` tags, in declaration order. 2 was a thrown resume's, which no suspension
+/// records (a throw enters the frame's error boundary at once); snapshots keep the numbers.
 mod completion_tag {
     pub(super) const GENERATOR_START: u8 = 0;
     pub(super) const RETURN: u8 = 1;
-    pub(super) const THROW: u8 = 2;
     pub(super) const YIELD: u8 = 3;
     pub(super) const AWAIT: u8 = 4;
 }
@@ -1019,7 +1019,6 @@ impl Snap for Completion {
         let (tag, value) = match *self {
             Self::GeneratorStart => (completion_tag::GENERATOR_START, Value::UNDEFINED),
             Self::Return(value) => (completion_tag::RETURN, value),
-            Self::Throw(value) => (completion_tag::THROW, value),
             Self::Yield(value) => (completion_tag::YIELD, value),
             Self::Await(value) => (completion_tag::AWAIT, value),
         };
@@ -1033,7 +1032,6 @@ impl Snap for Completion {
         Ok(match tag {
             completion_tag::GENERATOR_START => Self::GeneratorStart,
             completion_tag::RETURN => Self::Return(value),
-            completion_tag::THROW => Self::Throw(value),
             completion_tag::YIELD => Self::Yield(value),
             completion_tag::AWAIT => Self::Await(value),
             _ => return Err(SnapshotError("invalid snapshot completion".into())),

@@ -232,14 +232,14 @@ impl DeclaredTypes {
         for entry in &self.parameters {
             let Ok(found) = starts.binary_search_by_key(&entry.function, |&(start, _)| start) else { continue };
             let Some(function) = functions[starts[found].1].as_mut() else { continue };
-            let mut languages = function.declared_parameters.to_vec();
+            let mut languages = function.declared_parameters().to_vec();
             let slot = usize::from(entry.parameter);
             if languages.len() <= slot {
                 languages.resize(slot + 1, ANY_LANGUAGES);
             }
             let merged = entry.languages & languages[slot];
             languages[slot] = if merged == 0 { entry.languages } else { merged };
-            function.declared_parameters = languages.into();
+            function.set_declared_parameters(languages.into());
         }
     }
 

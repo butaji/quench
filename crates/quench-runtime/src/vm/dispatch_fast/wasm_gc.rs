@@ -163,7 +163,7 @@ lane_handler! {
             Some(step) => lane_gc_rule(vm, step, instruction, |_, register| r.get(register)),
             None => None,
         };
-        let indirect = const { matches!(Call::of(op), Some(Call::IndirectTarget)) };
+        let indirect = const { matches!(Call::of(gc_op::<OP>()), Some(Call::IndirectTarget)) };
         let value = match rule {
             Some(Ok(value)) => value,
             Some(Err(_)) => return exit(ip),

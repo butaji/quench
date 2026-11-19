@@ -55,8 +55,7 @@
 use super::*;
 use super::call_plan::{self, CallChain, CallForm, CallPart, CallPlan, CallShape, Choice};
 use super::super::{LaneHelper, LaneHelpers};
-use crate::staged::{Operation, Protocol};
-use crate::bytecode::{Op, Traits};
+use crate::bytecode::Op;
 use quench_bjit::HOLES;
 use quench_bjit::call::{self, CallRow};
 
@@ -340,7 +339,7 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     let chain = shape.method.map_or_else(Vec::new, |method| super::plan::chain_reads(layout, shape.this, method.cache, method.scratch));
     // The holders the chain's reads answer through: the body subscribes to them, so a change of their values retires it.
     layout.holders.borrow_mut().extend(chain.iter().map(|read| read.holder));
-    let plan = CallPlan { shape, direct: layout.callees(shape.call_pc), helper, spills: &spills, reloads: &reloads, proven_args, read, chain };
+    let plan = CallPlan { shape, direct: layout.callees(shape.call_pc), helper, spills: &spills, reloads: &reloads, proven_args, read, chain, builtin: layout.builtin(shape.call_pc) };
     let CallChain { parts, records: record, choice } = call_plan::plan_call(&plan)?;
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     #[cfg(test)]

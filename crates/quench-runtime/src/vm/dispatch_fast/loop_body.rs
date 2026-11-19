@@ -147,7 +147,7 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
         *body = LoopBody::Declined;
         return;
     }
-    let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, code, body)).unwrap_or_default();
+    let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
     // The loop's arrays are the activation's registers live at its header now: sampled, as an
     // OSR loop samples its own. A dead register may hold any value a window held before
     // (`ResidualProgram::entry_fill`), so it reads as `undefined`.
@@ -231,7 +231,7 @@ pub(super) fn enter_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip
     }
     // An idle body counts its dispatches down to its plan: until then, no view or plan is touched.
     if matches!(*site.body.borrow(), LoopBody::Idle { .. }) && site.body_waits() { return None; }
-    lane_loop_body::<H>(cx, r, ip, site)
+    run_loop_body::<H>(cx, r, ip, site)
 }
 
 /// Runs the lane body planned to start at `site`'s header, on the activation's registers

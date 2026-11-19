@@ -1385,23 +1385,9 @@ impl<H: Host> Vm<H> {
         if !self.is_function(next) {
             return Err(self.type_error(p, "iterator next method is not callable".into()));
         }
-        let source = self.heap.root_value(source_root).unwrap_or(source);
-        let next = self.heap.root_value(next_root).unwrap_or(next);
-        let result = match self.call_value(p, next, source, args) {
-            Ok(result) => result,
-            Err(error) => {
-                self.heap.release_root(next_root);
-                self.heap.release_root(source_root);
-                return Err(error);
-            }
-        };
-        let result_root = self.heap.root(result);
-        let result = self.heap.root_value(result_root).unwrap_or(result);
-        let step = self.iterator_result_value(p, result);
-        self.heap.release_root(result_root);
-        self.heap.release_root(next_root);
-        self.heap.release_root(source_root);
-        step
+        // The caller roots `source` and `next` for the call (`with_call_roots`).
+        let result = self.call_value(p, next, source, args)?;
+        self.with_call_roots([result], |vm| vm.iterator_result_value(p, result))
     }
 
     fn mark_iterator_done(&mut self, iterator: Value) {
@@ -3045,15 +3031,56 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// `is_current_realm_native` of a step's `next` (`StepNative`), proved once: the proof holds
+    /// the method's bits, the collection epoch (a slot names the same cell while it is unchanged)
+    /// and the realm, so a loop's later steps make three compares instead of reading the method's
+    /// record.
+    #[inline(always)]
+    pub(super) fn proved_step_native(&self, method: Value, step: StepNative) -> bool {
+        let proof = &self.step_native_proofs[step as usize];
+        (proof.method.get() == method.to_bits()
+            && proof.epoch.get() == self.heap.collection_epoch()
+            && proof.realm.get() == self.realm.globals)
+            || self.prove_step_native(method, step)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn prove_step_native(&self, method: Value, step: StepNative) -> bool {
+        let native = match step {
+            StepNative::ArrayIteratorNext => Native::ArrayIteratorNext,
+            StepNative::GeneratorNext => Native::GeneratorNext,
+        };
+        let proved = self.is_current_realm_native(method, native);
+        if proved {
+            let proof = &self.step_native_proofs[step as usize];
+            proof.method.set(method.to_bits());
+            proof.epoch.set(self.heap.collection_epoch());
+            proof.realm.set(self.realm.globals);
+        }
+        proved
+    }
+
     /// Whether `value` is the current realm's `native` function: one installed for this realm,
     /// or one every realm shares (`is_shared_native`).
     /// The shared function itself, the one each realm's prototypes install, answers by its
-    /// identity (`is_shared_native_of`) before any read of the function.
+    /// identity (`is_shared_native_of`) before any read of the function. Any other is proved
+    /// once per (function, native) while the realm and the heap's records stay as they were
+    /// (`RealmNativeProofs`): a hit is one compare, with no record read.
     #[inline]
     pub(super) fn is_current_realm_native(&self, value: Value, native: Native) -> bool {
-        if self.is_shared_native_of(value, native) {
+        if self.is_shared_native_of(value, native) || self.realm_native_proofs.holds(value, native) {
             return true;
         }
+        let proved = self.prove_current_realm_native(value, native);
+        if proved {
+            self.realm_native_proofs.note(value, native);
+        }
+        proved
+    }
+
+    /// `is_current_realm_native` from the function's record.
+    fn prove_current_realm_native(&self, value: Value, native: Native) -> bool {
         matches!(
             self.heap.function(value),
             Some(record @ FunctionRecord {
@@ -3336,6 +3363,47 @@ impl<H: Host> Vm<H> {
             prototype,
             [value, if done { Value::TRUE } else { Value::FALSE }],
         ))
+    }
+}
+
+/// The slots of `RealmNativeProofs`, a power of two: a native's slot is its discriminant's low bits.
+const REALM_NATIVE_PROOFS: usize = 16;
+
+/// Functions proved to be the current realm's own (or a shared) native of a kind
+/// (`Vm::is_current_realm_native`), one per slot keyed by the native. A function record's kind
+/// and realm never change, and `is_shared_native` reads a table that only grows, so a proof
+/// holds until the realm changes (`Vm::swap_realm_global`) or a collection may free the
+/// function and give its id to another record (`Vm::collect_inner`); both forget every proof.
+/// The proofs are not roots: a proved function that dies is forgotten by the collection that
+/// frees it, before any id is reused.
+pub(super) struct RealmNativeProofs([std::cell::Cell<(u64, u16)>; REALM_NATIVE_PROOFS]);
+
+impl RealmNativeProofs {
+    /// A slot's key that no native has (`Native::COUNT` is far below it).
+    const NONE: u16 = u16::MAX;
+
+    pub(super) const fn new() -> Self {
+        Self([const { std::cell::Cell::new((0, Self::NONE)) }; REALM_NATIVE_PROOFS])
+    }
+
+    #[inline(always)]
+    fn slot(native: Native) -> usize {
+        native as usize & (REALM_NATIVE_PROOFS - 1)
+    }
+
+    #[inline(always)]
+    fn holds(&self, value: Value, native: Native) -> bool {
+        self.0[Self::slot(native)].get() == (value.to_bits(), native as u16)
+    }
+
+    fn note(&self, value: Value, native: Native) {
+        self.0[Self::slot(native)].set((value.to_bits(), native as u16));
+    }
+
+    pub(super) fn forget(&self) {
+        for slot in &self.0 {
+            slot.set((0, Self::NONE));
+        }
     }
 }
 

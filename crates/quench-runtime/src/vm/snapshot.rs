@@ -50,6 +50,9 @@ impl<H: Host> Vm<H> {
             native_microtask_running: _,
             queue_resumed: _,
             declined_fast: _,
+            shared_entry_pair: _,
+            share_entry_pair: _,
+            main_realm,
             unobserved_jobs_entered: _,
             job_queue_programs: _,
             queue_chains: _,
@@ -82,6 +85,7 @@ impl<H: Host> Vm<H> {
             frame_pool: _,
             lowered_tier0: _,
             pending_call_stacks: _,
+            realm_native_proofs: _,
             js_native_contexts: _,
             native_roots: _,
             lane_stack: _,
@@ -406,6 +410,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_heap");
         self.realm.globals = reader.value()?;
+        self.realm_native_proofs.forget();
         self.realm.global_lexical_declarations = Snap::unsnap(&mut reader)?;
         self.realm.global_lexical_bindings = Snap::unsnap(&mut reader)?;
         self.realm.immutable_global_lexical_bindings = Snap::unsnap(&mut reader)?;

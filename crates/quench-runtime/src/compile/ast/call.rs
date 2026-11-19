@@ -193,13 +193,20 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn logical(&mut self, value: &LogicalExpression<'_>, debug_name: Option<Atom>) -> Register {
-        if value.operator.is_coalesce() {
-            return self.coalesce(value, debug_name);
-        }
-        let left = self.expression_with_debug_name(&value.left, debug_name);
         let dst = self.reg();
-        self.emit(Op::Move, dst, left, 0, 0);
-        let jump = self.emit(Op::JumpFalse, left, 0, 0, 0);
+        self.logical_into(value, debug_name, dst);
+        dst
+    }
+
+    /// A logical expression whose value ends in `dst`, allocated by the caller: the left operand
+    /// is computed into `dst` and tested there, and the right operand, when it runs, is computed
+    /// into `dst` in place of the left.
+    fn logical_into(&mut self, value: &LogicalExpression<'_>, debug_name: Option<Atom>, dst: Register) {
+        if value.operator.is_coalesce() {
+            return self.coalesce_into(value, debug_name, dst);
+        }
+        self.expression_into_named(&value.left, debug_name, dst);
+        let jump = self.emit(Op::JumpFalse, dst, 0, 0, 0);
         // Past the jump only `dst` and registers allocated before the expression are live,
         // so the right operand reuses the left's temporaries.
         let after_result = self.next_reg;
@@ -340,9 +347,9 @@ impl FunctionCompiler<'_, '_> {
         })
     }
 
-    /// `f.apply(receiver, arguments)`: the call passes the activation's `arguments` binding
-    /// on, which the activation may then never materialize (`CallPlan::forwards_arguments`).
-    fn forwards_arguments(value: &CallExpression<'_>) -> bool {
+    /// `f.apply(receiver, arguments)`, or of a rest alias (`compile::rest_alias`): passes the
+    /// `arguments` binding on, never materialized then (`CallPlan::forwards_arguments`).
+    fn forwards_arguments(&self, value: &CallExpression<'_>) -> bool {
         matches!(&value.callee, Expression::StaticMemberExpression(member)
             if !member.optional && member.property.name == "apply")
             && matches!(
@@ -651,14 +658,19 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn arguments(&mut self, values: &[Argument<'_>]) -> (Register, u16) {
+        self.arguments_with_regexp_callee(values, None)
+    }
+
+    /// `arguments`, where `regexp_callee` names the callee register of a call whose first
+    /// argument is a regexp literal that may share its object (`regexp_argument_call`).
+    fn arguments_with_regexp_callee(&mut self, values: &[Argument<'_>], regexp_callee: Option<Register>) -> (Register, u16) {
         // Reserve the contiguous ABI argument window first, then compute each argument straight
         // into its slot. The expressions' temporaries are allocated past the window, so they
         // never occupy a slot of it. A primitive literal has no evaluation effect and loads
         // into its slot as a constant.
         let expressions = values
             .iter()
-            .enumerate()
-            .filter_map(|(index, argument)| {
+            .filter_map(|argument| {
                 let Some(expression) = argument.as_expression() else {
                     self.owner
                         .reject(argument.span(), "spread arguments unsupported");
@@ -670,7 +682,16 @@ impl FunctionCompiler<'_, '_> {
         let base = self.next_reg;
         let targets: Vec<_> = (0..expressions.len()).map(|_| self.reg()).collect();
         let count = targets.len() as u16;
-        for (expression, target) in expressions.into_iter().zip(targets) {
+        for (index, (expression, target)) in expressions.into_iter().zip(targets).enumerate() {
+            if index == 0
+                && let (Expression::RegExpLiteral(literal), Some(callee)) = (expression, regexp_callee)
+            {
+                let value = self.regexp_argument_literal(literal, callee);
+                if value != target {
+                    self.emit(Op::Move, target, value, 0, 0);
+                }
+                continue;
+            }
             match Self::primitive_literal(expression) {
                 Some(constant) => {
                     let id = self.owner.constant(constant);

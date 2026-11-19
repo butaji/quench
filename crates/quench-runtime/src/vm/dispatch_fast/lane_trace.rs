@@ -10,14 +10,9 @@ impl LaneStack {
     /// of the Wasm activations' registers.
     pub(in crate::vm) fn extend_roots(&self, programs: &ProgramStore, out: &mut Vec<Value>) {
         self.extend_window_roots(programs, out);
-        out.extend(
-            self.activations()
-                .iter()
-                .filter_map(Activation::script)
-                .map(|script| script.callee),
-        );
+        out.extend(self.frames().filter_map(|frame| frame.script()).map(|script| script.callee));
         out.extend(self.with_object_roots());
-        out.extend(self.forwarders.iter().flat_map(|forwarder| [forwarder.callee, forwarder.env]));
+        out.extend(self.side_roots());
         out.extend(self.steps.iter().flat_map(LaneArrayStep::roots));
         for (_, record) in &self.records {
             record.extend_roots(out);
@@ -32,13 +27,13 @@ impl LaneStack {
     /// which its callee keeps alive.
     fn extend_window_roots(&self, programs: &ProgramStore, out: &mut Vec<Value>) {
         let (span, top) = (self.values.span(), self.values.top().addr());
-        let mut windows = self.activations().iter().enumerate().filter(|(_, activation)| span.contains(&activation.window_word())).peekable();
+        let mut windows = self.frames().enumerate().filter(|(_, activation)| span.contains(&activation.window_word())).peekable();
         while let Some((depth, activation)) = windows.next() {
             let end = windows.peek().map_or(top, |(_, next)| next.window_word());
             let len = end.wrapping_sub(activation.window_word()) / std::mem::size_of::<Value>() - lane_values::CONTEXT;
             // SAFETY: the values `base..top` are initialized, and the span lies within them.
             let window = unsafe { std::slice::from_raw_parts(activation.window_ptr(), len) };
-            match *activation.kind() {
+            match activation.kind() {
                 ActivationKind::Script(_) => {
                     let registers = Registers(activation.window_ptr());
                     extend_this_env_roots(out, registers.this(), registers.env());
@@ -56,11 +51,18 @@ impl LaneStack {
     }
 
     /// Records `pc` as the record the top activation, if a Wasm one, is at for a callout that may
-    /// run code (`lane_in_place`): the collector reads its registers' liveness there
+    /// run code (`in_place_in_lane`): the collector reads its registers' liveness there
     /// (`extend_wasm_roots`). A Wasm activation's callouts all note it before they run.
     pub(in crate::vm) fn note_wasm_pc(&mut self, pc: usize) {
+        // A plain header is a script frame; a Wasm activation is always a record. The note moves
+        // no frame, so the records are written without `records_mut`'s bound reset.
+        if self.plain.depth.get() != 0 {
+            return;
+        }
         let pc = pc as u32;
-        if let Some(Activation { kind: ActivationKind::Wasm { pc: at, .. } | ActivationKind::WasmEntry { pc: at, .. }, .. }) = self.activations.last_mut() {
+        if let Some(ActivationKind::Wasm { pc: at, .. } | ActivationKind::WasmEntry { pc: at, .. }) =
+            self.activation_records.get_mut().last_mut().map(|activation| activation.kind_mut())
+        {
             *at = pc;
         }
     }
@@ -71,14 +73,14 @@ impl LaneStack {
     /// (`note_wasm_pc`). Its registers hold Wasm values the collector reads as it reads a frame's.
     /// A function with no masks has its whole window scanned, so its window is initialized whole.
     fn extend_wasm_roots(&self, programs: &ProgramStore, depth: usize, window: &[Value], out: &mut Vec<Value>) {
-        let activation = &self.activations[depth];
-        let Some((program, noted)) = activation.wasm_site() else {
-            out.extend_from_slice(window);
-            return;
+        let Some(activation) = self.frame(depth) else { return out.extend_from_slice(window) };
+        let (program, noted) = match activation.kind() {
+            ActivationKind::Wasm { program, pc, .. } | ActivationKind::WasmEntry { program, pc, .. } => (program, pc as usize),
+            ActivationKind::Native | ActivationKind::Script(_) => return out.extend_from_slice(window),
         };
-        let call_pc = self.activations.get(depth + 1).and_then(Activation::caller_pc).unwrap_or(noted);
-        let masks = programs.residual(program).and_then(|program| program.register_root_masks(activation.function));
-        let raw = programs.raw_register_masks(program, activation.function);
+        let call_pc = self.frame(depth + 1).and_then(|above| above.caller_pc()).unwrap_or(noted);
+        let masks = programs.residual(program).and_then(|program| program.register_root_masks(activation.function()));
+        let raw = programs.raw_register_masks(program, activation.function());
         match masks {
             Some(masks) => masks.extend_live_except(call_pc, raw.as_deref(), window, out),
             None => out.extend_from_slice(window),
@@ -101,15 +103,14 @@ mod tests {
         vm.execute(&program).unwrap();
         let held = vm.heap.alloc_object(Vm::<TestHost>::empty_object(vm.object_proto));
         let registers = [held, Value::integer(7)];
-        let wasm = Activation {
-            native: crate::vm::compiled::ShadowFrame::EMPTY,
-            function: 0,
-            call: std::ptr::null(),
-            caller_base: std::ptr::null(),
-            caller_registers: Registers(std::ptr::null_mut()),
-            caller_program: ProgramId::MAIN,
-            kind: ActivationKind::Wasm { memory: MemoryView::NONE, frame_storage_bytes: std::mem::size_of_val(&registers), program: ProgramId::MAIN, pc: 0 },
-        };
+        let wasm = Activation::of_parts(
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+            Registers(std::ptr::null_mut()),
+            ProgramId::MAIN,
+            ActivationKind::Wasm { memory: MemoryView::NONE, frame_storage_bytes: std::mem::size_of_val(&registers), program: ProgramId::MAIN, pc: 0 },
+        );
         let window = vm.lane_stack.values.top();
         // SAFETY: the fresh stack's capacity holds the window, the next one's context words and
         // the activation, and the window's values are initialized.

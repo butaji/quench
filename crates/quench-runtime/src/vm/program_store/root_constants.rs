@@ -1,7 +1,7 @@
 //! A program's root binding slots written once (`ResidualProgram::root_slots_written_once`),
-//! derived on first read, and the runs of its root. A written-once slot a read found
-//! initialized holds that value for every later read, while the root has run at most once,
-//! so its root environment is the program's only one.
+//! derived on first read, the runs of its root, and the code that folded such a slot's value. A written-once slot a read found initialized holds that
+//! value for every later read, while the root has run at most once, so its root environment
+//! is the program's only one.
 use super::{ProgramId, ProgramStore};
 use crate::Value;
 use crate::code_dependencies::{CodeReaders, DependentCode};
@@ -16,7 +16,7 @@ pub(super) struct RootConstants {
     /// on their first calls, after another site's read derived the slots.
     written_once: std::cell::RefCell<Option<(Box<[u64]>, Box<[u32]>)>>,
     /// The root closures made for the program (`Vm::note_root_run`), counted up to two: past
-    /// one, no root slot is written-once for reads anymore.
+    /// one, no root slot is written-once for reads anymore and no record keeps its value.
     root_runs: std::cell::Cell<u8>,
     /// The published code that folded a written-once slot's value (`Identity::Folded`), retired
     /// by the program's second root run (`ProgramStore::note_root_run`).
@@ -52,16 +52,19 @@ impl ProgramStore {
         held.as_ref().is_some_and(|(words, _)| crate::bitset::words_contain(words, usize::from(slot)))
     }
 
-    /// Notes another run of program `id`'s root (its root closure is made). From its second, the
-    /// code that folded a written-once root slot is retired: its root environment is no longer
-    /// the program's only one.
-    pub(crate) fn note_root_run(&self, id: ProgramId) {
-        let Some(entry) = self.entry(id) else { return };
+    /// Notes another run of program `id`'s root (its root closure is made); whether it is its
+    /// second. From its second, the code that folded a written-once root slot is retired and
+    /// its readers retire: its root
+    /// environment is no longer the program's only one.
+    pub(crate) fn note_root_run(&self, id: ProgramId) -> bool {
+        let Some(entry) = self.entry(id) else { return false };
         let runs = &entry.root_constants.root_runs;
         runs.set(runs.get().saturating_add(1).min(ONE_ROOT_RUN + 1));
         if runs.get() > ONE_ROOT_RUN {
             entry.root_constants.readers.borrow_mut().retire(0);
+            return true;
         }
+        false
     }
 
     /// Makes `code`, which folded a written-once root slot of program `id`, retire at the root's

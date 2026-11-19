@@ -143,6 +143,42 @@ impl StackBudget {
     }
 }
 
+/// The stack bounds a run of native calls is checked against, read once at the run's entry
+/// (a lane run: `LaneStack::enter_generation`) instead of a `StackGuard`'s thread-local
+/// reads and writes per call. While the transition that set the thread's origin is held, the
+/// origin does not move, so the bounds stay exactly `StackGuard::enter`'s distance bound;
+/// read with no transition held, the current stack pointer stands in for the origin a later
+/// guard would set deeper, which only narrows them. A call checked here holds no transition
+/// of its own: the transition count bounds the guards it enters inside, as before.
+#[derive(Clone, Copy, Debug)]
+pub struct StackLimit {
+    floor: usize,
+    ceiling: usize,
+}
+
+impl StackLimit {
+    /// Bounds that admit nothing, before any run read its own.
+    pub const CLOSED: Self = Self { floor: usize::MAX, ceiling: 0 };
+
+    /// The bounds of the thread's current origin. They do not depend on the transition count,
+    /// so bounds read by a nested run equal its caller's while the origin's transition is held.
+    pub fn here() -> Self {
+        let origin = match STACK_ORIGIN.with(Cell::get) {
+            0 => current_stack_pointer(),
+            origin => origin,
+        };
+        Self { floor: origin.saturating_sub(STACK_BUDGET_BYTES), ceiling: origin.saturating_add(STACK_BUDGET_BYTES) }
+    }
+
+    /// Whether the stack pointer here is within the budget: `StackGuard::enter`'s distance
+    /// bound as two compares, with no thread-local access.
+    #[inline(always)]
+    pub fn admits(self) -> bool {
+        let current = current_stack_pointer();
+        current >= self.floor && current <= self.ceiling
+    }
+}
+
 impl Drop for StackGuard {
     fn drop(&mut self) {
         ACTIVE_TRANSITIONS.with(|depth| {
@@ -264,6 +300,38 @@ mod tests {
         let guard = GuestCallGuard::enter_with_storage(1).unwrap();
         drop(guard);
         assert_eq!(ACTIVE_GUEST_FRAME_STORAGE_BYTES.with(Cell::get), 0);
+    }
+
+    #[test]
+    fn stack_limit_matches_the_guard_distance_bound() {
+        #[inline(never)]
+        fn descend(limit: StackLimit, depth: usize, limit_failed: &mut Option<usize>) -> usize {
+            let frame = [0_u8; NATIVE_TEST_FRAME_BYTES];
+            std::hint::black_box(&frame);
+            if !limit.admits() && limit_failed.is_none() {
+                *limit_failed = Some(depth);
+            }
+            let Ok(_guard) = StackGuard::enter() else { return depth };
+            descend(limit, depth + 1, limit_failed)
+        }
+
+        std::thread::Builder::new()
+            .stack_size(WORKER_STACK_SIZE)
+            .spawn(|| {
+                let _outer = StackGuard::enter().unwrap();
+                let limit = StackLimit::here();
+                assert!(limit.admits());
+                let mut limit_failed = None;
+                let guard_failed = descend(limit, 0, &mut limit_failed);
+                // The limit read under the outer guard closes where a guard does, give or
+                // take the frame its own stack pointer is read in.
+                let limit_failed = limit_failed.expect("the limit closes before the stack ends");
+                assert!(guard_failed > 0 && limit_failed.abs_diff(guard_failed) <= 1);
+                assert!(!StackLimit::CLOSED.admits());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]

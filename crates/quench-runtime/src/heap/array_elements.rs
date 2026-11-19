@@ -11,6 +11,7 @@
 //! survives (`ArrayElements::leave_nursery`), so every young run's owner is a young array
 //! record its sweep shows.
 use crate::staged::record_heads::ArrayHeaderHead;
+use super::growth::{GrowthPolicy, grown_capacity};
 use crate::value::Value;
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error, realloc};
 use std::ptr::NonNull;
@@ -323,10 +324,7 @@ impl ArrayElements {
         // SAFETY: the run starts with room for a header, which no owner counts.
         unsafe {
             header.as_ptr().write(Header {
-                owners: 0,
-                len: len as u32,
-                capacity: len as u32,
-                others: counted,
+                head: ArrayHeaderHead { owners: 0, len: len as u32, capacity: len as u32, others: counted },
             });
         }
         Self { header }
@@ -505,11 +503,6 @@ impl ArrayElements {
     #[inline]
     pub(crate) fn first(&self) -> Option<Value> {
         self.get(0)
-    }
-
-    #[inline]
-    pub(crate) fn last(&self) -> Option<Value> {
-        self.len().checked_sub(1).map(|index| self.read(index))
     }
 
     /// The values in order.
@@ -855,6 +848,14 @@ impl ArrayElements {
         // SAFETY: `UniqueElements` is a transparent wrapper; the backing is now this array's
         // own, or the empty header, which only growth replaces.
         unsafe { &mut *(self as *mut Self).cast::<UniqueElements>() }
+    }
+
+    /// `make_mut` of a backing already this array's own and wide, which copies nothing;
+    /// `None`, which changes nothing, where `make_mut` would copy it.
+    #[inline(always)]
+    pub(crate) fn unique_mut(&mut self) -> Option<&mut UniqueElements> {
+        // SAFETY: `UniqueElements` is a transparent wrapper; the backing is this array's own.
+        self.is_unique().then(|| unsafe { &mut *(self as *mut Self).cast::<UniqueElements>() })
     }
 
     #[cold]

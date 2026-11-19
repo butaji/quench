@@ -5,8 +5,8 @@ use crate::staged::{BinaryClass, Constant, DecodeContext, NumberOperation, Opera
 mod fields;
 use fields::{field_row, field_store_row};
 pub(super) use fields::{site_read_row, stores_field};
-mod numeric;
-pub(super) use numeric::{numeric_row, staged_binary, staged_unary};
+mod number_rows;
+pub(super) use number_rows::{numeric_row, staged_binary, staged_unary};
 
 /// The row kind of a `Binary`'s operator class (`staged::BinaryClass`, the one classification of the operators):
 /// an arithmetic, bitwise or remainder operator's row. A relation as a value, or any other operator, has no Number row.

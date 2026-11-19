@@ -114,9 +114,15 @@ impl NumericStage for super::super::Concrete {
         u64::from(super::super::math::int_multiply(int32(left), int32(right)) as u32)
     }
     #[inline(always)]
+    fn int_leading_zeros(&mut self, value: u64) -> u64 {
+        u64::from(super::super::math::leading_zeros(value as u32))
+    }
+    #[inline(always)]
     fn i32_constant(&mut self, value: i32) -> u64 { u64::from(value as u32) }
     #[inline(always)]
     fn f64_constant(&mut self, value: f64) -> u64 { value.to_bits() }
+    fn f64_from_bits(&mut self, bits: u64) -> u64 { bits }
+    #[inline(always)]
     #[inline(always)]
     fn narrow(&mut self, value: u64) -> u64 { u64::from(value as u32) }
     #[inline(always)]

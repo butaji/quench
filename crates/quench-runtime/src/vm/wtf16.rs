@@ -851,6 +851,7 @@ impl JsStringInner {
                 match units.view() {
                     // SAFETY: ASCII units are UTF-8.
                     Units::Ascii(bytes) => text.push_str(unsafe { std::str::from_utf8_unchecked(bytes) }),
+                    Units::Latin1(bytes) => text.push_str(&latin1_text(bytes)),
                     Units::Wide(units) => {
                         let host = part.cached_host()?;
                         let pairs_at_ends = units.first().is_some_and(|&u| (0xDC00..=0xDFFF).contains(&u))

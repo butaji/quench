@@ -92,7 +92,7 @@ impl Lowering<'_, '_> {
             _ => None,
         };
         let string = Type::language(crate::ValueType::String);
-        let string_method = matches!(native, crate::vm::Native::StringCharCodeAt | crate::vm::Native::StringCharAt);
+        let string_method = matches!(native, crate::heap::Native::StringCharCodeAt | crate::heap::Native::StringCharAt);
         let receiver = match (folds, receiver) {
             (true, _) => None,
             (false, Some(register)) if string_method && (string.is_subtype(state.values[usize::from(register)].value.ty) || state.values[usize::from(register)].value.ty.is_subtype(string)) => Some(register),

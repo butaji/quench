@@ -469,6 +469,18 @@ impl<H: Host> Vm<H> {
                     Some(value) => crate::value::number_to_u32(self.to_number(p, value)?) as i32,
                     None => 0,
                 };
+                // Radix 10 (or absent): the shared int32 form of the text (`staged::parse_int`), which the b-jit's row answers too.
+                let decimal = if radix == 0 || radix == 10 {
+                    match (&text, self.heap.string(value)) {
+                        (None, Some(string)) => string.read_units(|units| crate::staged::parse_int::decimal_int32(units.iter())),
+                        _ => text.as_deref().and_then(|text| crate::staged::parse_int::decimal_int32(text.encode_utf16())),
+                    }
+                } else {
+                    None
+                };
+                if let Some(int) = decimal {
+                    return Ok(Value::integer(int));
+                }
                 Ok(Value::number(match (&text, self.heap.string(value)) {
                     (None, Some(string)) => string.read_units(|units| super::string_extra::parse_integer_units(units, radix)),
                     _ => super::string_extra::parse_integer(text.as_deref().unwrap_or_default(), radix),

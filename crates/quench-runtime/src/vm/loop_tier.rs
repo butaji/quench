@@ -336,7 +336,7 @@ fn region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, program: 
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
     let (Some(own), Some(body)) = (own, program.function_get(function as usize)) else { return Default::default() };
-    let candidates = super::dispatch_fast::direct_callees_in_lane(machine, own, function, body);
+    let candidates = direct_callees_in_lane(machine, own, function, program, body);
     machine.region_calls(program, function, own, &candidates)
 }
 
@@ -348,7 +348,7 @@ fn unit_region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, prog
     let (Some(own), Some(body)) = (own, program.function_get(function as usize)) else { return Default::default() };
     // A callee with no published body yet is called through its entry cell, which holds its body
     // once that publishes: the region compiled before its callees still calls them natively.
-    let candidates = super::dispatch_fast::direct_callees_in_lane(machine, own, function, body);
+    let candidates = direct_callees_in_lane(machine, own, function, program, body);
     for callees in &candidates { super::super::compiled::bind_region_callees(callees, own); }
     super::super::compiled::RegionCalls::direct(candidates)
 }
@@ -469,9 +469,8 @@ pub(super) fn loop_function_in_lane<H: Host>(cx: *mut LaneContext<H>, code: &Res
     let machine = unsafe { vm(cx) };
     let function_index = machine
         .lane_stack
-        .activations()
-        .last()
-        .map_or_else(|| machine.frames[unsafe { (*cx).frame() }].function, |activation| activation.function);
+        .top_frame()
+        .map_or_else(|| machine.frames[unsafe { (*cx).frame() }].function, |activation| activation.function());
     let function = code.function_get(function_index as usize)?;
     let constants = machine.programs.constants(unsafe { (*cx).program }).to_vec();
     Some((function_index, function, function.instructions().collect(), constants))

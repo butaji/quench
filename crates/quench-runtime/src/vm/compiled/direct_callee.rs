@@ -19,8 +19,6 @@ pub(in crate::vm) struct DirectCallee {
     pub(in crate::vm) call: usize,
     /// The caller's base instruction pointer (its view's records), which the callee's header saves for the return.
     pub(in crate::vm) caller_base: usize,
-    /// The callee's function index, which its header's packed word names.
-    pub(in crate::vm) function: u32,
     pub(in crate::vm) cell: usize,
     pub(in crate::vm) callee: Value,
     pub(in crate::vm) registers: u16,
@@ -68,34 +66,3 @@ pub(in crate::vm) fn window_width(inlined: &[InlinedCall], caller_registers: u16
     inlined.iter().map(|frame| usize::from(frame.base - caller_registers) + usize::from(frame.registers)).max().unwrap_or(0)
 }
 
-/// The prefix of a native frame of a direct call (`DirectCallee`), which every activation
-/// starts with: its callee, which names the call record it returns to, its receiver, the body
-/// it runs and its window of registers. Emitted code writes it, with `ActivationKind::Native`,
-/// into the lane stack's activations; the lane links the frame (`native_frames`) only where a
-/// helper observes it.
-#[derive(Clone, Copy)]
-#[repr(C)]
-pub(in crate::vm) struct ShadowFrame {
-    pub(in crate::vm) callee: *const DirectCallee,
-    pub(in crate::vm) this: u64, pub(in crate::vm) body: usize,
-    /// The address of its window of registers.
-    pub(in crate::vm) window: usize,
-}
-
-impl ShadowFrame {
-    /// The prefix of an activation the lane made: no callee, which tells it from a native
-    /// frame's (`LaneActivations::native_depth`), and its window, written at its push.
-    pub(in crate::vm) const EMPTY: Self = Self { callee: std::ptr::null(), this: 0, body: 0, window: 0 };
-}
-
-
-const _: () = {
-    use crate::staged::frame;
-    assert!(std::mem::offset_of!(ShadowFrame, callee) == frame::CALLEE);
-    assert!(std::mem::offset_of!(ShadowFrame, this) == frame::THIS);
-    assert!(std::mem::offset_of!(ShadowFrame, body) == frame::BODY);
-    assert!(std::mem::offset_of!(ShadowFrame, window) == frame::WINDOW);
-    assert!(std::mem::size_of::<ShadowFrame>() == frame::PREFIX_BYTES);
-    assert!(std::mem::offset_of!(crate::vm::dispatch_fast::Activation, native) == 0);
-    assert!(std::mem::size_of::<crate::vm::dispatch_fast::Activation>().is_power_of_two());
-};

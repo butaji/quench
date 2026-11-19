@@ -335,7 +335,7 @@ impl<H: Host> Vm<H> {
         }
         match self.heap.flat_text(value)? {
             crate::heap::FlatText::Record(super::wtf16::Units::Ascii(bytes)) => Some(bytes.len()),
-            crate::heap::FlatText::Record(super::wtf16::Units::Wide(_)) => None,
+            crate::heap::FlatText::Record(super::wtf16::Units::Wide(_) | super::wtf16::Units::Latin1(_)) => None,
             crate::heap::FlatText::Small(small) => Some(small.as_bytes().len()),
         }
     }

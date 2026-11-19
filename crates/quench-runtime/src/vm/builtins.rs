@@ -61,7 +61,7 @@ impl NativeTable {
     }
 
     #[inline(always)]
-    fn get(&self, kind: Native) -> Option<Value> {
+    pub(super) fn get(&self, kind: Native) -> Option<Value> {
         self.functions
             .get(kind as usize)
             .copied()
@@ -137,6 +137,8 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_prototypes");
         self.natives.reset(self.realm.globals);
+        // A shared native proved before is no longer in the table (`RealmNativeProofs`).
+        self.realm_native_proofs.forget();
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_native_function_table");
         // Error intrinsics must exist before any guarded initialization step.

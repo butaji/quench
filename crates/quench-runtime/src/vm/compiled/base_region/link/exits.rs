@@ -32,7 +32,7 @@ impl Leaves {
     /// write back).
     pub(super) fn open(layout: &Layout) -> Result<(Self, usize), String> {
         let mut leaves = Self(Vec::new());
-        let failed = leaves.index(layout, Leave::Word(super::super::LaneExit::Entry.word()))?;
+        let failed = leaves.index(layout, Leave::Word(crate::vm::compiled::LaneExit::Entry.word()))?;
         Ok((leaves, failed))
     }
 
@@ -47,7 +47,7 @@ impl Leaves {
             Leave::Word(word) => leave_row(leave_chain(&[], &[], ending.tails().0, ending.holes(word))?),
             Leave::Status => routine(call::LEAVE_STATUS)?,
             Leave::Return { pc, slot } => {
-                let status = u64::from(super::super::LANE_BODY_RETURNED);
+                let status = u64::from(crate::vm::compiled::LANE_BODY_RETURNED);
                 leave_row(leave_chain(&layout.spills(pc), &[], "leave_returned", padded_holes([slot, status, u64::from(layout.record(pc))]))?)
             }
         };
@@ -58,7 +58,7 @@ impl Leaves {
 
 /// Where an exit hole of a placed row goes: a stub in the cold area behind the leave rows, or a
 /// leave row.
-pub(super) enum Target {
+pub(in crate::vm::compiled) enum Target {
     Stub { pc: u32, routine: usize },
     Row(usize),
 }

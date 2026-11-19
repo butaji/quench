@@ -48,7 +48,7 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     pub(super) fn relink_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
         let entry = *self.lane_stack.script_targets.entries.get(linked)?;
-        if entry.admission != self.lane_stack.admission {
+        if !entry.admission.admits(self.lane_stack.admission) {
             return None;
         }
         let (program, function, env) = self.same_realm_user_target(callee)?;
@@ -77,7 +77,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn relink_known_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
         let (function, env) = callee.as_known_closure()?;
         let entry = self.lane_stack.script_targets.entries.get(linked)?;
-        if entry.admission != self.lane_stack.admission
+        if !entry.admission.admits(self.lane_stack.admission)
             || entry.function != function
             || !entry.this_binding.binds_receiver()
         {

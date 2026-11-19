@@ -66,12 +66,31 @@ pub(in crate::vm::compiled) struct Callees {
     /// the one a stitch may inline, every one a direct row of the call's chain calls.
     at: Vec<Option<std::ops::Range<usize>>>,
     bodies: Vec<Option<InlineBody>>,
-    /// By PC, the Stable fact holding the callee its call site recorded: the global cell its
-    /// callee register is read from (`Vm::stable_callees`).
-    stable: Vec<Option<GlobalFact>>,
+    /// By PC, what holds the callee its call site recorded (`Vm::stable_callees`).
+    stable: Vec<Option<Held>>,
     /// By PC, the native function the call site's callee register holds, where a field read defines it
     /// (`Vm::native_callees`), with the holder whose values the code depends on.
-    natives: Vec<Option<(crate::value::Value, crate::vm::Native, u32)>>,
+    natives: Vec<Option<(crate::value::Value, crate::heap::Native, u32)>>,
+}
+
+/// What holds a call site's callee register, so that the register need not be checked: a Stable global cell
+/// (its change retires the body), or a captured declaration whose identity the body's entry checks once
+/// (`Captured`, `base_region::link::entry_rows`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::vm::compiled) enum Held {
+    Global(GlobalFact),
+    /// The depth-0 capture at `slot` holds `callee` (its word) at every entry of the body.
+    Captured { slot: u16, callee: u64 },
+}
+
+impl Held {
+    /// The Stable global fact, if it is one.
+    pub(in crate::vm::compiled) fn global(held: Held) -> Option<GlobalFact> {
+        match held {
+            Held::Global(fact) => Some(fact),
+            Held::Captured { .. } => None,
+        }
+    }
 }
 
 /// Whether the call at `instruction` is a plain call a body's call chain makes: a call whose result
@@ -107,8 +126,8 @@ impl Callees {
 
     /// The callee each call site of `code` calls (`candidates`, by PC), `body_of` the function it
     /// runs, and `stable` the Stable fact holding it by PC.
-    pub(in crate::vm::compiled) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(&DirectCallee) -> Option<InlineBody>, stable: Vec<Option<GlobalFact>>,
-        natives: Vec<Option<(crate::value::Value, crate::vm::Native, u32)>>) -> Self {
+    pub(in crate::vm::compiled) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(&DirectCallee) -> Option<InlineBody>, stable: Vec<Option<Held>>,
+        natives: Vec<Option<(crate::value::Value, crate::heap::Native, u32)>>) -> Self {
         let mut owned = Vec::new();
         let at = code.iter().zip(candidates).map(|(instruction, site)| {
             let callees = reached(*instruction, site);

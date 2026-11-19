@@ -129,7 +129,7 @@ impl ParkedLane {
     pub(in crate::vm) fn extend_roots(&self, programs: &crate::vm::program_store::ProgramStore, out: &mut Vec<Value>) {
         self.stack.extend_roots(programs, out);
         let [this, env] = self.innermost;
-        extend_this_env_roots(out, this, env);
+        crate::vm::activation::extend_this_env_roots(out, this, env);
     }
 }
 
@@ -168,7 +168,7 @@ impl<H: Host> Vm<H> {
         (self.lane_deferred, self.lane_native, self.running_window) = (deferred, native, window);
         let mut stack = self.lane_roots.pop().expect("the lane stack this run parked").stack;
         std::mem::swap(&mut self.lane_stack, &mut stack);
-        if stack.activations().is_empty() {
+        if !stack.has_frames() {
             self.spare_lane_stacks.push(stack);
         }
         self.lane_stack.enter_generation((self.cache_epochs.gc, self.realm.globals));
@@ -201,12 +201,15 @@ impl<H: Host> Vm<H> {
             inline_calls: inline_calls && code.kind == crate::bytecode::ProgramKind::Wasm,
             script_calls,
             script_constructs,
+            tiers_run: self.tier_may_run(crate::jit_mode::Tier::ANY),
+            // `script_calls` starts on only where `inline_calls` is.
+            returns_script_frame: false,
             instance: Value::DELETED,
             instance_slots: (Value::DELETED, std::ptr::null()),
             indirect: IndirectSlot::NONE,
             instance_address: (Value::DELETED.to_bits(), ProgramId::default(), 0),
             signatures: (ProgramId::default(), None),
-            backedges_left: self.lane_credits_backedges(code, program).then_some(self.programs.tiers().wasm.backedges_per_entry),
+            backedges_left: self.credits_backedges_in_lane(code, program).then_some(self.programs.tiers().wasm.backedges_per_entry),
             floor,
             // SAFETY: the VM holds its interrupt state for the whole run.
             fuel: if unsafe { &*floor }.load(std::sync::atomic::Ordering::Relaxed) == COLLECTION_DUE_FLOOR { 0 } else { LANE_FUEL_BATCH },
@@ -239,6 +242,8 @@ impl<H: Host> Vm<H> {
     ) -> Ip {
         self.lane_stack.refresh_activation_limit();
         self.lane_stack.enter_generation((self.cache_epochs.gc, self.realm.globals));
+        // The tier's diagnostics, which no proved call runs under (`Admission::DIAGNOSED`).
+        self.lane_stack.set_diagnosed(self.programs.js_jit_diagnostics_enabled());
         let epoch = self.cache_epochs.gc;
         let cx: *mut LaneContext<H> = context;
         // The lane's admission mirrors the run's `script_calls` (`LaneStack::set_script_calls`);
@@ -269,7 +274,7 @@ impl<H: Host> Vm<H> {
     /// The census detail of a lane exit at the record `ip` of the innermost activation.
     #[cfg(feature = "profile-lane-exits")]
     fn record_lane_exit(&self, cx: *mut LaneContext<H>, ip: Ip) {
-        let Some(activation) = self.lane_stack.activations().last() else {
+        let Some(activation) = self.lane_stack.top_frame() else {
             return;
         };
         // SAFETY: the context's program outlives the run; `ip` is a record of
@@ -375,7 +380,7 @@ impl<H: Host> Vm<H> {
         let caller_registers = self.active_registers;
         let entered = self.enter_lane_floor(code, window.entry.program);
         let start = job_start(code, job, &window, (std::ptr::from_mut(pending), &raw mut executing), entered.cell);
-        let mut context = self.lane_context(start);
+        let mut context = self.context_for_start(start);
         let ip = self.drive_lane(&mut context, entered, |cx| match resume {
             JobResume::Sends(_) => window.enter(cx),
             JobResume::Throws(error) => window.enter_raising(cx, error),
@@ -410,11 +415,11 @@ impl<H: Host> Vm<H> {
         }
         // SAFETY: the owner keeps the frame, and so its registers, until the run ends.
         let record = unsafe { &mut *frame };
-        let (prefix, registers, size) = (record.prefix(), record.registers.as_mut_ptr(), record.registers.len());
+        let (receiver, registers, size) = (record.this().to_bits(), record.registers.as_mut_ptr(), record.registers.len());
         // SAFETY: the program store keeps a derived view alive with its program.
         let base = unsafe { (*view).records() };
         let entry = PreparedEntry { view, env: parent, capture, this, registers: size, passed: 0, argc: 0, keeps: false, size, program, function };
-        let activation = job_activation(&entry, base, registers, job, prefix, environment, frame);
+        let activation = job_activation(&entry, base, registers, job, receiver, environment, frame);
         Some(JobWindow { frame, registers, base, pc, entry, activation, _stack: stack })
     }
 
@@ -514,12 +519,11 @@ fn job_activation(
     base: Ip,
     window: *mut Value,
     job: JobRoot,
-    prefix: crate::vm::compiled::ShadowFrame,
+    receiver: u64,
     environment: bool,
     record: *mut FrameRecord,
 ) -> Activation {
-    Activation::of_parts(
-        prefix,
+    let mut activation = Activation::of_parts(
         entry.function,
         base,
         base,
@@ -534,5 +538,8 @@ fn job_activation(
             environment,
             record,
         }),
-    )
+    );
+    activation.this = receiver;
+    activation.window = window.addr();
+    activation
 }

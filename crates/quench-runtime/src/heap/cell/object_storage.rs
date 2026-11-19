@@ -28,7 +28,7 @@ impl Object {
         self.extras_pointer().is_some()
     }
 
-    #[inline] fn extras(&self) -> Option<&ObjectExtras> {
+    #[inline] pub(super) fn extras(&self) -> Option<&ObjectExtras> {
         // SAFETY: a tagged payload owns a live `ObjectExtras` for the object's lifetime.
         self.extras_pointer().map(|extras| unsafe { &*extras })
     }
@@ -68,7 +68,7 @@ impl Object {
         unsafe { &mut *extras }
     }
 
-    #[inline] fn extras_mut_existing(&mut self) -> Option<&mut ObjectExtras> {
+    #[inline] pub(super) fn extras_mut_existing(&mut self) -> Option<&mut ObjectExtras> {
         // SAFETY: as in `extras`, with `&mut self` making the borrow unique.
         self.extras_pointer().map(|extras| unsafe { &mut *extras })
     }

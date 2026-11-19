@@ -97,6 +97,11 @@ pub(super) enum Heap {
     ThisChain,
     /// The `length` of the direct array at hole 1, an int32 (what the array's record counts).
     Length,
+    /// `String.prototype.charCodeAt` of the flat string at hole 1, at the int32 index at hole 2 (`CHAR_CODE_AT_ROW`): the call
+    /// the method read's native folds into (`base_region::function::native_call`).
+    CharCodeAt,
+    /// `parseInt` of the flat string at hole 1 in radix 10 (`PARSE_INT_ROW`).
+    ParseInt,
     /// An empty ordinary object (`Allocation::Empty`), or a zero-length array, made inline from the object or array
     /// space's cursor and the captured template (`JsStepDispatch::empty_*`): the destination (hole 0) takes the
     /// direct reference of the new record. Planned as the fast arm of the instruction's helper step
@@ -311,7 +316,7 @@ impl Heap {
     }
 
     pub(super) fn yields_tagged(self) -> bool {
-        matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::Word | Heap::EmptyObject | Heap::EmptyArray)
+        matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::Word | Heap::EmptyObject | Heap::EmptyArray | Heap::CharCodeAt | Heap::ParseInt)
     }
 }
 

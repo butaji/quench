@@ -62,12 +62,17 @@ fn frame_root_environment<H: Host>(cx: *mut LaneContext<H>, depth: u16) -> Optio
 /// the same environment. Which slots those are is fixed per program, and a record's scope
 /// chain is fixed by its function, so the answer holds for the record.
 pub(super) fn root_binding_slot_in_lane<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> bool {
+    lane_root_binding_owner(cx, depth, slot).is_some()
+}
+
+/// `root_binding_slot_in_lane`, answered with the program whose root environment holds the slot.
+pub(super) fn lane_root_binding_owner<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<ProgramId> {
     // The parent links first: most captures end at a function's environment.
-    let Some(root) = root_environment_in_lane(cx, depth) else { return false };
+    let root = root_environment_in_lane(cx, depth)?;
     let vm = unsafe { vm(cx) };
     let slots = match vm.heap.environment(root) {
         Some(crate::heap::EnvironmentRecord { function, slots, .. }) if *function == super::ROOT_FUNCTION_ID => std::ptr::from_ref(slots),
-        _ => return false,
+        _ => return None,
     };
     let env = unsafe { (*cx).registers }.env();
     let walked = if env.is_deleted() {
@@ -77,11 +82,11 @@ pub(super) fn root_binding_slot_in_lane<H: Host>(cx: *mut LaneContext<H>, depth:
         vm.walked_capture_slots(env, false, depth)
     };
     let Some((walked, Some(program))) = walked else {
-        return false;
+        return None;
     };
     if !std::ptr::eq(slots, walked) {
-        return false;
+        return None;
     }
     let owner = program.map_or(vm.active_program, ProgramId::from_raw);
-    vm.programs.root_slot(owner, slot) == crate::bytecode::RootSlotRule::Binding
+    (vm.programs.root_slot(owner, slot) == crate::bytecode::RootSlotRule::Binding).then_some(owner)
 }

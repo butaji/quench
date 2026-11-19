@@ -20,7 +20,7 @@ const LANE_EXIT: &str = "LaneExit";
 const TIER_TABLE: &str = "MEASURED";
 const ENTRY_ALIAS: &str = "Entry";
 const EXIT_SUFFIXES: &[&str] = &["_EXIT", "_STATUS"];
-const FRAME_NAMES: &[&str] = &["Frame", "Activation", "ShadowFrame"];
+const FRAME_NAMES: &[&str] = &["Frame", "Activation"];
 const FRAME_SUFFIX: &str = "Frame";
 const COMMENT_PREFIX: &str = "#";
 const UNTAGGED_FLAGS: [&str; 2] = ["MemFlagsData", "trusted"];
@@ -412,8 +412,8 @@ mod tests {
 
     #[test]
     fn frame_structs_match_names() {
-        let file = parse("struct Frame; struct LaneFrame; struct Activation; struct Framer; mod m { struct ShadowFrame; }");
-        assert_eq!(frame_structs(&file), 4);
+        let file = parse("struct Frame; struct LaneFrame; struct Activation; struct Framer;");
+        assert_eq!(frame_structs(&file), 3);
     }
 
     #[test]

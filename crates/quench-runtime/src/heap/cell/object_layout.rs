@@ -3,6 +3,13 @@
 use super::*;
 
 impl Object {
+    /// The record's two stored words, `(payload, layout)`, as they are written. A fresh empty
+    /// object's pair depends only on its prototype, so generated allocation copies it
+    /// (`JsStepDispatch::empty_object_layout`).
+    pub(crate) fn stored_words(&self) -> (u64, u32) {
+        (self.head.payload, self.head.layout)
+    }
+
     /// An object of header words `meta` and `auxiliary` (`layout`) and `payload`.
     #[inline(always)]
     pub(super) fn from_header(meta: u32, auxiliary: u32, payload: u64) -> Self {
@@ -71,8 +78,8 @@ impl Object {
     #[inline(always)]
     pub(super) fn encode_proto(proto: Value) -> u32 {
         match proto.direct_object_index() {
-            Some(id) => PROTO_OBJECT_RECORD_BASE + id,
-            None => Self::encode_other_proto(proto),
+            Some(id) if (id as usize) < OBJECT_PROTO_WINDOW => PROTO_OBJECT_RECORD_BASE + id,
+            _ => Self::encode_other_proto(proto),
         }
     }
 
@@ -80,26 +87,24 @@ impl Object {
     #[inline(always)]
     pub(super) fn encode_array_proto(proto: Value) -> u32 {
         match proto.direct_array_index() {
-            Some(id) => PROTO_ARRAY_RECORD_BASE + id,
-            None => Self::encode_proto(proto),
+            Some(id) if (id as usize) < ARRAY_PROTO_WINDOW => PROTO_ARRAY_RECORD_BASE + id,
+            _ => Self::encode_proto(proto),
         }
     }
 
     #[inline]
     pub(super) fn encode_other_proto(proto: Value) -> u32 {
         match proto.heap_reference() {
-            Some(HeapReference::LegacySlot(index)) => {
-                assert!(
-                    (index as usize) < MAX_HEAP_CELLS,
-                    "heap exhausted the prototype index space"
-                );
-                index
+            Some(HeapReference::LegacySlot(index)) => windowed(proto, 0, LEGACY_SLOT_CAPACITY, index),
+            Some(HeapReference::ObjectRecord(id)) => windowed(proto, PROTO_OBJECT_RECORD_BASE, OBJECT_PROTO_WINDOW, id),
+            Some(HeapReference::ArrayRecord(id)) => windowed(proto, PROTO_ARRAY_RECORD_BASE, ARRAY_PROTO_WINDOW, id),
+            Some(HeapReference::FunctionRecord(id)) => windowed(proto, PROTO_FUNCTION_RECORD_BASE, FUNCTION_PROTO_WINDOW, id),
+            Some(HeapReference::PromiseRecord(id)) => windowed(proto, PROTO_PROMISE_RECORD_BASE, PROMISE_PROTO_WINDOW, id),
+            Some(HeapReference::IteratorRecord(id)) => windowed(proto, PROTO_ITERATOR_RECORD_BASE, ITERATOR_PROTO_WINDOW, id),
+            Some(HeapReference::CollectionRecord(id)) => {
+                windowed(proto, PROTO_COLLECTION_RECORD_BASE, COLLECTION_PROTO_WINDOW, id)
             }
-            Some(HeapReference::ObjectRecord(id)) => PROTO_OBJECT_RECORD_BASE + id,
-            Some(HeapReference::ArrayRecord(id)) => PROTO_ARRAY_RECORD_BASE + id,
-            Some(HeapReference::FunctionRecord(id)) => PROTO_FUNCTION_RECORD_BASE + id,
-            Some(HeapReference::PromiseRecord(id)) => PROTO_PROMISE_RECORD_BASE + id,
-            Some(HeapReference::IteratorRecord(id)) => PROTO_ITERATOR_RECORD_BASE + id,
+            Some(HeapReference::SymbolRecord(_)) => unreachable!("a symbol is never a prototype"),
             Some(HeapReference::AwaitRecord(_)) => unreachable!("an await state is never a prototype"),
             Some(HeapReference::StringRecord(_)) => unreachable!("a string is never a prototype"),
             Some(HeapReference::V128Record(_)) => unreachable!("a Wasm vector is never a prototype"),
@@ -206,7 +211,7 @@ impl Object {
     }
 
     /// Construction before publication has no shape dependents.
-    #[inline(always)] fn initialize_properties(&mut self, properties: ValueVec) {
+    #[inline(always)] pub(super) fn initialize_properties(&mut self, properties: ValueVec) {
         let (start, auxiliary) = properties.into_parts();
         // Exotic access is a fact of the object, not of the storage that replaces its own.
         // A storage change ends the object's constancy (`note_constant_write`): its readers
@@ -404,7 +409,7 @@ impl Object {
         EXTRAS_TAG | address
     }
 
-    #[inline] fn extras_pointer(&self) -> Option<*mut ObjectExtras> {
+    #[inline] pub(super) fn extras_pointer(&self) -> Option<*mut ObjectExtras> {
         let word = self.payload;
         (word & EXTRAS_TAG_MASK == EXTRAS_TAG)
             .then_some((word & !EXTRAS_TAG_MASK) as usize as *mut ObjectExtras)

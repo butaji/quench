@@ -7,6 +7,7 @@ use super::{immediate, operand_type, set};
 use crate::bytecode::{Constant, Operand, WideInstruction};
 use crate::staged::{NumberOperation, Operation};
 use crate::typed_ir::{IntRange, Type};
+use crate::staged::{DecodeContext, NumberOperation, Operation};
 use crate::value::Value;
 use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 
@@ -58,7 +59,7 @@ fn stepped(lookup: Lookup<'_>, instruction: WideInstruction) -> Option<IntRange>
 /// int32 never overflows, whatever int32 operands reach it.
 pub(in crate::vm::compiled) fn exact(lookup: Lookup<'_>, instruction: WideInstruction) -> Option<IntRange> {
     if instruction.result_flags() != 0 { return None; }
-    if matches!(Operation::<u64, ()>::of(instruction), Some(Operation::Number(NumberOperation::IncDec { .. }))) { return stepped(lookup, instruction); }
+    if matches!(Operation::<u64, ()>::decode(instruction, DecodeContext::EMPTY), Some(Operation::Number(NumberOperation::IncDec { .. }))) { return stepped(lookup, instruction); }
     let (operation, left, right) = operation(lookup, instruction)?;
     arithmetic(operation, left, right)
 }

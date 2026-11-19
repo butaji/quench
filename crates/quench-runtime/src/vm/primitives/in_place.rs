@@ -54,7 +54,7 @@ impl<H: Host> Vm<H> {
     /// made, so the receiver is cut in place without the general path's roots and copies. The
     /// parts are gathered once and the array is made from them in one step. `None` leaves any
     /// other call to `call_primitive_native`.
-    pub(super) fn split_in_place(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+    pub(in crate::vm) fn split_in_place(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         if native != Native::StringSplit {
             return None;
         }
@@ -134,7 +134,7 @@ impl<H: Host> Vm<H> {
     /// the result is written once, the unmatched runs copied around each replacement. A
     /// replacement function, a non-string pattern or a rope leaves the call to the general path
     /// (`string_replace_native`), which answers `None` here.
-    pub(super) fn replace_string_pattern(
+    pub(in crate::vm) fn replace_string_pattern(
         &mut self,
         p: &ResidualProgram,
         native: Native,

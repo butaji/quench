@@ -151,7 +151,7 @@ impl<H: Host> Vm<H> {
         let operator = crate::wasm::memory::MemoryStore::from_tag(i.imm()).expect("validated memory store");
         let value = self.decode_wasm_value(self.read(f, i.register_a()), operator.value_type())?;
         let (mut bytes, _) = self.wasm_memory_mut(memory)?;
-        write_memory(&mut bytes, address, operator, value).map_err(JsError::wasm_trap_error)
+        write_memory(&mut bytes, operator, address, value).map_err(JsError::wasm_trap_error)
     }
 
     /// The control steps (`Flow`): a select, a branch table, a trap and a return. A jump is

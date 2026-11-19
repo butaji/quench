@@ -1,7 +1,31 @@
 //! Calls the lane answers in place for their common case (else `native_call_miss`), and
 //! for-in's step (`fast_names_step`, the loop exit's row).
 use super::*;
+use crate::staged::call_complete::{concrete_returns_callee_completion, concrete_write_call_result};
+use crate::bytecode::index as opc;
+use crate::staged::strings::{ConcreteString, concrete_char_at, concrete_char_code_at};
 use crate::vm::object_get::ordinary_chain::ChainRead;
+
+/// `charCodeAt` of a flat string at an integer index (`staged::builtins::char_code_at`): the
+/// unit there, or NaN outside the string. `None` for any other receiver or index, which the
+/// native coerces, and for a rope, which it flattens.
+#[inline(always)]
+pub(super) fn string_char_code_at<H: Host>(vm: &Vm<H>, receiver: Value, index: Value) -> Option<Value> {
+    let records = vm.heap.string_record_base().unwrap_or(std::ptr::null());
+    concrete_char_code_at(ConcreteString::Record { records, value: receiver }, index)
+        .or_else(|| concrete_char_code_at(ConcreteString::Units(vm.heap.flat_text(receiver)?.units()), index))
+}
+
+/// `charAt` of a flat string at an integer index of an ASCII unit
+/// (`staged::builtins::char_at_ascii`): the unit's shared string (`Vm::ascii_byte_string`).
+/// Any other receiver, index or unit takes the native.
+pub(super) fn string_char_at_ascii<H: Host>(vm: &mut Vm<H>, receiver: Value, index: Value) -> Option<Value> {
+    let (records, table) = (vm.heap.string_record_base().unwrap_or(std::ptr::null()), vm.heap.ascii_unit_strings_base().unwrap_or(std::ptr::null()));
+    if let Some(character) = concrete_char_at(ConcreteString::Record { records, value: receiver }, table, index) {
+        return Some(character);
+    }
+    concrete_char_at(ConcreteString::Units(vm.heap.flat_text(receiver)?.units()), table, index)
+}
 
 /// The natives whose steady case (`Vm::steady_native_value`) a `Call` site makes under its own
 /// handler, one instantiation of `builtin_miss` per row: the native is a constant of the
@@ -22,6 +46,8 @@ macro_rules! builtin_rows {
         pub(in crate::vm::dispatch_fast) const fn builtin_miss_of<H: Host>(row: u8) -> Handler {
             match row { $($row => builtin_miss::<H, $row> as Handler,)* _ => native_call_miss::<H> }
         }
+        /// The builtin rows, whose identity slots come first (`NativeIdentities`).
+        const BUILTIN_ROWS: usize = [$($row),*].len();
     };
 }
 builtin_rows!(
@@ -30,36 +56,10 @@ builtin_rows!(
     12 => JsonStringify, 13 => DateNow, 14 => RegExpTest, 15 => RegExpExec,
 );
 
-/// The natives whose in-place body a `Call` site makes under its own handler, one instantiation
-/// of `lane_call_in_place` per row. The native is a constant of the handler, so the site tests the
-/// callee's identity and calls the body directly (`in_place_row_value`), not through the family
-/// table of `Vm::in_place_native_value`. A native in no row keeps `lane_native_call`.
-macro_rules! in_place_rows {
-    ($($row:literal => $native:ident),* $(,)?) => {
-        const fn in_place_row_native(row: u8) -> Native {
-            match row { $($row => Native::$native,)* _ => unreachable!() }
-        }
-        /// The in-place row of `native`, or `None` where no row serves it (`in_place_natives`).
-        pub(super) const fn in_place_row(native: Native) -> Option<u8> {
-            match native { $(Native::$native => Some($row),)* _ => None }
-        }
-        fn in_place_handler<H: Host>(row: u8) -> Handler {
-            match row { $($row => lane_call_in_place::<H, $row>,)* _ => lane_native_call::<H> }
-        }
-    };
-}
-in_place_rows!(
-    0 => ArraySlice, 1 => ArrayConcat, 2 => ArrayIndexOf, 3 => ArrayIncludes, 4 => ArrayJoin,
-    5 => ArrayAt, 6 => ArrayFill, 7 => ObjectKeys, 8 => ObjectAssign,
-    9 => StringTrim, 10 => StringIndexOf, 11 => StringSlice, 12 => StringSplit,
-    13 => StringToUpperCase, 14 => StringToLowerCase, 15 => StringPadStart,
-    16 => StringStartsWith, 17 => StringIncludes,
-);
 
 /// The Math functions whose call a site makes under its own handler, one instantiation of
 /// `math_native_miss` per row: the native is a constant, so the site tests the callee's
-/// identity and runs the operation inline (`number::math_inline_call` folds to it) with no
-/// dispatch on the native. Every other inline Math native keeps `call_math_miss`.
+/// identity and runs the native's staged row (`math_row_call`) with no dispatch on the native. Every other inline Math native keeps `call_math_miss`.
 macro_rules! math_rows {
     ($($row:literal => $native:ident),* $(,)?) => {
         const fn math_row_native(row: u8) -> Native {
@@ -70,13 +70,424 @@ macro_rules! math_rows {
         }
         /// The miss body of Math row `row` (`leaf_call_miss_of`).
         pub(in crate::vm::dispatch_fast) const fn math_miss_of<H: Host>(row: u8) -> Handler {
-            match row { $($row => math_native_miss::<H, $row> as Handler,)* _ => lane_call_math::<H> }
+            match row { $($row => math_native_miss::<H, $row> as Handler,)* _ => call_math_miss::<H> }
         }
+        /// The Math rows, whose identity slots follow the builtin rows' (`NativeIdentities`).
+        const MATH_ROWS: usize = [$($row),*].len();
     };
 }
 math_rows!(
     0 => MathSqrt, 1 => MathAbs, 2 => MathFloor, 3 => MathCeil, 4 => MathRound, 5 => MathTrunc,
     6 => MathMin, 7 => MathMax, 8 => MathImul, 9 => MathFround, 10 => MathSign,
+);
+
+/// The staged row of Math row `row` (`number::math_call`), which every Math row has.
+const fn math_row_call(row: u8) -> crate::staged::call_native::MathCall {
+    match super::number::math_call(math_row_native(row)) {
+        Some(call) => call,
+        None => panic!("a Math row runs a staged row"),
+    }
+}
+
+/// The natives a `Call` site calls through the lean native row (`lane_call_in_place`), one
+/// instantiation per row: the native is a constant of the handler, so the site's whole protocol is
+/// the identity compare, the native's in-place body reading the call's window where it lies, and
+/// the store of its value. No `native_call_miss` dispatch on the callee's record, no
+/// `native_value_in_lane` match, no activation, root or stack guard: an in-place body runs no guest
+/// code, raises nothing and observes no frame (`Vm::in_place_native_value`). Any other callee or
+/// case takes `native_call_miss`, which makes the same in-place attempt first.
+///
+/// The rows are derived from the catalog, not listed: every native with an in-place family
+/// (`in_place_natives::runs_no_guest_code`, the fact `IN_PLACE_FAMILIES` keeps per native) gets
+/// one, in discriminant order, so a native that gains an in-place body gains its row.
+const MAX_IN_PLACE_ROWS: usize = 256;
+
+/// No row (`IN_PLACE_ROW_OF`).
+const NO_IN_PLACE_ROW: u16 = u16::MAX;
+
+/// The rows' natives by discriminant, and how many there are.
+const IN_PLACE_ROW_NATIVES: ([u16; MAX_IN_PLACE_ROWS], usize) = {
+    let mut natives = [0; MAX_IN_PLACE_ROWS];
+    let (mut index, mut rows) = (0, 0);
+    while index < Native::COUNT {
+        if super::in_place_natives::runs_no_guest_code(Native::from_discriminant(index).unwrap()) {
+            natives[rows] = index;
+            rows += 1;
+        }
+        index += 1;
+    }
+    (natives, rows)
+};
+
+/// The lean rows, whose identity slots follow the Math rows' (`NativeIdentities`).
+const IN_PLACE_ROWS: usize = IN_PLACE_ROW_NATIVES.1;
+const _: () = assert!(IN_PLACE_ROWS <= MAX_IN_PLACE_ROWS, "raise MAX_IN_PLACE_ROWS and the handler arms");
+
+/// Each native's lean row, `NO_IN_PLACE_ROW` for one that runs guest code.
+const IN_PLACE_ROW_OF: [u16; Native::COUNT as usize] = {
+    let mut rows = [NO_IN_PLACE_ROW; Native::COUNT as usize];
+    let mut row = 0;
+    while row < IN_PLACE_ROWS {
+        rows[IN_PLACE_ROW_NATIVES.0[row] as usize] = row as u16;
+        row += 1;
+    }
+    rows
+};
+
+/// The native of lean row `row`. A row past the derived ones names a native with no in-place
+/// family, whose handler is never installed and folds to its miss.
+const fn in_place_row_native(row: u8) -> Native {
+    if (row as usize) < IN_PLACE_ROWS {
+        match Native::from_discriminant(IN_PLACE_ROW_NATIVES.0[row as usize]) {
+            Some(native) => native,
+            None => Native::MathInitialize,
+        }
+    } else {
+        Native::MathInitialize
+    }
+}
+
+/// The lean row handler of `native`, where it runs no guest code.
+fn in_place_handler<H: Host>(native: Native) -> Option<Handler> {
+    let row = IN_PLACE_ROW_OF[native as usize];
+    if row == NO_IN_PLACE_ROW {
+        return None;
+    }
+    Some(match row as u8 {
+            0 => lane_call_in_place::<H, 0>,
+            1 => lane_call_in_place::<H, 1>,
+            2 => lane_call_in_place::<H, 2>,
+            3 => lane_call_in_place::<H, 3>,
+            4 => lane_call_in_place::<H, 4>,
+            5 => lane_call_in_place::<H, 5>,
+            6 => lane_call_in_place::<H, 6>,
+            7 => lane_call_in_place::<H, 7>,
+            8 => lane_call_in_place::<H, 8>,
+            9 => lane_call_in_place::<H, 9>,
+            10 => lane_call_in_place::<H, 10>,
+            11 => lane_call_in_place::<H, 11>,
+            12 => lane_call_in_place::<H, 12>,
+            13 => lane_call_in_place::<H, 13>,
+            14 => lane_call_in_place::<H, 14>,
+            15 => lane_call_in_place::<H, 15>,
+            16 => lane_call_in_place::<H, 16>,
+            17 => lane_call_in_place::<H, 17>,
+            18 => lane_call_in_place::<H, 18>,
+            19 => lane_call_in_place::<H, 19>,
+            20 => lane_call_in_place::<H, 20>,
+            21 => lane_call_in_place::<H, 21>,
+            22 => lane_call_in_place::<H, 22>,
+            23 => lane_call_in_place::<H, 23>,
+            24 => lane_call_in_place::<H, 24>,
+            25 => lane_call_in_place::<H, 25>,
+            26 => lane_call_in_place::<H, 26>,
+            27 => lane_call_in_place::<H, 27>,
+            28 => lane_call_in_place::<H, 28>,
+            29 => lane_call_in_place::<H, 29>,
+            30 => lane_call_in_place::<H, 30>,
+            31 => lane_call_in_place::<H, 31>,
+            32 => lane_call_in_place::<H, 32>,
+            33 => lane_call_in_place::<H, 33>,
+            34 => lane_call_in_place::<H, 34>,
+            35 => lane_call_in_place::<H, 35>,
+            36 => lane_call_in_place::<H, 36>,
+            37 => lane_call_in_place::<H, 37>,
+            38 => lane_call_in_place::<H, 38>,
+            39 => lane_call_in_place::<H, 39>,
+            40 => lane_call_in_place::<H, 40>,
+            41 => lane_call_in_place::<H, 41>,
+            42 => lane_call_in_place::<H, 42>,
+            43 => lane_call_in_place::<H, 43>,
+            44 => lane_call_in_place::<H, 44>,
+            45 => lane_call_in_place::<H, 45>,
+            46 => lane_call_in_place::<H, 46>,
+            47 => lane_call_in_place::<H, 47>,
+            48 => lane_call_in_place::<H, 48>,
+            49 => lane_call_in_place::<H, 49>,
+            50 => lane_call_in_place::<H, 50>,
+            51 => lane_call_in_place::<H, 51>,
+            52 => lane_call_in_place::<H, 52>,
+            53 => lane_call_in_place::<H, 53>,
+            54 => lane_call_in_place::<H, 54>,
+            55 => lane_call_in_place::<H, 55>,
+            56 => lane_call_in_place::<H, 56>,
+            57 => lane_call_in_place::<H, 57>,
+            58 => lane_call_in_place::<H, 58>,
+            59 => lane_call_in_place::<H, 59>,
+            60 => lane_call_in_place::<H, 60>,
+            61 => lane_call_in_place::<H, 61>,
+            62 => lane_call_in_place::<H, 62>,
+            63 => lane_call_in_place::<H, 63>,
+            64 => lane_call_in_place::<H, 64>,
+            65 => lane_call_in_place::<H, 65>,
+            66 => lane_call_in_place::<H, 66>,
+            67 => lane_call_in_place::<H, 67>,
+            68 => lane_call_in_place::<H, 68>,
+            69 => lane_call_in_place::<H, 69>,
+            70 => lane_call_in_place::<H, 70>,
+            71 => lane_call_in_place::<H, 71>,
+            72 => lane_call_in_place::<H, 72>,
+            73 => lane_call_in_place::<H, 73>,
+            74 => lane_call_in_place::<H, 74>,
+            75 => lane_call_in_place::<H, 75>,
+            76 => lane_call_in_place::<H, 76>,
+            77 => lane_call_in_place::<H, 77>,
+            78 => lane_call_in_place::<H, 78>,
+            79 => lane_call_in_place::<H, 79>,
+            80 => lane_call_in_place::<H, 80>,
+            81 => lane_call_in_place::<H, 81>,
+            82 => lane_call_in_place::<H, 82>,
+            83 => lane_call_in_place::<H, 83>,
+            84 => lane_call_in_place::<H, 84>,
+            85 => lane_call_in_place::<H, 85>,
+            86 => lane_call_in_place::<H, 86>,
+            87 => lane_call_in_place::<H, 87>,
+            88 => lane_call_in_place::<H, 88>,
+            89 => lane_call_in_place::<H, 89>,
+            90 => lane_call_in_place::<H, 90>,
+            91 => lane_call_in_place::<H, 91>,
+            92 => lane_call_in_place::<H, 92>,
+            93 => lane_call_in_place::<H, 93>,
+            94 => lane_call_in_place::<H, 94>,
+            95 => lane_call_in_place::<H, 95>,
+            96 => lane_call_in_place::<H, 96>,
+            97 => lane_call_in_place::<H, 97>,
+            98 => lane_call_in_place::<H, 98>,
+            99 => lane_call_in_place::<H, 99>,
+            100 => lane_call_in_place::<H, 100>,
+            101 => lane_call_in_place::<H, 101>,
+            102 => lane_call_in_place::<H, 102>,
+            103 => lane_call_in_place::<H, 103>,
+            104 => lane_call_in_place::<H, 104>,
+            105 => lane_call_in_place::<H, 105>,
+            106 => lane_call_in_place::<H, 106>,
+            107 => lane_call_in_place::<H, 107>,
+            108 => lane_call_in_place::<H, 108>,
+            109 => lane_call_in_place::<H, 109>,
+            110 => lane_call_in_place::<H, 110>,
+            111 => lane_call_in_place::<H, 111>,
+            112 => lane_call_in_place::<H, 112>,
+            113 => lane_call_in_place::<H, 113>,
+            114 => lane_call_in_place::<H, 114>,
+            115 => lane_call_in_place::<H, 115>,
+            116 => lane_call_in_place::<H, 116>,
+            117 => lane_call_in_place::<H, 117>,
+            118 => lane_call_in_place::<H, 118>,
+            119 => lane_call_in_place::<H, 119>,
+            120 => lane_call_in_place::<H, 120>,
+            121 => lane_call_in_place::<H, 121>,
+            122 => lane_call_in_place::<H, 122>,
+            123 => lane_call_in_place::<H, 123>,
+            124 => lane_call_in_place::<H, 124>,
+            125 => lane_call_in_place::<H, 125>,
+            126 => lane_call_in_place::<H, 126>,
+            127 => lane_call_in_place::<H, 127>,
+            128 => lane_call_in_place::<H, 128>,
+            129 => lane_call_in_place::<H, 129>,
+            130 => lane_call_in_place::<H, 130>,
+            131 => lane_call_in_place::<H, 131>,
+            132 => lane_call_in_place::<H, 132>,
+            133 => lane_call_in_place::<H, 133>,
+            134 => lane_call_in_place::<H, 134>,
+            135 => lane_call_in_place::<H, 135>,
+            136 => lane_call_in_place::<H, 136>,
+            137 => lane_call_in_place::<H, 137>,
+            138 => lane_call_in_place::<H, 138>,
+            139 => lane_call_in_place::<H, 139>,
+            140 => lane_call_in_place::<H, 140>,
+            141 => lane_call_in_place::<H, 141>,
+            142 => lane_call_in_place::<H, 142>,
+            143 => lane_call_in_place::<H, 143>,
+            144 => lane_call_in_place::<H, 144>,
+            145 => lane_call_in_place::<H, 145>,
+            146 => lane_call_in_place::<H, 146>,
+            147 => lane_call_in_place::<H, 147>,
+            148 => lane_call_in_place::<H, 148>,
+            149 => lane_call_in_place::<H, 149>,
+            150 => lane_call_in_place::<H, 150>,
+            151 => lane_call_in_place::<H, 151>,
+            152 => lane_call_in_place::<H, 152>,
+            153 => lane_call_in_place::<H, 153>,
+            154 => lane_call_in_place::<H, 154>,
+            155 => lane_call_in_place::<H, 155>,
+            156 => lane_call_in_place::<H, 156>,
+            157 => lane_call_in_place::<H, 157>,
+            158 => lane_call_in_place::<H, 158>,
+            159 => lane_call_in_place::<H, 159>,
+            160 => lane_call_in_place::<H, 160>,
+            161 => lane_call_in_place::<H, 161>,
+            162 => lane_call_in_place::<H, 162>,
+            163 => lane_call_in_place::<H, 163>,
+            164 => lane_call_in_place::<H, 164>,
+            165 => lane_call_in_place::<H, 165>,
+            166 => lane_call_in_place::<H, 166>,
+            167 => lane_call_in_place::<H, 167>,
+            168 => lane_call_in_place::<H, 168>,
+            169 => lane_call_in_place::<H, 169>,
+            170 => lane_call_in_place::<H, 170>,
+            171 => lane_call_in_place::<H, 171>,
+            172 => lane_call_in_place::<H, 172>,
+            173 => lane_call_in_place::<H, 173>,
+            174 => lane_call_in_place::<H, 174>,
+            175 => lane_call_in_place::<H, 175>,
+            176 => lane_call_in_place::<H, 176>,
+            177 => lane_call_in_place::<H, 177>,
+            178 => lane_call_in_place::<H, 178>,
+            179 => lane_call_in_place::<H, 179>,
+            180 => lane_call_in_place::<H, 180>,
+            181 => lane_call_in_place::<H, 181>,
+            182 => lane_call_in_place::<H, 182>,
+            183 => lane_call_in_place::<H, 183>,
+            184 => lane_call_in_place::<H, 184>,
+            185 => lane_call_in_place::<H, 185>,
+            186 => lane_call_in_place::<H, 186>,
+            187 => lane_call_in_place::<H, 187>,
+            188 => lane_call_in_place::<H, 188>,
+            189 => lane_call_in_place::<H, 189>,
+            190 => lane_call_in_place::<H, 190>,
+            191 => lane_call_in_place::<H, 191>,
+            192 => lane_call_in_place::<H, 192>,
+            193 => lane_call_in_place::<H, 193>,
+            194 => lane_call_in_place::<H, 194>,
+            195 => lane_call_in_place::<H, 195>,
+            196 => lane_call_in_place::<H, 196>,
+            197 => lane_call_in_place::<H, 197>,
+            198 => lane_call_in_place::<H, 198>,
+            199 => lane_call_in_place::<H, 199>,
+            200 => lane_call_in_place::<H, 200>,
+            201 => lane_call_in_place::<H, 201>,
+            202 => lane_call_in_place::<H, 202>,
+            203 => lane_call_in_place::<H, 203>,
+            204 => lane_call_in_place::<H, 204>,
+            205 => lane_call_in_place::<H, 205>,
+            206 => lane_call_in_place::<H, 206>,
+            207 => lane_call_in_place::<H, 207>,
+            208 => lane_call_in_place::<H, 208>,
+            209 => lane_call_in_place::<H, 209>,
+            210 => lane_call_in_place::<H, 210>,
+            211 => lane_call_in_place::<H, 211>,
+            212 => lane_call_in_place::<H, 212>,
+            213 => lane_call_in_place::<H, 213>,
+            214 => lane_call_in_place::<H, 214>,
+            215 => lane_call_in_place::<H, 215>,
+            216 => lane_call_in_place::<H, 216>,
+            217 => lane_call_in_place::<H, 217>,
+            218 => lane_call_in_place::<H, 218>,
+            219 => lane_call_in_place::<H, 219>,
+            220 => lane_call_in_place::<H, 220>,
+            221 => lane_call_in_place::<H, 221>,
+            222 => lane_call_in_place::<H, 222>,
+            223 => lane_call_in_place::<H, 223>,
+            224 => lane_call_in_place::<H, 224>,
+            225 => lane_call_in_place::<H, 225>,
+            226 => lane_call_in_place::<H, 226>,
+            227 => lane_call_in_place::<H, 227>,
+            228 => lane_call_in_place::<H, 228>,
+            229 => lane_call_in_place::<H, 229>,
+            230 => lane_call_in_place::<H, 230>,
+            231 => lane_call_in_place::<H, 231>,
+            232 => lane_call_in_place::<H, 232>,
+            233 => lane_call_in_place::<H, 233>,
+            234 => lane_call_in_place::<H, 234>,
+            235 => lane_call_in_place::<H, 235>,
+            236 => lane_call_in_place::<H, 236>,
+            237 => lane_call_in_place::<H, 237>,
+            238 => lane_call_in_place::<H, 238>,
+            239 => lane_call_in_place::<H, 239>,
+            240 => lane_call_in_place::<H, 240>,
+            241 => lane_call_in_place::<H, 241>,
+            242 => lane_call_in_place::<H, 242>,
+            243 => lane_call_in_place::<H, 243>,
+            244 => lane_call_in_place::<H, 244>,
+            245 => lane_call_in_place::<H, 245>,
+            246 => lane_call_in_place::<H, 246>,
+            247 => lane_call_in_place::<H, 247>,
+            248 => lane_call_in_place::<H, 248>,
+            249 => lane_call_in_place::<H, 249>,
+            250 => lane_call_in_place::<H, 250>,
+            251 => lane_call_in_place::<H, 251>,
+            252 => lane_call_in_place::<H, 252>,
+            253 => lane_call_in_place::<H, 253>,
+            254 => lane_call_in_place::<H, 254>,
+            255 => lane_call_in_place::<H, 255>
+        })
+}
+
+/// The identity slots of the in-place native rows: one per builtin row, then one per Math row,
+/// then one per lean row.
+const IDENTITY_SLOTS: usize = BUILTIN_ROWS + MATH_ROWS + IN_PLACE_ROWS;
+
+/// The identity slot of lean row `row`. A row past the derived ones (`in_place_row_native`),
+/// never installed, reads the first slot, so its handler stays in bounds.
+const fn in_place_slot(row: u8) -> usize {
+    if (row as usize) < IN_PLACE_ROWS { BUILTIN_ROWS + MATH_ROWS + row as usize } else { 0 }
+}
+
+/// The identity slot of Math row `row`.
+const fn math_slot(row: u8) -> usize {
+    BUILTIN_ROWS + row as usize
+}
+
+/// A slot no callee matches: the direct function word of an id no record has (record ids lie
+/// below the record space's capacity, 2^24).
+const UNPROVEN: u64 = crate::value::ValueLayout::DIRECT_FUNCTION_TAG | u32::MAX as u64;
+
+/// The callee word each in-place native row admits (`staged::call_native::admit_identity`), one
+/// slot per row: the function the lane proved, from its record, to be the row's native, `UNPROVEN`
+/// before. The proof is a dependency of the lane's generation: a new one (a collection, which may
+/// free a function and reuse its id, or another realm: `LaneStack::enter_generation`) forgets
+/// every identity, as it retires the script targets, and the next call proves it again.
+pub(super) struct NativeIdentities([u64; IDENTITY_SLOTS]);
+
+impl NativeIdentities {
+    pub(super) const fn new() -> Self {
+        Self([UNPROVEN; IDENTITY_SLOTS])
+    }
+
+    pub(super) fn forget(&mut self) {
+        self.0 = [UNPROVEN; IDENTITY_SLOTS];
+    }
+}
+
+/// Whether `callee` is `native`, the native of identity slot `slot`: the row's admission, one
+/// compare of the callee word against the identity the lane proved
+/// (`staged::call_native::admit_identity`), else the proof from the callee's record, made once a
+/// generation (`prove_native_identity`).
+#[inline(always)]
+fn native_admitted<H: Host>(vm: &mut Vm<H>, callee: Value, slot: usize, native: Native) -> bool {
+    crate::staged::call_native::concrete_admit_identity(callee.to_bits(), vm.lane_stack.native_identities.0[slot])
+        || prove_native_identity(vm, callee, slot, native)
+}
+
+/// `native_admitted` past its compare: whether `callee`'s record is `native`'s, which the slot
+/// then holds until the generation ends.
+#[cold]
+#[inline(never)]
+fn prove_native_identity<H: Host>(vm: &mut Vm<H>, callee: Value, slot: usize, native: Native) -> bool {
+    let proved = callee_is_native(vm, callee, native);
+    if proved {
+        vm.lane_stack.native_identities.0[slot] = callee.to_bits();
+    }
+    proved
+}
+
+/// The natives whose in-place body is called directly (`in_place_row_value`), not through the
+/// family table of `Vm::in_place_native_value` (`in_place_natives`' `ROW` family). Their lean
+/// rows are the derived ones (`in_place_handler`), like every other in-place native's.
+macro_rules! in_place_rows {
+    ($($row:literal => $native:ident),* $(,)?) => {
+        /// The in-place row of `native`, or `None` where no row serves it (`in_place_natives`).
+        pub(super) const fn in_place_row(native: Native) -> Option<u8> {
+            match native { $(Native::$native => Some($row),)* _ => None }
+        }
+    };
+}
+in_place_rows!(
+    0 => ArraySlice, 1 => ArrayConcat, 2 => ArrayIndexOf, 3 => ArrayIncludes, 4 => ArrayJoin,
+    5 => ArrayAt, 6 => ArrayFill, 7 => ObjectKeys, 8 => ObjectAssign,
+    9 => StringTrim, 10 => StringIndexOf, 11 => StringSlice, 12 => StringSplit,
+    13 => StringToUpperCase, 14 => StringToLowerCase, 15 => StringPadStart,
+    16 => StringStartsWith, 17 => StringIncludes,
 );
 
 /// The handlers of a Math call's field read: `GetField` rows (`generated_row`) at the three Math call
@@ -89,15 +500,15 @@ pub(super) fn math_field_call_handlers<H: Host>() -> [*const (); 3] {
 }
 
 script_handler! {
-    /// A `Call` site whose callee was the Math function of row `ROW` (`native_call_handler`): its
-    /// value of Number arguments in place (`number::math_inline_call`). Any other callee or
-    /// argument takes `call_math_miss`.
+    /// A `Call` site whose callee was the Math function of row `ROW` (`native_call_handler`): the
+    /// native's admission (`native_admitted`) and its staged row of Number arguments
+    /// (`staged::call_native::math_call`). Any other callee or argument takes `call_math_miss`.
     pub(super) fn math_native_miss<ROW: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let native = const { math_row_native(ROW) };
-        let value = if callee_is_native(vm, r.get(i.b), native) {
+        let value = if native_admitted(vm, r.get(i.b), const { math_slot(ROW) }, native) {
             // SAFETY: the call's window is registers of the running function.
-            super::number::math_inline_call(native, unsafe { call_window_in_lane(r, i) })
+            crate::staged::call_native::concrete_math_call(const { math_row_call(ROW) }, unsafe { call_window_in_lane(r, i) })
         } else {
             None
         };
@@ -238,13 +649,14 @@ fn builtin_row_value<H: Host, const ROW: u8>(vm: &mut Vm<H>, receiver: Value, ar
 }
 
 script_handler! {
-    /// A `Call` site whose callee was the native of builtin row `ROW` (`native_call_handler`): that
-    /// call in its steady case (`Vm::steady_native_value`). Any other callee or case takes
+    /// A `Call` site whose callee was the native of builtin row `ROW` (`native_call_handler`): the
+    /// native's admission (`native_admitted`, the staged `admit_identity`), then that call in its
+    /// steady case (`Vm::steady_native_value`). Any other callee or case takes
     /// `native_call_miss`.
     pub(super) fn builtin_miss<ROW: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let native = const { row_native(ROW) };
-        let value = if !callee_is_native(vm, r.get(i.b), native) {
+        let value = if !native_admitted(vm, r.get(i.b), ROW as usize, native) {
             None
         } else if const { matches!(row_native(ROW), Native::RegExpTest | Native::RegExpExec) } {
             // A RegExp method's steady call (`Vm::steady_regexp_call`), entered from the site
@@ -323,24 +735,37 @@ pub(super) fn in_place_row_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram
 }
 
 script_handler! {
-    /// A `Call` site whose callee was the native of in-place row `ROW` (`native_call_handler`): that
-    /// native's in-place body (`in_place_row_value`) on its receiver and arguments. Any other callee
-    /// or case takes `lane_native_call`.
+    /// A `Call` site whose callee was the native of lean row `ROW` (`in_place_rows`): the
+    /// native's admission (`native_admitted`, one compare of the callee word), then its in-place
+    /// body over the call's window, read where it lies, and the value stored to the call's
+    /// register: the steps `native_call_miss` reaches through `native_value_in_lane` for this
+    /// native, in the same order, without its dispatch. Any other callee or case takes
+    /// `native_call_miss`, which tries the same body again and then calls the native.
     fn lane_call_in_place<ROW: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let native = const { in_place_row_native(ROW) };
-        let value = if callee_is_native(vm, r.get(i.b), native) {
-            // SAFETY: the context's program outlives the lane run.
-            let code = unsafe { &*(*cx).code };
-            // SAFETY: the call's window is registers of the running function.
-            in_place_row_value(vm, code, native, r.get(i.c), unsafe { lane_call_window(r, i) })
-        } else {
+        let value = if !native_admitted(vm, r.get(i.b), const { in_place_slot(ROW) }, native) {
             None
+        } else {
+            // SAFETY: the call's window is registers of the running function, which no
+            // in-place body moves; the context's program outlives the lane run.
+            let (args, code) = unsafe { (call_window_in_lane(r, i), &*(*cx).code) };
+            let receiver = r.get(i.c);
+            let float64 = if const { matches!(in_place_row_native(ROW), Native::DataViewGetFloat64 | Native::DataViewSetFloat64) } {
+                let value = vm.data_view_access_of(native, receiver, args);
+                if value.is_some() && vm.execution_mode == super::super::ExecutionMode::Compiled {
+                    vm.programs.note_js_jit_dataview_float64(native == Native::DataViewSetFloat64);
+                }
+                value
+            } else {
+                None
+            };
+            float64.or_else(|| vm.in_place_native_value_inline(code, native, r.get(i.b), receiver, args))
         };
         let Some(value) = value else {
-            sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
+            sibling!(native_call_miss::<H>, r, ip, Carried::script(cx))
         };
-        // An in-place case may allocate; a due collection runs at the lane's next safepoint.
+        // An in-place body may allocate; a due collection runs at the lane's next safepoint.
         note_allocation(vm);
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
@@ -355,13 +780,13 @@ script_handler! {
 /// whose result nothing reads (`result_dead`, asked only there) takes the form that may
 /// discard it (`call_array_callback_miss`'s `DISCARDS`).
 pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, result_dead: impl FnOnce() -> bool) -> Handler {
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 {
+    if concrete_returns_callee_completion(i.a) {
         return call_row::<H, { protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>();
     }
     match native {
         native if let Some(row) = builtin_row(native) => builtin_handler::<H>(row),
-        native if let Some(row) = in_place_row(native) => in_place_handler::<H>(row),
         native if let Some(handler) = math_handler::<H>(native) => handler,
+        native if let Some(handler) = in_place_handler::<H>(native) => handler,
         native if super::number::math_numbers_inline(native) => protocol_handler::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_MATH as u16 }>(),
         native if native.is_array_callback() && result_dead() => protocol_handler::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_ARRAY_CALLBACK_DISCARDING as u16 }>(),
         native if native.is_array_callback() => protocol_handler::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_ARRAY_CALLBACK as u16 }>(),
@@ -388,7 +813,7 @@ pub(super) fn body_native_call_in_lane<H: Host>(cx: *mut LaneContext<H>, call: &
         return body_native_out_in_lane(cx, call, native, (callee, receiver), &args);
     };
     note_allocation(vm);
-    call.registers.set(call.site.result, value);
+    concrete_write_call_result(call.registers.0.expose_provenance() as u64, call.site.result, value);
     LANE_CALL_COMPLETED
 }
 
@@ -402,8 +827,8 @@ script_handler! {
     pub(super) fn reflect_get_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         // SAFETY: the window is registers of the running function, read before anything runs.
-        let window = unsafe { lane_call_window(r, i) };
-        if i.a & crate::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted(cx) {
+        let window = unsafe { call_window_in_lane(r, i) };
+        if concrete_returns_callee_completion(i.a) && !returning_call_admitted(cx) {
             return exit(ip);
         }
         let read = match window {
@@ -451,7 +876,7 @@ fn body_native_out_in_lane<H: Host>(cx: *mut LaneContext<H>, call: &super::body_
     };
     // Guest code the native ran may have made the activations frames, whose registers these are.
     let after = unsafe { (*cx).registers };
-    after.set(call.site.result, value);
+    concrete_write_call_result(after.0.expose_provenance() as u64, call.site.result, value);
     if after.0 == call.registers.0 { return LANE_CALL_COMPLETED; }
     unsafe { (*cx).callee_resume = following(ip); (*cx).callee_acc = Value::UNDEFINED; }
     LANE_CALL_LEFT

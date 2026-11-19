@@ -10,7 +10,6 @@ use mru_chain::record_mru_entry;
 /// The slot word of a stored field entry: the slot in the low half, a store class in byte 2
 /// (`general_store`), and in byte 3 how many places of a lane body's leaves named the site
 /// (`Vm::note_field_leave`), written on that path only and kept across refills.
-pub(super) const FIELD_LEAVES_WORD: usize = 2;
 pub(super) const FIELD_LEAVES_SHIFT: u32 = 24;
 pub(super) const FIELD_BYTE: u32 = 0xff;
 
@@ -1034,7 +1033,6 @@ impl<H: Host> Vm<H> {
         self.closure_templates.fill(None);
         self.iterator_result_header = None;
         self.reused_iterator_result = Value::UNDEFINED;
-        self.shared_entry_pair = Value::UNDEFINED;
         self.descriptor_shapes = [None; _];
         self.descriptor_layout = None;
         self.regexp_object_header = None;
@@ -1803,7 +1801,7 @@ impl<H: Host> Vm<H> {
                 storage: None,
                 ty: crate::typed_ir::Type::ANY,
                 inherited: super::compiled::InheritedConstant::of([(cache.proved_prototype.bits(), value, cache.depth)]), function_shape: false,
-                raw_double: false, formed: None,
+                raw_double: false, formed: None, holder_id: None,
             });
         }
         loads
@@ -3266,6 +3264,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         // A getter the site's accessor entry answers is the `[[Get]]` result's whole
         // computation: its call with the receiver, without the data walk, which it would fail.
+        // A trivial getter's forward is that call's value (getters-as-calls.md).
+        match self.getter_entry_read(object, site) {
+            super::accessor_cache::GetterEntryRead::Answer(value, _) => return Ok(value),
+            super::accessor_cache::GetterEntryRead::Call(getter) => return self.call_value(p, getter, object, &[]),
+            super::accessor_cache::GetterEntryRead::Miss => {}
+        }
         if let Some(getter) = self.cached_field_getter(object, atom, site) {
             return self.call_value(p, getter, object, &[]);
         }
@@ -3331,7 +3335,7 @@ impl<H: Host> Vm<H> {
                         cell,
                         next: NO_ACCESSOR_FIELD,
                         getter: Value::UNDEFINED,
-                        answer: FieldCache::own(0, 0),
+                        answer: super::AccessorForward::None,
                     },
                 );
             }
@@ -3382,7 +3386,7 @@ impl<H: Host> Vm<H> {
                 cell,
                 next: NO_ACCESSOR_FIELD,
                 getter: Value::UNDEFINED,
-                answer: FieldCache::own(0, 0),
+                answer: super::AccessorForward::None,
             },
         );
     }
@@ -5215,11 +5219,11 @@ impl<H: Host> Vm<H> {
     /// How many runs of a lane body left at the site since its record was last reset,
     /// saturating at 255: the site's instability (byte 3 of its slot word, `FIELD_LEAVES_SHIFT`).
     pub(super) fn field_site_leaves(&self, site: usize) -> u8 {
-        (self.field_caches.stored(site)[FIELD_LEAVES_WORD] >> FIELD_LEAVES_SHIFT) as u8
+        (self.field_caches.stored(site).slot >> FIELD_LEAVES_SHIFT) as u8
     }
     pub(super) fn record_field_leave(&mut self, site: usize) {
         if !self.field_cache_records(site) { return; }
-        let word = &mut self.field_caches.stored_mut(site)[FIELD_LEAVES_WORD];
+        let word = &mut self.field_caches.stored_mut(site).slot;
         if *word >> FIELD_LEAVES_SHIFT != FIELD_BYTE { *word += 1 << FIELD_LEAVES_SHIFT; }
     }
     pub(super) fn record_field_cache(&mut self, site: usize, cache: FieldCache) {
@@ -5264,7 +5268,7 @@ impl<H: Host> Vm<H> {
         let leaves = self.field_site_leaves(site);
         self.field_caches.set(site, cache);
         if leaves != 0 {
-            self.field_caches.stored_mut(site)[FIELD_LEAVES_WORD] |= u32::from(leaves) << FIELD_LEAVES_SHIFT;
+            self.field_caches.stored_mut(site).slot |= u32::from(leaves) << FIELD_LEAVES_SHIFT;
         }
     }
     #[inline(always)]

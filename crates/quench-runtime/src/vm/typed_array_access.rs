@@ -1019,6 +1019,39 @@ unsafe fn store_number_element(kind: TypedArrayKind, target: *mut u8, value: Val
     true
 }
 
+/// `store_number_element` of any Number, a double into an integer kind by `store_double_element`.
+///
+/// # Safety
+/// As `store_number_element`.
+#[inline(always)]
+unsafe fn store_any_number(kind: TypedArrayKind, target: *mut u8, value: Value) -> bool {
+    // SAFETY: the caller's contract.
+    unsafe { store_number_element(kind, target, value) || store_double_element(kind, target, value) }
+}
+
+/// `store_number_element` of a non-integer into an integer kind: ToUint32's low bits or
+/// ToUint8Clamp of the double; false for a value that is no Number or a kind with no
+/// conversion here.
+///
+/// # Safety
+/// As `store_number_element`.
+#[inline(always)]
+unsafe fn store_double_element(kind: TypedArrayKind, target: *mut u8, value: Value) -> bool {
+    use crate::value::{number_to_u32, number_to_uint8_clamp};
+    let Some(number) = value.as_number() else { return false };
+    // SAFETY: the caller's contract, for each arm.
+    unsafe {
+        match kind {
+            TypedArrayKind::Uint8 | TypedArrayKind::Int8 => write_element(target, number_to_u32(number) as u8),
+            TypedArrayKind::Uint8Clamped => write_element(target, number_to_uint8_clamp(number)),
+            TypedArrayKind::Uint16 | TypedArrayKind::Int16 => write_element(target, number_to_u32(number) as u16),
+            TypedArrayKind::Uint32 | TypedArrayKind::Int32 => write_element(target, number_to_u32(number)),
+            _ => return false,
+        }
+    }
+    true
+}
+
 /// How many views `TypedViewCache` holds, a power of two: a view's slot index picks its entry.
 const TYPED_VIEW_ENTRIES: usize = 64;
 
@@ -1131,6 +1164,15 @@ impl<H: Host> Vm<H> {
         let Some((kind, element)) = self.typed_cached_slot::<KIND>(object, key) else { return false };
         // SAFETY: `typed_cached_slot` proved one element of `kind` writable at `element`.
         unsafe { store_number_element(kind, element, value) }
+    }
+
+    /// `typed_cached_store` of any Number, a double into an integer kind included
+    /// (`store_double_element`): the store-miss handler's first try, before it refills the entry.
+    #[inline(always)]
+    pub(super) fn typed_cached_store_number<const KIND: usize>(&mut self, object: Value, key: Value, value: Value) -> bool {
+        let Some((kind, element)) = self.typed_cached_slot::<KIND>(object, key) else { return false };
+        // SAFETY: as `typed_cached_store`.
+        unsafe { store_any_number(kind, element, value) }
     }
 
     /// The kind and element address at `key` of the current, writable cached entry of

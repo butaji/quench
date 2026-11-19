@@ -8,6 +8,7 @@ use crate::value_vec::{
 use crate::vm::program_store::ProgramId;
 use crate::vm::wtf16::JsString;
 use super::{WeakMapEntries, WeakSetEntries};
+use super::{ArrayElements, BufferBytes, Entries, PromiseCell, array_elements, array_proofs, dependencies, layouts, thin_slice};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -85,6 +86,36 @@ pub(crate) fn intrinsic_epoch() -> u64 {
 #[cold]
 pub(crate) fn note_intrinsic_change() {
     INTRINSIC_EPOCH.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Declares `Native`, one entry per builtin function kind, in discriminant order. The order fixes
+/// the discriminants that tables index and snapshots serialize, so entries never move. An entry
+/// marked `: unshared` is not a shared function object: `Vm::native_value` never builds it.
+/// `Native::COUNT` (`heap/cell/snapshot.rs`) is the list's length: `ALL`'s type states it, so a
+/// list of another length does not compile.
+macro_rules! natives {
+    ($( $(#[$meta:meta])* $variant:ident $(: $flag:ident)? ),* $(,)?) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[repr(u16)]
+        pub(crate) enum Native {
+            $( $(#[$meta])* $variant, )*
+        }
+
+        impl Native {
+            /// Every native in discriminant order: `ALL[n as usize]` has discriminant `n`.
+            pub(crate) const ALL: [Native; Native::COUNT as usize] = [$(Native::$variant),*];
+
+            /// Whether this native is a shared function object, which `Vm::native_value` builds on
+            /// first read and every realm shares.
+            pub(crate) const fn has_shared_function(self) -> bool {
+                /// Each native's `unshared` flag, by discriminant.
+                const UNSHARED: [bool; Native::COUNT as usize] = [$(natives!(@unshared $($flag)?)),*];
+                !UNSHARED[self as usize]
+            }
+        }
+    };
+    (@unshared) => { false };
+    (@unshared unshared) => { true };
 }
 
 #[rustfmt::skip]
@@ -614,6 +645,15 @@ natives! {
     CallSiteConstructor,
     CallSiteGetFunction,
     MathInitialize: unshared,
+    /// Initializers of the lazily installed namespaces and groups (`install_lazy_builtin_namespace`).
+    AtomicsInitialize: unshared,
+    WebAssemblyInitialize: unshared,
+    IntlInitialize: unshared,
+    ReflectInitialize: unshared,
+    ProxyInitialize: unshared,
+    WeakRefInitialize: unshared,
+    FinalizationRegistryInitialize: unshared,
+    DataViewInitialize: unshared,
 }
 
 /// A global's cold facts, boxed with its object part so the cell stays compact.
@@ -688,6 +728,7 @@ pub(crate) struct ArrayFromAsyncState {
     pub(crate) awaiting: ArrayFromAsyncAwait,
 }
 
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum FunctionKind {
     User(ProgramId, u32),
     Native(Native),
@@ -875,20 +916,58 @@ impl std::ops::DerefMut for Object {
 /// the null and undefined sentinels at the top.
 const PROTO_NULL: u32 = PROTO_INDEX_BITS;
 const PROTO_UNDEFINED: u32 = PROTO_INDEX_BITS - 1;
-/// Cells a heap may hold so that any of them can be a prototype (`staged::object_encoding`).
+/// Cells a heap may hold so that any of them can be a prototype (`staged::object_encoding`), and
+/// the link layout generated code reads: the legacy slots, then the object window, then the array
+/// window, each `RECORD_SPACE_CAPACITY` links and aligned to it.
 pub(crate) use crate::staged::object_encoding::{MAX_HEAP_CELLS, PROTO_ARRAY_RECORD_BASE, PROTO_INDEX_BITS, PROTO_OBJECT_RECORD_BASE};
-const PROTO_FUNCTION_RECORD_BASE: u32 = PROTO_ARRAY_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
-const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
-const PROTO_ITERATOR_RECORD_BASE: u32 = PROTO_PROMISE_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
-const PROTO_RECORD_END: u32 = PROTO_ITERATOR_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
-const _: () = assert!(PROTO_RECORD_END <= PROTO_UNDEFINED);
+use crate::staged::object_encoding::RECORD_SPACE_CAPACITY;
+/// The legacy slots a heap reserves, every one of which a window link names (`heap::slots`).
+pub(crate) const LEGACY_SLOT_CAPACITY: usize = MAX_HEAP_CELLS;
+/// Window sizes of the prototype link space, one per family. A record space may grow past its
+/// window (`records.rs` capacities); a record past it that becomes a prototype takes an overflow
+/// link (`heap::prototypes`), codes from `PROTO_RECORD_END` up to the sentinels.
+const OBJECT_PROTO_WINDOW: usize = RECORD_SPACE_CAPACITY;
+const ARRAY_PROTO_WINDOW: usize = RECORD_SPACE_CAPACITY;
+const FUNCTION_PROTO_WINDOW: usize = RECORD_SPACE_CAPACITY;
+const PROMISE_PROTO_WINDOW: usize = RECORD_SPACE_CAPACITY;
+const ITERATOR_PROTO_WINDOW: usize = RECORD_SPACE_CAPACITY;
+const COLLECTION_PROTO_WINDOW: usize = RECORD_SPACE_CAPACITY;
+const PROTO_FUNCTION_RECORD_BASE: u32 = PROTO_ARRAY_RECORD_BASE + ARRAY_PROTO_WINDOW as u32;
+const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + FUNCTION_PROTO_WINDOW as u32;
+const PROTO_ITERATOR_RECORD_BASE: u32 = PROTO_PROMISE_RECORD_BASE + PROMISE_PROTO_WINDOW as u32;
+const PROTO_COLLECTION_RECORD_BASE: u32 = PROTO_ITERATOR_RECORD_BASE + ITERATOR_PROTO_WINDOW as u32;
+const PROTO_RECORD_END: u32 = PROTO_COLLECTION_RECORD_BASE + COLLECTION_PROTO_WINDOW as u32;
+const _: () = assert!(PROTO_ARRAY_RECORD_BASE == PROTO_OBJECT_RECORD_BASE + OBJECT_PROTO_WINDOW as u32);
+const _: () = assert!(PROTO_RECORD_END < PROTO_UNDEFINED);
 const _: () = assert!(PROTO_OBJECT_RECORD_BASE.is_multiple_of(OBJECT_PROTO_WINDOW as u32));
 const _: () = assert!(PROTO_ARRAY_RECORD_BASE.is_multiple_of(ARRAY_PROTO_WINDOW as u32));
 const _: () = assert!(PROTO_FUNCTION_RECORD_BASE.is_multiple_of(FUNCTION_PROTO_WINDOW as u32));
 const _: () = assert!(PROTO_PROMISE_RECORD_BASE.is_multiple_of(PROMISE_PROTO_WINDOW as u32));
 const _: () = assert!(PROTO_ITERATOR_RECORD_BASE.is_multiple_of(ITERATOR_PROTO_WINDOW as u32));
 const _: () = assert!(PROTO_COLLECTION_RECORD_BASE.is_multiple_of(COLLECTION_PROTO_WINDOW as u32));
-const _: () = assert!(LEGACY_SLOT_CAPACITY <= PROTO_ARRAY_RECORD_BASE as usize);
+const _: () = assert!(LEGACY_SLOT_CAPACITY <= PROTO_OBJECT_RECORD_BASE as usize);
+
+/// The link of `prototype`, record `id` of a family whose window starts at `base` and holds
+/// `window` links: its window link while `id` fits, else an overflow link (`heap::prototypes`),
+/// so a record space may grow past its window and its records still serve as prototypes.
+#[inline]
+fn windowed(prototype: Value, base: u32, window: usize, id: u32) -> u32 {
+    if (id as usize) < window {
+        base + id
+    } else {
+        overflow_link(prototype)
+    }
+}
+
+/// The overflow link of `prototype` (`heap::prototypes`): past every window, below the sentinels.
+#[cold]
+#[inline(never)]
+fn overflow_link(prototype: Value) -> u32 {
+    let codes = (PROTO_UNDEFINED - PROTO_RECORD_END) as usize;
+    let index = super::prototypes::intern(prototype.to_bits(), codes)
+        .expect("prototype links exhausted: every out-of-window code is taken");
+    PROTO_RECORD_END + index
+}
 
 /// An object's encoded prototype reference (`PROTO_INDEX_BITS`). Equal links name the same
 /// prototype, so a chain walk compares links instead of decoding each to a `Value`.
@@ -937,12 +1016,12 @@ impl ProtoLink {
         match self.0 {
             PROTO_NULL => Value::NULL,
             PROTO_UNDEFINED => Value::UNDEFINED,
-            index if index < PROTO_ARRAY_RECORD_BASE => Value::heap(index),
-            index if index < PROTO_OBJECT_RECORD_BASE => {
-                Value::direct_array(index - PROTO_ARRAY_RECORD_BASE)
+            index if index < PROTO_OBJECT_RECORD_BASE => Value::heap(index),
+            index if index < PROTO_ARRAY_RECORD_BASE => {
+                Value::direct_object(index - PROTO_OBJECT_RECORD_BASE)
             }
             index if index < PROTO_FUNCTION_RECORD_BASE => {
-                Value::direct_object(index - PROTO_OBJECT_RECORD_BASE)
+                Value::direct_array(index - PROTO_ARRAY_RECORD_BASE)
             }
             index if index < PROTO_PROMISE_RECORD_BASE => {
                 Value::direct_function(index - PROTO_FUNCTION_RECORD_BASE)
@@ -1023,7 +1102,7 @@ pub(super) const NATIVE_OBJECT_EXTRAS_TAG: u64 = EXTRAS_TAG;
 pub(super) const NATIVE_OBJECT_EXTRAS_TAG_MASK: u64 = EXTRAS_TAG_MASK;
 pub(super) const NATIVE_OBJECT_PROTO_MASK: u32 = PROTO_INDEX_BITS;
 pub(super) const NATIVE_OBJECT_PROTO_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE;
-pub(super) const NATIVE_OBJECT_PROTO_RECORD_END: u32 = PROTO_FUNCTION_RECORD_BASE;
+pub(super) const NATIVE_OBJECT_PROTO_RECORD_END: u32 = PROTO_ARRAY_RECORD_BASE;
 
 const _: () =
     assert!(NATIVE_OBJECT_META_OFFSET + std::mem::size_of::<u32>() <= NATIVE_OBJECT_RECORD_SIZE);

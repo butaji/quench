@@ -56,11 +56,10 @@ impl<H: Host> Vm<H> {
         let Some(source_shape) = self.enum_cache_shape_of(source_data) else {
             return false;
         };
-        let epoch = crate::heap::prototype_layout_epoch();
         let memoized = self
             .plain_assign_shapes
             .get(target_shape, (source_shape, target_proto))
-            .filter(|entry| entry.proved == epoch);
+            .filter(|entry| entry.cell.holds());
         let (Some(entry), Some(slots)) = (memoized, self.enumerable_keys.get(source_shape)) else {
             return false;
         };

@@ -356,7 +356,9 @@ pub(crate) fn window_fill<S: Stage>(stage: &mut S, facts: S::Word, room: S::Word
 pub(crate) fn enter_cached<S: Stage>(stage: &mut S, held: S::Word, expected: Option<u64>, cell: S::Word, miss: S::Miss)
     -> Option<S::Word> {
     if let Some(expected) = expected {
-        super::protocol::guard_callee(stage, held, expected, miss)?;
+        // `protocol::guard_callee`, written out: the stencil build includes this file without `protocol`.
+        let same = stage.eq_imm(held, expected);
+        stage.guard(same, miss)?;
     }
     Some(stage.load_u64(Region::EntryCell.mutable(), cell, CELL.entry_offset))
 }
@@ -380,6 +382,17 @@ mod tests {
             ENTRY_CELL.proven_offset, ENTRY_CELL.numbers_offset, ENTRY_CELL.uses_this_offset];
         assert_eq!(offsets, [0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80]);
         assert_eq!((std::mem::size_of::<EntryCellLayoutWords>(), std::mem::align_of::<EntryCellLayoutWords>()), (128, 64));
+    }
+
+    #[test]
+    fn a_cached_entry_is_one_identity_compare_and_one_load() {
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut cell = cell(7, 5, 8, 2, 1);
+        cell.entry = 0xC0DE;
+        let at = std::ptr::addr_of!(cell) as u64;
+        assert_eq!(enter_cached(&mut stage, 42, Some(42), at, ()), Some(0xC0DE));
+        assert_eq!(enter_cached(&mut stage, 41, Some(42), at, ()), None, "another callee leaves");
+        assert_eq!(enter_cached(&mut stage, 41, None, at, ()), Some(0xC0DE), "a folded identity is the load alone");
     }
 
     #[test]
