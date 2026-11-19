@@ -2,6 +2,7 @@ use super::*;
 use crate::bytecode::index;
 use crate::staged::frame_arm::FrameArm;
 mod loop_stack;
+mod interpreter_frame;
 pub(super) use interpreter_frame::{InterpreterFrame, RowRun, runs_row};
 mod materialized_stops;
 
@@ -1706,7 +1707,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<FrameOutcome> {
         let instruction = instruction.filter(|instruction| crate::staged::Operation::<u64, ()>::is_await(*instruction))?;
         self.await_value_in_lane(p, frame, instruction.register_b(), instruction.result_register(), pc)
-            .map(|value| FrameOutcome::Await { value, destination: instruction.result_register(), frame: None })
+            .map(|value| FrameOutcome::Suspend(Suspended::Await { value, destination: instruction.result_register() }, None))
     }
 
     /// `stop_awaits_in_lane` of the `Await` at `pc` that reads register `awaited` and resumes into
@@ -2217,7 +2218,7 @@ impl<H: Host> Vm<H> {
                     }
                 }
                 FrameArm::LoadCapture => {
-                    if let (Some(value), _) =
+                    if let Some(value) =
                         self.cached_plain_capture(frame, ins.capture_depth(), ins.capture_slot())
                     {
                         self.write(frame, ins.result_register(), value);
@@ -2933,6 +2934,16 @@ impl<H: Host> Vm<H> {
         // established `slot < Function.locals`; invocation setup sizes this frame
         // to that function's local count.
         unsafe { *self.frames.get_unchecked(frame).locals.get_unchecked(slot) }
+    }
+
+    #[inline(always)]
+    /// Writes a local whose slot was checked by residual validation.
+    ///
+    /// # Safety
+    /// As `read_validated_local`.
+    pub(super) unsafe fn write_validated_local(&mut self, frame: usize, slot: usize, value: Value) {
+        // SAFETY: as `read_validated_local`.
+        unsafe { *self.frames.get_unchecked_mut(frame).locals.get_unchecked_mut(slot) = value; }
     }
 
 }
