@@ -3893,6 +3893,7 @@ lane_handler! {
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
 mod protocol_misses; use protocol_misses::*;
+mod derived_frames;
 mod local_fields;
 use local_fields::local_field_handler;
 mod window_bodies;
@@ -22331,73 +22332,10 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
     let Some((program, id, env, this, completion)) = target else {
         return exit(ip);
     };
-    #[cfg(feature = "profile-lane-exits")]
-    if let Some(body) = frame_entry_census(vm, program, id) {
-        super::lane_exits::record_detail(format!("frame construct {body}"));
-    }
-    // Allocating the receiver can make a collection due.
-    note_allocation(vm);
-    // SAFETY: the call record lies in the running view.
-    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
-    vm.frames[frame].pc = call_pc + 1;
-    vm.frames[frame].pc_is_resume = true;
     let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
-    // SAFETY: the construction's window is registers of the caller frame, which the push
-    // neither moves nor frees before it copies them.
-    let arguments: *const [Value] = unsafe { std::ptr::slice_from_raw_parts(r.0.add(usize::from(i.c)), argc) };
-    vm.set_construct_target(Some(super::activation::ConstructionTarget { callee, new_target: callee }));
-    // A constructor of another program runs in its own, which the push makes active and the
-    // loop's executing one sets aside, as `lane_push_frame_call` pushes a call.
-    let caller_program = (program != unsafe { (*cx).program }).then(|| {
-        // SAFETY: the general loop's executing program outlives the lane run.
-        let executing = unsafe { &mut *(*cx).executing };
-        let saved = super::dispatch_frame::SavedProgram {
-            id: executing.id,
-            retained: std::mem::replace(&mut executing.retained, vm.programs.get(program)),
-        };
-        executing.id = program;
-        lane_enter_program(cx, program);
-        saved
-    });
-    // SAFETY: the context's program is now the callee's, which outlives the lane run.
-    let code = unsafe { &*(*cx).code };
-    let pushed = vm.push_general_user_frame(code, id, env, this, unsafe { &*arguments }, CallContext::user_function(id, callee));
-    vm.set_construct_target(None);
-    match pushed {
-        Ok(call_guard) => {
-            // SAFETY: the general loop's pending calls outlive the lane run.
-            unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
-                caller: frame,
-                caller_cursor: None,
-                call_pc: call_pc as u32,
-                destination: i.a & crate::bytecode::REGISTER_MASK,
-                completion,
-                returns,
-                call_guard: Some(call_guard),
-                caller_program,
-            });
-            // The pushed frame's guard narrows the activations the thread admits.
-            vm.lane_stack.refresh_activation_limit();
-            let callee_frame = frame + 1;
-            if let Some(return_pc) = vm.js_tier_frame_entry(code, callee_frame) {
-                vm.frames[callee_frame].pc = return_pc;
-            }
-            lane_enter_script_frame(cx, callee_frame).into_loop()
-        }
-        // A failed push (the guest call depth) throws at the construction, as the general
-        // path's. The caller's program is the executing one again.
-        Err(error) => {
-            if let Some(saved) = caller_program {
-                // SAFETY: as above.
-                let executing = unsafe { &mut *(*cx).executing };
-                executing.id = saved.id;
-                executing.retained = saved.retained;
-                lane_enter_program(cx, saved.id);
-            }
-            vm.lane_completion.raise(error);
-            exit(ip)
-        }
-    }
+    // SAFETY: the construction's window is registers of the caller frame.
+    let arguments = std::ptr::slice_from_raw_parts(unsafe { r.0.add(usize::from(i.c)) }, argc);
+    derived_frames::push_construction_frame(cx, ip, i, frame, (program, id, env), (callee, callee), (this, completion), arguments)
 }
 
 /// Continue in JavaScript frame `frame` at its resume point, with the lane's per-frame
@@ -22714,6 +22652,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::StoreLocal | Class::StoreEnvLocal => Some(lane_store_local::<H>),
         Class::LoadCallee => Some(lane_load_callee::<H>),
         Class::InitializeTdz => Some(lane_initialize_tdz::<H>),
+        _ if opcode.binds_this() => Some(derived_frames::bind_this_in_frame::<H>),
         Class::CloneEnv => Some(lane_clone_env::<H>),
         Class::GetField => Some(lane_get_field_first::<H>),
         _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::Register, .. })) => Some(lane_set_object_field_own::<H, false>),
@@ -22963,10 +22902,10 @@ fn lane_call_fits(instruction: WideInstruction) -> bool {
                 && !instruction.parameter_eval()
         }
         Class::CallForwardingArguments => lane_returns(instruction),
+        // `super(...)` takes either argument form (`derived_frames::super_construct_in_frame`).
         Class::Construct => {
             lane_returns(instruction)
-                && !instruction.is_super_construct()
-                && !ImmediateLayout::construct_array_arguments(instruction.imm())
+                && (instruction.is_super_construct() || !ImmediateLayout::construct_array_arguments(instruction.imm()))
         }
         Class::GetField => lane_returns(instruction) || lane_sinks_field(instruction),
         Class::Unary | Class::MakeObject2 | Class::SuperConstArrayObject2 | Class::MakeObjectLiteral => {
@@ -23397,6 +23336,9 @@ fn derive_lane_view<'live, H: Host>(
                     handler: lane_get_field_sink_first::<H> as Handler,
                     produces: false,
                 })
+            } else if op.immediate_layout() == ImmediateLayout::ConstructCountAndFlags && ImmediateLayout::super_construct(instruction.imm()) {
+                // `super(...)`: the parent pushed in place in the frame the lane runs (`derived_frames`).
+                Some(LaneHandler { handler: derived_frames::super_construct_in_frame::<H> as Handler, produces: false })
             } else if let Some(kind) = returning_kind(instruction) {
                 Some(LaneHandler { handler: returning_handler::<H>(kind), produces: false })
             } else if let Some(handler) = wasm.then(|| wasm_lane_handler::<H>(op)).flatten() {

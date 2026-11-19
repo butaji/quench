@@ -46,7 +46,9 @@ fn without_helper_addresses_every_opcode_leaves() {
 /// The opcodes whose only lowering is the generic helper step, each for the reason beside it:
 /// no fast arm a register's word, a shape or a backing the row can read decides, so the helper
 /// is their whole operation, not a slow arm.
-const RESIDUAL: [Op; 18] = [
+const RESIDUAL: [Op; 19] = [
+    // Reads the frame's `this` binding, a VM-held dynamic binding of the derived constructor's environment.
+    Op::SuperCallCheck,
     // The define adds a property: where its site recorded the transition (`Known::adds`) its staged row (`staged::add`) is the fast arm (`adds`) and this helper its slow arm; with none recorded, the helper is the whole operation.
     Op::DefineField,
     // The key is converted (guest code) and the property defined through the shape's slow path.

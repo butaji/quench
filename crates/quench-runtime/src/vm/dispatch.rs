@@ -146,11 +146,11 @@ impl<H: Host> Vm<H> {
     /// A plain construction the loop pushes in place (`inline_construct_target`), its receiver bound.
     pub(super) fn try_inline_construct(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize)
         -> Option<Result<StepResult, JsError>> {
+        if i.is_super_construct() {
+            return self.try_inline_super_construct(p, f, i, pc);
+        }
         let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else { return None };
         let callee = self.read(f, i.register_b());
-        if i.is_super_construct() {
-            return self.try_inline_super_construct(p, f, i, pc, window, callee);
-        }
         let arguments: *const [Value] = self.register_window(f, window);
         if let Some((program, id, env, this)) = self.inline_construct_target(p, f, callee) {
             // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
@@ -170,18 +170,24 @@ impl<H: Host> Vm<H> {
     /// receiver made from it (`CallCompletion::Constructor`), a derived parent's binding its own
     /// (`CallCompletion::DerivedConstructor`). The construction's value lands in the record's
     /// register, which `SuperCallCheck` and `InitializeThis` then bind, as after
-    /// `construct_super_value`. Spread arguments and any other parent keep that path.
-    fn try_inline_super_construct(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize,
-        window: crate::bytecode::RegisterWindow, parent: Value) -> Option<Result<StepResult, JsError>> {
-        let (program, id, env, new_target, receiver) = self.inline_super_construct_target(p, f, parent)?;
-        let arguments: *const [Value] = self.register_window(f, window);
-        let (this, completion) = match receiver {
-            Some(this) => (this, CallCompletion::Constructor(this)),
-            None => (Value::UNDEFINED, CallCompletion::DerivedConstructor),
+    /// `construct_super_value`. Applied arguments (an implicit constructor's rest list) are
+    /// passed where a dense array holds them (`dense_super_arguments`); arguments that reading
+    /// would run guest code for, and any other parent, keep that path.
+    fn try_inline_super_construct(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize)
+        -> Option<Result<StepResult, JsError>> {
+        let parent = self.read(f, i.register_b());
+        let construction = self.inline_super_construct_target(p, f, parent)?;
+        let listed;
+        let arguments: *const [Value] = match i.construct_arguments() {
+            crate::bytecode::ConstructArguments::Registers(window) => std::ptr::from_ref(self.register_window(f, window)),
+            crate::bytecode::ConstructArguments::Array(register) => {
+                listed = self.dense_super_arguments(self.read(f, register))?;
+                std::ptr::from_ref(listed.as_slice())
+            }
         };
-        // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
-        self.push_in_loop_construction(p, f, pc, (program, id, env), (parent, Some(new_target)), this, unsafe { &*arguments },
-            i.result_register(), completion)
+        // SAFETY: see `push_general_user_frame`; the window (or list) outlives callee setup.
+        self.push_in_loop_construction(p, f, pc, construction.target, (parent, Some(construction.new_target)), construction.this,
+            unsafe { &*arguments }, i.result_register(), construction.completion)
     }
 
     /// A field read's `getter`, a user function the loop may push in place, run as the next

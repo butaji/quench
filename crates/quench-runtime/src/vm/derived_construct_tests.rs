@@ -134,3 +134,36 @@ print([dx, rep(() => new DX(1).s), JSON.stringify(rep((i) => new DY(i % 4)))].jo
 "#;
     assert_eq!(printed(source, "derived-construct-throws.js"), [r#"p3 ok {"x":0,"e":"p3"}"#]);
 }
+
+/// The steps of `super(...)` the lane makes in the frame it runs (`dispatch_fast::derived_frames`):
+/// an implicit constructor, whose rest list applies as a dense array, and spread arguments; an
+/// instance initializer that throws once `this` is bound, caught in the constructor; a second
+/// `super` caught after the parent ran again; `this` read before `super`, caught, then `super`.
+#[test]
+fn super_steps_run_in_the_frame_the_lane_runs() {
+    let source = r#"
+class B0 { constructor(a, b) { this.s = a + b; } }
+class B1 extends B0 {}
+class B2 extends B1 { constructor(a) { super(a, 1); this.t = this.s * 2; } }
+class B3 extends B0 { constructor(...xs) { super(...xs); this.n = xs.length; } }
+print([JSON.stringify(rep((i) => new B2(i))), rep((i) => new B2(i)) instanceof B1, JSON.stringify(rep((i) => new B3(i, 2, 3)))].join(" "));
+let boom = false;
+class I0 { constructor() { this.i0 = 1; } }
+class I1 extends I0 { f = (() => { if (boom) throw new Error("f"); return 2; })(); constructor() { try { super(); } catch (e) { this.caught = e.message; } } }
+const i1 = JSON.stringify(rep(() => new I1()));
+boom = true;
+print([i1, JSON.stringify(rep(() => new I1()))].join(" "));
+class A { constructor(x) { this.a = x; } }
+class D3 extends A { constructor() { super(1); try { super(2); } catch (e) { this.second = e.constructor.name; } } }
+class TB extends A { constructor() { let r = "none"; try { const t = this; r = typeof t; } catch (e) { r = e.constructor.name; } super(r); } }
+print([JSON.stringify(rep(() => new D3())), JSON.stringify(rep(() => new TB()))].join(" "));
+"#;
+    assert_eq!(
+        printed(source, "derived-construct-lane-steps.js"),
+        [
+            r#"{"s":2000,"t":4000} true {"s":2001,"n":3}"#,
+            r#"{"i0":1,"f":2} {"i0":1,"caught":"f"}"#,
+            r#"{"a":1,"second":"ReferenceError"} {"a":"ReferenceError"}"#,
+        ]
+    );
+}

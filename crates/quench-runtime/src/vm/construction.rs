@@ -19,6 +19,17 @@ pub(super) struct ClosureShapes {
     prototype: Option<(u32, u32)>,
 }
 
+/// A `super(...)` pushed in place (`Vm::inline_super_construct_target`): the parent's program,
+/// function and environment, the `new.target` it constructs with, the `this` its frame starts
+/// with (the receiver made from `new.target` for a base parent, `undefined` for a derived one,
+/// which binds its own), and the completion of its pending call.
+pub(super) struct SuperConstruction {
+    pub(super) target: (ProgramId, u32, Value),
+    pub(super) new_target: Value,
+    pub(super) this: Value,
+    pub(super) completion: CallCompletion,
+}
+
 /// What a recorded ordinary closure of one nested function in one realm is made of, apart
 /// from its environment (`Vm::closure_in_realm`): its own properties' values under their
 /// named shape, its `[[Prototype]]`, its kind, and for a constructor its prototype object's
@@ -823,11 +834,12 @@ impl<H: Host> Vm<H> {
     }
 
     /// `super(...)` at frame `frame` of `parent`, a user constructor the loop may push in place
-    /// with the running constructor's `new.target` (`construct_super_value`): the parent's code
-    /// and environment, the `new.target`, and the receiver when the parent is a base constructor
-    /// (`inline_constructible`), which OrdinaryCreateFromConstructor makes from `new.target`'s
-    /// own data `prototype` (`inline_construct_template_by`); `None` as the receiver for a
-    /// derived parent (`inline_derived_constructible`), which binds its own. Any other parent
+    /// with the running constructor's `new.target` (`construct_super_value`): a base parent
+    /// (`inline_constructible`) over the receiver OrdinaryCreateFromConstructor makes from
+    /// `new.target`'s own data `prototype` (`inline_construct_template_by`), completing as
+    /// `CallCompletion::Constructor`; a derived parent (`inline_derived_constructible`), which
+    /// binds its own, as `CallCompletion::DerivedConstructor`. Both the general loop
+    /// (`Vm::try_inline_construct`) and a lane running the frame (`derived_frames`) push it. Any other parent
     /// (a native, a bound function, a proxy, a class with instance fields at its root, a
     /// `new.target` whose `prototype` is not an own data object) keeps `construct_super_value`.
     pub(super) fn inline_super_construct_target(
@@ -835,17 +847,28 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         frame: usize,
         parent: Value,
-    ) -> Option<(ProgramId, u32, Value, Value, Option<Value>)> {
+    ) -> Option<SuperConstruction> {
         let new_target_atom = self.runtime_atoms.new_target;
         let new_target = self
             .dynamic_binding(self.frame_caller(frame), new_target_atom)
             .filter(|value| !value.is_undefined() && self.is_constructable(*value))?;
-        if let Some((program_id, id, env)) = self.in_loop_constructor(p, frame, parent, Self::inline_derived_constructible) {
-            return Some((program_id, id, env, new_target, None));
+        if let Some(target) = self.in_loop_constructor(p, frame, parent, Self::inline_derived_constructible) {
+            return Some(SuperConstruction { target, new_target, this: Value::UNDEFINED, completion: CallCompletion::DerivedConstructor });
         }
-        let (program_id, id, env) = self.in_loop_constructor(p, frame, parent, Self::inline_constructible)?;
+        let target = self.in_loop_constructor(p, frame, parent, Self::inline_constructible)?;
         let object = self.inline_construct_template_by(new_target, parent)?;
-        Some((program_id, id, env, new_target, Some(self.heap.alloc_object(object))))
+        let this = self.heap.alloc_object(object);
+        Some(SuperConstruction { target, new_target, this, completion: CallCompletion::Constructor(this) })
+    }
+
+    /// The values `super(...)` applies from `array` (`ConstructArguments::Array`: an implicit
+    /// derived constructor's rest list, or a spread) where reading them runs no guest code: a
+    /// dense array's elements, as CreateListFromArrayLike reads them (`dense_apply_arguments`).
+    /// `None` leaves the construction to `construct_super_value`, which reads them in full and
+    /// rejects a non-array as the general step does.
+    pub(super) fn dense_super_arguments(&self, array: Value) -> Option<Vec<Value>> {
+        self.heap.array(array)?;
+        self.dense_apply_arguments(array)
     }
 
     /// The checks `inline_construct_target` makes of the running frame and of `callee`, a user
