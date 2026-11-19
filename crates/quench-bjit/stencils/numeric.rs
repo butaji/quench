@@ -19,7 +19,7 @@ use crate::vm::operations::{I32BitwiseStage, NumberArithmetic, NumberBitwise, Nu
 pub(crate) use crate::words::*;
 
 pub(crate) use crate::codes::*;
-pub(crate) use crate::places::{deliver, index_of, number_word};
+pub(crate) use crate::places::{deliver, index_of, number_word, read_place, widen};
 
 const fn arithmetic_of(kind: u8) -> NumberArithmetic {
     match kind {
@@ -187,6 +187,20 @@ fn guard_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) 
     if D != MEMINT && D != MEM {
         frame.write(&mut stage, DEST, value, rep);
     }
+    Out::Next(frame.s)
+}
+
+/// `guard_row` with its tag test left out (`UNBOX`): the pinned destination takes the frame slot's word as it holds it, a
+/// pinned int32 its low word, a pinned double its binary64 bits (an int word widened). Only where the entry proved the
+/// slot a Number: the caller's argument proof (`CallRecord::proven_args`) is what makes the test redundant.
+#[inline(always)]
+fn unbox_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    let word = read_place::<MEM, LEFT>(&frame.s);
+    let (value, rep) = match D {
+        PIN..=LAST_INT_PIN => (word as u32 as u64, Representation::Int32),
+        _ => (if is_int(word) { widen(word) } else { word }, Representation::Float64),
+    };
+    frame.write(&mut Concrete::from_hole(0), DEST, value, rep);
     Out::Next(frame.s)
 }
 
@@ -377,6 +391,7 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
         LT..=NE => compare_row::<K, D, A, B, SPEC>(frame),
         JUMP | JUMP_POLL | JUMP_WATCH | POLL => control_row::<K, D, A, B>(frame),
         GUARD => guard_row(frame),
+        UNBOX => unbox_row(frame),
         JUMP_TRUE => truth_row::<true, D, A, B>(frame),
         JUMP_FALSE => truth_row::<false, D, A, B>(frame),
         NOT | NEG => unary_row::<K, D, A, B>(frame),

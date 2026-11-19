@@ -18,7 +18,7 @@ fn read_operands(kind: u8, dst: u8, a: u8, b: u8) -> (u8, u8, u8) {
         _ if is_copy(kind) => (dst, a, MEM),
         _ if is_compare(kind) => (MEM, a, b),
         JUMP | JUMP_POLL | JUMP_WATCH | POLL | TAG_INIT => (MEM, MEM, MEM),
-        GUARD | NOT | NEG | CLZ32 | MATH_FIRST..=MATH_LAST => (dst, a, MEM),
+        GUARD | UNBOX | NOT | NEG | CLZ32 | MATH_FIRST..=MATH_LAST => (dst, a, MEM),
         JUMP_TRUE | JUMP_FALSE | SPILL => (MEM, a, MEM),
         _ => (dst, a, b),
     }
@@ -134,6 +134,9 @@ fn control(places: &Places, rows: &mut BTreeSet<Code>) {
     }
     for &dst in places.floats_dst.iter().chain(&places.ints_dst) {
         rows.insert(canonical((GUARD, dst, MEM, MEM, true)));
+    }
+    for dst in int_pins().chain(double_pins()) {
+        rows.insert(canonical((UNBOX, dst, MEM, MEM, true)));
     }
     for a in int_pins().chain(double_pins()) {
         rows.insert(canonical((SPILL, MEM, a, MEM, true)));

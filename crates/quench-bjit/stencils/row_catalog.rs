@@ -377,6 +377,10 @@ macro_rules! catalog {
     JUMP,
     JUMP_POLL,
     GUARD,
+    /// `GUARD` of a pinned destination with its tag test left out: the destination takes the frame slot at hole 1's word
+    /// unboxed as the destination holds it. A proven-arguments entry runs it where the caller proved the argument a Number
+    /// (`numeric::unbox_row`).
+    UNBOX,
     TAG_INIT,
     SPILL,
     JUMP_WATCH,

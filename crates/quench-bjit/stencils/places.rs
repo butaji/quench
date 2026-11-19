@@ -36,13 +36,13 @@ fn stage() -> Concrete {
 
 /// The binary64 bits of the int32 in the low half of `value`.
 #[inline(always)]
-fn widen(value: u64) -> u64 {
+pub(crate) fn widen(value: u64) -> u64 {
     stage().i32_to_f64(value)
 }
 
 /// The place's value in its own representation.
 #[inline(always)]
-fn read_place<const P: u8, const H: u8>(s: &S) -> u64 {
+pub(crate) fn read_place<const P: u8, const H: u8>(s: &S) -> u64 {
     match P {
         // SAFETY: the frame slot at hole `H` is a live register of the activation.
         MEM => unsafe { (slot::<H>(s) as *const u64).read() },
