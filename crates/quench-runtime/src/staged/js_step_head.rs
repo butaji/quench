@@ -69,4 +69,15 @@ pub(crate) struct JsStepHead<V> {
     /// The word of the storage the running lane body's environment-owned locals live in, which its
     /// environment rows read through (`staged::environment::environment_slot`).
     pub(crate) environment_storage: u64,
+    /// The address of the lane run's plain-frame depth word (`PlainFrames`, `frame::PLAIN_DEPTH_AT`); its
+    /// registers word is `frame::PLAIN_REGISTERS_AT` past it. Emitted calls bump the depth and set the registers.
+    /// (reconciled with u-jit F5 on merge)
+    pub(crate) plain_depth: usize,
+    /// The plain depth's bound: a call whose header would pass it leaves to the helper row.
+    /// (reconciled with u-jit F5 on merge)
+    pub(crate) plain_depth_limit: usize,
+    /// The running body (`LaneMethod`) of each native frame, indexed by plain depth, and the address of
+    /// the table's top word. (reconciled with u-jit F5 on merge)
+    pub(crate) body_table: usize,
+    pub(crate) body_top: usize,
 }

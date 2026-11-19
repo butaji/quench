@@ -17,6 +17,10 @@ pub(in crate::vm) struct DirectCallee {
     pub(in crate::vm) body: Option<Rc<LaneMethod>>,
     /// The caller's call record, which the callee's activation returns to.
     pub(in crate::vm) call: usize,
+    /// The caller's base instruction pointer (its view's records), which the callee's header saves for the return.
+    pub(in crate::vm) caller_base: usize,
+    /// The callee's function index, which its header's packed word names.
+    pub(in crate::vm) function: u32,
     pub(in crate::vm) cell: usize,
     pub(in crate::vm) callee: Value,
     pub(in crate::vm) registers: u16,

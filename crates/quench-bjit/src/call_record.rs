@@ -54,8 +54,8 @@ pub const REGISTER_BYTES: usize = core::mem::size_of::<u64>();
 /// The per-site record of a direct-call row, two cache lines, patched into the row as the one
 /// 64-bit value hole 0 (its address). Everything a site knows that does not fit the three value
 /// holes: the callee's identity and cell, the cell's validity word the call was planned under,
-/// the descriptor the shadow frame names, the callee's capture word, the global object a sloppy
-/// callee binds an `undefined` or `null` receiver to, the stride of shadow frames, the caller
+/// the callee's header words (the caller's call record and base, the packed word), the callee's capture word, the global object a sloppy
+/// callee binds an `undefined` or `null` receiver to, the caller
 /// registers the call names, and where each leading argument's word is (`argument_places`: a place
 /// code, `MEM` for the caller's window slot, else the pinned register holding the value). The plan
 /// owns the record and must outlive the code.
@@ -65,10 +65,15 @@ pub struct CallRecord {
     pub callee: u64,
     pub cell: u64,
     pub expected: u64,
-    pub descriptor: u64,
+    /// The callee's capture word (`CONTEXT_BODY`).
     pub captures: u64,
     pub global_this: u64,
-    pub frame_bytes: u64,
+    /// The caller's call record the callee returns to (`CONTEXT_CALL`).
+    pub call: u64,
+    /// The caller's base instruction pointer (`CONTEXT_CALLER_BASE`).
+    pub caller_base: u64,
+    /// The packed word of the callee's plain header (`CONTEXT_PACKED`): function, flags, argc.
+    pub packed: u64,
     pub callee_register: u16,
     pub this_register: u16,
     pub args_register: u16,

@@ -302,6 +302,12 @@ pub(crate) const JS_STEP_LANE_VALUES_TOP: usize = core::mem::offset_of!(super::j
 pub(crate) const JS_STEP_LANE_VALUES_END: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_values_end);
 pub(crate) const JS_STEP_LANE_ACTIVATIONS_TOP: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_activations_top);
 pub(crate) const JS_STEP_LANE_FRAMES_END: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, lane_frames_end);
+/// The plain-frame words a native frame's header bumps (`PlainFrames`), and the body table each depth indexes.
+/// (reconciled with u-jit F5 on merge)
+pub(crate) const JS_STEP_PLAIN_DEPTH: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, plain_depth);
+pub(crate) const PLAIN_DEPTH_LIMIT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, plain_depth_limit);
+pub(crate) const JS_STEP_BODY_TABLE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, body_table);
+pub(crate) const JS_STEP_BODY_TOP: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, body_top);
 /// The entry cell's run counters, and the unit a raised run adds (`entry_cell::RAISED_RUN`).
 pub(crate) const CELL_COUNTERS_AT: usize = crate::staged::call::ENTRY_CELL.counters_offset as usize;
 pub(crate) const RAISED_RUN: u64 = 1 << u32::BITS;

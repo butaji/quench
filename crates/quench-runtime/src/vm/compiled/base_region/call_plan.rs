@@ -43,9 +43,10 @@ pub(super) use chain::ChainRead;
 use chain::chained_reads;
 use super::{Exit, SLOT};
 use super::super::direct_callee::DirectCallee;
-use super::super::{FRAME_BYTES, LaneHelper, LaneHelpers};
+use super::super::{LaneHelper, LaneHelpers};
 use crate::bytecode::{Class, ImmediateLayout, Register, WideInstruction};
 use crate::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
+use crate::staged::frame::{ARGC_SHIFT, BODY_FLAG, PLAIN_FLAG};
 use quench_bjit::call::{self, CallRow, ThisRow};
 use quench_bjit::call_record::{CallRecord, DirectHole, HelperHole, MAX_DIRECT_ARGC, PLACED_ARGUMENTS};
 use quench_bjit::numeric::{self, Kind, Place};
@@ -188,7 +189,11 @@ pub(super) struct DirectFacts {
     pub(super) cell: usize,
     pub(super) validity: u64,
     pub(super) facts: CellFacts,
-    pub(super) descriptor: usize,
+    /// The caller's call record and base, and the callee's function: the header words (`CallRecord::call`,
+    /// `caller_base`, `packed`).
+    pub(super) call: u64,
+    pub(super) caller_base: u64,
+    pub(super) function: u32,
     pub(super) captures: u64,
     /// The global object a sloppy callee binds an `undefined` or `null` receiver to.
     pub(super) global_this: Option<u64>,
@@ -197,7 +202,6 @@ pub(super) struct DirectFacts {
     pub(super) registers: u16,
     /// A construction site's forwarding record: not a plain call.
     pub(super) construction: bool,
-    pub(super) frame_bytes: u64,
     /// The site's callee register holds this callee by a Stable fact (`Callees::stable`): the body
     /// subscribes to the fact, so its change retires the body, and the row need not check the register.
     pub(super) held: bool,
@@ -217,13 +221,14 @@ impl DirectFacts {
             cell: callee.cell,
             validity: word(ENTRY_CELL.validity_offset),
             facts: CellFacts::of_word(word(ENTRY_CELL.facts_offset)),
-            descriptor: std::ptr::from_ref(callee).addr(),
+            call: callee.call as u64,
+            caller_base: callee.caller_base as u64,
+            function: callee.function,
             captures: callee.capture_word(),
             global_this: callee.sloppy.map(|global| global.to_bits()),
             lexical: callee.lexical,
             registers: callee.registers,
             construction: callee.forwarder.is_some(),
-            frame_bytes: FRAME_BYTES as u64,
             held,
         }
     }
@@ -388,15 +393,18 @@ fn refusal_only(plan: &CallPlan, register: Register) -> bool {
 /// The direct row and the record it reads, whose address is its hole 0. `arguments` is the place each leading
 /// argument is passed from (`argument_places`).
 fn direct_part(shape: &CallShape, facts: &DirectFacts, arguments: [u8; PLACED_ARGUMENTS], proven_args: u64) -> Result<(CallPart, Box<CallRecord>), String> {
+    // The callee's plain header: a body frame (BODY) of `argc` arguments in the callee's function.
+    let packed = u64::from(facts.function) | PLAIN_FLAG | BODY_FLAG | ((shape.argc as u64) << ARGC_SHIFT);
     let record = Box::new(CallRecord {
         proven_args,
         callee: facts.callee,
         cell: facts.cell as u64,
         expected: facts.validity,
-        descriptor: facts.descriptor as u64,
+        call: facts.call,
+        caller_base: facts.caller_base,
+        packed,
         captures: facts.captures,
         global_this: facts.global_this.unwrap_or_default(),
-        frame_bytes: facts.frame_bytes,
         callee_register: shape.callee,
         this_register: shape.this,
         args_register: shape.window,

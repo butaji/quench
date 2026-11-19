@@ -410,7 +410,7 @@ mod tests {
 
     fn facts() -> DirectFacts {
         let cell = CellFacts { registers: 4, room: 4, params: 2, fill: crate::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
-        DirectFacts { callee: IDENTITY, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, lexical: false, registers: 4, construction: false, frame_bytes: 32, held: false }
+        DirectFacts { callee: IDENTITY, cell: 0x1000, validity: 5, facts: cell, call: 0x3000, caller_base: 0x4000, function: 0, captures: 0, global_this: None, lexical: false, registers: 4, construction: false, held: false }
     }
 
     fn operand(register: Register) -> u16 {
