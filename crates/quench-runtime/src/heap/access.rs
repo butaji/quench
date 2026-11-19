@@ -795,6 +795,12 @@ impl Heap {
         std::ptr::addr_of!(self.array_records.cursor) as usize
     }
 
+    /// Array mark blocks, which a native store of a reference into an array's elements reads
+    /// (`staged::barrier::unlogged_store`, the array records' list in the dispatch head).
+    pub(crate) fn native_array_mark_blocks(&self) -> (*const u8, usize) {
+        self.array_records.native_mark_blocks()
+    }
+
     /// Function mark blocks, which a native store into a function's own properties reads.
     pub(crate) fn native_function_mark_blocks(&self) -> (*const u8, usize) {
         self.function_records.native_mark_blocks()

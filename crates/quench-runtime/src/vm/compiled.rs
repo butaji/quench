@@ -4713,6 +4713,7 @@ impl JsStepDispatch {
                 epoch: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, slots_tracked: 0,
                 empty_string: Value::DELETED.to_bits(),
                 environment_storage: crate::heap::absent_environment_storage(),
+                array_mark_blocks: 0, array_mark_block_count: 0,
                 vm: 0, residual: 0, lane_context: 0, returned_pc: 0,
                 lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
             },
@@ -4805,6 +4806,8 @@ impl JsStepDispatch {
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
         let (blocks, count) = vm.heap.native_function_mark_blocks();
         (self.function_mark_blocks, self.function_mark_block_count) = (blocks as usize, count);
+        let (blocks, count) = vm.heap.native_array_mark_blocks();
+        (self.array_mark_blocks, self.array_mark_block_count) = (blocks as usize, count);
         self.empty_string = vm.empty_string_word().to_bits();
         self.slots_tracked = usize::from(vm.heap.tracks_slot_values());
         let atoms = vm.method_cache_atoms.words();
