@@ -390,12 +390,12 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::b
     let spec = BodySpec { function, registers, known, realm: calls.realm, widened, seen: observation.entry_types, kinds: observation.operand_kinds };
     // SAFETY: `calls` was made of the call sites' records this compile (`Vm::region_calls`), whose entry cells are live.
     let built = unsafe { build_region(region, &spec, views, &calls.callees, helpers) };
-    let Ok(Body { code, bare, frames, records, stable, atoms, holders, layouts, slot_types, resumes, .. }) = built else { return base_only.then_some(None) };
+    let Ok(Body { code, bare, frames, records, stable, atoms, holders, chains, instanceofs, layouts, slot_types, resumes, .. }) = built else { return base_only.then_some(None) };
     if let Some(directory) = native_dump_directory() {
         dump_native_bytes(directory, DumpSite::Loop { header: region.header }, &code, None, "");
     }
     let calls = CallCode::of((frames, calls.callees.owned, records), registers, invalidation);
-    let facts = OsrFacts { stable: StableFacts { globals: stable, holders, atoms, layouts, slots: slot_types, ..Default::default() },
+    let facts = OsrFacts { stable: StableFacts { globals: stable, holders, chains, instanceofs, atoms, layouts, slots: slot_types, ..Default::default() },
         calls: LaneDependencies::of(std::iter::empty(), &calls.direct), ..OsrFacts::observed(observation) };
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
     let code = super::super::jit_backend::OffThread::ready(Some(LoopLowered {
@@ -474,19 +474,20 @@ pub(in crate::vm) fn start_osr_region(
     if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation.clone()), base) {
         return decided;
     }
-    let (plans, directs) = loop_inputs(program, region, function_id, observation, global_reads, widened, &unit_calls);
-    // The functions the lowering reads: its own, its plans' inlined callees' and their direct callees'.
-    let functions: Vec<u32> = std::iter::once(function_id)
-        .chain(plans.iter().flat_map(|plan| plan.unit.frames.iter().map(|frame| frame.target.function)))
-        .chain(directs.iter().flat_map(|direct| direct.iter().map(|callee| callee.target.function))).collect();
-    let facts = LoopFacts { int_entries: observation.int_entries.to_vec(), double_registers: observation.double_registers.to_vec(),
-        typed_captures: observation.typed_captures.to_vec(), int_captures: observation.int_captures.to_vec(),
-        frame_captures: observation.frame_captures.to_vec(), entry_bounds: observation.entry_bounds,
-        construct_plans: observation.construct_plans.map(|plan| plans.iter()
-            .flat_map(|input| super::lane_compile::construction_plans(&input.unit, function_id, plan)).collect()).unwrap_or_default() };
-    let job = LoopJob { program: program.detached(&functions), plans, fields, facts, isa, function_id, helpers, views, tiers,
-        held: stores.map(|names| (names.clone(), invalidation.address())) };
-    let code = super::super::jit_backend::OffThread::guarded(job, |job| job.run());
+    // The calls' callees, by the sites that reached them: the lowered unit calls them by their entries.
+    let caller = program.function(function_id as usize);
+    let held = stores.map(|names| super::HeldAtoms { names, invalidation: invalidation.address() });
+    let planner = LoopPlanner { observation, fields: &fields, isa: &*isa, program, function_id, helpers, views, tiers, stores: held, unit_calls: &unit_calls };
+    let (lowered, direct) = lower_loop(&planner, region, global_reads, widened)?;
+    let function = lowered.function;
+    super::residuals::report_clif(region.header, &function);
+    let clif = native_dump_directory().map(|_| function.display().to_string());
+    let stable = StableFacts { atoms: lowered.stable.atoms, holders: lowered.stable.holders, chains: lowered.stable.chains, ..StableFacts::default() };
+    let calls = if !direct.is_empty() { CallCode::of((Vec::new(), direct, Vec::new()), caller.registers, invalidation) } else { CallCode::holding(invalidation) };
+    let facts = OsrFacts { roots: lowered.stable.roots, stable, calls: LaneDependencies::of(std::iter::empty(), &calls.direct), ..OsrFacts::observed(observation) };
+    let code = super::super::jit_backend::run_in_background(move || {
+        compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()))
+    });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
     let call_frame = (program.function(function_id as usize).registers, invalidation);
     Some(PendingOsrRegion { code, watch, header: region.header, facts: OsrFacts::observed(observation), crossing: super::Crossing::General,

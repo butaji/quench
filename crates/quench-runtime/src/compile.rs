@@ -4366,6 +4366,13 @@ impl<'a> Compiler<'a> {
             is_generator: options.generator,
             is_class_constructor: options.class_constructor,
             derived_constructor: options.derived_constructor,
+            instance_initializer: None,
+            // Only a base class constructor's receiver is made by its own [[Construct]].
+            constant_fields: if options.class_constructor && !options.derived_constructor {
+                std::mem::take(&mut function.constant_fields).into()
+            } else {
+                Default::default()
+            },
             super_home_atom: options.super_home_atom,
             constructible: !options.non_constructible
                 && !options.async_function

@@ -2359,8 +2359,8 @@ pub(crate) struct Vm<H> {
     runtime_atoms: RuntimeAtoms,
     /// `Vm::constructed_shape` answers; cleared by every collection.
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
-    /// `Vm::preshape_receiver` answers: the declared layout a construction allocates its
-    /// receiver in; cleared by every collection.
+    /// `Vm::preshape_receiver` answers: the constant or declared layout a construction
+    /// allocates its receiver in; cleared by every collection and with the heap.
     preshaped_receivers: Box<[preshaped_receiver::PreshapedReceiver; preshaped_receiver::PRESHAPED_RECEIVER_ENTRIES]>,
     /// What constructions' receivers reach, per `new.target` (`Vm::preshape_receiver`'s slack
     /// tracking); kept across collections, which restart its sampling.

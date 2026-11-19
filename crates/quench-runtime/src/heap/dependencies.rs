@@ -17,8 +17,8 @@
 //! a prototype re-proves only what depends on it, never every prototype-dependent fact in the
 //! VM. The events no subject names (a collection that may reuse a dead prototype's record, a
 //! shape compaction, a restore) retire every cell (`Dependencies::retire_cells`) with the
-//! global `prototype_layout_epoch`. A dependency object may hold the same subjects
-//! (`Dependencies::hold_layouts`).
+//! global `prototype_layout_epoch`. A dependency object, or compiled code that took a fact read
+//! through a chain, may hold the same subjects (`Dependencies::hold_layouts`).
 
 use crate::value::Value;
 use std::cell::UnsafeCell;
@@ -302,8 +302,8 @@ struct Table {
     /// Per subject, the chain cells whose chain holds it (`ChainCell`).
     cell_readers: Vec<Vec<ChainCell>>,
     /// Per subject, the dependencies held on its layout (`Dependencies::hold_layouts`): data
-    /// dependencies (`code_dependencies::new_dependency`), whose retirement drops no code, so
-    /// a retirement never reenters the table.
+    /// dependencies and compiled code. A retirement takes them out (`Retired`) and retires
+    /// them once it holds the table no longer, so code dropped then never finds it borrowed.
     layout_readers: crate::code_dependencies::CodeReaders,
     /// The cell last made for each chain, by its first subject and length: every proof about
     /// one chain shares it while it holds. A chain is its first prototype's links, so while no
@@ -313,19 +313,36 @@ struct Table {
 }
 
 impl Drop for Table {
-    /// Retires every cell the table made, whose words return to the slab.
+    /// Retires every cell the table made, whose words return to the slab, and what held a layout.
     fn drop(&mut self) {
-        self.retire_cells();
+        self.retire_cells().retire();
+    }
+}
+
+/// The dependencies a retirement took out of the table (`Table::layout_readers`), to retire once
+/// the table is no longer borrowed.
+#[must_use]
+struct Retired(Vec<std::rc::Rc<dyn crate::code_dependencies::DependentCode>>);
+
+impl Retired {
+    fn retire(self) {
+        self.0.into_iter().for_each(|dependency| dependency.retire());
     }
 }
 
 impl Table {
-    fn retire(&mut self, subject: u32) {
+    /// Retires what read `subject`; what held its layout is given back to retire (`Retired`).
+    fn retire(&mut self, subject: u32) -> Retired {
+        let held = Retired(self.layout_readers.take(subject));
+        self.retire_proofs(subject);
+        held
+    }
+
+    fn retire_proofs(&mut self, subject: u32) {
         self.fuses.note_layout_change(subject);
         if let Some(cells) = self.cell_readers.get_mut(subject as usize) {
             std::mem::take(cells).into_iter().for_each(ChainCell::retire);
         }
-        self.layout_readers.retire(subject);
         if let (Some(store), Some(entries)) = (self.fact_store, self.fact_readers.get_mut(subject as usize)) {
             for entry in std::mem::take(entries) {
                 store.clear(entry);
@@ -360,12 +377,12 @@ impl Table {
         cells.push(cell);
     }
 
-    /// Retires every chain cell: an event no subject names (a collection that may reuse a dead
-    /// prototype's record, a shape compaction, a restore).
-    fn retire_cells(&mut self) {
+    /// Retires every chain cell and gives every layout holder to retire: an event no subject
+    /// names (a collection that may reuse a dead prototype's record, a shape compaction, a restore).
+    fn retire_cells(&mut self) -> Retired {
         self.chain_cells.drain().for_each(|(_, cell)| cell.retire());
         self.cell_readers.iter_mut().flat_map(std::mem::take).for_each(ChainCell::retire);
-        self.layout_readers.reset();
+        Retired(self.layout_readers.take_all())
     }
 
     /// Clears every proof of `kind`; the subjects that recorded a reader of it keep the
@@ -478,9 +495,10 @@ impl Dependencies {
     /// The subject of a prototype that died: its proofs retire, and the subject is free.
     pub(crate) fn release(&mut self, subject: u32) {
         let table = self.table_mut();
-        table.retire(subject);
+        let held = table.retire(subject);
         table.fuses.forget(subject);
         table.free.push(subject);
+        held.retire();
     }
 
     /// Retires every proof, for changes no subject names (a restored heap's prototypes).
@@ -496,14 +514,14 @@ impl Dependencies {
             table.fact_readers.iter_mut().flat_map(std::mem::take).for_each(|entry| store.clear(entry));
         }
         table.fuses.forget_all();
-        table.retire_cells();
+        table.retire_cells().retire();
     }
 
     /// Retires every chain cell (`Table::retire_cells`), for an event no subject names: a
     /// collection that may let a dead prototype's record be reused, or a shape compaction,
     /// which renumbers the shapes proofs name.
     pub(crate) fn retire_cells(&mut self) {
-        self.table_mut().retire_cells();
+        self.table_mut().retire_cells().retire();
     }
 
     /// The cell of the chain whose prototypes' subjects are `subjects`, nearest first: one
@@ -525,8 +543,9 @@ impl Dependencies {
     }
 
     /// Makes `dependency` retire when one of `subjects` changes its layout or dies, or at an
-    /// event no subject names (`retire_cells`); `false` where the reader table is full. Only a
-    /// data dependency (`code_dependencies::new_dependency`), whose retirement runs nothing.
+    /// event no subject names (`retire_cells`); `false` where the reader table is full. A data
+    /// dependency (`code_dependencies::new_dependency`) or compiled code (`code_dependencies::PrototypeChain`): it
+    /// retires after the table is released (`Retired`).
     pub(crate) fn hold_layouts(&self, subjects: &[u32], dependency: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
         // SAFETY: as `table`: no reference to the table is live across this call.
         let table = unsafe { &mut *self.0.get() };
@@ -683,7 +702,8 @@ impl Watch {
         if let Some((table, subject)) = self.0 {
             // SAFETY: the table outlives every object of its heap, which owns it, and no
             // reference to it is live while an object's layout changes (`Dependencies`).
-            unsafe { (*table.as_ref().get()).retire(subject) };
+            let held = unsafe { (*table.as_ref().get()).retire(subject) };
+            held.retire();
         }
     }
 

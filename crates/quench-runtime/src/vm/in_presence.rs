@@ -17,9 +17,12 @@ pub(crate) struct InPresence {
     pub(crate) shape: u32,
     pub(crate) link: u32,
     pub(crate) present: bool,
-    /// The exact shape of the receiver's prototype (its own where it has none): the holder whose layout the answer
-    /// depends on, which a code holding the answer subscribes to (`heap::subscribe_prototype_values`).
+    /// The exact shape of the receiver's prototype (its own where it has none): the holder whose values a code holding
+    /// the answer subscribes to (`heap::subscribe_prototype_values`).
     pub(crate) holder: u32,
+    /// The prototypes from `link` to the chain's end, all the answer read: a code holding it holds their layouts
+    /// (`Heap::subscribe_prototype_chain`).
+    pub(crate) depth: u8,
     /// The cell of the receiver's whole chain (`Vm::chain_cell`): the walk marked every link of it a prototype, so a
     /// change to one, or its death, ends the answer, and a change to a prototype off the chain leaves it.
     cell: crate::heap::ChainCell,
@@ -61,7 +64,7 @@ impl<H: Host> Vm<H> {
         }
         // Marking a link that was no prototype yet changes no layout: the answer holds under the cell made after it.
         let Some(cell) = self.chain_cell(proto, depth) else { return };
-        self.in_presences[index] = Some(InPresence { atom, shape, link, present, holder, cell });
+        self.in_presences[index] = Some(InPresence { atom, shape, link, present, holder, depth, cell });
     }
 
     /// What `key in object` answered for the key `atom` where exactly one receiver layout answered it and its answer

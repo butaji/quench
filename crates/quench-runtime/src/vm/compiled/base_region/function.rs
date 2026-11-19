@@ -52,6 +52,9 @@ pub(in crate::vm::compiled) struct Body {
     /// The exact shapes of the holders whose values its folded reads hold (a Stable fact): a change
     /// of a value a prototype of one holds retires the body (`StableFacts::holders`).
     pub(in crate::vm::compiled) holders: Box<[u32]>,
+    /// The prototype chains its folded reads, membership tests and adding stores read through (a
+    /// Stable fact): a layout change of a prototype on one retires the body (`StableFacts::chains`).
+    pub(in crate::vm::compiled) chains: Box<[crate::code_dependencies::PrototypeChain]>,
     /// What its `instanceof` fast arms hold of their constructors' `prototype`s (a Stable fact): a write of a `prototype`,
     /// a departure of a constructor's shape or a change of the `@@hasInstance` holder's values retires the body
     /// (`StableFacts::instanceofs`).
@@ -296,21 +299,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let holders: Box<[u32]> = held_holders(&decoded).iter().copied().chain(layout.prototypes.iter().map(|proto| proto.holder)).chain(layout.holders.borrow().iter().copied())
         .collect::<std::collections::BTreeSet<u32>>().into_iter().collect();
     let names_shapes = decoded.iter().any(|row| row.ic.is_some());
-    Ok(Body { code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region)).chain(sites.callees.held_facts())), atoms, holders,
-        instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,
-        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes, scratch, names_shapes, number_guards,
-        uses_this: crate::bytecode::activation_reads_this(spec.known.program, function) })
-}
-
-/// Admits a packed helper row only where its site's feedback admits its direct arm (`family_helpers::admits`):
-/// a binary site met Number operands only, an element site met a dense or typed element. Another site would
-/// run the general step on every execution. An inlined row has no site of its own, and is not admitted.
-fn feedback_admits(decoded: &mut [Decoded], kinds: &[Option<OperandKinds>], fields: Option<&dyn Fn(u16) -> bool>) {
-    for (row, site) in decoded.iter_mut().zip(kinds) {
-        if let Some(words) = row.packed
-            && !crate::vm::dispatch_fast::family_helpers::admits(words, *site, fields)
-        {
-            row.packed = None;
-        }
-    }
+    Ok(Body { code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region))), atoms, holders,
+        chains: held_chains(&decoded), instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,
+        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes, scratch, names_shapes })
 }

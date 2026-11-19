@@ -217,10 +217,11 @@ pub(crate) struct NativeFieldLoad {
     /// an online body subscribes to it (`LaneDependencies`) and reads the slot at it with no tag
     /// test; code that does not subscribe tests the tag and leaves where it fails.
     pub(crate) ty: crate::typed_ir::Type,
-    /// For a holder read, the value its proved immediate prototype holds when the code was
-    /// compiled (`Vm::inherited_constant`): a Stable fact. A read takes it while the receiver's
-    /// prototype is that one; a change of the value retires the code that took it
-    /// (`heap::subscribe_prototype_values`).
+    /// For a holder read, the value its proved holder holds when the code was compiled
+    /// (`Vm::inherited_constant`), with the chain from the receiver's prototype it was read
+    /// through: a Stable fact. A read takes it while the receiver's prototype is that one; a
+    /// change of the value retires the code that took it (`heap::subscribe_prototype_values`), as
+    /// does a layout change of a prototype on its chain (`Heap::subscribe_prototype_chain`).
     pub(crate) inherited: Option<InheritedConstant>,
     /// Whether a live function record had the receiver shape when the plan was made: a read
     /// then proves a readable record (an object or a function's), never a direct object.
@@ -314,20 +315,24 @@ pub(super) fn shape_in_set(builder: &mut FunctionBuilder<'_>, shape: ir::Value, 
 pub(crate) const INHERITED_PROTOTYPES: usize = 4;
 
 /// An inherited read's values, each fixed by the receiver's prototype link that names its
-/// holder, as they were when the code was compiled.
+/// holder, as they were when the code was compiled, and the prototypes from that link to the
+/// holder each was read through (`PrototypeChain::depth`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct InheritedConstant {
     values: [(u32, Value); INHERITED_PROTOTYPES],
+    depths: [u8; INHERITED_PROTOTYPES],
     count: u8,
 }
 
 impl InheritedConstant {
-    /// The values `holders` (prototype link and value) give; `None` where there are none or
-    /// more than the read folds.
-    pub(crate) fn of(holders: impl IntoIterator<Item = (u32, Value)>) -> Option<Self> {
-        let mut constant = Self { values: [(0, Value::UNDEFINED); INHERITED_PROTOTYPES], count: 0 };
-        for holder in holders {
-            *constant.values.get_mut(usize::from(constant.count))? = holder;
+    /// The values `holders` (prototype link, value, and the prototypes from the link to the
+    /// holder) give; `None` where there are none or more than the read folds.
+    pub(crate) fn of(holders: impl IntoIterator<Item = (u32, Value, u8)>) -> Option<Self> {
+        let mut constant = Self { values: [(0, Value::UNDEFINED); INHERITED_PROTOTYPES], depths: [0; INHERITED_PROTOTYPES], count: 0 };
+        for (link, value, depth) in holders {
+            let at = usize::from(constant.count);
+            *constant.values.get_mut(at)? = (link, value);
+            constant.depths[at] = depth;
             constant.count += 1;
         }
         (constant.count > 0).then_some(constant)
@@ -337,15 +342,21 @@ impl InheritedConstant {
         &self.values[..usize::from(self.count)]
     }
 
+    /// The chains the values were read through, one per value.
+    pub(crate) fn chains(&self) -> impl Iterator<Item = crate::code_dependencies::PrototypeChain> + '_ {
+        self.values().iter().zip(self.depths).map(|((link, _), depth)| crate::code_dependencies::PrototypeChain { link: *link, depth })
+    }
+
     /// These values and `other`'s, each prototype once; `None` where a prototype holds two
-    /// values or there are more than the read folds.
+    /// values or there are more than the read folds. A prototype both name keeps the longer
+    /// chain, which covers the shorter.
     pub(crate) fn joined(self, other: Self) -> Option<Self> {
-        let mut values: Vec<(u32, Value)> = self.values().to_vec();
-        for (prototype, value) in other.values() {
-            match values.iter().find(|(known, _)| known == prototype) {
-                Some((_, held)) if held != value => return None,
-                Some(_) => {}
-                None => values.push((*prototype, *value)),
+        let mut values: Vec<(u32, Value, u8)> = self.values().iter().zip(self.depths).map(|((link, value), depth)| (*link, *value, depth)).collect();
+        for ((prototype, value), depth) in other.values().iter().zip(other.depths) {
+            match values.iter_mut().find(|(known, _, _)| known == prototype) {
+                Some((_, held, _)) if held != value => return None,
+                Some((_, _, known)) => *known = (*known).max(depth),
+                None => values.push((*prototype, *value, depth)),
             }
         }
         Self::of(values)

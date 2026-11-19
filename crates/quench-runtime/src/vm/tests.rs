@@ -24814,3 +24814,149 @@ fn a_proof_survives_an_unrelated_prototype_change() {
     assert!(vm.array_pattern_fits(pair, 1), "and the next fit proves it again");
     assert!(vm.iterator_absence_proved(proto, key));
 }
+
+#[test]
+fn constant_class_fields_allocate_receivers_in_their_layout() {
+    // A base class's leading fields whose initializers are absent or primitive constants
+    // (`bytecode::ConstantField`) give its receivers their layout and values at allocation;
+    // their defines still run and find each in place. Exact for another `new.target` (a
+    // subclass's `super()`, `Reflect.construct`, a Proxy), a prototype setter, a throw in a
+    // later initializer that saved the receiver, classes evaluated many times, numeric,
+    // `__proto__`, repeated and string-literal keys, private elements, static fields and a
+    // receiver whose constructor adds more (its learned storage reserved first).
+    let source = r#"
+        const out = [];
+        class P { a = 1; b = "s"; c = null; d; e = -2.5; f = true; constructor(x) { this.g = x; } }
+        let p; for (let i = 0; i < 200; i++) p = new P(i);
+        out.push(Object.keys(p).join(""), String(p.a) + p.b + p.c + p.d + p.e + p.f + p.g);
+        globalThis.first = new P(1);
+        globalThis.second = new P(2);
+        const log = [];
+        Object.defineProperty(P.prototype, "a", { set(v) { log.push(v); }, get() { return "proto"; }, configurable: true });
+        const ps = new P(3);
+        out.push(log.length, ps.a, ps.hasOwnProperty("a"));
+        class D extends P { h = 7; constructor() { super(5); this.i = 8; } }
+        let d; for (let i = 0; i < 200; i++) d = new D();
+        out.push(Object.keys(d).join(""), Object.getPrototypeOf(d) === D.prototype, d.h + d.i + d.g);
+        function Other() {}
+        Other.prototype.tag = "o";
+        let rc; for (let i = 0; i < 200; i++) rc = Reflect.construct(P, [i], Other);
+        out.push(rc.tag, Object.keys(rc).join(""), Object.getPrototypeOf(rc) === Other.prototype, rc instanceof P);
+        const traps = [];
+        const NT = new Proxy(function () {}, { get(t, k, r) { traps.push(String(k)); return k === "prototype" ? Other.prototype : Reflect.get(t, k, r); } });
+        const pr = Reflect.construct(P, [9], NT);
+        out.push(traps.join(), Object.keys(pr).join(""), pr.tag, pr.g);
+        let saved, seen;
+        function boom(o) { saved = o; seen = Object.keys(o).join("") + ("d" in o); throw new Error("boom"); }
+        class T { a = 1; b = 2; c = boom(this); d = 4; }
+        let caught = 0; for (let i = 0; i < 50; i++) { try { new T(); } catch (e) { caught++; } }
+        out.push(caught, seen, Object.keys(saved).join(""), saved.b);
+        function make() { return class { x = 1; y = "y"; z; }; }
+        const made = [];
+        for (let i = 0; i < 20; i++) { const C = make(); made.push(new C(), new C()); }
+        out.push(
+            made.every(o => Object.keys(o).join("") === "xyz" && o.x === 1 && o.y === "y" && o.z === undefined),
+            Object.getPrototypeOf(made[0]) !== Object.getPrototypeOf(made[2]),
+            Object.getPrototypeOf(made[0]) === Object.getPrototypeOf(made[1]),
+        );
+        class N { 0 = 1; x = 2; }
+        class PR { __proto__ = 5; y = 1; }
+        class DU { a = 1; a = 2; b = 3; }
+        class SK { "my-key" = 1; plain = "v"; }
+        const n = new N(), pro = new PR(), du = new DU(), sk = new SK();
+        out.push(Object.keys(n).join(","), Object.keys(pro).join(","), pro.__proto__, Object.getPrototypeOf(pro) === PR.prototype,
+            Object.keys(du).join(","), du.a, Object.keys(sk).join(","), sk["my-key"]);
+        class PM { #p = 1; a = 1; get p() { return this.#p; } }
+        class PM2 { a = 1; #q() { return 4; } b = 2; get q() { return this.#q(); } }
+        const pm = new PM(), pm2 = new PM2();
+        out.push(Object.keys(pm).join(""), pm.p, Object.keys(pm2).join(""), pm2.q);
+        class ST { static s = 1; a = "a"; static t = 2; b = 0; }
+        const st = new ST();
+        out.push(Object.keys(st).join(""), ST.s + ST.t);
+        globalThis.bigs = [];
+        class Big { a = 1; b = 2; c = "c"; constructor(n) { this.d = n; this.e = n; this.f = n; this.g = typeof n; this.h = n + 0.5; } }
+        let big; for (let i = 0; i < 3000; i++) { big = new Big(i); if (i % 100 === 0) bigs.push(big); }
+        globalThis.Big = Big;
+        globalThis.P = P;
+        out.push(Object.keys(big).join(""), big.h + big.a);
+        print(out.join(" "));
+    "#;
+    // After collections, which evacuate the reserved runs of the survivors and forget the
+    // layouts, the survivors keep their values and new receivers take the layout again.
+    let after = r#"
+        const ok = bigs.length === 30
+            && bigs.every((o, k) => o.d === k * 100 && o.h === k * 100 + 0.5 && o.c === "c" && Object.keys(o).join("") === "abcdefgh");
+        const again = new P(4);
+        print([ok, first.b + second.e, Object.keys(again).join(""), again.a, again.g].join(" "));
+    "#;
+    let expected = concat!(
+        "abcdefg 1snullundefined-2.5true199 0 1 true abcdefghi true 20 o abcdefg true false ",
+        "prototype abcdefg o 9 50 abfalse ab 2 true true true 0,x __proto__,y 5 true a,b 2 ",
+        "my-key,plain 1 a 1 ab 4 ab 3 abcdefgh 3000.5",
+    );
+    let program = Engine::specialize(source, "constant-fields.js").unwrap();
+    let rest = Engine::specialize(after, "constant-fields-after.js").unwrap();
+
+    // The layouts the compiler kept: each base class's leading run, which stops at a key or an
+    // initializer outside it; a derived class has none. They survive the encoding.
+    let layouts = |program: &crate::ResidualProgram| {
+        program.compile_released();
+        (0..program.function_count())
+            .filter_map(|index| program.function_get(index))
+            .filter(|function| !function.constant_fields.is_empty())
+            .map(|function| function.constant_fields.iter().map(|field| program.atoms[field.atom as usize].to_string()).collect::<Vec<_>>().join(","))
+            .collect::<Vec<_>>()
+    };
+    let kept = layouts(&program);
+    for layout in ["a,b,c,d,e,f", "a,b", "a", "my-key,plain", "a,b,c"] {
+        assert!(kept.iter().any(|kept| kept == layout), "{layout} in {kept:?}");
+    }
+    assert!(!kept.iter().any(|kept| kept.contains('h') || kept.contains('0') || kept.contains("__proto__")), "{kept:?}");
+    let p = (0..program.function_count())
+        .filter_map(|index| program.function_get(index))
+        .find(|function| function.constant_fields.len() == 6)
+        .unwrap();
+    let values = p.constant_fields.iter().map(|field| field.value).collect::<Vec<_>>();
+    let s = values[1];
+    assert!(matches!(s, crate::bytecode::FieldConstant::String(atom) if &program.atoms[atom as usize] == "s"));
+    assert_eq!(values[0], crate::bytecode::FieldConstant::Number(1.0));
+    assert_eq!(values[2..], [
+        crate::bytecode::FieldConstant::Null,
+        crate::bytecode::FieldConstant::Undefined,
+        crate::bytecode::FieldConstant::Number(-2.5),
+        crate::bytecode::FieldConstant::Boolean(true),
+    ]);
+    let bytes: crate::KeptBytes = Rc::new(program.encode_trusted());
+    let decoded = crate::ResidualProgram::decode_trusted(bytes).unwrap();
+    let mut round = layouts(&decoded);
+    let mut original = kept.clone();
+    round.sort();
+    original.sort();
+    assert_eq!(round, original);
+
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = |vm: &mut Vm<TestHost>, name: &str| {
+            let atom = vm.intern_atom(name);
+            vm.own_property(vm.realm.globals, atom).unwrap()
+        };
+        // One layout from birth.
+        let first = global(&mut vm, "first");
+        let second = global(&mut vm, "second");
+        let shape = |vm: &Vm<TestHost>, value| vm.object_data(value).map(|object| object.shape());
+        assert!(shape(&vm, first).is_some());
+        assert_eq!(shape(&vm, first), shape(&vm, second));
+        if mode == crate::ExecutionMode::Interpreted {
+            // The receiver's eight values, three of them its layout's, are what the next learns.
+            let big = global(&mut vm, "Big");
+            assert_eq!(vm.learned_receiver_slots(big), Some(8));
+        }
+        vm.collect_slow(&program, false);
+        vm.collect_slow(&program, true);
+        vm.execute(&rest).unwrap();
+        assert_eq!(output.borrow().as_slice(), [expected, "true s-2.5 abcdefg 1 4"]);
+    }
+}
