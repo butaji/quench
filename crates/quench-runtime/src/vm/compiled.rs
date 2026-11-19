@@ -1331,7 +1331,7 @@ impl<H: Host> Vm<H> {
 /// header: one the loop does not write whose last writer before the header loads a constant of a
 /// single int32 value. The region guards each range once at its entry.
 #[cfg(feature = "aot")]
-fn ahead_constant_inputs(program: &ResidualProgram, function: &crate::bytecode::Function,
+fn ahead_constant_inputs(program: &ResidualProgram, function_id: u32, function: &crate::bytecode::Function,
     decoded: &[crate::bytecode::WideInstruction], (header, backedge): (u32, u32))
     -> Vec<(crate::bytecode::Register, crate::typed_ir::IntRange)> {
     let body = &decoded[header as usize..=backedge as usize];
@@ -1367,6 +1367,14 @@ fn ahead_constant_inputs(program: &ResidualProgram, function: &crate::bytecode::
         let Some(ty) = program.constants.get(instruction.constant_index() as usize).map(super::compiled::facts::constant_type) else { continue };
         let Some(range) = ty.int_range().filter(|range| range.min == range.max) else { continue };
         found.push((register, range));
+    }
+    // A parameter's value is not in this function: the call sites fix it where they pass a
+    // constant (`mm(A, B, C, 128)`), and the region guards the range once at its entry.
+    for index in 0..function.params {
+        if !wanted.contains(&index) { continue; }
+        if let Some(range) = array_kinds::parameter_int_range(program, function_id, usize::from(index)) {
+            found.push((index, range));
+        }
     }
     found
 }
@@ -1424,7 +1432,7 @@ pub(in crate::vm::compiled) fn ahead_loop_region(program: &ResidualProgram, func
     // A register the loop does not write whose value the program fixes before its header (a
     // `const m = 13` the loop's `%` divides by) enters with that value; the region guards the
     // range once at the entry, so an entry with another value leaves at the exact PC.
-    let entry_constants = ahead_constant_inputs(program, function, &decoded, (header, backedge));
+    let entry_constants = ahead_constant_inputs(program, function_id, function, &decoded, (header, backedge));
     let plan = |views| lane_region::RegionPlan { entry_bounds: true,
         // No run observed this loop's inputs: each int32 the index arithmetic reads is assumed
         // and checked once at the entry, instead of every use converting a Number.

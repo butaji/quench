@@ -246,7 +246,7 @@ pub(super) fn local_types(instructions: &[WideInstruction], constants: &[Constan
 }
 
 /// The constant `register` holds before `pc`, through copies: a local's store of one value.
-fn stored_constant(instructions: &[WideInstruction], pc: usize, register: Register, constants: &[Constant]) -> Type {
+pub(super) fn stored_constant(instructions: &[WideInstruction], pc: usize, register: Register, constants: &[Constant]) -> Type {
     let mut register = register;
     for at in (0..pc).rev() {
         let instruction = instructions[at];

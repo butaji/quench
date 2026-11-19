@@ -186,3 +186,51 @@ mod tests {
         assert_eq!(loop_element_kind(&program, 1, span), None);
     }
 }
+
+/// The one int32 range every call site passes `callee`'s argument `index`, where each passes a
+/// constant the caller's code fixes (a `const n = 128`): a region lowered ahead guards the
+/// range once at its entry, so a loop bound the program actually uses is a fact.
+pub(in crate::vm::compiled) fn parameter_int_range(program: &ResidualProgram, callee: u32, index: usize) -> Option<crate::typed_ir::IntRange> {
+    let mut found: Option<crate::typed_ir::IntRange> = None;
+    for caller in 0..program.function_count() as u32 {
+        let Some(body) = program.function_get(caller as usize) else { continue };
+        let decoded: Vec<WideInstruction> = body.instructions().collect();
+        for (pc, instruction) in decoded.iter().copied().enumerate() {
+            if !matches!(instruction.op().class(), Class::Call | Class::CallKnown) { continue; }
+            let target = if instruction.op().class() == Class::CallKnown {
+                Some(u32::from(instruction.known_function_index()))
+            } else {
+                callee_of(program, caller, instruction, pc)
+            };
+            if target != Some(callee) { continue; }
+            let window = instruction.call_window();
+            if index >= usize::from(window.count) { continue; }
+            let range = argument_range(program, caller, window.base + index as u16, pc, &decoded)?;
+            match found {
+                None => found = Some(range),
+                Some(seen) if seen == range => {}
+                Some(_) => return None,
+            }
+        }
+    }
+    found
+}
+
+/// The int32 range `register` holds before `pc` in `function`, through copies and constant
+/// locals; `None` for any other value.
+fn argument_range(program: &ResidualProgram, function: u32, register: Register, before: usize,
+    decoded: &[WideInstruction]) -> Option<crate::typed_ir::IntRange> {
+    let (at, instruction) = writer(program, function, register, before)?;
+    match instruction.op() {
+        Op::Move => argument_range(program, function, instruction.register_b(), at, decoded),
+        Op::LoadConst => {
+            let ty = program.constants.get(instruction.constant_index() as usize).map(super::facts::constant_type)?;
+            ty.int_range().filter(|range| range.min == range.max)
+        }
+        Op::LoadEnvLocal => {
+            let (store, source) = stored_register(program, function, instruction.local_slot(), at)?;
+            argument_range(program, function, source, store, decoded)
+        }
+        _ => None,
+    }
+}
