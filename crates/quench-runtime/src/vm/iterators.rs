@@ -32,6 +32,9 @@ pub(super) const ITERATOR_RESULT_DONE_SLOT: usize = 1;
 
 #[path = "collection_steps.rs"]
 mod collection_steps;
+#[path = "iterator_in_place.rs"]
+mod iterator_in_place;
+pub(super) use iterator_in_place::InPlaceStep;
 
 /// The stores `Vm::intact_iteration_kind` proves iterate by their own contents.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3045,37 +3048,13 @@ impl<H: Host> Vm<H> {
 
     /// Whether `value` is the current realm's `native` function: one installed for this realm,
     /// or one every realm shares (`is_shared_native`).
-    /// `is_current_realm_native` of a step's `next` (`StepNative`), proved once: the proof holds
-    /// the method's bits, the collection epoch (a slot names the same cell while it is unchanged)
-    /// and the realm, so a loop's later steps make three compares instead of reading the method's
-    /// record.
-    #[inline(always)]
-    pub(super) fn proved_step_native(&self, method: Value, step: StepNative) -> bool {
-        let proof = &self.step_native_proofs[step as usize];
-        (proof.method.get() == method.to_bits()
-            && proof.epoch.get() == self.heap.collection_epoch()
-            && proof.realm.get() == self.realm.globals)
-            || self.prove_step_native(method, step)
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn prove_step_native(&self, method: Value, step: StepNative) -> bool {
-        let native = match step {
-            StepNative::ArrayIteratorNext => Native::ArrayIteratorNext,
-            StepNative::GeneratorNext => Native::GeneratorNext,
-        };
-        let proved = self.is_current_realm_native(method, native);
-        if proved {
-            let proof = &self.step_native_proofs[step as usize];
-            proof.method.set(method.to_bits());
-            proof.epoch.set(self.heap.collection_epoch());
-            proof.realm.set(self.realm.globals);
-        }
-        proved
-    }
-
+    /// The shared function itself, the one each realm's prototypes install, answers by its
+    /// identity (`is_shared_native_of`) before any read of the function.
+    #[inline]
     pub(super) fn is_current_realm_native(&self, value: Value, native: Native) -> bool {
+        if self.is_shared_native_of(value, native) {
+            return true;
+        }
         matches!(
             self.heap.function(value),
             Some(record @ FunctionRecord {
@@ -3088,8 +3067,8 @@ impl<H: Host> Vm<H> {
 
     /// Every value a values iterator over a plain array would still yield, taken at once and
     /// leaving the iterator exhausted, when each remaining step is a Get of a present data
-    /// element: no indexed descriptors, sparse elements or arguments mapping, and no hole
-    /// (a hole's Get reaches the prototype chain). `None` leaves the steps to run one by one.
+    /// element or of a hole nothing fills (`holes_read_undefined`): no indexed descriptors,
+    /// sparse elements or arguments mapping. `None` leaves the steps to run one by one.
     pub(super) fn take_present_array_values(&mut self, iterator: Value) -> Option<Vec<Value>> {
         let Some(IteratorRecord {
             source,
@@ -3111,10 +3090,12 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let elements = array.elements();
-        if position > elements.len() || elements.range(position..elements.len()).any(|value| value.is_deleted()) {
+        if position > elements.len()
+            || (elements.range(position..elements.len()).any(|value| value.is_deleted()) && !self.holes_read_undefined(source))
+        {
             return None;
         }
-        let rest: Vec<Value> = elements.range(position..elements.len()).collect();
+        let rest: Vec<Value> = elements.range(position..elements.len()).map(|value| if value.is_deleted() { Value::UNDEFINED } else { value }).collect();
         if let Some(IteratorRecord { done, source, .. }) = self.heap.iterator_mut(iterator) {
             *done = true;
             *source = Value::UNDEFINED;
@@ -3160,9 +3141,7 @@ impl<H: Host> Vm<H> {
         if element.is_deleted() {
             return None;
         }
-        if let Some(IteratorRecord { index, ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.store_position(index, position + 1);
-        }
+        self.heap.store_iterator_position(iterator, position + 1);
         let value = if kind == IteratorKind::ArrayKeys { Value::number(position as f64) } else { element };
         self.iterator_result(value, false).ok()
     }
@@ -3251,12 +3230,7 @@ impl<H: Host> Vm<H> {
             if index >= length {
                 return Ok(None);
             }
-            if let Some(IteratorRecord {
-                index: next, ext, ..
-            }) = vm.heap.iterator_mut(iterator)
-            {
-                ext.store_position(next, index + 1);
-            }
+            vm.heap.store_iterator_position(iterator, index + 1);
             if kind == IteratorKind::ArrayKeys {
                 return Ok(Some((Value::number(index as f64), None)));
             }
@@ -3286,10 +3260,10 @@ impl<H: Host> Vm<H> {
     /// CreateIterResultObject: a fresh ordinary object whose `value` and `done` are data
     /// properties, laid out as the literal `{ value, done }`.
     /// One %ArrayIteratorPrototype%.next step of a values iterator over a plain array where
-    /// it runs no guest code: the present data element at its position (`Some(Some(_))`), or
-    /// the iterator done past the end (`Some(None)`), as `take_present_array_values` decides
-    /// for every remaining step. `None` for a hole, an exotic or sparse array, another kind
-    /// or a done iterator, whose step the native makes.
+    /// it runs no guest code (`step_present_element`): the element at its position, a hole
+    /// no prototype fills read as `undefined` (`Some(Some(_))`), or the iterator done past
+    /// the end (`Some(None)`). `None` for a hole some prototype may fill, an exotic or sparse
+    /// array, another kind or a done iterator, whose step the native makes.
     pub(super) fn step_present_array_value(&mut self, iterator: Value) -> Option<Option<Value>> {
         let Some(IteratorRecord {
             source,
@@ -3303,27 +3277,7 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let (source, position) = (*source, ext.position(*index));
-        let array = self.heap.array(source)?;
-        if array.has_indexed_descriptors()
-            || array.is_arguments_object()
-            || self.heap.sparse_length(source).is_some()
-        {
-            return None;
-        }
-        let Some(value) = array.elements().get(position) else {
-            if let Some(IteratorRecord { done, source, .. }) = self.heap.iterator_mut(iterator) {
-                *done = true;
-                *source = Value::UNDEFINED;
-            }
-            return Some(None);
-        };
-        if value.is_deleted() {
-            return None;
-        }
-        if let Some(IteratorRecord { index, ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.store_position(index, position + 1);
-        }
-        Some(Some(value))
+        self.step_present_element(iterator, source, position)
     }
 
     /// `step_present_array_value` for a step calling `method`, when `method` is the shared
