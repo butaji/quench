@@ -1,0 +1,201 @@
+//! The builtin rows: a call of a native the b-jit knows by identity, run on its staged row (the
+//! rows the interpreter and the u-jit run: `staged::builtins`, `staged::strings`, `staged::math`).
+//! One row per builtin, `call_builtin_<symbol>` (`quench_bjit::call::BuiltinRow`).
+//!
+//! Contract. A row is entered and left like every row (`rows.rs`): frame in r12, context in r13.
+//! Value hole 0 is the call's `CallRecord` address. The record's `callee` is the identity word the
+//! callee register (`callee_register`) must hold; `this_register` is the receiver and
+//! `args_register` the first argument of the window, the next arguments following it;
+//! `result_register` receives the result. Spills made the registers canonical before the row, so
+//! the row reads the frame slots.
+//!
+//! Successors: TAKEN after the result is stored to the result register; NEXT, when the row misses
+//! (the guard, or an operand the staged row leaves at), with nothing written: the planner lays the
+//! helper row there, which makes the call. No row leaves through an exit or makes a call.
+
+use crate::heap_rows::{payload, word_at};
+use crate::layout::call_record::{CallRecord, REGISTER_BYTES};
+use crate::layout::JS_STEP_STRING_RECORD_BASE;
+use crate::stage::StencilStage;
+use crate::staged::{builtins, math, strings};
+use crate::words::{S, hole64};
+use crate::{Row, Value};
+use core::mem::{offset_of, transmute};
+
+unsafe extern "C" {
+    static HOLE_NEXT: u8;
+    static HOLE_TAKEN: u8;
+}
+
+/// The value hole of the call record's address.
+const HOLE_RECORD: u8 = 0;
+
+macro_rules! go {
+    ($hole:ident, $s:expr) => {{
+        let s: S = $s;
+        let next: Row = transmute(&raw const $hole);
+        become next(s.frame, s.ctx, s.p[0], s.p[1], s.p[2], s.p[3], s.f[0], s.f[1], s.f[2], s.f[3], s.f[4], s.f[5], s.f[6], s.f[7])
+    }};
+}
+
+/// The state a successor receives where nothing is live: the frame and context, pinned registers zero.
+#[inline(always)]
+fn dead(s: &S) -> S {
+    S { frame: s.frame, ctx: s.ctx, p: Default::default(), f: Default::default() }
+}
+
+/// The word of the frame register `register`.
+#[inline(always)]
+unsafe fn frame_word(s: &S, register: usize) -> u64 {
+    // SAFETY: a register of the live frame, canonical after the spills before the row.
+    unsafe { ((s.frame + register * REGISTER_BYTES) as *const u64).read() }
+}
+
+/// The register index the record names at `field`.
+#[inline(always)]
+unsafe fn record_register(record: usize, field: usize) -> usize {
+    // SAFETY: the record is the chain's, live for the code's life.
+    unsafe { usize::from(((record + field) as *const u16).read()) }
+}
+
+/// Whether the callee register holds the identity the record names: the guard a u-jit call makes.
+#[inline(always)]
+unsafe fn is_callee(s: &S, record: usize) -> bool {
+    // SAFETY: as `record_register`.
+    unsafe { frame_word(s, record_register(record, offset_of!(CallRecord, callee_register))) == word_at(record, offset_of!(CallRecord, callee)) }
+}
+
+/// The receiver's word.
+#[inline(always)]
+unsafe fn receiver(s: &S, record: usize) -> u64 {
+    // SAFETY: as `record_register`.
+    unsafe { frame_word(s, record_register(record, offset_of!(CallRecord, this_register))) }
+}
+
+/// The word of argument `index` of the call's window.
+#[inline(always)]
+unsafe fn argument(s: &S, record: usize, index: usize) -> u64 {
+    // SAFETY: as `record_register`; the call passes the arguments the row reads (`BuiltinRow::arguments`).
+    unsafe { frame_word(s, record_register(record, offset_of!(CallRecord, args_register)) + index) }
+}
+
+/// The Number argument `index` as a double, or `None` where it is no Number.
+#[inline(always)]
+unsafe fn number(s: &S, record: usize, index: usize) -> Option<f64> {
+    // SAFETY: as `argument`.
+    unsafe { Value::from_bits(argument(s, record, index)).as_number() }
+}
+
+/// Writes the result word to the call's result register.
+#[inline(always)]
+unsafe fn store_result(s: &S, record: usize, word: u64) {
+    // SAFETY: as `record_register`, a register of the live frame.
+    unsafe { ((s.frame + record_register(record, offset_of!(CallRecord, result_register)) * REGISTER_BYTES) as *mut u64).write(word) }
+}
+
+/// `charCodeAt` of the string receiver at the index argument (`strings::string_char_code_at`).
+#[inline(always)]
+unsafe fn char_code_at(s: &S, record: usize) -> Option<u64> {
+    // SAFETY: as `is_callee`, `payload`'s and the receiver's reads.
+    unsafe {
+        if !is_callee(s, record) {
+            return None;
+        }
+        let records = word_at(payload(s), JS_STEP_STRING_RECORD_BASE);
+        let mut stage = StencilStage::from_hole(0);
+        let string = strings::flat_string(&mut stage, records, receiver(s, record), ())?;
+        strings::string_char_code_at(&mut stage, string, argument(s, record, 0), ())
+    }
+}
+
+/// `Number.isInteger` of a Number argument (`builtins::concrete_is_integral`); a non-Number misses.
+#[inline(always)]
+unsafe fn is_integer(s: &S, record: usize) -> Option<u64> {
+    // SAFETY: as `is_callee`.
+    unsafe {
+        if !is_callee(s, record) {
+            return None;
+        }
+        let value = Value::from_bits(argument(s, record, 0));
+        value.as_number()?;
+        Some(Value::boolean(builtins::concrete_is_integral(value)).to_bits())
+    }
+}
+
+/// A Math function of one Number (`math::float_unary`), its result a Number.
+#[inline(always)]
+unsafe fn unary(s: &S, record: usize, operation: math::FloatUnary) -> Option<u64> {
+    // SAFETY: as `is_callee`.
+    unsafe {
+        if !is_callee(s, record) {
+            return None;
+        }
+        let value = number(s, record, 0)?;
+        Some(Value::number(math::float_unary(operation, value)).to_bits())
+    }
+}
+
+/// `Math.max` (true) or `Math.min` of two Numbers (`math::float_extreme`).
+#[inline(always)]
+unsafe fn extreme(s: &S, record: usize, maximum: bool) -> Option<u64> {
+    // SAFETY: as `is_callee`.
+    unsafe {
+        if !is_callee(s, record) {
+            return None;
+        }
+        let (left, right) = (number(s, record, 0)?, number(s, record, 1)?);
+        Some(Value::number(math::float_extreme(maximum, left, right)).to_bits())
+    }
+}
+
+/// `Math.imul` of two int32 operands (`math::int_multiply`), its result an int32.
+#[inline(always)]
+unsafe fn imul(s: &S, record: usize) -> Option<u64> {
+    // SAFETY: as `is_callee`.
+    unsafe {
+        if !is_callee(s, record) {
+            return None;
+        }
+        let left = Value::from_bits(argument(s, record, 0)).as_int()?;
+        let right = Value::from_bits(argument(s, record, 1)).as_int()?;
+        Some(Value::integer(math::int_multiply(left, right)).to_bits())
+    }
+}
+
+/// One builtin row: its staged body's word is stored and the row continues at TAKEN, or the row
+/// continues at NEXT with nothing written.
+macro_rules! builtin_row {
+    ($name:ident, |$s:ident, $record:ident| $body:expr) => {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "rust-preserve-none" fn $name(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
+            unsafe {
+                let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
+                let $record = hole64::<HOLE_RECORD>() as usize;
+                let $s = &s;
+                match $body {
+                    Some(word) => {
+                        store_result($s, $record, word);
+                        go!(HOLE_TAKEN, dead($s))
+                    }
+                    None => {
+                        core::hint::cold_path();
+                        go!(HOLE_NEXT, dead($s))
+                    }
+                }
+            }
+        }
+    };
+}
+
+builtin_row!(call_builtin_char_code_at, |s, record| char_code_at(s, record));
+builtin_row!(call_builtin_is_integer, |s, record| is_integer(s, record));
+builtin_row!(call_builtin_floor, |s, record| unary(s, record, math::FloatUnary::Floor));
+builtin_row!(call_builtin_ceil, |s, record| unary(s, record, math::FloatUnary::Ceil));
+builtin_row!(call_builtin_trunc, |s, record| unary(s, record, math::FloatUnary::Trunc));
+builtin_row!(call_builtin_abs, |s, record| unary(s, record, math::FloatUnary::Abs));
+builtin_row!(call_builtin_sqrt, |s, record| unary(s, record, math::FloatUnary::Sqrt));
+builtin_row!(call_builtin_fround, |s, record| unary(s, record, math::FloatUnary::Fround));
+builtin_row!(call_builtin_round, |s, record| unary(s, record, math::FloatUnary::Round));
+builtin_row!(call_builtin_max, |s, record| extreme(s, record, true));
+builtin_row!(call_builtin_min, |s, record| extreme(s, record, false));
+builtin_row!(call_builtin_imul, |s, record| imul(s, record));

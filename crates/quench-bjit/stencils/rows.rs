@@ -26,6 +26,8 @@ macro_rules! need {
 
 #[cfg(all(fixed_rows, target_arch = "x86_64"))]
 mod call_rows;
+#[cfg(all(fixed_rows, target_arch = "x86_64"))]
+mod builtin_rows;
 mod codes;
 #[cfg(all(fixed_rows, target_arch = "x86_64"))]
 mod entry;

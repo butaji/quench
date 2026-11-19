@@ -108,12 +108,19 @@ pub(super) struct Layout<'a> {
     pub(super) invalidation: Option<usize>,
     /// The realm the entry proves active, where the code inlines callees.
     pub(super) realm: Option<RealmProof>,
+    /// Per caller PC, the builtin its callee is, where the b-jit runs it on a row (`Callees::builtins`).
+    pub(super) builtins: &'a [Option<super::call_plan::builtin::BuiltinCall>],
 }
 
 impl Layout<'_> {
     /// What the call at caller PC `pc` recorded of its callee.
     pub(super) fn callee(&self, pc: u32) -> Option<&DirectFacts> {
         self.callees.get(pc as usize)?.as_ref()
+    }
+
+    /// The builtin the call at caller PC `pc` runs on its row, if its callee is one.
+    pub(super) fn builtin(&self, pc: u32) -> Option<super::call_plan::builtin::BuiltinCall> {
+        self.builtins.get(pc as usize).copied().flatten()
     }
 
     fn origin(&self, row: u32) -> Option<Origin> {
