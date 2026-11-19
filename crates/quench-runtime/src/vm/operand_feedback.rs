@@ -181,8 +181,14 @@ impl Records {
     /// `records`, with feedback bytes (all `NONE`) in front of them where `feedback`.
     pub(super) fn new(records: Box<[LaneInstruction]>, feedback: bool) -> Self {
         let front = if feedback { records.len().div_ceil(RECORD_BYTES) } else { 0 };
+        // The records move into their own allocation, grown by the feedback records in front
+        // (`reserve_exact`, so no slack), instead of being copied into a second one: a derivation
+        // holds one copy of its records at its peak, not two.
+        let mut vector = Vec::from(records);
+        vector.reserve_exact(front);
+        vector.splice(0..0, std::iter::repeat_with(Self::blank).take(front));
         let cells: Box<[std::cell::UnsafeCell<LaneInstruction>]> =
-            std::iter::repeat_with(Self::blank).take(front).chain(records).map(std::cell::UnsafeCell::new).collect();
+            vector.into_iter().map(std::cell::UnsafeCell::new).collect::<Vec<_>>().into_boxed_slice();
         // SAFETY: `front` records lie before the end of `cells`; the pointer keeps the whole
         // allocation's provenance, which the feedback bytes before it need, and the boxed
         // records never move.
