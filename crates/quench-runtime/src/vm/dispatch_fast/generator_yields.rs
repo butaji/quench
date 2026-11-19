@@ -50,6 +50,10 @@ script_handler! {
     /// `yield` takes the general path.
     #[inline(never)]
     fn lane_yield<>(cx, r, ip, i, view) {
+        // A generator's window, the common case, runs the row with its suspender known.
+        if super::generator_windows::running_generator(unsafe { vm(cx) }) {
+            resume!(cx, lane_suspension(cx, r, ip, i, (LANE_YIELD, Suspender::Window)))
+        }
         let Some(suspender) = Suspender::of_yield(cx) else {
             return exit(ip);
         };
@@ -78,6 +82,7 @@ fn resume_point<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction) -
 /// result (`generator_windows::lane_suspend_generator`); a request's parks
 /// (`async_requests::lane_suspend_request`); a job root's suspends into its owner and the run
 /// ends (`suspend_job_root`).
+#[inline(always)]
 pub(super) fn lane_suspend_at<H: Host>(cx: *mut LaneContext<H>, ip: Ip, suspender: Suspender, suspending: Suspending<u64>) -> Resumed {
     let at = (record_pc(cx, ip) + usize::from(!suspending.again), suspending.destination);
     let (value, yielded) = (Value::from_bits(suspending.value), suspending.effect == SuspendEffect::Yield);

@@ -81,10 +81,10 @@ impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
         self.suspends.map(LaneSuspends::asynchronous)
     }
 
-    /// The row's suspension made in place (`LaneSuspends::suspend`), which the handler chose
-    /// before the row ran, so it never declines after the row's effects.
+    /// The row's suspension, which the handler makes in place by the suspender it chose before
+    /// the row ran (`lane_suspension`), so it never declines after the row's effects.
     fn suspend(&mut self, _stage: &mut Concrete, suspending: crate::staged::Suspending<u64>) -> Option<LaneControl> {
-        self.suspends.map(|suspends| LaneControl::Resumed(suspends.suspend(suspending)))
+        self.suspends.map(|_| LaneControl::Suspend(suspending))
     }
 
     /// The delegation's reads the lane finishes without guest code (`LaneSuspends::delegation`).
