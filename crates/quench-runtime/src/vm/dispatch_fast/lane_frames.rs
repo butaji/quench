@@ -225,6 +225,23 @@ impl LaneStack {
         activation
     }
 
+    /// Drop the innermost activation where it is: a plain one's header and side record
+    /// (`pop_plain_frame`), else the innermost record. No spill; the window stays for the caller
+    /// to release, as `LaneActivations::discard_top` leaves it.
+    ///
+    /// # Safety
+    /// An activation runs, and it holds no Wasm storage (`Activation::frame_storage_bytes`).
+    #[inline(always)]
+    pub(super) unsafe fn discard_top_frame(&mut self) {
+        if self.plain.depth.get() != 0 {
+            // SAFETY: a plain activation runs, tested above.
+            let _ = unsafe { self.pop_plain_frame() };
+        } else {
+            // SAFETY: the caller's contract: the records hold the innermost activation.
+            unsafe { self.activations_mut().discard_top() };
+        }
+    }
+
     /// The records alone, read without spilling.
     ///
     /// # Safety
@@ -310,5 +327,64 @@ impl LaneStack {
         if self.plain.depth.get() != 0 { return None; }
         // SAFETY: the reference ends here.
         unsafe { self.records_unspilled() }.top_native()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn script(function: u32, caller_registers: *mut Value, completion: Completion, kept: u16) -> Activation {
+        Activation::of_parts(
+            crate::vm::compiled::ShadowFrame::EMPTY, function, std::ptr::null(), std::ptr::null(), Registers(caller_registers), ProgramId::MAIN,
+            ActivationKind::Script(ScriptActivation {
+                callee: Value::UNDEFINED,
+                argc: 1,
+                completion,
+                forwards: kept != 0,
+                kept,
+                environment: false,
+                record: std::ptr::null_mut(),
+            }),
+        )
+    }
+
+    /// One-frame-one-call.md F4: every script activation of the lane's windows is a header, its
+    /// side record pushed beside it where its flags name one; the view, the header pop and the
+    /// spill read the same records a record push would have held.
+    #[test]
+    fn a_side_record_rides_with_its_header_and_spills_into_its_record() {
+        let mut stack = LaneStack::default();
+        let base = stack.values.as_mut_ptr();
+        let windows = [16, 48, 80, 112].map(|at| base.wrapping_add(at));
+        let shapes = [(Completion::Plain, 0), (Completion::Plain, 5), (Completion::Cross, 0), (Completion::Constructs, 0)];
+        for (index, (&window, &(completion, kept))) in windows.iter().zip(&shapes).enumerate() {
+            let caller = if index == 0 { std::ptr::null_mut() } else { windows[index - 1] };
+            // SAFETY: the windows lie in the values' reservation, each past the context words.
+            unsafe { stack.push_activation(script(index as u32, caller, completion, kept), window) };
+        }
+        assert_eq!(stack.activation_count(), 4);
+        // SAFETY: no walk runs.
+        assert_eq!(unsafe { (*stack.sides.get()).len() }, 3, "the plain one carries no side record");
+        let viewed: Vec<(u32, Completion, u16)> = stack.frames()
+            .map(|frame| { let script = frame.script().unwrap(); (frame.function(), script.completion, script.kept) })
+            .collect();
+        assert!(viewed == vec![(0, Completion::Plain, 0), (1, Completion::Plain, 5), (2, Completion::Cross, 0), (3, Completion::Constructs, 0)]);
+        assert!(stack.top_frame().unwrap().script().unwrap().completion == Completion::Constructs);
+        let popped = stack.pop_activation().unwrap();
+        assert_eq!(popped.function(), 3);
+        assert!(popped.script().unwrap().completion == Completion::Constructs);
+        assert_eq!(popped.window_ptr(), windows[3]);
+        assert_eq!(stack.plain.registers.get(), windows[2]);
+        // The rest spill into the records a record push would have written.
+        let records = stack.activations();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[1].script().unwrap().kept, 5);
+        assert!(records[1].script().unwrap().forwards);
+        assert!(records[2].script().unwrap().completion == Completion::Cross);
+        assert_eq!(records[2].window_ptr(), windows[2]);
+        assert_eq!(stack.plain.depth.get(), 0);
+        // SAFETY: no walk runs.
+        assert!(unsafe { (*stack.sides.get()).is_empty() }, "a spill takes every side record into its record");
     }
 }

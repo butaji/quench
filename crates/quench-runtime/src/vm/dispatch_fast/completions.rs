@@ -14,10 +14,9 @@ use crate::staged::call_complete::{concrete_admits_returning_call, concrete_retu
 #[inline(always)]
 pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let completion = match vm.lane_stack.activations().last().map(|activation| activation.kind()) {
-        Some(ActivationKind::Script(script)) => Some(script.completion),
-        _ => None,
-    };
+    // The innermost's completion read where it is: a header's side record names it, or the
+    // header alone (`Plain`, or a trampoline's), or a record (no spill, one-frame-one-call.md F4).
+    let completion = vm.lane_stack.top_frame().and_then(|frame| frame.script()).map(|script| script.completion);
     // An array step, a return per element, is tested first.
     if completion == Some(Completion::ArrayStep) {
         return lane_step_array_iteration_in_place(cx, value);
@@ -149,6 +148,13 @@ pub(super) fn lane_complete_plain_activation<H: Host, const LEAF: u8>(cx: *mut L
 #[inline(always)]
 pub(super) fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
+    // Only a plain, crossing or body-returning innermost begins a chain
+    // (`returning_chain_outermost`): any other declines before the records are read, which
+    // would spill the headers (one-frame-one-call.md F4).
+    let innermost = vm.lane_stack.top_frame()?.script()?.completion;
+    if !matches!(innermost, Completion::Plain | Completion::Cross | Completion::ReturnsToBody) {
+        return None;
+    }
     let (outermost, crossed) = returning_chain_outermost(vm.lane_stack.activations())?;
     // Script activations hold no Wasm storage (`LaneStack::pop_activation`), so the inner
     // ones go without its accounting.

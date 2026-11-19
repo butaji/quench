@@ -2435,7 +2435,10 @@ pub(in crate::vm) struct PlainFrames {
     depth: std::cell::Cell<usize>,
     /// The innermost plain activation's registers (offset 8).
     registers: std::cell::Cell<*mut Value>,
-    /// Their program, the running one: a plain call never crosses programs (offset 16).
+    /// The program the innermost plain activation's caller runs (offset 16), which each push
+    /// writes. A header without a side record never crosses, so it runs that program too; a
+    /// crossing one's side record keeps its own caller program, which its pop writes back
+    /// (`lane_frames::pop_plain_frame`; one-frame-one-call.md F4).
     program: std::cell::Cell<ProgramId>,
     /// The activation limit and the values' end as one address (offset 24): a proved call
     /// admits one more plain activation where its window's room ends at or below it
@@ -5342,8 +5345,9 @@ fn lane_return_value_general<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Va
 #[inline(always)]
 fn lane_complete_array_step<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    match vm.lane_stack.activations().last().map(|activation| activation.kind()) {
-        Some(ActivationKind::Script(script)) if script.completion == Completion::ArrayStep => lane_step_array_iteration_in_place(cx, value),
+    // Read where it is (a header's side record, a step header or a record), no spill.
+    match vm.lane_stack.top_frame().and_then(|frame| frame.script()) {
+        Some(script) if script.completion == Completion::ArrayStep => lane_step_array_iteration_in_place(cx, value),
         _ => None,
     }
 }
@@ -19712,7 +19716,7 @@ fn lane_enter_plain_window<H: Host>(
     // SAFETY: the running lane's context.
     let (caller_base, program) = unsafe { ((*cx).base, (*cx).program) };
     debug_assert!(depth == stack.plain.depth.get());
-    debug_assert!(depth == 0 || stack.plain.program.get() == program);
+    debug_assert!(stack.plain_program_holds(program));
     debug_assert!(callee_registers.0.addr() & HEAP_WINDOW == 0, "a lane stack window");
     // The record `lane_enter_window_of` builds here keeps `argc` (`KeepingRecord::of_kept`
     // without kept values) and completes `Completion::of(false, false, false)`, `Plain`.
@@ -20405,6 +20409,12 @@ fn lane_return_plain_header<H: Host, const INTO_BODY: bool>(cx: *mut LaneContext
         return None;
     }
     debug_assert!(stack.plain.registers.get() == window.0 && unsafe { (*cx).registers }.0 == window.0, "the innermost plain activation runs");
+    // A header with a side record (one-frame-one-call.md F4: keeping, environment, a completion
+    // past `Plain`, a crossing) completes past the pop: the records' returns take it, as they
+    // took its record before.
+    if !crate::staged::call_complete::concrete_frame_completes_plainly(window.0.expose_provenance() as u64) {
+        return None;
+    }
     // SAFETY: the call record belongs to the caller's live view.
     let destination = unsafe { (*window.plain_caller().0).a };
     if !INTO_BODY && destination & crate::bytecode::RETURN_REGISTER != 0 {
@@ -20443,9 +20453,11 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
     {
         return Some(resumed);
     }
-    let top = stack.activations().last()?;
+    // The innermost read where it is, a header with its side record or a record (no spill:
+    // one-frame-one-call.md F4).
+    let top = stack.top_frame()?;
     let expected = returning_completion(CROSSES, CONSTRUCTS, SETTLES);
-    let ActivationKind::Script(script) = top.kind() else { return None };
+    let Some(script) = top.script() else { return None };
     if script.completion != expected { return None; }
     // SAFETY: the call record belongs to the caller's live view.
     let destination = unsafe { (*top.call()).a };
@@ -20461,7 +20473,7 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
     // SAFETY: a script activation holds no drop glue and no Wasm storage
     // (`Activation::frame_storage_bytes`); the values hold no drop glue.
     unsafe {
-        stack.activations_mut().discard_top();
+        stack.discard_top_frame();
         stack.values.release_window(window);
     }
     // A return from inside a `with` leaves its scope without an exit.
@@ -20643,6 +20655,11 @@ fn lane_complete_to_wasm<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value)
 #[inline(always)]
 fn lane_complete_wasm_activation<H: Host>(cx: *mut LaneContext<H>, mut value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
+    // A plain header (with or without its side record) is always a script activation's, so it
+    // is no Wasm one: declined before the records are read, which would spill it.
+    if vm.lane_stack.plain.depth.get() != 0 {
+        return None;
+    }
     let top = vm.lane_stack.activations().last()?;
     if matches!(top.kind(), ActivationKind::Script(_))
         // SAFETY: the call record belongs to the caller's live view.
