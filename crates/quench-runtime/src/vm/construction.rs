@@ -220,6 +220,15 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn set_function_name_key(&mut self, function: Value, key: Value, prefix: u32) {
+        // A string key is its own name: strings are immutable, so the closure shares the key's
+        // record instead of copying its text into a new one for every closure made with it.
+        if prefix == crate::bytecode::FUNCTION_NAME_PREFIX_NONE && self.heap.string(key).is_some() {
+            if let Some(slot) = self.inferred_function_name_slot(function) {
+                self.heap.property_set(function, slot, key);
+                self.capture_function_name(function, key);
+            }
+            return;
+        }
         let name = match self.heap.get(key) {
             _ if let Some(value) = self.heap.string(key)  => value.to_string(),
             _ if let Some(description) = self.heap.symbol_data(key) => description

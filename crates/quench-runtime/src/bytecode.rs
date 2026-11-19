@@ -1664,7 +1664,10 @@ struct PackedHeader {
 }
 
 const _: () = assert!(size_of::<PackedHeader>() == 24);
-const _: () = assert!(size_of::<FunctionSlot>() == 64);
+// The header (24), the record's `OnceCell` (8), the unlowered cell (16: a tag and a pointer) and
+// the tier-0 cell (8).
+const _: () = assert!(size_of::<FunctionSlot>() == 56);
+const _: () = assert!(size_of::<UnlowerCell>() == 16);
 
 const NO_WORD: u32 = u32::MAX;
 
@@ -1753,7 +1756,7 @@ enum RecordUse {
 pub struct FunctionSlot {
     header: PackedHeader,
     record: std::cell::OnceCell<std::rc::Rc<Function>>,
-    unlowered: std::cell::RefCell<Option<Unlowered>>,
+    unlowered: UnlowerCell,
     /// The unlowered record its first runs execute until it lowers (`tier0`).
     tier0: tier0::Tier0Cell,
 }
@@ -1775,7 +1778,7 @@ impl Unlowered {
     fn function(&self, header: FunctionHeader) -> Function {
         match self {
             Self::Record(function) => Function::clone(function),
-            Self::Packed(packed) => binary::unpack_unlowered(packed),
+            Self::Packed(packed) => binary::unpack_unlowered(packed, &header),
             Self::Template(template) => header.own(Function::clone(&template.0), template.1.clone()),
         }
     }
@@ -1783,16 +1786,62 @@ impl Unlowered {
     fn into_function(self, header: FunctionHeader) -> Function {
         match self {
             Self::Record(function) => std::rc::Rc::unwrap_or_clone(function),
-            Self::Packed(packed) => binary::unpack_unlowered(&packed),
+            Self::Packed(packed) => binary::unpack_unlowered(&packed, &header),
             Self::Template(template) => header.own(Function::clone(&template.0), template.1),
         }
+    }
+}
+
+/// A slot's `Unlowered`, held in a `Cell` so that a slot shared by its program is changed through
+/// `&self` without a borrow flag: `with` takes the record out for the read and puts it back.
+struct UnlowerCell(std::cell::Cell<Option<Unlowered>>);
+
+impl UnlowerCell {
+    fn new(unlowered: Option<Unlowered>) -> Self {
+        Self(std::cell::Cell::new(unlowered))
+    }
+
+    /// `read` over the record, which stays in the slot.
+    fn with<R>(&self, read: impl FnOnce(Option<&Unlowered>) -> R) -> R {
+        let unlowered = self.0.take();
+        let result = read(unlowered.as_ref());
+        self.0.set(unlowered);
+        result
+    }
+
+    fn set(&self, unlowered: Option<Unlowered>) {
+        self.0.set(unlowered);
+    }
+
+    fn take(&self) -> Option<Unlowered> {
+        self.0.take()
+    }
+
+    fn is_none(&self) -> bool {
+        self.with(|unlowered| unlowered.is_none())
+    }
+
+    fn get_mut(&mut self) -> &mut Option<Unlowered> {
+        self.0.get_mut()
+    }
+}
+
+impl Clone for UnlowerCell {
+    fn clone(&self) -> Self {
+        Self::new(self.with(|unlowered| unlowered.cloned()))
+    }
+}
+
+impl std::fmt::Debug for UnlowerCell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.with(|unlowered| std::fmt::Debug::fmt(&unlowered, f))
     }
 }
 
 impl FunctionSlot {
     fn new(header: FunctionHeader, record: Option<Function>, unlowered: Option<Unlowered>) -> Self {
         let record = record.map_or_else(Default::default, |function| std::rc::Rc::new(function).into());
-        Self { header: PackedHeader::pack(&header), record, unlowered: unlowered.into(), tier0: Default::default() }
+        Self { header: PackedHeader::pack(&header), record, unlowered: UnlowerCell::new(unlowered), tier0: Default::default() }
     }
 
     pub(crate) fn compiled(function: Function) -> Self {
@@ -1829,7 +1878,7 @@ impl FunctionSlot {
     /// the record again or decodes it.
     #[cfg(test)]
     pub(crate) fn is_released(&self) -> bool {
-        self.record.get().is_none() && self.unlowered.borrow().is_none() && self.tier0.get().is_none()
+        self.record.get().is_none() && self.unlowered.is_none() && self.tier0.get().is_none()
     }
 
     #[inline(always)] pub(crate) fn header(&self) -> FunctionHeader {
@@ -4408,11 +4457,11 @@ impl ResidualProgram {
 
     fn build_record(&self, index: usize, purpose: RecordUse) -> Function {
         let unlowered = {
-            let header = self.functions[index].header();
-            let mut unlowered = self.functions[index].unlowered.borrow_mut();
+            let slot = &self.functions[index];
+            let header = slot.header();
             match purpose {
-                RecordUse::Kept => unlowered.take().map(|unlowered| unlowered.into_function(header)),
-                RecordUse::Transient => unlowered.as_ref().map(|unlowered| unlowered.function(header)),
+                RecordUse::Kept => slot.unlowered.take().map(|unlowered| unlowered.into_function(header)),
+                RecordUse::Transient => slot.unlowered.with(|unlowered| unlowered.map(|unlowered| unlowered.function(header))),
             }
         };
         if let Some(unlowered) = unlowered {

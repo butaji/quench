@@ -804,8 +804,25 @@ impl<H: Host> Vm<H> {
                 .flat_map(|((global, _), template)| [*global, template.anchor]),
         );
         roots.extend(self.with_stack.iter().copied());
+        // A lane window is filled only up to its entry fill (`lane_fill_window`), and the windows
+        // of the top activation and of a native's callee are scanned whole, so a register past
+        // the fill may hold a stale word an earlier activation left: a Value whose record may
+        // since have been freed. Window roots are therefore admitted only when they name a
+        // record that is still occupied. A stale word naming a reused record keeps that record
+        // one collection longer, which is safe; one naming a free record is dropped.
+        let lane_start = roots.len();
         self.lane_stack.extend_roots(&self.programs, &mut roots);
         self.lane_roots.iter().for_each(|parked| parked.extend_roots(&self.programs, &mut roots));
+        let heap = &self.heap;
+        let mut kept = lane_start;
+        for index in lane_start..roots.len() {
+            let value = roots[index];
+            if value.heap_reference().is_none() || heap.is_live(value) {
+                roots[kept] = value;
+                kept += 1;
+            }
+        }
+        roots.truncate(kept);
         roots.extend(std::iter::once(self.instanceof_has_instance_holder));
         roots.extend(self.active_call_roots.iter().copied());
         roots.extend(self.prepared_roots.iter().copied());
