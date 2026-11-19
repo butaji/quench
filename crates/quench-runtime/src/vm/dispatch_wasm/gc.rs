@@ -4,9 +4,9 @@
 
 use super::super::*;
 use super::super::wasm_gc::{ArrayInitialization, GcFieldIndex};
-use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind, GcField, GcFieldAccess, StructConstruction};
+use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind, GcField, GcFieldAccess};
 use crate::wasm::reference::ReferenceTarget;
-use crate::staged::wasm_gc::{Aggregate, GcOp, WasmGc, array_copy, array_fill, array_length, field_read, field_write, non_null, reference_cast};
+use crate::staged::wasm_gc::{Aggregate, ArrayConstruction, GcStep, WasmGc, array_copy, array_fill, array_length, field_read, field_write, non_null, reference_cast};
 use crate::staged::wasm_call::Call;
 use super::super::wasm_gc::stage::HeapStage;
 
@@ -15,17 +15,20 @@ use super::super::wasm_gc::stage::HeapStage;
 pub(in crate::vm) use crate::staged::wasm_gc::wasm_gc_value_ops;
 
 /// Whether the GC value opcode `op` can allocate a heap cell, which can make a collection due:
-/// its group's `allocates`. A call target has no group and is taken to allocate, as before.
+/// its step's group's `allocates`. A call target has no step and is taken to allocate, as before.
 #[inline(always)] pub(in crate::vm) const fn wasm_gc_allocates(op: Op) -> bool {
-    match GcOp::of(op) {
-        Some(group) => group.allocates(),
+    match GcStep::of(op) {
+        Some(step) => step.group().allocates(),
         None => true,
     }
 }
 
 /// Whether the GC value opcode `op` reads or writes a struct field or an array element.
 #[inline(always)] pub(in crate::vm) const fn wasm_gc_field_op(op: Op) -> bool {
-    matches!(GcOp::of(op), Some(GcOp::Field))
+    match GcStep::of(op) {
+        Some(step) => step.field().is_some(),
+        None => false,
+    }
 }
 
 /// A field access's operands (`Vm::wasm_field_operands`): the object, the field or element, its
@@ -56,38 +59,24 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value + Copy,
     ) -> Result<Option<Value>, JsError> {
-        match GcOp::of(i.op()) {
-            Some(GcOp::Field) => self.wasm_field_step(i, read),
-            Some(GcOp::ArrayLength) => self.wasm_array_bulk_step(i, read),
-            Some(GcOp::Null | GcOp::Equal) => self.wasm_reference_step(i, read),
-            Some(GcOp::Test) => self.wasm_cast_step(program, i, read),
-            Some(GcOp::Allocating) => self.wasm_allocating_step(program, i, read),
-            None => self.wasm_call_target_step(program, env, i, read).map(Some),
-        }
-    }
-
-    /// The step of an allocating GC operation (`GcOp::Allocating`): the array's bulk fill and
-    /// copy, the array and struct constructors, the segment operations, a descriptor test or
-    /// cast, and the i31 and extern conversions.
-    #[inline(always)]
-    fn wasm_allocating_step(
-        &mut self,
-        program: ProgramId,
-        i: WideInstruction,
-        read: impl Fn(&Self, u16) -> Value + Copy,
-    ) -> Result<Option<Value>, JsError> {
-        match i.op() {
-            Op::WasmArrayFill | Op::WasmArrayCopy => self.wasm_array_bulk_step(i, read),
-            Op::WasmArrayNew | Op::WasmArrayNewDefault | Op::WasmArrayNewFixed => {
-                self.wasm_array_new_step(program, i, read)
+        let Some(step) = GcStep::of(i.op()) else {
+            return self.wasm_call_target_step(program, env, i, read).map(Some);
+        };
+        match step {
+            GcStep::StructGet { .. } | GcStep::StructSet | GcStep::ArrayGet { .. } | GcStep::ArraySet => {
+                self.wasm_field_step(step, i, read)
             }
-            Op::WasmArrayNewData | Op::WasmArrayNewElem | Op::WasmArrayInitData | Op::WasmArrayInitElem => {
-                self.wasm_array_segment_step(program, i, read)
+            GcStep::ArrayLen | GcStep::ArrayFill | GcStep::ArrayCopy => self.wasm_array_bulk_step(step, i, read),
+            GcStep::IsNull | GcStep::AsNonNull | GcStep::Equal | GcStep::I31 | GcStep::ExternConversion => {
+                self.wasm_reference_step(step, i, read)
             }
-            Op::WasmStructNew | Op::WasmStructNewDefault | Op::WasmStructNewDesc
-            | Op::WasmStructNewDefaultDesc | Op::WasmRefGetDesc => self.wasm_struct_new_step(program, i, read),
-            Op::WasmDescriptorTest | Op::WasmDescriptorCast => self.wasm_cast_step(program, i, read),
-            _ => self.wasm_reference_step(i, read),
+            GcStep::Test { cast, descriptor } => self.wasm_cast_step(program, cast, descriptor, i, read),
+            GcStep::ArrayNew { construction } => self.wasm_array_new_step(program, construction, i, read),
+            GcStep::ArraySegment { kind, init } => self.wasm_array_segment_step(program, kind, init, i, read),
+            GcStep::StructNew { default, descriptor } => {
+                self.wasm_struct_new_step(program, default, descriptor, i, read)
+            }
+            GcStep::GetDescriptor => self.wasm_get_descriptor_step(program, i, read),
         }
     }
 
@@ -113,7 +102,7 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value,
     ) -> Result<Value, JsError> {
-        if i.op() == Op::WasmIndirectTarget {
+        if matches!(Call::of(i.op()), Some(Call::IndirectTarget)) {
             return self.wasm_indirect_target_of_operand(program, read(self, i.register_b()), read(self, i.register_c()), i.imm());
         }
         let residual = self.programs.get(program).ok_or_else(|| JsError::validation("missing Wasm program".into()))?;
@@ -127,17 +116,19 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError::validation("Wasm GC operation requires module declarations".into()))
     }
 
-    /// The operands of the field access `i` of a struct or an array, read from its registers.
+    /// The operands of the field step `step` (`struct.get`/`set`, `array.get`/`set`) of the
+    /// instruction `i`, read from its registers.
     #[inline(always)]
     fn wasm_field_operands(
         &self,
+        step: GcStep,
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value,
     ) -> Result<FieldOperands, JsError> {
-        let access = GcFieldAccess::from_op(i.op()).expect("field opcode");
+        let (aggregate, access) = step.field().expect("field step");
         let write = access == GcFieldAccess::Write;
         let field = GcField::from_tag(i.imm()).expect("validated field operand");
-        if matches!(i.op(), Op::WasmStructGet | Op::WasmStructGetS | Op::WasmStructGetU | Op::WasmStructSet) {
+        if aggregate == Aggregate::Struct {
             let reference = read(self, if write { i.register_a() } else { i.register_b() });
             let value = write.then(|| read(self, i.register_b()));
             return Ok(FieldOperands { reference, location: GcFieldIndex::Struct(field.index()), field, access, value });
@@ -157,7 +148,8 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value,
     ) -> Result<Option<Option<Value>>, JsError> {
-        let FieldOperands { reference, location, field, access, value } = self.wasm_field_operands(i, read)?;
+        let step = GcStep::of(i.op()).expect("field step");
+        let FieldOperands { reference, location, field, access, value } = self.wasm_field_operands(step, i, read)?;
         Ok(self.wasm_field_access(reference, location, field, access, value))
     }
 
@@ -204,14 +196,15 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// `wasm_gc_field_hit`, raising the trap a miss makes.
+    /// The field step `step`, raising the trap a miss makes.
     #[inline(always)]
     fn wasm_field_step(
         &mut self,
+        step: GcStep,
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value + Copy,
     ) -> Result<Option<Value>, JsError> {
-        let FieldOperands { reference, location, field, access, value } = self.wasm_field_operands(i, read)?;
+        let FieldOperands { reference, location, field, access, value } = self.wasm_field_operands(step, i, read)?;
         self.wasm_field_rule(reference, location, field, access, value)
     }
 
@@ -219,16 +212,17 @@ impl<H: Host> Vm<H> {
     /// are decoded from their registers before the rule runs on the heap.
     fn wasm_array_bulk_step(
         &mut self,
+        step: GcStep,
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value,
     ) -> Result<Option<Value>, JsError> {
-        match i.op() {
-            Op::WasmArrayLen => {
+        match step {
+            GcStep::ArrayLen => {
                 let reference = read(self, i.register_b()).to_bits();
                 let length = array_length(&mut HeapStage { vm: self }, reference)?;
                 Ok(Some(Value::integer(length as i32)))
             }
-            Op::WasmArrayFill => {
+            GcStep::ArrayFill => {
                 let (destination, source) = (read(self, i.register_a()), read(self, i.register_b()));
                 let count = u64::from(Self::wasm_u32_operand(read(self, i.register_c()))?);
                 let (output, _) = i.register_pair();
@@ -253,21 +247,24 @@ impl<H: Host> Vm<H> {
     fn wasm_array_new_step(
         &mut self,
         program: ProgramId,
+        construction: ArrayConstruction,
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value,
     ) -> Result<Option<Value>, JsError> {
         let declarations = self.wasm_module_declarations(program)?;
-        let initialization = match i.op() {
-            Op::WasmArrayNewFixed => {
+        let initialization = match construction {
+            ArrayConstruction::Fixed => {
                 let window = i.register_window();
                 let too_large = || JsError::wasm_trap_error(crate::WasmTrap::ArrayTooLarge);
                 ArrayInitialization::Fixed(self.wasm_window_values(window.base, window.count, read, too_large)?)
             }
-            Op::WasmArrayNew => ArrayInitialization::Repeated {
+            ArrayConstruction::Repeated => ArrayInitialization::Repeated {
                 count: Self::wasm_u32_operand(read(self, i.register_c()))?,
                 value: read(self, i.register_b()),
             },
-            _ => ArrayInitialization::Default(Self::wasm_u32_operand(read(self, i.register_b()))?),
+            ArrayConstruction::Default => {
+                ArrayInitialization::Default(Self::wasm_u32_operand(read(self, i.register_b()))?)
+            }
         };
         self.wasm_array_new(&declarations, i.imm(), initialization).map(Some)
     }
@@ -275,11 +272,12 @@ impl<H: Host> Vm<H> {
     fn wasm_array_segment_step(
         &mut self,
         program: ProgramId,
+        kind: ArraySegmentKind,
+        init: bool,
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value,
     ) -> Result<Option<Value>, JsError> {
-        let kind = ArraySegmentKind::from_op(i.op()).expect("array segment opcode");
-        if matches!(i.op(), Op::WasmArrayNewData | Op::WasmArrayNewElem) {
+        if !init {
             let base = i.register_b();
             let input = Self::wasm_u32_operand(read(self, base + ArraySegmentInput::Offset as u16))?;
             let count = Self::wasm_u32_operand(read(self, base + ArraySegmentInput::Count as u16))?;
@@ -299,22 +297,31 @@ impl<H: Host> Vm<H> {
     fn wasm_struct_new_step(
         &mut self,
         program: ProgramId,
+        default: bool,
+        descriptor: bool,
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value,
     ) -> Result<Option<Value>, JsError> {
         let declarations = self.wasm_module_declarations(program)?;
-        if i.op() == Op::WasmRefGetDesc {
-            return self.wasm_ref_get_desc(&declarations, i.imm(), read(self, i.register_b())).map(Some);
-        }
-        let mode = StructConstruction::from_op(i.op()).expect("struct constructor opcode");
         // A defaulted struct without a descriptor names no register window.
-        let window = (!mode.defaulted() || mode.described()).then(|| i.register_window());
-        let fields = window.map_or(0, |window| window.count - u16::from(mode.described()));
-        let descriptor = window.filter(|_| mode.described()).map(|window| read(self, window.base + fields));
-        let operands = window.filter(|_| !mode.defaulted()).map(|window| window.base);
+        let window = (!default || descriptor).then(|| i.register_window());
+        let fields = window.map_or(0, |window| window.count - u16::from(descriptor));
+        let descriptor_value = window.filter(|_| descriptor).map(|window| read(self, window.base + fields));
+        let operands = window.filter(|_| !default).map(|window| window.base);
         let field = |vm: &Self, index: usize| read(vm, operands.unwrap_or_default() + index as u16);
         let values = operands.map(|_| (usize::from(fields), &field as &dyn Fn(&Self, usize) -> Value));
-        self.wasm_struct_new(&declarations, i.imm(), values, descriptor).map(Some)
+        self.wasm_struct_new(&declarations, i.imm(), values, descriptor_value).map(Some)
+    }
+
+    /// `ref.get_desc`: the descriptor of the reference operand.
+    fn wasm_get_descriptor_step(
+        &mut self,
+        program: ProgramId,
+        i: WideInstruction,
+        read: impl Fn(&Self, u16) -> Value,
+    ) -> Result<Option<Value>, JsError> {
+        let declarations = self.wasm_module_declarations(program)?;
+        self.wasm_ref_get_desc(&declarations, i.imm(), read(self, i.register_b())).map(Some)
     }
 
     /// `ref.test` and `ref.cast` of a GC or i31 reference, and the descriptor forms.
@@ -322,18 +329,20 @@ impl<H: Host> Vm<H> {
     fn wasm_cast_step(
         &mut self,
         program: ProgramId,
+        cast: bool,
+        descriptor: bool,
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value + Copy,
     ) -> Result<Option<Value>, JsError> {
         let target = ReferenceTarget::validated(i.imm());
         let reference = read(self, i.register_b());
-        if matches!(i.op(), Op::WasmDescriptorTest | Op::WasmDescriptorCast) {
-            return self.wasm_descriptor_cast_step(program, i, target, reference, read);
+        if descriptor {
+            return self.wasm_descriptor_cast_step(program, cast, i, target, reference, read);
         }
         let declarations = self.wasm_module_declarations(program)?;
         let reference = reference.to_bits();
         let stage = &mut HeapStage { vm: self };
-        if i.op() == Op::WasmRefTest {
+        if !cast {
             return Ok(Some(Value::integer(stage.admits(reference, target, &declarations) as i32)));
         }
         Ok(Some(Value::from_bits(reference_cast(stage, reference, target, &declarations)?)))
@@ -345,6 +354,7 @@ impl<H: Host> Vm<H> {
     fn wasm_descriptor_cast_step(
         &mut self,
         program: ProgramId,
+        cast: bool,
         i: WideInstruction,
         target: ReferenceTarget,
         reference: Value,
@@ -352,41 +362,44 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<Value>, JsError> {
         let declarations = self.wasm_module_declarations(program)?;
         let valid = self.wasm_descriptor_matches(&declarations, target, reference, read(self, i.register_c()))?;
-        match i.op() {
-            Op::WasmDescriptorTest => Ok(Some(Value::integer(i32::from(valid)))),
-            _ if valid => Ok(Some(reference)),
-            _ => Err(JsError::wasm_trap_error(crate::WasmTrap::DescriptorCastFailure)),
+        if !cast {
+            return Ok(Some(Value::integer(i32::from(valid))));
+        }
+        if valid {
+            Ok(Some(reference))
+        } else {
+            Err(JsError::wasm_trap_error(crate::WasmTrap::DescriptorCastFailure))
         }
     }
 
-    /// The reference operations the GC rules make: `ref.is_null`, `ref.as_non_null`, and the
-    /// operations that stay with the general reference step (`ref.eq`, `i31`, external
-    /// conversions).
+    /// The reference steps the GC rules make: `ref.is_null`, `ref.as_non_null`, and the steps that
+    /// stay with the general reference step (`ref.eq`, `i31`, external conversions).
     fn wasm_reference_step(
         &mut self,
+        step: GcStep,
         i: WideInstruction,
         read: impl Fn(&Self, u16) -> Value,
     ) -> Result<Option<Value>, JsError> {
         let value = read(self, i.register_b());
-        Ok(Some(match i.op() {
-            Op::WasmRefIsNull => Value::integer(HeapStage { vm: self }.is_null(value.to_bits()) as i32),
-            Op::WasmRefEq => Value::integer(i32::from(value == read(self, i.register_c()))),
-            Op::WasmRefAsNonNull => {
+        Ok(Some(match step {
+            GcStep::IsNull => Value::integer(HeapStage { vm: self }.is_null(value.to_bits()) as i32),
+            GcStep::Equal => Value::integer(i32::from(value == read(self, i.register_c()))),
+            GcStep::AsNonNull => {
                 let check = crate::wasm::reference::NonNullCheck::from_tag(i.imm()).expect("validated non-null check");
                 Value::from_bits(non_null(&mut HeapStage { vm: self }, value.to_bits(), check.trap())?)
             }
-            Op::WasmI31 => {
+            GcStep::I31 => {
                 let operator = crate::wasm::i31::I31Operator::from_tag(i.imm()).expect("validated i31 operator");
                 let value = self.decode_wasm_value(value, operator.input_type())?;
                 self.encode_wasm_value(operator.apply(value).map_err(JsError::wasm_trap_error)?)
             }
-            Op::WasmExternalConversion => {
+            GcStep::ExternConversion => {
                 let conversion = crate::wasm::reference::ExternalConversion::from_tag(i.imm())
                     .expect("validated external conversion");
                 self.decode_wasm_value(value, conversion.input_type())?;
                 self.wasm_external_conversion(conversion, value)
             }
-            op => unreachable!("{op:?} is no Wasm GC value step"),
+            step => unreachable!("{step:?} is no reference step"),
         }))
     }
 }

@@ -1,6 +1,7 @@
 //! What a Wasm function's instruction is, as data: the one table every tier reads (the
 //! analysis, the emitter, the loop and threading passes). No tier names a Wasm opcode.
 
+use super::wasm_atomic::Atomic;
 use super::wasm_call::Call;
 use super::wasm_exception::Exception;
 use super::wasm_flow::Flow;
@@ -32,21 +33,45 @@ pub(crate) enum Step {
     Gc(GcOp),
     /// Exception construction, the catch's tag test and payload read, and `throw_ref`.
     Exception(Exception),
+    /// The atomic fence and the atomic accesses: read-modify-write, compare-exchange, wait and
+    /// notify.
+    Atomic(Atomic),
 }
 
 impl Step {
     /// The step `op` is, with `tag` its operator selector where the opcode takes one.
-    pub(crate) fn of(op: Op, tag: u32) -> Option<Self> {
-        WasmOperation::of(op, tag)
-            .map(Self::Numeric)
-            .or_else(|| Instance::of(op).map(Self::Instance))
-            .or_else(|| Memory::of(op).map(Self::Memory))
-            .or_else(|| Flow::of(op).map(Self::Flow))
-            .or_else(|| Call::of(op).map(Self::Call))
-            .or_else(|| TableOp::of(op).map(Self::Table))
-            .or_else(|| Simd::of(op, tag).map(Self::Simd))
-            .or_else(|| GcOp::of(op).map(Self::Gc))
-            .or_else(|| Exception::of(op).map(Self::Exception))
+    pub(crate) const fn of(op: Op, tag: u32) -> Option<Self> {
+        if let Some(step) = WasmOperation::of(op, tag) {
+            return Some(Self::Numeric(step));
+        }
+        if let Some(step) = Instance::of(op) {
+            return Some(Self::Instance(step));
+        }
+        if let Some(step) = Memory::of(op) {
+            return Some(Self::Memory(step));
+        }
+        if let Some(step) = Flow::of(op) {
+            return Some(Self::Flow(step));
+        }
+        if let Some(step) = Call::of(op) {
+            return Some(Self::Call(step));
+        }
+        if let Some(step) = TableOp::of(op) {
+            return Some(Self::Table(step));
+        }
+        if let Some(step) = Simd::of(op, tag) {
+            return Some(Self::Simd(step));
+        }
+        if let Some(step) = GcOp::of(op) {
+            return Some(Self::Gc(step));
+        }
+        if let Some(step) = Exception::of(op) {
+            return Some(Self::Exception(step));
+        }
+        match Atomic::of(op) {
+            Some(atomic) => Some(Self::Atomic(atomic)),
+            None => None,
+        }
     }
 
     /// The register whose slot the plan records for the step: its first operand, or a vector

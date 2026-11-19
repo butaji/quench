@@ -369,7 +369,7 @@ macro_rules! loads {
         pub(crate) enum MemoryLoad { $($scalar,)+ $($name,)+ }
         impl MemoryLoad {
             const ALL: &'static [Self] = &[$(Self::$scalar,)+ $(Self::$name,)+];
-            pub(crate) fn from_tag(tag: u32) -> Option<Self> { Self::ALL.get(tag as usize).copied() }
+            pub(crate) const fn from_tag(tag: u32) -> Option<Self> { if (tag as usize) < Self::ALL.len() { Some(Self::ALL[tag as usize]) } else { None } }
             pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, wasmparser::MemArg)> {
                 match op { $(wasmparser::Operator::$scalar { memarg } => Some((Self::$scalar, *memarg)),)+ $(wasmparser::Operator::$name { memarg } => Some((Self::$name, *memarg)),)+ _ => None }
             }
@@ -433,11 +433,11 @@ macro_rules! stores {
         pub(crate) enum MemoryStore { $($scalar,)+ $($name,)+ }
         impl MemoryStore {
             const ALL: &'static [Self] = &[$(Self::$scalar,)+ $(Self::$name,)+];
-            pub(crate) fn from_tag(tag: u32) -> Option<Self> { Self::ALL.get(tag as usize).copied() }
+            pub(crate) const fn from_tag(tag: u32) -> Option<Self> { if (tag as usize) < Self::ALL.len() { Some(Self::ALL[tag as usize]) } else { None } }
             pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, wasmparser::MemArg)> {
                 match op { $(wasmparser::Operator::$scalar { memarg } => Some((Self::$scalar, *memarg)),)+ $(wasmparser::Operator::$name { memarg } => Some((Self::$name, *memarg)),)+ _ => None }
             }
-            #[inline(always)] pub(crate) fn value_type(self) -> WasmType { match self { $(Self::$scalar => WasmType::$variant,)+ $(Self::$name => WasmType::V128,)+ } }
+            #[inline(always)] pub(crate) const fn value_type(self) -> WasmType { match self { $(Self::$scalar => WasmType::$variant,)+ $(Self::$name => WasmType::V128,)+ } }
             #[inline(always)] pub(crate) const fn width(self) -> usize { match self { $(Self::$scalar => std::mem::size_of::<$swidth>(),)+ $(Self::$name => std::mem::size_of::<$word>(),)+ } }
             /// Write the vector `value` at `at`, unchecked.
             ///

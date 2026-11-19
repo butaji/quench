@@ -137,10 +137,7 @@ pub(crate) mod wasm_operation;
 pub(crate) mod wasm_simd;
 pub(crate) mod wasm_simd_concrete;
 pub(crate) mod wasm_step;
-pub(crate) mod wasm_jump;
-pub(crate) use wasm_jump::{BranchTable, WasmJump};
-pub(crate) mod wasm_state;
-pub(crate) mod wasm_access;
+pub(crate) mod wasm_atomic;
 pub(crate) use wasm_concrete::ConcreteWasm;
 #[cfg(test)]
 pub(crate) mod trace;

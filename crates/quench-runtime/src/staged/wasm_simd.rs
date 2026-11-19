@@ -30,17 +30,19 @@ pub(crate) enum Simd {
 impl Simd {
     /// The vector step `op` is, with `tag` its selector where the opcode takes one: a selector
     /// or access the tiers do not run is none.
-    pub(crate) fn of(op: Op, tag: u32) -> Option<Self> {
+    pub(crate) const fn of(op: Op, tag: u32) -> Option<Self> {
         match op.class() {
-            Class::WasmSimd => SimdKernel::of(tag).map(|_| Self::Operator { selector: tag }),
+            Class::WasmSimd if SimdKernel::of(tag).is_some() => Some(Self::Operator { selector: tag }),
             Class::WasmSimdShuffle => Some(Self::Shuffle),
             Class::WasmMemoryAddress => Some(Self::Address),
-            Class::WasmMemoryLoad => {
-                (MemoryLoad::from_tag(tag) == Some(MemoryLoad::V128Load)).then_some(Self::Load)
-            }
-            Class::WasmMemoryStore => {
-                (MemoryStore::from_tag(tag) == Some(MemoryStore::V128Store)).then_some(Self::Store)
-            }
+            Class::WasmMemoryLoad => match MemoryLoad::from_tag(tag) {
+                Some(MemoryLoad::V128Load) => Some(Self::Load),
+                _ => None,
+            },
+            Class::WasmMemoryStore => match MemoryStore::from_tag(tag) {
+                Some(MemoryStore::V128Store) => Some(Self::Store),
+                _ => None,
+            },
             _ => None,
         }
     }

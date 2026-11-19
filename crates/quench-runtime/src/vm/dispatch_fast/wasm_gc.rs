@@ -47,7 +47,7 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// A read of a value field (`GcFieldAccess::plain_read`): the interpreter's own access
+    /// A plain read of a value field (`GcStep::StructGet` or `ArrayGet` with no sign): the interpreter's own access
     /// (`Vm::wasm_field_access`) with the record's operands read in place, a struct's field
     /// or, where `ARRAY`, an array's element. A trap takes the general path, which raises it.
     #[inline(never)]
@@ -72,10 +72,14 @@ lane_handler! {
 
 /// The handler of a `wasm_gc_value_op` (`lane_wasm_gc_step`), for `op` if it is one.
 pub(super) const fn wasm_gc_handler<H: Host>(op: Op) -> Option<Handler> {
-    match crate::wasm::gc::GcFieldAccess::plain_read(op) {
-        Some(false) => return Some(lane_wasm_field_read::<H, false>),
-        Some(true) => return Some(lane_wasm_field_read::<H, true>),
-        None => {}
+    match crate::staged::wasm_gc::GcStep::of(op) {
+        Some(crate::staged::wasm_gc::GcStep::StructGet { signed: None }) => {
+            return Some(lane_wasm_field_read::<H, false>);
+        }
+        Some(crate::staged::wasm_gc::GcStep::ArrayGet { signed: None }) => {
+            return Some(lane_wasm_field_read::<H, true>);
+        }
+        _ => {}
     }
     macro_rules! handlers {
         ($($name:ident)*) => { match op { $(Op::$name => Some(lane_wasm_gc_step::<H, { Op::$name as u16 }>),)* _ => None } };

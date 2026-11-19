@@ -169,10 +169,14 @@ impl SimdKernel {
     /// The kernel and lane immediate a selector names: none for an unknown operator or a
     /// lane past its count.
     #[inline]
-    pub(crate) fn of(selector: u32) -> Option<(&'static Self, u8)> {
-        let kernel = SimdOperator::KERNELS.get((selector >> SELECTOR_LANE_BITS) as usize)?;
+    pub(crate) const fn of(selector: u32) -> Option<(&'static Self, u8)> {
+        let index = (selector >> SELECTOR_LANE_BITS) as usize;
+        if index >= SimdOperator::KERNELS.len() {
+            return None;
+        }
+        let kernel = &SimdOperator::KERNELS[index];
         let lane = (selector & SELECTOR_LANE_MASK) as u8;
-        (u32::from(lane) < kernel.lanes).then_some((kernel, lane))
+        if (lane as u32) < kernel.lanes { Some((kernel, lane)) } else { None }
     }
 
     /// The type of the operator's result, read off its own semantics: a kernel is pure and
