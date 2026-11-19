@@ -6,8 +6,8 @@
  * same payload and builds the object in a C DOM; the canonical JSON text is produced once, as the
  * JS constructor does not serialize, so it is only used for validation. Each timed iteration
  * serializes the DOM into the output buffer from the start, as JSON.stringify builds the result.
- * The buffer keeps its capacity between iterations (the JS result string is garbage collected
- * outside the loop's string building). The last output must equal the canonical text.
+ * The buffer keeps its capacity between iterations, so the timed work is the serialization
+ * itself, not buffer growth. The last output must equal the canonical text.
  * Usage: json-stringify-inspector [jetstream-root]; run from the repo root. */
 #include "json-analogue.h"
 
