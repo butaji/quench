@@ -98,6 +98,7 @@ impl<H: Host> Vm<H> {
             native_program_resolver: _,
             execution_interrupt: _,
             active_call_roots: _,
+            active_roots: _,
             prepared_roots: _,
             step_native_proofs: _,
             with_stack: _,

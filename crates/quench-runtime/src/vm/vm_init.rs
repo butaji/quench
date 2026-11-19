@@ -95,6 +95,7 @@ impl<H: Host> Vm<H> {
             native_program_resolver: None,
             execution_interrupt,
             active_call_roots: vec![],
+            active_roots: vec![],
             realm_native_proofs: super::iterators::RealmNativeProofs::new(),
             prepared_roots: vec![],
             step_native_proofs: Default::default(),
