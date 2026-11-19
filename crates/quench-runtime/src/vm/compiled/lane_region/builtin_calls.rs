@@ -187,36 +187,97 @@ impl Lowering<'_, '_> {
     /// `argument`, as an int32, or -1. Strict equality and SameValueZero agree on a non-NaN
     /// search, so `includes` and `indexOf` share the scan. The scan reads the array's view (the
     /// loop's hoisted one, else proved here) and changes nothing, so it leaves at `exit`, before
-    /// any result is defined, for a receiver the view does not prove, an empty view (an encoded
-    /// backing reads as empty), and a hole: a prototype may hold the hole's index, which the
-    /// generic algorithm reads.
+    /// any result is defined, for a receiver the view does not prove, a prototype holding an index
+    /// (`LaneHelper::PrototypesHoldNoIndex`: a hole then reads undefined, which no int32 equals, so
+    /// the scans need no hole test), and an empty view (an encoded backing reads as empty).
+    /// Pass 1 finds the first word equal to the int's tagged word. Pass 2 finds the first double
+    /// word of the same value, and runs only where the backing may hold one (its count of other
+    /// values is nonzero): over [0, k) where pass 1 hit at k, over the whole backing where it missed.
     fn element_search(&mut self, state: &mut State, pc: usize, receiver: Register, argument: Register, exit: ir::Block) -> ir::Value {
+        let base = self.tagged(state, receiver);
         let (values, length) = match self.loop_array(pc, Some(receiver)).filter(|hoisted| hoisted.views == ElementViews::Dense) {
             Some(hoisted) => self.hoisted_view(hoisted),
             None => {
-                let base = self.tagged(state, receiver);
                 let view = emit_dense_array_view(&mut self.builder, self.payload, base, false, exit);
                 (view.values, view.length)
             }
         };
+        let clear = self.helper_call(LaneHelper::PrototypesHoldNoIndex, &[base]);
+        let clear = self.raw_compare_imm(Relation::NotEqual, clear, 0);
+        emit_js_guard(&mut self.builder, clear, exit);
         let populated = self.raw_compare_imm(Relation::NotEqual, length, 0);
         emit_js_guard(&mut self.builder, populated, exit);
         let int = self.int(state, argument, exit);
         let key = self.tagged(state, argument);
         let search = self.raw_unary(Unary::FromSigned(Lane::F64), int);
-        let (header, body, next, found, missing, done) = (self.builder.create_block(), self.builder.create_block(),
-            self.builder.create_block(), self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
-        self.builder.append_block_param(header, ir::types::I64);
-        self.builder.append_block_param(found, ir::types::I64);
-        self.builder.append_block_param(done, ir::types::I32);
-        // The scan walks the backing's words from its first to its end, one 8-byte element a step.
         let end = {
             let length = self.raw_unary(Unary::ZeroExtend(Lane::I64), length);
             let mut stage = super::super::object_slots::emit(&mut self.builder);
             let bytes = stage.mul_imm(length, size_of::<crate::Value>() as u64);
             stage.add(values, bytes)
         };
-        self.goto(header, &[values]);
+        let done = self.builder.create_block();
+        self.builder.append_block_param(done, ir::types::I32);
+        // Pass 1: the first word equal to the key.
+        let (word_found, word_missing) = (self.builder.create_block(), self.builder.create_block());
+        self.builder.append_block_param(word_found, ir::types::I64);
+        self.scan_words(values, end, key, search, false, word_found, word_missing);
+        // A word hit at `at`: the first double-equal element before it wins, if the backing may hold one.
+        self.builder.switch_to_block(word_found);
+        self.builder.seal_block(word_found);
+        let at = self.builder.block_params(word_found)[0];
+        let at_position = self.element_position(values, at);
+        let ints_only = self.holds_no_double(values);
+        let (doubles_before, doubles_before_found, doubles_before_missing) =
+            (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        self.builder.append_block_param(doubles_before_found, ir::types::I64);
+        self.branch_if(ints_only, (done, &[at_position]), (doubles_before, &[]));
+        self.builder.switch_to_block(doubles_before);
+        self.builder.seal_block(doubles_before);
+        self.scan_words(values, at, key, search, true, doubles_before_found, doubles_before_missing);
+        self.builder.switch_to_block(doubles_before_found);
+        self.builder.seal_block(doubles_before_found);
+        let double_at = self.builder.block_params(doubles_before_found)[0];
+        let double_position = self.element_position(values, double_at);
+        self.goto(done, &[double_position]);
+        self.builder.switch_to_block(doubles_before_missing);
+        self.builder.seal_block(doubles_before_missing);
+        self.goto(done, &[at_position]);
+        // No word hit: a double-equal element anywhere in the backing is the answer, else -1.
+        self.builder.switch_to_block(word_missing);
+        self.builder.seal_block(word_missing);
+        let none = self.raw_const(Lane::I32, -1);
+        let ints_only = self.holds_no_double(values);
+        let (doubles, doubles_found, doubles_missing) =
+            (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        self.builder.append_block_param(doubles_found, ir::types::I64);
+        self.branch_if(ints_only, (done, &[none]), (doubles, &[]));
+        self.builder.switch_to_block(doubles);
+        self.builder.seal_block(doubles);
+        self.scan_words(values, end, key, search, true, doubles_found, doubles_missing);
+        self.builder.switch_to_block(doubles_found);
+        self.builder.seal_block(doubles_found);
+        let double_at = self.builder.block_params(doubles_found)[0];
+        let double_position = self.element_position(values, double_at);
+        self.goto(done, &[double_position]);
+        self.builder.switch_to_block(doubles_missing);
+        self.builder.seal_block(doubles_missing);
+        self.goto(done, &[none]);
+        self.builder.switch_to_block(done);
+        self.builder.seal_block(done);
+        self.builder.block_params(done)[0]
+    }
+
+    /// The scan of the words from `start` up to `end` (both element addresses), in one loop:
+    /// `found` takes the address of the first word that is the int's tagged word `key`, or with
+    /// `by_double`, the first word that is a double of the int's value `search` (a NaN-space
+    /// word, a tag or a NaN, compares unequal to any Number). `missing` takes the range's end.
+    /// Continues from the current block, leaving the builder at no block.
+    fn scan_words(&mut self, start: ir::Value, end: ir::Value, key: ir::Value, search: ir::Value, by_double: bool,
+        found: ir::Block, missing: ir::Block) {
+        let (header, body, next) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        self.builder.append_block_param(header, ir::types::I64);
+        self.goto(header, &[start]);
         self.builder.switch_to_block(header);
         let cursor = self.builder.block_params(header)[0];
         let at_end = self.raw_compare(Relation::Equal, cursor, end);
@@ -227,14 +288,12 @@ impl Lowering<'_, '_> {
             let mut stage = super::super::object_slots::emit(&mut self.builder);
             stage.load_u64(Region::Elements.mutable(), cursor, 0)
         };
-        let present = self.raw_compare_imm(Relation::NotEqual, word, crate::Value::DELETED.to_bits() as i64);
-        emit_js_guard(&mut self.builder, present, exit);
-        // A word equal to the int's tagged word, or a double word of its value: any other word
-        // is a NaN-space tag or a NaN, which no Number compares equal to.
-        let same = self.raw_compare(Relation::Equal, word, key);
-        let number = self.raw_unary(Unary::Bitcast(Lane::F64), word);
-        let equal = self.raw_compare(Relation::FloatEqual, number, search);
-        let hit = self.raw_binary(Binary::Or, same, equal);
+        let hit = if by_double {
+            let number = self.raw_unary(Unary::Bitcast(Lane::F64), word);
+            self.raw_compare(Relation::FloatEqual, number, search)
+        } else {
+            self.raw_compare(Relation::Equal, word, key)
+        };
         self.branch_if(hit, (found, &[cursor]), (next, &[]));
         self.builder.switch_to_block(next);
         self.builder.seal_block(next);
@@ -244,23 +303,25 @@ impl Lowering<'_, '_> {
         };
         self.goto(header, &[advanced]);
         self.builder.seal_block(header);
-        self.builder.switch_to_block(found);
-        self.builder.seal_block(found);
-        let at = self.builder.block_params(found)[0];
-        let position = {
-            let offset = self.raw_binary(Binary::Sub, at, values);
+    }
+
+    /// The int32 position of the element at address `at` of the backing at `values`.
+    fn element_position(&mut self, values: ir::Value, at: ir::Value) -> ir::Value {
+        let offset = self.raw_binary(Binary::Sub, at, values);
+        let mut stage = super::super::object_slots::emit(&mut self.builder);
+        let index = stage.shr_imm(offset, size_of::<crate::Value>().trailing_zeros());
+        self.raw_unary(Unary::Narrow(Lane::I32), index)
+    }
+
+    /// Whether the backing at `values` holds only int32 words, by its count of other values
+    /// (`OTHERS_FROM_VALUES`, zero exactly when every value is an int32; an uncounted backing
+    /// reads nonzero, so the double scan runs).
+    fn holds_no_double(&mut self, values: ir::Value) -> ir::Value {
+        let others = {
             let mut stage = super::super::object_slots::emit(&mut self.builder);
-            let index = stage.shr_imm(offset, size_of::<crate::Value>().trailing_zeros());
-            self.raw_unary(Unary::Narrow(Lane::I32), index)
+            stage.load_u32(Region::Elements.mutable(), values, crate::heap::OTHERS_FROM_VALUES)
         };
-        self.goto(done, &[position]);
-        self.builder.switch_to_block(missing);
-        self.builder.seal_block(missing);
-        let none = self.raw_const(Lane::I32, -1);
-        self.goto(done, &[none]);
-        self.builder.switch_to_block(done);
-        self.builder.seal_block(done);
-        self.builder.block_params(done)[0]
+        self.raw_compare_imm(Relation::Equal, others, 0)
     }
 
     /// `pop` of the array in `receiver`: its last element, which the backing no longer holds,

@@ -1076,6 +1076,9 @@ lane_helper_inventory! { H;
     IndexSet => index_set_in_lane::<H>,
     /// Room for a loop's append to a dense array (`array_append_room_in_lane`).
     AppendRoom => array_append_room_in_lane::<H>,
+    /// Whether no prototype of an array holds an index (`prototypes_hold_no_index`), for a loop's
+    /// element search (`Lowering::element_search`).
+    PrototypesHoldNoIndex => prototypes_hold_no_index_in_lane::<H>,
     FunctionBinding => function_binding_in_lane::<H>,
     InterruptOwner => interrupt_owner_in_lane,
     GlobalGet => global_get_in_lane::<H>,
@@ -4181,6 +4184,13 @@ unsafe extern "C" fn array_append_room_in_lane<H: Host>(vm: u64, _residual: u64,
     // SAFETY: as `field_get_in_lane`; a growth moves only this array's backing.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
     vm.reserve_native_array_append(Value::from_bits(object)).map_or(0, |room| room as u64)
+}
+
+/// 1 where no prototype of the array `object` holds an index (`Vm::prototypes_hold_no_index`), else 0.
+unsafe extern "C" fn prototypes_hold_no_index_in_lane<H: Host>(vm: u64, _residual: u64, object: u64) -> u64 {
+    // SAFETY: as `array_append_room_in_lane`; the check reads the heap and writes nothing.
+    let vm = unsafe { &*(vm as *const Vm<H>) };
+    u64::from(vm.prototypes_hold_no_index(Value::from_bits(object)))
 }
 
 impl<H: Host> Vm<H> {
