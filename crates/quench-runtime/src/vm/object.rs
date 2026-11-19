@@ -3494,12 +3494,13 @@ impl<H: Host> Vm<H> {
             || self.heap.array(object).is_some()
             || self.heap.function(object).is_some() && self.function_links_answer(atom)
             || self.heap.ordinary_builtin_object(object).is_some();
-        let (cache, value) = self.inherited_field(receiver, shape_holds_own, atom)?;
+        let (cache, shapes, value) = self.inherited_field(receiver, shape_holds_own, atom)?;
         #[cfg(feature = "profile-lane-exits")]
         self.record_field_probe_path(site, atom, 5);
         if self.field_cache_records(site) {
             self.note_field_cache_write(site);
-            self.record_inherited_field(site, cache);
+            let depth = usize::from(cache.depth);
+            self.record_inherited_field(site, cache, &shapes[..depth]);
         }
         Some(value)
     }
@@ -3540,7 +3541,9 @@ impl<H: Host> Vm<H> {
     /// Records `cache` as the site's newest inherited entry. An entry for its receiver shape
     /// is replaced in place; a site holding `INHERITED_FIELD_CACHE_WAYS` entries reuses its
     /// oldest one's storage, so a site's entries stay bounded however many shapes reach it.
-    fn record_inherited_field(&mut self, site: usize, cache: InheritedFieldCache) {
+    /// `shapes` are the entry's chain, which the cache interns (`Dependencies::intern_inherited_chain`).
+    fn record_inherited_field(&mut self, site: usize, mut cache: InheritedFieldCache, shapes: &[u32]) {
+        cache.chain = self.heap.dependencies_mut().intern_inherited_chain(shapes);
         let head = self.inherited_field_indices.get(site);
         if let Some(slot) =
             record_mru_entry(self.heap.dependencies_mut(), head, INHERITED_FIELD_CACHE_WAYS, cache)
@@ -3600,7 +3603,7 @@ impl<H: Host> Vm<H> {
         let mut prototype = first;
         let mut holder = None;
         let mut holder_value = Value::UNDEFINED;
-        for &shape in &cache.prototype_shapes[..usize::from(cache.depth)] {
+        for &shape in self.heap.dependencies().inherited_chain(cache) {
             let data = self.inherited_chain_link(prototype, cache.atom, cache.function_links)?;
             if data.ordinary_shape() != shape {
                 return None;
@@ -3686,15 +3689,17 @@ impl<H: Host> Vm<H> {
         object: &Object,
         shape_holds_own: bool,
         atom: Atom,
-    ) -> Option<(InheritedFieldCache, Value)> {
+    ) -> Option<(InheritedFieldCache, [u32; INHERITED_FIELD_CACHE_MAX_DEPTH], Value)> {
         if self.shape_slot(object.shape(), atom).is_some() {
             return None;
         }
         let function_links = self.function_links_answer(atom);
+        // The chain's shapes, which `record_inherited_field` interns as the entry's `chain`.
+        let mut shapes = [NO_FIELD_HOLDER; INHERITED_FIELD_CACHE_MAX_DEPTH];
         let mut cache = InheritedFieldCache {
             receiver: object.shape(),
             atom,
-            prototype_shapes: [NO_FIELD_HOLDER; INHERITED_FIELD_CACHE_MAX_DEPTH],
+            chain: 0,
             depth: 0,
             function_links,
             answer: InheritedFieldAnswer::Absent,
@@ -3715,7 +3720,7 @@ impl<H: Host> Vm<H> {
         let mut prototype = object.proto();
         for depth in 0..INHERITED_FIELD_CACHE_MAX_DEPTH {
             if prototype.is_null() {
-                return absence_cacheable.then_some((cache, Value::UNDEFINED));
+                return absence_cacheable.then_some((cache, shapes, Value::UNDEFINED));
             }
             let data = self.inherited_chain_link(prototype, atom, function_links)?;
             let shape = data.shape();
@@ -3724,7 +3729,7 @@ impl<H: Host> Vm<H> {
             {
                 return None;
             }
-            cache.prototype_shapes[depth] = shape;
+            shapes[depth] = shape;
             cache.depth = (depth + 1) as u8;
             if let Some(slot) = self.shape_slot(shape, atom) {
                 // The immediate prototype is the regular field cache's holder tier.
@@ -3732,11 +3737,11 @@ impl<H: Host> Vm<H> {
                     return None;
                 }
                 cache.answer = InheritedFieldAnswer::Slot(slot as u16);
-                return Some((cache, self.heap.property_get(data, slot)?));
+                return Some((cache, shapes, self.heap.property_get(data, slot)?));
             }
             prototype = data.proto();
         }
-        (prototype.is_null() && absence_cacheable).then_some((cache, Value::UNDEFINED))
+        (prototype.is_null() && absence_cacheable).then_some((cache, shapes, Value::UNDEFINED))
     }
 
     #[cold]

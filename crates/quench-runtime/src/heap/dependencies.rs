@@ -22,12 +22,21 @@ use std::ptr::NonNull;
 /// stay uncached.
 pub(crate) const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 16;
 /// A field load answered `depth` prototypes above a receiver of shape `receiver`: the chain
-/// still has exactly `prototype_shapes[..depth]`, and `answer` says what that chain holds.
+/// still has exactly the `depth` prototype shapes interned at `chain`
+/// (`Dependencies::inherited_chain`), and `answer` says what that chain holds.
+///
+/// The shapes are interned, not held inline: every site reading through one class
+/// hierarchy names the same chain, and an inline array of `INHERITED_FIELD_CACHE_MAX_DEPTH`
+/// shapes was 64 of the entry's 120 bytes. An entry is now 56: holder, constant and watch
+/// (24), receiver, atom, chain, proved prototype, proved layout and next (24), answer (4),
+/// depth, function links and proved (3), padded.
 #[derive(Clone)]
 pub(crate) struct InheritedFieldCache {
     pub(crate) receiver: u32,
     pub(crate) atom: crate::bytecode::Atom,
-    pub(crate) prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
+    /// Where the chain's prototype shapes start in the interned chains
+    /// (`Dependencies::intern_inherited_chain`).
+    pub(crate) chain: u32,
     pub(crate) depth: u8,
     /// Whether a function may stand on the chain (`Vm::function_links_answer` of the name).
     pub(crate) function_links: bool,
@@ -53,6 +62,20 @@ pub(crate) struct InheritedFieldCache {
     /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
     pub(crate) next: u32,
 }
+/// The interned chain whose first shape sits at `offset` (`Dependencies::intern_inherited_chain`).
+fn chain_at(chains: &[u32], offset: u32) -> &[u32] {
+    let offset = offset as usize;
+    let len = chains[offset - 1] as usize;
+    &chains[offset..offset + len]
+}
+
+fn chain_hash(shapes: &[u32]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = rustc_hash::FxHasher::default();
+    shapes.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// An `InheritedFieldCache::proved_layout` no layout id reaches.
 pub(crate) const NO_PROVED_LAYOUT: u32 = u32::MAX;
 
@@ -120,6 +143,11 @@ struct Table {
     /// The inherited field cache's entries (`Vm::inherited_field_indices`), each of whose
     /// chain proofs the table retires.
     inherited: Vec<InheritedFieldCache>,
+    /// The prototype-shape chains inherited entries name (`InheritedFieldCache::chain`), each
+    /// once: its length, then its shapes, where an entry's `chain` names the first shape.
+    inherited_chains: Vec<u32>,
+    /// `inherited_chains`' chains by content: the offset of each one's first shape.
+    inherited_chain_index: hashbrown::HashTable<u32>,
     /// Per subject, the fact-table entries (`FactStore`) whose answer read it.
     fact_readers: Vec<Vec<u32>>,
     /// The fact table whose entries a retirement clears.
@@ -320,6 +348,35 @@ impl Dependencies {
         self.table().inherited.len()
     }
 
+    /// The offset of `shapes` among the interned chains, interned first where no entry named
+    /// it yet; an empty chain names none. Chains repeat across sites and receiver shapes
+    /// (one class hierarchy's), so the table grows by the distinct chains only, however
+    /// often a site records.
+    pub(crate) fn intern_inherited_chain(&mut self, shapes: &[u32]) -> u32 {
+        if shapes.is_empty() {
+            return 0;
+        }
+        let table = self.table_mut();
+        let hash = chain_hash(shapes);
+        let chains = &table.inherited_chains;
+        if let Some(&offset) = table.inherited_chain_index.find(hash, |&offset| chain_at(chains, offset) == shapes) {
+            return offset;
+        }
+        table.inherited_chains.push(shapes.len() as u32);
+        let offset = table.inherited_chains.len() as u32;
+        table.inherited_chains.extend_from_slice(shapes);
+        let chains = &table.inherited_chains;
+        table.inherited_chain_index.insert_unique(hash, offset, |&offset| chain_hash(chain_at(chains, offset)));
+        offset
+    }
+
+    /// The prototype shapes `cache`'s chain names, nearest first.
+    #[inline(always)]
+    pub(crate) fn inherited_chain(&self, cache: &InheritedFieldCache) -> &[u32] {
+        let chains = &self.table().inherited_chains;
+        chains.get(cache.chain as usize..).and_then(|chain| chain.get(..usize::from(cache.depth))).unwrap_or(&[])
+    }
+
     /// Adds `cache` as a new inherited entry, and its index.
     pub(crate) fn push_inherited(&mut self, cache: InheritedFieldCache) -> u32 {
         let inherited = &mut self.table_mut().inherited;
@@ -366,6 +423,8 @@ impl Dependencies {
     pub(crate) fn clear_inherited(&mut self) {
         let table = self.table_mut();
         table.inherited.clear();
+        table.inherited_chains.clear();
+        table.inherited_chain_index.clear();
         table.inherited_readers.iter_mut().for_each(Vec::clear);
     }
 }
