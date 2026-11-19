@@ -55,7 +55,7 @@
 use super::*;
 use super::call_plan::{self, CallChain, CallForm, CallPart, CallPlan, CallShape, Choice};
 use super::callees::chains;
-use super::decode::{staged_binary, staged_of, staged_unary};
+use super::decode::staged_of;
 use super::super::{LaneHelper, LaneHelpers};
 use crate::bytecode::{InstructionField, Op};
 use crate::staged::{Allocation, InlineEmpty};
@@ -88,6 +88,9 @@ pub(super) enum Step {
     /// handler's register (the row's destination, from its operand) and control to its block (the
     /// row's branch).
     Catch,
+    /// The semantic row of an instruction no row takes under `LaneHelpers::Ahead`: its opcode's semantic
+    /// entry runs it in the body (`generic::generic_row`), where a stop leaves.
+    Generic,
 }
 
 impl Step {
@@ -95,7 +98,7 @@ impl Step {
     /// as the raising step, or the VM step helper's call-out): it may allocate or run guest code, which
     /// no heap snapshot a region took sees.
     pub(super) fn runs_helper(self) -> bool {
-        matches!(self, Self::Helper | Self::CallOut | Self::Fast(_) | Self::Throw)
+        matches!(self, Self::Helper | Self::CallOut | Self::Fast(_) | Self::Throw | Self::Generic)
     }
 
     /// Whether the run reads the dispatch payload: a helper step calls through it, and a guarded
@@ -174,26 +177,6 @@ fn appends_one(instruction: WideInstruction) -> bool {
         && instruction.boolean_field(InstructionField::C) == Some(false)
 }
 
-/// The staged fast arm of a `Binary` no numeric row takes (`staged_binary`), over two register operands: a constant
-/// operand has no staged row.
-fn staged_binary_arm(instruction: WideInstruction) -> Option<Heap> {
-    let code = staged_binary(instruction.binary_operator())?;
-    let registers = instruction.operand_b().register_index().is_some() && instruction.operand_c().register_index().is_some();
-    (instruction.result_flags() == 0 && registers).then_some(Heap::Staged(code))
-}
-
-/// The staged fast arm of a `Unary` no unary row takes (`staged_unary`): a `void` that returns from the frame is the
-/// general step's (its record returns the value).
-fn staged_unary_arm(instruction: WideInstruction) -> Option<Heap> {
-    let code = staged_unary(instruction.unary_operator())?;
-    (instruction.result_flags() == 0 && !instruction.returns_from_frame()).then_some(Heap::Staged(code))
-}
-
-/// The staged fast arm `code` of an instruction whose only operand is its register `b` (`RequireObjectCoercible`).
-fn staged_plain_arm(instruction: WideInstruction, code: u8) -> Option<Heap> {
-    (instruction.result_flags() == 0).then_some(Heap::Staged(code))
-}
-
 /// The registers a fast arm reads: its operand in `a`, and for an append the array it writes
 /// through, the way a store names its array (`Decoded::base`).
 fn fast_operands(instruction: WideInstruction, fast: Heap) -> (Option<Source>, Option<Register>) {
@@ -236,10 +219,10 @@ fn calls_out(instruction: WideInstruction) -> bool {
 /// made in place are helper steps (behind their fast arm, where they have one); an add (`adds`) is a
 /// fast arm of its own, whose miss is the helper step where the instruction has one and the leave where
 /// it has none (`Step::Guard`); a name store or `typeof` is a call-out where the table has the VM step
-/// helper's address; every other instruction, and every one without the address, leaves.
+/// helper's address; every other instruction, and every one without the address, leaves (`unplaced`).
 pub(super) fn lowering(instruction: WideInstruction, known: Known, helpers: LaneHelpers) -> Step {
     let addressed = |helper| call_plan::helper_address(helpers, helper).is_some();
-    let called_out = || if addressed(LaneHelper::VmStep) && calls_out(instruction) { Step::CallOut } else { Step::Leave };
+    let called_out = || if addressed(LaneHelper::VmStep) && calls_out(instruction) { Step::CallOut } else { unplaced(helpers) };
     let in_place = addressed(LaneHelper::Step) && steps_in_place(instruction);
     let fast = fast_arm(instruction, known).or_else(|| adds::of(known, instruction).map(adds::Add::heap));
     match fast {
@@ -249,6 +232,12 @@ pub(super) fn lowering(instruction: WideInstruction, known: Known, helpers: Lane
         Some(fast) => Step::Fast(fast),
         None => Step::Helper,
     }
+}
+
+/// The step of an instruction no row takes: the leave to the interpreter, or in an AOT body (`LaneHelpers::Ahead`,
+/// where no helper address exists) the generic semantic row, which never leaves.
+fn unplaced(helpers: LaneHelpers) -> Step {
+    if matches!(helpers, LaneHelpers::Ahead) { Step::Generic } else { Step::Leave }
 }
 
 /// Whether `instruction` at `pc` may jump backward, which only a row that polls the interrupt flag
@@ -320,6 +309,7 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
         Step::CallOut => plan_helper(layout, pc, decoded, (LaneHelper::VmStep, helpers)),
         Step::Throw => plan_throw(layout, pc, helpers),
         Step::Catch => plan_catch(decoded, layout, pc, helpers),
+        Step::Generic => Err("generic row: planned with its semantic entries by `generic::generic_row`".into()),
         Step::Fast(fast) => plan_guarded(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?), helpers),
         Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, None, helpers),
         Step::Return => {
@@ -502,6 +492,9 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
 #[path = "steps/branches.rs"]
 mod branches;
 use branches::{branching, jump_to};
+#[path = "steps/generic.rs"]
+mod generic;
+pub(super) use generic::{Semantic, generic_row};
 
 #[cfg(test)]
 mod tests;

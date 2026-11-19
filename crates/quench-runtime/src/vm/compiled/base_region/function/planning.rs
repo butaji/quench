@@ -96,7 +96,7 @@ pub(super) fn leaves(layout: &Layout, row: &Decoded) -> bool {
 /// loop's steady path.
 pub(super) fn interprets(row: &Decoded) -> bool {
     match row.step {
-        Some(Step::Helper | Step::CallOut) => true,
+        Some(Step::Helper | Step::CallOut | Step::Generic) => true,
         Some(Step::Call(_)) => !region_call_rows(),
         _ => false,
     }
