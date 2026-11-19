@@ -486,7 +486,8 @@ function loadExemptions() {
   let txt = ""; try { txt = fs.readFileSync(f, "utf8"); } catch { return []; }
   return txt.split("\n").filter(l => l.trim() && !l.startsWith("#")).map(l => { const [cat, file, sym, reason] = l.split("\t"); return { cat, file: new RegExp(file), sym: new RegExp(sym || "."), reason: reason || "" }; });
 }
-const kindOf = it => MEASURED.has(it.cat) ? "measured" : "code";
+// An exemption whose reason starts "NEEDS BUILD" keeps the item open but moves it to the stabilization bucket.
+const kindOf = it => MEASURED.has(it.cat) || it.needsBuild ? "measured" : "code";
 function combine(outDir, statePath, inputs) {
   const all = [];
   for (const f of inputs) all.push(...JSON.parse(fs.readFileSync(f, "utf8")));
@@ -496,6 +497,7 @@ function combine(outDir, statePath, inputs) {
   const exempted = [];
   const items = [...byKey.values()].filter(it => {
     const e = ex.find(e => (e.cat === "*" || e.cat === it.cat) && e.file.test(it.file) && e.sym.test(it.symbol));
+    if (e && /^NEEDS BUILD/.test(e.reason)) { it.needsBuild = true; it.detail += ` [${e.reason}]`; return true; }
     if (e) { exempted.push({ ...it, reason: e.reason }); return false; }
     return true;
   });
@@ -512,7 +514,7 @@ function combine(outDir, statePath, inputs) {
 
   let md = `# Vision ledger\n\nGenerated ${stamp} by tools/vision-ledger.mjs (reading only, no build). Branches: ${[...new Set(items.map(i => i.branch))].join(", ")}.\n\n`;
   const codeN = items.filter(i => kindOf(i) === "code").length, measN = items.length - codeN;
-  md += `**Code gaps: ${codeN}** (closable now by editing; must reach zero). **Measured gaps: ${measN}** (gate rows; need a build, close at stabilization).\n\n`;
+  md += `**Code gaps: ${codeN}** (closable now by editing; must reach zero). **Measured gaps: ${measN}** (gate rows and items marked NEEDS BUILD; close at stabilization).\n\n`;
   md += `**${items.length} open items** (${items.filter(i => i.status === "new").length} new since the last run, ${closed.length} closed). Opcode names counted individually: ${items.filter(i => i.cat === "opcode-named").reduce((a, i) => a + weight(i), 0)}.\n\n`;
   md += `Each owner's items come from that owner's own pushed branch tip; gate items from the newest v2-merged ir-budget report. "Calls a staged row" is decided by name, so counts are an upper bound: triage before deleting.\n\n`;
   md += `| owner | ${cats.map(c => c.replace(/-/g, " ")).join(" | ")} | total |\n|---|${cats.map(() => "--:").join("|")}|--:|\n`;
