@@ -11,13 +11,14 @@
 //! references (`wasm_roots`).
 
 use super::wasm_instance_stage::value_kind;
-use super::{Analysis, AnalysisState, CallContext, Emitter, Host, Kind, Slot, Value, Vm, finish_callout};
+use super::{Analysis, AnalysisState, CallContext, Emitter, Host, JsError, Kind, ProgramId, Slot, Value, Vm, finish_callout};
 use crate::bytecode::{Function, Op, WideInstruction};
 use crate::staged::machine::{MachineAccess, MachineStage};
 use crate::staged::wasm::Width;
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::gc::ArraySegmentInput;
 use cranelift_codegen::ir::{self, MemFlagsData};
+use quench_bjit::wasm::FRAME_HEADER_WORDS;
 
 /// The bytes of one word of an operand block or a result.
 const WORD: usize = size_of::<u64>();
@@ -63,13 +64,13 @@ pub(super) fn allocating_result(op: Op) -> Option<Kind> {
 
 /// The instruction as one word (its opcode and registers, which fit in 16 bits each) and its
 /// immediate, which the callout unpacks.
-fn pack(instruction: WideInstruction) -> i64 {
+pub(super) fn pack(instruction: WideInstruction) -> i64 {
     let fields = [instruction.op() as u64, u64::from(instruction.a()), u64::from(instruction.b()), u64::from(instruction.c())];
     fields.iter().enumerate().fold(0, |packed, (index, field)| packed | (field << (index as u32 * FIELD_BITS))) as i64
 }
 
 /// The instruction `pack` and the immediate name.
-fn unpack(packed: u64, imm: u64) -> WideInstruction {
+pub(super) fn unpack(packed: u64, imm: u64) -> WideInstruction {
     let field = |index: u32| ((packed >> (index * FIELD_BITS)) & u64::from(u16::MAX)) as u16;
     let op = Op::from_index(usize::from(field(0))).expect("packed opcode");
     WideInstruction::new(op, field(1), field(2), field(3), imm as u32)
@@ -77,7 +78,7 @@ fn unpack(packed: u64, imm: u64) -> WideInstruction {
 
 /// The Value of an operand the emitted code spilled: an i32 from its low word, an i64 boxed
 /// where its payload does not fit, a reference as its Value bits.
-fn operand_value<H: Host>(vm: &mut Vm<H>, kind: u64, bits: u64) -> Value {
+pub(super) fn operand_value<H: Host>(vm: &mut Vm<H>, kind: u64, bits: u64) -> Value {
     if kind == Kind::I32 as u64 {
         Value::integer(bits as u32 as i32)
     } else if kind == Kind::I64 as u64 {
@@ -110,17 +111,71 @@ unsafe extern "C" fn gc_allocate<H: Host>(
             (register as u16, operand_value(vm, kind, bits))
         })
         .collect();
-    let read = |_: &Vm<H>, register: u16| {
-        values.iter().find(|(index, _)| *index == register).map_or(Value::UNDEFINED, |(_, value)| *value)
-    };
-    match vm.wasm_gc_value_step(program, env, instruction, read) {
-        Ok(result) => {
-            let bits = match result {
-                None => 0,
-                Some(value) if instruction.op() == Op::WasmDescriptorTest => value.as_int().unwrap_or(0) as u32 as u64,
-                Some(value) => value.to_bits(),
-            };
+    match allocating_bits(vm, program, env, instruction, &values) {
+        Ok(bits) => {
             // SAFETY: the emitted code gives `out` a word of its own for this call.
+            unsafe { *out = bits };
+            0
+        }
+        // SAFETY: compiled code passes the context of its call.
+        Err(error) => finish_callout(unsafe { &mut *context }, Ok(Err(error))),
+    }
+}
+
+/// The interpreter's step of an allocating `instruction` over `operands` (each register's Value),
+/// as its Wasm bits: a reference's Value bits, a descriptor test's flag, or 0 where the step has no
+/// result. Both allocation callouts (the u-jit's `gc_allocate`, the b-jit's `allocate_frame`) run it.
+pub(super) fn allocating_bits<H: Host>(
+    vm: &mut Vm<H>,
+    program: ProgramId,
+    env: Value,
+    instruction: WideInstruction,
+    operands: &[(u16, Value)],
+) -> Result<u64, JsError> {
+    let read = |_: &Vm<H>, register: u16| {
+        operands.iter().find(|(index, _)| *index == register).map_or(Value::UNDEFINED, |(_, value)| *value)
+    };
+    Ok(match vm.wasm_gc_value_step(program, env, instruction, read)? {
+        None => 0,
+        Some(value) if instruction.op() == Op::WasmDescriptorTest => value.as_int().unwrap_or(0) as u32 as u64,
+        Some(value) => value.to_bits(),
+    })
+}
+
+/// The allocating step of a stitched frame's row (`quench-bjit/stencils/wasm_rows_callout.rs`,
+/// `gc_allocate`): the operands are the frame's words, not spilled ones. `descriptor` names each
+/// operand as a word of `register | kind << 16` (the kinds are `Kind as u64`), `count` of them, and
+/// `meta` holds the immediate in its low 32 bits. The frame's registers are at the frame header's
+/// offset (`FRAME_HEADER_WORDS`), as the stitcher places them.
+///
+/// # Safety
+/// `context` is the live context of the row's call, `frame` the stitched frame whose registers
+/// the descriptor names, `descriptor` holds `count` words, and `out` is a word the row owns.
+pub(super) unsafe extern "C" fn allocate_frame<H: Host>(
+    context: *mut CallContext,
+    packed: u64,
+    meta: u64,
+    frame: *const u64,
+    descriptor: *const u64,
+    out: *mut u64,
+) -> i64 {
+    // SAFETY: compiled code passes the context of its call, whose VM is suspended in it.
+    let (program, env) = unsafe { ((*context).program, (*context).env) };
+    let instruction = unpack(packed, meta & u64::from(u32::MAX));
+    let count = ((meta >> 32) & 0xff) as usize;
+    // SAFETY: as above; the VM outlives the call.
+    let vm = unsafe { &mut *(*context).vm.cast::<Vm<H>>() };
+    let operands: Vec<(u16, Value)> = (0..count)
+        .map(|index| unsafe {
+            let entry = *descriptor.add(index);
+            let register = entry as u16;
+            let bits = *frame.add(FRAME_HEADER_WORDS as usize + usize::from(register));
+            (register, operand_value(vm, entry >> 16, bits))
+        })
+        .collect();
+    match allocating_bits(vm, program, env, instruction, &operands) {
+        Ok(bits) => {
+            // SAFETY: the row gives `out` a word of its own for this call.
             unsafe { *out = bits };
             0
         }

@@ -45,7 +45,10 @@ mod wasm_rows_call_vm;
 use wasm_rows_call_vm::call_vm;
 #[path = "wasm_rows_callout.rs"]
 mod wasm_rows_callout;
-use wasm_rows_callout::callout;
+use wasm_rows_callout::{callout, gc_allocate};
+#[path = "wasm_rows_roots.rs"]
+mod wasm_rows_roots;
+use wasm_rows_roots::{root_pop, root_push};
 
 /// The row of codes `K`, `OP`, `W`, `SHAPE` (`wasm_library.rs`).
 #[inline(always)]
@@ -95,6 +98,9 @@ pub(crate) unsafe fn run<const K: u8, const OP: u32, const W: u8, const SHAPE: u
             MEMORY_COPY => memory_copy(s),
             MEMORY_GROW => memory_grow(s),
             CALLOUT => callout::<OP>(s),
+            GC_ALLOCATE => gc_allocate(s),
+            ROOT_PUSH => root_push(s),
+            ROOT_POP => root_pop(s),
             SIMD_BINARY => simd::binary::<OP>(s),
             SIMD_UNARY => simd::unary::<OP>(s),
             SIMD_SHUFFLE => simd::shuffle(s),

@@ -66,6 +66,8 @@ fn stitched(vm: &Vm<crate::SystemHost>, module: &crate::WasmModule, index: usize
     let no_table = |_: usize| None;
     let no_vector = |_: usize| None;
     let no_move = |_: usize| false;
+    let no_references = |_: usize| -> Vec<u16> { Vec::new() };
+    let no_reads = |_: usize| -> Vec<(u16, u64)> { Vec::new() };
     let world = World {
         constant: &constant,
         memory_slot,
@@ -77,6 +79,9 @@ fn stitched(vm: &Vm<crate::SystemHost>, module: &crate::WasmModule, index: usize
         indirect: &no_indirect,
         table_callout: 0,
         gc_callout: 0,
+        allocate_callout: 0,
+        references: &no_references,
+        gc_reads: &no_reads,
         table_bindings: &no_table,
         registers: function.registers,
         vector_constant: &no_vector,

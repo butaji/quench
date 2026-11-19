@@ -299,7 +299,7 @@ fn plan(
         }
         Step::Simd(simd) => wasm_stitch_simd::simd(instruction, simd, world).or_else(|| wasm_stitch_simd_more::simd_more(pc, instruction, world)),
         Step::Table(op) => wasm_stitch_table::table(pc, instruction, op, world),
-        Step::Gc(op) => wasm_stitch_gc::gc(instruction, op, world),
+        Step::Gc(op) => wasm_stitch_gc::gc(pc, instruction, op, world),
         Step::Flow(Flow::Return) => Some(vec![if returns {
             Planned { stencil: "leave_wasm_word", holes: padded_holes([slot(a)]), taken: None }
         } else {
@@ -333,6 +333,19 @@ fn stencil(name: &str) -> Option<Stencil> {
     quench_bjit::rustc::stencil(name)
 }
 
+/// The entry for `params` arguments and `rest` zeroed registers: the variant of its parameter
+/// count (`wasm_entry.rs`, unzeroed when `rest` is 0), else the generic entry. A target without
+/// the variants (AArch64) has the generic entry alone.
+fn entry_stencil(params: usize, rest: u64) -> Option<Stencil> {
+    let variants = if rest == 0 { &ENTRY_UNZEROED } else { &ENTRY_ZEROED };
+    variants.get(params).and_then(|name| stencil(name)).or_else(|| stencil("entry_wasm"))
+}
+
+/// The x86-64 entry variants by parameter count, zeroing the registers after the arguments.
+const ENTRY_ZEROED: [&str; 5] = ["entry_wasm_p0", "entry_wasm_p1", "entry_wasm_p2", "entry_wasm_p3", "entry_wasm_p4"];
+/// The same, for an entry with no registers after its arguments.
+const ENTRY_UNZEROED: [&str; 5] = ["entry_wasm_p0_nz", "entry_wasm_p1_nz", "entry_wasm_p2_nz", "entry_wasm_p3_nz", "entry_wasm_p4_nz"];
+
 /// The code of `function`: the entry, the trap routine, then the rows, every successor patched;
 /// `None` where an instruction has no rows yet. The code is position independent: it calls and
 /// jumps only within itself.
@@ -365,6 +378,14 @@ pub(super) struct World<'a> {
     /// The GC operations' callout, `wasm_gc_callout::<H>` as an address (`wasm_gc_callout.rs`):
     /// the stitched code names its Host type's callout, as `table_callout` does.
     pub(super) gc_callout: u64,
+    /// The allocating GC steps' callout, `allocate_frame::<H>` as an address (`wasm_gc_allocate.rs`).
+    pub(super) allocate_callout: u64,
+    /// The reference registers a pc's calls hold (`Plan::references`), which the native roots hold
+    /// across them (`wasm_stitch_roots.rs`).
+    pub(super) references: &'a dyn Fn(usize) -> Vec<u16>,
+    /// The operand registers of an allocating GC step at a pc, each with its kind's code
+    /// (`Plan::gc_reads`, the kind as `Kind as u64`), in the order `allocating_reads` gives them.
+    pub(super) gc_reads: &'a dyn Fn(usize) -> Vec<(u16, u64)>,
     /// The environment slots a table or segment operation at `pc` binds (`TableOp::bindings`:
     /// the first, then the second), from the function's full plan; `None` where the plan did not
     /// reach `pc` or names no first binding.
@@ -399,7 +420,7 @@ pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &
             }
             return None;
         };
-        planned.push(rows);
+        planned.push(wasm_stitch_roots::rooted(pc, instructions[pc], rows, world)?);
     }
     // The first row of each instruction, and past the last.
     let mut first = Vec::with_capacity(planned.len() + 1);
@@ -442,10 +463,7 @@ pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &
         .map(|((planned, stencil), hole)| Row { stencil, hole: &**hole, taken: planned.taken.map(|target| row_index(target, &first)), cold: false })
         .collect();
 
-    let entry = stencil("entry_wasm")?;
     let trap = stencil("leave_wasm_trap")?;
-    let rows_at = entry.code.len() + trap.code.len();
-    let mut code = vec![0u8; rows_at + stencils.iter().map(|stencil| stencil.code.len()).sum::<usize>()];
     // The parameters follow the instance bindings (`Function::parameter_registers`).
     let first_parameter = function.parameter_registers?;
     let rest = u64::from(function.registers).checked_sub(u64::from(first_parameter) + params as u64)?;
@@ -453,6 +471,9 @@ pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &
     // A v128 local starts as zero like any other: the vector area follows the registers, so the
     // entry's zeroing runs on through its two words per register.
     let rest = if vectors { rest + 2 * u64::from(function.registers) } else { rest };
+    let entry = entry_stencil(params, rest)?;
+    let rows_at = entry.code.len() + trap.code.len();
+    let mut code = vec![0u8; rows_at + stencils.iter().map(|stencil| stencil.code.len()).sum::<usize>()];
     let entry_holes = padded_holes([wasm_stitch_simd::frame_bytes(function.registers, vectors), params as u64, rest, slot(first_parameter)]);
     patch_routine(&entry, &mut code[..entry.code.len()], &entry_holes, rows_at)?;
     code[entry.code.len()..rows_at].copy_from_slice(&trap.code);
@@ -495,6 +516,8 @@ mod wasm_stitch_global;
 mod wasm_stitch_table;
 #[path = "wasm_stitch_gc.rs"]
 mod wasm_stitch_gc;
+#[path = "wasm_stitch_roots.rs"]
+mod wasm_stitch_roots;
 #[path = "wasm_stitch_simd.rs"]
 mod wasm_stitch_simd;
 #[path = "wasm_stitch_simd_more.rs"]

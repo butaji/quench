@@ -41,7 +41,7 @@ fn field_of_tag(tag: u64) -> GcField {
 /// The Wasm bits of `stored`, the word `HeapStage::read_slot` returned for `field`: a packed
 /// field's integer, an `i32`'s integer, a number's bits (boxed where the payload is in the tag
 /// space), or a reference's bits.
-fn stored_bits<H: Host>(vm: &Vm<H>, field: GcField, stored: u64) -> u64 {
+pub(super) fn stored_bits<H: Host>(vm: &Vm<H>, field: GcField, stored: u64) -> u64 {
     match field.value() {
         GcFieldValue::Narrow if field.packed_bits().is_some() => stored,
         GcFieldValue::Narrow => u64::from(Value::from_bits(stored).as_int().expect("validated Wasm i32 field") as u32),
@@ -52,7 +52,7 @@ fn stored_bits<H: Host>(vm: &Vm<H>, field: GcField, stored: u64) -> u64 {
 }
 
 /// The value a field of `class` stores for the Wasm bits `bits`, the inverse of `stored_bits`.
-fn value_of_bits<H: Host>(vm: &mut Vm<H>, class: GcFieldValue, bits: u64) -> Value {
+pub(super) fn value_of_bits<H: Host>(vm: &mut Vm<H>, class: GcFieldValue, bits: u64) -> Value {
     match class {
         GcFieldValue::Narrow => Value::integer(bits as u32 as i32),
         GcFieldValue::Wide => vm.encode_bits64(bits),
@@ -240,7 +240,7 @@ impl<H: Host> WasmGc for Emitter<'_, '_, H> {
 }
 
 /// The register kind a field's word takes; `None` for a vector, which no tier reads.
-fn field_kind(field: GcField) -> Option<Kind> {
+pub(super) fn field_kind(field: GcField) -> Option<Kind> {
     match field.value() {
         GcFieldValue::Narrow => Some(Kind::I32),
         GcFieldValue::Wide => Some(Kind::I64),
@@ -251,13 +251,13 @@ fn field_kind(field: GcField) -> Option<Kind> {
 
 /// Whether a field access names a struct's field, whose index its tag holds, rather than an
 /// array element, whose index is a register.
-fn structure_access(op: Op) -> bool {
+pub(super) fn structure_access(op: Op) -> bool {
     matches!(op, Op::WasmStructGet | Op::WasmStructGetS | Op::WasmStructGetU | Op::WasmStructSet)
 }
 
 /// The registers of a field access, as the interpreter reads them: the reference, the array index
 /// (`None` for a struct) and the data register, which a write stores and a read writes.
-fn field_registers(instruction: WideInstruction, write: bool, structure: bool) -> (u16, Option<u16>, u16) {
+pub(super) fn field_registers(instruction: WideInstruction, write: bool, structure: bool) -> (u16, Option<u16>, u16) {
     match (structure, write) {
         (true, true) => (instruction.a(), None, instruction.b()),
         (true, false) => (instruction.b(), None, instruction.a()),

@@ -64,6 +64,14 @@ pub const MEMORY_GROW: u8 = 30;
 /// callout in hole B (`wasm_rows_call_vm.rs`), the callee's defined index in hole FOURTH. Its row
 /// is a `call_` row (`wasm_name`).
 pub const CALL_VM: u8 = 32;
+/// Native roots of a stitched frame (`wasm_rows_roots.rs`): `ROOT_PUSH` holds up to four registers,
+/// named 16 bits each in hole 0, in the context's native roots; `ROOT_POP` releases the count its
+/// hole names. Neither calls, so their rows are not `call_` rows.
+pub const ROOT_PUSH: u8 = 70;
+pub const ROOT_POP: u8 = 71;
+/// The allocating GC step's callout (`wasm_rows_callout.rs`, `gc_allocate`): it reads the operands
+/// from the frame, named by its holes. Its row is a `call_` row (`wasm_name`).
+pub const GC_ALLOCATE: u8 = 72;
 /// A global's storage operator codes: a 32-bit payload, a 64-bit payload.
 pub const STORAGE_BITS32: u32 = 0;
 pub const STORAGE_BITS64: u32 = 1;
