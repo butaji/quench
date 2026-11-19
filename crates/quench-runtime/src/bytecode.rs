@@ -2065,6 +2065,13 @@ pub(crate) struct RegisterRoots {
     /// `ALL_LIVE_AT_ENTRY` where liveness proves no bound. Filled where the lowering had the live
     /// sets, else on the first `ResidualProgram::entry_fill`.
     entry_live: std::cell::OnceCell<u16>,
+    /// The masks the derivation of `entry_live` solved, kept for the first mask ask
+    /// (`ResidualProgram::shared_register_root_masks`) so that ask does not solve the function
+    /// again. They are the masks `RegisterMasks::of` would derive, since they come from the same
+    /// solved sets at the same width. Kept only where a collection would keep them
+    /// (`RegisterMasks::too_large_to_keep` is false), so a large function's table is not held
+    /// before anything asks for it. Taken by that ask, so they are held once at most.
+    solved: std::cell::RefCell<Option<crate::compile::liveness::RegisterMasks>>,
 }
 
 /// Uncovered, which bounds no register live at entry.
@@ -2079,12 +2086,28 @@ impl RegisterRoots {
     /// derived on its first ask.
     pub(crate) fn new(covered: bool) -> Self {
         let entry_live = if covered { std::cell::OnceCell::new() } else { std::cell::OnceCell::from(Self::ALL_LIVE_AT_ENTRY) };
-        Self { covered, entry_live }
+        Self { covered, entry_live, solved: std::cell::RefCell::new(None) }
     }
 
     /// Covered, every register live at entry below `entry_live`.
     pub(crate) fn with_entry_live(covered: bool, entry_live: u16) -> Self {
-        Self { covered, entry_live: std::cell::OnceCell::from(entry_live) }
+        Self { covered, entry_live: std::cell::OnceCell::from(entry_live), solved: std::cell::RefCell::new(None) }
+    }
+
+    /// Covered, every register live at entry below `entry_live`, with the masks `solved` that
+    /// derived it kept for the first mask ask (see `solved`).
+    pub(crate) fn with_solved(entry_live: u16, solved: Option<crate::compile::liveness::RegisterMasks>) -> Self {
+        Self { covered: true, entry_live: std::cell::OnceCell::from(entry_live), solved: std::cell::RefCell::new(solved) }
+    }
+
+    /// Keeps `masks`, which a derivation of `entry_live` solved, for the first mask ask.
+    pub(crate) fn keep_solved(&self, masks: crate::compile::liveness::RegisterMasks) {
+        *self.solved.borrow_mut() = Some(masks);
+    }
+
+    /// The masks kept by `keep_solved` or `with_solved`, taken: a later call finds none.
+    pub(crate) fn take_solved(&self) -> Option<crate::compile::liveness::RegisterMasks> {
+        self.solved.take()
     }
 
     /// An `entry_live` that bounds nothing.
@@ -4554,7 +4577,7 @@ impl ResidualProgram {
     pub(crate) fn entry_fill(&self, function: &Function) -> u16 {
         function
             .register_roots
-            .entry_live_with(|| crate::compile::liveness::derive_entry_live(function, self, &self.field_sites, &self.superinstructions))
+            .entry_live_with(|| crate::compile::liveness::derive_entry_live_keeping(function, self, &self.field_sites, &self.superinstructions))
             .min(function.registers)
     }
 
@@ -4577,9 +4600,12 @@ impl ResidualProgram {
             .caches()
             .register_masks
             .get_or_init(|| {
-                crate::compile::liveness::RegisterMasks::of(function, self, &self.field_sites, &self.superinstructions)
-                    .map(std::rc::Rc::new)
-                    .expect("a covered function's liveness is derivable")
+                // The masks the lowering or the entry bound's derivation solved, when kept, else a solve.
+                let masks = function.register_roots.take_solved().unwrap_or_else(|| {
+                    crate::compile::liveness::RegisterMasks::of(function, self, &self.field_sites, &self.superinstructions)
+                        .expect("a covered function's liveness is derivable")
+                });
+                std::rc::Rc::new(masks)
             });
         Some(masks)
     }

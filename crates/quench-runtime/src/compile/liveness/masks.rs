@@ -44,7 +44,9 @@ impl RegisterMasks {
         (record.register_masks_derived() || !Self::too_large_to_keep(record)).then(|| program.register_root_masks(function))?
     }
 
-    /// `masks` at the narrowest width that holds every one of them.
+    /// `masks` at the narrowest width that holds every one of them. Given the live sets a solve
+    /// already returned (`analyze_with`), this builds the same masks `of` derives on its solved
+    /// path, without solving again: that solve narrows its sets to the same width.
     pub(crate) fn new(masks: Vec<RegisterSet>) -> Self {
         if let Some(narrow) = masks.iter().map(|&mask| u64::try_from(mask).ok()).collect::<Option<Box<[u64]>>>() { return Self::Narrow(narrow); }
         masks.iter().map(|&mask| mask.as_u128()).collect::<Option<Box<[u128]>>>().map_or_else(|| Self::Wide(masks.into_boxed_slice()), Self::Half)

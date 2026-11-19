@@ -4,8 +4,9 @@
 
 /// Target instances per shard. rustc holds every monomorphized row of its crate in memory at
 /// once: one invocation over the ~26k rows peaked near 6 GB (about 0.23 MB per row), so 4096 rows
-/// keep a shard near 1 GB plus the fixed cost of the shared row definitions.
-pub const ROWS_PER_SHARD: usize = 4096;
+/// kept a shard near 1 GB plus the fixed cost of the shared row definitions. The staged rows grew that cost:
+/// one 4096-row shard reached 14 GB on 2026-11-19, so a shard holds 1536.
+pub const ROWS_PER_SHARD: usize = 1536;
 
 /// Most shard compilations running at once: eight shards of about 1 GB fit a 16 GB machine
 /// beside the linker and the other crates cargo builds in parallel.
@@ -30,6 +31,28 @@ pub fn split<T>(items: &[T]) -> Vec<&[T]> {
         })
         .collect()
 }
+
+/// `items` in contiguous slices of at most `ROWS_PER_SHARD` weight each (an item heavier than that alone), at least
+/// one slice. A heap row inlines a staged heap operation, several times a Number row's code and its compile memory,
+/// so the build weighs each row (`HEAP_ROW_WEIGHT`) and no shard's rustc outgrows the box.
+pub fn split_weighted<T>(items: &[T], weight: impl Fn(&T) -> usize) -> Vec<&[T]> {
+    let mut parts = Vec::new();
+    let (mut start, mut load) = (0, 0);
+    for (index, item) in items.iter().enumerate() {
+        let w = weight(item);
+        if load + w > ROWS_PER_SHARD && index > start {
+            parts.push(&items[start..index]);
+            (start, load) = (index, 0);
+        }
+        load += w;
+    }
+    parts.push(&items[start..]);
+    parts
+}
+
+/// The weight of one heap row in `split_weighted`, in Number rows: a 1490-row shard of mostly heap rows reached 8.5 GB
+/// where a Number shard of the same length stays near 2 GB.
+pub const HEAP_ROW_WEIGHT: usize = 4;
 
 /// Concurrent compilations for `shards` shards on a machine with `parallelism` threads.
 pub fn workers(shards: usize, parallelism: usize) -> usize {

@@ -1,6 +1,7 @@
 //! Declared function signatures, local bindings and parameter shapes: what a TypeScript annotation
 //! says a function returns, takes as its rest parameter or as `this`, what each annotated local
-//! holds, and what each parameter's type literal or top-level class type declares
+//! holds, and what each parameter's type literal, local interface or literal alias, or top-level
+//! class type declares
 //! (`DeclaredTypes::signatures`, `DeclaredTypes::locals`, `DeclaredTypes::members`,
 //! `DeclaredTypes::parameter_classes`, `DeclaredTypes::parameters`). A declaration is a seed, not
 //! a proof (TypeScript is unsound), so a tier checks it once where a value enters and trusts it.
@@ -9,6 +10,7 @@ use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::{GetSpan, Span};
 use oxc_syntax::scope::ScopeFlags;
+use rustc_hash::FxHashMap;
 
 use crate::bytecode::{DeclaredSignature, DeclaredTypes};
 use crate::compile::class::class_method_source_span;
@@ -22,6 +24,7 @@ const TOP_LEVEL: u32 = u32::MAX;
 /// start each function's bytecode header begins at. Run before admission, so the annotations
 /// are still in place.
 pub(super) fn collect<'a>(program: &Program<'a>, names: &TypeNames<'_>, declarations: &mut DeclaredTypes) {
+    let shapes = Shapes::of(program);
     let mut collect = Collect {
         text: program.source_text,
         declarations,
@@ -30,8 +33,97 @@ pub(super) fn collect<'a>(program: &Program<'a>, names: &TypeNames<'_>, declarat
         method: None,
         loop_head: false,
         names,
+        shapes: &shapes,
     };
     collect.visit_program(program);
+}
+
+/// The nesting bound of `shape_members`' walk through `extends` clauses: a cycle or a chain this
+/// deep records nothing.
+const MAX_EXTENDS_DEPTH: u8 = 8;
+
+/// A top-level declaration whose members a parameter's type reference can denote.
+#[derive(Clone, Copy)]
+enum Shape<'s> {
+    /// An interface, one declaration of a name that may be declared by several interfaces.
+    Interface(&'s TSInterfaceDeclaration<'s>),
+    /// A non-generic type alias whose type is a type literal.
+    Literal(&'s TSTypeLiteral<'s>),
+}
+
+/// The top-level interfaces and literal aliases of a program, by name. A name is only looked up
+/// here after `TypeNames` has resolved it to a single declaration or to merged interfaces, so every
+/// declaration of a name is found.
+struct Shapes<'s> {
+    declarations: FxHashMap<&'s str, Vec<Shape<'s>>>,
+}
+
+impl<'s> Shapes<'s> {
+    /// The shapes of `program`'s top-level declarations, exported ones included.
+    fn of(program: &'s Program<'s>) -> Self {
+        let mut shapes = Shapes { declarations: FxHashMap::default() };
+        for statement in &program.body {
+            match statement {
+                Statement::TSInterfaceDeclaration(declaration) => shapes.interface(declaration),
+                Statement::TSTypeAliasDeclaration(declaration) => shapes.alias(declaration),
+                Statement::ExportDeclaration(export) => match &export.declaration {
+                    Declaration::TSInterfaceDeclaration(declaration) => shapes.interface(declaration),
+                    Declaration::TSTypeAliasDeclaration(declaration) => shapes.alias(declaration),
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+        shapes
+    }
+
+    fn interface(&mut self, declaration: &'s TSInterfaceDeclaration<'s>) {
+        self.declarations.entry(declaration.id.name.as_str()).or_default().push(Shape::Interface(declaration));
+    }
+
+    /// Record an alias only when it is non-generic and its type is a type literal; any other alias
+    /// has no member facts, so it records nothing.
+    fn alias(&mut self, declaration: &'s TSTypeAliasDeclaration<'s>) {
+        let TSType::TSTypeLiteral(literal) = &declaration.type_annotation else { return };
+        if declaration.type_parameters.is_none() {
+            self.declarations.entry(declaration.id.name.as_str()).or_default().push(Shape::Literal(literal));
+        }
+    }
+}
+
+/// The members a parameter typed by the local name `name` has, in the order TypeScript merges
+/// them: an `extends` base's members first, then the declaration's own, so a derived member that
+/// repeats a base member comes later and wins `DeclaredTypes::declared_member`. Every declaration of
+/// `name` contributes. `None` records nothing: no declaration of `name` is in `shapes`, a
+/// declaration is generic, an `extends` clause is generic or names anything but a local interface
+/// (`names` resolves it), or the walk exceeds `MAX_EXTENDS_DEPTH`.
+fn shape_members<'s>(shapes: &Shapes<'s>, names: &TypeNames<'_>, name: &str, depth: u8) -> Option<Vec<&'s TSSignature<'s>>> {
+    if depth > MAX_EXTENDS_DEPTH {
+        return None;
+    }
+    let mut members = Vec::new();
+    for shape in shapes.declarations.get(name)? {
+        match *shape {
+            Shape::Literal(literal) => members.extend(literal.members.iter()),
+            Shape::Interface(declaration) => {
+                if declaration.type_parameters.is_some() {
+                    return None;
+                }
+                for heritage in &declaration.extends {
+                    if heritage.type_arguments.is_some() {
+                        return None;
+                    }
+                    let TSTypeName::IdentifierReference(base) = &heritage.type_name else { return None };
+                    if !matches!(names.get(base.name.as_str()), Some(Named::Interface)) {
+                        return None;
+                    }
+                    members.extend(shape_members(shapes, names, base.name.as_str(), depth + 1)?);
+                }
+                members.extend(declaration.body.body.iter());
+            }
+        }
+    }
+    Some(members)
 }
 
 struct Collect<'a, 'd> {
@@ -49,6 +141,8 @@ struct Collect<'a, 'd> {
     loop_head: bool,
     /// The program's type-level names, which a parameter annotation may name a class by.
     names: &'d TypeNames<'d>,
+    /// The program's top-level interfaces and literal aliases, whose members a parameter may name.
+    shapes: &'d Shapes<'d>,
 }
 
 impl<'a> Visit<'a> for Collect<'a, '_> {
@@ -136,7 +230,8 @@ impl<'a> Collect<'a, '_> {
     }
 
     /// Record the declared shape of each parameter with a plain identifier pattern and a type
-    /// annotation: the properties of a type literal, or the top-level class a type reference names.
+    /// annotation: the properties of a type literal, the properties of a local interface or
+    /// non-generic literal alias the type reference names, or the top-level class it names.
     fn parameters(&mut self, function: u32, params: &FormalParameters<'_>) {
         for (index, parameter) in params.items.iter().enumerate() {
             let (Ok(index), Some(annotation)) = (u16::try_from(index), &parameter.type_annotation) else { continue };
@@ -152,8 +247,16 @@ impl<'a> Collect<'a, '_> {
                 }
                 TSType::TSTypeReference(reference) => {
                     let TSTypeName::IdentifierReference(name) = &reference.type_name else { continue };
-                    if let Some(Named::Class(class)) = self.names.get(name.name.as_str()) {
-                        self.declarations.declare_parameter_class(function, index, class);
+                    match self.names.get(name.name.as_str()) {
+                        Some(Named::Class(class)) => self.declarations.declare_parameter_class(function, index, class),
+                        Some(Named::Interface | Named::Alias { open: false, .. }) if reference.type_arguments.is_none() => {
+                            if let Some(members) = shape_members(self.shapes, self.names, name.name.as_str(), 0) {
+                                for member in members {
+                                    self.member(function, index, member);
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}
@@ -319,6 +422,39 @@ mod tests {
         assert_eq!(declared.declared_parameter_class(h, 0), None);
         assert_eq!(declared.declared_parameter_class(k, 0), None);
         assert_eq!(declared.declared_parameter_class(f, 0), None);
+    }
+
+    #[test]
+    fn parameter_interfaces_and_aliases_have_the_members_of_their_type_literal() {
+        let source = "interface I { x: number; s: string; o?: boolean }\ntype A = { x: number; s: string; o?: boolean };\n\
+            interface E extends I { y: number }\n\
+            function lit(p: {x: number, s: string, o?: boolean}) {}\n\
+            function fi(p: I) {}\nfunction fa(p: A) {}\nfunction fe(p: E) {}";
+        let declared = declared_of(source, "interfaces.cts");
+        let member_facts = |start: u32| ["x", "s", "o"].map(|name| declared.declared_member(start, 0, name));
+        let lit = source.find("function lit").unwrap() as u32;
+        let expected = [Some(bit(V::Number)), Some(bit(V::String)), Some(bit(V::Boolean) | bit(V::Undefined))];
+        assert_eq!(member_facts(lit), expected);
+        assert_eq!(member_facts(source.find("function fi").unwrap() as u32), expected);
+        assert_eq!(member_facts(source.find("function fa").unwrap() as u32), expected);
+        assert_eq!(member_facts(source.find("function fe").unwrap() as u32), expected);
+        assert_eq!(declared.declared_member(source.find("function fe").unwrap() as u32, 0, "y"), Some(bit(V::Number)));
+    }
+
+    #[test]
+    fn parameter_names_without_local_member_facts_record_nothing() {
+        let source = "interface G<T> { x: T }\ntype P<T> = { x: T };\ninterface Open extends Unknown { x: number }\n\
+            interface Twice { x: number }\ninterface Twice { s: string }\n\
+            function fg(p: G<number>) {}\nfunction fp(p: P<number>) {}\nfunction fo(p: Open) {}\n\
+            function fm(p: Missing) {}\nfunction ft(p: Twice) {}\nfunction fu(p: Missing<number>) {}";
+        let declared = declared_of(source, "nothing.cts");
+        for function in ["fg", "fp", "fo", "fm", "fu"] {
+            let start = source.find(&format!("function {function}")).unwrap() as u32;
+            assert_eq!(declared.declared_member(start, 0, "x"), None, "{function}");
+        }
+        let twice = source.find("function ft").unwrap() as u32;
+        assert_eq!(declared.declared_member(twice, 0, "x"), Some(bit(V::Number)));
+        assert_eq!(declared.declared_member(twice, 0, "s"), Some(bit(V::String)));
     }
 
     #[test]

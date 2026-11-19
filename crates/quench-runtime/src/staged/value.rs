@@ -191,9 +191,14 @@ pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::C
         let integer_truthy = stage.ne_imm(payload, 0u32);
         let past = is_double(stage, bits);
         let tagged = stage.not(past);
-        let falsy = [crate::Value::NULL, crate::Value::UNDEFINED, crate::Value::DELETED, crate::Value::FALSE]
-            .map(|value| stage.eq_imm(bits, value.to_bits()));
-        let falsy = falsy.into_iter().reduce(|any, each| stage.any(any, each)).expect("four falsy immediates");
+        // Written out, not an iterator fold: a stencil inlines every step (no call to `reduce` or `expect`).
+        let null = stage.eq_imm(bits, crate::Value::NULL.to_bits());
+        let undefined = stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits());
+        let deleted = stage.eq_imm(bits, crate::Value::DELETED.to_bits());
+        let false_word = stage.eq_imm(bits, crate::Value::FALSE.to_bits());
+        let nullish = stage.any(null, undefined);
+        let absent = stage.any(deleted, false_word);
+        let falsy = stage.any(nullish, absent);
         let immediate_truthy = stage.not(falsy);
         let double_truthy = stage.number_truthy(bits);
         let tagged_truthy = stage.pick(integer, integer_truthy, immediate_truthy);
