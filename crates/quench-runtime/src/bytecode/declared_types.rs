@@ -241,6 +241,7 @@ impl DeclaredTypes {
             languages[slot] = if merged == 0 { entry.languages } else { merged };
             function.declared_parameters = languages.into();
         }
+    }
 
     /// The receiver layout (`DeclaredLayout`) of the base class starting at `class_start`, when
     /// the program declares one.
