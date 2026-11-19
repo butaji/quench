@@ -26,13 +26,23 @@ pub(super) enum Search {
     Resume(usize),
 }
 
+/// Where the generic algorithm resumes a search of `range` the view cannot decide: its last
+/// index when `reverse`, else its first.
+fn resume_at(range: &std::ops::Range<usize>, reverse: bool) -> Search {
+    Search::Resume(if reverse { range.end - 1 } else { range.start })
+}
+
 impl<H: Host> Vm<H> {
     /// The element backing of an array whose indices are all own data properties of it: no
     /// indexed descriptors, sparse storage or arguments mapping. A slot holding the hole
     /// marker is a hole. Reading it runs no guest code; a search reads it in place.
     pub(super) fn array_search_elements(&self, this: Value) -> Option<&crate::heap::ArrayElements> {
         let object = self.heap.array(this)?;
-        (!object.has_indexed_descriptors() && !object.is_arguments_object() && self.heap.sparse_length(this).is_none())
+        // Only an array marked as having held sparse elements (`Object::mark_sparse_elements`,
+        // which every side-table insert sets first) can have a side-table entry: an unmarked
+        // one is decided by its header, without the side table's hash probe.
+        let sparse = || object.has_sparse_elements() && self.heap.sparse_length(this).is_some();
+        (!object.has_indexed_descriptors() && !object.is_arguments_object() && !sparse())
             .then(|| object.elements())
     }
 
@@ -47,21 +57,33 @@ impl<H: Host> Vm<H> {
     pub(super) fn search_dense(
         &self,
         array: Value,
+        range: std::ops::Range<usize>,
+        reverse: bool,
+        search: Value,
+        mode: Match,
+    ) -> Search {
+        // The backing itself, decoded element by element where it is narrow or double: a
+        // search reads each element once and copies nothing (`array_read_view` would decode an
+        // encoded backing into a new vector first).
+        let Some(elements) = self.array_search_elements(array) else {
+            return if range.is_empty() { Search::Missing } else { resume_at(&range, reverse) };
+        };
+        self.search_elements(elements, array, range, reverse, search, mode)
+    }
+
+    /// `search_dense` over `elements`, the backing `array_search_elements` gave for `array`.
+    fn search_elements(
+        &self,
+        elements: &crate::heap::ArrayElements,
+        array: Value,
         mut range: std::ops::Range<usize>,
         reverse: bool,
         search: Value,
         mode: Match,
     ) -> Search {
-        let resume = |range: &std::ops::Range<usize>| Search::Resume(if reverse { range.end - 1 } else { range.start });
-        // The backing itself, decoded element by element where it is narrow or double: a
-        // search reads each element once and copies nothing (`array_read_view` would decode an
-        // encoded backing into a new vector first).
-        let Some(elements) = self.array_search_elements(array) else {
-            return if range.is_empty() { Search::Missing } else { resume(&range) };
-        };
         // Indices past the vector are the generic algorithm's.
         if range.end > elements.len() && !range.is_empty() {
-            return resume(&range);
+            return resume_at(&range, reverse);
         }
         // A narrow backing searched for a value whose equal values are its own word alone (an
         // int32, or a constant or object reference): its words compare as they are, a hole by
@@ -129,7 +151,9 @@ impl<H: Host> Vm<H> {
     /// `fromIndex` that the view decides alone; `None` leaves any other call to the generic
     /// algorithm.
     pub(super) fn dense_search_call(&self, native: Native, array: Value, args: &[Value]) -> Option<Value> {
-        let length = self.array_search_elements(array)?.len();
+        // One proof of the backing serves the length and the search.
+        let elements = self.array_search_elements(array)?;
+        let length = elements.len();
         let start = match args.get(1) {
             None => 0,
             Some(from) => crate::units::relative_index(f64::from(from.as_int()?), length),
@@ -137,7 +161,7 @@ impl<H: Host> Vm<H> {
         let search = args.first().copied().unwrap_or(Value::UNDEFINED);
         let includes = native == Native::ArrayIncludes;
         let mode = if includes { Match::SameValueZero } else { Match::Strict };
-        Some(match self.search_dense(array, start..length, false, search, mode) {
+        Some(match self.search_elements(elements, array, start..length, false, search, mode) {
             Search::Found(_) if includes => Value::TRUE,
             Search::Found(index) => Value::number(index as f64),
             Search::Missing if includes => Value::FALSE,
