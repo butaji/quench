@@ -196,3 +196,28 @@ fn chained_await_jobs_keep_the_queue_order_and_yield_to_other_jobs() {
     );
     assert_eq!(lines, ["x0 y0 z0 x1 y1 t z1 x2 y2 | 900 0:0 299:0 0:1 299:1 299:2"]);
 }
+
+#[test]
+fn for_await_steps_chain_the_yield_jobs_in_the_queues_order() {
+    // A `for await` over an async generator alternates its await job with the generator's yield
+    // job, which a chain runs in place (`Vm::chain_yield_job`): two loops still take turns job
+    // by job, and a `then` chain started beside one still lands between its ticks.
+    let lines = agree(
+        r#"
+        const log = [];
+        async function* g(n) { for (let i = 0; i < 3; i++) yield n + i; }
+        async function run(n) { for await (const x of g(n)) log.push(x); log.push(n + "end"); }
+        const both = Promise.all([run("a"), run("b")]);
+        const ticks = [];
+        async function solo() { for await (const x of g("v")) ticks.push(x); ticks.push("end"); }
+        const alone = both.then(() => {
+            const done = solo();
+            let p = Promise.resolve();
+            for (let k = 0; k < 8; k++) p = p.then(() => ticks.push("t" + k));
+            return Promise.all([done, p]);
+        });
+        alone.then(() => print(log.join(" ") + " | " + ticks.join(" ")));
+        "#,
+    );
+    assert_eq!(lines, ["a0 b0 a1 b1 a2 b2 aend bend | t0 v0 t1 t2 v1 t3 t4 v2 t5 end t6 t7"]);
+}

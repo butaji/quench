@@ -89,6 +89,14 @@ impl<H: Host> Vm<H> {
         self.promise_resolve_value(p, promise, result)
     }
 
+    /// Whether a fresh iterator result of the current realm lacks `then` along its prototype
+    /// chain (`then_absence_proved`), so `resolve_iterator_result` fulfills its promise without
+    /// the read, running no guest code.
+    pub(super) fn iterator_results_then_free(&mut self) -> bool {
+        let prototype = self.realm_object_prototype(self.realm.globals);
+        self.then_absence_proved(prototype)
+    }
+
     /// Whether `prototype`'s chain lacks `then` (`plain_property_lookup`), proving it for the
     /// next ask (`then_absence_proof`) as `iterator_lacks_property_proving` proves its keys:
     /// each link becomes a prototype first, so a later change to one advances
