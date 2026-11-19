@@ -116,7 +116,7 @@ impl Lowering<'_, '_> {
         let target = instruction.jump_target() as usize;
         if target <= pc { self.interrupt_check(state, pc as u32); }
         let word = self.builder.use_var(held);
-        let holds = self.raw_compare_imm(Relation::Equal, word, Value::TRUE.to_bits() as i64);
+        let holds = crate::staged::value::boolean_truthy(&mut emit(&mut self.builder), word);
         let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
         self.branch_if(holds, (fall, &[]), (taken, &[]));
         self.continue_branch(state, pc, target, taken, fall);

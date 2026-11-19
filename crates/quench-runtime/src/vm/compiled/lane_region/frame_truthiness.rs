@@ -12,13 +12,11 @@ pub(super) fn register_truthiness(builder: &mut FunctionBuilder<'_>, registers: 
     match fact.representation {
         Representation::Int32 => {
             let int = { let variable = register_int(builder, registers, usize::from(register)); builder.use_var(variable) };
-            let mut stage = super::super::super::object_slots::emit(builder);
-            let word = stage.uextend32(int);
-            stage.ne_imm(word, 0u32)
+            crate::staged::value::int_truthy(&mut super::super::super::object_slots::emit(builder), int)
         }
         Representation::Int64 => {
             let word = { let variable = register_long(builder, registers, usize::from(register)); builder.use_var(variable) };
-            super::super::super::object_slots::emit(builder).ne_imm(word, 0u32)
+            crate::staged::value::int_truthy(&mut super::super::super::object_slots::emit(builder), word)
         }
         Representation::Float64 => {
             let number = { let variable = register_float(builder, registers, usize::from(register)); builder.use_var(variable) };
@@ -27,7 +25,7 @@ pub(super) fn register_truthiness(builder: &mut FunctionBuilder<'_>, registers: 
         Representation::Tagged => {
             let bits = register_tagged(builder, registers, state, register);
             if fact.ty.is_subtype(Type::language(crate::ValueType::Boolean)) {
-                super::super::super::object_slots::emit(builder).eq_imm(bits, Value::TRUE.to_bits())
+                crate::staged::value::boolean_truthy(&mut super::super::super::object_slots::emit(builder), bits)
             } else if helpers.is_numeric() {
                 emit_js_tagged_truthiness(builder, bits, miss)
             } else {

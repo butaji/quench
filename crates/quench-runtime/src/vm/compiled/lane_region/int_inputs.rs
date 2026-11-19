@@ -5,6 +5,8 @@
 
 use super::*;
 use super::super::operations::NumberArithmetic;
+use crate::staged::number_machine;
+use crate::vm::operations::NumberRelation;
 
 impl Lowering<'_, '_> {
     /// The registers the loop entered at the region's header reads as operands of index
@@ -58,12 +60,12 @@ impl Lowering<'_, '_> {
             let exit = self.guard_exit(state, pc as u32);
             let value = self.int(state, register, exit);
             if range.min > IntRange::FULL.min {
-                let above = self.raw_compare_imm(Relation::SignedGreaterEqual, value, range.min);
-                emit_js_guard(&mut self.builder, above, exit);
+                let min = i32::try_from(range.min).expect("an entering range's bound is an int32");
+                number_machine::guard_int_bound(&mut emit(&mut self.builder), NumberRelation::GreaterEqual, value, min, exit);
             }
             if range.max < IntRange::FULL.max {
-                let below = self.raw_compare_imm(Relation::SignedLessEqual, value, range.max);
-                emit_js_guard(&mut self.builder, below, exit);
+                let max = i32::try_from(range.max).expect("an entering range's bound is an int32");
+                number_machine::guard_int_bound(&mut emit(&mut self.builder), NumberRelation::LessEqual, value, max, exit);
             }
         }
     }
