@@ -45,6 +45,10 @@ fn size_classes_step_by_quarters_of_each_doubling() {
     // Each class has its own free list, in increasing order.
     let buckets: Vec<_> = [4, 6, 8, 10, 12, 14, 16, 20, 24, 28, 32, 40].into_iter().map(ValueArena::bucket).collect();
     assert_eq!(buckets, (0..12).collect::<Vec<_>>());
+    // A bucket's capacity inverts its class, for every class a range can have.
+    for capacity in (4..=1 << 12).filter(|&capacity| capacity_class(capacity) == capacity) {
+        assert_eq!(ValueArena::bucket_capacity(ValueArena::bucket(capacity)), capacity);
+    }
     // A range grows to the next class.
     assert_eq!(capacity_class(12 + 1), 14);
 }

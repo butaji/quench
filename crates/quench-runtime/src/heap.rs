@@ -2475,12 +2475,14 @@ impl Heap {
     }
 
     /// After a full collection that swept `payload_before` payload bytes: returns the empty record
-    /// pages (`RecordSpace::return_free_pages`), and the allocator's free memory when the sweep
+    /// pages (`RecordSpace::return_free_pages`), the whole pages of the property arena's released
+    /// runs (`ValueArena::return_free_pages`), and the allocator's free memory when the sweep
     /// freed a lot (`release_freed_allocator_memory`).
     fn return_freed_memory(&mut self, payload_before: usize) {
         for (family, _) in self.record_families_mut() {
             family.return_free_pages();
         }
+        self.properties.return_free_pages();
         let freed = payload_before.saturating_sub(self.payload_bytes);
         let share_freed = freed >= FREED_TRIM_SHARE_MIN_BYTES && freed.saturating_mul(4) > payload_before;
         if freed > FREED_TRIM_BYTES || share_freed {
