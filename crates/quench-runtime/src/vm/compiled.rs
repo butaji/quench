@@ -7504,7 +7504,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         // Registers start at i32 zero, as an activation's register file does, where an entry may
         // read them before writing (`entry_fill`), and the locals. Any other register is written
         // before a read on every path, so it needs no zero.
-        let zeroed = super::dispatch_fast::entry_fill(function);
+        let zeroed = super::dispatch_fast::entry_fill(self.code, function);
         for register in (0..zeroed).chain(function.registers..function.registers.saturating_add(function.locals)) {
             emitter.write_constant(register, Kind::I32, 0);
             emitter.write_constant(register, Kind::I64, 0);
