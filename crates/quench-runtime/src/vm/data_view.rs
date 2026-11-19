@@ -21,12 +21,11 @@ impl<H: Host> Vm<H> {
         self.data_view_proto = self
             .heap
             .alloc_object(Self::empty_object(self.object_proto));
-        self.install_data_view_for_realm(
-            program,
-            self.realm.globals,
-            constructor,
-            self.data_view_proto,
-        )
+        let prototype = self.data_view_proto;
+        self.install_data_view_for_realm(program, self.realm.globals, constructor, prototype)?;
+        self.seal_initialized_intrinsic(constructor);
+        self.seal_initialized_intrinsic(prototype);
+        Ok(())
     }
 
     pub(super) fn install_data_view_for_realm(

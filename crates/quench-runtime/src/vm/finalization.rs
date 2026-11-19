@@ -48,6 +48,8 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_builtin_named(program, prototype, name, native)?;
         }
+        self.seal_initialized_intrinsic(registry);
+        self.seal_initialized_intrinsic(prototype);
         self.global(program, "FinalizationRegistry", registry)
     }
 

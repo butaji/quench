@@ -253,6 +253,7 @@ impl<H: Host> Vm<H> {
         if offset > bytes_len || (!tracking && length > bytes_len - offset) {
             return Err(self.range_error(p, "Owned DataView out of bounds".into()));
         }
+        self.materialize_global_intrinsic(p, "DataView")?;
         let proto = self.intrinsic_builtin_prototype(Native::DataView);
         Ok(self.heap.alloc(Cell::DataView {
             object: Box::new(crate::heap::BufferViewObject {

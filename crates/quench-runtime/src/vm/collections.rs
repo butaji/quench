@@ -356,12 +356,21 @@ impl<H: Host> Vm<H> {
         self.set_constructor_prototype_attributes(weak_set);
         self.set_builtin_function_name(weak_set, "WeakSet")?;
         self.global(program, "WeakSet", weak_set)?;
+        self.install_lazy_builtin_namespace(program, "WeakRef", Native::WeakRefInitialize)
+    }
+
+    /// The `WeakRef` constructor and its prototype, built when script first observes the global
+    /// `WeakRef`.
+    pub(super) fn install_weak_ref(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let weak_ref = self.native_value(Native::WeakRef);
         self.weak_ref_proto = self.object();
         self.install_weak_ref_prototype(program, weak_ref, self.weak_ref_proto)?;
+        self.install_builtin_to_string_tag(self.weak_ref_proto, "WeakRef")?;
         self.set_named(program, weak_ref, "prototype", self.weak_ref_proto)?;
         self.set_constructor_prototype_attributes(weak_ref);
         self.set_builtin_function_name(weak_ref, "WeakRef")?;
+        self.seal_initialized_intrinsic(weak_ref);
+        self.seal_initialized_intrinsic(self.weak_ref_proto);
         self.global(program, "WeakRef", weak_ref)
     }
 

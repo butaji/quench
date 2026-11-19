@@ -601,6 +601,7 @@ impl<H: Host> Vm<H> {
         {
             return Ok(self.heap.alloc_string("Invalid Date".into()));
         }
+        self.ensure_intl_intrinsics(p)?;
         let constructor = self
             .realm
             .intrinsics

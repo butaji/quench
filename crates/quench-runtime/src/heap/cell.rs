@@ -663,6 +663,11 @@ pub(crate) enum Native {
     AtomicsInitialize,
     WebAssemblyInitialize,
     IntlInitialize,
+    ReflectInitialize,
+    ProxyInitialize,
+    WeakRefInitialize,
+    FinalizationRegistryInitialize,
+    DataViewInitialize,
 }
 
 /// A native's traits, each derived once at compile time from its defining predicate
@@ -2314,6 +2319,13 @@ impl Object {
     pub(super) fn set_aux(&mut self, auxiliary: u32) {
         let meta = self.meta();
         self.set_header(meta, auxiliary);
+    }
+
+    /// The record's two stored words, `(payload, layout)`, as they are written. A fresh empty
+    /// object's pair depends only on its prototype, so generated allocation copies it
+    /// (`JsStepDispatch::empty_object_layout`).
+    pub(crate) fn stored_words(&self) -> (u64, u32) {
+        (self.payload, self.layout)
     }
 
     #[inline(always)]

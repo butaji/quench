@@ -3672,6 +3672,17 @@ struct JsStepDispatch {
     /// slot where it runs in a frame (`heap::absent_environment_storage`).
     environment_storage: u64,
     outcome: Option<JsNativeStep>,
+    /// The object space's allocation cursor (`Heap::native_object_cursor`), which an inline
+    /// allocation bumps (`NATIVE_RECORD_CURSOR_LAYOUT`); zero where absent. Refreshed with the bases.
+    /// Declared last, with the other words only generated allocation reads: the stencils' offsets
+    /// (`quench-bjit/stencils/layout.rs`) are of the fields before them, which keep their places.
+    object_cursor: usize,
+    /// The record words of an empty object made for the realm's prototype `empty_object_proto`
+    /// (`capture_empty_object`): an inline allocation stores them into the record it bumps.
+    /// `empty_object_layout` zero: no template yet, and the allocation is made by its helper.
+    empty_object_layout: u64,
+    empty_object_payload: u64,
+    empty_object_proto: u64,
     /// Past every word generated code reads: a feature's field leaves their offsets as they are.
     #[cfg(feature = "native-execution")]
     stop_pc: usize,
@@ -4626,6 +4637,7 @@ impl JsStepDispatch {
             fixed_this_slot: std::ptr::null(),
             capture_values: std::ptr::null(), capture_len: 0, capture_stores: 0,
             array_record_base: 0, string_record_base: 0, ascii_unit_strings: 0, object_record_base: 0, function_record_base: 0,
+            object_cursor: 0, empty_object_layout: 0, empty_object_payload: 0, empty_object_proto: 0,
             object_mark_blocks: 0, object_mark_block_count: 0, function_mark_blocks: 0, function_mark_block_count: 0,
             property_buffer: 0, field_entries: 0, typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
             call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
@@ -4671,6 +4683,7 @@ impl JsStepDispatch {
             && self.typed_view_directory == directory.addr() && self.typed_view_pages == pages
             && self.slots_tracked == usize::from(vm.heap.tracks_slot_values())
             && self.empty_string != Value::DELETED.to_bits() && self.ascii_unit_strings != 0
+            && self.empty_object_proto == vm.realm_object_prototype(vm.realm.globals).to_bits()
         {
             return;
         }
@@ -4681,6 +4694,11 @@ impl JsStepDispatch {
     #[cold]
     #[inline(never)]
     fn reread_object_bases<H: Host>(&mut self, vm: &Vm<H>) {
+        // The empty object's template is dropped with the bases: the next empty allocation's helper
+        // makes an object again, which captures the template anew (`capture_empty_object`).
+        self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
+        (self.empty_object_layout, self.empty_object_payload) = (0, 0);
+        self.object_cursor = vm.heap.native_object_cursor();
         self.object_record_base = vm.heap.object_record_base().map_or(0, |base| base as usize);
         self.function_record_base = vm.heap.function_record_base().map_or(0, |base| base as usize);
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
@@ -4698,6 +4716,20 @@ impl JsStepDispatch {
         self.slots_tracked = usize::from(vm.heap.tracks_slot_values());
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
+    }
+
+    /// Records `object`, the empty object `Vm::object` just made for the current realm's prototype,
+    /// as the template an inline empty allocation copies: its two record words and the prototype
+    /// they were made for. The words depend on the prototype only (`Object::new`). Nothing is
+    /// captured where allocation is profiled per record, which the inline path would skip.
+    fn capture_empty_object<H: Host>(&mut self, vm: &Vm<H>, object: Value) {
+        if cfg!(any(feature = "profile-memory", feature = "profile-aggregate")) {
+            return;
+        }
+        let Some(record) = vm.heap.object_record(object) else { return };
+        let (payload, layout) = record.stored_words();
+        self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
+        (self.empty_object_payload, self.empty_object_layout) = (payload, u64::from(layout));
     }
 
     /// Readies a region's parked dispatch (`CompiledOsrRegion::parked`) for a run of `program`

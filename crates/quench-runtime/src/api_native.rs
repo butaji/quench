@@ -1667,6 +1667,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
         Some(self.scoped_value(value))
     }
 
+    /// `startup_data_property_rooted` for a holder's member that may still be a lazy data
+    /// property: the member's group materializes first, so the captured value is the built one.
+    pub fn materialized_startup_data_property_rooted(&mut self, holder: RootId, name: &str) -> Result<Option<RootId>, RootedError> {
+        let value = self
+            .vm
+            .materialized_startup_data_property_rooted(holder, name)
+            .map_err(|error| self.error(error))?;
+        Ok(value.map(|value| self.scoped_value(value)))
+    }
+
     /// Run `build` with every sealed intrinsic at its startup descriptor, then give the
     /// script's own descriptors back, so builtin loading never observes a script's mutation.
     pub fn with_startup_intrinsics<T>(

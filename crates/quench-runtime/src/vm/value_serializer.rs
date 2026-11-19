@@ -1644,6 +1644,8 @@ impl<H: Host> Vm<H> {
             return Err(ReadFailure::Invalid);
         }
         let view = if subtag == DATA_VIEW_TAG {
+            let program = self.embedding_program()?;
+            self.materialize_global_intrinsic(&program, "DataView")?;
             let prototype = self.intrinsic_builtin_prototype(Native::DataView);
             self.heap.alloc(Cell::DataView {
                 object: Box::new(crate::heap::BufferViewObject { native: Default::default(), object: Self::empty_object(prototype), offset }),

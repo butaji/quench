@@ -1782,6 +1782,24 @@ impl<H: Host> Vm<H> {
         self.materialize_lazy_data_property(&program, holder, key)
     }
 
+    /// `startup_data_property_rooted`, after materializing `holder`'s member `name` when it is
+    /// still a lazy data property, so a host reads a lazily installed intrinsic as built.
+    pub(crate) fn materialized_startup_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        name: &str,
+    ) -> Result<Option<Value>, JsError> {
+        let Some(holder) = self.root_value(holder) else {
+            return Ok(None);
+        };
+        let Some(atom) = self.lookup_atom(name) else {
+            return Ok(None);
+        };
+        let program = self.embedding_program()?;
+        self.materialize_lazy_data_property(&program, holder, PropertyKey::string(atom))?;
+        Ok(self.startup_data_property(holder, name))
+    }
+
     pub(crate) fn is_pending_lazy_data_property_rooted(
         &mut self,
         holder: RootId,

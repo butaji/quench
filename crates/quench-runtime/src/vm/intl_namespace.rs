@@ -9,6 +9,18 @@ impl<H: Host> Vm<H> {
         global: Value,
         object_prototype: Value,
     ) -> Result<(), JsError> {
+        let intl = self.install_intl_intrinsics(program, global, object_prototype)?;
+        self.set_builtin_value_named(global, "Intl", intl)
+    }
+
+    /// Makes `global`'s Intl namespace and the constructor intrinsics its natives build from,
+    /// without binding `Intl` on the global.
+    fn install_intl_intrinsics(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+        object_prototype: Value,
+    ) -> Result<Value, JsError> {
         let intl = self
             .heap
             .alloc_object(Self::empty_object(object_prototype));
@@ -99,8 +111,26 @@ impl<H: Host> Vm<H> {
         self.install_intl_duration_format_for_realm(intl, global, object_prototype)?;
         self.install_intl_list_format_for_realm(intl, global, object_prototype)?;
         self.install_intl_segmenter_for_realm(intl, global, object_prototype)?;
-        self.set_builtin_value_named(global, "Intl", intl)?;
-        Ok(())
+        Ok(intl)
+    }
+
+    /// Makes the current realm's Intl intrinsics exist before a `toLocaleString` native builds
+    /// from them, since such a native runs without observing the global `Intl`. The Intl group
+    /// materializes while its global property is still pending. When script has removed or
+    /// replaced that property first, the group is unreachable, so the intrinsics are built
+    /// without binding `Intl`.
+    pub(super) fn ensure_intl_intrinsics(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        let global = self.realm.globals;
+        if self.realm.intrinsics.intl_number_format_constructors.contains_key(&global) {
+            return Ok(());
+        }
+        let atom = self.intern_atom("Intl");
+        self.materialize_lazy_data_property(program, global, PropertyKey::string(atom))?;
+        if self.realm.intrinsics.intl_number_format_constructors.contains_key(&global) {
+            return Ok(());
+        }
+        let object_prototype = self.object_proto;
+        self.install_intl_intrinsics(program, global, object_prototype).map(|_| ())
     }
 
     pub(super) fn install_intl_namespace_for_realm(

@@ -2112,7 +2112,8 @@ impl<H: Host> Vm<H> {
         self.install_realm_default_bindings(program, global)?;
         self.install_json_for_realm(program, global)?;
         self.install_symbol_for_realm(program, global, object_prototype)?;
-        self.install_intl_for_realm(program, global, object_prototype)?;
+        let intl = self.native_with_realm(Native::IntlInitialize, Value::NULL, global);
+        self.define_lazy_builtin_namespace(program, global, "Intl", intl)?;
         Ok(global)
     }
 
