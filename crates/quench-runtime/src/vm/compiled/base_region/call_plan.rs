@@ -39,7 +39,7 @@
 pub(super) mod inline;
 pub(super) mod builtin;
 use builtin::BuiltinCall;
-use super::{Exit, SLOT};
+use super::{Exit, NO_SYMBOLS, SLOT, Symbolic};
 use super::super::direct_callee::DirectCallee;
 use super::super::{FRAME_BYTES, LaneHelper, LaneHelpers};
 use crate::bytecode::{ImmediateLayout, Register, WideInstruction};
@@ -251,8 +251,9 @@ pub(super) struct CallPart {
     pub(super) holes: [u64; HOLES],
     pub(super) taken: Option<usize>,
     pub(super) exits: Vec<Exit>,
-    /// The hole whose run-time address is a symbol the loader resolves, and the symbol (`HelperHole::Symbol`).
-    pub(super) symbol: Option<(u8, Symbol)>,
+    /// The holes whose run-time addresses are symbols the loader resolves, each with its symbol
+    /// (`HelperHole::Symbol`, the generic row's entry and operand record).
+    pub(super) symbols: Symbolic,
 }
 
 /// A planned call: its parts, the records its direct rows read (one per callee the site reached), and
@@ -302,7 +303,7 @@ fn slot(register: Register) -> u64 {
 }
 
 fn part(stencil: &'static Stencil, holes: [u64; HOLES], exits: Vec<Exit>) -> CallPart {
-    CallPart { stencil, holes, taken: None, exits, symbol: None }
+    CallPart { stencil, holes, taken: None, exits, symbols: NO_SYMBOLS }
 }
 
 pub(super) fn spill_part(place: Place, register: Register) -> Result<CallPart, String> {
@@ -315,13 +316,13 @@ pub(super) fn reload_part(place: Place, register: Register) -> Result<CallPart, 
 }
 
 fn helper_part(call_pc: u32, helper: HelperHole) -> Result<CallPart, String> {
-    let (address, symbol) = match helper {
+    let (address, symbols) = match helper {
         HelperHole::Address(0) => return Err("call: no helper address".to_string()),
-        HelperHole::Address(address) => (address as u64, None),
-        HelperHole::Symbol(helper) => (0, Some((HELPER_HOLE, Symbol::Helper(helper as u32)))),
+        HelperHole::Address(address) => (address as u64, NO_SYMBOLS),
+        HelperHole::Symbol(helper) => (0, [Some((HELPER_HOLE, Symbol::Helper(helper as u32))), None]),
     };
     let stencil = call::stencil(CallRow::Helper)?;
-    Ok(CallPart { symbol, ..part(stencil, padded_holes([u64::from(call_pc), address]), vec![Exit::At(call_pc), Exit::Status]) })
+    Ok(CallPart { symbols, ..part(stencil, padded_holes([u64::from(call_pc), address]), vec![Exit::At(call_pc), Exit::Status]) })
 }
 
 

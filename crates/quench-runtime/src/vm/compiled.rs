@@ -269,6 +269,7 @@ use direct_call::direct_call;
 mod guard_aarch64;
 mod eager;
 mod frozen;
+mod semantic_stop;
 pub(super) use frozen::{frozen_fields, frozen_global_reads, frozen_globals};
 pub(super) use eager::compile_eager_native;
 #[cfg(unix)]
@@ -5383,27 +5384,38 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         }
         Ok(Ok(JsCalloutStep::Stop(step))) => {
             // SAFETY: the adapter payload is unique to this native entry.
-            unsafe {
-                (*context_ref.adapter_payload.cast::<JsStepDispatch>()).outcome = Some(step);
-                result.write(0);
-            }
-            1
+            unsafe { stopped::<H, SINGLE_OPERATION>(context_ref, step, result) }
         }
         Ok(Err(error)) => {
-            let dispatch = unsafe { &mut *context_ref.adapter_payload.cast::<JsStepDispatch>() };
-            dispatch.outcome = Some(JsNativeStep {
-                instruction_pc: usize::try_from(function).unwrap_or(0),
-                next_pc: usize::try_from(function).unwrap_or(0).saturating_add(1),
-                result: Err(error),
-            });
-            unsafe { result.write(0) };
-            1
+            let pc = usize::try_from(function).unwrap_or(0);
+            let step = JsNativeStep { instruction_pc: pc, next_pc: pc.saturating_add(1), result: Err(error) };
+            // SAFETY: as above.
+            unsafe { stopped::<H, SINGLE_OPERATION>(context_ref, step, result) }
         }
         Err(panic) => {
             context_ref.raised = Some(Raised::Panic(panic));
             RAISED_STATUS
         }
     }
+}
+
+/// A callout's stop: a semantic entry's (`SINGLE_OPERATION`, run by an image body's generic row) in
+/// the body's own protocol (`semantic_stop::settle`); the dynamic step's as its step in the payload.
+///
+/// # Safety
+/// The context's VM and adapter payload are live and unborrowed; `result` is writable.
+#[cfg(feature = "native-execution")]
+unsafe fn stopped<H: Host, const SINGLE_OPERATION: bool>(context: &mut CallContext, step: JsNativeStep, result: *mut u64) -> i64 {
+    // SAFETY: as the caller promises.
+    let dispatch = unsafe { &mut *context.adapter_payload.cast::<JsStepDispatch>() };
+    let (status, word) = if SINGLE_OPERATION {
+        semantic_stop::settle(unsafe { &mut *context.vm.cast::<Vm<H>>() }, dispatch, step)
+    } else {
+        dispatch.outcome = Some(step);
+        (i64::from(NATIVE_JS_STOPPED), 0)
+    };
+    unsafe { result.write(word) };
+    status
 }
 
 impl CompiledJsFunction {
@@ -9545,6 +9557,8 @@ impl<H: Host> Vm<H> {
             match exited {
                 Some((NATIVE_JS_STOPPED, _)) => Some(dispatch.outcome.take().unwrap_or_else(||
                     failure("linked native function stopped without a transition".into()))),
+                Some(exit @ (LANE_BODY_RETURNED | LANE_BODY_THREW, _)) => Some(semantic_stop::unsettle(vm, dispatch, exit)
+                    .unwrap_or_else(|| failure("linked native function threw without an exception".into()))),
                 Some((status, word)) if status.checked_sub(RETURN_STATUS_BASE)
                     .and_then(|pc| usize::try_from(pc).ok())
                     .is_some_and(|pc| pc < instruction_count) => {
@@ -11144,8 +11158,9 @@ mod tests {
             native_js_operation_entry::<crate::test_host::TestHost, { usize::MAX }>,
         ] {
             let (status, _, outcome) = invoke_semantic(&mut vm, pc, entry);
-            assert_eq!(status, 1);
-            assert!(outcome.unwrap().result.is_err());
+            assert_eq!(status, i64::from(LANE_BODY_THREW), "a semantic stop is the body's own exception");
+            assert!(outcome.is_none());
+            assert!(vm.lane_completion.take_raised().is_some());
             assert_eq!(vm.frames[0].registers, before);
         }
     }
@@ -11161,17 +11176,16 @@ mod tests {
         body.code[pc] = crate::bytecode::Instr::wide(wide_index).unwrap();
         let mut vm = semantic_program(program);
         vm.frames[0].registers[usize::from(instruction.register_a())] = Value::number(7.0);
-        let (status, _, outcome) = invoke_semantic(&mut vm, pc,
+        let (status, _, _) = invoke_semantic(&mut vm, pc,
             native_js_operation_entry::<crate::test_host::TestHost, { Op::SetField as usize }>);
-        assert_eq!(status, 1);
-        assert!(outcome.unwrap().result.is_err());
+        assert_eq!(status, i64::from(LANE_BODY_THREW));
+        assert!(vm.lane_completion.take_raised().is_some());
         assert_eq!(vm.frames[0].registers[usize::from(instruction.register_a())], Value::number(7.0));
-        let (status, _, outcome) = invoke_semantic(&mut vm, pc,
+        let (status, _, _) = invoke_semantic(&mut vm, pc,
             native_js_operation_entry::<crate::test_host::TestHost, { Op::Throw as usize }>);
-        assert_eq!(status, 1);
-        let outcome = outcome.unwrap();
-        assert_eq!(outcome.instruction_pc, pc);
-        let Err(error) = outcome.result else { panic!("wide Throw must stop with its original value") };
+        assert_eq!(status, i64::from(LANE_BODY_THREW));
+        assert_eq!(raise_site_parts(vm.lane_raise_site).1 as usize, pc);
+        let error = vm.lane_completion.take_raised().expect("wide Throw must stop with its original value");
         assert_eq!(error.thrown_value(), Some(Value::number(7.0)));
     }
 
@@ -11183,11 +11197,10 @@ mod tests {
         vm.frames[0].registers[usize::from(instruction.register_a())] = value;
         let (status, _, outcome) = invoke_semantic(&mut vm, pc,
             native_js_operation_entry::<crate::test_host::TestHost, { Op::Throw as usize }>);
-        assert_eq!(status, 1);
-        let outcome = outcome.unwrap();
-        assert_eq!(outcome.instruction_pc, pc);
-        assert_eq!(outcome.next_pc, pc + 1);
-        let Err(error) = outcome.result else { panic!("semantic throw must be abrupt") };
+        assert_eq!(status, i64::from(LANE_BODY_THREW));
+        assert!(outcome.is_none());
+        assert_eq!(raise_site_parts(vm.lane_raise_site).1 as usize, pc);
+        let error = vm.lane_completion.take_raised().expect("semantic throw must be abrupt");
         assert_eq!(error.thrown_value(), Some(value));
     }
 
@@ -11200,11 +11213,8 @@ mod tests {
         vm.execution_interrupt.request_termination();
         let (status, _, outcome) = invoke_semantic(&mut vm, pc,
             native_js_operation_entry::<crate::test_host::TestHost, { Op::SetField as usize }>);
-        assert_eq!(status, 1);
-        let outcome = outcome.unwrap();
-        assert_eq!(outcome.instruction_pc, pc);
-        let Err(error) = outcome.result else { panic!("terminated entry must stop") };
-        assert!(error.is_execution_terminated());
+        assert_eq!(status, i64::from(quench_bjit::call_record::TERMINATED_STATUS), "terminated entry must stop");
+        assert!(outcome.is_none());
         assert_eq!(vm.own_property(vm.realm.globals, instruction.atom_index()), None);
     }
 

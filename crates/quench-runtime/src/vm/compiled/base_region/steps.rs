@@ -236,7 +236,7 @@ pub(super) fn lowering(instruction: WideInstruction, known: Known, helpers: Lane
 
 /// The step of an instruction no row takes: the leave to the interpreter, or in an AOT body (`LaneHelpers::Ahead`,
 /// where no helper address exists) the generic semantic row, which never leaves.
-fn unplaced(helpers: LaneHelpers) -> Step {
+pub(super) fn unplaced(helpers: LaneHelpers) -> Step {
     if matches!(helpers, LaneHelpers::Ahead) { Step::Generic } else { Step::Leave }
 }
 
@@ -284,7 +284,7 @@ impl Planned {
     /// The row of a chain part, its exits and no rows of its own; a part's successor is a part of
     /// the chain it belongs to.
     fn of_part(part: CallPart) -> Self {
-        Self { branch: part.taken.map(Branch::Part), exits: part.exits, symbolic: part.symbol, ..Self::single(part.stencil, part.holes, None, None) }
+        Self { branch: part.taken.map(Branch::Part), exits: part.exits, symbolic: part.symbols, ..Self::single(part.stencil, part.holes, None, None) }
     }
 }
 
@@ -309,9 +309,9 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
         Step::CallOut => plan_helper(layout, pc, decoded, (LaneHelper::VmStep, helpers)),
         Step::Throw => plan_throw(layout, pc, helpers),
         Step::Catch => plan_catch(decoded, layout, pc, helpers),
-        Step::Generic => Err("generic row: planned with its semantic entries by `generic::generic_row`".into()),
+        Step::Generic => generic_row(layout, decoded, pc, Semantic::of(layout, pc)?),
         Step::Fast(fast) => plan_guarded(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?), helpers),
-        Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, None, helpers),
+        Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, ahead_miss(decoded, layout, pc, helpers)?, helpers),
         Step::Return => {
             let register = match decoded.a {
                 Some(Source::Register(register)) => register,
@@ -494,7 +494,7 @@ mod branches;
 use branches::{branching, jump_to};
 #[path = "steps/generic.rs"]
 mod generic;
-pub(super) use generic::{Semantic, generic_row};
+pub(super) use generic::{Semantic, ahead_miss, generic_row};
 
 #[cfg(test)]
 mod tests;

@@ -1,10 +1,11 @@
 //! The file form of an `AotImage`: magic, build id, fingerprint, the recipe tables and atom
-//! texts, then per function its base and lane code with relocations. Every number is
+//! texts, the base PC labels and operand records, then per function its base and lane code with
+//! relocations. Every number is
 //! little-endian; `Words` reads it back and rejects a file that ends early or names an unknown tag.
 //!
 //! Owner: one pipeline.
 
-use super::{AotFunction, AotImage, LaneImage, base::BaseImage, symbols::{HeapValueRecipe, ShapeRecipe}};
+use super::{AotFunction, AotImage, LaneImage, OperandRecord, base::BaseImage, symbols::{HeapValueRecipe, ShapeRecipe}};
 use crate::vm::compiled::AHEAD_BUILD_ID;
 use crate::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
 use cranelift_codegen::binemit::Reloc;
@@ -30,6 +31,7 @@ pub(crate) fn to_bytes(image: &AotImage) -> Vec<u8> {
     out.extend(image.build_id.to_le_bytes());
     out.extend(image.fingerprint.to_le_bytes());
     put_recipes(&mut out, image);
+    put_sites(&mut out, image);
     put_count(&mut out, image.functions.len());
     for function in &image.functions {
         put_function(&mut out, function);
@@ -46,9 +48,11 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> Result<AotImage, String> {
     }
     let fingerprint = words.quad()?;
     let (shapes, heap_values, atoms) = read_recipes(&mut words)?;
+    let labels = (0..words.half()?).map(|_| Ok((words.half()?, words.half()?))).collect::<Result<_, String>>()?;
+    let operands = (0..words.half()?).map(|_| read_operands(&mut words)).collect::<Result<_, String>>()?;
     let count = words.half()?;
     let functions = (0..count).map(|_| read_function(&mut words)).collect::<Result<_, String>>()?;
-    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms })
+    Ok(AotImage { fingerprint, build_id, functions, shapes, heap_values, atoms, labels, operands })
 }
 
 /// The recipe tables and atom texts of `image` as they are in the file, for an object's data
@@ -77,6 +81,25 @@ fn put_recipes(out: &mut Vec<u8>, image: &AotImage) {
         put_count(out, atom.len());
         out.extend(atom.as_bytes());
     }
+}
+
+/// The base PC labels, then the operand records: each its site and its words.
+fn put_sites(out: &mut Vec<u8>, image: &AotImage) {
+    put_count(out, image.labels.len());
+    for (function, pc) in &image.labels {
+        out.extend(function.to_le_bytes());
+        out.extend(pc.to_le_bytes());
+    }
+    put_count(out, image.operands.len());
+    for record in &image.operands {
+        out.extend(record.function.to_le_bytes());
+        out.extend(record.pc.to_le_bytes());
+        record.words.iter().for_each(|word| out.extend(word.to_le_bytes()));
+    }
+}
+
+fn read_operands(words: &mut Words<'_>) -> Result<OperandRecord, String> {
+    Ok(OperandRecord { function: words.half()?, pc: words.half()?, words: [words.quad()?, words.quad()?] })
 }
 
 fn put_shape(out: &mut Vec<u8>, shape: &ShapeRecipe) {

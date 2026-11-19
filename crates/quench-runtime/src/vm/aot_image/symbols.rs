@@ -1,7 +1,7 @@
 //! The image's symbol space: every run-time address its code names. It extends
 //! `lane_region::relocs::RelocKind` (classes A and B: entry cells, descriptors, capture words,
 //! the invalidation word, helpers, the constant pool, atoms) with the base body's PC entries,
-//! the semantic entries of the generic row, and classes C and D: heap values and shapes, which
+//! the semantic entries and operand records of the generic row, and classes C and D: heap values and shapes, which
 //! the loader builds from recipes in the VM that runs the image. A symbol is
 //! `(namespace, key)`, the pair `RelocatableCode` relocations carry: the namespace is the
 //! `RelocKind` discriminant for classes A to D, and the key is the symbol's number.
@@ -21,6 +21,8 @@ use std::hash::Hash;
 const SEMANTIC_ENTRY_NAMESPACE: u32 = RelocKind::Shape as u32 + 1;
 /// The namespace of `Symbol::BasePc`, whose key is its label in the image's label list.
 const BASE_PC_NAMESPACE: u32 = SEMANTIC_ENTRY_NAMESPACE + 1;
+/// The namespace of `Symbol::Operands`, whose key is its record in the image's operand table.
+pub(crate) const OPERANDS_NAMESPACE: u32 = BASE_PC_NAMESPACE + 1;
 
 /// The attribute bits of a `ShapeRecipe` field, as `DataAttributes` reads them.
 pub(crate) const ATTRIBUTE_WRITABLE: u8 = 1 << 0;
@@ -41,6 +43,9 @@ pub(crate) enum Symbol {
     SemanticEntry(u16),
     /// The base body of `function` entered at record `pc` (a lane leave's continuation).
     BasePc { function: u32, pc: u32 },
+    /// The operand record (`NativeJsOperands`) of record `pc` of `function`, which its generic row
+    /// passes its semantic entry: data the linker places (`AotImage::operands`).
+    Operands { function: u32, pc: u32 },
     /// Class C: heap value number `key` of `AotImage::heap_values`.
     HeapValue(u32),
     /// Class D: shape number `key` of `AotImage::shapes`.
@@ -99,17 +104,30 @@ pub(crate) struct SymbolTable {
     heap_values: Interned<HeapValueRecipe>,
     atoms: Vec<Box<str>>,
     labels: Interned<(u32, u32)>,
+    operands: Interned<(u32, u32)>,
+}
+
+/// The tables `SymbolTable::finish` leaves: shapes, heap values, atom texts, base PC labels and
+/// operand sites, each by key.
+pub(crate) struct Finished {
+    pub(crate) shapes: Vec<ShapeRecipe>,
+    pub(crate) heap_values: Vec<HeapValueRecipe>,
+    pub(crate) atoms: Vec<Box<str>>,
+    pub(crate) labels: Vec<(u32, u32)>,
+    pub(crate) operands: Vec<(u32, u32)>,
 }
 
 impl SymbolTable {
     pub(crate) fn new(_program: &ResidualProgram) -> Self {
-        Self { shapes: Interned::default(), heap_values: Interned::default(), atoms: Vec::new(), labels: Interned::default() }
+        Self { shapes: Interned::default(), heap_values: Interned::default(), atoms: Vec::new(), labels: Interned::default(), operands: Interned::default() }
     }
 
-    /// The `(namespace, key)` pair code emits for `symbol`; a base PC's key is its interned label.
+    /// The `(namespace, key)` pair code emits for `symbol`; a base PC's key is its interned label,
+    /// an operand record's its site in the operand table.
     pub(crate) fn intern(&mut self, symbol: Symbol) -> (u32, u32) {
         match symbol {
             Symbol::BasePc { function, pc } => (BASE_PC_NAMESPACE, self.labels.key((function, pc))),
+            Symbol::Operands { function, pc } => (OPERANDS_NAMESPACE, self.operands.key((function, pc))),
             other => (other.namespace(), other.key()),
         }
     }
@@ -122,18 +140,19 @@ impl SymbolTable {
         Symbol::Shape(self.shapes.key(recipe))
     }
 
-    /// The symbol `(namespace, key)` names, the inverse of `intern`; `labels` is the image's label list.
-    pub(crate) fn decode(labels: &[(u32, u32)], namespace: u32, key: u32) -> Option<Symbol> {
+    /// The symbol `(namespace, key)` names in `image`, the inverse of `intern`.
+    pub(crate) fn decode(image: &AotImage, namespace: u32, key: u32) -> Option<Symbol> {
         match namespace {
-            BASE_PC_NAMESPACE => labels.get(key as usize).map(|&(function, pc)| Symbol::BasePc { function, pc }),
+            BASE_PC_NAMESPACE => image.labels.get(key as usize).map(|&(function, pc)| Symbol::BasePc { function, pc }),
+            OPERANDS_NAMESPACE => image.operands.get(key as usize).map(|record| Symbol::Operands { function: record.function, pc: record.pc }),
             SEMANTIC_ENTRY_NAMESPACE => u16::try_from(key).ok().map(Symbol::SemanticEntry),
             _ => KEYED.iter().find(|(kind, _)| *kind == namespace).map(|(_, make)| make(key)),
         }
     }
 
-    /// The recipe tables and the label list the image carries: shapes, heap values, atom texts, labels.
-    pub(crate) fn finish(self) -> (Vec<ShapeRecipe>, Vec<HeapValueRecipe>, Vec<Box<str>>, Vec<(u32, u32)>) {
-        (self.shapes.values, self.heap_values.values, self.atoms, self.labels.values)
+    /// The recipe tables, the label list and the operand sites the image carries.
+    pub(crate) fn finish(self) -> Finished {
+        Finished { shapes: self.shapes.values, heap_values: self.heap_values.values, atoms: self.atoms, labels: self.labels.values, operands: self.operands.values }
     }
 }
 
@@ -169,6 +188,7 @@ impl Symbol {
             Self::Shape(_) => RelocKind::Shape as u32,
             Self::SemanticEntry(_) => SEMANTIC_ENTRY_NAMESPACE,
             Self::BasePc { .. } => BASE_PC_NAMESPACE,
+            Self::Operands { .. } => OPERANDS_NAMESPACE,
         }
     }
 
@@ -179,7 +199,7 @@ impl Symbol {
                 | Self::ConstantPool(key) | Self::Atom(key) | Self::HeapValue(key) | Self::Shape(key) => key,
             Self::Invalidation => 0,
             Self::SemanticEntry(op) => u32::from(op),
-            Self::BasePc { .. } => unreachable!("a base PC is keyed by its label"),
+            Self::BasePc { .. } | Self::Operands { .. } => unreachable!("a base PC or an operand record is keyed by its site (`intern`)"),
         }
     }
 }

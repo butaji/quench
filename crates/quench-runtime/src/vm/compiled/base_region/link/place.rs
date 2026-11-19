@@ -15,13 +15,13 @@ pub(in crate::vm) struct SymbolSite {
 
 /// The symbolic fields of `rows` (`symbols` by row, the symbol of each row's named hole), at their code
 /// offsets from the code's start, `head` bytes past the entry thunk; a field must be an absolute word.
-fn symbol_sites(rows: &[Placed], symbols: &[Option<(u8, Symbol)>], head: usize) -> Result<Vec<SymbolSite>, String> {
-    let named = |row: usize, hole: u32| symbols.get(row).copied().flatten().is_some_and(|(index, _)| u32::from(index) == hole);
-    quench_bjit::symbolic_fields(rows, named).into_iter().map(|field| -> Result<SymbolSite, String> {
+fn symbol_sites(rows: &[Placed], symbols: &[Symbolic], head: usize) -> Result<Vec<SymbolSite>, String> {
+    let named = |row: usize, hole: u32| symbols.get(row).into_iter().flatten().flatten().find(|(index, _)| u32::from(*index) == hole).map(|(_, symbol)| *symbol);
+    quench_bjit::symbolic_fields(rows, |row, hole| named(row, hole).is_some()).into_iter().map(|field| -> Result<SymbolSite, String> {
         if field.class != quench_bjit::ABS64 {
             return Err("a symbolic hole is not an absolute word".to_string());
         }
-        let symbol = symbols[field.row].map(|(_, symbol)| symbol).ok_or("a symbolic field has no symbol")?;
+        let symbol = named(field.row, field.hole).ok_or("a symbolic field has no symbol")?;
         Ok(SymbolSite { offset: head + field.offset, symbol })
     }).collect()
 }
@@ -73,7 +73,7 @@ fn exit_addresses(code: &mut [u8], (rows_at, starts): (usize, &[usize]), mut at:
 /// in layout order: the hot rows first, so nothing cold sits between them. Also the code offset of
 /// each row and, for a loop region, of the resume thunk (`entry_resume`), which follows the stubs;
 /// each resume stub's `jumps` is patched to its row.
-pub(super) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[Vec<Target>], &[Vec<u8>]), jumps: &[Jump], symbols: &[Option<(u8, Symbol)>]) -> Result<(Vec<u8>, Vec<usize>, usize, Vec<SymbolSite>), String> {
+pub(super) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[Vec<Target>], &[Vec<u8>]), jumps: &[Jump], symbols: &[Symbolic]) -> Result<(Vec<u8>, Vec<usize>, usize, Vec<SymbolSite>), String> {
     let head = thunk(ending, 0)?.len();
     let resume = if ending == Ending::Region { routine("entry_resume")?.code } else { Vec::new() };
     let bound: usize = rows.iter().map(|row| row.stencil.code.len()).sum();

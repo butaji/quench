@@ -50,6 +50,24 @@ pub(crate) struct AotImage {
     pub(crate) atoms: Vec<Box<str>>,
     /// The `(function, pc)` labels of `Symbol::BasePc` keys.
     pub(crate) labels: Vec<(u32, u32)>,
+    /// The operand records the generic rows pass their semantic entries, by `Symbol::Operands` key.
+    pub(crate) operands: Vec<OperandRecord>,
+}
+
+/// The operand record of record `pc` of `function` (`NativeJsOperands`), as its words.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OperandRecord {
+    pub(crate) function: u32,
+    pub(crate) pc: u32,
+    pub(crate) words: [u64; 2],
+}
+
+impl OperandRecord {
+    /// The record of `(function, pc)` in `program`.
+    fn of(program: &ResidualProgram, (function, pc): (u32, u32)) -> Self {
+        let instruction = program.function(function as usize).instruction_at(pc as usize);
+        Self { function, pc, words: super::NativeJsOperands::of(instruction).words() }
+    }
 }
 
 /// One function of the image.
@@ -78,7 +96,7 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
     let functions = (0..program.function_count() as u32)
         .map(|id| lower_function(program, facts, target, id, &mut symbols))
         .collect::<Result<Vec<_>, String>>()?;
-    let (shapes, heap_values, atoms, labels) = symbols.finish();
+    let symbols::Finished { shapes, heap_values, atoms, labels, operands } = symbols.finish();
     Ok(AotImage {
         fingerprint: super::compiled::ahead_program_fingerprint(program),
         build_id: super::compiled::AHEAD_BUILD_ID,
@@ -87,6 +105,7 @@ pub(crate) fn lower(program: &ResidualProgram, facts: &AotFacts, target: &ImageT
         heap_values,
         atoms,
         labels,
+        operands: operands.into_iter().map(|site| OperandRecord::of(program, site)).collect(),
     })
 }
 
