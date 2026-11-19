@@ -1,6 +1,6 @@
 //! What a lane unit's by-name loads read at compile time: the global scope's bindings.
 use super::*;
-use super::super::global_facts::{GlobalRead, GlobalReads, GlobalSlot, GlobalTable, scalar_native};
+use super::super::global_facts::{GlobalRead, GlobalReads, GlobalSlot, GlobalTable, StableCell, scalar_native};
 
 impl<H: Host> Vm<H> {
     /// The PCs of `unit` whose by-name loads read the global scope as the lane's own does
@@ -64,6 +64,7 @@ impl<H: Host> Vm<H> {
             GlobalTable::Lane => loads.into_iter().map(|(pc, read)| (pc, self.lane_native_read(unit, pc, read))).collect(),
             GlobalTable::Base => {
                 let stores = self.lexical_stores(program, function, unit);
+                let held = held_objects(&loads);
                 loads.into_iter().map(|(pc, read)| {
                     let read = if held.contains(&pc) { read } else { self.slot_load(unit, pc, read) };
                     (pc, self.native_slot(pc, unit, read))
@@ -189,7 +190,7 @@ impl<H: Host> Vm<H> {
     /// The native a field read at `member` defines, as `native_callees` names it.
     fn native_member_callee(&mut self, program: &ResidualProgram, function: u32, code: &[crate::bytecode::WideInstruction],
         entered: &cranelift_codegen::bitset::CompoundBitSet, member: usize) -> Option<(crate::value::Value, crate::heap::Native, u32)> {
-        if let Some(GlobalRead::NativeMember { value, native, holder }) = self.method_native(&code[member]) {
+        if let Some(GlobalRead::NativeMember { value, native, holder, .. }) = self.method_native(&code[member]) {
             return Some((value, native, holder));
         }
         let crate::bytecode::FieldLookup::Atom { atom, base, .. } = code[member].field_lookup()? else { return None };
@@ -219,7 +220,6 @@ impl<H: Host> Vm<H> {
         };
         let value = self.own_plain_data(holder, atom)??;
         let crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(held), .. } = self.heap.function(value)? else { return None };
-        let native = *native;
         (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder, folds: false, cell: None })
     }
 
