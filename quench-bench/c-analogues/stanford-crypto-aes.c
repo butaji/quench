@@ -1,3 +1,6 @@
+// jetstream-row: stanford-crypto-aes
+// jetstream-files: SeaMonster/sjlc.js SeaMonster/stanford-crypto-aes.js
+// iterations: 120
 /* C analogue of JetStream's SeaMonster/stanford-crypto-aes.js: SJCL's table-driven AES.
  * The round tables are generated once on first use (sjcl's prototype `O()`), every item
  * builds a heap cipher object holding its encryption and decryption key schedules, and
