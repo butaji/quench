@@ -5760,7 +5760,7 @@ mod tests {
     /// Builds a list of `nodes` words from `LIST_HEAD`, each holding the next one's address
     /// and the last zero, then runs `walk` over it (locals: 0 the node count, 1 the address,
     /// 2 and 3 the walk's) and returns local 2: run in a selective
-    /// module, whose lane run raises the floor (`Vm::lane_credits_backedges`), so every
+    /// module, whose lane run raises the floor (`Vm::credits_backedges_in_lane`), so every
     /// backward jump takes the safepoint.
     fn walk_list_at_safepoints(name: &str, nodes: i32, walk: Vec<Operator<'static>>) -> Option<crate::WasmValue> {
         const WORD: i32 = 4;

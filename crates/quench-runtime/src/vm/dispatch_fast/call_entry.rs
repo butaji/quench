@@ -9,13 +9,13 @@ pub(super) enum CallEntry {
     /// Its activation holds its registers alone (`lane_activate`).
     Activates,
     /// It keeps the values it was passed for a forwarded `arguments`
-    /// (`CallPlan::forwards_arguments`, `lane_activate_keeping`).
+    /// (`CallPlan::forwards_arguments`, `activate_keeping_in_lane`).
     Keeps,
     /// It keeps them, and its rest parameter, in the register after the others, starts as
-    /// the array of those past the others (`lane_activate_keeping`).
+    /// the array of those past the others (`activate_keeping_in_lane`).
     Gathers,
     /// Its body is one returning `GetField` (`returning_kind` of its first instruction),
-    /// whose hit a call answers without activating it (`lane_call_read`).
+    /// whose hit a call answers without activating it (`call_read_in_lane`).
     Reads,
     /// It needs a VM frame (`CallPlan::registers_only` fails, or its view has no
     /// activation): a call takes `lane_frame_call`. Only the cache and the call's own
@@ -36,7 +36,7 @@ pub(super) enum CallEntry {
     ReadsThis,
     /// It keeps frame locals and makes closures (`CallPlan::environment_activation`): its
     /// activation's window holds its environment and locals after its registers
-    /// (`lane_activate_environment`). Only a plain call activates it.
+    /// (`activate_environment_in_lane`). Only a plain call activates it.
     Environment,
     /// An async function whose body never suspends, laid out as its registers
     /// (`CallPlan::settles_registers_only`): only a plain call of its own program activates
@@ -105,7 +105,7 @@ impl CallEntry {
 
 impl CallEntry {
     /// An entry another program's call activates frameless (`Vm::cross_call_entry`): a plain
-    /// or keeping activation, which `lane_activate_keeping` enters across programs.
+    /// or keeping activation, which `activate_keeping_in_lane` enters across programs.
     #[inline(always)]
     pub(super) fn activates_across(self) -> bool {
         matches!(self, Self::Activates | Self::Keeps | Self::Gathers | Self::Leaf | Self::CaptureLeaf | Self::ContextLeaf | Self::ThisLeaf)
@@ -117,7 +117,7 @@ impl CallEntry {
         matches!(self, Self::Reads | Self::ReadsElement | Self::ReadsCapture | Self::ReadsThis)
     }
 
-    /// A body whose call a read answers (`lane_call_read`): its own read, or a forwarded one.
+    /// A body whose call a read answers (`call_read_in_lane`): its own read, or a forwarded one.
     #[inline(always)]
     pub(super) fn answered_by_read(self) -> bool {
         self.reads() || self == Self::ForwardsRead

@@ -22,7 +22,7 @@ impl<H: Host> AccessorCall<H> {
 
     /// A read whose site caches an accessor (`Vm::cached_field_getter`) whose getter is a pure
     /// native read (`Vm::pure_native_getter_value`) or a frameless read target, answered as the
-    /// getter's call would return (`lane_call_read`): `[[Get]]` calls it on the base with no
+    /// getter's call would return (`call_read_in_lane`): `[[Get]]` calls it on the base with no
     /// arguments, and neither runs guest code. `Some(None)` is a cached getter that must be
     /// called (`activate_getter`); `None`, a site with no accessor entry for `object`.
     ///
@@ -91,7 +91,7 @@ impl<H: Host> AccessorCall<H> {
         if target.entry == CallEntry::Reads {
             // A getter only the general path has called has not run its read in the lane yet: it
             // takes the kind its first run would.
-            // SAFETY: as `lane_call_read`; the context's program outlives the lane run.
+            // SAFETY: as `call_read_in_lane`; the context's program outlives the lane run.
             let (entry, code) = unsafe { ((*target.view).records(), &*(*self.cx).code) };
             if unsafe { (*entry).handler } == row_returning_field_first::<H, NOT_LEAF> as *const () {
                 requicken::<H>(entry, returning_field_first_kind::<H, NOT_LEAF>(unsafe { vm(self.cx) }, code, unsafe { &*entry }));
@@ -100,7 +100,7 @@ impl<H: Host> AccessorCall<H> {
             return None;
         }
         let this = lane_direct_call_this(unsafe { vm(self.cx) }, target, object)?;
-        unsafe { lane_call_read(self.cx, target, ReadArguments::NONE, this) }
+        unsafe { call_read_in_lane(self.cx, target, ReadArguments::NONE, this) }
     }
 
     /// A lane read of `base` at the record `i` (at `ip`) that met `getter`: its value where a read
@@ -261,7 +261,7 @@ impl<H: Host> AccessorCall<H> {
     }
 
     /// The frameless target of the trap function `trap` and whether it is another program's,
-    /// which its activation enters and its return leaves (`lane_complete_activation`): a trap of
+    /// which its activation enters and its return leaves (`complete_activation_in_lane`): a trap of
     /// a library loaded as its own script, as Vue's and MobX's handlers are, activates as one of
     /// the running program's does. `None` for a trap the lane does not activate.
     pub(super) fn trap_target(&self, trap: Value) -> Option<(ScriptCallTarget, bool)> {
@@ -282,9 +282,9 @@ impl<H: Host> AccessorCall<H> {
         };
         let passed = ActivationArguments::Kept(arguments.as_ptr(), N);
         if crosses {
-            lane_activate_keeping::<H, true>(self.cx, r, ip, &target, passed, this, false, None)
+            activate_keeping_in_lane::<H, true>(self.cx, r, ip, &target, passed, this, false, None)
         } else {
-            lane_activate_keeping::<H, false>(self.cx, r, ip, &target, passed, this, false, None)
+            activate_keeping_in_lane::<H, false>(self.cx, r, ip, &target, passed, this, false, None)
         }
     }
 

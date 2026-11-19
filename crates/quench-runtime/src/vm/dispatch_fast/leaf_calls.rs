@@ -49,7 +49,7 @@ script_handler! {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         };
         // The cached target is of the running program (`Vm::script_call_holds`).
-        debug_assert!(!lane_crosses::<H, true>(cx, target));
+        debug_assert!(!crosses_in_lane::<H, true>(cx, target));
         // An admitted target runs under no `with` scope (`LaneStack::refuse_cached_calls`).
         debug_assert!(!vm.with_scope_entered);
         if !lane_admits_window(vm, target, ARGC) {
@@ -57,7 +57,7 @@ script_handler! {
         }
         vm.programs.record_js_jit_lane_entry(target.program(), target.function);
         let stack: &mut LaneStack = &mut vm.lane_stack;
-        // SAFETY: as `lane_push_passed`'s window, which the stack's length covers only once
+        // SAFETY: as `push_passed_in_lane`'s window, which the stack's length covers only once
         // the leaf is materialized: no collection runs before.
         let registers = unsafe {
             let registers = stack.values.top();

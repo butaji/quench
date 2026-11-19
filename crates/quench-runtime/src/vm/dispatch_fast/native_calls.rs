@@ -283,7 +283,7 @@ pub(super) fn reflect_get_call_handler<H: Host>() -> Handler {
 /// `lane_body_native_call` of a native that is not in place: the lane's own call of it
 /// (`lane_call_native`), beside the body's activations where the native allows, else from the
 /// frame, so the callbacks it makes run as activations of the lane above the body
-/// (`Vm::lane_deferred_callback`, `Vm::lane_native_callback`) and their returns go back to the
+/// (`Vm::deferred_callback_in_lane`, `Vm::native_callback_in_lane`) and their returns go back to the
 /// native, which returns to the body. `LANE_CALL_COMPLETED` with the value in the call's
 /// register; `LANE_CALL_LEFT` where the native made the body's activations frames, whose
 /// registers then hold it and which continue at the next record; `LANE_CALL_MISSED` where the

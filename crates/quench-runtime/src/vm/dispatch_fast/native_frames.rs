@@ -25,7 +25,7 @@ impl CallerState {
     }
 
     /// What the body `frame` runs with, which a lane call into its callee would have made the
-    /// context's (`lane_enter_window`). A direct callee runs in its caller's program.
+    /// context's (`enter_window_in_lane`). A direct callee runs in its caller's program.
     fn of_frame(frame: &ShadowFrame) -> Self {
         // SAFETY: a frame names the caller-owned callee, whose view outlives the run.
         let callee = unsafe { &*frame.callee };
@@ -94,7 +94,7 @@ pub(super) fn link_on_observe<H: Host>(cx: *mut LaneContext<H>, depth: usize) {
             }),
         ));
     }
-    // The frame's window takes the context words its call would have written (`lane_enter_window`).
+    // The frame's window takes the context words its call would have written (`enter_window_in_lane`).
     let window = Registers(frame.window as *mut Value);
     window.set_this(Value::from_bits(frame.this));
     window.set_env(callee.target.env);

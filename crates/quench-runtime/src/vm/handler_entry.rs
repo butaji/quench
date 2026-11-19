@@ -17,7 +17,7 @@ pub(in crate::vm) enum HandlerHome {
 /// A lane activation a handler is entered in: its index on the lane stack, which owns its `with`
 /// objects (`LaneStack::with_objects`), the function and program it runs, and its window's first
 /// register, after whose function's registers its environment entries and locals follow
-/// (`lane_activate_environment`).
+/// (`activate_environment_in_lane`).
 #[derive(Clone, Copy)]
 pub(in crate::vm) struct WindowHome {
     pub(in crate::vm) depth: usize,
@@ -99,7 +99,7 @@ impl<H: Host> Vm<H> {
         let function = program.function(window.function as usize);
         let slot = usize::from(local);
         // SAFETY: an environment activation's window holds its entries after its registers
-        // (`lane_activate_environment`), which nothing else writes while the handler enters.
+        // (`activate_environment_in_lane`), which nothing else writes while the handler enters.
         let entries = unsafe { window.window.add(usize::from(function.registers)) };
         let own = unsafe { *entries.add(usize::from(WINDOW_ENVIRONMENT)) };
         if own.is_deleted() || !function.local_slot_uses_environment(slot) {

@@ -39,7 +39,7 @@ impl ParameterHome {
     ///
     /// # Safety
     /// `entries` starts the entries of a live environment window of `function`
-    /// (`lane_activate_environment`), which holds a local for each of its slots.
+    /// (`activate_environment_in_lane`), which holds a local for each of its slots.
     pub(super) unsafe fn of(entries: *mut Value, function: &Function, slot: usize) -> Self {
         // SAFETY: as the caller guarantees.
         let environment = unsafe { *entries.add(usize::from(WINDOW_ENVIRONMENT)) };

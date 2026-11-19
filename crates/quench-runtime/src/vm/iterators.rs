@@ -3166,7 +3166,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Whether a for-of step calling `method` of `iterator` (`lane_iteration_step`) is this
+    /// Whether a for-of step calling `method` of `iterator` (`iteration_step_in_lane`) is this
     /// realm's `Generator.prototype.next` of a generator that is not running, which the step
     /// resumes in place (`generator_iteration_step`).
     pub(super) fn steps_as_generator(&self, iterator: Value, method: Value) -> bool {

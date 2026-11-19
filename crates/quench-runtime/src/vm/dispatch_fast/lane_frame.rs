@@ -1092,7 +1092,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         -> Option<(u64, Boxing)> {
         let value = match self.window {
             // SAFETY: a window record's slot is one of its function's locals, which the window holds
-            // after its environment and slots words (`lane_activate_environment`).
+            // after its environment and slots words (`activate_environment_in_lane`).
             Some(window) => unsafe { *window.add(usize::from(super::WINDOW_LOCALS) + usize::from(slot)) },
             None => {
                 let (locals, len) = self.locals?;
@@ -1970,7 +1970,7 @@ impl<const OP: u16, const FLAG: u8> crate::staged::Fields for LaneFields<'_, OP,
     #[inline(always)]
     fn wide(self) -> WideInstruction {
         // SAFETY: the view admits a record only with its register fields inside the function's
-        // registers (`lane_fields_fit`), which `REGISTER_MASK` bounds; stated so a row's operand
+        // registers (`fields_fit_in_lane`), which `REGISTER_MASK` bounds; stated so a row's operand
         // kind test folds.
         unsafe {
             // A record whose result register carries flags runs the general step instead

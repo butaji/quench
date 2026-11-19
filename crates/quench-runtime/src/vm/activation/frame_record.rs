@@ -114,7 +114,7 @@ impl FrameRecord {
     }
 
     /// Lays the environment window of a lane activation over the register file after its
-    /// registers, as a call lays a fresh one (`lane_activate_environment`): the environment (the
+    /// registers, as a call lays a fresh one (`activate_environment_in_lane`): the environment (the
     /// frame's own, once it made one, with `own_slots` its slot storage; else `DELETED`, the
     /// slots living among the locals in place), the slot storage's address, the `captured` mask,
     /// the in-place storage words, then the locals. The words live in the file's spare

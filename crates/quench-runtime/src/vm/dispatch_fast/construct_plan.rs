@@ -56,13 +56,13 @@ pub(super) struct ConstructPlan {
 /// Which constructions allocate from a `ConstructPlan`, and how they compute its fields.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ConstructPlanKind {
-    /// An initializer constructor's plan (`lane_initialize_fields`) whose fields are the
+    /// An initializer constructor's plan (`initialize_fields_in_lane`) whose fields are the
     /// arguments as passed.
     Passed,
     /// An initializer constructor's plan with defaulted or computed fields
     /// (`ConstructPlan::defaulted`, `ConstructPlan::computed`).
     Defaulted,
-    /// A forwarding constructor's plan (`lane_planned_receiver`), which holds only with its
+    /// A forwarding constructor's plan (`planned_receiver_in_lane`), which holds only with its
     /// forwarding (`lane_forwarded_fields`).
     Forwarding,
 }
@@ -269,7 +269,7 @@ pub(super) fn initializer_store_value<H: Host>(vm: &Vm<H>, store: &crate::byteco
     }
 }
 
-/// `lane_initialize_fields` while `callee`'s plan holds: the finished receiver, its fields
+/// `initialize_fields_in_lane` while `callee`'s plan holds: the finished receiver, its fields
 /// the arguments the plan's parameters name. A plan holds while its callee's layout and
 /// `prototype` do: the receiver's template is derived from those alone, and the epoch keeps
 /// the adds it planned free of setters. Apart from the planning, whose frame is larger.
@@ -395,7 +395,7 @@ fn initializer_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, cal
         || !Vm::<H>::inline_constructible(code.function_get(function as usize)?) {
         return None;
     }
-    let (this, added) = lane_initialize_fields(vm, code, callee, callee, function, argument)?;
+    let (this, added) = initialize_fields_in_lane(vm, code, callee, callee, function, argument)?;
     added.then_some(this)
 }
 
@@ -506,7 +506,7 @@ pub(super) fn watch_construct_plan<H: Host>(vm: &mut Vm<H>, index: usize, renew:
     }
 }
 
-/// `lane_initialize_fields` of the stores `adds` makes to the receiver it is given, each passed
+/// `initialize_fields_in_lane` of the stores `adds` makes to the receiver it is given, each passed
 /// to its `each` as a cached add runs: the receiver, and whether every store was a cached add.
 pub(super) fn lane_initialize_stores<H: Host>(
     vm: &mut Vm<H>,
@@ -544,7 +544,7 @@ pub(super) fn lane_initialize_stores<H: Host>(
 }
 
 /// Where the lane continues after a returned construction (`return new C(...)`) made `this`
-/// in place: the innermost activation completed with it (`lane_complete_activation`), else
+/// in place: the innermost activation completed with it (`complete_activation_in_lane`), else
 /// the frame's own return of it (`lane_frame_return`).
 #[inline(always)]
 pub(super) fn lane_return_constructed<H: Host>(cx: *mut LaneContext<H>, ip: Ip, this: Value) -> Resumed {
@@ -555,5 +555,5 @@ pub(super) fn lane_return_constructed<H: Host>(cx: *mut LaneContext<H>, ip: Ip, 
     {
         return resumed;
     }
-    lane_complete_activation(cx, ip, this).unwrap_or_else(|| Resumed::Exit(lane_frame_return(unsafe { vm(cx) }, ip, this)))
+    complete_activation_in_lane(cx, ip, this).unwrap_or_else(|| Resumed::Exit(lane_frame_return(unsafe { vm(cx) }, ip, this)))
 }
