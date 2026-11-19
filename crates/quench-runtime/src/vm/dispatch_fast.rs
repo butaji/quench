@@ -13949,6 +13949,10 @@ script_handler! {
         if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.lane_stack.refuses() {
             return exit(ip);
         }
+        // A construction inside a leaf is the activation its call would have pushed
+        // (`materialize_running_leaf_in_lane`), which completes the caller as any construction
+        // does; a leaf completes a planned returned one itself (`return_constructed_in_lane`).
+        materialize_running_leaf_in_lane(cx);
         // The cached target in place, as a call reads it (`Vm::script_call_entry`); an
         // uncached callee resolves (`script_target_in_lane`), after which the construction
         // retries.

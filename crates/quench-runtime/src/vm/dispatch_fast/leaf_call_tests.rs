@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_host::TestHost;
+use std::{cell::RefCell, rc::Rc};
 
 const LEAF_ENTRY_SOURCE: &str = r#"
       function plain(x) { return (x + 1) | 0; }
@@ -11,6 +12,8 @@ const LEAF_ENTRY_SOURCE: &str = r#"
       function readsGlobal(x) { return x + G0; }
       function picks(o, f) { return f ? o.a : o.b; }
       function calls(x) { return plain(x); }
+      function Pt(x) { this.x = x; }
+      function make(C, x) { return new C(x); }
       function loops(x) { var s = 0; for (var i = 0; i < x; i++) s += i; return s; }
       function args(x) { return arguments.length; }
       class P { #v = 1; read() { return this.#v; } }
@@ -20,8 +23,8 @@ const LEAF_ENTRY_SOURCE: &str = r#"
 
 #[test]
 fn leaf_bodies_take_the_leaf_entry_and_others_activate() {
-    // A body of register, capture, `this`, field read and store, global name and returning
-    // read records with forward jumps is a leaf (`leaf_body`), whose records read the
+    // A body of register, capture, `this`, field read and store, global name, construction and
+    // returning read records with forward jumps is a leaf (`leaf_body`), whose records read the
     // context or not; a call, a loop, `arguments` or a private read keeps the activation.
     let program = crate::Engine::specialize(LEAF_ENTRY_SOURCE, "leaf-entries.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
@@ -35,6 +38,7 @@ fn leaf_bodies_take_the_leaf_entry_and_others_activate() {
         ("setter", Some(CallEntry::ThisLeaf)),
         ("readsGlobal", Some(CallEntry::Leaf)),
         ("picks", Some(CallEntry::Leaf)),
+        ("make", Some(CallEntry::Leaf)),
         ("calls", None),
         ("loops", None),
         ("args", None),
