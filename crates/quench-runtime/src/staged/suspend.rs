@@ -142,6 +142,6 @@ fn yield_value<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, (destina
 /// the frame cannot tell an object or resolve it, or the resolution raised.
 #[inline(always)]
 pub(crate) fn await_source<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, awaited: S::Word) -> Option<S::Word> {
-    let object = frame.object_like(stage, awaited)?;
+    let object = frame.object_test(stage, awaited)?;
     stage.choose_leaving(object, |stage| frame.promise_resolve(stage, awaited), |_| Some(awaited))
 }

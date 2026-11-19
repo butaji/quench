@@ -334,6 +334,7 @@ impl<W, P> Operation<W, P> {
     #[inline(always)]
     pub(crate) fn decode_flow<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
         Some(match instruction.op() {
+            Op::Await | Op::Yield | Op::YieldStar => return Self::decode_suspend(instruction.wide()),
             Op::Move => Self::Move {
                 destination: instruction.result_register(), source: instruction.register_b() },
             Op::LoadConst => Self::LoadConst {
@@ -511,7 +512,6 @@ impl Operation<u64, ()> {
         Some(match instruction.op() {
             Op::StringCaseIndex => Self::StringCaseIndex { destination: instruction.result_register(),
                 source: instruction.register_c(), start: instruction.imm(), count: instruction.element_count() },
-            Op::Await | Op::Yield | Op::YieldStar => return Self::decode_suspend(instruction),
             _ => return None,
         })
     }
@@ -564,7 +564,7 @@ impl Operation<u64, ()> {
     /// Whether `instruction` yields a value from a generator (`Yield`, a lane row). The interpreter
     /// frame answers no suspension (`Frame::suspend_yield`), so its yield is the general loop's step.
     pub(crate) fn is_yield(instruction: WideInstruction) -> bool {
-        matches!(Self::decode_lane(instruction), Some(Self::Suspend { kind: super::Suspension::Yield, .. }))
+        matches!(Self::decode_lane(instruction), Some(Self::Suspend { kind: super::Suspension::Yield { .. }, .. }))
     }
 
     /// Whether `instruction` awaits a value (`Await`, a lane row). The interpreter frame answers no

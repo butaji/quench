@@ -16566,6 +16566,7 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
         _ if crate::staged::construction_family(opcode) => Some(lane_script_construct::<H>),
         _ if crate::staged::forwarded_call_family(opcode) => Some(lane_forward_call::<H>),
         _ if crate::staged::return_family(opcode) => Some(lane_return::<H, NOT_LEAF>),
+        _ if generator_yields::suspend_handler::<H>(opcode).is_some() => generator_yields::suspend_handler::<H>(opcode),
         _ => wasm_gc_handler::<H>(opcode),
     }
 }

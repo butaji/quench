@@ -128,7 +128,7 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
     /// Whether `value` is an object (`Vm::is_object_like`), which its heap cell decides; `None`
     /// where the frame cannot read the heap.
     #[inline(always)]
-    fn object_like(&mut self, _stage: &mut S, _value: S::Word) -> Option<S::Cond> {
+    fn object_test(&mut self, _stage: &mut S, _value: S::Word) -> Option<S::Cond> {
         None
     }
 

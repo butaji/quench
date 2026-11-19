@@ -83,17 +83,17 @@ lane_handler! {
             let backward = if const { crate::staged::wasm_branch_table(LaneFields::<B>::OPCODE) } { BACKWARD } else { unsafe { (*ip).jump() } <= 0 };
             let mut frame = row_frame::<H, B, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
             match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
-                Step::Control(Edge::Target) => {
+                Step::Control(LaneControl::Edge(Edge::Target)) => {
                     if const { crate::staged::fused_base(MODE) == crate::staged::FUSED_TARGET } {
                         target_run!(cx, r, ip, carried, PREFIX, NO_COPY, TEST)
                     } else {
                         resume!(cx, super::super::take_jump::<H>(cx, r, ip, backward, carried, None))
                     }
                 }
-                Step::Control(Edge::Entry(k)) => resume!(cx, super::super::take_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, backward, carried, None)),
-                Step::Control(Edge::Leave) => unreachable!("a jump leaves no lane run"),
-                Step::Control(Edge::Transfer) => unreachable!("a jump transfers no control"),
-                Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
+                Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, super::super::take_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, backward, carried, None)),
+                Step::Control(LaneControl::Edge(Edge::Leave)) => unreachable!("a jump leaves no lane run"),
+                Step::Control(LaneControl::Resumed(_) | LaneControl::Suspend(_) | LaneControl::Edge(Edge::Transfer)) => unreachable!("a jump transfers no control"),
+                Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!(cx, r, following(ip), carried),
                 Step::Unresolved => if backward {
                     sibling!(const { jump_row_miss::<H, true>(LaneFields::<B>::OPCODE) }, r, ip, view)
                 } else {
@@ -221,11 +221,11 @@ lane_handler! {
                 let carried = if const { LaneFields::<$L>::RESULT_A } { Carried::script_in(cx, view) } else { view };
                 let mut frame = row_frame::<H, $L, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
                 match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
-                    Step::Control(Edge::Target) => resume!(cx, super::super::take_jump::<H>(cx, r, ip, backward, carried, None)),
-                    Step::Control(Edge::Entry(k)) => resume!(cx, super::super::take_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, backward, carried, None)),
-                    Step::Control(Edge::Leave) => unreachable!("a jump leaves no lane run"),
-                    Step::Control(Edge::Transfer) => unreachable!("a jump transfers no control"),
-                    Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
+                    Step::Control(LaneControl::Edge(Edge::Target)) => resume!(cx, super::super::take_jump::<H>(cx, r, ip, backward, carried, None)),
+                    Step::Control(LaneControl::Edge(Edge::Entry(k))) => resume!(cx, super::super::take_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, backward, carried, None)),
+                    Step::Control(LaneControl::Edge(Edge::Leave)) => unreachable!("a jump leaves no lane run"),
+                    Step::Control(LaneControl::Resumed(_) | LaneControl::Suspend(_) | LaneControl::Edge(Edge::Transfer)) => unreachable!("a jump transfers no control"),
+                    Step::Control(LaneControl::Edge(Edge::Following)) | Step::Value(_) => next!(cx, r, following(ip), carried),
                     Step::Unresolved => if backward {
                         sibling!(const { jump_row_miss::<H, true>(LaneFields::<$L>::OPCODE) }, r, ip, view)
                     } else {

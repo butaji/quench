@@ -64,7 +64,7 @@ impl AwaitSource {
 
 impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
     /// Whether `value` is an object, by the lane context's VM; `None` without a context.
-    fn object_like(&mut self, _stage: &mut Concrete, value: u64) -> Option<bool> {
+    fn object_test(&mut self, _stage: &mut Concrete, value: u64) -> Option<bool> {
         let host = self.host?;
         Some((host.awaits.object_like)(host.cx, Value::from_bits(value)))
     }

@@ -99,7 +99,7 @@ impl<H: Host> CallFrame<Concrete> for HostFrame<'_, H> {
         Some(self.program.function(self.site.function as usize).is_async)
     }
 
-    fn object_like(&mut self, _stage: &mut Concrete, value: u64) -> Option<bool> {
+    fn object_test(&mut self, _stage: &mut Concrete, value: u64) -> Option<bool> {
         Some(self.vm.is_object_like(Value::from_bits(value)))
     }
 
