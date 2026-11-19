@@ -12,3 +12,7 @@ handler-not-row	vm/dispatch_fast/array_steps\.rs$	^lane_(callback_target|admits_
 per-call-recheck	vm/dispatch_fast/array_steps\.rs$	^lane_call_for_each_once$	one context-flag load, not a re-proof (Builtins triage)
 *	.	^default_locale_compare$	wraps host collation (ICU), which has no staged form (Builtins triage)
 hand-table	quench-bjit/build/transfer\.rs$	.	AArch64 ISA encodings (A64_* masks), not engine layout; no disassembler crate for them (b-jit triage)
+frame-model	.	^(SourceStackFrame|RegisterWindow|ChunkWindow|Window|FlattenFrame|WindowFill|CallbackWindow|KeepingWindow|WindowContext|CallActivation|WindowLocals|WindowScope|WindowHome|EvalWindow|JobWindow|HostFrame|EmitFrame)$	data or algorithm struct named *Window/*Frame, not a call frame (stack-trace text, operand ranges, work stacks, row argument bundles, codegen state) (Calls triage)
+handler-not-row	vm/dispatch_fast	^(lane_exit|lane_general_step)$	infrastructure: hands the record at its exact PC to the general step, which runs the staged row (Derive decision A6)
+value-semantics-copy	loop_kernel/shape\.rs$	^arith_operand$	maps a register to the kernel Iota model; computes no operator value (Derive triage)
+value-semantics-copy	vm/dispatch_fast\.rs$	^shift_beside_natives$	native frame-depth bookkeeping; matched on the word shift (Derive triage)

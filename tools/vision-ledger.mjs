@@ -184,6 +184,17 @@ function scan(tree, branch, wantOwners) {
   }
   for (const p of ["is_wide_marker", "is_call_with_eval_flags", "is_relocatable_local_access", "is_field_store", "is_wide", "is_module", "is_shared", "is_super_construct", "is_register_field", "is_operand_field", "is_empty", "is_some", "is_none", "is_ok", "is_err", "is_null", "is_nan", "is_finite", "is_ascii", "is_zero", "is_negative", "is_positive"]) preds.delete(p);
 
+  // Files another crate compiles through #[path] (the stencil build reads runtime rows this way):
+  // their items look unused to the runtime crate, so #[allow(dead_code)] there is not a dead path.
+  const pathIncluded = new Set();
+  for (const rel of files) {
+    const src = fs.readFileSync(path.join(tree, rel), "utf8");
+    for (const m of src.matchAll(/#\[path\s*=\s*"([^"]+)"\]/g)) {
+      const target = path.normalize(path.join(path.dirname(rel), m[1]));
+      if (target.split("/")[1] !== rel.split("/")[1]) pathIncluded.add(target);
+    }
+  }
+
   // Builtin keys from the Native enum.
   let nativeKeys = [];
   const declaredByTier = { interpreter: 0, "b-jit": 0, "u-jit": 0 };
@@ -322,7 +333,7 @@ function scan(tree, branch, wantOwners) {
     }
     // P12: delete dead paths.
     for (const m of s.matchAll(/#\[allow\(dead_code\)\]/g))
-      if (!inRanges(tests, m.index)) add("dead-code", rel, lineOf(starts, m.index), `dead@${lineOf(starts, m.index)}`, `#[allow(dead_code)] keeps a dead path (principle 12)`);
+      if (!inRanges(tests, m.index) && !pathIncluded.has(rel)) add("dead-code", rel, lineOf(starts, m.index), `dead@${lineOf(starts, m.index)}`, `#[allow(dead_code)] keeps a dead path (principle 12)`);
     // One policy home: QUENCH_* switches outside vm/switches.rs.
     if (inRuntime && !/vm\/switches\.rs$/.test(rel)) for (const m of src.matchAll(/env::var(?:_os)?\(\s*"(QUENCH_[A-Z0-9_]+)"/g))
       if (!inRanges(tests, m.index)) add("policy-outside-home", rel, lineOf(starts, m.index), m[1], `${m[1]} read outside vm/switches.rs (one policy home)`, { owner: "Compile pipeline" });
