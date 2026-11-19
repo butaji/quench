@@ -478,10 +478,9 @@ mod tests {
     /// the runtime's own.
     use super::super::{CallContext, JsStepDispatch};
     use crate::vm::wtf16::native_string as form;
-    #[allow(dead_code)]
-    mod stencil_layout {
-        include!("../../../../quench-bjit/stencils/layout.rs");
-    }
+    /// The stencils mount this same file (`quench-bjit/stencils/layout.rs`), so the runtime's
+    /// copy is the stencils' numbers.
+    use crate::staged::layout_offsets as stencil_layout;
     mod stencil_units {
         include!("../../../../quench-bjit/stencils/units.rs");
     }
