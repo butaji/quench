@@ -813,7 +813,8 @@ impl<H: Host> Vm<H> {
                     }
                     Ok(StepResult::Continue)
                 }
-                RowRun::Declined => unreachable!("a row-only opcode's staged row decides it: {:?} a={:?}", i.op(), self.read(f, i.a())),
+                RowRun::Declined => unreachable!("a row-only opcode's staged row decides it: {:?} flags {:#x} register a {:?} at pc {}",
+                    i.op(), i.result_flags(), self.frames[f].registers.get(usize::from(i.a())).copied(), *pc),
             },
             // An arithmetic binary: its staged row first, then the record's general `Binary` on a miss. The Number
             // relation of `==` or `===` leaves a pair that is no Number, and that relation names both operators, so
@@ -871,7 +872,7 @@ impl<H: Host> Vm<H> {
                 match self.run_row_completed(p, f, i, pc, allow_inline_calls, operation, completes) {
                     RowRun::Done(_) => Ok(StepResult::Continue),
                     RowRun::Stop(stop) => stop,
-                    RowRun::Declined => unreachable!("the interpreter frame answers every literal row: {:?}", i.op()),
+                    RowRun::Declined => unreachable!("the interpreter frame answers every literal row"),
                 }
             }
             // A call-out row the interpreter's stage answers in place (`staged_value_step`).
