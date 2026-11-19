@@ -1,6 +1,6 @@
 //! Copy propagation over the bytecode: a read of a `Move`'s destination takes its source.
 use super::*;
-use crate::bytecode::{FieldLayout, ImmediateLayout, InstructionField};
+use crate::bytecode::{FieldLayout, ImmediateLayout, InstructionField, WideInstruction};
 use crate::compile::CompileScratch;
 
 #[cfg(test)]
@@ -45,8 +45,8 @@ pub(super) fn forward_move_sources(
         if rewritten_readers.contains(pc) {
             continue;
         }
-        let uses = |instruction: Instr| liveness::uses(instruction.as_wide(), methods, field_sites, superinstructions);
-        let definitions = |instruction: Instr| liveness::definitions(instruction.as_wide(), superinstructions);
+        let uses = |instruction: WideInstruction| liveness::uses(instruction, methods, field_sites, superinstructions);
+        let definitions = |instruction: WideInstruction| liveness::definitions(instruction, superinstructions);
         let Some(forwarding) = scan_move(function, &analysis, &scope, pc, (&uses, &definitions), &mut readers) else {
             continue;
         };
@@ -130,7 +130,9 @@ impl CodeLiveness {
     }
 }
 
-type Masks<'m> = (&'m dyn Fn(Instr) -> RegisterSet, &'m dyn Fn(Instr) -> RegisterSet);
+/// The read and write masks of an instruction, taken of its widened form: a packed wide
+/// instruction is only a reference into the function's wide table (`BcFunction::widened`).
+type Masks<'m> = (&'m dyn Fn(WideInstruction) -> RegisterSet, &'m dyn Fn(WideInstruction) -> RegisterSet);
 
 /// What forwarding one `Move` does: its source, and whether its destination is dead once the
 /// scan ends. The readers its value reaches, each rewritten to read the source, are in the
@@ -193,7 +195,8 @@ fn scan_move(
         if live_seen > SCAN_LIMIT {
             break;
         }
-        let (read, written) = (uses(instruction), definitions(instruction));
+        let widened = function.widened(instruction);
+        let (read, written) = (uses(widened), definitions(widened));
         if read & destination_bit != 0 {
             let Some(rewritten) = forward_read(instruction, destination, source, (uses, definitions)) else {
                 break;
@@ -225,8 +228,9 @@ fn forward_read(instruction: Instr, destination: Register, source: Register, (us
         return None;
     }
     let rewritten = substitute_register_read(instruction, destination, source)?;
-    let expected = (uses(instruction) & !register_bit(destination)) | register_bit(source);
-    (uses(rewritten) == expected && definitions(rewritten) == definitions(instruction)).then_some(rewritten)
+    let (original, changed) = (instruction.as_wide(), rewritten.as_wide());
+    let expected = (uses(original) & !register_bit(destination)) | register_bit(source);
+    (uses(changed) == expected && definitions(changed) == definitions(original)).then_some(rewritten)
 }
 
 /// Whether `op` reads a register window or a register pair, which no single register replaces.
