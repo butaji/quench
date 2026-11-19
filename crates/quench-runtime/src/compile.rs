@@ -51,6 +51,8 @@ fn plain_local_form(op: Op) -> Option<Op> {
         None
     }
 }
+#[cfg(feature = "aot")]
+pub(crate) mod aot_facts;
 mod annex_b_targets;
 mod arrow;
 mod ast;

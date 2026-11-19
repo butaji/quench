@@ -7,6 +7,8 @@ mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use 
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
 #[cfg(feature = "aot")]
+pub(crate) mod aot_image;
+#[cfg(feature = "aot")]
 pub(crate) mod native_object;
 #[cfg(feature = "aot")]
 pub(crate) mod native_graph;
