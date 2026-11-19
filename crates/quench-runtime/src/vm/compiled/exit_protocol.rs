@@ -283,28 +283,25 @@ mod tests {
     #[test]
     fn the_reader_separates_completion_leaves_and_termination() {
         let word = LaneExit::Inlined { frame: 1, pc: 2 }.word();
-        assert_eq!(LaneExit::read(NATIVE_JS_STOPPED, word, || unreachable!()), LaneExit::Inlined { frame: 1, pc: 2 });
-        assert_eq!(LaneExit::read(TERMINATED_STATUS as u32, 0, || unreachable!()), LaneExit::Terminated);
-        let returned = LaneExit::read(LANE_BODY_RETURNED, Value::UNDEFINED.to_bits(), || 5);
+        assert_eq!(LaneExit::read(LaneStatus::NativeJsStopped as u32, word, || unreachable!()), LaneExit::Inlined { frame: 1, pc: 2 });
+        assert_eq!(LaneExit::read(LaneStatus::Terminated as u32, 0, || unreachable!()), LaneExit::Terminated);
+        let returned = LaneExit::read(LaneStatus::Returned as u32, Value::UNDEFINED.to_bits(), || 5);
         assert!(matches!(returned, LaneExit::Returned { pc: 5, .. }));
     }
 
     #[test]
-    fn a_single_status_classifies_to_its_class_and_back() {
-        for (status, class) in SINGLE_STATUS {
-            assert_eq!(classify(status), class);
-            assert_eq!(status_of(class), Some(status));
+    fn each_lane_status_reads_back_as_itself() {
+        for status in [LaneStatus::Returned, LaneStatus::Threw, LaneStatus::NotEntered, LaneStatus::Terminated, LaneStatus::NativeJsStopped] {
+            assert_eq!(LaneStatus::of(status as u32), Some(status));
         }
-        assert_eq!(classify(NATIVE_JS_STOPPED), StatusClass::Leave);
-        assert_eq!(status_of(StatusClass::Leave), None);
     }
 
-    /// Every producer of a leave word stops with `NATIVE_JS_STOPPED` (the stencil entry thunks
+    /// Every producer of a leave word stops with `LaneStatus::NativeJsStopped` (the stencil entry thunks
     /// return it, `stencil_layout_matches`), which the one reader decodes.
     #[test]
     fn a_leave_status_decodes_its_word() {
         for exit in EXITS {
-            assert_eq!(LaneExit::read(NATIVE_JS_STOPPED, exit.word(), || unreachable!()), exit);
+            assert_eq!(LaneExit::read(LaneStatus::NativeJsStopped as u32, exit.word(), || unreachable!()), exit);
         }
         assert_eq!(LaneExit::read(0, LaneExit::Entry.word(), || unreachable!()), LaneExit::At(0), "status 0 is no leave");
     }
