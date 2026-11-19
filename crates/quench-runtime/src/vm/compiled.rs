@@ -130,6 +130,7 @@ mod lane_region;
 pub(super) mod emit_machine;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
+mod admission;
 #[cfg(all(test, feature = "aot"))]
 #[path = "compiled/lane_unit_polymorphic_tests.rs"]
 mod lane_unit_polymorphic_tests;
