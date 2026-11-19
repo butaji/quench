@@ -2007,6 +2007,13 @@ fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::Declare
             out.string(name);
         }
     }
+    out.u32(declared.local_members.len() as u32);
+    for member in &declared.local_members {
+        out.u32(member.function);
+        out.string(&member.local);
+        out.string(&member.member);
+        out.u16(member.languages);
+    }
 }
 
 fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super::DeclaredTypes>>, String> {
@@ -2074,8 +2081,16 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
         let names = input.list(|input| Ok(input.string()?.into_boxed_str()))?;
         Ok(super::declared_types::DeclaredLayout { class_start, names: names.into_boxed_slice() })
     })?;
+    let local_members = input.list(|input| {
+        Ok(super::DeclaredLocalMember {
+            function: input.u32()?,
+            local: input.string()?.into_boxed_str(),
+            member: input.string()?.into_boxed_str(),
+            languages: input.u16()?,
+        })
+    })?;
     Ok(Some(Box::new(super::DeclaredTypes {
-        declared, enum_constants, fields, signatures, locals, members, parameter_classes, parameters, layouts,
+        declared, enum_constants, fields, signatures, locals, members, local_members, parameter_classes, parameters, layouts,
     })))
 }
 

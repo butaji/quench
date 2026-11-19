@@ -1,7 +1,9 @@
 //! Declared function signatures, local bindings and parameter shapes: what a TypeScript annotation
 //! says a function returns, takes as its rest parameter or as `this`, what each annotated local
-//! holds, and what each parameter's type literal or top-level class type declares
+//! holds, and what each parameter's or local's object type (a literal, or an interface or alias the
+//! program declares) and each parameter's top-level class type declares
 //! (`DeclaredTypes::signatures`, `DeclaredTypes::locals`, `DeclaredTypes::members`,
+//! `DeclaredTypes::local_members`,
 //! `DeclaredTypes::parameter_classes`, `DeclaredTypes::parameters`). A declaration is a seed, not
 //! a proof (TypeScript is unsound), so a tier checks it once where a value enters and trusts it.
 
@@ -136,7 +138,8 @@ impl<'a> Collect<'a, '_> {
     }
 
     /// Record the declared shape of each parameter with a plain identifier pattern and a type
-    /// annotation: the properties of a type literal, or the top-level class a type reference names.
+    /// annotation: the properties of an object type (a type literal, or an interface or alias the
+    /// program declares), or the top-level class a type reference names.
     fn parameters(&mut self, function: u32, params: &FormalParameters<'_>) {
         for (index, parameter) in params.items.iter().enumerate() {
             let (Ok(index), Some(annotation)) = (u16::try_from(index), &parameter.type_annotation) else { continue };
@@ -144,21 +147,24 @@ impl<'a> Collect<'a, '_> {
                 continue;
             }
             self.parameter_languages(function, index, parameter, annotation);
-            match &annotation.type_annotation {
-                TSType::TSTypeLiteral(literal) => {
-                    for member in &literal.members {
-                        self.member(function, index, member);
-                    }
-                }
-                TSType::TSTypeReference(reference) => {
-                    let TSTypeName::IdentifierReference(name) = &reference.type_name else { continue };
-                    if let Some(Named::Class(class)) = self.names.get(name.name.as_str()) {
-                        self.declarations.declare_parameter_class(function, index, class);
-                    }
-                }
-                _ => {}
+            if let TSType::TSTypeReference(reference) = &annotation.type_annotation
+                && let TSTypeName::IdentifierReference(name) = &reference.type_name
+                && let Some(Named::Class(class)) = self.names.get(name.name.as_str())
+            {
+                self.declarations.declare_parameter_class(function, index, class);
+            }
+            for (member, languages) in self.object_members(&annotation.type_annotation) {
+                self.declarations.declare_member(function, index, &member, languages);
             }
         }
+    }
+
+    /// The declared properties an object-shaped annotation names, each with a closed language set
+    /// (`DECLARED_ANY` members are left out). An optional property admits `undefined`, as an optional
+    /// class field does.
+    fn object_members(&self, ty: &TSType<'_>) -> Vec<(Box<str>, u16)> {
+        let members = self.names.members_of(ty).unwrap_or_default();
+        members.into_iter().filter(|(_, languages)| *languages != DECLARED_ANY).collect()
     }
 
     /// Record a parameter's language set when the program's type names resolve it to a different set
@@ -177,29 +183,19 @@ impl<'a> Collect<'a, '_> {
         self.declarations.declare_parameter(function, index, languages);
     }
 
-    /// A property of a parameter's type literal with a static identifier key and a type annotation.
-    /// An optional property admits `undefined`, as an optional class field does.
-    fn member(&mut self, function: u32, parameter: u16, member: &TSSignature<'_>) {
-        let TSSignature::TSPropertySignature(property) = member else { return };
-        let PropertyKey::StaticIdentifier(identifier) = &property.key else { return };
-        let Some(annotation) = &property.type_annotation else { return };
-        let mut languages = declared_language_in(&annotation.type_annotation, self.names);
-        if property.optional {
-            languages |= language_bit(crate::ValueType::Undefined);
-        }
-        if languages != DECLARED_ANY {
-            self.declarations.declare_member(function, parameter, identifier.name.as_str(), languages);
-        }
-    }
-
     /// Record a local binding of a plain identifier with a type annotation, in the innermost function.
     /// An array annotation is recorded for its element types even where its own languages are open.
+    /// An object-shaped annotation (a literal, or an interface or alias the program declares) also
+    /// records its properties for the local (`DeclaredTypes::declare_local_member`).
     fn local(&mut self, name: Option<&str>, annotation: Option<&TSTypeAnnotation<'_>>) {
         let (Some(function), Some(name), Some(annotation)) = (self.function, name, annotation) else { return };
         let languages = declared_language_in(&annotation.type_annotation, self.names);
         let elements = element_languages(&annotation.type_annotation, self.names);
         if languages != DECLARED_ANY || elements != DECLARED_ANY {
             self.declarations.declare_local(function, name, languages, elements);
+        }
+        for (member, languages) in self.object_members(&annotation.type_annotation) {
+            self.declarations.declare_local_member(function, name, &member, languages);
         }
     }
 }
@@ -349,5 +345,74 @@ mod tests {
             .expect("the function is compiled");
         assert_eq!(compiled(f), vec![bit(V::Number)]);
         assert_eq!(compiled(g), vec![bit(V::Object) | bit(V::Function)]);
+    }
+
+    #[test]
+    fn interface_and_alias_parameters_declare_their_members() {
+        let source = "interface Point { x: number; y?: string }\ntype Named = { name: boolean };\nfunction f(p: Point, n: Named, z: Missing) {}";
+        let declared = declared_of(source, "interfaces.cts");
+        let f = source.find("function f").unwrap() as u32;
+        assert_eq!(declared.declared_member(f, 0, "x"), Some(bit(V::Number)));
+        assert_eq!(declared.declared_member(f, 0, "y"), Some(bit(V::String) | bit(V::Undefined)));
+        assert_eq!(declared.declared_member(f, 0, "missing"), None);
+        assert_eq!(declared.declared_member(f, 1, "name"), Some(bit(V::Boolean)));
+        assert_eq!(declared.declared_member(f, 2, "anything"), None);
+        // The language sets of the parameters: an interface admits objects and functions, an alias a plain object.
+        assert_eq!(declared.declared_parameter(f, 0), Some(bit(V::Object) | bit(V::Function)));
+        assert_eq!(declared.declared_parameter(f, 1), Some(crate::staged::value::language::OBJECT_PLAIN));
+    }
+
+    #[test]
+    fn interface_extends_and_merging_build_one_member_set() {
+        let source = "interface A { x: number; z: string }\ninterface B extends A { x: boolean; w: number }\n\
+            interface C { m: number }\ninterface C { n: string }\nfunction g(b: B, c: C) {}";
+        let declared = declared_of(source, "extends.cts");
+        let g = source.find("function g").unwrap() as u32;
+        // The child's `x` overrides the parent's; the parent's `z` is inherited.
+        assert_eq!(declared.declared_member(g, 0, "x"), Some(bit(V::Boolean)));
+        assert_eq!(declared.declared_member(g, 0, "z"), Some(bit(V::String)));
+        assert_eq!(declared.declared_member(g, 0, "w"), Some(bit(V::Number)));
+        // Two blocks of one interface merge.
+        assert_eq!(declared.declared_member(g, 1, "m"), Some(bit(V::Number)));
+        assert_eq!(declared.declared_member(g, 1, "n"), Some(bit(V::String)));
+    }
+
+    #[test]
+    fn generic_members_typed_by_a_parameter_are_open() {
+        let source = "interface Box<T> { value: T; count: number }\ntype Pair<K> = { key: K; size: string };\nfunction h(b: Box<number>, p: Pair<string>) {}";
+        let declared = declared_of(source, "generic.cts");
+        let h = source.find("function h").unwrap() as u32;
+        assert_eq!(declared.declared_member(h, 0, "value"), None);
+        assert_eq!(declared.declared_member(h, 0, "count"), Some(bit(V::Number)));
+        assert_eq!(declared.declared_member(h, 1, "key"), None);
+        assert_eq!(declared.declared_member(h, 1, "size"), Some(bit(V::String)));
+    }
+
+    #[test]
+    fn alias_and_heritage_cycles_terminate() {
+        let source = "type Loop = Loop2;\ntype Loop2 = Loop;\ninterface Ring extends Ring { r: number }\n\
+            type Both = Both & { k: string };\nfunction c(v: Loop, r: Ring, b: Both) {}";
+        let declared = declared_of(source, "cycles.cts");
+        let c = source.find("function c").unwrap() as u32;
+        assert_eq!(declared.declared_member(c, 0, "anything"), None);
+        assert_eq!(declared.declared_member(c, 1, "r"), Some(bit(V::Number)));
+        assert_eq!(declared.declared_member(c, 2, "k"), Some(bit(V::String)));
+    }
+
+    #[test]
+    fn local_object_annotations_declare_their_members() {
+        let source = "interface Point { x: number }\nfunction f() { const p: Point = { x: 1 }; let q: {y: string} = { y: '' }; }\nconst top: Point = { x: 2 };";
+        let program = Engine::specialize_typescript(source, "locals.cts").unwrap();
+        let declared = program.declared_types.as_deref().expect("a typed program keeps its declarations");
+        let f = source.find("function f").unwrap() as u32;
+        assert_eq!(declared.declared_local_member(f, "p", "x"), Some(bit(V::Number)));
+        assert_eq!(declared.declared_local_member(f, "q", "y"), Some(bit(V::String)));
+        assert_eq!(declared.declared_local_member(f, "p", "y"), None);
+        assert_eq!(declared.declared_local_member(u32::MAX, "top", "x"), Some(bit(V::Number)));
+        // The members survive the binary round trip.
+        let bytes: crate::KeptBytes = std::rc::Rc::new(program.encode_trusted());
+        let decoded = crate::ResidualProgram::decode_trusted(bytes).unwrap();
+        assert_eq!(decoded.declared_types, program.declared_types);
+        assert_eq!(decoded.declared_types.as_deref().map(|declared| declared.local_members.len()), Some(3));
     }
 }

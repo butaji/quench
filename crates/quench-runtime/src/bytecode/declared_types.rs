@@ -132,6 +132,21 @@ pub(crate) struct DeclaredMember {
     pub(crate) languages: u16,
 }
 
+/// A property a local binding's object annotation declares: `const p: Point = …` with `interface
+/// Point { x: number }` declares `x` of local `p`. Keyed like `DeclaredLocal` (the function's start and
+/// the local's name).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DeclaredLocalMember {
+    /// The innermost enclosing function's start (`u32::MAX` at the top level, as `DeclaredLocal::function`).
+    pub(crate) function: u32,
+    /// The local binding's name.
+    pub(crate) local: Box<str>,
+    /// The property's name: a non-computed identifier key.
+    pub(crate) member: Box<str>,
+    /// Language bits the property's annotation admits.
+    pub(crate) languages: u16,
+}
+
 /// A parameter whose annotation names a class declared at the top level of the program: the
 /// parameter is an instance of that class, whose declared fields (`DeclaredField`) describe it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -170,6 +185,8 @@ pub(crate) struct DeclaredTypes {
     pub(crate) locals: Vec<DeclaredLocal>,
     /// The declared properties of parameters' type literals, in source order.
     pub(crate) members: Vec<DeclaredMember>,
+    /// The declared properties of locals whose object annotation names them, in source order.
+    pub(crate) local_members: Vec<DeclaredLocalMember>,
     /// The parameters whose annotation names a top-level class, in source order.
     pub(crate) parameter_classes: Vec<DeclaredParameterClass>,
     /// The parameters whose named-resolved language sets differ from their name-free ones, in source order.
@@ -199,6 +216,10 @@ impl DeclaredTypes {
         self.members.push(DeclaredMember { function, parameter, name: Box::from(name), languages });
     }
 
+    pub(crate) fn declare_local_member(&mut self, function: u32, local: &str, member: &str, languages: u16) {
+        self.local_members.push(DeclaredLocalMember { function, local: Box::from(local), member: Box::from(member), languages });
+    }
+
     pub(crate) fn declare_parameter_class(&mut self, function: u32, parameter: u16, class: u32) {
         self.parameter_classes.push(DeclaredParameterClass { function, parameter, class });
     }
@@ -213,7 +234,7 @@ impl DeclaredTypes {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.declared.is_empty() && self.enum_constants.is_empty() && self.fields.is_empty()
-            && self.signatures.is_empty() && self.locals.is_empty() && self.members.is_empty()
+            && self.signatures.is_empty() && self.locals.is_empty() && self.members.is_empty() && self.local_members.is_empty()
             && self.parameter_classes.is_empty() && self.parameters.is_empty() && self.layouts.is_empty()
     }
 
@@ -316,6 +337,16 @@ impl DeclaredTypes {
         self.parameter_classes.iter().rev()
             .find(|entry| entry.function == function && entry.parameter == parameter)
             .map(|entry| entry.class)
+    }
+
+    /// The declared language types of property `member` of local `local` of the function starting at
+    /// `function` (`u32::MAX` for the top level), from its object annotation, when the program declares
+    /// one (the last declaration wins).
+    #[cfg_attr(not(test), allow(dead_code, reason = "the object model seeds local member reads next"))]
+    pub(crate) fn declared_local_member(&self, function: u32, local: &str, member: &str) -> Option<u16> {
+        self.local_members.iter().rev()
+            .find(|entry| entry.function == function && &*entry.local == local && &*entry.member == member)
+            .map(|entry| entry.languages)
     }
 
     /// The named-resolved language types of parameter `parameter` of the function starting at
