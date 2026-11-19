@@ -75,9 +75,16 @@ impl<H: Host> Vm<H> {
                     Loaded::Pushed(_) => unreachable!("a read with no destination inlines no getter"),
                 }
             }
-            // A named store is the field store the miss made: strict where the row says so (no function's strictness).
-            CallOut::StoreField { atom, site: cache, strict, .. } => {
-                let object = first.expect("a store names its object");
+            // A named store is the field store the row names, or the store to the frame's `this`: strict where the row
+            // says so (no function's strictness).
+            CallOut::StoreField { object, atom, site: cache, strict, .. } => {
+                let object = match object {
+                    Some(_) => first.expect("a store names its object"),
+                    None => {
+                        let frame = self.owner_frame(site.owner).expect("a store to this names its frame");
+                        self.checked_this_binding(p, frame)?
+                    }
+                };
                 self.set_field_cached(p, object, atom, operand, cache, strict).map(|()| None)
             }
             // A keyed store: the value is the operand list's register, and strict where the row or the function is.
@@ -86,8 +93,8 @@ impl<H: Host> Vm<H> {
                 let strict = strict || p.function(site.function as usize).strict;
                 self.set_index_mode(p, object, operand, value, strict).map(|()| None)
             }
-            CallOut::Equality { .. } | CallOut::Binary { .. } | CallOut::Delete { .. } | CallOut::Decide { .. } =>
-                self.operator_step(p, site, operation, (first, operand)),
+            CallOut::Equality { .. } | CallOut::Binary { .. } | CallOut::Delete { .. } | CallOut::Decide { .. }
+                | CallOut::DecideOperand { .. } => self.operator_step(p, site, operation, (first, operand)),
             CallOut::ForInNext { .. } => Ok(Some(self.for_in_next(p, operand)?.unwrap_or(Value::DELETED))),
             CallOut::EnumeratedGet { .. } => self.get_index(p, first.expect("an enumerated read names its base"), operand).map(Some),
             CallOut::Protocol { step: Protocol::RestView { get, fixed, rest }, .. } =>
@@ -98,6 +105,21 @@ impl<H: Host> Vm<H> {
             CallOut::Accessor { atom, site: cache, .. } =>
                 self.get_field_cached(p, first.expect("an accessor read names its receiver"), atom, cache).map(Some),
             _ => self.name_step(p, site, operation, first),
+        }
+    }
+
+    /// The value of a call-out's operand `operand` read by `owner`: a register of the owner, a program constant,
+    /// or the field or local the owner's frame names (`resolve_operand`).
+    pub(super) fn call_out_operand(&mut self, p: &ResidualProgram, owner: VarOwner, operand: Operand) -> Result<Value, JsError> {
+        match operand.kind() {
+            Some(crate::bytecode::OperandKind::Register) => Ok(self.owner_register(owner, operand.payload())),
+            Some(crate::bytecode::OperandKind::Constant) => {
+                Ok(self.active_constant(usize::from(operand.payload())).expect("a call-out's constant is in its program"))
+            }
+            _ => {
+                let frame = self.owner_frame(owner).expect("a call-out's field or local names its frame");
+                self.resolve_operand(p, frame, operand)
+            }
         }
     }
 
@@ -173,6 +195,11 @@ impl<H: Host> Vm<H> {
                 self.delete_reference_property_mode(p, left, right, strict).map(Some)
             }
             CallOut::Decide { operator, .. } => self.binary_truthy(p, operator, left, right).map(|holds| Some(Value::boolean(holds))),
+            // ToBoolean of the general `Binary` result, which a constant operand's comparison takes as its decision.
+            CallOut::DecideOperand { operator, .. } => {
+                let value = self.binary(p, operator, left, right)?;
+                Ok(Some(Value::boolean(self.truthy(value))))
+            }
             _ => unreachable!("{operation:?} is no operator step"),
         }
     }

@@ -6,6 +6,7 @@
 use crate::bytecode::{Operand, Register, ResidualProgram, WideInstruction};
 use crate::host::Host;
 use crate::staged::protocol_literals::LiteralStep;
+use crate::staged::value::TypeofKind;
 use crate::staged::{Allocation, CallOut, Concrete, Constant, Edge, NumericFrame, Operation, Step};
 use crate::staged::Frame as _;
 use crate::staged::CallFrame as _;
@@ -263,11 +264,23 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
         (constant.value.to_bits(), InterpreterFact::Value)
     }
 
-    /// ToBoolean from the value's own word; `None` where a heap cell decides it, which the general
-    /// path answers.
+    /// ToBoolean of the register's value: an immediate's by its tag, a heap value's by its cell (`Vm::truthy`,
+    /// which runs no guest code).
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Concrete, register: Register) -> Option<bool> {
-        Value::from_bits(self.read(stage, register)).truthiness()
+        let value = Value::from_bits(self.read(stage, register));
+        Some(value.truthiness().unwrap_or_else(|| self.vm().truthy(value)))
+    }
+
+    /// The `typeof` kind of the heap value `word`, by its cell (`Vm::typeof_kind`).
+    fn type_of(&mut self, _stage: &mut Concrete, word: u64) -> Option<TypeofKind> {
+        let index = crate::vm::coercion::typeof_name_index(self.vm().typeof_kind(Value::from_bits(word)));
+        Some(TypeofKind::of_index(index as u64))
+    }
+
+    /// The interned `typeof` result string of the name index `name` (`Vm::typeof_names`).
+    fn typeof_string(&mut self, _stage: &mut Concrete, name: u64) -> Option<(u64, InterpreterFact)> {
+        Some((self.vm().typeof_names[name as usize].to_bits(), InterpreterFact::Value))
     }
 
     #[inline(always)]
@@ -330,7 +343,7 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
         if !matches!(operation,
             CallOut::LoadName { .. } | CallOut::GlobalTypeof { .. } | CallOut::GlobalWrite { .. } | CallOut::ForInNext { .. }
                 | CallOut::Binary { .. } | CallOut::Equality { .. } | CallOut::PropertyKey { .. } | CallOut::Decide { .. }
-                | CallOut::ToNumeric { .. } | CallOut::IncDec { .. } | CallOut::Unary { .. }
+                | CallOut::DecideOperand { .. } | CallOut::ToNumeric { .. } | CallOut::IncDec { .. } | CallOut::Unary { .. }
                 | CallOut::StoreField { .. } | CallOut::StoreElement { .. }
                 | CallOut::Protocol { step: crate::staged::Protocol::Value(crate::staged::protocol_values::ValueStep::GetAsyncIterator)
                     | crate::staged::Protocol::Literal(crate::staged::protocol_literals::LiteralStep::CacheTemplate { .. }
@@ -340,10 +353,18 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
         }
         let (program, site) = (self.program, self.site);
         let vm = self.vm();
-        let operands = operation.operands().read(&program.method_arguments, |operand| match operand.register_index() {
-            Some(register) => vm.owner_register(site.owner, register),
-            None => vm.active_constant(usize::from(operand.payload())).expect("a call-out's constant is in its program"),
+        let mut failure = None;
+        let operands = operation.operands().read(&program.method_arguments, |operand| match vm.call_out_operand(program, site.owner, operand) {
+            Ok(value) => value,
+            Err(error) => {
+                failure.get_or_insert(error);
+                Value::UNDEFINED
+            }
         });
+        if let Some(error) = failure {
+            self.raised = Some(error);
+            return None;
+        }
         // A template object is the cache entry of the frame the row runs in, so it is keyed by that frame
         // rather than the VM's innermost one (`call_out` makes the step over its own frame).
         if let CallOut::Protocol { step: crate::staged::Protocol::Literal(step @ (LiteralStep::CacheTemplate { .. } | LiteralStep::LoadTemplate { .. })), .. } = operation {

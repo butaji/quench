@@ -135,7 +135,7 @@ pub(crate) fn is_binary_arithmetic(instruction: WideInstruction) -> bool {
 /// A unary operation (`Unary`): a logical not, a `typeof` index, `void` or a bitwise not.
 pub(crate) fn is_unary(instruction: WideInstruction) -> bool {
     match decoded(instruction) {
-        Some(Operation::LogicalNot { .. } | Operation::TypeofIndex { .. } | Operation::Void { .. }
+        Some(Operation::LogicalNot { .. } | Operation::TypeofIndex { .. } | Operation::Void { .. } | Operation::Unary { .. }
             | Operation::Number(NumberOperation::BitwiseNot { .. })) => true,
         Some(_) => false,
         None => instruction.op().is_unary(),

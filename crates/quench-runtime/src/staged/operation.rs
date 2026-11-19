@@ -84,6 +84,9 @@ pub(crate) enum Operation<W, P> {
     LoadName { destination: Register, atom: u32, site: u16, receiver: Option<Register>, proof: P },
     /// Define `destination` as `undefined` (`void`).
     Void { destination: Register },
+    /// The VM's unary `operator` (a `UnaryOperator`, or an internal unary test) of register `source`, defining
+    /// `destination` (`CallOut::Unary`): an operator no staged row decides.
+    Unary { destination: Register, source: Register, operator: u32 },
     /// ToPropertyKey of a string `source`, which is its own key; any other value leaves at the
     /// miss edge, where the VM converts it (`Vm::to_property_key`: a Number allocates, an object
     /// runs guest code).
@@ -424,26 +427,24 @@ impl<W, P> Operation<W, P> {
                 root: false },
             Op::StoreCapture => Self::StoreCapture {
                 source: instruction.register_a(), depth: instruction.capture_depth(), slot: instruction.capture_slot() },
-            Op::Unary => return Self::decode_unary(instruction),
+            Op::Unary => Self::decode_unary(instruction),
             _ => return None,
         })
     }
 
     /// The unary operators of `decode_value`.
     #[inline(always)]
-    fn decode_unary(instruction: WideInstruction) -> Option<Self> {
+    fn decode_unary(instruction: WideInstruction) -> Self {
         let (destination, source) = (instruction.result_register(), instruction.register_b());
         let operator = instruction.unary_operator();
         if let Some((index, negated)) = crate::bytecode::typeof_test(operator) {
-            return Some(Self::TypeofTest { destination, source, index: index as u64, negated });
+            return Self::TypeofTest { destination, source, index: index as u64, negated };
         }
-        Some(match operator {
+        match operator {
             #[cfg(not(stencil_build))]
             _ if operator == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot { destination, source },
-            // A `typeof` that returns from the frame is the general step's (the record returns the value).
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::Typeof as u32 && !instruction.returns_from_frame() =>
-                Self::TypeofString { destination, source },
+            _ if operator == oxc_ast::ast::UnaryOperator::Typeof as u32 => Self::TypeofString { destination, source },
             _ if operator == crate::bytecode::UNARY_TYPEOF_INDEX => Self::TypeofIndex { destination, source },
             #[cfg(not(stencil_build))]
             _ if operator == oxc_ast::ast::UnaryOperator::BitwiseNot as u32 =>
@@ -455,10 +456,9 @@ impl<W, P> Operation<W, P> {
             _ if operator == oxc_ast::ast::UnaryOperator::UnaryPlus as u32 =>
                 Self::number_unary(destination, source, crate::vm::operations::NumberUnary::Plus),
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::Void as u32 && !instruction.returns_from_frame() =>
-                Self::Void { destination },
-            _ => return None,
-        })
+            _ if operator == oxc_ast::ast::UnaryOperator::Void as u32 => Self::Void { destination },
+            _ => Self::Unary { destination, source, operator },
+        }
     }
 
     /// `operation` of a Number `source` in the int32 domain: an int32 operand decides it, a double

@@ -246,9 +246,8 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 
 /// The general binary operation a Number operation computes where its words do not decide it: the
 /// `Binary` of its operator over its operands (`CallOut::Binary`), with the register it defines. `None`
-/// for an operation that is no binary operator's, or whose operand is neither a register nor a constant
-/// (the call-out takes those alone). A relation's value is left out where it is `==` or `===`, which
-/// one relation names both of.
+/// for an operation that is no binary operator's. A relation's value is left out where it is `==` or `===`,
+/// which one relation names both of: the `Binary` row of that record asks the VM for it.
 #[cfg(not(stencil_build))]
 fn general_binary(operation: &NumberOperation) -> Option<(super::CallOut, Option<Register>)> {
     let (destination, left, right, operator) = match *operation {
@@ -260,8 +259,7 @@ fn general_binary(operation: &NumberOperation) -> Option<(super::CallOut, Option
             (destination, left, right, relation.binary_operator()),
         _ => return None,
     };
-    (super::generic::is_value_operand(left) && super::generic::is_value_operand(right))
-        .then_some((super::CallOut::Binary { left, right, operator }, Some(destination)))
+    Some((super::CallOut::Binary { left, right, operator }, Some(destination)))
 }
 
 /// The Math function `operation` of one Number `source`, as a double.

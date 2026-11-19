@@ -14,8 +14,8 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             | Operation::FieldAdd { .. } | Operation::IndexGetHost { .. }) => super::property::property_step(stage, frame, property),
         keyed @ (Operation::Delete { .. } | Operation::ElementRead { .. } | Operation::ElementReadOperand { .. } | Operation::ElementWrite { .. }) => keyed_step(stage, frame, keyed),
         Operation::IncDecLocal { local, source, decrement } => inc_dec_local(stage, frame, local, source, decrement),
-        Operation::Void { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. } | Operation::Binary { .. }
-            | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
+        Operation::Void { .. } | Operation::Unary { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. }
+            | Operation::Binary { .. } | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
         Operation::WasmJump(jump) => super::wasm_jump::step(stage, frame, jump),
         Operation::BranchTable(table) => super::wasm_jump::branch_table(stage, frame, table),
         call @ (Operation::Call(_) | Operation::Return { .. } | Operation::Suspend { .. }) => call_step(stage, frame, call),
@@ -439,8 +439,8 @@ pub(crate) fn step_wasm_vector<F: Frame<Concrete>>(stage: &mut Concrete, frame: 
 pub(crate) fn step_arith<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::Number(operation) => numeric::step(stage, frame, operation),
-        Operation::Void { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. } | Operation::Binary { .. }
-            | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
+        Operation::Void { .. } | Operation::Unary { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. }
+            | Operation::Binary { .. } | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
         Operation::LogicalNot { .. } => register_step(stage, frame, operation),
         Operation::TypeofIndex { destination, source } => super::control::typeof_index(stage, frame, destination, source),
         Operation::TypeofTest { destination, source, index, negated } =>

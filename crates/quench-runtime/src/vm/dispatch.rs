@@ -4,26 +4,21 @@
 // rest by catalog attribute: `NO_STEP` (Nop; the wide marker is never dispatched), `SUSPENDS` (Await, Yield,
 // YieldStar: `staged_suspend`), `ROW_ONLY` (a staged row that decides its opcode: IteratorCleanupPush,
 // IteratorCleanupPop, ForInNext, GetAsyncIterator, StringCaseIndex, CacheTemplateObject,
-// LoadCachedTemplateObject, ToNumeric, IncDec, Return, Throw), `OWNER_ONLY` (LoadEnvLocal, StoreEnvLocal,
-// StoreName: `owner_step` alone), an owned step (`Op::owned_step`: its row first where the catalog marks one,
+// LoadCachedTemplateObject, ToNumeric, IncDec, Return, Throw, SetThisField, SetThisFieldStrict), `OWNER_ONLY`
+// (LoadEnvLocal, StoreEnvLocal, StoreName: `owner_step` alone), an owned step (`Op::owned_step`: its row first where the catalog marks one,
 // then `owner_step`), `Decoder::Literal` (`decode_literal` run completed on the frame, whose
 // `allocate_value` and element definer answer it), and the Names, Generic, Property and Value call-outs
 // (`staged_value_step`).
 // What is left, and why:
-// - Row, then a per-opcode miss: Binary, NumericAdd, NumericMultiply, Unary, JumpBinaryFalse. Each
-//   miss is that opcode's own semantics, not a staged row's. What keeps each from its arm alone:
-//   - Binary, NumericAdd, NumericMultiply: `decode_binary` declines an operand that is neither a register nor
-//     a constant, and under `stencil_build` every operator that is no Number's.
-//   - Unary: `decode_unary` declines the operators it does not stage: a `typeof` or `void` that returns from the
-//     frame, and any operator outside the unary family. A non-int32 operand is `CallOut::Unary`.
-//   - JumpBinaryFalse: a bitwise test of a constant operand whose word is no int32 has no call-out, since `Decide`
-//     takes registers and a `Binary` yields a Number whose truth a word cannot tell (a BigInt's zero is no int32 zero).
-// - Field stores to `this`: SetThisField, SetThisFieldStrict. The interpreter frame's property plans are
-//   `NoPlans`, so its store row always leaves; the miss must read `this` by `checked_this_binding`, which
-//   the named store's call-out (`CallOut::StoreField`, reading register B) does not.
-// - Run-only (`Declined` is unreachable): GetField, GetIndex, SetField, SetFieldStrict, SetIndex. Their misses are
-//   the call-outs `LoadField`, `LoadElement`, `StoreField` and `StoreElement`, which the interpreter frame answers;
-//   a read that writes `this` stores its value through `store_field_sink`.
+// - Row, then a per-opcode miss: InitializeTdz. The row leaves for a slot it does not hold plainly, and the miss
+//   writes the TDZ marker there. (Binary, NumericAdd, NumericMultiply, Unary and JumpBinaryFalse run only their
+//   rows: the interpreter frame answers each through `CallOut::Binary`, `Unary`, `Decide`/`DecideOperand` and
+//   `Equality`. Their one leave is the Number relation of `==` or `===`, which `Binary` answers as the general row.)
+// - Run-only (`Declined` is unreachable): GetField, GetIndex, SetField, SetFieldStrict, SetIndex. A read or store its
+//   plan leaves is `CallOut::LoadField`, `LoadElement`, `StoreField` or `StoreElement`, which the interpreter frame
+//   answers; a read that writes `this` stores its value through `store_field_sink`. SetThisField and
+//   SetThisFieldStrict have no arm: `ROW_ONLY` runs them through `step_unlisted`, and their store to `this` is the
+//   `CallOut::StoreField` with no object register, which takes `this` from the frame's `this_value`.
 // - WasmBranchTable: its row's edge is a branch-table entry (`Edge::Entry`), which the interpreter frame's
 //   `step_row` refuses, so its case stays the hand body.
 // Call-family records (`staged::invoke::general_call_form`: Call, CallArray, CallSpread, CallForwardingArguments,
@@ -614,17 +609,6 @@ impl<H: Host> Vm<H> {
                     RowRun::Stop(stop) => return stop,
                 }
             }
-            Op::SetThisField | Op::SetThisFieldStrict => {
-                let this = self.checked_this_binding(p, f)?;
-                self.set_field_cached(
-                    p,
-                    this,
-                    i.atom_index(),
-                    self.read(f, i.register_a()),
-                    i.cache_site_index(),
-                    i.op().field_store().is_some_and(|store| store.strict),
-                )?;
-            }
             Op::SetIndex => {
                 match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
@@ -635,8 +619,18 @@ impl<H: Host> Vm<H> {
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
                 match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
+                    // The Number relation of `==` or `===` leaves a pair that is no Number. That relation names
+                    // both operators, so the general `Binary` of the record (`CallOut::Binary`) answers it.
                     RowRun::Declined => {
-                        return self.binary_miss(p, f, i, pc);
+                        let operation = crate::staged::Operation::<u64, ()>::Binary {
+                            destination: i.result_register(), left: i.operand_b(), right: i.operand_c(), operator: i.binary_operator(),
+                        };
+                        let completes = i.result_flags() & crate::bytecode::RETURN_REGISTER;
+                        match self.run_row_completed(p, f, i, pc, allow_inline_calls, operation, completes) {
+                            RowRun::Done(_) => {}
+                            RowRun::Stop(stop) => return stop,
+                            RowRun::Declined => unreachable!("the interpreter frame answers the general binary row"),
+                        }
                     }
                     RowRun::Stop(stop) => return stop,
                 }
@@ -645,18 +639,14 @@ impl<H: Host> Vm<H> {
             Op::Unary => {
                 match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        return self.unary_miss(p, f, i);
-                    }
+                    RowRun::Declined => unreachable!("the interpreter frame answers every unary row"),
                     RowRun::Stop(stop) => return stop,
                 }
             }
             Op::JumpBinaryFalse => {
                 match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        return self.jump_binary_false_miss(p, f, i, pc);
-                    }
+                    RowRun::Declined => unreachable!("the interpreter frame answers every comparison jump"),
                     RowRun::Stop(stop) => return stop,
                 }
             }
@@ -780,74 +770,6 @@ impl<H: Host> Vm<H> {
         let strict = p.function(self.frames[f].function as usize).strict;
         self.with_field_source(f, site, crate::bytecode::FieldPart::Sink, |vm| vm.set_field_cached(
             p, vm.frames[f].this, sink.0, value, sink.1, strict))
-    }
-
-    #[inline(never)]
-    fn binary_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, _pc: &mut usize) -> Result<StepResult, JsError> {
-        let operator = i.binary_operator();
-        let left_operand = i.operand_b();
-        let right_operand = i.operand_c();
-        self.profile
-            .binary(operator as usize, left_operand.0, right_operand.0);
-        let left = self.resolve_operand(p, f, left_operand)?;
-        let right = self.resolve_operand(p, f, right_operand)?;
-        #[cfg(feature = "profile-aggregate")]
-        {
-            let integer = self.numeric_integer_binary(operator, left, right).is_some();
-            self.profile.regional_binary(
-                self.frames[f].program.raw(),
-                self.frames[f].function,
-                (*pc - 1) as u32,
-                integer,
-            );
-            if !crate::staged::binary(i.op()) {
-                self.profile.numeric_binary_path(
-                    operator as usize,
-                    integer,
-                    left.as_int().is_some() && right.as_int().is_some(),
-                );
-            }
-        }
-        let v = match self.number_binary(operator, left, right) {
-            Some(value) => value,
-            None => self.binary(p, operator, left, right)?,
-        };
-        if i.returns_from_frame() {
-            return Ok(StepResult::Return(v));
-        }
-        if let Some(local) = i.numeric_local_target() {
-            self.frames[f].locals[local as usize] = v;
-            self.profile
-                .virtual_opcode(self.frames[f].program.raw(), crate::staged::STORE_LOCAL_PLAIN_ROW as usize);
-        } else {
-            self.write(f, i.result_register(), v);
-        }
-        Ok(StepResult::Continue)
-    }
-
-    #[inline(never)]
-    fn unary_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
-        let v = self.unary(p, i.unary_operator(), self.read(f, i.register_b()))?;
-        if i.returns_from_frame() {
-            return Ok(StepResult::Return(v));
-        }
-        self.write(f, i.result_register(), v);
-        Ok(StepResult::Continue)
-    }
-
-    #[inline(never)]
-    fn jump_binary_false_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize) -> Result<StepResult, JsError> {
-        let operator = i.binary_operator_field();
-        let left_operand = i.operand_b();
-        let right_operand = i.operand_c();
-        self.profile
-            .binary(operator as usize, left_operand.0, right_operand.0);
-        let left = self.resolve_operand(p, f, left_operand)?;
-        let right = self.resolve_operand(p, f, right_operand)?;
-        if !self.binary_truthy(p, operator, left, right)? {
-            *pc = i.jump_target() as usize;
-        }
-        Ok(StepResult::Continue)
     }
 
     /// An opcode with no arm of its own in `step`, run as its catalog runner (`RUNNERS`): one table

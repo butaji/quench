@@ -19,8 +19,8 @@ pub(super) fn is_value_operand(operand: Operand) -> bool {
 }
 
 impl<W, P> Operation<W, P> {
-    /// The `Binary`, `ToPropertyKey` and `JumpBinaryFalse` operations of `decode`; `None` where
-    /// an operand is no register or the instruction returns from the frame.
+    /// The `Binary`, `ToPropertyKey` and `JumpBinaryFalse` operations of `decode`; `None` where a `Binary`
+    /// carries a result flag (`decode_completed` strips it first).
     #[inline(always)]
     pub(crate) fn decode_generic(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
@@ -50,8 +50,8 @@ impl<W, P> Operation<W, P> {
 
     /// `Binary`: an arithmetic, bitwise or relation operator as its Number operation
     /// (`numeric::binary_operation`), equality as its own row, and any other operator the VM's.
-    /// Both operands may be registers or program constants; any other operand leaves the record
-    /// to the general step.
+    /// Every operand kind decodes; whether a frame asks the VM for a record its words leave is
+    /// the frame's (`NumericFrame::general_operators`), not the decode's.
     #[inline(always)]
     fn decode_binary(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0 { return None; }
@@ -61,15 +61,14 @@ impl<W, P> Operation<W, P> {
         if let Some(number) = super::numeric::binary_operation(operator, destination, left, right) {
             return Some(Self::Number(number));
         }
-        if !is_value_operand(left) || !is_value_operand(right) { return None; }
         #[cfg(not(stencil_build))]
         return Some(match equality_operator(operator) {
             Some((strict, negated)) => Self::Equality { destination, left, right, strict, negated },
             None => Self::Binary { destination, left, right, operator },
         });
-        // The stencil build has no equality classifier: a non-Number `Binary` is the caller's own path.
+        // The stencil build has no equality classifier: every other `Binary` is the VM's operator.
         #[cfg(stencil_build)]
-        return None;
+        return Some(Self::Binary { destination, left, right, operator });
     }
 }
 
@@ -82,8 +81,10 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::PropertyKey { destination, source } => property_key(stage, frame, destination, source),
         Operation::Equality { destination, left, right, strict, negated } =>
             equality(stage, frame, destination, [left, right], (strict, negated)),
-        Operation::Binary { destination, left, right, operator } =>
+        Operation::Binary { destination, left, right, operator } if frame.general_operators() =>
             super::callout::calling(stage, frame, CallOut::Binary { left, right, operator }, Some(destination)),
+        Operation::Unary { destination, source, operator } if frame.general_operators() =>
+            super::callout::calling(stage, frame, CallOut::Unary { operator, value: source }, Some(destination)),
         Operation::CompareJump { .. } => super::compare::step(stage, frame, operation),
         _ => Step::Unresolved,
     }
@@ -149,7 +150,9 @@ pub(super) fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2]
 fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
     [left, right]: [Operand; 2], (strict, negated): (bool, bool)) -> Step<S::Word, F::Control> {
     let (Some(left_word), Some(right_word)) = (frame.operand_word(stage, left), frame.operand_word(stage, right)) else {
-        return Step::Unresolved;
+        // An operand the words do not hold (a constant, a field or a local): the VM's equality where the frame takes it.
+        if !frame.general_operators() { return Step::Unresolved; }
+        return super::callout::calling(stage, frame, CallOut::Equality { left, right, strict, negated }, Some(destination));
     };
     let (decided, equal) = decide(stage, [left_word, right_word], strict);
     let result = if negated { stage.not(equal) } else { equal };

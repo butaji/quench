@@ -641,11 +641,16 @@ pub(super) fn property_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
             Some(word) => Some(word),
             None => return super::callout::loading(stage, frame, super::CallOut::LoadField { lookup }, destination),
         },
-        // A store its plan leaves is the VM's named store, where the frame takes it (`CallOut::StoreField`).
+        // A store its plan leaves is the VM's named store, where the frame takes it (`CallOut::StoreField`). A store
+        // to `this` has no base register: the VM takes `this` where the frame holds it (`Frame::this_value`).
         Operation::SetField { value, base, atom, site, strict } => match super::property_write::set_field(stage, frame, (value, base), (atom, site), miss) {
             Some(word) => Some(word),
-            None => base.and_then(|object| super::callout::storing(stage, frame,
-                super::CallOut::StoreField { object, value, atom, site, strict })),
+            None => match base {
+                Some(object) => super::callout::storing(stage, frame,
+                    super::CallOut::StoreField { object: Some(object), value, atom, site, strict }),
+                None => frame.this_value(stage).and_then(|_| super::callout::storing(stage, frame,
+                    super::CallOut::StoreField { object: None, value, atom, site, strict })),
+            },
         },
         Operation::StoreField { base, value, fact, atom, site } =>
             super::property_write::store_word(stage, frame, base, (value, fact), (atom, site), miss),
