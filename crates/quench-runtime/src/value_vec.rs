@@ -109,14 +109,20 @@ const BUCKETS: usize = 128;
 /// A size class's released runs, linked through each run's first value: a released run's
 /// values are dead, so its list costs no memory of its own. As a `Vec<u32>` per class, the
 /// lists held 2.2 MB at TypeScript's peak, the full collection that releases millions of runs.
+///
+/// The list is `unreleased` runs at the head, then released ones: a run is pushed at the head
+/// unreleased, `pop_free` takes the head, and `return_free_pages` gives back the pages of the
+/// first `unreleased` runs and then counts them released. So a run whose pages are already
+/// given back is never walked again, and every link stays the one `push_free` wrote.
 #[derive(Clone, Copy, Debug)]
 struct FreeRuns {
     head: u32,
     len: u32,
+    unreleased: u32,
 }
 
 impl FreeRuns {
-    const EMPTY: Self = Self { head: u32::MAX, len: 0 };
+    const EMPTY: Self = Self { head: u32::MAX, len: 0, unreleased: 0 };
 
     fn is_empty(self) -> bool {
         self.len == 0
@@ -485,7 +491,7 @@ impl ValueArena {
                     return Err(crate::snapshot::SnapshotError("free run past the arena".into()));
                 }
                 values[start as usize] = Value::from_bits(u64::from(list.head));
-                *list = FreeRuns { head: start, len: list.len + 1 };
+                *list = FreeRuns { head: start, len: list.len + 1, unreleased: list.unreleased + 1 };
             }
         }
         let shape_lengths = reader.u32s()?;
@@ -1365,7 +1371,7 @@ impl ValueArena {
     fn push_free(&mut self, bucket: usize, start: u32) {
         let list = &mut self.free[bucket];
         self.values[start as usize] = Value::from_bits(u64::from(list.head));
-        *list = FreeRuns { head: start, len: list.len + 1 };
+        *list = FreeRuns { head: start, len: list.len + 1, unreleased: list.unreleased + 1 };
     }
 
     /// The last run released into `bucket`, unlinked.
@@ -1376,7 +1382,8 @@ impl ValueArena {
             return None;
         }
         let next = self.values[list.head as usize].to_bits() as u32;
-        self.free[bucket] = FreeRuns { head: next, len: list.len - 1 };
+        // The head is one of the `unreleased` runs at the front while there are any (`FreeRuns`).
+        self.free[bucket] = FreeRuns { head: next, len: list.len - 1, unreleased: list.unreleased.saturating_sub(1) };
         Some(list.head)
     }
 
@@ -1727,7 +1734,8 @@ impl ValueArena {
     /// Gives back the whole pages inside each released run (`return_free_pages`'s contract).
     /// A run's first value links its free list and stays; the values after it are dead, so
     /// every page wholly inside the run is released, and a page that shares a value with a
-    /// live range or another run is kept.
+    /// live range or another run is kept. A run already given back is not given back again
+    /// (`FreeRuns::unreleased`).
     pub(crate) fn return_free_pages(&mut self) {
         let bytes = self.values.capacity() * size_of::<Value>();
         if bytes < FREE_PAGES_MIN_BYTES || self.released_values * 2 <= self.values.len() {
@@ -1735,17 +1743,18 @@ impl ValueArena {
         }
         for bucket in 0..BUCKETS {
             let list = self.free[bucket];
-            if list.is_empty() {
+            if list.unreleased == 0 {
                 continue;
             }
             let capacity = Self::bucket_capacity(bucket);
             let mut start = list.head;
-            for _ in 0..list.len {
+            for _ in 0..list.unreleased {
                 let next = self.values[start as usize].to_bits() as u32;
                 let first = start as usize + 1;
                 self.values.release_pages(first, start as usize + capacity);
                 start = next;
             }
+            self.free[bucket].unreleased = 0;
         }
     }
 }
