@@ -14,6 +14,7 @@
 //! defines the callee register as that constant, and the call compares nothing per use.
 
 use crate::bytecode::JsDenotation;
+use super::super::lane_body_abi::body_signature_in_lane;
 use super::*;
 use crate::bytecode::ImmediateLayout;
 use crate::staged::flow::FlowStage;
@@ -157,7 +158,7 @@ fn callee_capture<'a>(unit: &super::super::lane_unit::Unit, direct: &'a DirectSi
     if !matches!(crate::vm::compiled::decoded(read), Some(crate::staged::Operation::LoadCapture { .. })) || read.capture_depth() != 0 || read.result_flags() != 0 || !own(pc) { return None; }
     let call = *direct.range(pc..).find(|(call, _)| own(**call) && unit.instructions[**call].register_b() == read.result_register())?.1.first()?;
     // SAFETY: the body owns its direct callees for as long as its code runs.
-    Some(unsafe { &**call })
+    Some(unsafe { &*call })
 }
 
 /// The registers an instruction of the unit reads as numbers, and the type each needs where it is

@@ -73,7 +73,7 @@ impl LaneView {
             use super::super::super::compiled::{LaneBodyOutcome as O, base_region::{Event, count}};
             count(match &outcome {
                 O::Published(_) => Event::BodyPublished, O::Compiling(_) => Event::BodyCompiling, O::Unpaid => Event::BodyUnpaid,
-                O::Short => Event::BodyShort, O::Declined => Event::BodyDeclined, O::Stale => Event::BodyStale, O::Deferred => Event::BodyDeferred,
+                O::Short => Event::BodyShort, O::Declined => Event::BodyDeclined, O::Stale => Event::BodyStale, O::Deferred => Event::BodyDeferred, O::Base => Event::BodyBase,
             });
         }
         match outcome {
@@ -92,6 +92,8 @@ impl LaneView {
                 LaneBody::Unspecialized { entries: 0, recompiles, stuck }
             }
             super::super::super::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
+            // A b-jit body serves it better: the entry stitches that body (`Vm::base_body_work`), and the u-jit body waits.
+            super::super::super::compiled::LaneBodyOutcome::Base => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
             // Its entries decide when it looks again (`attempts_at`), no hot loop's skip.
             super::super::super::compiled::LaneBodyOutcome::Unpaid => {
                 self.tier().history.set(LaneBodyHistory { unpaid: true, ..self.tier().history.get() });

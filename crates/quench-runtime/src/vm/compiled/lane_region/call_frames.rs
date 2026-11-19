@@ -13,6 +13,7 @@ use super::relocs::address;
 use super::super::entry_cell::{EntryCell, RAISED_RUN};
 use quench_bjit::call_record::LaneStatus;
 use super::super::super::dispatch_fast::LaneRecoverySpace;
+use super::super::lane_body_abi::body_signature_in_lane;
 use crate::staged::call::admit_room;
 use crate::staged::{Access, Region};
 use crate::staged::{plan_entry, CallEntry, CallFrame, CalleeKind, DirectPlan, Entered, Identity, Invocation, Resolved, Room, Stage};

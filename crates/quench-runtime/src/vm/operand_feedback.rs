@@ -291,7 +291,7 @@ fn declared_parameter_languages(function: &crate::bytecode::Function, register: 
         None => function.local_registers.iter()
             .find(|entry| entry.register == register && entry.local < function.params)?.local,
     };
-    let languages = *function.declared_parameters.get(usize::from(index))?;
+    let languages = *function.declared_parameters().get(usize::from(index))?;
     (languages == STRING_LANGUAGES || languages == NUMBER_LANGUAGES).then_some(languages)
 }
 
