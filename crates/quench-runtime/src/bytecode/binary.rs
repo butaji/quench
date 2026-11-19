@@ -1780,7 +1780,7 @@ fn read_module_requests(input: &mut BinaryReader<'_>) -> Result<Vec<ModuleReques
 }
 
 /// The declared environment: none (0), or its declarations, enum constants, class fields, signatures,
-/// locals, parameter members and parameter classes (1).
+/// locals, parameter members, parameter classes and parameter language sets (1).
 fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::DeclaredTypes>) {
     let Some(declared) = declared else {
         out.u8(0);
@@ -1845,6 +1845,12 @@ fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::Declare
         out.u16(parameter.parameter);
         out.u32(parameter.class);
     }
+    out.u32(declared.parameters.len() as u32);
+    for parameter in &declared.parameters {
+        out.u32(parameter.function);
+        out.u16(parameter.parameter);
+        out.u16(parameter.languages);
+    }
 }
 
 fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super::DeclaredTypes>>, String> {
@@ -1904,8 +1910,11 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
     let parameter_classes = input.list(|input| {
         Ok(super::DeclaredParameterClass { function: input.u32()?, parameter: input.u16()?, class: input.u32()? })
     })?;
+    let parameters = input.list(|input| {
+        Ok(super::DeclaredParameter { function: input.u32()?, parameter: input.u16()?, languages: input.u16()? })
+    })?;
     Ok(Some(Box::new(super::DeclaredTypes {
-        declared, enum_constants, fields, signatures, locals, members, parameter_classes,
+        declared, enum_constants, fields, signatures, locals, members, parameter_classes, parameters,
     })))
 }
 

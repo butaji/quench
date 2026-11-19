@@ -4,6 +4,7 @@
 //! A declaration is a seed, not a proof: TypeScript is unsound.
 
 use crate::typed_ir::ANY_LANGUAGES;
+use super::Function;
 
 /// What a declaration of the declared environment is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,6 +125,19 @@ pub(crate) struct DeclaredParameterClass {
     pub(crate) class: u32,
 }
 
+/// A parameter whose annotation the program's own type names resolve to a different language set
+/// than the name-free reading gives (`type N = number; function f(a: N) {}`). Its set narrows the
+/// function's `declared_parameters` entry once the program is compiled (`DeclaredTypes::apply_parameters`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DeclaredParameter {
+    /// The function's source span start (as `DeclaredSignature::start`).
+    pub(crate) function: u32,
+    /// The parameter's index.
+    pub(crate) parameter: u16,
+    /// Language bits the parameter's type admits, with the program's type names resolved.
+    pub(crate) languages: u16,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct DeclaredTypes {
     pub(crate) declared: Vec<Declared>,
@@ -139,6 +153,8 @@ pub(crate) struct DeclaredTypes {
     pub(crate) members: Vec<DeclaredMember>,
     /// The parameters whose annotation names a top-level class, in source order.
     pub(crate) parameter_classes: Vec<DeclaredParameterClass>,
+    /// The parameters whose named-resolved language sets differ from their name-free ones, in source order.
+    pub(crate) parameters: Vec<DeclaredParameter>,
 }
 
 impl DeclaredTypes {
@@ -166,10 +182,40 @@ impl DeclaredTypes {
         self.parameter_classes.push(DeclaredParameterClass { function, parameter, class });
     }
 
+    pub(crate) fn declare_parameter(&mut self, function: u32, parameter: u16, languages: u16) {
+        self.parameters.push(DeclaredParameter { function, parameter, languages });
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.declared.is_empty() && self.enum_constants.is_empty() && self.fields.is_empty()
             && self.signatures.is_empty() && self.locals.is_empty() && self.members.is_empty()
-            && self.parameter_classes.is_empty()
+            && self.parameter_classes.is_empty() && self.parameters.is_empty()
+    }
+
+    /// Narrows the declared parameter sets of the functions in `functions` with the named-resolved
+    /// sets recorded here, matched by each function's source span start (`DeclaredParameter::function`).
+    /// The recorded set is intersected with the function's current set; where they are disjoint the
+    /// recorded set stands, as a shadowing type name's does.
+    pub(crate) fn apply_parameters(&self, functions: &mut [Option<Function>]) {
+        if self.parameters.is_empty() {
+            return;
+        }
+        let mut starts: Vec<(u32, usize)> = functions.iter().enumerate()
+            .filter_map(|(id, function)| Some((function.as_ref()?.source_span?.start, id)))
+            .collect();
+        starts.sort_unstable();
+        for entry in &self.parameters {
+            let Ok(found) = starts.binary_search_by_key(&entry.function, |&(start, _)| start) else { continue };
+            let Some(function) = functions[starts[found].1].as_mut() else { continue };
+            let mut languages = function.declared_parameters.to_vec();
+            let slot = usize::from(entry.parameter);
+            if languages.len() <= slot {
+                languages.resize(slot + 1, ANY_LANGUAGES);
+            }
+            let merged = entry.languages & languages[slot];
+            languages[slot] = if merged == 0 { entry.languages } else { merged };
+            function.declared_parameters = languages.into();
+        }
     }
 
     /// The folded value of `enumeration.member`, when the program declares one.
@@ -240,5 +286,14 @@ impl DeclaredTypes {
         self.parameter_classes.iter().rev()
             .find(|entry| entry.function == function && entry.parameter == parameter)
             .map(|entry| entry.class)
+    }
+
+    /// The named-resolved language types of parameter `parameter` of the function starting at
+    /// `function`, when they differ from the name-free reading (the last declaration wins).
+    #[cfg_attr(not(test), allow(dead_code, reason = "the parameter table is read by the tests and the function's declared_parameters"))]
+    pub(crate) fn declared_parameter(&self, function: u32, parameter: u16) -> Option<u16> {
+        self.parameters.iter().rev()
+            .find(|entry| entry.function == function && entry.parameter == parameter)
+            .map(|entry| entry.languages)
     }
 }

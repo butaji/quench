@@ -2,8 +2,8 @@
 //! says a function returns, takes as its rest parameter or as `this`, what each annotated local
 //! holds, and what each parameter's type literal or top-level class type declares
 //! (`DeclaredTypes::signatures`, `DeclaredTypes::locals`, `DeclaredTypes::members`,
-//! `DeclaredTypes::parameter_classes`). A declaration is a seed, not a proof (TypeScript is
-//! unsound), so a tier checks it once where a value enters and trusts it.
+//! `DeclaredTypes::parameter_classes`, `DeclaredTypes::parameters`). A declaration is a seed, not
+//! a proof (TypeScript is unsound), so a tier checks it once where a value enters and trusts it.
 
 use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
@@ -13,7 +13,7 @@ use oxc_syntax::scope::ScopeFlags;
 use crate::bytecode::{DeclaredSignature, DeclaredTypes};
 use crate::compile::class::class_method_source_span;
 use crate::typed_ir::language_bit;
-use super::{DECLARED_ANY, Named, TypeNames, declared_language_in, element_languages};
+use super::{DECLARED_ANY, Named, TypeNames, declared_language, declared_language_in, element_languages};
 
 /// The function a local is declared in when it is top-level code of a script or module.
 const TOP_LEVEL: u32 = u32::MAX;
@@ -143,6 +143,7 @@ impl<'a> Collect<'a, '_> {
             if parameter.pattern.get_identifier_name().is_none() {
                 continue;
             }
+            self.parameter_languages(function, index, parameter, annotation);
             match &annotation.type_annotation {
                 TSType::TSTypeLiteral(literal) => {
                     for member in &literal.members {
@@ -158,6 +159,22 @@ impl<'a> Collect<'a, '_> {
                 _ => {}
             }
         }
+    }
+
+    /// Record a parameter's language set when the program's type names resolve it to a different set
+    /// than the name-free reading (`declared_language`). An optional or defaulted parameter admits
+    /// `undefined`, as its declared set does (`compile::typescript::declared_parameters`).
+    fn parameter_languages(&mut self, function: u32, index: u16, parameter: &FormalParameter<'_>, annotation: &TSTypeAnnotation<'_>) {
+        let named = declared_language_in(&annotation.type_annotation, self.names);
+        if named == declared_language(&annotation.type_annotation) {
+            return;
+        }
+        let languages = if named != DECLARED_ANY && (parameter.optional || parameter.initializer.is_some()) {
+            named | language_bit(crate::ValueType::Undefined)
+        } else {
+            named
+        };
+        self.declarations.declare_parameter(function, index, languages);
     }
 
     /// A property of a parameter's type literal with a static identifier key and a type annotation.
@@ -316,5 +333,21 @@ mod tests {
         assert_eq!(declared.locals.len(), 2);
         assert_eq!(declared.members.len(), 1);
         assert_eq!(declared.parameter_classes.len(), 1);
+    }
+
+    #[test]
+    fn named_parameter_types_reach_the_compiled_functions() {
+        let source = "type N = number;\ninterface Point { x: number }\nfunction f(a: N) {}\nfunction g(p: Point) {}";
+        let program = Engine::specialize_typescript(source, "named.cts").unwrap();
+        let declared = declared_of(source, "named.cts");
+        let f = source.find("function f").unwrap() as u32;
+        let g = source.find("function g").unwrap() as u32;
+        assert_eq!(declared.declared_parameter(f, 0), Some(bit(V::Number)));
+        let compiled = |start: u32| (0..program.function_count()).filter_map(|index| program.function_get(index))
+            .find(|function| function.source_span.map(|span| span.start) == Some(start))
+            .map(|function| function.declared_parameters.to_vec())
+            .expect("the function is compiled");
+        assert_eq!(compiled(f), vec![bit(V::Number)]);
+        assert_eq!(compiled(g), vec![bit(V::Object) | bit(V::Function)]);
     }
 }

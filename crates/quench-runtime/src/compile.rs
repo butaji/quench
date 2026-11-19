@@ -3497,6 +3497,7 @@ impl<'a> Compiler<'a> {
         // header's dispatch class is settled here. The root, which runs as soon as the program
         // does, lowers here, and every record does under `verify-replay`, as each replay it
         // compares with is lowered.
+        self.declared_types.apply_parameters(&mut functions);
         let undefined_constant = self.constant(Constant::Undefined);
         let lower_at_load = lowers_at_load();
         let lowered_here = |id: usize| lower_at_load || id == crate::vm::ROOT_FUNCTION_ID as usize;
