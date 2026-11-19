@@ -8027,7 +8027,7 @@ impl<H: Host> Vm<H> {
 
     /// The JavaScript tier at the entry of `frame`, an initialized frame at PC zero, made
     /// wherever a frame is entered: the general loop, and the lane's in-place frame calls
-    /// (`lane_frame_call`). With the native result written to its return register, the PC
+    /// (`frame_call_in_lane`). With the native result written to its return register, the PC
     /// of the `Return` that completes the frame; else `None`, the entry counted as an
     /// interpreter fallback, and the untouched frame runs from its entry.
     pub(super) fn js_tier_frame_entry(&mut self, program: &ResidualProgram, frame: usize) -> Option<usize> {
@@ -8201,7 +8201,7 @@ impl<H: Host> Vm<H> {
 
     /// The JavaScript tier's direct entry of a plain call of a same-program user function,
     /// before any callee frame is pushed: the general loop's in-loop and known calls and the
-    /// lane's frame calls (`lane_frame_call`) make it. Only an already-promoted function
+    /// lane's frame calls (`frame_call_in_lane`) make it. Only an already-promoted function
     /// enters; its native subset is pure and has a guarded Number ABI. A call that returns
     /// its callee's completion (`returns`) completes its caller, so it and every guard miss
     /// stay on the ordinary frame path.

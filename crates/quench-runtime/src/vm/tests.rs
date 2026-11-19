@@ -23523,7 +23523,7 @@ fn lane_leaf_calls_share_captures_and_store_their_own_receiver() {
 
 #[test]
 fn lane_leaf_calls_return_field_reads_as_activations() {
-    // A leaf's returning field read (`lane_returning`) keeps its leaf form through every kind
+    // A leaf's returning field read (`returning_miss`) keeps its leaf form through every kind
     // its site takes, and a getter, a proxy or a throw it meets after warm-up makes the leaf an
     // activation first (expected values from Node).
     let source = r#"
@@ -23566,7 +23566,7 @@ fn lane_leaf_calls_return_field_reads_as_activations() {
 
 #[test]
 fn lane_returning_operators_keep_binary_semantics() {
-    // A returning arithmetic `Binary` decided per operator (`lane_returning_operator`) gives
+    // A returning arithmetic `Binary` decided per operator (`returning_operator_miss`) gives
     // integers, other Numbers, concatenations, BigInts and a `valueOf` the values the general
     // `Binary` gives (expected values from Node).
     let source = r#"

@@ -33,6 +33,14 @@ macro_rules! by_leaf {
     }};
 }
 
+/// The protocol row of a return record of opcode `$op` whose RETURN parameter code is `$code`
+/// (`protocol_misses::returning_code`): the record runs its staged row, then its miss body.
+macro_rules! return_row {
+    ($op:expr, $code:expr) => {
+        protocol_row::<H, { $op as u16 }, ACC_NONE, { protocol_family::RETURN | ($code as u16) }>
+    };
+}
+
 
 use crate::staged::compare::{IN_OPERATOR, INSTANCEOF_OPERATOR};
 use super::compiled::tier_policy::Tiers;
@@ -52,7 +60,7 @@ use crate::wasm::integer::I32BinaryOperator;
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
 
 /// The arithmetic operators the lane decides per operator (`lane_operator`,
-/// `lane_returning_operator`): `$pick!(OPERATOR)` of `$operator`'s, else `None`; or with
+/// `returning_operator_miss`): `$pick!(OPERATOR)` of `$operator`'s, else `None`; or with
 /// `all`, the array of every operator's `$pick!`.
 macro_rules! arithmetic_operators {
     (@with $form:ident ($($args:tt)*)) => {{
@@ -525,30 +533,40 @@ impl LaneView {
                 macro_rules! pick {
                     ($op:expr) => {
                         [
-                            (lane_returning_operator::<H, { $op }, false, NOT_LEAF> as Handler, lane_returning_operator::<H, { $op }, false, { $leaf }> as Handler),
-                            (lane_returning_operator::<H, { $op }, true, NOT_LEAF> as Handler, lane_returning_operator::<H, { $op }, true, { $leaf }> as Handler),
+                            (returning_operator_miss::<H, { $op }, false, NOT_LEAF> as Handler, returning_operator_miss::<H, { $op }, false, { $leaf }> as Handler),
+                            (returning_operator_miss::<H, { $op }, true, NOT_LEAF> as Handler, returning_operator_miss::<H, { $op }, true, { $leaf }> as Handler),
                         ]
                     };
                 }
                 let returns = [
-                    (lane_return::<H, NOT_LEAF> as Handler, lane_return::<H, { $leaf }> as Handler),
-                    (lane_return_constant::<H, NOT_LEAF>, lane_return_constant::<H, { $leaf }>),
-                    (lane_returning::<H, RETURNING_UNARY, NOT_LEAF>, lane_returning::<H, RETURNING_UNARY, { $leaf }>),
-                    (lane_returning::<H, RETURNING_BINARY, NOT_LEAF>, lane_returning::<H, RETURNING_BINARY, { $leaf }>),
+                    (return_row!(crate::bytecode::Op::Return, returning_code(RETURN_KIND, NOT_LEAF)) as Handler,
+                        return_row!(crate::bytecode::Op::Return, returning_code(RETURN_KIND, $leaf)) as Handler),
+                    (return_row!(crate::bytecode::Op::Return, returning_code(CONSTANT_KIND, NOT_LEAF)) as Handler,
+                        return_row!(crate::bytecode::Op::Return, returning_code(CONSTANT_KIND, $leaf)) as Handler),
+                    (returning_miss::<H, RETURNING_UNARY, NOT_LEAF>, returning_miss::<H, RETURNING_UNARY, { $leaf }>),
+                    (returning_miss::<H, RETURNING_BINARY, NOT_LEAF>, returning_miss::<H, RETURNING_BINARY, { $leaf }>),
                     (row_returning_field_first::<H, NOT_LEAF>, row_returning_field_first::<H, { $leaf }>),
                     (row_returning_field_miss::<H, NOT_LEAF>, row_returning_field_miss::<H, { $leaf }>),
                     (generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, NOT_LEAF) }>,
                         generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, { $leaf }) }>),
                     (generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, NOT_LEAF) }>,
                         generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, { $leaf }) }>),
-                    (lane_returning::<H, RETURNING_FIELD, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD, { $leaf }>),
-                    (lane_returning::<H, RETURNING_FIELD_OWN, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_OWN, { $leaf }>),
-                    (lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, { $leaf }>),
-                    (lane_returning::<H, RETURNING_FIELD_HOLDER, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_HOLDER, { $leaf }>),
-                    (lane_returning::<H, RETURNING_FIELD_INHERITED, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_INHERITED, { $leaf }>),
-                    (lane_returning::<H, RETURNING_FIELD_NESTED, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_NESTED, { $leaf }>),
-                    (lane_returning::<H, RETURNING_FIELD_PRIVATE, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_PRIVATE, { $leaf }>),
-                    (lane_returning::<H, RETURNING_FIELD_GETTER, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_GETTER, { $leaf }>),
+                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD, NOT_LEAF)) as Handler,
+                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD, $leaf)) as Handler),
+                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_OWN, NOT_LEAF)) as Handler,
+                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_OWN, $leaf)) as Handler),
+                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_POLYMORPHIC, NOT_LEAF)) as Handler,
+                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_POLYMORPHIC, $leaf)) as Handler),
+                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_HOLDER, NOT_LEAF)) as Handler,
+                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_HOLDER, $leaf)) as Handler),
+                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_INHERITED, NOT_LEAF)) as Handler,
+                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_INHERITED, $leaf)) as Handler),
+                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_NESTED, NOT_LEAF)) as Handler,
+                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_NESTED, $leaf)) as Handler),
+                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_PRIVATE, NOT_LEAF)) as Handler,
+                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_PRIVATE, $leaf)) as Handler),
+                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_GETTER, NOT_LEAF)) as Handler,
+                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_GETTER, $leaf)) as Handler),
                 ];
                 returns.into_iter().chain(arithmetic_operators!(all pick).into_iter().flatten()).collect::<Vec<(Handler, Handler)>>()
             }};
@@ -9721,7 +9739,7 @@ script_handler! {
         // SAFETY: as `Vm::script_call_entry`; a read resolves no target and collects nothing.
         let target = unsafe { &*target };
         if target.entry == CallEntry::Frame {
-            sibling!(lane_frame_call::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(frame_call_in_lane::<H>, r, ip, Carried::script_in(cx, view))
         }
         if target.entry == CallEntry::Environment {
             // The site calls its environment target's form directly from now on.
@@ -10100,11 +10118,11 @@ script_handler! {
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
-        // A callee that needs a frame takes it as `lane_frame_call` pushes one.
+        // A callee that needs a frame takes it as `frame_call_in_lane` pushes one.
         if !target.entry.activates_across() && target.entry != CallEntry::Environment {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::record_detail(format!("cross call to frame entry={:?}", target.entry as u8));
-            sibling!(lane_frame_call::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(frame_call_in_lane::<H>, r, ip, Carried::script_in(cx, view))
         }
         #[cfg(feature = "profile-lane-exits")]
         profile_script_call_target(cx, ip, callee, target);
@@ -10212,10 +10230,10 @@ script_handler! {
                 }
                 sibling!(lane_script_call::<H, ANY_ARGC, false>, r, ip, Carried::script_in(cx, view))
             }
-            // Another program's callee that needs a frame takes it as `lane_frame_call`
+            // Another program's callee that needs a frame takes it as `frame_call_in_lane`
             // pushes one.
             if !target.entry.activates() {
-                sibling!(lane_frame_call::<H>, r, ip, Carried::script_in(cx, view))
+                sibling!(frame_call_in_lane::<H>, r, ip, Carried::script_in(cx, view))
             }
             requicken::<H>(ip, lane_script_call_cross::<H>);
             sibling!(lane_script_call_cross::<H>, r, ip, Carried::script_in(cx, view))
@@ -10843,7 +10861,7 @@ fn activate_kept_in_lane<H: Host, const MAY_CROSS: bool>(
 
 /// `lane_function_call` of a forwarded `callee` with no frameless target: a user function
 /// the general loop pushes in place (`Vm::in_loop_call_target`) takes its frame as
-/// `lane_frame_call` makes it, with the forwarded `receiver` and `args`, the call window's
+/// `frame_call_in_lane` makes it, with the forwarded `receiver` and `args`, the call window's
 /// tail. Any other takes the general path.
 #[inline(never)]
 fn forwarded_frame_call_in_lane<H: Host>(
@@ -10927,7 +10945,7 @@ script_handler! {
                 kind: FunctionKind::Native(native),
                 ..
             }) => *native,
-            _ => sibling!(lane_frame_call::<H>, r, ip, Carried::script_in(cx, view)),
+            _ => sibling!(frame_call_in_lane::<H>, r, ip, Carried::script_in(cx, view)),
         };
         if matches!(native, Native::FunctionCall | Native::FunctionBoundCall) {
             sibling!(lane_function_call::<H>, r, ip, Carried::script_in(cx, view))
@@ -14439,12 +14457,12 @@ fn wasm_lane_handler<H: Host>(instruction: WideInstruction) -> Option<Option<Lan
 lane_handler! {
     /// A Wasm view's return: the Wasm activation's completion first, which a Wasm callee
     /// returns to far more often than to a script caller; any other takes
-    /// `lane_return_general`'s order.
+    /// `return_general_in_lane`'s order.
     fn lane_return_wasm<>(cx, r, ip, i, view) {
         if let Some(resumed) = lane_complete_wasm_activation(cx, r.get(i.a)) {
             resume!(cx, resumed)
         }
-        sibling!(lane_return_general::<H>, r, ip, view)
+        sibling!(return_general_in_lane::<H>, r, ip, view)
     }
 }
 
@@ -14452,11 +14470,11 @@ return_handler! {
     /// Return from an inline call to its caller; returning from the loop's
     /// entry frame belongs to the general loop.
     /// `LEAF` where the record is a leaf's (`LaneView::specialize_leaf_returns`).
-    fn lane_return<LEAF: u8>(cx, r, ip, i, view) {
+    fn return_miss<LEAF: u8>(cx, r, ip, i, view) {
         if let Some(resumed) = complete_plain_activation_in_lane::<H, LEAF>(cx, r.get(i.a)) {
             resume!(cx, resumed)
         }
-        sibling!(lane_return_general::<H>, r, ip, view)
+        sibling!(return_general_in_lane::<H>, r, ip, view)
     }
 }
 
@@ -14465,23 +14483,23 @@ return_handler! {
     /// (`specialize_constant_returns`): the constant's return in one record, as `return;` and
     /// `return null;` compile. Any return past the common one writes the register and takes
     /// the `Return` record's own path.
-    fn lane_return_constant<LEAF: u8>(cx, r, ip, i, view) {
+    fn return_constant_miss<LEAF: u8>(cx, r, ip, i, view) {
         let value = i.constant();
         if let Some(resumed) = complete_plain_activation_in_lane::<H, LEAF>(cx, value) {
             resume!(cx, resumed)
         }
         r.set(i.a, value);
-        sibling!(lane_return_general::<H>, r, following(ip), view)
+        sibling!(return_general_in_lane::<H>, r, following(ip), view)
     }
 }
 
 lane_handler! {
-    /// `lane_return` past the common return (`complete_plain_activation_in_lane`): another
+    /// `return_miss` past the common return (`complete_plain_activation_in_lane`): another
     /// program's activation, which a program that calls across programs returns from as
-    /// often as the common return; any other completion takes `lane_return_other`. Out of
-    /// line, so `lane_return` keeps its registers.
+    /// often as the common return; any other completion takes `return_other_in_lane`. Out of
+    /// line, so `return_miss` keeps its registers.
     #[inline(never)]
-    fn lane_return_general<>(cx, r, ip, i, view) {
+    fn return_general_in_lane<>(cx, r, ip, i, view) {
         let value = r.get(i.a);
         if let Some(resumed) = complete_native_step_in_lane(cx, value) {
             resume!(cx, resumed)
@@ -14495,14 +14513,14 @@ lane_handler! {
         if let Some(resumed) = complete_returning_chain_in_lane(cx, value) {
             resume!(cx, resumed)
         }
-        sibling!(lane_return_other::<H>, r, ip, view)
+        sibling!(return_other_in_lane::<H>, r, ip, view)
     }
 }
 
 lane_handler! {
-    /// `lane_return_general` of any other activation's completion, or the frame's return.
+    /// `return_general_in_lane` of any other activation's completion, or the frame's return.
     #[inline(never)]
-    fn lane_return_other<>(cx, r, ip, i, view) {
+    fn return_other_in_lane<>(cx, r, ip, i, view) {
         if let Some(resumed) = complete_returning_in_lane(cx, ip, r.get(i.a)) {
             resume!(cx, resumed)
         }
@@ -14770,7 +14788,7 @@ fn lane_complete_wasm_activation<H: Host>(cx: *mut LaneContext<H>, mut value: Va
 }
 
 /// The value-producing records that may return their result from the frame
-/// (`returns_in_lane`), as `lane_returning` parameters.
+/// (`returns_in_lane`), as `returning_miss` parameters.
 const RETURNING_FIELD: u8 = 0;
 const RETURNING_UNARY: u8 = 1;
 const RETURNING_BINARY: u8 = 2;
@@ -14996,7 +15014,7 @@ impl FieldHit {
 /// The read a `CallEntry::reads` body answers with, by the state its records quickened to.
 #[derive(Clone, Copy)]
 enum LeafRead {
-    /// Its returning `GetField` (`lane_returning` of `kind`) on the object `base` names: the
+    /// Its returning `GetField` (`returning_miss` of `kind`) on the object `base` names: the
     /// kind's hit (`returning_field_hit`), or for a holder a record prototype's method read
     /// with no call.
     Field { base: u16, kind: u8, cache: u16 },
@@ -15025,10 +15043,10 @@ impl LeafRead {
             return Some(Self::Element { base: entry.b, field: FieldHit::of::<H>(entry)?, index: element.c });
         }
         let handler = entry.handler;
-        if handler == lane_returning::<H, RETURNING_FIELD_NESTED, NOT_LEAF> as *const () {
+        if handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_NESTED, NOT_LEAF)) as *const () {
             return Some(Self::Nested { site: entry.imm() });
         }
-        if handler == lane_returning::<H, RETURNING_FIELD_PRIVATE, NOT_LEAF> as *const () {
+        if handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_PRIVATE, NOT_LEAF)) as *const () {
             return Some(Self::Private {
                 base: entry.b,
                 atom: entry.imm(),
@@ -15037,13 +15055,13 @@ impl LeafRead {
                 function: target.function,
             });
         }
-        let kind = if handler == lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF> as *const () {
+        let kind = if handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_POLYMORPHIC, NOT_LEAF)) as *const () {
             RETURNING_FIELD_POLYMORPHIC
-        } else if returning_own_row::<H>(handler) || handler == lane_returning::<H, RETURNING_FIELD_OWN, NOT_LEAF> as *const () {
+        } else if returning_own_row::<H>(handler) || handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_OWN, NOT_LEAF)) as *const () {
             RETURNING_FIELD_OWN
-        } else if handler == lane_returning::<H, RETURNING_FIELD_HOLDER, NOT_LEAF> as *const () {
+        } else if handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_HOLDER, NOT_LEAF)) as *const () {
             RETURNING_FIELD_HOLDER
-        } else if handler == lane_returning::<H, RETURNING_FIELD_INHERITED, NOT_LEAF> as *const () {
+        } else if handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_INHERITED, NOT_LEAF)) as *const () {
             RETURNING_FIELD_INHERITED
         } else {
             return None;
@@ -15147,7 +15165,7 @@ enum MemoLeaf {
     Nested { base: u16, field: super::FieldCache, second: super::FieldCache },
 }
 
-/// The memo shapes `lane_script_call_memo` takes as its parameter: a leaf's step
+/// The memo shapes `script_call_memo_miss` takes as its parameter: a leaf's step
 /// (`MemoLeaf::shape`), with `MEMO_FORWARD` set for a leaf a forwarding body reaches
 /// (`MemoRead::Forward`), so a site's handler makes its memo's steps with no dispatch on them.
 const MEMO_FIELD: u8 = 0;
@@ -15270,7 +15288,7 @@ fn memo_first_step<H: Host>(
     }
 }
 
-/// What a call site's read target answered with (`lane_script_call_memo`), so the site's
+/// What a call site's read target answered with (`script_call_memo_miss`), so the site's
 /// next call of the same callee makes the hits alone: the target's read, or a forwarding
 /// body's field and method reads and the read of the method they found. Every part depends
 /// on the callee alone, whose body is fixed, and on the shapes its steps name.
@@ -15300,13 +15318,13 @@ impl MemoRead {
     }
 }
 
-/// The `lane_script_call_memo` instantiation of memo shape `shape` (`MemoRead::shape`).
+/// The `script_call_memo_miss` instantiation of memo shape `shape` (`MemoRead::shape`).
 fn script_call_memo_handler<H: Host>(shape: u8) -> Handler {
     const _: () = assert!(MEMO_NESTED < MEMO_FORWARD);
     macro_rules! shapes {
         ($($shape:expr),*) => {
             match shape {
-                $(shape if shape == $shape => lane_script_call_memo::<H, { $shape }> as Handler,)*
+                $(shape if shape == $shape => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::FRAME_CALL | ($shape as u16) }> as Handler,)*
                 _ => unreachable!("a memo shape is a leaf step, forwarded or not"),
             }
         };
@@ -15366,7 +15384,7 @@ fn note_read_in_lane<H: Host>(
 }
 
 /// The memo of the read `target` just answered at `site` for `arguments` and `this`, and the
-/// site's memo form (`lane_script_call_memo`); nothing for an arrow's own `this`, which the
+/// site's memo form (`script_call_memo_miss`); nothing for an arrow's own `this`, which the
 /// memo does not hold, or a read whose records no longer hit.
 #[cold]
 #[inline(never)]
@@ -15524,7 +15542,7 @@ script_handler! {
     /// target's would. A call the memo does not answer takes the full form, which the site
     /// then keeps; a run that admits no read call (`returning_call_admitted_in_lane`) takes it
     /// once.
-    fn lane_script_call_memo<SHAPE: u8>(cx, r, ip, i, view) {
+    fn script_call_memo_miss<SHAPE: u8>(cx, r, ip, i, view) {
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
         // A run that admits no read call leaves the memo to the next.
         if !unsafe { (*cx).script_calls } || (returns && !returning_call_admitted_in_lane(cx)) {
@@ -15558,7 +15576,7 @@ fn read_base_in_lane(
     }
 }
 
-/// The `lane_returning` kind of a value record that returns its result from the frame.
+/// The `returning_miss` kind of a value record that returns its result from the frame.
 fn returning_kind(instruction: WideInstruction) -> Option<u8> {
     if !instruction.returns_from_frame() {
         return None;
@@ -15578,7 +15596,7 @@ script_handler! {
     /// as the record's own handler computes it, then the activation's completion, or the VM
     /// frame's return of it from the general loop (`frame_return_in_lane`). A value the
     /// handler does not compute takes the general path.
-    fn lane_returning<KIND: u8, LEAF: u8>(cx, r, ip, i, view) {
+    fn returning_miss<KIND: u8, LEAF: u8>(cx, r, ip, i, view) {
         let value = unsafe {
             match KIND {
                 RETURNING_FIELD_OWN
@@ -15596,7 +15614,7 @@ script_handler! {
                     });
                     let Some(value) = value else {
                         if KIND == RETURNING_FIELD_POLYMORPHIC {
-                            sibling!(lane_returning::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
+                            sibling!(returning_miss::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
                         }
                         sibling!(row_returning_field_miss::<H, LEAF>, r, ip, Carried::script_in(cx, view))
                     };
@@ -15607,13 +15625,13 @@ script_handler! {
                     let value = field_base_in_lane(cx, r, crate::bytecode::FieldBase(i.b))
                         .and_then(|object| lane_frame::LaneFrame::<ACC_NONE>::private_value(cx, ip.addr(), code, object, i.imm()));
                     let Some(value) = value else {
-                        sibling!(lane_returning::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
+                        sibling!(returning_miss::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
                     };
                     Some(value)
                 }
                 RETURNING_FIELD_NESTED => {
                     let Some(value) = lane_nested_own_value(cx, r, i).or_else(|| lane_nested_polymorphic_value(cx, r, ip)) else {
-                        sibling!(lane_returning::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
+                        sibling!(returning_miss::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
                     };
                     Some(value)
                 }
@@ -15625,7 +15643,7 @@ script_handler! {
                         Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
                         // A native getter that raised is not called again: the general path raises it.
                         Err(next) if (vm(cx)).lane_completion.is_raised() => next,
-                        Err(_) => sibling!(lane_returning::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script(cx)),
+                        Err(_) => sibling!(returning_miss::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script(cx)),
                     };
                 }
                 RETURNING_FIELD => match field_value_in_lane(cx, r, i) {
@@ -15672,22 +15690,22 @@ script_handler! {
     /// `CONSTANT`, a constant, resolved when the view was derived
     /// (`specialize_register_operands`) as `lane_operator` resolves a non-returning one: two
     /// integers decide it here with no dispatch on the operator, any other operands take
-    /// `lane_returning_operator_other`.
-    fn lane_returning_operator<OP: u32, CONSTANT: bool, LEAF: u8>(cx, r, ip, i, view) {
+    /// `returning_operator_other_in_lane`.
+    fn returning_operator_miss<OP: u32, CONSTANT: bool, LEAF: u8>(cx, r, ip, i, view) {
         let right = if CONSTANT { i.constant() } else { r.get(i.c) };
         let Some(value) = super::operations::integer_operator::<OP>(r.get(i.b), right) else {
-            sibling!(lane_returning_operator_other::<H, OP, CONSTANT, LEAF>, r, ip, Carried::script_in(cx, view))
+            sibling!(returning_operator_other_in_lane::<H, OP, CONSTANT, LEAF>, r, ip, Carried::script_in(cx, view))
         };
         lane_return_value!(cx, ip, value, LEAF)
     }
 }
 
 script_handler! {
-    /// `lane_returning_operator` of operands other than two integers: other Numbers, then the
+    /// `returning_operator_miss` of operands other than two integers: other Numbers, then the
     /// concatenation and BigInt values `binary_value` decides; any other takes the
     /// general path. Out of line, so the integer case keeps few values live.
     #[inline(never)]
-    fn lane_returning_operator_other<OP: u32, CONSTANT: bool, LEAF: u8>(cx, r, ip, i, view) {
+    fn returning_operator_other_in_lane<OP: u32, CONSTANT: bool, LEAF: u8>(cx, r, ip, i, view) {
         let (left, right) = (r.get(i.b), if CONSTANT { i.constant() } else { r.get(i.c) });
         let value = super::operations::number_value_operator::<OP>(left, right)
             .or_else(|| (OP == super::operations::ADDITION).then(|| concat_value(cx, left, right)).flatten())
@@ -15721,16 +15739,33 @@ fn returning_field_first_kind<H: Host, const LEAF: u8>(
     i: &LaneInstruction,
 ) -> Handler {
     if i.b != crate::bytecode::FieldBase::NESTED && vm.is_private_name(i.imm()) {
-        return lane_returning::<H, RETURNING_FIELD_PRIVATE, LEAF>;
+        return field_return_row::<H, LEAF>(RETURNING_FIELD_PRIVATE);
     }
     if is_single_field_base(i.b) && !vm.reads_function_info(i.imm()) {
         by_leaf!(LEAF, |L| single_base_handler(i.b, generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, L) }>,
-            generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, L) }>, lane_returning::<H, RETURNING_FIELD, L>))
+            generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, L) }>,
+            return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD, L)) as Handler))
     } else if field_site_tier_in_lane(vm, code, i) == FieldSiteTier::Nested {
-        lane_returning::<H, RETURNING_FIELD_NESTED, LEAF>
+        field_return_row::<H, LEAF>(RETURNING_FIELD_NESTED)
     } else {
-        lane_returning::<H, RETURNING_FIELD, LEAF>
+        field_return_row::<H, LEAF>(RETURNING_FIELD)
     }
+}
+
+/// The protocol row of a returning `GetField` of `kind` (a `RETURNING_FIELD*` kind) at leaf form
+/// `LEAF`: its RETURN code (`returning_code`), which `returning_miss` completes.
+fn field_return_row<H: Host, const LEAF: u8>(kind: u8) -> Handler {
+    by_leaf!(LEAF, |L| match kind {
+        RETURNING_FIELD => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD, L)) as Handler,
+        RETURNING_FIELD_OWN => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_OWN, L)) as Handler,
+        RETURNING_FIELD_POLYMORPHIC => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_POLYMORPHIC, L)) as Handler,
+        RETURNING_FIELD_HOLDER => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_HOLDER, L)) as Handler,
+        RETURNING_FIELD_INHERITED => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_INHERITED, L)) as Handler,
+        RETURNING_FIELD_NESTED => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_NESTED, L)) as Handler,
+        RETURNING_FIELD_PRIVATE => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_PRIVATE, L)) as Handler,
+        RETURNING_FIELD_GETTER => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_GETTER, L)) as Handler,
+        _ => unreachable!("a returning GetField's kind is a field kind"),
+    })
 }
 
 script_handler! {
@@ -15760,23 +15795,23 @@ script_handler! {
         let handler: Option<Handler> = match field_site_tier_in_lane(unsafe { vm(cx) }, code, i) {
             // A local base has no single-base kind (`is_single_field_base`).
             tier if tier != FieldSiteTier::Nested && !is_single_field_base(i.b) => {
-                Some(lane_returning::<H, RETURNING_FIELD, LEAF>)
+                Some(field_return_row::<H, LEAF>(RETURNING_FIELD))
             }
             FieldSiteTier::Own | FieldSiteTier::Holder | FieldSiteTier::Inherited if cell_receiver => {
-                Some(lane_returning::<H, RETURNING_FIELD, LEAF>)
+                Some(field_return_row::<H, LEAF>(RETURNING_FIELD))
             }
-            FieldSiteTier::Nested => Some(lane_returning::<H, RETURNING_FIELD_NESTED, LEAF>),
-            FieldSiteTier::General => Some(lane_returning::<H, RETURNING_FIELD, LEAF>),
-            FieldSiteTier::Getter => Some(lane_returning::<H, RETURNING_FIELD_GETTER, LEAF>),
-            FieldSiteTier::Polymorphic => Some(lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, LEAF>),
-            FieldSiteTier::Holder => Some(lane_returning::<H, RETURNING_FIELD_HOLDER, LEAF>),
-            FieldSiteTier::Inherited => Some(lane_returning::<H, RETURNING_FIELD_INHERITED, LEAF>),
+            FieldSiteTier::Nested => Some(field_return_row::<H, LEAF>(RETURNING_FIELD_NESTED)),
+            FieldSiteTier::General => Some(field_return_row::<H, LEAF>(RETURNING_FIELD)),
+            FieldSiteTier::Getter => Some(field_return_row::<H, LEAF>(RETURNING_FIELD_GETTER)),
+            FieldSiteTier::Polymorphic => Some(field_return_row::<H, LEAF>(RETURNING_FIELD_POLYMORPHIC)),
+            FieldSiteTier::Holder => Some(field_return_row::<H, LEAF>(RETURNING_FIELD_HOLDER)),
+            FieldSiteTier::Inherited => Some(field_return_row::<H, LEAF>(RETURNING_FIELD_INHERITED)),
             FieldSiteTier::Own => None,
         };
         if let Some(handler) = handler {
             requicken::<H>(ip, handler);
         }
-        sibling!(lane_returning::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
+        sibling!(returning_miss::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
     }
 }
 
@@ -15787,7 +15822,7 @@ script_handler! {
     /// frames first, as leaving the lane would make them (`materialize_lane_activations`).
     /// Any other call takes the general path, and the record resolves anew on its next run.
     #[inline(never)]
-    fn lane_frame_call<>(cx, r, ip, i, view) {
+    fn frame_call_in_lane<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
@@ -15810,7 +15845,7 @@ script_handler! {
     }
 }
 
-/// `lane_frame_call` of an async function the general loop would push as a settling call
+/// `frame_call_in_lane` of an async function the general loop would push as a settling call
 /// (`Vm::in_loop_settling_target`): the callee starts as a job (`Vm::start_async_call`) beside
 /// the caller's activations, as a native that runs beside them does (`call_native_out_in_lane`),
 /// so its first `await` suspends its window in place and the caller continues in the lane with
@@ -15911,7 +15946,7 @@ fn frame_entry_census<H: Host>(vm: &Vm<H>, program: ProgramId, function: u32) ->
     })
 }
 
-/// `lane_frame_call`'s call of `callee`, resolved to the in-loop `target`, with receiver
+/// `frame_call_in_lane`'s call of `callee`, resolved to the in-loop `target`, with receiver
 /// `this` and the call window's values past its first `skip` (a forwarded call's own
 /// arguments, `Vm::forwarded_call`): entered directly when the JavaScript tier promoted it,
 /// else pushed as the general loop's in-loop call pushes it.
@@ -16590,7 +16625,7 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
         _ if crate::staged::delete_family(opcode) => Some(lane_delete::<H>),
         _ if crate::staged::construction_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::Construct as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>),
         _ if crate::staged::forwarded_call_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::CallForwardingArguments as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::FORWARD_CALL as u16 }>),
-        _ if crate::staged::return_family(opcode) => Some(lane_return::<H, NOT_LEAF>),
+        _ if crate::staged::return_family(opcode) => Some(return_row!(crate::bytecode::Op::Return, returning_code(RETURN_KIND, NOT_LEAF))),
         _ if generator_yields::suspend_handler::<H>(opcode).is_some() => generator_yields::suspend_handler::<H>(opcode),
         _ => wasm_gc_handler::<H>(opcode),
     }
@@ -16784,7 +16819,7 @@ fn operand_in_lane(
 
 /// A `Call` runs in the lane only as the general loop pushes one in place: it evaluates no
 /// direct or parameter-scope `eval`, which a window activation's call record runs apart (`lane_eval`). It, `GetField`, `Unary` and `Binary` may return their
-/// result from the frame (`returns_in_lane`, `lane_returning`); a returning record runs no
+/// result from the frame (`returns_in_lane`, `returning_miss`); a returning record runs no
 /// other result flag.
 fn call_fits_in_lane(instruction: WideInstruction) -> bool {
     match instruction.op() {
@@ -17112,11 +17147,11 @@ const ACCUMULATOR: bool = cfg!(quench_lane_tail_calls);
 fn returning_handler<H: Host>(kind: u8) -> Handler {
     match kind {
         RETURNING_FIELD => row_returning_field_first::<H, NOT_LEAF>,
-        RETURNING_UNARY => lane_returning::<H, RETURNING_UNARY, NOT_LEAF>,
-        RETURNING_BINARY => lane_returning::<H, RETURNING_BINARY, NOT_LEAF>,
-        RETURNING_OBJECT => lane_returning::<H, RETURNING_OBJECT, NOT_LEAF>,
-        RETURNING_OBJECT_LITERAL => lane_returning::<H, RETURNING_OBJECT_LITERAL, NOT_LEAF>,
-        _ => lane_returning::<H, RETURNING_LITERAL, NOT_LEAF>,
+        RETURNING_UNARY => returning_miss::<H, RETURNING_UNARY, NOT_LEAF>,
+        RETURNING_BINARY => returning_miss::<H, RETURNING_BINARY, NOT_LEAF>,
+        RETURNING_OBJECT => returning_miss::<H, RETURNING_OBJECT, NOT_LEAF>,
+        RETURNING_OBJECT_LITERAL => returning_miss::<H, RETURNING_OBJECT_LITERAL, NOT_LEAF>,
+        _ => returning_miss::<H, RETURNING_LITERAL, NOT_LEAF>,
     }
 }
 
@@ -17745,7 +17780,7 @@ fn install_loop_sites<'live, H: Host>(
 /// its generated row or jump row gave it: operand kinds and operators are the rows' own decode
 /// (`Binary`, `JumpBinaryFalse`, `Unary`), not handler choices made here.
 fn specialize_returning_binaries<H: Host>(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction]) {
-    let returning_binary = lane_returning::<H, RETURNING_BINARY, NOT_LEAF> as Handler as *const ();
+    let returning_binary = returning_miss::<H, RETURNING_BINARY, NOT_LEAF> as Handler as *const ();
     for (pc, &instruction) in decoded.iter().enumerate() {
         if records[pc].handler == returning_binary {
             specialize_returning_operator::<H>(instruction, constants, &mut records[pc]);
@@ -17754,14 +17789,14 @@ fn specialize_returning_binaries<H: Host>(decoded: &[WideInstruction], constants
 }
 
 /// Runs each `LoadConst` whose register the next record, a `Return`, returns as one record
-/// (`lane_return_constant`). The `Return` record stays for jumps that reach it, and the
+/// (`return_constant_miss`). The `Return` record stays for jumps that reach it, and the
 /// fused record's general return continues there.
 fn specialize_constant_returns<H: Host>(records: &mut [LaneInstruction]) {
     let load = generated_row::<H, { crate::staged::LOAD_CONST_ROW }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
-    let ret = lane_return::<H, NOT_LEAF> as Handler as *const ();
+    let ret = return_row!(crate::bytecode::Op::Return, returning_code(RETURN_KIND, NOT_LEAF)) as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         if records[pc].handler == load && records[pc + 1].handler == ret && records[pc + 1].a == records[pc].a {
-            records[pc].handler = lane_return_constant::<H, NOT_LEAF> as Handler as *const ();
+            records[pc].handler = return_row!(crate::bytecode::Op::Return, returning_code(CONSTANT_KIND, NOT_LEAF)) as *const ();
         }
     }
 }
@@ -18233,9 +18268,9 @@ fn specialize_frame_locals<H: Host>(function: &Function, records: &mut [LaneInst
 
 
 /// Gives a returning `Binary` record of an arithmetic operator on a register and a register
-/// or constant its operator's `lane_returning_operator`, its fields resolved as
+/// or constant its operator's `returning_operator_miss`, its fields resolved as
 /// `specialize_register_operands` resolves a non-returning one's; any other keeps
-/// `lane_returning`.
+/// `returning_miss`.
 fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constants: &[Value], record: &mut LaneInstruction) {
     use crate::bytecode::OperandKind::{Constant, Register};
     let (left, right) = (instruction.operand_b(), instruction.operand_c());
@@ -18253,9 +18288,9 @@ fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constant
     macro_rules! pick {
         ($op:expr) => {
             if constant.is_some() {
-                lane_returning_operator::<H, { $op }, true, NOT_LEAF> as Handler
+                returning_operator_miss::<H, { $op }, true, NOT_LEAF> as Handler
             } else {
-                lane_returning_operator::<H, { $op }, false, NOT_LEAF> as Handler
+                returning_operator_miss::<H, { $op }, false, NOT_LEAF> as Handler
             }
         };
     }

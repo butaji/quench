@@ -18,7 +18,7 @@ pub(super) enum CallEntry {
     /// whose hit a call answers without activating it (`call_read_in_lane`).
     Reads,
     /// It needs a VM frame (`CallPlan::registers_only` fails, or its view has no
-    /// activation): a call takes `lane_frame_call`. Only the cache and the call's own
+    /// activation): a call takes `frame_call_in_lane`. Only the cache and the call's own
     /// out-of-line form see such a target (`script_target_in_lane` leaves it out).
     Frame,
     /// Its body reads a field of `this` or a parameter, then an element of that by a
