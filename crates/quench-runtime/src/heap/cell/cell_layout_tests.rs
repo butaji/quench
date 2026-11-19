@@ -44,12 +44,14 @@ fn native_object_layout_is_derived_from_the_current_storage_types() {
     );
     assert_eq!(
         NATIVE_OBJECT_EXTRAS_ARENA_START_OFFSET,
-        std::mem::offset_of!(ObjectExtras, arena_start)
+        std::mem::offset_of!(ObjectExtras, head) + std::mem::offset_of!(ObjectExtrasHead<DisplacedInline, super::ArrayElements>, arena_start)
     );
 
     let layout = super::super::NATIVE_OBJECT_LAYOUT;
     assert_eq!(layout.extras_inline_values_offset,
-        std::mem::offset_of!(ObjectExtras, inline_properties) + std::mem::offset_of!(DisplacedInline, 0));
+        std::mem::offset_of!(ObjectExtras, head)
+            + std::mem::offset_of!(ObjectExtrasHead<DisplacedInline, super::ArrayElements>, inline_properties)
+            + std::mem::offset_of!(DisplacedInline, 0));
     assert_eq!(layout.record_size, std::mem::size_of::<Object>());
     assert_eq!(layout.record_align, std::mem::align_of::<Object>());
     assert_eq!(layout.meta_offset, NATIVE_OBJECT_META_OFFSET);
