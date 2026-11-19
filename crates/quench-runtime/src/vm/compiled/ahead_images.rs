@@ -4,6 +4,9 @@
 //! own helper table and publishes it where a compile of that function would (`install`).
 use super::*;
 use crate::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
+use crate::vm::aot_image::{LaneImage, base::{BaseImage, NO_ENTRY}, symbols::{Symbol, SymbolTable}};
+use crate::compile::aot_facts::AotFacts;
+use super::lane_unit::Origin;
 use std::collections::BTreeMap;
 
 /// The lane body of one function: its code, and what its lowering proved about the entry ABI.
@@ -47,21 +50,58 @@ fn fingerprint(program: &ResidualProgram) -> u64 {
     hash
 }
 
-/// The image of `function`, or `None` where it lowers to nothing a lane body may run.
-fn image(program: &ResidualProgram, function: u32) -> Option<Image> {
+/// The unit of `function`'s lane body (`lane_unit::with_budget`, with no extra call budget).
+fn unit_of(program: &ResidualProgram, function: u32) -> Option<lane_unit::Unit> {
     let body = program.function_get(function as usize)?;
-    let unit = lane_unit::with_budget(program, function, body, 0, &|_, _| Vec::new(), &|callee| program.function_get(callee as usize))?;
-    let mut lowered = lane_region::lower_body(program, function, &unit, LaneHelpers::Ahead, &[],
-        &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &[])?;
+    lane_unit::with_budget(program, function, body, 0, &|_, _| Vec::new(), &|callee| program.function_get(callee as usize))
+}
+
+/// The code of the lane body `unit` lowers to under `facts` (`LaneHelpers::Ahead`), and whether
+/// it polls for faults; `None` where it gives no native record.
+fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, facts: VmFacts<'_>) -> Option<(RelocatableCode, bool)> {
+    let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, &[],
+        &Default::default(), facts, &[], &BTreeMap::new(), &[], None, &[])?;
     if lowered.region.native == 0 { return None; }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = crate::vm::jit_backend::target_isa()?;
     let code = crate::vm::jit_backend::compile_function(native, &*isa, Some(crate::vm::compiled::tier_policy::LANE_BODY_MAX_CODE_BYTES), |compiled, function| {
         RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
     }).ok()?;
+    Some((code, lowered.region.fault_poll))
+}
+
+/// The image of `function`, or `None` where it lowers to nothing a lane body may run.
+fn image(program: &ResidualProgram, function: u32) -> Option<Image> {
+    let unit = unit_of(program, function)?;
+    let (code, fault_poll) = lowered_code(program, &unit, function, VmFacts::STATIC)?;
     let atoms = code.relocations.iter().filter_map(|relocation| lane_region::relocs::atom_key(relocation.namespace, relocation.key))
         .collect::<std::collections::BTreeSet<_>>().into_iter().map(|atom| (atom, program.atoms[atom as usize].to_string())).collect();
-    Some(Image { fault_poll: lowered.region.fault_poll, code, atoms })
+    Some(Image { fault_poll, code, atoms })
+}
+
+/// The lane body of `function` for an AOT image under the closed-world `facts`, its leaves
+/// continuing at `base`'s entries (`join`): every leave's target is interned in `symbols`.
+/// `None` where it gives no native record, or polls for faults: the lowering does not report
+/// the poll's offset, so the base body runs such a function.
+pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32, facts: &AotFacts, base: &BaseImage,
+    symbols: &mut SymbolTable,
+) -> Option<LaneImage> {
+    let unit = unit_of(program, function)?;
+    let targets = leave_targets(&unit, function, base, symbols);
+    let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { targets: &targets }), closed: Some(facts), ..VmFacts::STATIC };
+    let (code, fault_poll) = lowered_code(program, &unit, function, facts)?;
+    (!fault_poll).then_some(LaneImage { code, fault_poll: None })
+}
+
+/// Each unit PC's leave target as the base body's `Symbol::BasePc`: a caller record the base body
+/// enters, or an inlined callee's record. The callee's own base entries are not checked here yet.
+// TODO: check the inlined callee's record against that function's base body.
+fn leave_targets(unit: &lane_unit::Unit, function: u32, base: &BaseImage, symbols: &mut SymbolTable) -> Box<[Option<(u32, u32)>]> {
+    unit.origins.iter().map(|origin| match *origin {
+        Origin::Caller(record) => base.pc_offsets.get(record as usize).is_some_and(|at| *at != NO_ENTRY)
+            .then(|| symbols.intern(Symbol::BasePc { function, pc: record })),
+        Origin::Inlined { frame, pc } => Some(symbols.intern(Symbol::BasePc { function: unit.frames[frame].target.function, pc })),
+    }).collect()
 }
 
 impl AheadImages {

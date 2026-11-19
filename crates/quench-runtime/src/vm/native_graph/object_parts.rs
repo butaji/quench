@@ -83,24 +83,16 @@ pub(super) fn lower_object_regions(
     )
 }
 
-/// The native entry of function `function_id`: a trampoline over its lane body and its
-/// per-PC fallback, which `symbols` name.
-pub(super) fn lower_object_entry(
-    function_id: u32, instruction_count: usize, isa: &dyn TargetIsa, symbols: (u32, u32),
-) -> Result<ir::Function, String> {
-    let (mut body_signature, mut fallback_signature) = (None, None);
-    super::super::compiled::lower_ahead_entry(NATIVE_FUNCTION_NAMESPACE, function_id, instruction_count, isa,
+/// The native entry of function `function_id`: a trampoline over the body `body` names.
+pub(super) fn lower_object_entry(function_id: u32, isa: &dyn TargetIsa, body: u32) -> Result<ir::Function, String> {
+    let mut body_signature = None;
+    super::super::compiled::lower_ahead_entry(NATIVE_FUNCTION_NAMESPACE, function_id, isa,
         super::super::compiled::AheadTargets {
             body: &mut |builder, words| {
-                let callee = import_symbol(builder, &mut body_signature, symbols.0,
+                let callee = import_symbol(builder, &mut body_signature, body,
                     super::super::compiled::body_signature_in_lane(isa.pointer_type(), isa.default_call_conv()));
                 let results = builder.call_function(callee, words);
                 (results[0], results[1])
-            },
-            fallback: &mut |builder, [context, pc, result]| {
-                let callee = import_symbol(builder, &mut fallback_signature, symbols.1,
-                    super::super::compiled::native_js_operation_signature(isa));
-                builder.call_function(callee, &[context, pc, result, result])[0]
             },
         })
 }

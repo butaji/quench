@@ -269,7 +269,7 @@ impl ObjectExtension<'_> {
             function: lower_object_fallback(body, function_id, table, &*self.isa)?,
         });
         pending.bodies.push(NativeFunction::Definition { name: format!("{namespace}_function_{id}_body"), function: lane_body });
-        lower_object_entry(function_id, body.code.len(), &*self.isa, entries)
+        lower_object_entry(function_id, &*self.isa, entries.0)
     }
 
     /// Function `id`'s operand records as object data.
