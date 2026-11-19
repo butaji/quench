@@ -95,6 +95,12 @@ pub(crate) enum CallContext {
 pub(crate) enum CallCompletion {
     Value,
     Constructor(Value),
+    /// [[Construct]] of a derived class constructor pushed in place (`Vm::try_inline_construct`,
+    /// `dispatch_fast::lane_frame_construct`): the frame starts with `this` uninitialized and
+    /// its `super(...)` binds it, so the call yields what `Vm::derived_construct_value` makes
+    /// of the returned value and the frame's `this` as it retires: the returned object, else
+    /// the binding, or the error a missing `super(...)` or a primitive result throws at the call.
+    DerivedConstructor,
     Promise(crate::heap::RootId),
     Generator(super::generator::GeneratorResume),
     /// A lane's array iteration whose callback became this frame: its return steps and

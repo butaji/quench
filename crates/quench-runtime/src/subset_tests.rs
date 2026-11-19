@@ -893,6 +893,47 @@ print(out.join("|"));
 }
 
 #[test]
+fn arguments_passed_last_inside_try_statements_keep_their_values() {
+    // A body that passes its `arguments` object on inside a `try` (mobx's action wrappers:
+    // `try { return run(this, arguments) } finally { … }`) keeps its passed values and makes the
+    // object at the pass (`KeptArguments::Passes`), since `arguments_passed_last` traces handler
+    // edges (one-frame-one-call.md F6 (d)). A read of the binding a handler may run after the
+    // pass (`late`) still declines; one before any pass (`early`, whose pass is in its `catch`)
+    // keeps. The expected output is Node's.
+    let source = r#"
+var depth = 0, out = [];
+function wrap() { depth++; try { return run(this, arguments); } finally { depth--; } }
+function late() { try { return run(this, arguments); } catch (e) { return "late:" + arguments.length; } }
+function early() { try { check(arguments.length); } catch (e) { return run(null, arguments); } return "ok"; }
+function run(self, args) { if (args[0] === "boom") throw new Error("boom"); var s = 0; for (var i = 0; i < args.length; i++) s += args[i]; return s; }
+function check(n) { if (n > 2) throw new Error("many"); }
+var total = 0;
+for (var i = 0; i < 300; i++) { total += wrap(i, 1); total += early(1, 2, i); }
+out.push(total, depth, early(1), late(1, 2), late("boom", 2));
+try { wrap("boom"); } catch (e) { out.push(e.message, depth); }
+print(out.join("|"));
+"#;
+    let program = Engine::specialize(source, "arguments-passed-in-try.js").unwrap();
+    program.compile_released();
+    let named = |name: &str| {
+        program
+            .functions
+            .iter()
+            .find(|function| function.name.is_some_and(|atom| program.atoms[atom as usize].to_string() == name))
+            .unwrap_or_else(|| panic!("function {name}"))
+    };
+    let (wrap, late, early) = (named("wrap"), named("late"), named("early"));
+    assert!(!wrap.handlers.is_empty() && !early.handlers.is_empty());
+    assert_eq!(wrap.kept_arguments(), Some(crate::bytecode::KeptArguments::Passes));
+    assert!(wrap.call_plan(&program).keeps_arguments);
+    assert_eq!(late.kept_arguments(), None);
+    assert!(!late.call_plan(&program).keeps_arguments);
+    assert_eq!(early.kept_arguments(), Some(crate::bytecode::KeptArguments::Passes));
+    program.validate().unwrap();
+    assert_eq!(output(source), ["90900|0|ok|3|late:2|boom|0"]);
+}
+
+#[test]
 fn closure_making_arrows_run_as_environment_activations_with_their_lexical_this() {
     // An arrow that makes closures runs as an environment activation
     // (`CallPlan::environment_activation`) whose `this` is its environment's; its

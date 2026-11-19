@@ -757,26 +757,36 @@ impl<H: Host> Vm<H> {
                     return Ok(result);
                 }
                 if derived_constructor {
-                    if result.is_undefined() {
-                        let this = this.unwrap_or(Value::DELETED);
-                        return if this.is_deleted() {
-                            Err(vm.reference_error(
-                                p,
-                                "Must call super constructor before returning from derived constructor"
-                                    .into(),
-                            ))
-                        } else {
-                            Ok(this)
-                        };
-                    }
-                    return Err(vm.type_error(
-                        p,
-                        "derived constructor may only return an object or undefined".into(),
-                    ));
+                    return vm.derived_construct_value(p, result, this.unwrap_or(Value::DELETED));
                 }
                 Ok(object)
             },
         )
+    }
+
+    /// What [[Construct]] of a derived constructor whose body completed with `value` yields,
+    /// its frame's `this` binding being `this` (`Value::DELETED` while uninitialized)
+    /// (ECMA-262 10.2.2 steps 10-12): an object it returns, else its `this` binding for
+    /// `undefined`, which `super(...)` must have initialized; any other value is a TypeError.
+    /// The recursive construction (`construct_value_with_new_target`) and the pending call of
+    /// one pushed in place (`CallCompletion::DerivedConstructor`) both complete through it.
+    pub(super) fn derived_construct_value(&mut self, p: &ResidualProgram, value: Value, this: Value) -> Result<Value, JsError> {
+        if self.is_object_like(value) {
+            return Ok(value);
+        }
+        if !value.is_undefined() {
+            return Err(self.type_error(p, "derived constructor may only return an object or undefined".into()));
+        }
+        if this.is_deleted() {
+            return Err(self.reference_error(p, "Must call super constructor before returning from derived constructor".into()));
+        }
+        Ok(this)
+    }
+
+    /// Whether `derived_construct_value` of `value` and `this` completes without an error, so a
+    /// lane may finish the construction itself (`lane_return_script_frame`).
+    pub(super) fn derived_construct_completes(&self, value: Value, this: Value) -> bool {
+        self.is_object_like(value) || value.is_undefined() && !this.is_deleted()
     }
 
     /// A function's own data `prototype`, read without the generic [[Get]]. Functions are
@@ -792,6 +802,59 @@ impl<H: Host> Vm<H> {
         frame: usize,
         callee: Value,
     ) -> Option<(ProgramId, u32, Value, Value)> {
+        let (program_id, id, env) = self.in_loop_constructor(p, frame, callee, Self::inline_constructible)?;
+        Some((program_id, id, env, self.inline_construct_receiver(callee)?))
+    }
+
+    /// `new callee(...)` of a derived class constructor that the loop may push in place, as
+    /// `inline_construct_target` admits a base one: its code and environment. It allocates no
+    /// receiver: the body binds `this` through `super(...)` (`InitializeThis`), and its pending
+    /// call yields that binding or the object the body returns (`CallCompletion::DerivedConstructor`).
+    pub(super) fn inline_derived_construct_target(
+        &self,
+        p: &ResidualProgram,
+        frame: usize,
+        callee: Value,
+    ) -> Option<(ProgramId, u32, Value)> {
+        self.in_loop_constructor(p, frame, callee, Self::inline_derived_constructible)
+    }
+
+    /// `super(...)` at frame `frame` of `parent`, a user constructor the loop may push in place
+    /// with the running constructor's `new.target` (`construct_super_value`): the parent's code
+    /// and environment, the `new.target`, and the receiver when the parent is a base constructor
+    /// (`inline_constructible`), which OrdinaryCreateFromConstructor makes from `new.target`'s
+    /// own data `prototype` (`inline_construct_template_by`); `None` as the receiver for a
+    /// derived parent (`inline_derived_constructible`), which binds its own. Any other parent
+    /// (a native, a bound function, a proxy, a class with instance fields at its root, a
+    /// `new.target` whose `prototype` is not an own data object) keeps `construct_super_value`.
+    pub(super) fn inline_super_construct_target(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        parent: Value,
+    ) -> Option<(ProgramId, u32, Value, Value, Option<Value>)> {
+        let new_target_atom = self.runtime_atoms.new_target;
+        let new_target = self
+            .dynamic_binding(self.frame_caller(frame), new_target_atom)
+            .filter(|value| !value.is_undefined() && self.is_constructable(*value))?;
+        if let Some((program_id, id, env)) = self.in_loop_constructor(p, frame, parent, Self::inline_derived_constructible) {
+            return Some((program_id, id, env, new_target, None));
+        }
+        let (program_id, id, env) = self.in_loop_constructor(p, frame, parent, Self::inline_constructible)?;
+        let object = self.inline_construct_template_by(new_target, parent)?;
+        Some((program_id, id, env, new_target, Some(self.heap.alloc_object(object))))
+    }
+
+    /// The checks `inline_construct_target` makes of the running frame and of `callee`, a user
+    /// function of the running realm whose body `admits` takes: its program, function and
+    /// environment.
+    fn in_loop_constructor(
+        &self,
+        p: &ResidualProgram,
+        frame: usize,
+        callee: Value,
+        admits: fn(&crate::bytecode::Function) -> bool,
+    ) -> Option<(ProgramId, u32, Value)> {
         let caller = &self.frames[frame];
         if frame + 1 != self.frames.len()
             || caller.function == super::ROOT_FUNCTION_ID
@@ -827,10 +890,7 @@ impl<H: Host> Vm<H> {
             }
             owner.function_get(id as usize)?
         };
-        if !Self::inline_constructible(body) {
-            return None;
-        }
-        Some((program_id, id, env, self.inline_construct_receiver(callee)?))
+        admits(body).then_some((program_id, id, env))
     }
 
     /// A body whose [[Construct]] the dispatch loop may push in place: a constructible
@@ -846,6 +906,19 @@ impl<H: Host> Vm<H> {
             && !function.derived_constructor
             && !function.class_initializer
             && function.instance_initializer.is_none()
+    }
+
+    /// A derived class constructor whose [[Construct]] the dispatch loop may push in place: its
+    /// frame starts with `this` uninitialized (`activate_general_frame`), its `super(...)`
+    /// binds it and runs its instance initializer (`InitializeThis`), and its pending call
+    /// applies the derived return rules (`CallCompletion::DerivedConstructor`).
+    pub(super) fn inline_derived_constructible(function: &crate::bytecode::Function) -> bool {
+        function.dispatch == DispatchClass::General
+            && function.constructible
+            && !function.is_async
+            && !function.is_generator
+            && function.derived_constructor
+            && !function.class_initializer
     }
 
     /// The receiver an in-place [[Construct]] of `callee` allocates: an ordinary object

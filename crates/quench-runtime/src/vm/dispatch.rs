@@ -214,6 +214,27 @@ impl<H: Host> Vm<H> {
         destination: crate::bytecode::Register,
         completion: CallCompletion,
     ) -> Option<Result<StepResult, JsError>> {
+        let new_target = matches!(completion, CallCompletion::Constructor(_) | CallCompletion::DerivedConstructor).then_some(callee);
+        self.push_in_loop_construction(p, f, pc, (program, id, env), (callee, new_target), this, arguments, destination, completion)
+    }
+
+    /// `push_in_loop_activation` with [[Construct]]'s `new.target` given: `Some` binds the
+    /// construction target (`construct_target`) for the callee's activation to take, as a
+    /// `super(...)` pushed in place passes its constructor's `new.target` to the parent's
+    /// (`try_inline_super_construct`).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn push_in_loop_construction(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        pc: usize,
+        (program, id, env): (ProgramId, u32, Value),
+        (callee, new_target): (Value, Option<Value>),
+        this: Value,
+        arguments: &[Value],
+        destination: crate::bytecode::Register,
+        completion: CallCompletion,
+    ) -> Option<Result<StepResult, JsError>> {
         let caller_program = self.active_program;
         let callee_residual = if program == caller_program {
             None
@@ -225,8 +246,8 @@ impl<H: Host> Vm<H> {
         if callee_residual.is_some() {
             self.set_active_program(program);
         }
-        let constructs = matches!(completion, CallCompletion::Constructor(_));
-        if constructs { self.set_construct_target(Some(ConstructionTarget { callee, new_target: callee })); }
+        let constructs = new_target.is_some();
+        if let Some(new_target) = new_target { self.set_construct_target(Some(ConstructionTarget { callee, new_target })); }
         let call_guard = self.push_general_user_frame(callee_residual.as_deref().unwrap_or(p), id, env, this, arguments,
             CallContext::user_function(id, callee));
         if constructs { self.set_construct_target(None); }
