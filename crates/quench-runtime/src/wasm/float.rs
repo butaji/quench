@@ -16,7 +16,7 @@ macro_rules! binary_family {
     ($enum:ident, $float:ty, $bits:ty, $variant:ident,
      ($float_alias:ident, $bits_alias:ident, $sign:ident, $nan:ident), ($left:ident, $right:ident);
      $($name:ident, $wasm:ident => $body:expr;)+) => {
-        selectors!($enum; $($name, $wasm;)+);
+        selectors!(@decoded $enum; $($name, $wasm;)+);
         impl $enum {
             /// The operator written out on its own: the oracle the staged rules are tested
             /// against (`staged::wasm_float_tests`); execution goes through `evaluate`.
@@ -52,7 +52,7 @@ macro_rules! unary_family {
     ($enum:ident, $float:ty, $bits:ty, $variant:ident,
      ($float_alias:ident, $bits_alias:ident, $sign:ident), $value:ident;
      $($name:ident, $wasm:ident => $body:expr;)+) => {
-        selectors!($enum; $($name, $wasm;)+);
+        selectors!(@decoded $enum; $($name, $wasm;)+);
         impl $enum {
             /// The operator written out on its own: the oracle the staged rules are tested
             /// against (`staged::wasm_float_tests`); execution goes through `evaluate`.

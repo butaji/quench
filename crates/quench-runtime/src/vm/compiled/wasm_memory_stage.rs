@@ -9,18 +9,21 @@ use super::{
     Vm, compiled_memory_copy, compiled_memory_fill, refresh_memory_length,
 };
 use crate::bytecode::{Function, WideInstruction};
-use crate::staged::machine::{MachineAccess, MachineStage};
+use crate::staged::machine::{Lane, MachineAccess, MachineStage};
 use crate::staged::wasm::Width;
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::integer::I64BinaryOperator as Binary;
 use crate::staged::wasm_memory::{
-    Access, Memory, WasmMemory, WasmMemoryGrow, WasmMemoryWrite, copy, fill, load, size, store,
+    Access, Memory, WasmMemory, WasmMemoryGrow, WasmMemoryWrite, copy, fill, load, load_vector, size,
+    store, store_vector,
 };
 use crate::wasm::INDEX_GROW_FAILURE;
 use crate::wasm::memory::WASM_PAGE_BITS;
 use cranelift_codegen::ir::{self, MemFlagsData};
 
 impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
+    type Vector = ir::Value;
+
     fn guarded(&self) -> bool {
         self.guarded
     }
@@ -46,6 +49,12 @@ impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
         let flags = self.load_flags();
         self.load_access(access, flags, host)
     }
+
+    fn memory_load_vector(&mut self, index: ir::Value, offset: u32) -> ir::Value {
+        let host = self.host_address(index, offset);
+        let flags = self.load_flags();
+        self.raw_load(Lane::V128, flags, host, 0)
+    }
 }
 
 impl<H: Host> WasmMemoryWrite for Emitter<'_, '_, H> {
@@ -53,6 +62,14 @@ impl<H: Host> WasmMemoryWrite for Emitter<'_, '_, H> {
         let host = self.host_address(index, offset);
         let flags = self.flags(Region::LinearMemory);
         self.store_access(access, flags, host, value);
+    }
+
+    /// A guarded vector store keeps the trap code of a load (`load_flags`): a proven access
+    /// skips the explicit check, so the fault is the store's own.
+    fn memory_store_vector(&mut self, index: ir::Value, offset: u32, value: ir::Value) {
+        let host = self.host_address(index, offset);
+        let flags = self.load_flags();
+        self.store_word(flags, value, host, 0);
     }
 
     fn memory_fill(&mut self, index: ir::Value, byte: ir::Value, length: ir::Value) {

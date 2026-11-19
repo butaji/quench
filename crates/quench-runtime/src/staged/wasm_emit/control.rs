@@ -1,7 +1,7 @@
-//! Emit functions for control flow, locals, arrays, returns, exceptions and register moves.
+//! Emit functions for control flow, locals, calls, arrays, returns, exceptions and register moves.
 
 use super::Emission;
-use crate::bytecode::{ImmediateLayout, Op, Register};
+use crate::bytecode::{ImmediateLayout, Op, Operand, Register};
 use crate::wasm::integer::I32BinaryOperator;
 
 /// An unconditional jump whose target is patched when its label is bound.
@@ -140,5 +140,36 @@ pub(crate) fn exception_payload(
         exception,
         0,
         u32::from(offset),
+    )
+}
+
+/// Fills `count` registers from `start` with the default value constant `value`.
+pub(crate) fn fill_registers(start: Register, count: Register, value: u32) -> Emission {
+    Emission::new(Op::WasmFillRegisters, 0, start, count, value)
+}
+
+/// `destination = call of the known function callee`, its argument window `immediate`.
+pub(crate) fn call_known(destination: Register, callee: Register, immediate: u32) -> Emission {
+    Emission::new(Op::CallKnown, destination, callee, 0, immediate)
+}
+
+/// `destination = call of the function reference`, its receiver the void result in `receiver`.
+pub(crate) fn call_through(
+    destination: Register,
+    reference: Register,
+    receiver: Register,
+    immediate: u32,
+) -> Emission {
+    Emission::new(Op::Call, destination, reference, receiver, immediate)
+}
+
+/// `destination = array[index]`, the element of the bundle `array` at the index register `index`.
+pub(crate) fn get_index(destination: Register, array: Register, index: Register) -> Emission {
+    Emission::new(
+        Op::GetIndex,
+        destination,
+        Operand::register(array).0,
+        Operand::register(index).0,
+        0,
     )
 }

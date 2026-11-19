@@ -15,7 +15,7 @@ use crate::staged::wasm_float::convert;
 
 macro_rules! scalar_conversions {
     ($value:ident; $($name:ident, $wasm:ident, $source:ident => $result:ident, $body:expr;)+) => {
-        selectors!(ScalarConversionOperator; $($name, $wasm;)+);
+        selectors!(@decoded ScalarConversionOperator; $($name, $wasm;)+);
 
         impl ScalarConversionOperator {
             pub(crate) fn source_type(self) -> WasmType {

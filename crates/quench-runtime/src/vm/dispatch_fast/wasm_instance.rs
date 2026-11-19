@@ -2,39 +2,11 @@
 //! globals.
 use super::*;
 use crate::staged::wasm_memory::scalar_address;
-use crate::staged::machine::{Machine, MachineStage};
-use crate::staged::wasm_instance::{WasmBindings, binding_get};
+use crate::staged::wasm_instance::binding_get;
 use crate::staged::wasm_simd::WasmSimd as _;
 use crate::staged::wasm_simd_concrete::ConcreteSimd;
 use crate::staged::ConcreteWasm;
-use crate::vm::JsError;
-
-/// The environment of a running instance, as the interpreter's stage for its binding rule: the
-/// fields the heap holds in `env` (`Vm::wasm_binding`).
-struct InstanceBindings<'a, H: Host> {
-    vm: &'a Vm<H>,
-    env: Value,
-}
-
-impl<H: Host> Machine for InstanceBindings<'_, H> {
-    type Word = u64;
-}
-
-impl<H: Host> MachineStage for InstanceBindings<'_, H> {
-    type Exit = JsError;
-
-    crate::staged::wasm_concrete::scalar_operators! {}
-
-    fn trap_when(&mut self, flag: u64, trap: crate::WasmTrap) -> Result<(), JsError> {
-        if flag == 0 { Ok(()) } else { Err(JsError::wasm_trap_error(trap)) }
-    }
-}
-
-impl<H: Host> WasmBindings for InstanceBindings<'_, H> {
-    fn binding_word(&mut self, slot: u32) -> Option<u64> {
-        self.vm.wasm_binding(self.env, slot as usize).map(|value| value.to_bits())
-    }
-}
+use crate::vm::wasm_global::InstanceBindings;
 
 lane_handler! {
     /// Load an instance binding; loading the function's memory register

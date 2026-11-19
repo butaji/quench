@@ -5,6 +5,7 @@
 
 use super::Emission;
 use crate::bytecode::{ImmediateLayout, Op, Register};
+use crate::wasm::i31::I31Operator;
 
 /// `result = conversion(input)`, an externref internalize or externalize, `conversion` the
 /// lowering's selector.
@@ -143,6 +144,21 @@ pub(crate) fn table_copy(
 /// through.
 pub(crate) fn instance_binding(destination: Register, slot: u32) -> Emission {
     Emission::new(Op::WasmInstanceBinding, destination, 0, 0, slot)
+}
+
+/// `destination = global`, the global whose binding register is `binding`.
+pub(crate) fn global_get(destination: Register, binding: Register) -> Emission {
+    Emission::new(Op::WasmGlobalGet, destination, binding, 0, 0)
+}
+
+/// `global = value`, the global whose binding register is `binding`.
+pub(crate) fn global_set(value: Register, binding: Register) -> Emission {
+    Emission::new(Op::WasmGlobalSet, value, binding, 0, 0)
+}
+
+/// `result = operator(input)` on an i31 reference, the operator its selector.
+pub(crate) fn i31_operation(result: Register, input: Register, operator: I31Operator) -> Emission {
+    Emission::new(Op::WasmI31, result, input, 0, operator as u32)
 }
 
 /// `effective = address + offset`, a memory32 effective address on `memory`, `offset` the

@@ -178,9 +178,16 @@ pub(crate) fn native(operator: SimdOperator) -> Option<Native> {
 }
 
 /// The vector registers of a machine. A value is a 128-bit vector or a scalar in its low bits,
-/// the representation of `SimdKernel::apply_bits`.
+/// the representation of `SimdKernel::apply_bits`; a scalar result is the `Scalar` word.
 pub(crate) trait WasmSimd {
     type Value: Copy;
+    /// The word of an operator whose result is a scalar (i32, i64, f32 or f64).
+    type Scalar: Copy;
+    /// The vector whose bits are `bits`.
+    fn constant_vector(&mut self, bits: u128) -> Self::Value;
+    /// The scalar result of the operator `selector` names on its operands, by its kernel: no
+    /// native row yields a scalar.
+    fn scalar_kernel(&mut self, selector: u32, left: Self::Value, right: Option<Self::Value>) -> Self::Scalar;
     /// `native` on `left` and, where it takes one, `right`: the shift count, or a vector.
     fn vector_native(
         &mut self,
@@ -218,4 +225,29 @@ pub(crate) fn simd<S: WasmSimd>(
         Some(native) => stage.vector_native(native, left, right),
         None => stage.vector_kernel(selector, left, right),
     }
+}
+
+/// The scalar result of the operator `selector` names (an i32 extract, bitmask or any/all test),
+/// its word of the stage's `Scalar` type: the kernel, the one body of such an operator.
+#[inline(always)]
+pub(crate) fn simd_scalar<S: WasmSimd>(
+    stage: &mut S,
+    selector: u32,
+    left: S::Value,
+    right: Option<S::Value>,
+) -> S::Scalar {
+    stage.scalar_kernel(selector, left, right)
+}
+
+/// The v128 constant `bits`, the stage's vector.
+#[inline(always)]
+pub(crate) fn vector_constant<S: WasmSimd>(stage: &mut S, bits: u128) -> S::Value {
+    stage.constant_vector(bits)
+}
+
+/// A vector moved from one bank to another: the value itself, so the move is the copy of the
+/// stage's word and nothing else.
+#[inline(always)]
+pub(crate) fn vector_move<S: WasmSimd>(_: &mut S, source: S::Value) -> S::Value {
+    source
 }

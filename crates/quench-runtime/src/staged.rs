@@ -104,6 +104,8 @@ pub(crate) mod wasm_call;
 pub(crate) mod wasm_roots;
 pub(crate) mod wasm_flow;
 pub(crate) mod wasm_instance;
+#[cfg(not(stencil_build))]
+pub(crate) mod wasm_activation;
 pub(crate) mod wasm_machine;
 pub(crate) mod wasm_memory;
 pub(crate) mod wasm_table_ops;

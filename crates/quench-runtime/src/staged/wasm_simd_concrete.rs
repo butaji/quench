@@ -3,8 +3,8 @@
 //! it (`execute`); the tests run every row against its kernel, which is the oracle the Wasm
 //! tier's vector instructions must equal.
 
-use super::wasm_simd::{Lanes, Native, NativeOp, WasmSimd, simd};
-use crate::WasmValue;
+use super::wasm_simd::{Lanes, Native, NativeOp, WasmSimd, simd, simd_scalar};
+use crate::{WasmType, WasmValue};
 use crate::wasm::V128_BYTES;
 use crate::wasm::simd::{SimdKernel, bits_of, lane, replace, shuffle, value_of};
 
@@ -15,8 +15,13 @@ pub(crate) struct ConcreteSimd;
 /// operator's, read from its table entry.
 #[inline(always)]
 pub(crate) fn execute(selector: u32, left: WasmValue, right: Option<WasmValue>) -> WasmValue {
-    let bits = simd(&mut ConcreteSimd, selector, bits_of(left), right.map(bits_of));
-    value_of(SimdKernel::result_of(selector), bits)
+    let (left, right) = (bits_of(left), right.map(bits_of));
+    let result = SimdKernel::result_of(selector);
+    let bits = match result {
+        WasmType::V128 => simd(&mut ConcreteSimd, selector, left, right),
+        _ => u128::from(simd_scalar(&mut ConcreteSimd, selector, left, right)),
+    };
+    value_of(result, bits)
 }
 
 /// `operation` on each lane of `bits`, cut at `width`.
@@ -56,6 +61,16 @@ fn lane_wise(native: Native, left: u128, right: u128) -> u128 {
 
 impl WasmSimd for ConcreteSimd {
     type Value = u128;
+    type Scalar = u64;
+
+    fn constant_vector(&mut self, bits: u128) -> u128 {
+        bits
+    }
+
+    /// The kernel's bits, the scalar in their low word.
+    fn scalar_kernel(&mut self, selector: u32, left: u128, right: Option<u128>) -> u64 {
+        self.vector_kernel(selector, left, right) as u64
+    }
 
     fn vector_native(&mut self, native: Native, left: u128, right: Option<u128>) -> u128 {
         let right = right.unwrap_or(0);

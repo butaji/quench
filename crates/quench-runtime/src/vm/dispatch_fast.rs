@@ -20795,7 +20795,7 @@ fn lane_wasm_export_frame<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip
 
 /// `lane_wasm_export_frame`'s call as a frameless Wasm activation of the export
 /// (`ActivationKind::WasmEntry`) over its instance environment, pushed as a Wasm call's
-/// activation is (`wasm_calls::enter_wasm_function`) beside the caller's activations, which
+/// activation is (`wasm_activation::enter_function`) beside the caller's activations, which
 /// stay activations. The run goes on as a Wasm run (`LaneContext::inline_calls`) until the
 /// activation returns (`lane_complete_activation`). `None`, which changes nothing, where the
 /// callee has no lane view yet or the lane no room for it: the frame call takes it.

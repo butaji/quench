@@ -16,10 +16,10 @@ use crate::staged::machine::MachineStage;
 use crate::staged::wasm::{Width, binary_result, integer_binary, unary_result};
 
 macro_rules! binary_family {
-    ($enum:ident, $signed:ty, $unsigned:ty, $variant:ident,
+    ($(@ $decoded:ident)? $enum:ident, $signed:ty, $unsigned:ty, $variant:ident,
      ($signed_alias:ident, $unsigned_alias:ident), ($($argument:ident),+);
      $($name:ident, $wasm:ident => $body:expr;)+) => {
-        selectors!($enum; $($name, $wasm;)+);
+        selectors!($(@ $decoded)? $enum; $($name, $wasm;)+);
         impl $enum {
             pub(crate) fn allowed_in_constant_expression(self) -> bool {
                 matches!(self, Self::Add | Self::Subtract | Self::Multiply)
@@ -47,14 +47,14 @@ macro_rules! integer_binary_operators {
     ($aliases:tt, $arguments:tt; $($name:ident, $i32:ident, $i64:ident => $body:expr;)+
      @i64 $($wide_name:ident, $wide_wasm:ident => $wide_body:expr;)+) => {
         binary_family!(I32BinaryOperator, i32, u32, I32, $aliases, $arguments; $($name, $i32 => $body;)+);
-        binary_family!(I64BinaryOperator, i64, u64, I64, $aliases, $arguments; $($name, $i64 => $body;)+ $($wide_name, $wide_wasm => $wide_body;)+);
+        binary_family!(@decoded I64BinaryOperator, i64, u64, I64, $aliases, $arguments; $($name, $i64 => $body;)+ $($wide_name, $wide_wasm => $wide_body;)+);
     };
 }
 
 macro_rules! unary_family {
     ($enum:ident, $signed:ty, $variant:ident, $signed_alias:ident, $argument:ident;
      $($name:ident, $wasm:ident => $body:expr;)+) => {
-        selectors!($enum; $($name, $wasm;)+);
+        selectors!(@decoded $enum; $($name, $wasm;)+);
         impl $enum {
             #[cfg(test)]
             #[inline(always)] pub(crate) fn apply(self, $argument: $signed) -> WasmValue {
@@ -70,7 +70,7 @@ macro_rules! integer_unary_operators {
     ($signed:ident, $argument:ident;
      $($name:ident, $i32:ident, $i64:ident => $body:expr;)+
      @i64 $($wide_name:ident, $wide_wasm:ident => $wide_body:expr;)+) => {
-        selectors!(I32UnaryOperator; $($name, $i32;)+);
+        selectors!(@decoded I32UnaryOperator; $($name, $i32;)+);
         unary_family!(I64UnaryOperator, i64, I64, $signed, $argument; $($name, $i64 => $body;)+ $($wide_name, $wide_wasm => $wide_body;)+);
     };
 }

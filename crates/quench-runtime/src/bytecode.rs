@@ -3218,9 +3218,11 @@ pub(crate) fn private_identity_label(identity: &str) -> Option<&str> {
     (!label.is_empty()).then_some(label)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum DispatchClass {
+    /// The class a function without a numeric body takes, and a lowering's default.
+    #[default]
     General,
     Numeric,
 }
