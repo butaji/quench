@@ -59,6 +59,21 @@ pub(crate) enum PrototypeProof {
     Linked { expected_link: u32 },
 }
 
+/// Which of the VM's entry lookups a read takes where its plan has no op for the receiver: the
+/// VM's polymorphic entries, its hashed entries, a prototype holder's entry, or an inherited
+/// entry's chain walk. Each is one frame host call (`PropertyFrame::field_entry`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum EntryKind {
+    /// The site's inline megamorphic entries, own or of the immediate prototype.
+    Polymorphic,
+    /// The site's hashed entries past the inline ones (`Vm::polymorphic_field_hit`).
+    Hashed,
+    /// The site's primary holder entry, for a direct object or any other receiver.
+    Holder,
+    /// The site's inherited entry, walked past the immediate prototype.
+    Inherited,
+}
+
 /// How a `GetField` site reads, as the proof its tier holds of the site.
 #[derive(Clone, Copy)]
 pub(crate) enum FieldPlan<'a> {
