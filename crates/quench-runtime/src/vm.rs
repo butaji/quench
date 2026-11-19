@@ -266,6 +266,7 @@ mod primitive_bench;
 mod primitives;
 pub(crate) mod program_store;
 mod promise;
+mod host_frames;
 mod promise_aggregate;
 mod promise_async;
 mod promise_jobs;

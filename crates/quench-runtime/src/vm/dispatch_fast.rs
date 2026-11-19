@@ -9498,7 +9498,7 @@ impl<H: Host> Vm<H> {
     fn resume_deferred_caller(&mut self, call_pc: usize, before: usize) {
         // The natives running beside the activations recorded the frame count without them;
         // their caller is now the innermost new frame (`Vm::function_caller`).
-        let natives = self.realm.promise.active_native.len();
+        let natives = self.host_frame_count();
         self.shift_beside_natives(natives, before, self.frames.len() - before);
         // The call runs from the innermost activation's frame, resuming after it.
         let frame = self.frames.len() - 1;
@@ -9506,16 +9506,6 @@ impl<H: Host> Vm<H> {
         self.frames[frame].pc_is_resume = true;
     }
 
-    /// Running natives, innermost of the first `natives`, that recorded `depth` frames beside
-    /// activations now `added` frames above it: their caller is the innermost of those.
-    fn shift_beside_natives(&mut self, natives: usize, depth: usize, added: usize) {
-        for native in self.realm.promise.active_native[..natives].iter_mut().rev() {
-            if native.frame_depth != depth {
-                break;
-            }
-            native.frame_depth += added;
-        }
-    }
 
     /// The lane's exit (`dispatch_in_lane`'s exit record): a running leaf, whose records may
     /// leave the lane (`materialize_leaf_in_lane`), then every activation becomes a frame the
@@ -9735,7 +9725,7 @@ impl<H: Host> Vm<H> {
             // The native's caller is now the innermost of its activations' frames, as when
             // its deferred call is observed (`materialize_deferred_lane_now`).
             let added = *self.lane_stack.boundary_frames.get_or_insert(self.frames.len() - before);
-            let natives = boundary.natives.min(self.realm.promise.active_native.len());
+            let natives = boundary.natives.min(self.host_frame_count());
             self.shift_beside_natives(natives, boundary.deferred.frames, added);
         }
         self.lane_stack.values.clear();
@@ -20071,7 +20061,7 @@ impl<H: Host> Vm<H> {
                 pending: saved.pending,
                 executing: saved.executing,
                 deferred,
-                natives: self.realm.promise.active_native.len(),
+                natives: self.host_frame_count(),
             });
         // A callback of a native an earlier callback's frames run nests its own boundary.
         let outer_boundary_frames = self.lane_stack.boundary_frames.take();

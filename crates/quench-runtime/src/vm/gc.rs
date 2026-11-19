@@ -770,13 +770,7 @@ impl<H: Host> Vm<H> {
         ));
         roots.extend(self.test262_agent.roots());
         roots.extend(self.shared_async_waiters.iter().map(|w|w.promise));
-        roots.extend(
-            self.realm
-                .promise
-                .active_native
-                .iter()
-                .flat_map(|activation| [activation.callable, activation.receiver]),
-        );
+        self.host_frame_roots(&mut roots);
         roots.extend(
             self.realm.promise.rejection_notifications.iter().map(
                 |notification| match notification {
