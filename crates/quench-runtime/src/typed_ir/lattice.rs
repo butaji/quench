@@ -82,6 +82,8 @@ impl Type {
         Languages::of(ValueType::Number).union(Languages::of(ValueType::Boolean))
             .union(Languages::of(ValueType::Null)).union(Languages::of(ValueType::Undefined)).bits()));
     pub(crate) const NUMBER: Self = Self::language(ValueType::Number);
+    /// `undefined`, what `Type::immediate(Value::UNDEFINED)` is, as a constant the stencil build can name.
+    pub(crate) const UNDEFINED: Self = Self::language(ValueType::Undefined);
     /// The integers of the whole int32 span, the widest range an int32-represented value holds.
     pub(crate) const INT32: Self = Self(TypeKind::Int(IntRange::FULL));
     /// The canonical direct-object tag only: no object-table range, base,

@@ -53,6 +53,7 @@ fn suspended<W, C>(control: Option<C>) -> Step<W, C> {
     }
 }
 
+#[inline(always)]
 fn guard_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let held = match operation {

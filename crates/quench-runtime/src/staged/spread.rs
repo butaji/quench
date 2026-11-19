@@ -5,7 +5,10 @@
 //! is the one definition every tier runs.
 
 use super::callout::calling;
-use super::{Arguments, NumericFrame, NumericStage, Operation, Step};
+use super::{NumericFrame, NumericStage, Operation, Step};
+#[cfg(not(stencil_build))]
+use super::Arguments;
+#[cfg(not(stencil_build))]
 use crate::bytecode::{ConstructArguments, Op, WideInstruction};
 
 /// What the argument registers of a call-out call hold.
@@ -25,6 +28,7 @@ pub(crate) enum Passing {
 
 /// The call-out row of a spread call or a super construction; `None` for any other instruction,
 /// and for a direct eval, which the host decides.
+#[cfg(not(stencil_build))]
 #[inline(always)]
 pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>> {
     let destination = || instruction.result_register();

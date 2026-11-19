@@ -536,21 +536,21 @@ impl<W, P> Operation<W, P> {
         }
         match operator {
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot { destination, source },
+            _ if operator == crate::vm::operations::unary_operator::LogicalNot => Self::LogicalNot { destination, source },
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::Typeof as u32 => Self::TypeofString { destination, source },
+            _ if operator == crate::vm::operations::unary_operator::Typeof => Self::TypeofString { destination, source },
             _ if operator == crate::bytecode::UNARY_TYPEOF_INDEX => Self::TypeofIndex { destination, source },
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::BitwiseNot as u32 =>
+            _ if operator == crate::vm::operations::unary_operator::BitwiseNot =>
                 Self::Number(NumberOperation::BitwiseNot { destination, source: Operand::register(source) }),
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::UnaryNegation as u32 =>
+            _ if operator == crate::vm::operations::unary_operator::UnaryNegation =>
                 Self::number_unary(destination, source, crate::vm::operations::NumberUnary::Negate),
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::UnaryPlus as u32 =>
+            _ if operator == crate::vm::operations::unary_operator::UnaryPlus =>
                 Self::number_unary(destination, source, crate::vm::operations::NumberUnary::Plus),
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::Void as u32 => Self::Void { destination },
+            _ if operator == crate::vm::operations::unary_operator::Void => Self::Void { destination },
             _ => Self::Unary { destination, source, operator },
         }
     }

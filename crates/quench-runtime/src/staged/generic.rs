@@ -19,6 +19,7 @@ pub(super) fn is_value_operand(operand: Operand) -> bool {
 }
 
 impl<W, P> Operation<W, P> {
+    #[cfg(not(stencil_build))]
     /// The `Binary`, `ToPropertyKey` and `JumpBinaryFalse` operations of `decode`; `None` where a `Binary`
     /// carries a result flag (`decode_completed` strips it first).
     #[inline(always)]
@@ -35,6 +36,7 @@ impl<W, P> Operation<W, P> {
         })
     }
 
+    #[cfg(not(stencil_build))]
     /// `IntCaseIndex`: the case slot of register `c` among the `b` dense int labels from `imm`.
     fn decode_int_case(instruction: WideInstruction) -> Option<Self> {
         let count = instruction.element_count();
@@ -65,6 +67,7 @@ impl<W, P> Operation<W, P> {
         Self::decode_binary(instruction)
     }
 
+    #[cfg(not(stencil_build))]
     /// `Binary`: an arithmetic, bitwise or relation operator as its Number operation
     /// (`numeric::binary_operation`), equality as its own row, and any other operator the VM's.
     /// Every operand kind decodes; whether a frame asks the VM for a record its words leave is
@@ -111,7 +114,7 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 #[inline(always)]
 fn void<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register) -> Step<S::Word, F::Control> {
-    let undefined = Constant { value: Value::UNDEFINED, ty: Type::immediate(Value::UNDEFINED) };
+    let undefined = Constant { value: Value::UNDEFINED, ty: Type::UNDEFINED };
     let (value, fact) = frame.constant(stage, undefined);
     frame.write(stage, destination, value, fact);
     Step::Value(value)
