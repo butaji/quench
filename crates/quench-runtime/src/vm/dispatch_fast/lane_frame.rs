@@ -2556,6 +2556,10 @@ macro_rules! row_decode {
             Operation::decode_wasm_access($fields, crate::staged::DecodeContext::EMPTY)
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmVector)) } {
             Operation::decode_wasm_vector($fields, crate::staged::DecodeContext::EMPTY)
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Property)) } {
+            // A named read, a named store or `delete` (`f5df21c6c1`): without it every GetField row
+            // decoded to nothing and left for the general step.
+            Operation::decode_property(crate::staged::Fields::wide($fields))
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Literal)) } {
             Operation::decode_literal(crate::staged::Fields::wide($fields), ())
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Lane)) } {
