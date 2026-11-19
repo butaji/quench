@@ -8,12 +8,12 @@
  * arena (as JSON.parse allocates one JS value per node), strings without escapes as views into
  * the input. The arena is reset before each timed parse, so the previous DOM is released outside
  * the timed region. The last result is serialized again and must equal the input string.
- * Usage: json-parse-inspector [jetstream-root]; run from the repo root. */
+ * Usage: json-parse-inspector [iterations [jetstream-root]]; run from the repo root. */
 #include "json-analogue.h"
 
 int main(int argc, char **argv) {
-  const int iterations = 20; /* // iterations: header */
-  const char *root = argc > 1 ? argv[1] : "quench-bench/jetstream";
+  int iterations = argc > 1 ? atoi(argv[1]) : 20; /* argv[1] = iterations (// iterations: header) */
+  const char *root = argc > 2 ? argv[2] : "quench-bench/jetstream";
   char path[4096];
   snprintf(path, sizeof path, "%s/SeaMonster/inspector-json-payload.js.z", root);
 

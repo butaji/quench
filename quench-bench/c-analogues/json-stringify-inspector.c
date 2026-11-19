@@ -8,12 +8,12 @@
  * serializes the DOM into the output buffer from the start, as JSON.stringify builds the result.
  * The buffer keeps its capacity between iterations, so the timed work is the serialization
  * itself, not buffer growth. The last output must equal the canonical text.
- * Usage: json-stringify-inspector [jetstream-root]; run from the repo root. */
+ * Usage: json-stringify-inspector [iterations [jetstream-root]]; run from the repo root. */
 #include "json-analogue.h"
 
 int main(int argc, char **argv) {
-  const int iterations = 20; /* // iterations: header */
-  const char *root = argc > 1 ? argv[1] : "quench-bench/jetstream";
+  int iterations = argc > 1 ? atoi(argv[1]) : 20; /* argv[1] = iterations (// iterations: header) */
+  const char *root = argc > 2 ? argv[2] : "quench-bench/jetstream";
   char path[4096];
   snprintf(path, sizeof path, "%s/SeaMonster/inspector-json-payload.js.z", root);
 
