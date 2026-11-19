@@ -1,3 +1,34 @@
+// Hand arms left: the arms of `Vm::step` that still name an opcode, and why none is a family arm.
+// `step` carries `#[quench_macros::operation_semantics]`, which rejects match guards ("semantic dispatch
+// guards must live inside the operation"), so a family arm such as `op if op.owned_step().is_some()` or
+// `op if op.generic_step() == Some(GenericStep::LaneResult)` cannot be written here. Until that macro
+// accepts a family guard (or the family moves into the operation), these stay named:
+// - Owned-step rows, run first, then `owner_step` (`Op::owned_step`): LoadLocal, StoreLocal, LoadCapture,
+//   StoreCapture, LoadName, LoadNameCall, LoadNameTypeof. (LoadEnvLocal, StoreVarBinding, StoreEnvLocal and
+//   StoreName take `owner_step` alone, with no row first, and must keep that.)
+// - Lane-result call-outs (`GenericStep::LaneResult`): ToPropertyKey, GetIterator, IteratorClose,
+//   AppendArray, ForInStart; and Delete, which takes the same `staged_value_step` call-out.
+// - Row, then a per-opcode miss: LoadConst, GetField, GetIndex, ToNumeric, SetField, SetFieldStrict,
+//   SetIndex, Binary, NumericAdd, NumericMultiply, IncDec, Unary, JumpBinaryFalse. Each miss is that
+//   opcode's own semantics, not a staged row's.
+// - Row that stops the run: Return, Throw.
+// - Call forms with their own convention (spread, forwarded arguments, inline and known targets, per-form
+//   misses): Call, CallArray, CallSpread, CallForwardingArguments, CallKnown, CallMethod, CallThisMethod,
+//   Construct.
+// - Suspension and no-op: Await, Yield, YieldStar (`staged_suspend`), Nop (must not reach `step_wasm`), Wide.
+// - Literal allocation under the tier's proof (`Decoder::Literal`, `Operation::decode_literal`): MakeClosure,
+//   MakeObject, MakeObject2, MakeObjectLiteral, SuperConstArrayObject2, MakeArray, MakeConstArray,
+//   MakeLiteralTemplate, CreateRegExpLiteral, StringConcat.
+// - Hand semantics with no staged row yet: CloneEnv (environment clone plan), LoadThis, LoadCallee,
+//   LoadImportMeta, InitializeThis, InitializeTdz, CallFirstChunk, CacheTemplateObject,
+//   LoadCachedTemplateObject, ResolveName, LoadResolvedName, StoreResolvedName, DeleteName,
+//   ValidateClassHeritage, RequireObjectCoercible, RequireIteratorResult, SuperCallCheck,
+//   IteratorCleanupPush, IteratorCleanupPop, SetFunctionName, SetFunctionNameKey, SetFunctionDebugName,
+//   SetThisField, SetThisFieldStrict, DefinePropertyRecord, DefinePrivateField, DefineField,
+//   DefineComputedField, DefineArrayElement, CopyDataProperties, CheckPrivate, PrivateIn, MarkPrivateName,
+//   ArgumentsLength, ArgumentGet, GetAsyncIterator, ForInNext (lane loop exit), StringCaseIndex,
+//   WasmBranchTable.
+
 use super::*;
 use super::dispatch_frame::{InterpreterFrame, RowRun};
 

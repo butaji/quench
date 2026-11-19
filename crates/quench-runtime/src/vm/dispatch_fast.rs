@@ -16653,8 +16653,8 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
         _ if crate::staged::copy_properties_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::CopyDataProperties as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::COPY_DATA_PROPERTIES as u16 }> as Handler),
         _ if opcode.steps_in_lane() => Some(general_step_in_lane::<H>),
-        _ if crate::staged::element_read_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::GetIndex as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_INDEX as u16 }> as Handler),
-        _ if crate::staged::element_write_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::SetIndex as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::SET_INDEX as u16 }> as Handler),
+        _ if crate::staged::element_read_family(opcode) => Some(protocol_row::<H, ELEMENT_READ, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_INDEX as u16 }> as Handler),
+        _ if crate::staged::element_write_family(opcode) => Some(protocol_row::<H, ELEMENT_WRITE, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::SET_INDEX as u16 }> as Handler),
         _ if crate::staged::known_call_family(opcode) => Some(known_call_handler::<H>()),
         _ if crate::staged::call_family(opcode) => Some(script_call_row::<H>(ANY_ARGC)),
         _ if crate::staged::call_array_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::CallArray as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_ARRAY as u16 }> as Handler),
@@ -17850,7 +17850,7 @@ fn proved_row<H: Host>(handler: *const ()) -> Option<Handler> {
     }
     // A store keeps its generic record (`set_index_miss`) until a proof names it: the keyed store
     // has no row of its own in the lane, so this is the one place a store's row is installed.
-    if handler == protocol_row::<H, { crate::bytecode::Op::SetIndex as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::SET_INDEX as u16 }> as Handler as *const () {
+    if handler == protocol_row::<H, ELEMENT_WRITE, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::SET_INDEX as u16 }> as Handler as *const () {
         return Some(generated_row::<H, ELEMENT_WRITE, ACC_NONE, FLAG_SET>);
     }
     None

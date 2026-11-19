@@ -348,6 +348,9 @@ impl Traits {
     pub(crate) const ARITHMETIC_BINARY: Self = Self(1 << 40);
     /// A first-call stub (`CallFirstChunk`): its function's chunk compiles on the first call.
     pub(crate) const FIRST_CALL_STUB: Self = Self(1 << 41);
+    /// An op that builds an object literal from its site (`MakeObject2`, `MakeObjectLiteral`) or from a
+    /// superinstruction whose object is one (`SuperConstArrayObject2`): the profile's object-literal sites.
+    pub(crate) const OBJECT_LITERAL: Self = Self(1 << 42);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
