@@ -170,6 +170,12 @@ pub(crate) fn leading_zeros(uint32: u32) -> u32 {
     uint32.leading_zeros()
 }
 
+/// `Math.clz32` of the int32 word `value`, on `stage`: its unsigned low 32 bits' leading zeros.
+#[inline(always)]
+pub(crate) fn count_leading_zeros<S: NumericStage>(stage: &mut S, value: S::Word) -> S::Word {
+    stage.int_leading_zeros(value)
+}
+
 /// `operation` of the binary64 word `value`, on `stage`.
 #[inline(always)]
 pub(crate) fn unary<S: NumericStage>(stage: &mut S, operation: FloatUnary, value: S::Word) -> S::Word {

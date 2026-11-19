@@ -367,6 +367,11 @@ impl NumericStage for Emit<'_, '_> {
     fn int_multiply(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
         self.raw_binary(Binary::Mul, left, right)
     }
+    /// A 64-bit word's low 32 bits are the int32; the count is over those alone.
+    fn int_leading_zeros(&mut self, a: ir::Value) -> ir::Value {
+        let a = if self.raw_lane(a) == Lane::I64 { self.narrow(a) } else { a };
+        self.raw_unary(Unary::LeadingZeros, a)
+    }
     fn float_extreme(&mut self, maximum: bool, left: ir::Value, right: ir::Value) -> ir::Value {
         self.raw_binary(if maximum { Binary::FloatMax } else { Binary::FloatMin }, left, right)
     }
