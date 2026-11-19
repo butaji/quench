@@ -82,8 +82,8 @@ fn run(start_pc: usize, stop_pc: usize) -> Run {
     let (_code, entry) = trampoline();
     let mut vm = tests::semantic_vm("throw 7;");
     REACHED.with(|reached| *reached.borrow_mut() = Reached::default());
-    let (status, word) = JsNativeActivation::with(&mut vm, ProgramId::MAIN, 0, start_pc, false, false, |activation, vm| {
-        let dispatch = &mut activation.dispatch;
+    let (status, word) = JsStepDispatch::with(&mut vm, ProgramId::MAIN, 0, start_pc, false, false, |activation, vm| {
+        let dispatch = &mut *activation;
         dispatch.stop_pc = stop_pc;
         dispatch.returned_pc = BODY_RETURNED_PC;
         let interrupt = vm.execution_interrupt.atomic_flag() as *const _;

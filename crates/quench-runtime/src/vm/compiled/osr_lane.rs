@@ -6,21 +6,21 @@ use super::*;
 /// The loop's own words: its receiver, the entry's counter and the scratch a leave inside an
 /// inlined callee writes the callee's live registers to.
 pub(super) fn bind_loop<H: Host>(
-    native: &mut JsNativeActivation, vm: &mut Vm<H>, region: &LoopRegion, entry: &mut LoopEntry,
+    native: &mut JsStepDispatch, vm: &mut Vm<H>, region: &LoopRegion, entry: &mut LoopEntry,
     (_frame, lane_context): (usize, usize),
 ) {
-    native.dispatch.bind_native_storage(vm);
-    native.dispatch.lane_context = lane_context;
+    native.bind_native_storage(vm);
+    native.lane_context = lane_context;
     // A region's `THIS`-based reads take the running activation's receiver, as a lane
     // body's do (`lane_loop_body`); `with` leaves it `DELETED`. A frameless activation's
     // receiver is the lane context's: `frame` is then the VM frame beneath it, its caller's.
     // SAFETY: `lane_context` is the running lane's context for `H`.
-    native.dispatch.receiver = unsafe { super::dispatch_fast::lane_context_this::<H>(lane_context) }.to_bits();
+    native.receiver = unsafe { super::dispatch_fast::lane_context_this::<H>(lane_context) }.to_bits();
     // The counter is the `words` field's first word, not the struct's offset 0:
     // `LoopEntry` is not `repr(C)`.
-    native.dispatch.loop_entry = entry.words_mut() as usize;
+    native.loop_entry = entry.words_mut() as usize;
     // A leave inside an inlined callee writes the callee's live registers here.
-    if region.inlining.is_some() { native.dispatch.inlined = entry.scratch_address(); }
+    if region.inlining.is_some() { native.inlined = entry.scratch_address(); }
 }
 
 /// The loop entry's captures as the dense slot view the lane capture reads use, a stored
@@ -42,7 +42,7 @@ fn dense_captures(region: &LoopRegion, entry: &LoopEntry) -> Vec<crate::Value> {
 /// # Safety
 /// `lane_context` is the running lane's context for `H`.
 pub(super) unsafe fn bind_captures<H: Host>(
-    native: &mut JsNativeActivation, region: &LoopRegion, entry: &LoopEntry, lane_context: usize,
+    native: &mut JsStepDispatch, region: &LoopRegion, entry: &LoopEntry, lane_context: usize,
 ) -> Vec<crate::Value> {
     // A region that calls reads its captures live too where the lane has them: a callee may
     // store one, which a copy would not see. Where it has none, the copy as before.
@@ -53,10 +53,10 @@ pub(super) unsafe fn bind_captures<H: Host>(
     let none = region.captures.is_empty() && region.stored_captures.is_empty();
     let captures = if live.is_some() || none { Vec::new() } else { dense_captures(region, entry) };
     if let Some(((values, len), stores)) = live {
-        (native.dispatch.capture_values, native.dispatch.capture_len, native.dispatch.capture_stores) = (values, len, usize::from(stores));
+        (native.capture_values, native.capture_len, native.capture_stores) = (values, len, usize::from(stores));
     } else if !captures.is_empty() {
-        native.dispatch.capture_values = captures.as_ptr();
-        native.dispatch.capture_len = captures.len();
+        native.capture_values = captures.as_ptr();
+        native.capture_len = captures.len();
     }
     captures
 }
@@ -68,22 +68,22 @@ pub(super) unsafe fn bind_captures<H: Host>(
 /// `registers` is the activation's live register file; `lane_context` the running lane's
 /// context for `H`.
 pub(super) unsafe fn bind_frame<H: Host>(
-    native: &mut JsNativeActivation, vm: &mut Vm<H>, (program, function, lane_context): (ProgramId, u32, usize),
+    native: &mut JsStepDispatch, vm: &mut Vm<H>, (program, function, lane_context): (ProgramId, u32, usize),
     registers: *mut crate::value::Value,
 ) {
     if let Some(program) = vm.programs.get(program)
         && let Some(body) = program.function_get(function as usize) {
-        native.dispatch.native_registers = registers;
-        native.dispatch.register_count = usize::from(body.registers);
-        native.dispatch.native_locals = super::dispatch_fast::lane_body_locals::<H>(lane_context as *mut (), registers, false);
-        native.dispatch.local_count = usize::from(body.locals);
-        native.dispatch.body = body as *const _;
-        native.dispatch.residual = Rc::as_ptr(&program) as usize;
+        native.native_registers = registers;
+        native.register_count = usize::from(body.registers);
+        native.native_locals = super::dispatch_fast::lane_body_locals::<H>(lane_context as *mut (), registers, false);
+        native.local_count = usize::from(body.locals);
+        native.body = body as *const _;
+        native.residual = Rc::as_ptr(&program) as usize;
     }
-    native.dispatch.refresh_object_bases(vm);
+    native.refresh_object_bases(vm);
     // The program's field cache entries, which its site rows read and a body it calls by its entry
     // finds bound where the region lends it the lane frame's place (`region_lend`).
-    native.dispatch.field_entries = vm.program_field_entries(program).unwrap_or(0);
+    native.field_entries = vm.program_field_entries(program).unwrap_or(0);
 }
 
 /// The payload a region runs with: the lane's own, or one lent to it where `lend` names whether it
@@ -107,7 +107,7 @@ unsafe fn payload_for<H: Host>(vm: &mut Vm<H>, dispatch: &mut JsStepDispatch, le
 /// As `CompiledOsrRegion::run`: `registers` is the live register file, and `vm` and
 /// `interrupt` belong to this lane activation.
 pub(super) unsafe fn enter<H: Host>(
-    native: &mut JsNativeActivation, vm: &mut Vm<H>, program: ProgramId,
+    native: &mut JsStepDispatch, vm: &mut Vm<H>, program: ProgramId,
     (code, resume): (BodyEntry, u64), registers: *mut crate::value::Value,
     interrupt: *const crate::execution_interrupt::ExecutionInterrupt, (lane_context, lend): (usize, Option<bool>),
 ) -> RegionRun {
@@ -115,7 +115,7 @@ pub(super) unsafe fn enter<H: Host>(
     context.vm = std::ptr::from_mut(vm).cast();
     context.program = program;
     // SAFETY: the region runs on the lane's activation at the lane stack's top, and `reclaim` follows the run.
-    let payload = unsafe { payload_for(vm, &mut native.dispatch, lend) };
+    let payload = unsafe { payload_for(vm, &mut *native, lend) };
     context.adapter_payload = payload.cast();
     // The region's call rows reload its payload's heap bases after the callee ran (`lane_region_call`).
     // SAFETY: `lane_context` is the running lane's.
@@ -129,12 +129,12 @@ pub(super) unsafe fn enter<H: Host>(
     unsafe { super::dispatch_fast::lane_region_payload::<H>(lane_context, outer) };
     if lend.is_some() {
         // SAFETY: `payload` is the one `lend` was given, and the run it lent for is over.
-        unsafe { region_lend::reclaim(&mut native.dispatch) };
+        unsafe { region_lend::reclaim(&mut *native) };
     }
     if let Some(Raised::Panic(panic)) = context.raised.take() {
         std::panic::resume_unwind(panic);
     }
-    let exit = LaneExit::read(status, word, || native.dispatch.returned_pc);
+    let exit = LaneExit::read(status, word, || native.returned_pc);
     // A leave with native frames on the lane stack is read in the innermost of them.
     RegionRun { exit, nested: vm.lane_stack.native_depth() != 0 }
 }
