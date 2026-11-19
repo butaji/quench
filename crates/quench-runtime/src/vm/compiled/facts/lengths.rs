@@ -194,11 +194,49 @@ impl Relations {
         }
     }
 
+    /// `result` is `first - step` where `step` is a constant of at least one: `result` is below `first`
+    /// (`under`), whatever `first` is, as the subtraction only lowers it.
+    fn relate_difference(&mut self, lookup: &dyn Fn(Operand) -> Option<IntRange>, instruction: WideInstruction) {
+        if instruction.result_flags() != 0 || !is_numeric_binary(instruction)
+            || NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()) != Some(NumberArithmetic::Subtract) { return; }
+        let Some(first) = instruction.operand_b().register_index() else { return };
+        let result = instruction.result_register();
+        let step = lookup(instruction.operand_c()).filter(|step| step.min == step.max && step.min >= 1);
+        if step.is_none() || first == result { return; }
+        if let Some(slot) = self.under.get_mut(usize::from(result)) {
+            *slot = Some(first);
+            self.name(first);
+        }
+    }
+
+    /// `register` is decremented in place: the relations it holds stay true of its lower value (a value
+    /// below a bound is below it once lowered), but a relation another register holds to its value (a
+    /// bound it is below) does not, so only those are dropped. Its length is no longer its array's.
+    fn decrement(&mut self, register: Register) {
+        let index = usize::from(register);
+        let kept = [&self.below, &self.under, &self.atmost, &self.twice].map(|table| table.get(index).copied().flatten());
+        self.kill(register);
+        for (table, array) in [&mut self.below, &mut self.under, &mut self.atmost, &mut self.twice].into_iter().zip(kept) {
+            if let Some(slot) = table.get_mut(index) { *slot = array; }
+        }
+    }
+
+    /// The register `instruction` decrements in place, where it is `register--` (no flags).
+    fn decremented(instruction: WideInstruction) -> Option<Register> {
+        if instruction.result_flags() != 0 { return None; }
+        match crate::vm::compiled::decoded(instruction) {
+            Some(Operation::Number(NumberOperation::IncDec { destination, source, decrement: true, .. })) if destination == source => Some(destination),
+            _ => None,
+        }
+    }
+
     /// The relations after `instruction` at `pc`.
     pub(super) fn step(&mut self, model: &Model<'_>, pc: usize, instruction: WideInstruction,
         written: &dyn Fn(WideInstruction) -> Vec<Register>, lookup: &dyn Fn(Operand) -> Option<IntRange>, numeric_store: bool) {
         if matches!(Operation::<u64, ()>::of(instruction), Some(Operation::Move { .. })) && instruction.result_flags() == 0 {
             self.copy(instruction.result_register(), instruction.register_b());
+        } else if let Some(register) = Self::decremented(instruction) {
+            self.decrement(register);
         } else {
             for register in written(instruction) { self.kill(register); }
         }
@@ -206,6 +244,7 @@ impl Relations {
         self.relate_read(model.program, instruction);
         self.relate_sum(lookup, instruction);
         self.relate_shift(lookup, instruction);
+        self.relate_difference(lookup, instruction);
     }
 }
 
