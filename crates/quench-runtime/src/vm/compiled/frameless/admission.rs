@@ -3,6 +3,7 @@
 //! captures.
 use super::{CallEntry, CACHE_ENTRIES, MATERIALIZATION_LIMIT, META_PARAMS, META_REGISTERS, THIS_NONE, THIS_RECEIVER};
 use super::super::{Host, JsStepDispatch, ResidualProgram, Vm};
+use super::super::admission::{admit_callee, CalleeUse};
 use crate::Value;
 
 /// Admits `callee` for frameless calls from the payload's program and caches it: its
@@ -61,8 +62,7 @@ fn admit_function<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: 
     let (owner, function, env) = vm.in_loop_call_target(program, callee)?;
     if owner != dispatch.program_id { return None; }
     let body = program.function_get(function as usize)?;
-    let plan = body.call_plan(program);
-    if !plan.in_loop || !plan.registers_only || body.rest { return None; }
+    admit_callee(program, body, CalleeUse::Frameless).ok()?;
     let epoch = vm.cache_epochs.gc;
     if vm.frameless.materializations.get(&(owner.raw(), function))
         .is_some_and(|&(leaves, counted)| leaves >= MATERIALIZATION_LIMIT && counted == epoch) {
