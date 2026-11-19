@@ -172,13 +172,16 @@ pub(super) struct ExitSig {
 /// leaves there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ExitSite {
-    pub(super) sig: usize,
-    pub(super) exit: LaneExit,
+    /// The leave's word (`LaneExit::word`), which `LaneExit::decode` reads back; the table's key.
+    /// Kept as a word, not a `LaneExit`, which holds a `Value` and is three words wide.
+    word: u64,
+    pub(super) sig: u32,
     pub(super) id: u32,
-    pub(super) unit_pc: usize,
+    pub(super) unit_pc: u32,
 }
 
-/// A unit's leaves, each place once, ordered by leave word, over its interned sigs.
+/// A unit's leaves, each place once, ordered by leave word, over its interned sigs. Built once per
+/// compile and kept by the body it publishes, so its tables hold no capacity past their length.
 #[derive(Default)]
 pub(in crate::vm) struct ExitTable {
     sigs: Vec<ExitSig>,
@@ -200,6 +203,8 @@ impl ExitTable {
             };
             table.add(exit, sig, unit_pc);
         }
+        table.sigs.shrink_to_fit();
+        table.sites.shrink_to_fit();
         table
     }
 
@@ -221,22 +226,25 @@ impl ExitTable {
 
     /// Adds the leave `exit` unless an earlier unit PC already leaves there.
     fn add(&mut self, exit: LaneExit, sig: usize, unit_pc: usize) {
-        let Err(at) = self.sites.binary_search_by_key(&exit.word(), |site| site.exit.word()) else { return };
+        let word = exit.word();
+        let Err(at) = self.sites.binary_search_by_key(&word, |site| site.word) else { return };
         let id = self.sites.len() as u32;
-        self.sites.insert(at, ExitSite { sig, exit, id, unit_pc });
+        let sig = u32::try_from(sig).expect("a unit interns fewer sigs than a u32 holds");
+        let unit_pc = u32::try_from(unit_pc).expect("a unit has fewer PCs than a u32 holds");
+        self.sites.insert(at, ExitSite { word, sig, id, unit_pc });
     }
 
     /// The site at the place `exit` leaves, which only a leave at a PC has.
     pub(super) fn site(&self, exit: LaneExit) -> Option<&ExitSite> {
         if !matches!(exit, LaneExit::At(_) | LaneExit::Inlined { .. }) { return None; }
-        self.sites.binary_search_by_key(&exit.word(), |site| site.exit.word()).ok().map(|index| &self.sites[index])
+        self.sites.binary_search_by_key(&exit.word(), |site| site.word).ok().map(|index| &self.sites[index])
     }
 
     /// The diagnostic name of the leave `exit` (`QUENCH_LANE_BODY`): its site id and, for an
     /// inlined leave, where its sig stores each live value (`slot>scratch`).
     pub(in crate::vm) fn describe(&self, exit: LaneExit) -> String {
         let Some(site) = self.site(exit) else { return String::new() };
-        let sig = &self.sigs[site.sig];
+        let sig = &self.sigs[site.sig as usize];
         if sig.kind != ExitKind::Inlined { return format!(" s{}", site.id); }
         let stores = sig.live.iter().map(|value| match value.source {
             Source::Scratch(at) => format!("{}>{at}", value.slot),

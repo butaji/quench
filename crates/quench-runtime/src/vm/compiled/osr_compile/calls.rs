@@ -75,6 +75,12 @@ impl CallCode {
         Self { inlined, direct, records, caller_registers, recovery, invalidation }
     }
 
+    /// Releases the capacity its vectors hold past their length (`LaneDependencies::trim`).
+    pub(in crate::vm) fn trim(&mut self) {
+        self.inlined.shrink_to_fit();
+        self.records.shrink_to_fit();
+    }
+
     /// Whether its code calls a callee by its entry (a b-jit direct row, whose record it owns, or a
     /// Cranelift region's direct call): it runs on the lane frame's payload (`region_lend`), whose
     /// lane stack words the callee's window and frame are pushed through.

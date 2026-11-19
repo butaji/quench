@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 /// The unit PCs of a previous body's leaves: the specialization's feedback.
 pub(super) fn unit_leaves(unit: &lane_unit::Unit, generic: &[LaneExit]) -> Vec<usize> {
     let exits = ExitTable::of_unit(unit);
-    generic.iter().filter_map(|exit| exits.site(*exit).map(|site| site.unit_pc)).collect()
+    generic.iter().filter_map(|exit| exits.site(*exit).map(|site| site.unit_pc as usize)).collect()
 }
 
 /// The calls a unit still makes (none it inlines) whose callees have bodies. Each candidate
