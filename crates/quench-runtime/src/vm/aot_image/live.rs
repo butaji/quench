@@ -55,14 +55,16 @@ pub(crate) fn install<H: Host>(image: &AotImage, vm: &mut Vm<H>) -> Result<LiveI
     let layout = layout(image);
     let invalidation = Invalidation::default();
     let operands: Box<[[u64; 2]]> = image.operands.iter().map(|record| record.words).collect();
+    let mut linked = vec![false; image.functions.len()];
     let code = CodeMemory::assemble(layout.length, |pointer, out| {
         let bases: Box<[u64]> = layout.bases.iter().map(|at| (pointer.addr() + at) as u64).collect();
         let places = Places { bases: &bases, invalidation: invalidation.address(), operands: &operands };
-        place(image, vm, &layout, (pointer.addr(), &places), out)
+        place(image, vm, &layout, (pointer.addr(), &places), (out, &mut linked))
     })?;
     let start = code.pointer().addr();
     let bases: Box<[usize]> = layout.bases.iter().map(|at| start + at).collect();
-    let lanes: Box<[Option<usize>]> = layout.lanes.iter().map(|lane| lane.map(|at| start + at)).collect();
+    let lanes: Box<[Option<usize>]> = layout.lanes.iter().zip(&linked)
+        .map(|(lane, linked)| lane.filter(|_| *linked).map(|at| start + at)).collect();
     let entries = bases.iter().zip(lanes.iter()).map(|(base, lane)| lane.unwrap_or(*base)).collect();
     Ok(LiveImage { _code: code, invalidation, operands, entries, bases, lanes })
 }
@@ -89,13 +91,18 @@ fn layout(image: &AotImage) -> Layout {
     Layout { bases, lanes, length }
 }
 
-/// Links every body of `image` into `out`, the block that starts at `start`, its symbols at `places`.
-fn place<H: Host>(image: &AotImage, vm: &mut Vm<H>, layout: &Layout, (start, places): (usize, &Places<'_>), out: &mut [u8]) -> Result<(), String> {
+/// Links every body of `image` into `out`, the block that starts at `start`, its symbols at
+/// `places`, and marks in `linked` each lane body that linked. A base body names only symbols the
+/// image fixes at load, so one that does not link fails the image; a lane body may name what the
+/// program makes as it runs (`HeapValueRecipe::PrototypeOf`, a callee's entry cell), which
+/// resolves when it is published (`link_lane`), so one that does not link yet is left unplaced.
+fn place<H: Host>(image: &AotImage, vm: &mut Vm<H>, layout: &Layout, (start, places): (usize, &Places<'_>),
+    (out, linked): (&mut [u8], &mut [bool])) -> Result<(), String> {
     let mut address = |namespace: u32, key: u32| resolve(image, vm, places, namespace, key);
     for (function, body) in image.functions.iter().enumerate() {
         link_into(out, start, layout.bases[function], &body.base.code, &mut address)?;
         if let (Some(lane), Some(at)) = (&body.lane, layout.lanes[function]) {
-            link_into(out, start, at, &lane.code, &mut address)?;
+            linked[function] = link_into(out, start, at, &lane.code, &mut address).is_ok();
         }
     }
     Ok(())

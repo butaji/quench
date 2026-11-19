@@ -209,7 +209,9 @@ impl Symbol {
 
 /// The word of the heap value or shape `symbol` names, built in `vm` from `image`'s recipes: the
 /// word a live lowering would embed (a heap value's bits, a shape's id). `None` for any other
-/// symbol, and for a recipe `vm` cannot build from the image alone (`Constant`, `PrototypeOf`).
+/// symbol, for a recipe `vm` cannot build from the image alone (`Constant`), and for one the
+/// running program has not made yet (`PrototypeOf` before the root activation creates the
+/// closure): a lane body that names one links when it is published (`live::link_lane`).
 pub(crate) fn resolve_recipe<H: Host>(symbol: Symbol, image: &AotImage, vm: &mut Vm<H>) -> Option<u64> {
     match symbol {
         Symbol::HeapValue(key) => Some(heap_value(image, vm, key)?.to_bits()),
@@ -227,8 +229,20 @@ fn heap_value<H: Host>(image: &AotImage, vm: &mut Vm<H>, key: u32) -> Option<Val
             let globals = vm.realm.globals;
             vm.own_property(globals, atom)
         }
-        HeapValueRecipe::Constant(_) | HeapValueRecipe::PrototypeOf(_) => None,
+        HeapValueRecipe::PrototypeOf(function) => prototype_of(vm, function),
+        HeapValueRecipe::Constant(_) => None,
     }
+}
+
+/// The own `prototype` of function `function`'s closure in the running program, where the program
+/// made exactly one (a top-level function, recorded as `Vm::cached_functions` finds it): with
+/// several, no one prototype is the function's, so the recipe resolves to none.
+fn prototype_of<H: Host>(vm: &mut Vm<H>, function: u32) -> Option<Value> {
+    let mut closures = vm.cached_functions(vm.active_program, function);
+    let closure = closures.next()?;
+    if closures.next().is_some() { return None; }
+    let atom = vm.prototype_atom();
+    vm.own_property(closure, atom).filter(|prototype| prototype.is_heap())
 }
 
 /// The shape of shape recipe `key`: the empty object of its prototype, then each field added
