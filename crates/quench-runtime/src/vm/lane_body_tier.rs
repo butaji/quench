@@ -433,7 +433,9 @@ impl LaneView {
                 LaneBody::Compiling { pending, wait: std::cell::Cell::new(wait), looks, recompiles, stuck }
             }
             super::super::compiled::LaneBodyOutcome::Published(published) => {
-                self.respecialize_callers();
+                // An optimizing compile after a quick body changes no caller's call: those that
+                // called the quick body by its entry or cell reach this one the same way.
+                if !self.optimize_due() { self.respecialize_callers(); }
                 self.specialized(entry, published, recompiles, stuck)
             }
             // A compile a collection or a changed fact outran is a body a lifecycle edge dropped.
