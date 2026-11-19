@@ -332,7 +332,7 @@ function scan(tree, branch, wantOwners) {
         add("specializer-driver", rel, lineOf(starts, f.at), f.name, `${f.name}: a separate specializer driver (principle 3: one specializer driver for every tier)`, { owner: "u-jit" });
     }
     // P12: delete dead paths.
-    for (const m of s.matchAll(/#\[allow\(dead_code\)\]/g))
+    for (const m of s.matchAll(/#!?\[allow\(dead_code\)\]/g))
       if (!inRanges(tests, m.index) && !pathIncluded.has(rel)) add("dead-code", rel, lineOf(starts, m.index), `dead@${lineOf(starts, m.index)}`, `#[allow(dead_code)] keeps a dead path (principle 12)`);
     // One policy home: QUENCH_* switches outside vm/switches.rs.
     if (inRuntime && !/vm\/switches\.rs$/.test(rel)) for (const m of src.matchAll(/env::var(?:_os)?\(\s*"(QUENCH_[A-Z0-9_]+)"/g))
@@ -487,7 +487,8 @@ function combine(outDir, statePath, inputs) {
   const prevKeys = new Set(prev.keys), nowKeys = new Set(items.map(i => i.key));
   for (const it of items) it.status = prevKeys.has(it.key) ? "open" : (prev.keys.length ? "new" : "open");
   const closed = prev.keys.filter(k => !nowKeys.has(k));
-  const owners = [...new Set(items.map(i => i.owner))].sort();
+  // An owner that just closed its last item stays listed (code 0, was N) once, so its count is seen to reach zero.
+  const owners = [...new Set([...items.map(i => i.owner), ...Object.keys(prev.code || {}).filter(o => prev.code[o] > 0)])].sort();
   const cats = Object.keys(CAT_TITLE);
   const stamp = new Date().toISOString().replace(/\.\d+Z$/, "Z");
   const weight = it => it.cat === "opcode-named" ? (+(/^(\d+)/.exec(it.detail) || [0, 1])[1]) : 1;
@@ -522,6 +523,7 @@ function combine(outDir, statePath, inputs) {
   const prevCode = prev.code || {};
   const codeBy = {};
   let delta = `Vision ledger ${stamp}: code gaps ${codeN}, measured gaps ${measN}; ${items.filter(i => i.status === "new").length} new, ${closed.length} closed.\n`;
+  fs.rmSync(path.join(outDir, "owners"), { recursive: true, force: true });
   fs.mkdirSync(path.join(outDir, "owners"), { recursive: true });
   for (const o of owners) {
     const mine = items.filter(i => i.owner === o);
