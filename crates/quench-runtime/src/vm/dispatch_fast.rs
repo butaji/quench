@@ -2291,11 +2291,11 @@ pub(super) struct LaneStack {
     /// `SHARED_PLANS`: every new activation of the same function under the same environment,
     /// as each call of an async function is, shares it.
     pub(super) last_window_plan: [Option<(ProgramId, u32, generator_windows::WindowPlan)>; generator_windows::SHARED_PLANS],
-    /// The record of the generator the lane last resumed as a window, under the collection
-    /// epoch of the resume (`Vm::windowed_generator_record`): its yield finds the record without
-    /// a heap lookup. A collection, the only way a generator's cell is freed and its index
-    /// reused, retires it.
-    pub(in crate::vm) last_generator: (Value, u64, *mut crate::vm::activation::GeneratorRecord),
+    /// The records of the two generators last looked up, the last first, each under the
+    /// collection epoch it was found in (`Vm::generator_record_mut`): a step, and a delegate's
+    /// step alternating with its delegating generator's, finds them without a heap lookup. A
+    /// collection, the only way a generator's cell is freed and its index reused, retires them.
+    pub(in crate::vm) last_generator: [(Value, u64, *mut crate::vm::activation::GeneratorRecord); 2],
 }
 
 /// Drops the entries of `held` that activations from index `depth` on own. Activations push
@@ -2356,7 +2356,7 @@ impl Default for LaneStack {
             boundary_frames: None,
             wasm_export: None,
             last_window_plan: [None; generator_windows::SHARED_PLANS],
-            last_generator: (Value::UNDEFINED, u64::MAX, std::ptr::null_mut()),
+            last_generator: [(Value::UNDEFINED, u64::MAX, std::ptr::null_mut()); 2],
         }
     }
 }

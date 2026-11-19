@@ -269,7 +269,7 @@ pub(super) fn lane_resume_generator<H: Host>(
 
 /// `generator`'s record and its suspended frame, with the register that takes the value the
 /// resume sends, when the frame resumes in this realm and program. The record found is the one
-/// `Vm::generator_record_mut` keeps for the next lookup (`LaneStack::last_generator`).
+/// `Vm::generator_record_mut` keeps for the next lookups (`LaneStack::last_generator`).
 /// SAFETY of the result: the generator's cell keeps its record, and the record its frame, boxed:
 /// nothing moves or frees either before the resume.
 #[inline(always)]

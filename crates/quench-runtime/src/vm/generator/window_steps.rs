@@ -119,13 +119,14 @@ impl<H: Host> Vm<H> {
 
     /// The generator record of `generator`. A record is boxed once at creation and freed only by
     /// a collection, so the last one found is reused while no collection ran since
-    /// (`LaneStack::last_generator`): a step looks its generator up several times.
+    /// (`LaneStack::last_generator`): a step looks its generator up several times, and a
+    /// delegation alternates between two.
     #[inline(always)]
     pub(in crate::vm) fn generator_record_mut(
         &mut self,
         generator: Value,
     ) -> Option<&mut GeneratorRecord> {
-        let (last, epoch, record) = self.lane_stack.last_generator;
+        let (last, epoch, record) = self.lane_stack.last_generator[0];
         if last == generator && epoch == self.heap.collection_epoch() {
             // SAFETY: the record is boxed, never replaced, and freed only by a collection.
             return Some(unsafe { &mut *record });
@@ -133,14 +134,21 @@ impl<H: Host> Vm<H> {
         self.looked_up_generator_record(generator)
     }
 
+    /// `generator_record_mut` of a generator other than the last one found: the one before it,
+    /// or looked up in the heap, made the last.
     #[inline(never)]
     fn looked_up_generator_record(&mut self, generator: Value) -> Option<&mut GeneratorRecord> {
         let epoch = self.heap.collection_epoch();
-        let record: *mut GeneratorRecord = match self.heap.iterator_mut(generator) {
-            Some(IteratorRecord { ext, .. }) => std::ptr::from_mut(ext.generator.as_deref_mut()?),
-            _ => return None,
+        let [last, previous] = self.lane_stack.last_generator;
+        let record: *mut GeneratorRecord = if (previous.0, previous.1) == (generator, epoch) {
+            previous.2
+        } else {
+            match self.heap.iterator_mut(generator) {
+                Some(IteratorRecord { ext, .. }) => std::ptr::from_mut(ext.generator.as_deref_mut()?),
+                _ => return None,
+            }
         };
-        self.lane_stack.last_generator = (generator, epoch, record);
+        self.lane_stack.last_generator = [(generator, epoch, record), last];
         // SAFETY: just found in the live heap.
         Some(unsafe { &mut *record })
     }
