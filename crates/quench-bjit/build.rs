@@ -23,6 +23,9 @@ mod class;
 mod elf;
 #[path = "build/layout.rs"]
 mod layout;
+#[macro_use]
+#[path = "stencils/row_catalog.rs"]
+mod row_catalog;
 #[path = "stencils/library.rs"]
 mod library;
 #[path = "build/macho.rs"]

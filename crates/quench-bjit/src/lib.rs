@@ -6,6 +6,9 @@
 //! context and pins) is `stencils/rows.rs`'s, assigned by LLVM, and `PINNED` and `PINNED_F`
 //! count the pins while their indexes stay abstract (`stencils/codes.rs`).
 
+#[macro_use]
+#[path = "../stencils/row_catalog.rs"]
+mod row_catalog;
 pub mod class;
 pub mod patch;
 #[cfg(test)]
@@ -381,7 +384,8 @@ mod rustc_tests {
     /// branch target and the last entry's miss takes the exit.
     #[test]
     fn cache_rows_patch_their_entry_holes_and_take_their_successors() {
-        use super::numeric::library::{heap_canonical, heap_name, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_ROW, MEM};
+        use super::numeric::library::{heap_canonical, heap_name, MEM};
+        use super::numeric::row_names::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_ROW};
         let row = |heap, chained| {
             let stencil = rustc::stencil(&heap_name(heap_canonical((heap, chained, MEM, MEM, MEM)))).expect("a cache row");
             let mut values: Vec<u32> = stencil.imm32.iter().map(|field| field.index).collect();

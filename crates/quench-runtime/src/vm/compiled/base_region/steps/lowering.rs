@@ -51,7 +51,7 @@ fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
             // derivation debt: no staged::Operation for the `typeof` string and `typeof` test operators
             Class::Unary => staged_unary_arm(instruction).or_else(|| typeof_arm(instruction.unary_operator())),
             Class::Binary => staged_binary_arm(instruction),
-            Class::RequireObjectCoercible => staged_plain_arm(instruction, numeric::library::STAGED_COERCIBLE),
+            Class::RequireObjectCoercible => staged_plain_arm(instruction, numeric::row_names::STAGED_COERCIBLE),
             _ => None,
         },
     }
@@ -84,8 +84,8 @@ fn fast_operands(instruction: WideInstruction, fast: Heap) -> (Option<Source>, O
         Heap::Add { .. } => adds::operands(instruction),
         Heap::Name { .. } => (Some(Source::Register(instruction.register_a())), None),
         Heap::Append => (instruction.optional_register_b().map(Source::Register), Some(instruction.register_a())),
-        Heap::Staged(numeric::library::STAGED_VOID) => (None, None),
-        Heap::Staged(numeric::library::STAGED_BITWISE_NOT | numeric::library::STAGED_COERCIBLE) => (Some(Source::Register(instruction.register_b())), None),
+        Heap::Staged(numeric::row_names::STAGED_VOID) => (None, None),
+        Heap::Staged(numeric::row_names::STAGED_BITWISE_NOT | numeric::row_names::STAGED_COERCIBLE) => (Some(Source::Register(instruction.register_b())), None),
         Heap::Staged(_) => (instruction.operand_b().register_index().map(Source::Register), None),
         _ => (Some(Source::Register(instruction.register_b())), None),
     }

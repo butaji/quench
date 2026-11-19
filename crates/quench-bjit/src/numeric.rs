@@ -163,6 +163,9 @@ pub struct Row {
 pub mod library;
 #[path = "../stencils/site_bits.rs"]
 pub mod site_bits;
+use library::TYPED_KINDS;
+#[path = "../stencils/row_names.rs"]
+pub mod row_names;
 #[path = "../stencils/supernodes.rs"]
 pub mod supernodes;
 

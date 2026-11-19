@@ -1,6 +1,8 @@
-//! The row catalog: every Number row kind and heap row the b-jit library names, once, in the order
-//! their codes are numbered. `codes.rs` includes it by path with `#[macro_use]`, so its `pub const`s
-//! are the codes; `library.rs` reads each heap row's operand slots and entry mode from `HEAP_TABLES`.
+//! The row catalog's macros, and the list of every Number row kind and heap row the b-jit library names,
+//! once, in the order their codes are numbered. `catalog!` hands the list to a consumer macro. `row_catalog!`
+//! emits either the heap rows' codes (`names`, `row_names.rs`) or the kinds' codes and `HEAP_TABLES`
+//! (`tables`, `row_tables.rs`); the runtime's `heap_code_match!` (`base_rows.rs`) reads each heap row's
+//! catalog line. Each crate mounts this file once at its root (`#[macro_use]`) before its modules.
 //!
 //! A heap row is one line: `NAME: uses(dst, a, b, entry),` where `dst`, `a`, `b` are the `Slot`s its
 //! operands range over and `entry` is its `Entry` mode, and `x COUNT` makes a family of `COUNT` codes
@@ -10,43 +12,10 @@
 //! Adding a heap row: one line here naming its variant (`= Heap::X`). `Heap::code` in `runtime base_rows.rs` expands
 //! these lines (`heap_code_of!`), and the test there lists every variant.
 
-#![allow(dead_code, unused_imports, unused_macros)]
-
-use super::TYPED_KINDS;
-
-/// How a heap row reads its entry flag: it ignores it, keeps the site's, or is always an entry.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Entry {
-    Never,
-    Kept,
-    Always,
-}
-
-/// The places one operand of a heap row ranges over: a row that does not read the operand fixes it to `MEM`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Slot {
-    Unread,
-    /// Any destination: every int place and every double register.
-    Dst,
-    /// A typed element read's destination: a double register or `MEM`.
-    Float,
-    /// Any operand: every int place, the constant and immediate, and every double register.
-    Src,
-}
-
-/// The places a heap row reads: its entry flag and the places each operand ranges over.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Uses {
-    pub entry: Entry,
-    pub dst: Slot,
-    pub a: Slot,
-    pub b: Slot,
-}
-
 /// Numbers the listed codes consecutively from 0, in the listed order: each `NAME` becomes
 /// `pub const NAME: u8` holding the next value, its doc comments attached, and `reserve N` skips
-/// `N` values that no code holds. The count after the last value is the last argument's name
-/// (`ROW_CODE_COUNT`, one past the highest code). A new code is a new line, never a typed number.
+/// `N` values that no code holds. `NAME_COUNT:` before the list also names the count after the last value
+/// (one past the highest code). A new code is a new line, never a typed number. `@plain` emits no count.
 macro_rules! numbered_codes {
     (@emit $count:ident, $base:expr;) => {
         pub(crate) const $count: u8 = $base;
@@ -58,91 +27,84 @@ macro_rules! numbered_codes {
         $(#[$m])* pub const $name: u8 = $base;
         numbered_codes!(@emit $count, $base + 1; $($($rest)*)?);
     };
+    (@plain $base:expr;) => {};
+    (@plain $base:expr; reserve $n:expr $(, $($rest:tt)*)?) => {
+        numbered_codes!(@plain $base + $n; $($($rest)*)?);
+    };
+    (@plain $base:expr; $(#[$m:meta])* $name:ident $(, $($rest:tt)*)?) => {
+        $(#[$m])* pub const $name: u8 = $base;
+        numbered_codes!(@plain $base + 1; $($($rest)*)?);
+    };
     ($count:ident: $($list:tt)*) => {
         numbered_codes!(@emit $count, 0; $($list)*);
     };
 }
 
 /// One chunk of heap rows: `$start` is the code the chunk's first row takes, `$end` the first code after
-/// the chunk, `$table` the chunk's `(first code, count, uses)` entries.
+/// the chunk, `$table` the chunk's `(first code, count, uses)` entries. `$mode` is `names` (each row's `pub const`)
+/// or `tables` (the chunk's entries in `$table`).
 macro_rules! heap_chunk {
-    ($end:ident, $table:ident, $start:expr; $($body:tt)*) => {
-        heap_chunk!(@go $end, $table, $start, []; $($body)*);
+    ($mode:ident, $end:ident, $table:ident, $start:expr; $($body:tt)*) => {
+        heap_chunk!(@go $mode, $end, $table, $start, []; $($body)*);
     };
-    (@go $end:ident, $table:ident, $base:expr, [$($acc:tt)*];) => {
+    (@go $mode:ident, $end:ident, $table:ident, $base:expr, [$($acc:tt)*];) => {
         const $end: u8 = $base;
-        const $table: &[(u8, u8, Uses)] = &[$($acc)*];
+        heap_chunk!(@table $mode, $table, [$($acc)*]);
     };
-    (@go $end:ident, $table:ident, $base:expr, [$($acc:tt)*]; reserve $n:expr $(, $($rest:tt)*)?) => {
-        heap_chunk!(@go $end, $table, $base + $n, [$($acc)*]; $($($rest)*)?);
+    (@table names, $table:ident, [$($acc:tt)*]) => {};
+    (@table tables, $table:ident, [$($acc:tt)*]) => {
+        pub const $table: &[(u8, u8, Uses)] = &[$($acc)*];
     };
-    (@go $end:ident, $table:ident, $base:expr, [$($acc:tt)*];
+    (@go $mode:ident, $end:ident, $table:ident, $base:expr, [$($acc:tt)*]; reserve $n:expr $(, $($rest:tt)*)?) => {
+        heap_chunk!(@go $mode, $end, $table, $base + $n, [$($acc)*]; $($($rest)*)?);
+    };
+    (@go $mode:ident, $end:ident, $table:ident, $base:expr, [$($acc:tt)*];
         $(#[$m:meta])* $name:ident : unlisted $(, $($rest:tt)*)?) => {
-        $(#[$m])* pub const $name: u8 = $base;
-        heap_chunk!(@go $end, $table, $base + 1, [$($acc)*]; $($($rest)*)?);
+        heap_chunk!(@name $mode, $base, $(#[$m])* $name);
+        heap_chunk!(@go $mode, $end, $table, $base + 1, [$($acc)*]; $($($rest)*)?);
     };
-    (@go $end:ident, $table:ident, $base:expr, [$($acc:tt)*];
+    (@go $mode:ident, $end:ident, $table:ident, $base:expr, [$($acc:tt)*];
         $(#[$m:meta])* $name:ident : uses($dst:ident, $a:ident, $b:ident, $entry:ident) $(x $n:ident)? $(= $pat:pat $(=> $off:expr)?)? $(, $($rest:tt)*)?) => {
-        $(#[$m])* pub const $name: u8 = $base;
-        heap_chunk!(@go $end, $table, $base + (1 $(+ ($n) - 1)?),
+        heap_chunk!(@name $mode, $base, $(#[$m])* $name);
+        heap_chunk!(@go $mode, $end, $table, $base + (1 $(+ ($n) - 1)?),
             [$($acc)* ($base, 1 $(+ ($n) - 1)?, Uses { entry: Entry::$entry, dst: Slot::$dst, a: Slot::$a, b: Slot::$b }),];
             $($($rest)*)?);
     };
+    (@name names, $base:expr, $(#[$m:meta])* $name:ident) => {
+        $(#[$m])* pub const $name: u8 = $base;
+    };
+    (@name tables, $base:expr, $(#[$m:meta])* $name:ident) => {};
 }
 
 /// The whole catalog: the heap chunks in order (each chained from the one before), then the Number kinds.
+/// `names` emits the heap rows' codes; `tables` emits the kinds' codes and `HEAP_TABLES`.
 macro_rules! row_catalog {
-    (heap { $($chunk:tt)* } number { $($kinds:tt)* }) => {
-        row_catalog!(@heap 0, []; $($chunk)*);
-        numbered_codes! { KIND_CODE_COUNT: $($kinds)* }
+    (names heap { $($chunk:tt)* } number { $($kinds:tt)* }) => {
+        row_catalog!(@heap names, 0, []; $($chunk)*);
     };
-    (@heap $prev:expr, [$($tables:ident,)*];) => {
-        pub(crate) const HEAP_TABLES: &[&[(u8, u8, Uses)]] = &[$($tables),*];
-        pub const ROW_CODE_COUNT: u8 = $prev;
+    (tables heap { $($chunk:tt)* } number { $($kinds:tt)* }) => {
+        row_catalog!(@heap tables, 0, []; $($chunk)*);
+        numbered_codes! { @plain 0; $($kinds)* }
     };
-    (@heap $prev:expr, [$($tables:ident,)*]; [$end:ident $table:ident: $($body:tt)*] $($rest:tt)*) => {
-        heap_chunk!($end, $table, $prev; $($body)*);
-        row_catalog!(@heap $end, [$($tables,)* $table,]; $($rest)*);
+    (@heap $mode:ident, $prev:expr, [$($tables:ident,)*];) => {
+        row_catalog!(@tail $mode, $prev, [$($tables,)*]);
     };
-}
-
-/// The heap rows' codes as one expression over `$heap` (a `Heap`): each chunk is a `match` whose arms are the catalog's
-/// patterns (`Heap::X => row`, a family's offset after `=>`) and whose catch-all is `None`; the chunks are tried in turn.
-macro_rules! heap_code_match {
-    (@chunks $heap:tt, $acc:expr;) => {
-        $acc
+    (@heap $mode:ident, $prev:expr, [$($tables:ident,)*]; [$end:ident $table:ident: $($body:tt)*] $($rest:tt)*) => {
+        heap_chunk!($mode, $end, $table, $prev; $($body)*);
+        row_catalog!(@heap $mode, $end, [$($tables,)* $table,]; $($rest)*);
     };
-    (@chunks $heap:tt, $acc:expr; [$end:ident $table:ident: $($body:tt)*] $($rest:tt)*) => {
-        heap_code_match!(@chunks $heap, $acc.or_else(|| heap_code_match!(@go $heap, []; $($body)*)); $($rest)*)
+    (@tail names, $prev:expr, [$($tables:ident,)*]) => {
+        // The last chunk's end is the heap code count: it fits the `u8` codes.
+        const _: () = assert!($prev as usize <= u8::MAX as usize);
     };
-    (@go $heap:tt, [$($arms:tt)*];) => {
-        match $heap {
-            $($arms)*
-            _ => None,
-        }
-    };
-    (@go $heap:tt, [$($arms:tt)*]; reserve $n:expr $(, $($rest:tt)*)?) => {
-        heap_code_match!(@go $heap, [$($arms)*]; $($($rest)*)?)
-    };
-    (@go $heap:tt, [$($arms:tt)*]; $(#[$m:meta])* $name:ident : uses($($u:tt)*) $(x $n:ident)? = $pat:pat $(=> $off:expr)? $(, $($rest:tt)*)?) => {
-        heap_code_match!(@go $heap, [$($arms)* $pat => Some(library::$name $(+ $off)?),]; $($($rest)*)?)
-    };
-    (@go $heap:tt, [$($arms:tt)*]; $(#[$m:meta])* $name:ident : uses($($u:tt)*) $(x $n:ident)? $(, $($rest:tt)*)?) => {
-        heap_code_match!(@go $heap, [$($arms)*]; $($($rest)*)?)
-    };
-    ($heap:tt heap { $($chunk:tt)* } number { $($kinds:tt)* }) => {
-        heap_code_match!(@chunks $heap, None; $($chunk)*).unwrap_or_else(|| unreachable!("a heap variant without a catalog row"))
-    };
-}
-
-/// `$heap`'s code: the catalog's heap rows as one expression (`heap_code_match!`).
-macro_rules! heap_code_of {
-    ($heap:tt) => {
-        catalog!(heap_code_match($heap))
+    (@tail tables, $prev:expr, [$($tables:ident,)*]) => {
+        const _: () = assert!($prev as usize <= u8::MAX as usize);
+        pub const HEAP_TABLES: &[&[(u8, u8, Uses)]] = &[$($tables),*];
     };
 }
 
 /// The whole catalog, handed to `$consumer` with `$args` ahead of its `heap { .. } number { .. }` body.
+#[macro_export]
 macro_rules! catalog {
     ($consumer:ident ($($args:tt)*)) => {
         $consumer! { $($args)*

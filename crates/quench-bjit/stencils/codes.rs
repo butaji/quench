@@ -2,16 +2,17 @@
 //! operation. The one definition `numeric.rs` (the semantics), `library.rs` (which rows exist) and
 //! the runtime (which row it plans) all read.
 
-#[macro_use]
-#[path = "row_catalog.rs"]
-mod row_catalog;
-pub use row_catalog::*;
+/// The Number kinds' codes and the heap tables (`row_tables.rs`, the catalog's build-side half).
+#[path = "row_tables.rs"]
+mod row_tables;
+pub use row_tables::*;
 /// The stencils read the site bits through this path (`site_bits.rs`); the lib and the runtime read `numeric::site_bits`.
 #[cfg(stencil_build)]
 pub use crate::site_bits::*;
 
-/// The catalog's codes: each row's const, and the heap tables (`row_catalog.rs`).
-catalog!(row_catalog());
+/// The heap rows' names: the stencils read them through here; the lib and the runtime through `numeric::row_names`.
+#[cfg(stencil_build)]
+pub use crate::row_names::*;
 
 /// The pinned registers the row ABI fixes (`rows.rs`): the int32 pins are r14, r15, rdi and rsi (x22..x25 on
 /// AArch64), the double pins xmm0..7 (d0..d7). These two counts are the only places codes the ABI gives; every
@@ -43,12 +44,6 @@ use crate::layout::typed_array_catalog::TypedArrayKind;
 
 /// The planned typed array kinds: each typed row family (`TYPED_INDEX_ROW`, `TYPED_STORE_ROW`) has one row per kind.
 pub const TYPED_KINDS: u8 = TypedArrayKind::COUNT as u8;
-/// The last row of each typed family.
-pub const TYPED_INDEX_LAST: u8 = TYPED_INDEX_ROW + TYPED_KINDS - 1;
-pub const TYPED_STORE_LAST: u8 = TYPED_STORE_ROW + TYPED_KINDS - 1;
-/// The first and last staged codes: one heap-space run after the parse-int row.
-pub const STAGED_FIRST: u8 = STAGED_REMAINDER;
-pub const STAGED_LAST: u8 = STAGED_STRICT_NE;
 /// The discriminants of the kinds with no native element (BigInt64, BigUint64, Float16), which have no row.
 pub const NON_NATIVE_KINDS: [u8; non_native_count()] = non_native_kinds();
 

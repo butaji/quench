@@ -253,7 +253,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
     let seen = super::declared::seen(function, ending, spec.seen);
     let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), &seen);
-    feedback_admits(&mut decoded, &kinds);
+    feedback_admits(&mut decoded, &kinds, spec.known.fields);
     let shaped: Vec<Register> = prototypes.iter().map(|proto| proto.register).collect();
     // The entry seeds the direct objects it checks: the declared ones, and each shape-checked receiver (`Heap::Shape`).
     let objects: Vec<Register> = super::declared::exact_objects(function, &prototypes).into_iter().chain(shapes.iter().map(|proto| proto.register)).collect();
@@ -308,10 +308,10 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
 /// Admits a packed helper row only where its site's feedback admits its direct arm (`family_helpers::admits`):
 /// a binary site met Number operands only, an element site met a dense or typed element. Another site would
 /// run the general step on every execution. An inlined row has no site of its own, and is not admitted.
-fn feedback_admits(decoded: &mut [Decoded], kinds: &[Option<OperandKinds>]) {
+fn feedback_admits(decoded: &mut [Decoded], kinds: &[Option<OperandKinds>], fields: Option<&dyn Fn(u16) -> bool>) {
     for (row, site) in decoded.iter_mut().zip(kinds) {
         if let Some(words) = row.packed
-            && !crate::vm::dispatch_fast::family_helpers::admits(words, *site)
+            && !crate::vm::dispatch_fast::family_helpers::admits(words, *site, fields)
         {
             row.packed = None;
         }

@@ -122,6 +122,9 @@ pub(in crate::vm::compiled) struct Known<'a> {
     /// object has the receiver layout (exact shape and prototype link) that answered, which a layout change of any
     /// prototype retires the code over (`Body::holders`). `None` where no fact may be held.
     pub(in crate::vm::compiled) presences: Option<&'a [Option<InPresence>]>,
+    /// Whether a field cache site's primary entry holds a receiver (`Vm::field_cache_filled`), where the VM runs
+    /// specialized: admits a field row's direct arm (`family_helpers::admits`). `None` where none may be held.
+    pub(in crate::vm::compiled) fields: Option<&'a dyn Fn(u16) -> bool>,
     /// What each by-name global access takes (`Vm::global_table`, the b-jit's), where the code may hold
     /// Stable facts: a global object's slot under its layout (`globals`). `None` where none may.
     pub(in crate::vm::compiled) globals: Option<&'a crate::vm::global_facts::GlobalReads>,

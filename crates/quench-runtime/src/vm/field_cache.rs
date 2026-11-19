@@ -202,4 +202,12 @@ impl<H: Host> Vm<H> {
         let entry = self.megamorphic_field_cache(self.field_cache_index(site), receiver.exact_shape(), holder.exact_shape())?;
         (entry.holder != NO_FIELD_HOLDER).then(|| self.heap.property_get(holder, usize::from(entry.slot)))?
     }
+
+    /// Whether the field cache site `site`'s primary entry holds a receiver: a plan-time admission fact for a
+    /// field row's direct arm. The arm checks the entry at run time, so a stale answer costs only a decline.
+    pub(in crate::vm) fn field_cache_filled(&self, site: u16) -> bool {
+        // SAFETY: the active layout reserves every compiler-emitted site, as `cached_field_store_hit` reads it.
+        let cache = unsafe { self.field_caches.get_unchecked(self.field_cache_index(site)) };
+        cache.receiver != EMPTY_CACHE.receiver
+    }
 }

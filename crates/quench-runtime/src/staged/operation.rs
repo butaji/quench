@@ -198,7 +198,8 @@ impl<W, P> Operation<W, P> {
     /// site's feedback can gate qualify (`write_binary_result`; element sites record `OperandKinds::DENSE`
     /// and `TYPED`; field sites have no direct arm yet).
     pub(crate) fn direct_helper(&self) -> bool {
-        matches!(self, Self::Binary { .. } | Self::ElementRead { .. } | Self::ElementWrite { .. })
+        matches!(self, Self::Binary { .. } | Self::ElementRead { .. } | Self::ElementWrite { .. }
+            | Self::GetField { .. } | Self::SetField { .. } | Self::LogicalNot { .. } | Self::TypeofIndex { .. })
     }
 
     /// The environment, global and iteration operations of `decode` (`Decoder::Names`), from a
