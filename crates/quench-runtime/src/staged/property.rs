@@ -528,14 +528,14 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
         }
         FieldPlan::Readable(inner) => read_with(stage, frame, (owner, true), object, *inner, miss),
         FieldPlan::Probed { fast, atom, site } => frame.probed(stage, owner, object, (atom, site), miss,
-            |stage, frame, miss| read_with(stage, frame, (owner, readable), object, *fast, miss)),
+            #[inline(always)] |stage, frame, miss| read_with(stage, frame, (owner, readable), object, *fast, miss)),
         FieldPlan::Known => frame.known_value(stage, owner),
         FieldPlan::Chain(links) => chain(stage, frame, (owner, readable), object, links, miss),
         FieldPlan::Host { atom, site } => frame.field_probe(stage, owner, object, atom, site, miss),
         FieldPlan::Geometry { atom } => frame.geometry_read(stage, object, atom, miss),
         FieldPlan::Length => frame.length_read(stage, object, miss),
         FieldPlan::Entry(kind) => frame.field_entry(stage, owner, object, kind, miss),
-        FieldPlan::Hinted { ops, entry } => frame.entried(stage, owner, object, entry, miss, |stage, frame, miss| {
+        FieldPlan::Hinted { ops, entry } => frame.entried(stage, owner, object, entry, miss, #[inline(always)] |stage, frame, miss| {
             let at = frame.receiver_record(stage, owner, object, readable, miss)?;
             let records = frame.object_records(stage);
             run_owned(stage, frame, (owner, !readable), ops, (at, records), miss)
@@ -587,8 +587,8 @@ fn arms<S: Stage>(stage: &mut S, plans: &[Arm<'_>], at: Reached<S::Word, S::Cond
         stage.guard(member, miss)?;
         return ic::run(stage, arm.ops, at, records, miss);
     }
-    stage.choose_leaving(member, |stage| ic::run(stage, arm.ops, at, records, miss),
-        |stage| arms(stage, rest, at, records, miss))
+    stage.choose_leaving(member, #[inline(always)] |stage| ic::run(stage, arm.ops, at, records, miss),
+        #[inline(always)] |stage| arms(stage, rest, at, records, miss))
 }
 
 /// A nested lookup: each link reads from the previous link's value, the first from `owner`'s

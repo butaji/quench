@@ -12,26 +12,6 @@ pub const ROWS_PER_SHARD: usize = 1536;
 /// beside the linker and the other crates cargo builds in parallel.
 pub const MAX_WORKERS: usize = 8;
 
-/// The shard count for `rows` instances: at least one, so the fixed rows always have a home.
-pub fn shard_count(rows: usize) -> usize {
-    rows.div_ceil(ROWS_PER_SHARD).max(1)
-}
-
-/// `items` in `shard_count` contiguous slices whose lengths differ by at most one.
-pub fn split<T>(items: &[T]) -> Vec<&[T]> {
-    let count = shard_count(items.len());
-    let (base, extra) = (items.len() / count, items.len() % count);
-    let mut start = 0;
-    (0..count)
-        .map(|shard| {
-            let end = start + base + usize::from(shard < extra);
-            let part = &items[start..end];
-            start = end;
-            part
-        })
-        .collect()
-}
-
 /// `items` in contiguous slices of at most `ROWS_PER_SHARD` weight each (an item heavier than that alone), at least
 /// one slice. A heap row inlines a staged heap operation, several times a Number row's code and its compile memory,
 /// so the build weighs each row (`HEAP_ROW_WEIGHT`) and no shard's rustc outgrows the box.
@@ -76,20 +56,18 @@ mod tests {
 
     #[test]
     fn small_lists_make_one_shard() {
-        assert_eq!(shard_count(0), 1);
-        assert_eq!(split::<u8>(&[]).len(), 1);
-        assert_eq!(shard_count(ROWS_PER_SHARD), 1);
-        assert_eq!(shard_count(ROWS_PER_SHARD + 1), 2);
+        assert_eq!(split_weighted::<u8>(&[], |_| 1).len(), 1);
+        assert_eq!(split_weighted(&[0u8; ROWS_PER_SHARD], |_| 1).len(), 1);
+        assert_eq!(split_weighted(&[0u8; ROWS_PER_SHARD + 1], |_| 1).len(), 2);
     }
 
     #[test]
-    fn split_is_contiguous_balanced_and_complete() {
+    fn weighted_split_is_contiguous_bounded_and_complete() {
         let items: Vec<usize> = (0..ROWS_PER_SHARD * 3 + 5).collect();
-        let parts = split(&items);
-        assert_eq!(parts.len(), 4);
+        let weight = |item: &usize| if item % 3 == 0 { HEAP_ROW_WEIGHT } else { 1 };
+        let parts = split_weighted(&items, weight);
         assert_eq!(parts.concat(), items);
-        let (min, max) = (parts.iter().map(|p| p.len()).min().unwrap(), parts.iter().map(|p| p.len()).max().unwrap());
-        assert!(max - min <= 1 && max <= ROWS_PER_SHARD);
+        assert!(parts.iter().all(|part| part.iter().map(weight).sum::<usize>() <= ROWS_PER_SHARD));
     }
 
     #[test]

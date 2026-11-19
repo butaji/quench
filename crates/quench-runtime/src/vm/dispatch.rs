@@ -781,10 +781,12 @@ impl<H: Host> Vm<H> {
                 self.staged_suspend(p, site, i, pc)
             }
             // A row that decides its opcode alone runs as its staged row on the frame, which never declines.
-            Runner::RowOnly => match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
+            // Decoded over the program's tables: a row-only record that names a site or constant (a template, a method
+            // site) decodes only with them.
+            Runner::RowOnly => match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::of(p)) {
                 RowRun::Done(_) => Ok(StepResult::Continue),
                 RowRun::Stop(stop) => stop,
-                RowRun::Declined => unreachable!("a row-only opcode's staged row decides it"),
+                RowRun::Declined => unreachable!("a row-only opcode's staged row decides it: {:?}", i.op()),
             },
             // An arithmetic binary: its staged row first, then the record's general `Binary` on a miss. The Number
             // relation of `==` or `===` leaves a pair that is no Number, and that relation names both operators, so
