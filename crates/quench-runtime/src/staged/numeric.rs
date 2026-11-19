@@ -351,6 +351,8 @@ fn int_case<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, d
     let (offset, _) = stage.int_arithmetic(NumberArithmetic::Subtract, value, low);
     let fallback = stage.i32_constant(i32::from(count));
     let slot = stage.select(inside, offset, fallback);
+    // The frame's own form of the int32 slot: a tagged word where its registers hold tagged words.
+    let slot = frame.int_result(stage, slot);
     let fact = frame.int_fact();
     frame.write(stage, destination, slot, fact);
     Step::Value(slot)

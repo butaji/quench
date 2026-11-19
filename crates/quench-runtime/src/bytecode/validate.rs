@@ -415,6 +415,7 @@ fn immediate_domains_in_bounds(
             instruction.property_definition_mode().is_some()
         }
         super::ImmediateRole::ArrayLength => instruction.array_length() <= super::MAX_ARRAY_LENGTH,
+        super::ImmediateRole::IntCaseMinimum => true,
         super::ImmediateRole::MethodSiteIndex => {
             instruction.method_site_index() < bounds.method_sites
         }
