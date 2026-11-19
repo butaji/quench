@@ -303,7 +303,11 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let mut identities: Vec<(u16, u64)> = sites.callees.captured_identities().collect();
     identities.sort_unstable();
     identities.dedup();
-    let proven_args = super::call_args::proven_arguments(function, &spec.known.program.constants, &numbers).unwrap_or_default();
+    // The entry guards hold the pinned int32 and double webs live at the header (`entry_rows`, which every entry runs), so
+    // the argument proof starts from them as well as from the declared Numbers.
+    let (pinned_ints, pinned_doubles) = super::call_args::entry_pins(&homes, &webs, &span);
+    let seeded: Vec<Register> = numbers.iter().copied().chain(pinned_doubles).collect();
+    let proven_args = super::call_args::proven_arguments(function, &spec.known.program.constants, &seeded, &pinned_ints).unwrap_or_default();
     let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities };
     let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);

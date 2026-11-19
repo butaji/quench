@@ -1,7 +1,7 @@
 //! The arguments a call passes as Numbers, planned into its direct row (`CallRecord::proven_args`): the facts analysis
 //! (`facts::analyze_text`) run over the enclosing function's bytecode from pc 0, every register starting unknown except the
-//! declared Number parameters (`declared::entry_numbers`), which the entry guards hold as Numbers and the function never
-//! writes. A call's argument is proven where its register holds a Number at the call on every path. The analysis is an
+//! declared Number parameters (`declared::entry_numbers`) and the pinned webs the body's entry guards at its header
+//! (`entry_pins`: int32s and doubles), which every entry checks before pc 0 runs. A call's argument is proven where its register holds a Number at the call on every path. The analysis is an
 //! invariant of the bytecode, as `exact.rs` relies on: a region or resume stub enters only in states it covers.
 
 use super::*;
@@ -9,13 +9,26 @@ use super::super::facts::{self, Observed, Seeds, Text};
 use super::super::lane_region::{leaders, writes};
 use super::call_plan::{CallForm, CallShape};
 use super::link::INT32_BIT;
+use super::plan::Homes;
+use super::span::Span;
+use super::webs::Webs;
 use crate::bytecode::{Constant, Function, Register, WideInstruction};
 use crate::typed_ir::Type;
+
+/// The frame registers of the pinned int32 and double webs the body's entry guards at its header (`entry_rows`'s pin
+/// rows, which every entry runs): `(int32s, doubles)`.
+pub(super) fn entry_pins(homes: &Homes, webs: &Webs, span: &Span) -> (Vec<Register>, Vec<Register>) {
+    let entered = webs.entry_live(span);
+    let held = |web: &Register| entered.contains(&usize::from(*web));
+    let ints = homes.pins.iter().filter(|(_, web)| held(web)).map(|(_, web)| homes.orig[usize::from(*web)]).collect();
+    let doubles = homes.floats.iter().filter(|(_, web)| held(web)).map(|(_, web)| homes.orig[usize::from(*web)]).collect();
+    (ints, doubles)
+}
 
 /// Per PC of `function`, the mask of its call's arguments proven Numbers (bit `k`: argument `k`) and int32s (bit
 /// `INT32_BIT + k`, which implies bit `k`), zero where no call is
 /// or no argument is proven; `None` where the analysis models less than the function does (`exact::exact_pcs`'s conditions).
-pub(super) fn proven_arguments(function: &Function, constants: &[Constant], numbers: &[Register]) -> Option<Box<[u64]>> {
+pub(super) fn proven_arguments(function: &Function, constants: &[Constant], numbers: &[Register], ints: &[Register]) -> Option<Box<[u64]>> {
     if !function.handlers.is_empty() || function.is_generator || function.is_async || function.has_dynamic_scope_access() || function.arguments_slot.is_some() {
         return None;
     }
@@ -24,6 +37,9 @@ pub(super) fn proven_arguments(function: &Function, constants: &[Constant], numb
     let mut initial = vec![Type::ANY; usize::from(function.registers)];
     for &register in numbers {
         initial[usize::from(register)] = Type::NUMBER;
+    }
+    for &register in ints {
+        initial[usize::from(register)] = Type::INT32;
     }
     let text = Text { entry: 0, instructions: &instructions, leaders: &blocks, constants, written: &writes,
         own_shape: &|_| None, native_calls: true, raises: &[] };
