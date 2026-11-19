@@ -205,6 +205,14 @@ const fn context_at(word: usize) -> i32 { -((word * 8) as i32) }
 /// tier moves the values' top past the window itself.
 #[inline(always)]
 pub(crate) fn push_plain<S: Stage>(stage: &mut S, plain: S::Word, window: S::Word, header: PlainHeader<S::Word>, program: S::Word) {
+    let depth = stage.load_u64(Region::Payload.mutable(), plain, frame::PLAIN_DEPTH_AT as i32);
+    push_plain_at(stage, plain, window, header, program, depth);
+}
+
+/// `push_plain` where the tier already holds the plain depth word `depth` (it loaded it for its
+/// admission, `LaneStack::plain_room`): the same stores, without reloading it.
+#[inline(always)]
+pub(crate) fn push_plain_at<S: Stage>(stage: &mut S, plain: S::Word, window: S::Word, header: PlainHeader<S::Word>, program: S::Word, depth: S::Word) {
     let at = Region::Frame.mutable();
     stage.store_u64(at, window, context_at(frame::CONTEXT_CALL), header.call);
     stage.store_u64(at, window, context_at(frame::CONTEXT_CALLER_REGISTERS), header.caller_registers);
@@ -212,7 +220,6 @@ pub(crate) fn push_plain<S: Stage>(stage: &mut S, plain: S::Word, window: S::Wor
     stage.store_u64(at, window, context_at(frame::CONTEXT_PACKED), header.packed);
     stage.store_u64(at, window, context_at(frame::CONTEXT_CALLEE), header.callee);
     let words = Region::Payload.mutable();
-    let depth = stage.load_u64(words, plain, frame::PLAIN_DEPTH_AT as i32);
     let depth = stage.add_imm(depth, 1u64);
     stage.store_u64(words, plain, frame::PLAIN_DEPTH_AT as i32, depth);
     stage.store_u64(words, plain, frame::PLAIN_REGISTERS_AT as i32, window);

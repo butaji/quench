@@ -66,6 +66,9 @@ fn lane_array_callback_activation<H: Host>(
     if let ActivationKind::Script(script) = shape.activation.kind_mut() {
         script.completion = completion;
     }
+    // Its activation is the record, whose completion is the step's, not a native's callback's
+    // trampoline header.
+    shape.header = None;
     let entry = shape.entry(target, this);
     Some((shape, entry))
 }

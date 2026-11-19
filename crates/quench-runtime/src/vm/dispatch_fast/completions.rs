@@ -22,6 +22,7 @@ pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, 
         return lane_step_array_iteration_in_place(cx, value);
     }
     let common = match completion {
+        // A callback's record: one still a plain header returned through its trampoline.
         Some(Completion::ReturnsToNative) => lane_complete_native_callback(cx, value),
         // `lane_complete_activation` begins with the same chain.
         Some(Completion::Plain) => None,
@@ -219,7 +220,10 @@ pub(super) fn lane_end_body_callee<H: Host>(cx: *mut LaneContext<H>, value: Valu
 }
 
 /// `lane_complete_activation` of a native's callback (`Completion::ReturnsToNative`): the
-/// native's caller state restored, the run ends with `value`, which the native receives.
+/// native's caller state restored, the run ends with `value`, which the native receives. Only a
+/// callback's record reaches it: one that keeps its values, a gathering one, or a plain header a
+/// spill made a record (`LaneStack::spill_plain`). A callback still a plain header returns
+/// through its trampoline instead (`callback_trampoline_returned`), which ends the run the same way.
 #[inline(always)]
 pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };

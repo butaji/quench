@@ -2285,6 +2285,9 @@ pub(super) struct LaneStack {
     activation_records: std::cell::UnsafeCell<LaneActivations>,
     /// The plain activations above the innermost record, whose headers the value stack holds.
     plain: PlainFrames,
+    /// The return trampoline of the native callbacks pushed as plain activations
+    /// (`CallbackTrampoline`), at an address their headers name.
+    callback_return: Box<CallbackTrampoline>,
     /// Wasm activation payload represented by `values` before lane materialization.
     wasm_storage_bytes: usize,
     /// Resolved targets of lane `Call` records (`Vm::script_call_entry`) of callees of the
@@ -2395,6 +2398,14 @@ pub(in crate::vm) struct PlainFrames {
     registers: std::cell::Cell<*mut Value>,
     /// Their program, the running one: a plain call never crosses programs (offset 16).
     program: std::cell::Cell<ProgramId>,
+    /// The activation limit as a bound on `depth` (offset 24): while `depth > 0`, it holds
+    /// `activation_limit - records - 1`, saturating at 0, so a proved call admits one more
+    /// plain activation where `depth - 1 < bound` (`LaneStack::plain_room`), one compare of the
+    /// word the push loads anyway. The records never change while `depth > 0` (any record
+    /// push or pop spills first, `activations_mut`), so only the limit's changes refresh it
+    /// (`refresh_activation_limit`, a due collection) and a push at depth 0
+    /// (`refresh_plain_bound`). At depth 0 its value is unused: `depth - 1` wraps.
+    bound: std::cell::Cell<usize>,
 }
 pub(in crate::vm) const PLAIN_DEPTH_OFFSET: usize = std::mem::offset_of!(PlainFrames, depth);
 pub(in crate::vm) const PLAIN_REGISTERS_OFFSET: usize = std::mem::offset_of!(PlainFrames, registers);
@@ -2472,13 +2483,16 @@ impl LaneStack {
         let mut window = Registers(self.plain.registers.get());
         for slot in (len..len + depth).rev() {
             let (call, caller_registers, caller_base) = window.plain_caller();
+            // A native's callback (`CallbackTrampoline`), the outermost, becomes `PreparedShape::of`'s record.
+            let (call, caller_registers, completion) = self.callback_return.returns(call)
+                .map_or((call, caller_registers, Completion::Plain), |(call, registers)| (call, registers, Completion::ReturnsToNative));
             let (function, argc, callee) = window.plain_callee();
             let mut activation = Activation::of_parts(
                 crate::vm::compiled::ShadowFrame::EMPTY, function, call, caller_base, caller_registers, program,
                 ActivationKind::Script(ScriptActivation {
                     callee,
                     argc,
-                    completion: Completion::Plain,
+                    completion,
                     forwards: false,
                     kept: 0,
                     environment: false,
@@ -2495,6 +2509,34 @@ impl LaneStack {
         unsafe { records.set_len(len + depth) };
     }
 
+    /// Set `PlainFrames::bound` from the activation limit and the records' count, which every
+    /// plain activation above them shares: `limit - records - 1`, saturating at 0.
+    #[inline(always)]
+    fn refresh_plain_bound(&self) {
+        // SAFETY: reads the length alone.
+        let records = unsafe { (*self.activation_records.get()).len() };
+        self.plain.bound.set(self.activation_limit.get().saturating_sub(records).saturating_sub(1));
+    }
+
+    /// Whether a proved plain call (`lane_plain_activation!`) may push one more plain activation
+    /// over `depth`, the plain depth it loaded, with `room` values for its window: the activation
+    /// limit (`activation_count() < activation_limit`) and the values' room
+    /// (`lane_activation_room`), the same answer. Past depth 0 the limit is one compare of the
+    /// depth against `PlainFrames::bound`; at depth 0 (`depth - 1` wraps) or at the bound it
+    /// is decided from the records' count, which refreshes the bound for the depths above.
+    /// It makes no call.
+    #[inline(always)]
+    fn plain_room(&self, depth: usize, room: u16) -> bool {
+        let below = depth.wrapping_sub(1) < self.plain.bound.get() || {
+            // SAFETY: reads the length alone.
+            let records = unsafe { (*self.activation_records.get()).len() };
+            let below = records + depth < self.activation_limit.get();
+            if depth == 0 { self.refresh_plain_bound(); }
+            below
+        };
+        below && crate::staged::call::concrete_fits(self.values.room() as u64, u64::from(room))
+    }
+
     /// Whether `activation` may be a plain activation: a script activation of the lane's own
     /// windows that completes plainly and keeps, forwards and promotes nothing.
     #[inline(always)]
@@ -2507,6 +2549,31 @@ impl LaneStack {
             && activation.native.body == 0
             && activation.native.this == 0
             && window.addr() & lane_values::HEAP_WINDOW == 0
+    }
+
+    /// Push a native's callback of `header` over the window at `window` as a plain activation
+    /// whose header names the return trampoline (`CallbackTrampoline`): the trampoline's words
+    /// take the callback's own call record and caller registers, which its return and a spill
+    /// read. Every native callback is pushed over no plain activation (its native observed the
+    /// records, `Vm::lane_native_callback`), so its header is the outermost plain one and the
+    /// trampoline's words are its alone.
+    ///
+    /// # Safety
+    /// The caller admitted the activation (`concrete_admit_callback`), whose window starts at
+    /// `window`, the values' top.
+    #[inline(always)]
+    unsafe fn push_callback_header(&mut self, header: &CallbackHeader, window: *mut Value) {
+        debug_assert_eq!(self.plain.depth.get(), 0, "a native's callback runs over records alone");
+        // The first plain activation over the records names their count to the proved calls
+        // above it (`plain_room`).
+        self.refresh_plain_bound();
+        self.callback_return.call.set(header.call);
+        self.callback_return.caller_registers.set(header.caller_registers);
+        // At depth 0, which the push need not load.
+        crate::staged::protocol::push_plain_at(
+            &mut crate::staged::Concrete::new(std::ptr::null()),
+            self.plain_frames_word() as u64, window.expose_provenance() as u64, header.plain, header.program, 0,
+        );
     }
 }
 
@@ -2522,7 +2589,9 @@ impl Default for LaneStack {
                 depth: std::cell::Cell::new(0),
                 registers: std::cell::Cell::new(std::ptr::null_mut()),
                 program: std::cell::Cell::new(ProgramId::MAIN),
+                bound: std::cell::Cell::new(0),
             },
+            callback_return: Box::new(CallbackTrampoline::new()),
             wasm_storage_bytes: 0,
             call_sites: std::cell::RefCell::default(),
             script_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
@@ -2627,6 +2696,9 @@ impl LaneStack {
         // completion never leaves, so every plain activation shares it.
         if Self::is_plain(&activation, window) {
             debug_assert!(self.plain.depth.get() == 0 || self.plain.program.get() == activation.caller_program());
+            // The first plain activation over the records names their count to the proved
+            // calls above it (`plain_room`).
+            if self.plain.depth.get() == 0 { self.refresh_plain_bound(); }
             let ActivationKind::Script(script) = activation.kind() else { unreachable!() };
             use crate::staged::protocol::{plain_packed, push_plain, PlainHeader};
             let header = PlainHeader {
@@ -2683,23 +2755,26 @@ impl LaneStack {
         Some(activation)
     }
 
-    /// The return of the innermost plain activation, if one runs: its caller's call record,
-    /// registers and records. Its window is released.
+    /// The return of the innermost plain activation, whose window is `window`: its caller's
+    /// call record, registers and records. Its window is released.
+    ///
+    /// # Safety
+    /// A plain activation runs (`plain.depth > 0`) and `window` is its window
+    /// (`plain.registers`).
     #[inline(always)]
-    fn pop_plain(&mut self) -> Option<(Ip, Registers, Ip)> {
-        let depth = self.plain.depth.get();
-        if depth == 0 { return None; }
-        let window = self.plain.registers.get();
+    unsafe fn pop_plain(&mut self, window: *mut Value) -> (Ip, Registers, Ip) {
+        debug_assert!(self.plain.depth.get() != 0 && self.plain.registers.get() == window, "the innermost plain activation returns");
         let caller = crate::staged::protocol::pop_plain(
             &mut crate::staged::Concrete::new(std::ptr::null()), self.plain_frames_word() as u64, window.addr() as u64,
         );
-        // SAFETY: the window is the innermost, the lane stack's own.
-        unsafe { self.values.release_window(window.addr()) };
-        Some((
+        // SAFETY: a plain window is the lane stack's own (`is_plain`), never a heap window, so
+        // its release is the top's move without `release_window`'s test.
+        unsafe { self.values.set_top(window) };
+        (
             std::ptr::with_exposed_provenance(caller.call as usize),
             Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize)),
             std::ptr::with_exposed_provenance(caller.base as usize),
-        ))
+        )
     }
 
     /// Drops what the activations from index `depth` on owned, which completed: their loops'
@@ -2734,6 +2809,7 @@ impl LaneStack {
             unsafe { (*self.activation_records.get()).capacity() }.min(admitted)
         };
         self.activation_limit.set(limit);
+        self.refresh_plain_bound();
     }
 
     /// Records `target` as a callee of the call record whose link is `link`, in the order
@@ -3361,6 +3437,8 @@ pub(super) fn note_allocation<H: Host>(vm: &Vm<H>) {
             *fuel = 0;
         }
         vm.lane_stack.activation_limit.set(0);
+        // The proved calls' bound on the plain depth (`PlainFrames::bound`) follows the limit.
+        vm.lane_stack.plain.bound.set(0);
     }
 }
 
@@ -14903,9 +14981,12 @@ macro_rules! lane_plain_activation {
         // So does a window past `FIXED_ARGUMENT_COPIES`, whose copy is a call.
         // A proved link (`PLAIN_LINK`) proved the argument count; the room stays per call.
         let argc = call_argument_count::<$argc>(i);
+        // The plain depth the proved push writes past (`LaneStack::plain_room`), loaded once.
+        let mut depth = vm.lane_stack.plain.depth.get();
         if if $proven {
             debug_assert!(argc <= FIXED_ARGUMENT_COPIES && crate::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)));
-            !lane_activation_room(vm, target)
+            debug_assert_eq!(vm.lane_stack.plain_room(depth, target.room), lane_activation_room(vm, target));
+            !vm.lane_stack.plain_room(depth, target.room)
         } else {
             argc > FIXED_ARGUMENT_COPIES || !lane_admits_window(vm, target, argc)
         } {
@@ -14921,15 +15002,23 @@ macro_rules! lane_plain_activation {
         // SAFETY: the record's window of `r` holds its values.
         let passed = unsafe { r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))).cast_const() };
         // A callee whose entry cell holds a body runs it before any activation exists.
-        if !returns
-            && unsafe { (*target.view).entry_published() }
-            && let Some(resumed) = lane_enter_cell_body(cx, r, ip, target, passed, argc, this)
-        {
-            resume!(cx, resumed)
+        if !returns && unsafe { (*target.view).entry_published() } {
+            if let Some(resumed) = lane_enter_cell_body(cx, r, ip, target, passed, argc, this) {
+                resume!(cx, resumed)
+            }
+            // A declined body may have made the plain activations records (entering emitted
+            // code spills them): the push writes over the depth it left, and a first plain
+            // activation names the records' count to the ones above (`PlainFrames::bound`).
+            depth = vm.lane_stack.plain.depth.get();
+            if depth == 0 { vm.lane_stack.refresh_plain_bound(); }
         }
         debug_assert!(!target.settles(), "a settling target activates through its own call form");
         let callee_registers = lane_fill_window(vm, target, passed, argc);
-        let (registers, base) = lane_enter_window_of::<H, false, false, { !$proven }>(cx, vm, r, ip, target, callee_registers, argc, this, false, None, None);
+        let (registers, base) = if $proven {
+            lane_enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, argc, this)
+        } else {
+            lane_enter_window_of::<H, false, false, true>(cx, vm, r, ip, target, callee_registers, argc, this, false, None, None)
+        };
         next!(cx, registers, base, Carried::script(cx))
     }};
 }
@@ -19399,6 +19488,59 @@ fn lane_enter_window_of<H: Host, const GENERAL: bool, const SETTLES: bool, const
     (callee_registers, start)
 }
 
+/// `lane_enter_window_of` of a proved plain call (`lane_plain_activation!` past `PLAIN_LINK`):
+/// the record it would build is always plain (no general form, so no crossing; no
+/// construction, settling, keeping or forwarding; an empty native prefix; a lane stack
+/// window), so its header goes below the window straight from the call's words
+/// (`protocol::push_plain_at`), with no `Activation` value and no `LaneStack::is_plain`
+/// test. `depth` is the plain depth `LaneStack::plain_room` admitted it at.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn lane_enter_plain_window<H: Host>(
+    cx: *mut LaneContext<H>,
+    vm: &mut Vm<H>,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    callee_registers: Registers,
+    depth: usize,
+    argc: u16,
+    this: Value,
+) -> (Registers, Ip) {
+    use crate::staged::protocol::{plain_packed, push_plain_at, PlainHeader};
+    callee_registers.set_this(this);
+    let stack: &mut LaneStack = &mut vm.lane_stack;
+    // SAFETY: the running lane's context.
+    let (caller_base, program) = unsafe { ((*cx).base, (*cx).program) };
+    debug_assert!(depth == stack.plain.depth.get());
+    debug_assert!(depth == 0 || stack.plain.program.get() == program);
+    debug_assert!(callee_registers.0.addr() & HEAP_WINDOW == 0, "a lane stack window");
+    // The record `lane_enter_window_of` builds here keeps `argc` (`KeepingRecord::of_kept`
+    // without kept values) and completes `Completion::of(false, false, false)`, `Plain`.
+    let header = PlainHeader {
+        call: ip.expose_provenance() as u64,
+        caller_registers: r.0.expose_provenance() as u64,
+        caller_base: caller_base.expose_provenance() as u64,
+        packed: plain_packed(target.function, argc, 0),
+        callee: target.callee.to_bits(),
+    };
+    push_plain_at(
+        &mut crate::staged::Concrete::new(std::ptr::null()),
+        stack.plain_frames_word() as u64, callee_registers.0.expose_provenance() as u64, header, u64::from(program.raw()), depth as u64,
+    );
+    // SAFETY: the program store keeps a derived view alive with its program.
+    let base = unsafe { (*target.view).records() };
+    unsafe {
+        (*cx).registers = callee_registers;
+        (*cx).base = base;
+    }
+    callee_registers.set_env(target.env);
+    callee_registers.set_capture(target.capture);
+    // A proved call never runs under the tier's diagnostics (`lane_script_call_prove`), so it
+    // records no tier entry (`lane_enter_window_of`'s `COUNTED`). It never constructs.
+    (callee_registers, unsafe { (*target.view).start() })
+}
+
 /// The frameless target of another program's function `callee` a native calls from the
 /// lane (`Vm::lane_native_callback`), as a trap's (`proxy_traps::lane_trap_target`).
 fn lane_cross_callback_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option<(ScriptCallTarget, bool)> {
@@ -19425,7 +19567,7 @@ fn lane_push_callback<H: Host>(
         // SAFETY: the running lane's context, which nothing else accesses.
         let shape = PreparedShape::of(unsafe { &*cx }, call, target, args.len());
         if let Some(shape) = &shape
-            && let Some(start) = lane_push_prepared(cx, &shape.activation, shape.room, &shape.entry(target, this), args)
+            && let Some(start) = lane_push_prepared(cx, shape, &shape.entry(target, this), args)
         {
             return Some(start);
         }
@@ -19954,7 +20096,26 @@ return_handler! {
     /// Return from an inline call to its caller; returning from the loop's
     /// entry frame belongs to the general loop.
     /// `LEAF` where the record is a leaf's (`LaneView::specialize_leaf_returns`).
+    /// A plain activation's return (call protocol v2 stage C) is this record alone: its header
+    /// below `r` names the caller, and nothing else is read (`lane_return_plain_header`, the
+    /// first step of `lane_complete_plain_activation` for a record of no leaf). Every other
+    /// return takes `lane_return_records`, so this handler makes no call.
     fn lane_return<LEAF: u8>(cx, r, ip, i, view) {
+        if LEAF == NOT_LEAF
+            && let Some((registers, next)) = lane_return_plain_header::<H, false>(cx, r, r.get(i.a))
+        {
+            let carried = Carried { memory: MemoryView::script(cx), integers: crate::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
+            next!(cx, registers, next, carried)
+        }
+        sibling!(lane_return_records::<H, LEAF>, r, ip, view)
+    }
+}
+
+return_handler! {
+    /// `lane_return` of an activation that is not a plain one past its header: a leaf's, a
+    /// record's (`lane_complete_plain_activation`), else the returns past the common one.
+    #[inline(never)]
+    fn lane_return_records<LEAF: u8>(cx, r, ip, i, view) {
         if let Some(resumed) = lane_complete_plain_activation::<H, LEAF>(cx, r.get(i.a)) {
             resume!(cx, resumed)
         }
@@ -20019,6 +20180,30 @@ const fn returning_completion(crosses: bool, constructs: bool, settles: bool) ->
     if crosses { Completion::Cross } else if constructs { Completion::Constructs } else if settles { Completion::SettlesPromise } else { Completion::Plain }
 }
 
+/// `lane_return_from`'s plain completion of the innermost activation where it is a plain one
+/// (call protocol v2 stage C) running on `window`: its header's caller resumes after the
+/// call with `value` in the call's result register. `None`, which changes nothing, where no
+/// plain activation runs or, unless `INTO_BODY`, its call returns its own completion
+/// (`lane_return_chain` takes it). It reads no record and makes no call.
+#[inline(always)]
+fn lane_return_plain_header<H: Host, const INTO_BODY: bool>(cx: *mut LaneContext<H>, window: Registers, value: Value) -> Option<(Registers, Ip)> {
+    let stack: &mut LaneStack = &mut unsafe { vm(cx) }.lane_stack;
+    if stack.plain.depth.get() == 0 {
+        return None;
+    }
+    debug_assert!(stack.plain.registers.get() == window.0 && unsafe { (*cx).registers }.0 == window.0, "the innermost plain activation runs");
+    // SAFETY: the call record belongs to the caller's live view.
+    let destination = unsafe { (*window.plain_caller().0).a };
+    if !INTO_BODY && destination & crate::bytecode::RETURN_REGISTER != 0 {
+        return None;
+    }
+    // SAFETY: a plain activation runs on `window`, checked above.
+    let (call, caller_registers, caller_base) = unsafe { stack.pop_plain(window.0) };
+    unsafe { (*cx).registers = caller_registers; (*cx).base = caller_base; }
+    caller_registers.set(destination & crate::bytecode::REGISTER_MASK, value);
+    Some((caller_registers, following(call)))
+}
+
 /// `lane_return_plain` of the innermost activation, a script one whose call keeps its
 /// result: of the caller's program (`Completion::Plain`), or, where `CROSSES`, of another
 /// (`Completion::Cross`), which enters the caller's program first, or, where `CONSTRUCTS`, a
@@ -20040,16 +20225,10 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
     }
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // A plain activation's header sits below the running window (call protocol v2 stage C).
-    if !CROSSES && !CONSTRUCTS && !SETTLES && stack.plain.depth.get() != 0 {
-        debug_assert!(stack.plain.registers.get() == unsafe { (*cx).registers }.0, "the innermost plain activation runs");
-        // SAFETY: the call record belongs to the caller's live view.
-        let destination = unsafe { (*Registers(stack.plain.registers.get()).plain_caller().0).a };
-        if INTO_BODY || destination & crate::bytecode::RETURN_REGISTER == 0 {
-            let (call, caller_registers, caller_base) = stack.pop_plain()?;
-            unsafe { (*cx).registers = caller_registers; (*cx).base = caller_base; }
-            caller_registers.set(destination & crate::bytecode::REGISTER_MASK, value);
-            return Some((caller_registers, following(call)));
-        }
+    if !CROSSES && !CONSTRUCTS && !SETTLES
+        && let Some(resumed) = lane_return_plain_header::<H, INTO_BODY>(cx, Registers(stack.plain.registers.get()), value)
+    {
+        return Some(resumed);
     }
     let top = stack.activations().last()?;
     let expected = returning_completion(CROSSES, CONSTRUCTS, SETTLES);
@@ -25641,7 +25820,7 @@ impl<H: Host> Vm<H> {
         // `lane_call_native` made them frames, and only this run makes more.
         if site.frames != self.frames.len()
             || lane_context::<H>() != cx
-            || !self.lane_stack.activations().is_empty()
+            || self.lane_stack.activation_count() != 0
             || self.lane_deferred.is_some()
             || self.with_scope_entered
         {
@@ -25921,6 +26100,9 @@ pub(super) struct PreparedLaneCallback<H: Host> {
     /// The activation calls passing its argument count push, made once (`PreparedShape`).
     shape: Option<PreparedShape>,
     pending: Vec<PendingGeneralCall>,
+    /// The executing program the calls' frames would take, which the context names with
+    /// `pending` from the first call to the loop's end (`Vm::call_prepared_lane`).
+    executing: super::dispatch_frame::ExecutingProgram,
     _stack: crate::stack::StackGuard,
 }
 
@@ -25934,6 +26116,10 @@ pub(super) struct PreparedLaneCallback<H: Host> {
 struct PreparedShape {
     argc: usize,
     activation: Activation,
+    /// The plain header a callback that keeps nothing pushes instead of `activation`
+    /// (`lane_push_prepared`); `None` for one that keeps its values, and for an array step's
+    /// activation, which `lane_admit_prepared` pushes as its record.
+    header: Option<CallbackHeader>,
     registers: usize,
     passed: usize,
     keeps: bool,
@@ -25966,7 +26152,115 @@ impl PreparedShape {
             }),
         );
         let room = usize::from(target.room).max(fill_room::<ACTIVATION_FILL_BLOCK>(size));
-        Some(Self { argc, activation, registers, passed: argc.min(params), keeps, size, room })
+        // A callback that keeps nothing is pushed as a plain activation returning through the
+        // trampoline; one that keeps its values needs the record's `kept`.
+        let header = (!keeps).then(|| {
+            // SAFETY: the lane's VM, which outlives its context; the trampoline is the lane stack's.
+            let (trampoline, result) = unsafe { (*caller.vm).lane_stack.callback_return.bind::<H>() };
+            CallbackHeader {
+                plain: crate::staged::protocol::PlainHeader {
+                    call: trampoline,
+                    caller_registers: result,
+                    caller_base: caller.base.expose_provenance() as u64,
+                    packed: crate::staged::protocol::plain_packed(target.function, argc.min(params) as u16, 0),
+                    callee: target.callee.to_bits(),
+                },
+                program: u64::from(caller.program.raw()),
+                call,
+                caller_registers: caller.registers,
+            }
+        });
+        Some(Self { argc, activation, header, registers, passed: argc.min(params), keeps, size, room })
+    }
+}
+
+/// A `PreparedShape`'s callback pushed as a plain activation (`LaneStack::push_callback_header`),
+/// made once per shape: the header `push_plain` writes, whose call record and caller registers
+/// are the return trampoline's (`CallbackTrampoline::bind`), its program, and the callback's
+/// own call record and caller registers, which the trampoline takes at each push.
+#[derive(Clone, Copy)]
+struct CallbackHeader {
+    plain: crate::staged::protocol::PlainHeader<u64>,
+    program: u64,
+    call: Ip,
+    caller_registers: Registers,
+}
+
+/// The register of the trampoline's window (`CallbackTrampoline::result`) a callback's return
+/// writes: its call record's `a`, a result register (no `RETURN_REGISTER`), so the plain return
+/// takes it as any call's.
+const CALLBACK_RESULT: u16 = 0;
+
+/// The return trampoline of the native callbacks pushed as plain activations
+/// (`LaneStack::push_callback_header`), as JSC and V8 return into native code through a return
+/// thunk. A callback's header names `records[0]` as its call record and `result` as its
+/// caller's registers, so the plain return (`lane_return_from`) writes the value into `result`
+/// and resumes at `records[1]`, whose handler (`callback_trampoline_returned`) ends the run: the
+/// plain return makes no test of its own for a callback. `call` and `caller_registers` are the
+/// innermost callback's own, which that handler and a spill (`LaneStack::spill_plain`) read.
+#[repr(C)]
+struct CallbackTrampoline {
+    records: [LaneInstruction; 2],
+    result: std::cell::Cell<Value>,
+    call: std::cell::Cell<Ip>,
+    caller_registers: std::cell::Cell<Registers>,
+}
+
+impl CallbackTrampoline {
+    /// A trampoline no handler is bound to yet (`bind`), which no header names.
+    fn new() -> Self {
+        let record = || LaneInstruction {
+            handler: std::ptr::null(),
+            operand: LaneOperand { imm: 0 },
+            a: CALLBACK_RESULT,
+            b: 0,
+            c: 0,
+            call_link: std::cell::Cell::new(NO_CALL_LINK),
+        };
+        Self {
+            records: [record(), record()],
+            result: std::cell::Cell::new(Value::UNDEFINED),
+            call: std::cell::Cell::new(std::ptr::null()),
+            caller_registers: std::cell::Cell::new(Registers(std::ptr::null_mut())),
+        }
+    }
+
+    /// Binds the handler of the VM `H` (`callback_trampoline_returned`) to its records, and answers
+    /// the words a callback's header names: its call record and its result window. The call
+    /// record is never dispatched; it holds the handler too.
+    fn bind<H: Host>(&mut self) -> (u64, u64) {
+        let handler = callback_trampoline_returned::<H> as Handler as *const ();
+        for record in &mut self.records {
+            record.handler = handler;
+        }
+        (self.records.as_ptr().expose_provenance() as u64, self.result.as_ptr().expose_provenance() as u64)
+    }
+
+    /// The callback's own call record and caller registers where `call`, a plain header's, is
+    /// the trampoline's call record; `None` for any other plain activation.
+    #[inline(always)]
+    fn returns(&self, call: Ip) -> Option<(Ip, Registers)> {
+        std::ptr::eq(call, self.records.as_ptr()).then(|| (self.call.get(), self.caller_registers.get()))
+    }
+}
+
+script_handler! {
+    /// `records[1]` of the return trampoline (`CallbackTrampoline`): the callback's plain return
+    /// wrote its value to the trampoline's result register and restored its caller's records
+    /// and the values' top. The native's caller's registers are the context's again and the run
+    /// ends with the value, which the native receives, as `lane_complete_native_callback` ends a
+    /// callback's record.
+    fn callback_trampoline_returned<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let value = r.get(i.a);
+        let stack = &mut vm.lane_stack;
+        let (call, caller_registers) = (stack.callback_return.call.get(), stack.callback_return.caller_registers.get());
+        // SAFETY: the running lane's context, which nothing else accesses.
+        unsafe { (*cx).registers = caller_registers };
+        // What the callback's loops and scopes owned completed with it.
+        stack.drop_owned_from(stack.activation_count());
+        vm.lane_completion.set(LaneCompletion::NativeReturned(value));
+        exit(call)
     }
 }
 
@@ -26026,38 +26320,60 @@ impl PreparedShape {
     }
 }
 
-/// The activation of a `PreparedShape`, `activation` with its admission's `room`, for a call
-/// with `args` (`entry`): the window filled, the activation pushed and the context made the
-/// callee's. `None`, which changes nothing, where the lane stack lacks room.
+/// The activation of a native's callback of `shape`, for a call with `args` (`entry`): the
+/// window filled, the activation pushed (its plain header where the shape has one, which
+/// returns through the trampoline, else its record) and the context made the callee's.
+/// `None`, which changes nothing, where the lane stack lacks room.
 #[inline(always)]
 fn lane_push_prepared<H: Host>(
     cx: *mut LaneContext<H>,
-    activation: &Activation,
-    room: usize,
+    shape: &PreparedShape,
     entry: &PreparedEntry,
     args: &[Value],
 ) -> Option<Ip> {
-    let window = lane_admit_prepared(cx, activation, room)?;
+    let window = match &shape.header {
+        Some(header) => admit_callback_header(cx, header, shape.room)?,
+        None => lane_admit_prepared(cx, &shape.activation, shape.room)?,
+    };
     // SAFETY: the admission pushed the activation over the window; `args` holds
     // `entry.argc` values.
     Some(unsafe { lane_enter_prepared(cx, entry, args, window) })
 }
 
-/// `lane_push_prepared`'s admission: `activation` pushed over a window at the lane stack's
-/// top with `room`, whose address it answers for the entry to fill. `None`, which
+/// Whether the lane stack admits one more activation with `room` values: the callback
+/// family's admission row (`staged::call_callback::admit_callback`).
+#[inline(always)]
+fn admits_callback(stack: &LaneStack, room: usize) -> bool {
+    crate::staged::call_callback::concrete_admit_callback(
+        stack.activation_count() as u64, stack.activation_limit.get() as u64, stack.values.room() as u64, room as u64,
+    )
+}
+
+/// `lane_push_prepared`'s admission of a record: `activation` pushed over a window at the lane
+/// stack's top with `room`, whose address it answers for the entry to fill. `None`, which
 /// changes nothing, where the lane stack lacks room.
 #[inline(always)]
 fn lane_admit_prepared<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, room: usize) -> Option<*mut Value> {
     let stack = &mut unsafe { vm(cx) }.lane_stack;
-    // The callback family's admission row (`staged::call_callback::admit_callback`).
-    if !crate::staged::call_callback::concrete_admit_callback(
-        stack.activation_count() as u64, stack.activation_limit.get() as u64, stack.values.room() as u64, room as u64,
-    ) {
+    if !admits_callback(stack, room) {
         return None;
     }
     // SAFETY: as `lane_push_callback`'s.
     let at = stack.values.top();
     unsafe { stack.push_activation_copy(activation, at) };
+    Some(at)
+}
+
+/// `lane_admit_prepared` of a callback's plain header (`LaneStack::push_callback_header`).
+#[inline(always)]
+fn admit_callback_header<H: Host>(cx: *mut LaneContext<H>, header: &CallbackHeader, room: usize) -> Option<*mut Value> {
+    let stack = &mut unsafe { vm(cx) }.lane_stack;
+    if !admits_callback(stack, room) {
+        return None;
+    }
+    // SAFETY: admitted above; the window starts at the values' top.
+    let at = stack.values.top();
+    unsafe { stack.push_callback_header(header, at) };
     Some(at)
 }
 
@@ -26218,7 +26534,7 @@ impl<H: Host> Vm<H> {
         let cx: *mut LaneContext<H> = site.cx.cast();
         if site.frames != self.frames.len()
             || lane_context::<H>() != cx
-            || !self.lane_stack.activations().is_empty()
+            || self.lane_stack.activation_count() != 0
             || self.with_scope_entered
             // SAFETY: the lane's context lives while its native runs.
             || !unsafe { (*cx).script_calls }
@@ -26242,12 +26558,21 @@ impl<H: Host> Vm<H> {
             caller: unsafe { std::ptr::read(cx) },
             shape: None,
             pending: self.pending_call_stacks.pop().unwrap_or_default(),
+            // SAFETY: as above.
+            executing: super::dispatch_frame::ExecutingProgram { id: unsafe { (*cx).program }, retained: None },
             _stack: stack,
         })
     }
 
-    /// Ends a prepared loop: its pending-call stack returns to the pool.
+    /// Ends a prepared loop: the context names its caller's pending calls and executing
+    /// program again (`Vm::call_prepared_lane` left the loop's named), and its pending-call
+    /// stack returns to the pool.
     pub(super) fn finish_lane_callback(&mut self, prepared: PreparedLaneCallback<H>) {
+        // SAFETY: the lane's context lives while its native, which ends the loop, runs.
+        unsafe {
+            (*prepared.cx).pending = prepared.caller.pending;
+            (*prepared.cx).executing = prepared.caller.executing;
+        }
         let PreparedLaneCallback { mut pending, .. } = prepared;
         pending.clear();
         self.pending_call_stacks.push(pending);
@@ -26267,7 +26592,7 @@ impl<H: Host> Vm<H> {
         // SAFETY: the lane's context lives while its native runs.
         let program = unsafe { (*cx).program };
         if site.frames != self.frames.len()
-            || !self.lane_stack.activations().is_empty()
+            || self.lane_stack.activation_count() != 0
             || self.lane_deferred.is_some()
             || self.with_scope_entered
             || self.active_program != program
@@ -26287,31 +26612,25 @@ impl<H: Host> Vm<H> {
             prepared.shape = PreparedShape::of(&prepared.caller, site.call, &prepared.target, args.len());
         }
         let registers = self.active_registers;
-        let mut executing = super::dispatch_frame::ExecutingProgram { id: program, retained: None };
+        // Named past the call until the loop ends (`finish_lane_callback`) or an exit restores
+        // the caller's: between calls no run of this lane reads them, and a nested one restores them.
         // SAFETY: as `lane_native_callback`'s.
         unsafe {
             (*cx).pending = &mut prepared.pending;
-            (*cx).executing = &mut executing;
+            (*cx).executing = &mut prepared.executing;
         }
-        let restore_pending = |cx: *mut LaneContext<H>, caller: &LaneContext<H>| unsafe {
-            (*cx).pending = caller.pending;
-            (*cx).executing = caller.executing;
-        };
         let pushed = match &prepared.shape {
-            Some(shape) => lane_push_prepared(cx, &shape.activation, shape.room, &shape.entry(&prepared.target, prepared.this), args),
+            Some(shape) => lane_push_prepared(cx, shape, &shape.entry(&prepared.target, prepared.this), args),
             None => None,
         };
-        let Some(start) = pushed.or_else(|| {
+        let start = pushed.or_else(|| {
             lane_push_callback(cx, site.call, &prepared.target, args, prepared.this, false)
-        }) else {
-            restore_pending(cx, &prepared.caller);
-            return None;
-        };
+        })?;
         unsafe { (*cx).memory = MemoryView::script(cx) };
         let exit = lane_dispatch(cx, start);
         let outcome = match self.lane_completion.take_native_returned() {
             Some(value) => {
-                restore_pending(cx, &prepared.caller);
+                debug_assert!(prepared.executing.retained.is_none(), "a completed callback's run retains no program");
                 Ok(value)
             }
             None => {
@@ -26326,6 +26645,7 @@ impl<H: Host> Vm<H> {
                 unsafe { lane_restore_context(cx, std::ptr::read(&prepared.caller)) };
                 // SAFETY: the lane's program outlives its run.
                 let code = unsafe { &*prepared.caller.code };
+                let executing = super::dispatch_frame::ExecutingProgram { id: program, retained: prepared.executing.retained.take() };
                 let exited = super::dispatch_frame::LaneExit { executing, raised };
                 let result = self.run_frames_after_lane_exit(code, frame, &mut prepared.pending, exited);
                 debug_assert_eq!(self.frames.len(), site.frames + 1, "the loop leaves the callback's frame");
