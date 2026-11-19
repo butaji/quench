@@ -163,18 +163,20 @@ impl Lowering<'_, '_> {
         }
         let exit = self.guard_exit(state, pc as u32);
         let number = state.values[usize::from(value)].value.ty.is_subtype(Type::NUMBER);
-        let array = self.loop_array(pc, Some(base)).filter(|array| number && array.writable);
+        // A reference is stored through a hoisted dense view too, past its barrier gate (`store_gate`);
+        // a typed view takes a Number alone.
+        let array = self.loop_array(pc, Some(base))
+            .filter(|array| array.writable && (number || array.views == ElementViews::Dense));
         match array {
             Some(array) if array.views == ElementViews::Dense && self.left_here =>
-                self.dense_element_write(state, array, pc as u32, instruction, exit),
+                self.dense_element_write(state, array, pc as u32, instruction, number, exit),
             held => {
                 self.held_view = held.map(|array| self.held_array(array, (false, self.ranges.in_bounds(pc))));
                 self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementWrite { value, base, key });
-                // A store through a typed or double view leaves where it misses, calling no VM
-                // step, so no backing moved and no view is read again.
-                if !held.is_some_and(|array| matches!(array.views, ElementViews::Typed(_) | ElementViews::Double)) {
-                    self.reload_dense_arrays(pc);
-                }
+                // A store through a held view leaves where it misses (`index_set_host`) and calls no
+                // helper, so no backing moved and no view is read again. Only the general row may
+                // call the VM's store, which may move any backing.
+                if held.is_none() { self.reload_dense_arrays(pc); }
             }
         }
         state.proofs.arrays.clear();
