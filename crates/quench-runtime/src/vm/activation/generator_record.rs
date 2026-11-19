@@ -265,6 +265,17 @@ impl GeneratorRecord {
         self.take_parked(GeneratorLife::Completed)
     }
 
+    /// The oldest queued async request, taken. A completed generator queues no more (each
+    /// request then settles at once), so its queue's buffer goes with its last request rather
+    /// than with the generator.
+    pub(crate) fn next_request(&mut self) -> Option<AsyncGeneratorRequest> {
+        let request = self.requests.pop_front();
+        if self.requests.is_empty() && self.is_completed() {
+            self.requests = VecDeque::new();
+        }
+        request
+    }
+
     pub(crate) fn extend_roots(&self, out: &mut Vec<Value>) {
         out.push(self.realm);
         if let Some(continuation) = self.continuation() {
