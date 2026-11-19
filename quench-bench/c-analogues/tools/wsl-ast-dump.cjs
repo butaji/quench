@@ -194,13 +194,15 @@ function lexTokens(text) {
 }
 
 function parseInput(input) {
-    const program = run("new Program()");
+    let program = run("new Program()");
     ctx.__program = program;
     ctx.__text = input.text;
     // Same origin, kind and line offset as Prepare.js.
     run(input.kind === "stdlib"
         ? "parse(__program, '/internal/stdlib', 'native', 27, __text)"
         : "parse(__program, '/internal/test', 'user', 0, __text)");
+    // --clone: dump cloneProgram(program) instead of the parse tree (the cloner pass)
+    if (process.argv.includes("--clone") && input.kind === "stdlib") program = run("cloneProgram(__program)");
     return program;
 }
 

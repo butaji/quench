@@ -11,6 +11,7 @@
 #include "wsl-inputs.h"
 #include "wsl-ast.h"
 #include "wsl-parse.h"
+#include "wsl-clone.h"
 
 static uint32_t fnv_bytes(uint32_t h, const char *s, size_t n) {
   for (size_t i = 0; i < n; i++) {
@@ -43,6 +44,7 @@ static int dump_lex_input(const Input *in, Buf *b, char *err, size_t errcap) {
 }
 
 /* Parses one input (stdlib or doPrep) into b; returns the node count, or -1 with status set. */
+static int CLONE_FLAG;
 static long parse_one(int i, const Input *in, Buf *b, char *status, size_t statuscap) {
   int native = i == 0 ? 1 : 0;
   const char *origin = i == 0 ? "/internal/stdlib" : "/internal/test";
@@ -60,7 +62,13 @@ static long parse_one(int i, const Input *in, Buf *b, char *status, size_t statu
   parse_program(&prog, origin, native, lineOffset, in->text, in->len);
   WSL_NH = 0;
   buf_str(b, "program\n");
-  for (int k = 0; k < prog.statements.n; k++) dump_node(b, prog.statements.v[k], 1);
+  if (CLONE_FLAG && native) {
+    /* cloneProgram(program): dump the clone instead of the parse tree */
+    AstList cl = {0};
+    statements_clone(&cl, &prog.statements);
+    for (int k = 0; k < cl.n; k++) dump_node(b, cl.v[k], 1);
+  } else
+    for (int k = 0; k < prog.statements.n; k++) dump_node(b, prog.statements.v[k], 1);
   long nodes = -1;
   for (size_t c = 0; c < b->n; c++) if (b->s[c] == '\n') nodes++;
   return nodes;
@@ -109,7 +117,8 @@ int main(int argc, char **argv) {
   int dumpAt = -1;
   int benchIterations = 0;
   for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dumpAt = atoi(argv[++i]);
+    if (strcmp(argv[i], "--clone") == 0) CLONE_FLAG = 1;
+    else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dumpAt = atoi(argv[++i]);
     else if (strcmp(argv[i], "--bench") == 0 && i + 1 < argc) benchIterations = atoi(argv[++i]);
     else root = argv[i];
   }
