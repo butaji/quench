@@ -543,7 +543,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn shape_may_have_symbol_keys(&self, shape: u32) -> bool {
         let entry = &self.shapes[shape as usize];
-        entry.dictionary_trigger.is_some() || entry.facts.has_symbol_key()
+        entry.facts.is_dictionary() || entry.facts.has_symbol_key()
     }
     pub(super) fn mark_object_dictionary(&mut self, object: Value, trigger: DictionaryTrigger) {
         let Some(shape) = self.object_data(object).map(Object::shape) else {
