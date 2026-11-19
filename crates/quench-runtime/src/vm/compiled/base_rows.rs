@@ -372,7 +372,7 @@ mod tests {
             ("empty_string", at!(JsStepDispatch, empty_string), m::JS_STEP_EMPTY_STRING),
             ("environment_storage", at!(JsStepDispatch, environment_storage), m::JS_STEP_ENV_STORAGE),
             ("armed_array_proofs", at!(JsStepDispatch, armed_array_proofs), m::JS_STEP_ARMED_ARRAY_PROOFS),
-            ("array_chain_index_free", at!(JsStepDispatch, array_chain_index_free), m::JS_STEP_ARRAY_CHAIN_INDEX_FREE),
+            ("array_chain_index_free_address", at!(JsStepDispatch, array_chain_index_free_address), m::JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS),
         ]
     }
 
