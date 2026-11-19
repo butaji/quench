@@ -6313,7 +6313,8 @@ const RETURNING_FORM: usize = OWN_FORMS.len() + 50;
 const RETURNING_BASE: u8 = own_site(false, RETURNING_FORM);
 pub(super) const fn returning_site(this: bool, leaf: u8) -> u8 { own_site(this, RETURNING_FORM) + 2 * leaf }
 pub(super) const fn returning_field_site(site: u8) -> bool { site >= RETURNING_BASE }
-pub(super) const fn returning_leaf(site: u8) -> u8 { (site - RETURNING_BASE) / 2 }
+/// Saturating: a const branch for a site of another family still instantiates the call.
+pub(super) const fn returning_leaf(site: u8) -> u8 { site.saturating_sub(RETURNING_BASE) / 2 }
 
 /// Whether `handler` is the returning own-field row of no leaf form, at `this` or a register
 /// (`returning_site`): the leaf call's reads recognise it as the own read it is.

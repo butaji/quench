@@ -40,7 +40,7 @@ pub use stub::{EXIT_STUB_LEN, exit_stub};
 
 /// The frame's header words before the registers: the result pointer, the memory base and its
 /// length (the call row reloads the pins from them). The stitcher reads it; `build.rs` does not.
-pub const FRAME_HEADER_WORDS: u64 = 3;
+pub const FRAME_HEADER_WORDS: u64 = wasm_layout::FRAME_HEADER_WORDS;
 
 /// Pinned int registers a stencil takes, and the double registers (xmm0 to xmm7) after them.
 pub const PINNED: usize = 4;

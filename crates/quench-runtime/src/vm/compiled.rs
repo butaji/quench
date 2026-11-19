@@ -183,6 +183,9 @@ mod wasm_simd_stage;
 // `--b-jit` enters a module's functions through their stitched rows (`stitched_entry`).
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 mod wasm_stitch;
+mod wasm_specializer;
+use wasm_specializer::{WasmResidual, WasmSpecializer, WasmTierChoice};
+use crate::vm::specializer::Specializer as _;
 /// The b-jit's Wasm codes equal the runtime's values (compile-time checks only).
 mod wasm_codes_check;
 #[cfg(target_arch = "x86_64")]
@@ -8879,16 +8882,14 @@ impl<H: Host> Vm<H> {
                 let full_plan = full_plans[index].as_ref()?;
                 let body_build_started = diagnostics_enabled.then(std::time::Instant::now);
                 let body_memory_before = body_build_started.and_then(|_| jit_memory_snapshot());
-                let built = analysis.build_function(
-                    isa,
+                let built = WasmSpecializer {
                     index,
+                    plans: &plans,
                     full_plan,
-                    &plans,
-                    guarded,
-                    fixed_base,
-                    &reference_site_ids[index],
-                    diagnostics_enabled,
-                );
+                    reference_site_ids: &reference_site_ids[index],
+                    tier: WasmTierChoice::Optimizing { analysis: &analysis, isa, guarded, fixed_base, diagnostics_enabled },
+                }
+                .specialize(&code);
                 if let Some(started) = body_build_started {
                     let memory_after = jit_memory_snapshot();
                     eprintln!(
@@ -8900,8 +8901,8 @@ impl<H: Host> Vm<H> {
                         memory_after.map(|memory| memory.1),
                     );
                 }
-                let entry = analysis.build_entry(isa, index, plans[index].as_ref()?, MemoryArguments::of(fixed_base, guarded));
-                Some((index, built?, entry))
+                let Ok(WasmResidual::Compiled(built, entry)) = built else { return None };
+                Some((index, built, entry))
             });
             bodies = compile_built_functions(isa, count, self.memory_policy(), build)?;
         }
@@ -8917,7 +8918,27 @@ impl<H: Host> Vm<H> {
                         if !callable[index] {
                             return None;
                         }
-                        stitched_entry(self, program, &code, index, (&plans, &entry_cells, &callable, &analysis.grows_memory), memory_slot, (full_plans[index].as_ref()?, &reference_site_ids[index], env))
+                        let full_plan = full_plans[index].as_ref()?;
+                        let residual = WasmSpecializer {
+                            index,
+                            plans: &plans,
+                            full_plan,
+                            reference_site_ids: &reference_site_ids[index],
+                            tier: WasmTierChoice::Baseline {
+                                vm: self,
+                                program_id: program,
+                                env,
+                                memory_slot,
+                                entry_cells: &entry_cells,
+                                callable: &callable,
+                                grows_memory: &analysis.grows_memory,
+                            },
+                        }
+                        .specialize(&code);
+                        match residual.ok()? {
+                            WasmResidual::Rows(rows) => Some(rows),
+                            WasmResidual::Compiled(..) => None,
+                        }
                     })
                     .collect();
                 let kept: Vec<bool> = codes.iter().map(Option::is_some).collect();
