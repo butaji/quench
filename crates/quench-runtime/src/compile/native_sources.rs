@@ -1,6 +1,7 @@
 //! Compile source units into one stable atom namespace before host initialization.
 
-use super::{AtomPrefix, Diagnostic, HostScriptOptions, ReleasedRecords, DynamicFunctionKind, DynamicFunctionSource, DYNAMIC_FUNCTION_GOAL, DYNAMIC_FUNCTION_SOURCE_NAME, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL};
+use crate::bytecode::DYNAMIC_FUNCTION_SOURCE_NAME;
+use super::{AtomPrefix, Diagnostic, HostScriptOptions, ReleasedRecords, DynamicFunctionKind, DynamicFunctionSource, DYNAMIC_FUNCTION_GOAL, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL};
 use crate::bytecode::{Atom, AtomSequence, AtomTable, SourceText};
 use crate::{Engine, ResidualProgram};
 use rustc_hash::FxHashMap;

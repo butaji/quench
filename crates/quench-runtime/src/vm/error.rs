@@ -1440,7 +1440,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "native-execution")]
         let native_program = {
             let parts = kind.native_parts(self.specialization_part(), &parameters, &source);
-            match self.resolve_native_program(crate::compile::DYNAMIC_FUNCTION_SOURCE_NAME, &parts) {
+            match self.resolve_native_program(crate::bytecode::DYNAMIC_FUNCTION_SOURCE_NAME, &parts) {
                 Ok(program) => program,
                 Err(crate::NativeSourceError::Syntax(message)) => return self.syntax_error_result(program, &message),
                 Err(error) => return Err(JsError::validation(error.to_string())),
@@ -1456,7 +1456,7 @@ impl<H: Host> Vm<H> {
         let program_id = if let Some(id) = native_program_id { id } else {
             self.require_source_compilation(program)?;
             let dynamic = crate::compile::DynamicFunctionSource::new(&parameters, &source, kind);
-            let source_name = crate::compile::DYNAMIC_FUNCTION_SOURCE_NAME;
+            let source_name = crate::bytecode::DYNAMIC_FUNCTION_SOURCE_NAME;
             // A Function body compiles from its text alone, so its compiled form goes through the
             // host's compile cache as a host script's does (`eval_host_script`).
             let kept_key = [self.specialization_part(), dynamic.text.as_str()];

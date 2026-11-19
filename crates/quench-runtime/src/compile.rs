@@ -163,7 +163,6 @@ pub(crate) const DYNAMIC_FUNCTION_PUBLIC_NAME: &str = "anonymous";
 /// The name of every Function-constructor program. Its frames report their origin, not this
 /// name (`CompilationOrigin::FunctionConstructor`), so one name serves all of them and keys
 /// their compiled form by text alone.
-pub(crate) const DYNAMIC_FUNCTION_SOURCE_NAME: &str = "<Function>";
 
 /// A Function-constructor program's source: the coerced parameter and body strings,
 /// normalized, in the expression the compiler parses (`(function anonymous(…\n) {\n…\n})`),
@@ -272,7 +271,7 @@ impl StaticModuleTextKey {
     }
 }
 pub(crate) use crate::bytecode::{ModuleReexport as StaticModuleReexport, StaticModuleAnalysis, StaticModulePlan, StaticModuleThrow};
-pub(crate) use crate::bytecode::{Diagnostic, DiagnosticKind};
+pub(crate) use crate::bytecode::{Diagnostic, DiagnosticKind, ReleasedRecords};
 impl Diagnostic {
     /// A parse failure, reported with V8's message at OXC's position.
     fn parse_failure(source_name: &str, source: &str, error: &oxc_diagnostics::OxcDiagnostic) -> Self {
@@ -1867,17 +1866,6 @@ enum DataLiterals {
 }
 
 /// What a compilation keeps of each record it releases during its load
-/// (`Compiler::finish_early`) beside the function's header and replay.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ReleasedRecords {
-    /// Nothing: the function compiles again from its source on its first read.
-    Dropped,
-    /// Its compile-cache encoding, for a program its host encodes once compiled: the
-    /// encoding copies it instead of compiling every released function again (npm scenario,
-    /// cold, empty cache, x86_64 callgrind: prettier 4.32 -> 2.98 G instructions, cold
-    /// `import typescript` 19.7 -> 11.3 G).
-    Encoded,
-}
 
 /// The compiler's tables as the derived facts of a function it finished read them
 /// (`FactTables`): every function nested in it is finished too, so each it makes has its

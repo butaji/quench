@@ -10,7 +10,7 @@ pub(super) fn write_closure_tables(out: &mut BinaryWriter, program: &crate::byte
 
 /// The closure tables `write_closure_tables` wrote, for a program of `functions` functions.
 pub(super) fn read_closure_tables(input: &mut BinaryReader<'_>, functions: usize)
-    -> Result<(Option<std::rc::Rc<crate::bytecode::ClosureReads>>, crate::compile::first_call::FirstCallStubs), String> {
+    -> Result<(Option<std::rc::Rc<crate::bytecode::ClosureReads>>, crate::bytecode::FirstCallStubs), String> {
     Ok((read_closure_reads(input)?, read_first_call_scopes(input, functions)?))
 }
 
@@ -64,7 +64,7 @@ fn read_closure_reads(input: &mut BinaryReader<'_>) -> Result<Option<std::rc::Rc
 /// The scopes of a program's nested first-call stubs (`ResidualProgram::first_call_scopes`):
 /// per stub its id, inherited strictness, scope level count, and the names it reads with each
 /// one's level and slot.
-fn write_first_call_scopes(out: &mut BinaryWriter, stubs: &crate::compile::first_call::FirstCallStubs) {
+fn write_first_call_scopes(out: &mut BinaryWriter, stubs: &crate::bytecode::FirstCallStubs) {
     out.u32(stubs.len() as u32);
     for (stub, scopes) in stubs.iter() {
         out.u32(*stub);
@@ -79,7 +79,7 @@ fn write_first_call_scopes(out: &mut BinaryWriter, stubs: &crate::compile::first
     }
 }
 
-fn read_first_call_scopes(input: &mut BinaryReader<'_>, functions: usize) -> Result<crate::compile::first_call::FirstCallStubs, String> {
+fn read_first_call_scopes(input: &mut BinaryReader<'_>, functions: usize) -> Result<crate::bytecode::FirstCallStubs, String> {
     let stubs = input.list(|input| {
         let stub = input.u32()?;
         let strict = input.bool()?;

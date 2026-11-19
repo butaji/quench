@@ -556,7 +556,7 @@ mod tests {
         ] {
             let origin = retained.map(|(prefix, _)| crate::wrapper_origin(prefix).unwrap());
             let mut program = crate::Engine::specialize_host_script(&text, "calls.js", &crate::compile::NoAtomPrefix,
-                crate::HostScriptOptions { origin, typescript, keep_records: true }, crate::compile::ReleasedRecords::Encoded).unwrap();
+                crate::HostScriptOptions { origin, typescript, keep_records: true }, crate::bytecode::ReleasedRecords::Encoded).unwrap();
             if let Some((prefix, body)) = retained {
                 let source = program.source.as_mut().unwrap();
                 source.retain_body(crate::bytecode::SourceText::Shared(body.into()), prefix.len() as u32);

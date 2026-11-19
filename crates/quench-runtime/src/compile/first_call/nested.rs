@@ -5,6 +5,7 @@
 //! sources (TOD-196 stage 1). Its chunk compiles its text against those scopes, kept as
 //! names (`FirstCallScopes`), so its code reads its captures where the eager compile would.
 use super::*;
+pub(crate) use crate::bytecode::FirstCallScopes;
 use capture_scope::{CaptureScope, ScopeChain};
 use std::rc::Rc;
 
@@ -67,52 +68,6 @@ pub(in crate::compile) fn alone_body_end(program: &Program<'_>) -> Option<u32> {
     function.body.as_ref().map(|body| body.span.end)
 }
 
-/// The bindings a stub's function reads from the scopes it closes over, by name: each with the
-/// level of its scope (the innermost is 0) and its slot, the names packed into one text so the
-/// stub costs two allocations however many names it reads.
-#[derive(Debug)]
-pub(crate) struct ScopeNames {
-    text: Box<str>,
-    /// Each binding's end in `text`, its scope level and its slot.
-    ends: Box<[(u32, u16, u16)]>,
-}
-
-impl ScopeNames {
-    pub(crate) fn len(&self) -> usize {
-        self.ends.len()
-    }
-
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, u16, u16)> {
-        let starts = std::iter::once(0).chain(self.ends.iter().map(|&(end, ..)| end));
-        starts.zip(self.ends.iter()).map(|(start, &(end, level, slot))| (&self.text[start as usize..end as usize], level, slot))
-    }
-}
-
-impl<'n> FromIterator<(&'n str, u16, u16)> for ScopeNames {
-    fn from_iter<I: IntoIterator<Item = (&'n str, u16, u16)>>(bindings: I) -> Self {
-        let (mut text, mut ends) = (String::new(), Vec::new());
-        for (name, level, slot) in bindings {
-            text.push_str(name);
-            ends.push((text.len() as u32, level, slot));
-        }
-        Self { text: text.into(), ends: ends.into() }
-    }
-}
-
-/// A program's nested stubs by id, sorted, each with the scopes its chunk compiles against; the
-/// chunks of its stubs append theirs.
-pub(crate) type FirstCallStubs = crate::bytecode::append_vec::AppendVec<(u32, Rc<FirstCallScopes>)>;
-
-/// What a nested stub's chunk compiles its function against: the bindings it reads from the
-/// scopes it closes over (its free names, and the capture markers of those), and the strictness
-/// it inherits.
-#[derive(Debug)]
-pub(crate) struct FirstCallScopes {
-    /// How many scopes it closes over, innermost first.
-    levels: u16,
-    names: ScopeNames,
-    strict: bool,
-}
 
 /// A nested stub's predicted captures, as (distance, slot), and the scopes its chunk compiles
 /// against.
@@ -241,22 +196,6 @@ impl<'f> FreeNameCheck<'f> {
 }
 
 impl FirstCallScopes {
-    pub(crate) fn new(levels: u16, names: ScopeNames, strict: bool) -> Self {
-        Self { levels, names, strict }
-    }
-
-    pub(crate) fn levels(&self) -> u16 {
-        self.levels
-    }
-
-    pub(crate) fn names(&self) -> &ScopeNames {
-        &self.names
-    }
-
-    pub(crate) fn strict(&self) -> bool {
-        self.strict
-    }
-
     /// The chain the chunk's function closes over, its names interned in `atoms`.
     fn chain(&self, atoms: &mut CompilerAtoms<'_>) -> ScopeChain {
         let mut levels = vec![Vec::new(); usize::from(self.levels)];

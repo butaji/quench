@@ -18,7 +18,7 @@ mod room;
 mod template;
 pub(in crate::compile) use template::StubOwn;
 pub(crate) mod nested;
-pub(crate) use nested::{FirstCallScopes, FirstCallStubs};
+pub(crate) use nested::FirstCallScopes;
 pub(in crate::compile) use nested::{FreeNameCheck, FreeNames, alone_body_end, alone_start, free_names, skimmed_free_names};
 pub(in crate::compile) use room::ChunkRoom;
 

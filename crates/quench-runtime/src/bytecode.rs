@@ -2,13 +2,27 @@ use smallvec::SmallVec;
 
 mod internal_bindings;
 mod diagnostic;
+pub(crate) mod first_call;
 mod module_records;
 pub use module_records::{ModuleImportBinding, ModuleImportName, ModuleRequest, ModuleRequestPhase};
 pub use diagnostic::Diagnostic;
 pub(crate) use diagnostic::DiagnosticKind;
+pub(crate) use first_call::{FirstCallScopes, FirstCallStubs};
 pub(crate) use module_records::{ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind,
     StaticModuleAnalysis, StaticModulePlan, StaticModuleThrow};
 pub(crate) use internal_bindings::*;
+/// The name a `new Function`-style source compiles under.
+pub(crate) const DYNAMIC_FUNCTION_SOURCE_NAME: &str = "<Function>";
+
+/// What a compiler releases of a function's records (`Compiler::finish_early`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReleasedRecords {
+    /// Nothing: the function compiles again from its source on its first read.
+    Dropped,
+    /// Its compile-cache encoding, for a program its host encodes once compiled.
+    Encoded,
+}
+
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
 pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
 
@@ -3862,7 +3876,7 @@ pub struct ResidualProgram {
     /// How its functions can be compiled again from source, when they can.
     pub(crate) replay: Option<std::rc::Rc<crate::compile::replay::ProgramReplay>>,
     /// Each nested first-call stub's scopes, by stub id, which an encoding keeps with the stubs.
-    pub(crate) first_call_scopes: crate::compile::first_call::FirstCallStubs,
+    pub(crate) first_call_scopes: crate::bytecode::FirstCallStubs,
     /// The records a decoded program keeps encoded until their functions' first read.
     pub(crate) encoded_records: Option<std::rc::Rc<EncodedRecords>>,
     /// Whether the program is known to be valid (`ValidationProof`).

@@ -845,8 +845,8 @@ fn load_encoded_records_decode_as_records_compiled_again() {
             crate::Engine::specialize_script_with_atom_prefix(source, &name, &crate::compile::NoAtomPrefix, released)
                 .unwrap()
         };
-        let encoded = compile(crate::compile::ReleasedRecords::Encoded);
-        let dropped = compile(crate::compile::ReleasedRecords::Dropped);
+        let encoded = compile(crate::bytecode::ReleasedRecords::Encoded);
+        let dropped = compile(crate::bytecode::ReleasedRecords::Dropped);
         assert!(
             encoded.functions.iter().any(|slot| slot.record().is_none()),
             "the program releases records during its load"

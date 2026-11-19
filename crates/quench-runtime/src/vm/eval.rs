@@ -140,7 +140,7 @@ impl<H: Host> Vm<H> {
                 source,
                 source_name,
                 &*self,
-                crate::compile::ReleasedRecords::Dropped,
+                crate::bytecode::ReleasedRecords::Dropped,
             ) {
                 Ok(residual) => residual,
                 Err(diagnostics) => {
@@ -501,11 +501,11 @@ impl<H: Host> Vm<H> {
     /// What a compilation keeps of the records its load releases: their compile-cache
     /// encoding when its program is `cached` and the host keeps compiled programs, which
     /// `encode_cached_program` then copies.
-    pub(super) fn released_records(&self, cached: bool) -> crate::compile::ReleasedRecords {
+    pub(super) fn released_records(&self, cached: bool) -> crate::bytecode::ReleasedRecords {
         if cached && self.host.keeps_compiled_programs() {
-            crate::compile::ReleasedRecords::Encoded
+            crate::bytecode::ReleasedRecords::Encoded
         } else {
-            crate::compile::ReleasedRecords::Dropped
+            crate::bytecode::ReleasedRecords::Dropped
         }
     }
 

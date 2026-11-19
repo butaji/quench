@@ -3681,7 +3681,7 @@ impl<H: Host> Vm<H> {
                     &module.name,
                     module.typescript,
                     &*self,
-                    crate::compile::ReleasedRecords::Dropped,
+                    crate::bytecode::ReleasedRecords::Dropped,
                 )
                 .map_err(|diagnostics| {
                     if diagnostics
@@ -3957,7 +3957,7 @@ impl<H: Host> Vm<H> {
             &module.name,
             module.typescript,
             &*self,
-            crate::compile::ReleasedRecords::Dropped,
+            crate::bytecode::ReleasedRecords::Dropped,
         )
         .map_err(|diagnostics| {
             if diagnostics
