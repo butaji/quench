@@ -338,7 +338,8 @@ impl<H: Host> Vm<H> {
                 if size <= REPEAT_COPY_MAX_UNITS
                     && let Some(super::wtf16::Units::Ascii(bytes)) = receiver.existing_units()
                 {
-                    let text: smallvec::SmallVec<[u8; 64]> = bytes.iter().copied().cycle().take(size).collect();
+                    let mut text = smallvec::SmallVec::<[u8; REPEAT_COPY_MAX_UNITS]>::from_elem(0, size);
+                    super::wtf16::repeat_ascii_into(&mut text, bytes);
                     return Ok(self.heap.alloc_ascii_run(&text));
                 }
                 Ok(self.heap.alloc_string(receiver.repeat(count)))
