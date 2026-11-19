@@ -1,5 +1,15 @@
 //! Number to 32-bit integer conversions: ToUint32 and the truncation the value encoding uses.
 
+#[cfg(not(stencil_build))]
+use crate::float_layout::binary64_parts;
+// The stencil build mounts the same file (`float_layout.rs`), which the runtime's root names `crate::float_layout`.
+#[cfg(stencil_build)]
+#[allow(dead_code)]
+#[path = "../float_layout.rs"]
+mod float_layout;
+#[cfg(stencil_build)]
+use float_layout::binary64_parts;
+
 /// `value` truncated toward zero when it fits `i32`; any other result is some `i32` whose
 /// conversion back differs from `value`. x86-64 truncates directly (out-of-range and NaN
 /// inputs give `i32::MIN`), skipping the saturation a Rust cast adds.
@@ -81,7 +91,7 @@ fn number_to_u32_wide(value: f64) -> u32 {
     }
     // At or above 2^63 the value is an integer: its significand times a power of two of
     // at least 2^11, whose low 32 bits are the significand's shifted, or none past 2^32.
-    let (significand, exponent) = crate::float_layout::binary64_parts(value);
+    let (significand, exponent) = binary64_parts(value);
     let low = if exponent.unsigned_abs() >= u32::BITS { 0 } else { (significand << exponent) as u32 };
     if value.is_sign_negative() { low.wrapping_neg() } else { low }
 }

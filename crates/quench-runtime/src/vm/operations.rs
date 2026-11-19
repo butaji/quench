@@ -1,4 +1,5 @@
 use super::*;
+use crate::value::NumericPair;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
 mod number_operators;
@@ -8,6 +9,37 @@ pub(super) use number_operators::immediate_number_pair;
 use number_operators::*;
 mod number_rows;
 pub(crate) use number_rows::*;
+
+// The operator codes the shared rows name (`number_rows::binary_operator`, `unary_operator`) are the parser's.
+const _: () = assert!(binary_operator::Equality == BinaryOperator::Equality as u32
+    && binary_operator::Inequality == BinaryOperator::Inequality as u32
+    && binary_operator::StrictEquality == BinaryOperator::StrictEquality as u32
+    && binary_operator::StrictInequality == BinaryOperator::StrictInequality as u32
+    && binary_operator::LessThan == BinaryOperator::LessThan as u32
+    && binary_operator::LessEqualThan == BinaryOperator::LessEqualThan as u32
+    && binary_operator::GreaterThan == BinaryOperator::GreaterThan as u32
+    && binary_operator::GreaterEqualThan == BinaryOperator::GreaterEqualThan as u32
+    && binary_operator::Addition == BinaryOperator::Addition as u32
+    && binary_operator::Subtraction == BinaryOperator::Subtraction as u32
+    && binary_operator::Multiplication == BinaryOperator::Multiplication as u32
+    && binary_operator::Division == BinaryOperator::Division as u32
+    && binary_operator::Remainder == BinaryOperator::Remainder as u32
+    && binary_operator::Exponential == BinaryOperator::Exponential as u32
+    && binary_operator::ShiftLeft == BinaryOperator::ShiftLeft as u32
+    && binary_operator::ShiftRight == BinaryOperator::ShiftRight as u32
+    && binary_operator::ShiftRightZeroFill == BinaryOperator::ShiftRightZeroFill as u32
+    && binary_operator::BitwiseOR == BinaryOperator::BitwiseOR as u32
+    && binary_operator::BitwiseXOR == BinaryOperator::BitwiseXOR as u32
+    && binary_operator::BitwiseAnd == BinaryOperator::BitwiseAnd as u32
+    && binary_operator::In == BinaryOperator::In as u32
+    && binary_operator::Instanceof == BinaryOperator::Instanceof as u32);
+const _: () = assert!(unary_operator::UnaryPlus == UnaryOperator::UnaryPlus as u32
+    && unary_operator::UnaryNegation == UnaryOperator::UnaryNegation as u32
+    && unary_operator::LogicalNot == UnaryOperator::LogicalNot as u32
+    && unary_operator::BitwiseNot == UnaryOperator::BitwiseNot as u32
+    && unary_operator::Typeof == UnaryOperator::Typeof as u32
+    && unary_operator::Void == UnaryOperator::Void as u32
+    && unary_operator::Delete == UnaryOperator::Delete as u32);
 
 /// Shared Number/BigInt content mismatch diagnostic.
 pub(super) const MIXED_BIGINT_TYPES: &str =
@@ -21,52 +53,10 @@ pub(super) enum ArrayLikeElementKind {
 /// The comparison operators occupy the binary operator discriminants up to this one.
 pub(super) const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualThan as u32;
 
-/// `number_relations` rows' operators: which binary operator denotes each relation.
-macro_rules! number_relation_operators {
-    ($($relation:ident => [$($operator:ident $symbol:literal),+ $(,)?], $stage_method:ident;)+) => {
-        impl NumberRelation {
-            /// The binary operator a relation denotes, the first of its group. `Equal` and `NotEqual` name
-            /// two operators each (`==` and `===`), so a caller that needs one of them must not ask.
-            pub(crate) fn binary_operator(self) -> u32 {
-                match self {
-                    $(Self::$relation => [$(BinaryOperator::$operator as u32),+][0],)+
-                }
-            }
-
-            #[inline(always)]
-            pub(crate) fn from_operator(op: u32) -> Option<Self> {
-                $(
-                    if $(op == BinaryOperator::$operator as u32)||+ {
-                        return Some(Self::$relation);
-                    }
-                )+
-                None
-            }
-        }
-    };
-}
-number_relation_rows!(number_relation_operators);
 
 macro_rules! number_arithmetic_operators {
     ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
         impl NumberArithmetic {
-            /// The binary operator this arithmetic operation denotes (`from_operator`'s inverse).
-            pub(crate) fn binary_operator(self) -> u32 {
-                match self {
-                    $(Self::$operation => BinaryOperator::$operator as u32,)+
-                }
-            }
-
-            #[inline(always)]
-            pub(crate) fn from_operator(operator: u32) -> Option<Self> {
-                $(
-                    if operator == BinaryOperator::$operator as u32 {
-                        return Some(Self::$operation);
-                    }
-                )+
-                None
-            }
-
             /// The Number arithmetic operation the decoded instruction denotes: the `Arithmetic`
             /// of `Operation::Number`, which `Binary` decodes its arithmetic operators to
             /// (`staged::numeric::binary_operation`). No record of another opcode denotes one.
@@ -93,11 +83,6 @@ impl NumberArithmetic {
     /// Multiplication can round before ToInt32 and does not have this law.
     pub(super) const fn int32_projection_is_wrapping(self) -> bool {
         matches!(self, Self::Add | Self::Subtract)
-    }
-
-    /// Whether the result of two integers is an integer: all but a division.
-    pub(crate) const fn integral(self) -> bool {
-        !matches!(self, Self::Divide)
     }
 }
 
@@ -148,13 +133,6 @@ number_unary_rows!(number_unary_operators);
 macro_rules! number_bitwise_operators {
     ($($operation:ident => $operator:ident, $stage_method:ident, $symbol:literal;)+) => {
         impl NumberBitwise {
-            /// The binary operator this bitwise operation denotes (`from_operator`'s inverse).
-            pub(crate) fn binary_operator(self) -> u32 {
-                match self {
-                    $(Self::$operation => BinaryOperator::$operator as u32,)+
-                }
-            }
-
             /// `from_operator` of a decoded operator, as one match.
             #[inline(always)]
             pub(crate) fn from_binary_operator(operator: BinaryOperator) -> Option<Self> {
@@ -162,16 +140,6 @@ macro_rules! number_bitwise_operators {
                     $(BinaryOperator::$operator => Some(Self::$operation),)+
                     _ => None,
                 }
-            }
-
-            #[inline]
-            pub(crate) fn from_operator(operator: u32) -> Option<Self> {
-                $(
-                    if operator == BinaryOperator::$operator as u32 {
-                        return Some(Self::$operation);
-                    }
-                )+
-                None
             }
 
             /// The signed int32 operation the decoded instruction denotes: the `Bitwise` of
@@ -269,12 +237,14 @@ pub(super) fn number_relation(op: u32, left: Value, right: Value) -> Option<bool
     if op > LAST_COMPARISON_OPERATOR {
         return None;
     }
-    if let Some((a, b)) = Value::int_pair(left, right) {
+    let pair = Value::numeric_pair(left, right);
+    if let NumericPair::Ints(a, b) = pair {
         return Some(number_comparison(op, a, b));
     }
     // Equality, strict equality and the relational operators agree with IEEE 754
     // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.
-    Some(number_comparison(op, left.as_number()?, right.as_number()?))
+    let (a, b) = pair.as_doubles()?;
+    Some(number_comparison(op, a, b))
 }
 
 #[cfg(test)]
@@ -484,11 +454,12 @@ pub(super) const BITWISE_AND: u32 = BinaryOperator::BitwiseAnd as u32;
 /// immediate primitive as its ToNumeric, `immediate_number_pair`); `None` for any other.
 #[inline(always)]
 pub(super) fn number_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
-    if let Some(value) = bitwise_value_operator::<OP>(left, right) {
+    let pair = Value::numeric_pair(left, right);
+    if let Some(value) = bitwise_value_operator::<OP>(pair) {
         return Some(value);
     }
-    let (left, right) = match Value::number_pair(left, right) {
-        Some(pair) => pair,
+    let (left, right) = match pair.as_doubles() {
+        Some(doubles) => doubles,
         None => immediate_number_pair(left, right)?,
     };
     number_operator::<OP>(left, right).map(Value::number)
@@ -506,23 +477,18 @@ pub(super) fn number_operator<const OP: u32>(left: f64, right: f64) -> Option<f6
 /// makes it, without the round trip through doubles `numeric_number_result` takes. `None`
 /// for any other operator, which folds away for a constant `OP`, and for other operands.
 #[inline(always)]
-fn bitwise_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
+fn bitwise_value_operator<const OP: u32>(pair: NumericPair) -> Option<Value> {
     let operation = NumberBitwise::from_binary_operator(numeric_binary_operator(OP)?)?;
-    Some(number_bitwise_result(operation, value_to_int32(left)?, value_to_int32(right)?))
-}
-
-/// ToInt32 of a Number from its own representation: an integer as it is, a double by
-/// `number_to_i32`. Branches, not `Option::or_else`: the closure's `Some` stayed a flag
-/// register tested after the conversion (V8-v7 NavierStokes `x | 0`).
-#[inline(always)]
-fn value_to_int32(value: Value) -> Option<i32> {
-    if let Some(integer) = value.as_int() {
-        return Some(integer);
-    }
-    match value.as_number() {
-        Some(number) => Some(crate::value::number_to_i32(number)),
-        None => None,
-    }
+    // An integer operand is its own ToInt32; a double is taken by `number_to_i32`. An int32
+    // widened to a double is an integer again under `number_to_i32`, so `Numbers` agrees.
+    let (left, right) = match pair {
+        NumericPair::Ints(left, right) => (left, right),
+        NumericPair::Numbers(left, right) => {
+            (crate::value::number_to_i32(left), crate::value::number_to_i32(right))
+        }
+        NumericPair::Other => return None,
+    };
+    Some(number_bitwise_result(operation, left, right))
 }
 
 /// Integer operator `OP` (`numeric_integer_result`) when both operands are integers;
@@ -541,13 +507,14 @@ fn number_arithmetic_values(
     left: Value,
     right: Value,
 ) -> Option<(Value, crate::profile::BinaryValuePath)> {
+    let pair = Value::numeric_pair(left, right);
     if operation != NumberArithmetic::Divide
-        && let Some((left, right)) = Value::int_pair(left, right)
+        && let NumericPair::Ints(left, right) = pair
     {
         let value = numeric_integer_arithmetic_result(operation, left, right);
         return Some((value, crate::profile::BinaryValuePath::IntegerFastPath));
     }
-    let (left, right) = Value::number_pair(left, right)?;
+    let (left, right) = pair.as_doubles()?;
     Some((
         Value::number(number_arithmetic_result(operation, left, right)),
         crate::profile::BinaryValuePath::NumberFastPath,
@@ -642,10 +609,9 @@ impl<H: Host> Vm<H> {
     pub(super) fn numeric_integer_binary(
         &self,
         operator: u32,
-        left: Value,
-        right: Value,
+        left: i32,
+        right: i32,
     ) -> Option<Value> {
-        let (left, right) = Value::int_pair(left, right)?;
         // The common operators match the immediate directly; the rest go through the table.
         match operator {
             ADDITION => Some(numeric_integer_arithmetic_result(NumberArithmetic::Add, left, right)),
@@ -1673,7 +1639,10 @@ impl<H: Host> Vm<H> {
         if !is_numeric_binary_operator(op) {
             return None;
         }
-        if let Some(value) = self.numeric_integer_binary(op, left, right) {
+        let pair = Value::numeric_pair(left, right);
+        if let NumericPair::Ints(a, b) = pair
+            && let Some(value) = self.numeric_integer_binary(op, a, b)
+        {
             self.record_binary_value_path(
                 op,
                 left,
@@ -1682,7 +1651,7 @@ impl<H: Host> Vm<H> {
             );
             return Some(value);
         }
-        let (left_number, right_number) = Value::number_pair(left, right)?;
+        let (left_number, right_number) = pair.as_doubles()?;
         let operator = numeric_binary_operator(op)
             .expect("numeric operator range is represented in the operator table");
         self.record_binary_value_path(
@@ -1767,7 +1736,7 @@ impl<H: Host> Vm<H> {
             );
         }
         if let Some(operator) = RelationalOperator::from_immediate(op) {
-            if let (Some(left_number), Some(right_number)) = (left.as_number(), right.as_number()) {
+            if let Some((left_number, right_number)) = Value::numeric_pair(left, right).as_doubles() {
                 self.record_binary_value_path(
                     op,
                     left,
@@ -1787,44 +1756,43 @@ impl<H: Host> Vm<H> {
             let result = self.compare_relational(p, operator, left, right)?;
             return Ok(Self::integrity_bool(result));
         }
-        if op <= BinaryOperator::StrictInequality as u32
-            && let Some((a, b)) = Value::int_pair(left, right)
-        {
-            self.record_binary_value_path(
-                op,
-                left,
-                right,
-                crate::profile::BinaryValuePath::IntegerFastPath,
-            );
-            return Ok(Self::integrity_bool(
-                if op == BinaryOperator::Equality as u32
-                    || op == BinaryOperator::StrictEquality as u32
-                {
-                    a == b
-                } else {
-                    a != b
-                },
-            ));
-        }
-        if op <= BinaryOperator::StrictInequality as u32
-            && let (Some(a), Some(b)) = (left.as_number(), right.as_number())
-        {
-            self.record_binary_value_path(
-                op,
-                left,
-                right,
-                crate::profile::BinaryValuePath::NumberFastPath,
-            );
-            let equal = a == b;
-            return Ok(Self::integrity_bool(
-                if op == BinaryOperator::Equality as u32
-                    || op == BinaryOperator::StrictEquality as u32
-                {
-                    equal
-                } else {
-                    !equal
-                },
-            ));
+        if op <= BinaryOperator::StrictInequality as u32 {
+            let pair = Value::numeric_pair(left, right);
+            if let NumericPair::Ints(a, b) = pair {
+                self.record_binary_value_path(
+                    op,
+                    left,
+                    right,
+                    crate::profile::BinaryValuePath::IntegerFastPath,
+                );
+                return Ok(Self::integrity_bool(
+                    if op == BinaryOperator::Equality as u32
+                        || op == BinaryOperator::StrictEquality as u32
+                    {
+                        a == b
+                    } else {
+                        a != b
+                    },
+                ));
+            }
+            if let Some((a, b)) = pair.as_doubles() {
+                self.record_binary_value_path(
+                    op,
+                    left,
+                    right,
+                    crate::profile::BinaryValuePath::NumberFastPath,
+                );
+                let equal = a == b;
+                return Ok(Self::integrity_bool(
+                    if op == BinaryOperator::Equality as u32
+                        || op == BinaryOperator::StrictEquality as u32
+                    {
+                        equal
+                    } else {
+                        !equal
+                    },
+                ));
+            }
         }
         self.record_binary_value_path(op, left, right, crate::profile::BinaryValuePath::Fallback);
         self.binary_slow(p, op, left, right)
@@ -2068,7 +2036,8 @@ impl<H: Host> Vm<H> {
         if op > LAST_COMPARISON_OPERATOR {
             return None;
         }
-        if let Some((a, b)) = Value::int_pair(left, right) {
+        let pair = Value::numeric_pair(left, right);
+        if let NumericPair::Ints(a, b) = pair {
             self.record_binary_value_path(
                 op,
                 left,
@@ -2079,7 +2048,7 @@ impl<H: Host> Vm<H> {
         }
         // Equality, strict equality and the relational operators agree with IEEE 754
         // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.
-        let (a, b) = (left.as_number()?, right.as_number()?);
+        let (a, b) = pair.as_doubles()?;
         self.record_binary_value_path(
             op,
             left,
@@ -2272,38 +2241,6 @@ impl<H: Host> Vm<H> {
 /// `Number ** Number` (`Math.pow`), the value `staged::math::power` computes.
 pub(super) fn exponentiate(base: f64, exponent: f64) -> f64 {
     crate::staged::math::power(base, exponent)
-}
-
-/// Whether an equality operator is strict and whether it is negated; `None` for any other.
-#[inline(always)]
-pub(crate) fn equality_operator(op: u32) -> Option<(bool, bool)> {
-    const EQUALITY: u32 = BinaryOperator::Equality as u32;
-    const INEQUALITY: u32 = BinaryOperator::Inequality as u32;
-    const STRICT_EQUALITY: u32 = BinaryOperator::StrictEquality as u32;
-    const STRICT_INEQUALITY: u32 = BinaryOperator::StrictInequality as u32;
-    // The four operators are consecutive from an aligned first, each negation right after
-    // its test and the strict pair after the loose one, so two bits of the offset decide
-    // them, with no table of branches.
-    const NEGATED: u32 = INEQUALITY - EQUALITY;
-    const STRICT: u32 = STRICT_EQUALITY - EQUALITY;
-    const _: () = assert!(
-        NEGATED == 1
-            && STRICT == 2
-            && STRICT_INEQUALITY - EQUALITY == STRICT | NEGATED
-            && EQUALITY.is_multiple_of(STRICT << 1)
-    );
-    let offset = op.wrapping_sub(EQUALITY);
-    (offset <= STRICT | NEGATED).then_some((offset & STRICT != 0, offset & NEGATED != 0))
-}
-
-/// The equality operator that is `strict` and `negated`: the inverse of `equality_operator`.
-pub(crate) fn equality_binary_operator(strict: bool, negated: bool) -> u32 {
-    match (strict, negated) {
-        (false, false) => BinaryOperator::Equality as u32,
-        (false, true) => BinaryOperator::Inequality as u32,
-        (true, false) => BinaryOperator::StrictEquality as u32,
-        (true, true) => BinaryOperator::StrictInequality as u32,
-    }
 }
 
 /// The entry that runs a native's call (`Vm::call_native_dispatch`), one per family of

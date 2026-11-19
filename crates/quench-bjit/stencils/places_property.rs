@@ -265,7 +265,7 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> PropertyFrame<Co
             Callout::SiteStore { gated } => {
                 let tables = field_tables(&self.places.s);
                 let offset = stage_site(stage);
-                entry::site_store(stage, tables, object, offset, (value, gated), miss)
+                entry::site_store(stage, tables, object, offset, (value, gated, None), miss)
             }
             Callout::FlatStore { int } => flat_store(stage, &self.places.s, object, value, int),
             Callout::Plan | Callout::LoopEntry | Callout::SiteRead { .. } => None,
@@ -293,13 +293,13 @@ pub(crate) fn run_lexical<const D: u8, const A: u8, const B: u8>(stage: &mut Con
 /// `GetField` of the receiver in register `LEFT` (hole 1), the plan deciding how it reads.
 #[inline(always)]
 pub(crate) fn receiver_read() -> Operation<u64, ()> {
-    Operation::GetField { base: FieldBase::register(LEFT), lookup: FieldLookup::Site(0) }
+    Operation::GetField { base: FieldBase::register(LEFT), lookup: FieldLookup::Site(0), destination: DEST }
 }
 
 /// `SetField` of the value in register `LEFT` into the object in register `DEST` (hole 0).
 #[inline(always)]
 pub(crate) fn receiver_set() -> Operation<u64, ()> {
-    Operation::SetField { value: LEFT, base: Some(DEST), atom: 0, site: 0 }
+    Operation::SetField { value: LEFT, base: Some(DEST), atom: 0, site: 0, strict: false }
 }
 
 /// The cache entry tables of the activation: the field entries and the object record table.
@@ -324,5 +324,5 @@ fn flat_store(stage: &mut Concrete, s: &S, object: u64, value: u64, int: bool) -
     let records = word_at(base, JS_STEP_OBJECT_RECORD_BASE);
     let (id, record) = direct_object_record(stage, object, records, ())?;
     let rep = if int { Representation::Int32 } else { Representation::Tagged };
-    own_flat_store(stage, record, id, 0, 0, (value, rep), ())
+    own_flat_store(stage, record, id, 0, 0, (value, rep, crate::typed_ir::Type::ANY), ())
 }

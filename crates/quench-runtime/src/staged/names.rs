@@ -6,6 +6,7 @@
 use super::callout::calling;
 use super::{CallOut, Constant, GlobalBinding, Operation, NumericFrame, NumericStage, Register, Step};
 use crate::typed_ir::Type;
+#[cfg(not(stencil_build))]
 use crate::bytecode::{Op, WideInstruction};
 use crate::Value;
 
@@ -38,22 +39,29 @@ pub(crate) enum Protocol {
     /// through cache site `site`, found already holding its name (`Vm::constant_fields_held`).
     /// It reads one cache entry and a shape, runs no guest code and raises nothing.
     ConstantFieldsHeld { site: u16 },
+    #[cfg(not(stencil_build))]
     /// A literal, template, closure or object-construction step (`protocol_literals`).
     Literal(super::protocol_literals::LiteralStep),
+    #[cfg(not(stencil_build))]
     /// A class, private-name or function-naming step (`protocol_classes`).
     Class(super::protocol_classes::ClassStep),
+    #[cfg(not(stencil_build))]
     /// A by-name, environment, string or iteration-cleanup step (`protocol_values`).
     Value(super::protocol_values::ValueStep),
+    #[cfg(not(stencil_build))]
     /// An activation-variable step: a local, a `var` binding, TDZ, an argument (`protocol_owned`).
     Owned(super::protocol_owned::OwnedVarStep),
+    #[cfg(not(stencil_build))]
     /// A Wasm GC, reference, table, memory-init, atomic or exception step (`protocol_wasm`).
     Wasm(super::protocol_wasm::WasmHostStep),
 }
 
+#[cfg(not(stencil_build))]
 /// The bits of a `CloneEnv`'s immediate that name its clone plan: an environment window's record
 /// (`dispatch_fast::specialize_environment_window`) carries its register count above them.
 pub(crate) const ENVIRONMENT_CLONE_PLAN_MASK: u32 = u16::MAX as u32;
 
+#[cfg(not(stencil_build))]
 /// The staged operation `instruction` denotes among the name, environment and iteration
 /// opcodes; `None` for any other opcode.
 #[inline(always)]
@@ -88,6 +96,7 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
 }
 
 impl<W, P> Operation<W, P> {
+    #[cfg(not(stencil_build))]
     /// The name read `instruction` (`LoadName`, or a call's `LoadNameCall`) denotes under the
     /// tier's `proof` of the global it names; `None` for any other opcode.
     #[inline(always)]
@@ -102,6 +111,7 @@ impl<W, P> Operation<W, P> {
     }
 }
 
+#[cfg(not(stencil_build))]
 /// The iteration and spread steps of `decode`, with the registers `Vm::call_out` reads.
 #[inline(always)]
 fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>> {
@@ -285,7 +295,7 @@ fn load_name<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         (Some(()), receiver) => {
             if let Some(receiver) = receiver {
                 let undefined = Value::UNDEFINED;
-                let (word, fact) = frame.constant(stage, Constant { value: undefined, ty: Type::immediate(undefined) });
+                let (word, fact) = frame.constant(stage, Constant { value: undefined, ty: Type::UNDEFINED });
                 frame.write(stage, receiver, word, fact);
             }
             Step::Value(stage.constant(0))

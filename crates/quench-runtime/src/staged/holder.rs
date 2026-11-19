@@ -13,6 +13,7 @@ pub(crate) use super::ic::holder_read;
 /// once the watch is retired.
 // Read by the u-jit and b-jit projections of GetField on string receivers (threads 13 and 7).
 
+#[cfg(not(stencil_build))]
 /// The interpreter's reading of `holder_read`.
 ///
 /// # Safety
@@ -25,6 +26,7 @@ pub(crate) unsafe fn concrete_holder_read(record: &crate::heap::Object, guard: u
         .map(crate::Value::from_bits)
 }
 
+#[cfg(not(stencil_build))]
 /// The interpreter's reading of `own_constant_read` for the object part `record`.
 ///
 /// # Safety

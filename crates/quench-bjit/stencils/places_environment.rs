@@ -87,7 +87,7 @@ impl<const D: u8, const A: u8, const B: u8> GlobalFrame<Concrete> for Places<D, 
     #[inline(always)]
     fn global_read(&mut self, stage: &mut Concrete, destination: Register, _atom: u32, _site: u16, _ty: Type, _proof: ()) -> Option<()> {
         let layout = global_layout(stage, payload(&self.s), hole::<HOLE_A>() as u64)?;
-        let word = object::read_slot(stage, layout, 0, object::Representation::Tagged);
+        let word = object::read_slot(stage, layout, 0, Representation::Tagged);
         Frame::write(self, stage, destination, word, Representation::Tagged);
         Some(())
     }

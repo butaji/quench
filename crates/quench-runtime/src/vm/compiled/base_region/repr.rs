@@ -187,6 +187,28 @@ fn concat_site(row: &Decoded, kinds: Option<&OperandKinds>) -> bool {
     row.generic && row.kind == Kind::Add && row.heap.is_none() && row.step.is_none() && variant_of(Kind::Add, kinds) == Variant::Concat
 }
 
+/// Keeps each site read's slot-type proof (`Decoded::typed`) only where a row drops a check on it: an
+/// inline-cache read of a receiver every path proved (`Heap::IcKnownGet`) into a pinned double, in code that
+/// makes no call or helper step.
+///
+/// INVARIANT (one fact store): a check the b-jit drops is backed by a fact-store proof and the dependency
+/// that keeps it true. Here the proof is the slot's observed type, a Number type (`NativeFieldLoad::ty`, the
+/// type `Heap::slot_type` maintains on every store), and the dependency is the same one the u-jit's code holds
+/// for it (`SlotDependency`, subscribed through `Body::slot_types` as `StableFacts::slots`): a store that widens
+/// the slot retires the code before its next entry. Inside one run nothing the rows do widens it (an in-place
+/// store writes only what the slot's type holds, or leaves through the store gate); only a call or a helper
+/// step could, so code that makes one keeps the tested read.
+pub(super) fn keep_typed_reads(homes: &Homes, decoded: &mut [Decoded]) {
+    let calls = decoded.iter().any(Decoded::makes_calls);
+    for row in decoded.iter_mut() {
+        let double = row.dst.is_some_and(|dst| matches!(homes.place(dst), Place::PinF(_)));
+        let known = row.heap == Some(Heap::Site) && row.ic.is_some() && row.proven;
+        if calls || !known || !double {
+            row.typed = None;
+        }
+    }
+}
+
 /// Whether the row takes general (tagged word) semantics: its result or an operand of a
 /// relation is no int32.
 pub(super) fn is_general(row: &Decoded, reprs: &[Option<Representation>]) -> bool {

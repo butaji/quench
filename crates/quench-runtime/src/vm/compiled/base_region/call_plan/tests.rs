@@ -1,7 +1,7 @@
 use super::*;
 use quench_bjit::call_record as protocol;
 
-const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: CallForm::Plain, method: None };
+const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: CallForm::Plain, method: None, op: crate::bytecode::Op::Call };
 
 fn facts(registers: u16, params: u16) -> DirectFacts {
     let cell = CellFacts { registers, room: registers, params, fill: crate::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
@@ -90,11 +90,11 @@ fn a_helper_chain_has_no_record_and_its_helper_row_is_last_before_the_reloads() 
 #[test]
 fn a_step_chain_is_spills_helper_reloads() {
     let (spills, reloads) = ([(Place::Pin(0), 1)], [(Place::PinF(1), 5), (Place::Pin(0), 1)]);
-    let parts = plan_step(9, 0x4000, &spills, &reloads).expect("a chain");
+    let parts = plan_step(9, 0x4000, None, &spills, &reloads).expect("a chain");
     assert_eq!(parts.len(), spills.len() + 1 + reloads.len());
     assert_eq!(parts[spills.len()].holes[..2], [9, 0x4000]);
     assert_eq!(parts[spills.len()].exits, [Exit::At(9), Exit::Status]);
-    assert!(plan_step(9, 0, &[], &[]).is_err(), "a helper row needs its address");
+    assert!(plan_step(9, 0, None, &[], &[]).is_err(), "a helper row needs its address");
 }
 
 #[test]
@@ -128,11 +128,7 @@ fn a_dead_pinned_argument_is_passed_by_its_pin_and_spilled_on_refusal_only() {
 fn call_protocol_matches_the_runtime() {
     use super::super::super as compiled;
     use compiled::entry_cell::{EntryCell, LANE_BODY_NOT_ENTERED};
-    #[allow(dead_code)]
-    mod stencil_layout {
-        include!("../../../../../../quench-bjit/stencils/layout.rs");
-    }
-    use stencil_layout as mirror;
+    use super::stencil_layout as mirror;
     assert_eq!(
         [compiled::LANE_CALL_COMPLETED, compiled::LANE_CALL_MISSED, compiled::LANE_CALL_LEFT, compiled::LANE_CALL_TERMINATED, compiled::LANE_CALL_BRANCHED, compiled::LaneExit::Callee.word()],
         [protocol::LANE_CALL_COMPLETED, protocol::LANE_CALL_MISSED, protocol::LANE_CALL_LEFT, protocol::LANE_CALL_TERMINATED, protocol::LANE_CALL_BRANCHED, protocol::CALLEE_EXIT]
@@ -178,3 +174,8 @@ fn a_method_site_reads_its_callee_before_the_direct_row() {
     assert_eq!(chain.parts[2].taken, Some(4), "the direct row completes past the helper row");
     assert_eq!(chain.records.first().map(|record| record.callee_register), Some(7), "the direct row checks the scratch register");
 }
+
+/// The stencils' layout numbers, mounted as the stencil crate mounts them (`call_protocol_matches_the_runtime`).
+#[allow(dead_code)]
+#[path = "../../../../../../quench-bjit/stencils/layout.rs"]
+mod stencil_layout;

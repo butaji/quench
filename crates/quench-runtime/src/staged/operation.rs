@@ -2,6 +2,7 @@
 //! decoder for the opcode (`Op::staged`), and its queries over instructions. `staged.rs` re-exports it.
 
 use super::*;
+#[cfg(not(stencil_build))]
 use super::wasm_jump::WasmJump;
 
 /// An instruction `step` runs, with the operands a tier decoded.
@@ -63,12 +64,44 @@ pub(crate) enum Operation<W, P> {
     TypeofString { destination: Register, source: Register },
     /// Store `value` at dense array element `index`, under `proof`.
     IndexWrite { index: W, value: W, proof: P },
+    /// A property add of `value` to the object at the record table `records`, through a site's
+    /// transition `edge` (and the prototype `link` a chained site must hold), storing it in `form`
+    /// (`add::site_add`). The tier names the object word and the site's words: a register's or the
+    /// activation's receiver, so one variant serves the register and `this` add rows. No opcode
+    /// decodes to it; a stencil row builds it. Leaves at the miss edge where the add declines.
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    AddSite { records: W, object: W, edge: add::Edge<W>, link: Option<W>, form: Form, value: W },
+    /// A function's inferred name `name` written to the function word `function`'s empty name slot
+    /// through a site's naming edge (`naming::site_name`, the `(edge, empty)` pair). No opcode decodes
+    /// to it; a stencil row builds it. Leaves at the miss edge where the naming declines.
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    NamingSite { records: W, function: W, naming: (add::Edge<W>, W), form: Form, name: W },
+    /// `value instanceof constructor` into `destination`, decided by the frame's words of the value
+    /// and the constructor (`Frame::instance_of`, the walk `object::instanceof_by_words`); the frame's
+    /// default leaves it to the VM's `Binary` callout. Leaves at the miss edge where the walk declines.
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    InstanceOf { destination: Register, value: Register, constructor: Register },
+    /// Continue where register `source` holds a direct array (the array identity test, `Frame::direct_array`);
+    /// any other value leaves at the miss edge.
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    DirectArray { source: Register },
+    /// Define `destination` with the `length` of the direct array in register `source` (`Frame::array_length`).
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    ArrayLength { destination: Register, source: Register },
+    /// Define `destination` with the `length` of the typed array in register `source` (`Frame::typed_length`).
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    TypedLength { destination: Register, source: Register },
+    /// Append the value in register `value` to the array in register `array`, where its backing has
+    /// room and is writable (`Frame::array_append`); a value the frame does not append leaves at the miss edge.
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    ArrayAppend { array: Register, value: Register },
     /// The empty object, object or array literal, constant array, regexp literal, closure,
     /// literal template or string concatenation `allocation` makes, defined into `destination`; a due collection leaves
     /// at the frame's miss edge (`Frame::allocate_value`).
     Allocate { destination: Register, allocation: Allocation, proof: P },
     /// A `SuperConstArrayObject2` record's pair (`superinstructions`): a constant array, two `Binary`
     /// operations, then an object pair, each part's row in turn (`superinstructions::step`).
+    #[cfg(not(stencil_build))]
     SuperConstArrayObject2(super::superinstructions::ConstArrayPair<P>),
     /// Define element `index` of the literal array in `array` as `value` (`DefineArrayElement`), a
     /// fresh hole of that array; the frame's element definer answers it (`Frame::define_element`).
@@ -181,6 +214,7 @@ pub(crate) enum Operation<W, P> {
     /// Suspend the activation (`Suspension`: `await`, `yield`, `yield*`) with the value of `value`,
     /// resuming with what it receives next in `destination` (`suspend::suspend`, which asks the
     /// frame: `Frame::suspend_await`, `suspend_yield`, `suspend_yield_star`).
+    #[cfg(not(stencil_build))]
     Suspend { kind: super::Suspension, destination: Register, value: Register },
     /// Continue: a record a rewrite emptied (`Op::Nop`), which reads and writes nothing.
     Nop,
@@ -243,14 +277,19 @@ pub(crate) enum Operation<W, P> {
     #[cfg(not(stencil_build))]
     WasmFloat(wasm_float::WasmFloatOperation),
     /// A Wasm i32 or i64 register or immediate operator (`wasm_int`), which the row answers from its words.
+    #[cfg(not(stencil_build))]
     WasmInt(wasm_int::WasmIntOperation),
     /// A Wasm i32 conditional jump or fused add-and-jump over int32 operands (`wasm_jump`).
+    #[cfg(not(stencil_build))]
     WasmJump(WasmJump),
     /// A Wasm branch table: control goes to the entry its index picks (`Edge::Entry`, `wasm_jump`).
+    #[cfg(not(stencil_build))]
     BranchTable(BranchTable),
     /// A Wasm global's load or store, or a register window's fill (`wasm_state`).
+    #[cfg(not(stencil_build))]
     WasmState(wasm_state::WasmStateOperation),
     /// A Wasm direct load or store of the function's memory (`wasm_access`).
+    #[cfg(not(stencil_build))]
     WasmAccess(wasm_access::WasmAccessOperation),
     /// A Wasm SIMD operator or byte shuffle on the lane's vector registers (`wasm_simd`).
     #[cfg(not(stencil_build))]
@@ -497,21 +536,21 @@ impl<W, P> Operation<W, P> {
         }
         match operator {
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot { destination, source },
+            _ if operator == crate::vm::operations::unary_operator::LogicalNot => Self::LogicalNot { destination, source },
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::Typeof as u32 => Self::TypeofString { destination, source },
+            _ if operator == crate::vm::operations::unary_operator::Typeof => Self::TypeofString { destination, source },
             _ if operator == crate::bytecode::UNARY_TYPEOF_INDEX => Self::TypeofIndex { destination, source },
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::BitwiseNot as u32 =>
+            _ if operator == crate::vm::operations::unary_operator::BitwiseNot =>
                 Self::Number(NumberOperation::BitwiseNot { destination, source: Operand::register(source) }),
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::UnaryNegation as u32 =>
+            _ if operator == crate::vm::operations::unary_operator::UnaryNegation =>
                 Self::number_unary(destination, source, crate::vm::operations::NumberUnary::Negate),
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::UnaryPlus as u32 =>
+            _ if operator == crate::vm::operations::unary_operator::UnaryPlus =>
                 Self::number_unary(destination, source, crate::vm::operations::NumberUnary::Plus),
             #[cfg(not(stencil_build))]
-            _ if operator == oxc_ast::ast::UnaryOperator::Void as u32 => Self::Void { destination },
+            _ if operator == crate::vm::operations::unary_operator::Void => Self::Void { destination },
             _ => Self::Unary { destination, source, operator },
         }
     }
@@ -561,6 +600,8 @@ impl<W, P> Operation<W, P> {
     }
 }
 
+// The instruction queries the tiers ask: runtime only, as the stencils decode no instruction.
+#[cfg(not(stencil_build))]
 impl Operation<u64, ()> {
     /// The operation `instruction` denotes, decoded with no tables (`DecodeContext::EMPTY`): what a
     /// tier asks an instruction's meaning by, where the row's operands need no table.
@@ -652,7 +693,6 @@ impl Operation<u64, ()> {
     /// The field cache sites `instruction` reads (`true`) or stores through (`false`), as the
     /// program's field sites name them: a named read's lookup (its site, or the sites of a
     /// nested lookup), and a field store's cache site.
-    #[cfg(not(stencil_build))]
     pub(crate) fn field_cache_sites(instruction: WideInstruction, field_sites: &[crate::bytecode::FieldSite]) -> Vec<(u16, bool)> {
         if Self::is_field_read(instruction) {
             return match instruction.field_lookup() {
