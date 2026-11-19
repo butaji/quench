@@ -220,7 +220,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
 /// read then the test on it. No flagged row (`LaneFields::FLAG_ROLE`) is a member.
 ///
 /// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below.
-pub(crate) const FUSED_ROWS: [(u16, u16, u8); 88] = [
+pub(crate) const FUSED_ROWS: [(u16, u16, u8); 92] = [
     // An i32 add of a constant then the direct load at its sum (the load reads the register).
     (Op::WasmI32AddImmediate as u16, Op::WasmI32Load as u16, FUSED_PLAIN),
     (Op::WasmI32AddImmediate as u16, Op::WasmI64Load as u16, FUSED_PLAIN),
@@ -349,12 +349,22 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 88] = [
     // `a[i] = v; t = v` of a register copy of the stored value. Subsumes `specialize_store_moves`
     // (`lane_set_index_move`).
     (Op::SetIndex as u16, Op::Move as u16, FUSED_PLAIN),
+    // f64 arithmetic then f64 arithmetic (any operator, comparisons included: each row decodes its own
+    // operator from its immediate). Subsumes the boxed float pairs (`lane_f64_pair`, `FloatPairs::HANDLERS`).
+    (Op::WasmF64Binary as u16, Op::WasmF64Binary as u16, FUSED_PLAIN),
+    // The raw form of the same pair: both rows read and write raw words (`raw_representation`).
+    // Subsumes the raw float pairs (`lane_f64_pair` with `RAW`).
+    (Op::WasmF64BinaryRaw as u16, Op::WasmF64BinaryRaw as u16, FUSED_PLAIN),
+    // An f64 load then the f64 operator on the loaded value. Subsumes `lane_f64_load_pair`.
+    (Op::WasmF64Load as u16, Op::WasmF64Binary as u16, FUSED_PLAIN),
+    // An f64 operator then the f64 store of its result. Subsumes `lane_f64_store_pair`.
+    (Op::WasmF64Binary as u16, Op::WasmF64Store as u16, FUSED_PLAIN),
 ];
 
 /// Runs of three or four generated rows the lane runs as one record (`chain_rows`): each
 /// entry's links in record order, `NO_LINK` padding a three-link chain. Only the last link may
 /// be a jump. A chain at a record wins over a `FUSED_ROWS` pair there.
-pub(crate) const FUSED_CHAINS: [[u16; 4]; 41] = [
+pub(crate) const FUSED_CHAINS: [[u16; 4]; 42] = [
     // A local or capture read, then a register comparison, then its branch. Subsumes the value
     // jump of `specialize_value_jumps` (`lane_value_jump`) after a read.
     [Op::LoadLocalPlain as u16, Op::Binary as u16, Op::JumpFalse as u16, NO_LINK],
@@ -411,7 +421,52 @@ pub(crate) const FUSED_CHAINS: [[u16; 4]; 41] = [
     // store it addresses.
     [Op::Binary as u16, Op::Binary as u16, Op::GetIndex as u16, NO_LINK],
     [Op::Binary as u16, Op::Binary as u16, Op::SetIndex as u16, NO_LINK],
+    // `mem[x] op= v` on f64: the load, the f64 operator on the loaded value, then the f64 store of its
+    // result. Subsumes `lane_f64_update` (`FloatPairs::UPDATES`).
+    [Op::WasmF64Load as u16, Op::WasmF64Binary as u16, Op::WasmF64Store as u16, NO_LINK],
 ];
+
+/// Whether every `FUSED_ROWS` pair and `FUSED_CHAINS` chain joins rows of one representation
+/// (`raw_representation`): a raw word is not a boxed value, so no fused record mixes them.
+const fn fused_links_share_representation() -> bool {
+    let mut pair = 0;
+    while pair < FUSED_ROWS.len() {
+        let (a, b, _) = FUSED_ROWS[pair];
+        match (Op::from_index(a as usize), Op::from_index(b as usize)) {
+            (Some(a), Some(b)) => {
+                if raw_representation(a) != raw_representation(b) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+        pair += 1;
+    }
+    let mut chain = 0;
+    while chain < FUSED_CHAINS.len() {
+        let links = FUSED_CHAINS[chain];
+        let mut link = 0;
+        let mut first: Option<bool> = None;
+        while link < 4 {
+            if links[link] != NO_LINK {
+                let Some(op) = Op::from_index(links[link] as usize) else { return false };
+                let raw = raw_representation(op);
+                match first {
+                    None => first = Some(raw),
+                    Some(earlier) => {
+                        if earlier != raw {
+                            return false;
+                        }
+                    }
+                }
+            }
+            link += 1;
+        }
+        chain += 1;
+    }
+    true
+}
+const _: () = assert!(fused_links_share_representation(), "a fused pair or chain mixes raw and boxed rows");
 
 /// The absent fourth link of a three-link `FUSED_CHAINS` entry.
 pub(crate) const NO_LINK: u16 = u16::MAX;
@@ -850,8 +905,6 @@ pub(crate) const fn makes_call(op: Op) -> bool {
 pub(crate) const fn leaf_value_or_jump(op: Op) -> bool { op.is_leaf_value() || op.is_leaf_jump() }
 /// Whether `op` is a binary record a leaf admits with register or constant operands (`LEAF_BINARY`).
 pub(crate) const fn leaf_binary_operation(op: Op) -> bool { op.is_leaf_binary() }
-/// Computes a Wasm f64 binary operator (`WasmF64Binary`).
-pub(crate) const fn wasm_f64_binary(op: Op) -> bool { matches!(op, Op::WasmF64Binary) }
 /// Whether `op`'s record holds its i64 and f64 operands and result as raw machine words (the
 /// `*Raw` Wasm classes, `compile::liveness::raw_webs`, and a raw i64 return). Its row reads and
 /// writes those registers as they are (`Frame::raw_read`, `Frame::raw_write`): no tag check and
@@ -863,10 +916,6 @@ pub(crate) const fn raw_representation(op: Op) -> bool {
 }
 /// Computes a Wasm f64 unary operator (`WasmF64Unary`).
 pub(crate) const fn wasm_f64_unary(op: Op) -> bool { matches!(op, Op::WasmF64Unary) }
-/// Loads an f64 from the function's memory (`WasmF64Load`).
-pub(crate) const fn wasm_f64_load(op: Op) -> bool { matches!(op, Op::WasmF64Load) }
-/// Stores an f64 to the function's memory (`WasmF64Store`).
-pub(crate) const fn wasm_f64_store(op: Op) -> bool { matches!(op, Op::WasmF64Store) }
 /// Binds the instance a Wasm function runs in (`WasmInstanceBinding`).
 pub(crate) const fn wasm_instance_binding(op: Op) -> bool { matches!(op, Op::WasmInstanceBinding) }
 /// Reads the size of the function's memory (`WasmMemorySize`).
@@ -894,10 +943,6 @@ pub(crate) fn computes_numeric_binary(op: Op) -> bool { matches!(op.js_denotatio
 
 // Class families: the record families a tier's lowering and lane handlers select by. Each answers
 // exactly its catalog class, so a family query and the class it names agree on every opcode.
-/// The float binary operator family of an f64 selector (`Class::WasmFloatBinary64`).
-pub(crate) const fn float_binary64_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::WasmFloatBinary64) }
-/// The float binary operator family of an f32 selector (`Class::WasmFloatBinary32`).
-pub(crate) const fn float_binary32_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::WasmFloatBinary32) }
 /// The construction family (`Class::Construct`).
 pub(crate) const fn construction_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::Construct) }
 /// The call family (`Class::Call`).
@@ -958,10 +1003,6 @@ pub(crate) const fn wasm_setup_family(op: Op) -> bool {
 }
 
 // Row constants of the opcodes the lane's tables name by index.
-/// The opcode whose row runs a Wasm f64 load (`WasmF64Load`).
-pub(crate) const WASM_F64_LOAD_ROW: u16 = Op::WasmF64Load as u16;
-/// The opcode whose row runs a Wasm f64 store (`WasmF64Store`).
-pub(crate) const WASM_F64_STORE_ROW: u16 = Op::WasmF64Store as u16;
 /// The opcode whose row increments or decrements a Number (`IncDec`).
 pub(crate) const INC_DEC_ROW: u16 = Op::IncDec as u16;
 /// The opcode whose row writes a capture (`StoreCapture`).
