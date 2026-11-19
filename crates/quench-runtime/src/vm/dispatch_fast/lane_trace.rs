@@ -9,12 +9,7 @@ impl LaneStack {
     /// of the Wasm activations' registers.
     pub(in crate::vm) fn extend_roots(&self, programs: &ProgramStore, out: &mut Vec<Value>) {
         self.extend_window_roots(programs, out);
-        out.extend(
-            self.activations()
-                .iter()
-                .filter_map(Activation::script)
-                .map(|script| script.callee),
-        );
+        out.extend(self.frames().filter_map(|frame| frame.script()).map(|script| script.callee));
         out.extend(self.with_object_roots());
         out.extend(self.forwarders.iter().flat_map(|forwarder| [forwarder.callee, forwarder.env]));
         out.extend(self.steps.iter().flat_map(LaneArrayStep::roots));
@@ -31,13 +26,13 @@ impl LaneStack {
     /// which its callee keeps alive.
     fn extend_window_roots(&self, programs: &ProgramStore, out: &mut Vec<Value>) {
         let (span, top) = (self.values.span(), self.values.top().addr());
-        let mut windows = self.activations().iter().enumerate().filter(|(_, activation)| span.contains(&activation.window_word())).peekable();
+        let mut windows = self.frames().enumerate().filter(|(_, activation)| span.contains(&activation.window_word())).peekable();
         while let Some((depth, activation)) = windows.next() {
             let end = windows.peek().map_or(top, |(_, next)| next.window_word());
             let len = end.wrapping_sub(activation.window_word()) / std::mem::size_of::<Value>() - lane_values::CONTEXT;
             // SAFETY: the values `base..top` are initialized, and the span lies within them.
             let window = unsafe { std::slice::from_raw_parts(activation.window_ptr(), len) };
-            match *activation.kind() {
+            match activation.kind() {
                 ActivationKind::Script(_) => {
                     let registers = Registers(activation.window_ptr());
                     out.extend([registers.this(), registers.env()]);
@@ -59,9 +54,9 @@ impl LaneStack {
     /// (`Vm::collect_slow`): every register where no activation is above it or the function
     /// has no liveness. Its registers hold Wasm values the collector reads as it reads a frame's.
     fn extend_wasm_roots(&self, programs: &ProgramStore, depth: usize, window: &[Value], out: &mut Vec<Value>) {
-        let activation = &self.activations()[depth];
+        let Some(activation) = self.frame(depth) else { return out.extend_from_slice(window) };
         let masks = programs.residual(activation.caller_program()).and_then(|program| program.register_root_masks(activation.function()));
-        let call_pc = self.activations().get(depth + 1).and_then(Activation::caller_pc);
+        let call_pc = self.frame(depth + 1).and_then(|above| above.caller_pc());
         match masks.zip(call_pc) {
             Some((masks, pc)) => masks.extend_live(pc, window, out),
             None => out.extend_from_slice(window),

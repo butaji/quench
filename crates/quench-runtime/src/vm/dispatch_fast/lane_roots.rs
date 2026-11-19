@@ -167,7 +167,7 @@ impl<H: Host> Vm<H> {
         (self.lane_deferred, self.lane_native, self.running_window) = (deferred, native, window);
         let mut stack = self.lane_roots.pop().expect("the lane stack this run parked").stack;
         std::mem::swap(&mut self.lane_stack, &mut stack);
-        if stack.activations().is_empty() {
+        if !stack.has_frames() {
             self.spare_lane_stacks.push(stack);
         }
         self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
@@ -232,6 +232,8 @@ impl<H: Host> Vm<H> {
     ) -> Ip {
         self.lane_stack.refresh_activation_limit();
         self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
+        // The tier's diagnostics, which no proved call runs under (`Admission::DIAGNOSED`).
+        self.lane_stack.set_diagnosed(self.programs.js_jit_diagnostics_enabled());
         let epoch = self.heap.collection_epoch();
         let cx: *mut LaneContext<H> = context;
         // The lane's admission mirrors the run's `script_calls` (`LaneStack::set_script_calls`);
@@ -262,7 +264,7 @@ impl<H: Host> Vm<H> {
     /// The census detail of a lane exit at the record `ip` of the innermost activation.
     #[cfg(feature = "profile-lane-exits")]
     fn record_lane_exit(&self, cx: *mut LaneContext<H>, ip: Ip) {
-        let Some(activation) = self.lane_stack.activations().last() else {
+        let Some(activation) = self.lane_stack.top_frame() else {
             return;
         };
         // SAFETY: the context's program outlives the run; `ip` is a record of

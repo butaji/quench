@@ -75,6 +75,7 @@ pub(crate) mod call_environment;
 pub(crate) mod call_leaf;
 pub(crate) mod call_construct;
 pub(crate) mod call_callback;
+pub(crate) mod enter;
 pub(crate) mod call_iteration;
 pub(crate) use forms::{Arguments, CallFacts, Callee, FunctionId, Invocation, Receiver, RegisterList};
 pub(crate) use protocol::CallOperation;

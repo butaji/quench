@@ -17,8 +17,8 @@ pub(super) fn settle_raised_window<H: Host>(cx: *mut LaneContext<H>, record: Ip)
         return None;
     }
     let depth = vm.lane_stack.activation_count().checked_sub(1)?;
-    let activation = *vm.lane_stack.activations().last()?;
-    let script = *activation.script().filter(|script| script.completion.is_windowed())?;
+    let activation = vm.lane_stack.top_frame()?;
+    let script = activation.script().filter(|script| script.completion.is_windowed())?;
     if vm.lane_stack.iterators.last().is_some_and(|(owner, _)| *owner == depth) {
         return None;
     }
@@ -30,7 +30,7 @@ pub(super) fn settle_raised_window<H: Host>(cx: *mut LaneContext<H>, record: Ip)
     }
     let owner = unsafe { (*cx).root };
     vm.lane_stack.pop_activation()?;
-    lane_restore_caller(cx, &activation);
+    lane_restore_caller(cx, activation.record());
     Some(match (owner, script.completion) {
         (LaneRoot::Job(job), Completion::ResumesJob) => {
             vm.finish_job_window(job);

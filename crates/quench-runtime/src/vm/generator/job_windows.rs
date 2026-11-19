@@ -26,6 +26,7 @@ impl<H: Host> Vm<H> {
     /// a superinstruction, or a local addressed by an instruction no window handler reads
     /// (`Function::window_reads_locals`).
     pub(in crate::vm) fn run_job(&mut self, code: &ResidualProgram, job: JobRoot, resume: JobResume) -> JobEnd {
+        // Keeps the spill: a stack `nested_lane_run` parks has held records alone so far (one-frame-one-call.md, F2).
         let nested = !self.lane_stack.activations().is_empty() || self.lane_deferred.is_some();
         let admitted = if nested {
             let innermost = self.innermost_lane_state();

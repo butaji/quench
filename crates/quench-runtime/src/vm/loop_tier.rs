@@ -379,9 +379,8 @@ pub(super) fn lane_loop_function<H: Host>(cx: *mut LaneContext<H>, code: &Residu
     let machine = unsafe { vm(cx) };
     let function_index = machine
         .lane_stack
-        .activations()
-        .last()
-        .map_or_else(|| machine.frames[unsafe { (*cx).frame() }].function, |activation| activation.function);
+        .top_frame()
+        .map_or_else(|| machine.frames[unsafe { (*cx).frame() }].function, |activation| activation.function());
     let function = code.function_get(function_index as usize)?;
     let constants = machine.programs.constants(unsafe { (*cx).program }).to_vec();
     Some((function_index, function, function.instructions().collect(), constants))

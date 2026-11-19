@@ -55,6 +55,7 @@ pub(super) fn left_lane(resume: Ip) -> bool {
 /// Changes the completion of the lane's `depth`th activation `from` one `to` another;
 /// false, changing nothing, where it holds another or is no script activation.
 fn recomplete<H: Host>(cx: *mut LaneContext<H>, depth: usize, from: Completion, to: Completion) -> bool {
+    // spills: writes the completion into the record a plain header does not have.
     match unsafe { vm(cx) }.lane_stack.activations_mut().get_mut(depth).map(|activation| activation.kind_mut()) {
         Some(ActivationKind::Script(script)) if script.completion == from => {
             script.completion = to;

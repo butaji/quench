@@ -69,7 +69,7 @@ impl LaneStack {
 /// Whether the running activation is a generator over its record's register file.
 #[inline(always)]
 pub(super) fn running_generator<H: Host>(vm: &Vm<H>) -> bool {
-    vm.lane_stack.activations().last().and_then(Activation::script).is_some_and(|script| script.completion.is_generator())
+    vm.lane_stack.top_frame().and_then(|frame| frame.script()).is_some_and(|script| script.completion.is_generator())
 }
 
 /// `lane_generator_step` of a for-of step of a generator's `next` that the lane resumes as an

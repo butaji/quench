@@ -50,7 +50,7 @@ fn promote_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, parame
     let (this, env) = unsafe { ((*cx).registers.this(), (*cx).registers.env()) };
     let record = if scope.record.is_null() {
         let depth = vm.lane_stack.activation_count() - 1;
-        let callee = vm.lane_stack.activations().last().and_then(Activation::script)?.callee;
+        let callee = vm.lane_stack.top_frame().and_then(|frame| frame.script())?.callee;
         vm.lane_stack.own_record(depth, FrameRecord::for_eval(scope.program, scope.function, callee, this, env))
     } else {
         scope.record
