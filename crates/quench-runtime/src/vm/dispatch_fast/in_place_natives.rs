@@ -8,6 +8,7 @@ impl<H: Host> Vm<H> {
     /// A native call's value where its common case completes in place: the steady cases
     /// first (`Vm::steady_native_value`), then Math, the pure string methods, objects, collections
     /// and arrays, and primitives. `None` leaves the call to the native itself.
+    #[inline(always)]
     pub(in crate::vm) fn in_place_native_value(&mut self, code: &ResidualProgram, native: Native, callee: Value,
         receiver: Value, args: &[Value]) -> Option<Value> {
         // A new attempt clears any flag a previous attempt left for its general native.
@@ -15,42 +16,15 @@ impl<H: Host> Vm<H> {
         // One table read selects the families that can answer `native` (`IN_PLACE_FAMILIES`),
         // tried in the same order the cascade of all eight tried them.
         let families = IN_PLACE_FAMILIES[native as usize];
-        if families == 0 {
+        // The steady cases are the common ones: tried here, in the caller, so they do not carry
+        // the frame of the whole cascade (`in_place_family_value`).
+        if families & STEADY != 0 && let Some(value) = self.steady_native_value(native, receiver, args) {
+            return Some(value);
+        }
+        if (families & !STEADY) == 0 {
             return None;
         }
-        // A native with an in-place row answers from its row's body alone (`in_place_row_value`).
-        if families & ROW != 0 {
-            return super::native_calls::in_place_row_value(self, code, native, receiver, args);
-        }
-        let tries = |family: u16| families & family != 0;
-        if tries(STEADY) && let Some(value) = self.steady_native_value(native, receiver, args) {
-            return Some(value);
-        }
-        if tries(MATH) && let Some(value) = math_value(native, args) {
-            return Some(value);
-        }
-        if tries(PURE_STRING) && let Some(value) = self.pure_string_method_call(code, native, receiver, args) {
-            return Some(value);
-        }
-        if tries(OBJECT) && let Some(value) = object_value(self, code, native, receiver, args) {
-            return Some(value);
-        }
-        if tries(COLLECTION) && let Some(value) = collection_value(self, code, native, receiver, args) {
-            return Some(value);
-        }
-        if tries(ARRAY) && let Some(value) = array_value(self, code, native, callee, receiver, args) {
-            return Some(value);
-        }
-        if tries(INTERNAL_SLOT) && let Some(value) = internal_slot_value(self, native, callee, receiver) {
-            return Some(value);
-        }
-        if tries(PRIMITIVE) && let Some(value) = primitive_value(self, native, receiver, args) {
-            return Some(value);
-        }
-        if tries(PRIMITIVE_LEAF) {
-            return primitive_leaf_value(self, code, native, receiver, args);
-        }
-        None
+        in_place_family_value(self, code, native, callee, receiver, args, families)
     }
 
     /// `value`, the in-place body's answer for `native`. Where that body declined (`None`), the
@@ -63,6 +37,44 @@ impl<H: Host> Vm<H> {
         }
         value
     }
+}
+
+/// `in_place_native_value` after its steady case: a native's in-place row (`in_place_row_value`),
+/// else the families of `families` other than `STEADY`, in order, each answering or declining.
+/// Out of line, so the steady case inlined into the caller does not carry this cascade's frame.
+#[inline(never)]
+fn in_place_family_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, callee: Value,
+    receiver: Value, args: &[Value], families: u16) -> Option<Value> {
+    // A native with an in-place row answers from its row's body alone (`in_place_row_value`).
+    if families & ROW != 0 {
+        return super::native_calls::in_place_row_value(vm, code, native, receiver, args);
+    }
+    let tries = |family: u16| families & family != 0;
+    if tries(MATH) && let Some(value) = math_value(native, args) {
+        return Some(value);
+    }
+    if tries(PURE_STRING) && let Some(value) = vm.pure_string_method_call(code, native, receiver, args) {
+        return Some(value);
+    }
+    if tries(OBJECT) && let Some(value) = object_value(vm, code, native, receiver, args) {
+        return Some(value);
+    }
+    if tries(COLLECTION) && let Some(value) = collection_value(vm, code, native, receiver, args) {
+        return Some(value);
+    }
+    if tries(ARRAY) && let Some(value) = array_value(vm, code, native, callee, receiver, args) {
+        return Some(value);
+    }
+    if tries(INTERNAL_SLOT) && let Some(value) = internal_slot_value(vm, native, callee, receiver) {
+        return Some(value);
+    }
+    if tries(PRIMITIVE) && let Some(value) = primitive_value(vm, native, receiver, args) {
+        return Some(value);
+    }
+    if tries(PRIMITIVE_LEAF) {
+        return primitive_leaf_value(vm, code, native, receiver, args);
+    }
+    None
 }
 
 // The in-place families, one bit each, in the order `in_place_native_value` tries them.
@@ -280,20 +292,69 @@ fn object_to_string_in_place<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, re
 /// mutators (`Vm::plain_collection_mutation`, a dense `Map#set` first), a DataView element
 /// get or set that raises nothing, a Date getter of a Date, and `ArrayBuffer.isView`.
 fn collection_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
-    match native {
-        Native::MapSet if vm.map_set(receiver, args) => Some(receiver),
-        Native::MapSet | Native::MapDelete | Native::MapClear | Native::SetAdd | Native::SetDelete | Native::SetClear =>
-            vm.plain_collection_mutation(code, native, receiver, args),
-        Native::ArrayBufferIsView => Some(Value::boolean(vm.is_array_buffer_view(args.first().copied().unwrap_or(Value::UNDEFINED)))),
-        _ if super::super::data_view::data_view_element(native) => vm.plain_data_view_access(native, receiver, args),
-        _ if super::super::date::date_reads(native) => vm.plain_date_get(native, receiver),
-        Native::TypedArrayAt => vm.plain_typed_at(native, receiver, args),
-        Native::Uint8ArrayIndexOf => vm.plain_typed_index_of(native, receiver, args),
-        Native::Uint8ArrayIncludes => vm.plain_typed_includes(native, receiver, args),
-        Native::Uint8ArrayFill => vm.plain_typed_fill(native, receiver, args),
+    match COLLECTION_ARMS[native as usize] {
+        MAP_SET_ARM if vm.map_set(receiver, args) => Some(receiver),
+        MAP_SET_ARM | MUTATION_ARM => vm.plain_collection_mutation(code, native, receiver, args),
+        ARRAY_BUFFER_IS_VIEW_ARM => Some(Value::boolean(vm.is_array_buffer_view(args.first().copied().unwrap_or(Value::UNDEFINED)))),
+        DATA_VIEW_ARM => vm.plain_data_view_access(native, receiver, args),
+        DATE_ARM => vm.plain_date_get(native, receiver),
+        TYPED_AT_ARM => vm.plain_typed_at(native, receiver, args),
+        TYPED_INDEX_OF_ARM => vm.plain_typed_index_of(native, receiver, args),
+        TYPED_INCLUDES_ARM => vm.plain_typed_includes(native, receiver, args),
+        TYPED_FILL_ARM => vm.plain_typed_fill(native, receiver, args),
         _ => None,
     }
 }
+
+// The arms of `collection_value`, one code each, in `COLLECTION_ARMS`.
+const NO_COLLECTION_ARM: u8 = 0;
+/// `Map.prototype.set`: its dense step first, then the general mutation.
+const MAP_SET_ARM: u8 = 1;
+/// The Map and Set mutators other than `set` (`plain_collection_mutation`).
+const MUTATION_ARM: u8 = 2;
+const ARRAY_BUFFER_IS_VIEW_ARM: u8 = 3;
+const DATA_VIEW_ARM: u8 = 4;
+const DATE_ARM: u8 = 5;
+const TYPED_AT_ARM: u8 = 6;
+const TYPED_INDEX_OF_ARM: u8 = 7;
+const TYPED_INCLUDES_ARM: u8 = 8;
+const TYPED_FILL_ARM: u8 = 9;
+
+/// The `collection_value` arm of `native`, or `NO_COLLECTION_ARM`.
+const fn collection_arm(native: Native) -> u8 {
+    if matches!(native, Native::MapSet) {
+        MAP_SET_ARM
+    } else if matches!(native, Native::MapDelete | Native::MapClear | Native::SetAdd | Native::SetDelete | Native::SetClear) {
+        MUTATION_ARM
+    } else if matches!(native, Native::ArrayBufferIsView) {
+        ARRAY_BUFFER_IS_VIEW_ARM
+    } else if super::super::data_view::data_view_element(native) {
+        DATA_VIEW_ARM
+    } else if super::super::date::date_reads(native) {
+        DATE_ARM
+    } else if matches!(native, Native::TypedArrayAt) {
+        TYPED_AT_ARM
+    } else if matches!(native, Native::Uint8ArrayIndexOf) {
+        TYPED_INDEX_OF_ARM
+    } else if matches!(native, Native::Uint8ArrayIncludes) {
+        TYPED_INCLUDES_ARM
+    } else if matches!(native, Native::Uint8ArrayFill) {
+        TYPED_FILL_ARM
+    } else {
+        NO_COLLECTION_ARM
+    }
+}
+
+/// `collection_arm` of every native, by discriminant: one table read selects the arm.
+const COLLECTION_ARMS: [u8; Native::COUNT as usize] = {
+    let mut table = [NO_COLLECTION_ARM; Native::COUNT as usize];
+    let mut index = 0;
+    while index < Native::COUNT {
+        table[index as usize] = collection_arm(Native::from_discriminant(index).unwrap());
+        index += 1;
+    }
+    table
+};
 
 /// Natives that read the receiver's own record or the realm's state: a string's or function's text
 /// (`String.prototype.toString`, `Function.prototype.toString`), a Map's iterators

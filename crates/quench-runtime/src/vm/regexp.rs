@@ -2300,16 +2300,9 @@ impl<H: Host> Vm<H> {
                 let input =
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 // With the builtin exec, only the match and its effects are observable: the
-                // result array it would build never escapes. The proof alone decides it; the
-                // match reads the compiled matcher once, in `regexp_match_from`.
+                // result array it would build never escapes. The proof alone decides it.
                 if vm.regexp_exec_is_builtin(receiver) {
-                    let matched = vm.regexp_builtin_match(p, receiver, &input)?;
-                    let found = matched.is_some();
-                    if let Some(matched) = matched {
-                        let owner = vm.regexp_legacy_owner(receiver)?;
-                        vm.record_regexp_legacy_match(owner, input, matched);
-                    }
-                    return Ok(if found { Value::TRUE } else { Value::FALSE });
+                    return vm.regexp_builtin_test(p, receiver, input).map(Value::boolean);
                 }
                 let input =
                     vm.string_value_from(args.first().copied().unwrap_or(Value::UNDEFINED), &input);
@@ -2321,6 +2314,38 @@ impl<H: Host> Vm<H> {
                 })
             },
         )
+    }
+
+    /// `RegExp.prototype.test` through the builtin exec: `RegExpBuiltinExec`'s `lastIndex`
+    /// reads and writes and its match, with no captures collected, since nothing reads them
+    /// here. The legacy statics are left pending from the match's start, found again only if
+    /// a static is read (`record_regexp_legacy_pending`), as the steady path leaves them.
+    fn regexp_builtin_test(&mut self, p: &ResidualProgram, this: Value, input: JsString) -> Result<bool, JsError> {
+        let last_index = self.regexp_last_index(p, this)?;
+        let last_index = self.regexp_to_length_value(p, last_index)?;
+        let (regex, owner, stateful, sticky) = match self.heap.get(this) {
+            Some(Cell::RegExp { meta, .. }) => (
+                Self::regexp_matcher(meta)?,
+                meta.legacy_constructor,
+                meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY)),
+                meta.flags.contains(RegExpFlags::STICKY),
+            ),
+            _ => return Err(self.type_error(p, "RegExp method called on incompatible receiver".into())),
+        };
+        let start = if stateful { last_index } else { 0 };
+        let steady = self
+            .regexp_last_index_slot(this)
+            .map(|slot| steady::SteadyMatch { slot, prefiltered: false, captures: false });
+        let matched = self.regexp_search(&regex, &input, start, (stateful, sticky), steady);
+        if stateful {
+            let last_index = Value::number(matched.as_ref().map_or(0, |matched| matched.range.end) as f64);
+            self.store_regexp_last_index(p, this, last_index)?;
+        }
+        let Some(matched) = matched else {
+            return Ok(false);
+        };
+        self.record_regexp_legacy_pending(owner, input, regex, matched.range.start);
+        Ok(true)
     }
 
     /// `RegExpBuiltinExec` steps 2–15 for the RegExp `this`: reads and updates `lastIndex`
