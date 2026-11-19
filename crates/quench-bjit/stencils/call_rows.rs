@@ -43,7 +43,7 @@
 use crate::layout::call_record::{helper_outcome, CallRecord, DirectHole, HelperHole, LaneStatus, Outcome, CALLEE_EXIT, PLACED_ARGUMENTS, REGISTER_BYTES};
 use crate::codes::{DOUBLE_PINS, LAST_INT_PIN, MEM, PIN, PINF};
 use crate::heap_rows::{payload, set_context_word, word_at};
-use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_USES_THIS_AT, CELL_RECOVERY_AT, JS_STEP_BODY_TABLE, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_VALUES_END, JS_STEP_RESIDUAL, JS_STEP_VM, PLAIN_DEPTH_LIMIT, CONTEXT_BODY, CONTEXT_THIS, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
+use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_USES_THIS_AT, CELL_RECOVERY_AT, JS_STEP_ACTIVATION_COUNT, JS_STEP_BODY_TABLE, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_VALUES_END, JS_STEP_RESIDUAL, JS_STEP_VM, PLAIN_DEPTH_LIMIT, CONTEXT_BODY, CONTEXT_THIS, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
 use crate::places::Places;
 use crate::stage::StencilStage;
 use crate::staged::frame::{PLAIN_DEPTH_AT, PLAIN_REGISTERS_AT};
@@ -269,8 +269,9 @@ struct Admitted {
     /// The plain depth and innermost window before the push.
     depth: u64,
     registers: u64,
-    /// The body table the frame's running body is written to, at its depth.
+    /// The body table entry for the frame's body, at the total frame count (records + plain depth).
     table: usize,
+    frames: u64,
     /// The addresses of the lane's state words, read once at admission: every move writes through them.
     tops: protocol::LaneTops<u64>,
 }
@@ -280,7 +281,7 @@ struct Admitted {
 fn pop(a: &Admitted) {
     let mut stage = StencilStage::from_hole(0);
     protocol::set_plain(&mut stage, a.tops, a.depth, a.registers);
-    protocol::set_body_top(&mut stage, a.tops, a.depth);
+    protocol::set_body_top(&mut stage, a.tops, a.frames);
     protocol::set_values(&mut stage, a.tops, a.top as u64);
 }
 
@@ -301,8 +302,9 @@ unsafe fn admit(stage: &mut StencilStage, record: usize, payload: usize) -> Opti
             return None;
         }
         let registers = word_at(tops.plain_at as usize, PLAIN_REGISTERS_AT);
-        let table = word_at(payload, JS_STEP_BODY_TABLE) as usize;
-        Some(Admitted { cell, top: top as usize, room: room as usize, fill: fill as usize, depth, registers, table, tops })
+        let records = word_at(word_at(payload, JS_STEP_ACTIVATION_COUNT) as usize, 0);
+        let table = word_at(payload, JS_STEP_BODY_TABLE) as usize + ((records + depth) as usize) * REGISTER_BYTES;
+        Some(Admitted { cell, top: top as usize, room: room as usize, fill: fill as usize, depth, registers, table, tops, frames: records + depth })
     }
 }
 
@@ -330,9 +332,9 @@ unsafe fn push<const ARGC: usize>(s: &S, file: u64, record: usize, a: &Admitted,
         protocol::push_body_header(&mut stage, a.top as u64, header);
         // The running body, at the frame's depth in the body table; the depth and window it bumps.
         let body = word_at(a.cell, CELL_BODY_AT);
-        stage.store_u64(Region::Frame.mutable(), a.table as u64, (a.depth as i32) * REGISTER_BYTES as i32, body);
+        stage.store_u64(Region::Frame.mutable(), a.table as u64, 0, body);
         protocol::set_plain(&mut stage, a.tops, a.depth + 1, a.top as u64);
-        protocol::set_body_top(&mut stage, a.tops, a.depth + 1);
+        protocol::set_body_top(&mut stage, a.tops, a.frames + 1);
         protocol::set_values(&mut stage, a.tops, (a.top + ((a.room + FRAME_CONTEXT_WORDS) << WORD_SHIFT)) as u64);
     }
 }
@@ -456,7 +458,6 @@ macro_rules! direct_row {
     };
 }
 
-
 /// The unconditional leave: every register is passed to the exit as it came.
 #[unsafe(no_mangle)]
 pub unsafe extern "rust-preserve-none" fn exit_here(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
@@ -472,8 +473,7 @@ pub unsafe extern "rust-preserve-none" fn exit_here(frame: usize, ctx: usize, p0
 unsafe fn reload<const P: u8>(s: S) -> S {
     let mut s = s;
     let mut stage = StencilStage::from_hole(0);
-    // The spill's frame slot, the first value hole: it holds the word the preceding spill wrote.
-    let at = stage.site(0);
+    let at = stage.site(0); // the spill's frame slot (first value hole), holding the word the spill wrote
     let word = stage.load_site(Region::Frame.mutable(), s.frame as u64, at);
     let int = value::is_int(&mut stage, word);
     match P {

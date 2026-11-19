@@ -80,4 +80,8 @@ pub(crate) struct JsStepHead<V> {
     /// the table's top word. (reconciled with u-jit F5 on merge)
     pub(crate) body_table: usize,
     pub(crate) body_top: usize,
+    /// The address of the lane's record-activation count word: the body table is indexed by total frame
+    /// count (records + plain depth), since a record push resets the plain depth to 0.
+    /// (reconciled with u-jit F5 on merge)
+    pub(crate) activation_count: usize,
 }

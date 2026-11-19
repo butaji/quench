@@ -308,6 +308,7 @@ pub(crate) const JS_STEP_PLAIN_DEPTH: usize = core::mem::offset_of!(super::js_st
 pub(crate) const PLAIN_DEPTH_LIMIT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, plain_depth_limit);
 pub(crate) const JS_STEP_BODY_TABLE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, body_table);
 pub(crate) const JS_STEP_BODY_TOP: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, body_top);
+pub(crate) const JS_STEP_ACTIVATION_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, activation_count);
 /// The entry cell's run counters, and the unit a raised run adds (`entry_cell::RAISED_RUN`).
 pub(crate) const CELL_COUNTERS_AT: usize = crate::staged::call::ENTRY_CELL.counters_offset as usize;
 pub(crate) const RAISED_RUN: u64 = 1 << u32::BITS;
