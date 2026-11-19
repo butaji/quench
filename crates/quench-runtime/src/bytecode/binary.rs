@@ -7,7 +7,7 @@ use super::{
     EvalBindingLocation, FieldBase, FieldSite, Function, FunctionSlot, Handler, InitialRegister, Instr,
     LexicalBindingKind, LocalRegister, MethodSite, ModuleImportBinding, ModuleImportName,
     ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind, ModuleRequest,
-    LiteralStep, ModuleRequestPhase, ObjectSite, Op, RegExpLiteralSite, SourcePosition, Superinstruction,
+    LiteralStep, ModuleRequestPhase, ObjectSite, Op, RegExpLiteralSite, SourceOffset, Superinstruction,
     WideInstruction,
 };
 
@@ -390,9 +390,8 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         out.optional_atom_pair(site.sink);
         for source in site.sources {
             out.u8(source.is_some() as u8);
-            if let Some((line, column)) = source {
-                out.u32(line);
-                out.u32(column);
+            if let Some(offset) = source {
+                out.u32(offset);
             }
         }
     }
@@ -604,7 +603,6 @@ fn decode_program(
             base: input.u32()?,
             line_offset: input.u32()?,
             column_offset: input.u32()?,
-            line_starts: Default::default(),
             call_sites: if input.bool()? {
                 std::cell::OnceCell::from(std::sync::Arc::from(input.list(|input| {
                     Ok(super::CallSiteDescription {
@@ -762,9 +760,9 @@ fn decode_program(
             second: input.optional_atom_pair()?,
             sink: input.optional_atom_pair()?,
             sources: [
-                input.optional_source_location()?,
-                input.optional_source_location()?,
-                input.optional_source_location()?,
+                input.optional_source_offset()?,
+                input.optional_source_offset()?,
+                input.optional_source_offset()?,
             ],
         })
     })?;
@@ -1667,7 +1665,7 @@ impl BinaryWriter {
         self.u32(bytes.len() as u32);
         self.bytes.extend_from_slice(bytes);
         match last {
-            Some(position) => { self.u8(1); self.u32(position.pc); self.u32(position.line); self.u32(position.column); }
+            Some(entry) => { self.u8(1); self.u32(entry.pc); self.u32(entry.offset); }
             None => self.u8(0),
         }
     }
@@ -1713,7 +1711,7 @@ impl<'a> BinaryReader<'a> {
         let bytes = self.take(len)?.to_vec();
         let last = match self.u8()? {
             0 => None,
-            1 => Some(SourcePosition { pc: self.u32()?, line: self.u32()?, column: self.u32()? }),
+            1 => Some(SourceOffset { pc: self.u32()?, offset: self.u32()? }),
             _ => return Err("invalid residual source position table".into()),
         };
         Ok(super::SourcePositions::from_encoded(bytes, last))
@@ -1844,10 +1842,10 @@ impl<'a> BinaryReader<'a> {
         let value = self.u32()?;
         Ok((value != u32::MAX).then_some(value))
     }
-    pub(super) fn optional_source_location(&mut self) -> Result<Option<(u32, u32)>, String> {
+    pub(super) fn optional_source_offset(&mut self) -> Result<Option<u32>, String> {
         match self.u8()? {
             0 => Ok(None),
-            1 => Ok(Some((self.u32()?, self.u32()?))),
+            1 => Ok(Some(self.u32()?)),
             _ => Err("invalid residual source option".into()),
         }
     }

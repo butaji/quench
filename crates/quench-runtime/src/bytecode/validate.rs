@@ -518,6 +518,9 @@ impl ResidualProgram {
 
     pub(crate) fn validate(&self) -> Result<(), String> {
         if let Some(source) = &self.source { source.validate_call_sites()?; }
+        // The compiled-source bytes a position may name: those of the kept text, after its
+        // wrapper prefix. A program that keeps no text has none to bound them by.
+        let source_end = self.source.as_ref().map(|source| source.base as usize + source.text.len());
         if self.functions.is_empty() && self.kind != super::ProgramKind::Wasm {
             return Err("program has no entry function".into());
         }
@@ -657,19 +660,18 @@ function.plain_local_slots(&self.superinstructions)
             }
             let code_len = function.code.len() as u32;
             // One decoding pass: entries strictly increase in pc, lie within the code and
-            // have a line and column, and the last decoded entry is the table's last.
+            // within the compiled source, and the last decoded entry is the table's last.
             let mut previous_pc = None;
             let mut decoded_last = None;
-            for position in function.source_positions.iter() {
-                if previous_pc.is_some_and(|pc| pc >= position.pc)
-                    || position.pc >= code_len
-                    || position.line == 0
-                    || position.column == 0
+            for entry in function.source_positions.iter() {
+                if previous_pc.is_some_and(|pc| pc >= entry.pc)
+                    || entry.pc >= code_len
+                    || source_end.is_some_and(|end| entry.offset as usize > end)
                 {
                     return Err(format!("function {index} has invalid source positions"));
                 }
-                previous_pc = Some(position.pc);
-                decoded_last = Some(position);
+                previous_pc = Some(entry.pc);
+                decoded_last = Some(entry);
             }
             if decoded_last != function.source_positions.last() {
                 return Err(format!("function {index} has invalid source positions"));
@@ -893,7 +895,7 @@ function.plain_local_slots(&self.superinstructions)
             }
         }
         for site in &self.field_sites {
-            if site.sources.iter().flatten().any(|(line, column)| *line == 0 || *column == 0)
+            if site.sources.iter().flatten().any(|offset| source_end.is_some_and(|end| *offset as usize > end))
                 || !field_base_in_bounds(site.base.0, REGISTER_MASK, 0)
                 || !atom_in_bounds(site.first.0, self.atoms.len())
                 || !cache_in_bounds(site.first.1, self.cache_sites.get())

@@ -22,10 +22,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::PrivateFieldExpression(member) => member.field.span.start,
             _ => expression.span().start,
         };
-        let position = self.owner.source_position(start);
-        let previous = self
-            .current_source_position
-            .replace((position.line, position.column));
+        let previous = self.current_source_position.replace(self.owner.source_offset(start));
         let start = self.next_reg;
         let result = self.expression_at_current_position(expression, debug_name);
         self.current_source_position = previous;
@@ -659,8 +656,8 @@ impl FunctionCompiler<'_, '_> {
             let site = self.owner.cache_site();
             let second_site = self.owner.cache_site();
             let access = self.field_site(FieldBase::THIS, (first, site), Some((second, second_site)));
-            let first_position = self.owner.source_position(inner.property.span.start);
-            self.owner.field_sites[access as usize].sources[0] = Some((first_position.line, first_position.column));
+            let first_offset = self.owner.source_offset(inner.property.span.start);
+            self.owner.field_sites[access as usize].sources[0] = Some(first_offset);
             self.emit(Op::GetField, dst, FieldBase::NESTED, 0, access);
             return dst;
         }

@@ -3,8 +3,7 @@ use super::*;
 
 impl FunctionCompiler<'_, '_> {
     pub(super) fn with_source_offset<T>(&mut self, offset: u32, emit: impl FnOnce(&mut Self) -> T) -> T {
-        let position = self.owner.source_position(offset);
-        let previous = self.current_source_position.replace((position.line, position.column));
+        let previous = self.current_source_position.replace(self.owner.source_offset(offset));
         let result = emit(self);
         self.current_source_position = previous;
         result

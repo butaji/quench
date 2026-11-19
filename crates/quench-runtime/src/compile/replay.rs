@@ -455,8 +455,6 @@ impl RewriteRanges {
 #[derive(Default)]
 pub(super) struct ReplayViews {
     pub(super) constants: std::cell::OnceCell<Vec<(u64, u32)>>,
-    pub(super) line_starts: std::cell::OnceCell<Vec<usize>>,
-    pub(super) utf16_excess: std::cell::OnceCell<Vec<(usize, usize)>>,
 }
 
 /// How a program's functions can be compiled again, one at a time.
@@ -853,16 +851,7 @@ pub(crate) fn recompile(
     } else {
         SpecializationMode::Disabled
     };
-    let (line_starts, utf16_excess) = views.layout(text);
-    let mut compiler = Compiler::with_layout(
-        &program.source_name,
-        text,
-        mode,
-        &atoms,
-        FxHashMap::default(),
-        std::borrow::Cow::Borrowed(line_starts),
-        std::borrow::Cow::Borrowed(utf16_excess),
-    );
+    let mut compiler = Compiler::new(&program.source_name, text, mode, &atoms, FxHashMap::default());
     compiler.source_comments = parsed
         .program
         .comments

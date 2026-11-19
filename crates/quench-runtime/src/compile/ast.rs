@@ -94,7 +94,8 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) code: Vec<Instr>,
     pub(super) wide: Vec<WideInstruction>,
     pub(super) source_positions: crate::bytecode::SourcePositions,
-    current_source_position: Option<(u32, u32)>,
+    /// The source offset the instructions being emitted come from.
+    current_source_position: Option<u32>,
     pub(super) next_reg: Register,
     pub(super) max_reg: Register,
     pub(super) local_slots: Rc<FxHashMap<Atom, u16>>,
@@ -415,23 +416,19 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             })
     }
 
-    /// Records the current source position at `at`, unless the last entry already holds it.
+    /// Records the current source offset at `at`, unless the last entry already holds it.
     #[inline]
     fn record_source_position(&mut self, op: Op, at: usize) {
-        let Some((line, column)) = self.current_source_position else { return };
-        let repeats = self
-            .source_positions
-            .last()
-            .is_some_and(|position| position.line == line && position.column == column);
+        let Some(offset) = self.current_source_position else { return };
+        let repeats = self.source_positions.last().is_some_and(|entry| entry.offset == offset);
         // Calls expose their own source position. An argument Move carrying
         // the same compressed position may disappear during rewriting.
         if repeats && op.control_flow_layout() != crate::bytecode::ControlFlowLayout::Call {
             return;
         }
-        self.source_positions.push(crate::bytecode::SourcePosition {
+        self.source_positions.push(crate::bytecode::SourceOffset {
             pc: u32::try_from(at).unwrap_or(u32::MAX),
-            line,
-            column,
+            offset,
         });
     }
 
