@@ -182,49 +182,70 @@ static void js_restore(JsContext *P, const JsLexState *s) {
   P->pos = s->pos; P->ts = s->ts; P->te = s->te; P->prev_end = s->prev_end; P->ntok = s->ntok;
   P->tt = s->tt; P->nl = s->nl;
 }
-static int js_ident_start(unsigned char c) {
-  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$';
+/* Character classes: one table lookup per character instead of range tests. */
+enum { CC_IDSTART = 1, CC_IDPART = 2 };
+static unsigned char js_cls[256];
+static int js_cls_ready;
+static void js_init_classes(void) {
+  for (unsigned c = 0; c < 256; c++) {
+    unsigned char v = 0;
+    if ((c | 0x20) - 'a' < 26u || c == '_' || c == '$') v = CC_IDSTART | CC_IDPART;
+    else if (c - '0' < 10u) v = CC_IDPART;
+    js_cls[c] = v;
+  }
+  js_cls_ready = 1;
 }
-static int js_ident_part(unsigned char c) { return js_ident_start(c) || (c >= '0' && c <= '9'); }
+static inline int js_ident_start(unsigned c) { return js_cls[c & 0xFF] & CC_IDSTART; }
+static inline int js_ident_part(unsigned c) { return js_cls[c & 0xFF] & CC_IDPART; }
 
-static void js_skip_space(JsContext *P) {
+/* Skips whitespace and comments from index i; sets *nl when a line terminator is passed. */
+static size_t js_skip(JsContext *P, size_t i, int *nl) {
   const unsigned char *s = (const unsigned char *)P->src;
-  size_t i = P->pos, n = P->len;
+  const size_t n = P->len;
   while (i < n) {
     unsigned char c = s[i];
-    if (c == '\n' || c == '\r') { P->nl = 1; i++; }
-    else if (c == ' ' || c == '\t' || c == '\v' || c == '\f') i++;
+    if (c == ' ' || c == '\t' || c == '\v' || c == '\f') i++;
+    else if (c == '\n' || c == '\r') { *nl = 1; i++; }
     else if (c == '/' && i + 1 < n && s[i + 1] == '/') {
       i += 2;
       while (i < n && s[i] != '\n' && s[i] != '\r') i++;
     } else if (c == '/' && i + 1 < n && s[i + 1] == '*') {
       size_t e = i + 2;
-      while (e + 1 < n && !(s[e] == '*' && s[e + 1] == '/')) { if (s[e] == '\n') P->nl = 1; e++; }
+      while (e + 1 < n && !(s[e] == '*' && s[e + 1] == '/')) { if (s[e] == '\n') *nl = 1; e++; }
       if (e + 1 >= n) { P->ts = i; js_fail(P, "unterminated comment"); }
       i = e + 2;
     } else if (c == 0xC2 && i + 1 < n && s[i + 1] == 0xA0) i += 2;
     else if (c == 0xEF && i + 2 < n && s[i + 1] == 0xBB && s[i + 2] == 0xBF) i += 3;
-    else if (c == 0xE2 && i + 2 < n && s[i + 1] == 0x80 && (s[i + 2] == 0xA8 || s[i + 2] == 0xA9)) { P->nl = 1; i += 3; }
+    else if (c == 0xE2 && i + 2 < n && s[i + 1] == 0x80 && (s[i + 2] == 0xA8 || s[i + 2] == 0xA9)) { *nl = 1; i += 3; }
     else if (c == '#' && i == 0 && n > 1 && s[1] == '!') { while (i < n && s[i] != '\n') i++; }
     else break;
   }
-  P->pos = i;
+  return i;
 }
 
 static int js_keyword(const char *s, size_t n) {
-  static const struct { const char *s; int tt; } kw[] = {
-    {"break", TK_BREAK}, {"case", TK_CASE}, {"catch", TK_CATCH}, {"class", TK_CLASS},
-    {"const", TK_CONST}, {"continue", TK_CONTINUE}, {"debugger", TK_DEBUGGER}, {"default", TK_DEFAULT},
-    {"delete", TK_DELETE}, {"do", TK_DO}, {"else", TK_ELSE}, {"export", TK_EXPORT},
-    {"extends", TK_EXTENDS}, {"finally", TK_FINALLY}, {"for", TK_FOR}, {"function", TK_FUNCTION},
-    {"if", TK_IF}, {"import", TK_IMPORT}, {"in", TK_IN}, {"instanceof", TK_INSTANCEOF},
-    {"new", TK_NEW}, {"return", TK_RETURN}, {"super", TK_SUPER}, {"switch", TK_SWITCH},
-    {"this", TK_THIS}, {"throw", TK_THROW}, {"try", TK_TRY}, {"typeof", TK_TYPEOF},
-    {"var", TK_VAR}, {"void", TK_VOID}, {"while", TK_WHILE}, {"with", TK_WITH},
-    {"null", TK_NULL}, {"true", TK_TRUE}, {"false", TK_FALSE}};
+#define JS_KW(lit, t) if (n == sizeof(lit) - 1 && memcmp(s, lit, sizeof(lit) - 1) == 0) return t
   if (n < 2 || n > 10 || s[0] < 'a' || s[0] > 'z') return TK_NAME;
-  for (size_t i = 0; i < sizeof kw / sizeof kw[0]; i++)
-    if (kw[i].s[0] == s[0] && strlen(kw[i].s) == n && memcmp(kw[i].s, s, n) == 0) return kw[i].tt;
+  switch (s[0]) {
+  case 'b': JS_KW("break", TK_BREAK); break;
+  case 'c': JS_KW("case", TK_CASE); JS_KW("catch", TK_CATCH); JS_KW("class", TK_CLASS);
+            JS_KW("const", TK_CONST); JS_KW("continue", TK_CONTINUE); break;
+  case 'd': JS_KW("debugger", TK_DEBUGGER); JS_KW("default", TK_DEFAULT); JS_KW("delete", TK_DELETE);
+            JS_KW("do", TK_DO); break;
+  case 'e': JS_KW("else", TK_ELSE); JS_KW("export", TK_EXPORT); JS_KW("extends", TK_EXTENDS); break;
+  case 'f': JS_KW("finally", TK_FINALLY); JS_KW("for", TK_FOR); JS_KW("function", TK_FUNCTION);
+            JS_KW("false", TK_FALSE); break;
+  case 'i': JS_KW("if", TK_IF); JS_KW("import", TK_IMPORT); JS_KW("in", TK_IN);
+            JS_KW("instanceof", TK_INSTANCEOF); break;
+  case 'n': JS_KW("new", TK_NEW); JS_KW("null", TK_NULL); break;
+  case 'r': JS_KW("return", TK_RETURN); break;
+  case 's': JS_KW("super", TK_SUPER); JS_KW("switch", TK_SWITCH); break;
+  case 't': JS_KW("this", TK_THIS); JS_KW("throw", TK_THROW); JS_KW("try", TK_TRY);
+            JS_KW("typeof", TK_TYPEOF); JS_KW("true", TK_TRUE); break;
+  case 'v': JS_KW("var", TK_VAR); JS_KW("void", TK_VOID); break;
+  case 'w': JS_KW("while", TK_WHILE); JS_KW("with", TK_WITH); break;
+  }
+#undef JS_KW
   return TK_NAME;
 }
 
@@ -252,18 +273,23 @@ static void js_scan_number(JsContext *P, size_t i, int *tt, size_t *end) {
 
 static void js_lex(JsContext *P) {
   const unsigned char *s = (const unsigned char *)P->src;
-  size_t n = P->len, i;
+  const size_t n = P->len;
+  size_t i;
+  int nl = 0;
   P->prev_end = P->te;
-  P->nl = 0;
-  js_skip_space(P);
-  P->ts = P->pos;
-  P->ntok++;
   i = P->pos;
-  if (i >= n) { P->tt = TK_EOF; P->te = i; return; }
+  /* fast path: most tokens follow a token with no space in between */
+  if (i < n && s[i] > ' ' && s[i] < 0x80 &&
+      !(s[i] == '/' && i + 1 < n && (s[i + 1] == '/' || s[i + 1] == '*')) && s[i] != '#') {
+    /* no whitespace or comment before the token */
+  } else i = js_skip(P, i, &nl);
+  P->nl = nl;
+  P->ts = i;
+  P->ntok++;
+  if (i >= n) { P->tt = TK_EOF; P->te = P->pos = i; return; }
   unsigned char c = s[i];
-  unsigned char c1 = i + 1 < n ? s[i + 1] : 0;
-  unsigned char c2 = i + 2 < n ? s[i + 2] : 0;
-  unsigned char c3 = i + 3 < n ? s[i + 3] : 0;
+#define CH(k) (i + (k) < n ? s[i + (k)] : 0)
+  unsigned char c1 = CH(1);
   int tt = TK_EOF;
   size_t e = i + 1;
 #define TOK(len, t) do { tt = (t); e = i + (len); } while (0)
@@ -299,43 +325,43 @@ static void js_lex(JsContext *P) {
     case ',': TOK(1, TK_COMMA); break;
     case ':': TOK(1, TK_COLON); break;
     case '~': TOK(1, TK_TILDE); break;
-    case '.': if (c1 == '.' && c2 == '.') TOK(3, TK_ELLIPSIS); else TOK(1, TK_DOT); break;
+    case '.': if (c1 == '.' && CH(2) == '.') TOK(3, TK_ELLIPSIS); else TOK(1, TK_DOT); break;
     case '?':
-      if (c1 == '?') { if (c2 == '=') TOK(3, TK_NULLISHEQ); else TOK(2, TK_NULLISH); }
-      else if (c1 == '.' && !(c2 >= '0' && c2 <= '9')) TOK(2, TK_QDOT);
+      if (c1 == '?') { if (CH(2) == '=') TOK(3, TK_NULLISHEQ); else TOK(2, TK_NULLISH); }
+      else if (c1 == '.' && !(CH(2) >= '0' && CH(2) <= '9')) TOK(2, TK_QDOT);
       else TOK(1, TK_QUESTION);
       break;
     case '<':
-      if (c1 == '<') { if (c2 == '=') TOK(3, TK_SHLEQ); else TOK(2, TK_SHL); }
+      if (c1 == '<') { if (CH(2) == '=') TOK(3, TK_SHLEQ); else TOK(2, TK_SHL); }
       else if (c1 == '=') TOK(2, TK_LE); else TOK(1, TK_LT);
       break;
     case '>':
       if (c1 == '>') {
-        if (c2 == '>') { if (c3 == '=') TOK(4, TK_SHREQ); else TOK(3, TK_SHR); }
-        else if (c2 == '=') TOK(3, TK_SAREQ); else TOK(2, TK_SAR);
+        if (CH(2) == '>') { if (CH(3) == '=') TOK(4, TK_SHREQ); else TOK(3, TK_SHR); }
+        else if (CH(2) == '=') TOK(3, TK_SAREQ); else TOK(2, TK_SAR);
       } else if (c1 == '=') TOK(2, TK_GE); else TOK(1, TK_GT);
       break;
     case '=':
-      if (c1 == '=') { if (c2 == '=') TOK(3, TK_SEQ); else TOK(2, TK_EQ); }
+      if (c1 == '=') { if (CH(2) == '=') TOK(3, TK_SEQ); else TOK(2, TK_EQ); }
       else if (c1 == '>') TOK(2, TK_ARROW); else TOK(1, TK_ASSIGN);
       break;
     case '!':
-      if (c1 == '=') { if (c2 == '=') TOK(3, TK_SNE); else TOK(2, TK_NE); } else TOK(1, TK_BANG);
+      if (c1 == '=') { if (CH(2) == '=') TOK(3, TK_SNE); else TOK(2, TK_NE); } else TOK(1, TK_BANG);
       break;
     case '+': if (c1 == '+') TOK(2, TK_INC); else if (c1 == '=') TOK(2, TK_PLUSEQ); else TOK(1, TK_PLUS); break;
     case '-': if (c1 == '-') TOK(2, TK_DEC); else if (c1 == '=') TOK(2, TK_MINUSEQ); else TOK(1, TK_MINUS); break;
     case '*':
-      if (c1 == '*') { if (c2 == '=') TOK(3, TK_STARSTAREQ); else TOK(2, TK_STARSTAR); }
+      if (c1 == '*') { if (CH(2) == '=') TOK(3, TK_STARSTAREQ); else TOK(2, TK_STARSTAR); }
       else if (c1 == '=') TOK(2, TK_STAREQ); else TOK(1, TK_STAR);
       break;
     case '/': if (c1 == '=') TOK(2, TK_SLASHEQ); else TOK(1, TK_SLASH); break;
     case '%': if (c1 == '=') TOK(2, TK_PERCENTEQ); else TOK(1, TK_PERCENT); break;
     case '&':
-      if (c1 == '&') { if (c2 == '=') TOK(3, TK_ANDEQ); else TOK(2, TK_AND); }
+      if (c1 == '&') { if (CH(2) == '=') TOK(3, TK_ANDEQ); else TOK(2, TK_AND); }
       else if (c1 == '=') TOK(2, TK_AMPEQ); else TOK(1, TK_AMP);
       break;
     case '|':
-      if (c1 == '|') { if (c2 == '=') TOK(3, TK_OREQ); else TOK(2, TK_OR); }
+      if (c1 == '|') { if (CH(2) == '=') TOK(3, TK_OREQ); else TOK(2, TK_OR); }
       else if (c1 == '=') TOK(2, TK_BAREQ); else TOK(1, TK_BAR);
       break;
     case '^': if (c1 == '=') TOK(2, TK_CARETEQ); else TOK(1, TK_CARET); break;
@@ -343,6 +369,7 @@ static void js_lex(JsContext *P) {
     }
   }
 #undef TOK
+#undef CH
   P->tt = tt;
   P->te = e;
   P->pos = e;
@@ -1520,6 +1547,7 @@ static JsNode *js_parse_statement(JsContext *P) {
 static JsNode *js_parse(JsContext *ctx, const char *src, size_t len, int module, size_t *tokens_out) {
   js_arena_reset(&ctx->ar);
   ctx->sp = 0;
+  if (!js_cls_ready) js_init_classes();
   ctx->src = src; ctx->len = len;
   ctx->pos = 0; ctx->ts = 0; ctx->te = 0; ctx->prev_end = 0; ctx->ntok = 0;
   ctx->tt = TK_EOF; ctx->nl = 0; ctx->module = module;
