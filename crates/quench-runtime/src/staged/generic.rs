@@ -14,7 +14,7 @@ use crate::Value;
 
 /// Whether `operand` names a register or a program constant: the operands a `Binary` or an
 /// `Equality` row reads (`NumericFrame::operand_word`).
-fn is_value_operand(operand: Operand) -> bool {
+pub(super) fn is_value_operand(operand: Operand) -> bool {
     matches!(operand.kind(), Some(OperandKind::Register | OperandKind::Constant))
 }
 

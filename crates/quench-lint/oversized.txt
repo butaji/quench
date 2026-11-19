@@ -980,7 +980,6 @@ complexity crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_receive
 complexity crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_view 12
 complexity crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_write 12
 complexity crates/quench-runtime/src/vm/vector_region.rs::Builder<'_>::add 32
-complexity crates/quench-runtime/src/vm/vector_region.rs::Builder<'_>::fused 22
 complexity crates/quench-runtime/src/vm/vector_region.rs::VectorRegion::run 23
 complexity crates/quench-runtime/src/vm/vector_region.rs::admit 15
 complexity crates/quench-runtime/src/vm/wasm.rs::Vm<H>::decode_wasm_value_in 15
@@ -3595,7 +3594,6 @@ function-lines crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_rec
 function-lines crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_view 45
 function-lines crates/quench-runtime/src/vm/value_serializer.rs::Vm<H>::wire_write 50
 function-lines crates/quench-runtime/src/vm/vector_region.rs::Builder<'_>::add 131
-function-lines crates/quench-runtime/src/vm/vector_region.rs::Builder<'_>::fused 64
 function-lines crates/quench-runtime/src/vm/vector_region.rs::VectorRegion::run 100
 function-lines crates/quench-runtime/src/vm/vector_region.rs::admit 50
 function-lines crates/quench-runtime/src/vm/vector_region.rs::tests::fixture 41

@@ -149,8 +149,8 @@ fn the_element_instructions_decode_to_their_rows() {
     use crate::bytecode::{Op, WideInstruction};
     let read = WideInstruction::new(Op::GetIndex, 3, 4, 5, 0);
     assert!(matches!(Operation::<u64, ()>::decode(read, crate::staged::DecodeContext::EMPTY),
-        Some(Operation::ElementRead { base: 4, key }) if key.register_index() == Some(5)));
+        Some(Operation::ElementRead { base: 4, key, .. }) if key.register_index() == Some(5)));
     let write = WideInstruction::new(Op::SetIndex, 3, 4, 5, 0);
     assert!(matches!(Operation::<u64, ()>::decode(write, crate::staged::DecodeContext::EMPTY),
-        Some(Operation::ElementWrite { value: 3, base: 4, key: 5 })));
+        Some(Operation::ElementWrite { value: 3, base: 4, key: 5, strict: false })));
 }

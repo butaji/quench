@@ -13,7 +13,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         property @ (Operation::GetField { .. } | Operation::SetField { .. } | Operation::StoreField { .. } | Operation::FieldGetHost { .. }
             | Operation::FieldAdd { .. } | Operation::IndexGetHost { .. }) => super::property::property_step(stage, frame, property),
         keyed @ (Operation::Delete { .. } | Operation::ElementRead { .. } | Operation::ElementReadOperand { .. } | Operation::ElementWrite { .. }) => keyed_step(stage, frame, keyed),
-        Operation::IncDecLocal { .. } => Step::Unresolved,
+        Operation::IncDecLocal { local, source, decrement } => inc_dec_local(stage, frame, local, source, decrement),
         Operation::Void { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. } | Operation::Binary { .. }
             | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
         Operation::WasmJump(jump) => super::wasm_jump::step(stage, frame, jump),
@@ -26,9 +26,10 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::GlobalLexicalLoad { .. }
             | Operation::GlobalLexicalStore { .. } | Operation::LoadName { .. } | Operation::Protocol { .. }
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } | Operation::SpreadCall { .. } | Operation::SuperCall { .. }
-            | Operation::LoadCapture { .. } | Operation::StoreCapture { .. } => super::names::step(stage, frame, operation),
-        guard @ (Operation::GuardIdentity { .. } | Operation::GuardLive | Operation::GuardRealm { .. } | Operation::GuardDeclared { .. }
-            | Operation::GuardPrototype { .. } | Operation::GuardShape { .. } | Operation::GuardStores { .. } | Operation::BackEdge { .. }) => guard_step(stage, frame, guard),
+            | Operation::LoadCapture { .. } | Operation::StoreCapture { .. } | Operation::CloneEnv { .. }
+            | Operation::IteratorCleanupPush { .. } | Operation::IteratorCleanupPop | Operation::SetFunctionName { .. }
+            => super::names::step(stage, frame, operation),
+        Operation::SuperConstArrayObject2(pair) => super::superinstructions::step(stage, frame, pair),
         value => value_step(stage, frame, value),
     }
 }
@@ -125,7 +126,7 @@ fn string_case_index<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: 
 #[inline(always)]
 fn load_callee<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register) -> Step<S::Word, F::Control> {
-    let Some((value, fact)) = frame.callee(stage) else { return Step::Unresolved };
+    let Some((value, fact)) = frame.callee_value(stage) else { return Step::Unresolved };
     frame.write(stage, destination, value, fact);
     Step::Value(value)
 }
@@ -212,6 +213,51 @@ fn local_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     }
 }
 
+/// `IncDecLocal`: the `++` (or `--`) of `source` written to frame local `local`, by the Number step of an
+/// int32 or binary64 operand, else the VM's update (`CallOut::IncDec`). Defines the updated value.
+#[inline(always)]
+fn inc_dec_local<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, local: Register, source: Register,
+    decrement: bool) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    let operation = if decrement { crate::vm::operations::NumberArithmetic::Subtract } else { crate::vm::operations::NumberArithmetic::Add };
+    let operand = crate::bytecode::Operand::register(source);
+    let (word, fact) = match frame.int_operand(stage, operand, miss) {
+        Some(value) => {
+            let one = stage.i32_constant(1);
+            let (sum, overflowed) = stage.int_arithmetic(operation, value, one);
+            match stage.guard_false(overflowed, miss) {
+                Some(()) => (frame.int_result(stage, sum), frame.int_fact()),
+                None => return inc_dec_local_by_vm(stage, frame, local, source, decrement),
+            }
+        }
+        None => match frame.number_operand(stage, operand, miss) {
+            Some(number) => {
+                let one = stage.f64_constant(1.0);
+                (stage.float_arithmetic(operation, number, one), frame.number_fact())
+            }
+            None => return inc_dec_local_by_vm(stage, frame, local, source, decrement),
+        },
+    };
+    if frame.store_numeric_local(stage, local, word, fact) { Step::Value(word) } else { Step::Unresolved }
+}
+
+/// The VM's update of `source` written to local `local` (`inc_dec_local`'s other operands).
+#[inline(always)]
+fn inc_dec_local_by_vm<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, local: Register, source: Register,
+    decrement: bool) -> Step<S::Word, F::Control> {
+    if !frame.general_operators() {
+        return Step::Unresolved;
+    }
+    match frame.vm_step(stage, super::CallOut::IncDec { source, decrement }, None) {
+        // The update has run, so the local must take it: a frame that answers an update keeps its locals.
+        Some((word, fact)) => {
+            assert!(frame.store_numeric_local(stage, local, word, fact), "a frame that answers an update keeps its numeric local");
+            Step::Value(word)
+        }
+        None => Step::Unresolved,
+    }
+}
+
 /// RequireObjectCoercible of `register`: its tagged word where it is neither `null` nor
 /// `undefined`; those leave at the frame's miss edge.
 #[inline(always)]
@@ -224,7 +270,10 @@ fn require_object_coercible<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
     let nullish = stage.either(null, undefined);
     match stage.guard_false(nullish, miss) {
         Some(()) => Step::Value(value),
-        None => Step::Unresolved,
+        None => {
+            frame.object_coercion_failed(stage, value);
+            Step::Unresolved
+        }
     }
 }
 
@@ -261,6 +310,8 @@ pub(crate) enum RowStep {
     WasmMemory,
     /// The Wasm SIMD operators and byte shuffles on the lane's vector registers (`wasm_simd::step`).
     WasmVector,
+    /// The activation entries of a lane's synthetic prologue records (`prologue::step`).
+    Entry,
     /// A `Binary` or `Unary`: the Number operations, the generic comparisons and call-outs,
     /// `!` and the `typeof` forms (`step_arith`), not the whole of `step`.
     Arith,
@@ -283,6 +334,10 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
         Some(Decoder::WasmState) => RowStep::WasmState,
         Some(Decoder::WasmMemory) => RowStep::WasmMemory,
         Some(Decoder::WasmVector) => RowStep::WasmVector,
+        Some(Decoder::Lane) => match op {
+            Op::TierPrologue | Op::BodyEntry => RowStep::Entry,
+            _ => RowStep::Full,
+        },
         Some(Decoder::Value) => match op {
             Op::LoadCapture | Op::StoreCapture => RowStep::Names,
             Op::IncDec | Op::ToNumeric => RowStep::Number,

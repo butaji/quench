@@ -18,20 +18,6 @@ impl<H: Host> Vm<H> {
         position.unwrap_or(cases.len()) as u32
     }
 
-    /// `StringCaseIndex`: the case its run of constants selects for its register, written
-    /// as an integer.
-    pub(in crate::vm) fn select_string_case(&mut self, f: usize, i: WideInstruction) -> Result<(), JsError> {
-        let start = i.constant_index();
-        let value = self.read(f, i.register_c());
-        let cases = self.programs.constants(self.frames[f].program);
-        let cases = cases
-            .get(start..start + usize::from(i.element_count()))
-            .ok_or_else(|| JsError::validation("switch cases are outside program".into()))?;
-        let index = self.string_case_index(value, cases);
-        self.write(f, i.result_register(), Value::integer(index as i32));
-        Ok(())
-    }
-
     /// The entry a case table takes past the first, the PC already naming that one: its
     /// selector's low 32 bits, any past the cases the default entry after them.
     pub(in crate::vm) fn branch_table_case(&self, f: usize, i: WideInstruction) -> usize {

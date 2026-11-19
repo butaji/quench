@@ -279,7 +279,6 @@ mod string_cache;
 mod string_extra;
 pub(crate) mod value_serializer;
 mod owned_clone_native;
-mod superinstruction;
 mod symbol;
 mod well_known_symbols;
 pub(crate) use well_known_symbols::{WellKnownSymbol, WellKnownSymbols};

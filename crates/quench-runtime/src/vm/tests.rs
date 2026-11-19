@@ -23596,7 +23596,8 @@ fn lane_leaf_calls_return_field_reads_as_activations() {
 
 #[test]
 fn lane_returning_operators_keep_binary_semantics() {
-    // A returning arithmetic `Binary` decided per operator (`returning_operator_miss`) gives
+    // A returning arithmetic `Binary` decided per operator (`returning_operator_row`, and its
+    // `returning_operator_miss` for the rest) gives
     // integers, other Numbers, concatenations, BigInts and a `valueOf` the values the general
     // `Binary` gives (expected values from Node).
     let source = r#"

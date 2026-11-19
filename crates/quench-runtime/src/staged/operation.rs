@@ -45,6 +45,12 @@ pub(crate) enum Operation<W, P> {
     /// literal template or string concatenation `allocation` makes, defined into `destination`; a due collection leaves
     /// at the frame's miss edge (`Frame::allocate_value`).
     Allocate { destination: Register, allocation: Allocation, proof: P },
+    /// A `SuperConstArrayObject2` record's pair (`superinstructions`): a constant array, two `Binary`
+    /// operations, then an object pair, each part's row in turn (`superinstructions::step`).
+    SuperConstArrayObject2(super::superinstructions::ConstArrayPair<P>),
+    /// Define element `index` of the literal array in `array` as `value` (`DefineArrayElement`), a
+    /// fresh hole of that array; the frame's element definer answers it (`Frame::define_element`).
+    DefineElement { array: Register, index: u32, value: Register },
     /// Continue unless an interrupt or a due collection is requested (`Frame::safepoint`).
     Safepoint { proof: P },
     /// Continue where the word `source` holds exactly `expected`, bit for bit (`guard::identity`).
@@ -124,7 +130,7 @@ pub(crate) enum Operation<W, P> {
     FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
     /// The value `base.name` reads through `lookup`'s plan (`property::read_with`); the tier
     /// defines the result register.
-    GetField { base: FieldBase, lookup: FieldLookup },
+    GetField { base: FieldBase, lookup: FieldLookup, destination: Register },
     /// `base.atom = value` through cache `site`'s store plan (`property_write::set_field`);
     /// `base` is `this` for `None`.
     SetField { value: Register, base: Option<Register>, atom: u32, site: u16, strict: bool },
@@ -155,7 +161,7 @@ pub(crate) enum Operation<W, P> {
     Return { source: Register },
     /// The value `base[key]` reads, a present dense element where the array and the key's int32
     /// are proved (`element_rows`), else the VM's read; the tier defines the result register.
-    ElementRead { base: Register, key: Operand },
+    ElementRead { base: Register, key: Operand, destination: Register },
     /// An indexed read whose base is a frame local, not a register (`GetIndex` over a numeric
     /// local operand): the tier's exact path makes it (`element_rows::step` leaves it unresolved).
     ElementReadOperand { destination: Register, base: Operand, key: Operand },
@@ -164,7 +170,7 @@ pub(crate) enum Operation<W, P> {
     IncDecLocal { local: Register, source: Register, decrement: bool },
     /// `base[key] = value`, replacing a present dense element in place where the array owns its
     /// backing alone and the value needs no barrier log, else the VM's store.
-    ElementWrite { value: Register, base: Register, key: Register },
+    ElementWrite { value: Register, base: Register, key: Register, strict: bool },
     /// Define `destination` from the capture `slot`, `depth` scopes out, or from the root
     /// environment's projected binding where `root` (`Frame::capture_slot`). The decode never
     /// names a root: only a tier that found the walk end at one does.
@@ -174,6 +180,25 @@ pub(crate) enum Operation<W, P> {
     /// `left` compared with `right` (`Comparison`), jumping to the target when the comparison
     /// holds, or fails where `negate` (`JumpBinaryFalse`); otherwise continue after it.
     CompareJump { comparison: Comparison, left: Operand, right: Operand, negate: bool },
+    /// A Wasm i32 or i64 register or immediate operator (`wasm_int`), which the row answers from its words.
+    WasmInt(wasm_int::WasmIntOperation),
+    /// A Wasm i32 conditional jump or fused add-and-jump over int32 operands (`wasm_jump`).
+    WasmJump(WasmJump),
+    /// A Wasm branch table: control goes to the entry its index picks (`Edge::Entry`, `wasm_jump`).
+    BranchTable(BranchTable),
+    /// A Wasm global's load or store, or a register window's fill (`wasm_state`).
+    WasmState(wasm_state::WasmStateOperation),
+    /// A Wasm direct load or store of the function's memory (`wasm_access`).
+    WasmAccess(wasm_access::WasmAccessOperation),
+    /// A Wasm SIMD operator or byte shuffle on the lane's vector registers (`wasm_simd`).
+    WasmVector(wasm_simd::VectorOperation),
+    /// The tier prologue of a frameless activation of `function` with `parameters` parameters
+    /// (`TierPrologue`, a lane's synthetic record): the JavaScript tier enters it, and the activation
+    /// continues where that completes it (`prologue::PrologueFrame::tier_prologue`).
+    Prologue { function: u32, parameters: u16 },
+    /// The prologue of a specialized body of `function` (`BodyEntry`, a lane's synthetic record): the body
+    /// runs on the activation's registers, binding `this` where `binds_this` (`prologue::PrologueFrame::body_entry`).
+    BodyEntry { function: u32, binds_this: bool },
 }
 /// Decoding reads instructions and the opcode catalog, which the stencil build (`quench-bjit`) does
 /// not have: a stencil row builds its operation from its holes instead.
@@ -198,12 +223,54 @@ impl<W, P> Operation<W, P> {
         }
     }
 
-    /// Whether the packed step helper runs this operation directly (`dispatch_fast::family_helpers`): its
-    /// direct arm reads the operands from the running frame and declines, before any effect, where the
-    /// general step decides. Only the operations whose arms are shared with `Vm::step` and whose miss the
-    /// site's feedback can gate qualify (`write_binary_result`; element and field sites record none).
-    pub(crate) fn direct_helper(&self) -> bool {
-        matches!(self, Self::Binary { .. })
+    /// The Wasm i32 jumps of `decode` (`Decoder::WasmJump`), from any record's wide fields
+    /// (`Fields::wide`).
+    #[inline(always)]
+    pub(crate) fn decode_wasm_jump(instruction: WideInstruction) -> Option<Self> {
+        WasmJump::decode(instruction).map(Self::WasmJump).or_else(|| BranchTable::decode(instruction).map(Self::BranchTable))
+    }
+
+    /// The staged operation `instruction` makes apart from how its result completes the frame
+    /// (its result flags: a return, a `this` write), and those flags. A tier that completes a
+    /// record's result itself asks this instead of naming the opcode; `decode` alone stays the
+    /// operation with no completion.
+    pub(crate) fn decode_completed(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Self, crate::bytecode::Register)> {
+        let (plain, flags) = Self::completion_split(instruction)?;
+        Some((Self::decode(plain, context)?, flags))
+    }
+
+    /// `decode_completed` of the literal operations (`decode_literal_with`) under the tier's `proof`, with the
+    /// superinstruction parts `parts` of `decode_literal_with`: the operation and the flags its record completes
+    /// the frame by.
+    pub(crate) fn decode_literal_completed_with(instruction: WideInstruction, parts: Option<[WideInstruction; 4]>, proof: P)
+        -> Option<(Self, crate::bytecode::Register)> {
+        let (plain, flags) = Self::completion_split(instruction)?;
+        Some((Self::decode_literal_with(plain, parts, proof)?, flags))
+    }
+
+    /// The record `instruction` is without its completion flags, and those flags: a return, or a `this` write.
+    fn completion_split(instruction: WideInstruction) -> Option<(WideInstruction, crate::bytecode::Register)> {
+        use crate::bytecode::{RETURN_REGISTER, SET_THIS_REGISTER};
+        // The returned flags are the completions only: a return, or a `this` write. A numeric local target
+        // is where the result goes, not how it completes, so it is left to the record (`writes_numeric_local`);
+        // it shares its bit with the `this` write, and only the layout tells them apart.
+        let layout = instruction.op().result_layout();
+        let completing = (layout.allowed_flags() & RETURN_REGISTER)
+            | if matches!(layout, crate::bytecode::ResultLayout::ReturnableAndThis) { SET_THIS_REGISTER } else { 0 };
+        let flags = instruction.result_flags() & completing;
+        if instruction.result_flags() & !layout.allowed_flags() != 0 { return None; }
+        // Every allowed flag is a completion or the numeric local target, which the row's caller writes
+        // (`writes_numeric_local`), so the plain record carries none of them.
+        let plain = if instruction.result_flags() != 0 { instruction.without_result_flags() } else { instruction };
+        Some((plain, flags))
+    }
+
+    /// The destination and constant index of an instruction `decode_flow` reads as `LoadConst`,
+    /// for a tier that holds its constants in a table of its own (the b-jit's Numbers): the
+    /// same decode, with the constant left for the tier to look up.
+    #[inline(always)]
+    pub(crate) fn decode_constant_load(instruction: WideInstruction) -> Option<(Register, usize)> {
+        (instruction.op() == Op::LoadConst).then(|| (instruction.result_register(), instruction.constant_index()))
     }
 
     /// The environment, global and iteration operations of `decode` (`Decoder::Names`), from a
@@ -211,6 +278,33 @@ impl<W, P> Operation<W, P> {
     #[inline(always)]
     pub(crate) fn decode_names(instruction: WideInstruction) -> Option<Self> {
         names::decode(instruction)
+    }
+
+    /// The literal operations of `decode` (`Decoder::Literal`) under the tier's `proof` of the
+    /// allocation: the allocation a literal, closure or constant array record makes
+    /// (`Allocation::decode`, which an array literal's element definitions do not change: the
+    /// array is a hole array and each definition is `DefineElement`), and an element definition.
+    #[inline(always)]
+    pub(crate) fn decode_literal(instruction: WideInstruction, proof: P) -> Option<Self> {
+        Self::decode_literal_with(instruction, None, proof)
+    }
+
+    /// `decode_literal`, where `parts` are the four records of the superinstruction a
+    /// `SuperConstArrayObject2` record names (the program's table entry); `None` for any other record,
+    /// and for a pair whose `parts` are none.
+    pub(crate) fn decode_literal_with(instruction: WideInstruction, parts: Option<[WideInstruction; 4]>, proof: P) -> Option<Self> {
+        match instruction.op() {
+            Op::DefineArrayElement => Some(Self::DefineElement {
+                array: instruction.register_b(), index: instruction.imm(), value: instruction.register_a() }),
+            Op::SuperConstArrayObject2 => {
+                let pair = super::superinstructions::ConstArrayPair::decode(instruction, parts?, proof)?;
+                Some(Self::SuperConstArrayObject2(pair))
+            }
+            _ => {
+                let (destination, allocation) = Allocation::decode(instruction, &[])?;
+                Some(Self::Allocate { destination, allocation, proof })
+            }
+        }
     }
 
     /// The register moves and control transfers of `decode`, from any record a tier holds
@@ -275,7 +369,7 @@ impl<W, P> Operation<W, P> {
             FieldLookup::Atom { base, .. } => base,
             FieldLookup::Site(_) => FieldBase(FieldBase::NESTED),
         };
-        Some(Self::GetField { base, lookup })
+        Some(Self::GetField { base, lookup, destination: instruction.result_register() })
     }
 
     /// The value-level operations of `decode`.
@@ -363,6 +457,8 @@ impl Operation<u64, ()> {
         Some(match instruction.op() {
             Op::StringCaseIndex => Self::StringCaseIndex { destination: instruction.result_register(),
                 source: instruction.register_c(), start: instruction.imm(), count: instruction.element_count() },
+            Op::TierPrologue => Self::Prologue { function: instruction.imm(), parameters: instruction.register_a() },
+            Op::BodyEntry => Self::BodyEntry { function: instruction.imm(), binds_this: instruction.register_b() != 0 },
             _ => return None,
         })
     }

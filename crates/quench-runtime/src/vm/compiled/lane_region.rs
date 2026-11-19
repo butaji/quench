@@ -4252,7 +4252,7 @@ impl Lowering<'_, '_> {
         if folds { field_plans::embed_inherited(&inputs, &mut self.stable.roots); }
         with_read_plan(&inputs, (folds, held.known.is_some()), |plans| {
             let edges = frame::Edges::ValueGuarded { miss: exit };
-            match self.field_step(state, edges, crate::staged::Operation::GetField { base, lookup }, (plans, held)) {
+            match self.field_step(state, edges, crate::staged::Operation::GetField { base, lookup, destination: 0 }, (plans, held)) {
                 crate::staged::Step::Value(value) => Some(value),
                 _ => None,
             }

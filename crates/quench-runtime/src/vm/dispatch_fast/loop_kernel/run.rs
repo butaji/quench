@@ -104,10 +104,20 @@ pub(super) fn arith(operation: NumberArithmetic, a: f64, b: f64) -> f64 {
     f64::from_bits(crate::staged::NumericStage::float_arithmetic(&mut stage, operation, a.to_bits(), b.to_bits()))
 }
 
+/// `operation` of two Numbers as the staged bitwise row computes it: both operands' ToInt32 (the
+/// interpreter's stage), the int32 bitwise word, then its Number (unsigned for a zero-fill shift).
 #[inline(always)]
 fn bits(operation: NumberBitwise, a: f64, b: f64) -> f64 {
-    let int32 = |value: f64| crate::value::number_to_i32(value);
-    super::super::super::operations::number_bitwise_f64_result(operation, int32(a), int32(b))
+    use crate::staged::NumericStage;
+    let mut stage = crate::staged::Concrete::new(std::ptr::null());
+    let left = NumericStage::to_int32(&mut stage, a.to_bits(), ()).expect("the interpreter stage converts every Number");
+    let right = NumericStage::to_int32(&mut stage, b.to_bits(), ()).expect("the interpreter stage converts every Number");
+    let word = NumericStage::int_bitwise(&mut stage, operation, left, right);
+    f64::from_bits(if operation == NumberBitwise::ShiftRightUnsigned {
+        NumericStage::u32_to_f64(&mut stage, word)
+    } else {
+        NumericStage::i32_to_f64(&mut stage, word)
+    })
 }
 
 #[inline(always)]

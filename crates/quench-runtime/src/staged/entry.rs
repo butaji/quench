@@ -76,7 +76,6 @@ fn plain_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::Word, slot: 
 
 /// A field read through two cache entries: the first names a value the second entry's site reads from.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn site_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, (first, second): (S::Imm, S::Imm), miss: S::Miss) -> Option<S::Word> {
     site_tables(stage, tables, miss)?;
     let middle = site_read_in(stage, tables, object, first, miss)?;
@@ -140,7 +139,6 @@ pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), ob
 /// a run in the arena, so `None` (leaving at `miss`) where it has none, or where an inline value
 /// is past the inline ones.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 fn holder_value<S: Stage>(stage: &mut S, holder: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
     let payload = stage.load_u64(Region::Payload.mutable(), holder, OBJECT.payload_offset as i32);
     let extras = has_extras(stage, payload);
@@ -182,7 +180,6 @@ fn own_entry_value<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, mis
 /// entry's slot. `None` (leaving at `miss`) for any other receiver, link or holder, so a changed
 /// prototype is a miss.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 fn holder_entry_value<S: Stage>(stage: &mut S, records: S::Word, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
     let link = super::object::proto_link(stage, record);
@@ -253,7 +250,6 @@ pub(crate) fn shape_link_matches<S: Stage>(stage: &mut S, record: S::Word, (shap
 /// `None` (leaving at `miss`) where the word is no direct object or the entry is no entry for
 /// the record (`own_entry_value`, `holder_entry_value`).
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 fn site_read_in<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
     let (_, record, entry) = site_record(stage, tables, object, offset, miss)?;
     let own = own_entry(stage, entry);
@@ -293,7 +289,6 @@ pub(crate) fn site_own_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word)
 /// offset is the row's only per-site operand, so a site is read as the interpreter's cached
 /// read reads it.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn site_read<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
     site_tables(stage, tables, miss)?;
     site_read_in(stage, tables, object, offset, miss)
@@ -302,7 +297,6 @@ pub(crate) fn site_read<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), obj
 /// A nested lookup's chain of two reads, `object.first.second` (`FieldLookup::Site`): the value
 /// the first entry reads is the object the second reads from, and the tables are proved once.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> S::Word {
     stage.load_site(Region::LoopEntry.readonly(), entry, offset)
 }
@@ -315,7 +309,6 @@ pub(crate) fn entry_word<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm
 /// may store in place at all (a specialized run, no method cache naming the field) is the
 /// caller's.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn entry_backing<S: Stage>(stage: &mut S, entry: S::Word, offset: S::Imm) -> (S::Word, S::Word) {
     use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
     let address = stage.add_imm(entry, offset);

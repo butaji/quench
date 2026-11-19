@@ -385,6 +385,9 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     raw_result: bool,
     /// How the running activation suspends in place, for a staged suspension row.
     suspends: Option<LaneSuspends>,
+    /// The activation entries of the running lane context, for a staged prologue row (`PrologueFrame`);
+    /// none elsewhere.
+    entry: Option<EntryHost>,
 }
 
 /// The VM's entry lookups of the running lane at the row's site `ip`, erased of its host so the
@@ -757,7 +760,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, suspends: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, suspends: None, entry: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -1003,6 +1006,12 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             return unsafe { read(context) }.unwrap_or(Value::DELETED).to_bits();
         }
         self.this.to_bits()
+    }
+
+    #[inline(always)]
+    fn this_value(&mut self, stage: &mut Concrete) -> Option<(u64, Boxing)> {
+        let this = self.this(stage);
+        (this != Value::DELETED.to_bits()).then_some((this, Boxing::Value))
     }
 
     #[inline(always)]
@@ -1262,7 +1271,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn callee(&mut self, _stage: &mut Concrete) -> Option<(u64, Boxing)> {
+    fn callee_value(&mut self, _stage: &mut Concrete) -> Option<(u64, Boxing)> {
         let (context, read) = self.callee?;
         // SAFETY: the running lane's context, live for the row's step.
         Some((unsafe { read(context) }?.to_bits(), Boxing::Value))
@@ -2112,6 +2121,17 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), kept, environment: Some(environment), global_store, names: Some((cx.cast(), names)),
             clones, cleanups: Some(cleanups), scope: scope_reads::<H, FLAG>(cx, ip, i), ..LaneFrame::<ACC>::hosted::<H>(r, view, cx) };
     }
+    if const { OP == crate::bytecode::TIER_PROLOGUE as u16 || OP == crate::bytecode::BODY_ENTRY as u16 } {
+        // A prologue record enters the activation's function in the lane context `cx` (`tier_prologue_resumed`,
+        // `body_entry_resumed`), erased of its host so the frame names no `H`.
+        let entry = EntryHost {
+            cx: cx.cast(),
+            ip,
+            tier: |context, r, view, function, parameters| unsafe { tier_prologue_resumed::<H>(context.cast(), r, view, function, parameters) },
+            body: |context, ip, r, view, function, binds_this| unsafe { body_entry_resumed::<H>(context.cast(), ip, r, view, function, binds_this) },
+        };
+        return LaneFrame::<ACC> { entry: Some(entry), ..LaneFrame::<ACC>::new(r, view) };
+    }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Lane)) } {
         // A string-case index reads its operand from the register file (`LaneFrame::read` stands for field B),
         // and answers from the case table of the record's filter (`FLAG_CASE_FILTER`), else the VM's selector.
@@ -2382,6 +2402,7 @@ macro_rules! row_step {
         else if const { matches!(crate::staged::row_step($op), R::WasmState) } { crate::staged::step_wasm_state($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::WasmMemory) } { crate::staged::step_wasm_access($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::WasmVector) } { crate::staged::step_wasm_vector($stage, $frame, $operation) }
+        else if const { matches!(crate::staged::row_step($op), R::Entry) } { crate::staged::step_entry($stage, $frame, $operation) }
         else { crate::staged::step($stage, $frame, $operation) }
     }};
 }
@@ -2812,7 +2833,13 @@ lane_handler! {
         }
         // `if const`, not `match const`: rustc compiles only a taken `if const` branch, so each
         // instantiation holds its one decoder (a `match` on a constant compiles every arm).
-        let decoded = row_decode!(OP, FLAG, fields).map(|operation| if const { FLAG == FLAG_ROOT } { operation.rooted() } else { operation });
+        // A superinstruction's pair decodes from its parts in the program's table (`super_parts_in_lane`).
+        let decoded = (if const { crate::staged::super_const_array_family(LaneFields::<OP, FLAG>::OPCODE) } {
+            Operation::decode_literal_with(crate::staged::Fields::wide(fields), super::super_parts_in_lane::<H>(cx, i.imm() as usize), ())
+        } else {
+            row_decode!(OP, FLAG, fields)
+        })
+        .map(|operation| if const { FLAG == FLAG_ROOT } { operation.rooted() } else { operation });
         let Some(operation) = decoded else { sibling!(general_step_in_lane::<H>, r, ip, view) };
         // A row that reads records in place (`Decoder::Names`) or a planned named read may read a slot of the property arena.
         let property_values = if property && !store {
@@ -3202,6 +3229,12 @@ lane_handler! {
         let Some(operation) = row_decode!(OP, FLAG_UNREAD, fields) else {
             sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
         };
+        // A returning record's value is `returning_row`'s to complete: this row never computes it.
+        if const { LaneFields::<OP>::OPCODE.result_layout().allowed_flags() & crate::bytecode::RETURN_REGISTER != 0 }
+            && i.a & crate::bytecode::RETURN_REGISTER != 0
+        {
+            sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
+        }
         let mut stage = Concrete::new(std::ptr::null());
         let mut frame = row_frame::<H, OP, ACC, FLAG_UNREAD>(cx, r, ip, i, view);
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
@@ -3216,6 +3249,83 @@ lane_handler! {
             Step::Control(LaneControl::Edge(Edge::Leave)) => return exit(ip),
             // A transfer resumes the register file the frame switched to.
             Step::Control(LaneControl::Resumed(resumed)) => resume!(cx, resumed),
+            Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view),
+        }
+    }
+}
+
+script_handler! {
+    /// The lane handler of a returning record of opcode `OP` at leaf form `LEAF`, whose RETURN
+    /// parameter is `MISS` (`protocol_misses::returning_code`). It is generated from its staged row as
+    /// `protocol_row` is, but its value completes the activation (`lane_return_value!`) instead of
+    /// writing a register. The record decodes with its result flags stripped (`decode_completed`), and
+    /// only a record whose flags are exactly the return reaches its row. Any other record, and any step
+    /// but a value, takes the record's protocol miss, which completes the returning value itself.
+    pub(super) fn returning_row<OP: u16, LEAF: u8, MISS: u16>(cx, r, ip, i, view) {
+        let fields = LaneFields::<OP>(i);
+        // A superinstruction's pair decodes from its parts in the program's table (`super_parts_in_lane`).
+        let decoded = if const { crate::staged::super_const_array_family(LaneFields::<OP>::OPCODE) } {
+            Operation::decode_literal_completed_with(crate::staged::Fields::wide(fields), super::super_parts_in_lane::<H>(cx, i.imm() as usize), ())
+        } else {
+            Operation::decode_completed(crate::staged::Fields::wide(fields), crate::staged::DecodeContext::EMPTY)
+        };
+        let Some((operation, _)) = decoded.filter(|(_, flags)| *flags == crate::bytecode::RETURN_REGISTER) else {
+            sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
+        };
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
+        match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
+            Step::Value(value) => {
+                let value = Value::from_bits(value);
+                if let Some(resumed) = by_leaf!(LEAF, |L| super::complete_plain_activation_in_lane::<H, L>(cx, value)) {
+                    resume!(cx, resumed)
+                }
+                resume!(cx, super::return_value_general_in_lane(cx, ip, value));
+            }
+            Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view),
+        }
+    }
+}
+
+script_handler! {
+    /// The lane handler of a returning `Binary` of arithmetic operator `OPERATOR` (a `BinaryOperator`'s
+    /// value) on a register and a constant, at leaf form `LEAF`, whose RETURN parameter is `MISS`
+    /// (`protocol_misses::operator_return_code`). The operator is static, so the row builds the staged
+    /// `Binary` operation directly (`numeric::int32_binary_operation` where the record's constant is an
+    /// int32 `INT32`, else `numeric::binary_operation`): the left operand is the record's register, the
+    /// right one its constant, which the record's immediate (the operator field) no longer holds, so the
+    /// frame's reads answer it from the record's own constant word. It runs over the frame `returning_row`
+    /// runs over, and completes the activation with its value. Any other step, and a record whose flags
+    /// are not exactly the return, takes the record's protocol miss (`protocol_miss`), which completes the
+    /// value itself.
+    pub(super) fn returning_operator_row<OP: u16, OPERATOR: u8, LEAF: u8, INT32: bool, MISS: u16>(cx, r, ip, i, view) {
+        if i.a & !crate::bytecode::REGISTER_MASK != crate::bytecode::RETURN_REGISTER {
+            sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
+        }
+        let destination = i.a & crate::bytecode::REGISTER_MASK;
+        let (left, right) = (Operand::register(i.b), Operand(i.c));
+        let number = if INT32 {
+            crate::staged::numeric::int32_binary_operation(OPERATOR as u32, destination, left, right)
+        } else {
+            crate::staged::numeric::binary_operation(OPERATOR as u32, destination, left, right)
+        };
+        let Some(number) = number else {
+            sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view)
+        };
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = LaneFrame::<ACC_NONE> { reads: Reads::of_jump::<H>(cx, Some(i.constant())),
+            ..row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view) };
+        match crate::staged::step_number(&mut stage, &mut frame, Operation::Number(number)) {
+            Step::Value(value) => {
+                // An int32 row's result is an integer already; a Float64 one is made as its canonical Value
+                // (`Value::number`), so an integral result is the integer it is.
+                let value = Value::from_bits(value);
+                let value = if INT32 { value } else { value.as_number().map_or(value, Value::number) };
+                if let Some(resumed) = by_leaf!(LEAF, |L| super::complete_plain_activation_in_lane::<H, L>(cx, value)) {
+                    resume!(cx, resumed)
+                }
+                resume!(cx, super::return_value_general_in_lane(cx, ip, value));
+            }
             Step::Control(_) | Step::Unresolved => sibling!(const { protocol_miss::<H>(MISS) }, r, ip, view),
         }
     }
@@ -3247,8 +3357,8 @@ fn jump_row_backward<H: Host, const OP: u16>(handler: *const ()) -> bool {
 ///
 /// # Safety
 /// `cx` is the running lane's context and `r` its register file. Called through
-/// `LaneHost::allocate`, a constant function pointer in the inlined frame `staged_allocate`
-/// builds, so the call inlines and each handler keeps only its allocation's arm.
+/// `LaneHost::allocate`, a constant function pointer in the inlined frame a row builds, so the
+/// call inlines and each handler keeps only its allocation's arm.
 #[inline(always)]
 unsafe fn allocation_in_lane<H: Host>(cx: *mut (), r: Registers, allocation: Allocation) -> Option<Value> {
     let cx = cx.cast::<LaneContext<H>>();
@@ -3416,31 +3526,6 @@ fn concat_value_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, window: 
         |_: &Vm<H>, part: usize| r.get((base + part) as Register))?;
     note_allocation(vm);
     Some(value)
-}
-
-/// `allocation` into `destination` by the staged operation, in the lane context `cx`'s own run;
-/// false, writing nothing, where the general path must make it.
-// merge: HEAD-only helper, kept; no caller remains in the merged tree yet.
-#[allow(dead_code)]
-#[inline(always)]
-pub(super) fn staged_allocate<H: Host>(cx: *mut LaneContext<H>, r: Registers, destination: u16, allocation: Allocation) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
-    matches!(crate::staged::step(&mut stage, &mut frame, Operation::Allocate { destination, allocation, proof: () }), Step::Value(_))
-}
-
-/// The by-name load of record `i` (a call's, with a receiver, where `call`) by the staged
-/// `LoadName` row over `binding`, in the lane context `cx`'s own run; false, writing nothing,
-/// where the binding does not answer it.
-// merge: HEAD-only helper, kept; no caller remains in the merged tree yet.
-#[allow(dead_code)]
-#[inline(always)]
-pub(super) fn staged_load_name<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction, call: bool,
-    binding: NameBinding) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx).named(binding);
-    let row = Operation::LoadName { destination: i.a, atom: i.imm(), site: i.c, receiver: call.then_some(i.b), proof: () };
-    matches!(crate::staged::step(&mut stage, &mut frame, row), Step::Value(_))
 }
 
 /// `delete base[key]` into `destination` by the staged operation, in the lane context `cx`'s own

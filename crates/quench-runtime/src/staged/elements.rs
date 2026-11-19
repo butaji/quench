@@ -213,7 +213,6 @@ pub(crate) fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base:
 /// decoded through the upper-word table at `upper_words` (`object::decode_narrow_through`);
 /// `None` (leaving at `miss`) past the backing's end or at a hole.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn record_element<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, index: S::Word, upper_words: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     let backing = flagged_backing(stage, record_base, base, miss)?;

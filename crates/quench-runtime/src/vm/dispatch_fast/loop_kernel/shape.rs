@@ -322,8 +322,8 @@ impl<'a> Graph<'a> {
             Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { source, decrement, .. })) => {
                 self.inc_dec(source, decrement, file)
             }
-            Some(crate::staged::Operation::ElementRead { base, key }) => self.get_index(base, key, file),
-            Some(crate::staged::Operation::ElementWrite { value, base, key }) => {
+            Some(crate::staged::Operation::ElementRead { base, key, .. }) => self.get_index(base, key, file),
+            Some(crate::staged::Operation::ElementWrite { value, base, key, .. }) => {
                 return self.set_index(value, base, key, file).map(|()| None).ok_or(());
             }
             _ => {
@@ -359,20 +359,27 @@ impl<'a> Graph<'a> {
     }
 }
 
-/// An affine value plus or minus an integer constant.
+/// An affine value plus or minus an integer constant, as the staged int32 row computes it: the
+/// row's checked result stays affine, and an overflowing one leaves the form.
 fn shifted(kind: SymOp, a: Sym, b: Sym) -> Option<Sym> {
     let integer = |sym: Sym| match sym {
         Sym::Const(value) if value.fract() == 0.0 && value.abs() <= 65536.0 => Some(value as i32),
         _ => None,
     };
-    match (kind, a, b) {
-        (SymOp::Arith(NumberArithmetic::Add), Sym::Affine(register, offset), other)
-        | (SymOp::Arith(NumberArithmetic::Add), other, Sym::Affine(register, offset)) => Some(Sym::Affine(register, offset.checked_add(integer(other)?)?)),
-        (SymOp::Arith(NumberArithmetic::Subtract), Sym::Affine(register, offset), other) => {
-            Some(Sym::Affine(register, offset.checked_sub(integer(other)?)?))
-        }
-        _ => None,
-    }
+    let (register, offset, other, operation) = match (kind, a, b) {
+        (SymOp::Arith(operation @ NumberArithmetic::Add), Sym::Affine(register, offset), other)
+        | (SymOp::Arith(operation @ NumberArithmetic::Add), other, Sym::Affine(register, offset)) => (register, offset, other, operation),
+        (SymOp::Arith(operation @ NumberArithmetic::Subtract), Sym::Affine(register, offset), other) => (register, offset, other, operation),
+        _ => return None,
+    };
+    let mut stage = crate::staged::Concrete::new(std::ptr::null());
+    let (word, overflowed) = crate::staged::NumericStage::int_arithmetic(
+        &mut stage,
+        operation,
+        u64::from(offset as u32),
+        u64::from(integer(other)? as u32),
+    );
+    (!overflowed).then(|| Sym::Affine(register, word as u32 as i32))
 }
 
 /// The staged operation `instruction` denotes, if its decoder has one (`Operation::decode`).

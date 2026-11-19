@@ -161,9 +161,7 @@ fn binary_count(function: &crate::bytecode::Function, counts: &[u64]) -> u64 {
         .code
         .iter()
         .enumerate()
-        .filter(|(_, instruction)| {
-            instruction.op().is_binary_arithmetic()
-        })
+        .filter(|(_, instruction)| instruction.op().traits().has(crate::bytecode::Traits::ARITHMETIC_BINARY))
         .map(|(pc, _)| counts.get(pc).copied().unwrap_or(0))
         .sum()
 }

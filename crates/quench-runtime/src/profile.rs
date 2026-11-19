@@ -155,20 +155,20 @@ fn object_literal_site(
     let (op, site) = if encoded.is_wide() {
         let instruction = function.widened(encoded);
         match instruction.op() {
-            Op::MakeObject2 | Op::MakeObjectLiteral => {
-                (instruction.op(), instruction.object_site_index())
+            crate::bytecode::SUPER_CONST_ARRAY_OBJECT => (instruction.op(), instruction.superinstruction_index()),
+            op if op.traits().has(crate::bytecode::Traits::OBJECT_LITERAL) => {
+                (op, instruction.object_site_index())
             }
-            Op::SuperConstArrayObject2 => (instruction.op(), instruction.superinstruction_index()),
             _ => return None,
         }
     } else {
         match encoded.op() {
-            Op::MakeObject2 | Op::MakeObjectLiteral => (encoded.op(), encoded.object_site_index()),
-            Op::SuperConstArrayObject2 => (encoded.op(), encoded.superinstruction_index()),
+            crate::bytecode::SUPER_CONST_ARRAY_OBJECT => (encoded.op(), encoded.superinstruction_index()),
+            op if op.traits().has(crate::bytecode::Traits::OBJECT_LITERAL) => (op, encoded.object_site_index()),
             _ => return None,
         }
     };
-    let object = (op == Op::SuperConstArrayObject2).then(|| program.superinstructions[site].code).map(|[.., object]| object);
+    let object = (op == crate::bytecode::SUPER_CONST_ARRAY_OBJECT).then(|| program.superinstructions[site].code).map(|[.., object]| object);
     let site_op = object.map_or(op, |instruction| instruction.op());
     let site = object.map_or(site, |instruction| instruction.object_site_index());
     Some((op, site_op, site))
@@ -332,12 +332,7 @@ impl Profile {
         pc: usize,
         opcode: crate::bytecode::Op,
     ) {
-        use crate::bytecode::Op;
-
-        if !matches!(
-            opcode,
-            Op::MakeObject2 | Op::MakeObjectLiteral | Op::SuperConstArrayObject2
-        ) {
+        if !opcode.traits().has(crate::bytecode::Traits::OBJECT_LITERAL) {
             return;
         }
         *self
@@ -359,14 +354,11 @@ impl Profile {
         eprint!(
             "{{\"kind\":\"quench-object-literal-sites\",\"program_id\":{program_id},\"dispatch_counts\":{{"
         );
-        for (index, opcode) in [
-            crate::bytecode::Op::MakeObject2,
-            crate::bytecode::Op::MakeObjectLiteral,
-            crate::bytecode::Op::SuperConstArrayObject2,
-        ]
-        .into_iter()
-        .enumerate()
-        {
+        // The catalog's object-literal opcodes, in catalog order (`Traits::OBJECT_LITERAL`).
+        let object_literal_ops = (0..crate::bytecode::Op::COUNT)
+            .filter_map(crate::bytecode::Op::from_index)
+            .filter(|opcode| opcode.traits().has(crate::bytecode::Traits::OBJECT_LITERAL));
+        for (index, opcode) in object_literal_ops.enumerate() {
             if index > 0 {
                 eprint!(",");
             }

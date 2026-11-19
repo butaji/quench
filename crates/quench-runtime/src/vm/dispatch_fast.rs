@@ -41,6 +41,25 @@ macro_rules! return_row {
     };
 }
 
+/// The lane handler of a returning record of opcode `$op` of kind `$kind` at leaf form `$leaf`
+/// (`returning_row`): its RETURN parameter is `returning_code($kind, $leaf)`, which its miss body
+/// (`returning_miss` of `$kind`) completes.
+macro_rules! returning_row_of {
+    ($op:expr, $kind:expr, $leaf:expr) => {
+        returning_row::<H, { $op as u16 }, { $leaf }, { protocol_family::RETURN | (returning_code($kind, $leaf) as u16) }>
+    };
+}
+
+/// The lane handler of a returning constant-right `Binary` of arithmetic operator `$op` at leaf form
+/// `$leaf`, whose constant is an int32 where `$int32` (`returning_operator_row`): its RETURN parameter is
+/// `operator_return_code($op, $leaf)`, which its miss body (`returning_operator_miss_of`) completes.
+macro_rules! returning_operator_row_of {
+    ($op:expr, $leaf:expr, $int32:expr) => {
+        returning_operator_row::<H, { crate::bytecode::BINARY_ROW as u16 }, { $op as u8 }, { $leaf }, { $int32 },
+            { operator_return_code($op as u8, $leaf) }> as Handler
+    };
+}
+
 
 use crate::staged::compare::{IN_OPERATOR, INSTANCEOF_OPERATOR};
 use super::compiled::tier_policy::Tiers;
@@ -292,7 +311,7 @@ impl LaneInstruction {
 
     #[inline(always)]
     fn vector_region(&self) -> *const vector_region::VectorRegion {
-        // SAFETY: the view writes `region` for the records it gives `lane_vector_region`, the
+        // SAFETY: the view writes `region` for the records it gives `vector_region_row`, the
         // only handler that reads it.
         unsafe { self.operand.region }
     }
@@ -642,43 +661,47 @@ impl LaneView {
     fn specialize_leaf_returns<H: Host>(&self, form: LeafForm) {
         macro_rules! forms {
             ($leaf:expr) => {{
+                // A constant right operand's record keeps its operator in the operand (`specialize_returning_operator`),
+                // so its operator's row decodes it; a register right operand is a `returning_row`.
                 macro_rules! pick {
                     ($op:expr) => {
                         [
-                            (returning_operator_miss::<H, { $op }, false, NOT_LEAF> as Handler, returning_operator_miss::<H, { $op }, false, { $leaf }> as Handler),
-                            (returning_operator_miss::<H, { $op }, true, NOT_LEAF> as Handler, returning_operator_miss::<H, { $op }, true, { $leaf }> as Handler),
+                            (returning_operator_row_of!($op, NOT_LEAF, true), returning_operator_row_of!($op, $leaf, true)),
+                            (returning_operator_row_of!($op, NOT_LEAF, false), returning_operator_row_of!($op, $leaf, false)),
                         ]
                     };
                 }
                 let returns = [
-                    (return_row!(crate::bytecode::Op::Return, returning_code(RETURN_KIND, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::Return, returning_code(RETURN_KIND, $leaf)) as Handler),
-                    (return_row!(crate::bytecode::Op::Return, returning_code(CONSTANT_KIND, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::Return, returning_code(CONSTANT_KIND, $leaf)) as Handler),
-                    (returning_miss::<H, RETURNING_UNARY, NOT_LEAF>, returning_miss::<H, RETURNING_UNARY, { $leaf }>),
-                    (returning_miss::<H, RETURNING_BINARY, NOT_LEAF>, returning_miss::<H, RETURNING_BINARY, { $leaf }>),
+                    (return_row!(crate::bytecode::RETURN_ROW, returning_code(RETURN_KIND, NOT_LEAF)) as Handler,
+                        return_row!(crate::bytecode::RETURN_ROW, returning_code(RETURN_KIND, $leaf)) as Handler),
+                    (return_row!(crate::bytecode::RETURN_ROW, returning_code(CONSTANT_KIND, NOT_LEAF)) as Handler,
+                        return_row!(crate::bytecode::RETURN_ROW, returning_code(CONSTANT_KIND, $leaf)) as Handler),
+                    (returning_row_of!(crate::bytecode::UNARY_ROW, RETURNING_UNARY, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::UNARY_ROW, RETURNING_UNARY, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::BINARY_ROW, RETURNING_BINARY, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::BINARY_ROW, RETURNING_BINARY, $leaf) as Handler),
                     (row_returning_field_first::<H, NOT_LEAF>, row_returning_field_first::<H, { $leaf }>),
                     (row_returning_field_miss::<H, NOT_LEAF>, row_returning_field_miss::<H, { $leaf }>),
                     (generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, NOT_LEAF) }>,
                         generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, { $leaf }) }>),
                     (generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, NOT_LEAF) }>,
                         generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, { $leaf }) }>),
-                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD, $leaf)) as Handler),
-                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_OWN, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_OWN, $leaf)) as Handler),
-                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_POLYMORPHIC, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_POLYMORPHIC, $leaf)) as Handler),
-                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_HOLDER, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_HOLDER, $leaf)) as Handler),
-                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_INHERITED, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_INHERITED, $leaf)) as Handler),
-                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_NESTED, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_NESTED, $leaf)) as Handler),
-                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_PRIVATE, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_PRIVATE, $leaf)) as Handler),
-                    (return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_GETTER, NOT_LEAF)) as Handler,
-                        return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_GETTER, $leaf)) as Handler),
+                    (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_OWN, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_OWN, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_POLYMORPHIC, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_HOLDER, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_HOLDER, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_INHERITED, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_INHERITED, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_NESTED, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_NESTED, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_PRIVATE, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_PRIVATE, $leaf) as Handler),
+                    (returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_GETTER, NOT_LEAF) as Handler,
+                        returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_GETTER, $leaf) as Handler),
                 ];
                 returns.into_iter().chain(arithmetic_operators!(all pick).into_iter().flatten()).collect::<Vec<(Handler, Handler)>>()
             }};
@@ -1741,7 +1764,6 @@ enum ActivationKind {
     /// (`Activation::native`, the callee's descriptor, receiver, body and window) and this
     /// tag, no link state. `NativeFrames::link` makes it a `Script` activation when the lane
     /// first observes it; the prefix stays, as the descriptor of the frame above it.
-    #[allow(dead_code)] // written by emitted code (`call_frames`), read as the tag
     Native = KIND_NATIVE,
     Script(ScriptActivation) = KIND_SCRIPT,
     /// A Wasm activation keeps its caller's memory for the return and its requested
@@ -3916,7 +3938,7 @@ mod lane_reads;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{protocol_row, protocol_miss, protocol_family, is_row, jump_row, row_jump, jumps_by_row, generated_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
+use lane_frame::{protocol_row, returning_row, returning_operator_row, protocol_miss, protocol_family, is_row, jump_row, row_jump, jumps_by_row, generated_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
 mod capture_append;
@@ -5275,10 +5297,23 @@ fn object_pair_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: u32
     value
 }
 
+/// The four records of superinstruction `index` of the running lane's program, which a
+/// `SuperConstArrayObject2` record names (`Operation::decode_literal_with`); `None` past the table.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+pub(super) unsafe fn super_parts_in_lane<H: Host>(cx: *mut LaneContext<H>, index: usize) -> Option<[WideInstruction; 4]> {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    code.superinstructions.get(index).map(|site| site.wide)
+}
+
 /// A `SuperConstArrayObject2` record's object: a copy of the constant array, the two
 /// fused `Binary` results, and the literal holding them, with each part's result in its
 /// register as the general path leaves it. `None` before any guest code could run: an
-/// operation on an object, or one that throws.
+/// operation on an object, or one that throws. The hand body a returning pair's staged row
+/// (`returning_row`) misses to (`returning_miss`); a non-returning pair's miss is the general step.
 ///
 /// Out of line: its general binary result returns through a stack slot, which would cost a
 /// handler inlining it the tail call to the next record.
@@ -6201,7 +6236,7 @@ script_handler! {
             let private: Handler = single_base_handler(i.b,
                 generated_row::<H, FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_THIS>,
                 generated_row::<H, FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_REGISTER>,
-$1protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::GET_PRIVATE_FIELD as u16 }>);
+$1protocol_row::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::GET_PRIVATE_FIELD as u16 }>);
             requicken::<H>(ip, private);
             sibling!(private, r, ip, Carried::script_in(cx, view))
         }
@@ -6320,9 +6355,9 @@ script_handler! {
             _ if string_base && (unsafe { vm(cx) }).string_field_site_cacheable(code, i.imm()) => {
                 Some(single_base_handler(
                     i.b,
-$1protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_STRING as u16 }>,
+$1protocol_row::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_STRING as u16 }>,
                     generated_row::<H, FIELD_LEAF_READ, ACC_NONE, STRING_SITE>,
-$1protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_STRING as u16 }>,
+$1protocol_row::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_STRING as u16 }>,
                 ))
             }
             _ if string_base => Some(general_handler::<H>(i.b)),
@@ -6339,7 +6374,7 @@ $1protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protoc
                 ))
             }
             FieldSiteTier::Nested if nested_row_site(unsafe { vm(cx) }, code, i) => Some(generated_row::<H, FIELD_LEAF_READ, ACC_NONE, NESTED_SITE>),
-            FieldSiteTier::Nested => Some(protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_NESTED as u16 }> as Handler),
+            FieldSiteTier::Nested => Some(protocol_row::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_NESTED as u16 }> as Handler),
             FieldSiteTier::General => Some(general_handler::<H>(i.b)),
             // A getter's own-field hint is the generated read (`GETTER_THIS`, `GETTER_REGISTER`); a
             // local base, which no row names, reads through the getter's activation.
@@ -6347,7 +6382,7 @@ $1protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protoc
                 i.b,
                 generated_row::<H, FIELD_LEAF_READ, ACC_NONE, GETTER_THIS>,
                 generated_row::<H, FIELD_LEAF_READ, ACC_NONE, GETTER_REGISTER>,
-$1protocol_row::<H, { crate::bytecode::Op::GetField as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>,
+$1protocol_row::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>,
             )),
             FieldSiteTier::Polymorphic if is_single_field_base(i.b) =>
                 Some(generated_row::<H, FIELD_LEAF_READ, ACC_NONE, POLYMORPHIC_SITE> as Handler),
@@ -7833,10 +7868,10 @@ fn specialize_in_lane<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function
         outcome
     };
     if now {
-        own.specialize_lane_body_now(body_entry_in_lane::<H>, specialize);
+        own.specialize_lane_body_now(body_entry_row::<H>(), specialize);
         own.body_view_in_lane().is_some()
     } else {
-        own.specialize_lane_body(body_entry_in_lane::<H>, specialize)
+        own.specialize_lane_body(body_entry_row::<H>(), specialize)
     }
 }
 
@@ -11335,7 +11370,7 @@ impl<H: Host> Vm<H> {
             && (!self.programs.js_jit_lane_methods_enabled() || unsafe { &*view }.tier_unclaimed_in_lane())
         {
             // SAFETY: the program store keeps a derived view alive with its program.
-            unsafe { &*view }.claim_for_tier(tier_prologue_in_lane::<H>, function, body.params, !body.is_arrow);
+            unsafe { &*view }.claim_for_tier(tier_prologue_row::<H>(), function, body.params, !body.is_arrow);
         }
         let capture = self.target_capture(code, program, env);
         let target = ScriptCallTarget {
@@ -11585,7 +11620,7 @@ script_handler! {
         let handler: Handler = match entry {
             Some(CallEntry::Environment) => call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::ENVIRONMENT as u16 }>(),
             Some(CallEntry::Settles) => call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::SETTLES as u16 }>(),
-            Some(CallEntry::Keeps | CallEntry::Gathers) => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::SCRIPT_CALL_KEEPING as u16 }>,
+            Some(CallEntry::Keeps | CallEntry::Gathers) => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::SCRIPT_CALL_KEEPING as u16 }>,
             Some(entry) if entry.leaf_form() != NOT_LEAF => leaf_call_handler::<H>(entry, i),
             Some(_) => call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>(),
             None => sibling!(script_call_resolve_miss::<H>, r, ip, Carried::script_in(cx, view)),
@@ -11800,7 +11835,7 @@ fn call_argument_count<const ARGC: u16>(i: &LaneInstruction) -> u16 {
 
 /// The protocol row of a `Call` record that runs the miss body `MISS` (`protocol_misses`).
 const fn call_row<H: Host, const MISS: u16>() -> Handler {
-    protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, MISS> as Handler
+    protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, MISS> as Handler
 }
 
 /// The protocol row of a `Call` record whose argument count is `argc` (`ANY_ARGC` past four),
@@ -14070,11 +14105,11 @@ script_handler! {
             vm.note_site_callee(unsafe { &(*ip).call_link }, super::compiled::CallTarget {
                 callee: super::compiled::CalleeBinding::Identity(callee), function: target.function });
             if i.a & crate::bytecode::RETURN_REGISTER == 0 {
-                requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::Construct as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::PLANNED_CONSTRUCT as u16 }>);
+                requicken::<H>(ip, protocol_row::<H, { crate::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::PLANNED_CONSTRUCT as u16 }>);
                 r.set(i.a, this);
                 next!(cx, r, following(ip), Carried::script_in(cx, view))
             }
-            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::Construct as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::PLANNED_CONSTRUCT_RETURNED as u16 }>);
+            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::PLANNED_CONSTRUCT_RETURNED as u16 }>);
             if let Some(resumed) = complete_activation_in_lane(cx, ip, this) {
                 resume!(cx, resumed)
             }
@@ -14084,7 +14119,7 @@ script_handler! {
         if target.forwards() {
             // The site constructs a forwarding target: later runs enter the keeping
             // construction directly, which moves the record back for any other target.
-            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::Construct as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT_KEEPING as u16 }>);
+            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT_KEEPING as u16 }>);
             sibling!(script_construct_keeping_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         let built = if target.initializes() {
@@ -14160,7 +14195,7 @@ script_handler! {
     fn planned_construct_full_in_lane<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let Some(this) = planned_construction_in_lane(vm, r.get(i.b), r, i) else {
-            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::Construct as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>);
+            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>);
             sibling!(script_construct_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         // Allocating the receiver can make a collection due.
@@ -14195,7 +14230,7 @@ script_handler! {
             .then(|| planned_construction_in_lane(vm, r.get(i.b), r, i))
             .flatten();
         let Some(this) = planned else {
-            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::Construct as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>);
+            requicken::<H>(ip, protocol_row::<H, { crate::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>);
             sibling!(script_construct_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         // Allocating the receiver can make a collection due.
@@ -14389,7 +14424,7 @@ script_handler! {
             }
             Err(Some(next)) => next,
             Err(None) => {
-                requicken::<H>(ip, protocol_row::<H, { crate::bytecode::Op::Construct as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>);
+                requicken::<H>(ip, protocol_row::<H, { crate::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>);
                 sibling!(script_construct_miss::<H>, r, ip, Carried::script_in(cx, view))
             }
         }
@@ -15006,6 +15041,86 @@ fn admits_window_in_lane<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, argc: u
     crate::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)) && activation_room_in_lane(vm, target)
 }
 
+/// Where the lane continues after a frameless activation's tier prologue (`tier_prologue_in_lane`): the
+/// JavaScript tier runs the function's compiled body where it can (`Vm::js_tier_activation_entry`), and the
+/// activation continues at the record the native result completes, with the result in its register; else at
+/// its first record. Shared by the prologue's staged row (`EntryHost`) and its hand body.
+#[inline(always)]
+fn tier_prologue_resumed<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried, function: u32, params: usize) -> Resumed {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the activation just set the context to its own function's.
+    let base = unsafe { (*cx).base };
+    // SAFETY: the program's views outlive the lane run.
+    let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
+    // SAFETY: the activation's registers hold its parameters from its first.
+    let parameters = unsafe { std::slice::from_raw_parts(r.0, params) };
+    let entered = own
+        .and_then(|own| tier_direct_in_lane(vm, own, parameters))
+        .or_else(|| tier_enter_in_lane(cx, function, own, parameters));
+    if let Some((pc, register, value)) = entered {
+        r.set(register, value);
+        // SAFETY: the tier returns a PC of the function, whose records are contiguous.
+        return Resumed::At(r, unsafe { base.add(pc) }, Carried::script_in(cx, view));
+    }
+    Resumed::At(r, base, Carried::script_in(cx, view))
+}
+
+/// Where the lane continues after a specialized body's prologue record (`body_entry_in_lane`) at `ip`: the body
+/// runs on the activation's registers and leaves where its run ends (`body_concluded_in_lane`), or the
+/// activation continues at its first record where the body is not entered. Shared by the prologue's staged row
+/// (`EntryHost`) and its hand body.
+#[inline(always)]
+fn body_entry_resumed<H: Host>(cx: *mut LaneContext<H>, ip: Ip, r: Registers, view: Carried, function: u32, binds_this: bool) -> Resumed {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the activation just set the context to its own function's.
+    let (program, base) = unsafe { ((*cx).program, (*cx).base) };
+    // SAFETY: the program's views outlive the lane run; this record is the view's.
+    let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view)
+        .expect("a lane body entry runs in its view");
+    // An entry of the audit's interpreted epoch runs the function's records (`lane_body_audit`).
+    // The activation just pushed is this entry's: its caller runs this function's records
+    // where it is a recursive call.
+    let recursive = vm.lane_stack.activations().last().is_some_and(|activation| activation.caller_base() == base);
+    if own.audit_entry(true, recursive) {
+        return Resumed::At(r, base, Carried::script_in(cx, view));
+    }
+    // A body a lifecycle edge retired gives its prologue back and warms again.
+    let Some(method) = own.cell_body().or_else(|| own.body_view_in_lane()) else {
+        own.settle_retired_body();
+        return Resumed::At(r, base, Carried::script_in(cx, view));
+    };
+    // A body whose rows write past the frame's registers (its scratch, its inlined windows, past the
+    // environment window) runs where the frame's storage reaches them; a lane activation's room is the stack's.
+    let reaches = frame_reaches_in_lane(cx, method.caller_registers(), method.frame_reach());
+    if !reaches || !body_admits_in_lane(cx, &method, NO_PENDING_ACTIVATIONS) {
+        if reaches && body_prepare_recovery_in_lane(cx, &method) { return Resumed::Exit(exit(base)); }
+        drop(method);
+        body_refused_in_lane(vm, own);
+        return Resumed::At(r, base, Carried::script_in(cx, view));
+    }
+    let receiver = entry_receiver_in_lane(cx, binds_this);
+    // SAFETY: the activation just set the context to its own captures.
+    let captures = capture_reads(unsafe { (*cx).registers }.capture());
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let left = vm.run_lane_method(&method, direct_calls_in_lane(cx), program, code, r.0, receiver, captures, cx.cast());
+    let resumed = body_concluded_in_lane::<H>(cx, r, ip, own, &method, left, function);
+    drop(method);
+    resumed
+}
+
+/// The protocol row of a frameless activation's tier prologue record (`TierPrologue`): the staged prologue
+/// row (`PrologueFrame::tier_prologue`), with `tier_prologue_in_lane` as the body it completes where it leaves.
+const fn tier_prologue_row<H: Host>() -> Handler {
+    protocol_row::<H, { crate::bytecode::TIER_PROLOGUE as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::TIER_PROLOGUE as u16 }>
+}
+
+/// The protocol row of a specialized body's prologue record (`BodyEntry`): the staged prologue row
+/// (`PrologueFrame::body_entry`), with `body_entry_in_lane` as the body it completes where it leaves.
+const fn body_entry_row<H: Host>() -> Handler {
+    protocol_row::<H, { crate::bytecode::BODY_ENTRY as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::BODY_ENTRY as u16 }>
+}
+
 script_handler! {
     /// The tier prologue a frameless activation of a function the JavaScript tier may claim
     /// starts at (`LaneView::claim_for_tier`): the tier runs the body natively where it can
@@ -15016,23 +15131,9 @@ script_handler! {
     /// at the first record again.
     #[inline(never)]
     fn tier_prologue_in_lane<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let (function, params) = (i.imm(), usize::from(i.a));
-        // SAFETY: the activation just set the context to its own function's.
-        let base = unsafe { (*cx).base };
-        // SAFETY: the program's views outlive the lane run.
-        let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view);
-        // SAFETY: the activation's registers hold its parameters from its first.
-        let parameters = unsafe { std::slice::from_raw_parts(r.0, params) };
-        let entered = own
-            .and_then(|own| tier_direct_in_lane(vm, own, parameters))
-            .or_else(|| tier_enter_in_lane(cx, function, own, parameters));
-        if let Some((pc, register, value)) = entered {
-            r.set(register, value);
-            // SAFETY: the tier returns a PC of the function, whose records are contiguous.
-            next!(cx, r, unsafe { base.add(pc) }, Carried::script_in(cx, view))
-        }
-        next!(cx, r, base, Carried::script_in(cx, view))
+        // The staged row answers the same continuation (`EntryHost::tier`); this is its miss body.
+        let resumed = tier_prologue_resumed::<H>(cx, r, view, i.imm(), usize::from(i.a));
+        resume!(cx, resumed)
     }
 }
 
@@ -15045,41 +15146,8 @@ script_handler! {
     /// for the activation such a leave makes.
     #[inline(never)]
     fn body_entry_in_lane<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let function = i.imm();
-        // SAFETY: the activation just set the context to its own function's.
-        let (program, base) = unsafe { ((*cx).program, (*cx).base) };
-        // SAFETY: the program's views outlive the lane run; this record is the view's.
-        let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view)
-            .expect("a lane body entry runs in its view");
-        // An entry of the audit's interpreted epoch runs the function's records (`lane_body_audit`).
-        // The activation just pushed is this entry's: its callers run this function's records
-        // where it is a recursive call.
-        if own.audit_entry(true, || lane_reentered(vm, base, 0)) {
-            next!(cx, r, base, Carried::script_in(cx, view))
-        }
-        // A body a lifecycle edge retired gives its prologue back and warms again.
-        let Some(method) = own.cell_body().or_else(|| own.body_view_in_lane()) else {
-            own.settle_retired_body();
-            next!(cx, r, base, Carried::script_in(cx, view))
-        };
-        // A body whose rows write past the frame's registers (its scratch, its inlined windows, past the
-        // environment window) runs where the frame's storage reaches them; a lane activation's room is the stack's.
-        let reaches = frame_reaches_in_lane(cx, method.caller_registers(), method.frame_reach());
-        if !reaches || !body_admits_in_lane(cx, &method, NO_PENDING_ACTIVATIONS) {
-            if reaches && body_prepare_recovery_in_lane(cx, &method) { return exit(base); }
-            drop(method);
-            body_refused_in_lane(vm, own);
-            next!(cx, r, base, Carried::script_in(cx, view))
-        }
-        let receiver = entry_receiver_in_lane(cx, i.b != 0);
-        // SAFETY: the activation just set the context to its own captures.
-        let captures = capture_reads(unsafe { (*cx).registers }.capture());
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let exit = vm.run_lane_method(&method, direct_calls_in_lane(cx), program, code, r.0, receiver, captures, cx.cast());
-        let resumed = body_concluded_in_lane::<H>(cx, r, ip, own, &method, exit, function);
-        drop(method);
+        // The staged row answers the same continuation (`EntryHost::body`); this is its miss body.
+        let resumed = body_entry_resumed::<H>(cx, ip, r, view, i.imm(), i.b != 0);
         resume!(cx, resumed)
     }
 }
@@ -17300,10 +17368,10 @@ impl LeafRead {
             return Some(Self::Element { base: entry.b, field: FieldHit::of::<H>(entry)?, index: element.c });
         }
         let handler = entry.handler;
-        if handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_NESTED, NOT_LEAF)) as *const () {
+        if handler == returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_NESTED, NOT_LEAF) as *const () {
             return Some(Self::Nested { site: entry.imm() });
         }
-        if handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_PRIVATE, NOT_LEAF)) as *const () {
+        if handler == returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_PRIVATE, NOT_LEAF) as *const () {
             return Some(Self::Private {
                 base: entry.b,
                 atom: entry.imm(),
@@ -17312,13 +17380,13 @@ impl LeafRead {
                 function: target.function,
             });
         }
-        let kind = if handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_POLYMORPHIC, NOT_LEAF)) as *const () {
+        let kind = if handler == returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF) as *const () {
             RETURNING_FIELD_POLYMORPHIC
-        } else if returning_own_row::<H>(handler) || handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_OWN, NOT_LEAF)) as *const () {
+        } else if returning_own_row::<H>(handler) || handler == returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_OWN, NOT_LEAF) as *const () {
             RETURNING_FIELD_OWN
-        } else if handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_HOLDER, NOT_LEAF)) as *const () {
+        } else if handler == returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_HOLDER, NOT_LEAF) as *const () {
             RETURNING_FIELD_HOLDER
-        } else if handler == return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_INHERITED, NOT_LEAF)) as *const () {
+        } else if handler == returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_INHERITED, NOT_LEAF) as *const () {
             RETURNING_FIELD_INHERITED
         } else {
             return None;
@@ -17581,7 +17649,7 @@ fn script_call_memo_handler<H: Host>(shape: u8) -> Handler {
     macro_rules! shapes {
         ($($shape:expr),*) => {
             match shape {
-                $(shape if shape == $shape => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::FRAME_CALL | ($shape as u16) }> as Handler,)*
+                $(shape if shape == $shape => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::FRAME_CALL | ($shape as u16) }> as Handler,)*
                 _ => unreachable!("a memo shape is a leaf step, forwarded or not"),
             }
         };
@@ -17957,6 +18025,18 @@ script_handler! {
     }
 }
 
+/// The protocol miss body of a returning constant-right `Binary` of operator `operator` (a
+/// `BinaryOperator`'s value) at leaf form `LEAF` (`protocol_misses::returns`): `returning_operator_miss`
+/// of that operator; `None` for a value no arithmetic operator has.
+const fn returning_operator_miss_of<H: Host, const LEAF: u8>(operator: u8) -> Option<Handler> {
+    macro_rules! pick {
+        ($op:expr) => {
+            returning_operator_miss::<H, { $op }, true, LEAF> as Handler
+        };
+    }
+    arithmetic_operators!(operator as u32, pick)
+}
+
 script_handler! {
     /// `returning_operator_miss` of operands other than two integers: other Numbers, then the
     /// concatenation and BigInt values `binary_value` decides; any other takes the
@@ -18001,7 +18081,7 @@ fn returning_field_first_kind<H: Host, const LEAF: u8>(
     if is_single_field_base(i.b) && !vm.reads_function_info(i.imm()) {
         by_leaf!(LEAF, |L| single_base_handler(i.b, generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, L) }>,
             generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, L) }>,
-            return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD, L)) as Handler))
+            returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD, L) as Handler))
     } else if field_site_tier_in_lane(vm, code, i) == FieldSiteTier::Nested {
         field_return_row::<H, LEAF>(RETURNING_FIELD_NESTED)
     } else {
@@ -18013,14 +18093,14 @@ fn returning_field_first_kind<H: Host, const LEAF: u8>(
 /// `LEAF`: its RETURN code (`returning_code`), which `returning_miss` completes.
 fn field_return_row<H: Host, const LEAF: u8>(kind: u8) -> Handler {
     by_leaf!(LEAF, |L| match kind {
-        RETURNING_FIELD => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD, L)) as Handler,
-        RETURNING_FIELD_OWN => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_OWN, L)) as Handler,
-        RETURNING_FIELD_POLYMORPHIC => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_POLYMORPHIC, L)) as Handler,
-        RETURNING_FIELD_HOLDER => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_HOLDER, L)) as Handler,
-        RETURNING_FIELD_INHERITED => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_INHERITED, L)) as Handler,
-        RETURNING_FIELD_NESTED => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_NESTED, L)) as Handler,
-        RETURNING_FIELD_PRIVATE => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_PRIVATE, L)) as Handler,
-        RETURNING_FIELD_GETTER => return_row!(crate::bytecode::Op::GetField, returning_code(RETURNING_FIELD_GETTER, L)) as Handler,
+        RETURNING_FIELD => returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD, L) as Handler,
+        RETURNING_FIELD_OWN => returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_OWN, L) as Handler,
+        RETURNING_FIELD_POLYMORPHIC => returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_POLYMORPHIC, L) as Handler,
+        RETURNING_FIELD_HOLDER => returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_HOLDER, L) as Handler,
+        RETURNING_FIELD_INHERITED => returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_INHERITED, L) as Handler,
+        RETURNING_FIELD_NESTED => returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_NESTED, L) as Handler,
+        RETURNING_FIELD_PRIVATE => returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_PRIVATE, L) as Handler,
+        RETURNING_FIELD_GETTER => returning_row_of!(crate::bytecode::FIELD_READ, RETURNING_FIELD_GETTER, L) as Handler,
         _ => unreachable!("a returning GetField's kind is a field kind"),
     })
 }
@@ -18923,10 +19003,10 @@ const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) 
 /// definition, a method's brand, and the brand checks of a read and of `#x in`.
 const fn private_element_handler<H: Host>(opcode: Op) -> Option<Handler> {
     match opcode {
-        _ if crate::staged::private_field_definition_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::DefinePrivateField as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_PRIVATE_FIELD as u16 }> as Handler),
-        _ if crate::staged::private_name_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::MarkPrivateName as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::MARK_PRIVATE_NAME as u16 }> as Handler),
-        _ if crate::staged::private_check_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::CheckPrivate as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::CHECK_PRIVATE as u16 }> as Handler),
-        _ if crate::staged::private_in_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::PrivateIn as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::PRIVATE_IN as u16 }> as Handler),
+        _ if crate::staged::private_field_definition_family(opcode) => Some(protocol_row::<H, { crate::bytecode::PRIVATE_FIELD_DEFINE as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_PRIVATE_FIELD as u16 }> as Handler),
+        _ if crate::staged::private_name_family(opcode) => Some(protocol_row::<H, { crate::bytecode::PRIVATE_NAME_MARK as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::MARK_PRIVATE_NAME as u16 }> as Handler),
+        _ if crate::staged::private_check_family(opcode) => Some(protocol_row::<H, { crate::bytecode::PRIVATE_CHECK as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::CHECK_PRIVATE as u16 }> as Handler),
+        _ if crate::staged::private_in_family(opcode) => Some(protocol_row::<H, { crate::bytecode::PRIVATE_IN as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::PRIVATE_IN as u16 }> as Handler),
         _ => None,
     }
 }
@@ -18935,24 +19015,27 @@ const fn private_element_handler<H: Host>(opcode: Op) -> Option<Handler> {
 /// branch tests, which read it.
 const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
     match opcode {
+        // The lane's synthetic prologue records: their staged rows, which the lane's activations start at.
+        crate::bytecode::TIER_PROLOGUE => Some(tier_prologue_row::<H>()),
+        crate::bytecode::BODY_ENTRY => Some(body_entry_row::<H>()),
         _ if crate::staged::field_read_family(opcode) => Some(row_get_field_first::<H>),
         // merge: theirs' `lane_set_object_field_own` / `lane_set_this_field_own` are undefined; HEAD's `field_store_row` serves both receivers.
         _ if opcode.field_store().is_some() => opcode.field_store().map(|store| field_store_row::<H>(store)),
-        _ if crate::staged::property_record_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::DefinePropertyRecord as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_PROPERTY_RECORD as u16 }> as Handler),
-        _ if crate::staged::field_definition_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::DefineField as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_FIELD as u16 }> as Handler),
+        _ if crate::staged::property_record_family(opcode) => Some(protocol_row::<H, { crate::bytecode::PROPERTY_RECORD_DEFINE as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_PROPERTY_RECORD as u16 }> as Handler),
+        _ if crate::staged::field_definition_family(opcode) => Some(protocol_row::<H, { crate::bytecode::FIELD_DEFINE as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::DEFINE_FIELD as u16 }> as Handler),
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
-        _ if crate::staged::copy_properties_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::CopyDataProperties as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::COPY_DATA_PROPERTIES as u16 }> as Handler),
+        _ if crate::staged::copy_properties_family(opcode) => Some(protocol_row::<H, { crate::bytecode::COPY_DATA_PROPERTIES as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::COPY_DATA_PROPERTIES as u16 }> as Handler),
         _ if opcode.steps_in_lane() => Some(general_step_in_lane::<H>),
-        _ if crate::staged::element_read_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::GetIndex as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_INDEX as u16 }> as Handler),
-        _ if crate::staged::element_write_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::SetIndex as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::SET_INDEX as u16 }> as Handler),
+        _ if crate::staged::element_read_family(opcode) => Some(protocol_row::<H, ELEMENT_READ, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_INDEX as u16 }> as Handler),
+        _ if crate::staged::element_write_family(opcode) => Some(protocol_row::<H, ELEMENT_WRITE, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::SET_INDEX as u16 }> as Handler),
         _ if crate::staged::known_call_family(opcode) => Some(known_call_handler::<H>()),
         _ if crate::staged::call_family(opcode) => Some(script_call_row::<H>(ANY_ARGC)),
-        _ if crate::staged::call_array_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::CallArray as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_ARRAY as u16 }> as Handler),
-        _ if crate::staged::call_spread_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::CallSpread as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_SPREAD as u16 }> as Handler),
-        _ if crate::staged::delete_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::Delete as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::DELETE as u16 }> as Handler),
-        _ if crate::staged::construction_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::Construct as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>),
-        _ if crate::staged::forwarded_call_family(opcode) => Some(protocol_row::<H, { crate::bytecode::Op::CallForwardingArguments as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::FORWARD_CALL as u16 }>),
-        _ if crate::staged::return_family(opcode) => Some(return_row!(crate::bytecode::Op::Return, returning_code(RETURN_KIND, NOT_LEAF))),
+        _ if crate::staged::call_array_family(opcode) => Some(protocol_row::<H, { crate::bytecode::CALL_ARRAY as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_ARRAY as u16 }> as Handler),
+        _ if crate::staged::call_spread_family(opcode) => Some(protocol_row::<H, { crate::bytecode::CALL_SPREAD as u16 }, ACC_NONE, { protocol_family::NATIVE_CALL | protocol_misses::native_call::CALL_SPREAD as u16 }> as Handler),
+        _ if crate::staged::delete_family(opcode) => Some(protocol_row::<H, { crate::bytecode::DELETE_ROW as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::DELETE as u16 }> as Handler),
+        _ if crate::staged::construction_family(opcode) => Some(protocol_row::<H, { crate::bytecode::CONSTRUCT_ROW as u16 }, ACC_NONE, { protocol_family::CONSTRUCT | protocol_misses::construct::SCRIPT_CONSTRUCT as u16 }>),
+        _ if crate::staged::forwarded_call_family(opcode) => Some(protocol_row::<H, { crate::bytecode::FORWARDED_CALL as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::FORWARD_CALL as u16 }>),
+        _ if crate::staged::return_family(opcode) => Some(return_row!(crate::bytecode::RETURN_ROW, returning_code(RETURN_KIND, NOT_LEAF))),
         _ if generator_yields::suspend_handler::<H>(opcode).is_some() => generator_yields::suspend_handler::<H>(opcode),
         _ => wasm_gc_handler::<H>(opcode),
     }
@@ -19476,15 +19559,16 @@ use crate::vm::compiled::tier_policy::{LANE_ENTRY_MIN_RUN, LANE_ENTRY_MIN_CALL_R
 /// handler returns to the lane loop, which carries no accumulator.
 const ACCUMULATOR: bool = cfg!(quench_lane_tail_calls);
 
-/// The handler of a returning record of `kind` (`returning_kind`) in a view that has no leaf form.
+/// The handler of a returning record of `kind` (`returning_kind`) in a view that has no leaf form:
+/// each kind is one opcode's (its traits name it), so the record is that opcode's `returning_row`.
 fn returning_handler<H: Host>(kind: u8) -> Handler {
     match kind {
         RETURNING_FIELD => row_returning_field_first::<H, NOT_LEAF>,
-        RETURNING_UNARY => returning_miss::<H, RETURNING_UNARY, NOT_LEAF>,
-        RETURNING_BINARY => returning_miss::<H, RETURNING_BINARY, NOT_LEAF>,
-        RETURNING_OBJECT => returning_miss::<H, RETURNING_OBJECT, NOT_LEAF>,
-        RETURNING_OBJECT_LITERAL => returning_miss::<H, RETURNING_OBJECT_LITERAL, NOT_LEAF>,
-        _ => returning_miss::<H, RETURNING_LITERAL, NOT_LEAF>,
+        RETURNING_UNARY => returning_row_of!(crate::bytecode::UNARY_ROW, RETURNING_UNARY, NOT_LEAF) as Handler,
+        RETURNING_BINARY => returning_row_of!(crate::bytecode::BINARY_ROW, RETURNING_BINARY, NOT_LEAF) as Handler,
+        RETURNING_OBJECT => returning_row_of!(crate::bytecode::OBJECT_PAIR, RETURNING_OBJECT, NOT_LEAF) as Handler,
+        RETURNING_OBJECT_LITERAL => returning_row_of!(crate::bytecode::OBJECT_LITERAL_ROW, RETURNING_OBJECT_LITERAL, NOT_LEAF) as Handler,
+        _ => returning_row_of!(crate::bytecode::SUPER_CONST_ARRAY_OBJECT, RETURNING_LITERAL, NOT_LEAF) as Handler,
     }
 }
 
@@ -19591,11 +19675,11 @@ fn derive_lane_view<'live, H: Host>(
                 tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
                     .and_then(|_| {
                         LaneHandler::producer(match acc {
-                            ACC_NONE => protocol_row::<H, { crate::bytecode::Op::WasmF64Unary as u16 }, ACC_NONE, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_NONE as u16 }> as Handler,
-                            ACC_A => protocol_row::<H, { crate::bytecode::Op::WasmF64Unary as u16 }, ACC_A, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_A as u16 }> as Handler,
-                            ACC_B => protocol_row::<H, { crate::bytecode::Op::WasmF64Unary as u16 }, ACC_B, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_B as u16 }> as Handler,
-                            ACC_C => protocol_row::<H, { crate::bytecode::Op::WasmF64Unary as u16 }, ACC_C, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_C as u16 }> as Handler,
-                            _ => protocol_row::<H, { crate::bytecode::Op::WasmF64Unary as u16 }, ACC_PAIR, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_PAIR as u16 }> as Handler,
+                            ACC_NONE => protocol_row::<H, { crate::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_NONE, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_NONE as u16 }> as Handler,
+                            ACC_A => protocol_row::<H, { crate::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_A, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_A as u16 }> as Handler,
+                            ACC_B => protocol_row::<H, { crate::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_B, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_B as u16 }> as Handler,
+                            ACC_C => protocol_row::<H, { crate::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_C, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_C as u16 }> as Handler,
+                            _ => protocol_row::<H, { crate::bytecode::WASM_F64_UNARY_ROW as u16 }, ACC_PAIR, { protocol_family::LOOP | protocol_misses::loops::F64_SQRT_PAIR as u16 }> as Handler,
                         })
                     })
             } else if admits_row(op) && op.reads_arguments()
@@ -19622,10 +19706,10 @@ fn derive_lane_view<'live, H: Host>(
             } else if crate::staged::calls(op) && iteration_step_in_lane(&decoded, pc) {
                 Some(LaneHandler {
                     handler: match for_of_step_in_lane(&decoded, pc) {
-                        Some(ForOfTest::Emitted) => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::READS_EMITTED as u16 }> as Handler,
-                        Some(ForOfTest::Threaded) => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::READS_THREADED as u16 }> as Handler,
-                        None if binding_step_in_lane(&decoded, pc) => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::BINDING as u16 }> as Handler,
-                        None => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::STEP as u16 }> as Handler,
+                        Some(ForOfTest::Emitted) => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::READS_EMITTED as u16 }> as Handler,
+                        Some(ForOfTest::Threaded) => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::READS_THREADED as u16 }> as Handler,
+                        None if binding_step_in_lane(&decoded, pc) => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::BINDING as u16 }> as Handler,
+                        None => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::ITERATION | protocol_misses::iteration::STEP as u16 }> as Handler,
                     },
                     produces: false,
                 })
@@ -20872,7 +20956,7 @@ fn install_loop_sites<'live, H: Host>(
 /// its generated row or jump row gave it: operand kinds and operators are the rows' own decode
 /// (`Binary`, `JumpBinaryFalse`, `Unary`), not handler choices made here.
 fn specialize_returning_binaries<H: Host>(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction]) {
-    let returning_binary = returning_miss::<H, RETURNING_BINARY, NOT_LEAF> as Handler as *const ();
+    let returning_binary = returning_row_of!(crate::bytecode::BINARY_ROW, RETURNING_BINARY, NOT_LEAF) as *const ();
     for (pc, &instruction) in decoded.iter().enumerate() {
         if records[pc].handler == returning_binary {
             specialize_returning_operator::<H>(instruction, constants, &mut records[pc]);
@@ -20885,10 +20969,10 @@ fn specialize_returning_binaries<H: Host>(decoded: &[WideInstruction], constants
 /// fused record's general return continues there.
 fn specialize_constant_returns<H: Host>(records: &mut [LaneInstruction]) {
     let load = generated_row::<H, { crate::staged::LOAD_CONST_ROW }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
-    let ret = return_row!(crate::bytecode::Op::Return, returning_code(RETURN_KIND, NOT_LEAF)) as *const ();
+    let ret = return_row!(crate::bytecode::RETURN_ROW, returning_code(RETURN_KIND, NOT_LEAF)) as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         if records[pc].handler == load && records[pc + 1].handler == ret && records[pc + 1].a == records[pc].a {
-            records[pc].handler = return_row!(crate::bytecode::Op::Return, returning_code(CONSTANT_KIND, NOT_LEAF)) as *const ();
+            records[pc].handler = return_row!(crate::bytecode::RETURN_ROW, returning_code(CONSTANT_KIND, NOT_LEAF)) as *const ();
         }
     }
 }
@@ -20904,7 +20988,7 @@ fn proved_row<H: Host>(handler: *const ()) -> Option<Handler> {
     }
     // A store keeps its generic record (`set_index_miss`) until a proof names it: the keyed store
     // has no row of its own in the lane, so this is the one place a store's row is installed.
-    if handler == protocol_row::<H, { crate::bytecode::Op::SetIndex as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::SET_INDEX as u16 }> as Handler as *const () {
+    if handler == protocol_row::<H, ELEMENT_WRITE, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::SET_INDEX as u16 }> as Handler as *const () {
         return Some(generated_row::<H, ELEMENT_WRITE, ACC_NONE, FLAG_SET>);
     }
     None
@@ -21359,10 +21443,11 @@ fn specialize_frame_locals<H: Host>(function: &Function, records: &mut [LaneInst
 
 
 
-/// Gives a returning `Binary` record of an arithmetic operator on a register and a register
-/// or constant its operator's `returning_operator_miss`, its fields resolved as
-/// `specialize_register_operands` resolves a non-returning one's; any other keeps
-/// `returning_miss`.
+/// Gives a returning `Binary` record of an arithmetic operator on a register and a constant its
+/// operator's `returning_operator_row`, its fields resolved as `specialize_register_operands`
+/// resolves a non-returning one's. A record whose right operand is a register, and any other,
+/// keeps its `returning_row`: a constant operand replaces the record's operator field (the
+/// operand is one union with it), so the row's operator is its static parameter instead.
 fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constants: &[Value], record: &mut LaneInstruction) {
     use crate::bytecode::OperandKind::{Constant, Register};
     let (left, right) = (instruction.operand_b(), instruction.operand_c());
@@ -21370,20 +21455,16 @@ fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constant
         return;
     }
     let constant = match right.kind() {
-        Some(Register) => None,
         Some(Constant) => match constants.get(usize::from(right.payload())) {
-            Some(constant) => Some(*constant),
+            Some(constant) => *constant,
             None => return,
         },
         _ => return,
     };
+    let int32 = constant.as_int().is_some();
     macro_rules! pick {
         ($op:expr) => {
-            if constant.is_some() {
-                returning_operator_miss::<H, { $op }, true, NOT_LEAF> as Handler
-            } else {
-                returning_operator_miss::<H, { $op }, false, NOT_LEAF> as Handler
-            }
+            if int32 { returning_operator_row_of!($op, NOT_LEAF, true) } else { returning_operator_row_of!($op, NOT_LEAF, false) }
         };
     }
     let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick) else {
@@ -21391,10 +21472,7 @@ fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constant
     };
     record.handler = handler as *const ();
     record.b = left.payload();
-    match constant {
-        Some(constant) => record.operand = LaneOperand { constant },
-        None => record.c = right.payload(),
-    }
+    record.operand = LaneOperand { constant };
 }
 
 

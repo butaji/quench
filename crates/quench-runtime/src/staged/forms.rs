@@ -15,9 +15,8 @@ use crate::bytecode::{ConstructArguments, ImmediateLayout, Op, Register, WideIns
 /// A function of the running program, by its index (`CallKnown`).
 pub(crate) type FunctionId = u16;
 
-/// The registers a method call passes: `count` entries of the call records from `start`
-/// (`DecodeContext::call_records`), in the order the arguments are passed, not necessarily
-/// consecutive.
+/// The registers a method call passes: `count` entries of the program's method arguments from
+/// `start`, in the order the arguments are passed, not necessarily consecutive.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct RegisterList {
     pub(crate) start: u32,
@@ -242,7 +241,7 @@ mod tests {
     const RECORDS: [Register; 3] = [4, 2, 7];
 
     fn methods() -> DecodeContext<'static> {
-        DecodeContext { method_sites: &SITES, call_records: &RECORDS, ..DecodeContext::EMPTY }
+        DecodeContext { method_sites: &SITES, ..DecodeContext::EMPTY }
     }
 
     #[test]

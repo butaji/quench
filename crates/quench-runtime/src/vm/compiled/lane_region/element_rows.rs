@@ -13,8 +13,8 @@ impl Lowering<'_, '_> {
         let row = Operation::decode(instruction, crate::staged::DecodeContext::EMPTY)?;
         let held = |register: Register| register < self.unit.registers;
         let supported = match row {
-            Operation::ElementRead { base, key } => held(base) && self.operand_supported(key),
-            Operation::ElementWrite { value, base, key } => [value, base, key].into_iter().all(held),
+            Operation::ElementRead { base, key, .. } => held(base) && self.operand_supported(key),
+            Operation::ElementWrite { value, base, key, .. } => [value, base, key].into_iter().all(held),
             _ => false,
         };
         supported.then_some(row)
@@ -28,13 +28,13 @@ impl Lowering<'_, '_> {
     /// The element row at `pc`, lowered by its definition; whether control falls through.
     pub(super) fn element_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         match self.element_row(instruction).expect("an element row decodes") {
-            Operation::ElementRead { base, key } => {
+            Operation::ElementRead { base, key, .. } => {
                 let destination = instruction.result_register();
                 let falls = self.element_read(state, pc, (destination, base, key));
                 if falls { self.conform_declared_rest_read(state, pc, base, destination); }
                 falls
             }
-            Operation::ElementWrite { value, base, key } => self.element_write(state, (pc, instruction), (value, base, key)),
+            Operation::ElementWrite { value, base, key, .. } => self.element_write(state, (pc, instruction), (value, base, key)),
             _ => unreachable!("an element row is a read or a write"),
         }
     }
@@ -54,7 +54,7 @@ impl Lowering<'_, '_> {
         // A hoisted array's hole leaves, until the read has left often enough to be widened
         // (`LoopTier::left_at`), whose recompile then takes the VM's read.
         self.hole_leaves = array.is_some() && !self.generic.contains(&pc);
-        let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key })
+        let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key, destination })
             else { unreachable!("an element read yields a value or leaves at its miss edge") };
         if array.is_some_and(|array| matches!(array.views, ElementViews::Typed(_) | ElementViews::Double)) {
             self.set_number(state, destination, value);
@@ -125,12 +125,8 @@ impl Lowering<'_, '_> {
                 self.dense_element_write(state, array, pc as u32, instruction, exit),
             held => {
                 self.held_view = held.map(|array| self.held_array(array, (false, self.ranges.in_bounds(pc))));
-                self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementWrite { value, base, key });
-                // A store through a typed or double view leaves where it misses, calling no VM
-                // step, so no backing moved and no view is read again.
-                if !held.is_some_and(|array| matches!(array.views, ElementViews::Typed(_) | ElementViews::Double)) {
-                    self.reload_dense_arrays(pc);
-                }
+                self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementWrite { value, base, key, strict: instruction.boolean_flag().unwrap_or(false) });
+                self.reload_dense_arrays(pc);
             }
         }
         state.proofs.arrays.clear();

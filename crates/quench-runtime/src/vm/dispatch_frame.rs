@@ -1910,7 +1910,7 @@ impl<H: Host> Vm<H> {
                     if matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::CloneEnv { .. } | crate::staged::Operation::Return { .. }
                             | crate::staged::Operation::ElementRead { .. } | crate::staged::Operation::ElementWrite { .. } | crate::staged::Operation::CompareJump { .. }))
                         || crate::staged::Operation::<u64, ()>::decode_load_name(instruction, ()).is_some() || crate::staged::Operation::<u64, ()>::is_field_read(instruction)
-                        || instruction.op().traits().has(crate::bytecode::Traits::BINARY_RESULT) || crate::staged::private_in_family(instruction.op()) || instruction.op().is_field_store() {
+                        || instruction.op().traits().has(crate::bytecode::Traits::BINARY_RESULT) || crate::staged::private_in_family(instruction.op()) || crate::staged::Operation::<u64, ()>::is_field_store(instruction) {
                         let function = p.function_get(self.frames[frame].function as usize);
                         let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
@@ -2146,24 +2146,7 @@ impl<H: Host> Vm<H> {
                     if let Some(register) = ins.optional_register_b() {
                         self.write(frame, register, value);
                     }
-                    RowRun::Done(crate::staged::Edge::Leave | crate::staged::Edge::Transfer | crate::staged::Edge::Entry(_)) =>
-                        unreachable!("the interpreter frame neither suspends the lane nor enters a branch table"),
-                    RowRun::Declined => {
-                        // A heap value's truthiness is the VM's, which runs no guest code.
-                        if let crate::staged::Operation::JumpIf { register, taken } = operation {
-                            if self.truthy(self.read(frame, register)) == taken {
-                                pc = ins.jump_target() as usize;
-                                if pc <= instruction_pc {
-                                    self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
-                                }
-                            }
-                            continue;
-                        }
-                        // The arm below runs the miss path; its step takes this declined row, undecoded.
-                        self.pending_row = Some(operation);
-                    }
-                    // A return, a raise or a suspension: the step result the run completes with.
-                    RowRun::Stop(stop) => self.row_stop = Some(stop),
+                    continue;
                 }
                 FrameArm::Move => {
                     self.write(

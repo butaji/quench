@@ -52,6 +52,7 @@ pub(crate) mod barrier;
 #[cfg_attr(not(feature = "jit"), allow(dead_code))] // a specializer's operations; the interpreter has native Numbers
 pub(crate) mod number_machine;
 mod heap;
+mod superinstructions;
 mod global;
 #[cfg_attr(not(test), allow(dead_code))] // the division is data the specializers will ask; today only its tests do
 pub(crate) mod division;
@@ -116,6 +117,8 @@ pub(crate) mod protocol;
 pub(crate) use forms::{Arguments, CallFacts, Callee, FunctionId, Invocation, Receiver, RegisterList};
 pub(crate) use protocol::CallOperation;
 pub(crate) mod invoke;
+pub(crate) mod prologue;
+pub(crate) use prologue::{step_entry, PrologueFrame};
 pub(crate) mod plan;
 mod native_call;
 pub(crate) use plan::{plan_entry, CalleeKind, CallEntry, DirectPlan, Identity, Resolved};
@@ -140,7 +143,6 @@ mod control;
 mod generic;
 pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
 pub(crate) mod effects;
-#[allow(dead_code)] // the K-PLAN builder; its first consumer is the u-jit lowering (P4, TOD-1700)
 pub(crate) mod function_plan;
 pub(crate) mod region;
 pub(crate) mod wasm;

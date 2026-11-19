@@ -24,6 +24,7 @@ impl<H: Host> Vm<H> {
             OwnedStep::LoadLocal => self.load_local_step(p, owner, i),
             OwnedStep::StoreVarBinding => self.store_var_binding_step(p, owner, i),
             OwnedStep::StoreLocal => self.store_local_step(p, owner, i),
+            OwnedStep::InitializeTdz => self.initialize_tdz_step(p, owner, i),
             OwnedStep::StoreEnvLocal => self.store_env_local_step(p, owner, i),
             OwnedStep::LoadCapture => self.load_capture_step(p, owner, i),
             OwnedStep::StoreCapture => self.store_capture_step(p, owner, i),
@@ -98,6 +99,15 @@ impl<H: Host> Vm<H> {
     fn load_local_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction) -> Result<(), JsError> {
         let value = self.load_local_binding(p, owner, i.local_slot(), None)?;
         self.set_owner_register(owner, i.result_register(), value);
+        Ok(())
+    }
+
+    /// `InitializeTdz`: the dead-zone marker written to local slot `slot`, wherever the owner keeps the binding
+    /// (its frame's slots, or the environment of a captured one).
+    fn initialize_tdz_step(&mut self, p: &ResidualProgram, owner: VarOwner, i: WideInstruction) -> Result<(), JsError> {
+        *self
+            .owner_binding_mut(p, owner, i.local_slot())
+            .ok_or_else(|| JsError("invalid local slot".into()))? = Value::DELETED;
         Ok(())
     }
 

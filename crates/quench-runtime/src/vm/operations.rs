@@ -25,6 +25,14 @@ pub(super) const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualTha
 macro_rules! number_relation_operators {
     ($($relation:ident => [$($operator:ident $symbol:literal),+ $(,)?], $stage_method:ident;)+) => {
         impl NumberRelation {
+            /// The binary operator a relation denotes, the first of its group. `Equal` and `NotEqual` name
+            /// two operators each (`==` and `===`), so a caller that needs one of them must not ask.
+            pub(crate) fn binary_operator(self) -> u32 {
+                match self {
+                    $(Self::$relation => [$(BinaryOperator::$operator as u32),+][0],)+
+                }
+            }
+
             #[inline(always)]
             pub(crate) fn from_operator(op: u32) -> Option<Self> {
                 $(
@@ -42,6 +50,13 @@ number_relation_rows!(number_relation_operators);
 macro_rules! number_arithmetic_operators {
     ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
         impl NumberArithmetic {
+            /// The binary operator this arithmetic operation denotes (`from_operator`'s inverse).
+            pub(crate) fn binary_operator(self) -> u32 {
+                match self {
+                    $(Self::$operation => BinaryOperator::$operator as u32,)+
+                }
+            }
+
             #[inline(always)]
             pub(crate) fn from_operator(operator: u32) -> Option<Self> {
                 $(
@@ -133,6 +148,13 @@ number_unary_rows!(number_unary_operators);
 macro_rules! number_bitwise_operators {
     ($($operation:ident => $operator:ident, $stage_method:ident, $symbol:literal;)+) => {
         impl NumberBitwise {
+            /// The binary operator this bitwise operation denotes (`from_operator`'s inverse).
+            pub(crate) fn binary_operator(self) -> u32 {
+                match self {
+                    $(Self::$operation => BinaryOperator::$operator as u32,)+
+                }
+            }
+
             /// `from_operator` of a decoded operator, as one match.
             #[inline(always)]
             pub(crate) fn from_binary_operator(operator: BinaryOperator) -> Option<Self> {
@@ -538,27 +560,10 @@ fn numeric_integer_result(operator: BinaryOperator, left: i32, right: i32) -> Op
         BinaryOperator::Addition => numeric_integer_arithmetic_result(NumberArithmetic::Add, left, right),
         BinaryOperator::Subtraction => numeric_integer_arithmetic_result(NumberArithmetic::Subtract, left, right),
         BinaryOperator::Multiplication => numeric_integer_arithmetic_result(NumberArithmetic::Multiply, left, right),
-        BinaryOperator::Division => {
-            if right == 0 || (left == 0 && right < 0) {
-                return None;
-            }
-            let remainder = left.checked_rem(right)?;
-            if remainder != 0 {
-                return None;
-            }
-            Value::integer(left.checked_div(right)?)
-        }
-        BinaryOperator::Remainder => {
-            if right == 0 {
-                return None;
-            }
-            let remainder = left.checked_rem(right)?;
-            if remainder == 0 && left < 0 {
-                Value::number(-0.0)
-            } else {
-                Value::integer(remainder)
-            }
-        }
+        // The Number operations' own values: `Value::number` makes an integral quotient or remainder the
+        // integer it is, and -0 the double it is.
+        BinaryOperator::Division => Value::number(number_arithmetic_result(NumberArithmetic::Divide, f64::from(left), f64::from(right))),
+        BinaryOperator::Remainder => Value::number(number_remainder(f64::from(left), f64::from(right))),
         BinaryOperator::Exponential => return None,
         operator => number_bitwise_result(
             NumberBitwise::from_binary_operator(operator)

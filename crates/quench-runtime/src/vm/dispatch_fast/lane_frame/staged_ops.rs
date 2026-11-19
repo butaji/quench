@@ -266,3 +266,44 @@ impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
         self.suspends?.in_place(self.registers, step).map(LaneControl::Resumed)
     }
 }
+
+/// What `await` of `awaited` waits on in the lane context `cx` (registers `r`): the staged
+/// conversion (`staged::await_source`) over the lane's own PromiseResolve. `None` leaves a
+/// conversion that could run guest code, or throw into the frame's handlers, to the general path.
+pub(in crate::vm::dispatch_fast) fn awaited_value_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, awaited: Value) -> Option<Value> {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
+    crate::staged::await_source(&mut stage, &mut frame, awaited.to_bits()).map(Value::from_bits)
+}
+
+/// The activation entries of the running lane context, erased of its host so the frame names no `H`
+/// (`PrologueFrame`): the tier prologue and the body entry the prologue records run
+/// (`tier_prologue_resumed`, `body_entry_resumed`), each answering where the lane resumes. `ip` is the
+/// body entry's record.
+#[derive(Clone, Copy)]
+pub(in crate::vm::dispatch_fast) struct EntryHost {
+    pub(in crate::vm::dispatch_fast) cx: *mut (),
+    pub(in crate::vm::dispatch_fast) ip: super::super::Ip,
+    pub(in crate::vm::dispatch_fast) tier: unsafe fn(*mut (), Registers, Carried, u32, usize) -> super::super::Resumed,
+    pub(in crate::vm::dispatch_fast) body: unsafe fn(*mut (), super::super::Ip, Registers, Carried, u32, bool) -> super::super::Resumed,
+}
+
+impl<const ACC: u8> crate::staged::PrologueFrame<Concrete> for LaneFrame<ACC> {
+    /// The tier prologue's entry: the function is entered in the lane context, which resumes where
+    /// the activation continues (`tier_prologue_resumed`).
+    fn tier_prologue(&mut self, _stage: &mut Concrete, function: u32, parameters: u16) -> Option<LaneControl> {
+        let entry = self.entry?;
+        // SAFETY: the row runs in the lane context `entry` names, whose views outlive the run.
+        let resumed = unsafe { (entry.tier)(entry.cx, self.registers, self.view, function, usize::from(parameters)) };
+        Some(LaneControl::Resumed(resumed))
+    }
+
+    /// The specialized body's prologue: the body runs on the activation's registers, and the lane
+    /// resumes where it leaves (`body_entry_resumed`).
+    fn body_entry(&mut self, _stage: &mut Concrete, function: u32, binds_this: bool) -> Option<LaneControl> {
+        let entry = self.entry?;
+        // SAFETY: as `tier_prologue`; `entry.ip` is the prologue record the row runs at.
+        let resumed = unsafe { (entry.body)(entry.cx, entry.ip, self.registers, self.view, function, binds_this) };
+        Some(LaneControl::Resumed(resumed))
+    }
+}

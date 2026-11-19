@@ -8,11 +8,20 @@ pub(in crate::vm::dispatch_fast) const RETURN_KIND: u8 = 13;
 pub(in crate::vm::dispatch_fast) const CONSTANT_KIND: u8 = 14;
 /// Leaf forms a return record takes (`LeafForm`, 0..=4).
 pub(in crate::vm::dispatch_fast) const LEAF_FORMS: u8 = 5;
+/// Kinds of a returning constant-right `Binary` (`returning_operator_row`): `OPERATOR_KIND` plus the
+/// operator's `BinaryOperator` value, so each operator is its own kind (values up to 21 fit the byte).
+pub(in crate::vm::dispatch_fast) const OPERATOR_KIND: u8 = 15;
 
 /// The RETURN family's parameter code of a record of `kind` at leaf form `leaf`:
 /// `kind * LEAF_FORMS + leaf`, which fits the byte for every kind above.
 pub(in crate::vm::dispatch_fast) const fn returning_code(kind: u8, leaf: u8) -> u8 {
     kind * LEAF_FORMS + leaf
+}
+
+/// The RETURN family's parameter of a returning constant-right `Binary` of operator `operator` at leaf
+/// form `leaf` (`returning_operator_row`'s MISS).
+pub(in crate::vm::dispatch_fast) const fn operator_return_code(operator: u8, leaf: u8) -> u16 {
+    protocol_family::RETURN | (returning_code(OPERATOR_KIND + operator, leaf) as u16)
 }
 
 /// A `match` on `$leaf` (0..=4) that binds `$l` to the const leaf form, as `by_leaf!` does for a
@@ -46,6 +55,15 @@ pub(in crate::vm::dispatch_fast) const fn return_miss_of<H: Host>(parameters: u8
         RETURNING_FIELD_NESTED => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_FIELD_NESTED, L> as Handler),
         RETURNING_FIELD_PRIVATE => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_FIELD_PRIVATE, L> as Handler),
         RETURNING_FIELD_GETTER => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_FIELD_GETTER, L> as Handler),
+        RETURNING_UNARY => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_UNARY, L> as Handler),
+        RETURNING_BINARY => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_BINARY, L> as Handler),
+        RETURNING_OBJECT => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_OBJECT, L> as Handler),
+        RETURNING_OBJECT_LITERAL => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_OBJECT_LITERAL, L> as Handler),
+        RETURNING_LITERAL => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_LITERAL, L> as Handler),
+        kind if kind >= OPERATOR_KIND => leaf_arms!(leaf, |L| match returning_operator_miss_of::<H, L>(kind - OPERATOR_KIND) {
+            Some(handler) => handler,
+            None => general_step_in_lane::<H>,
+        }),
         _ => general_step_in_lane::<H>,
     }
 }
