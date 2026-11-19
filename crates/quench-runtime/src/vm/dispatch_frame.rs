@@ -831,8 +831,10 @@ impl<H: Host> Vm<H> {
     /// Pushes the `with` objects an activation of `function` inherits from its environment `env`.
     #[inline(always)]
     fn push_inherited_with_scopes(&mut self, env: Value, function: &crate::bytecode::Function, kind: crate::bytecode::ProgramKind) {
-        self.with_stack
-            .extend(self.captured_with_objects_for_function(env, function.inherited_with_scope, kind));
+        if self.with_scope_entered {
+            self.with_stack
+                .extend(self.captured_with_objects_for_function(env, function.inherited_with_scope, kind));
+        }
     }
 
     /// Binds an activation's implicit bindings, then its registers and parameters, once its
