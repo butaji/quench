@@ -2316,6 +2316,13 @@ impl Object {
         self.set_header(meta, auxiliary);
     }
 
+    /// The record's two stored words, `(payload, layout)`, as they are written. A fresh empty
+    /// object's pair depends only on its prototype, so generated allocation copies it
+    /// (`JsStepDispatch::empty_object_layout`).
+    pub(crate) fn stored_words(&self) -> (u64, u32) {
+        (self.payload, self.layout)
+    }
+
     #[inline(always)]
     pub(crate) fn new(proto: Value) -> Self {
         // `with_property_storage` of empty inline storage, written out as `with_inline_values`

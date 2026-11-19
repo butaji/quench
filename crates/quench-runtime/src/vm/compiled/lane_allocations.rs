@@ -14,6 +14,8 @@ pub(super) unsafe extern "C" fn lane_new_object<H: Host>(vm: u64, _residual: u64
     let object = vm.object();
     super::dispatch_fast::note_allocation(vm);
     dispatch.refresh_object_bases(vm);
+    // After the refresh, which drops a stale template: the words this object holds are the template.
+    dispatch.capture_empty_object(vm, object);
     object.to_bits()
 }
 

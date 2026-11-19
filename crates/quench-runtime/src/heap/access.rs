@@ -782,6 +782,13 @@ impl Heap {
         self.object_records.native_mark_blocks()
     }
 
+    /// The object space's allocation cursor (`records::RecordCursor`), which an inline allocation
+    /// reads and bumps (`NATIVE_RECORD_CURSOR_LAYOUT`). It is a field of this heap, which stays
+    /// where it is while the VM runs; a native entry rereads it with the other record bases.
+    pub(crate) fn native_object_cursor(&self) -> usize {
+        std::ptr::addr_of!(self.object_records.cursor) as usize
+    }
+
     /// Function mark blocks, which a native store into a function's own properties reads.
     pub(crate) fn native_function_mark_blocks(&self) -> (*const u8, usize) {
         self.function_records.native_mark_blocks()
