@@ -111,6 +111,8 @@ pub(super) struct Planned {
     pub(super) owned: Vec<Box<quench_bjit::call_record::CallRecord>>,
     /// Reached only through a fast row's miss (`steps::behind`): laid out after the hot rows.
     pub(super) cold: bool,
+    /// The hole that names a symbol the loader resolves, and the symbol (`CallPart::symbol`).
+    pub(super) symbolic: Option<(u8, crate::vm::aot_image::Symbol)>,
 }
 
 impl Planned {
@@ -131,7 +133,7 @@ impl Planned {
     }
 
     pub(super) fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
-        Self { stencil, node: None, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: Vec::new(), cold: false }
+        Self { stencil, node: None, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: Vec::new(), cold: false, symbolic: None }
     }
 }
 

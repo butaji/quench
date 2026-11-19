@@ -2,10 +2,13 @@ use super::*;
 use super::call_plan::DirectFacts;
 use super::declared::EntryGuard;
 use super::super::LaneHelper;
-use quench_bjit::{call, exit_stub, padded_holes, patch_successor, EXIT_STUB_LEN, HOLES};
+use quench_bjit::{call, padded_holes, patch_successor, HOLES};
 
 mod entry;
+mod place;
 pub(super) use entry::{EntryRow, entry_rows};
+pub(super) use place::place_rows;
+pub(in crate::vm) use place::SymbolSite;
 
 /// `jmp rel32`: a resume stub's last row, which jumps to its PC's first row.
 #[cfg(target_arch = "x86_64")]
@@ -377,12 +380,21 @@ fn branch_target(layout: &Layout, leaves: &mut Leaves, starts: &[usize], (row, r
     Ok(Some(entry + parts + leaves.index(layout, leave)?))
 }
 
+/// A linked body: its code, the table of its resume stubs, the code offset of each PC's first row
+/// (for the PCs that have one, ascending), and the symbols its code names.
+pub(super) struct Linked {
+    pub(super) code: Vec<u8>,
+    pub(super) resumes: ResumeTable,
+    pub(super) entries: Vec<(u32, usize)>,
+    pub(super) symbols: Vec<SymbolSite>,
+}
+
 /// Lays the entry rows, rows, leave stubs and, for a loop region, resume stubs out as one code buffer
 /// behind the entry thunk, with the table of the resume stubs. The hot code is the entry rows and the
 /// body, which fall through to their successors; everything a guard, a miss or a branch out of the
 /// region reaches (the leave rows, the exit routines and each exiting row's stub) is placed after it
 /// (`place_rows`).
-pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<(Vec<u8>, ResumeTable), String> {
+pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<Linked, String> {
     // A row's own rows run before and after it at its PC: a branch to the PC lands on the first.
     let (starts, mut parts) = (row_starts(planned), Vec::new());
     for (row, start) in planned.iter().zip(&starts) {
@@ -414,82 +426,16 @@ pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<(Vec<u8>, Res
         .chain(stubs.iter().flat_map(|stub| stub.exits(failed_row)))
         .collect();
     debug_assert_eq!(exits.len(), rows.len());
-    let (code, offsets, thunk) = place_rows(layout.ending, &rows, (&exits, &routines), &jumps)?;
-    Ok((code, ResumeTable::of(thunk, &stubs, &jumps, &offsets)?))
+    let mut symbols = vec![None; g];
+    symbols.extend(body.iter().map(|row| row.symbolic));
+    symbols.resize(rows.len(), None);
+    let (code, offsets, thunk, sites) = place_rows(layout.ending, &rows, (&exits, &routines), &jumps, &symbols)?;
+    let pcs = layout.entries.iter().filter(|&&(_, row)| !planned[row as usize].stencil.code.is_empty() || !planned[row as usize].pre.is_empty());
+    let entries: Vec<(u32, usize)> = pcs.map(|&(pc, row)| (pc, offsets[g + starts[row as usize]])).collect();
+    Ok(Linked { code, resumes: ResumeTable::of(thunk, &stubs, &jumps, &offsets)?, entries, symbols: sites })
 }
 
-/// Writes the exit stub of `pc` at `at`: it pushes the PC and jumps to the routine at `routine_at`.
-fn write_stub(code: &mut [u8], at: usize, pc: u32, routine_at: usize) -> Result<(), String> {
-    let stub = exit_stub(pc, routine_at as i64 - at as i64).map_err(|error| format!("exit stub: {error:?}"))?;
-    code[at..at + EXIT_STUB_LEN].copy_from_slice(&stub);
-    Ok(())
-}
 
-/// Copies each of `routines` to `at`, returning where each starts and the end.
-fn append_routines(code: &mut [u8], mut at: usize, routines: &[Vec<u8>]) -> (Vec<usize>, usize) {
-    let mut starts = Vec::with_capacity(routines.len());
-    for routine in routines {
-        code[at..at + routine.len()].copy_from_slice(routine);
-        starts.push(at);
-        at += routine.len();
-    }
-    (starts, at)
-}
-
-/// The address each exit of each row goes to, writing the stubs it names at `at` (each entering its
-/// routine of `routine_at`); the end of the stubs too. `rows_at` is the address of the first row's
-/// code and `starts` each row's offset from it.
-fn exit_addresses(code: &mut [u8], (rows_at, starts): (usize, &[usize]), mut at: usize, (exits, routine_at): (&[Vec<Target>], &[usize])) -> Result<(Vec<Vec<usize>>, usize), String> {
-    let base = code.as_ptr() as usize;
-    let mut addresses: Vec<Vec<usize>> = Vec::with_capacity(exits.len());
-    for row_exits in exits {
-        let mut row_addresses = Vec::with_capacity(row_exits.len());
-        for target in row_exits {
-            row_addresses.push(match *target {
-                Target::Row(row) => rows_at + starts[row],
-                Target::Stub { pc, routine } => {
-                    write_stub(code, at, pc, routine_at[routine])?;
-                    at += EXIT_STUB_LEN;
-                    base + at - EXIT_STUB_LEN
-                }
-            });
-        }
-        addresses.push(row_addresses);
-    }
-    Ok((addresses, at))
-}
-
-/// Copies the rows behind the thunk, then the exit routines and each stub, and patches each
-/// row's exits to their targets, `exits` by row and exit kind (a leave row's start, or a stub);
-/// the code is position independent, so the buffer can move to executable memory. The rows are
-/// in layout order: the hot rows first, so nothing cold sits between them. Also the code offset of
-/// each row and, for a loop region, of the resume thunk (`entry_resume`), which follows the stubs;
-/// each resume stub's `jumps` is patched to its row.
-pub(super) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[Vec<Target>], &[Vec<u8>]), jumps: &[Jump]) -> Result<(Vec<u8>, Vec<usize>, usize), String> {
-    let head = thunk(ending, 0)?.len();
-    let resume = if ending == Ending::Region { routine("entry_resume")?.code } else { Vec::new() };
-    let bound: usize = rows.iter().map(|row| row.stencil.code.len()).sum();
-    let stubs = exits.iter().flatten().filter(|target| matches!(target, Target::Stub { .. })).count();
-    let tail: usize = routines.iter().map(Vec::len).sum::<usize>() + stubs * EXIT_STUB_LEN + resume.len();
-    let mut code = vec![0u8; head + bound + tail];
-    let base = code.as_mut_ptr();
-    // SAFETY: `base + head` has room for every stencil's full length, which bounds the rows.
-    let (len, starts) = unsafe { quench_bjit::copy_patch(rows, base.add(head), |_, _| base as usize) };
-    let (routine_at, at) = append_routines(&mut code, head + len, routines);
-    let (addresses, mut at) = exit_addresses(&mut code, (base as usize + head, &starts), at, (exits, &routine_at))?;
-    // SAFETY: as above; the stubs lie after the copied code inside `code`.
-    let (_, starts) = unsafe { quench_bjit::copy_patch(rows, base.add(head), |row, kind| addresses[row].get(kind as usize).copied().unwrap_or(base as usize)) };
-    for jump in jumps {
-        patch_jump(&mut code, head + starts[jump.row], starts[jump.target] as i64 - starts[jump.row] as i64)?;
-    }
-    let thunk_bytes = thunk(ending, head)?;
-    code[..head].copy_from_slice(&thunk_bytes);
-    code[at..at + resume.len()].copy_from_slice(&resume);
-    let resume_at = at;
-    at += resume.len();
-    code.truncate(at);
-    Ok((code, starts.iter().map(|start| head + start).collect(), resume_at))
-}
 
 #[cfg(test)]
 mod tests;

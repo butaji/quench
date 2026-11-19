@@ -73,6 +73,13 @@ pub(in crate::vm::compiled) struct Body {
     /// Whether its inline-cache rows hold shape ids, which a shape compaction renumbers
     /// (`LaneMethod::names_shapes`).
     pub(in crate::vm::compiled) names_shapes: bool,
+    /// The run-time addresses the code names by symbol (`SymbolSite`), which a linked image's loader fills; none
+    /// for a body built for this process.
+    pub(in crate::vm::compiled) symbols: Box<[SymbolSite]>,
+    /// The code offset of each PC's first row, ascending by PC, for the PCs a control may enter (`link::Linked`).
+    pub(in crate::vm::compiled) entries: Box<[(u32, usize)]>,
+    /// The PCs with no stencil row of their own, which take the generic row (`steps::generic_row`), ascending.
+    pub(in crate::vm::compiled) generic: Box<[u32]>,
 }
 
 /// What a stitch decides its call sites by: the callees they recorded and the stitch's budget, the
@@ -135,7 +142,8 @@ pub(in crate::vm::compiled) struct BodySpec<'a> {
     pub(in crate::vm::compiled) function: u32,
     pub(in crate::vm::compiled) registers: u16,
     pub(in crate::vm::compiled) known: Known<'a>,
-    pub(in crate::vm::compiled) realm: RealmProof,
+    /// The realm the body proves active at its entry; none where it folds nothing realm-bound (an image's body).
+    pub(in crate::vm::compiled) realm: Option<RealmProof>,
     pub(in crate::vm::compiled) widened: &'a [usize],
     /// The type each entry register held when the compile observed it, by register (a register past the slice
     /// is no observation: `Type::ANY`).
@@ -280,7 +288,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let invalidation = spec.known.invalidation.filter(|_| decoded.iter().any(Decoded::holds_stable) && decoded.iter().any(Decoded::makes_calls));
     // A body proves the realm it was compiled in at its entry, whatever it folds: a program shared by
     // realms enters it only in that one, so a realm switch need not retire it (`LaneMethod::realm_bound`).
-    let realm = (ending == Ending::Body || !stitched.frames.is_empty()).then_some(spec.realm).or_else(|| held_realm(&decoded));
+    let realm = (ending == Ending::Body || !stitched.frames.is_empty()).then_some(spec.realm).flatten().or_else(|| held_realm(&decoded));
     let relies: Vec<bool> = decoded.iter().map(|row| row.relies).collect();
     let (guards, numbers) = (super::declared::entry_guards(function), super::declared::entry_numbers(function));
     // A declared Number's rows rely on its entry guard, and an inlined frame's copies run at a leave: those guards stay.
@@ -293,8 +301,10 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, guards, numbers, prototypes, shapes, stores, identities };
     let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
-    let (code, resumes) = link(&layout, &planned)?;
-    residuals::report_rows(&layout, region.header, &decoded, &planned, code.len());
+    let linked = link(&layout, &planned)?;
+    residuals::report_rows(&layout, region.header, &decoded, &planned, linked.code.len());
+    let generic: Box<[u32]> = (0..decoded.len()).filter(|&k| reached.contains(k) && decoded[k].step == Some(Step::Leave) && !layout.inlined(k as u32))
+        .map(|k| layout.record(k as u32)).collect();
     let exits = decoded.iter().enumerate().filter(|(k, row)| reached.contains(*k) && leaves(&layout, row)).count();
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
     let covered = reached.count() - exits;
@@ -305,7 +315,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let holders: Box<[u32]> = held_holders(&decoded).iter().copied().chain(layout.prototypes.iter().map(|proto| proto.holder))
         .collect::<std::collections::BTreeSet<u32>>().into_iter().collect();
     let names_shapes = decoded.iter().any(|row| row.ic.is_some());
-    Ok(Body { code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region)).chain(sites.callees.held_facts())), atoms, holders,
+    Ok(Body { code: linked.code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region)).chain(sites.callees.held_facts())), atoms, holders,
         instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,
-        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes, scratch, names_shapes })
+        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes: linked.resumes, scratch, names_shapes,
+        symbols: linked.symbols.into(), entries: linked.entries.into(), generic })
 }

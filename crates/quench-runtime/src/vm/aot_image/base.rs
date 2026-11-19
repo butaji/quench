@@ -11,7 +11,8 @@
 use super::{ImageTarget, symbols::SymbolTable};
 use crate::bytecode::ResidualProgram;
 use crate::compile::aot_facts::AotFacts;
-use crate::vm::jit_backend::relocatable_code::RelocatableCode;
+use crate::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
+use cranelift_codegen::binemit::Reloc;
 
 /// A base body: code, relocations, and where each record starts.
 pub(crate) struct BaseImage {
@@ -30,7 +31,8 @@ impl BaseImage {
     pub(crate) fn generic_rows(&self) -> usize { self.generic.len() }
 }
 
-/// The base body of function `id`.
+/// The base body of function `id`: the BaseJIT body over the program alone (no profile, no callee),
+/// its helper addresses as `Reloc::Abs8` relocations to the symbols the loader resolves.
 pub(crate) fn lower(
     program: &ResidualProgram,
     facts: &AotFacts,
@@ -38,6 +40,20 @@ pub(crate) fn lower(
     id: u32,
     symbols: &mut SymbolTable,
 ) -> Result<BaseImage, String> {
-    let _ = (program, facts, target, id, symbols);
-    todo!("base tier")
+    // The facts and the target change no base row: the body folds no fact and names no target's layout.
+    let _ = (facts, target);
+    let built = crate::vm::compiled::image_body(program, id)?;
+    let relocations: Box<[Relocation]> = built.symbols.iter().map(|site| {
+        let (namespace, key) = symbols.intern(site.symbol);
+        Relocation { offset: site.offset, kind: Reloc::Abs8, namespace, key, addend: 0 }
+    }).collect();
+    let mut pc_offsets = vec![NO_ENTRY; program.function(id as usize).instructions().count()];
+    for &(pc, offset) in built.entries.iter() {
+        pc_offsets[pc as usize] = u32::try_from(offset).map_err(|_| format!("code offset {offset} past the image's reach"))?;
+    }
+    Ok(BaseImage {
+        code: RelocatableCode { code: built.code.into(), relocations },
+        pc_offsets: pc_offsets.into(),
+        generic: built.generic,
+    })
 }

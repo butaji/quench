@@ -48,6 +48,7 @@ use quench_bjit::call::{self, CallRow, ThisRow};
 use quench_bjit::call_record::{CallRecord, MAX_DIRECT_ARGC, PLACED_ARGUMENTS};
 use quench_bjit::numeric::{self, Kind, Place};
 use quench_bjit::{HOLES, Stencil, padded_holes};
+use crate::vm::aot_image::Symbol;
 
 /// How a body makes a call, by the instruction's operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -250,6 +251,8 @@ pub(super) struct CallPart {
     pub(super) holes: [u64; HOLES],
     pub(super) taken: Option<usize>,
     pub(super) exits: Vec<Exit>,
+    /// The hole whose run-time address is a symbol the loader resolves, and the symbol (`HelperHole::Symbol`).
+    pub(super) symbol: Option<(u8, Symbol)>,
 }
 
 /// A planned call: its parts, the records its direct rows read (one per callee the site reached), and
@@ -267,17 +270,29 @@ pub(super) struct CallPlan<'a> {
     /// Each callee the site reached, latest first (`Layout::callees`).
     pub(super) direct: &'a [DirectFacts],
     /// The address of `body_call_helper` (`helper_address`).
-    pub(super) helper: usize,
+    pub(super) helper: HelperHole,
     pub(super) spills: &'a [(Place, Register)],
     pub(super) reloads: &'a [(Place, Register)],
     /// The builtin the callee is, where the site's native callee is one the b-jit runs on a row (`builtin::of`).
     pub(super) builtin: Option<BuiltinCall>,
 }
 
-/// The address of `helper` in a process helper table; none for a linked or symbolic one.
-pub(super) fn helper_address(helpers: LaneHelpers, helper: LaneHelper) -> Option<usize> {
+/// Where a helper row's address goes: the address itself in a process helper table, or the symbol
+/// an image's loader resolves to it (`LaneHelpers::Ahead`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum HelperHole {
+    Address(usize),
+    Symbol(LaneHelper),
+}
+
+/// The hole of a helper row that names the helper (`CallRow::Helper`).
+const HELPER_HOLE: u8 = 1;
+
+/// The helper's place for `helper` under `helpers`: none for a linked or a frameless one.
+pub(super) fn helper_address(helpers: LaneHelpers, helper: LaneHelper) -> Option<HelperHole> {
     match helpers {
-        LaneHelpers::Process(table) => Some(table[helper as usize].addr()),
+        LaneHelpers::Process(table) => Some(HelperHole::Address(table[helper as usize].addr())),
+        LaneHelpers::Ahead => Some(HelperHole::Symbol(helper)),
         _ => None,
     }
 }
@@ -287,7 +302,7 @@ fn slot(register: Register) -> u64 {
 }
 
 fn part(stencil: &'static Stencil, holes: [u64; HOLES], exits: Vec<Exit>) -> CallPart {
-    CallPart { stencil, holes, taken: None, exits }
+    CallPart { stencil, holes, taken: None, exits, symbol: None }
 }
 
 pub(super) fn spill_part(place: Place, register: Register) -> Result<CallPart, String> {
@@ -299,11 +314,14 @@ pub(super) fn reload_part(place: Place, register: Register) -> Result<CallPart, 
     Ok(part(call::stencil(CallRow::Reload(place))?, padded_holes([slot(register)]), Vec::new()))
 }
 
-fn helper_part(call_pc: u32, helper: usize) -> Result<CallPart, String> {
-    if helper == 0 {
-        return Err("call: no helper address".to_string());
-    }
-    Ok(part(call::stencil(CallRow::Helper)?, padded_holes([u64::from(call_pc), helper as u64]), vec![Exit::At(call_pc), Exit::Status]))
+fn helper_part(call_pc: u32, helper: HelperHole) -> Result<CallPart, String> {
+    let (address, symbol) = match helper {
+        HelperHole::Address(0) => return Err("call: no helper address".to_string()),
+        HelperHole::Address(address) => (address as u64, None),
+        HelperHole::Symbol(helper) => (0, Some((HELPER_HOLE, Symbol::Helper(helper as u32)))),
+    };
+    let stencil = call::stencil(CallRow::Helper)?;
+    Ok(CallPart { symbol, ..part(stencil, padded_holes([u64::from(call_pc), address]), vec![Exit::At(call_pc), Exit::Status]) })
 }
 
 
@@ -370,7 +388,7 @@ fn builtin_part(shape: &CallShape, builtin: Option<BuiltinCall>) -> Result<Optio
 
 /// The chain of a helper step at `pc` (any instruction whose operation the helper runs in place):
 /// the spills, the helper row, the reloads.
-pub(super) fn plan_step(pc: u32, helper: usize, spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
+pub(super) fn plan_step(pc: u32, helper: HelperHole, spills: &[(Place, Register)], reloads: &[(Place, Register)]) -> Result<Vec<CallPart>, String> {
     let mut parts = spills.iter().map(|&(place, register)| spill_part(place, register)).collect::<Result<Vec<_>, _>>()?;
     parts.push(helper_part(pc, helper)?);
     for &(place, register) in reloads {
@@ -477,7 +495,7 @@ mod tests {
     }
 
     fn plan<'a>(direct: Option<&'a DirectFacts>, spills: &'a [(Place, Register)], reloads: &'a [(Place, Register)]) -> CallPlan<'a> {
-        CallPlan { shape: SHAPE, direct, helper: 0x4000, spills, reloads, builtin: None }
+        CallPlan { shape: SHAPE, direct, helper: HelperHole::Address(0x4000), spills, reloads, builtin: None }
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -505,7 +523,7 @@ mod tests {
         let chain = plan_call(&plan(None, &[], &[(Place::PinF(0), 3)])).expect("a plan");
         assert_eq!((chain.choice, chain.records.is_empty(), chain.parts.len()), (Choice::Helper(Declined::NoTarget), true, 2));
         assert!(chain.parts.iter().all(|part| part.taken.is_none()));
-        let nowhere = CallPlan { helper: 0, ..plan(None, &[], &[]) };
+        let nowhere = CallPlan { helper: HelperHole::Address(0), ..plan(None, &[], &[]) };
         assert!(plan_call(&nowhere).is_err(), "a helper row needs its address");
     }
 
@@ -513,11 +531,11 @@ mod tests {
     #[test]
     fn a_step_chain_is_spills_helper_reloads() {
         let (spills, reloads) = ([(Place::Pin(0), 1)], [(Place::PinF(1), 5), (Place::Pin(0), 1)]);
-        let parts = plan_step(9, 0x4000, &spills, &reloads).expect("a chain");
+        let parts = plan_step(9, HelperHole::Address(0x4000), &spills, &reloads).expect("a chain");
         assert_eq!(parts.len(), spills.len() + 1 + reloads.len());
         assert_eq!(parts[spills.len()].holes[..2], [9, 0x4000]);
         assert_eq!(parts[spills.len()].exits, [Exit::At(9), Exit::Status]);
-        assert!(plan_step(9, 0, &[], &[]).is_err(), "a helper row needs its address");
+        assert!(plan_step(9, HelperHole::Address(0), &[], &[]).is_err(), "a helper row needs its address");
     }
 
     #[test]
