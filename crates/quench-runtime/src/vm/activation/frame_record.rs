@@ -5,9 +5,8 @@
 //! has no record, a frame being what holds its dynamic bindings.
 
 use super::CallContext;
-use super::frame_cold::{FrameCold, NO_COLD};
+use super::frame_cold::FrameCold;
 use super::suspension_live::SuspensionLive;
-use crate::bytecode::Atom;
 use crate::compile::liveness::RegisterSet;
 use crate::snapshot::{Reader, Snap, SnapshotResult, Writer};
 use crate::heap::EnvironmentSlots;
@@ -29,7 +28,7 @@ pub(crate) struct FrameRecord {
     pub(in crate::vm) context: CallContext,
     /// The reflected parameters and kept arguments, dynamic bindings, `with` objects and
     /// binding site, when the frame holds any (`FrameCold`).
-    cold: Option<Box<FrameCold>>,
+    pub(super) cold: Option<Box<FrameCold>>,
     pub(in crate::vm) program: ProgramId,
     pub(in crate::vm) function: u32,
     pub(in crate::vm) pc: usize,
@@ -96,81 +95,6 @@ impl FrameRecord {
     /// The suspended receiver.
     pub(in crate::vm) fn this(&self) -> Value {
         Value::from_bits(self.prefix.this)
-    }
-
-    /// Its rarely held state, the empty one where it holds none.
-    #[inline(always)]
-    fn cold(&self) -> &FrameCold {
-        self.cold.as_deref().unwrap_or(&NO_COLD)
-    }
-
-    /// Its rarely held state, boxed now where it held none.
-    fn cold_mut(&mut self) -> &mut FrameCold {
-        self.cold.get_or_insert_with(|| Box::new(FrameCold::EMPTY))
-    }
-
-    /// The arguments it keeps for an `arguments` object or legacy reflection.
-    #[cfg(test)]
-    pub(in crate::vm) fn original_arguments(&self) -> &[Value] {
-        &self.cold().original_arguments
-    }
-
-    /// The dynamic bindings it holds itself (implicit ones, a direct eval's).
-    pub(in crate::vm) fn dynamic_bindings(&self) -> &[(Atom, Value)] {
-        &self.cold().dynamic_bindings
-    }
-
-    /// `dynamic_bindings`, to change.
-    pub(in crate::vm) fn dynamic_bindings_mut(&mut self) -> &mut Vec<(Atom, Value)> {
-        &mut self.cold_mut().dynamic_bindings
-    }
-
-    /// The dynamic bindings it holds itself, taken: an environment takes them over.
-    pub(in crate::vm) fn take_dynamic_bindings(&mut self) -> Vec<(Atom, Value)> {
-        self.cold.as_mut().map(|cold| std::mem::take(&mut cold.dynamic_bindings)).unwrap_or_default()
-    }
-
-    /// The scope stack the frame detached when it suspended: the `with` objects of its
-    /// scope chain, those its closure captured and those it entered, outermost first. While a
-    /// lane activation runs the frame, the chain is the lane stack's (`LaneStack::with_objects`).
-    pub(in crate::vm) fn with_objects(&self) -> &[Value] {
-        &self.cold().with_objects
-    }
-
-    /// `with_objects`, to change.
-    pub(in crate::vm) fn with_objects_mut(&mut self) -> &mut Vec<Value> {
-        &mut self.cold_mut().with_objects
-    }
-
-    /// `with_objects`, to drain, where the frame holds a box for them.
-    pub(in crate::vm) fn held_with_objects_mut(&mut self) -> Option<&mut Vec<Value>> {
-        self.cold.as_mut().map(|cold| &mut cold.with_objects)
-    }
-
-    /// The resume pc of the binding site the direct eval the activation is running was called
-    /// at (`CallerView::binding_site`).
-    pub(in crate::vm) fn binding_site_pc(&self) -> Option<u32> {
-        self.cold().binding_site_pc
-    }
-
-    /// Makes `site` the binding site, returning the one it replaces.
-    pub(in crate::vm) fn replace_binding_site_pc(&mut self, site: Option<u32>) -> Option<u32> {
-        if site.is_none() && self.cold.is_none() {
-            return None;
-        }
-        std::mem::replace(&mut self.cold_mut().binding_site_pc, site)
-    }
-
-    /// A direct eval over the record ended: its binding site and the `with` scopes it entered
-    /// with go, and the box with them where it holds nothing else.
-    pub(in crate::vm) fn end_eval_scope(&mut self) {
-        if let Some(cold) = self.cold.as_mut() {
-            cold.binding_site_pc = None;
-            cold.with_objects.clear();
-            if cold.is_empty() {
-                self.cold = None;
-            }
-        }
     }
 
     /// The value the instruction the frame suspended at evaluates to, which a resume sends: it

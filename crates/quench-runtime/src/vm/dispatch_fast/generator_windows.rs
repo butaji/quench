@@ -102,19 +102,56 @@ pub(super) struct WindowLocals {
     own_slots: Option<*const crate::heap::EnvironmentSlots>,
 }
 
+/// The collection epoch (the capture's remembered environment), program-store epoch (its
+/// view) and environment, made or not, a `WindowPlan` holds under.
+type PlanKey = (u64, u64, Value, bool);
+
 /// What a suspended frame's windowed resumes derive from its function and environment alone,
-/// kept on its record (`FrameRecord::window_plan`) while `key` holds: the same collection
-/// epoch (the capture's remembered environment), program-store epoch (its view) and
-/// environment, made or not. Each resume of a generator or async body re-derived them.
+/// kept on its record (`FrameRecord::window_plan`) while its key holds (`PlanKey`). Each resume
+/// of a generator or async body re-derived them. The key and the locals lie flat, their flags
+/// together: as a tuple and an option they took each record 88 bytes, flat 72.
 #[derive(Clone, Copy)]
 pub(in crate::vm) struct WindowPlan {
-    key: (u64, u64, Value, bool),
+    collection_epoch: u64,
+    context_epoch: u64,
+    key_env: Value,
     pub(super) view: *const LaneView,
     pub(super) parent: Value,
-    pub(super) locals: Option<WindowLocals>,
     pub(super) capture: *const usize,
+    /// The window's locals (`locals`): their captured-slot mask and own slot storage.
+    locals_captured: u64,
+    own_slots: *const crate::heap::EnvironmentSlots,
+    key_captured: bool,
+    has_locals: bool,
+    has_own_slots: bool,
     /// Whether the window carries an environment after the registers (`Vm::window_layout`).
     pub(super) environment: bool,
+}
+
+const _: () = assert!(size_of::<Option<WindowPlan>>() <= 72);
+
+impl WindowPlan {
+    fn new(key: PlanKey, view: *const LaneView, parent: Value, locals: Option<WindowLocals>, capture: *const usize, environment: bool) -> Self {
+        let (collection_epoch, context_epoch, key_env, key_captured) = key;
+        let WindowLocals { captured: locals_captured, own_slots } = locals.unwrap_or(WindowLocals { captured: 0, own_slots: None });
+        Self {
+            collection_epoch, context_epoch, key_env, view, parent, capture, locals_captured,
+            own_slots: own_slots.unwrap_or(std::ptr::null()),
+            key_captured, has_locals: locals.is_some(), has_own_slots: own_slots.is_some(), environment,
+        }
+    }
+
+    /// Whether it was derived under `key`.
+    #[inline(always)]
+    fn holds(&self, key: PlanKey) -> bool {
+        (self.collection_epoch, self.context_epoch, self.key_env, self.key_captured) == key
+    }
+
+    /// How the window carries its locals, where it carries an environment.
+    #[inline(always)]
+    pub(super) fn locals(&self) -> Option<WindowLocals> {
+        self.has_locals.then_some(WindowLocals { captured: self.locals_captured, own_slots: self.has_own_slots.then_some(self.own_slots) })
+    }
 }
 
 /// The plan a windowed resume of `frame`, laid out with an environment window when
@@ -124,13 +161,13 @@ pub(in crate::vm) struct WindowPlan {
 pub(super) fn window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: &FrameRecord, environment: bool) -> Option<WindowPlan> {
     let (program, function, env, captured) = (frame.program, frame.function, frame.env, frame.captured);
     let key = (vm.heap.collection_epoch(), vm.programs.context_epoch(), env, captured);
-    if let Some(plan) = frame.window_plan.filter(|plan| plan.key == key) {
+    if let Some(plan) = frame.window_plan.filter(|plan| plan.holds(key)) {
         return Some(plan);
     }
     let view = vm.lane_view_any(program, function)?;
     let (parent, locals) = window_environments(vm, view, env, captured, environment)?;
     let capture = vm.target_capture(code, program, parent);
-    Some(WindowPlan { key, view, parent, locals, capture, environment })
+    Some(WindowPlan::new(key, view, parent, locals, capture, environment))
 }
 
 /// `window_plan` of a suspended `frame`, of the active program: its record's own while it
@@ -141,7 +178,7 @@ pub(super) fn window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame
 #[inline(always)]
 pub(super) fn cached_window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: &FrameRecord) -> Option<(WindowPlan, bool)> {
     let key = (vm.heap.collection_epoch(), vm.programs.context_epoch(), frame.env, frame.captured);
-    if let Some(plan) = frame.window_plan.filter(|plan| plan.key == key) {
+    if let Some(plan) = frame.window_plan.filter(|plan| plan.holds(key)) {
         return Some((plan, false));
     }
     shared_window_plan(vm, code, frame, key).map(|plan| (plan, true))
@@ -159,7 +196,7 @@ pub(super) unsafe fn record_window_plan<'a, H: Host>(vm: &mut Vm<H>, code: &Resi
     // SAFETY: as the caller guarantees.
     let record = unsafe { &mut *frame };
     let key = (vm.heap.collection_epoch(), vm.programs.context_epoch(), record.env, record.captured);
-    if !matches!(&record.window_plan, Some(plan) if plan.key == key) {
+    if !matches!(&record.window_plan, Some(plan) if plan.holds(key)) {
         record.window_plan = Some(shared_window_plan(vm, code, record, key)?);
     }
     record.window_plan.as_ref()
@@ -170,11 +207,11 @@ pub(in crate::vm) const SHARED_PLANS: usize = 8;
 
 /// `cached_window_plan` of a frame whose record holds no plan under `key`.
 #[inline(never)]
-fn shared_window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: &FrameRecord, key: (u64, u64, Value, bool)) -> Option<WindowPlan> {
+fn shared_window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: &FrameRecord, key: PlanKey) -> Option<WindowPlan> {
     let shared = (vm.active_program, frame.function);
     let slot = frame.function as usize % SHARED_PLANS;
     if frame.program == vm.active_program
-        && let Some((.., plan)) = vm.lane_stack.last_window_plan[slot].filter(|(program, function, plan)| (*program, *function) == shared && plan.key == key)
+        && let Some((.., plan)) = vm.lane_stack.last_window_plan[slot].filter(|(program, function, plan)| (*program, *function) == shared && plan.holds(key))
     {
         return Some(plan);
     }
@@ -250,7 +287,8 @@ pub(super) fn lane_resume_generator<H: Host>(
     let frame = suspended.0;
     let depth = Some(vm.lane_stack.activations.len()).filter(|&depth| depth < vm.lane_stack.activation_limit.get())?;
     // SAFETY: the record keeps the frame boxed, and the reference ends with the statement.
-    let WindowPlan { view, parent, locals, capture, environment, .. } = *unsafe { record_window_plan(vm, code, frame) }?;
+    let plan = *unsafe { record_window_plan(vm, code, frame) }?;
+    let (view, parent, locals, capture, environment) = (plan.view, plan.parent, plan.locals(), plan.capture, plan.environment);
     vm.resume_generator_window((generator, record), suspended, method, sent, depth);
     if let Some(locals) = locals {
         open_window_locals(vm, frame, locals);

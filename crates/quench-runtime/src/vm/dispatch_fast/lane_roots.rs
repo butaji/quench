@@ -4,7 +4,7 @@
 //! with no VM frame beneath it; its `await` suspends it back into the record (`lane_await`), its
 //! return ends the run, and any other exit makes it a frame the general loop finishes.
 use super::*;
-use super::generator_windows::{open_window_locals, cached_window_plan, store_window_plan, WindowPlan};
+use super::generator_windows::{open_window_locals, cached_window_plan, store_window_plan};
 use super::super::activation::{FrameRecord, JobResume, JobRoot};
 use super::super::dispatch_frame::{ExecutingProgram, LaneExit};
 
@@ -380,7 +380,7 @@ impl<H: Host> Vm<H> {
         let frame = unsafe { &*frame };
         let (program, function, this, pc) = (frame.program, frame.function, frame.this(), frame.pc);
         let cached = cached_window_plan(self, code, frame)?;
-        let WindowPlan { view, parent, locals, capture, environment, .. } = cached.0;
+        let (view, parent, locals, capture, environment) = (cached.0.view, cached.0.parent, cached.0.locals(), cached.0.capture, cached.0.environment);
         let this = self.window_this(code.function(function as usize), this, parent)?;
         let stack = crate::stack::StackGuard::enter().ok()?;
         self.check_execution_interrupt().ok()?;
