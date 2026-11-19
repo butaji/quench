@@ -102,6 +102,7 @@ fn rustc_flags() -> Vec<String> {
 /// The architecture and object reader of a build target, if its stencils are supported.
 fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
     let var = |name| env::var(name).unwrap_or_default();
+    if !var("QUENCH_NO_STENCILS").is_empty() { return None; }
     match (var("CARGO_CFG_TARGET_ARCH").as_str(), var("CARGO_CFG_TARGET_OS").as_str()) {
         ("x86_64", "linux") => Some((Arch::X86_64, elf::rows)),
         ("aarch64", "linux") => Some((Arch::Aarch64, elf::rows)),

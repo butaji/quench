@@ -1,6 +1,6 @@
 //! Searches of an ASCII subject's bytes, for a caller that holds them and needs no `Subject`.
 
-use super::{backtrack, Match, Regex};
+use super::{Match, Regex};
 use std::ops::Range;
 
 impl Regex {
