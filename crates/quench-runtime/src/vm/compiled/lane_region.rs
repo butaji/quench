@@ -1697,6 +1697,16 @@ pub(super) fn lower(
         }
     }
     let mut initial = completion.initial_types(count, usize::from(function.params));
+    // A register the region's own entry cannot observe, but whose value the program fixes before
+    // the loop (a constant, `const m = 13`), enters with that value: conformance guards the range
+    // once at the entry (`guard_entering_ranges`), so a caller that supplies another value leaves
+    // at the exact PC rather than reading the constant the proof assumed.
+    for &(register, range) in int_entries {
+        if let Some(slot) = initial.get_mut(usize::from(register))
+            && slot.is_any_or_number() {
+            *slot = Type::int(range);
+        }
+    }
     let heap = literals::heap_primitive_pcs(entry_pc, &initial, &instructions, &leaders, &program.constants, lowering.native_calls);
     if !numeric {
         scalar::require_entry_types(program, function, &instructions, |pc| generic.contains(&entry_leave(unit)) || heap.contains(pc), &lowering.written, &mut initial);

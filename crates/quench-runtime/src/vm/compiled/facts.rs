@@ -100,8 +100,9 @@ impl Facts {
         let Some(start) = (0..=pc).rev().find(|pc| leaders.contains(*pc)) else { return Type::ANY };
         let Some(entry) = self.at(start) else { return Type::ANY };
         let mut types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]> = entry.iter().copied().collect();
+        let locals = local_types(instructions, constants);
         for (at, instruction) in instructions.iter().enumerate().take(pc).skip(start) {
-            if matches!(transfer_observed(&mut types, *instruction, constants, written, native_calls, self.observed_at(at)), Flow::Leaves) {
+            if matches!(transfer_observed(&mut types, *instruction, constants, written, native_calls, self.observed_at(at), &locals), Flow::Leaves) {
                 return Type::ANY;
             }
         }
@@ -115,13 +116,14 @@ impl Facts {
         constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool,
         mut visit: impl FnMut(usize, Register, Type)) {
         let mut types = smallvec::SmallVec::<[Type; INLINE_ANALYSIS_ITEMS]>::new();
+        let locals = local_types(instructions, constants);
         for start in (0..instructions.len()).filter(|pc| leaders.contains(*pc)) {
             let Some(entry) = self.at(start) else { continue };
             types.clear();
             types.extend_from_slice(entry);
             for (pc, instruction) in instructions.iter().copied().enumerate().skip(start) {
                 if pc != start && leaders.contains(pc) { break; }
-                let flow = transfer_observed(&mut types, instruction, constants, written, native_calls, self.observed_at(pc));
+                let flow = transfer_observed(&mut types, instruction, constants, written, native_calls, self.observed_at(pc), &locals);
                 for register in written(instruction) {
                     visit(pc, register, types.get(usize::from(register)).copied().unwrap_or(Type::ANY));
                 }
@@ -228,6 +230,36 @@ pub(super) fn boolean_binary(operator: u32) -> bool {
         || [BinaryOperator::Instanceof, BinaryOperator::In].iter().any(|relation| *relation as u32 == operator)
 }
 
+/// The type of each local slot whose every store writes a constant of one type: a slot the
+/// program initializes once and keeps (`const m = 13`). Any other slot reads `ANY`, as before.
+pub(super) fn local_types(instructions: &[WideInstruction], constants: &[Constant]) -> Vec<Type> {
+    let mut joined: Vec<Option<Type>> = Vec::new();
+    for (pc, instruction) in instructions.iter().enumerate() {
+        let class = instruction.op().class();
+        if !matches!(class, Class::StoreLocal | Class::StoreEnvLocal | Class::StoreVarBinding) { continue; }
+        let slot = instruction.local_slot();
+        let ty = stored_constant(instructions, pc, instruction.register_a(), constants);
+        if joined.len() <= slot { joined.resize(slot + 1, None); }
+        joined[slot] = Some(joined[slot].map_or(ty, |seen| seen.join(ty)));
+    }
+    joined.into_iter().map(|ty| ty.unwrap_or(Type::ANY)).collect()
+}
+
+/// The constant `register` holds before `pc`, through copies: a local's store of one value.
+fn stored_constant(instructions: &[WideInstruction], pc: usize, register: Register, constants: &[Constant]) -> Type {
+    let mut register = register;
+    for at in (0..pc).rev() {
+        let instruction = instructions[at];
+        if !super::lane_region::writes(instruction).contains(&register) { continue; }
+        if instruction.op() == crate::bytecode::Op::Move { register = instruction.register_b(); continue; }
+        if instruction.op() == crate::bytecode::Op::LoadConst {
+            return constants.get(instruction.constant_index()).map_or(Type::ANY, constant_type);
+        }
+        return Type::ANY;
+    }
+    Type::ANY
+}
+
 /// Applies `instruction` to `types`; returns where control goes next. A call continues where
 /// the region makes native calls (`native_calls`), past which no object keeps its shape.
 fn transfer(
@@ -236,6 +268,7 @@ fn transfer(
     constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Vec<Register>,
     native_calls: bool,
+    locals: &[Type],
 ) -> Flow {
     let op = instruction.op();
     match op.class() {
@@ -247,6 +280,13 @@ fn transfer(
         Class::Move => {
             let source = types.get(usize::from(instruction.register_b())).copied().unwrap_or(Type::ANY);
             set(types, instruction.result_register(), source);
+            Flow::Next
+        }
+        // A local slot the program stores one type into reads that type (`local_types`): a
+        // constant divisor stays an int and its `%` keeps the integer row.
+        Class::LoadLocal | Class::LoadEnvLocal if !instruction.writes_numeric_local() => {
+            let ty = locals.get(instruction.local_slot()).copied().unwrap_or(Type::ANY);
+            set(types, instruction.result_register(), ty);
             Flow::Next
         }
         Class::IncDec if instruction.numeric_local_target().is_none() => {
@@ -334,7 +374,8 @@ fn unary_transfer(types: &mut [Type], instruction: WideInstruction) -> Option<Fl
 pub(super) fn proves_numbers(instruction: WideInstruction, registers: usize, constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool) -> Vec<Register> {
     let mut types = vec![Type::ANY; registers];
-    if matches!(transfer(&mut types, instruction, constants, written, native_calls), Flow::Leaves) { return Vec::new(); }
+    let locals = local_types(&[instruction], constants);
+    if matches!(transfer(&mut types, instruction, constants, written, native_calls, &locals), Flow::Leaves) { return Vec::new(); }
     let written = written(instruction);
     (0..registers).filter(|register| types[*register].is_subtype(Type::NUMBER) && !written.contains(&(*register as Register)))
         .map(|register| register as Register).collect()
@@ -364,9 +405,10 @@ impl Observed<'_> {
 /// `transfer`, where an element read observed to hold Numbers or int32s (`Facts::observed`)
 /// defines that type.
 fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants: &[Constant],
-    written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool, observed: Option<Type>) -> Flow {
+    written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool, observed: Option<Type>,
+    locals: &[Type]) -> Flow {
     let flow = unary_transfer(types, instruction)
-        .unwrap_or_else(|| transfer(types, instruction, constants, written, native_calls));
+        .unwrap_or_else(|| transfer(types, instruction, constants, written, native_calls, locals));
     if let Some(ty) = observed.filter(|_| instruction.op().class().eq(Class::GetIndex)) {
         for register in written(instruction) { set(types, register, ty); }
     }

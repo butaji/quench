@@ -1327,6 +1327,50 @@ impl<H: Host> Vm<H> {
     }
 }
 
+/// The registers a loop's own entry cannot observe whose value the program fixes before its
+/// header: one the loop does not write whose last writer before the header loads a constant of a
+/// single int32 value. The region guards each range once at its entry.
+#[cfg(feature = "aot")]
+fn ahead_constant_inputs(program: &ResidualProgram, function: &crate::bytecode::Function,
+    decoded: &[crate::bytecode::WideInstruction], (header, backedge): (u32, u32))
+    -> Vec<(crate::bytecode::Register, crate::typed_ir::IntRange)> {
+    let body = &decoded[header as usize..=backedge as usize];
+    let written: std::collections::BTreeSet<crate::bytecode::Register> =
+        body.iter().flat_map(|instruction| lane_region::writes(*instruction)).collect();
+    // Only a constant the loop's own arithmetic reads is worth an entry guard: a comparison
+    // refines its int operand anyway, so seeding one there would pay a check and save nothing.
+    let mut wanted: std::collections::BTreeSet<crate::bytecode::Register> = std::collections::BTreeSet::new();
+    for instruction in body {
+        let op = instruction.op();
+        if op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary {
+            for operand in [instruction.operand_b(), instruction.operand_c()] {
+                if let Some(register) = operand.register_index() { wanted.insert(register); }
+            }
+        } else if op.class() == crate::bytecode::Class::IncDec && instruction.numeric_local_target().is_none() {
+            wanted.insert(instruction.register_b());
+        }
+    }
+    // A copy inside the loop carries the operand (`Move r6, r11`), so the source counts too.
+    loop {
+        let before = wanted.len();
+        for instruction in body.iter().filter(|instruction| instruction.op() == crate::bytecode::Op::Move) {
+            if wanted.contains(&instruction.result_register()) { wanted.insert(instruction.register_b()); }
+        }
+        if wanted.len() == before { break; }
+    }
+    let mut found = Vec::new();
+    for register in 0..function.registers {
+        if written.contains(&register) || !wanted.contains(&register) { continue; }
+        let Some((_, instruction)) = (0..header as usize).rev().map(|pc| (pc, decoded[pc]))
+            .find(|(_, instruction)| lane_region::writes(*instruction).contains(&register)) else { continue };
+        if instruction.op() != crate::bytecode::Op::LoadConst { continue; }
+        let Some(ty) = program.constants.get(instruction.constant_index() as usize).map(super::compiled::facts::constant_type) else { continue };
+        let Some(range) = ty.int_range().filter(|range| range.min == range.max) else { continue };
+        found.push((register, range));
+    }
+    found
+}
+
 /// `function_id` lowered as an ahead lane body (`Coverage::Prefix`, the lane body ABI) under
 /// `helpers` and `facts`: it runs from the first record and leaves at the first instruction
 /// it does not lower. `None` for the root and where nothing lowers.
@@ -1377,6 +1421,10 @@ pub(in crate::vm::compiled) fn ahead_loop_region(program: &ResidualProgram, func
     // kind at its entry, so the dynamic dispatch (`Typed(None)`) stays only for a loop whose
     // arrays the program does not name.
     let static_kind = array_kinds::loop_element_kind(program, function_id, (header, backedge));
+    // A register the loop does not write whose value the program fixes before its header (a
+    // `const m = 13` the loop's `%` divides by) enters with that value; the region guards the
+    // range once at the entry, so an entry with another value leaves at the exact PC.
+    let entry_constants = ahead_constant_inputs(program, function, &decoded, (header, backedge));
     let plan = |views| lane_region::RegionPlan { entry_bounds: true,
         // No run observed this loop's inputs: each int32 the index arithmetic reads is assumed
         // and checked once at the entry, instead of every use converting a Number.
@@ -1390,7 +1438,7 @@ pub(in crate::vm::compiled) fn ahead_loop_region(program: &ResidualProgram, func
         let lowered = lane_region::RegionSpecializer { function_id, unit: &unit, helpers: LaneHelpers::Ahead,
             fields: &[], global_reads: &crate::vm::global_facts::GlobalReads::default(), facts: VmFacts::STATIC, generic: &[],
             direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
-            entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
+            entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &entry_constants, typed_captures: &[], int_captures: &[],
             plan: plan(views) }
             .specialize(program);
         match lowered {

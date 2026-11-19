@@ -12,7 +12,7 @@ fn native_call_retires_conditional_shapes_in_cfg_facts() {
         Type::direct_object(7).join(Type::NULLISH), Type::INT32, Type::ANY] {
         let mut types = vec![ty; usize::from(function.registers)];
         assert!(matches!(transfer(&mut types, call, &program.constants,
-            &super::super::lane_region::writes, true), Flow::Next));
+            &super::super::lane_region::writes, true, &[]), Flow::Next));
         for (register, actual) in types.into_iter().enumerate() {
             let expected = if register == usize::from(call.result_register()) { Type::ANY }
                 else { ty.without_object_shape() };
@@ -32,11 +32,11 @@ fn native_construction_continues_like_a_call() {
     let construct = function.instructions().find(|instruction| instruction.op().is_construct()).unwrap();
     let mut types = vec![Type::direct_object(7); usize::from(function.registers)];
     assert!(matches!(transfer(&mut types, construct, &program.constants,
-        &super::super::lane_region::writes, true), Flow::Next));
+        &super::super::lane_region::writes, true, &[]), Flow::Next));
     assert_eq!(types[usize::from(construct.result_register())], Type::ANY);
     assert!(types.iter().all(|ty| *ty == Type::ANY || *ty == Type::direct_object(7).without_object_shape()));
     assert!(matches!(transfer(&mut types, construct, &program.constants,
-        &super::super::lane_region::writes, false), Flow::Leaves));
+        &super::super::lane_region::writes, false, &[]), Flow::Leaves));
 }
 
 fn infer_inductive(body: &str, names: &[&str]) -> (Vec<Type>, Vec<Register>) {
@@ -131,7 +131,8 @@ fn overflow_proofs_entered(source: &str, input: Type, entering: &[(Register, Int
     let leaders = super::super::lane_region::leaders(&instructions);
     let mut initial = vec![Type::ANY; usize::from(function.registers)];
     initial[0] = input;
-    let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants,
+    let locals = Vec::new();
+    let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants, locals: &locals,
         written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: false };
     let seeds = Seeds { entering, ..Seeds::observing(Observed::NONE) };
     let mut free = Vec::new();
@@ -191,7 +192,8 @@ fn a_seeded_typed_array_load_types_its_register_with_the_kinds_range() {
         .map(|(pc, _)| ObservedRead { pc, ty: byte }).collect();
     assert!(!reads.is_empty());
     let initial = vec![Type::ANY; usize::from(function.registers)];
-    let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants,
+    let locals = Vec::new();
+    let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants, locals: &locals,
         written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: false };
     let seeds = Seeds { observed: Observed(&reads), ..Seeds::observing(Observed::NONE) };
     let mut loaded = Vec::new();

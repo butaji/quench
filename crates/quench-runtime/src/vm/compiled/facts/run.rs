@@ -66,6 +66,8 @@ pub(in crate::vm::compiled) struct Text<'a> {
     pub(in crate::vm::compiled) written: &'a dyn Fn(WideInstruction) -> Vec<Register>,
     pub(in crate::vm::compiled) own_shape: &'a dyn Fn(usize) -> Option<(Register, u32)>,
     pub(in crate::vm::compiled) native_calls: bool,
+    /// Each local slot's type where its stores prove one (`facts::local_types`).
+    pub(in crate::vm::compiled) locals: &'a [Type],
 }
 
 impl Point {
@@ -142,7 +144,7 @@ fn step(point: &mut Point, text: &Text<'_>, seeds: Seeds<'_>, pc: usize) -> Flow
     if let Some((register, shape)) = (text.own_shape)(pc) { set(&mut point.types, register, Type::direct_object(shape)); }
     let signless = seeds.signless.binary_search(&pc).is_ok()
         .then(|| ranges::signless_range(&ranges::lookup(&point.types, text.constants), instruction)).flatten();
-    let flow = transfer_observed(&mut point.types, instruction, text.constants, text.written, text.native_calls, seeds.observed.at(pc));
+    let flow = transfer_observed(&mut point.types, instruction, text.constants, text.written, text.native_calls, seeds.observed.at(pc), text.locals);
     if let Some(range) = signless { set(&mut point.types, instruction.result_register(), Type::int(range)); }
     flow
 }
@@ -215,7 +217,8 @@ impl Facts {
 pub(in crate::vm::compiled) fn analyze(entry: usize, initial: &[Type], instructions: &[WideInstruction],
     leaders: &CompoundBitSet, constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, seeds: Seeds<'_>) -> Facts {
-    analyze_text(&Text { entry, instructions, leaders, constants, written, own_shape, native_calls }, initial, seeds)
+    let locals = super::local_types(instructions, constants);
+    analyze_text(&Text { entry, instructions, leaders, constants, written, own_shape, native_calls, locals: &locals }, initial, seeds)
 }
 
 /// `analyze` over `text`.

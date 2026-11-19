@@ -122,8 +122,9 @@ impl Lowering<'_, '_> {
         let signless = self.signless_products(instructions);
         let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),
             signless: &signless };
+        let locals = super::super::facts::local_types(instructions, &self.program.constants);
         let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
-            native_calls: self.native_calls };
+            native_calls: self.native_calls, locals: &locals };
         let mut proved = IntRanges::new(instructions.len());
         let mut seen = Seen::default();
         facts::analyze_text(&text, initial, seeds).replay(&text, seeds, |pc, point| self.prove_at((&mut proved, &mut seen), (&model, &signless, instructions), pc, point));
