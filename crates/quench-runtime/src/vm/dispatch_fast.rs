@@ -11832,8 +11832,11 @@ fn lane_inlined_activation<H: Host>(
     let (registers, _) =
         lane_push_activation::<H, false, false>(cx, r, call, target, arguments, receiver, false);
     let inlining = region.inlining.as_ref().expect("an inlining region");
+    // The admitted target is the function the region compiled for this callee (`frame.function`,
+    // fixed at analysis): the guard named the same callee, which holds one function.
+    debug_assert_eq!(target.function, frame.function, "the entry's target is the inlined function");
     // SAFETY: the context's program outlives the lane run.
-    let live = unsafe { &*(*cx).code }.register_root_masks(frame.function)
+    let live = unsafe { &*(*cx).code }.register_root_masks(target.function)
         .expect("an inlined callee has its register roots (`lane_inlining_region`)");
     for register in 0..frame.registers {
         let bound = frame.bound.get(usize::from(register)).copied().flatten().map(|source| r.get(source));
