@@ -63,27 +63,27 @@ pub(super) fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
     targets
 }
 
+/// Whether `code` jumps backward: it has a loop, whose iterations repay any entry.
+pub(super) fn closes_loop(code: &[crate::bytecode::WideInstruction]) -> bool {
+    code.iter().enumerate().any(|(pc, instruction)|
+        instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc)
+}
+
 /// Whether a body has work that amortizes an entry, which costs a few hundred instructions
 /// the lane's own run of a short leaf never pays: a loop, an inlined call, a call of itself
 /// (its recursion runs natively inside the entry), or length (`Tiers::amortizing_instructions`).
 pub(super) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
-    let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
-        instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-    loops || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::body_tier_in_lane())
+    closes_loop(&unit.instructions) || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
 }
 
 /// Whether one entry of `unit` saves more interpreter time than the body's entry costs
 /// (`Priors::body_entry_ns`), its inlined callees' work included: a unit with a loop does, and
 /// so does one that calls itself (`calls_itself`).
 pub(super) fn entry_repays(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
-    let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
-        instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-    loops || calls_itself(direct, function) || straight_line_repays(&tiers.priors, unit.instructions.len())
+    closes_loop(&unit.instructions) || calls_itself(direct, function) || straight_line_repays(&tiers.priors, unit.instructions.len())
 }
 
-/// The call depth `recursion_cycle` follows: a cycle through more functions than this is weighed as
-/// straight-line code.
-const RECURSION_DEPTH: usize = 4;
+use tier_policy::RECURSION_DEPTH;
 
 /// The functions that call `function` back through the targets their call sites linked
 /// (`targets`), each within `RECURSION_DEPTH` calls of it: `function` itself where it recurses
@@ -132,7 +132,7 @@ fn calls_itself(direct: &[DirectCallee], function: u32) -> bool {
 /// Whether a straight-line unit of `instructions` instructions repays its entry: the share of
 /// its interpreted time the body keeps exceeds the body's entry cost.
 fn straight_line_repays(priors: &tier_policy::Priors, instructions: usize) -> bool {
-    instructions as u64 * priors.interpreter_ns * (tier_policy::PER_MILLE - priors.body_share) / tier_policy::PER_MILLE > priors.body_entry_ns
+    instructions >= priors.repaying_length(priors.body_share)
 }
 
 /// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was

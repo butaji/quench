@@ -74,12 +74,14 @@ impl LaneView {
     /// false) of an interpreted epoch counts nothing and declines the body: the activation it
     /// makes enters the prologue, which counts it.
     ///
-    /// A `recursive` entry, made from an activation of the same function, counts nothing
-    /// either: the body makes its own recursive calls directly, so its epochs never count
-    /// them, and an interpreted epoch that did would hold a fraction of the body epoch's work
-    /// (fib(10)'s 177 activations against the body's one entry retired a body 3.8x cheaper).
+    /// A `recursive` entry, made within `RECURSION_DEPTH` activations of another of the same
+    /// function (`f` calling `f`, or `f` calling `g` calling `f`), counts nothing either: the
+    /// body makes its own recursive calls directly, and a mutual recursion's through its
+    /// callees' bodies, so its epochs never count them, and an interpreted epoch that did would
+    /// hold a fraction of the body epoch's work (fib(10)'s 177 activations against the body's
+    /// one entry retired a body 3.8x cheaper). Asked only while the audit runs.
     #[inline(always)]
-    pub(in crate::vm) fn audit_entry(&self, counts_interpreted: bool, recursive: bool) -> bool {
+    pub(in crate::vm) fn audit_entry(&self, counts_interpreted: bool, recursive: impl FnOnce() -> bool) -> bool {
         let mut history = self.tier().history.get();
         if history.audit.done {
             return false;
@@ -102,7 +104,7 @@ impl LaneView {
         let period = self.tiers.lane_body.audit_period;
         let seen = history.audit.seen;
         let interpreted = (seen / period) % SIDES as u32 == INTERPRETER as u32;
-        if recursive || (interpreted && !counts_interpreted) {
+        if (interpreted && !counts_interpreted) || recursive() {
             return interpreted;
         }
         history.audit.seen = seen.wrapping_add(1);

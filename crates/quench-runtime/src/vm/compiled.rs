@@ -9610,9 +9610,15 @@ const VOID_RESULT_CONSTANT: usize = 1;
 /// Whether a lane body for `body` could amortize an entry (`lane_facts::amortizes_entry`): a
 /// loop, a call (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
-pub(super) fn body_may_amortize_in_lane(tiers: &Tiers, body: &crate::bytecode::Function) -> bool {
-    body.loops() || body.code.len() >= tiers.amortizing_instructions(tier_policy::body_tier_in_lane())
-        || body.code.iter().any(|packed| crate::staged::Operation::<u64, ()>::is_plain_call(super::dispatch_fast::decoded_instruction(body, *packed)))
+pub(super) fn lane_body_may_amortize(tiers: &Tiers, body: &crate::bytecode::Function) -> bool {
+    body_may_amortize(tiers, body, tier_policy::lane_body_tier())
+}
+
+/// `lane_body_may_amortize` for a body `tier` compiles: a b-jit body the default mode picks
+/// (`tier_model::Pick::Base`) asks the stencil tier's length, whatever the process's lane tier.
+pub(super) fn body_may_amortize(tiers: &Tiers, body: &crate::bytecode::Function, tier: crate::jit_mode::Tier) -> bool {
+    body.loops() || body.code.len() >= tiers.amortizing_instructions(tier)
+        || body.code.iter().any(|packed| body.widened(*packed).op().is_call())
 }
 
 /// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
