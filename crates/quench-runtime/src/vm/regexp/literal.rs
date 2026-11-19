@@ -187,8 +187,8 @@ impl<H: Host> Vm<H> {
     fn regexp_argument_callee(&self, callee: Value) -> bool {
         matches!(
             self.heap.function(callee),
-            Some(FunctionRecord { kind: FunctionKind::Native(native), realm, .. })
-                if *realm == self.realm.globals
+            Some(record @ FunctionRecord { kind: FunctionKind::Native(native), .. })
+                if self.record_realm(record) == self.realm.globals
                     && matches!(native, Native::StringReplace | Native::StringMatch | Native::StringSearch | Native::StringSplit)
         )
     }
