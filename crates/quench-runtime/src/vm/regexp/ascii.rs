@@ -1,12 +1,14 @@
 //! Regexp searches of flat ASCII subjects made in place, from their bytes.
 use super::*;
+use super::replacement::{ReplaceResult, result_length};
 
 /// The result of a replace of a flat ASCII subject by a flat ASCII template with no `$`, made
-/// from both borrowed out of the heap, and whether it is too long to be a string.
+/// from both borrowed out of the heap.
 pub(super) struct AsciiReplace {
-    /// The result where it is used and something matched.
+    /// The result where it is built as a string and something matched.
     pub(super) output: Option<JsString>,
-    pub(super) too_long: bool,
+    /// The result's length, `None` where it is too long to be a string.
+    pub(super) length: Option<usize>,
 }
 
 impl AsciiReplace {
@@ -18,7 +20,7 @@ impl AsciiReplace {
         (this, replacement): (Value, Value),
         matcher: &quench_regexp::Regex,
         flags: RegExpFlags,
-        result_used: bool,
+        build: ReplaceResult,
         ranges: &mut smallvec::SmallVec<[Range<usize>; 8]>,
     ) -> Option<Self> {
         use crate::vm::wtf16::Units::Ascii;
@@ -29,7 +31,7 @@ impl AsciiReplace {
             return None;
         }
         let input = heap.string(this)?;
-        let mut plan = |bytes: &[u8]| Self::plan_bytes(bytes, literal, matcher, flags, result_used, ranges);
+        let mut plan = |bytes: &[u8]| Self::plan_bytes(bytes, literal, matcher, flags, build, ranges);
         match input.existing_flat().map(|flat| flat.view()) {
             Some(Ascii(bytes)) => plan(bytes),
             Some(_) => None,
@@ -44,16 +46,13 @@ impl AsciiReplace {
         literal: &[u8],
         matcher: &quench_regexp::Regex,
         flags: RegExpFlags,
-        result_used: bool,
+        build: ReplaceResult,
         ranges: &mut smallvec::SmallVec<[Range<usize>; 8]>,
     ) -> Option<Self> {
         ascii_match_ranges(matcher, bytes, flags.contains(RegExpFlags::GLOBAL), ranges)?;
-        let length = ranges
-            .iter()
-            .try_fold(bytes.len(), |length, range| (length - range.len()).checked_add(literal.len()))
-            .filter(|length| *length <= super::wtf16::MAX_STRING_UNITS);
-        let output = length.filter(|_| result_used && !ranges.is_empty()).map(|length| ascii_replaced(bytes, literal, ranges, length));
-        Some(Self { output, too_long: length.is_none() })
+        let length = result_length(bytes.len(), ranges.as_slice(), literal.len());
+        let output = length.filter(|_| build == ReplaceResult::Value && !ranges.is_empty()).map(|length| ascii_replaced(bytes, literal, ranges, length));
+        Some(Self { output, length })
     }
 }
 

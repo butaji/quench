@@ -350,8 +350,10 @@ script_handler! {
 /// `native_call_miss`, the handler of every other native. A call returning its result
 /// completes its caller, which only `native_call_miss` makes. An array callback method's site
 /// whose result nothing reads (`result_dead`, asked only there) takes the form that may
-/// discard it (`call_array_callback_miss`'s `DISCARDS`).
-pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, result_dead: impl FnOnce() -> bool) -> Handler {
+/// discard it (`call_array_callback_miss`'s `DISCARDS`). A `String.prototype.replace` whose
+/// result only the `GetField "length"` after it reads (`length_only`, asked only there) takes
+/// the replacement's length without building it (`regexp_calls::replace_length_handler`).
+pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, result_dead: impl FnOnce() -> bool, length_only: impl FnOnce() -> bool) -> Handler {
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
         return call_row::<H, { protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>();
     }
@@ -359,6 +361,7 @@ pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, 
         native if let Some(row) = builtin_row(native) => builtin_handler::<H>(row),
         native if let Some(row) = in_place_row(native) => in_place_handler::<H>(row),
         native if let Some(handler) = math_handler::<H>(native) => handler,
+        Native::StringReplace if length_only() => super::regexp_calls::replace_length_handler::<H>(),
         native if super::number::math_numbers_inline(native) => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_MATH as u16 }>,
         native if native.is_array_callback() && result_dead() => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_ARRAY_CALLBACK_DISCARDING as u16 }>,
         native if native.is_array_callback() => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_ARRAY_CALLBACK as u16 }>,

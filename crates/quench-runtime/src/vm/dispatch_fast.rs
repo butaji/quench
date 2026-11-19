@@ -12350,7 +12350,7 @@ script_handler! {
         // callee back.
         if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) {
             let native = *native;
-            let handler = native_call_handler::<H>(native, i, || call_result_dead_in_lane(cx, ip, i));
+            let handler = native_call_handler::<H>(native, i, || call_result_dead_in_lane(cx, ip, i), || regexp_calls::length_read(cx, ip, i));
             requicken::<H>(ip, handler);
             if handler as *const () != call_row::<H, { protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>() as *const () {
                 native_calls::install_math_field_call::<H>(cx, ip, native);
@@ -13418,7 +13418,7 @@ use named_keys::named_key_element;
 mod in_place_natives;
 mod root_bindings;
 use root_bindings::frame_capture_at_root;
-mod native_calls; mod getters; mod generator_yields;
+mod native_calls; mod regexp_calls; mod getters; mod generator_yields;
 mod lane_roots;
 mod lane_trace;
 mod with_scopes;
@@ -13949,6 +13949,10 @@ script_handler! {
         if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.lane_stack.refuses() {
             return exit(ip);
         }
+        // A construction inside a leaf is the activation its call would have pushed
+        // (`materialize_running_leaf_in_lane`), which completes the caller as any construction
+        // does; a leaf completes a planned returned one itself (`return_constructed_in_lane`).
+        materialize_running_leaf_in_lane(cx);
         // The cached target in place, as a call reads it (`Vm::script_call_entry`); an
         // uncached callee resolves (`script_target_in_lane`), after which the construction
         // retries.
@@ -14282,6 +14286,9 @@ script_handler! {
     /// keep their code.
     #[inline(never)]
     fn script_construct_keeping_miss<>(cx, r, ip, i, view) {
+        // As `script_construct_miss`: a leaf's construction materializes the leaf's activation
+        // before anything completes, which a site reaches directly once it is keeping.
+        materialize_running_leaf_in_lane(cx);
         let finished = match construct_planned_fields_in_lane(cx, r, i) {
             Some(this) => Ok(KeepingConstruction::Finished(this)),
             None => construct_keeping_activation_in_lane(cx, r, ip, i),
