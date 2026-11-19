@@ -102,7 +102,7 @@ function matchBrace(s, open) { let depth = 0; for (let i = open; i < s.length; i
 // Ranges of `#[cfg(test)]` items.
 function testRanges(s) {
   const r = [];
-  const re = /#\[cfg\((?:any\()?test[^\]]*\]/g;
+  const re = /#\[cfg\((?:(?:any|all)\()?test\b[^\]]*\]/g;
   let m;
   while ((m = re.exec(s))) {
     const brace = s.indexOf("{", m.index), semi = s.indexOf(";", m.index);
