@@ -67,6 +67,27 @@ pub(in crate::vm) fn performed(instruction: impl std::borrow::Borrow<crate::byte
     decoded(plain)
 }
 
+/// The Number unary operation a record denotes with its operator (`NumberUnary::from_js_instruction`
+/// asked of the record's opcode), so a tier passes the record and names no opcode.
+#[inline]
+pub(in crate::vm) fn number_unary(instruction: WideInstruction, operator: u32) -> Option<operations::NumberUnary> {
+    operations::NumberUnary::from_js_instruction(instruction.op(), operator)
+}
+
+/// The signed int32 bitwise operation a record denotes with its operator (`NumberBitwise::from_js_instruction`
+/// asked of the record's opcode).
+#[inline]
+pub(in crate::vm) fn number_bitwise(instruction: WideInstruction, operator: u32) -> Option<operations::NumberBitwise> {
+    operations::NumberBitwise::from_js_instruction(instruction.op(), operator)
+}
+
+/// The Number arithmetic operation a record denotes with its operator (`NumberArithmetic::from_js_instruction`
+/// asked of the record's opcode).
+#[inline]
+pub(in crate::vm) fn number_arithmetic(instruction: WideInstruction, operator: u32) -> Option<operations::NumberArithmetic> {
+    operations::NumberArithmetic::from_js_instruction(instruction.op(), operator)
+}
+
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 mod exit_protocol;

@@ -723,7 +723,7 @@ fn numeric_instructions(program: &ResidualProgram, instructions: &[WideInstructi
 fn numeric_instruction(program: &ResidualProgram, instruction: WideInstruction) -> bool {
     if instruction.writes_current_this()
         || (instruction.result_flags() != 0 && !instruction.returns_from_frame()) { return false; }
-    match instruction.op() {
+    match () {
         _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::LoadConst) => program.constants.get(instruction.constant_index())
             .and_then(super::facts::immediate).is_some(),
         _ if instruction.op().traits().has(crate::bytecode::Traits::SCALAR_REGION) => true,
@@ -1114,7 +1114,7 @@ fn move_root(instructions: &[WideInstruction], leaders: &CompoundBitSet, (header
     for at in (header..pc).rev() {
         if at + 1 < pc && leaders.contains(at + 1) { break; }
         let instruction = instructions[at];
-        match instruction.op() {
+        match () {
             _ if matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })) && instruction.result_flags() == 0 => {
                 if instruction.register_a() == register { register = instruction.register_b(); }
             }
@@ -1128,14 +1128,14 @@ fn move_root(instructions: &[WideInstruction], leaders: &CompoundBitSet, (header
 /// Whether `instruction` can change no heap value natively: anything else it would do (a
 /// non-Number operand, a missed cache) leaves the body first.
 fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> bool {
-    reads_slot(constants, instruction).unwrap_or_else(|| match instruction.op() {
+    reads_slot(constants, instruction).unwrap_or_else(|| match () {
         // ToNumeric of a Number is the Number; any other operand leaves (`Lowering::instruction`). A
         // dense element is read natively, any other leaving (`emit_dense_element_read`); a null or
         // undefined operand leaves before any effect (`staged::require_object_coercible`).
         _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Number(crate::staged::NumberOperation::ToNumeric { .. }))) || matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::RequireObjectCoercible { .. })) => !instruction.returns_from_frame(),
         // A Number operator of a Number; any other operand leaves before any effect (`Lowering::unary`).
-        opcode if opcode.immediate_role() == crate::bytecode::ImmediateRole::UnaryOperator
-            && crate::vm::operations::NumberUnary::from_js_instruction(opcode, instruction.unary_operator()).is_some() =>
+        _ if instruction.op().immediate_role() == crate::bytecode::ImmediateRole::UnaryOperator
+            && crate::vm::compiled::number_unary(instruction, instruction.unary_operator()).is_some() =>
             instruction.result_flags() == 0 && !instruction.writes_current_this(),
         _ => instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
     })
@@ -1144,7 +1144,7 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
 /// Whether `instruction` reads only a frame slot, a constant, a capture or a field, where it is
 /// one; `None` for the other instructions.
 fn reads_slot(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> Option<bool> {
-    Some(match instruction.op() {
+    Some(match () {
         _ if instruction.op().traits().has(Traits::FRAME_ONLY) => true,
         _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::LoadConst) => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
         _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::IncDec) => instruction.numeric_local_target().is_none(),
@@ -1171,7 +1171,7 @@ fn stores_element(instruction: WideInstruction) -> bool {
 /// value but an element, or replaces one in place (`Lowering::element_write` retires the views
 /// itself on its general path), so no array's storage changes.
 fn retains_array_views(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> bool {
-    match instruction.op() {
+    match () {
         _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. } | crate::staged::Operation::LoadCapture { .. })) => false,
         _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementWrite { .. })) => true,
         _ => reads_only(constants, instruction),
@@ -1977,7 +1977,7 @@ impl Lowering<'_, '_> {
         let reads = [next.operand_b(), next.operand_c()].iter().filter(|operand| operand.register_index() == Some(register)).count();
         if reads == 0 || !(next.result_register() == register || self.dead_after(at, register)) { return false; }
         let operator = next.binary_operator();
-        if super::operations::NumberBitwise::from_js_instruction(next.op(), operator)
+        if crate::vm::compiled::number_bitwise(next, operator)
             .is_some_and(|bitwise| bitwise != super::operations::NumberBitwise::ShiftRightUnsigned) {
             return true;
         }
@@ -2008,7 +2008,7 @@ impl Lowering<'_, '_> {
         use crate::bytecode::ImmediateRole as Role;
         let operator = matches!(next.op().immediate_role(), Role::BinaryOperator | Role::AdditionOperator | Role::MultiplicationOperator);
         if !operator || next.returns_from_frame() || next.writes_current_this() || next.result_flags() != 0 { return None; }
-        let operation = super::operations::NumberArithmetic::from_js_instruction(next.op(), next.binary_operator())?;
+        let operation = crate::vm::compiled::number_arithmetic(next, next.binary_operator())?;
         if !operation.int32_projection_is_wrapping() { return None; }
         let operands = [next.operand_b(), next.operand_c()];
         let int32_constant = |operand: Operand| operand.kind() == Some(OperandKind::Constant)
@@ -2293,7 +2293,7 @@ impl Lowering<'_, '_> {
                     // A field chain names sequential sites, not alternatives for
                     // one polymorphic access. Bind each distinct column once.
                     let mut sites = smallvec::SmallVec::<[u16; 3]>::new();
-                    match instruction.op() {
+                    match () {
                         _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) => match instruction.field_lookup() {
                             Some(FieldLookup::Atom { cache_site, .. }) => sites.push(cache_site),
                             Some(FieldLookup::Site(site)) => {
@@ -2384,7 +2384,7 @@ impl Lowering<'_, '_> {
     /// changes neither (`emit_js_own_field_set`, `Lowering::site_store`).
     fn entry_store_atoms(&mut self, instructions: &[WideInstruction]) -> BTreeMap<Atom, Variable> {
         let mut store_atoms = BTreeMap::new();
-        let stored = instructions.iter().filter_map(|instruction| match instruction.op() {
+        let stored = instructions.iter().filter_map(|instruction| match () {
             _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. })) => Some(instruction.atom_index()),
             _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) && instruction.writes_current_this() => match instruction.field_lookup() {
                 Some(FieldLookup::Site(index)) => self.program.field_sites.get(index).and_then(|site| site.sink).map(|(atom, _)| atom),
@@ -2423,7 +2423,7 @@ impl Lowering<'_, '_> {
     /// writes, where `instruction` is one.
     fn field_owner(&self, pc: usize, instruction: WideInstruction) -> Option<usize> {
         let count = usize::from(self.unit.registers);
-        match instruction.op() {
+        match () {
             _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) && !super::reads_length(self.program, instruction) => {
                 let base = self.field_base(pc, instruction);
                 base.and_then(|base| if base == crate::bytecode::FieldBase::THIS { Some(count) }
@@ -2575,7 +2575,7 @@ impl Lowering<'_, '_> {
         }
         let pc32 = pc as u32;
         let plain = instruction.result_flags() == 0;
-        let ran = match instruction.op() {
+        let ran = match () {
             _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Throw) => self.throw(state, pc, instruction),
             // A call, a construction in the caller's window and a return: the staged operations
             // the tier's facts admit (`call_rows`).
@@ -3348,7 +3348,7 @@ impl Lowering<'_, '_> {
             let mut predicate = None;
             for pc in (header + 1..back).rev() {
                 let instruction = instructions[pc];
-                match instruction.op() {
+                match () {
                     _ if matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })) && instruction.result_flags() == 0 => {
                         if instruction.register_a() == required { required = instruction.register_b(); }
                     }
@@ -3506,7 +3506,7 @@ impl Lowering<'_, '_> {
         for at in pc + 1..self.unit.instructions.len() {
             if boundaries.contains(at) || self.unit.markers.contains(&at) { break; }
             let instruction = self.unit.instructions[at];
-            let operator = match instruction.op() {
+            let operator = match () {
                 _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. })) => Some(instruction.binary_operator_field()),
                 _ if instruction.op().js_denotation() == JsDenotation::NumericBinary => Some(instruction.binary_operator()),
                 _ => None,
@@ -4313,8 +4313,7 @@ impl Lowering<'_, '_> {
         if instruction.result_flags() != 0 || instruction.writes_current_this() {
             return None;
         }
-        let operation = crate::vm::operations::NumberUnary::from_js_instruction(
-            instruction.op(), instruction.unary_operator())?;
+        let operation = crate::vm::compiled::number_unary(instruction, instruction.unary_operator())?;
         let source = instruction.register_b();
         let domain = if state.values[usize::from(source)].value.ty.is_subtype(Type::INT32) {
             crate::staged::Domain::Int32
@@ -4349,8 +4348,8 @@ impl Lowering<'_, '_> {
             return None;
         }
         let operator = instruction.binary_operator();
-        let arithmetic = super::operations::NumberArithmetic::from_js_instruction(instruction.op(), operator);
-        let bitwise = super::operations::NumberBitwise::from_js_instruction(instruction.op(), operator);
+        let arithmetic = crate::vm::compiled::number_arithmetic(instruction, operator);
+        let bitwise = crate::vm::compiled::number_bitwise(instruction, operator);
         // `%` is the shared Number remainder; the opcode's denotation is the catalog's, so the
         // meaning is not a second hand-written `Binary` arm.
         let remainder = instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
@@ -4367,7 +4366,7 @@ impl Lowering<'_, '_> {
             && let Some(next) = self.unit.instructions.get(pc + 1).copied()
             && next.result_flags() == 0
             && crate::staged::meaning::means(next, crate::staged::meaning::Meaning::Binary)
-            && super::operations::NumberBitwise::from_js_instruction(next.op(), next.binary_operator())
+            && crate::vm::compiled::number_bitwise(next, next.binary_operator())
                 == Some(super::operations::NumberBitwise::Or)
             && next.operand_b().register_index() == Some(destination)
             && super::facts::constant_number(&self.program.constants, next.operand_c()) == Some(0.0)
