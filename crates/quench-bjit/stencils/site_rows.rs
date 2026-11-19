@@ -10,7 +10,7 @@ use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver};
 use crate::words::{hole, hole64, is_int, FIRST_TAG, HOLE_FOURTH};
 use crate::layout::words::TAG_SHIFT;
 use crate::places::{DEST, Places, settle, site_object, tagged_place};
-use crate::places_property::{Callout, HeldRead, PlannedPlaces, planned_frame, receiver_read, run_planned};
+use crate::places_property::{Callout, HeldRead, PlannedPlaces, planned_frame, receiver_read};
 use crate::stage::StencilStage;
 use crate::staged::{Constant, Operation, Step, step, step_property};
 use crate::typed_ir::Type;
@@ -38,7 +38,11 @@ fn site_row<const D: u8, const CHAIN: bool>(s: S, payload: usize, object: u64) -
     let mut stage = StencilStage::with_values(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE));
     let mut places = Places::<D, MEM, MEM>::new(s);
     let read = Operation::FieldGetHost { object, atom: 0, site: 0 };
-    let word = run_planned(&mut stage, &mut places, [], Callout::SiteRead { chained: CHAIN }, read);
+    let step = step_property(&mut stage, &mut planned_frame(&mut places, [], Callout::SiteRead { chained: CHAIN }), read);
+    let word = match step {
+        Step::Value(word) => Some(word),
+        _ => None,
+    };
     deliver::<D>(places.s, need!(places.s, word))
 }
 
@@ -59,7 +63,11 @@ fn site_store_row<const A: u8, const GATED: bool>(s: S, payload: usize, base: Op
     let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
     let mut places = Places::<MEM, A, MEM>::new(s);
     let store = Operation::StoreField { base, value, fact: Type::ANY, atom: 0, site: 0 };
-    let stored = run_planned(&mut stage, &mut places, [], Callout::SiteStore { gated: GATED }, store);
+    let step = step_property(&mut stage, &mut planned_frame(&mut places, [], Callout::SiteStore { gated: GATED }), store);
+    let stored = match step {
+        Step::Value(word) => Some(word),
+        _ => None,
+    };
     need!(places.s, stored);
     Out::Next(places.s)
 }

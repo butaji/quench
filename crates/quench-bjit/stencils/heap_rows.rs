@@ -44,7 +44,7 @@ use crate::stage::StencilStage;
 use crate::staged::{Frame, Operation, Stage, Step, step, step_local, step_value, string_length};
 use crate::codes::{ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, APPEND_ROW, ARRAY_ROW, CALLEE_CAPTURE_ROW, CAPTURE_IDENTITY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAR_CODE_AT_ROW, CONSTANT_ROW, DECLARED_ROW, ENV_DEFINE_ROW, HELD_LINK_AT, PROTOTYPE_ROW, SHAPE_ROW, STORES_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, FOR_IN_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, HELD_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_INT_ADMITTED_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ADMITTED_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, IC_SET_ROW, IDENTITY_ROW, INDEX_ROW, INSTANCEOF_ROW, KEY_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LIVE_ROW, LOAD_CHECKED_ROW, LOAD_LOCAL_ROW, MEM, NAME_ARENA_ROW, NAME_EITHER_ROW, OBJECT_ROW, PARSE_INT_ROW, REALM_ROW, SITE_ROW, SITE_STORE_ROW, STAGED_FIRST, STAGED_LAST, STORE_CHECKED_ROW, STORE_LOCAL_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, TYPED_INDEX_LAST, TYPED_INDEX_ROW, TYPED_LENGTH_ROW, TYPED_STORE_LAST, TYPED_STORE_ROW, TYPEOF_INDEX_ROW, TYPEOF_ISNOT_ROW, TYPEOF_IS_ROW, TYPEOF_STRING_ROW};
 use crate::staged::{code_units, environment, parse_int};
-use crate::places_view::{self, ELEMENT_SITES, PlacesView, entry_dense, entry_typed};
+use crate::places_view::{ELEMENT_SITES, PlacesView, entry_dense, entry_typed};
 use crate::{environment_rows, key_rows, name_rows, site_rows, staged_rows};
 
 /// `this` (`LoadThis`): the activation's receiver defined into the destination, where it holds one.
@@ -187,11 +187,18 @@ fn staged_element<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A
 
 /// An element read: the array word is hole 1; an entry row's record offset is hole 1 too. A dense
 /// read is the staged `ElementRead` (`key` the register at hole 2); an entry row's read is the same
-/// operation through the loop entry's view (`places_view::entry_read`).
+/// operation through the loop entry's view (`PlacesView` over `entry_dense`).
 #[inline(always)]
 fn index_row<const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) -> Out {
     if ENTRY {
-        places_view::entry_read::<D, B>(s, entry_dense::<HOLE_A>(payload))
+        let view = entry_dense::<HOLE_A>(payload);
+        let mut places = Places::<D, MEM, B>::new(s);
+        let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT) };
+        let mut frame = PlacesView::new(&mut places, LEFT, view);
+        match step(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, read) {
+            Step::Value(word) => deliver::<D>(places.s, word),
+            _ => Out::Exit(places.s),
+        }
     } else {
         let mut frame = Places::<D, MEM, B>::new(s);
         match staged_element(&mut frame, Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT) }) {
@@ -202,11 +209,18 @@ fn index_row<const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) 
 }
 
 /// An element store: the array is hole 0, the value hole 1, the index hole 2. A dense store is the
-/// staged `ElementWrite`; an entry row's store is the same operation through the loop entry's view.
+/// staged `ElementWrite`; an entry row's store is the same operation through the loop entry's view (`PlacesView`).
 #[inline(always)]
 fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) -> Out {
     if ENTRY {
-        places_view::entry_write::<A, B>(s, entry_dense::<0>(payload))
+        let view = entry_dense::<0>(payload);
+        let mut places = Places::<MEM, A, B>::new(s);
+        let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT };
+        let mut frame = PlacesView::new(&mut places, DEST, view);
+        match step(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, write) {
+            Step::Value(_) => Out::Next(places.s),
+            _ => Out::Exit(places.s),
+        }
     } else {
         let mut frame = Places::<MEM, A, B>::new(s);
         let done = staged_element(&mut frame, Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT }).is_some();
@@ -215,7 +229,7 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
 }
 
 /// A typed element read: the entry words' offset is hole 1, the Number delivered as `Value::number` makes it
-/// (`places_view::entry_read` over the typed view of the kind).
+/// (`PlacesView` over the typed view of the kind).
 #[inline(always)]
 fn typed_index_row<const KIND: u8, const D: u8, const B: u8>(s: S, payload: usize) -> Out {
     let view = need!(s, entry_typed::<KIND>(payload, (HOLE_A, TYPED_INDEX_ROW)));
@@ -234,7 +248,7 @@ fn typed_index_row<const KIND: u8, const D: u8, const B: u8>(s: S, payload: usiz
 }
 
 /// A typed element store of the Number operand (hole 1): the entry words' offset is hole 0, the index hole 2
-/// (`places_view::entry_write` over the typed view of the kind).
+/// (`PlacesView` over the typed view of the kind).
 #[inline(always)]
 fn typed_store_row<const KIND: u8, const A: u8, const B: u8>(s: S, payload: usize) -> Out {
     let view = need!(s, entry_typed::<KIND>(payload, (0, TYPED_STORE_ROW)));

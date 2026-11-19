@@ -273,32 +273,12 @@ impl<'a, const D: u8, const A: u8, const B: u8, const N: usize> PropertyFrame<Co
     }
 }
 
-/// The staged property operation `operation` run over `places`, with `ops` as the row's plan and
-/// `callout` its VM callout: the word it produced, or `None` where it left (nothing written past
-/// the leave).
-#[inline(always)]
-pub(crate) fn run_planned<const D: u8, const A: u8, const B: u8, const N: usize>(stage: &mut Concrete,
-    places: &mut Places<D, A, B>, ops: [IcOp<'static>; N], callout: Callout, operation: Operation<u64, ()>) -> Option<u64> {
-    match planned_step(stage, places, ops, callout, operation) {
-        Step::Value(word) => Some(word),
-        _ => None,
-    }
-}
-
-/// `planned_step`'s frame for a row: `places` wrapped with the plan `ops` and the callout, the frame the rows that
+/// The planned frame for a row: `places` wrapped with the plan `ops` and the callout, the frame the rows that
 /// run the staged step themselves build (`site_rows`, `ic_rows`), so the row names the `Operation` it runs.
 #[inline(always)]
 pub(crate) fn planned_frame<'a, const D: u8, const A: u8, const B: u8, const N: usize>(places: &'a mut Places<D, A, B>,
     ops: [IcOp<'static>; N], callout: Callout) -> PlannedPlaces<'a, D, A, B, N> {
     PlannedPlaces { places, ops, callout, lexical: None, held: None }
-}
-
-/// The staged property operation `operation` run over `places` through the planned frame: the step it made.
-#[inline(always)]
-pub(crate) fn planned_step<const D: u8, const A: u8, const B: u8, const N: usize>(stage: &mut Concrete,
-    places: &mut Places<D, A, B>, ops: [IcOp<'static>; N], callout: Callout, operation: Operation<u64, ()>) -> Step<u64, ()> {
-    let mut frame = planned_frame(places, ops, callout);
-    step_property(stage, &mut frame, operation)
 }
 
 /// The staged global-name operation `operation` (`LoadName` or `GlobalWrite`) run over `places` where
