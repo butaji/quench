@@ -85,6 +85,7 @@ impl MethodCacheTable {
 
     /// Every recorded site's ways, in no particular order (sites emptied by a reclaimed program
     /// read as empty ways).
+    #[cfg(any(test, feature = "profile-aggregate"))]
     pub(in crate::vm) fn recorded(&self) -> impl Iterator<Item = &MethodWays> {
         self.entries.iter()
     }
