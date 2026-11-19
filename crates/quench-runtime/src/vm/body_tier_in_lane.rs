@@ -27,6 +27,16 @@ pub(super) struct LaneBodyHistory {
     demanded: bool,
     /// The timed runs of its current body and of the interpreter (`audit`).
     audit: audit::Audit,
+    /// The planned IR instructions of its body where that body compiled quick
+    /// (`tier_model::compiles_quick`), else 0: its completions weigh an optimizing compile.
+    quick_ir: u32,
+    /// Whether its next compile is the optimizing one its quick body's entries repaid
+    /// (`LaneView::optimize_body`): priced already, it compiles at its next entry.
+    optimize: bool,
+    /// The runs its retired bodies made (`EntryCell::evidence` at each retirement): entries of the
+    /// function as the warm-up's are, which a recompile's pricing counts with its own warm-up's
+    /// (Lindy: a function that ran this long runs on), rather than starting again from none.
+    runs: u32,
 }
 
 #[path = "lane_body_audit.rs"]
@@ -102,7 +112,16 @@ impl LaneView {
         let LaneBody::Specialized { leaves_at, completed, recompiles, stuck, method, .. } = body else { return false };
         if completed_region || exit.completes() {
             completed.set(true);
-            if self.entry.note_completions(1) % NATIVE_CREDIT_RUNS == 0 { credit_native_callees(method); }
+            let completions = self.entry.note_completions(1);
+            if completions % NATIVE_CREDIT_RUNS == 0 { credit_native_callees(method); }
+            // A body compiled quick weighs the optimizing compile at each doubling of its runs.
+            let quick_ir = self.tier().history.get().quick_ir;
+            if quick_ir != 0 && completions.is_power_of_two()
+                && super::super::compiled::lane_facts::optimizes_quick_body(self.tiers, self, self.records.len() as u64, u32::try_from(completions).unwrap_or(u32::MAX), quick_ir as usize)
+            {
+                self.optimize_body();
+                return true;
+            }
             return false;
         }
         let exits = self.entry.note_leave();
@@ -129,6 +148,27 @@ impl LaneView {
         true
     }
 
+    /// Retires its quick body for the optimizing compile its runs repaid, which starts at its next
+    /// entry (`LaneBodyHistory::optimize`); the quick body's direct callers keep running it.
+    fn optimize_body(&self) {
+        let history = self.tier().history.get();
+        self.tier().history.set(LaneBodyHistory { quick_ir: 0, optimize: true, ..history });
+        // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
+        let body = unsafe { &mut *self.tier().tier_lane.get() };
+        let LaneBody::Specialized { recompiles, stuck, .. } = body else { return };
+        let next = LaneBody::Unspecialized { entries: u32::from(self.tiers.lane_body.warmup()) - 1, recompiles: *recompiles, stuck: *stuck };
+        self.retire_body(body, next);
+    }
+
+    /// Notes the level of the compile it plans now: quick, of about `ir` IR instructions, or optimizing.
+    pub(in crate::vm) fn note_compile_level(&self, quick: bool, ir: usize) {
+        let history = self.tier().history.get();
+        self.tier().history.set(LaneBodyHistory { quick_ir: if quick { u32::try_from(ir.max(1)).unwrap_or(u32::MAX) } else { 0 }, ..history });
+    }
+
+    /// Whether its next compile is the optimizing one its quick body's runs repaid.
+    pub(in crate::vm) fn optimize_due(&self) -> bool { self.tier().history.get().optimize }
+
     /// Counts a leave inside this function's body that a native caller's run made, which no
     /// handler entry notes (`native_frames::advance_into_frames`): one add to the cell's word, on the leave.
     pub(super) fn note_native_leave(&self) { self.entry.note_leave(); }
@@ -138,12 +178,26 @@ impl LaneView {
     fn retire_body(&self, body: &mut LaneBody, next: LaneBody) {
         let body_state = body.tier_state();
         let LaneBody::Specialized { tier_prologue, .. } = body else { unreachable!() };
+        self.credit_runs();
         let event = if matches!(next, LaneBody::Declined) { TierEvent::Decline } else { TierEvent::Demote };
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
         super::super::tier_machine::withdraw(&self.entry, body_state, event);
         self.tier().retired.borrow_mut().push(method);
+    }
+
+    /// Books its current body's runs to its history (`LaneBodyHistory::runs`) as the body goes.
+    fn credit_runs(&self) {
+        let (completions, leaves) = self.entry.evidence();
+        let history = self.tier().history.get();
+        let runs = u32::try_from(completions.saturating_add(leaves)).unwrap_or(u32::MAX);
+        self.tier().history.set(LaneBodyHistory { runs: history.runs.saturating_add(runs), ..history });
+    }
+
+    /// The entries a compile at its warm-up count `entries` is priced at: those and its retired bodies' runs.
+    fn priced_entries(&self, entries: u32) -> u32 {
+        entries.saturating_add(self.tier().history.get().runs)
     }
 
     /// The entries before its next body specializes: the warm-up, doubled per dropped body.
@@ -269,6 +323,8 @@ impl LaneView {
         let body = unsafe { &mut *self.tier().tier_lane.get() };
         let LaneBody::Specialized { tier_prologue, recompiles, stuck, .. } = body else { return };
         if history.callee_recompiles >= self.tiers.lane_body.max_callee_recompiles { return; }
+        self.credit_runs();
+        let history = self.tier().history.get();
         self.tier().history.set(LaneBodyHistory { callee_recompiles: history.callee_recompiles + 1, late_calls: 0, ..history });
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
         let next = LaneBody::Unspecialized { entries: u32::from(self.tiers.lane_body.warmup_entries) - 1, recompiles: *recompiles, stuck: *stuck };
@@ -292,6 +348,7 @@ impl LaneView {
     pub(super) fn drop_body(&self, body: &mut LaneBody) {
         let LaneBody::Specialized { leaves_at, stuck, recompiles, .. } = body else { return };
         let (stuck, recompiles) = (stuck.union(leaves_at.get()), *recompiles);
+        self.credit_runs();
         let history = self.tier().history.get();
         self.tier().history.set(LaneBodyHistory {
             lifetimes: history.lifetimes.saturating_add(1),
@@ -315,6 +372,7 @@ impl LaneView {
         };
         use std::cell::Cell;
         self.audit_restart();
+        self.tier().history.set(LaneBodyHistory { optimize: false, ..self.tier().history.get() });
         // Native callers enter a closed body through the view's cell, and leave inside it
         // through the view's pin.
         if let Some(body) = method.lease().filter(|body| body.calls_only_natively()) {
@@ -363,7 +421,7 @@ impl LaneView {
                 if !self.attempts_at(entries.saturating_add(1)) { super::super::compiled::base_region::count(super::super::compiled::base_region::Event::BodyRecurrent); }
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
-                (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| entries.saturating_add(1)), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
+                (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| self.priced_entries(entries.saturating_add(1))), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
             }
             LaneBody::Unspecialized { entries, recompiles, stuck } => {
                 let ticks = warm_ticks();
@@ -396,7 +454,9 @@ impl LaneView {
                 LaneBody::Compiling { pending, wait: std::cell::Cell::new(wait), looks, recompiles, stuck }
             }
             super::super::compiled::LaneBodyOutcome::Published(published) => {
-                self.respecialize_callers();
+                // An optimizing compile after a quick body changes no caller's call: those that
+                // called the quick body by its entry or cell reach this one the same way.
+                if !self.optimize_due() { self.respecialize_callers(); }
                 self.specialized(entry, published, recompiles, stuck)
             }
             // A compile a collection or a changed fact outran is a body a lifecycle edge dropped.

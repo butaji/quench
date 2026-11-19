@@ -29,7 +29,7 @@ pub(in crate::vm) struct Tiers {
 #[cfg(test)]
 pub(in crate::vm) const TEST_PRIORS: Priors = Priors {
     interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
-    region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, remaining_divisor: 4, plan_ns_per_ir: 1500,
+    region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, quick_body_share: 400, quick_compile_permille: 670, remaining_divisor: 4, plan_ns_per_ir: 1500,
 };
 
 /// The runs a loop-free function makes unlowered before a later call lowers it
@@ -95,6 +95,14 @@ pub(in crate::vm) struct Priors {
     /// publish a `LaneMethod` the one entry driver runs (`lane_body_entry`, `Vm::run_lane_body`),
     /// whose binding of the lane frame is the crossing's cost, not the code the body enters.
     pub(in crate::vm) base_body_share: u64,
+    /// A u-jit body compiled without the mid-end (`CompileLevel::Quick`: no e-graph, no loop
+    /// unswitching), as a share of the interpreter's time per bytecode, and the share of an
+    /// optimized compile's time its compile takes, both per mille. Richards' compile profile
+    /// (Nov 18): of 972M Ir of Cranelift, the e-graph took 179M and poll unswitching 140M, so a
+    /// quick compile costs about two thirds; its code keeps the values the e-graph would have
+    /// folded, a third more time per bytecode than `body_share`.
+    pub(in crate::vm) quick_body_share: u64,
+    pub(in crate::vm) quick_compile_permille: u64,
     /// The divisor of the entries and the interpreter time so far that gives the credible lower
     /// bound of those to come, where the decision (a compile) is irreversible.
     pub(in crate::vm) remaining_divisor: u64,
@@ -391,7 +399,7 @@ const MEASURED: Tiers = Tiers {
         window_registers: 32,
         max_depth: 3,
     },
-    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, remaining_divisor: 4, plan_ns_per_ir: 1500 },
+    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, quick_body_share: 400, quick_compile_permille: 670, remaining_divisor: 4, plan_ns_per_ir: 1500 },
     stress: false,
     admits_all: false,
     regexp_native_runs: 2000,
