@@ -10956,7 +10956,7 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
                 super::compiled::LaneBodyWork::Start { generic, shrinks, observed, looped, called, caller, arrays: &arrays },
             poll => poll,
         };
-        let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, body)).unwrap_or_default();
+        let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, code, body)).unwrap_or_default();
         // `--b-jit` stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
         if crate::jit_mode::base_only() {
             let super::compiled::LaneBodyWork::Start { generic, .. } = work else { unreachable!("a stencil body never compiles in the background") };
@@ -18664,7 +18664,7 @@ impl<H: Host> Vm<H> {
 /// specialized and the lane would activate it in place, with an ordinary `this`, from a
 /// plain call of at most its parameters: what a lane body calls by its compiled entry
 /// (`compiled::DirectCallee`), the latest first.
-fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, body: &crate::bytecode::Function) -> Vec<super::compiled::DirectCandidates> {
+fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, program: &crate::bytecode::ResidualProgram, body: &crate::bytecode::Function) -> Vec<super::compiled::DirectCandidates> {
     let tail_calls = vm.host.proper_tail_calls() && body.strict;
     body.code.iter().enumerate().map(|(pc, packed)| {
         let instruction = body.widened(*packed);
@@ -18675,10 +18675,20 @@ fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, body
             callees.extend(lane_construct_callee(vm, view, function, pc, ImmediateLayout::argument_count(instruction.imm())));
             return callees;
         }
+        let Some(argc) = direct_argc(program, instruction) else { return callees };
         callees.extend(lane_body_tier::site_targets(vm, view, pc).filter(|_| direct)
-            .filter_map(|target| lane_direct_callee(vm, view, function, pc, ImmediateLayout::argument_count(instruction.imm()), target)));
+            .filter_map(|target| lane_direct_callee(vm, view, function, pc, argc, target)));
         callees
     }).collect()
+}
+
+/// The arguments a call instruction passes its direct row: a method call's are its method site's count, which only the
+/// site names (`None` where the program holds no such site).
+fn direct_argc(program: &crate::bytecode::ResidualProgram, instruction: WideInstruction) -> Option<u16> {
+    match instruction.op() {
+        crate::bytecode::Op::CallMethod => crate::staged::DecodeContext::of(program).method_site(instruction.method_site_index()).map(|site| site.argument_count),
+        _ => Some(ImmediateLayout::argument_count(instruction.imm())),
+    }
 }
 
 /// Records the forwarded initializer the construction at `i` ran, which a body may call by

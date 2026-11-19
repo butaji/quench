@@ -294,6 +294,18 @@ fn chosen_row(kind: Kind, [dst, a, b]: [Place; 3], variant: Variant, general: bo
     row(speculates(variant, general)).or_else(|_| row(!general)).or_else(|_| checked(speculates(variant, general)))
 }
 
+/// The site read of a method call's callee (`call_plan::Method`): the field cache entry `cache` answers for the
+/// receiver register `receiver`, written to the frame slot of `scratch`, where the call's direct row checks it. A miss
+/// leaves with nothing written (`Exit::At` the call), so the interpreter runs the call instruction again.
+pub(super) fn method_read(receiver: Register, cache: u16, scratch: Register) -> Result<(&'static Stencil, [u64; HOLES]), String> {
+    let row = HeapRow { heap: Heap::Site, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
+    let (dst_hole, a_hole) = (u64::from(scratch) * SLOT, u64::from(receiver) * SLOT);
+    let object = dst_hole | a_hole << numeric::library::SITE_OBJECT_AT;
+    let upper = crate::value::NarrowLayout::upper_words() as u64;
+    let entry = super::decode::site_read_row(receiver, cache, scratch).hole;
+    Ok((base_rows::stencil(row)?, padded_holes([object, upper, entry, 0, 0])))
+}
+
 /// The row of `decoded` at `pc`, which takes general semantics where `general` and the speculation of
 /// its feedback `variant`; a backward jump takes the poll row the layout's ending names.
 pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): (bool, Variant), helpers: LaneHelpers) -> Result<Planned, String> {

@@ -585,6 +585,50 @@ impl FunctionCompiler<'_, '_> {
         (strings.len() >= MINIMUM_CASES && strings.len() < usize::from(u16::MAX)).then_some(strings)
     }
 
+    /// The labels of a switch whose tests are int literals (constant int32 Numbers, in case order, with the case index
+    /// of each), when at least four of them cover a span of at most 1024 with at least half of it labelled. Any other
+    /// test, a fraction or a larger Number, or a sparse set keeps the compare chain.
+    fn dense_int_switch_labels(item: &SwitchStatement<'_>) -> Option<Vec<(i32, usize)>> {
+        const MINIMUM_CASES: usize = 4;
+        const MAXIMUM_SPAN: i64 = 1024;
+        let mut labels = Vec::new();
+        for (index, case) in item.cases.iter().enumerate() {
+            let Some(test) = &case.test else { continue };
+            let Some(Constant::Number(number)) = binding_time::expression(test) else { return None };
+            if number.fract() != 0.0 || number < f64::from(i32::MIN) || number > f64::from(i32::MAX) { return None; }
+            labels.push((number as i32, index));
+        }
+        if labels.len() < MINIMUM_CASES { return None; }
+        let low = i64::from(labels.iter().map(|(label, _)| *label).min()?);
+        let high = i64::from(labels.iter().map(|(label, _)| *label).max()?);
+        let span = high - low + 1;
+        let mut distinct: Vec<i32> = labels.iter().map(|(label, _)| *label).collect();
+        distinct.sort_unstable();
+        distinct.dedup();
+        (span <= MAXIMUM_SPAN && distinct.len() as i64 * 2 >= span).then_some(labels)
+    }
+
+    /// The selector and branch table of a dense int switch (`IntCaseIndex`, `WasmBranchTable`): one `Jump` per label slot
+    /// in order, then the no-match `Jump` the selector's count names. Returns each slot's edge with its case (`None`
+    /// where no label holds the slot) and the no-match edge.
+    fn dense_int_switch(&mut self, discriminant_binding: Atom, labels: &[(i32, usize)]) -> (Vec<(usize, Option<usize>)>, usize) {
+        let low = labels.iter().map(|(label, _)| *label).min().unwrap_or(0);
+        let high = labels.iter().map(|(label, _)| *label).max().unwrap_or(0);
+        let count = (i64::from(high) - i64::from(low) + 1) as u16;
+        let discriminant = self.load_atom(discriminant_binding);
+        let selector = self.reg();
+        self.emit(Op::IntCaseIndex, selector, count, discriminant, low as u32);
+        self.emit(Op::WasmBranchTable, selector, 0, 0, u32::from(count));
+        let mut edges = Vec::with_capacity(usize::from(count));
+        for slot in 0..count {
+            // The first case of a label holds it (`===` takes the first equal case).
+            let value = low + i32::from(slot);
+            let case = labels.iter().find(|(label, _)| *label == value).map(|(_, case)| *case);
+            edges.push((self.emit(Op::Jump, 0, 0, 0, 0), case));
+        }
+        (edges, self.emit(Op::Jump, 0, 0, 0, 0))
+    }
+
     fn switch_statement(&mut self, item: &SwitchStatement<'_>) {
         self.clear_statement_completion();
         let discriminant_binding = self.hidden_local("\0quench:switch-discriminant");
@@ -600,6 +644,8 @@ impl FunctionCompiler<'_, '_> {
         }
         let mut case_edges = Vec::with_capacity(item.cases.len());
         let string_cases = typeof_operand.is_none().then(|| Self::string_switch_cases(item)).flatten();
+        let int_labels = typeof_operand.is_none().then(|| Self::dense_int_switch_labels(item)).flatten();
+        let mut dense_edges = Vec::new();
         let no_match = if let Some(strings) = string_cases {
             // Every test is a string literal, which evaluates to itself without effects: one
             // selector finds the first case `===` the discriminant, and a table enters it.
@@ -613,6 +659,12 @@ impl FunctionCompiler<'_, '_> {
                 case_edges.push(case.test.as_ref().map(|_| self.emit(Op::Jump, 0, 0, 0, 0)));
             }
             self.emit(Op::Jump, 0, 0, 0, 0)
+        } else if let Some(labels) = int_labels {
+            // Dense int labels: one selector finds the label's slot, a branch table enters its `Jump`.
+            for _ in &item.cases { case_edges.push(None); }
+            let (edges, no_match) = self.dense_int_switch(discriminant_binding, &labels);
+            dense_edges = edges;
+            no_match
         } else {
             // Every case test is an expression evaluated before any clause body runs, so no
             // statement boundary releases this register before the last test reads it: one load
@@ -667,6 +719,9 @@ impl FunctionCompiler<'_, '_> {
             .position(|case| case.test.is_none())
             .map_or(end, |index| targets[index]);
         self.patch_to(no_match, fallback);
+        for (edge, case) in dense_edges {
+            self.patch_to(edge, case.map_or(fallback, |case| targets[case]));
+        }
         self.patch_edges(&control.breaks, end);
         self.resolve_control_destinations(&control, end, None);
         self.pop_lexical_scope();

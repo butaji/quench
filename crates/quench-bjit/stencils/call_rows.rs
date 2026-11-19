@@ -40,7 +40,7 @@
 //! writes the live pinned registers back: the lowering of an instruction whose operation only
 //! the interpreter runs.
 
-use crate::layout::call_record::{helper_outcome, CallRecord, LaneStatus, Outcome, CALLEE_EXIT, PLACED_ARGUMENTS, REGISTER_BYTES};
+use crate::layout::call_record::{helper_outcome, CallRecord, DirectHole, HelperHole, LaneStatus, Outcome, CALLEE_EXIT, PLACED_ARGUMENTS, REGISTER_BYTES};
 use crate::codes::{LAST_DOUBLE_PIN, LAST_INT_PIN, MEM, PIN, PINF};
 use crate::heap_rows::{payload, set_context_word, word_at};
 use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_USES_THIS_AT, CELL_RECOVERY_AT, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_FRAMES_END, JS_STEP_LANE_VALUES_END, JS_STEP_RESIDUAL, JS_STEP_VM, CONTEXT_BODY, CONTEXT_THIS, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
@@ -59,13 +59,6 @@ unsafe extern "C" {
     static HOLE_EXIT1: u8;
 }
 
-/// The values holes of the call rows: the helper row's call pc and helper address, the direct
-/// row's record address.
-const HOLE_CALL_PC: u8 = 0;
-const HOLE_HELPER: u8 = 1;
-const HOLE_RECORD: u8 = 0;
-/// A direct row's call record index in the caller, which a raise names to the lane (`raising`).
-const HOLE_DIRECT_PC: u8 = 1;
 /// Shift from a word count to bytes.
 const WORD_SHIFT: u32 = REGISTER_BYTES.trailing_zeros();
 
@@ -162,75 +155,68 @@ fn word_of(step: Step<u64, ()>) -> Option<u64> {
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "rust-preserve-none" fn call_helper(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
-    unsafe {
-        let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
-        let payload = payload(&s);
-        let helper: Helper = transmute(hole64::<HOLE_HELPER>() as usize);
-        let status = helper(word_at(payload, JS_STEP_VM), word_at(payload, JS_STEP_RESIDUAL), word_at(payload, JS_STEP_LANE_CONTEXT), hole64::<HOLE_CALL_PC>());
-        match helper_outcome(status) {
-            Outcome::Next => go!(HOLE_NEXT, dead(&s)),
-            Outcome::Taken => go!(HOLE_TAKEN, dead(&s)),
-            Outcome::Missed => {
-                core::hint::cold_path();
-                go!(HOLE_EXIT0, dead(&s))
-            }
-            Outcome::Left => {
-                core::hint::cold_path();
-                go!(HOLE_EXIT1, leaving(&s, LaneStatus::NativeJsStopped as u32, CALLEE_EXIT))
-            }
-            Outcome::Raised => {
-                core::hint::cold_path();
-                go!(HOLE_EXIT1, raising(&s, payload, hole64::<HOLE_CALL_PC>()))
-            }
-            Outcome::Terminated => {
-                core::hint::cold_path();
-                go!(HOLE_EXIT1, leaving(&s, LaneStatus::Terminated as u32, 0))
-            }
-        }
-    }
-}
-
-/// The packed helper row's values holes after the helper's: the instruction's first word (its opcode
-/// and operands) and its immediate (`WideInstruction::from_words`).
-const HOLE_PACKED_FIRST: u8 = 2;
-const HOLE_PACKED_IMM: u8 = 3;
 /// A packed step helper (`lane_body_step_packed`): (vm, residual, lane context, call pc, first word, immediate) -> status.
 type HelperPacked = unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64;
 
-/// Helper row `call_helper_packed`: `call_helper` with the instruction its planner decoded passed as holes
-/// V2 and V3, so the helper runs it without decoding the record again. Its successors and exits are `call_helper`'s.
-#[unsafe(no_mangle)]
-pub unsafe extern "rust-preserve-none" fn call_helper_packed(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
-    unsafe {
-        let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
-        let payload = payload(&s);
-        let helper: HelperPacked = transmute(hole64::<HOLE_HELPER>() as usize);
-        let status = helper(word_at(payload, JS_STEP_VM), word_at(payload, JS_STEP_RESIDUAL), word_at(payload, JS_STEP_LANE_CONTEXT), hole64::<HOLE_CALL_PC>(),
-            hole64::<HOLE_PACKED_FIRST>(), hole64::<HOLE_PACKED_IMM>());
-        match helper_outcome(status) {
-            Outcome::Next => go!(HOLE_NEXT, dead(&s)),
-            Outcome::Taken => go!(HOLE_TAKEN, dead(&s)),
-            Outcome::Missed => {
-                core::hint::cold_path();
-                go!(HOLE_EXIT0, dead(&s))
-            }
-            Outcome::Left => {
-                core::hint::cold_path();
-                go!(HOLE_EXIT1, leaving(&s, LaneStatus::NativeJsStopped as u32, CALLEE_EXIT))
-            }
-            Outcome::Raised => {
-                core::hint::cold_path();
-                go!(HOLE_EXIT1, raising(&s, payload, hole64::<HOLE_CALL_PC>()))
-            }
-            Outcome::Terminated => {
-                core::hint::cold_path();
-                go!(HOLE_EXIT1, leaving(&s, LaneStatus::Terminated as u32, 0))
+/// One helper row body, expanded for each entry (`PACKED`): the semantic helper at hole V1 runs the step at the
+/// call pc (hole V0), which for `PACKED` also takes the instruction's words (holes V2, V3) so it runs without
+/// decoding the record. The status the helper answers picks the successor. `call_helper` and `call_helper_packed`
+/// are the two expansions, so the row's contract is written once.
+macro_rules! helper_row {
+    ($(#[$doc:meta])* $name:ident, $packed:literal) => {
+        $(#[$doc])*
+        #[unsafe(no_mangle)]
+        pub unsafe extern "rust-preserve-none" fn $name(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
+            const PACKED: bool = $packed;
+            unsafe {
+                let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
+                let payload = payload(&s);
+                let (vm, residual, context) = (word_at(payload, JS_STEP_VM), word_at(payload, JS_STEP_RESIDUAL), word_at(payload, JS_STEP_LANE_CONTEXT));
+                let status = if PACKED {
+                    let helper: HelperPacked = transmute(hole64::<{ HelperHole::Helper as u8 }>() as usize);
+                    helper(vm, residual, context, hole64::<{ HelperHole::CallPc as u8 }>(), hole64::<{ HelperHole::PackedFirst as u8 }>(), hole64::<{ HelperHole::PackedImm as u8 }>())
+                } else {
+                    let helper: Helper = transmute(hole64::<{ HelperHole::Helper as u8 }>() as usize);
+                    helper(vm, residual, context, hole64::<{ HelperHole::CallPc as u8 }>())
+                };
+                match helper_outcome(status) {
+                    Outcome::Next => go!(HOLE_NEXT, dead(&s)),
+                    Outcome::Taken => go!(HOLE_TAKEN, dead(&s)),
+                    Outcome::Missed => {
+                        core::hint::cold_path();
+                        go!(HOLE_EXIT0, dead(&s))
+                    }
+                    Outcome::Left => {
+                        core::hint::cold_path();
+                        go!(HOLE_EXIT1, leaving(&s, LaneStatus::NativeJsStopped as u32, CALLEE_EXIT))
+                    }
+                    Outcome::Raised => {
+                        core::hint::cold_path();
+                        go!(HOLE_EXIT1, raising(&s, payload, hole64::<{ HelperHole::CallPc as u8 }>()))
+                    }
+                    Outcome::Terminated => {
+                        core::hint::cold_path();
+                        go!(HOLE_EXIT1, leaving(&s, LaneStatus::Terminated as u32, 0))
+                    }
+                }
             }
         }
-    }
+    };
 }
+
+helper_row!(
+    /// Helper row `call_helper`: holes V0 = the call record's pc (the fourth helper argument), V1 =
+    /// the helper's address (`lane_body_call`); vm, residual and lane context come from the dispatch payload
+    /// behind the context. Successors: COMPLETED continues at NEXT; MISSED (nothing ran) leaves at the call's
+    /// pc through EXIT0 (a leave that does not spill); LEFT and TERMINATED leave through EXIT1 with the
+    /// (status, word) in r14, r15 (`leave_status`); BRANCHED (a step that took its conditional jump) continues
+    /// at TAKEN, the reloads of the registers live at the jump's target.
+    call_helper, false);
+
+helper_row!(
+    /// Helper row `call_helper_packed`: `call_helper` with the instruction its planner decoded passed as holes
+    /// V2 and V3, so the helper runs it without decoding the record again. Its successors and exits are `call_helper`'s.
+    call_helper_packed, true);
 
 /// How a direct call ended.
 enum Entered {
@@ -385,7 +371,7 @@ const LEXICAL: u8 = 2;
 unsafe fn enter<const ARGC: usize, const MODE: u8, const CHECKED: bool>(s: &S) -> Entered {
     // SAFETY: as `admit`.
     unsafe {
-        let record = hole64::<HOLE_RECORD>() as usize;
+        let record = hole64::<{ DirectHole::Record as u8 }>() as usize;
         let mut stage = StencilStage::from_hole(0);
         // The caller's register file: the call protocol's frame hook (`Places::call_registers`).
         let mut frame = Places::<0, 0, 0>::new(S { frame: s.frame, ctx: s.ctx, p: s.p, f: s.f });
@@ -441,7 +427,7 @@ macro_rules! direct_row {
                     }
                     Entered::Raised => {
                         core::hint::cold_path();
-                        go!(HOLE_EXIT0, raising(&s, payload(&s), hole64::<HOLE_DIRECT_PC>()))
+                        go!(HOLE_EXIT0, raising(&s, payload(&s), hole64::<{ DirectHole::CallPc as u8 }>()))
                     }
                     Entered::Left(status, word) => {
                         core::hint::cold_path();

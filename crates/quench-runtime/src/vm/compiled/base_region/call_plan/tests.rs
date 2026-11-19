@@ -1,7 +1,7 @@
 use super::*;
 use quench_bjit::call_record as protocol;
 
-const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: CallForm::Plain };
+const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: CallForm::Plain, method: None };
 
 fn facts(registers: u16, params: u16) -> DirectFacts {
     let cell = CellFacts { registers, room: registers, params, fill: crate::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
@@ -54,7 +54,7 @@ fn every_other_call_takes_the_helper_with_its_reason() {
 
 fn plan<'a>(direct: Option<&'a DirectFacts>, spills: &'a [(Place, Register)], reloads: &'a [(Place, Register)]) -> CallPlan<'a> {
     let direct = direct.map_or(&[][..], std::slice::from_ref);
-    CallPlan { shape: SHAPE, direct, helper: 0x4000, spills, reloads, proven_args: 0 }
+    CallPlan { shape: SHAPE, direct, helper: 0x4000, spills, reloads, proven_args: 0, read: None }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -157,4 +157,24 @@ fn a_direct_record_carries_the_proven_arguments() {
     let direct = facts(4, 2);
     let chain = plan_call(&CallPlan { proven_args: 0b11, ..plan(Some(&direct), &[], &[]) }).expect("a plan");
     assert_eq!(chain.records.first().map(|record| record.proven_args), Some(0b11));
+}
+
+/// A method call's chain is the spills, its site read (the callee into the scratch register), the checked direct row
+/// that compares that callee and takes the receiver as `this`, then the helper row; the read leaves at the call.
+#[test]
+fn a_method_site_reads_its_callee_before_the_direct_row() {
+    let shape = CallShape { callee: 7, form: CallForm::Method, method: Some(Method { cache: 3, scratch: 7 }), ..SHAPE };
+    let direct = facts(4, 2);
+    assert_eq!(choose(&shape, Some(&direct)), Choice::Direct);
+    assert_eq!(choose(&CallShape { method: None, ..shape }, Some(&direct)), Choice::Helper(Declined::Form), "a method form needs its read");
+    let read = quench_bjit::call::stencil(quench_bjit::call::CallRow::Reload(quench_bjit::numeric::Place::Pin(0))).expect("a row");
+    let spills = [(quench_bjit::numeric::Place::Pin(0), 2)];
+    let plan = CallPlan { shape, read: Some((read, quench_bjit::padded_holes([0]))), ..plan(Some(&direct), &spills, &[]) };
+    let chain = plan_call(&plan).expect("a plan");
+    assert_eq!(chain.choice, Choice::Direct);
+    assert_eq!(chain.parts.len(), 4, "spill, read, direct row, helper row");
+    assert!(std::ptr::eq(chain.parts[1].stencil, read), "the read follows the spills");
+    assert_eq!(chain.parts[1].exits, vec![super::super::Exit::At(9)], "a miss leaves at the call");
+    assert_eq!(chain.parts[2].taken, Some(4), "the direct row completes past the helper row");
+    assert_eq!(chain.records.first().map(|record| record.callee_register), Some(7), "the direct row checks the scratch register");
 }

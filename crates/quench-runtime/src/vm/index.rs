@@ -549,14 +549,26 @@ impl<H: Host> Vm<H> {
     /// replacing a present one, appending at the dense length, or filling a hole no prototype
     /// claims (`set_index_mode`, `general_elements`); `false` before any effect.
     pub(super) fn store_plain_element(&mut self, object: Value, index: usize, value: Value) -> bool {
+        if self.store_present_element(object, index, value) { return true; }
         let Some(data) = self.heap.array(object) else { return false };
         if data.has_indexed_descriptors() || data.is_frozen() { return false; }
         match data.elements().get(index) {
-            Some(present) if !present.is_deleted() => { self.replace_dense_element(object, index, value); true }
             Some(_) => !data.is_arguments_object() && self.inherited_index_unclaimed(object, index)
                 && self.set_array_element(object, index, value),
             None => self.append_dense_element(object, index, value),
         }
+    }
+
+    /// Replaces the present dense element `index` of the plain array `object` with `value`: no guest code
+    /// and no allocation, so the direct helper runs it too (`family_helpers`). `false`, before any effect,
+    /// where the element is absent or the array's descriptors or integrity govern the store.
+    #[inline(always)]
+    pub(in crate::vm) fn store_present_element(&mut self, object: Value, index: usize, value: Value) -> bool {
+        let Some(data) = self.heap.array(object) else { return false };
+        if data.has_indexed_descriptors() || data.is_frozen() { return false; }
+        if !data.elements().get(index).is_some_and(|present| !present.is_deleted()) { return false; }
+        self.replace_dense_element(object, index, value);
+        true
     }
 
     pub(super) fn set_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {

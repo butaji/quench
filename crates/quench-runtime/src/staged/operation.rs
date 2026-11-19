@@ -192,6 +192,14 @@ impl<W, P> Operation<W, P> {
         }
     }
 
+    /// Whether the packed step helper runs this operation directly (`dispatch_fast::family_helpers`): its
+    /// direct arm reads the operands from the running frame and declines, before any effect, where the
+    /// general step decides. Only the operations whose arms are shared with `Vm::step` qualify
+    /// (`step_index_get`, `step_index_set`, `write_binary_result`).
+    pub(crate) const fn direct_helper(&self) -> bool {
+        matches!(self, Self::ElementRead { .. } | Self::ElementWrite { .. } | Self::Binary { .. })
+    }
+
     /// The environment, global and iteration operations of `decode` (`Decoder::Names`), from a
     /// record's wide fields (`Fields::wide`).
     #[inline(always)]
