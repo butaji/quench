@@ -194,6 +194,18 @@ pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::C
     (undecided, stage.pick(heap, record, unheaped_truthy))
 }
 
+/// ToBoolean of a Boolean's `bits`: `true` alone is truthy.
+#[inline(always)]
+pub(crate) fn boolean_truthy<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
+    stage.eq_imm(bits, crate::Value::TRUE.to_bits())
+}
+
+/// ToBoolean of an integer word (an int32 or a 64-bit integer, as held): nonzero.
+#[inline(always)]
+pub(crate) fn int_truthy<S: Stage>(stage: &mut S, word: S::Word) -> S::Cond {
+    stage.ne_imm(word, 0u32)
+}
+
 /// The index in `bytecode::TYPEOF_NAMES` of a name some value's `typeof` is.
 const fn typeof_name_index(name: &str) -> u64 {
     match crate::bytecode::typeof_name_index(name) {
