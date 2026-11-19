@@ -253,7 +253,7 @@ impl<H: Host> Vm<H> {
     /// Notes that the element access at `pc` of frame `f` met `kind`, in the frame function's lane view.
     pub(crate) fn note_element_kind(&self, f: usize, pc: usize, kind: OperandKinds) {
         let function = self.frames[f].function as usize;
-        let view = self.programs.lane_views(self.active_program).and_then(|views| views.get(function));
+        let view = self.programs.made_lane_views(self.active_program).and_then(|views| views.get(function));
         if let Some(view) = view.and_then(super::super::program_store::derived_lane_view) {
             view.note_element(pc, kind);
         }
