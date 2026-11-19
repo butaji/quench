@@ -1907,7 +1907,7 @@ fn read_module_requests(input: &mut BinaryReader<'_>) -> Result<Vec<ModuleReques
 }
 
 /// The declared environment: none (0), or its declarations, enum constants, class fields, signatures,
-/// locals, parameter members and parameter classes (1).
+/// locals, parameter members, parameter classes and parameter language sets (1).
 fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::DeclaredTypes>) {
     let Some(declared) = declared else {
         out.u8(0);
@@ -1942,6 +1942,7 @@ fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::Declare
         out.u32(field.class_start);
         out.string(&field.name);
         out.u16(field.languages);
+        out.u16(field.elements);
         out.u8(u8::from(field.is_static));
     }
     out.u32(declared.signatures.len() as u32);
@@ -1956,6 +1957,7 @@ fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::Declare
         out.u32(local.function);
         out.string(&local.name);
         out.u16(local.languages);
+        out.u16(local.elements);
     }
     out.u32(declared.members.len() as u32);
     for member in &declared.members {
@@ -1969,6 +1971,12 @@ fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::Declare
         out.u32(parameter.function);
         out.u16(parameter.parameter);
         out.u32(parameter.class);
+    }
+    out.u32(declared.parameters.len() as u32);
+    for parameter in &declared.parameters {
+        out.u32(parameter.function);
+        out.u16(parameter.parameter);
+        out.u16(parameter.languages);
     }
 }
 
@@ -1994,12 +2002,13 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
         let class_start = input.u32()?;
         let name = input.string()?.into_boxed_str();
         let languages = input.u16()?;
+        let elements = input.u16()?;
         let is_static = match input.u8()? {
             0 => false,
             1 => true,
             _ => return Err("invalid declared field static flag".to_string()),
         };
-        Ok(super::declared_types::DeclaredField { class_start, name, languages, is_static })
+        Ok(super::declared_types::DeclaredField { class_start, name, languages, elements, is_static })
     })?;
     let signatures = input.list(|input| {
         Ok(super::DeclaredSignature {
@@ -2010,7 +2019,12 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
         })
     })?;
     let locals = input.list(|input| {
-        Ok(super::DeclaredLocal { function: input.u32()?, name: input.string()?.into_boxed_str(), languages: input.u16()? })
+        Ok(super::DeclaredLocal {
+            function: input.u32()?,
+            name: input.string()?.into_boxed_str(),
+            languages: input.u16()?,
+            elements: input.u16()?,
+        })
     })?;
     let members = input.list(|input| {
         Ok(super::DeclaredMember {
@@ -2023,8 +2037,11 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
     let parameter_classes = input.list(|input| {
         Ok(super::DeclaredParameterClass { function: input.u32()?, parameter: input.u16()?, class: input.u32()? })
     })?;
+    let parameters = input.list(|input| {
+        Ok(super::DeclaredParameter { function: input.u32()?, parameter: input.u16()?, languages: input.u16()? })
+    })?;
     Ok(Some(Box::new(super::DeclaredTypes {
-        declared, enum_constants, fields, signatures, locals, members, parameter_classes,
+        declared, enum_constants, fields, signatures, locals, members, parameter_classes, parameters,
     })))
 }
 
