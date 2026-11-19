@@ -95,7 +95,7 @@ impl<H: Host> Vm<H> {
     /// a later call compiles the function whole (`compile_first_chunk`). `None` where the
     /// body does not stream, the callee then pointed at its chunk.
     fn call_streamed_runs(&mut self, p: &ResidualProgram, stub: (ProgramId, u32), callee: Value, this: Value, args: &[Value]) -> Result<Option<Value>, JsError> {
-        use crate::compile::statement_stream::StreamRun;
+        use crate::bytecode::StreamRun;
         let Some(span) = p.functions[stub.1 as usize].header().source_span else { return Ok(None) };
         if span.end - span.start < STREAMED_RUNS_MIN || self.streamed_stubs.contains(&stub) {
             return Ok(None);
@@ -124,7 +124,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn compile_first_chunk_anew(&mut self, p: &ResidualProgram, (program, function): (ProgramId, u32), run: Option<&crate::compile::statement_stream::StreamRun>) -> Result<FunctionKind, JsError> {
+    fn compile_first_chunk_anew(&mut self, p: &ResidualProgram, (program, function): (ProgramId, u32), run: Option<&crate::bytecode::StreamRun>) -> Result<FunctionKind, JsError> {
         if run.is_none()
             && let Some(appended) = self.append_first_chunk(p, (program, function))
         {

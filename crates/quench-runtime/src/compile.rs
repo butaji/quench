@@ -12,23 +12,9 @@ use oxc_span::{GetSpan, SourceType, Span};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 use std::ops::Range;
+pub use crate::bytecode::HostScriptOptions;
+pub(crate) use crate::compile_phase::{CompilePhase, compile_phase_boundary};
 /// Source-shaping inputs shared by host Script preparation and native compilation.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct HostScriptOptions {
-    pub origin: Option<(u32, u32)>,
-    pub keep_records: bool,
-    pub typescript: bool,
-}
-
-impl HostScriptOptions {
-    /// Middle component of the host compile-cache/native-image key; source text
-    /// and the specialization mode remain separate components.
-    pub fn cache_goal(self) -> String {
-        let (line, column) = self.origin.unwrap_or_default();
-        format!("specialized-script:{line}:{column}:{}{}", self.keep_records,
-            if self.typescript { ":typescript" } else { "" })
-    }
-}
 
 /// The most registers a function's promoted locals may take: half of the register domain,
 /// leaving the other half for the temporaries of any one statement.
@@ -70,7 +56,7 @@ mod locals;
 mod numeric;
 pub(crate) mod first_call;
 mod program_shape;
-pub(crate) use program_shape::EvalContext;
+pub(crate) use crate::bytecode::EvalContext;
 use program_shape::ParsedProgramShape;
 mod object_registers;
 pub(crate) mod regexp; mod regexp_memo;
@@ -1327,30 +1313,6 @@ fn add_use_strict<'a>(program: &mut Program<'a>, allocator: &'a Allocator, inher
 /// A point in compilation where the code about to run differs from the code that ran, which
 /// an embedding may act on (`set_compile_phase_boundary`), as a host returns read-only pages
 /// the next phase does not touch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CompilePhase {
-    /// A compilation has parsed its source; its semantic analysis starts.
-    Analysis,
-    /// A compilation has parsed and analysed its source; its code generation starts.
-    CodeGeneration,
-    /// A compiled program is complete and its encoding for the host's compile cache starts:
-    /// the parser's and code generator's work is over, and the encoder's begins.
-    Encoding,
-}
-
-/// What a compilation does at each `CompilePhase`, set once by the embedding.
-static COMPILE_PHASE_BOUNDARY: std::sync::OnceLock<fn(CompilePhase)> = std::sync::OnceLock::new();
-
-/// Sets the action a compilation takes at each `CompilePhase`; the first call wins.
-pub fn set_compile_phase_boundary(action: fn(CompilePhase)) {
-    let _ = COMPILE_PHASE_BOUNDARY.set(action);
-}
-
-pub(crate) fn compile_phase_boundary(phase: CompilePhase) {
-    if let Some(action) = COMPILE_PHASE_BOUNDARY.get() {
-        action(phase);
-    }
-}
 
 pub(crate) fn module_default_binding(module_name: &str) -> String {
     format!("\0quench:module-default:{module_name}")

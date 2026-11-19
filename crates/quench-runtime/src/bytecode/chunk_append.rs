@@ -70,7 +70,7 @@ pub(crate) struct ChunkDelta {
     pub(crate) regexp_literal_sites: Vec<RegExpLiteralSite>,
     pub(crate) literal_templates: Vec<Box<[LiteralStep]>>,
     /// The stubs of the chunk's functions, with the scopes their own chunks compile against.
-    pub(crate) stubs: Vec<(u32, std::rc::Rc<crate::compile::first_call::FirstCallScopes>)>,
+    pub(crate) stubs: Vec<(u32, std::rc::Rc<crate::bytecode::FirstCallScopes>)>,
     pub(crate) sites: u16,
 }
 

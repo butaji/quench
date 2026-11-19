@@ -1,15 +1,8 @@
 //! What a compilation expects its parsed program to be, and the eval context it compiles in.
 use oxc_span::Span;
 
-use crate::bytecode::Atom;
+use crate::bytecode::EvalContext;
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub(crate) struct EvalContext {
-    pub in_function: bool,
-    pub home_atom: Option<Atom>,
-    pub super_calls: bool,
-    pub class_initializer: bool,
-}
 
 /// What a compilation expects its parsed program to be.
 #[derive(Clone, Copy)]

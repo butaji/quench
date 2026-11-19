@@ -48,7 +48,7 @@ pub(super) fn is_strict_code_cacheable(residual: &ResidualProgram) -> bool {
 
 /// What an eval's compilation reads of its caller, and the direct-eval cache key it makes.
 pub(super) struct CallerFacts {
-    pub(super) context: crate::compile::EvalContext,
+    pub(super) context: crate::bytecode::EvalContext,
     pub(super) private_names: Vec<(String, String)>,
     pub(super) annex_b_forbidden_names: Vec<String>,
     pub(super) key: Option<DirectEvalKey>,
@@ -160,7 +160,7 @@ impl std::hash::Hash for EvalSource {
 pub(crate) struct DirectEvalKey {
     pub(crate) source: EvalSource,
     pub(crate) strict: bool,
-    pub(crate) context: crate::compile::EvalContext,
+    pub(crate) context: crate::bytecode::EvalContext,
     pub(crate) private_names: Vec<(String, String)>,
     pub(crate) annex_b_forbidden_names: Vec<String>,
     pub(crate) caller: EvalCaller,

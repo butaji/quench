@@ -513,7 +513,7 @@ impl<H: Host> Vm<H> {
         // The compilation is over either way (`CompilePhase::Encoding`); a host that keeps no
         // programs is offered none, so nothing is encoded (async-fs, cold: 43 encodings,
         // 2.4% of its instructions).
-        crate::compile::compile_phase_boundary(crate::compile::CompilePhase::Encoding);
+        crate::compile_phase::compile_phase_boundary(crate::compile_phase::CompilePhase::Encoding);
         if !self.host.keeps_compiled_programs() {
             return None;
         }
@@ -1145,7 +1145,7 @@ impl<H: Host> Vm<H> {
         self.intern_atom(&format!("\0quench:private-home:{private}"))
     }
 
-    fn direct_eval_context(&mut self, p: &ResidualProgram) -> Option<crate::compile::EvalContext> {
+    fn direct_eval_context(&mut self, p: &ResidualProgram) -> Option<crate::bytecode::EvalContext> {
         if !self.direct_eval {
             return None;
         }
@@ -1165,7 +1165,7 @@ impl<H: Host> Vm<H> {
                     })
                 })
                 .unwrap_or(false);
-        Some(crate::compile::EvalContext {
+        Some(crate::bytecode::EvalContext {
             in_function: self.direct_eval_function_context(p),
             home_atom,
             super_calls,

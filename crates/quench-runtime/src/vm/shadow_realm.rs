@@ -183,7 +183,7 @@ impl<H: Host> Vm<H> {
             "<ShadowRealm>",
             &*self,
             false,
-            crate::compile::EvalContext::default(),
+            crate::bytecode::EvalContext::default(),
             &[],
             &[],
         )

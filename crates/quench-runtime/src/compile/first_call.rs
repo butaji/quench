@@ -58,7 +58,7 @@ pub(super) struct ChunkWindow<'a> {
     line_starts: &'a [usize],
     utf16_excess: &'a [(usize, usize)],
     /// The run of a streamed body the chunk compiles.
-    run: Option<&'a super::statement_stream::StreamRun>,
+    run: Option<&'a crate::bytecode::StreamRun>,
 }
 
 impl<'a> ChunkWindow<'a> {
@@ -171,11 +171,11 @@ impl Engine {
         function: u32,
         span: crate::bytecode::SourceSpan,
         atom_prefix: &dyn AtomPrefix,
-        run: Option<&super::statement_stream::StreamRun>,
+        run: Option<&crate::bytecode::StreamRun>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let name = program.source_name.as_str();
         let source = program.source.as_ref().filter(|source| source.base == 0);
-        fn chunk_text<'s>(source: &'s crate::bytecode::ProgramSource, span: crate::bytecode::SourceSpan, run: Option<&super::statement_stream::StreamRun>, method: bool) -> Option<ChunkText<'s>> { match run.and_then(|run| run.from) {
+        fn chunk_text<'s>(source: &'s crate::bytecode::ProgramSource, span: crate::bytecode::SourceSpan, run: Option<&crate::bytecode::StreamRun>, method: bool) -> Option<ChunkText<'s>> { match run.and_then(|run| run.from) {
             // A later run's chunk holds the function's header alone, its body from the run on.
             Some((_, body)) => source
                 .text

@@ -2,15 +2,19 @@ use smallvec::SmallVec;
 
 mod internal_bindings;
 mod diagnostic;
+pub(crate) mod eval_context;
 pub(crate) mod first_call;
 mod module_records;
 pub use module_records::{ModuleImportBinding, ModuleImportName, ModuleRequest, ModuleRequestPhase};
 pub use diagnostic::Diagnostic;
 pub(crate) use diagnostic::DiagnosticKind;
-pub(crate) use first_call::{FirstCallScopes, FirstCallStubs};
+pub(crate) use eval_context::EvalContext;
+pub(crate) use first_call::{FirstCallScopes, FirstCallStubs, StreamRun, StreamedRun};
 pub(crate) use module_records::{ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind,
     StaticModuleAnalysis, StaticModulePlan, StaticModuleThrow};
 pub(crate) use internal_bindings::*;
+
+
 /// The name a `new Function`-style source compiles under.
 pub(crate) const DYNAMIC_FUNCTION_SOURCE_NAME: &str = "<Function>";
 
@@ -4404,4 +4408,23 @@ fn reads_this_field(code: &ResidualProgram, instruction: WideInstruction) -> boo
             let operand = Operand(value);
             operand.kind() == Some(OperandKind::Field) && site_base_is_this(usize::from(operand.payload()))
         })
+}
+
+/// How a host's script compiles: where in its source it starts, whether its functions keep
+/// their records, and whether it is TypeScript. A record of the text, not of the compiler.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HostScriptOptions {
+    pub origin: Option<(u32, u32)>,
+    pub keep_records: bool,
+    pub typescript: bool,
+}
+
+impl HostScriptOptions {
+    /// Middle component of the host compile-cache/native-image key; source text
+    /// and the specialization mode remain separate components.
+    pub fn cache_goal(self) -> String {
+        let (line, column) = self.origin.unwrap_or_default();
+        format!("specialized-script:{line}:{column}:{}{}", self.keep_records,
+            if self.typescript { ":typescript" } else { "" })
+    }
 }

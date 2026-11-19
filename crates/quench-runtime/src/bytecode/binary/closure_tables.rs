@@ -89,7 +89,7 @@ fn read_first_call_scopes(input: &mut BinaryReader<'_>, functions: usize) -> Res
             return Err("invalid residual first-call scope level".into());
         }
         let names = names.iter().map(|(name, level, slot)| (name.as_str(), *level, *slot)).collect();
-        Ok((stub, std::rc::Rc::new(crate::compile::first_call::FirstCallScopes::new(levels, names, strict))))
+        Ok((stub, std::rc::Rc::new(crate::bytecode::FirstCallScopes::new(levels, names, strict))))
     })?;
     if stubs.iter().any(|(stub, _)| *stub as usize >= functions) || !stubs.is_sorted_by_key(|(stub, _)| *stub) {
         return Err("invalid residual first-call stub".into());

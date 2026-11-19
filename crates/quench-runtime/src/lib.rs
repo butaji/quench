@@ -50,6 +50,9 @@ mod bitset;
 mod dense_map;
 mod bytecode;
 mod compile;
+/// The phases a compilation passes and the hook a profiler sets: named by the runtime, which
+/// reports them without naming the compiler.
+mod compile_phase;
 /// Register liveness and the root masks a collection reads: bytecode facts the tiers and the
 /// runtime share, so they do not live in the compiler (`compile`), which a static image omits.
 mod liveness;
@@ -99,7 +102,8 @@ pub use vm::tier_events::{Event as TierEvent, TierEvents};
 pub use bytecode::{set_record_built, set_record_read, KeptBytes, ResidualProgram, ModuleRequest, ModuleRequestPhase, FlowFunction, FlowInstruction};
 pub use module_identity::normalized_text as normalized_module_name;
 pub use bytecode::Diagnostic;
-pub use compile::{CompilePhase, Engine, set_compile_phase_boundary};
+pub use compile::Engine;
+pub use compile_phase::{CompilePhase, set_compile_phase_boundary};
 pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId};
 pub use snapshot::{SnapshotReader, SnapshotWriter};
 pub use host::{

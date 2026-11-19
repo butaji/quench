@@ -13,6 +13,7 @@ use oxc_ast::ast::{
     Statement, Super, TaggedTemplateExpression, ThisExpression, UnaryExpression, UnaryOperator, UpdateExpression,
 };
 use oxc_ast_visit::{Visit, walk};
+pub(crate) use crate::bytecode::{StreamRun, StreamedRun};
 
 use super::FunctionCompiler;
 
@@ -35,29 +36,6 @@ pub(super) struct StreamedBody {
     pub(super) one_run: bool,
 }
 
-/// A first-call chunk of a function whose body streams, compiled one run of its statements
-/// at a time (`Vm::call_streamed_runs`): each run compiles as a chunk of its own that runs
-/// once and is then dropped, so a body that runs once (mandreel's `global_init`, 614K
-/// instructions) never has its code resident whole.
-pub(crate) struct StreamRun {
-    /// The start of the function in the program's text.
-    pub(crate) start: u32,
-    /// Where the run starts, for a run after the first, whose chunk holds the function's
-    /// header alone; the first run's chunk compiles the function from its text.
-    pub(crate) from: Option<(u32, StreamedRun)>,
-    /// What the chunk's compilation found: the body, when it streams, and where its next run
-    /// starts, if any.
-    pub(crate) found: std::cell::Cell<Option<(StreamedRun, Option<u32>)>>,
-}
-
-/// The body of a function whose runs compile one at a time.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct StreamedRun {
-    /// The offset of the body's opening brace, and of its closing one.
-    pub(crate) open: u32,
-    pub(crate) close: u32,
-    pub(crate) strict: bool,
-}
 
 impl StreamRun {
     pub(crate) fn first(start: u32) -> Self {
