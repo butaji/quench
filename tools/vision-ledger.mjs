@@ -360,7 +360,7 @@ function scan(tree, branch, wantOwners) {
   for (const k of nativeKeys) {
     const full = snake(k);
     const tail = full.replace(prefixes, "");
-    const keys = [full]; if (tail !== full && (tail.includes("_") || tail.length >= 6)) keys.push(tail);
+    const keys = [full]; if (tail !== full && (tail.includes("_") || tail.length >= 7)) keys.push(tail);
     const re = new RegExp(`^(?:[a-z0-9]+_)*(?:${keys.join("|")})(?:_[a-z0-9]+)*$`);
     const bodies = fnIndex.filter(f => re.test(f.name) && f.lines >= 4 && !BODY_SKIP_FILE.test(f.rel) && !BODY_SKIP_NAME.test(f.name) && !/^\{\s*[A-Za-z_:.<>]+\([^;]*\)\s*\}$/s.test(f.body.trim()));
     // A plain_* fast prefix that declines into the generic native is one body with it.
@@ -375,6 +375,8 @@ function scan(tree, branch, wantOwners) {
       const callsRow = new RegExp(`\\b(${rowNames.join("|")})\\b`);
       for (let i = bodies.length - 1; i >= 0; i--) if (/\/staged\//.test(bodies[i].rel) || callsRow.test(bodies[i].body)) bodies.splice(i, 1);
     }
+    // Stencils and u-jit emitters are tier code: the stencil-not-row and clif-not-row rules judge them.
+    for (let i = bodies.length - 1; i >= 0; i--) if (/^crates\/quench-bjit\/|vm\/compiled\//.test(bodies[i].rel)) bodies.splice(i, 1);
     // Helpers and embedding wrappers are layers, not bodies.
     for (let i = bodies.length - 1; i >= 0; i--) if (/_(helper|embedding)$/.test(bodies[i].name)) bodies.splice(i, 1);
     const filesSet = new Set(bodies.map(b => b.rel));
