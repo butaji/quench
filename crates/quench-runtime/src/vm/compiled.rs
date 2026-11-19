@@ -4482,7 +4482,7 @@ impl JsStepDispatch {
                 environment_storage: crate::heap::absent_environment_storage(),
                 vm: 0, residual: 0, lane_context: 0, returned_pc: 0,
                 lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
-                plain_depth: 0, plain_depth_limit: 0, body_table: 0, body_top: 0, activation_count: 0,
+                plain_depth: 0, plain_depth_limit: 0, body_table: 0, activation_count: 0, body_top: 0, native_table: 0,
             },
             program_id: ProgramId::MAIN, frame: usize::MAX, allow_inline_calls: false, start_pc: 0,
             #[cfg(feature = "native-execution")]
