@@ -1729,6 +1729,18 @@ pub(super) fn lower(
     }
     if coverage.selected_entry() {
         lowering.written = lowering.facts.written(&instructions, &writes, count);
+        // A loop-invariant relation operand the analysis leaves untyped (`a[i] < p`) is a
+        // Number for its comparison: contracting it at the header makes each comparison read an
+        // unboxed double, and the header's entry proves it once (`conform`). Only a hypothesized
+        // entry may take the contract, since only it may check a value no run observed.
+        let contracts = if entry_ints == EntryInts::Hypothesized {
+            lowering.number_contracts(&instructions, &loops, coverage.entry())
+        } else { Vec::new() };
+        if !contracts.is_empty() {
+            lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders,
+                &program.constants, &writes, &own_shape, lowering.native_calls,
+                super::facts::Seeds { contracts: &contracts, ..super::facts::Seeds::observing(observed) });
+        }
         // Backedge definitions choose a numeric entry signature. Conformance
         // proves the external input once; every subsequent edge carries the
         // same verified SSA view. This is an admission requirement, not a fact
@@ -1761,7 +1773,7 @@ pub(super) fn lower(
             }
         }
         refined |= lowering.seed_loop_ints(&mut initial, &loops);
-        if refined { lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, super::facts::Seeds::observing(observed)); }
+        if refined { lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, super::facts::Seeds { contracts: &contracts, ..super::facts::Seeds::observing(observed) }); }
         lowering.refine_inductive_inputs(&mut initial, &instructions, &leaders, &loops, &own_shape);
     }
     lowering.refine_loop_inputs(entry_pc, &initial, &instructions, &leaders, &loops, &own_shape);

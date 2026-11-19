@@ -10,6 +10,6 @@ dot 2 14 8
 fib 0 - 8
 matmul 3 16 6
 nbody 1 13 34
-qsort 3 24 4
+qsort 3 13 4
 structs 2 9 17
 sum 2 10 7

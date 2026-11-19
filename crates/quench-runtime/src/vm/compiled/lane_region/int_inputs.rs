@@ -49,6 +49,21 @@ impl Lowering<'_, '_> {
             inputs.extend(self.numeric_parameters());
             inputs.sort_unstable();
             inputs.dedup();
+            // A scan's bound (`a[i] < p`) travels as a Number across the loop: the comparison
+            // reads a double, so an int seed would box it back to a tagged value before each
+            // backward edge and unbox it again per use. Conformance takes the Number once.
+            let numbers = self.relation_numbers(loops);
+            if std::env::var_os("SEED_TRACE").is_some() {
+                eprintln!("NUMBERS entry={} numbers={numbers:?} header_r14={:?}",
+                    self.coverage.entry(), self.facts.at(self.coverage.entry()).and_then(|t| t.get(14)).copied());
+            }
+            for register in numbers {
+                let slot = &mut initial[usize::from(register)];
+                if slot.is_any_or_number() && *slot != Type::INT32 {
+                    *slot = Type::NUMBER;
+                    seeded = true;
+                }
+            }
         }
         for register in inputs {
             let slot = &mut initial[usize::from(register)];
@@ -58,6 +73,62 @@ impl Lowering<'_, '_> {
             }
         }
         seeded
+    }
+
+    /// The loop-invariant operand of a scan's relation (`a[i] < p`) whose comparison reads a
+    /// Number: taken as a Float64 at the entry, so no use tags or untags it per iteration.
+    fn relation_numbers(&self, loops: &[(usize, usize)]) -> Vec<Register> {
+        let header = self.coverage.entry();
+        let Some((_, back)) = loops.iter().copied().filter(|(start, _)| *start == header)
+            .max_by_key(|(_, back)| *back) else { return Vec::new() };
+        let body = &self.unit.instructions[header..=back];
+        let written: BTreeSet<Register> = body.iter().flat_map(|instruction| writes(*instruction)).collect();
+        let mut found = Vec::new();
+        for instruction in body {
+            if !instruction.op().class().eq(Class::JumpBinaryFalse) { continue; }
+            if super::super::operations::NumberRelation::from_operator(instruction.binary_operator_field()).is_none() { continue; }
+            let operands = [instruction.operand_b(), instruction.operand_c()];
+            let element = |operand: &Operand| operand.register_index().is_some_and(|register|
+                body.iter().any(|other| other.op().class().eq(Class::GetIndex) && other.result_register() == register));
+            let reads: Vec<bool> = operands.iter().map(element).collect();
+            if reads.iter().filter(|read| **read).count() != 1 { continue; }
+            for (operand, read) in operands.iter().zip(&reads) {
+                if *read { continue; }
+                let Some(register) = operand.register_index() else { continue };
+                if written.contains(&register) || !self.is_live(header, register) { continue; }
+                found.push(register);
+            }
+        }
+        found
+    }
+
+    /// The loop-invariant operands a loop's relations compare, taken as Numbers at the header:
+    /// a register the loop does not write whose header fact is untyped, compared against an
+    /// element read (`a[i] < p`). The comparison then reads an unboxed double, and neither the
+    /// NaN test nor the exactness round trip is paid per iteration. The contract is a hypothesis
+    /// the lowering discharges at the header (`conform` proves Number once, leaving otherwise).
+    pub(super) fn number_contracts(&self, instructions: &[WideInstruction], loops: &[(usize, usize)],
+        header: usize) -> Vec<super::super::facts::Contract> {
+        let Some((_, back)) = loops.iter().copied().filter(|(start, _)| *start == header)
+            .max_by_key(|(_, back)| *back) else { return Vec::new() };
+        let body = &instructions[header..=back];
+        let written: BTreeSet<Register> = body.iter().flat_map(|instruction| writes(*instruction)).collect();
+        let mut found: Vec<super::super::facts::Contract> = Vec::new();
+        for instruction in body {
+            if !instruction.op().class().eq(Class::JumpBinaryFalse) { continue; }
+            if super::super::operations::NumberRelation::from_operator(instruction.binary_operator_field()).is_none() { continue; }
+            for operand in [instruction.operand_b(), instruction.operand_c()] {
+                let Some(register) = operand.register_index() else { continue };
+                if written.contains(&register) || !self.is_live(header, register) { continue; }
+                if found.iter().any(|(_, known, _)| *known == register) { continue; }
+                let ty = self.facts.at(header).and_then(|types| types.get(usize::from(register))).copied()
+                    .unwrap_or(Type::ANY);
+                if ty.is_any_or_number() && !ty.is_int32() {
+                    found.push((header, register, Type::NUMBER));
+                }
+            }
+        }
+        found
     }
 
     /// The function's parameters no instruction of the unit uses in an object position — a
