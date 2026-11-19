@@ -1,0 +1,3 @@
+# AOT ratio ratchet of `quench-gate aot`: per JetStream row, the ceiling of the AOT binary's
+# wall-clock time over its C analogue's. Growth past the ceiling fails; an improvement lowers it.
+# A row with no value is written only by `--record`.

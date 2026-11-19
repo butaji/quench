@@ -1,3 +1,6 @@
+// jetstream-row: gaussian-blur
+// jetstream-files: SeaMonster/gaussian-blur.js
+// iterations: 120
 /* C analogue of JetStream's SeaMonster/gaussian-blur.js: the same IIR blur over an
  * 800x450 RGBA image, double arithmetic, a float line buffer and uint32 pixels, so a
  * JS engine is compared with what a C programmer writes for the same program. */
