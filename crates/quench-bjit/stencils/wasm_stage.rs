@@ -16,7 +16,7 @@ use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 use crate::wasm::WasmTrap;
-use crate::words::{HOLE_A, HOLE_B, S, hole64, slot};
+use crate::words::{HOLE_B, S, hole64, slot};
 
 /// The linear memory a Wasm function runs over: its base in the second pin, its length in bytes
 /// in the third, as the entry loads them (`wasm_entry.rs`). Unguarded: the staged rule checks every
@@ -208,19 +208,6 @@ impl WasmInstance for GlobalStage {
     fn global_store(&mut self, slot: u32, storage: Storage, value: u64) {
         // SAFETY: as `global_load`.
         unsafe { *self.cell(slot) = storage.narrow(value) }
-    }
-}
-
-/// The compiled-function ABI of the u-jit, which every Wasm function's entry takes.
-type WasmEntry = unsafe extern "C" fn(usize, u64, u64, *const u64, *mut u64) -> u32;
-
-/// Calls the entry in the cell at hole B's address: the arguments are the registers from hole A
-/// on, the result goes to hole 0's register. Returns the callee's status (0 for a normal return).
-#[inline(always)]
-pub(crate) unsafe fn call_entry(s: &S) -> u32 {
-    unsafe {
-        let entry: WasmEntry = core::mem::transmute(*(hole64::<HOLE_B>() as *const usize));
-        entry(s.ctx, s.p[1] as u64, s.p[2] as u64, slot::<HOLE_A>(s) as *const u64, slot::<0>(s) as *mut u64)
     }
 }
 

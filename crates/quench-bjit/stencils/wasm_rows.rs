@@ -18,19 +18,20 @@ use crate::staged::wasm_concrete::ConcreteWasm;
 use crate::staged::wasm_float::{float_binary, float_binary_operator, float_unary_operator};
 use crate::staged::wasm_memory::{load, store};
 use crate::wasm::WasmTrap;
-use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S, hole, hole64};
+use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S, hole, hole64, slot};
 
 pub(crate) use crate::wasm_codes::*;
 
 #[path = "wasm_frame.rs"]
 pub(crate) mod wasm_frame;
-use wasm_frame::{access, float_of, read, reload_memory, right, trap, width_of, write};
+use wasm_frame::{access, float_of, read, right, trap, width_of, write};
 #[path = "wasm_stage.rs"]
 mod wasm_stage;
 pub(crate) use wasm_stage::StencilMemory;
-use wasm_stage::call_entry;
 #[path = "wasm_call_stage.rs"]
 mod wasm_call_stage;
+use crate::staged::wasm_call::call_entry;
+use wasm_call_stage::{CallStage, leave_with};
 #[path = "wasm_rows_memory.rs"]
 mod wasm_rows_memory;
 use wasm_rows_memory::{memory_copy, memory_fill, memory_size};
@@ -211,12 +212,12 @@ unsafe fn memory_store<const OP: u32>(s: S) -> Out {
 #[inline(always)]
 unsafe fn call_wasm(mut s: S) -> Out {
     unsafe {
-        let status = call_entry(&s);
-        reload_memory(&mut s, hole64::<HOLE_FOURTH>() as usize);
-        if status != 0 {
-            s.p[0] = status as usize;
-            return Out::Exit(s);
-        }
-        Out::Next(s)
+        let entry = *(hole64::<HOLE_B>() as *const usize);
+        let (window, destination) = (slot::<HOLE_A>(&s), slot::<0>(&s));
+        let result = {
+            let mut stage = CallStage { s: &mut s };
+            call_entry(&mut stage, entry, window, destination, hole64::<HOLE_FOURTH>() as usize)
+        };
+        leave_with(s, result)
     }
 }
