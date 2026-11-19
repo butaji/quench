@@ -242,7 +242,7 @@ fn append_compacted_shape(
         _ => shapes[parent as usize].dictionary_trigger(),
     };
     let parent_facts = shapes[parent as usize].facts;
-    shapes.push(Shape::child(
+    push_child(shapes, Shape::child(
         Some(parent),
         transition,
         storage_len,
