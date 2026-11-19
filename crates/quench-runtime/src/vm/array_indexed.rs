@@ -30,6 +30,11 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        // The plain body (`plain_array_at`) first: an int32 index into a present element needs
+        // no guest code.
+        if let Some(value) = self.plain_array_at(this, args) {
+            return Ok(value);
+        }
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         let Some(index) =

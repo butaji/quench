@@ -3,7 +3,7 @@
 use super::*;
 use crate::vm::object_get::ordinary_chain::ChainRead;
 
-/// The natives whose steady case (`Vm::steady_native_value`) a `Call` site makes under its own
+/// The natives whose steady case (`builtin_row_value`) a `Call` site makes under its own
 /// handler, one instantiation of `lane_call_builtin` per row: the native is a constant of the
 /// handler, so its entry is a direct call and the site tests only the callee's identity.
 macro_rules! builtin_rows {
@@ -218,16 +218,58 @@ fn install_math_field_call2<H: Host>(call_ip: Ip, native: Native) {
     }
 }
 
+/// The steady case of builtin row `ROW`, which calls its native's one body directly. The row's
+/// native is a constant, so each `if const` arm not taken is dropped and no arm re-matches the
+/// native at run time. Every row of `builtin_rows` has its arm here; a native without one declines.
+#[inline(always)]
+fn builtin_row_value<H: Host, const ROW: u8>(vm: &mut Vm<H>, receiver: Value, args: &[Value]) -> Option<Value> {
+    // A new attempt clears any flag a previous attempt left for its general native.
+    vm.declined_fast = None;
+    let first = args.first().copied();
+    if const { matches!(row_native(ROW), Native::MapGet | Native::MapHas) } {
+        let found = vm.pure_collection_lookup(const { row_native(ROW) }, receiver, first.unwrap_or(Value::UNDEFINED));
+        return vm.fast_declined(const { row_native(ROW) }, found);
+    }
+    if const { matches!(row_native(ROW), Native::SetHas | Native::WeakMapGet | Native::WeakMapHas | Native::WeakSetHas) } {
+        return vm.pure_collection_lookup(const { row_native(ROW) }, receiver, first.unwrap_or(Value::UNDEFINED));
+    }
+    if const { matches!(row_native(ROW), Native::MapSet) } {
+        return if vm.map_set(receiver, args) { Some(receiver) } else { None };
+    }
+    if const { matches!(row_native(ROW), Native::ArrayPush) } {
+        return vm.array_push_dense(receiver, args);
+    }
+    if const { matches!(row_native(ROW), Native::ArrayPop) } {
+        return vm.array_pop_dense(receiver);
+    }
+    if const { matches!(row_native(ROW), Native::StringCharCodeAt) } {
+        return vm.string_char_code_at_core(receiver, first?);
+    }
+    if const { matches!(row_native(ROW), Native::StringCharAt) } {
+        return vm.string_char_at_core(receiver, first?);
+    }
+    if const { matches!(row_native(ROW), Native::ArrayIsArray) } {
+        return vm.steady_is_array(first.unwrap_or(Value::UNDEFINED)).map(Value::boolean);
+    }
+    if const { matches!(row_native(ROW), Native::JsonStringify) } {
+        let text = vm.json_stringify_steady(args);
+        return vm.fast_declined(const { row_native(ROW) }, text);
+    }
+    if const { matches!(row_native(ROW), Native::DateNow) } {
+        return Some(vm.date_now());
+    }
+    None
+}
+
 script_handler! {
     /// A `Call` site whose callee was the native of builtin row `ROW` (`native_call_handler`): that
-    /// call in its steady case (`Vm::steady_native_value`). Any other callee or case takes
+    /// call in its steady case (`builtin_row_value`). Any other callee or case takes
     /// `lane_native_call`.
     fn lane_call_builtin<ROW: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let native = const { row_native(ROW) };
-        let value = if callee_is_native(vm, r.get(i.b), native) {
+        let value = if callee_is_native(vm, r.get(i.b), const { row_native(ROW) }) {
             // SAFETY: the call's window is registers of the running function.
-            vm.steady_native_value(native, r.get(i.c), unsafe { lane_call_window(r, i) })
+            builtin_row_value::<H, ROW>(vm, r.get(i.c), unsafe { lane_call_window(r, i) })
         } else {
             None
         };
