@@ -507,11 +507,41 @@ impl<H: Host> Vm<H> {
         if let Some(index) = lookup_index {
             child.lookup_index = OnceCell::from(index);
         }
-        self.shapes.push(child);
+        push_child(&mut self.shapes, child);
         let parent_length = self.shapes[parent as usize].storage_len();
         self.heap.register_property_shape(next, storage_len, Some((parent, parent_length)));
         next
     }
+    /// The capacity an add that moves an object's arena run to `shape` reserves for a run of
+    /// `length` values (the new length): the size the shape tree predicts. It follows the only
+    /// child of each shape while that child is an `Add` of one more slot, and takes the length
+    /// the chain reaches, clamped to `length..=PREDICTED_RUN_CAP_FACTOR * length`, as a size
+    /// class. Walked only on a move, which already copies the run, never on an add that stays.
+    pub(super) fn predicted_run_capacity(&self, shape: u32, length: usize) -> usize {
+        let cap = length * crate::value_vec::PREDICTED_RUN_CAP_FACTOR;
+        let mut extent = length;
+        let mut cursor = shape;
+        while extent < cap {
+            let entry = &self.shapes[cursor as usize];
+            if entry.facts.children() != 1 || entry.is_dictionary() {
+                break;
+            }
+            let child_id = entry.last_child.get();
+            let Some(child) = self.shapes.get(child_id as usize) else {
+                break;
+            };
+            if child.parent() != Some(cursor)
+                || !matches!(child.transition, ShapeTransition::Add { .. })
+                || child.storage_len() != entry.storage_len() + 1
+            {
+                break;
+            }
+            extent = child.storage_len();
+            cursor = child_id;
+        }
+        crate::value_vec::capacity_class(extent.clamp(length, cap))
+    }
+
     /// Whether `to` is `from` extended by one appended property slot: the shape an add of
     /// one new data property makes, which `Heap::property_add` can apply directly.
     pub(super) fn shape_appends_one_slot(&self, from: u32, to: u32) -> bool {
@@ -2163,12 +2193,18 @@ impl<H: Host> Vm<H> {
             return;
         }
         let (slot, shape) = (usize::from(transition.slot), transition.after);
-        if !(self.heap.object_record_by_id(record_id).admits_plain_append(slot, value)
-            && self.heap.record_property_append_plain(record_id, slot, value, shape))
-            && !self.heap.record_property_append_reserved(record_id, slot, value, shape)
+        if self.heap.object_record_by_id(record_id).admits_plain_append(slot, value)
+            && self.heap.record_property_append_plain(record_id, slot, value, shape)
         {
-            self.heap.record_property_add_moving(object, slot, value, shape);
+            return;
         }
+        if self.heap.record_property_append_reserved(record_id, slot, value, shape) {
+            return;
+        }
+        // The add moves the run: reserve the size the shape tree predicts for it, so the
+        // object's next adds append in place rather than move it again.
+        let want = self.predicted_run_capacity(shape, slot + 1);
+        self.heap.record_property_add_moving(object, slot, value, shape, want);
     }
 
     /// `define_field_cached`'s hit inline, for an object record: the site's add entry for its
