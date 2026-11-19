@@ -196,9 +196,9 @@ impl FunctionCompiler<'_, '_> {
         if value.operator.is_coalesce() {
             return self.coalesce(value, debug_name);
         }
-        let start = self.next_reg;
         let left = self.expression_with_debug_name(&value.left, debug_name);
-        let dst = self.join_result(left, start);
+        let dst = self.reg();
+        self.emit(Op::Move, dst, left, 0, 0);
         let jump = self.emit(Op::JumpFalse, left, 0, 0, 0);
         // Past the jump only `dst` and registers allocated before the expression are live,
         // so the right operand reuses the left's temporaries.

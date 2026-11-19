@@ -10,6 +10,11 @@
 //! one of the loop's own checks would act (a termination request, a due collection, module
 //! advancement, a host that observes promises), the chain ends and the queue's loop takes the
 //! job.
+//!
+//! The fulfilled reaction of an async generator's `yield` await, which resumes no frame but
+//! settles the generator's request (`Vm::settle_yield_await`), runs in the chain too where it
+//! runs no guest code (`Vm::chain_yield_job`): a `for await` over an async generator alternates
+//! the two, the loop's await job and the generator's yield job, so its steps stay in one chain.
 use super::*;
 use super::settle::Stop;
 use super::super::activation::{FrameRecord, JobResume, JobRoot, SuspendKind};
@@ -36,10 +41,35 @@ pub(in crate::vm) struct ChainedJob {
     pub(in crate::vm) how: JobResume,
 }
 
+/// The queue's front job where it chains (`Vm::chained_front`), by the one look at its await
+/// state.
+#[derive(Clone, Copy)]
+enum ChainedFront {
+    /// The await reaction of an async function: its await's role, the promise its function
+    /// settles, and the frame its await state keeps (`Vm::job_frame`).
+    Await(AwaitRole, Value, *const FrameRecord),
+    /// The fulfilled reaction of `generator`'s `yield` await, which settles the request `promise`.
+    Yield { generator: Value, promise: Value },
+}
+
+impl ChainedFront {
+    /// The promise the job settles and the generator it runs for, which its call roots hold
+    /// (`Vm::root_chained_job`); an async function has no generator.
+    fn roots(self) -> (Value, Value) {
+        match self {
+            Self::Await(_, promise, _) => (promise, Value::UNDEFINED),
+            Self::Yield { generator, promise } => (promise, generator),
+        }
+    }
+}
+
 /// What follows a chained job's settled stop (`Vm::chain_next_job`).
 enum ChainStep {
     /// The queue's next job, taken off the queue and entered, resumes now.
     Next(ChainedJob),
+    /// The queue's next job, an async generator's yield job, ran in the chain
+    /// (`Vm::chain_yield_job`), with this await: the chain goes on after it.
+    Settled(AwaitResume),
     /// The queue's next job does not chain: the queue's loop takes it.
     Ends,
     /// The queue's next job ran as the host observes it, with this outcome, which ends the chain.
@@ -94,11 +124,31 @@ impl<H: Host> Vm<H> {
             if settled.is_err() || left == 0 {
                 return settled;
             }
-            current = match self.chain_next_job(code, program, resume) {
-                ChainStep::Next(next) => next,
-                ChainStep::Ends => return settled,
-                ChainStep::Ran(stop) => return stop,
+            current = match self.chain_after(code, program, resume, &mut left) {
+                Ok(next) => next,
+                Err(None) => return settled,
+                Err(Some(stop)) => return stop,
             };
+        }
+    }
+
+    /// The next job the chain resumes after the job of `ended`, a function of `program`, once
+    /// the yield jobs at the queue's front ran in the chain (`ChainStep::Settled`), each counted
+    /// against the chain's `left` jobs. `Err(None)` where the chain ends with the stop of the
+    /// last job it resumed, `Err(Some(stop))` where it ends with `stop`, the outcome of a job
+    /// that ended it.
+    fn chain_after(&mut self, code: &ResidualProgram, program: ProgramId, mut ended: AwaitResume, left: &mut u32) -> Result<ChainedJob, Option<Stop>> {
+        loop {
+            match self.chain_next_job(code, program, ended) {
+                ChainStep::Next(next) => return Ok(next),
+                ChainStep::Settled(settled) => ended = settled,
+                ChainStep::Ends => return Err(None),
+                ChainStep::Ran(stop) => return Err(Some(stop)),
+            }
+            *left -= 1;
+            if *left == 0 {
+                return Err(None);
+            }
         }
     }
 
@@ -126,20 +176,34 @@ impl<H: Host> Vm<H> {
     /// one's call roots replace its own, and the next one enters that context, as
     /// `Vm::run_pending_job` and `Vm::run_promise_job` do. A host that observes the job after all
     /// (`Host::enter_unobserved_job` answering a context) runs it as an observed job, which ends
-    /// the chain.
+    /// the chain. A yield job chains only where a fresh iterator result lacks `then`
+    /// (`Vm::iterator_results_then_free`), which is asked before the job leaves the queue.
     fn chain_next_job(&mut self, p: &ResidualProgram, program: ProgramId, ended: AwaitResume) -> ChainStep {
-        let Some((role, promise, frame)) = self.chained_front(program, ended) else {
+        let Some(front) = self.chained_front(program, ended) else {
             return ChainStep::Ends;
         };
+        if matches!(front, ChainedFront::Yield { .. }) && !self.iterator_results_then_free() {
+            return ChainStep::Ends;
+        }
         let Some(PendingJob::Reaction(reaction)) = self.realm.jobs.pop_front() else {
             unreachable!("the front job `chained_front` read leaves the queue");
         };
         self.end_unobserved_job();
-        self.root_chained_job(&reaction, promise);
+        self.root_chained_job(&reaction, front.roots());
         if let Some(context) = self.host.enter_unobserved_job(true) {
             let ran = self.run_observed_promise_job(context, |vm| vm.promise_reaction_body(p, reaction));
             return ChainStep::Ran(ran.map(|()| None));
         }
+        match front {
+            ChainedFront::Await(role, promise, frame) => Self::chained_await(&reaction, (role, promise, frame)),
+            ChainedFront::Yield { generator, promise } => self.chain_yield_job(p, &reaction, generator, promise),
+        }
+    }
+
+    /// The chained job of `reaction`, the await reaction of an async function with its await's
+    /// `role`, the `promise` it settles and its `frame` (`ChainedFront::Await`): it resumes with
+    /// the reaction's value, or throws its rejection.
+    fn chained_await(reaction: &PromiseJob, (role, promise, frame): (AwaitRole, Value, *const FrameRecord)) -> ChainStep {
         let job = role.job(reaction.handler);
         let how = if reaction.rejected {
             JobResume::Throws(JsError::thrown(reaction.value, "await rejected".into()))
@@ -150,20 +214,36 @@ impl<H: Host> Vm<H> {
         ChainStep::Next(ChainedJob { resume, job, frame, how })
     }
 
+    /// The fulfilled `reaction` of `generator`'s `yield` await, run in the chain as the queue's
+    /// loop would run its job (`Vm::promise_reaction_body`, `Vm::resume_pending_await`): the
+    /// request `promise` settles with the iterator result (`settle_yield_await`), which queues
+    /// the request's reactions as its settlement does anywhere, then the generator's queued
+    /// requests run, of which `chained_front` found none. It runs in the realm the generator
+    /// awaited in, which is the chain's, with the promise and the generator its call roots
+    /// (`root_chained_job`). A fresh iterator result lacks `then`, so no guest code runs. As in
+    /// the reaction's body, an error other than a termination settles nothing, an await having
+    /// no derived promise.
+    fn chain_yield_job(&mut self, p: &ResidualProgram, reaction: &PromiseJob, generator: Value, promise: Value) -> ChainStep {
+        let state = reaction.handler;
+        let settled = self
+            .settle_yield_await(p, (state, generator), promise, reaction.value)
+            .and_then(|()| self.resume_async_generator_queue(p, generator));
+        match settled {
+            Err(error) if error.is_execution_terminated() => ChainStep::Ran(Err(error)),
+            _ => {
+                let role = AwaitRole::AsyncGeneratorYield(generator);
+                ChainStep::Settled(AwaitResume { state: Some(state), promise, role, rejected: false })
+            }
+        }
+    }
+
     /// The queue's front job, where it chains after the job of `ended`, a function of `program`:
     /// none of the checks the queue's loop makes between jobs would act (no termination request,
     /// no collection due, no module advancement pending, no host that observes promises), the
     /// queue's unobserved jobs share the host's context, and `ended`'s call roots lie on top
-    /// (`chain_roots_hold`); and the job is the reaction of a pending await of an async function
-    /// of `program`, with no host context of its own nor derived promise, in the current realm,
-    /// where its function awaited too. Its await's role, the promise it settles, and the frame
-    /// its await state keeps (`Vm::job_frame`), found by the one look at the state.
-    ///
-    /// The frame stays valid for the chain's run of the job: the state keeps it boxed while
-    /// pending, and between this look and the run the job only leaves the queue, the host's
-    /// unobserved context ends and is entered (whose released roots free nothing before a
-    /// collection, and none runs), and the job's call roots are written, none of which touches
-    /// the state.
+    /// (`chain_roots_hold`); and the job is the reaction of a pending await in the current realm,
+    /// where it awaited too, with no host context of its own nor derived promise, of a kind that
+    /// chains (`chained_await_front`).
     ///
     /// Each check stays per job: a job runs guest code, which may allocate (a collection then
     /// due), request termination, import a module, or call into a host that starts observing
@@ -171,7 +251,7 @@ impl<H: Host> Vm<H> {
     /// the queue's front is looked at first: an empty or unchainable front, where every chain
     /// ends, answers before the loop's checks. No lane run may be live when the next job enters
     /// the lane directly (`run_chained_job`), so that is checked here too, not only asserted.
-    fn chained_front(&self, program: ProgramId, ended: AwaitResume) -> Option<(AwaitRole, Value, *const FrameRecord)> {
+    fn chained_front(&self, program: ProgramId, ended: AwaitResume) -> Option<ChainedFront> {
         let Some(PendingJob::Reaction(reaction)) = self.realm.jobs.front() else {
             return None;
         };
@@ -190,35 +270,68 @@ impl<H: Host> Vm<H> {
         if reaction.execution_context.get().is_some() || !reaction.next.is_undefined() || reaction.realm != realm {
             return None;
         }
+        self.chained_await_front(reaction, program)
+    }
+
+    /// `chained_front` of `reaction` by the one look at its await state, which awaited in the
+    /// current realm: the await of an async function of `program`, with the frame its state
+    /// keeps (`Vm::job_frame`), or the fulfilled `yield` await of an async generator with no
+    /// request queued.
+    ///
+    /// An async function's frame stays valid for the chain's run of the job: the state keeps it
+    /// boxed while pending, and between this look and the run the job only leaves the queue, the
+    /// host's unobserved context ends and is entered (whose released roots free nothing before a
+    /// collection, and none runs), and the job's call roots are written, none of which touches
+    /// the state.
+    fn chained_await_front(&self, reaction: &PromiseJob, program: ProgramId) -> Option<ChainedFront> {
         let state = self.heap.await_state(reaction.handler)?;
         let (role, awaited_realm, promise) = state.pending()?;
-        if !matches!(role, AwaitRole::AsyncFunction) || awaited_realm != realm {
+        if awaited_realm != self.realm.globals {
             return None;
         }
-        // An async function's pending state keeps its frame (`AwaitState::suspended_frame`).
-        let frame = state.suspended_frame()?;
-        (frame.program == program).then_some((role, promise, std::ptr::from_ref(frame)))
+        match role {
+            AwaitRole::AsyncFunction => {
+                // An async function's pending state keeps its frame (`AwaitState::suspended_frame`).
+                let frame = state.suspended_frame()?;
+                (frame.program == program).then_some(ChainedFront::Await(role, promise, std::ptr::from_ref(frame)))
+            }
+            AwaitRole::AsyncGeneratorYield(generator) if !reaction.rejected && self.requests_none_queued(generator) => {
+                Some(ChainedFront::Yield { generator, promise })
+            }
+            AwaitRole::AsyncGeneratorYield(_) | AwaitRole::AsyncGeneratorAwait(_) => None,
+        }
+    }
+
+    /// Whether the async generator `generator` has no request queued, so settling its yield's
+    /// request leaves `resume_async_generator_queue` nothing to run.
+    fn requests_none_queued(&self, generator: Value) -> bool {
+        self.heap
+            .iterator(generator)
+            .and_then(|record| record.ext.generator.as_deref())
+            .is_some_and(|record| record.requests.is_empty())
     }
 
     /// Whether the call roots of the await job of `ended` lie on top of the call root stack, as
     /// the queue's loop and the reaction's resumption pushed them (`AWAIT_JOB_ROOTS`), or as
     /// `root_chained_job` wrote them: the job's reaction names its await state and no derived
-    /// promise, and the promise it settles follows with no generator.
+    /// promise, and the promise it settles follows with its generator, if any.
     fn chain_roots_hold(&self, ended: AwaitResume) -> bool {
         let roots = &self.active_call_roots;
         let Some(at) = roots.len().checked_sub(AWAIT_JOB_ROOTS) else {
             return false;
         };
         let roots = &roots[at..];
-        ended.state == Some(roots[1]) && roots[2].is_undefined() && roots[4] == ended.promise && roots[5].is_undefined()
+        let generator = ended.role.generator().unwrap_or(Value::UNDEFINED);
+        ended.state == Some(roots[1]) && roots[2].is_undefined() && roots[4] == ended.promise && roots[5] == generator
     }
 
-    /// The call roots of the chained job of `reaction`, whose function settles `promise`, take
-    /// the place of the ended job's (`chain_roots_hold`): a finished job roots nothing, as the
-    /// queue's loop drops its roots before it takes the next job (`Vm::run_pending_job`).
-    fn root_chained_job(&mut self, reaction: &PromiseJob, promise: Value) {
+    /// The call roots of the chained job of `reaction`, which settles `promise` for `generator`
+    /// (`ChainedFront::roots`), take the place of the ended job's (`chain_roots_hold`): a
+    /// finished job roots nothing, as the queue's loop drops its roots before it takes the next
+    /// job (`Vm::run_pending_job`).
+    fn root_chained_job(&mut self, reaction: &PromiseJob, (promise, generator): (Value, Value)) {
         let at = self.active_call_roots.len() - AWAIT_JOB_ROOTS;
-        let roots = [reaction.realm, reaction.handler, reaction.next, reaction.value, promise, Value::UNDEFINED];
+        let roots = [reaction.realm, reaction.handler, reaction.next, reaction.value, promise, generator];
         self.active_call_roots[at..].copy_from_slice(&roots);
     }
 }

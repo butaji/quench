@@ -114,12 +114,7 @@ impl<H: Host> Vm<H> {
         if let AwaitRole::AsyncGeneratorYield(generator) = resume.role
             && !resume.rejected
         {
-            self.spend_await(state);
-            self.keep_spare_await_state(state);
-            if let Some(record) = self.generator_record_mut(generator) {
-                record.stop();
-            }
-            return self.resolve_iterator_result(p, resume.promise, value, false);
+            return self.settle_yield_await(p, (state, generator), resume.promise, value);
         }
         let how = if resume.rejected {
             JobResume::Throws(JsError::thrown(value, "await rejected".into()))
@@ -127,6 +122,20 @@ impl<H: Host> Vm<H> {
             JobResume::Sends(value)
         };
         self.resume_job(p, StopOwner::Async(resume), how, run).map(drop)
+    }
+
+    /// The fulfilled reaction of the await state `state` of `generator`'s `yield` of `value`
+    /// (AsyncGeneratorYield's Await): the state is spent and kept spare, the generator, whose
+    /// frame stays parked in its record, is suspended again, and the request `promise` settles
+    /// with the iterator result (AsyncGeneratorCompleteStep). The generator's queued requests
+    /// are its caller's to run (`resume_async_generator_queue`).
+    pub(super) fn settle_yield_await(&mut self, p: &ResidualProgram, (state, generator): (Value, Value), promise: Value, value: Value) -> Result<(), JsError> {
+        self.spend_await(state);
+        self.keep_spare_await_state(state);
+        if let Some(record) = self.generator_record_mut(generator) {
+            record.stop();
+        }
+        self.resolve_iterator_result(p, promise, value, false)
     }
 
     /// An async generator's request `promise` resumes its suspended `generator` with `how`, as

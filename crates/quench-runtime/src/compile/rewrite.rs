@@ -5,7 +5,6 @@ use crate::bytecode::{
 };
 use super::liveness::{RegisterSet, register_bit};
 mod copies;
-mod producers;
 use copies::forward_move_sources;
 mod loop_constants;
 pub(super) use loop_constants::hoist_loop_constants;
@@ -391,9 +390,8 @@ impl CodeLiveness {
     }
 
     /// Updates the facts for one span `coalesce_distant_producer_moves` coalesced. A span is a
-    /// block (one entry, falling through, under handlers that read neither register) where
-    /// nothing between the producer and the move touches either register, so only the live
-    /// sets after the producer change:
+    /// block (one entry, falling through, no handler) where nothing between the producer and
+    /// the move touches either register, so only the live sets after the producer change:
     /// `src` is no longer read there and `dst` holds the value instead, live up to the move
     /// exactly when it is live after it. The producer's own live set is unchanged.
     fn coalesce(
@@ -512,13 +510,12 @@ fn invert_branches_over_jumps(function: &mut BcFunction) {
 /// non-adjacent form of `ProducerMove`: `src = producer; ...; dst = Move src` becomes
 /// `dst = producer; ...; Nop`. Call arguments are evaluated before their window is
 /// reserved, so each argument computed ahead of another argument's evaluation ends in such
-/// a move. Writing `dst` earlier is unobservable when the span between the two is one basic
-/// block that neither reads nor writes `dst` or `src`, the handlers covering the producer read
-/// neither register (`CodeLiveness::handler_live`; the span lies under one set of handlers,
-/// since its boundaries are protected positions), `src` is dead after the move, and neither
-/// register is promoted local storage (which legacy `f.arguments` reflection reads). Each
-/// coalesced span updates the transfer masks and live sets it changes before the next move is
-/// read (`CodeLiveness::coalesce`), so spans may nest and chain within one pass.
+/// a move. Writing `dst` earlier is unobservable when the span between the two is one
+/// handler-free basic block that neither reads nor writes `dst` or `src`, `src` is dead
+/// after the move, and neither register is promoted local storage (which legacy
+/// `f.arguments` reflection reads). Each coalesced span updates the transfer masks and live
+/// sets it changes before the next move is read (`CodeLiveness::coalesce`), so spans may
+/// nest and chain within one pass.
 fn coalesce_distant_producer_moves(
     function: &mut BcFunction,
     methods: &(impl liveness::MethodArguments + ?Sized),
@@ -580,8 +577,10 @@ fn coalesce_distant_producer_moves(
         };
         let instruction = function.code[producer];
         if instruction.is_wide()
-            || analysis.handler_live(producer) & pair != 0
-            || !coalesces_at_a_distance(instruction.op())
+            || !function.handlers.iter().all(|handler| handler.end as usize <= producer || handler.start as usize > target)
+            || !fuses(instruction.op(), Op::Move, |recipe| {
+                matches!(recipe, Recipe::ProducerMove)
+            })
             || instruction.result_register() != source
             || analysis.transfers[producer].1 != register_bit(source)
             || analysis.transfers[producer].0 & pair != 0
