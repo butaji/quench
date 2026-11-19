@@ -4574,6 +4574,10 @@ lane_handler! {
         };
         let function = code.function(vm.frames[frame].function as usize);
         let instruction = function.widened(function.code[pc]);
+        // A record that returns its result (`RETURN_REGISTER`) completes the frame, which the general path does.
+        if instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
+            return exit(ip);
+        }
         vm.frames[frame].pc = pc;
         vm.frames[frame].pc_is_resume = false;
         let mut next = pc + 1;

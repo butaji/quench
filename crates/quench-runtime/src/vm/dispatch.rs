@@ -789,7 +789,7 @@ impl<H: Host> Vm<H> {
                 // A unary's row leaves where its words decide nothing the frame proves (an immediate no tag class
                 // names, a Number row's miss); the VM's general unary (`Vm::unary`) answers every operand.
                 RowRun::Declined if i.op() == crate::bytecode::Op::Unary => {
-                    let value = self.unary(p, i.unary_operator(), self.read(f, i.operand_b()))?;
+                    let value = self.unary(p, i.unary_operator(), self.read(f, i.register_b()))?;
                     self.write(f, i.result_register(), value);
                     if i.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
                         return Ok(StepResult::Return(value));

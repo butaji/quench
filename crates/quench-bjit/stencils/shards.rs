@@ -6,7 +6,7 @@
 /// once: one invocation over the ~26k rows peaked near 6 GB (about 0.23 MB per row), so 4096 rows
 /// kept a shard near 1 GB plus the fixed cost of the shared row definitions. The staged rows grew that cost:
 /// one 4096-row shard reached 14 GB on 2026-11-19, so a shard holds 1536.
-pub const ROWS_PER_SHARD: usize = 1536;
+pub const ROWS_PER_SHARD: usize = 1024;
 
 /// Most shard compilations running at once: eight shards of about 1 GB fit a 16 GB machine
 /// beside the linker and the other crates cargo builds in parallel.
