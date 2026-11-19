@@ -2804,14 +2804,13 @@ impl LaneStack {
             // bound assumes.
             if self.plain.depth.get() == 0 { self.refresh_plain_bound(window.addr()); }
             let ActivationKind::Script(script) = activation.kind() else { unreachable!() };
-            use crate::staged::protocol::{plain_packed, push_plain, PlainHeader};
-            let header = PlainHeader {
-                call: activation.call().expose_provenance() as u64,
-                caller_registers: activation.caller_registers().0.expose_provenance() as u64,
-                caller_base: activation.caller_base().expose_provenance() as u64,
-                packed: plain_packed(activation.function(), script.argc, flags),
-                callee: script.callee.to_bits(),
-            };
+            use crate::staged::protocol::{push_plain, PlainHeader};
+            let header = PlainHeader::new(
+                activation.call().expose_provenance() as u64,
+                activation.caller_registers().0.expose_provenance() as u64,
+                activation.caller_base().expose_provenance() as u64,
+                activation.function(), script.argc, flags, script.callee.to_bits(),
+            );
             let side = lane_frames::Side::of(script, activation.caller_program(), flags);
             push_plain(
                 &mut crate::staged::Concrete::new(std::ptr::null()),
@@ -19898,7 +19897,7 @@ fn lane_enter_plain_window<H: Host>(
     argc: u16,
     this: Value,
 ) -> (Registers, Ip) {
-    use crate::staged::protocol::{plain_packed, push_plain_at, PlainHeader};
+    use crate::staged::protocol::{push_plain_at, PlainHeader};
     callee_registers.set_this(this);
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // SAFETY: the running lane's context.
@@ -19908,13 +19907,10 @@ fn lane_enter_plain_window<H: Host>(
     debug_assert!(callee_registers.0.addr() & HEAP_WINDOW == 0, "a lane stack window");
     // The record `lane_enter_window_of` builds here keeps `argc` (`KeepingRecord::of_kept`
     // without kept values) and completes `Completion::of(false, false, false)`, `Plain`.
-    let header = PlainHeader {
-        call: ip.expose_provenance() as u64,
-        caller_registers: r.0.expose_provenance() as u64,
-        caller_base: caller_base.expose_provenance() as u64,
-        packed: plain_packed(target.function, argc, 0),
-        callee: target.callee.to_bits(),
-    };
+    let header = PlainHeader::new(
+        ip.expose_provenance() as u64, r.0.expose_provenance() as u64, caller_base.expose_provenance() as u64,
+        target.function, argc, 0, target.callee.to_bits(),
+    );
     push_plain_at(
         &mut crate::staged::Concrete::new(std::ptr::null()),
         stack.plain_frames_word() as u64, callee_registers.0.expose_provenance() as u64, header, u64::from(program.raw()), depth as u64,
@@ -26535,13 +26531,10 @@ impl PreparedShape {
             // SAFETY: the lane's VM, which outlives its context; the trampoline is the lane stack's.
             let (trampoline, result) = unsafe { (*caller.vm).lane_stack.callback_return.bind::<H>() };
             CallbackHeader {
-                plain: crate::staged::protocol::PlainHeader {
-                    call: trampoline,
-                    caller_registers: result,
-                    caller_base: caller.base.expose_provenance() as u64,
-                    packed: crate::staged::protocol::plain_packed(target.function, argc.min(params) as u16, 0),
-                    callee: target.callee.to_bits(),
-                },
+                plain: crate::staged::protocol::PlainHeader::new(
+                    trampoline, result, caller.base.expose_provenance() as u64,
+                    target.function, argc.min(params) as u16, 0, target.callee.to_bits(),
+                ),
                 program: u64::from(caller.program.raw()),
                 call,
                 caller_registers: caller.registers,

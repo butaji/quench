@@ -179,6 +179,19 @@ pub(crate) struct PlainHeader<W> {
     pub(crate) callee: W,
 }
 
+impl PlainHeader<u64> {
+    /// The header of a plain activation of `function` with `argc` values and side-record `flags`,
+    /// called from `call` with its caller's `caller_registers` and `caller_base`, running
+    /// `callee`. The one constructor of the words every plain push writes: the interpreter's
+    /// record-shaped push (`LaneStack::push_activation`), a proved call (`lane_enter_plain_window`)
+    /// and a native callback's trampoline header.
+    #[inline(always)]
+    pub(crate) const fn new(call: u64, caller_registers: u64, caller_base: u64, function: u32, argc: u16, flags: u64,
+        callee: u64) -> Self {
+        Self { call, caller_registers, caller_base, packed: plain_packed(function, argc, flags), callee }
+    }
+}
+
 /// What a plain activation's return reads of its header: the caller's call record, registers
 /// and records.
 #[derive(Clone, Copy)]
