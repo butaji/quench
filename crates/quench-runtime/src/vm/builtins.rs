@@ -4,612 +4,36 @@ use super::*;
 
 /// Marks a cached atom field that has not been interned since the last program reset.
 pub(super) const NO_CACHED_ATOM: Atom = Atom::MAX;
-const MATH_FUNCTIONS: &[(&str, Native)] = &[
-    ("abs", Native::MathAbs),
-    ("acos", Native::MathAcos),
-    ("acosh", Native::MathAcosh),
-    ("asin", Native::MathAsin),
-    ("asinh", Native::MathAsinh),
-    ("atan", Native::MathAtan),
-    ("atan2", Native::MathAtan2),
-    ("atanh", Native::MathAtanh),
-    ("cbrt", Native::MathCbrt),
-    ("ceil", Native::MathCeil),
-    ("clz32", Native::MathClz32),
-    ("cos", Native::MathCos),
-    ("cosh", Native::MathCosh),
-    ("exp", Native::MathExp),
-    ("expm1", Native::MathExpm1),
-    ("floor", Native::MathFloor),
-    ("f16round", Native::MathF16Round),
-    ("fround", Native::MathFround),
-    ("hypot", Native::MathHypot),
-    ("imul", Native::MathImul),
-    ("log", Native::MathLog),
-    ("log10", Native::MathLog10),
-    ("log1p", Native::MathLog1p),
-    ("log2", Native::MathLog2),
-    ("max", Native::MathMax),
-    ("min", Native::MathMin),
-    ("pow", Native::MathPow),
-    ("random", Native::MathRandom),
-    ("round", Native::MathRound),
-    ("sign", Native::MathSign),
-    ("sin", Native::MathSin),
-    ("sinh", Native::MathSinh),
-    ("sqrt", Native::MathSqrt),
-    ("sumPrecise", Native::MathSumPrecise),
-    ("tan", Native::MathTan),
-    ("tanh", Native::MathTanh),
-    ("trunc", Native::MathTrunc),
-];
-#[rustfmt::skip]
-const NATIVES: &[Native] = &[
-    Native::Print, Native::HostDone, Native::CreateRealm, Native::IsHTMLDDA, Native::EvalScript, Native::CollectGarbage, Native::RealmTypeError, Native::Eval, Native::Function, Native::FunctionPrototype, Native::FunctionPrototypeHasInstance, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag, Native::ShadowRealm, Native::ShadowRealmEvaluate, Native::ShadowRealmImportValue, Native::ShadowRealmImportValueFulfilled, Native::ShadowRealmWrappedFunction,
-    Native::ObjectKeys, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
-    Native::ObjectGroupBy,
-    Native::ObjectFromEntries, Native::ObjectIs,
-    Native::ObjectCreate, Native::ObjectAssign, Native::ObjectDefineProperty, Native::ObjectDefineProperties, Native::ObjectGetPrototypeOf,
-    Native::ObjectSetPrototypeOf, Native::ObjectHasOwn, Native::ObjectPreventExtensions,
-    Native::ObjectIsExtensible, Native::ObjectSeal, Native::ObjectIsSealed,
-    Native::ObjectFreeze, Native::ObjectIsFrozen,
-    Native::ObjectPrototypeHasOwnProperty, Native::ObjectPrototypePropertyIsEnumerable, Native::ObjectPrototypeIsPrototypeOf, Native::ObjectPrototypeLookupGetter, Native::ObjectPrototypeLookupSetter, Native::ObjectPrototypeToLocaleString, Native::ObjectPrototypeToString, Native::ObjectPrototypeValueOf,
-    Native::ObjectPrototypeDefineGetter, Native::ObjectPrototypeDefineSetter,
-    Native::ObjectPrototypeProtoGetter, Native::ObjectPrototypeProtoSetter,
-    Native::ReflectGet, Native::ReflectHas, Native::ReflectApply, Native::ReflectGetOwnPropertyDescriptor, Native::ReflectDefineProperty, Native::ReflectDeleteProperty, Native::ReflectPreventExtensions, Native::ReflectIsExtensible,
-    Native::ReflectSet,
-    Native::SuperSet,
-    Native::ObjectLiteralPrototype,
-    Native::ObjectLiteralCreate,
-    Native::ReflectOwnKeys,
-    Native::ReflectGetPrototypeOf,
-    Native::ReflectSetPrototypeOf,
-    Native::ReflectConstruct,
-    Native::Proxy,
-    Native::ProxyRevocable,
-    Native::ProxyRevoke,
-    Native::JsonParse,
-    Native::JsonStringify,
-    Native::JsonRawJson,
-    Native::JsonIsRawJson,
-    Native::Array, Native::TypedArray, Native::TypedArrayFrom, Native::TypedArrayOf,
-    Native::TypedArrayLastIndexOf,
-    Native::TypedArraySort,
-    Native::TypedArrayAt,
-    Native::TypedArrayToReversed,
-    Native::TypedArrayToSorted,
-    Native::TypedArrayWith,
-    Native::TypedArrayToLocaleString,
-    Native::TypedArrayBufferGetter,
-    Native::TypedArrayByteLengthGetter,
-    Native::TypedArrayByteOffsetGetter,
-    Native::TypedArrayLengthGetter,
-    Native::TypedArrayToStringTag,
-    Native::ArrayIsArray,
-    Native::ArrayPush,
-    Native::ArrayPop,
-    Native::ArraySlice,
-    Native::ArrayIncludes,
-    Native::ArrayJoin,
-    Native::ArrayConcat,
-    Native::ArrayFlat,
-    Native::ArrayReverse,
-    Native::ArrayShift,
-    Native::ArrayUnshift,
-    Native::ArraySplice,
-    Native::ArrayFill,
-    Native::ArrayAt,
-    Native::ArrayLastIndexOf,
-    Native::ArrayIndexOf,
-    Native::ArrayCopyWithin,
-    Native::ArrayWith,
-    Native::ArrayForEach,
-    Native::ArrayMap,
-    Native::ArrayFilter,
-    Native::ArraySome,
-    Native::ArrayEvery,
-    Native::ArrayFind,
-    Native::ArrayFindIndex,
-    Native::ArrayFindLast,
-    Native::ArrayFindLastIndex,
-    Native::ArrayGroup,
-    Native::ArrayGroupToMap,
-    Native::ArrayFlatMap,
-    Native::ArrayReduce,
-    Native::ArrayReduceRight,
-    Native::TypedArrayForEach,
-    Native::TypedArrayMap,
-    Native::TypedArrayFilter,
-    Native::TypedArraySome,
-    Native::TypedArrayEvery,
-    Native::TypedArrayFind,
-    Native::TypedArrayFindIndex,
-    Native::TypedArrayFindLast,
-    Native::TypedArrayFindLastIndex,
-    Native::TypedArrayReduce,
-    Native::TypedArrayReduceRight,
-    Native::ArrayToReversed,
-    Native::ArrayToSpliced,
-    Native::ArraySort,
-    Native::ArrayToSorted,
-    Native::ArrayToString, Native::ArrayToLocaleString, Native::ArraySpecies, Native::ArrayFromAsync,
-    Native::ArrayFromAsyncFulfilled, Native::ArrayFromAsyncRejected,
-    Native::ArrayKeys,
-    Native::ArrayValues,
-    Native::ArrayEntries,
-    Native::ArrayFrom,
-    Native::ArrayOf,
-    Native::ArrayBuffer,
-    Native::ArrayBufferSpecies,
-    Native::ArrayBufferSlice,
-    Native::ArrayBufferTransfer,
-    Native::ArrayBufferResize,
-    Native::ArrayBufferTransferToFixedLength,
-    Native::ArrayBufferTransferToImmutable,
-    Native::ArrayBufferSliceToImmutable,
-    Native::ArrayBufferByteLengthGetter,
-    Native::ArrayBufferDetachedGetter,
-    Native::ArrayBufferImmutableGetter,
-    Native::ArrayBufferMaxByteLengthGetter,
-    Native::ArrayBufferResizableGetter,
-    Native::SharedArrayBufferByteLengthGetter,
-    Native::SharedArrayBufferGrowableGetter,
-    Native::SharedArrayBufferMaxByteLengthGetter,
-    Native::ArrayBufferIsView,
-    Native::DetachArrayBuffer,
-    Native::ArrayIteratorNext,
-    Native::SharedArrayBuffer,
-    Native::SharedArrayBufferGrow,
-    Native::SharedArrayBufferSlice,
-    Native::AtomicsLoad,
-    Native::AtomicsStore,
-    Native::AtomicsAdd,
-    Native::AtomicsSub,
-    Native::AtomicsAnd,
-    Native::AtomicsOr,
-    Native::AtomicsXor,
-    Native::AtomicsExchange,
-    Native::AtomicsCompareExchange,
-    Native::AtomicsIsLockFree,
-    Native::AtomicsNotify,
-    Native::AtomicsWait,
-    Native::AtomicsWaitAsync,
-    Native::AtomicsPause,
-    Native::Uint8Array,
-    Native::Uint8ClampedArray,
-    Native::Uint16Array,
-    Native::Uint32Array,
-    Native::Int8Array,
-    Native::Int16Array,
-    Native::Int32Array,
-    Native::BigInt64Array,
-    Native::BigUint64Array,
-    Native::Float16Array,
-    Native::Float32Array,
-    Native::Float64Array,
-    Native::Uint8ArraySet,
-    Native::Uint8ArrayReverse,
-    Native::Uint8ArrayFill,
-    Native::Uint8ArrayCopyWithin,
-    Native::Uint8ArraySubarray,
-    Native::Uint8ArraySlice,
-    Native::Uint8ArrayIncludes,
-    Native::Uint8ArrayIndexOf,
-    Native::Uint8ArrayJoin,
-    Native::Uint8ArrayToString,
-    Native::Uint8ArrayKeys,
-    Native::Uint8ArrayValues,
-    Native::Uint8ArrayEntries,
-    Native::Uint8ArrayFromBase64,
-    Native::Uint8ArrayFromHex,
-    Native::Uint8ArraySetFromBase64,
-    Native::Uint8ArraySetFromHex,
-    Native::Uint8ArrayToBase64,
-    Native::Uint8ArrayToHex,
-    Native::DataView,
-    Native::DataViewGetUint8,
-    Native::DataViewSetUint8,
-    Native::DataViewGetInt8,
-    Native::DataViewSetInt8,
-    Native::DataViewGetUint16,
-    Native::DataViewSetUint16,
-    Native::DataViewGetInt16,
-    Native::DataViewSetInt16,
-    Native::DataViewGetUint32,
-    Native::DataViewSetUint32,
-    Native::DataViewGetInt32,
-    Native::DataViewSetInt32,
-    Native::DataViewGetFloat32,
-    Native::DataViewSetFloat32,
-    Native::DataViewGetFloat64,
-    Native::DataViewSetFloat64,
-    Native::DataViewGetFloat16,
-    Native::DataViewSetFloat16,
-    Native::DataViewGetBigInt64,
-    Native::DataViewSetBigInt64,
-    Native::DataViewGetBigUint64,
-    Native::DataViewSetBigUint64,
-    Native::DataViewBufferGetter,
-    Native::DataViewByteLengthGetter,
-    Native::DataViewByteOffsetGetter,
-    Native::Map,
-    Native::MapGet,
-    Native::MapSet,
-    Native::MapHas,
-    Native::MapDelete,
-    Native::MapClear,
-    Native::MapKeys,
-    Native::MapValues,
-    Native::MapEntries,
-    Native::MapForEach,
-    Native::MapGetOrInsert,
-    Native::MapGetOrInsertComputed,
-    Native::MapGroupBy,
-    Native::MapSizeGetter,
-    Native::Set,
-    Native::SetAdd,
-    Native::SetHas,
-    Native::SetDelete,
-    Native::SetClear,
-    Native::SetKeys,
-    Native::SetValues,
-    Native::SetEntries,
-    Native::SetForEach,
-    Native::SetSizeGetter,
-    Native::SetDifference,
-    Native::SetIntersection,
-    Native::SetSymmetricDifference,
-    Native::SetUnion,
-    Native::SetIsDisjointFrom,
-    Native::SetIsSubsetOf,
-    Native::SetIsSupersetOf,
-    Native::SetSpeciesGetter,
-    Native::Iterator, Native::IteratorFrom, Native::IteratorConcat, Native::IteratorZip,
-    Native::IteratorZipKeyed, Native::IteratorMap, Native::IteratorFilter, Native::IteratorTake,
-    Native::IteratorDrop, Native::IteratorFlatMap, Native::IteratorReduce, Native::IteratorToArray,
-    Native::IteratorForEach, Native::IteratorEvery, Native::IteratorFind, Native::IteratorSome,
-    Native::IteratorDispose, Native::IteratorProtocolNext, Native::IteratorProtocolReturn,
-    Native::IteratorHelperNext,
-    Native::IteratorHelperReturn,
-    Native::IteratorPrototypeConstructorGetter, Native::IteratorPrototypeConstructorSetter,
-    Native::IteratorPrototypeToStringTagGetter, Native::IteratorPrototypeToStringTagSetter,
-    Native::IteratorNext, Native::StringIteratorNext, Native::RegExpStringIteratorNext, Native::IteratorClose,
-    Native::IteratorSelf, Native::AsyncIteratorSelf,
-    Native::IteratorReturn, Native::IteratorThrow,
-    Native::GeneratorNext, Native::GeneratorReturn, Native::GeneratorThrow,
-    Native::AsyncGeneratorNext, Native::AsyncGeneratorReturn, Native::AsyncGeneratorThrow,
-    Native::AsyncGeneratorReturnFulfilled, Native::AsyncGeneratorReturnRejected,
-    Native::AsyncIteratorDispose, Native::AsyncIteratorDisposeFulfilled,
-    Native::Test262Agent,
-    Native::WeakMap,
-    Native::WeakMapGet,
-    Native::WeakMapSet,
-    Native::WeakMapHas,
-    Native::WeakMapDelete,
-    Native::WeakMapGetOrInsert,
-    Native::WeakMapGetOrInsertComputed,
-    Native::WeakSet,
-    Native::WeakSetAdd,
-    Native::WeakSetHas,
-    Native::WeakSetDelete,
-    Native::WeakRef,
-    Native::WeakRefDeref,
-    Native::FinalizationRegistry,
-    Native::FinalizationRegistryRegister,
-    Native::FinalizationRegistryUnregister,
-    Native::DisposableStack, Native::AsyncDisposableStack, Native::AsyncDisposableStackUse, Native::AsyncDisposableStackAdopt,
-    Native::AsyncDisposableStackDefer, Native::AsyncDisposableStackMove, Native::AsyncDisposableStackDisposeAsync,
-    Native::AsyncDisposableStackDisposed, Native::DisposableStackMove, Native::DisposableStackDisposed,
-    Native::DisposableStackUse, Native::DisposableStackAdopt, Native::DisposableStackDefer, Native::DisposableStackDispose,
-    Native::DisposableStackUseAsync, Native::DisposableStackDisposeAsync, Native::DisposableStackDisposeWithCompletion,
-    Native::DisposableStackDisposeAsyncWithCompletion, Native::DisposableStackAsyncDisposalFulfilled,
-    Native::DisposableStackAsyncDisposalRejected,
-    Native::FunctionCall, Native::FunctionApply, Native::FunctionBind, Native::FunctionBoundCall, Native::FunctionToString, Native::FunctionCaller, Native::AsyncFunction, Native::GeneratorFunction, Native::AsyncGeneratorFunction, Native::AsyncGeneratorDelegateReturnStart,
-    Native::Date, Native::DateNow, Native::DateGetTime, Native::DateGetFullYear,
-    Native::DateGetMonth, Native::DateGetDate, Native::DateGetDay, Native::DateGetHours,
-    Native::DateGetMinutes, Native::DateGetSeconds, Native::DateGetMilliseconds,
-    Native::DateGetTimezoneOffset, Native::DateGetUTCFullYear, Native::DateGetUTCMonth,
-    Native::DateGetUTCDate, Native::DateGetUTCDay, Native::DateGetUTCHours,
-    Native::DateGetUTCMinutes, Native::DateGetUTCSeconds, Native::DateGetUTCMilliseconds,
-    Native::DateGetYear, Native::DateSetTime, Native::DateSetFullYear, Native::DateSetMonth,
-    Native::DateSetUTCMonth, Native::DateSetDate, Native::DateSetUTCDate,
-    Native::DateSetUTCFullYear, Native::DateSetHours, Native::DateSetMinutes,
-    Native::DateSetSeconds, Native::DateSetMilliseconds, Native::DateSetUTCHours,
-    Native::DateSetUTCMinutes, Native::DateSetUTCSeconds, Native::DateSetUTCMilliseconds,
-    Native::DateSetYear, Native::DateValueOf, Native::DateToString, Native::DateToUTCString,
-    Native::DateToDateString, Native::DateToTimeString, Native::DateToLocaleString,
-    Native::DateToLocaleDateString, Native::DateToLocaleTimeString,
-    Native::DateToISOString, Native::DateToJSON, Native::DateToPrimitive,
-    Native::DateToTemporalInstant, Native::DateParse, Native::DateUTC,
-    Native::TemporalToLocaleString,
-    Native::TemporalDuration, Native::TemporalDurationFrom, Native::TemporalDurationCompare,
-    Native::TemporalDurationAdd, Native::TemporalDurationSubtract, Native::TemporalDurationWith,
-    Native::TemporalDurationAbs, Native::TemporalDurationNegated, Native::TemporalDurationTotal,
-    Native::TemporalDurationRound,
-    Native::TemporalDurationToString, Native::TemporalDurationToJSON, Native::TemporalDurationValueOf,
-    Native::TemporalDurationYearsGetter, Native::TemporalDurationMonthsGetter,
-    Native::TemporalDurationWeeksGetter, Native::TemporalDurationDaysGetter,
-    Native::TemporalDurationHoursGetter, Native::TemporalDurationMinutesGetter,
-    Native::TemporalDurationSecondsGetter, Native::TemporalDurationMillisecondsGetter,
-    Native::TemporalDurationMicrosecondsGetter, Native::TemporalDurationNanosecondsGetter,
-    Native::TemporalDurationSignGetter, Native::TemporalDurationBlankGetter,
-    Native::TemporalPlainDate, Native::TemporalPlainDateFrom, Native::TemporalPlainDateCompare,
-    Native::TemporalPlainDateCalendarIdGetter, Native::TemporalPlainDateYearGetter,
-    Native::TemporalPlainDateMonthGetter, Native::TemporalPlainDateMonthCodeGetter,
-    Native::TemporalPlainDateDayGetter, Native::TemporalPlainDateEraGetter,
-    Native::TemporalPlainDateEraYearGetter, Native::TemporalPlainDateDayOfWeekGetter,
-    Native::TemporalPlainDateDayOfYearGetter, Native::TemporalPlainDateWeekOfYearGetter,
-    Native::TemporalPlainDateYearOfWeekGetter, Native::TemporalPlainDateDaysInWeekGetter,
-    Native::TemporalPlainDateDaysInMonthGetter, Native::TemporalPlainDateDaysInYearGetter,
-    Native::TemporalPlainDateMonthsInYearGetter, Native::TemporalPlainDateInLeapYearGetter,
-    Native::TemporalPlainDateToString,
-    Native::TemporalPlainDateToJSON, Native::TemporalPlainDateToLocaleString,
-    Native::TemporalPlainDateToPlainDateTime, Native::TemporalPlainDateToPlainMonthDay,
-    Native::TemporalPlainDateToPlainYearMonth, Native::TemporalPlainDateToZonedDateTime,
-    Native::TemporalPlainDateEquals, Native::TemporalPlainDateWith,
-    Native::TemporalPlainDateWithCalendar, Native::TemporalPlainDateValueOf,
-    Native::TemporalPlainDateAdd, Native::TemporalPlainDateSubtract,
-    Native::TemporalPlainDateUntil, Native::TemporalPlainDateSince,
-    Native::TemporalPlainTime, Native::TemporalPlainTimeFrom, Native::TemporalPlainTimeCompare,
-    Native::TemporalPlainTimeAdd, Native::TemporalPlainTimeSubtract,
-    Native::TemporalPlainTimeEquals,
-    Native::TemporalPlainTimeHourGetter, Native::TemporalPlainTimeMinuteGetter,
-    Native::TemporalPlainTimeSecondGetter, Native::TemporalPlainTimeMillisecondGetter,
-    Native::TemporalPlainTimeMicrosecondGetter, Native::TemporalPlainTimeNanosecondGetter,
-    Native::TemporalPlainTimeValueOf,
-    Native::TemporalPlainTimeRound,
-    Native::TemporalPlainTimeUntil, Native::TemporalPlainTimeSince,
-    Native::TemporalPlainTimeToString, Native::TemporalPlainTimeToJSON,
-    Native::TemporalPlainTimeWith,
-    Native::TemporalPlainMonthDay, Native::TemporalPlainMonthDayFrom,
-    Native::TemporalPlainMonthDayCompare, Native::TemporalPlainMonthDayCalendarIdGetter,
-    Native::TemporalPlainMonthDayDayGetter, Native::TemporalPlainMonthDayMonthCodeGetter,
-    Native::TemporalPlainMonthDayEquals, Native::TemporalPlainMonthDayToString,
-    Native::TemporalPlainMonthDayToJSON, Native::TemporalPlainMonthDayToLocaleString,
-    Native::TemporalPlainMonthDayToPlainDate, Native::TemporalPlainMonthDayWith,
-    Native::TemporalPlainMonthDayValueOf,
-    Native::TemporalPlainYearMonth, Native::TemporalPlainYearMonthFrom,
-    Native::TemporalPlainYearMonthCompare, Native::TemporalPlainYearMonthCalendarIdGetter,
-    Native::TemporalPlainYearMonthYearGetter, Native::TemporalPlainYearMonthMonthGetter,
-    Native::TemporalPlainYearMonthMonthCodeGetter,
-    Native::TemporalPlainYearMonthEraGetter, Native::TemporalPlainYearMonthEraYearGetter,
-    Native::TemporalPlainYearMonthReferenceISODayGetter,
-    Native::TemporalPlainYearMonthDaysInMonthGetter,
-    Native::TemporalPlainYearMonthDaysInYearGetter,
-    Native::TemporalPlainYearMonthMonthsInYearGetter,
-    Native::TemporalPlainYearMonthInLeapYearGetter, Native::TemporalPlainYearMonthEquals,
-    Native::TemporalPlainYearMonthToString, Native::TemporalPlainYearMonthToJSON,
-    Native::TemporalPlainYearMonthToLocaleString, Native::TemporalPlainYearMonthAdd,
-    Native::TemporalPlainYearMonthSubtract, Native::TemporalPlainYearMonthUntil,
-    Native::TemporalPlainYearMonthSince, Native::TemporalPlainYearMonthWith,
-    Native::TemporalPlainYearMonthValueOf, Native::TemporalPlainYearMonthToPlainDate,
-    Native::TemporalPlainDateTime, Native::TemporalPlainDateTimeFrom,
-    Native::TemporalPlainDateTimeCompare, Native::TemporalPlainDateTimeAdd,
-    Native::TemporalPlainDateTimeSubtract, Native::TemporalPlainDateTimeRound,
-    Native::TemporalPlainDateTimeUntil, Native::TemporalPlainDateTimeSince,
-    Native::TemporalPlainDateTimeToString, Native::TemporalPlainDateTimeToJSON,
-    Native::TemporalPlainDateTimeToPlainDate, Native::TemporalPlainDateTimeToPlainTime,
-    Native::TemporalPlainDateTimeValueOf,
-    Native::TemporalPlainDateTimeToZonedDateTime,
-    Native::TemporalPlainDateTimeWith,
-    Native::TemporalPlainDateTimeWithCalendar,
-    Native::TemporalPlainDateTimeWithPlainTime,
-    Native::TemporalPlainDateTimeEquals,
-    Native::TemporalPlainDateTimeCalendarIdGetter,
-    Native::TemporalPlainDateTimeYearGetter, Native::TemporalPlainDateTimeMonthGetter,
-    Native::TemporalPlainDateTimeMonthCodeGetter, Native::TemporalPlainDateTimeDayGetter,
-    Native::TemporalPlainDateTimeEraGetter, Native::TemporalPlainDateTimeEraYearGetter,
-    Native::TemporalPlainDateTimeDayOfWeekGetter, Native::TemporalPlainDateTimeDayOfYearGetter,
-    Native::TemporalPlainDateTimeWeekOfYearGetter, Native::TemporalPlainDateTimeYearOfWeekGetter,
-    Native::TemporalPlainDateTimeDaysInWeekGetter, Native::TemporalPlainDateTimeDaysInMonthGetter,
-    Native::TemporalPlainDateTimeDaysInYearGetter, Native::TemporalPlainDateTimeMonthsInYearGetter,
-    Native::TemporalPlainDateTimeInLeapYearGetter,
-    Native::TemporalPlainDateTimeHourGetter, Native::TemporalPlainDateTimeMinuteGetter,
-    Native::TemporalPlainDateTimeSecondGetter, Native::TemporalPlainDateTimeMillisecondGetter,
-    Native::TemporalPlainDateTimeMicrosecondGetter, Native::TemporalPlainDateTimeNanosecondGetter,
-    Native::TemporalZonedDateTime, Native::TemporalZonedDateTimeEpochNanosecondsGetter,
-    Native::TemporalZonedDateTimeFrom, Native::TemporalZonedDateTimeCompare,
-    Native::TemporalZonedDateTimeEquals,
-    Native::TemporalZonedDateTimeWithTimeZone, Native::TemporalZonedDateTimeWith,
-    Native::TemporalZonedDateTimeWithCalendar,
-    Native::TemporalZonedDateTimeWithPlainTime,
-    Native::TemporalZonedDateTimeToInstant, Native::TemporalZonedDateTimeToPlainDate,
-    Native::TemporalZonedDateTimeToPlainDateTime, Native::TemporalZonedDateTimeToPlainTime,
-    Native::TemporalZonedDateTimeValueOf,
-    Native::TemporalZonedDateTimeAdd, Native::TemporalZonedDateTimeSubtract,
-    Native::TemporalZonedDateTimeGetTimeZoneTransition,
-    Native::TemporalZonedDateTimeStartOfDay,
-    Native::TemporalZonedDateTimeRound,
-    Native::TemporalZonedDateTimeUntil, Native::TemporalZonedDateTimeSince,
-    Native::TemporalZonedDateTimeToString, Native::TemporalZonedDateTimeToJSON,
-    Native::TemporalZonedDateTimeToLocaleString,
-    Native::TemporalZonedDateTimeTimeZoneIdGetter, Native::TemporalZonedDateTimeCalendarIdGetter,
-    Native::TemporalZonedDateTimeYearGetter, Native::TemporalZonedDateTimeMonthGetter,
-    Native::TemporalZonedDateTimeMonthCodeGetter,
-    Native::TemporalZonedDateTimeDayGetter, Native::TemporalZonedDateTimeHourGetter,
-    Native::TemporalZonedDateTimeMinuteGetter, Native::TemporalZonedDateTimeSecondGetter,
-    Native::TemporalZonedDateTimeMillisecondGetter, Native::TemporalZonedDateTimeMicrosecondGetter,
-    Native::TemporalZonedDateTimeNanosecondGetter,
-    Native::TemporalZonedDateTimeEraGetter, Native::TemporalZonedDateTimeEraYearGetter,
-    Native::TemporalZonedDateTimeDayOfWeekGetter, Native::TemporalZonedDateTimeDayOfYearGetter,
-    Native::TemporalZonedDateTimeWeekOfYearGetter, Native::TemporalZonedDateTimeYearOfWeekGetter,
-    Native::TemporalZonedDateTimeDaysInWeekGetter, Native::TemporalZonedDateTimeDaysInMonthGetter,
-    Native::TemporalZonedDateTimeDaysInYearGetter, Native::TemporalZonedDateTimeMonthsInYearGetter,
-    Native::TemporalZonedDateTimeInLeapYearGetter,
-    Native::TemporalZonedDateTimeEpochMillisecondsGetter, Native::TemporalZonedDateTimeHoursInDayGetter,
-    Native::TemporalZonedDateTimeOffsetGetter, Native::TemporalZonedDateTimeOffsetNanosecondsGetter,
-    Native::TemporalInstant, Native::TemporalInstantFrom, Native::TemporalInstantCompare,
-    Native::TemporalInstantFromEpochMilliseconds, Native::TemporalInstantFromEpochNanoseconds,
-    Native::TemporalInstantEpochNanosecondsGetter, Native::TemporalInstantEpochMillisecondsGetter,
-    Native::TemporalInstantToString, Native::TemporalInstantToJSON, Native::TemporalInstantValueOf,
-    Native::TemporalInstantEquals, Native::TemporalInstantAdd, Native::TemporalInstantSubtract,
-    Native::TemporalInstantRound,
-    Native::TemporalInstantSince, Native::TemporalInstantUntil,
-    Native::TemporalInstantToZonedDateTimeISO,
-    Native::TemporalNowInstant, Native::TemporalNowPlainDateISO,
-    Native::TemporalNowPlainDateTimeISO, Native::TemporalNowPlainTimeISO,
-    Native::TemporalNowTimeZoneId, Native::TemporalNowZonedDateTimeISO,
-    Native::Error, Native::ErrorToString, Native::ErrorIsError, Native::ErrorCaptureStackTrace,
-    Native::ErrorStackGetter, Native::ErrorStackSetter,
-    Native::CallSiteGetFileName, Native::CallSiteGetThis, Native::CallSiteGetFunctionName,
-    Native::CallSiteGetLineNumber, Native::CallSiteGetColumnNumber,
-    Native::CallSiteGetTypeName, Native::CallSiteGetMethodName,
-    Native::CallSiteIsEval, Native::CallSiteGetEvalOrigin,
-    Native::CallSiteIsConstructor, Native::CallSiteIsNative, Native::CallSiteToString,
-    Native::CallSiteConstructor, Native::CallSiteGetFunction,
-    Native::AggregateError, Native::SuppressedError, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::ThrowTypeError,
-    Native::RegExp,
-    Native::RegExpCompile,
-    Native::RegExpEscape,
-    Native::RegExpLegacyGetter,
-    Native::RegExpLegacySetter,
-    Native::RegExpToString,
-    Native::RegExpSymbolMatch,
-    Native::RegExpSymbolSearch,
-    Native::RegExpSymbolReplace,
-    Native::RegExpSymbolMatchAll,
-    Native::RegExpSymbolSplit,
-    Native::RegExpSpecies,
-    Native::RegExpExec,
-    Native::RegExpTest,
-    Native::RegExpGlobal,
-    Native::RegExpIgnoreCase,
-    Native::RegExpMultiline,
-    Native::RegExpDotAll,
-    Native::RegExpUnicode,
-    Native::RegExpUnicodeSets,
-    Native::RegExpSticky,
-    Native::RegExpHasIndices,
-    Native::RegExpSource,
-    Native::RegExpFlags,
-    Native::String, Native::Boolean, Native::BooleanToString, Native::BooleanValueOf, Native::BigInt, Native::BigIntValueOf, Native::BigIntToString, Native::BigIntToLocaleString, Native::BigIntAsIntN, Native::BigIntAsUintN,
-    Native::IntlNumberFormat, Native::IntlNumberFormatSupportedLocalesOf,
-    Native::IntlNumberFormatFormatGetter,
-    Native::IntlNumberFormatFormat,
-    Native::IntlNumberFormatFormatToParts, Native::IntlNumberFormatFormatRange,
-    Native::IntlNumberFormatFormatRangeToParts, Native::IntlNumberFormatResolvedOptions,
-    Native::IntlGetCanonicalLocales,
-    Native::IntlSupportedValuesOf, Native::IntlLocale,
-    Native::IntlLocaleToString, Native::IntlLocaleMaximize, Native::IntlLocaleMinimize,
-    Native::IntlLocaleGetCalendars, Native::IntlLocaleGetCollations,
-    Native::IntlLocaleGetHourCycles, Native::IntlLocaleGetNumberingSystems,
-    Native::IntlLocaleGetTimeZones, Native::IntlLocaleGetTextInfo,
-    Native::IntlLocaleGetWeekInfo, Native::IntlLocaleBaseNameGetter,
-    Native::IntlLocaleLanguageGetter, Native::IntlLocaleScriptGetter,
-    Native::IntlLocaleRegionGetter, Native::IntlLocaleVariantsGetter,
-    Native::IntlLocaleCalendarGetter, Native::IntlLocaleCollationGetter,
-    Native::IntlLocaleHourCycleGetter, Native::IntlLocaleCaseFirstGetter,
-    Native::IntlLocaleFirstDayOfWeekGetter, Native::IntlLocaleNumberingSystemGetter,
-    Native::IntlLocaleNumericGetter,
-    Native::IntlCollator, Native::IntlCollatorSupportedLocalesOf, Native::IntlCollatorCompareGetter, Native::IntlCollatorCompare,
-    Native::IntlCollatorResolvedOptions,
-    Native::IntlPluralRules, Native::IntlPluralRulesSupportedLocalesOf,
-    Native::IntlPluralRulesSelect, Native::IntlPluralRulesSelectRange,
-    Native::IntlPluralRulesResolvedOptions,
-    Native::IntlDateTimeFormat, Native::IntlDateTimeFormatFormatGetter,
-    Native::IntlDateTimeFormatFormat, Native::IntlDateTimeFormatFormatToParts,
-    Native::IntlDateTimeFormatFormatRange, Native::IntlDateTimeFormatFormatRangeToParts,
-    Native::IntlDateTimeFormatSupportedLocalesOf, Native::IntlDateTimeFormatResolvedOptions,
-    Native::IntlDisplayNames, Native::IntlDisplayNamesSupportedLocalesOf, Native::IntlDisplayNamesOf,
-    Native::IntlDisplayNamesResolvedOptions,
-    Native::IntlDurationFormat, Native::IntlDurationFormatFormatGetter,
-    Native::IntlDurationFormatFormat, Native::IntlDurationFormatFormatToParts,
-    Native::IntlDurationFormatResolvedOptions, Native::IntlDurationFormatSupportedLocalesOf,
-    Native::IntlListFormat, Native::IntlListFormatFormatGetter, Native::IntlListFormatFormat,
-    Native::IntlListFormatFormatToParts, Native::IntlListFormatResolvedOptions,
-    Native::IntlListFormatSupportedLocalesOf,
-    Native::IntlRelativeTimeFormat, Native::IntlRelativeTimeFormatSupportedLocalesOf,
-    Native::IntlRelativeTimeFormatFormat, Native::IntlRelativeTimeFormatFormatToParts,
-    Native::IntlRelativeTimeFormatResolvedOptions,
-    Native::IntlSegmenter, Native::IntlSegmenterSupportedLocalesOf,
-    Native::IntlSegmenterSegment, Native::IntlSegmenterResolvedOptions,
-    Native::IntlSegmenterSegmentsIterator, Native::IntlSegmenterSegmentsContaining, Native::IntlSegmenterIteratorNext,
-    Native::Symbol, Native::SymbolToString, Native::SymbolToPrimitive, Native::SymbolValueOf,
-    Native::SymbolDescriptionGetter,
-    Native::SymbolFor,
-    Native::SymbolKeyFor,
-    Native::StringCharCodeAt, Native::StringSlice,
-    Native::StringCharAt,
-    Native::StringSubstring,
-    Native::StringSubstr,
-    Native::StringIncludes,
-    Native::StringIsWellFormed,
-    Native::StringStartsWith,
-    Native::StringEndsWith,
-    Native::StringIndexOf, Native::StringLastIndexOf, Native::StringToString, Native::StringValueOf,
-    Native::StringReplace, Native::StringSplit, Native::StringTrim, Native::StringTrimStart,
-    Native::StringTrimEnd,
-    Native::StringRepeat,
-    Native::StringPadStart,
-    Native::StringPadEnd,
-    Native::StringMatch,
-    Native::StringMatchAll,
-    Native::StringSearch,
-    Native::StringReplaceAll,
-    Native::StringAt, Native::StringCodePointAt, Native::StringToUpperCase, Native::StringToLowerCase, Native::StringToLocaleLowerCase, Native::StringToLocaleUpperCase, Native::StringLocaleCompare, Native::StringConcat, Native::StringNormalize, Native::StringValues,
-    Native::StringAnchor, Native::StringBig, Native::StringBlink, Native::StringBold, Native::StringFixed, Native::StringFontcolor, Native::StringFontsize, Native::StringItalics, Native::StringLink, Native::StringSmall, Native::StringStrike, Native::StringSub, Native::StringSup,
-    Native::StringToWellFormed,
-    Native::EncodeUri,
-    Native::EncodeUriComponent,
-    Native::DecodeUri,
-    Native::DecodeUriComponent,
-    Native::GlobalEscape,
-    Native::GlobalUnescape,
-    Native::StringFromCharCode, Native::StringFromCodePoint, Native::StringRaw,
-    Native::ParseInt,
-    Native::MathLog,
-    Native::MathPow,
-    Native::MathFloor,
-    Native::MathMin,
-    Native::MathMax,
-    Native::MathRandom,
-    Native::MathAbs, Native::MathCeil, Native::MathRound, Native::MathTrunc,
-    Native::MathSqrt, Native::MathSign, Native::MathAcos, Native::MathAsin,
-    Native::MathAtan, Native::MathCos, Native::MathExp, Native::MathSin,
-    Native::MathTan, Native::MathAtan2,
-    Native::MathAcosh, Native::MathAsinh, Native::MathAtanh, Native::MathCbrt,
-    Native::MathCosh, Native::MathExpm1, Native::MathFround, Native::MathHypot,
-    Native::MathImul, Native::MathLog10, Native::MathLog1p, Native::MathLog2,
-    Native::MathSinh, Native::MathTanh, Native::MathClz32, Native::MathF16Round,
-    Native::MathSumPrecise,
-    Native::NumberString,
-    Native::NumberToLocaleString,
-    Native::Number, Native::NumberValueOf,
-    Native::GlobalIsNaN, Native::GlobalIsFinite, Native::NumberIsNaN,
-    Native::NumberIsFinite,
-    Native::NumberIsInteger,
-    Native::NumberIsSafeInteger,
-    Native::NumberParseFloat,
-    Native::NumberFixed,
-    Native::NumberExponential,
-    Native::NumberPrecision,
-    Native::Promise,
-    Native::PromiseSpeciesGetter,
-    Native::PromiseResolve,
-    Native::PromiseReject,
-    Native::PromiseTry,
-    Native::PromiseWithResolvers,
-    Native::PromiseCapabilityExecutor,
-    Native::PromiseThen,
-    Native::PromiseCatch,
-    Native::PromiseFinally,
-    Native::PromiseFinallyHandler,
-    Native::PromiseFinallyContinuationHandler,
-    Native::PromiseAll, Native::PromiseAllKeyed, Native::PromiseRace, Native::PromiseAllSettled, Native::PromiseAllSettledKeyed, Native::PromiseAny,
-    Native::PromiseAggregateJob,
-    Native::DynamicImport, Native::AsyncFromSyncValue,
-    Native::AsyncFromSyncValueRejected, Native::AsyncGeneratorDelegateFulfilled,
-    Native::AsyncGeneratorDelegateRejected,
-    Native::WebAssemblyValidate, Native::WebAssemblyCompile, Native::WebAssemblyInstantiate,
-    Native::WasmModule, Native::WasmModuleExports, Native::WasmModuleImports,
-    Native::WasmModuleCustomSections,
-    Native::WasmInstance, Native::WasmInstanceExportsGetter,
-    Native::WasmMemory, Native::WasmMemoryGrow, Native::WasmMemoryBufferGetter,
-    Native::WasmTable, Native::WasmTableLengthGetter, Native::WasmTableGrow, Native::WasmTableGet,
-    Native::WasmTableSet,
-    Native::WasmGlobal, Native::WasmGlobalValueGetter, Native::WasmGlobalValueSetter,
-    Native::WasmGlobalValueOf, Native::WasmTag,
-    Native::WasmCompileError, Native::WasmLinkError, Native::WasmRuntimeError, ];
+/// `Math`'s functions, in installation order: derived from the rows of `native_rows`.
+const MATH_FUNCTIONS: &[(&str, Native)] = super::native_rows::MATH_FUNCTIONS;
+/// The number of natives that are shared function objects: `Native::ALL` less the unshared ones.
+const fn shared_native_count() -> usize {
+    let mut count = 0;
+    let mut index = 0;
+    while index < Native::ALL.len() {
+        if Native::ALL[index].has_shared_function() {
+            count += 1;
+        }
+        index += 1;
+    }
+    count
+}
+
+/// The natives that are shared function objects, in discriminant order. Each row's native is
+/// among them: `native_value` asserts that a native has a row or is listed here.
+const NATIVES: [Native; shared_native_count()] = {
+    let mut natives = [Native::Print; shared_native_count()];
+    let mut count = 0;
+    let mut index = 0;
+    while index < Native::ALL.len() {
+        if Native::ALL[index].has_shared_function() {
+            natives[count] = Native::ALL[index];
+            count += 1;
+        }
+        index += 1;
+    }
+    natives
+};
 /// The function objects every realm shares, one per `NATIVES` entry. Each is built on its
 /// first read (`Vm::native_value`): a realm's installation reads fewer than half of them,
 /// and a program reads the rest only through the builtins it uses.
@@ -636,6 +60,7 @@ impl NativeTable {
         self.functions.clear();
     }
 
+    #[inline(always)]
     fn get(&self, kind: Native) -> Option<Value> {
         self.functions
             .get(kind as usize)
@@ -694,7 +119,7 @@ mod namespace_tests {
         let program = Engine::specialize("0", "namespace-preparation.js").unwrap();
         let mut vm = Vm::new(TestHost::default());
         vm.initialize(&program).unwrap();
-        for name in ["Math", "Temporal"] {
+        for name in ["Math", "Temporal", "Atomics", "Intl", "WebAssembly", "Reflect", "Proxy", "WeakRef", "FinalizationRegistry", "DataView"] {
             let atom = vm.lookup_atom(name).unwrap();
             assert!(vm.is_pending_lazy_data_property(vm.realm.globals, PropertyKey::string(atom)), "{name}");
         }
@@ -731,8 +156,8 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_object_arrays");
         self.install_typed_array(program)?;
-        self.install_data_view(program)?;
-        self.install_atomics(program)?;
+        self.install_lazy_builtin_namespace(program, "DataView", Native::DataViewInitialize)?;
+        self.install_lazy_builtin_namespace(program, "Atomics", Native::AtomicsInitialize)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_typed_memory");
         self.install_collections(program)?;
@@ -777,13 +202,12 @@ impl<H: Host> Vm<H> {
         self.report_memory_if_enabled("runtime_date_regexp_realms");
         let symbol = self.native_value(Native::Symbol);
         self.set_builtin_function_name(symbol, "Symbol")?;
-        self.set_builtin_named(program, symbol, "for", Native::SymbolFor)?;
-        self.set_builtin_named(program, symbol, "keyFor", Native::SymbolKeyFor)?;
+        self.install_native_rows(program, symbol, super::native_rows::Holder::SymbolConstructor)?;
         for well_known in WellKnownSymbol::ALL {
             let name = well_known.name();
             let value = self
                 .heap
-                .alloc(Cell::Symbol(crate::heap::SymbolData::public(Some(format!("Symbol.{name}")))));
+                .alloc_symbol(crate::heap::SymbolData::public(Some(format!("Symbol.{name}"))));
             self.well_known_symbols.insert(well_known, value);
             self.set_named_constant(program, symbol, name, value)?;
         }
@@ -858,18 +282,11 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.install_finalization_registry(program)?;
-        let atomics_name = self.intern_atom("Atomics");
-        if let Some(atomics) = self.own_property(self.realm.globals, atomics_name) {
-            self.install_builtin_to_string_tag(atomics, "Atomics")?;
-        }
+        self.install_lazy_builtin_namespace(program, "FinalizationRegistry", Native::FinalizationRegistryInitialize)?;
         let bigint = self.native_value(Native::BigInt);
         let prototype_atom = self.prototype_atom();
         let bigint_prototype = self.get_property(program, bigint, prototype_atom)?;
         self.install_builtin_to_string_tag(bigint_prototype, "BigInt")?;
-        let data_view = self.native_value(Native::DataView);
-        let data_view_prototype = self.get_property(program, data_view, prototype_atom)?;
-        self.install_builtin_to_string_tag(data_view_prototype, "DataView")?;
         let date = self.native_value(Native::Date);
         let date_prototype = self.get_property(program, date, prototype_atom)?;
         let date_to_primitive = self.native_value(Native::DateToPrimitive);
@@ -889,7 +306,6 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        self.install_builtin_to_string_tag(self.weak_ref_proto, "WeakRef")?;
         self.install_array_species()?;
         let native_typed_array = self.native_value(Native::TypedArray);
         self.install_typed_array_species(
@@ -914,28 +330,14 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_symbols_disposal");
         self.install_string(program, string)?;
-        self.set_builtin_named(program, string, "fromCharCode", Native::StringFromCharCode)?;
-        self.set_builtin_named(
-            program,
-            string,
-            "fromCodePoint",
-            Native::StringFromCodePoint,
-        )?;
-        self.set_builtin_named(program, string, "raw", Native::StringRaw)?;
+        self.install_native_rows(program, string, super::native_rows::Holder::StringConstructor)?;
         self.global(program, "String", string)?;
         self.install_iterator_self(program)?;
-        for (name, native) in [
-            ("parseInt", Native::ParseInt),
-            ("parseFloat", Native::NumberParseFloat),
-            ("isNaN", Native::GlobalIsNaN),
-            ("isFinite", Native::GlobalIsFinite),
-        ] {
-            self.set_builtin_named(program, self.realm.globals, name, native)?;
-        }
+        self.install_native_rows(program, self.realm.globals, super::native_rows::Holder::GlobalObject)?;
         self.install_number(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_core_builtins");
-        self.install_intl_for_realm(program, self.realm.globals, self.object_proto)?;
+        self.install_lazy_builtin_namespace(program, "Intl", Native::IntlInitialize)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_intl");
         for (name, native) in [
@@ -953,12 +355,12 @@ impl<H: Host> Vm<H> {
             self.set_builtin_named(program, self.realm.globals, name, native)?;
         }
         self.install_json_for_realm(program, self.realm.globals)?;
-        self.install_reflect(program)?;
+        self.install_lazy_builtin_namespace(program, "Reflect", Native::ReflectInitialize)?;
         self.install_lazy_builtin_namespace(program, "Math", Native::MathInitialize)?;
         self.install_promise(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_before_webassembly");
-        self.install_webassembly(program)?;
+        self.install_lazy_builtin_namespace(program, "WebAssembly", Native::WebAssemblyInitialize)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins_before_temporal");
         self.install_lazy_builtin_namespace(program, "Temporal", Native::TemporalInitialize)?;
@@ -967,19 +369,41 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn install_lazy_builtin_namespace(
+    pub(super) fn install_lazy_builtin_namespace(
         &mut self,
         program: &ResidualProgram,
         name: &str,
         initializer: Native,
     ) -> Result<(), JsError> {
         let initializer = self.native_with_env(initializer, Value::NULL);
+        let global = self.realm.globals;
+        self.define_lazy_builtin_namespace(program, global, name, initializer)
+    }
+
+    /// Materializes the current realm's global `name` when it is still a pending lazy member,
+    /// before a native reads an intrinsic that the global's initializer builds.
+    pub(super) fn materialize_global_intrinsic(&mut self, program: &ResidualProgram, name: &str) -> Result<(), JsError> {
+        let global = self.realm.globals;
+        let atom = self.intern_atom(name);
+        self.materialize_lazy_data_property(program, global, PropertyKey::string(atom))
+    }
+
+    /// Defines `holder.name` as a lazy namespace that the `initializer` function builds when
+    /// first observed. A realm's own initializer is a native of that realm, so it builds the
+    /// namespace in the realm owning `holder`.
+    pub(super) fn define_lazy_builtin_namespace(
+        &mut self,
+        program: &ResidualProgram,
+        holder: Value,
+        name: &str,
+        initializer: Value,
+    ) -> Result<(), JsError> {
         let atom = self.intern_atom(name);
         let key = self.heap.alloc_string(self.atom_value(atom));
-        self.with_call_roots([initializer, key], |vm| {
+        self.with_call_roots([holder, initializer, key], |vm| {
             vm.define_lazy_data_properties(
                 program,
-                vm.realm.globals,
+                holder,
                 &[super::lazy_data_property::LazyMember {
                     key,
                     enumerable: false,
@@ -994,13 +418,12 @@ impl<H: Host> Vm<H> {
     fn install_prototypes(&mut self) {
         self.object_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
-        self.function_proto = self.heap.alloc_function(FunctionRecord {
+            .alloc_object(Self::empty_object(Value::NULL));
+        self.function_proto = self.alloc_function_in(FunctionRecord {
             object: Self::empty_object(self.object_proto),
-            realm: self.realm.globals,
             kind: FunctionKind::Native(Native::FunctionPrototype),
             env: Value::NULL,
-        });
+        }, self.realm.globals);
         for (native, prototype) in [
             (Native::Object, self.object_proto),
             (Native::Function, self.function_proto),
@@ -1027,48 +450,27 @@ impl<H: Host> Vm<H> {
         global: Value,
     ) -> Result<(), JsError> {
         let prototype = self.realm_object_prototype(global);
-        let json = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let json = self.heap.alloc_object(Self::empty_object(prototype));
         self.install_builtin_to_string_tag(json, "JSON")?;
         let realm = (global != self.realm.globals).then_some(global);
-        for (name, native) in [
-            ("parse", Native::JsonParse),
-            ("stringify", Native::JsonStringify),
-            ("rawJSON", Native::JsonRawJson),
-            ("isRawJSON", Native::JsonIsRawJson),
-        ] {
-            self.set_realm_builtin_named(program, json, name, native, realm)?;
-        }
+        self.install_rows_in_realm(program, json, super::native_rows::Holder::Json, realm)?;
         self.set_builtin_value_named(global, "JSON", json)
     }
 
-    fn install_reflect(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+    pub(super) fn install_reflect(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let reflect = self.object();
-        for (name, native) in [
-            ("get", Native::ReflectGet),
-            ("has", Native::ReflectHas),
-            ("apply", Native::ReflectApply),
-            (
-                "getOwnPropertyDescriptor",
-                Native::ReflectGetOwnPropertyDescriptor,
-            ),
-            ("defineProperty", Native::ReflectDefineProperty),
-            ("deleteProperty", Native::ReflectDeleteProperty),
-            ("preventExtensions", Native::ReflectPreventExtensions),
-            ("isExtensible", Native::ReflectIsExtensible),
-            ("set", Native::ReflectSet),
-            ("ownKeys", Native::ReflectOwnKeys),
-            ("getPrototypeOf", Native::ReflectGetPrototypeOf),
-            ("setPrototypeOf", Native::ReflectSetPrototypeOf),
-            ("construct", Native::ReflectConstruct),
-        ] {
-            self.set_builtin_named(program, reflect, name, native)?;
-        }
+        self.install_native_rows(program, reflect, super::native_rows::Holder::Reflect)?;
         self.install_builtin_to_string_tag(reflect, "Reflect")?;
+        self.seal_initialized_intrinsic(reflect);
         self.global(program, "Reflect", reflect)
     }
     pub(super) fn install_math(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let math = self.object();
         self.install_builtin_to_string_tag(math, "Math")?;
+        // Functions, then value properties: the order Node's `Math` lists them in.
+        for (name, native) in MATH_FUNCTIONS {
+            self.set_builtin_named(program, math, name, *native)?;
+        }
         for (name, value) in [
             ("E", std::f64::consts::E),
             ("LN10", std::f64::consts::LN_10),
@@ -1080,9 +482,6 @@ impl<H: Host> Vm<H> {
             ("SQRT2", std::f64::consts::SQRT_2),
         ] {
             self.set_named_constant(program, math, name, Value::number(value))?;
-        }
-        for (name, native) in MATH_FUNCTIONS {
-            self.set_builtin_named(program, math, name, *native)?;
         }
         self.seal_initialized_intrinsic(math);
         self.global(program, "Math", math)
@@ -1142,10 +541,21 @@ impl<H: Host> Vm<H> {
         if let Some(function) = self.natives.get(kind) {
             return function;
         }
-        debug_assert!(NATIVES.contains(&kind), "{kind:?} has no shared function");
+        debug_assert!(
+            super::native_rows::row_name(kind).is_some() || NATIVES.contains(&kind),
+            "{kind:?} has no shared function"
+        );
         let function = self.native_with_realm(kind, Value::NULL, self.natives.realm);
         self.natives.insert(kind, function);
         function
+    }
+
+    /// Whether `value` is the function every realm shares for `native` (`is_shared_native` of
+    /// a function of that native): one comparison with the table's entry, no read of the
+    /// function. The table enters only `native`'s own function under it (`native_value`).
+    #[inline(always)]
+    pub(super) fn is_shared_native_of(&self, value: Value, native: Native) -> bool {
+        self.natives.get(native) == Some(value)
     }
 
     /// Whether `value` is the function every realm shares for its native: one native serves
@@ -1348,6 +758,49 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_value_named(object, name, function)
     }
 
+    /// Installs `holder`'s rows on `target` as the shared builtin functions, in row order.
+    pub(super) fn install_native_rows(
+        &mut self,
+        program: &ResidualProgram,
+        target: Value,
+        holder: super::native_rows::Holder,
+    ) -> Result<(), JsError> {
+        for row in super::native_rows::NATIVE_ROWS.iter().filter(|row| row.holder == holder) {
+            self.set_builtin_named(program, target, row.name, row.native)?;
+        }
+        Ok(())
+    }
+
+    /// Installs `holder`'s rows on `target` as functions of `global`'s realm, in row order.
+    pub(super) fn install_realm_native_rows(
+        &mut self,
+        target: Value,
+        holder: super::native_rows::Holder,
+        global: Value,
+    ) -> Result<(), JsError> {
+        for row in super::native_rows::NATIVE_ROWS.iter().filter(|row| row.holder == holder) {
+            let function = self.native_with_realm(row.native, global, global);
+            self.set_builtin_function_name(function, row.name)?;
+            self.set_builtin_value_named(target, row.name, function)?;
+        }
+        Ok(())
+    }
+
+    /// Installs `holder`'s rows on `target`: as the shared builtin functions when `realm` is `None`,
+    /// else as functions of `realm`.
+    pub(super) fn install_rows_in_realm(
+        &mut self,
+        program: &ResidualProgram,
+        target: Value,
+        holder: super::native_rows::Holder,
+        realm: Option<Value>,
+    ) -> Result<(), JsError> {
+        match realm {
+            None => self.install_native_rows(program, target, holder),
+            Some(global) => self.install_realm_native_rows(target, holder, global),
+        }
+    }
+
     pub(super) fn set_builtin_function_value_named(
         &mut self,
         object: Value,
@@ -1453,7 +906,7 @@ mod math_function_tests {
         for (name, native) in MATH_FUNCTIONS {
             assert!(native.is_math_function(), "Math.{name}");
         }
-        for native in NATIVES.iter().filter(|native| native.is_math_function()) {
+        for native in (0..Native::COUNT).filter_map(Native::from_discriminant).filter(|native| native.is_math_function()) {
             assert!(
                 MATH_FUNCTIONS.iter().any(|(_, listed)| listed == native),
                 "{native:?} is a Math function"

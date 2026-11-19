@@ -1,12 +1,26 @@
-//! The resumption of an async function's or an async generator's activation, which the owner of
-//! its suspended frame runs as a job (`Vm::run_job`): in the lane over the frame's register
-//! file, or as the frame it gives up for the general loop to run. An await's reaction resumes it
-//! with the awaited value or its rejection, an async generator's request with the value `next`
-//! sent or the error `throw` threw. The run's end settles a promise or a request, or the
-//! activation awaits again.
+//! The resumption of a suspended activation (`Vm::resume_suspended`), which the owner of its
+//! frame runs as a job (`Vm::run_job`): in the lane over the frame's register file, or as the
+//! frame it gives up for the general loop to run. An await's reaction resumes an async
+//! activation with the awaited value or its rejection, a generator's `next` or `throw` (an
+//! async generator's request) with the value sent or the error thrown. The run's stop settles
+//! as its kind says (`Vm::settle_job_end`).
 use super::*;
-use super::super::activation::{JobResume, JobRoot, SuspendKind};
-use super::super::dispatch_fast::JobEnd;
+use super::settle::Stop;
+use super::super::activation::{FrameRecord, JobResume, JobRoot, SuspendKind};
+use super::job_chain::ChainedJob;
+
+/// What an await resumption's run leaves behind it (`Vm::resume_suspended_in`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QueuedRun {
+    /// The caller's program is active again after the run.
+    RestoresProgram,
+    /// The activation's program stays active for the queue's next resumption of it
+    /// (`Vm::resume_queued_await`).
+    KeepsProgram,
+    /// As `KeepsProgram`, and the resumption may go on with the queue's next await jobs
+    /// (`Vm::run_job_chain`).
+    Chains,
+}
 
 impl<H: Host> Vm<H> {
     /// An await's reaction: `state` is the `AwaitState` both its handlers name, and `value` what
@@ -19,13 +33,57 @@ impl<H: Host> Vm<H> {
         rejected: bool,
         value: Value,
     ) -> Result<Value, JsError> {
-        let Some((role, realm, promise)) = self.heap.await_state(state).and_then(AwaitState::pending) else {
+        let pending = self.heap.await_state(state).and_then(AwaitState::pending);
+        self.resume_pending_await(p, (state, pending), (rejected, value), QueuedRun::RestoresProgram)
+    }
+
+    /// `resume_await` of the reaction a job queue runs (`Vm::run_promise_reaction`), whose look
+    /// at the await `state` found it an await state with `pending` (`AwaitState::pending`). The
+    /// activation's program stays active after its run, which the queue's next resumption of
+    /// the same program finds in place (`Vm::run_job_queue`), unless the host observes promise
+    /// lifecycles, whose hooks run between the job's steps as they always have. The job of a
+    /// queue that chains (`Vm::chainable_job`) may run the queue's next await jobs in its
+    /// resumption (`Vm::run_job_chain`).
+    pub(in crate::vm) fn resume_queued_await(
+        &mut self,
+        p: &ResidualProgram,
+        (state, pending): (Value, Option<(AwaitRole, Value, Value)>),
+        rejected: bool,
+        value: Value,
+    ) -> Result<Value, JsError> {
+        let chainable = std::mem::take(&mut self.chainable_job);
+        let run = match (!self.job_queue_programs.is_empty() && !self.host.observes_promise_lifecycle(), chainable) {
+            (false, _) => QueuedRun::RestoresProgram,
+            (true, false) => QueuedRun::KeepsProgram,
+            (true, true) => QueuedRun::Chains,
+        };
+        self.resume_pending_await(p, (state, pending), (rejected, value), run)
+    }
+
+    /// `resume_await` of `state`, whose lookup gave `pending`, leaving what `run` says. Only an
+    /// async function's activation that resumes in the realm its job runs in chains: the job's
+    /// realm is then the one its chained successors keep (`Vm::chain_next_job`).
+    fn resume_pending_await(
+        &mut self,
+        p: &ResidualProgram,
+        (state, pending): (Value, Option<(AwaitRole, Value, Value)>),
+        (rejected, value): (bool, Value),
+        run: QueuedRun,
+    ) -> Result<Value, JsError> {
+        let Some((role, realm, promise)) = pending else {
             return Err(JsError("stale async continuation".into()));
         };
         let resume = AwaitResume { state: Some(state), promise, role, rejected };
         let previous_global = self.switch_realm_global(realm);
-        let settled = self.with_call_roots([Some(promise), role.generator(), Some(value)].into_iter().flatten(), |vm| {
-            vm.resume_awaited(p, state, resume, value)?;
+        let run = match run {
+            QueuedRun::Chains if previous_global != realm || !matches!(role, AwaitRole::AsyncFunction) => QueuedRun::KeepsProgram,
+            run => run,
+        };
+        // The caller roots `state` and `value` (the queue its job's values, `start_root_job` the
+        // state) and has run any due collection; the run may detach the promise and the
+        // generator from the state it spends or arms again.
+        let settled = self.with_call_roots([promise, role.generator().unwrap_or(Value::UNDEFINED)], |vm| {
+            vm.resume_awaited(p, state, resume, value, run)?;
             match role.generator() {
                 Some(generator) => vm.resume_async_generator_queue(p, generator),
                 None => Ok(()),
@@ -41,39 +99,54 @@ impl<H: Host> Vm<H> {
         let Some((role, _, promise)) = self.heap.await_state(state).and_then(AwaitState::pending) else {
             return Err(JsError("stale async continuation".into()));
         };
-        let resume = AwaitResume { state: Some(state), promise, role, rejected: false };
-        let end = self.run_job(p, role.job(state), JobResume::Sends(Value::UNDEFINED));
-        self.settle_job_end(p, resume, end)
+        let owner = StopOwner::Async(AwaitResume { state: Some(state), promise, role, rejected: false });
+        let job = owner.job();
+        let frame = self.job_frame(job).map(std::ptr::from_ref).ok_or_else(|| JsError("stale async continuation".into()))?;
+        let end = self.run_job(p, job, frame, JobResume::Sends(Value::UNDEFINED));
+        self.settle_job_end(p, owner, end).map(drop)
     }
 
     /// The activation of `resume`, whose await `state` its reaction runs, resumes with `value`
     /// or its rejection. A fulfilled await of a `yield`'s value resumes no frame: it settles the
-    /// request with the value, the frame parked in the generator's record.
-    fn resume_awaited(&mut self, p: &ResidualProgram, state: Value, resume: AwaitResume, value: Value) -> Result<(), JsError> {
+    /// request with the value, the frame parked in the generator's record. `run` says what the
+    /// run leaves behind (`resume_queued_await`).
+    fn resume_awaited(&mut self, p: &ResidualProgram, state: Value, resume: AwaitResume, value: Value, run: QueuedRun) -> Result<(), JsError> {
         if let AwaitRole::AsyncGeneratorYield(generator) = resume.role
             && !resume.rejected
         {
-            self.spend_await(state);
-            if let Some(record) = self.generator_record_mut(generator) {
-                record.stop();
-            }
-            let result = self.iterator_result(value, false)?;
-            return self.promise_resolve_value(p, resume.promise, result);
+            return self.settle_yield_await(p, (state, generator), resume.promise, value);
         }
         let how = if resume.rejected {
             JobResume::Throws(JsError::thrown(value, "await rejected".into()))
         } else {
             JobResume::Sends(value)
         };
-        self.resume_job(resume, resume.role.job(state), how)
+        self.resume_job(p, StopOwner::Async(resume), how, run).map(drop)
+    }
+
+    /// The fulfilled reaction of the await state `state` of `generator`'s `yield` of `value`
+    /// (AsyncGeneratorYield's Await): the state is spent and kept spare, the generator, whose
+    /// frame stays parked in its record, is suspended again, and the request `promise` settles
+    /// with the iterator result (AsyncGeneratorCompleteStep). The generator's queued requests
+    /// are its caller's to run (`resume_async_generator_queue`).
+    pub(super) fn settle_yield_await(&mut self, p: &ResidualProgram, (state, generator): (Value, Value), promise: Value, value: Value) -> Result<(), JsError> {
+        self.spend_await(state);
+        self.keep_spare_await_state(state);
+        if let Some(record) = self.generator_record_mut(generator) {
+            record.stop();
+        }
+        self.resolve_iterator_result(p, promise, value, false)
     }
 
     /// An async generator's request `promise` resumes its suspended `generator` with `how`, as
-    /// `next` or `throw` sent it: in the realm the caller switched to.
-    pub(in crate::vm) fn resume_request(&mut self, generator: Value, promise: Value, how: JobResume) -> Result<(), JsError> {
-        let job = JobRoot { object: generator, kind: SuspendKind::AsyncGenerator };
+    /// `next` or `throw` sent it: in the realm the caller switched to, after any due collection,
+    /// which none of the activation is on the stack for.
+    pub(in crate::vm) fn resume_request(&mut self, p: &ResidualProgram, generator: Value, promise: Value, how: JobResume) -> Result<(), JsError> {
         let resume = AwaitResume { state: None, promise, role: AwaitRole::AsyncGeneratorAwait(generator), rejected: matches!(how, JobResume::Throws(_)) };
-        self.resume_job(resume, job, how)
+        self.with_call_roots([promise, generator, how.value().unwrap_or(Value::UNDEFINED)], |vm| {
+            vm.maybe_collect(p);
+            vm.resume_suspended(p, StopOwner::Async(resume), how).map(drop)
+        })
     }
 
     /// An await state whose reaction ran: it is spent.
@@ -83,52 +156,79 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// The activation of `resume`, which `job` names, resumes with `how`, in the program of its
-    /// function, and its run settles. A due collection runs first, where none of the activation
-    /// is on the stack.
-    fn resume_job(&mut self, resume: AwaitResume, job: JobRoot, how: JobResume) -> Result<(), JsError> {
-        let program = self.job_frame(job).ok_or_else(|| JsError("stale async continuation".into()))?.program;
-        let code = self.programs.get(program).ok_or_else(|| JsError("async continuation program is unavailable".into()))?;
+    /// The one resumption of a suspended activation, of every kind: `owner`'s activation, whose
+    /// owner keeps its frame (`StopOwner::job`), resumes with `how` (the value `next` or an
+    /// await's reaction sends, or the error `throw` or a rejection throws) in the program of its
+    /// function, and its stop settles (`settle_job_end`). The caller has switched to its realm,
+    /// roots the job's values and has run any due collection. `p`, the caller's program, serves
+    /// where it is the function's own, so the common run takes no reference on the program
+    /// store's.
+    pub(in crate::vm) fn resume_suspended(&mut self, p: &ResidualProgram, owner: StopOwner, how: JobResume) -> Stop {
+        self.resume_job(p, owner, how, QueuedRun::RestoresProgram)
+    }
+
+    /// `resume_suspended`, leaving what `run` says behind (`resume_queued_await`).
+    fn resume_job(&mut self, p: &ResidualProgram, owner: StopOwner, how: JobResume, run: QueuedRun) -> Stop {
+        let job = owner.job();
+        let frame = self.job_frame(job).ok_or_else(|| JsError("stale async continuation".into()))?;
+        let (program, frame) = (frame.program, std::ptr::from_ref(frame));
+        if self.programs.residual(program).is_some_and(|code| std::ptr::eq(code, p)) {
+            return self.resume_suspended_in(p, program, (owner, job, frame), (how, run));
+        }
+        let Some(code) = self.programs.get(program) else {
+            let message = match job.kind {
+                SuspendKind::Generator => "generator continuation program is unavailable",
+                SuspendKind::AsyncFunction | SuspendKind::AsyncGenerator => "async continuation program is unavailable",
+            };
+            return Err(JsError(message.into()));
+        };
+        self.resume_suspended_in(&code, program, (owner, job, frame), (how, run))
+    }
+
+    /// `resume_suspended` in `code`, the program `program` of the function whose suspended
+    /// `frame` the job resumes, which stays active after it unless `run` restores the caller's.
+    /// A run that `Chains` goes on with the queue's next await jobs where the chain admits it
+    /// (`Vm::job_chain_admits`).
+    fn resume_suspended_in(
+        &mut self,
+        code: &ResidualProgram,
+        program: ProgramId,
+        (owner, job, frame): (StopOwner, JobRoot, *const FrameRecord),
+        (how, run): (JobResume, QueuedRun),
+    ) -> Stop {
         let previous_program = self.replace_active_program(program);
-        let roots = [Some(resume.promise), resume.role.generator(), resume.state, how.value()].into_iter().flatten();
-        let settled = self.with_call_roots(roots, |vm| {
-            vm.maybe_collect(&code);
-            let resumed = if vm.native_microtask_running && job.kind == SuspendKind::AsyncFunction { job.object } else { Value::UNDEFINED };
-            let outer = std::mem::replace(&mut vm.queue_resumed, resumed);
-            let end = vm.run_job(&code, job, how);
-            vm.queue_resumed = outer;
-            // An async generator's await state is spent once its reaction ran, as an async
-            // function's was armed again or spent with its continuation.
-            if job.kind == SuspendKind::AsyncGenerator
-                && let Some(state) = resume.state
-            {
-                vm.spend_await(state);
+        let resumed = if self.native_microtask_running && job.kind == SuspendKind::AsyncFunction { job.object } else { Value::UNDEFINED };
+        let outer = std::mem::replace(&mut self.queue_resumed, resumed);
+        let settled = match owner {
+            StopOwner::Async(resume) if run == QueuedRun::Chains && self.job_chain_admits(job) => {
+                self.run_job_chain(code, program, ChainedJob { resume, job, frame, how }, outer)
             }
-            vm.settle_job_end(&code, resume, end)
-        });
-        self.restore_active_program(previous_program);
+            _ => self.run_and_settle(code, (owner, job, frame), how, outer),
+        };
+        if run == QueuedRun::RestoresProgram {
+            self.restore_active_program(previous_program);
+        }
         settled
     }
 
-    /// What a job's run did: its promise or request settles, it awaits again, or the frames its
-    /// activations became finished, as `settle_resumed_frame` settles them. `code` is the
-    /// program of its function.
-    fn settle_job_end(&mut self, code: &ResidualProgram, resume: AwaitResume, end: JobEnd) -> Result<(), JsError> {
-        match end {
-            JobEnd::Returned(value) => self.complete_resumed(code, resume, value),
-            JobEnd::Suspended(value) => match (resume.role.generator(), resume.state) {
-                (Some(generator), _) => self.await_again(code, resume, AwaitKind::generator_await(generator), value),
-                (None, Some(state)) => {
-                    self.with_call_roots([state, value], |vm| vm.attach_await_reactions(code, state, resume.promise, None, value))
-                }
-                (None, None) => unreachable!("an async function resumes from the reaction of its await"),
-            },
-            JobEnd::Yielded(value) => match resume.role.generator() {
-                Some(generator) => self.await_again(code, resume, AwaitKind::AsyncGeneratorYield { generator }, value),
-                None => unreachable!("only an async generator's activation yields from a job"),
-            },
-            JobEnd::Threw(error) => self.fail_resumed(code, resume, error),
-            JobEnd::Frames(result) => self.settle_resumed_frame(code, resume, result),
+    /// Runs `owner`'s activation (`Vm::run_job`) and settles its stop, `outer` being the
+    /// activation a drain resumed before it (`queue_resumed`).
+    fn run_and_settle(
+        &mut self,
+        code: &ResidualProgram,
+        (owner, job, frame): (StopOwner, JobRoot, *const FrameRecord),
+        how: JobResume,
+        outer: Value,
+    ) -> Stop {
+        let end = self.run_job(code, job, frame, how);
+        self.queue_resumed = outer;
+        // An async generator's await state is spent once its reaction ran, as an async
+        // function's was armed again or spent with its continuation.
+        if let StopOwner::Async(AwaitResume { state: Some(state), .. }) = owner
+            && job.kind == SuspendKind::AsyncGenerator
+        {
+            self.spend_await(state);
         }
+        self.settle_job_end(code, owner, end)
     }
 }

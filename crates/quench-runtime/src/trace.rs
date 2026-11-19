@@ -121,9 +121,9 @@ setting! {
     "QUENCH_DEV", Dev {
         /// The memory-first heap policy in place of the default.
         MemoryFirst = "memory-first",
-        /// Array backings take the double element kind (`heap::array_elements::DOUBLE_LEN`):
-        /// for the readers that consume it while compiled tiers do not guard its flag yet.
-        DoubleElements = "double-elements",
+        /// Array backings never take the double element kind (`heap::array_elements::DOUBLE_LEN`),
+        /// which they otherwise take on their first Number that is no int32.
+        NoDoubleElements = "no-double-elements",
         /// A requested compile runs on the requesting thread and installs at once, as in tests:
         /// instruction counts then see the code a run installs.
         SyncCompile = "sync-compile",

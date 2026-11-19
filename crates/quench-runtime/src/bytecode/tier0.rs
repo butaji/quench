@@ -96,6 +96,12 @@ fn runs_unlowered(program: &ResidualProgram, index: usize, function: &Function) 
         && !crate::trace::Dev::Tier0Off.on()
         && !function.loops()
         && !function.suspends()
+        // A program running from its kept form lowers every record on first read, as its
+        // decoded ones are: a first-call chunk appended to it adds records that would otherwise
+        // run unlowered, and a recursive one (a parser's descent, a tree walk's visitor) keeps
+        // a frame of itself live through its runs until its unlowered record is pinned for good
+        // (`ResidualProgram::tier0_blocked`): acorn-wtb +8% per steady iteration.
+        && program.encoded_records.is_none()
 }
 
 impl ResidualProgram {
@@ -111,10 +117,10 @@ impl ResidualProgram {
         }
         // Copied before any run derives facts into it (its call plan, its decoded form): the
         // unlowered record stays as the load left it for the lowering.
-        let mut function = slot.unlowered.borrow().as_ref().map(|unlowered| unlowered.function(slot.header()))?;
+        let mut function = slot.unlowered.with(|unlowered| unlowered.map(|unlowered| unlowered.function(slot.header())))?;
         if !runs_unlowered(self, index, &function) {
             // The lowering this read goes on to takes the record unpacked here, not again.
-            *slot.unlowered.borrow_mut() = Some(super::Unlowered::Record(Rc::new(function)));
+            slot.unlowered.set(Some(super::Unlowered::Record(Rc::new(function))));
             return None;
         }
         // Every register is a root and starts `undefined`: no liveness runs for it.

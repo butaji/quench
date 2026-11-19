@@ -11,28 +11,24 @@ use crate::typed_ir::Type;
 use crate::vm::operations::{equality_binary_operator, equality_operator, NumberBitwise, NumberRelation};
 use crate::{Value, ValueType};
 
-/// The `null` or `undefined` a nullish test compares with.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Nullish {
-    Null,
-    Undefined,
+/// The nullish `value` (`null` or `undefined`) a nullish test compares with, where it is one.
+pub(crate) fn nullish_of(value: Value) -> Option<ValueType> {
+    if value == Value::NULL {
+        Some(ValueType::Null)
+    } else if value == Value::UNDEFINED {
+        Some(ValueType::Undefined)
+    } else {
+        None
+    }
 }
 
-impl Nullish {
-    /// The nullish `value`, where it is one.
-    pub(crate) fn of(value: Value) -> Option<Self> {
-        [Self::Null, Self::Undefined].into_iter().find(|nullish| nullish.value() == value)
-    }
-
-    #[inline]
-    fn value(self) -> Value {
-        match self { Self::Null => Value::NULL, Self::Undefined => Value::UNDEFINED }
-    }
-
-    /// The semantic type of the one value.
-    #[inline]
-    fn ty(self) -> Type {
-        Type::language(match self { Self::Null => ValueType::Null, Self::Undefined => ValueType::Undefined })
+/// The value of the nullish language type `kind`.
+#[inline]
+fn nullish_value(kind: ValueType) -> Value {
+    match kind {
+        ValueType::Null => Value::NULL,
+        ValueType::Undefined => Value::UNDEFINED,
+        _ => unreachable!("nullish_value of a type that is not nullish"),
     }
 }
 
@@ -56,12 +52,15 @@ pub(crate) enum Comparison {
     /// `==` or `===` (`strict`), negated for `!=` and `!==`, of the tested operand (the row's
     /// `left`) and `expected`, a constant the tier proved the other operand is: a tag decides it,
     /// and the register's type where it already does.
-    Nullish { expected: Nullish, strict: bool, negated: bool },
+    Nullish { expected: ValueType, strict: bool, negated: bool },
     /// The truth of a bitwise operator's result of two Numbers (`if (flags & MASK)`): its int32
     /// bits are nonzero, so the Number the operator would make is never made.
     Bitwise(NumberBitwise),
     /// `===` or `!==` (`negated`) of the tested operand (the row's `left`) and the Boolean
     /// `expected`: a Boolean has one encoding, so identity decides it.
+    // No decode makes it since the boolean-constant jump handler went with
+    // specialize_register_operands; the lane re-adopts it at the Ir pass (a constant-operand
+    // decode that sees the constant's kind).
     Boolean { expected: bool, negated: bool },
     /// `value instanceof constructor` of two registers: its prototype-chain walk is no word test,
     /// so the VM decides it (`CallOut::Decide`), guest code (`@@hasInstance`, a proxy) included.
@@ -137,7 +136,13 @@ impl<W, P> Operation<W, P> {
 pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let Operation::CompareJump { comparison, left, right, negate } = operation else { return Step::Unresolved };
-    let Some(holds) = outcome(stage, frame, comparison, [left, right], negate) else { return Step::Unresolved };
+    let holds = match outcome(stage, frame, comparison, [left, right], negate) {
+        Some(holds) => holds,
+        None => match by_vm(stage, frame, comparison, [left, right]) {
+            Some(holds) => holds,
+            None => return Step::Unresolved,
+        },
+    };
     let taken = if negate { stage.not(holds) } else { holds };
     Step::Control(frame.branch(stage, taken))
 }
@@ -165,6 +170,43 @@ fn outcome<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, co
     }
 }
 
+/// Whether `comparison` of `[left, right]` holds where the words leave it, as the VM decides it, where the frame
+/// takes the general operators (`NumericFrame::general_operators`). A relation, an operator, or a comparison of a
+/// constant operand is `CallOut::Binary` (which takes constants); an equality the words leave is `CallOut::Equality`;
+/// a bitwise test is `CallOut::Decide` over two registers and `CallOut::DecideOperand` otherwise. A comparison of two
+/// registers the VM already decided (`decided_by_vm`) is no second ask. `None` where the frame keeps declining.
+#[inline(always)]
+fn by_vm<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, comparison: Comparison,
+    [left, right]: [Operand; 2]) -> Option<S::Cond> {
+    if !frame.general_operators() { return None; }
+    let both_registers = left.register_index().is_some() && right.register_index().is_some();
+    match comparison {
+        Comparison::Relation { relation, .. } => binary_decision(stage, frame, [left, right], relation.binary_operator()),
+        Comparison::Operator(operator) => binary_decision(stage, frame, [left, right], operator),
+        Comparison::Instanceof | Comparison::Membership | Comparison::Decided(_) if !both_registers =>
+            binary_decision(stage, frame, [left, right], comparison.operator()?),
+        // An equality the words leave (a constant operand the frame's words do not hold): the VM's equality.
+        Comparison::Equality { strict, negated } => {
+            let (decision, _) = frame.vm_step(stage, CallOut::Equality { left, right, strict, negated }, None)?;
+            Some(stage.eq_imm(decision, Value::TRUE.to_bits()))
+        }
+        Comparison::Bitwise(operation) => {
+            let call = bitwise_decision([left, right], operation.binary_operator());
+            let (decision, _) = frame.vm_step(stage, call, None)?;
+            Some(stage.eq_imm(decision, Value::TRUE.to_bits()))
+        }
+        _ => None,
+    }
+}
+
+/// The VM's decision of `left operator right` by `CallOut::Binary`, whose operands may be constants: its boolean.
+#[inline(always)]
+fn binary_decision<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [left, right]: [Operand; 2],
+    operator: u32) -> Option<S::Cond> {
+    let (decision, _) = frame.vm_step(stage, CallOut::Binary { left, right, operator }, None)?;
+    Some(stage.eq_imm(decision, Value::TRUE.to_bits()))
+}
+
 /// Whether the pair is equal (unequal for `negated`): the words decide it where they can
 /// (`generic::decide`), the VM's `CallOut::Decide` otherwise; an operand that is no register
 /// leaves a pair the words do not decide at the frame's miss edge.
@@ -178,6 +220,11 @@ fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [
     let value = match [left.register_index(), right.register_index()] {
         [Some(left), Some(right)] => {
             let call = CallOut::Decide { left, right, operator: equality_binary_operator(strict, negated) };
+            stage.choose_leaving(decided, |_| Some(decision), |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?
+        }
+        // A constant operand the words do not decide: the VM's equality, which takes constants (`CallOut::Equality`).
+        _ if frame.general_operators() => {
+            let call = CallOut::Equality { left, right, strict, negated };
             stage.choose_leaving(decided, |_| Some(decision), |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?
         }
         _ => {
@@ -199,6 +246,14 @@ fn identity<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, t
     Some(if negated { stage.not(same) } else { same })
 }
 
+/// The VM's decision of a bitwise test: `Decide` over two registers, `DecideOperand` where an operand is a constant.
+fn bitwise_decision([left, right]: [Operand; 2], operator: u32) -> CallOut {
+    match (left.register_index(), right.register_index()) {
+        (Some(left), Some(right)) => CallOut::Decide { left, right, operator },
+        _ => CallOut::DecideOperand { left, right, operator },
+    }
+}
+
 /// The VM's decision of `left operator right`: the call-out, whose operands are registers.
 fn decision_call([left, right]: [Operand; 2], operator: u32) -> Option<CallOut> {
     Some(CallOut::Decide { left: left.register_index()?, right: right.register_index()?, operator })
@@ -216,13 +271,22 @@ fn decided_by_vm<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
 /// The longest prototype chain a word walk follows: a longer one is the VM's decision.
 const PROTOTYPE_WALK_LINKS: u32 = 16;
 
-/// Whether `value instanceof constructor` holds. Where the frame holds the constructor's `prototype`
-/// as a Stable fact (`NumericFrame::stable_prototype`) the value's own words decide it by a walk
-/// of its prototype links (`walked_instanceof`), and the VM the pairs they leave; with no such
-/// fact, or no object record table to walk in, it is the VM's decision.
+/// Whether `value instanceof constructor` holds. Subsumes the hand `instanceof` relations of the lane
+/// (`lane_instanceof_value`, `lane_instanceof_value_walk`, and the jump forms `lane_instanceof_jump_true`,
+/// `lane_jump_instanceof_false`, which are this comparison under a `JumpTrue` or `JumpFalse`). The frame's own proof of the constructor's chain
+/// (`Frame::instance_of`: a published watch, or an ordinary walk that runs no guest code) decides it
+/// first where it holds. Else, where the frame holds the constructor's `prototype` as a Stable fact
+/// (`NumericFrame::stable_prototype`) the value's own words decide it by a walk of its prototype links
+/// (`walked_instanceof`), and the VM the pairs they leave; with no such fact, or no object record table
+/// to walk in, it is the VM's decision.
 #[inline(always)]
 fn instanceof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operands: [Operand; 2]) -> Option<S::Cond> {
     let [value, constructor] = operands;
+    if let (Some(left), Some(right)) = (frame.operand_word(stage, value), frame.operand_word(stage, constructor))
+        && let Some(holds) = frame.instance_of(stage, left, right)
+    {
+        return Some(holds);
+    }
     let target = constructor.register_index().and_then(|register| frame.stable_prototype(stage, register));
     let Some(target) = target else { return decided_by_vm(stage, frame, operands, INSTANCEOF_OPERATOR) };
     let Some(records) = frame.object_records(stage) else { return decided_by_vm(stage, frame, operands, INSTANCEOF_OPERATOR) };
@@ -266,7 +330,7 @@ fn walked_instanceof<S: NumericStage>(stage: &mut S, (records, value): (S::Word,
 fn bitwise<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [left, right]: [Operand; 2],
     operation: NumberBitwise) -> Option<S::Cond> {
     let miss = frame.miss();
-    let (left, right) = (frame.int32_operand(stage, left, miss)?, frame.int32_operand(stage, right, miss)?);
+    let (left, right) = (super::numeric::bitwise_word(stage, frame, left, miss)?, super::numeric::bitwise_word(stage, frame, right, miss)?);
     let bits = stage.int_bitwise(operation, left, right);
     let zero = stage.i32_is_zero(bits);
     Some(stage.not(zero))
@@ -277,26 +341,26 @@ fn bitwise<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [l
 /// register. A heap cell an IsHTMLDDA object may be leaves at the miss edge.
 #[inline(always)]
 fn nullish<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, tested: Operand,
-    (expected, strict): (Nullish, bool), equal_edge: Edge) -> Option<S::Cond> {
+    (expected, strict): (ValueType, bool), equal_edge: Edge) -> Option<S::Cond> {
     let register = tested.register_index()?;
     if let Some(equal) = frame.register_type(register).and_then(|ty| known_equal(ty, expected, strict)) {
         let word = stage.constant(u64::from(equal));
         return Some(stage.ne_imm(word, 0u64));
     }
     let word = frame.tagged(stage, register);
-    let equal = if strict { stage.eq_imm(word, expected.value().to_bits()) } else { loosely_nullish(stage, frame, word)? };
-    frame.refine(register, if strict { expected.ty() } else { Type::NULLISH }, equal_edge);
+    let equal = if strict { stage.eq_imm(word, nullish_value(expected).to_bits()) } else { loosely_nullish(stage, frame, word)? };
+    frame.refine(register, if strict { Type::language(expected) } else { Type::NULLISH }, equal_edge);
     Some(equal)
 }
 
 /// Whether a value of type `ty` is `expected` (loosely, either nullish value) by its type
 /// alone: the nullish types are, and objects, Numbers and Booleans are not.
-fn known_equal(ty: Type, expected: Nullish, strict: bool) -> Option<bool> {
+fn known_equal(ty: Type, expected: ValueType, strict: bool) -> Option<bool> {
     let [null, undefined] = [ValueType::Null, ValueType::Undefined].map(Type::language);
     if ty.is_subtype(null) {
-        Some(!strict || expected == Nullish::Null)
+        Some(!strict || expected == ValueType::Null)
     } else if ty.is_subtype(undefined) {
-        Some(!strict || expected == Nullish::Undefined)
+        Some(!strict || expected == ValueType::Undefined)
     } else {
         (ty.is_direct_object_family() || ty.is_subtype(Type::NUMBER.join(Type::language(ValueType::Boolean)))).then_some(false)
     }

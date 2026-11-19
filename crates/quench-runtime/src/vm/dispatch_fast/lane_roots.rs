@@ -1,10 +1,10 @@
 //! What a lane run is rooted in: the VM frame a general loop entered it from, or, for a promise
 //! job or a native `next`, the suspended frame of an async function or a generator that its
 //! owner keeps (`Vm::run_lane_job`). A job's lane resumes the activation over its record's register file
-//! with no VM frame beneath it; its `await` suspends it back into the record (`lane_await`), its
+//! with no VM frame beneath it; its `await` suspends it back into the record (`await_in_lane`), its
 //! return ends the run, and any other exit makes it a frame the general loop finishes.
 use super::*;
-use super::generator_windows::{open_window_locals, window_plan, WindowPlan};
+use super::generator_windows::{open_window_locals, cached_window_plan, store_window_plan};
 use super::super::activation::{FrameRecord, JobResume, JobRoot};
 use super::super::dispatch_frame::{ExecutingProgram, LaneExit};
 
@@ -60,7 +60,7 @@ impl<H: Host> LaneContext<H> {
 /// The words of an innermost activation's state that a parked lane keeps: its receiver and its environment.
 const INNERMOST_STATE_LEN: usize = 2;
 
-/// Everything a lane run's context starts from (`Vm::lane_context`).
+/// Everything a lane run's context starts from (`Vm::context_for_start`).
 pub(super) struct LaneStart<'a> {
     pub(super) code: &'a ResidualProgram,
     pub(super) program: ProgramId,
@@ -128,7 +128,8 @@ impl ParkedLane {
     /// Appends to `out` every value the parked run holds.
     pub(in crate::vm) fn extend_roots(&self, programs: &crate::vm::program_store::ProgramStore, out: &mut Vec<Value>) {
         self.stack.extend_roots(programs, out);
-        out.extend(self.innermost);
+        let [this, env] = self.innermost;
+        extend_this_env_roots(out, this, env);
     }
 }
 
@@ -170,18 +171,21 @@ impl<H: Host> Vm<H> {
         if !stack.has_frames() {
             self.spare_lane_stacks.push(stack);
         }
-        self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
+        self.lane_stack.enter_generation((self.cache_epochs.gc, self.realm.globals));
         result
     }
 
     /// The context of a lane run that starts as `start` says; its other state starts empty.
-    pub(super) fn lane_context(&mut self, start: LaneStart<'_>) -> LaneContext<H> {
+    #[inline(always)]
+    pub(super) fn context_for_start(&mut self, start: LaneStart<'_>) -> LaneContext<H> {
         let LaneStart { code, program, root, registers, base, this, pending, executing, inline_calls, script_calls, script_constructs, floor } = start;
         // The root's receiver is its window's context word (`Registers::this`); its environment
         // and captures are the window's to write where it has its own (a frame's run has none).
         registers.set_this(this);
         registers.set_env(Value::DELETED);
         registers.set_capture(std::ptr::null());
+        let (views, constants) = self.programs.lane_tables(program);
+        let (views, constants) = (std::ptr::from_ref(views), std::ptr::from_ref(constants));
         LaneContext {
             binding: LaneBinding { object_base: self.heap.object_record_base().unwrap_or(std::ptr::null()), resume: resume_lane_binding::<H>, retire: retire_lane_binding::<H> },
             vm: self,
@@ -192,14 +196,17 @@ impl<H: Host> Vm<H> {
             base,
             pending,
             executing,
-            views: self.programs.lane_views(program).map_or(&[][..], |views| views) as *const _,
-            constants: self.programs.constants(program) as *const _,
+            views,
+            constants,
             inline_calls: inline_calls && code.kind == crate::bytecode::ProgramKind::Wasm,
             script_calls,
             script_constructs,
             instance: Value::DELETED,
             instance_slots: (Value::DELETED, std::ptr::null()),
-            backedges_left: self.lane_credits_backedges(code, program).then_some(self.programs.tiers().wasm.backedges_per_entry),
+            indirect: IndirectSlot::NONE,
+            instance_address: (Value::DELETED.to_bits(), ProgramId::default(), 0),
+            signatures: (ProgramId::default(), None),
+            backedges_left: self.credits_backedges_in_lane(code, program).then_some(self.programs.tiers().wasm.backedges_per_entry),
             floor,
             // SAFETY: the VM holds its interrupt state for the whole run.
             fuel: if unsafe { &*floor }.load(std::sync::atomic::Ordering::Relaxed) == COLLECTION_DUE_FLOOR { 0 } else { LANE_FUEL_BATCH },
@@ -231,10 +238,10 @@ impl<H: Host> Vm<H> {
         start: impl FnOnce(*mut LaneContext<H>) -> Ip,
     ) -> Ip {
         self.lane_stack.refresh_activation_limit();
-        self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
+        self.lane_stack.enter_generation((self.cache_epochs.gc, self.realm.globals));
         // The tier's diagnostics, which no proved call runs under (`Admission::DIAGNOSED`).
         self.lane_stack.set_diagnosed(self.programs.js_jit_diagnostics_enabled());
-        let epoch = self.heap.collection_epoch();
+        let epoch = self.cache_epochs.gc;
         let cx: *mut LaneContext<H> = context;
         // The lane's admission mirrors the run's `script_calls` (`LaneStack::set_script_calls`);
         // the outer run's resumes after this one.
@@ -245,14 +252,14 @@ impl<H: Host> Vm<H> {
         let outer_fuel = LANE_FUEL.with(|current| current.replace(unsafe { &raw mut (*cx).fuel }));
         let _proofs = crate::heap::LaneProofScope::enter();
         let (first, left) = exited(start(cx));
-        let ip = if left { first } else { lane_dispatch(cx, first) };
+        let ip = if left { first } else { dispatch_in_lane(cx, first) };
         #[cfg(feature = "profile-lane-exits")]
         self.record_lane_exit(cx, ip);
         self.materialize_lane_exit(cx);
         LANE_FUEL.with(|current| current.set(outer_fuel));
         // A collection this run made ran under its own context, not the outer one, which
         // resumes now: it drops what it resolved before (`retire_lane_binding`).
-        if !outer.is_null() && self.heap.collection_epoch() != epoch {
+        if !outer.is_null() && self.cache_epochs.gc != epoch {
             // SAFETY: every active context has the repr(C) prefix, whose callback owns its Host.
             unsafe { (outer.cast::<LaneBinding>().as_ref().unwrap_unchecked().retire)(outer) };
         }
@@ -279,7 +286,7 @@ impl<H: Host> Vm<H> {
             instruction,
             self.programs.source_name(unsafe { (*cx).program }).unwrap_or_default(),
             instruction
-                .filter(|instruction| instruction.op().is_get_field())
+                .filter(|instruction| crate::staged::reads_named_field(instruction.op()))
                 .and_then(|instruction| code.atoms.get(instruction.imm() as usize)),
             body.name.map_or("", |atom| &code.atoms[atom as usize]),
             body.source_span.map(|span| span.start),
@@ -335,45 +342,71 @@ impl<H: Host> Vm<H> {
     /// handler of its function catches or which ends it in its owner (`JobEnd::Threw`). `code`
     /// is the program of its function, the active one, and the realm is the one that resumed
     /// it, starting over an empty lane stack (`Vm::nested_lane_run`). `resume` back, changing nothing, where the lane does not admit it (`admit_job`).
-    pub(in crate::vm) fn run_lane_job(&mut self, code: &ResidualProgram, job: JobRoot, resume: JobResume) -> Result<JobEnd, JobResume> {
-        let Some(window) = self.admit_job(code, job, resume.sent()) else {
+    pub(in crate::vm) fn run_lane_job(&mut self, code: &ResidualProgram, job: JobRoot, frame: *const FrameRecord, resume: JobResume) -> Result<JobEnd, JobResume> {
+        let Some(window) = self.admit_job(code, job, frame, resume.sent()) else {
             return Err(resume);
         };
         let mut pending = self.pending_call_stacks.pop().unwrap_or_default();
+        let end = self.drive_job_window(code, job, window, resume, &mut pending);
+        self.pending_call_stacks.push(pending);
+        Ok(end)
+    }
+
+    /// `run_lane_job` of a job a chain of await jobs resumes (`Vm::run_job_chain`), over the
+    /// pending general calls `pending`, which the chain keeps for all its jobs instead of taking
+    /// a stack from `pending_call_stacks` and giving it back for each one. `pending` is empty
+    /// when the run starts and when it ends.
+    pub(in crate::vm) fn run_chained_lane_job(
+        &mut self,
+        code: &ResidualProgram,
+        (job, frame): (JobRoot, *const FrameRecord),
+        resume: JobResume,
+        pending: &mut Vec<PendingGeneralCall>,
+    ) -> Result<JobEnd, JobResume> {
+        let Some(window) = self.admit_job(code, job, frame, resume.sent()) else {
+            return Err(resume);
+        };
+        Ok(self.drive_job_window(code, job, window, resume, pending))
+    }
+
+    /// The lane run of `job`'s activation over `window`, which `admit_job` admitted, entered
+    /// with `resume`, its general calls pending on `pending`, which it leaves empty. How the
+    /// run ended (`job_end`).
+    fn drive_job_window(&mut self, code: &ResidualProgram, job: JobRoot, window: JobWindow, resume: JobResume, pending: &mut Vec<PendingGeneralCall>) -> JobEnd {
         let mut executing = ExecutingProgram { id: window.entry.program, retained: None };
         let caller_registers = self.active_registers;
         let entered = self.enter_lane_floor(code, window.entry.program);
-        let start = job_start(code, job, &window, (&raw mut pending, &raw mut executing), entered.cell);
-        let mut context = self.lane_context(start);
+        let start = job_start(code, job, &window, (std::ptr::from_mut(pending), &raw mut executing), entered.cell);
+        let mut context = self.context_for_start(start);
         let ip = self.drive_lane(&mut context, entered, |cx| match resume {
             JobResume::Sends(_) => window.enter(cx),
             JobResume::Throws(error) => window.enter_raising(cx, error),
         });
-        let end = self.job_end(code, job, &context, ip, &mut pending, executing);
+        let end = self.job_end(code, job, &context, ip, pending, executing);
         pending.clear();
-        self.pending_call_stacks.push(pending);
         self.active_registers = caller_registers;
-        Ok(end)
+        end
     }
 
     /// The window `job`'s activation runs over, once the lane admits the run, and the frame's
     /// owner has started it: the function lays out as a window (`window_layout`) and has a
-    /// view, and the stack has room. `None` changes nothing.
-    fn admit_job(&mut self, code: &ResidualProgram, job: JobRoot, sent: Value) -> Option<JobWindow> {
-        if !self.lane_admits(code) || code.kind == crate::bytecode::ProgramKind::Wasm {
+    /// view, and the stack has room. `frame` is the suspended frame of `job`'s owner
+    /// (`Vm::job_frame`), looked up by the caller. `None` changes nothing.
+    fn admit_job(&mut self, code: &ResidualProgram, job: JobRoot, frame: *const FrameRecord, sent: Value) -> Option<JobWindow> {
+        if !self.admits_in_lane(code) || code.kind == crate::bytecode::ProgramKind::Wasm {
             return None;
         }
-        let frame = self.job_frame(job)?;
-        let environment = self.window_layout(frame, code)?;
+        // SAFETY: the owner holds the frame boxed, which nothing moves or drops before the resume
+        // below: the caller looked it up with the job rooted and ran no collection since.
+        let frame = unsafe { &*frame };
         let (program, function, this, pc) = (frame.program, frame.function, frame.this(), frame.pc);
-        // SAFETY: the owner holds the frame, which nothing moves before the resume below.
-        let plan = window_plan(self, code, unsafe { &*std::ptr::from_ref(frame) }, environment)?;
-        let WindowPlan { view, parent, locals, capture, .. } = plan;
+        let cached = cached_window_plan(self, code, frame)?;
+        let (view, parent, locals, capture, environment) = (cached.0.view, cached.0.parent, cached.0.locals(), cached.0.capture, cached.0.environment);
         let this = self.window_this(code.function(function as usize), this, parent)?;
         let stack = crate::stack::StackGuard::enter().ok()?;
         self.check_execution_interrupt().ok()?;
         let frame = self.resume_job_window(job, sent)?;
-        unsafe { (*frame).window_plan = Some(plan) };
+        store_window_plan(frame, cached);
         if let Some(locals) = locals {
             open_window_locals(self, frame, locals);
         }
@@ -452,15 +485,15 @@ impl JobWindow {
             let stack = &mut vm(cx).lane_stack;
             stack.push_generator_activation(self.activation);
             stack.restore_iterators(0, &mut (*self.frame).active_iterators);
-            stack.restore_with_objects(0, &mut (*self.frame).with_objects);
+            stack.restore_with_objects(0, &mut *self.frame);
             vm(cx).record_window_owner(&*(*cx).code, 0);
-            lane_enter_suspended(cx, &self.entry, self.registers, self.pc)
+            enter_suspended_in_lane(cx, &self.entry, self.registers, self.pc)
         }
     }
 
     /// Enters the window as `enter` does, to raise `error` at the instruction the frame
     /// suspended at, the one before its resume point: a handler of its function covering that
-    /// record catches the error, else the activation ends in its owner (`lane_raised_exit`).
+    /// record catches the error, else the activation ends in its owner (`raised_exit_in_lane`).
     /// The record the lane exits at.
     fn enter_raising<H: Host>(&self, cx: *mut LaneContext<H>, error: JsError) -> Ip {
         self.enter(cx);
@@ -470,7 +503,7 @@ impl JobWindow {
         vm.lane_completion.raise(error);
         vm.lane_raise_site = super::super::compiled::raise_site(self.entry.function, suspended as u32);
         // SAFETY: the suspended instruction's record lies in its function's view, which `base` starts.
-        lane_raised_exit(cx, unsafe { self.base.add(suspended) })
+        raised_exit_in_lane(cx, unsafe { self.base.add(suspended) })
     }
 }
 

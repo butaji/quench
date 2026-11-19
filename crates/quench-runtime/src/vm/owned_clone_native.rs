@@ -12,22 +12,6 @@ struct ViewSpan {
     tracking: bool,
 }
 
-/// The typed array kinds an owned clone names, by their name without the `Array` suffix.
-const OWNED_TYPED_ARRAY_KINDS: [(&str, TypedArrayKind); 12] = [
-    ("Uint8", TypedArrayKind::Uint8),
-    ("Uint8Clamped", TypedArrayKind::Uint8Clamped),
-    ("Uint16", TypedArrayKind::Uint16),
-    ("Uint32", TypedArrayKind::Uint32),
-    ("Int8", TypedArrayKind::Int8),
-    ("Int16", TypedArrayKind::Int16),
-    ("Int32", TypedArrayKind::Int32),
-    ("BigInt64", TypedArrayKind::BigInt64),
-    ("BigUint64", TypedArrayKind::BigUint64),
-    ("Float16", TypedArrayKind::Float16),
-    ("Float32", TypedArrayKind::Float32),
-    ("Float64", TypedArrayKind::Float64),
-];
-
 impl<H: Host> Vm<H> {
     pub(crate) fn embedding_clone_metadata(
         &mut self,
@@ -153,31 +137,23 @@ impl<H: Host> Vm<H> {
             }
             Node::Object(_) => self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(self.object_proto))),
+                .alloc_object(Self::empty_object(self.object_proto)),
             Node::Array(length, _) => {
                 let prototype = self.array_prototype_for_realm(self.realm.globals);
-                let v = self.heap.alloc(Cell::Array {
-                    object: crate::heap::ArrayObject::new(
+                let v = self.heap.alloc_array(crate::heap::ArrayObject::new(
                         Self::empty_object(prototype),
                         Vec::new(),
-                    ),
-                });
+                    ));
                 self.set_array_length(&p, v, Value::number(*length as f64))?;
                 v
             }
             Node::Map(_) => {
                 let proto = self.intrinsic_builtin_prototype(Native::Map);
-                self.heap.alloc(Cell::Map {
-                    object: Self::empty_object(proto),
-                    entries: Default::default(),
-                })
+                self.heap.alloc_map(Self::empty_object(proto), Default::default())
             }
             Node::Set(_) => {
                 let proto = self.intrinsic_builtin_prototype(Native::Set);
-                self.heap.alloc(Cell::Set {
-                    object: Self::empty_object(proto),
-                    entries: Default::default(),
-                })
+                self.heap.alloc_set(Self::empty_object(proto), Default::default())
             }
             Node::Date(n) => {
                 let proto = self.intrinsic_builtin_prototype(Native::Date);
@@ -261,6 +237,7 @@ impl<H: Host> Vm<H> {
         if offset > bytes_len || (!tracking && length > bytes_len - offset) {
             return Err(self.range_error(p, "Owned DataView out of bounds".into()));
         }
+        self.materialize_global_intrinsic(p, "DataView")?;
         let proto = self.intrinsic_builtin_prototype(Native::DataView);
         Ok(self.heap.alloc(Cell::DataView {
             object: Box::new(crate::heap::BufferViewObject {
@@ -276,7 +253,12 @@ impl<H: Host> Vm<H> {
     fn embedding_clone_typed_view(&mut self, p: &ResidualProgram, kind: &str, span: &ViewSpan) -> Result<Value, JsError> {
         let ViewSpan { buffer, bytes_len, offset, length, tracking } = *span;
         let stem = kind.strip_suffix("Array").unwrap_or(kind);
-        let Some(&(_, kind)) = OWNED_TYPED_ARRAY_KINDS.iter().find(|(name, _)| *name == stem) else {
+        // The owned clone names a kind by its constructor's name without the `Array` suffix.
+        let Some(kind) = crate::heap::TYPED_ARRAYS
+            .iter()
+            .find(|row| row.name.strip_suffix("Array") == Some(stem))
+            .map(|row| row.kind)
+        else {
             return Err(self.type_error(p, "Unknown owned view kind".into()));
         };
         let width = kind.width();
@@ -313,7 +295,7 @@ impl<H: Host> Vm<H> {
             _ => return Err(self.type_error(p, "Unknown owned Error kind".into())),
         };
         let proto = self.intrinsic_builtin_prototype(native);
-        Ok(self.heap.alloc(Cell::Object(Object::error(proto))))
+        Ok(self.heap.alloc_object(Object::error(proto)))
     }
 
     pub(crate) fn embedding_clone_collection_insert(

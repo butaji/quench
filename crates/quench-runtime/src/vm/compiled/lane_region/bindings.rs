@@ -33,7 +33,7 @@ impl Lowering<'_, '_> {
 
     /// Whether the VM's in-loop call target of `callee` names `function` of `program` with no
     /// termination requested: a same-realm closure of that body (`Vm::in_loop_call_target`),
-    /// as `lane_admitted_function_binding` decides, without its call.
+    /// as `admitted_function_binding_in_lane` decides, without its call.
     fn cached_call_target(&mut self, program: ir::Value, callee: ir::Value, function: ir::Value) -> ir::Value {
         type Target = super::super::InLoopCallTarget;
         let table = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, call_targets));

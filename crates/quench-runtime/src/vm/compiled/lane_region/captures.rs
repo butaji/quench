@@ -96,7 +96,7 @@ fn capture_miss(builder: &mut FunctionBuilder<'_>, reach: Reach, site: &CaptureS
         return emit(builder).raw_const(Lane::I64, 0);
     };
     let (payload, helpers) = reach;
-    let vm = emit_js_payload_fixed_word(builder, payload, std::mem::offset_of!(JsStepDispatch, vm));
+    let vm = emit_js_payload_fixed_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.vm));
     let slot = emit(builder).raw_const(Lane::I64, i64::from(at.1));
     let helper = helpers.address(builder, LaneHelper::FunctionCapture);
     let read = emit_lane_call(builder, helper, &[vm, callee, slot]);
@@ -105,7 +105,7 @@ fn capture_miss(builder: &mut FunctionBuilder<'_>, reach: Reach, site: &CaptureS
     read
 }
 
-/// A capture's read by the lane's own lookup (`dispatch_fast::lane_body_capture`); a miss leaves.
+/// A capture's read by the lane's own lookup (`dispatch_fast::body_capture_in_lane`); a miss leaves.
 fn capture_get(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), exit: ir::Block) -> ir::Value {
     let (context, packed) = capture_operands(builder, reach.0, at);
     let value = call_helper(builder, reach, LaneHelper::CaptureGet, &[context, packed]);
@@ -114,7 +114,7 @@ fn capture_get(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), 
     value
 }
 
-/// A capture's store by the lane's own store (`dispatch_fast::lane_body_capture_store`); a binding
+/// A capture's store by the lane's own store (`dispatch_fast::body_capture_store_in_lane`); a binding
 /// it does not take leaves at `exit`.
 pub(super) fn store_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), value: ir::Value,
     exit: ir::Block) {
@@ -127,7 +127,7 @@ pub(super) fn store_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, at:
 /// The lane context and the packed capture (depth in the high half, slot in the low) a capture
 /// helper takes.
 fn capture_operands(builder: &mut FunctionBuilder<'_>, payload: ir::Value, (depth, slot): (u16, u16)) -> (ir::Value, ir::Value) {
-    let context = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+    let context = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.lane_context));
     let packed = emit(builder).raw_const(Lane::I64, i64::from(u32::from(depth) << u16::BITS | u32::from(slot)));
     (context, packed)
 }
@@ -145,7 +145,7 @@ impl Lowering<'_, '_> {
     /// (`Entry::capture_values`) or a published callee's, fixed by the identity its call guards
     /// (`Lowering::frame_captures`), where the slot holds an ordinary value; otherwise, in an
     /// inlined frame, the VM's own projection of the closure the call bound
-    /// (`lane_function_capture_read`), which also resolves shared and statically bound callees'
+    /// (`function_capture_read_in_lane`), which also resolves shared and statically bound callees'
     /// slots, else the lane's own read. Each read loads where it runs, after any call that may
     /// have stored to the slot.
     pub(super) fn capture_site(&mut self, state: &mut State, pc: usize, depth: u16,
@@ -206,6 +206,31 @@ impl Lowering<'_, '_> {
         let same = self.is_identity(value, expected);
         emit_js_guard(&mut self.builder, same, exit);
         self.identity_constant(expected)
+    }
+
+    /// The root constant the capture read at `pc` takes (`FactTables::root_constant`), with its
+    /// program, where the division folds Stable facts.
+    pub(super) fn root_constant_at(&self, pc: usize) -> Option<(crate::vm::program_store::ProgramId, Value)> {
+        let found = (self.vm.online?.root_constant)(pc)?;
+        self.division().folds(BindingTime::Stable).then_some(found)
+    }
+
+    /// The capture read at `pc` of a written-once root binding that `root_constant_at` folds: the
+    /// binding's function, the result register's value, with no read of the environment. The
+    /// function is held as a Stable fact (`hold_stable`), a dependency on the program's root
+    /// constants (`StableFacts::root_program`), so the program's second root run retires the code.
+    /// `None` where the value is no function.
+    pub(super) fn root_constant_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+        let (program, value) = self.root_constant_at(pc)?;
+        let ty = Type::function(value)?;
+        let exit = self.guard_exit(state, pc as u32);
+        self.hold_stable(state, exit);
+        self.stable.root_program = Some(program);
+        let fact = RegisterFact::admit(Fact { ty, representation: Representation::Tagged, binding: BindingTime::Stable,
+            proof: Proof::Dependency, projection: Projection::Exact }).expect("a Stable fact's dependency proves any type");
+        let word = self.identity_constant(value);
+        self.define(state, instruction.result_register(), word, fact);
+        Some(true)
     }
 
     /// The capture row `instruction` decodes to, where this lowering makes it: a read at depth

@@ -1,4 +1,5 @@
-//! Reads of a proxy whose `get` trap runs as an activation of the lane.
+//! Reads of a proxy whose `get` trap runs as an activation of the lane. The activations are
+//! `AccessorCall`'s (`accessor_protocol.rs`); this file decides which trap a read calls.
 use super::*;
 use crate::vm::object_get::ordinary_chain::ChainRead;
 
@@ -14,7 +15,7 @@ const SET_TRAP_ARGUMENTS: usize = 4;
 /// with. The target's shape leaves the key unconstrained (`Vm::shape_leaves_atom_unconstrained`),
 /// so no invariant checks the trap's result. `None` for any other read: no proxy, a revoked
 /// one, a private name, no trap, or a target that may constrain the key.
-fn get_trap_call<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::Atom) -> Option<(Value, Value, [Value; GET_TRAP_ARGUMENTS])> {
+pub(super) fn get_trap_call<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::Atom) -> Option<(Value, Value, [Value; GET_TRAP_ARGUMENTS])> {
     let (target, handler) = vm.proxy_parts(object)?;
     if handler.is_null() || vm.is_private_name(atom) {
         return None;
@@ -29,137 +30,19 @@ fn get_trap_call<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::
     vm.shape_leaves_atom_unconstrained(target, atom).then_some((trap, handler, [target, vm.atom_string(atom), object]))
 }
 
-/// A lane read of `atom` from the proxy `base` at the record `ip` whose handler has no `get`
-/// trap: the read of its target (through further trapless proxies) along the ordinary chain
-/// (`Vm::ordinary_chain_read`), a data value or an absent key completing the record in place
-/// and a getter running as an activation with the proxy as receiver. `Err` carries the
-/// record to continue at: the general path for any other read, a returning or nested record
-/// among them.
-fn lane_read_forwarded<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, base: Value, atom: crate::bytecode::Atom) -> Result<(Registers, Ip), Ip> {
-    let vm = unsafe { vm(cx) };
-    // SAFETY: `ip` is a record of the running view.
-    let i = unsafe { &*ip };
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 || i.b == crate::bytecode::FieldBase::NESTED || vm.is_private_name(atom) {
-        return Err(exit(ip));
-    }
-    let mut target = base;
-    while let Some((inner, handler)) = vm.proxy_parts(target) {
-        if !vm.handler_lacks_trap(handler, ProxyTrap::Get) {
-            return Err(exit(ip));
-        }
-        target = inner;
-    }
-    match vm.ordinary_chain_read_proved(target, atom) {
-        Some(ChainRead::Value(value)) => lane_complete_read(r, ip, i, value),
-        Some(ChainRead::Absent) => lane_complete_read(r, ip, i, Value::UNDEFINED),
-        Some(ChainRead::Getter(Some(getter))) if !getter.is_undefined() => lane_activate_getter(cx, r, ip, getter, base, None),
-        _ => Err(exit(ip)),
-    }
-}
-
-/// The read record `i` at `ip` completed in place with `value`.
-fn lane_complete_read(r: Registers, ip: Ip, i: &LaneInstruction, value: Value) -> Result<(Registers, Ip), Ip> {
-    r.set(i.a, value);
-    Ok((r, following(ip)))
-}
-
-/// A lane read at the record `ip` of `read`'s base and name that no cached getter answers:
-/// a proxy's `get` trap of the running program activated with the handler as its receiver
-/// (`get_trap_call`), whose completion is the read's value. `Err` carries the record to
-/// continue at: the general path for any other read, or for an activation the lane has no
-/// room for.
-pub(super) fn lane_read_get_trap<H: Host>(
-    cx: *mut LaneContext<H>,
-    r: Registers,
-    ip: Ip,
-    read: Option<(Value, crate::bytecode::Atom)>,
-) -> Result<(Registers, Ip), Ip> {
-    let vm = unsafe { vm(cx) };
-    let Some((base, atom)) = read else {
-        return Err(exit(ip));
-    };
-    let Some((trap, handler, arguments)) = get_trap_call(vm, base, atom) else {
-        #[cfg(feature = "profile-lane-exits")]
-        if let Some((target, handler)) = vm.proxy_parts(base) {
-            let trap = vm.plain_property_lookup(handler, crate::vm::PropertyKey::string(vm.runtime_atoms.get));
-            super::super::lane_exits::record_detail(format!(
-                "get trap decline trap={} unconstrained={} name={}",
-                match trap { None => "unanswered", Some(None) => "absent", Some(Some(_)) => "found" },
-                vm.shape_leaves_atom_unconstrained(target, atom),
-                vm.atom_name(atom)
-            ));
-        }
-        return lane_read_forwarded(cx, r, ip, base, atom);
-    };
-    lane_materialize_running_leaf(cx);
-    let Some(target) = lane_trap_target(cx, trap) else {
-        #[cfg(feature = "profile-lane-exits")]
-        super::super::lane_exits::record_detail("get trap decline target".into());
-        return Err(exit(ip));
-    };
-    let activated = lane_activate_trap(cx, r, ip, target, handler, &arguments)?;
-    owe_invariants(vm, Completion::ReadsTrapped, arguments[0], atom, TrapAccess::Read);
-    Ok(activated)
-}
-
-/// The frameless target of the trap function `trap` and whether it is another program's,
-/// which its activation enters and its return leaves (`lane_complete_activation`): a trap of
-/// a library loaded as its own script, as Vue's and MobX's handlers are, activates as one of
-/// the running program's does. `None` for a trap the lane does not activate.
-pub(super) fn lane_trap_target<H: Host>(cx: *mut LaneContext<H>, trap: Value) -> Option<(ScriptCallTarget, bool)> {
-    if let Some(target) = lane_script_target(cx, trap) {
-        return (!target.forwards()).then_some((target, false));
-    }
-    let vm = unsafe { vm(cx) };
-    // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
-    let target = vm.cross_call_entry(trap).map(|target| unsafe { *target })?;
-    (target.entry.activates() && !target.forwards() && !lane_constructing(vm, trap)).then_some((target, true))
-}
-
-/// The activation of the trap `target` (`lane_trap_target`) called on `handler` with
-/// `arguments` for the access record at `ip`. `Err` carries the record to continue at.
-fn lane_activate_trap<H: Host, const N: usize>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, (target, crosses): (ScriptCallTarget, bool), handler: Value, arguments: &[Value; N]) -> Result<(Registers, Ip), Ip> {
-    let Some(this) = lane_call_this(unsafe { vm(cx) }, &target, handler) else {
-        return Err(exit(ip));
-    };
-    let passed = ActivationArguments::Kept(arguments.as_ptr(), N);
-    if crosses {
-        lane_activate_keeping::<H, true>(cx, r, ip, &target, passed, this, false, None)
-    } else {
-        lane_activate_keeping::<H, false>(cx, r, ip, &target, passed, this, false, None)
-    }
-}
-
 /// The atom of a computed key a proxy's trap receives as a string: a string's own, or the
 /// canonical decimal text of an array index. `None` for any other key (a symbol, a negative
 /// or fractional number, an object whose ToPropertyKey runs guest code).
-fn keyed_trap_atom<H: Host>(vm: &mut Vm<H>, key: Value) -> Option<crate::bytecode::Atom> {
+pub(super) fn keyed_trap_atom<H: Host>(vm: &mut Vm<H>, key: Value) -> Option<crate::bytecode::Atom> {
     if let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) {
         return Some(vm.index_key_atom(index));
     }
     vm.string_key_atom(key)
 }
 
-/// A lane `GetIndex` of `base[key]` at the record `ip` where `base` is a proxy whose `get`
-/// trap a named read would activate (`lane_read_get_trap`): the same activation with the
-/// key's string. `None`, before any effect, for any other read, which goes on along its
-/// path; `Err` carries the record to continue at.
-pub(super) fn lane_keyed_get_trap<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, base: Value, key: Value) -> Option<Result<(Registers, Ip), Ip>> {
-    let vm = unsafe { vm(cx) };
-    vm.proxy_parts(base)?;
-    let atom = keyed_trap_atom(vm, key)?;
-    let (trap, handler, arguments) = get_trap_call(vm, base, atom)?;
-    lane_materialize_running_leaf(cx);
-    let target = lane_trap_target(cx, trap)?;
-    Some(lane_activate_trap(cx, r, ip, target, handler, &arguments).map(|activated| {
-        owe_invariants(vm, Completion::ReadsTrapped, arguments[0], atom, TrapAccess::Read);
-        activated
-    }))
-}
-
-/// Records that the trap activation `lane_activate_keeping` just pushed completes as
+/// Records that the trap activation `activate_keeping_in_lane` just pushed completes as
 /// `completion` says and owes `target` its invariants for `atom` (`TrapCheck`).
-fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, target: Value, atom: crate::bytecode::Atom, access: TrapAccess) {
+pub(super) fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, target: Value, atom: crate::bytecode::Atom, access: TrapAccess) {
     // An array's `length` and elements are answered by its element facts too, which its
     // layout does not name; any other name by its shape, which its layout does.
     let by_layout = vm.heap.array(target).is_none() || (atom != vm.length_atom && !vm.atom_class(atom).contains(crate::vm::object::AtomClass::ARRAY_INDEX));
@@ -191,68 +74,13 @@ pub(super) fn trap_result_needs_general_path<H: Host>(vm: &Vm<H>, payload: SideP
 
 /// The `set` trap's call for a store of `value` to the name `atom` of the proxy `object`, as
 /// `get_trap_call` finds a read's: the trap, the handler it is called on and its values.
-fn set_trap_call<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::Atom, value: Value) -> Option<(Value, Value, [Value; SET_TRAP_ARGUMENTS])> {
+pub(super) fn set_trap_call<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::Atom, value: Value) -> Option<(Value, Value, [Value; SET_TRAP_ARGUMENTS])> {
     let (target, handler) = vm.proxy_parts(object)?;
     if handler.is_null() || vm.is_private_name(atom) {
         return None;
     }
     let trap = vm.plain_property_lookup(handler, crate::vm::PropertyKey::string(vm.runtime_atoms.set))??;
     vm.shape_leaves_atom_unconstrained(target, atom).then_some((trap, handler, [target, vm.atom_string(atom), value, object]))
-}
-
-/// A lane store of `value` to the name `atom` of the proxy `object` at the record `ip` whose
-/// handlers (it may be nested) have no `set`, `getOwnPropertyDescriptor` or `defineProperty`
-/// trap: the ordinary set of the target with the proxy as receiver, which writes the target's
-/// writable data property or adds one (`Vm::set_plain_key_property`). `None`, before any
-/// effect, leaves any other store, an accessor, a read-only property or a non-extensible
-/// target among them, to the general path.
-fn lane_store_forwarded<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, object: Value, atom: crate::bytecode::Atom, value: Value) -> Option<Resumed> {
-    let vm = unsafe { vm(cx) };
-    vm.proxy_parts(object)?;
-    let mut target = object;
-    while let Some((inner, handler)) = vm.proxy_parts(target) {
-        if !vm.handler_lacks_trap(handler, ProxyTrap::Set) {
-            return None;
-        }
-        target = inner;
-    }
-    if target != vm.descriptor_forwarding_target(object) || vm.is_private_name(atom) {
-        return None;
-    }
-    vm.set_plain_key_property(target, atom, value, false)?;
-    note_allocation(vm);
-    Some(Resumed::At(r, following(ip), Carried::script(cx)))
-}
-
-/// A lane store of `value` to the name `atom` of `object` at the record `ip` that no setter
-/// answers: a proxy's `set` trap of the running program activated with the handler as its
-/// receiver (`set_trap_call`), whose completion leaves the record's registers as they are
-/// (`Completion::Assigns`, or `AssignsChecked` for a strict store, whose rejection the
-/// general path raises). `None`, before any effect, leaves any other store to its path; an
-/// activation the lane has no room for exits at the record.
-pub(super) fn lane_store_set_trap<H: Host>(
-    cx: *mut LaneContext<H>,
-    r: Registers,
-    ip: Ip,
-    object: Value,
-    atom: crate::bytecode::Atom,
-    value: Value,
-    strict: bool,
-) -> Option<Resumed> {
-    let vm = unsafe { vm(cx) };
-    let Some((trap, handler, arguments)) = set_trap_call(vm, object, atom, value) else {
-        return lane_store_forwarded(cx, r, ip, object, atom, value);
-    };
-    let target = lane_trap_target(cx, trap)?;
-    lane_call_this(vm, &target.0, handler)?;
-    Some(match lane_activate_trap(cx, r, ip, target, handler, &arguments) {
-        Ok((registers, next)) => {
-            let access = if strict { TrapAccess::StrictStore } else { TrapAccess::Store };
-            owe_invariants(vm, Completion::AssignsTrapped, arguments[0], atom, access);
-            Resumed::At(registers, next, Carried::script(cx))
-        }
-        Err(next) => Resumed::Exit(next),
-    })
 }
 
 impl<H: Host> Vm<H> {

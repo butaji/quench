@@ -100,6 +100,16 @@ const ELEMENTS: [NativeKind; 9] = [
     NativeKind { kind: TypedArrayKind::Uint8Clamped, element: Element::Integer(Integer::Clamped8) },
 ];
 
+/// The position of `kind` among the native kinds: the index a typed element record keeps in its
+/// immediate, which `native_kind_at` reads back (`None` for Float16 and the BigInt kinds).
+pub(crate) fn native_kind_index(kind: TypedArrayKind) -> Option<u32> {
+    ELEMENTS.iter().position(|native| native.kind == kind).map(|index| index as u32)
+}
+
+/// The native kind at `index` (`native_kind_index`).
+#[inline(always)]
+pub(crate) fn native_kind_at(index: u32) -> NativeKind { ELEMENTS[index as usize] }
+
 /// The int32 word of the `integer` element at `address`.
 #[inline(always)]
 fn load_integer<S: Stage>(stage: &mut S, integer: Integer, address: S::Word) -> S::Word {

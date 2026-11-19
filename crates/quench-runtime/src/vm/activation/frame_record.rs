@@ -5,7 +5,8 @@
 //! has no record, a frame being what holds its dynamic bindings.
 
 use super::CallContext;
-use crate::bytecode::Atom;
+use super::frame_cold::FrameCold;
+use super::suspension_live::SuspensionLive;
 use crate::compile::liveness::RegisterSet;
 use crate::snapshot::{Reader, Snap, SnapshotResult, Writer};
 use crate::heap::EnvironmentSlots;
@@ -23,30 +24,31 @@ pub(crate) struct FrameRecord {
     /// The receiver, as value bits (the frame prefix's THIS word, `staged::frame`).
     receiver: u64,
     pub(in crate::vm) context: CallContext,
-    pub(in crate::vm) reflected_parameters: u16,
-    pub(in crate::vm) original_arguments: Vec<Value>,
+    /// The reflected parameters and kept arguments, dynamic bindings, `with` objects and
+    /// binding site, when the frame holds any (`FrameCold`).
+    pub(super) cold: Option<Box<FrameCold>>,
     pub(in crate::vm) program: ProgramId,
     pub(in crate::vm) function: u32,
     pub(in crate::vm) pc: usize,
     pub(in crate::vm) env: Value,
     pub(in crate::vm) locals: Vec<Value>,
-    pub(in crate::vm) dynamic_bindings: Vec<(Atom, Value)>,
     pub(in crate::vm) captured: bool,
     /// The register file, with the frame context words below register 0 that a lane window
     /// over it writes (`register_file::FRAME_CONTEXT`). Only its values change while
     /// suspended, never its length, so `WINDOW` stays valid.
     pub(in crate::vm) registers: RegisterFile,
     pub(in crate::vm) active_iterators: Vec<ActiveIterator>,
-    /// The scope stack the frame detached when it suspended: the `with` objects of its
-    /// scope chain, those its closure captured and those it entered, outermost first. While a
-    /// lane activation runs the frame, the chain is the lane stack's (`LaneStack::with_objects`).
-    pub(in crate::vm) with_objects: Vec<Value>,
-    /// The registers live at the suspension, when liveness covers the function: only these
-    /// can name a cell, so the GC traces them alone. `None` traces every register. The others
-    /// keep what they held, cleared only on resume after a collection (`settle_registers`).
-    pub(in crate::vm) live_registers: Option<RegisterSet>,
+    /// Whether the registers the last suspension found live (`suspension_live`) are the only
+    /// ones the GC traces (`live_registers`): set while suspended, until the frame runs again
+    /// (`settle_registers`). The others keep what they held, cleared only on resume after a
+    /// collection. A flag beside the set, so a suspension at the pc of the last one writes no
+    /// copy of it, and a resume reads none.
+    traces_live: bool,
     /// The heap's collection epoch when the frame suspended (`Heap::collection_epoch`).
     suspended_epoch: u64,
+    /// The last suspension's pc and the registers live there, when liveness covers the function
+    /// (`Vm::park_frame`, `suspend_registers`).
+    suspension_live: Option<SuspensionLive>,
     /// What its windowed resumes derive once (`generator_windows::window_plan`).
     pub(in crate::vm) window_plan: Option<crate::vm::dispatch_fast::WindowPlan>,
     /// Skip one function-entry tier attempt when the frame runs again (`Frame::js_jit_skip_entry_once`).
@@ -55,9 +57,15 @@ pub(crate) struct FrameRecord {
     /// activation runs the frame (`open_environment_window`): the locals and environment
     /// live there until the run ends (`close_environment_window`).
     environment_window: bool,
-    /// The resume pc of the binding site the direct eval the activation is running was called
-    /// at (`CallerView::binding_site`).
-    pub(in crate::vm) binding_site_pc: Option<u32>,
+    /// The record of the generator whose lane window runs the frame, set as the window resumes
+    /// it (`Vm::resume_generator_window`) and read as it yields (`Vm::suspend_generator_window`):
+    /// a running generator is rooted, and its record boxed, so its yield needs no lookup. Null
+    /// where no generator's window ran the frame; stale once the run ends, and read by none then.
+    pub(in crate::vm) resuming_generator: *mut super::GeneratorRecord,
+    /// The frame's own `this` is authoritative (`Frame::fixed_this`), as its call decided
+    /// (`Vm::initialize_activation_bindings`): an activation that pushed no lexical `this`
+    /// binding has no other place to read it from when it runs again.
+    fixed_this: bool,
 }
 
 #[cfg(test)]
@@ -95,7 +103,7 @@ impl FrameRecord {
     }
 
     /// Lays the environment window of a lane activation over the register file after its
-    /// registers, as a call lays a fresh one (`lane_activate_environment`): the environment (the
+    /// registers, as a call lays a fresh one (`activate_environment_in_lane`): the environment (the
     /// frame's own, once it made one, with `own_slots` its slot storage; else `DELETED`, the
     /// slots living among the locals in place), the slot storage's address, the `captured` mask,
     /// the in-place storage words, then the locals. The words live in the file's spare
@@ -169,24 +177,23 @@ impl FrameRecord {
         let record = Self {
             receiver: this.to_bits(),
             context: CallContext::Function(callee),
-            reflected_parameters: 0,
-            original_arguments: Vec::new(),
+            cold: None,
             program,
             function,
             pc: 0,
             env,
             locals: Vec::new(),
-            dynamic_bindings: Vec::new(),
             captured: false,
             registers: RegisterFile::new(),
             active_iterators: Vec::new(),
-            with_objects: Vec::new(),
-            live_registers: None,
+            traces_live: false,
+            suspension_live: None,
             suspended_epoch: 0,
             window_plan: None,
             js_jit_skip_entry_once: false,
             environment_window: false,
-            binding_site_pc: None,
+            resuming_generator: std::ptr::null_mut(),
+            fixed_this: false,
         };
         Box::new(record)
     }
@@ -198,46 +205,83 @@ impl FrameRecord {
     }
 
     /// The suspension of a frame that ran in a lane activation over its register file: it resumes
-    /// at `pc`, with the registers liveness finds live there. The iterators its loops pushed and
-    /// the `with` objects its scope chain held while it ran come back first (`Vm::park_frame`).
-    pub(in crate::vm) fn suspend_at(&mut self, pc: usize, live: (Option<RegisterSet>, u64)) {
+    /// at `pc`, in the collection epoch `epoch`, with the registers live there that
+    /// `suspension_live` already holds for `pc` (`Vm::park_frame`). The iterators its loops
+    /// pushed and the `with` objects its scope chain held while it ran come back first.
+    #[inline(always)]
+    pub(in crate::vm) fn suspend_at(&mut self, pc: usize, epoch: u64) {
+        debug_assert!(self.suspension_live.as_ref().is_none_or(|live| live.at(pc)));
         self.pc = pc;
-        self.suspend_registers(live);
+        (self.traces_live, self.suspended_epoch) = (true, epoch);
     }
 
-    /// The registers live at the suspension and the collection epoch it happened in: the
-    /// dead ones keep their values, which no collection traces (`extend_roots`).
+    /// The registers live at the suspension at `pc` (`None` where liveness does not cover the
+    /// function) and the collection epoch it happened in: the dead ones keep their values, which
+    /// no collection traces (`extend_roots`).
     pub(in crate::vm) fn suspend_registers(&mut self, (live, epoch): (Option<RegisterSet>, u64)) {
-        (self.live_registers, self.suspended_epoch) = (live, epoch);
+        SuspensionLive::store(&mut self.suspension_live, self.pc, live);
+        (self.traces_live, self.suspended_epoch) = (true, epoch);
+    }
+
+    /// The registers the GC traces alone while the frame is suspended, when liveness covers
+    /// its function; `None` traces every register.
+    #[inline(always)]
+    pub(in crate::vm) fn live_registers(&self) -> Option<RegisterSet> {
+        if !self.traces_live {
+            return None;
+        }
+        self.suspension_live.as_ref().and_then(SuspensionLive::live)
+    }
+
+    /// Whether the last suspension, whose live registers the record keeps, was at `pc`.
+    #[inline(always)]
+    pub(in crate::vm) fn suspended_live_at(&self, pc: usize) -> bool {
+        self.suspension_live.as_ref().is_some_and(|live| live.at(pc))
+    }
+
+    /// Keeps the registers live at a suspension at `pc` (`None`: liveness does not cover the
+    /// function) for each next suspension there (`Vm::park_frame`).
+    pub(in crate::vm) fn note_suspension_live(&mut self, pc: usize, live: Option<RegisterSet>) {
+        SuspensionLive::store(&mut self.suspension_live, pc, live);
     }
 
     /// The frame runs again, where every register is traced: the registers dead at its
     /// suspension are cleared when a collection ran since (epoch `epoch`), as the cells they
     /// named may be gone; with none, each still names a cell.
+    #[inline(always)]
     pub(in crate::vm) fn settle_registers(&mut self, epoch: u64) {
-        if let Some(live) = self.live_registers.take()
-            && self.suspended_epoch != epoch
-        {
+        if self.suspended_epoch != epoch && self.traces_live {
+            self.clear_dead_registers_after_collection();
+        }
+        self.traces_live = false;
+    }
+
+    /// `settle_registers` after a collection: the registers outside the suspension's live set
+    /// cleared.
+    #[inline(never)]
+    fn clear_dead_registers_after_collection(&mut self) {
+        if let Some(live) = self.suspension_live.as_ref().and_then(SuspensionLive::live) {
             clear_dead_registers(&mut self.registers, live);
         }
     }
 
-    /// `frame`'s suspended state, moved: its register file and buffers keep their storage. What
-    /// a run derives for itself (the operation's field and binding site, the capture cache,
-    /// a fixed `this`, the `with` base) is not kept.
+    /// `frame`'s suspended state, moved: its register file and buffers keep their storage, but
+    /// for the rarely held ones that are empty (`FrameCold`), which are freed. What a run derives
+    /// for itself (the operation's field and binding site, the capture cache,
+    /// the `with` base) is not kept.
     pub(in crate::vm) fn capture(frame: Box<Frame>) -> Box<Self> {
         let Frame {
             context, reflected_parameters, original_arguments, program, function, pc, env, this,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
             pc_is_resume: _, source_field: _, binding_site_pc: _,
             initialized_registers: _, capture_cache: _, with_base: _, js_jit_interpreter_started: _,
-            fixed_this: _, js_jit_skip_entry_once,
+            fixed_this, js_jit_skip_entry_once,
         } = *frame;
+        let cold = FrameCold { reflected_parameters, original_arguments, dynamic_bindings, with_objects, binding_site_pc: None }.boxed();
         let record = Self {
-            receiver: this.to_bits(), context, reflected_parameters, original_arguments, program, function, pc, env,
-            locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
-            live_registers: None, suspended_epoch: 0, window_plan: None, js_jit_skip_entry_once, environment_window: false,
-            binding_site_pc: None,
+            receiver: this.to_bits(), context, cold, program, function, pc, env, locals, captured, registers, active_iterators,
+            traces_live: false, suspended_epoch: 0, suspension_live: None, window_plan: None, js_jit_skip_entry_once, environment_window: false,
+            resuming_generator: std::ptr::null_mut(), fixed_this,
         };
         Box::new(record)
     }
@@ -248,12 +292,19 @@ impl FrameRecord {
         #[cfg(test)]
         note_frame_made();
         self.settle_registers(u64::MAX);
+        self.into_buffers(with_base)
+    }
+
+    /// The finished activation's buffers as a frame for the pool (`Vm::pool_finished_frame`):
+    /// no run reads its values again.
+    pub(in crate::vm) fn into_buffers(self: Box<Self>, with_base: usize) -> Box<Frame> {
         let this = self.this();
         let Self {
-            receiver: _, context, reflected_parameters, original_arguments, program, function, pc, env,
-            locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
-            live_registers: _, suspended_epoch: _, window_plan: _, js_jit_skip_entry_once, environment_window: _, binding_site_pc: _,
+            receiver: _, context, cold, program, function, pc, env, locals, captured, registers, active_iterators,
+            traces_live: _, suspended_epoch: _, suspension_live: _, window_plan: _, js_jit_skip_entry_once, environment_window: _,
+            resuming_generator: _, fixed_this,
         } = *self;
+        let FrameCold { reflected_parameters, original_arguments, dynamic_bindings, with_objects, binding_site_pc: _ } = FrameCold::unbox(cold);
         Box::new(Frame {
             context, reflected_parameters, original_arguments, program, function, pc,
             pc_is_resume: true,
@@ -266,7 +317,7 @@ impl FrameRecord {
             capture_cache: CaptureCache::default(),
             active_iterators, with_objects, with_base,
             js_jit_interpreter_started: None,
-            fixed_this: false,
+            fixed_this,
         })
     }
 
@@ -274,13 +325,14 @@ impl FrameRecord {
     /// and registers only the live ones where the suspension knows them (`live_registers`):
     /// each other one would cost the mark a push and a pop to find it names no cell.
     pub(in crate::vm) fn extend_roots(&self, out: &mut Vec<Value>) {
+        let cold = self.cold();
         out.extend(self.context.callee());
-        out.extend_from_slice(&self.original_arguments);
-        out.extend_from_slice(&self.with_objects);
+        out.extend_from_slice(&cold.original_arguments);
+        out.extend_from_slice(&cold.with_objects);
         out.extend([self.env, self.this()]);
         Value::extend_heap_values(out, &self.locals);
-        out.extend(self.dynamic_bindings.iter().map(|(_, value)| *value));
-        match self.live_registers {
+        out.extend(cold.dynamic_bindings.iter().map(|(_, value)| *value));
+        match self.live_registers() {
             Some(live) => out.extend(
                 self.registers.iter().enumerate().filter(|&(register, value)| value.is_heap() && live.contains(register)).map(|(_, &value)| value),
             ),
@@ -304,24 +356,23 @@ impl Clone for FrameRecord {
         Self {
             receiver: self.receiver,
             context: self.context,
-            reflected_parameters: self.reflected_parameters,
-            original_arguments: self.original_arguments.clone(),
+            cold: self.cold.as_deref().and_then(|cold| FrameCold { binding_site_pc: None, ..cold.clone() }.boxed()),
             program: self.program,
             function: self.function,
             pc: self.pc,
             env: self.env,
             locals: self.locals.clone(),
-            dynamic_bindings: self.dynamic_bindings.clone(),
             captured: self.captured,
             registers: self.registers.clone(),
             active_iterators: self.active_iterators.clone(),
-            with_objects: self.with_objects.clone(),
-            live_registers: self.live_registers,
+            traces_live: self.traces_live,
+            suspension_live: self.suspension_live.clone(),
             suspended_epoch: self.suspended_epoch,
             window_plan: None,
             js_jit_skip_entry_once: self.js_jit_skip_entry_once,
             environment_window: false,
-            binding_site_pc: None,
+            resuming_generator: std::ptr::null_mut(),
+            fixed_this: self.fixed_this,
         }
     }
 }
@@ -330,17 +381,18 @@ impl Clone for FrameRecord {
 /// its registers (`live_registers`) and starts its run anew on resume.
 impl Snap for FrameRecord {
     fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
+        let cold = self.cold();
         self.context.snap(writer)?;
-        self.reflected_parameters.snap(writer)?;
-        self.original_arguments.snap(writer)?;
+        cold.reflected_parameters.snap(writer)?;
+        cold.original_arguments.snap(writer)?;
         self.program.snap(writer)?;
         self.function.snap(writer)?;
         self.pc.snap(writer)?;
         self.env.snap(writer)?;
         self.this().snap(writer)?;
         self.locals.snap(writer)?;
-        self.dynamic_bindings.snap(writer)?;
-        match self.live_registers {
+        cold.dynamic_bindings.snap(writer)?;
+        match self.live_registers() {
             Some(live) => {
                 let mut registers = RegisterFile::from_registers(&self.registers);
                 clear_dead_registers(&mut registers, live);
@@ -349,35 +401,40 @@ impl Snap for FrameRecord {
             None => self.registers.snap(writer)?,
         }
         self.active_iterators.snap(writer)?;
-        self.with_objects.snap(writer)?;
+        cold.with_objects.snap(writer)?;
         self.captured.snap(writer)
     }
 
     fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
+        let context = Snap::unsnap(reader)?;
+        let mut cold = FrameCold { reflected_parameters: Snap::unsnap(reader)?, original_arguments: Snap::unsnap(reader)?, ..FrameCold::EMPTY };
+        let (program, function, pc, env) = (Snap::unsnap(reader)?, Snap::unsnap(reader)?, Snap::unsnap(reader)?, Snap::unsnap(reader)?);
+        let receiver = Value::unsnap(reader)?.to_bits();
+        let locals = Snap::unsnap(reader)?;
+        cold.dynamic_bindings = Snap::unsnap(reader)?;
+        let (registers, active_iterators) = (Snap::unsnap(reader)?, Snap::unsnap(reader)?);
+        cold.with_objects = Snap::unsnap(reader)?;
         let record = Self {
-            context: Snap::unsnap(reader)?,
-            reflected_parameters: Snap::unsnap(reader)?,
-            original_arguments: Snap::unsnap(reader)?,
-            program: Snap::unsnap(reader)?,
-            function: Snap::unsnap(reader)?,
-            pc: Snap::unsnap(reader)?,
-            env: Snap::unsnap(reader)?,
-            receiver: Value::unsnap(reader)?.to_bits(),
-            locals: Snap::unsnap(reader)?,
-            dynamic_bindings: Snap::unsnap(reader)?,
-            registers: Snap::unsnap(reader)?,
-            active_iterators: Snap::unsnap(reader)?,
-            with_objects: Snap::unsnap(reader)?,
+            receiver, context, cold: cold.boxed(), program, function, pc, env, locals, registers, active_iterators,
             captured: Snap::unsnap(reader)?,
-            live_registers: None,
+            traces_live: false,
+            suspension_live: None,
             suspended_epoch: 0,
             window_plan: None,
             js_jit_skip_entry_once: false,
             environment_window: false,
-            binding_site_pc: None,
+            resuming_generator: std::ptr::null_mut(),
+            fixed_this: false,
         };
         Ok(record)
     }
+}
+
+/// Appends the receiver and environment of an activation to `out`, the two context words every
+/// activation holds beside its registers, which a collection traces as roots.
+#[inline]
+pub(in crate::vm) fn extend_this_env_roots(out: &mut Vec<Value>, this: Value, env: Value) {
+    out.extend([this, env]);
 }
 
 /// Clears the `registers` outside `live`: each past the set's width, and the runs of dead ones

@@ -1,16 +1,16 @@
 use super::*;
 use super::array_view::{Match, Search};
 
-/// Where `Vm::array_species_is_array_create` found `Array.prototype.constructor` for an array
-/// of `shape`, which has no own `constructor`, under `epoch`. A change to the prototype's layout
-/// advances the epoch; shape compaction advances it too, so a proof never names a renumbered shape.
-/// The slot's value may change in place, so each use reads it.
+/// An array shape `Vm::array_species_is_array_create` found without an own `constructor`, for
+/// arrays of `prototype`, and the `constructor` that prototype held when proved. While the
+/// `ArrayConstructor` fuse holds for `prototype` its slot still holds that constructor, so a
+/// repeat check reads two fuse records and no slot. Shape compaction renumbers shapes and
+/// clears it with the field caches.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct ArraySpeciesProof {
     shape: u32,
-    epoch: u64,
     prototype: Value,
-    constructor_slot: usize,
+    constructor: Option<Value>,
 }
 
 impl<H: Host> Vm<H> {
@@ -53,16 +53,10 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         this: Value,
     ) -> Result<Value, JsError> {
-        // A direct array whose elements are ordinary and all present: every HasProperty, Get
-        // and Set below reads or writes an own data element and observes nothing, so the
-        // steps reduce to reversing the backing. Moving values within one array stores no
-        // new reference, which the write barrier passes.
-        if self.heap.record_array(this).is_some_and(|array| {
-            array.holds_ordinary_elements() && !array.elements().iter().any(|value| value.is_deleted())
-        }) && let Some(array) = self.heap.record_array_store_mut(this, Value::UNDEFINED)
-        {
-            super::index::mutable_array_elements(array.elements_mut()).reverse();
-            return Ok(this);
+        // The plain body (`plain_array_reverse`) first: where every element is present and
+        // ordinary, the steps below reduce to reversing the backing.
+        if let Some(reversed) = self.plain_array_reverse(this, &[]) {
+            return Ok(reversed);
         }
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
@@ -428,8 +422,8 @@ impl<H: Host> Vm<H> {
         constructor.is_undefined()
             || (matches!(
                 self.heap.function(constructor),
-                Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), realm, .. })
-                    if *realm == self.realm.globals
+                Some(record @ FunctionRecord { kind: FunctionKind::Native(Native::Array), .. })
+                    if self.record_realm(record) == self.realm.globals
             ) && self.has_intrinsic_species_getter(constructor))
     }
 
@@ -456,6 +450,10 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        // The plain body (`plain_array_fill`) first: int32 or absent bounds need no guest code.
+        if let Some(filled) = self.plain_array_fill(this, args) {
+            return Ok(filled);
+        }
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -497,7 +495,7 @@ impl<H: Host> Vm<H> {
     /// default attributes and whose prototypes hold no index (`prototypes_hold_no_index`), so
     /// a present element is replaced and a hole defined in place. `false` leaves every index
     /// to the generic Set, having stored none.
-    fn fill_plain_array_elements(
+    pub(super) fn fill_plain_array_elements(
         &mut self,
         array: Value,
         indices: std::ops::Range<usize>,
@@ -516,7 +514,7 @@ impl<H: Host> Vm<H> {
             };
             super::index::mutable_array_elements(array_object.elements_mut()).fill(in_dense, value);
         }
-        if self.heap.fills_sparse_tail(array, &indices) {
+        if indices.end > dense && self.heap.fills_sparse_tail(array, &indices) {
             self.heap.fill_array_tail(array, value);
             return true;
         }
@@ -526,6 +524,9 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// Array.prototype.concat: the dense body (`array_concat_dense`) first, on the boxed receiver,
+    /// which answers when no step can be observed; otherwise the general steps, which read each
+    /// item's `@@isConcatSpreadable` and length and copy its elements by [[Get]].
     pub(super) fn array_concat_native(
         &mut self,
         p: &ResidualProgram,
@@ -533,6 +534,12 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let source = self.box_object_or_type_error(p, this)?;
+        // The dense prefix, unless the dispatcher just ran it and it declined (`fast_declined`).
+        if self.declined_fast.take() != Some(Native::ArrayConcat)
+            && let Some(result) = self.array_concat_dense(source, args)
+        {
+            return Ok(result);
+        }
         let target = self.array_species_create(p, source, 0)?;
         // `target` is held only here while guest code (getters, traps) can collect.
         self.with_call_roots([target], |vm| {
@@ -542,21 +549,7 @@ impl<H: Host> Vm<H> {
                 .ok_or_else(|| JsError("Symbol.isConcatSpreadable is not initialized".into()))?;
             let mut next = 0usize;
             for item in std::iter::once(source).chain(args.iter().copied()) {
-                let spreadable = if vm.concat_spreadable_absent(item, spreadable_atom) {
-                    // An Array no `@@isConcatSpreadable` reaches: the Get reads `undefined`
-                    // and IsArray holds.
-                    true
-                } else if vm.is_object_like(item) {
-                    let value = vm.get_index(p, item, spreadable_atom)?;
-                    if value.is_undefined() {
-                        vm.is_array(p, item)?
-                    } else {
-                        vm.truthy(value)
-                    }
-                } else {
-                    false
-                };
-                if !spreadable {
+                if !vm.concat_item_spreadable(p, item, spreadable_atom)? {
                     if next as f64 >= MAX_SAFE_INTEGER {
                         return Err(
                             vm.type_error(p, "array concat index exceeds safe integer".into())
@@ -679,15 +672,15 @@ impl<H: Host> Vm<H> {
     pub(super) fn array_push_one(&mut self, this: Value, value: Value) -> Option<Value> {
         let object = self.heap.record_array(this)?;
         let length = object.elements().len();
+        let room = object.elements().capacity();
         if !object.holds_ordinary_elements() || length >= MAX_ARRAY_LENGTH || !self.link_chain_holds_no_index(object.proto_link())
         {
             return None;
         }
-        if let Some(grown) = self.push_in_room(this, value) {
-            return Some(grown);
+        match self.push_in_room(this, value, room) {
+            Some(grown) => Some(grown),
+            None => self.push_by_heap(this, value, length),
         }
-        self.heap.push_array_element(this, value)?;
-        Some(Value::length(length + 1))
     }
 
     /// `chain_holds_no_index` of the prototype `link` names, matched undecoded against the
@@ -699,53 +692,37 @@ impl<H: Host> Vm<H> {
     }
 
     /// The staged append (`staged::builtins::array_push_one`) of `value` to `array`, whose
-    /// backing it owns alone and has a slot for it, as a store the write barrier passes
-    /// without logging. A growth adds no payload then, so there is nothing to charge.
+    /// backing it owns alone and has `room` slots for, as a store the write barrier passes
+    /// without logging. The unlogged check is the only mutable access; the append writes
+    /// through the record base. A growth adds no payload then, so there is nothing to charge.
     #[inline(always)]
-    fn push_in_room(&mut self, array: Value, value: Value) -> Option<Value> {
+    fn push_in_room(&mut self, array: Value, value: Value, room: usize) -> Option<Value> {
         let records = self.heap.array_record_base()?;
-        let room = self.heap.record_array_store_mut_unlogged(array, value)?.elements().capacity();
+        self.heap.record_array_store_mut_unlogged(array, value)?;
         crate::staged::builtins::concrete_array_push(records, array, room, value)
     }
 
-    /// `pop()` of a direct array whose elements are ordinary and dense, as
-    /// `array_push_one` admits it: an empty one answers `undefined`; one whose last element is
-    /// present removes it, as the generic steps' Get, DeletePropertyOrThrow and `length` set
-    /// do: in place by the staged row (`pop_in_place`) where the array owns its backing, else
-    /// through the heap, which copies it first. `None` for a hole, which its prototypes
-    /// answer, and for any other receiver.
-    #[inline(always)]
-    pub(super) fn array_pop_one(&mut self, this: Value) -> Option<Value> {
-        if !self.heap.record_array(this)?.holds_ordinary_elements() {
-            return None;
-        }
-        if let Some(popped) = self.pop_in_place(this) {
-            return Some(popped);
-        }
-        match self.heap.record_array(this)?.elements().last() {
-            None => Some(Value::UNDEFINED),
-            Some(last) if last.is_deleted() => None,
-            // Removing stores no reference, which the write barrier passes.
-            Some(_) => super::index::mutable_array_elements(
-                self.heap.record_array_store_mut(this, Value::UNDEFINED)?.elements_mut(),
-            )
-            .pop(),
-        }
+    /// `array_push_one` past the room of the backing, or of a store the write barrier logs:
+    /// the heap appends (`Heap::push_array_element`), copying a shared backing and charging
+    /// any growth. The new length is `length` plus one.
+    #[inline(never)]
+    fn push_by_heap(&mut self, this: Value, value: Value, length: usize) -> Option<Value> {
+        self.heap.push_array_element(this, value)?;
+        Some(Value::length(length + 1))
     }
 
-    /// The staged removal (`staged::builtins::array_pop`) of the last element of `array`,
-    /// which retires the proofs a shorter array falsifies first.
+    /// `push` onto a dense array as one append: the single-value case is `array_push_one`,
+    /// every other dense receiver `array_push_appended`. The one core of `Array.prototype.push`,
+    /// called by the general native and the steady call path alike.
     #[inline(always)]
-    fn pop_in_place(&mut self, array: Value) -> Option<Value> {
-        let records = self.heap.array_record_base()?;
-        self.heap.record_array(array)?.announce_shrinking();
-        crate::staged::builtins::concrete_array_pop(records, array)
+    pub(super) fn array_push_dense(&mut self, this: Value, args: &[Value]) -> Option<Value> {
+        if let [value] = *args && let Some(length) = self.array_push_one(this, value) { return Some(length); }
+        self.array_push_appended(this, args)
     }
 
     /// `push` onto a dense array (`dense_array_length`) as one append, when each appended
-    /// index stores plainly (`array_indices_store_plainly`); one value first as `array_push_one`.
-    pub(super) fn array_push_dense(&mut self, this: Value, args: &[Value]) -> Option<Value> {
-        if let [value] = *args && let Some(length) = self.array_push_one(this, value) { return Some(length); }
+    /// index stores plainly (`array_indices_store_plainly`).
+    fn array_push_appended(&mut self, this: Value, args: &[Value]) -> Option<Value> {
         let length = self.dense_array_length(this)?;
         let final_length = length.checked_add(args.len())?;
         if final_length > MAX_ARRAY_LENGTH {
@@ -837,16 +814,38 @@ impl<H: Host> Vm<H> {
         true
     }
 
-    /// `pop` of a dense array (`dense_array_length`) as one removal, when its last element
-    /// is present: the generic steps read that own data element, delete it and shorten
-    /// `length` by one; a receiver `array_pop_one` admits takes its steps.
+    /// `pop` of a dense array as one removal, when its last element is present: the generic
+    /// steps read that own data element, delete it and shorten `length` by one. An empty
+    /// array answers `undefined`; a hole, which its prototypes answer, takes the general path
+    /// (`None`), as does any other receiver. The one core of `Array.prototype.pop`, called by
+    /// the general native and the steady call path alike.
+    #[inline(always)]
     pub(super) fn array_pop_dense(&mut self, this: Value) -> Option<Value> {
-        if self.heap.record_array(this).is_some_and(|object| object.holds_ordinary_elements()) { return self.array_pop_one(this); }
+        let object = self.heap.record_array(this)?;
+        let records = self.heap.array_record_base()?;
+        // A shorter array falsifies the proofs a prototype's elements and the running lane's
+        // storage proofs hold, so they retire before the removal.
+        object.announce_shrinking();
+        match crate::staged::builtins::concrete_array_pop(records, this) {
+            Some(popped) => Some(popped),
+            None => self.array_pop_slow(this),
+        }
+    }
+
+    /// `array_pop_dense` past the staged removal, which declines a shared backing, a non-ordinary
+    /// one and a hole: an empty array answers `undefined`, a hole (which its prototypes answer)
+    /// takes the general path (`None`), and otherwise the backing is made unique first (its
+    /// copy-on-write) and the last element leaves it.
+    #[inline(never)]
+    fn array_pop_slow(&mut self, this: Value) -> Option<Value> {
         let length = self.dense_array_length(this)?;
         let Some(last) = length.checked_sub(1) else { return Some(Value::UNDEFINED) };
-        let object = self.heap.array_mut(this)?;
-        if object.elements().get(last).is_some_and(Value::is_deleted) { return None; }
-        super::index::mutable_array_elements(object.elements_mut()).pop()
+        if self.heap.array(this)?.elements().get(last).is_some_and(Value::is_deleted) {
+            return None;
+        }
+        // Removing stores no reference, which the write barrier passes.
+        let array = self.heap.array_store_mut(this, Value::UNDEFINED)?;
+        super::index::mutable_array_elements(array.elements_mut()).pop()
     }
 
     fn array_push_with_array_like_semantics(
@@ -942,12 +941,20 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Array.prototype.slice: the dense body (`plain_array_slice`) first, which answers an array
+    /// of this realm's ArrayCreate whose range is present own data elements, with immediate
+    /// bounds; otherwise the general steps (ArraySpeciesCreate, [[Get]] per index).
     pub(super) fn array_slice_native(
         &mut self,
         p: &ResidualProgram,
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if self.declined_fast.take() != Some(Native::ArraySlice)
+            && let Some(sliced) = self.plain_array_slice(this, args)
+        {
+            return Ok(sliced);
+        }
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         let start = args
@@ -965,15 +972,6 @@ impl<H: Host> Vm<H> {
             .transpose()?
             .unwrap_or(length);
         let count = end.saturating_sub(start);
-        // ArraySpeciesCreate is this realm's ArrayCreate and every element of the range is a
-        // present own data element: the result is a new array of those values, made at once
-        // instead of holes that each CreateDataPropertyOrThrow fills.
-        if self.array_species_is_array_create(object)
-            && let Some(values) = self.present_dense_elements(object, start..end)
-                .map(|values| smallvec::SmallVec::<[Value; 16]>::from_slice(&values))
-        {
-            return Ok(self.array_of(&values));
-        }
         let result = self.array_species_create(p, object, count)?;
         // `result` is held only here while guest code (getters, traps) can collect.
         self.with_call_roots([result], |vm| {
@@ -1011,11 +1009,10 @@ impl<H: Host> Vm<H> {
         };
         let constructor_is_foreign_intrinsic_array = matches!(
             self.heap.function(constructor),
-            Some(FunctionRecord {
+            Some(record @ FunctionRecord {
                 kind: FunctionKind::Native(Native::Array),
-                realm,
                 ..
-            }) if *realm != self.realm.globals
+            }) if self.record_realm(record) != self.realm.globals
         );
         if constructor_is_foreign_intrinsic_array {
             constructor = Value::UNDEFINED;
@@ -1029,11 +1026,10 @@ impl<H: Host> Vm<H> {
         // `new Array(length)` of this realm is ArrayCreate: Array.prototype is fixed.
         let constructor_is_intrinsic_array = matches!(
             self.heap.function(constructor),
-            Some(FunctionRecord {
+            Some(record @ FunctionRecord {
                 kind: FunctionKind::Native(Native::Array),
-                realm,
                 ..
-            }) if *realm == self.realm.globals
+            }) if self.record_realm(record) == self.realm.globals
         );
         if constructor.is_undefined() || constructor_is_intrinsic_array {
             return self.array_create(p, length);
@@ -1045,12 +1041,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether ArraySpeciesCreate of `source` is this realm's ArrayCreate with every Get on the
-    /// way reading a data property: an ordinary Array with no own `constructor` whose
-    /// prototype is this realm's `Array.prototype`, which holds this realm's `Array` as its
-    /// `constructor`, whose `@@species` is the intrinsic getter. A proof for the receiver's
-    /// shape under the current `prototype_layout_epoch` names the slot to read
-    /// (`ArraySpeciesProof`).
+    /// way reading a data property or the intrinsic getter: an ordinary Array with no own
+    /// `constructor` whose prototype is this realm's `Array.prototype`, which holds the realm's
+    /// `Array` as its `constructor` (`IntactFuse::ArrayConstructor`), whose `@@species` is the
+    /// intrinsic getter (`IntactFuse::ArraySpecies`). Past the first call for a shape, two fuse
+    /// bits and one slot read.
     pub(super) fn array_species_is_array_create(&mut self, source: Value) -> bool {
+        use crate::code_dependencies::IntactFuse;
         let prototype = self.array_prototype_for_realm(self.realm.globals);
         let Some(array) = self.heap.array(source) else {
             return false;
@@ -1058,94 +1055,54 @@ impl<H: Host> Vm<H> {
         if array.is_arguments_object() || array.has_side_descriptors() || array.proto() != prototype {
             return false;
         }
-        let (shape, epoch) = (array.shape(), crate::heap::prototype_layout_epoch());
-        let proof = match self.array_species_proof {
-            Some(proof) if proof.shape == shape && proof.epoch == epoch && proof.prototype == prototype => proof,
-            _ => match self.prove_array_species(shape, prototype, epoch) {
-                Some(proof) => proof,
-                None => return false,
-            },
-        };
-        self.object_data(prototype)
-            .and_then(|data| self.heap.property_get(data, proof.constructor_slot))
-            .is_some_and(|constructor| self.realm_array_constructor(constructor) && self.has_intrinsic_species_getter(constructor))
+        let shape = array.shape();
+        if let Some(ArraySpeciesProof { shape: proved, prototype: holder, constructor: Some(constructor) }) = self.array_species_proof
+            && proved == shape
+            && holder == prototype
+        {
+            let fuses = self.heap.dependencies().fuses();
+            if fuses.intact(IntactFuse::ArrayConstructor, prototype) == Some(true) && fuses.intact(IntactFuse::ArraySpecies, constructor) == Some(true) {
+                return true;
+            }
+        }
+        self.array_species_is_array_create_slow(shape, prototype)
     }
 
-    /// Whether `item` is an ordinary Array of this realm that no `@@isConcatSpreadable` reaches:
-    /// neither its own shape nor `Array.prototype` nor `Object.prototype` (the whole chain) has
-    /// the key. Then `Get(item, @@isConcatSpreadable)` reads `undefined` without running guest
-    /// code and IsArray holds, so `concat` spreads it. A proof for the item's shape holds while
-    /// the prototype layout epoch does: any change to either prototype's shape or prototype
-    /// advances it.
-    pub(super) fn concat_spreadable_absent(&mut self, item: Value, symbol: Value) -> bool {
-        let Some(array) = self.heap.array(item) else {
-            return false;
-        };
-        if array.is_arguments_object() || array.has_side_descriptors() || array.proto() != self.array_proto {
-            return false;
-        }
-        let (shape, epoch) = (array.shape(), crate::heap::prototype_layout_epoch());
-        if self.concat_spreadable_proof == Some((shape, epoch)) {
-            return true;
-        }
-        self.prove_concat_spreadable_absent(shape, symbol, epoch)
-    }
-
-    #[cold]
+    /// `array_species_is_array_create` past its recorded proof: the shape's lack of an own
+    /// `constructor`, then both fuses, proved where unproved, and the proof recorded.
     #[inline(never)]
-    fn prove_concat_spreadable_absent(&mut self, shape: u32, symbol: Value, epoch: u64) -> bool {
-        let key = PropertyKey::symbol(symbol);
-        if self.shape_is_dictionary(shape) || self.property_shape_slot(shape, key).is_some() {
+    fn array_species_is_array_create_slow(&mut self, shape: u32, prototype: Value) -> bool {
+        use crate::code_dependencies::IntactFuse;
+        let proved = matches!(self.array_species_proof, Some(proof) if proof.shape == shape && proof.prototype == prototype);
+        if !proved && !self.array_shape_lacks_constructor(shape, prototype) {
             return false;
         }
-        let (array_proto, object_proto) = (self.array_proto, self.object_proto);
-        let lacks = |vm: &Self, holder: Value, parent: Value| {
-            vm.object_data(holder).is_some_and(|data| {
-                data.proto() == parent && !vm.shape_is_dictionary(data.shape()) && vm.property_shape_slot(data.shape(), key).is_none()
-            })
+        if !self.fuse_intact_at(IntactFuse::ArrayConstructor, prototype) {
+            return false;
+        }
+        let slot = self.heap.dependencies().fuses().slot(IntactFuse::ArrayConstructor);
+        let Some(constructor) = self.object_data(prototype).and_then(|data| self.heap.property_get(data, slot)) else {
+            return false;
         };
-        if !lacks(self, array_proto, object_proto) || !lacks(self, object_proto, Value::NULL) {
+        if !self.fuse_intact_at(IntactFuse::ArraySpecies, constructor) {
             return false;
         }
-        self.heap.mark_prototype(array_proto);
-        self.heap.mark_prototype(object_proto);
-        // Marking an object that was no prototype yet leaves the epoch where it was.
-        if crate::heap::prototype_layout_epoch() == epoch {
-            self.concat_spreadable_proof = Some((shape, epoch));
+        if let Some(proof) = self.array_species_proof.as_mut().filter(|proof| proof.shape == shape && proof.prototype == prototype) {
+            proof.constructor = Some(constructor);
         }
         true
     }
 
-    /// Whether `value` is this realm's `Array`, the constructor ArrayCreate stands for.
-    pub(super) fn realm_array_constructor(&self, value: Value) -> bool {
-        matches!(
-            self.heap.function(value),
-            Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), realm, .. }) if *realm == self.realm.globals
-        )
-    }
-
-    /// `array_species_is_array_create`'s lookups past its proof, recorded once the prototype
-    /// it reads is a marked prototype, so a later change to its layout advances the epoch and
-    /// retires the proof.
+    /// Whether array shape `shape` has no own `constructor`, remembered for a shape that keeps
+    /// its properties (no dictionary).
     #[cold]
     #[inline(never)]
-    fn prove_array_species(&mut self, shape: u32, prototype: Value, epoch: u64) -> Option<ArraySpeciesProof> {
-        let key = PropertyKey::string(self.runtime_atoms.constructor);
-        if self.property_shape_slot(shape, key).is_some() {
-            return None;
+    fn array_shape_lacks_constructor(&mut self, shape: u32, prototype: Value) -> bool {
+        let lacks = self.property_shape_slot(shape, PropertyKey::string(self.runtime_atoms.constructor)).is_none();
+        if lacks && !self.shape_is_dictionary(shape) {
+            self.array_species_proof = Some(ArraySpeciesProof { shape, prototype, constructor: None });
         }
-        let data = self.object_data(prototype)?;
-        let constructor_slot = self.property_shape_slot(data.shape(), key)?;
-        if self.slot_attributes(data, constructor_slot)?.accessor {
-            return None;
-        }
-        let proof = ArraySpeciesProof { shape, epoch, prototype, constructor_slot };
-        self.heap.mark_prototype(prototype);
-        // Marking an object that was no prototype yet leaves the epoch where it was.
-        if crate::heap::prototype_layout_epoch() == epoch {
-            self.array_species_proof = Some(proof);
-        }
-        Some(proof)
+        lacks
     }
 
     pub(super) fn is_array(&mut self, p: &ResidualProgram, value: Value) -> Result<bool, JsError> {
@@ -1179,12 +1136,20 @@ impl<H: Host> Vm<H> {
         Ok(crate::units::relative_index(self.to_number(p, value)?, length))
     }
 
+    /// Array.prototype.includes: the dense search (`dense_search_call`) first, which decides a
+    /// dense array from an immediate or absent `fromIndex`; otherwise the general steps, which
+    /// resume the dense search at a hole a prototype may hold and read the rest by [[Get]].
     pub(super) fn array_includes_native(
         &mut self,
         p: &ResidualProgram,
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if self.declined_fast.take() != Some(Native::ArrayIncludes)
+            && let Some(found) = self.dense_search_call(Native::ArrayIncludes, this, args)
+        {
+            return Ok(found);
+        }
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         if length == 0 {
@@ -1227,7 +1192,10 @@ impl<H: Host> Vm<H> {
                     Some(value) => vm.coerce_js_string(p, value)?,
                 };
                 let mut output = super::wtf16::JsStringBuilder::default();
-                for index in vm.join_dense_prefix(object, length, &separator, &mut output)..length {
+                // The dense prefix is the one join body (`plain_join_prefix`); the rest is the spec's.
+                let (prefix, stop) = vm.plain_join_prefix(object, length, &separator);
+                output.append(&prefix);
+                for index in stop..length {
                     if index != 0 {
                         output.append(&separator);
                     }
@@ -1243,3 +1211,4 @@ impl<H: Host> Vm<H> {
         })
     }
 }
+

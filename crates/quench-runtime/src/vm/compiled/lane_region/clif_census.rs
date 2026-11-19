@@ -16,8 +16,7 @@ pub(super) struct Census {
 }
 
 pub(super) fn enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("QUENCH_CLIF_CENSUS").is_some())
+    crate::vm::switches::clif_census()
 }
 
 impl Census {
@@ -35,8 +34,7 @@ impl Census {
     /// Whether to print the CLIF of this op's lowering: the first few of each op where
     /// `QUENCH_CLIF_CENSUS=sample`.
     pub(super) fn sample(&self, name: impl std::fmt::Debug) -> bool {
-        static SAMPLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *SAMPLE.get_or_init(|| std::env::var("QUENCH_CLIF_CENSUS").is_ok_and(|value| value == "sample"))
+        crate::vm::switches::clif_census_sample()
             && self.ops.get(&format!("{name:?}")).is_none_or(|(count, _)| *count < 2)
     }
 

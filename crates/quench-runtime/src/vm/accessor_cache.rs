@@ -58,19 +58,18 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// `object`'s record and the site's entry for it, while the prototype layout epoch it was
-    /// proved under still holds. An ordinary receiver matches its entry by layout, which holds
-    /// its shape and prototype: a recorded layout is of a shaped receiver outside dictionary
-    /// mode, so a match proves what `shape_property_lookup` would.
+    /// `object`'s record and the site's entry for it, while the cell of the chain it was proved
+    /// over still holds. An ordinary receiver matches its entry by layout, which holds its
+    /// shape and prototype: a recorded layout is of a shaped receiver outside dictionary mode,
+    /// so a match proves what `shape_property_lookup` would.
     fn receiver_entry(&self, object: Value, atom: Atom, site: usize) -> Option<(&Object, &AccessorFieldCache)> {
-        let epoch = crate::heap::prototype_layout_epoch();
         if let Some(receiver) = self.heap.object_record(object) {
             let layout = receiver.layout_id();
-            return Some((receiver, self.site_entry(site, |cache| layout == cache.layout && epoch == cache.epoch)?));
+            return Some((receiver, self.site_entry(site, |cache| layout == cache.layout && cache.cell.holds())?));
         }
         let receiver = self.shape_property_lookup(object, atom)?;
         let (shape, proto) = (receiver.shape(), receiver.proto());
-        Some((receiver, self.site_entry(site, |cache| shape == cache.receiver && proto == cache.prototype && epoch == cache.epoch)?))
+        Some((receiver, self.site_entry(site, |cache| shape == cache.receiver && proto == cache.prototype && cache.cell.holds())?))
     }
 
     /// The newest of the site's entries that `matches`.
@@ -87,8 +86,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// One walk of the site's accessor entries at cache index `site` for `object`
-    /// (getters-as-calls.md): the entry of its layout, under the prototype layout epoch it was
-    /// proved under, names the getter its holder holds now. Where that is the getter the
+    /// (getters-as-calls.md): the entry of its layout, while the cell of the chain it was proved
+    /// over holds, names the getter its holder holds now. Where that is the getter the
     /// entry's forward was recognized from (`AccessorForward`), the forward is the call's
     /// value; else the getter is the one to call, found without the fact table's probe or a
     /// second walk (`cached_field_getter`). `Miss` leaves the read to `cached_field_getter`.
@@ -101,12 +100,12 @@ impl<H: Host> Vm<H> {
         let Some(receiver) = self.heap.object_record(object) else {
             return GetterEntryRead::Miss;
         };
-        let (layout, epoch) = (receiver.layout_id(), crate::heap::prototype_layout_epoch());
+        let layout = receiver.layout_id();
         while index != NO_ACCESSOR_FIELD {
             let Some(entry) = self.accessor_fields.get(index as usize) else {
                 return GetterEntryRead::Miss;
             };
-            if entry.layout == layout && entry.epoch == epoch {
+            if entry.layout == layout && entry.cell.holds() {
                 let Some(getter) = self.entry_accessors(entry, receiver).and_then(|(getter, _)| getter) else {
                     return GetterEntryRead::Miss;
                 };
@@ -146,13 +145,13 @@ impl<H: Host> Vm<H> {
         if self.shape_is_dictionary(receiver.shape()) {
             return;
         }
-        let (layout, epoch) = (receiver.layout_id(), crate::heap::prototype_layout_epoch());
+        let layout = receiver.layout_id();
         let mut index = self.accessor_field_indices.get(site);
         while index != NO_ACCESSOR_FIELD {
             let Some(entry) = self.accessor_fields.get_mut(index as usize) else {
                 return;
             };
-            if entry.layout == layout && entry.epoch == epoch {
+            if entry.layout == layout && entry.cell.holds() {
                 (entry.getter, entry.answer) = (getter, answer);
                 return;
             }
@@ -170,12 +169,12 @@ impl<H: Host> Vm<H> {
         let Some(receiver) = self.heap.object_record(object) else {
             return SetterForward::Unknown;
         };
-        let (layout, epoch) = (receiver.layout_id(), crate::heap::prototype_layout_epoch());
+        let layout = receiver.layout_id();
         while index != NO_ACCESSOR_FIELD {
             let Some(entry) = self.accessor_fields.get(index as usize) else {
                 break;
             };
-            if entry.layout == layout && entry.epoch == epoch {
+            if entry.layout == layout && entry.cell.holds() {
                 return match entry.answer {
                     _ if entry.getter != setter => SetterForward::Unknown,
                     AccessorForward::Store { cache, atom } => SetterForward::Store(cache, atom),

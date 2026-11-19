@@ -174,18 +174,19 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
-            declared_parameters: vec![].into(),
+            rare: None,
             rest: false,
             is_async: false,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
             instance_initializer: None,
+            constant_fields: Default::default(),
             super_home_atom: None,
             constructible: true,
             class_initializer: false,
             parameter_eval_arguments_error: false,
-            unaliased_arguments: false,
+            unaliased_arguments: false, rest_alias: false,
             prototype_unobservable: false,
             arguments_slot: None,
             simple_parameters: true,
@@ -194,10 +195,11 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             local_atoms: vec![].into(),
             environment_atoms: vec![].into(),
             selective_capture_slots: None,
+            declared_functions: Default::default(),
+            declared_captures: Default::default(),
             local_registers: Vec::new().into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions,
@@ -207,15 +209,9 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             registers: 1,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: vec![].into(),
             register_roots: Default::default(),
             undefined_register: None,
@@ -259,15 +255,15 @@ fn decoder_rejects_out_of_range_local_load() {
 /// table's last, a truncated varint and an overlong one each fail decoding with an error.
 #[test]
 fn decoder_rejects_inconsistent_source_position_tables() {
-    use crate::bytecode::{SourcePosition, SourcePositions};
+    use crate::bytecode::SourcePositions;
     let code = || vec![Instr::new(Op::Return, 0, 0, 0, 0), Instr::new(Op::Return, 0, 0, 0, 0)];
-    let valid: SourcePositions = [SourcePosition { pc: 0, line: 1, column: 1 }, SourcePosition { pc: 1, line: 2, column: 3 }]
+    let valid: SourcePositions = [SourceOffset { pc: 0, offset: 1 }, SourceOffset { pc: 1, offset: 3 }]
         .into_iter()
         .collect();
     assert!(residual_round_trip(&one_function_program(code(), valid.clone()), "positions-valid").is_ok());
     let (bytes, last) = valid.encoded();
     let bytes = bytes.to_vec();
-    let mismatched = SourcePositions::from_encoded(bytes.clone(), Some(SourcePosition { pc: 1, line: 9, column: 9 }));
+    let mismatched = SourcePositions::from_encoded(bytes.clone(), Some(SourceOffset { pc: 1, offset: 9 }));
     let missing_last = SourcePositions::from_encoded(bytes.clone(), None);
     let truncated = SourcePositions::from_encoded(bytes[..bytes.len() - 1].iter().copied().chain([0x80]).collect(), last);
     let overlong = SourcePositions::from_encoded(vec![0xff; 32], last);
@@ -301,18 +297,19 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
-            declared_parameters: vec![].into(),
+            rare: None,
             rest: false,
             is_async: false,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
             instance_initializer: None,
+            constant_fields: Default::default(),
             super_home_atom: None,
             constructible: true,
             class_initializer: false,
             parameter_eval_arguments_error: false,
-            unaliased_arguments: false,
+            unaliased_arguments: false, rest_alias: false,
             prototype_unobservable: false,
             arguments_slot: None,
             simple_parameters: true,
@@ -321,10 +318,11 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             local_atoms: vec![].into(),
             environment_atoms: vec![].into(),
             selective_capture_slots: None,
+            declared_functions: Default::default(),
+            declared_captures: Default::default(),
             local_registers: Vec::new().into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),
@@ -334,15 +332,9 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             registers: 1,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: vec![].into(),
             register_roots: Default::default(),
             undefined_register: None,
@@ -464,9 +456,9 @@ fn instance_initializer_plan_survives_round_trip_and_rejects_invalid_owners() {
     // The invalid variants below change records in place, which needs them compiled.
     program.compile_released();
     let owner = (0..program.functions.len())
-        .position(|index| program.function(index).instance_initializer.is_some())
+        .position(|index| program.function(index).instance_initializer().is_some())
         .unwrap();
-    let initializer = program.function(owner).instance_initializer.unwrap();
+    let initializer = program.function(owner).instance_initializer().unwrap();
     let path = std::env::temp_dir().join(format!(
         "quench-instance-initializer-{}",
         std::process::id()
@@ -475,14 +467,14 @@ fn instance_initializer_plan_survives_round_trip_and_rejects_invalid_owners() {
     let bytes = std::fs::read(&path).unwrap();
     let decoded = ResidualProgram::read_binary(&path).unwrap();
     assert_eq!(
-        decoded.function(owner).instance_initializer,
+        decoded.function(owner).instance_initializer(),
         Some(initializer)
     );
     decoded.write_binary(&path).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
     for plan in [program.functions.len() as u32, owner as u32, 0] {
         let mut invalid = program.clone();
-        invalid.functions[owner].instance_initializer = Some(plan);
+        invalid.functions[owner].set_instance_initializer(plan);
         invalid.write_binary(&path).unwrap();
         assert!(ResidualProgram::read_binary(&path).is_err());
     }
@@ -605,9 +597,9 @@ fn fused_field_source_locations_survive_binary_round_trip_and_validate_coordinat
         let decoded = ResidualProgram::read_binary(&path).unwrap();
         crate::Runtime::new(crate::SystemHost).execute(&decoded).unwrap();
         let site = program.field_sites.iter().position(|site| site.second.is_some()).expect("nested field site");
-        for coordinate in [(0, 1), (1, 0)] {
+        for offset in [u32::MAX - 1] {
             let mut invalid = program.clone();
-            invalid.field_sites[site].sources[0] = Some(coordinate);
+            invalid.field_sites[site].sources[0] = offset;
             invalid.write_binary(&path).unwrap();
             assert!(ResidualProgram::read_binary(&path).unwrap_err().contains("invalid field site"));
         }
@@ -625,8 +617,8 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
         base: 0,
         line_offset: 0,
         column_offset: 0,
-        line_starts: Default::default(),
         call_sites: Default::default(),
+        layout: Default::default(),
     };
     for (index, expected) in ["a", "b", "c", "d", "e", ""].into_iter().enumerate() {
         assert_eq!(source.source_line(index as u32 + 1), Some(expected));
@@ -639,8 +631,8 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
         base: 0,
         line_offset: 1,
         column_offset: 2,
-        line_starts: Default::default(),
         call_sites: Default::default(),
+        layout: Default::default(),
     };
     assert_eq!(wrapped.source_line(1), Some("first"));
     assert_eq!(wrapped.source_line(2), Some("second"));
@@ -655,8 +647,8 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
         base: prefix.len() as u32,
         line_offset,
         column_offset,
-        line_starts: Default::default(),
         call_sites: Default::default(),
+        layout: Default::default(),
     };
     assert_eq!(retained.source_line(1), Some("first"));
     assert_eq!(retained.source_line(2), Some("second"));
@@ -666,19 +658,32 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
 }
 
 #[test]
+fn source_layout_maps_offsets_to_utf16_lines_and_columns() {
+    // LF, an astral character (two UTF-16 units, four UTF-8 bytes) and CRLF.
+    let text = "ab\n\u{1F600}c\r\nd";
+    let layout = SourceLayout::of(text);
+    let expected = [
+        (0, (1, 1)), (1, (1, 2)), (2, (1, 3)), (3, (2, 1)), (7, (2, 3)), (8, (2, 4)), (9, (2, 5)), (10, (3, 1)), (11, (3, 2)),
+    ];
+    for (offset, (line, column)) in expected {
+        assert_eq!(layout.line_column(offset), SourcePosition { line, column }, "offset {offset}");
+    }
+}
+
+#[test]
 fn source_positions_round_trip_every_delta_shape() {
     let positions = [
-        SourcePosition { pc: 0, line: 3, column: 40 },
-        SourcePosition { pc: 1, line: 3, column: 7 },
-        SourcePosition { pc: 9, line: 1, column: 200_000 },
-        SourcePosition { pc: 300, line: 1, column: 200_001 },
-        SourcePosition { pc: u32::MAX, line: u32::MAX, column: u32::MAX },
+        SourceOffset { pc: 0, offset: 40 },
+        SourceOffset { pc: 1, offset: 7 },
+        SourceOffset { pc: 9, offset: 200_000 },
+        SourceOffset { pc: 300, offset: 200_001 },
+        SourceOffset { pc: u32::MAX, offset: u32::MAX },
     ];
     let table = positions.into_iter().collect::<SourcePositions>();
     assert_eq!(table.iter().collect::<Vec<_>>(), positions);
     assert_eq!(table.last(), positions.last().copied());
-    assert_eq!(table.at(8), Some(positions[1]));
-    assert_eq!(table.at(300), Some(positions[3]));
+    assert_eq!(table.at(8), Some(positions[1].offset));
+    assert_eq!(table.at(300), Some(positions[3].offset));
 }
 
 /// A compact encoding names every atom by its text: decoded under ids its reader's VM gives,
@@ -771,31 +776,28 @@ fn compact_encoding_names_every_atom_by_its_text() {
 fn derived_function_facts_round_trip_and_match_their_derivation() {
     let source = "function g() { return 1; }\nfunction f(x) { g(); const kept = g(); x(); return kept + x(); }\nf(() => 2);";
     let program = crate::Engine::specialize(source, "dead-call-results.js").unwrap();
-    let mut claimed = 0;
-    for (index, function) in program.functions.iter().enumerate() {
+    let dead_calls = |program: &ResidualProgram, function: &Function, index: usize| -> Vec<u32> {
         let Some(masks) = program.register_root_masks(index as u32) else {
-            assert!(function.register_roots.dead_call_results().is_empty());
-            continue;
+            return Vec::new();
         };
-        let derived: Vec<u32> = function
+        function
             .instructions()
             .enumerate()
             .filter(|(pc, instruction)| {
-                instruction.op() == Op::Call
-                    && instruction.result_flags() == 0
-                    && masks.get(pc + 1).is_some_and(|after| {
-                        crate::compile::liveness::register_dead(after, usize::from(instruction.a() & crate::bytecode::REGISTER_MASK))
-                    })
+                instruction.op() == Op::Call && crate::compile::liveness::call_result_dead(*instruction, *pc, masks)
             })
             .map(|(pc, _)| pc as u32)
-            .collect();
-        assert_eq!(function.register_roots.dead_call_results(), derived.as_slice(), "function {index}");
-        claimed += derived.len();
+            .collect()
+    };
+    let mut claimed = 0;
+    for (index, function) in program.functions.iter().enumerate() {
+        claimed += dead_calls(&program, function, index).len();
     }
     assert!(claimed > 0, "the unused `g()` and `x()` results are dead");
     let decoded = residual_round_trip(&program, "dead-call-results").unwrap();
-    for (original, decoded_function) in program.functions.iter().zip(&decoded.functions) {
-        assert_eq!(original.register_roots.dead_call_results(), decoded_function.register_roots.dead_call_results());
+    for (index, (original, decoded_function)) in program.functions.iter().zip(&decoded.functions).enumerate() {
+        assert_eq!(dead_calls(&program, original, index), dead_calls(&decoded, decoded_function, index));
+        assert_eq!(program.entry_fill(original), decoded.entry_fill(decoded_function));
         // The decoder seeds the facts the encoder derived (`Function::derived_facts`).
         assert_eq!(
             original.derived_facts(&program, original.names_resolve_statically(&program)),
@@ -884,4 +886,20 @@ fn load_encoded_records_decode_as_records_compiled_again() {
         // The encoding took the load's records; another compiles them again, as a clone does.
         assert_eq!(decode(&encoded).1, atoms);
     }
+}
+
+/// The function record's budget. Estimated from 368 bytes: the eight lazy booleans share one
+/// `u16` (-14), declared atom sets, initializer and register masks move behind `Function::caches`
+/// (-24 net of its +8 pointer), and `SourcePositions` boxes its bytes (48 -> 40, -8). Plain
+/// locals and the hot expansion's pointer stay inline, where their hot-path reads need them.
+/// Net -38, so 330.
+const FUNCTION_RECORD_BUDGET: usize = 352;
+
+#[test]
+fn register_row_trait_tags_exactly_the_register_move_local_and_jump_rows() {
+    let tagged: Vec<Op> = (0..Op::COUNT)
+        .filter_map(Op::from_index)
+        .filter(|op| op.traits().has(Traits::REGISTER_ROW))
+        .collect();
+    assert_eq!(tagged, [Op::Move, Op::LoadLocalPlain, Op::StoreLocalPlain, Op::Jump, Op::JumpFalse, Op::JumpTrue]);
 }

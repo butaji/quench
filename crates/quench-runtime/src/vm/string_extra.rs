@@ -14,7 +14,8 @@ const ESCAPE_LATIN1_MAX: u16 = 0xff;
 const ESCAPE_WIDE_MARKER: u16 = b'u' as u16;
 const ESCAPE_BYTE_HEX_DIGITS: usize = 2;
 const ESCAPE_WIDE_HEX_DIGITS: usize = 4;
-use crate::units::HEXADECIMAL_RADIX;
+use crate::units::{DECIMAL_RADIX, HEXADECIMAL_RADIX};
+use super::number_parse::{radix_digit_run, radix_digits_value, split_sign, trim_leading_space};
 /// Bits one hex digit spells.
 const HEX_DIGIT_BITS: u32 = HEXADECIMAL_RADIX.ilog2();
 /// A URI escape is `%` and two hex digits.
@@ -227,140 +228,212 @@ fn decode_uri_escape(
     Ok(end)
 }
 
-pub(super) fn parse_integer(text: &str, mut radix: i32) -> f64 {
-    let mut input = text.trim_start_matches(super::primitives::is_ecma_whitespace_character);
-    let sign = if let Some(rest) = input.strip_prefix('-') {
-        input = rest;
-        -1.0
-    } else {
-        input = input.strip_prefix('+').unwrap_or(input);
-        1.0
+/// parseInt of `text` with `radix` (0 when absent): the integer its leading digits spell.
+pub(super) fn parse_integer(text: &str, radix: i32) -> f64 {
+    let text = text.trim_start_matches(super::primitives::is_ecma_whitespace_character);
+    parse_integer_bytes(text.as_bytes(), radix)
+}
+
+/// parseInt of wide or ASCII `units` with `radix`, read in place.
+pub(super) fn parse_integer_units(units: super::wtf16::Units<'_>, radix: i32) -> f64 {
+    super::number_parse::with_ascii_units(units, |bytes| parse_integer_bytes(bytes, radix))
+}
+
+/// The lowest radix parseInt accepts.
+const MIN_PARSE_RADIX: i32 = 2;
+/// The highest radix parseInt accepts.
+const MAX_PARSE_RADIX: i32 = 36;
+/// The length of a `0x` or `0X` prefix that parseInt strips for radix 16.
+const HEX_PREFIX_LENGTH: usize = 2;
+
+/// parseInt of ASCII `bytes` with `radix`, read in place: the sign, the radix (16 when a `0x`
+/// prefix meets radix 0 or 16), then the longest run of digits valid in that radix.
+pub(super) fn parse_integer_bytes(bytes: &[u8], radix: i32) -> f64 {
+    let (negative, unsigned) = split_sign(trim_leading_space(bytes));
+    let has_hex_prefix = unsigned.starts_with(b"0x") || unsigned.starts_with(b"0X");
+    let radix = match radix {
+        0 if has_hex_prefix => HEXADECIMAL_RADIX as i32,
+        0 => DECIMAL_RADIX as i32,
+        radix => radix,
     };
-    if radix == 0 {
-        radix = if input.starts_with("0x") || input.starts_with("0X") {
-            16
-        } else {
-            10
-        };
-    }
-    if !(2..=36).contains(&radix) {
+    if !(MIN_PARSE_RADIX..=MAX_PARSE_RADIX).contains(&radix) {
         return f64::NAN;
     }
-    if radix == 16 {
-        input = input
-            .strip_prefix("0x")
-            .or_else(|| input.strip_prefix("0X"))
-            .unwrap_or(input);
-    }
-    let digits_end = input
-        .find(|character: char| !character.is_digit(radix as u32))
-        .unwrap_or(input.len());
-    if digits_end == 0 {
+    let radix = radix as u32;
+    let digits = if radix == HEXADECIMAL_RADIX && has_hex_prefix {
+        &unsigned[HEX_PREFIX_LENGTH..]
+    } else {
+        unsigned
+    };
+    let run = radix_digit_run(digits, radix);
+    if run == 0 {
         return f64::NAN;
     }
-    sign * super::number::integer_digits_value(&input[..digits_end], radix as u32)
+    let value = radix_digits_value(&digits[..run], radix);
+    if negative { -value } else { value }
 }
 
 /// The digits `Number.prototype.toString(radix)` spells, after their sign.
-const RADIX_DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+pub(super) const RADIX_DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
 
-/// `Number::toString(number, radix)` for a finite `number` and a radix in 2..=36 other than
-/// 10, which the caller spells in decimal: V8's `DoubleToRadixCString`, which Node's output
-/// follows. Fraction digits stop where they no longer distinguish the double from its
-/// neighbours (half the gap to the next double, scaled with each digit), the last rounds to
-/// even and may carry into the integer part, and integer digits below the double's precision
-/// are zeros.
-/// `number_to_radix` as a string value. An integer below 2^53 spells exactly its digits (no
-/// fraction, no digit below the double's precision), which a `u64` loop writes on the stack
-/// with one division per digit instead of `fmod` and two growing vectors.
-pub(super) fn number_to_radix_string(number: f64, radix: u32) -> super::wtf16::JsString {
-    let magnitude = number.abs();
-    if magnitude < crate::number_to_string::EXACT_INTEGER_MAGNITUDE && magnitude.fract() == 0.0 {
-        // 53 binary digits and a sign.
-        let mut buffer = [0u8; 54];
-        let mut at = buffer.len();
-        let mut integer = magnitude as u64;
-        let radix = u64::from(radix);
-        loop {
-            at -= 1;
-            buffer[at] = RADIX_DIGITS[(integer % radix) as usize];
-            integer /= radix;
-            if integer == 0 {
-                break;
-            }
-        }
-        if number < 0.0 {
-            at -= 1;
-            buffer[at] = b'-';
-        }
-        return super::wtf16::JsString::from_ascii_bytes(&buffer[at..]);
-    }
-    number_to_radix(number, radix).into()
-}
+/// The most binary integer digits a finite double spells: its integer part is below 2^MAX_EXP,
+/// with one more for a quotient that the division rounds up.
+const RADIX_INTEGER_DIGITS: usize = f64::MAX_EXP as usize + 1;
+/// The most fraction digits a radix in 2..=36 spells: from the point down to the least
+/// subnormal, 2^-1074, which is 1074 binary digits, with one more for the rounding of each
+/// scaled digit.
+const RADIX_FRACTION_DIGITS: usize = (1 - f64::MIN_EXP) as usize + f64::MANTISSA_DIGITS as usize;
+/// The index of the point in a radix text's buffer: after the byte for its sign and the
+/// integer digits.
+const RADIX_POINT: usize = 1 + RADIX_INTEGER_DIGITS;
+/// A radix text on the stack: its sign, integer digits, point and fraction digits.
+pub(super) const RADIX_TEXT_CAPACITY: usize = RADIX_POINT + 1 + RADIX_FRACTION_DIGITS;
 
-pub(super) fn number_to_radix(number: f64, radix: u32) -> String {
-    let base = f64::from(radix);
-    let negative = number < 0.0;
+/// `Number::toString(number, radix)` of a finite `number` and a radix in 2..=36, written into
+/// `buffer` and answered as its slice: V8's `DoubleToRadixCString`, which Node's output
+/// follows. Integer digits are written from the point backwards, fraction digits forwards from
+/// it, so the text needs no growing storage. An integer below 2^53 has no fraction and no digit
+/// below the double's precision, so it is only its integer digits.
+pub(super) fn radix_text(number: f64, radix: u32, buffer: &mut [u8; RADIX_TEXT_CAPACITY]) -> &[u8] {
     let value = number.abs();
     let mut integer = value.floor();
-    let mut fraction = value - integer;
+    let fraction = value - integer;
     // Half the distance to the next double, at least the least positive one.
-    let mut delta = (0.5 * (next_double(value) - value)).max(next_double(0.0));
-    let mut fraction_digits = Vec::new();
-    if fraction >= delta {
-        loop {
-            fraction *= base;
-            delta *= base;
-            let digit = fraction as usize;
-            fraction_digits.push(digit);
-            fraction -= digit as f64;
-            let rounds_up = fraction > 0.5 || (fraction == 0.5 && digit & 1 == 1);
-            if rounds_up && fraction + delta > 1.0 {
-                // Round up, carrying through every written digit at the radix's last value.
-                loop {
-                    match fraction_digits.pop() {
-                        None => {
-                            integer += 1.0;
-                            break;
-                        }
-                        Some(last) if last + 1 < radix as usize => {
-                            fraction_digits.push(last + 1);
-                            break;
-                        }
-                        Some(_) => {}
-                    }
-                }
-                break;
-            }
-            if fraction < delta {
-                break;
-            }
+    let delta = (0.5 * (next_double(value) - value)).max(next_double(0.0));
+    let (fraction_len, carried) = write_fraction_digits(fraction, delta, radix, &mut buffer[RADIX_POINT + 1..]);
+    if carried {
+        integer += 1.0;
+    }
+    let mut start = write_integer_digits(integer, radix, &mut buffer[..RADIX_POINT]);
+    if number < 0.0 {
+        start -= 1;
+        buffer[start] = b'-';
+    }
+    let end = finish_fraction(buffer, fraction_len);
+    &buffer[start..end]
+}
+
+/// Writes the fraction digits of `fraction` (in [0, 1)) into `digits`, as their values, from the
+/// point down. A digit is written while the fraction still exceeds `delta`, the half gap to the
+/// next double, which scales with each digit. Answers the digit count, and whether a round-up
+/// carried through every digit into the integer part.
+fn write_fraction_digits(mut fraction: f64, mut delta: f64, radix: u32, digits: &mut [u8]) -> (usize, bool) {
+    let base = f64::from(radix);
+    if fraction < delta {
+        return (0, false);
+    }
+    let mut length = 0;
+    loop {
+        fraction *= base;
+        delta *= base;
+        let digit = fraction as usize;
+        digits[length] = digit as u8;
+        length += 1;
+        fraction -= digit as f64;
+        let rounds_up = fraction > 0.5 || (fraction == 0.5 && digit & 1 == 1);
+        if rounds_up && fraction + delta > 1.0 {
+            return round_up_digits(&mut digits[..length], radix);
+        }
+        if fraction < delta {
+            return (length, false);
         }
     }
-    let mut integer_digits = Vec::new();
+}
+
+/// Rounds the fraction digit values `digits` up one place: the last digit below the radix's last
+/// value is incremented, and each digit at that last value is dropped. Answers the digits kept,
+/// and whether every digit was dropped, which carries into the integer part.
+fn round_up_digits(digits: &mut [u8], radix: u32) -> (usize, bool) {
+    let mut length = digits.len();
+    while length > 0 {
+        length -= 1;
+        if u32::from(digits[length]) + 1 < radix {
+            digits[length] += 1;
+            return (length + 1, false);
+        }
+    }
+    (0, true)
+}
+
+/// Writes the radix digits of the whole number `integer` ending at the end of `digits`, with
+/// the zeros that the double's precision leaves at its end, and answers where they start.
+fn write_integer_digits(mut integer: f64, radix: u32, digits: &mut [u8]) -> usize {
+    let base = f64::from(radix);
+    let mut start = digits.len();
     // Digits below the double's precision are zeros.
     while binary_exponent(integer / base) > 0 {
         integer /= base;
-        integer_digits.push(b'0');
+        start -= 1;
+        digits[start] = b'0';
     }
     loop {
         let remainder = integer % base;
-        integer_digits.push(RADIX_DIGITS[remainder as usize]);
+        start -= 1;
+        digits[start] = RADIX_DIGITS[remainder as usize];
         integer = (integer - remainder) / base;
         if integer <= 0.0 {
+            return start;
+        }
+    }
+}
+
+/// Spells the `count` fraction digit values after the point, and writes the point before them
+/// when there are any. Answers the end of the text.
+fn finish_fraction(buffer: &mut [u8; RADIX_TEXT_CAPACITY], count: usize) -> usize {
+    if count == 0 {
+        return RADIX_POINT;
+    }
+    buffer[RADIX_POINT] = b'.';
+    let end = RADIX_POINT + 1 + count;
+    for digit in &mut buffer[RADIX_POINT + 1..end] {
+        *digit = RADIX_DIGITS[usize::from(*digit)];
+    }
+    end
+}
+
+/// `number_to_radix` as a string value, for a finite `number`: its text is written on the stack
+/// and copied once into the string.
+pub(super) fn number_to_radix_string(number: f64, radix: u32) -> super::wtf16::JsString {
+    with_radix_text(number, radix, super::wtf16::JsString::from_ascii_bytes)
+}
+
+/// 2^53: integers of smaller magnitude are exact doubles.
+const EXACT_INTEGER_LIMIT: f64 = (1_u64 << f64::MANTISSA_DIGITS) as f64;
+
+/// The most units an exact integer below 2^53 takes in any radix: 53 binary digits and a sign.
+const INTEGER_RADIX_CAPACITY: usize = f64::MANTISSA_DIGITS as usize + 1;
+
+/// Hands `use_text` the radix-`radix` text of the finite `number`, written on the stack: an exact
+/// integer into a buffer of `INTEGER_RADIX_CAPACITY`, any other number into the full
+/// `RADIX_TEXT_CAPACITY` buffer, so the common integer call clears no large buffer.
+pub(super) fn with_radix_text<T>(number: f64, radix: u32, use_text: impl FnOnce(&[u8]) -> T) -> T {
+    let exact = number.trunc() == number && number.abs() < EXACT_INTEGER_LIMIT;
+    if exact {
+        let mut buffer = [0u8; INTEGER_RADIX_CAPACITY];
+        return use_text(integer_radix_text(number as i64, radix, &mut buffer));
+    }
+    let mut buffer = [0u8; RADIX_TEXT_CAPACITY];
+    use_text(radix_text(number, radix, &mut buffer))
+}
+
+/// The radix-`radix` digits of `integer` (|integer| < 2^53), written backwards into `buffer`.
+fn integer_radix_text(integer: i64, radix: u32, buffer: &mut [u8; INTEGER_RADIX_CAPACITY]) -> &[u8] {
+    let base = u64::from(radix);
+    let mut magnitude = integer.unsigned_abs();
+    let mut start = buffer.len();
+    loop {
+        start -= 1;
+        buffer[start] = RADIX_DIGITS[(magnitude % base) as usize];
+        magnitude /= base;
+        if magnitude == 0 {
             break;
         }
     }
-    if negative {
-        integer_digits.push(b'-');
+    if integer < 0 {
+        start -= 1;
+        buffer[start] = b'-';
     }
-    integer_digits.reverse();
-    let mut text = String::from_utf8(integer_digits).expect("radix digits are ASCII");
-    if !fraction_digits.is_empty() {
-        text.push('.');
-        text.extend(fraction_digits.into_iter().map(|digit| char::from(RADIX_DIGITS[digit])));
-    }
-    text
+    &buffer[start..]
 }
 
 /// The least double greater than the finite, non-negative `value`.

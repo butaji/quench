@@ -44,6 +44,8 @@ pub use execution_interrupt::ExecutionInterrupt;
 pub use vm::NativeFaultHandler;
 mod bigint;
 mod bitset;
+mod dataflow;
+mod webs;
 mod dense_map;
 mod bytecode;
 mod compile;
@@ -106,7 +108,7 @@ pub use memory_edge::report_allocator_memory;
 pub use stack::{STACK_BUDGET_BYTES, STACK_HEADROOM_BYTES, WORKER_STACK_SIZE};
 pub use value::Value;
 pub use vm::{
-    local_timezone_changed, write_double, write_raw_bytes, write_uint32, write_uint64, ExecutionMode, HostObjectRead, JsError, SerializedValue, SharedWireInput,
+    local_timezone_changed, write_double, write_raw_bytes, write_uint32, write_uint64, ExecutionMode, CompileFailureKind, HostObjectRead, JsError, SerializedValue, SharedWireInput,
     ValueDeserializer, ValueSerializer, WireInput, WireOutput, WIRE_FORMAT_VERSION,
 };
 
@@ -119,7 +121,7 @@ const _: fn() = || {
 mod api;
 pub use api::{
     CollectionContext,
-    BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostCallback, HostFunction, HostFunctionDescriptor, HostFunctionId, HostWeakRoot, IntactBuiltin,
+    BufferStorage, Detach, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostCallback, HostFunction, HostFunctionDescriptor, HostFunctionId, HostWeakRoot, IntactBuiltin,
     PreparedScript, NativeArithmetic, NativeContext, PromiseRejectionEvent, RootScopeMark, RootedError, RootedIterator, Runtime,
     CompiledScript, RuntimeError, SourceKind, ErrorSourcePosition, SourceStackFrame, SynchronousModule, ModuleAcceptArguments, ModuleAcceptCallback,
     DeserializerDelegate, SerializerDelegate,

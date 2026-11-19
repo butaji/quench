@@ -49,6 +49,9 @@ pub(super) struct ObjectHeader {
     pub(super) address: ir::Value,
     /// The record's layout id, where it was loaded (`IcOp::GuardLayout`).
     pub(super) word: Option<ir::Value>,
+    /// The record's auxiliary word (exact shape and storage-form bits) the header read, which a
+    /// formed read compares (`staged::property_slots::formed_slot`) instead of reading it again.
+    pub(super) auxiliary: Option<ir::Value>,
 }
 
 /// A verified direct-object locator. Indexed records keep the admitted base and
@@ -101,12 +104,12 @@ impl ObjectRecord {
 
     pub(super) fn header(self, builder: &mut FunctionBuilder<'_>, known: Option<typed_ir::VerifiedFact>) -> ObjectHeader {
         let address = self.address(builder);
-        let (loaded, word, inline) = shape_and_inline(builder, address);
+        let (loaded, word, inline, auxiliary) = shape_and_inline(builder, address);
         let (shape, word) = match known.and_then(|fact| fact.ty.object_shape()) {
             Some(shape) => (emit(builder).raw_const(Lane::I32, i64::from(shape)), None),
             None => (loaded, Some(word)),
         };
-        ObjectHeader { record: self, shape, inline, address, word }
+        ObjectHeader { record: self, shape, inline, address, word, auxiliary: Some(auxiliary) }
     }
 }
 
@@ -145,8 +148,8 @@ impl ObjectHeader {
         let function_object = emit(builder).raw_binary_imm(Binary::Add, function_record, function.object_offset as i64);
         emit(builder).goto(join, &[function_object]);
         builder.switch_to_block(join);
-        let (shape, word, inline) = shape_and_inline(builder, record);
-        Self { record: ObjectRecord::Address(record), shape, inline, address: record, word: Some(word) }
+        let (shape, word, inline, auxiliary) = shape_and_inline(builder, record);
+        Self { record: ObjectRecord::Address(record), shape, inline, address: record, word: Some(word), auxiliary: Some(auxiliary) }
     }
 }
 
@@ -183,16 +186,17 @@ fn auxiliary_word(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, ad
     (layout_id, builder.ins().load(types::I32, table, entry, layout.auxiliary_offset as i32))
 }
 
-/// The record's exact shape, its layout id and its inline-storage flag, from one layout read:
+/// The record's exact shape, its layout id, its inline-storage flag and the auxiliary word they
+/// came from, from one layout read:
 /// the auxiliary word's storage-form bits carry the header's inline flag
 /// (`Object::storage_form`), so the flag needs no second header word.
-pub(super) fn shape_and_inline(builder: &mut FunctionBuilder<'_>, address: ir::Value) -> (ir::Value, ir::Value, ir::Value) {
+pub(super) fn shape_and_inline(builder: &mut FunctionBuilder<'_>, address: ir::Value) -> (ir::Value, ir::Value, ir::Value, ir::Value) {
     let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
     let (layout_id, word) = auxiliary_word(builder, regions::shape_word(), address);
     let shape = builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form | layout.narrow_form)));
     let form = builder.ins().band_imm_u(word, i64::from(layout.inline_form));
     let inline = emit(builder).raw_compare_imm(Relation::NotEqual, form, 0);
-    (shape, layout_id, inline)
+    (shape, layout_id, inline, word)
 }
 
 /// `staged::object::inline_storage`'s residual for the record at `record`.
@@ -213,10 +217,11 @@ pub(crate) struct NativeFieldLoad {
     /// an online body subscribes to it (`LaneDependencies`) and reads the slot at it with no tag
     /// test; code that does not subscribe tests the tag and leaves where it fails.
     pub(crate) ty: crate::typed_ir::Type,
-    /// For a holder read, the value its proved immediate prototype holds when the code was
-    /// compiled (`Vm::inherited_constant`): a Stable fact. A read takes it while the receiver's
-    /// prototype is that one; a change of the value retires the code that took it
-    /// (`heap::subscribe_prototype_values`).
+    /// For a holder read, the value its proved holder holds when the code was compiled
+    /// (`Vm::inherited_constant`), with the chain from the receiver's prototype it was read
+    /// through: a Stable fact. A read takes it while the receiver's prototype is that one; a
+    /// change of the value retires the code that took it (`heap::subscribe_prototype_values`), as
+    /// does a layout change of a prototype on its chain (`Heap::subscribe_prototype_chain`).
     pub(crate) inherited: Option<InheritedConstant>,
     /// Whether a live function record had the receiver shape when the plan was made: a read
     /// then proves a readable record (an object or a function's), never a direct object.
@@ -229,6 +234,10 @@ pub(crate) struct NativeFieldLoad {
     /// proving the shape and the storage form, and reads that form's layout, a fact of the id,
     /// with no test (`IcOp::GuardLayout`).
     pub(crate) formed: Option<u32>,
+    /// For a holder read, the layout id of the holder (`FieldCache::holder_id`) where the entry
+    /// kept one: a guard of it proves the holder's whole header, which names `holder` as its
+    /// shape, so it replaces the holder's shape guard (`IcOp::GuardLayout`, `field_plans`).
+    pub(crate) holder_id: Option<u32>,
 }
 
 /// The most shape-guarded load groups one field read lowers before it calls the field cache
@@ -306,20 +315,24 @@ pub(super) fn shape_in_set(builder: &mut FunctionBuilder<'_>, shape: ir::Value, 
 pub(crate) const INHERITED_PROTOTYPES: usize = 4;
 
 /// An inherited read's values, each fixed by the receiver's prototype link that names its
-/// holder, as they were when the code was compiled.
+/// holder, as they were when the code was compiled, and the prototypes from that link to the
+/// holder each was read through (`PrototypeChain::depth`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct InheritedConstant {
     values: [(u32, Value); INHERITED_PROTOTYPES],
+    depths: [u8; INHERITED_PROTOTYPES],
     count: u8,
 }
 
 impl InheritedConstant {
-    /// The values `holders` (prototype link and value) give; `None` where there are none or
-    /// more than the read folds.
-    pub(crate) fn of(holders: impl IntoIterator<Item = (u32, Value)>) -> Option<Self> {
-        let mut constant = Self { values: [(0, Value::UNDEFINED); INHERITED_PROTOTYPES], count: 0 };
-        for holder in holders {
-            *constant.values.get_mut(usize::from(constant.count))? = holder;
+    /// The values `holders` (prototype link, value, and the prototypes from the link to the
+    /// holder) give; `None` where there are none or more than the read folds.
+    pub(crate) fn of(holders: impl IntoIterator<Item = (u32, Value, u8)>) -> Option<Self> {
+        let mut constant = Self { values: [(0, Value::UNDEFINED); INHERITED_PROTOTYPES], depths: [0; INHERITED_PROTOTYPES], count: 0 };
+        for (link, value, depth) in holders {
+            let at = usize::from(constant.count);
+            *constant.values.get_mut(at)? = (link, value);
+            constant.depths[at] = depth;
             constant.count += 1;
         }
         (constant.count > 0).then_some(constant)
@@ -329,15 +342,21 @@ impl InheritedConstant {
         &self.values[..usize::from(self.count)]
     }
 
+    /// The chains the values were read through, one per value.
+    pub(crate) fn chains(&self) -> impl Iterator<Item = crate::code_dependencies::PrototypeChain> + '_ {
+        self.values().iter().zip(self.depths).map(|((link, _), depth)| crate::code_dependencies::PrototypeChain { link: *link, depth })
+    }
+
     /// These values and `other`'s, each prototype once; `None` where a prototype holds two
-    /// values or there are more than the read folds.
+    /// values or there are more than the read folds. A prototype both name keeps the longer
+    /// chain, which covers the shorter.
     pub(crate) fn joined(self, other: Self) -> Option<Self> {
-        let mut values: Vec<(u32, Value)> = self.values().to_vec();
-        for (prototype, value) in other.values() {
-            match values.iter().find(|(known, _)| known == prototype) {
-                Some((_, held)) if held != value => return None,
-                Some(_) => {}
-                None => values.push((*prototype, *value)),
+        let mut values: Vec<(u32, Value, u8)> = self.values().iter().zip(self.depths).map(|((link, value), depth)| (*link, *value, depth)).collect();
+        for ((prototype, value), depth) in other.values().iter().zip(other.depths) {
+            match values.iter_mut().find(|(known, _, _)| known == prototype) {
+                Some((_, held, _)) if held != value => return None,
+                Some((_, _, known)) => *known = (*known).max(depth),
+                None => values.push((*prototype, *value, depth)),
             }
         }
         Self::of(values)
@@ -382,7 +401,7 @@ mod tests {
 
     #[test]
     fn direct_field_plans_reject_dictionary_and_missing_receiver_shapes() {
-        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None };
+        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None };
         assert!(field.valid());
         for shape in [super::super::super::NO_FIELD_RECEIVER,
             crate::value_vec::DICTIONARY_STORAGE, crate::value_vec::DICTIONARY_STORAGE | 1] {

@@ -35,11 +35,15 @@ const _: () = assert!(PREFIX_BYTES == 32);
 
 /// The context words below every window's register 0 (call protocol v2), in address order:
 /// the runtime's `register_file::FRAME_CONTEXT` and the b-jit's `FRAME_CONTEXT_WORDS` are this.
-/// The receiver, environment, captures, then a plain activation's header (the caller's call
-/// record, registers and records, the packed word, the callee).
+/// Counted down from register 0: the receiver, environment, captures, then a plain
+/// activation's header (the caller's call record, registers and records, the packed word, the
+/// callee), then a body's captures word. A body's receiver and captures are written into its
+/// own window by whoever enters it, so each frame carries its own and a call saves and
+/// restores nothing.
 #[repr(C)]
 #[allow(dead_code)]
 struct ContextWords {
+    body: usize,
     callee: usize,
     packed: usize,
     caller_base: usize,
@@ -66,7 +70,12 @@ pub(crate) const CONTEXT_CALLER_REGISTERS: usize = context_index(offset_of!(Cont
 pub(crate) const CONTEXT_CALLER_BASE: usize = context_index(offset_of!(ContextWords, caller_base));
 pub(crate) const CONTEXT_PACKED: usize = context_index(offset_of!(ContextWords, packed));
 pub(crate) const CONTEXT_CALLEE: usize = context_index(offset_of!(ContextWords, callee));
-const _: () = assert!(CONTEXT_CALLEE == CONTEXT_WORDS);
+/// A body's captures word (`entry_cell::capture_word`): the dense slots' address, whether they
+/// admit every direct store, and their count (`shared_words::capture_values`, `capture_stores`,
+/// `capture_len` read it).
+pub(crate) const CONTEXT_BODY: usize = context_index(offset_of!(ContextWords, body));
+const _: () = assert!(CONTEXT_CALLEE + 1 == CONTEXT_BODY && CONTEXT_BODY == CONTEXT_WORDS);
+const _: () = assert!(CONTEXT_CALLEE == 8);
 const _: () = assert!(CONTEXT_THIS == 1);
 const _: () = assert!(CONTEXT_ENV == 2);
 const _: () = assert!(CONTEXT_CAPTURE == 3);
@@ -74,7 +83,7 @@ const _: () = assert!(CONTEXT_CALL == 4);
 const _: () = assert!(CONTEXT_CALLER_REGISTERS == 5);
 const _: () = assert!(CONTEXT_CALLER_BASE == 6);
 const _: () = assert!(CONTEXT_PACKED == 7);
-const _: () = assert!(CONTEXT_WORDS == 8);
+const _: () = assert!(CONTEXT_WORDS == 9);
 
 /// The packed word: function in bits 0-31, flags from bit `FLAG_BASE`, argc from `ARGC_SHIFT`.
 const FUNCTION_BITS: u32 = 32;
@@ -153,3 +162,5 @@ const _: () = assert!(PLAIN_PROGRAM_AT == 16);
 /// asserts them against `size_of::<Activation>()` and `KIND_OFFSET`.
 pub(crate) const ACTIVATION_BYTES: usize = 128;
 pub(crate) const ACTIVATION_KIND_OFFSET: usize = 72;
+/// The tag of a native direct call's frame (`quench_bjit::shared_words::KIND_NATIVE`, asserted equal by the runtime).
+pub(crate) const KIND_NATIVE: u8 = 0;

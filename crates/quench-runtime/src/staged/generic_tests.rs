@@ -2,6 +2,7 @@
 
 use super::tests::ConcreteFrame;
 use super::*;
+use crate::bytecode::Operand;
 use crate::heap::Heap;
 use crate::Value;
 
@@ -18,7 +19,7 @@ fn run(operation: Operation<u64, ()>, values: &[Value], heap: Option<&Heap>) -> 
 /// The boolean `left == right` (or `===`, negated) the staged equality produces, or `None`
 /// where the words leave it to the VM.
 fn equality(left: Value, right: Value, strict: bool, negated: bool) -> Option<bool> {
-    let operation = Operation::Equality { destination: 2, left: 0, right: 1, strict, negated };
+    let operation = Operation::Equality { destination: 2, left: Operand::register(0), right: Operand::register(1), strict, negated };
     match run(operation, &[left, right], None) {
         (Step::Value(word), registers) => {
             assert_eq!(registers[2], word);
@@ -64,7 +65,7 @@ fn equality_leaves_pairs_the_words_do_not_decide_to_the_vm() {
     assert_eq!(equality(Value::number(1.0), Value::TRUE, false, false), None);
     let mut heap = Heap::new();
     let (a, b) = (heap.alloc_string("x".into()), heap.alloc_string("x".into()));
-    let operation = Operation::Equality { destination: 2, left: 0, right: 1, strict: true, negated: false };
+    let operation = Operation::Equality { destination: 2, left: Operand::register(0), right: Operand::register(1), strict: true, negated: false };
     if a != b {
         assert!(matches!(run(operation, &[a, b], Some(&heap)).0, Step::Unresolved));
     }

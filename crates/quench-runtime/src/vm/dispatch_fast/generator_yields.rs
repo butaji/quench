@@ -1,76 +1,120 @@
 //! The lane's suspensions: `yield` and `yield*` of a generator the lane runs over its record's
-//! register file (`generator_windows`), and the `await` of a promise job's activation. Each
-//! suspends the activation in place; any other `yield` or `yield*`, a materialized generator
-//! frame's, takes the general path, which suspends the frame back into its generator.
+//! register file (`generator_windows`) or of an async generator's in-place request, and the
+//! `await` of a promise job's activation or a request's. Each runs its staged row on the lane's
+//! frame (`lane_frame::suspension_row_in_lane`), which suspends the activation in place
+//! (`suspend_at_in_lane`); any other `yield` or `yield*`, a materialized generator frame's, and any
+//! step the lane's frame declines take the general path, which suspends the frame back into its
+//! generator.
 use super::*;
-use super::generator_windows::{lane_yield_in_window, lane_yield_star_in_window, running_generator};
+use super::lane_frame::{lane_suspension, yield_star_kind, Suspender, LANE_YIELD};
 use super::super::activation::{JobRoot, SuspendKind};
+use crate::staged::{SuspendEffect, Suspending, Suspension};
 
 script_handler! {
-    /// `yield` of the generator activation the lane runs over its record (`running_generator`):
-    /// the frame suspends in place and the caller continues with the step's result
-    /// (`lane_yield_in_window`). The root of a native `next`'s run (`LaneRoot::Job` of a sync
-    /// generator) suspends into its record and ends the run with the yielded value
-    /// (`Vm::suspend_job_window`); an async generator's root parks likewise, its record awaiting
-    /// the value before the request settles (`Vm::suspend_async_generator_yield`). Any other
+    /// `yield` of a generator activation that suspends in place (`Suspender::of_yield`): a
+    /// window's frame suspends into its record and the caller continues with the step's result;
+    /// a request's parks, its record awaiting the value before the request settles; the root of
+    /// a job's run suspends into its record and ends the run (`suspend_at_in_lane`). Any other
     /// `yield` takes the general path.
     #[inline(never)]
-    fn lane_yield<>(cx, r, ip, i, view) {
-        if running_generator(unsafe { vm(cx) }) {
-            resume!(cx, lane_yield_in_window(cx, r, ip, i))
+    fn yield_row<>(cx, r, ip, i, view) {
+        // A generator's window, the common case, runs the row with its suspender known.
+        if super::generator_windows::running_generator(unsafe { vm(cx) }) {
+            resume!(cx, suspension_row_in_lane(cx, r, ip, i, (LANE_YIELD, Suspender::Window)))
         }
-        if let LaneRoot::Job(job) = unsafe { (*cx).root }
-            && matches!(job.kind, SuspendKind::Generator | SuspendKind::AsyncGenerator)
-        {
-            let vm = unsafe { vm(cx) };
-            let mut value = r.get(i.b);
-            // SAFETY: the record lies in the running view.
-            let pc = unsafe { ip.offset_from((*cx).base) } as usize;
-            let destination = i.a & crate::bytecode::REGISTER_MASK;
-            if job.kind == SuspendKind::AsyncGenerator {
-                // The yield awaits its value, converted as an `await`'s source is.
-                // SAFETY: the context's program outlives the lane run.
-                let Some(source) = vm.lane_await_source(unsafe { &*(*cx).code }, value) else {
-                    return exit(ip);
-                };
-                value = source;
-                note_allocation(vm);
-                vm.suspend_async_generator_yield(job, pc + 1, destination, value);
-            } else {
-                vm.suspend_job_window(job, pc + 1, destination, value, 0);
-            }
-            vm.lane_stack.pop_activation();
-            vm.lane_completion.set(LaneCompletion::Suspended(value));
-        }
-        exit(ip)
+        let Some(suspender) = Suspender::of_yield(cx) else {
+            return exit(ip);
+        };
+        resume!(cx, suspension_row_in_lane(cx, r, ip, i, (LANE_YIELD, suspender)))
     }
+}
+
+/// The pc of the record at `ip` in the running view.
+#[inline(always)]
+fn record_pc<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> usize {
+    // SAFETY: the record lies in the running view.
+    unsafe { ip.offset_from((*cx).base) as usize }
+}
+
+/// The suspension a row on the lane's frame makes of the record at `ip` (`suspending`), in place
+/// as `suspender` says: the frame resumes at this record (a `yield*` step,
+/// `Suspending::again`) or after it, with the value it is resumed with in the row's
+/// destination. A window's frame suspends into its generator and its caller takes the step's
+/// result (`generator_windows::lane_suspend_generator`); a request's parks
+/// (`async_requests::lane_suspend_request`); a job root's suspends into its owner and the run
+/// ends (`suspend_job_root`), unless an `await` continues in place (`settled_await_in_place`);
+/// a settling body hands its frame over (`suspend_settling`). `r` holds the record's registers.
+#[inline(always)]
+pub(super) fn lane_suspend_at<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, suspender: Suspender,
+    suspending: Suspending<u64>) -> Resumed {
+    let at = (record_pc(cx, ip) + usize::from(!suspending.again), suspending.destination);
+    let (value, yielded) = (Value::from_bits(suspending.value), suspending.effect == SuspendEffect::Yield);
+    match suspender {
+        Suspender::Window => {
+            let delegated = suspending.delegated.map(Value::from_bits);
+            super::generator_windows::suspend_generator_in_lane(cx, at.0, at.1, value, delegated)
+        }
+        Suspender::Request => super::async_requests::suspend_request_in_lane(cx, at, yielded, value),
+        Suspender::JobRoot(job) => {
+            // The converted value may be a fresh promise, which the safepoints after the run collect.
+            note_allocation(unsafe { vm(cx) });
+            if let Some(settled) = settled_await_in_place(cx, job, suspending) {
+                r.set(at.1, settled);
+                return Resumed::At(r, following(ip), Carried::script(cx));
+            }
+            suspend_job_root(cx, at, job, value, yielded);
+            Resumed::Exit(exit(ip))
+        }
+        Suspender::Settling => suspend_settling(cx, r, at, value),
+    }
+}
+
+/// The value an `await` of `suspending` by the activation of `job` continues with in place, as
+/// `Vm::settled_await` answers it, while the lane has fuel for the continuation; `None` where
+/// the activation suspends. A `yield` never continues in place.
+#[inline(always)]
+fn settled_await_in_place<H: Host>(cx: *mut LaneContext<H>, job: JobRoot, suspending: Suspending<u64>) -> Option<Value> {
+    if suspending.effect != SuspendEffect::Await {
+        return None;
+    }
+    let settled = unsafe { vm(cx) }.settled_await(job, Value::from_bits(suspending.value))?;
+    (!script_fuel_out(cx)).then_some(settled)
+}
+
+/// The activation a job's lane run is rooted in (`LaneRoot::Job`) stops with `value`, a `yield`
+/// when `yielded`, else an `await`, resuming at `pc` with the value it is resumed with in
+/// `destination`: its frame suspends into its owner as its kind does
+/// (`Vm::suspend_async_generator_yield` for an async generator's `yield`,
+/// `Vm::suspend_job_window` for the rest), the activation pops, and the run ends.
+fn suspend_job_root<H: Host>(cx: *mut LaneContext<H>, (pc, destination): (usize, crate::bytecode::Register), job: JobRoot,
+    value: Value, yielded: bool) {
+    let vm = unsafe { vm(cx) };
+    if yielded && job.kind == SuspendKind::AsyncGenerator {
+        vm.suspend_async_generator_yield(job, pc, destination, value, 0);
+    } else {
+        vm.suspend_job_window(job, pc, destination, value, 0);
+    }
+    vm.lane_stack.pop_activation();
+    vm.lane_completion.set(LaneCompletion::Suspended(value));
 }
 
 script_handler! {
     /// `yield*` of a generator activation the lane runs over its record
-    /// (`lane_yield_star_in_window`). Any other `yield*` takes the general step.
+    /// (`generator_windows::running_generator`), by its row on the lane's frame: the delegate's
+    /// result read where it is a plain iterator result, a delegate generator stepped in place,
+    /// and the result passed on as this generator's own yield. Any other `yield*` takes the
+    /// general step.
     #[inline(never)]
-    fn lane_yield_star<>(cx, r, ip, i, view) {
-        if running_generator(unsafe { vm(cx) }) {
-            resume!(cx, lane_yield_star_in_window(cx, r, ip, i))
+    fn yield_star_row<>(cx, r, ip, i, view) {
+        if !super::generator_windows::running_generator(unsafe { vm(cx) }) {
+            return exit(ip);
         }
-        exit(ip)
+        resume!(cx, suspension_row_in_lane(cx, r, ip, i, (yield_star_kind(i), Suspender::Window)))
     }
 }
 
 impl<H: Host> Vm<H> {
-    /// What `await` of `awaited` waits on, as `PromiseResolve(%Promise%, awaited)` converts it
-    /// where that observes nothing: a non-object as it is, an object by `lane_promise_resolve`.
-    /// `None` leaves a conversion that could run guest code, or throw into the frame's
-    /// handlers, to the general path.
-    fn lane_await_source(&mut self, code: &ResidualProgram, awaited: Value) -> Option<Value> {
-        if self.is_object_like(awaited) {
-            return self.lane_promise_resolve(code, self.intrinsic_promise_constructor(), awaited);
-        }
-        Some(awaited)
-    }
-
-    /// What an `await` of `source` (`lane_await_source`) by the activation of `job` evaluates
+    /// What an `await` of `source` (the row's `await_source`) by the activation of `job` evaluates
     /// to without suspending: its reaction would be the only queued job, so suspending, queueing
     /// it and resuming observes nothing more. Only an async function a microtask drain resumed
     /// (`queue_resumed`), with no other job queued and no host watching promises, awaiting a
@@ -88,45 +132,152 @@ impl<H: Host> Vm<H> {
 }
 
 script_handler! {
-    /// `await` of the activation a promise job's lane run is rooted in (`LaneRoot::Job`): the
-    /// frame suspends into its owner, resuming after this record with the awaited value in its
-    /// register, the activation pops, and the run ends for the job to attach the await's
-    /// reactions (`Vm::suspend_job_window`). Any other `await`, a conversion that could run
-    /// guest code included, takes the general path.
+    /// `await` of the activation the lane runs, by the suspender `Suspender::of_await` chooses: an
+    /// async generator's request parks (`Suspender::Request`), a settling body hands its frame to
+    /// the continuation (`Suspender::Settling`), and the activation a promise job's run is rooted
+    /// in suspends into its owner (`Suspender::JobRoot`). A request is the common case and runs
+    /// the row with its suspender known. Any other `await` takes the general path, which a
+    /// conversion that could run guest code, or a settling body that keeps its values, reaches.
     #[inline(never)]
     fn lane_await<>(cx, r, ip, i, view) {
-        let LaneRoot::Job(job) = (unsafe { (*cx).root }) else {
-            return exit(ip);
-        };
-        let vm = unsafe { vm(cx) };
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let Some(value) = vm.lane_await_source(code, r.get(i.b)) else {
-            return exit(ip);
-        };
-        // The source may be a fresh promise, which the safepoints after the run collect.
-        note_allocation(vm);
-        if let Some(settled) = vm.settled_await(job, value)
-            && !script_fuel_out(cx)
-        {
-            r.set(i.a & crate::bytecode::REGISTER_MASK, settled);
-            next!(cx, r, following(ip), Carried::script(cx))
+        if super::async_requests::running_request(unsafe { vm(cx) }) {
+            resume!(cx, lane_suspension(cx, r, ip, i, (Suspension::Await, Suspender::Request)))
         }
-        // SAFETY: the record lies in the running view.
-        let pc = unsafe { ip.offset_from((*cx).base) } as usize;
-        vm.suspend_job_window(job, pc + 1, i.a & crate::bytecode::REGISTER_MASK, value, 0);
-        vm.lane_stack.pop_activation();
-        vm.lane_completion.set(LaneCompletion::Suspended(value));
-        exit(ip)
+        let Some(suspender) = Suspender::of_await(cx) else {
+            return exit(ip);
+        };
+        resume!(cx, lane_suspension(cx, r, ip, i, (Suspension::Await, suspender)))
     }
 }
 
-/// The handlers of a frame's suspensions (`lane_yield`, `lane_yield_star`, `lane_await`).
+/// The handlers of a frame's suspensions: each runs its staged `Suspend` row on the lane's frame
+/// (`suspension_row_in_lane`), with the suspender its record's activation makes.
 pub(super) const fn suspend_handler<H: Host>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
-        Class::Yield => Some(lane_yield::<H>),
-        Class::YieldStar => Some(lane_yield_star::<H>),
-        Class::Await => Some(lane_await::<H>),
+        Class::Yield => Some(yield_row::<H>),
+        Class::YieldStar => Some(yield_star_row::<H>),
+        Class::Await => Some(await_row::<H>),
         _ => None,
     }
+}
+
+/// `await` of an async body its caller's run called and settles (`Completion::SettlesPromise`),
+/// suspending as `Suspender::of_await` allowed (a body that kept the values it was passed, or
+/// whose call returns its completion, takes the general path): its registers, and for an
+/// environment activation the environment and locals its window holds (`settling_frame`), become
+/// the frame of the continuation the awaited value's reaction resumes (a job, `Vm::run_lane_job`),
+/// the activation pops, and its caller goes on with the call's promise, as the general loop's
+/// in-place async call leaves it (`StepResult::Suspend(Suspended::Await)`). `(pc, destination)`
+/// is where the continuation resumes, and `value` the converted awaited value.
+#[inline(never)]
+fn suspend_settling<H: Host>(cx: *mut LaneContext<H>, r: Registers, (pc, destination): (usize, crate::bytecode::Register),
+    value: Value) -> Resumed {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let activation = *vm.lane_stack.activations.last().expect("a settling activation runs");
+    // The converted value may be a fresh promise, which the safepoints after the run collect.
+    note_allocation(vm);
+    let frame = settling_frame(vm, code, &activation, (r, pc));
+    let root = vm.lane_stack.settling.pop().expect("each settling activation has its entry");
+    let promise = vm.settling_promise(root);
+    let continuation = vm.suspend_activation(frame, super::super::activation::Completion::Await(value), Some(destination), promise);
+    vm.lane_stack.pop_activation();
+    let (memory, _) = restore_caller_in_lane(cx, &activation);
+    match vm.enqueue_async_resume(code, crate::heap::AwaitKind::function(continuation), promise, value) {
+        Ok(()) => resume_after_call_in_lane(&activation, memory, promise),
+        Err(error) => {
+            vm.lane_completion.raise(error);
+            Resumed::Exit(exit(activation.call))
+        }
+    }
+}
+
+/// The frame of the settling `activation` running with registers `r`, which resumes at `pc`:
+/// its registers, receiver and environment, with the loops it opened (`LaneStack::iterators`).
+/// A plain activation's frame is made off the frame stack with its window's registers moved in
+/// once (`Vm::detached_plain_frame`); an environment activation's (`pushed_settling_frame`)
+/// owns the environment its window made, or makes it now, and takes the window's locals, as
+/// its materialization would (`materialize_environment_frame`).
+///
+/// A settling activation is an async function's call, never a program's root, so no global
+/// lexical binding is published here (`Vm::persist_global_lexical_bindings`).
+fn settling_frame<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, activation: &Activation, (r, pc): (Registers, usize)) -> Box<super::super::Frame> {
+    let ActivationKind::Script(script) = activation.kind else { unreachable!("a settling activation is a script one") };
+    let count = usize::from(code.function(activation.function as usize).registers);
+    let argc = usize::from(script.argc);
+    // SAFETY: the activation's window holds its registers, which nothing writes until the frame takes them.
+    let window = unsafe { activation.window(count) };
+    let context = CallContext::user_function(activation.function, script.callee);
+    let detached = if script.environment {
+        None
+    } else {
+        let passed = &window[..argc.min(count)];
+        vm.detached_plain_frame(code, activation.function, (r.env(), r.this()), context, (passed, window))
+    };
+    let mut frame = detached.unwrap_or_else(|| pushed_settling_frame(vm, code, activation, r, (count, argc)));
+    frame.pc = pc;
+    frame.pc_is_resume = true;
+    let depth = vm.lane_stack.activations.len() - 1;
+    vm.lane_stack.take_iterators(depth, &mut frame.active_iterators);
+    debug_assert_ne!(frame.function, super::super::ROOT_FUNCTION_ID);
+    frame
+}
+
+/// `settling_frame`'s frame pushed as a full activation and popped again, holding the window's
+/// `count` registers and the `argc` values passed: the way any frameless activation becomes a
+/// frame (`Vm::push_script_frame_with_registers`), and an environment activation's then takes
+/// its environment and locals (`materialize_environment_frame`).
+fn pushed_settling_frame<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, activation: &Activation, r: Registers,
+    (count, argc): (usize, usize)) -> Box<super::super::Frame> {
+    let ActivationKind::Script(script) = activation.kind else { unreachable!("a settling activation is a script one") };
+    // SAFETY: the activation's window holds its registers, which nothing writes until the frame takes them.
+    let window = unsafe { activation.window(count) };
+    // SAFETY: an environment activation's window holds its kept values after its locals.
+    let passed = if script.environment { unsafe { environment_passed(code, activation, count, argc) } } else { &window[..argc.min(count)] };
+    let context = CallContext::user_function(activation.function, script.callee);
+    vm.push_script_frame_with_registers(code, activation.function, r.env(), r.this(), context, passed, window);
+    if script.environment {
+        // A settling activation runs its caller's program (`Completion::of`).
+        vm.materialize_environment_frame(code, activation, (activation.caller_program, r.env(), r.this()), argc);
+    }
+    let mut frame = vm.frames.pop().expect("the activation pushed a frame");
+    frame.with_objects = vm.with_stack.split_off(frame.with_base);
+    frame
+}
+
+/// The `argc` values passed to the environment `activation` of a function of `count`
+/// registers: kept after its environment and locals (`activate_environment_in_lane`).
+///
+/// # Safety
+/// `activation` is a live environment activation, whose window nothing writes meanwhile.
+unsafe fn environment_passed<'a>(code: &ResidualProgram, activation: &'a Activation, count: usize, argc: usize) -> &'a [Value] {
+    let kept = count + usize::from(WINDOW_LOCALS) + usize::from(code.function(activation.function as usize).locals);
+    // SAFETY: as the caller guarantees.
+    &(unsafe { activation.window(kept + argc) })[kept..]
+}
+
+/// The environment activation (`activate_environment_in_lane`) of settling `target`, called at
+/// `ip` with registers `r`, passing `passed` with receiver `this`: its return settles the call's
+/// promise, whose root `LaneStack::settling` holds last (`Completion::SettlesPromise`); an
+/// activation refused releases it, before any effect.
+pub(super) fn activate_settling_environment<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    passed: &[Value],
+    this: Value,
+) -> Result<(Registers, Ip), Ip> {
+    let entered = activate_environment_in_lane(cx, r, ip, target, passed, (this, false));
+    let vm = unsafe { vm(cx) };
+    if entered.is_ok() {
+        let activation = vm.lane_stack.activations_mut().last_mut().expect("the activation was pushed");
+        if let ActivationKind::Script(script) = &mut activation.kind {
+            script.completion = Completion::SettlesPromise;
+        }
+    } else if let Some(root) = vm.lane_stack.settling.pop().flatten() {
+        vm.heap.release_root(root);
+    }
+    entered
 }

@@ -9,20 +9,18 @@ impl<H: Host> Vm<H> {
         values: Vec<Value>,
     ) -> Result<Value, JsError> {
         let Some(keys) = keys else {
-            return Ok(self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            return Ok(self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
                     values,
-                ),
-            }));
+                )));
         };
         let result = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         for (key, value) in keys.into_iter().zip(values) {
             let key = if let Some(name) = self.heap.string(key).cloned() {
                 PropertyKey::string(self.intern_js_atom(&name))
-            } else if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            } else if self.heap.is_symbol(key) {
                 PropertyKey::symbol(key)
             } else {
                 continue;
@@ -34,12 +32,10 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn aggregate_error(&mut self, p: &ResidualProgram, errors: Vec<Value>) -> Result<Value, JsError> {
         let array_prototype = self.array_prototype_for_realm(self.realm.globals);
-        let errors = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let errors = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(array_prototype),
                 errors,
-            ),
-        });
+            ));
         let errors = self.heap.root(errors);
         let result = (|| {
             let message = self.heap.alloc_string("All promises were rejected".into());
@@ -67,7 +63,7 @@ impl<H: Host> Vm<H> {
         let intrinsic = self.heap.function(resolve).is_some_and(|function| {
             matches!(function.kind, FunctionKind::Native(Native::PromiseResolve))
                 && function.env.is_null()
-                && function.realm == self.realm.globals
+                && self.record_realm(function) == self.realm.globals
         });
         if intrinsic {
             return self.promise_resolve_for_constructor(p, constructor, value);

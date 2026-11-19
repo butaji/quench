@@ -19,7 +19,7 @@ fn setter_site_bit(site: usize) -> (usize, u64) {
 
 /// Whether a general store called a setter at the site at cache index `site`.
 #[inline(always)]
-fn met_setter(stack: &LaneStack, site: usize) -> bool {
+pub(super) fn met_setter(stack: &LaneStack, site: usize) -> bool {
     let (word, bit) = setter_site_bit(site);
     stack.setter_sites.get(word).is_some_and(|bits| bits & bit != 0)
 }
@@ -29,7 +29,7 @@ fn met_setter(stack: &LaneStack, site: usize) -> bool {
 /// (`Vm::set_field_uncached`): an ordinary object's own or inherited accessor, with no proxy
 /// up its chain to mediate an inherited one, which the site then caches. `None` for any other
 /// store, a private name's among them.
-fn stored_setter<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::Atom, site: usize) -> Option<Value> {
+pub(super) fn stored_setter<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::Atom, site: usize) -> Option<Value> {
     if let Some((_, setter)) = vm.cached_field_accessor(object, atom, site) {
         return setter;
     }
@@ -57,15 +57,15 @@ pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
         return None;
     }
     let setter = stored_setter(vm, object, i.imm(), site)?;
-    let target = lane_script_target(cx, setter).filter(|target| !target.forwards())?;
+    let target = script_target_in_lane(cx, setter).filter(|target| !target.forwards())?;
     // A trivial setter (`this.f = v`) is the store it makes (getters-as-calls.md): no call.
     if lane_forwarded_setter_store(vm, &target, object, site, setter, r.get(i.a)) {
         return Some(Resumed::At(r, following(ip), Carried::script(cx)));
     }
-    let this = lane_call_this(vm, &target, object)?;
+    let this = call_this_in_lane(vm, &target, object)?;
     // SAFETY: the record's value register is one of the running function's.
     let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };
-    Some(match lane_activate_kept::<H, false>(cx, r, ip, &target, stored, this) {
+    Some(match activate_kept_in_lane::<H, false>(cx, r, ip, &target, stored, this) {
         Ok((registers, next)) => {
             vm.lane_stack.recomplete_top(Completion::Assigns);
             Resumed::At(registers, next, Carried::script(cx))
@@ -127,7 +127,7 @@ enum SetterStore {
 /// what the setter returns, an assignment ignores (`Completion::Assigns`). A private name's
 /// store is left to the call (its home is the setter's).
 fn trivial_setter_store<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, object: Value) -> SetterStore {
-    if !target.entry.activates() || target.params == 0 || lane_direct_call_this(vm, target, object) != Some(object) {
+    if !target.entry.activates() || target.params == 0 || direct_call_this_in_lane(vm, target, object) != Some(object) {
         return SetterStore::Never;
     }
     let Some(code) = vm.programs.residual(target.program()) else {
@@ -143,7 +143,7 @@ fn trivial_setter_store<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, object: 
     if store.value != parameter || vm.is_private_name(store.atom) {
         return SetterStore::Never;
     }
-    // The setter is of the running program (`lane_script_target`), whose sites its store's are.
+    // The setter is of the running program (`script_target_in_lane`), whose sites its store's are.
     let cache = vm.field_cache_entry(store.site);
     let holds = vm.heap.object_record(object).is_some_and(|receiver| cache.holder == crate::vm::NO_FIELD_HOLDER && cache.receiver == receiver.exact_shape());
     if holds { SetterStore::Store(cache, store.atom) } else { SetterStore::NotYet }
@@ -175,7 +175,7 @@ pub(super) fn frame_completion(completion: Option<Completion>, payload: SidePayl
         Some(Completion::Assigns) => CallCompletion::Assigned,
         Some(Completion::ReadsTrapped | Completion::AssignsTrapped) => CallCompletion::Trapped(payload.trap()),
         Some(generator) if generator.is_generator() => {
-            CallCompletion::Generator(super::super::generator::GeneratorResume::new(generator == Completion::Generates))
+            CallCompletion::Generator(super::super::generator::GeneratorResume::new(generator.reuses_result()))
         }
         _ => CallCompletion::Value,
     }

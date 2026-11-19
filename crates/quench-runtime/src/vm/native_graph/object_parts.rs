@@ -93,7 +93,7 @@ pub(super) fn lower_object_entry(
         super::super::compiled::AheadTargets {
             body: &mut |builder, words| {
                 let callee = import_symbol(builder, &mut body_signature, symbols.0,
-                    super::super::compiled::lane_body_signature(isa.pointer_type(), isa.default_call_conv()));
+                    super::super::compiled::body_signature_in_lane(isa.pointer_type(), isa.default_call_conv()));
                 let results = builder.call_function(callee, words);
                 (results[0], results[1])
             },

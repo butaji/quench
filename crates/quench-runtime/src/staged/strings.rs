@@ -3,13 +3,15 @@
 //! string in a specializer's code. The record's form is read in place
 //! (`vm::wtf16::native_string`): the two ASCII forms and the UTF-16 one; a rope, a slice, an
 //! append-buffer prefix and a parts string are other tags, and leave at the row's `miss`.
-//! The interpreter reads the same units through `FlatUnits::view` (`builtins::concrete_*`).
+//! The interpreter reads the same units through `FlatUnits::view`: `concrete_char_code_at` and
+//! `concrete_char_at` take the string in either form (`ConcreteString`).
 
-use super::builtins::{UnitWidth, char_at_ascii, char_code_at};
+use super::builtins::{UnitWidth, char_at_ascii, char_at_ascii_within, char_code_at, char_code_at_within};
 use super::region::Region;
 use super::Stage;
 use crate::Value;
 use crate::vm::wtf16::native_string as form;
+use crate::vm::wtf16::{JsString, Units};
 
 /// A flat string's units as the words a row reads: the address of the first, how many there
 /// are, and whether each is two bytes (one) or one (zero).
@@ -27,18 +29,32 @@ pub(crate) struct FlatString<W> {
 pub(crate) fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
     -> Option<FlatString<S::Word>> {
     let (record, short, wide) = super::string_length::flat_record(stage, record_base, value, miss)?;
-    // Every form keeps the words of both layouts inside the record, so each is read and the
-    // form selects.
-    let pointer = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_POINTER_OFFSET);
-    let shared_units = stage.add_imm(pointer, form::shared_units_offset());
-    let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
-    let short_units = stage.add_imm(record, form::SHORT_UNITS_OFFSET);
-    let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
-    let units = stage.select(short, short_units, shared_units);
-    let length = stage.select(short, short_length, shared_length);
+    let units = record_units(stage, record, short);
+    let length = record_length(stage, record, short);
     let (one, zero) = (stage.constant(1), stage.constant(0));
     let wide = stage.select(wide, one, zero);
     Some(FlatString { units, length, wide })
+}
+
+/// The units of the flat string whose record is `record`, in the form `short` names: the record's
+/// own, else its shared buffer's. Every form keeps the words of both layouts inside the record, so
+/// each is read and the form selects. A record's suballocations may change when the VM runs, so a
+/// row reads them where it uses them, not held across a safepoint.
+#[inline(always)]
+pub(crate) fn record_units<S: Stage>(stage: &mut S, record: S::Word, short: S::Cond) -> S::Word {
+    let pointer = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_POINTER_OFFSET);
+    let shared_units = stage.add_imm(pointer, form::shared_units_offset());
+    let short_units = stage.add_imm(record, form::SHORT_UNITS_OFFSET);
+    stage.select(short, short_units, shared_units)
+}
+
+/// The length of the flat string whose record is `record`, in the form `short` names. A string's
+/// length never changes, so a loop may hold it (`loop_strings`).
+#[inline(always)]
+pub(crate) fn record_length<S: Stage>(stage: &mut S, record: S::Word, short: S::Cond) -> S::Word {
+    let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
+    let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
+    stage.select(short, short_length, shared_length)
 }
 
 /// `row` of `string` at its own width.
@@ -56,6 +72,24 @@ pub(crate) fn string_char_code_at<S: Stage>(stage: &mut S, string: FlatString<S:
     at_width(stage, string, |stage, width| char_code_at(stage, width, string.units, string.length, index, miss))
 }
 
+/// `string_char_code_at` of `string` for an index the caller proves below its length: the row with no
+/// bounds test (`builtins::char_code_at_within`).
+#[inline(always)]
+pub(crate) fn string_char_code_at_within<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    at_width(stage, string, |stage, width| char_code_at_within(stage, width, string.units, index, miss))
+}
+
+/// `string_char_at` for an index the caller proves below the string's length (`builtins::char_at_ascii_within`).
+#[inline(always)]
+pub(crate) fn string_char_at_within<S: Stage>(stage: &mut S, string: FlatString<S::Word>, index: S::Word, table: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    let present = stage.ne_imm(table, 0u32);
+    stage.guard(present, miss)?;
+    let unit = at_width(stage, string, |stage, width| char_at_ascii_within(stage, width, string.units, index, miss))?;
+    character_of_unit(stage, table, unit, miss)
+}
+
 /// `builtins::char_at_ascii` of `string`: the one-character string of the unit, from the
 /// table of those strings at `table` (`Heap::ascii_unit_strings_base`, zero before the first
 /// exists). `None` (leaving at `miss`) where the row leaves, or where the unit has no string
@@ -66,6 +100,13 @@ pub(crate) fn string_char_at<S: Stage>(stage: &mut S, string: FlatString<S::Word
     let present = stage.ne_imm(table, 0u32);
     stage.guard(present, miss)?;
     let unit = at_width(stage, string, |stage, width| char_at_ascii(stage, width, string.units, string.length, index, miss))?;
+    character_of_unit(stage, table, unit, miss)
+}
+
+/// The one-character string of the ASCII `unit` from the table at `table`, which the unit has once
+/// it is made (`leaving at miss` where it has none yet).
+#[inline(always)]
+fn character_of_unit<S: Stage>(stage: &mut S, table: S::Word, unit: S::Word, miss: S::Miss) -> Option<S::Word> {
     let offset = stage.mul_imm(unit, size_of::<Value>() as u64);
     let address = stage.add(table, offset);
     let character = stage.load_u64(Region::HeapMeta.mutable(), address, 0);
@@ -74,22 +115,53 @@ pub(crate) fn string_char_at<S: Stage>(stage: &mut S, string: FlatString<S::Word
     Some(character)
 }
 
-/// The interpreter's `string_char_code_at` of the string `value` among the records at
-/// `record_base`: `None` for a form the row does not read, which the caller reads through the
-/// string's units (`builtins::concrete_char_code_at`).
+/// A flat string a concrete caller holds, in either form: its record among the string records
+/// at `records`, read in place, or its units already viewed, which covers the forms a record
+/// read leaves.
+#[derive(Clone, Copy)]
+pub(crate) enum ConcreteString<'a> {
+    /// The string `value` among the string records at `records`.
+    Record { records: *const JsString, value: Value },
+    /// The units of a flat string.
+    Units(Units<'a>),
+}
+
+impl ConcreteString<'_> {
+    /// This string's units as the words a row reads, or `None` where a record read leaves.
+    #[inline(always)]
+    fn flat(self) -> Option<FlatString<u64>> {
+        match self {
+            Self::Record { records, value } => {
+                let mut stage = super::Concrete::new(std::ptr::null());
+                flat_string(&mut stage, records as u64, value.to_bits(), ())
+            }
+            Self::Units(units) => {
+                let wide = u64::from(matches!(units, Units::Wide(_)));
+                let (base, length) = match units {
+                    Units::Ascii(bytes) => (bytes.as_ptr() as u64, bytes.len() as u64),
+                    Units::Wide(units) => (units.as_ptr() as u64, units.len() as u64),
+                };
+                Some(FlatString { units: base, length, wide })
+            }
+        }
+    }
+}
+
+/// The interpreter's `string_char_code_at` of `string` at `index`; `None` where the row leaves,
+/// which the caller answers through the native.
 #[inline(always)]
-pub(crate) fn concrete_string_char_code_at(record_base: *const crate::vm::wtf16::JsString, value: Value, index: Value) -> Option<Value> {
+pub(crate) fn concrete_char_code_at(string: ConcreteString<'_>, index: Value) -> Option<Value> {
+    let string = string.flat()?;
     let mut stage = super::Concrete::new(std::ptr::null());
-    let string = flat_string(&mut stage, record_base as u64, value.to_bits(), ())?;
     string_char_code_at(&mut stage, string, index.to_bits(), ()).map(Value::from_bits)
 }
 
-/// The interpreter's `string_char_at` of the string `value`, from the table of one-unit strings
+/// The interpreter's `string_char_at` of `string` at `index`, from the table of one-unit strings
 /// at `table`; `None` where the row leaves.
 #[inline(always)]
-pub(crate) fn concrete_string_char_at(record_base: *const crate::vm::wtf16::JsString, table: *const Value, value: Value, index: Value) -> Option<Value> {
+pub(crate) fn concrete_char_at(string: ConcreteString<'_>, table: *const Value, index: Value) -> Option<Value> {
+    let string = string.flat()?;
     let mut stage = super::Concrete::new(std::ptr::null());
-    let string = flat_string(&mut stage, record_base as u64, value.to_bits(), ())?;
     string_char_at(&mut stage, string, index.to_bits(), table as u64, ()).map(Value::from_bits)
 }
 
@@ -145,5 +217,41 @@ mod tests {
         assert!(read(&heap, Value::integer(3), Value::integer(0)).is_none());
         let empty = Heap::new();
         assert!(read(&empty, slice, Value::integer(0)).is_none(), "no record base");
+    }
+
+    #[test]
+    fn char_code_at_reads_units_of_either_width_and_answers_nan_outside() {
+        let narrow = Units::Ascii(b"aZ");
+        let wide = [0x61u16, 0x20ac];
+        let wide = Units::Wide(&wide);
+        let at = |units, index: Value| concrete_char_code_at(ConcreteString::Units(units), index).map(Value::to_bits);
+        assert_eq!(at(narrow, Value::integer(1)), Some(Value::integer(0x5a).to_bits()));
+        assert_eq!(at(wide, Value::integer(1)), Some(Value::integer(0x20ac).to_bits()));
+        for index in [2, 100, -1, i32::MIN] {
+            assert_eq!(at(narrow, Value::integer(index)), Some(Value::NAN.to_bits()), "{index} is outside");
+        }
+        assert_eq!(at(Units::Ascii(b""), Value::integer(0)), Some(Value::NAN.to_bits()));
+        assert_eq!(at(narrow, Value::number(0.5)), None, "a double index leaves to the native");
+        assert_eq!(at(narrow, Value::UNDEFINED), None, "an absent index leaves to the native");
+    }
+
+    #[test]
+    fn char_at_answers_ascii_units_from_the_table_and_leaves_the_rest() {
+        let mut table = [Value::UNDEFINED; 128];
+        table[usize::from(b'y')] = Value::integer(7);
+        table[0x7f] = Value::integer(9);
+        let table = table.as_ptr();
+        let wide = [0x61u16, 0x20ac, 0x7f];
+        let wide = Units::Wide(&wide);
+        let at = |units, index: i32| concrete_char_at(ConcreteString::Units(units), table, Value::integer(index));
+        assert_eq!(at(Units::Ascii(b"xy"), 1), Some(Value::integer(7)));
+        assert_eq!(at(Units::Ascii(b"xy"), 0), None, "a unit with no string yet leaves to the native");
+        assert_eq!(at(wide, 1), None, "a unit past ASCII leaves");
+        assert_eq!(at(wide, 2), Some(Value::integer(9)), "the last ASCII unit stays");
+        assert_eq!(at(wide, 3), None, "outside leaves for the native's empty string");
+        assert_eq!(at(wide, -1), None);
+        assert_eq!(concrete_char_at(ConcreteString::Units(wide), table, Value::number(1.5)), None);
+        let no_table: *const Value = std::ptr::null();
+        assert_eq!(concrete_char_at(ConcreteString::Units(wide), no_table, Value::integer(2)), None, "no table yet");
     }
 }

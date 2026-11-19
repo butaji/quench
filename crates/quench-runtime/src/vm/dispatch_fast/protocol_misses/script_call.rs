@@ -3,7 +3,7 @@
 use super::super::*;
 
 // Parameter codes (the low byte of `protocol_family::SCRIPT_CALL | code`). The argument count of
-// `script_call_miss` is in bits 0-2 (`ANY_ARGC` is code 5, `ARGC_ANY`), and `PLAIN` is bit 3.
+// `script_call_miss` is in bits 0-2 (`ANY_ARGC` is 5), and `PLAIN` is bit 3.
 
 /// `script_call_miss::<0, false>`.
 pub(in crate::vm::dispatch_fast) const ARGC_0: u8 = 0;
@@ -75,6 +75,6 @@ pub(in crate::vm::dispatch_fast) const fn script_call_miss_of<H: Host>(parameter
         CROSS_PLAIN_2 => script_call_cross_plain_miss::<H, 2> as Handler,
         CROSS_PLAIN_3 => script_call_cross_plain_miss::<H, 3> as Handler,
         CROSS_PLAIN_4 => script_call_cross_plain_miss::<H, 4> as Handler,
-        _ => lane_general_step::<H>,
+        _ => general_step_in_lane::<H>,
     }
 }

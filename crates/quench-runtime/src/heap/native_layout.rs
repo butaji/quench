@@ -31,6 +31,13 @@ impl Heap {
         self.string_records.base_ptr()
     }
 
+    /// `string_record_base` untested, for a read that proves its receiver a direct string with a
+    /// record before it addresses the table.
+    #[inline(always)]
+    pub(crate) fn live_string_records(&self) -> *const JsString {
+        self.string_records.live_base()
+    }
+
     /// The table of one-unit ASCII strings by unit (`ascii_unit_strings`), `UNDEFINED` for a
     /// unit with no string yet: where native code reads `charAt`'s result. A collection
     /// empties it, so a reader takes the base again after any safepoint.

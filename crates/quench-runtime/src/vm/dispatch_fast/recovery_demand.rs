@@ -11,8 +11,8 @@ impl LaneRecoverySpace {
 
 /// Records that a body call into `own` found the stacks short of its body's room.
 pub(super) fn note_short<H: Host>(vm: &Vm<H>, own: &LaneView) {
-    let Some(method) = own.lane_body() else { return };
-    super::lane_body_refused(vm, own);
+    let Some(method) = own.body_view_in_lane() else { return };
+    super::body_refused_in_lane(vm, own);
     vm.lane_stack.recovery_demand.set(vm.lane_stack.recovery_demand.get().max(method.recovery_space()));
 }
 

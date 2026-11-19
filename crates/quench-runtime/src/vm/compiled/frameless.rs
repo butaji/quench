@@ -25,9 +25,7 @@ pub(super) use admission::general_frameless_admit;
 const WINDOW_VALUES: usize = 1 << 16;
 const SHADOW_RECORDS: usize = 1 << 12;
 const CACHE_ENTRIES: usize = 256;
-/// Recoveries of one function's frameless activations in one collection epoch after which
-/// its calls keep frames for the rest of the epoch.
-const MATERIALIZATION_LIMIT: u32 = 16;
+use crate::vm::compiled::tier_policy::MATERIALIZATION_LIMIT;
 /// `CallEntry::meta`'s fields above its function: the register count, then the parameter count.
 const META_REGISTERS: u32 = u32::BITS;
 const META_PARAMS: u32 = META_REGISTERS + u16::BITS;
@@ -72,7 +70,8 @@ struct CallEntry {
 /// while one is live, since every exit from native code makes their frames first.
 pub(crate) struct Frameless {
     /// The windows, shadow records and call cache, made when native code first binds them
-    /// (`bind`): a VM that runs no native body keeps none of their 0.6 MiB resident.
+    /// (`bind`): a VM that runs no native body keeps none of them, and one that does commits
+    /// only the pages its activations reach (`zeroed_boxed_slice`), not their 0.6 MiB.
     stacks: std::sync::OnceLock<FramelessStacks>,
     /// Each function's last admission, by function index, with its program and closure
     /// environment: a fresh closure of it shares all but its callee and captures (`admit`).
@@ -101,13 +100,36 @@ struct FramelessStacks {
 
 impl FramelessStacks {
     fn new() -> Self {
-        let empty = ShadowRecord { call_pc: 0, this: Value::UNDEFINED, callee: Value::UNDEFINED };
-        Self {
-            windows: vec![Value::UNDEFINED; WINDOW_VALUES].into_boxed_slice(),
-            shadow: vec![empty; SHADOW_RECORDS].into_boxed_slice(),
-            cache: vec![CallEntry::default(); CACHE_ENTRIES].into_boxed_slice(),
+        // SAFETY: each element type is a struct of `u64` words (`Value` wraps one), for which
+        // all-zero bytes are a valid value. A window is written before it is read
+        // (`fill_window`), a shadow record is read only below the top a push advanced past it,
+        // and an empty call entry is `CallEntry::default()`.
+        unsafe {
+            Self {
+                windows: zeroed_boxed_slice(WINDOW_VALUES),
+                shadow: zeroed_boxed_slice(SHADOW_RECORDS),
+                cache: zeroed_boxed_slice(CACHE_ENTRIES),
+            }
         }
     }
+}
+
+/// A boxed slice of `len` zeroed elements. The allocation is zeroed by the allocator, which
+/// backs a large one with fresh pages it commits by first touch: the stack pays resident
+/// memory only for the entries a run reaches, not for all of them at binding.
+///
+/// # Safety
+/// All-zero bytes are a valid `T`.
+unsafe fn zeroed_boxed_slice<T>(len: usize) -> Box<[T]> {
+    let layout = std::alloc::Layout::array::<T>(len).expect("frameless stack layout");
+    // SAFETY: the layout is nonzero-sized, as every stack holds entries.
+    let base = unsafe { std::alloc::alloc_zeroed(layout) }.cast::<T>();
+    if base.is_null() {
+        std::alloc::handle_alloc_error(layout);
+    }
+    // SAFETY: `len` zeroed elements the box owns, freed by `Box`'s deallocation with the same
+    // layout; zeroed bytes are valid per the caller's contract.
+    unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(base, len)) }
 }
 
 impl Frameless {
@@ -134,6 +156,12 @@ impl Frameless {
     /// Whether the payload runs inside a frameless activation.
     pub(super) fn inside(&self, dispatch: &JsStepDispatch) -> bool {
         dispatch.shadow_top != self.stacks().shadow.as_ptr() as usize
+    }
+
+    /// The count of the frameless activations the payload runs inside, its innermost's depth:
+    /// distinct for every one live at once in one native entry (`lane_allocations::regexp_argument_key`).
+    pub(super) fn depth(&self, dispatch: &JsStepDispatch) -> usize {
+        dispatch.shadow_top.saturating_sub(self.stacks().shadow.as_ptr() as usize) / size_of::<ShadowRecord>()
     }
 
     /// Forgets every admission (`Vm::clear_call_targets`).
@@ -176,7 +204,7 @@ fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir:
     let cached = emit(builder).raw_binary(Binary::Add, cache, offset);
     let named = emit(builder).raw_load(Lane::I64, regions::heap_meta(), cached, std::mem::offset_of!(CallEntry, callee) as i32);
     let epoch = emit(builder).raw_load(Lane::I64, regions::heap_meta(), cached, std::mem::offset_of!(CallEntry, epoch) as i32);
-    let current = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, epoch));
+    let current = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.epoch));
     let same = emit(builder).raw_compare(Relation::Equal, named, callee);
     let fresh = emit(builder).raw_compare(Relation::Equal, epoch, current);
     let hit = emit(builder).raw_binary(Binary::And, same, fresh);
@@ -218,7 +246,7 @@ pub(super) fn chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch
     }).collect();
     if let Some(last) = records.last() {
         let last_function = admitted_function(vm, last.link.callee);
-        let epoch = vm.heap.collection_epoch();
+        let epoch = vm.cache_epochs.gc;
         let (leaves, counted) = vm.frameless.materializations.entry((dispatch.program_id.raw(), last_function)).or_default();
         if *counted != epoch { (*leaves, *counted) = (0, epoch); }
         *leaves += 1;

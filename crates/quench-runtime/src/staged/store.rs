@@ -3,12 +3,12 @@
 //! interpreter runs it on `Concrete`; a specializer emits it from the same rows.
 
 use super::narrow::{NOT_NARROW, UPPER_WORD};
-use super::object::{inline_storage, Rep, HALF_BYTES};
+use super::object::{inline_storage, HALF_BYTES};
 use super::slot_store::{admitted_payload, gate_open, gated_payload, store_flat};
 use super::Stage;
 use super::region::Region;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-use crate::typed_ir::Type;
+use crate::typed_ir::{Representation, Type};
 use crate::value::{NarrowLayout, ValueLayout, LOWER_WORD};
 use crate::{Value, ValueType};
 
@@ -34,7 +34,7 @@ pub(crate) fn narrow_form<S: Stage>(stage: &mut S, value: S::Word, fact: Type) -
 fn any_narrow_form<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
     let upper = stage.and_imm(value, UPPER_WORD);
     let is_int = stage.eq_imm(upper, ValueLayout::INT_TAG);
-    stage.choose(is_int, |stage| integer_form(stage, value), |stage| reference_form(stage, value, upper))
+    stage.choose(is_int, #[inline(always)] |stage| integer_form(stage, value), #[inline(always)] |stage| reference_form(stage, value, upper))
 }
 
 /// Whether the int32 `value`'s biased low word is below the narrow integer span: it has a narrow form.
@@ -114,7 +114,7 @@ pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::
 fn own_store_formed<S: Stage>(stage: &mut S, (record, payload, slot): (S::Word, S::Word, u16),
     value: S::Word, packed: bool, miss: S::Miss) -> Option<()> {
     if !packed {
-        store_flat(stage, payload, slot, (value, Rep::Tagged));
+        store_flat(stage, payload, slot, (value, Representation::Tagged));
         return Some(());
     }
     let narrow = any_narrow_form(stage, value);
@@ -153,7 +153,7 @@ fn own_store_with<S: Stage>(stage: &mut S, (record, payload, slot): (S::Word, S:
         stage.store_u32(Region::Payload.mutable(), address, 0, narrow);
         stage.constant(0)
     }, |stage| {
-        store_flat(stage, payload, slot, (value, Rep::Tagged));
+        store_flat(stage, payload, slot, (value, Representation::Tagged));
         stage.constant(0)
     });
     Some(())
@@ -169,7 +169,7 @@ pub(crate) fn own_store_raw<S: Stage>(stage: &mut S, record: S::Word, slot: u16,
     let run = super::object::flat_run(stage, payload, miss)?;
     let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64);
     let address = stage.add_imm(run, offset);
-    super::slot_store::store_word(stage, address, number, Rep::Float64);
+    super::slot_store::store_word(stage, address, number, Representation::Float64);
     Some(())
 }
 
@@ -256,7 +256,7 @@ pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id:
         // The arena form: the payload is the run's start (`Object::plain_arena_start`).
         // SAFETY: a live record, read before any write.
         let start = unsafe { (*record).proved_arena_start() };
-        if !heap.store_unlogged(super::RecordSpace::Object, record_id, value) {
+        if !heap.store_unlogged(super::StagedRecordSpace::Object, record_id, value) {
             return false;
         }
         // SAFETY: the layout matched, so its run holds `slot`; the gate admitted the write.
@@ -270,7 +270,7 @@ pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id:
     // store, which changes nothing on a miss.
     // SAFETY: a live record, read before any write.
     if let Some(start) = unsafe { (*record).formed_plain_start(shape) } {
-        if !heap.store_unlogged(super::RecordSpace::Object, record_id, value) {
+        if !heap.store_unlogged(super::StagedRecordSpace::Object, record_id, value) {
             return false;
         }
         // SAFETY: the shape matched, so its run holds `slot`; the gate admitted the write.
@@ -300,7 +300,7 @@ pub(crate) unsafe fn concrete_narrow_store(heap: &mut crate::heap::Heap, record_
     let Some(narrow) = value.to_narrow() else {
         return false;
     };
-    if !heap.store_unlogged(super::RecordSpace::Object, record_id, value) {
+    if !heap.store_unlogged(super::StagedRecordSpace::Object, record_id, value) {
         return false;
     }
     // SAFETY: the shape matched, so the run's halves hold `slot`; the gate admitted the write.
@@ -311,7 +311,7 @@ pub(crate) unsafe fn concrete_narrow_store(heap: &mut crate::heap::Heap, record_
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::heap::{Cell, Heap, Object};
+    use crate::heap::{Heap, Object};
     use crate::Value;
 
     /// An object of `count` int32 properties, in packed inline storage where they fit.
@@ -319,7 +319,7 @@ mod tests {
         for shape in 1..=count as u32 {
             heap.register_property_shape(shape, shape as usize, None);
         }
-        let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let object = heap.alloc_object(Object::new(Value::NULL));
         for shape in 1..=count as u32 {
             heap.property_add(object, Value::integer(0), shape);
         }
@@ -342,7 +342,7 @@ mod tests {
     fn a_packed_store_takes_integers_references_and_constants_and_leaves_the_rest() {
         let mut heap = Heap::new();
         let (object, shape) = object_of(&mut heap, 2);
-        let other = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let other = heap.alloc_object(Object::new(Value::NULL));
         for value in [Value::integer(-7), Value::integer(1 << 20), other, Value::NULL, Value::UNDEFINED, Value::TRUE, Value::FALSE] {
             assert!(store(&mut heap, object, shape, 1, value), "{value:?}");
             assert_eq!(read(&heap, object, shape, 1), Some(value));

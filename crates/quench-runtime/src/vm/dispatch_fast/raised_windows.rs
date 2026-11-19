@@ -18,7 +18,8 @@ pub(super) fn settle_raised_window<H: Host>(cx: *mut LaneContext<H>, record: Ip)
     }
     let depth = vm.lane_stack.activation_count().checked_sub(1)?;
     let activation = vm.lane_stack.top_frame()?;
-    let script = activation.script().filter(|script| script.completion.is_windowed())?;
+    // An in-place request's throw fails it where its frame unwinds (`fail_materialized_request`).
+    let script = activation.script().filter(|script| script.completion.is_windowed() && script.completion != Completion::AsyncRequest)?;
     if vm.lane_stack.iterators.last().is_some_and(|(owner, _)| *owner == depth) {
         return None;
     }
@@ -30,7 +31,7 @@ pub(super) fn settle_raised_window<H: Host>(cx: *mut LaneContext<H>, record: Ip)
     }
     let owner = unsafe { (*cx).root };
     let popped = vm.lane_stack.pop_activation()?;
-    lane_restore_caller(cx, &popped);
+    restore_caller_in_lane(cx, &popped);
     Some(match (owner, script.completion) {
         (LaneRoot::Job(job), Completion::ResumesJob) => {
             vm.finish_job_window(job);
@@ -38,7 +39,7 @@ pub(super) fn settle_raised_window<H: Host>(cx: *mut LaneContext<H>, record: Ip)
         }
         _ => {
             vm.finish_generator_window(script.callee);
-            lane_raised_exit(cx, activation.call())
+            raised_exit_in_lane(cx, activation.call())
         }
     })
 }

@@ -37,12 +37,10 @@ impl<H: Host> Vm<H> {
         callee: Value,
     ) -> Option<(super::ProgramId, u32, Value)> {
         match self.heap.function(callee) {
-            Some(FunctionRecord {
-                kind: FunctionKind::User(program, id),
-                env,
-                realm,
-                ..
-            }) if *realm == self.realm.globals => Some((*program, *id, *env)),
+            Some(record) if self.record_realm(record) == self.realm.globals => match record.kind {
+                FunctionKind::User(program, id) => Some((program, id, record.env)),
+                FunctionKind::Native(_) => None,
+            },
             Some(_) => None,
             // A call-only closure of the running program (`Value::known_closure`).
             None => callee.as_known_closure().map(|(id, env)| (self.active_program, id, env)),
@@ -75,7 +73,10 @@ impl<H: Host> Vm<H> {
     /// `args`, answered without the general call path. `None` leaves the call to it: a call
     /// outside the method's admission, or one that fails, which the general path repeats
     /// to raise the same error, since the attempt had no observable effect.
-    #[inline(never)]
+    ///
+    /// Inlined into each caller, so a caller with a constant native folds the admission and
+    /// the body choice to that one body.
+    #[inline(always)]
     pub(super) fn pure_string_method_call(
         &mut self,
         p: &ResidualProgram,
@@ -83,23 +84,50 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Option<Value> {
-        if !native.is_pure_string_method()
-            || !self.heap.is_string(receiver)
-            || args.iter().any(|argument| self.is_object_like(*argument))
-        {
+        if !self.pure_string_admitted(native, receiver, args) {
             return None;
         }
-        if let Some(value) = self.string_search_in_place(native, receiver, args) {
+        if let Some(value) = self.pure_string_in_place(native, receiver, args) {
             return Some(value);
         }
-        if let Some(value) = self.substring_in_place(native, receiver, args) {
-            return Some(value);
+        // The general body, which tries the same in-place body first, skips it this once.
+        self.declined_fast = Some(native);
+        self.pure_string_general(p, native, receiver, args)
+    }
+
+    /// The admission of `pure_string_method_call`: a pure String method on a string receiver,
+    /// with no object-like argument.
+    #[inline(always)]
+    fn pure_string_admitted(&self, native: Native, receiver: Value, args: &[Value]) -> bool {
+        native.is_pure_string_method()
+            && self.heap.is_string(receiver)
+            && !args.iter().any(|argument| self.is_object_like(*argument))
+    }
+
+    /// The one in-place body that serves `native` among the pure String methods, or `None`
+    /// where that body leaves the call to `pure_string_general`. Each native belongs to one
+    /// body only, so no other body is tried.
+    #[inline(always)]
+    fn pure_string_in_place(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
+        match native {
+            Native::StringIndexOf | Native::StringLastIndexOf | Native::StringIncludes | Native::StringStartsWith
+            | Native::StringEndsWith =>
+                self.string_search_in_place(native, receiver, args),
+            Native::StringSlice | Native::StringSubstring | Native::StringSubstr =>
+                self.substring_in_place(native, receiver, args),
+            Native::StringSplit => self.split_in_place(native, receiver, args),
+            Native::StringToUpperCase | Native::StringToLowerCase | Native::StringTrim | Native::StringTrimStart
+            | Native::StringTrimEnd | Native::StringPadStart | Native::StringPadEnd | Native::StringRepeat =>
+                self.ascii_text_method(native, receiver, args),
+            _ => None,
         }
-        if let Some(value) = self.split_in_place(native, receiver, args) {
-            return Some(value);
-        }
+    }
+
+    /// A pure String method's general call: `call_primitive_native`, whose result is the
+    /// call's value. A string method reads its receiver as text, which it may make on demand.
+    #[inline(never)]
+    fn pure_string_general(&mut self, p: &ResidualProgram, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         let result = self.call_primitive_native(p, native, receiver, args).ok();
-        // A string method reads its receiver as text, which it may make on demand.
         self.heap.charge_materialized_text();
         result
     }
@@ -208,37 +236,13 @@ impl<H: Host> Vm<H> {
             }
             Native::StringCharCodeAt => {
                 let index = self.argument_integer(p, args, 0, 0)?;
-                let Some(text) = self.heap.string(this) else {
-                    return Err(JsError("string method receiver is not a string".into()));
-                };
-                let unit = index
-                    .try_into()
-                    .ok()
-                    .and_then(|index: usize| text.units().get(index));
-                Ok(unit.map_or_else(
-                    || Value::number(f64::NAN),
-                    |unit| Value::number(unit.into()),
-                ))
+                self.string_char_code_at_core(this, Value::number(index as f64))
+                    .ok_or_else(|| JsError("string method receiver is not a string".into()))
             }
             Native::StringCharAt => {
                 let index = self.argument_integer(p, args, 0, 0)?;
-                let Some(receiver) = self.heap.string(this).cloned() else {
-                    return Err(JsError("string method receiver is not a string".into()));
-                };
-                let Some(index) = usize::try_from(index).ok() else {
-                    return Ok(self
-                        .heap
-                        .alloc_string(super::wtf16::JsString::from_units(&[])));
-                };
-                let units = receiver.units();
-                if let Some(value) = units.get(index).and_then(|unit| self.ascii_unit_string(unit)) {
-                    return Ok(value);
-                }
-                let value = units.get_range(index..index + 1).map_or_else(
-                    || super::wtf16::JsString::from_units(&[]),
-                    super::wtf16::JsString::from_unit_run,
-                );
-                Ok(self.heap.alloc_string(value))
+                self.string_char_at_core(this, Value::number(index as f64))
+                    .ok_or_else(|| JsError("string method receiver is not a string".into()))
             }
             Native::StringSlice | Native::StringSubstring => {
                 let text = self.string_receiver_text(this)?;
@@ -249,95 +253,17 @@ impl<H: Host> Vm<H> {
             }
             Native::StringSubstr => {
                 let text = self.string_receiver_text(this)?;
-                let units = text.units();
-                let length = units.len() as i64;
-                let raw_start = self.argument_integer(p, args, 0, 0)?;
-                let start = if raw_start < 0 {
-                    (length + raw_start).max(0)
-                } else {
-                    raw_start.min(length)
-                };
-                let count = self.argument_integer(p, args, 1, length - start)?.max(0);
-                let end = start.saturating_add(count).min(length);
-                self.string_substring(&text, start as usize..end as usize)
+                let length = text.units().len() as i64;
+                let start = self.argument_integer(p, args, 0, 0)?;
+                let count = self.argument_integer(p, args, 1, in_place::SUBSTR_REST)?;
+                self.string_substring(&text, in_place::substr_range(length, start, count))
             }
-            Native::StringIncludes | Native::StringStartsWith | Native::StringEndsWith => {
-                let Some(receiver) = self.heap.string(this).cloned() else {
-                    return Err(JsError("string method receiver is not a string".into()));
-                };
-                let search_value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if self.regexp_is_regexp(p, search_value)? {
-                    return Err(self.type_error(p, "search string cannot be a RegExp".into()));
-                }
-                let search = self.coerce_js_string(p, search_value)?;
-                let length = receiver.units().len();
-                let position_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                let position = if native == Native::StringEndsWith && position_value.is_undefined()
-                {
-                    length
-                } else {
-                    let number = self.to_number(p, position_value)?;
-                    if number.is_nan() || number <= 0.0 {
-                        0
-                    } else if number.is_infinite() || number >= length as f64 {
-                        length
-                    } else {
-                        number.trunc() as usize
-                    }
-                };
-                let matched = match native {
-                    Native::StringIncludes => {
-                        receiver.find_units(search.units(), position).is_some()
-                    }
-                    Native::StringStartsWith => receiver
-                        .units()
-                        .slice(position..receiver.units().len())
-                        .starts_with(search.units()),
-                    Native::StringEndsWith => {
-                        let start = position.saturating_sub(search.units().len());
-                        receiver.units().slice(start..position) == search.units()
-                    }
-                    _ => unreachable!(),
-                };
-                Ok(if matched { Value::TRUE } else { Value::FALSE })
-            }
-            Native::StringIndexOf | Native::StringLastIndexOf => {
-                let Some(receiver) = self.heap.string(this).cloned() else {
-                    return Err(JsError("string method receiver is not a string".into()));
-                };
-                let search =
-                    self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let text = receiver.units();
-                let result = if native == Native::StringIndexOf {
-                    let start = self
-                        .to_number(p, args.get(1).copied().unwrap_or_else(|| Value::number(0.0)))?
-                        .max(0.0)
-                        .trunc() as usize;
-                    receiver.find_units(search.units(), start)
-                } else {
-                    let position = self.to_number(
-                        p,
-                        args.get(1)
-                            .copied()
-                            .unwrap_or_else(|| Value::number(text.len() as f64)),
-                    )?;
-                    let position = if position.is_nan() {
-                        text.len()
-                    } else {
-                        position.max(0.0).min(text.len() as f64).trunc() as usize
-                    };
-                    super::string::rfind_utf16(text, search.units(), position)
-                };
-                Ok(Value::number(result.map_or(-1.0, |index| index as f64)))
-            }
-            Native::StringReplace => match self.replace_in_place(native, this, args) {
-                Some(value) => Ok(value),
-                None => self.string_replace_native(p, this, args, false),
-            },
-            Native::StringReplaceAll => match self.replace_in_place(native, this, args) {
-                Some(value) => Ok(value),
-                None => self.string_replace_native(p, this, args, true),
-            },
+            Native::StringIndexOf | Native::StringLastIndexOf | Native::StringIncludes | Native::StringStartsWith
+            | Native::StringEndsWith => self.string_search_general(p, native, this, args),
+            // `string_replace_native` tries `replace_string_pattern` first.
+            Native::StringReplace => self.string_replace_native(p, this, args, false),
+            // `string_replace_native` tries `replace_string_pattern` first.
+            Native::StringReplaceAll => self.string_replace_native(p, this, args, true),
             Native::StringSplit => self.string_split_native(p, this, args),
             Native::StringTrim | Native::StringTrimStart | Native::StringTrimEnd => {
                 let Some(receiver) = self.heap.string(this).cloned() else {
@@ -410,8 +336,9 @@ impl<H: Host> Vm<H> {
                 if size <= REPEAT_COPY_MAX_UNITS
                     && let Some(super::wtf16::Units::Ascii(bytes)) = receiver.existing_units()
                 {
-                    let text: smallvec::SmallVec<[u8; 64]> = bytes.iter().copied().cycle().take(size).collect();
-                    return Ok(self.heap.alloc_string(super::wtf16::JsString::from_ascii_bytes(&text)));
+                    let mut text = smallvec::SmallVec::<[u8; REPEAT_COPY_MAX_UNITS]>::from_elem(0, size);
+                    super::wtf16::repeat_ascii_into(&mut text, bytes);
+                    return Ok(self.heap.alloc_ascii_run(&text));
                 }
                 Ok(self.heap.alloc_string(receiver.repeat(count)))
             }
@@ -448,7 +375,7 @@ impl<H: Host> Vm<H> {
                         bytes.extend(padding);
                         bytes.extend_from_slice(text);
                     }
-                    return Ok(self.heap.alloc_string(super::wtf16::JsString::from_ascii_bytes(&bytes)));
+                    return Ok(self.heap.alloc_ascii_run(&bytes));
                 }
                 let receiver_units = receiver.units().to_vec();
                 let fill_len = target - receiver_units.len();
@@ -536,48 +463,26 @@ impl<H: Host> Vm<H> {
             }
             Native::ParseInt => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let text = self.to_string(p, value)?;
+                // A string argument is read in place; any other is converted by ToString first.
+                let text = if self.heap.is_string(value) { None } else { Some(self.to_string(p, value)?) };
                 let radix = match args.get(1).copied() {
                     Some(value) => crate::value::number_to_u32(self.to_number(p, value)?) as i32,
                     None => 0,
                 };
-                Ok(Value::number(super::string_extra::parse_integer(
-                    &text, radix,
-                )))
+                Ok(Value::number(match (&text, self.heap.string(value)) {
+                    (None, Some(string)) => string.read_units(|units| super::string_extra::parse_integer_units(units, radix)),
+                    _ => super::string_extra::parse_integer(text.as_deref().unwrap_or_default(), radix),
+                }))
             }
             Native::NumberParseFloat => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if let Some(string) = self.heap.string(value) {
+                    return Ok(Value::number(string.read_units(super::number::parse_float_units)));
+                }
                 let text = self.to_string(p, value)?;
                 Ok(Value::number(super::number::parse_float(&text)))
             }
-            Native::MathFloor
-            | Native::MathAbs
-            | Native::MathCeil
-            | Native::MathRound
-            | Native::MathTrunc
-            | Native::MathSqrt
-            | Native::MathSign
-            | Native::MathAcos
-            | Native::MathAsin
-            | Native::MathAtan
-            | Native::MathCos
-            | Native::MathExp
-            | Native::MathSin
-            | Native::MathTan
-            | Native::MathAcosh
-            | Native::MathAsinh
-            | Native::MathAtanh
-            | Native::MathCbrt
-            | Native::MathCosh
-            | Native::MathExpm1
-            | Native::MathFround
-            | Native::MathLog10
-            | Native::MathLog1p
-            | Native::MathLog2
-            | Native::MathSinh
-            | Native::MathTanh
-            | Native::MathClz32
-            | Native::MathF16Round => {
+            native if super::number::is_math_unary(native) => {
                 let value = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 Ok(Value::number(
                     super::number::math_unary(native, value).expect("a unary Math native"),
@@ -586,9 +491,8 @@ impl<H: Host> Vm<H> {
             Native::MathAtan2 => {
                 let y = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let x = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                let y = self.to_number(p, y)?;
-                let x = self.to_number(p, x)?;
-                Ok(Value::number(super::fdlibm_math::atan2(y, x)))
+                let numbers = [self.to_number(p, y)?, self.to_number(p, x)?];
+                Ok(Value::number(super::number::math_numbers(native, &numbers).expect("Math.atan2")))
             }
             Native::MathMin | Native::MathMax => {
                 let mut numbers = smallvec::SmallVec::<[f64; super::number::MATH_INLINE_ARGUMENTS]>::new();
@@ -670,6 +574,30 @@ impl<H: Host> Vm<H> {
         range: std::ops::Range<usize>,
     ) -> Result<Value, JsError> {
         Ok(self.heap.alloc_string(text.substring(range)))
+    }
+
+    /// The general body of `indexOf`, `lastIndexOf`, `includes`, `startsWith` and `endsWith`: the
+    /// receiver's text, the RegExp check of `includes`, `startsWith` and `endsWith`, the search's
+    /// ToString and the position's ToNumber run in that order, each possibly running guest code.
+    /// The search itself is `in_place::search_result` from the clamped position, as the in-place
+    /// body makes it.
+    fn string_search_general(&mut self, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+        let Some(receiver) = self.heap.string(this).cloned() else {
+            return Err(JsError("string method receiver is not a string".into()));
+        };
+        let search_value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let is_regexp_checked = matches!(native, Native::StringIncludes | Native::StringStartsWith | Native::StringEndsWith);
+        if is_regexp_checked && self.regexp_is_regexp(p, search_value)? {
+            return Err(self.type_error(p, "search string cannot be a RegExp".into()));
+        }
+        let search = self.coerce_js_string(p, search_value)?;
+        let length = receiver.units().len();
+        let number = match args.get(1).copied() {
+            Some(value) if !value.is_undefined() => self.to_number(p, value)?,
+            _ => in_place::search_default(native, length),
+        };
+        let position = in_place::clamped_position(native, number, length);
+        Ok(in_place::search_result(native, receiver.units(), search.units(), position))
     }
 
     /// `String.fromCharCode` of Numbers, whose ToNumber runs no guest code; `None` when any

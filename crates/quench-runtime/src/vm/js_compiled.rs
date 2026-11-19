@@ -4,7 +4,7 @@
 //! semantic SSA specializer that frameless JIT bodies and linked AOT regions share
 //! (`compile_js_typed_numeric_region`): an interpreter change reaches it.
 
-use crate::bytecode::{Function, ProgramKind, ResidualProgram, Traits};
+use crate::bytecode::{Function, LazyFlag, ProgramKind, ResidualProgram, Traits};
 
 /// Native code and its result interpretation for a JavaScript function.
 pub(super) struct JsJitArtifact {
@@ -15,10 +15,7 @@ pub(super) struct JsJitArtifact {
     pub(super) result: super::compiled::NativeNumberResult,
 }
 
-// Keep native regions short so an interpreter interrupt cannot be delayed by a large body.
-const MAX_INSTRUCTIONS: usize = 256;
-const MAX_REGISTERS: usize = 256;
-pub(crate) const MAX_CODE_BYTES: usize = 64 * 1024;
+use crate::vm::compiled::tier_policy::{JS_COMPILED_MAX_INSTRUCTIONS, JS_COMPILED_MAX_REGISTERS};
 const MAX_PARAMETERS: usize = 8;
 
 /// Compile `function_id` as a numeric function through the shared semantic SSA specializer;
@@ -31,7 +28,7 @@ pub(super) fn compile(program: &ResidualProgram, function_id: u32) -> Option<JsJ
 
 /// The numeric function's image, compiling on the code generator's thread (`NumericImage::start`);
 /// `None` where `compile` would decline before compiling.
-pub(super) fn start(program: &ResidualProgram, function_id: u32) -> Option<super::jit_backend::Pending<Option<super::compiled::NumericImage>>> {
+pub(super) fn start(program: &ResidualProgram, function_id: u32) -> Option<super::jit_backend::OffThread<Option<super::compiled::NumericImage>>> {
     admitted(program, function_id)?;
     super::compiled::NumericImage::start(program, function_id)
 }
@@ -51,10 +48,10 @@ pub(super) fn candidate_rejection_reason(program: &ResidualProgram, function_id:
     if function.code.is_empty() {
         return "empty-function";
     }
-    if function.code.len() > MAX_INSTRUCTIONS {
+    if function.code.len() > JS_COMPILED_MAX_INSTRUCTIONS {
         return "bytecode-limit";
     }
-    if usize::from(function.registers) > MAX_REGISTERS {
+    if usize::from(function.registers) > JS_COMPILED_MAX_REGISTERS {
         return "register-limit";
     }
     if usize::from(function.params) > MAX_PARAMETERS {
@@ -67,14 +64,14 @@ pub(super) fn candidate_rejection_reason(program: &ResidualProgram, function_id:
 }
 
 pub(super) fn function_candidate(function: &Function, program: &ResidualProgram) -> bool {
-    *function.js_tier_candidate.get_or_init(|| scanned_function_candidate(function, program))
+    function.lazy_flag(LazyFlag::JsTierCandidate, || scanned_function_candidate(function, program))
 }
 
 fn scanned_function_candidate(function: &Function, program: &ResidualProgram) -> bool {
     !function.code.is_empty()
-        && function.code.len() <= MAX_INSTRUCTIONS
+        && function.code.len() <= JS_COMPILED_MAX_INSTRUCTIONS
         && function.wide.is_empty()
-        && usize::from(function.registers) <= MAX_REGISTERS
+        && usize::from(function.registers) <= JS_COMPILED_MAX_REGISTERS
         && usize::from(function.params) <= MAX_PARAMETERS
         && eligible(function, program)
 }
@@ -88,7 +85,7 @@ pub(super) fn eligible(function: &Function, program: &crate::bytecode::ResidualP
         || function.is_class_constructor
         || function.derived_constructor
         || function.class_initializer
-        || function.instance_initializer.is_some()
+        || function.instance_initializer().is_some()
         || function.rest
         || !function.simple_parameters
         || !function.handlers.is_empty()

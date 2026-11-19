@@ -1,9 +1,9 @@
-use super::{OCCUPANCY_WORD_BITS, PromotionAge, RECORD_SPACE_CAPACITY, RECORDS_PER_BLOCK, RecordSpace};
+use super::{OCCUPANCY_WORD_BITS, PromotionAge, RECORDS_PER_BLOCK, RESERVE_MIN_BLOCKS, RecordSpace, TEST_RECORD_CAPACITY};
 use std::mem::size_of;
 
 #[test]
 fn newborn_words_exclude_logged_old_records_and_restore_their_marks() {
-    let mut arena: RecordSpace<u64> = RecordSpace::default();
+    let mut arena: RecordSpace<u64, TEST_RECORD_CAPACITY> = RecordSpace::default();
     let old: Vec<_> = (0..=OCCUPANCY_WORD_BITS)
         .map(|value| arena.try_insert(value as u64).unwrap())
         .collect();
@@ -58,7 +58,7 @@ fn reserved_record_base_is_absent_until_reserved_and_then_stable() {
 
 #[test]
 fn object_record_addresses_are_dense_and_reuse_vacancies() {
-    let mut arena: RecordSpace<_> = RecordSpace::default();
+    let mut arena: RecordSpace<_, TEST_RECORD_CAPACITY> = RecordSpace::default();
     let first = arena.try_insert(String::from("first")).unwrap();
     let second = arena.try_insert(String::from("second")).unwrap();
     // SAFETY: both ids were returned by successful insertions and remain live.
@@ -76,7 +76,7 @@ fn object_record_addresses_are_dense_and_reuse_vacancies() {
     assert_eq!(last as usize, RECORDS_PER_BLOCK);
     // SAFETY: the first id remains live after the second block is added.
     assert_eq!(unsafe { arena.get_live(first) }, "first");
-    const { assert!(RECORD_SPACE_CAPACITY > RECORDS_PER_BLOCK) };
+    const { assert!(TEST_RECORD_CAPACITY > RECORDS_PER_BLOCK) };
     assert_eq!(arena.remove_live(first), "first");
     assert_eq!(arena.try_insert(String::from("reused")).unwrap(), first);
     // SAFETY: the slot-index id was reinitialized by the insertion above.
@@ -87,7 +87,7 @@ fn object_record_addresses_are_dense_and_reuse_vacancies() {
 fn object_record_sweep_uses_marks_and_recycles_dead_ids() {
     use super::RecordSweep;
 
-    let mut arena: RecordSpace<_> = RecordSpace::default();
+    let mut arena: RecordSpace<_, TEST_RECORD_CAPACITY> = RecordSpace::default();
     let dead = arena.try_insert(String::from("dead")).unwrap();
     let live = arena.try_insert(String::from("live")).unwrap();
     assert!(arena.mark(live));
@@ -111,7 +111,7 @@ fn object_record_sweep_uses_marks_and_recycles_dead_ids() {
 fn bitmap_reuse_preserves_descending_free_id_order_across_sweeps() {
     use super::RecordSweep;
 
-    let mut arena: RecordSpace<_> = RecordSpace::default();
+    let mut arena: RecordSpace<_, TEST_RECORD_CAPACITY> = RecordSpace::default();
     let ids: Vec<_> = (0..6)
         .map(|value| arena.try_insert(value).unwrap())
         .collect();
@@ -141,7 +141,7 @@ fn bitmap_reuse_preserves_descending_free_id_order_across_sweeps() {
 
 #[test]
 fn record_block_metadata_never_moves_once_reserved() {
-    let mut arena: RecordSpace<u64> = RecordSpace::default();
+    let mut arena: RecordSpace<u64, TEST_RECORD_CAPACITY> = RecordSpace::default();
     arena.try_insert(0).unwrap();
     let (blocks, count) = arena.native_mark_blocks();
     assert_eq!(count, 1);
@@ -150,7 +150,7 @@ fn record_block_metadata_never_moves_once_reserved() {
     }
     let (moved, count) = arena.native_mark_blocks();
     assert_eq!((moved, count), (blocks, 8));
-    assert_eq!(arena.blocks.capacity(), RECORD_SPACE_CAPACITY / RECORDS_PER_BLOCK);
+    assert_eq!(arena.blocks.capacity(), TEST_RECORD_CAPACITY / RECORDS_PER_BLOCK);
     // Reserved block capacity is no allocation the memory ledger counts.
     assert_eq!(arena.allocated_bytes(), 8 * (RECORDS_PER_BLOCK * size_of::<u64>() + size_of::<super::RecordBlock>()));
 }
@@ -178,4 +178,28 @@ fn a_hole_keeps_its_ids_out_of_fresh_reused_and_restored_records() {
         let Ok(id) = restored.try_insert(value) else { break };
         assert!(!Holed::in_hole(id), "restored id {id} is in the hole");
     }
+}
+
+#[test]
+fn a_full_sweep_returns_empty_blocks_past_the_reserve_and_lowers_the_high_water() {
+    const BLOCKS: usize = 64;
+    let mut records: RecordSpace<u64, TEST_RECORD_CAPACITY> = RecordSpace::default();
+    let ids: Vec<_> = (0..BLOCKS * RECORDS_PER_BLOCK)
+        .map(|value| records.try_insert(value as u64).unwrap())
+        .collect();
+    for &id in &ids[..10] {
+        assert!(records.mark(id));
+    }
+    records.sweep(true, PromotionAge::First, false, |_| {});
+    // Block 0 keeps the survivors; the reserve keeps the blocks just above it, and the rest of
+    // the empty blocks go back to the kernel.
+    let returned = records.return_free_pages();
+    assert_eq!(records.next_id as usize, RECORDS_PER_BLOCK);
+    assert_eq!(returned, (BLOCKS - 1 - RESERVE_MIN_BLOCKS) * RECORDS_PER_BLOCK * size_of::<u64>());
+    assert_eq!(records.return_free_pages(), 0, "a returned block is not returned again");
+    // SAFETY: `ids[3]` is a live ID returned by the insertion above.
+    assert_eq!(unsafe { *records.get_live(ids[3]) }, 3);
+    // Allocation takes the free ids below the lowered high water mark first.
+    let reused = records.try_insert(99).unwrap();
+    assert!((reused as usize) < RECORDS_PER_BLOCK);
 }

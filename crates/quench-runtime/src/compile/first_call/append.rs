@@ -31,17 +31,17 @@ impl Engine {
         let header = program.functions.get(function as usize)?.header();
         let span = header.source_span?;
         let chunk = ChunkText::of(source, span, super::stub_is_method(&header))?;
-        let (line_starts, utf16_excess) = replay.views.layout(&source.text);
         let stubs = &program.first_call_scopes;
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
-        let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, line_starts, utf16_excess, run: None };
+        let checked = replay.checked_at_load(span.start);
+        let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, run: None, checked };
         let allocator = lazy_bodies::sized_arena(&chunk.text);
         let mut free_names = FreeNames::default();
         let nested = replay.direct_stubs;
         let mut parsed = parse_text(&allocator, &window, &chunk, span.start, nested.then_some(&mut free_names));
         let name = program.source_name.as_str();
         let method = super::stub_is_method(&header);
-        let mut prototype_unobservable = chunk_analysis(&parsed, name, nested.then_some((&chunk.text, usize::from(!header.is_arrow && !method))))?;
+        let mut prototype_unobservable = chunk_analysis(&parsed, name, nested.then_some((&chunk.text, usize::from(!header.is_arrow && !method))), window.checked())?;
         let mut compiler = window.compiler(name, SpecializationMode::of(atom_prefix), atom_prefix, &mut parsed.program, Default::default(), &mut Default::default(), &mut prototype_unobservable);
         compiler.prototype_unobservable = prototype_unobservable;
         compiler.source_comments = parsed.program.comments.iter().map(|comment| comment.span).collect();
@@ -89,15 +89,17 @@ fn parse_text<'a>(
 /// a chunk appended to a program makes none of, and the function expressions whose `prototype`
 /// nothing observes. `None` where the text does not check alone. A text the load's skim decided
 /// (`skimmed`, with the `function` keywords its own function spells) has no early error left
-/// to find, and no private name or function expression to analyze unless it names one.
-fn chunk_analysis(parsed: &oxc_parser::ParserReturn<'_>, name: &str, skimmed: Option<(&str, usize)>) -> Option<Starts> {
+/// to find, and no private name or function expression to analyze unless it names one. A
+/// function the load checked (`checked`) has its early errors found already, so the analysis
+/// builds its facts without checking them again.
+fn chunk_analysis(parsed: &oxc_parser::ParserReturn<'_>, name: &str, skimmed: Option<(&str, usize)>, checked: bool) -> Option<Starts> {
     if !chunk_parses_alone(parsed, skimmed.is_some()) {
         return None;
     }
     if skimmed.is_some_and(|(text, own)| !text.contains('#') && text.matches("function").count() <= own) {
         return Some(Starts::default());
     }
-    let semantic = semantic_stats::checked_semantic(&parsed.program, name).ok()?;
+    let semantic = semantic_stats::checked_semantic(&parsed.program, name, checked).ok()?;
     let private_name_ids = private_name_ids(&semantic.semantic);
     let unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program, &Default::default());
     private_name_ids.is_empty().then_some(unobservable)
@@ -106,11 +108,17 @@ fn chunk_analysis(parsed: &oxc_parser::ParserReturn<'_>, name: &str, skimmed: Op
 /// Whether the chunk's text, a function alone, parsed and checked as a script; the early errors
 /// of the program's analysis are the load's where the load `skimmed` it.
 fn chunk_parses_alone(parsed: &oxc_parser::ParserReturn<'_>, skimmed: bool) -> bool {
-    !parsed.stack_exhausted
-        && parsed.diagnostics.is_empty()
-        && stack::validate(&parsed.program).is_ok()
+    if parsed.stack_exhausted || !parsed.diagnostics.is_empty() {
+        return false;
+    }
+    let found = crate::compile::checks::walk(&parsed.program, crate::compile::checks::Passes {
+        depth: true,
+        targets: parsed.has_call_assignment_targets,
+        ..Default::default()
+    });
+    !found.stack_exhausted
         && early::regexp_early_error(parsed).is_none()
-        && annex_b_targets::invalid_parsed_target(parsed).is_none()
+        && found.invalid_target.is_none()
         && (skimmed || early::program_early_errors(&parsed.program, false).1.is_empty())
 }
 
@@ -219,7 +227,7 @@ impl<'a> Compiler<'a> {
         let layouts = capture_layout::inputs(&facts, &dynamic, |at| capture_layout::mapped_arguments(&functions[at]));
         for (at, function) in functions.iter_mut().enumerate() {
             capture_layout::apply_function(function, (first as usize) + at, &layouts[at], &self.atoms);
-            self.settle_dispatch(function);
+            self.settle_dispatch_only(function);
             function.shrink_to_fit();
         }
         Some(functions)

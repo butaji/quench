@@ -14,7 +14,7 @@ use cranelift_codegen::{
 /// The categories of a count, in field order.
 pub(super) const NAMES: [&str; 5] = ["boxes", "guards", "spills", "calls", "instructions"];
 
-/// The index of the registers parameter of the lane body signature (`lane_body_signature`):
+/// The index of the registers parameter of the lane body signature (`body_signature_in_lane`):
 /// the activation's register file, where a loop keeps nothing it can hold in a register.
 const REGISTERS_PARAM: usize = 3;
 

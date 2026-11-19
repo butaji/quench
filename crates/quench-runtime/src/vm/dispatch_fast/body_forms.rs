@@ -54,7 +54,7 @@ impl<'a> BodyCall<'a> {
         let code = unsafe { &*(*cx).code };
         // SAFETY: the context names the running activation, which a native callee's frame is while its helper
         // runs (`native_frames::in_innermost_frame`).
-        let (registers, base, function, this) = unsafe { ((*cx).registers, (*cx).base, lane_running_function(cx), (*cx).registers.this()) };
+        let (registers, base, function, this) = unsafe { ((*cx).registers, (*cx).base, running_function_in_lane(cx), (*cx).registers.this()) };
         // The form of this record, decoded once per run: the run's code fixes it.
         let site = match unsafe { (*cx).body_site } {
             Some((decoded_code, decoded_function, decoded_pc, site))
@@ -87,7 +87,7 @@ impl<'a> BodyCall<'a> {
         unsafe { &(*self.ip).call_link }
     }
 
-    /// Whether the call's record may be requickened to its read memo (`lane_memoize_read`): only a
+    /// Whether the call's record may be requickened to its read memo (`memoize_read_in_lane`): only a
     /// register call's record has the layout the memo's handlers read.
     pub(super) fn memoizes(&self) -> bool {
         matches!((self.site.callee, self.site.arguments), (Callee::Register(_), Arguments::Window { .. }))
@@ -161,13 +161,13 @@ impl<'a> BodyCall<'a> {
 
     /// The plain activation of `target` this call makes: its window of registers filled with the
     /// arguments, then `undefined`. The call passes at most `target`'s parameters and the lane stack
-    /// has room (`lane_activation_room`).
+    /// has room (`activation_room_in_lane`).
     pub(super) fn push_plain<H: Host>(&self, cx: *mut LaneContext<H>, target: &ScriptCallTarget, this: Value, constructs: bool) -> Registers {
         match self.site.arguments {
             Arguments::Window { first, count } => {
                 // SAFETY: the record's window of the registers holds its values.
                 let passed = unsafe { self.registers.0.add(usize::from(first)).cast_const() };
-                lane_push_passed::<H, false, false>(cx, self.registers, self.ip, target, passed, count, this, constructs).0
+                push_passed_in_lane::<H, false, false>(cx, self.registers, self.ip, target, passed, count, this, constructs).0
             }
             Arguments::List(_) => self.push_listed(cx, target, this, constructs),
         }
@@ -186,7 +186,7 @@ impl<'a> BodyCall<'a> {
             stack.values.set_top(top.add(usize::from(target.registers) + super::super::lane_values::CONTEXT));
             Registers(top)
         };
-        lane_enter_window::<H, false, false>(cx, self.registers, self.ip, target, window, self.argc(), this, constructs, None, None).0
+        enter_window_in_lane::<H, false, false>(cx, self.registers, self.ip, target, window, self.argc(), this, constructs, None, None).0
     }
 }
 

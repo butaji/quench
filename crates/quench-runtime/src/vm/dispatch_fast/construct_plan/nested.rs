@@ -37,20 +37,20 @@ pub(in super::super) fn nested_root_holds<H: Host>(vm: &mut Vm<H>, nested: &Nest
 fn capture_value<H: Host>(vm: &mut Vm<H>, env: Value, capture: u32) -> Option<Value> {
     let (slots, root) = vm.walked_capture_slots(env, false, ImmediateLayout::capture_depth(capture))?;
     // SAFETY: as `Vm::walked_capture_slots`; nothing below collects.
-    vm.plain_capture(unsafe { &*slots }, root, ImmediateLayout::capture_slot(capture)).0
+    vm.plain_capture(unsafe { &*slots }, root, ImmediateLayout::capture_slot(capture))
 }
 
 /// A fresh object of `constructor` as its own plans build it from `arguments`, which run no
 /// guest code: `None` where it has no holding plan.
 pub(in super::super) fn nested_construction<H: Host>(vm: &mut Vm<H>, constructor: Value, arguments: &[Value; NESTED_ARGUMENTS]) -> Option<Value> {
     let argument = |parameter: u16| arguments.get(usize::from(parameter)).copied().unwrap_or(Value::UNDEFINED);
-    planned_construction(vm, constructor, argument).or_else(|| super::super::lane_forwarded_fields(vm, constructor, argument))
+    planned_construction(vm, constructor, argument).or_else(|| super::super::forwarded_fields_in_lane(vm, constructor, argument))
 }
 
 /// The value `construct` gives its field, built from the constructor its capture and chain
 /// name, read through data properties, with the field the plan then holds for it. `env` is the
 /// initializer's closure environment.
-fn lane_nested_construct<H: Host>(vm: &mut Vm<H>, env: Value, construct: &NestedConstruct) -> Option<(Value, NestedField)> {
+fn nested_construct_in_lane<H: Host>(vm: &mut Vm<H>, env: Value, construct: &NestedConstruct) -> Option<(Value, NestedField)> {
     let root = capture_value(vm, env, construct.capture)?;
     let mut held = [Value::UNDEFINED; NESTED_CHAIN];
     let mut constructor = root;
@@ -69,7 +69,7 @@ fn lane_nested_construct<H: Host>(vm: &mut Vm<H>, env: Value, construct: &Nested
 /// The forwarded initializer's adds on `this`, which a construction completes in the lane when
 /// none runs guest code: the plan of the fields they gave it (`None` where it cannot hold one),
 /// nested constructions included, or the outer `None` where an add cannot be applied (the construction then activates).
-pub(in super::super) fn lane_finish_forwarded<H: Host>(
+pub(in super::super) fn finish_forwarded_in_lane<H: Host>(
     vm: &mut Vm<H>,
     code: &ResidualProgram,
     env: Value,
@@ -79,9 +79,9 @@ pub(in super::super) fn lane_finish_forwarded<H: Host>(
 ) -> Option<Option<ConstructPlan>> {
     let mut fields = Some(EMPTY_CONSTRUCT_PLAN);
     let nested = std::cell::Cell::new(None);
-    let applied = lane_add_initializer_fields(vm, code, this, function, argument,
+    let applied = add_initializer_fields_in_lane(vm, code, this, function, argument,
         |vm, construct| {
-            let (built, field) = lane_nested_construct(vm, env, construct)?;
+            let (built, field) = nested_construct_in_lane(vm, env, construct)?;
             nested.set(Some(field));
             Some(built)
         },

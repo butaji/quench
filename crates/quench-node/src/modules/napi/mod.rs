@@ -20,6 +20,8 @@ use std::{
 };
 
 mod abi;
+mod builtins;
+mod cleanup;
 mod errors;
 mod functions;
 mod lifecycle;
@@ -76,7 +78,9 @@ pub(crate) struct Env {
     weak_map_set: RootId,
     weak_map_delete: RootId,
     instance_data: Cell<Option<lifecycle::Finalizer>>,
-    cleanup_hooks: RefCell<Vec<(CleanupHook, usize)>>,
+    cleanup_hooks: cleanup::Hooks,
+    /// Callback scopes opened and not yet closed (`napi_callback_scope_mismatch`).
+    open_callback_scopes: Cell<usize>,
     /// Bytes addons report holding outside the heap (`napi_adjust_external_memory`).
     external_memory: Cell<i64>,
     /// Weakly held targets whose finalizers run once the collector clears them.
@@ -142,7 +146,7 @@ impl Env {
             weak_map_set: c.retain(set)?,
             weak_map_delete: c.retain(delete)?,
             instance_data: Cell::new(None),
-            cleanup_hooks: RefCell::new(Vec::new()),
+            cleanup_hooks: Default::default(), open_callback_scopes: Cell::new(0),
             external_memory: Cell::new(0),
             finalizers: RefCell::new(Vec::new()),
             events: work::new_events().map_err(RootedError::host)?,
@@ -400,6 +404,8 @@ pub(crate) fn dlopen(
 /// The exported ABI, referenced so the linker keeps every symbol for `dlopen`ed addons.
 static EXPORTS: &[&[ExportedSymbol]] = &[
     abi::EXPORTS,
+    builtins::EXPORTS,
+    cleanup::EXPORTS,
     errors::EXPORTS,
     functions::EXPORTS,
     lifecycle::EXPORTS,
@@ -410,6 +416,7 @@ static EXPORTS: &[&[ExportedSymbol]] = &[
 ];
 
 pub(crate) use functions::invoke;
+pub(crate) use cleanup::run_cleanup_hooks;
 pub(crate) use work::{drain, has_work, poll, promise_executor};
 
 /// The linker interface derives from the same declarations as the C functions.

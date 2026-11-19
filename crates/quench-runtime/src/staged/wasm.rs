@@ -9,6 +9,10 @@ use super::machine::MachineStage;
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 use crate::{WasmTrap, WasmType};
 
+/// The bytes of a v128: the one definition, which the runtime's and the stencil's `crate::wasm`
+/// re-export.
+pub(crate) const V128_BYTES: usize = core::mem::size_of::<u128>();
+
 /// The integer width an operation runs at; an i32 operator is its i64 namesake at `I32`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Width {
@@ -137,4 +141,23 @@ fn check_division<S: WasmStage>(
     let is_negative_one = stage.operate(Binary::Equal, width, right, negative_one);
     let overflow = stage.operate(Binary::And, Width::I32, is_minimum, is_negative_one);
     stage.trap_when(overflow, WasmTrap::IntegerOverflow)
+}
+
+/// The integer operator a tag names. A tag outside the family names no row, so the first operator
+/// stands in (the dispatch never reaches it).
+#[cfg(stencil_build)]
+pub(crate) const fn binary_operator(tag: u32) -> Binary {
+    match Binary::from_tag(tag) {
+        Some(operator) => operator,
+        None => Binary::Add,
+    }
+}
+
+/// The integer unary operator a tag names, as `binary_operator`.
+#[cfg(stencil_build)]
+pub(crate) const fn unary_operator(tag: u32) -> Unary {
+    match Unary::from_tag(tag) {
+        Some(operator) => operator,
+        None => Unary::EqualZero,
+    }
 }

@@ -88,6 +88,10 @@ impl Lowering<'_, '_> {
             let room = self.array_variables(array).room;
             let unproved = self.raw_const(Lane::I32, 0);
             self.builder.def_var(room, unproved);
+            if let Some(checked) = self.prototype_clear.get(&array.source).copied() {
+                let unchecked = self.raw_const(Lane::I8, 0);
+                self.builder.def_var(checked, unchecked);
+            }
         }
     }
 }

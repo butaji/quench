@@ -25,7 +25,7 @@ fn eager_publication_reports_lane_bodies() {
     let native = crate::NativeJsProgram::compile_eager_with_options(program.clone(), options).unwrap();
     let counts = native.publication_counts();
     assert!(counts.functions >= 2, "program functions: {counts:?}");
-    assert!(counts.lane_bodies >= 1, "no function entered a lane body: {counts:?}");
+    assert!(counts.bodies_in_lane >= 1, "no function entered a lane body: {counts:?}");
     assert!(counts.call_threaded >= 1, "the root stays call-threaded: {counts:?}");
     assert!(counts.semantic_entry_sites > 0, "a fallback must still exist: {counts:?}");
     let mut runtime = Runtime::new(TestHost::default());
@@ -104,7 +104,7 @@ fn a_frozen_image_folds_whole_program_globals_and_guards_a_change() {
     let (program, native) = compile_frozen(source);
     let counts = native.publication_counts();
     assert!(counts.frozen_globals >= 1, "no whole-program global folded: {counts:?}");
-    assert!(counts.lane_bodies >= 1, "no lane body: {counts:?}");
+    assert!(counts.bodies_in_lane >= 1, "no lane body: {counts:?}");
     let scale = program.atoms.iter().position(|name| name == "SCALE").unwrap() as crate::bytecode::Atom;
     assert!(native.frozen_global_atoms_for_test().contains(&scale), "atoms: {:?}", native.frozen_global_atoms_for_test());
     let mut runtime = Runtime::new(TestHost::default());
@@ -132,7 +132,7 @@ fn a_frozen_image_folds_a_prototype_value_and_guards_a_redefinition() {
     let (program, native) = compile_frozen(source);
     let counts = native.publication_counts();
     assert!(counts.frozen_fields >= 1, "no prototype value folded: {counts:?}");
-    assert!(counts.lane_bodies >= 1, "no lane body: {counts:?}");
+    assert!(counts.bodies_in_lane >= 1, "no lane body: {counts:?}");
     let k = program.atoms.iter().position(|name| name == "k").unwrap() as crate::bytecode::Atom;
     assert!(native.frozen_field_atoms_for_test().contains(&k), "atoms: {:?}", native.frozen_field_atoms_for_test());
     let mut runtime = Runtime::new(TestHost::default());
@@ -155,7 +155,7 @@ fn a_retired_image_leaves_its_lane_bodies_for_the_semantic_fallback() {
     "#;
     let (_program, native) = compile_frozen(source);
     let counts = native.publication_counts();
-    assert!(counts.lane_bodies >= 1, "no lane body: {counts:?}");
+    assert!(counts.bodies_in_lane >= 1, "no lane body: {counts:?}");
     let mut runtime = Runtime::new(TestHost::default());
     runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();

@@ -51,7 +51,7 @@ impl Lowering<'_, '_> {
         (operation, exit): (NumberArithmetic, ir::Block)) {
         let truncated = match operation {
             NumberArithmetic::Add | NumberArithmetic::Subtract => self.truncated_through_sums(pc, operands.0),
-            NumberArithmetic::Multiply if self.truncated_through_sums(pc, operands.0) => {
+            NumberArithmetic::Multiply if self.truncated_through_sums(pc, operands.0) || self.truncated_through_int32_sum(state, pc, operands.0) => {
                 if !self.small_int32_factor(operands.1) && !self.ranges.overflow_free(pc) {
                     self.truncated_product(state, operands, exit);
                     return;
@@ -74,13 +74,8 @@ impl Lowering<'_, '_> {
     fn truncated_product(&mut self, state: &mut State, (destination, [left, right]): Operands, exit: ir::Block) {
         let left = self.operand_int(state, left, exit).expect("proved int32 operand");
         let right = self.operand_int(state, right, exit).expect("proved int32 operand");
-        let builder = &mut self.builder;
-        let (left, right) = (builder.ins().sextend(types::I64, left), builder.ins().sextend(types::I64, right));
-        let product = builder.ins().imul(left, right);
-        let biased = builder.ins().iadd_imm_s(product, 1_i64 << 52);
-        let exact = builder.ins().icmp_imm_s(ir::condcodes::IntCC::UnsignedLessThan, biased, 1_i64 << 53);
-        emit_js_guard(builder, exact, exit);
-        let low = builder.ins().ireduce(types::I32, product);
+        let (low, exact) = number_machine::truncated_int32_product(&mut emit(&mut self.builder), left, right);
+        emit_js_guard(&mut self.builder, exact, exit);
         self.set_int(state, destination, low);
     }
 
@@ -93,73 +88,59 @@ impl Lowering<'_, '_> {
     }
 
     /// The staged Number arithmetic of `operation` over `operands`, in a domain with its overflow
-    /// and negative-zero policies.
+    /// and negative-zero policies; the operands' guards and the step's leave at `miss`. The step's
+    /// word, where it produced one.
     fn arithmetic_step(&mut self, state: &mut State, ((destination, [left, right]), operation): (Operands, NumberArithmetic),
-        (domain, overflow, zero): (Domain, Overflow, NegativeZero), exit: ir::Block) {
+        (domain, overflow, zero): (Domain, Overflow, NegativeZero), miss: ir::Block) -> Option<ir::Value> {
         let operation = Operation::Number(NumberOperation::Arithmetic { destination, left, right, operation, domain, overflow, zero });
-        self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
+        match self.step(state, frame::Edges::ValueGuarded { miss }, operation) {
+            crate::staged::Step::Value(word) => Some(word),
+            _ => None,
+        }
     }
 
-    /// A sum or difference only its ToInt32 is read of: int32 operands wrap, any other numbers
-    /// take ToInt32 of their double result, and both join as an int32.
-    fn truncated_sum(&mut self, state: &mut State, pc: usize, (destination, [left, right]): Operands,
+    /// A sum or difference only its ToInt32 is read of: int32 operands wrap (the staged row), any
+    /// other numbers take ToInt32 of their binary64 result. Each arm defines the destination as an
+    /// int32, so the join keeps it.
+    fn truncated_sum(&mut self, state: &mut State, pc: usize, operands: Operands,
         (operation, exit): (NumberArithmetic, ir::Block)) -> Option<()> {
-        let float = self.builder.create_block();
-        self.builder.set_cold_block(float);
+        let (destination, [left, right]) = operands;
+        let float = super::cold_block(&mut self.builder);
         let mut float_state = state.clone();
-        let left_int = self.operand_int(state, left, float).expect("supported operand");
-        let right_int = self.operand_int(state, right, float).expect("supported operand");
-        let wrapped = number_machine::wrapping_int32_arithmetic(&mut emit(&mut self.builder), operation, left_int, right_int);
         let join = self.builder.create_block();
-        let int = self.builder.append_block_param(join, types::I32);
-        self.goto(join, &[wrapped]);
+        self.arithmetic_step(state, (operands, operation), (Domain::Int32, Overflow::Wrap, NegativeZero::Ignore), float)?;
+        self.goto(join, &[]);
         self.builder.switch_to_block(float);
         let left_number = self.operand_number(&mut float_state, left, exit)?;
         let right_number = self.operand_number(&mut float_state, right, exit)?;
         let number = number_machine::float_arithmetic(&mut emit(&mut self.builder), operation, left_number, right_number);
         let truncated = self.number_to_int32(number, exit);
-        self.goto(join, &[truncated]);
+        self.set_int(&mut float_state, destination, truncated);
+        self.goto(join, &[]);
         self.builder.switch_to_block(join);
         self.join_states(state, &float_state, pc);
-        self.set_int(state, destination, int);
         Some(())
     }
 
-    /// Operands a tag only types: the int32 arithmetic where both are int32 and its result is
-    /// one (an overflow, or a product's negative zero, takes the binary64 arm), else binary64.
-    fn checked_arithmetic(&mut self, state: &mut State, pc: usize, (destination, [left, right]): Operands,
+    /// Operands a tag only types: the staged int32 row where both are int32, which widens an
+    /// overflow or a product's negative zero to binary64 itself; else the binary64 arm. Each arm
+    /// defines the destination as a Number, so the join keeps it.
+    fn checked_arithmetic(&mut self, state: &mut State, pc: usize, operands: Operands,
         (operation, exit): (NumberArithmetic, ir::Block)) -> Option<()> {
-        let float = self.builder.create_block();
-        self.builder.set_cold_block(float);
+        let (destination, [left, right]) = operands;
+        let float = super::cold_block(&mut self.builder);
         let mut float_state = state.clone();
-        let left_int = self.operand_int(state, left, float).expect("supported operand");
-        let right_int = self.operand_int(state, right, float).expect("supported operand");
-        let (result, overflow) = number_machine::checked_int32_arithmetic(&mut emit(&mut self.builder), operation, left_int, right_int);
-        let int_done = self.builder.create_block();
-        self.branch_if(overflow, (float, &[]), (int_done, &[]));
-        self.builder.switch_to_block(int_done);
-        if operation == NumberArithmetic::Multiply { self.guard_not_negative_zero(result, [left_int, right_int], float); }
         let join = self.builder.create_block();
-        let number = self.builder.append_block_param(join, types::F64);
-        let result = self.raw_unary(Unary::FromSigned(Lane::F64), result);
-        self.goto(join, &[result]);
+        self.arithmetic_step(state, (operands, operation), (Domain::Int32, Overflow::Widen, NegativeZero::Exit), float)?;
+        self.goto(join, &[]);
         self.builder.switch_to_block(float);
         let left_number = self.operand_number(&mut float_state, left, exit)?;
         let right_number = self.operand_number(&mut float_state, right, exit)?;
         let result = number_machine::float_arithmetic(&mut emit(&mut self.builder), operation, left_number, right_number);
-        self.goto(join, &[result]);
+        self.set_number(&mut float_state, destination, result);
+        self.goto(join, &[]);
         self.builder.switch_to_block(join);
         self.join_states(state, &float_state, pc);
-        self.set_number(state, destination, number);
         Some(())
-    }
-
-    /// Continues where the int32 `product` of `operands` is no negative zero, else at `float`.
-    fn guard_not_negative_zero(&mut self, product: ir::Value, operands: [ir::Value; 2], float: ir::Block) {
-        let zero = self.raw_compare_imm(Relation::Equal, product, 0);
-        let signs = self.raw_binary(Binary::Or, operands[0], operands[1]);
-        let negative = self.raw_compare_imm(Relation::SignedLess, signs, 0);
-        let negative_zero = self.raw_binary(Binary::And, zero, negative);
-        emit_js_guard_not(&mut self.builder, negative_zero, float);
     }
 }

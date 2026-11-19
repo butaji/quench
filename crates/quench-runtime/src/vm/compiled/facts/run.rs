@@ -3,28 +3,12 @@
 
 use super::lengths::Relations;
 use super::ranges::{self, Edge};
-use super::{set, transfer_observed, Contract, Facts, Flow, Observed, INLINE_ANALYSIS_ITEMS};
-use crate::bytecode::{Constant, ControlFlowLayout, Register, ResidualProgram, WideInstruction};
-use crate::typed_ir::{IntRange, Type};
+use super::{hold_contracts, join_types, meet_relations, set, transfer_observed, Contract, Facts, Flow, Observed, INLINE_ANALYSIS_ITEMS};
+use crate::bytecode::{Class, Constant, ControlFlowLayout, Register, ResidualProgram, WideInstruction};
+use crate::typed_ir::{IntRange, Type, WIDENING_ROUNDS};
 use cranelift_codegen::bitset::CompoundBitSet;
+use std::cell::{Cell, RefCell};
 use super::super::super::operations::NumberRelation;
-
-/// The leaders whose rows changed since they last ran, run lowest first: bytecode lays a
-/// block out after the blocks that reach it (but for backedges), so the lowest pending
-/// leader is the next in reverse postorder and each block runs once per change of its
-/// inputs, not once per edge that reached it.
-#[derive(Default)]
-struct Pending(CompoundBitSet);
-
-impl Pending {
-    fn new() -> Self { Self::default() }
-    fn push(&mut self, pc: usize) { self.0.insert(pc); }
-    fn pop(&mut self) -> Option<usize> {
-        let first = self.0.iter().next()?;
-        self.0.remove(first);
-        Some(first)
-    }
-}
 
 /// The abstract state of a run at one point: the registers' types (a range is a type), and the
 /// length relations a unit-proving run tracks beside them.
@@ -46,6 +30,19 @@ pub(in crate::vm::compiled) struct Model<'a> {
     /// Whether the element access at a PC reads or writes a hoisted view, whose miss leaves the
     /// body (`Lowering::hoisted_access`).
     pub(in crate::vm::compiled) dense: &'a dyn Fn(usize) -> bool,
+    /// What the access at a PC does through a hoisted typed view (`Lowering::typed_access`), where it is
+    /// one that runs no guest code and changes no array's length (`TypedAccess`).
+    pub(in crate::vm::compiled) typed: &'a dyn Fn(usize) -> Option<TypedAccess>,
+}
+
+/// An instruction on a hoisted typed view whose effect on lengths is known (`Model::typed`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(in crate::vm::compiled) enum TypedAccess {
+    /// A `length` read of a register's typed array, which the view answers natively.
+    Length,
+    /// An element store through a typed or double view: it changes no length, and runs guest
+    /// code only where its value is no Number (`Relations::step`).
+    Store,
 }
 
 /// What a run assumes beyond the program text.
@@ -123,6 +120,16 @@ impl Point {
         ranges::exact(&ranges::lookup(&self.types, constants), instruction).is_some_and(|range| range.fits_int32())
     }
 
+    /// Whether `register` holds a Number at this point on every path into it (`Type::NUMBER`).
+    pub(in crate::vm::compiled) fn holds_number(&self, register: Register) -> bool {
+        self.types.get(usize::from(register)).is_some_and(|ty| ty.is_subtype(Type::NUMBER))
+    }
+
+    /// Whether `register` holds an int32 at this point on every path into it (`Type::INT32`).
+    pub(in crate::vm::compiled) fn holds_int32(&self, register: Register) -> bool {
+        self.types.get(usize::from(register)).is_some_and(|ty| ty.is_subtype(Type::INT32))
+    }
+
     /// The range of the result of the arithmetic of `instruction` where it leaves int32 but is
     /// an integer Number of `IntRange::WORD` (`ranges::index_range`).
     pub(in crate::vm::compiled) fn index_range(&self, constants: &[Constant], instruction: WideInstruction, signless: bool) -> Option<IntRange> {
@@ -157,7 +164,10 @@ fn step(point: &mut Point, text: &Text<'_>, seeds: Seeds<'_>, pc: usize) -> Flow
     let instruction = text.instructions[pc];
     if let Some(model) = seeds.model {
         model.enter_frame(pc, point);
-        point.relations.step(&model, pc, instruction, text.written);
+        // A store of a Number runs no guest code (its value and key convert without a call).
+        let numeric_store = point.numeric_store(instruction);
+        let lookup = ranges::lookup(&point.types, text.constants);
+        point.relations.step(&model, pc, instruction, text.written, &lookup, numeric_store);
     }
     // A direct own read proves its receiver before defining its result.
     // If result and receiver alias, transfer kills that refinement.
@@ -184,53 +194,6 @@ fn run_block(point: &mut Point, text: &Text<'_>, seeds: Seeds<'_>, leader: usize
 }
 
 impl Facts {
-    /// The edge into the block led by `pc`, which joins the state `point` into its row.
-    fn reach(&mut self, pc: usize, point: &Point, pending: &mut Pending, seeds: Seeds<'_>) {
-        if !self.merge_point(pc, point) { return; }
-        if seeds.model.is_some_and(|model| model.generic.contains(&pc)) { self.widen(pc); }
-        pending.push(pc);
-    }
-
-    /// The edges out of a block that ended at `last` in `flow`, in the state `point`.
-    fn follow(&mut self, text: &Text<'_>, seeds: Seeds<'_>, (last, flow): (usize, Flow), point: Point, pending: &mut Pending) {
-        match flow {
-            Flow::Leaves => {}
-            Flow::Next => {
-                if last + 1 < text.instructions.len() { self.reach(last + 1, &point, pending, seeds); }
-            }
-            Flow::To(target) => self.branch(text, seeds, (last, target), point, pending),
-        }
-    }
-
-    /// The jump at `pc` to `target`, and the fallthrough of a conditional one, each edge in the
-    /// state it proves.
-    fn branch(&mut self, text: &Text<'_>, seeds: Seeds<'_>, (pc, target): (usize, usize), mut point: Point, pending: &mut Pending) {
-        let instruction = text.instructions[pc];
-        let conditional = instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump;
-        // Only a comparison refines its edges apart; any other conditional jump sends one state
-        // both ways, with no copy.
-        let refines = conditional && instruction.op().is_jump_binary_false();
-        let mut following = refines.then(|| point.clone());
-        if instruction.op().is_jump_binary_false() {
-            point.refine(text.constants, instruction, false);
-            if let Some(following) = following.as_mut() { following.refine(text.constants, instruction, true); }
-        }
-        if target <= pc { self.headers.insert(target); }
-        if target == text.entry && target <= pc { self.join_backedge(&point.types); }
-        self.reach(target, &point, pending, seeds);
-        match following {
-            Some(following) => self.reach(pc + 1, &following, pending, seeds),
-            None if conditional => self.reach(pc + 1, &point, pending, seeds),
-            None => {}
-        }
-    }
-
-    /// The join of the entry's backedge inputs, without the unknown external input.
-    fn join_backedge(&mut self, types: &[Type]) {
-        if self.backedge.is_empty() { self.backedge.extend_from_slice(types); return; }
-        for (known, incoming) in self.backedge.iter_mut().zip(types) { *known = known.join(*incoming); }
-    }
-
     /// Each reachable block replayed from its row, as the fixed point ran it: `visit` sees the
     /// state before each instruction.
     pub(in crate::vm::compiled) fn replay(&self, text: &Text<'_>, seeds: Seeds<'_>, mut visit: impl FnMut(usize, &Point)) {
@@ -248,18 +211,165 @@ pub(in crate::vm::compiled) fn analyze(entry: usize, initial: &[Type], instructi
     analyze_text(&Text { entry, instructions, leaders, constants, written, own_shape, native_calls, raises }, initial, seeds)
 }
 
-/// `analyze` over `text`.
-pub(in crate::vm::compiled) fn analyze_text(text: &Text<'_>, initial: &[Type], seeds: Seeds<'_>) -> Facts {
-    let mut facts = Facts::new(text.instructions.len(), initial.len(), seeds);
-    let mut pending = Pending::new();
-    if text.entry < text.instructions.len() {
-        facts.reach(text.entry, &Point::entering(initial, seeds), &mut pending, seeds);
+/// A block's input as `solve` holds it: the row of the block led by `heads[block]`, its types
+/// and the length relations the run keeps (empty where it tracks none).
+#[derive(Clone, PartialEq)]
+struct Row {
+    block: usize,
+    types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]>,
+    length_of: Vec<Option<Register>>,
+    below: Vec<Option<Register>>,
+    under: Vec<Option<Register>>,
+    atmost: Vec<Option<Register>>,
+    twice: Vec<Option<Register>>,
+}
+
+impl Row {
+    fn of(block: usize, point: Point) -> Self {
+        let Relations { length_of, below, under, atmost, twice, .. } = point.relations;
+        Self { block, types: point.types, length_of, below, under, atmost, twice }
     }
-    let mut raised: smallvec::SmallVec<[(usize, usize, Point); 2]> = smallvec::SmallVec::new();
-    while let Some(leader) = pending.pop() {
-        let mut point = facts.point_at(leader);
-        let ended = run_block(&mut point, text, seeds, leader, |pc, state| {
-            facts.reached.insert(pc);
+
+    /// The state on entry to the block: its relations name the registers their rows do.
+    fn point(&self) -> Point {
+        Point { types: self.types.clone(),
+            relations: Relations::of_rows(self.length_of.clone(), self.below.clone(), self.under.clone(), self.atmost.clone(), self.twice.clone()) }
+    }
+}
+
+/// The fixpoint of `transfer` as a forward problem of `dataflow::solve`. Its blocks are the PCs
+/// a row may be held at, ascending, so the driver's lowest-first order is the bytecode's (the
+/// lowest pending leader is the next in reverse postorder, but for backedges). A block runs to
+/// the first instruction that does not continue to the next or whose next leads a block, as the
+/// lowering does, so where it ends depends on its state: `transfer` records the edges it took,
+/// each with its own state, the exception edges of the instructions it passed included, in the
+/// order the rows join them (the jump target, the fallthrough, then each raise by PC).
+struct FactFlow<'t, 'a, 's> {
+    text: &'t Text<'a>,
+    seeds: Seeds<'s>,
+    heads: Vec<usize>,
+    entry: Option<Point>,
+    /// How often a join changed each block's row: past `WIDENING_ROUNDS` a range that grows widens,
+    /// at a loop header alone (`headers`): a block inside the loop follows the header's finite rows
+    /// exactly, so the branch that guards it keeps the bound it proves.
+    rounds: Vec<Cell<u8>>,
+    /// The blocks a backward edge reaches, each marked as its edge is taken.
+    headers: Vec<Cell<bool>>,
+    reached: CompoundBitSet,
+    /// Join of the entry's backedge inputs, without the unknown external input.
+    backedge: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]>,
+    /// The edges the last `transfer` took: their target blocks, and each one's state and whether
+    /// it is a backward edge, which `transfer_edge_at` hands over.
+    targets: Vec<usize>,
+    sends: RefCell<Vec<(Option<Row>, bool)>>,
+    raised: smallvec::SmallVec<[(usize, usize, Point); 2]>,
+}
+
+impl FactFlow<'_, '_, '_> {
+    fn block_of(&self, pc: usize) -> Option<usize> {
+        self.heads.binary_search(&pc).ok()
+    }
+
+    /// The edge to `pc` in the state `point`, backward where `backward`. An edge past the end
+    /// reaches no row.
+    fn send(&mut self, pc: usize, point: Point, backward: bool) {
+        if pc >= self.text.instructions.len() { return; }
+        let block = self.block_of(pc);
+        debug_assert!(block.is_some(), "an edge's target PC {pc} leads no block");
+        let Some(block) = block else { return };
+        self.targets.push(block);
+        self.sends.get_mut().push((Some(Row::of(block, point)), backward));
+    }
+
+    /// The jump at `pc` to `target`, and the fallthrough of a conditional one, each edge in the
+    /// state it proves.
+    fn branch(&mut self, (pc, target): (usize, usize), mut point: Point) {
+        let text = self.text;
+        let instruction = text.instructions[pc];
+        let conditional = instruction.op().control_flow_layout() == ControlFlowLayout::ConditionalJump;
+        // Only a comparison refines its edges apart; any other conditional jump sends one state
+        // both ways.
+        let refines = conditional && instruction.op().is_jump_binary_false();
+        let mut following = refines.then(|| point.clone());
+        if instruction.op().is_jump_binary_false() {
+            point.refine(text.constants, instruction, false);
+            if let Some(following) = following.as_mut() { following.refine(text.constants, instruction, true); }
+        }
+        if target == text.entry && target <= pc { self.join_backedge(&point.types); }
+        match following {
+            Some(following) => {
+                self.send(target, point, target <= pc);
+                self.send(pc + 1, following, false);
+            }
+            None if conditional => {
+                self.send(target, point.clone(), target <= pc);
+                self.send(pc + 1, point, false);
+            }
+            None => self.send(target, point, target <= pc),
+        }
+    }
+
+    /// The join of the entry's backedge inputs, without the unknown external input.
+    fn join_backedge(&mut self, types: &[Type]) {
+        if self.backedge.is_empty() { self.backedge.extend_from_slice(types); return; }
+        for (known, incoming) in self.backedge.iter_mut().zip(types) { *known = known.join(*incoming); }
+    }
+
+    /// What a join that `changed` the row of `block` does beside: it counts toward the block's
+    /// widening, and a block a previous body left at forgets its types.
+    fn joined(&self, row: &mut Row, changed: bool) {
+        if !changed { return; }
+        let rounds = &self.rounds[row.block];
+        rounds.set(rounds.get().saturating_add(1));
+        if self.seeds.model.is_some_and(|model| model.generic.contains(&self.heads[row.block])) {
+            row.types.fill(Type::ANY);
+        }
+    }
+}
+
+impl crate::dataflow::Dataflow for FactFlow<'_, '_, '_> {
+    type State = Row;
+
+    fn blocks(&self) -> usize {
+        self.heads.len()
+    }
+
+    fn edges(&self, _block: usize) -> &[usize] {
+        &self.targets
+    }
+
+    fn entry_state(&self, block: usize) -> Option<Row> {
+        if self.heads[block] != self.text.entry { return None; }
+        let point = self.entry.clone()?;
+        Some(self.admit(block, Row::of(block, point)))
+    }
+
+    fn admit(&self, block: usize, mut incoming: Row) -> Row {
+        hold_contracts(self.seeds.contracts, self.heads[block], &mut incoming.types);
+        self.joined(&mut incoming, true);
+        incoming
+    }
+
+    fn join(&self, into: &mut Row, incoming: &Row) -> bool {
+        let block = into.block;
+        let widening = self.headers[block].get() && self.rounds[block].get() >= WIDENING_ROUNDS;
+        let mut changed = join_types(&mut into.types, &incoming.types, widening);
+        changed |= meet_relations([&mut into.length_of, &mut into.below, &mut into.under, &mut into.atmost, &mut into.twice],
+            [incoming.length_of.as_slice(), incoming.below.as_slice(), incoming.under.as_slice(), incoming.atmost.as_slice(), incoming.twice.as_slice()]);
+        changed |= hold_contracts(self.seeds.contracts, self.heads[block], &mut into.types);
+        self.joined(into, changed);
+        changed
+    }
+
+    fn transfer(&mut self, block: usize, state: &Row) -> Row {
+        let (text, seeds) = (self.text, self.seeds);
+        self.targets.clear();
+        self.sends.get_mut().clear();
+        let mut point = state.point();
+        let mut raised = std::mem::take(&mut self.raised);
+        let reached = &mut self.reached;
+        let ended = run_block(&mut point, text, seeds, self.heads[block], |pc, state| {
+            reached.insert(pc);
             let first = text.raises.partition_point(|raise| raise.0 < pc);
             for &(_, target, bound) in text.raises[first..].iter().take_while(|raise| raise.0 == pc) {
                 let mut caught = state.clone();
@@ -270,11 +380,67 @@ pub(in crate::vm::compiled) fn analyze_text(text: &Text<'_>, initial: &[Type], s
                 raised.push((pc, target, caught));
             }
         });
-        facts.follow(text, seeds, ended, point, &mut pending);
-        for (pc, target, caught) in raised.drain(..) {
-            if target <= pc { facts.headers.insert(target); }
-            facts.reach(target, &caught, &mut pending, seeds);
+        match ended {
+            (_, Flow::Leaves) => {}
+            (last, Flow::Next) => self.send(last + 1, point, false),
+            (last, Flow::To(target)) => self.branch((last, target), point),
         }
+        for (pc, target, caught) in raised.drain(..) {
+            self.send(target, caught, target <= pc);
+        }
+        self.raised = raised;
+        // The edges carry their own states (`transfer_edge_at`).
+        Row { block, types: smallvec::SmallVec::new(), length_of: Vec::new(), below: Vec::new(), under: Vec::new(), atmost: Vec::new(), twice: Vec::new() }
+    }
+
+    fn transfer_edge_at(&self, _block: usize, index: usize, _out: &Row) -> Row {
+        let (row, backward) = std::mem::take(&mut self.sends.borrow_mut()[index]);
+        let row = row.expect("each edge is taken once per transfer");
+        if backward { self.headers[row.block].set(true); }
+        row
+    }
+}
+
+/// The PCs a row may be held at: the entry, the leaders, every jump's target and conditional
+/// fallthrough, and every handler an exception edge enters.
+fn heads(text: &Text<'_>) -> Vec<usize> {
+    let length = text.instructions.len();
+    let mut heads: CompoundBitSet = text.leaders.clone();
+    let mut add = |pc: usize| if pc < length { heads.insert(pc); };
+    add(text.entry);
+    for (pc, instruction) in text.instructions.iter().enumerate() {
+        let layout = instruction.op().control_flow_layout();
+        if layout.jumps() || instruction.op().class() == Class::JumpBinaryFalse { add(instruction.jump_target() as usize); }
+        if layout == ControlFlowLayout::ConditionalJump { add(pc + 1); }
+    }
+    for &(_, target, _) in text.raises { add(target); }
+    heads.iter().filter(|&pc| pc < length).collect()
+}
+
+/// `analyze` over `text`.
+pub(in crate::vm::compiled) fn analyze_text(text: &Text<'_>, initial: &[Type], seeds: Seeds<'_>) -> Facts {
+    let length = text.instructions.len();
+    let heads = heads(text);
+    let blocks = heads.len();
+    let mut flow = FactFlow {
+        text, seeds,
+        entry: (text.entry < length).then(|| Point::entering(initial, seeds)),
+        rounds: (0..blocks).map(|_| Cell::new(0)).collect(),
+        headers: (0..blocks).map(|_| Cell::new(false)).collect(),
+        reached: CompoundBitSet::with_capacity(length),
+        backedge: smallvec::SmallVec::new(),
+        targets: Vec::new(),
+        sends: RefCell::new(Vec::new()),
+        raised: smallvec::SmallVec::new(),
+        heads,
+    };
+    let rows = crate::dataflow::solve(&mut flow);
+    let mut facts = Facts::new(length, initial.len(), seeds);
+    facts.reached = flow.reached;
+    facts.backedge = flow.backedge;
+    for (row, pc) in rows.into_iter().zip(flow.heads) {
+        let Some(row) = row else { continue };
+        facts.store_row(pc, &row.types, [&row.length_of, &row.below, &row.under, &row.atmost, &row.twice]);
     }
     facts
 }

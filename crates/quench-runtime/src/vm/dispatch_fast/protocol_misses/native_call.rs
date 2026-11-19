@@ -16,6 +16,6 @@ pub(in crate::vm::dispatch_fast) const fn native_call_miss_of<H: Host>(parameter
         NATIVE => native_call_miss::<H> as Handler,
         CALL_ARRAY => call_array_miss::<H> as Handler,
         CALL_SPREAD => call_spread_miss::<H> as Handler,
-        _ => lane_general_step::<H>,
+        _ => general_step_in_lane::<H>,
     }
 }

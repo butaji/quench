@@ -35,7 +35,7 @@ fn pair_census_distinguishes_first_and_second_rejection() {
     assert_eq!(vm.get_field_cached(&program, first, atom, cache).unwrap(), second);
     let field = vm.field_cache_entry(cache);
     let mut site = FieldSite { base: FieldBase::THIS, first: (atom, cache), second: Some((atom, cache)),
-        sink: None, sources: std::array::from_fn(|_| None) };
+        sink: None, sources: [FieldSite::NO_SOURCE; 3] };
     let memo = MemoLeaf::Nested { base: FieldBase::THIS.0, field, second: field };
     for (receiver, intermediate, expected, counts) in [
         (first, second, Some(first), [1, 1, 1]),

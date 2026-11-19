@@ -36,9 +36,9 @@ impl<H: Host> Vm<H> {
             let next = self.heap.root(next);
             next_root = Some(next);
             let result = match kind {
-                GroupByKind::Object => Cell::Object(Self::empty_object(Value::NULL)),
-                GroupByKind::Map => Cell::Map {
-                    object: Self::empty_object(
+                GroupByKind::Object => self.heap.alloc_object(Self::empty_object(Value::NULL)),
+                GroupByKind::Map => self.heap.alloc_map(
+                    Self::empty_object(
                         self.realm
                             .intrinsics
                             .builtin_prototypes
@@ -46,56 +46,56 @@ impl<H: Host> Vm<H> {
                             .copied()
                             .unwrap_or(self.map_proto),
                     ),
-                    entries: Default::default(),
-                },
+                    Default::default(),
+                ),
             };
-            let result = self.heap.alloc(result);
             let result = self.heap.root(result);
             result_root = Some(result);
-            let mut index = 0u64;
-            loop {
-                if index >= MAX_SAFE_INTEGER as u64 {
-                    let error = self
-                        .type_error(p, "groupBy iteration exceeds the safe integer limit".into());
-                    let receiver = self.heap.root_value(iterator).unwrap();
-                    return Err(self.iterator_abrupt(p, receiver, error));
-                }
-                let Some(value) = self.rooted_iterator_step_value(p, iterator, next)? else {
-                    return Ok(self.heap.root_value(result).unwrap());
-                };
-                let value = self.heap.root(value);
-                let mut key_root = None;
-                let entry = (|| {
-                    let element = self.heap.root_value(value).unwrap();
-                    let callback = self.heap.root_value(callback).unwrap();
-                    let key = self.call_value(
-                        p,
-                        callback,
-                        Value::UNDEFINED,
-                        &[element, Value::number(index as f64)],
-                    )?;
-                    let root = self.heap.root(key);
-                    key_root = Some(root);
-                    let key = match kind {
-                        GroupByKind::Object => self.to_property_key(p, key)?,
-                        GroupByKind::Map => canonicalize_keyed_collection_key(key),
+            let callee = self.heap.root_value(callback).unwrap();
+            self.with_prepared_callback(callee, Value::UNDEFINED, |vm, prepared| -> Result<Value, JsError> {
+                let mut index = 0u64;
+                loop {
+                    if index >= MAX_SAFE_INTEGER as u64 {
+                        let error = vm
+                            .type_error(p, "groupBy iteration exceeds the safe integer limit".into());
+                        let receiver = vm.heap.root_value(iterator).unwrap();
+                        return Err(vm.iterator_abrupt(p, receiver, error));
+                    }
+                    let Some(value) = vm.rooted_iterator_step_value(p, iterator, next)? else {
+                        return Ok(vm.heap.root_value(result).unwrap());
                     };
-                    self.heap.update_root(root, key);
-                    let output = self.heap.root_value(result).unwrap();
-                    let key = self.heap.root_value(root).unwrap();
-                    let element = self.heap.root_value(value).unwrap();
-                    self.add_value_to_group(p, kind, output, key, element)
-                })();
-                let entry = entry.map_err(|error| {
-                    let receiver = self.heap.root_value(iterator).unwrap();
-                    self.iterator_abrupt(p, receiver, error)
-                });
-                for root in [Some(value), key_root].into_iter().flatten() {
-                    self.heap.release_root(root);
+                    let value = vm.heap.root(value);
+                    let mut key_root = None;
+                    let entry = (|| {
+                        let element = vm.heap.root_value(value).unwrap();
+                        let key = vm.call_prepared(
+                            p,
+                            prepared,
+                            &[element, Value::number(index as f64)],
+                        )?;
+                        let root = vm.heap.root(key);
+                        key_root = Some(root);
+                        let key = match kind {
+                            GroupByKind::Object => vm.to_property_key(p, key)?,
+                            GroupByKind::Map => canonicalize_keyed_collection_key(key),
+                        };
+                        vm.heap.update_root(root, key);
+                        let output = vm.heap.root_value(result).unwrap();
+                        let key = vm.heap.root_value(root).unwrap();
+                        let element = vm.heap.root_value(value).unwrap();
+                        vm.add_value_to_group(p, kind, output, key, element)
+                    })();
+                    let entry = entry.map_err(|error| {
+                        let receiver = vm.heap.root_value(iterator).unwrap();
+                        vm.iterator_abrupt(p, receiver, error)
+                    });
+                    for root in [Some(value), key_root].into_iter().flatten() {
+                        vm.heap.release_root(root);
+                    }
+                    entry?;
+                    index += 1;
                 }
-                entry?;
-                index += 1;
-            }
+            })
         })();
         for root in [
             Some(source),
@@ -121,16 +121,18 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         let group = match kind {
-            GroupByKind::Object => match self.heap.get(key).cloned() {
-                Some(Cell::Symbol(_)) => self.symbol_property(result, key),
-                _ if let Some(name) = self.heap.string(key).cloned()  => {
+            GroupByKind::Object => {
+                if self.heap.is_symbol(key) {
+                    self.symbol_property(result, key)
+                } else if let Some(name) = self.heap.string(key).cloned() {
                     let atom = self.intern_js_atom(&name);
                     self.own_property(result, atom)
+                } else {
+                    unreachable!("ToPropertyKey returns a string or symbol")
                 }
-                _ => unreachable!("ToPropertyKey returns a string or symbol"),
-            },
+            }
             GroupByKind::Map => self.map_entry_index(result, key).map(|index| {
-                let Some(Cell::Map { entries, .. }) = self.heap.get(result) else {
+                let Some(entries) = self.heap.map_entries(result) else {
                     unreachable!("groupBy owns a Map result")
                 };
                 entries.value_at(index)
@@ -141,26 +143,24 @@ impl<H: Host> Vm<H> {
                 unreachable!("groupBy owns array groups")
             }
         } else {
-            let group = self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            let group = self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
                     vec![value],
-                ),
-            });
+                ));
             match kind {
-                GroupByKind::Object => match self.heap.get(key).cloned() {
-                    Some(Cell::Symbol(_)) => {
+                GroupByKind::Object => {
+                    if self.heap.is_symbol(key) {
                         self.set_index(p, result, key, group)?;
-                    }
-                    _ if let Some(name) = self.heap.string(key).cloned()  => {
+                    } else if let Some(name) = self.heap.string(key).cloned() {
                         let atom = self.intern_js_atom(&name);
                         self.set_property(result, atom, group)?;
+                    } else {
+                        unreachable!("ToPropertyKey returns a string or symbol");
                     }
-                    _ => unreachable!("ToPropertyKey returns a string or symbol"),
-                },
+                }
                 GroupByKind::Map => {
                     let key_hash = self.same_value_zero_hash(key);
-                    let Some(Cell::Map { entries, .. }) = self.heap.get_mut(result) else {
+                    let Some(entries) = self.heap.map_entries_mut(result) else {
                         unreachable!("groupBy owns a Map result")
                     };
                     entries.push((key, group), key_hash);

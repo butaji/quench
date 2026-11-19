@@ -1,47 +1,8 @@
-//! Bound AST traversal before recursive semantic and lowering passes.
-use oxc_ast::ast::{AssignmentTarget, BindingPattern, Expression, Program, Statement};
-use oxc_ast_visit::{Visit, walk};
+//! Bound AST traversal before recursive semantic and lowering passes. The walk itself lives in
+//! `checks`, shared with the other read-only passes.
+use oxc_ast::ast::Program;
 
-/// A walk entering one transition per level, as the recursive passes after it do, against
-/// the budget left where it starts (`StackBudget`).
-struct Validator {
-    budget: crate::stack::StackBudget,
-    depth: usize,
-    exhausted: bool,
-}
-
-impl Validator {
-    fn descend(&mut self, visit: impl FnOnce(&mut Self)) {
-        if self.exhausted {
-            return;
-        }
-        if !self.budget.admits(self.depth) {
-            self.exhausted = true;
-            return;
-        }
-        self.depth += 1;
-        visit(self);
-        self.depth -= 1;
-    }
-}
-
-impl<'a> Visit<'a> for Validator {
-    fn visit_expression(&mut self, expression: &Expression<'a>) {
-        self.descend(|this| walk::walk_expression(this, expression));
-    }
-
-    fn visit_statement(&mut self, statement: &Statement<'a>) {
-        self.descend(|this| walk::walk_statement(this, statement));
-    }
-
-    fn visit_binding_pattern(&mut self, pattern: &BindingPattern<'a>) {
-        self.descend(|this| walk::walk_binding_pattern(this, pattern));
-    }
-
-    fn visit_assignment_target(&mut self, target: &AssignmentTarget<'a>) {
-        self.descend(|this| walk::walk_assignment_target(this, target));
-    }
-}
+use super::checks::{Passes, walk};
 
 pub(crate) fn validate_parsed(parsed: &oxc_parser::ParserReturn<'_>) -> Result<(), crate::stack::StackExhausted> {
     if parsed.stack_exhausted {
@@ -51,9 +12,11 @@ pub(crate) fn validate_parsed(parsed: &oxc_parser::ParserReturn<'_>) -> Result<(
 }
 
 pub(super) fn validate(program: &Program<'_>) -> Result<(), crate::stack::StackExhausted> {
-    let mut validator = Validator { budget: crate::stack::StackBudget::here(), depth: 0, exhausted: false };
-    validator.visit_program(program);
-    if validator.exhausted { Err(crate::stack::StackExhausted) } else { Ok(()) }
+    if walk(program, Passes { depth: true, ..Passes::default() }).stack_exhausted {
+        Err(crate::stack::StackExhausted)
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

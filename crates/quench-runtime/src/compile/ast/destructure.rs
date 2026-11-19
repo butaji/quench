@@ -48,6 +48,11 @@ pub(super) enum AssignmentReference {
     },
 }
 
+/// The rejection for a destructuring key the compiler does not lower.
+const DESTRUCTURING_KEY_UNSUPPORTED: &str = "destructuring key is unsupported";
+/// The rejection for an assignment target the compiler does not lower.
+const ASSIGNMENT_TARGET_UNSUPPORTED: &str = "assignment target unsupported";
+
 impl FunctionCompiler<'_, '_> {
     pub(super) fn assignment(&mut self, value: &AssignmentExpression<'_>) -> Register {
         if let Some(target) = value.left.as_simple_assignment_target() {
@@ -67,7 +72,19 @@ impl FunctionCompiler<'_, '_> {
             }
             let operator = value.operator as u8;
             if operator == 0 {
-                let right = self.expression(&value.right);
+                // A plain store to a promoted local is a `Move` after the value, so the value is
+                // computed straight into the local's register.
+                let local = match &reference {
+                    AssignmentReference::Name { atom, environment: None } => self.plain_store_register(*atom),
+                    _ => None,
+                };
+                let right = match local {
+                    Some(register) => {
+                        self.expression_into(&value.right, register);
+                        register
+                    }
+                    None => self.expression(&value.right),
+                };
                 if Self::anonymous_function_definition(&value.right)
                     && let Some(name) = self.assignment_identifier_name(&value.left)
                 {
@@ -352,7 +369,7 @@ impl FunctionCompiler<'_, '_> {
                         }
                         AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
                             let Some((key, excluded_key)) = self.pattern_key(&property.name) else {
-                                self.owner.reject(property.span(), "destructuring key is unsupported");
+                                self.owner.reject(property.span(), DESTRUCTURING_KEY_UNSUPPORTED);
                                 continue;
                             };
                             let reference = self.prepare_maybe_default_reference(&property.binding);
@@ -459,7 +476,7 @@ impl FunctionCompiler<'_, '_> {
             }
             _ => {
                 self.owner
-                    .reject(target.span(), "assignment target unsupported");
+                    .reject(target.span(), ASSIGNMENT_TARGET_UNSUPPORTED);
                 AssignmentReference::Name {
                     atom: self.owner.atom("undefined"),
                     environment: None,
@@ -537,7 +554,7 @@ impl FunctionCompiler<'_, '_> {
             _ => {
                 let Some(target) = target.as_assignment_target() else {
                     self.owner
-                        .reject(target.span(), "assignment target unsupported");
+                        .reject(target.span(), ASSIGNMENT_TARGET_UNSUPPORTED);
                     return;
                 };
                 self.assign_pattern(target, value);
@@ -636,7 +653,7 @@ impl FunctionCompiler<'_, '_> {
                 for property in &object.properties {
                     let dst = self.reg();
                     let Some((key, excluded_key)) = self.pattern_key(&property.key) else {
-                        self.owner.reject(property.span, "destructuring key is unsupported");
+                        self.owner.reject(property.span, DESTRUCTURING_KEY_UNSUPPORTED);
                         continue;
                     };
                     excluded.push(excluded_key);

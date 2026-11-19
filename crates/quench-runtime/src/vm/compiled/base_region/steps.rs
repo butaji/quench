@@ -31,7 +31,7 @@
 //! 4. A leave (`CallRow::Here`): the region ends at the instruction and the interpreter runs it,
 //!    for every other instruction: the suspensions `Await`, `Yield` and
 //!    `YieldStar`, whose generator or async record the lane resumes in the interpreter, so no native
-//!    code could continue past them; the Wasm opcodes (`EXCLUDED`); a call with a result flag other than the
+//!    code could continue past them; the Wasm opcodes (`Traits::WASM_OPCODE`); a call with a result flag other than the
 //!    return flag and the `this` binding; a conditional jump the helper would take backward in a loop region, which has no row that
 //!    polls the interrupt flag before it (a body has: `function::preludes`); and any instruction that
 //!
@@ -54,11 +54,14 @@
 
 use super::*;
 use super::call_plan::{self, CallChain, CallForm, CallPart, CallPlan, CallShape, Choice};
-use super::callees::chains;
 use super::super::{LaneHelper, LaneHelpers};
-use crate::bytecode::{InstructionField, Op};
+use crate::staged::{Operation, Protocol};
+use crate::bytecode::{Op, Traits};
 use quench_bjit::HOLES;
 use quench_bjit::call::{self, CallRow};
+
+mod lowering;
+pub(super) use lowering::{calls_in_place, decode_step, lowering, STEP_WRITES};
 
 /// How the b-jit runs an instruction no row takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,8 +73,11 @@ pub(super) enum Step {
     Fast(Heap),
     /// `LaneHelper::VmStep` makes the record's call-out in place (`staged::CallOut`) and the region continues.
     CallOut,
-    /// `Fast` in a region whose heap rows read snapshots (`settle`): a helper's effects would not
-    /// reach them, so the slow arm is the leave at the record, which the interpreter runs.
+    /// `LaneHelper::AllocateStep` makes the record's fixed-shape object in place (its destination written) and the region
+    /// continues; a declined allocation leaves at the record.
+    Allocate,
+    /// A fast arm whose miss is the leave at the record, which the interpreter runs: an add with no
+    /// in-place step (`lowering`), an `instanceof` jump (`sites::instanceof_jump`).
     Guard(Heap),
     /// The region leaves at the record.
     Leave,
@@ -86,6 +92,8 @@ pub(super) enum Step {
     /// handler's register (the row's destination, from its operand) and control to its block (the
     /// row's branch).
     Catch,
+    /// A `WasmBranchTable`: a compare tree on the selector over the table's `Jump` rows (`function::switch`).
+    Switch,
 }
 
 impl Step {
@@ -93,7 +101,7 @@ impl Step {
     /// as the raising step, or the VM step helper's call-out): it may allocate or run guest code, which
     /// no heap snapshot a region took sees.
     pub(super) fn runs_helper(self) -> bool {
-        matches!(self, Self::Helper | Self::CallOut | Self::Fast(_) | Self::Throw)
+        matches!(self, Self::Helper | Self::CallOut | Self::Allocate | Self::Fast(_) | Self::Throw)
     }
 
     /// Whether the run reads the dispatch payload: a helper step calls through it, and a guarded
@@ -109,31 +117,12 @@ impl Step {
     }
 }
 
-/// The opcodes the b-jit does not compile, by opcode index: the Wasm opcodes (catalog names that
-/// begin `Wasm`). A Wasm function has its own compiler (`dispatch_wasm`, the Wasm tiers), which
-/// owns the linear memory, tables and typed registers these opcodes read, so a function holding
-/// one is not a b-jit body (`covers`), and a loop region holding one leaves at it.
-const EXCLUDED: [u64; Op::COUNT.div_ceil(WORD)] = {
-    const PREFIX: &[u8] = b"Wasm";
-    let mut table = [0; Op::COUNT.div_ceil(WORD)];
-    let mut index = 0;
-    while index < Op::COUNT {
-        let name = Op::NAMES[index].as_bytes();
-        let mut at = 0;
-        let mut named = name.len() >= PREFIX.len();
-        while named && at < PREFIX.len() {
-            named = name[at] == PREFIX[at];
-            at += 1;
-        }
-        table[index / WORD] |= (named as u64) << (index % WORD);
-        index += 1;
-    }
-    table
-};
-
-/// Whether the b-jit compiles a function of these instructions: none is an excluded opcode.
+/// Whether the b-jit compiles a function of these instructions: none is a Wasm opcode, which the
+/// catalog marks (`Traits::WASM_OPCODE`). A Wasm function has its own compiler (`dispatch_wasm`, the
+/// Wasm tiers), which owns the linear memory, tables and typed registers these opcodes read, so a
+/// function holding one is not a b-jit body, and a loop region holding one leaves at it.
 pub(in crate::vm::compiled) fn covers(code: &[WideInstruction]) -> bool {
-    code.iter().all(|instruction| EXCLUDED[instruction.op() as usize / WORD] >> (instruction.op() as usize % WORD) & 1 == 0)
+    code.iter().all(|instruction| !instruction.op().traits().has(Traits::WASM_OPCODE))
 }
 
 /// The most registers a step the helper makes writes: its result, and the `this` a name call
@@ -149,13 +138,11 @@ fn steps_in_place(instruction: WideInstruction) -> bool {
         && instruction.written_registers().count() <= STEP_WRITES
 }
 
-/// The heap row that is the fast arm of a `Unary` that is a `typeof` string, index or test
-/// (`staged::value::immediate_typeof_index`), where the test's name index fits its hole.
+/// The heap row that is the fast arm of a `Unary` that is a `typeof` string or test (the index form is
+/// `Operation::TypeofIndex`), where the test's name index fits its hole.
 fn typeof_arm(operator: u32) -> Option<Heap> {
-    match operator {
-        crate::bytecode::UNARY_TYPEOF_INDEX => return Some(Heap::TypeofIndex),
-        crate::vm::coercion::TYPEOF => return Some(Heap::TypeofString),
-        _ => {}
+    if operator == crate::vm::coercion::TYPEOF {
+        return Some(Heap::TypeofString);
     }
     let (index, negated) = crate::bytecode::typeof_test(operator)?;
     Some(Heap::TypeofIs { index: u8::try_from(index).ok()?, negated })
@@ -165,14 +152,25 @@ fn typeof_arm(operator: u32) -> Option<Heap> {
 /// word (`staged::iteration`, `staged::value`) or the backing's own layout words
 /// (`elements::append_in_room`) decide.
 fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
-    match instruction.op().class() {
-        Class::SetFunctionName => names::of(known, instruction).map(names::Name::heap),
-        Class::RequireIteratorResult => Some(Heap::Object),
-        Class::ToPropertyKey => Some(Heap::Key),
-        Class::AppendArray => appends_one(instruction).then_some(Heap::Append),
-        Class::ForInNext => Some(Heap::ForIn),
-        Class::Unary => typeof_arm(instruction.unary_operator()),
-        _ => None,
+    match staged_of(instruction) {
+        Some(Operation::PropertyKey { .. }) => Some(Heap::Key),
+        // One element (not a spread, not elisions) defined at the literal's length: the case a capacity word decides.
+        Some(Operation::Protocol { step: Protocol::AppendArray { length: 0, spread: false }, operands: [_, Some(_)], .. }) => Some(Heap::Append),
+        Some(Operation::ForInNext { .. }) => Some(Heap::ForIn),
+        Some(Operation::TypeofIndex { .. }) => Some(Heap::TypeofIndex),
+        Some(Operation::RequireIteratorResult { .. }) => Some(Heap::Object),
+        _ => match instruction.op().class() {
+            // derivation debt: no staged::Operation for SetFunctionName (the naming is a recorded site, `names`)
+            Class::SetFunctionName => names::of(known, instruction).map(names::Name::heap),
+            // derivation debt: no staged::Operation for the `typeof` string and `typeof` test operators
+            Class::Unary => typeof_arm(instruction.unary_operator()),
+            _ => None,
+        },
+    }
+    if super::super::meaning_compiled::is_unary(instruction) {
+        typeof_arm(instruction.unary_operator())
+    } else {
+        None
     }
 }
 
@@ -241,8 +239,8 @@ fn branches_back(pc: u32, instruction: WideInstruction) -> bool {
 /// as a body's do, so a step that jumps backward may be made in place. A helper step names the register it writes, and a fast
 /// arm the register it reads; an add row also names its transition and the atom it holds unnamed.
 pub(super) fn decode_step(pc: u32, instruction: WideInstruction, known: Known, (helpers, polls): (LaneHelpers, bool)) -> Decoded {
-    match instruction.op().class() {
-        Class::Nop => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
+    match staged_of(instruction) {
+        Some(Operation::Nop) => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
         _ => {
             let step = if branches_back(pc, instruction) && !polls { Step::Leave } else { lowering(instruction, known, helpers) };
             let helped = step.runs_helper();
@@ -256,23 +254,6 @@ pub(super) fn decode_step(pc: u32, instruction: WideInstruction, known: Known, (
             let name = names::of(known, instruction).filter(|name| matches!(step, Step::Fast(fast) | Step::Guard(fast) if fast == name.heap()));
             let result = written.next();
             Decoded { target, a: read, base, also: written.next(), add, name, atom: add.map(|_| instruction.atom_index()), ..Decoded::step(step, result) }
-        }
-    }
-}
-
-/// A helper step, alone or behind a fast arm, may write any heap value, which the snapshots a heap row reads (the entry
-/// record's captures, fields and array views) would not see, and run guest code that changes a
-/// Stable fact a region holds (the global object's layout): where the region has such a row its
-/// helper steps leave instead. A fast arm stays: its hit stores as a `Store` row does, in the
-/// backing the views read live, and only its slow arm becomes the leave (`Step::Guard`).
-pub(super) fn settle(rows: &mut [&mut Decoded]) {
-    if rows.iter().any(|row| row.heap.is_some_and(Heap::reads_snapshot) || row.global.is_some() || row.lexical.is_some()) {
-        for row in rows.iter_mut() {
-            row.step = match row.step {
-                Some(Step::Fast(fast)) => Some(Step::Guard(fast)),
-                Some(step) if step.runs_helper() => Some(Step::Leave),
-                step => step,
-            };
         }
     }
 }
@@ -292,7 +273,7 @@ impl Planned {
 
 /// A chain as one planned row: the row after the `spills` that lead it is the row itself, the
 /// spills run before it and the rest after it, all at the same PC.
-fn chained(parts: Vec<CallPart>, spills: usize, owned: Option<Box<quench_bjit::call_record::CallRecord>>) -> Result<Planned, String> {
+fn chained(parts: Vec<CallPart>, spills: usize, owned: Vec<Box<quench_bjit::call_record::CallRecord>>) -> Result<Planned, String> {
     let mut parts = parts.into_iter().map(Planned::of_part);
     let before: Vec<Planned> = parts.by_ref().take(spills).collect();
     let mut row = parts.next().ok_or("chain: no row")?;
@@ -309,8 +290,10 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
         Step::Leave => leave(pc),
         Step::Helper => plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers)),
         Step::CallOut => plan_helper(layout, pc, decoded, (LaneHelper::VmStep, helpers)),
+        Step::Allocate => plan_helper(layout, pc, decoded, (LaneHelper::AllocateStep, helpers)),
         Step::Throw => plan_throw(layout, pc, helpers),
         Step::Catch => plan_catch(decoded, layout, pc, helpers),
+        Step::Switch => Err("switch: planned as a compare tree (plan_row)".into()),
         Step::Fast(fast) => plan_guarded(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?), helpers),
         Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, None, helpers),
         Step::Return => {
@@ -346,10 +329,15 @@ pub(super) fn leave(pc: u32) -> Result<Planned, String> {
 /// completed, branched or missed (nothing ran: the leave at the record), or left, where the step ran in frames it made
 /// of the lane's activations (a frame-needing step of a native callee) and the body leaves past it: the row's
 /// (status, word) exit.
-fn helper_chain(layout: &Layout, pc: u32, reloads: &[(Place, Register)], (helper, helpers): (LaneHelper, LaneHelpers)) -> Result<Planned, String> {
-    let address = call_plan::helper_address(helpers, helper).ok_or("step: no helper address")?;
+fn helper_chain(layout: &Layout, pc: u32, reloads: &[(Place, Register)], (helper, helpers): (LaneHelper, LaneHelpers), packed: Option<[u64; 2]>) -> Result<Planned, String> {
+    // A step the planner decoded runs the packed helper (`LaneHelper::StepPacked`), which takes its instruction as is.
+    let packed = packed.filter(|_| helper == LaneHelper::Step).and_then(|words| call_plan::helper_address(helpers, LaneHelper::StepPacked).map(|address| (address, words)));
+    let (address, packed) = match packed {
+        Some((address, words)) => (address, Some(words)),
+        None => (call_plan::helper_address(helpers, helper).ok_or("step: no helper address")?, None),
+    };
     let (spills, record) = (layout.spills(pc), layout.record(pc));
-    chained(call_plan::plan_step(record, address, &spills, reloads)?, spills.len(), None)
+    chained(call_plan::plan_step(record, address, packed, &spills, reloads)?, spills.len(), Vec::new())
 }
 
 /// The pinned registers a row at `pc` reloads before it continues: those live at the next
@@ -360,8 +348,8 @@ fn reloads(layout: &Layout, decoded: &Decoded, pc: u32) -> Vec<(Place, Register)
 
 /// The chain of a step at `pc` that `helper` makes, which also branches to the target of its instruction where
 /// it jumps.
-fn plan_helper(layout: &Layout, pc: u32, decoded: &Decoded, helper: (LaneHelper, LaneHelpers)) -> Result<Planned, String> {
-    let row = helper_chain(layout, pc, &reloads(layout, decoded, pc), helper)?;
+pub(super) fn plan_helper(layout: &Layout, pc: u32, decoded: &Decoded, helper: (LaneHelper, LaneHelpers)) -> Result<Planned, String> {
+    let row = helper_chain(layout, pc, &reloads(layout, decoded, pc), helper, decoded.packed)?;
     match decoded.target {
         Some(target) => branching(row, layout, (pc, target)),
         None => Ok(row),
@@ -393,7 +381,7 @@ fn completion(layout: &Layout, pc: u32, web: Register) -> Result<Vec<Planned>, S
 /// after it and no registers are reloaded; a helper that did not raise (it ran beside a native
 /// callee's frames, where it makes nothing) falls to the leave at the record, as every exit does.
 fn plan_throw(layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
-    let mut row = helper_chain(layout, pc, &[], (LaneHelper::Step, helpers))?;
+    let mut row = helper_chain(layout, pc, &[], (LaneHelper::Step, helpers), None)?;
     row.post.push(Planned { exits: vec![Exit::At(layout.record(pc))], ..Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, None) });
     Ok(row)
 }
@@ -443,7 +431,7 @@ fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, slow: Opti
     if (read != Place::Mem || second != Place::Mem) && fast.reads_frame_word() {
         return slow.map_or_else(|| leave(pc), Ok);
     }
-    let row = HeapRow { heap: fast, dst: written, a: read, b: Place::Mem, entry: false };
+    let row = HeapRow { heap: fast, dst: written, a: read, b: second, entry: false };
     let holes = heap_holes(decoded, homes, fast, false, [written_hole, read_hole, second_hole]);
     let behind_parts = slow.as_ref().map_or(0, |slow| 1 + slow.pre.len() + slow.post.len());
     let mut run = Planned::single(base_rows::stencil(row)?, holes, None, slow.is_none().then_some(pc));
@@ -461,12 +449,13 @@ fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, slow: Opti
 /// parts that name another part of their run are renumbered past it.
 pub(super) fn behind(mut fast: Planned, mut slow: Planned) -> Planned {
     let (lead, tail) = (std::mem::take(&mut slow.pre), std::mem::take(&mut slow.post));
-    fast.owned = slow.owned.take();
+    fast.owned = std::mem::take(&mut slow.owned);
     fast.post = lead.into_iter().chain(std::iter::once(slow)).chain(tail).map(|mut part| {
         part.branch = part.branch.map(|branch| match branch {
             Branch::Part(index) => Branch::Part(index + 1),
             pc @ Branch::Pc(_) => pc,
         });
+        part.cold = true;
         part
     }).collect();
     fast
@@ -479,12 +468,17 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     let helper = if shape.form == CallForm::Plain { layout.ending.call_helper() } else { shape.form.helper() };
     let helper = call_plan::helper_address(helpers, helper).ok_or("call: no helper address")?;
     let (spills, reloads) = (layout.spills(pc), if shape.returning { Vec::new() } else { layout.spills(pc + 1) });
-    let plan = CallPlan { shape, direct: layout.callee(shape.call_pc), helper, spills: &spills, reloads: &reloads };
-    let CallChain { parts, record, choice } = call_plan::plan_call(&plan)?;
+    let proven_args = if layout.inlined(pc) { 0 } else { layout.proven_args.get(shape.call_pc as usize).copied().unwrap_or(0) };
+    let read = shape.method.map(|method| super::plan::method_read(shape.this, method.cache, method.scratch)).transpose()?;
+    let chain = shape.method.map_or_else(Vec::new, |method| super::plan::chain_reads(layout, shape.this, method.cache, method.scratch));
+    // The holders the chain's reads answer through: the body subscribes to them, so a change of their values retires it.
+    layout.holders.borrow_mut().extend(chain.iter().map(|read| read.holder));
+    let plan = CallPlan { shape, direct: layout.callees(shape.call_pc), helper, spills: &spills, reloads: &reloads, proven_args, read, chain };
+    let CallChain { parts, records: record, choice } = call_plan::plan_call(&plan)?;
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     #[cfg(test)]
     if choice == Choice::Direct {
-        super::note_fast(crate::bytecode::index::Call);
+        super::note_fast(shape.op);
     }
     chained(parts, spills.len(), record)
 }

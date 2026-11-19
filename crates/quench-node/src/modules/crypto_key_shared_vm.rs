@@ -11,9 +11,7 @@ const KEY_TYPE_PRIVATE: f64 = super::crypto_key_layout::Kind::Private as u32 as 
 const KEY_SLOT_COUNT: usize = 2;
 const CRYPTO_KEY_SLOT_COUNT: usize = 7;
 const CACHE: &str = "\0builtin:crypto/native-key-slots";
-fn get(c: &mut Context<'_>, o: RootId, n: &str) -> Result<RootId, RootedError> {
-    c.get_named_property_rooted(o, n)
-}
+use crate::modules::util_shared_vm::named_get as get;
 fn set(c: &mut Context<'_>, o: RootId, n: &str, v: RootId) -> Result<(), RootedError> {
     let k = c.string_rooted(n);
     c.define_data_property_rooted(o, k, v, true, true, true)?;

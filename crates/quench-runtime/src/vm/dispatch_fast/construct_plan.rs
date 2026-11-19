@@ -3,16 +3,16 @@ use super::*;
 use crate::staged::plan_fields::{field_value, FieldClass};
 mod nested;
 mod adds;
-pub(super) use adds::{lane_add_initializer_fields, lane_add_stores};
-pub(super) use nested::{lane_finish_forwarded, nested_construction, nested_root_holds, NestedField};
+pub(super) use adds::{add_initializer_fields_in_lane, add_stores_in_lane};
+pub(super) use nested::{finish_forwarded_in_lane, nested_construction, nested_root_holds, NestedField};
 
 /// What a constructor's initializer body (`ScriptCallTarget::initializes`) made of a receiver
 /// whose adds all hit: the callee's receiver template under `prototype`, which the callee and
 /// that prototype alone determine, ends at `shape`, its fields the arguments for
 /// `parameters[..fields]` in order, a defaulted one's fallback in place of a falsy argument.
-/// While the prototype layout keeps `epoch` (`prototype_layout_epoch`), which every
-/// collection advances, those adds would hit again with the same transitions, so the object
-/// can be allocated finished.
+/// While the plan's dependency holds (`watch_construct_plan`: the values and layouts of the
+/// objects it read and of the chains above them), those adds would hit again with the same
+/// transitions, so the object can be allocated finished.
 #[derive(Clone, Copy)]
 pub(super) struct ConstructPlan {
     pub(super) callee: Value,
@@ -42,12 +42,12 @@ pub(super) struct ConstructPlan {
     pub(super) operators: [u8; CONSTRUCT_PLAN_FIELDS],
     pub(super) fallbacks: [Value; CONSTRUCT_PLAN_FIELDS],
     /// For a forwarding constructor's plan, where its body's reads resolved
-    /// (`lane_forwarded_construction`), which the plan's own proof keeps. Its fields, if any, are
-    /// those its forwarded initializer stores (`lane_record_forwarded_fields`).
+    /// (`forwarded_construction_in_lane`), which the plan's own proof keeps. Its fields, if any, are
+    /// those its forwarded initializer stores (`record_forwarded_fields_in_lane`).
     pub(super) forwarded: Option<ForwardedResolution>,
     /// The field a nested construction gives a fresh object each time (`NestedField`).
     pub(super) nested: Option<NestedField>,
-    /// For a class whose constructor only constructs its parent (`lane_super_construction`),
+    /// For a class whose constructor only constructs its parent (`super_construction`),
     /// the parent whose stores the plan holds; `undefined` for any other plan. The plan holds
     /// while the class's [[Prototype]] is still that parent, which `super(...)` constructs.
     pub(super) super_parent: Value,
@@ -56,20 +56,20 @@ pub(super) struct ConstructPlan {
 /// Which constructions allocate from a `ConstructPlan`, and how they compute its fields.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ConstructPlanKind {
-    /// An initializer constructor's plan (`lane_initialize_fields`) whose fields are the
+    /// An initializer constructor's plan (`initialize_fields_in_lane`) whose fields are the
     /// arguments as passed.
     Passed,
     /// An initializer constructor's plan with defaulted or computed fields
     /// (`ConstructPlan::defaulted`, `ConstructPlan::computed`).
     Defaulted,
-    /// A forwarding constructor's plan (`lane_planned_receiver`), which holds only with its
-    /// forwarding (`lane_forwarded_fields`).
+    /// A forwarding constructor's plan (`planned_receiver_in_lane`), which holds only with its
+    /// forwarding (`forwarded_fields_in_lane`).
     Forwarding,
 }
 
 impl ConstructPlan {
-    /// This plan, holding from the current prototype layout epoch, with its receiver
-    /// header derived from its prototype and shape.
+    /// This plan, with its receiver header derived from its prototype and shape; it holds
+    /// under the dependency `watch_construct_plan` then gives it.
     pub(super) fn finish(self) -> Self {
         self.derive_header()
     }
@@ -164,7 +164,7 @@ impl ConstructPlan {
     }
 
     /// This plan holding the fields `fields` that a forwarded initializer's adds gave a receiver
-    /// of `shape` (`lane_record_forwarded_fields`), forwarding as `forwarded`.
+    /// of `shape` (`record_forwarded_fields_in_lane`), forwarding as `forwarded`.
     pub(super) fn with_recorded(&self, fields: &Self, shape: u32, forwarded: ForwardedResolution) -> Self {
         Self {
             shape,
@@ -255,7 +255,7 @@ pub(super) fn initializer_value<H: Host>(vm: &Vm<H>, passed: Value, fallback: Op
 }
 
 /// The value initializer `store` gives its field from the parameters' values `argument`:
-/// `None` where the store leaves it to the body (`lane_add_initializer_fields`). The running
+/// `None` where the store leaves it to the body (`add_initializer_fields_in_lane`). The running
 /// program is the store's (`Vm::active_constant`).
 #[inline(always)]
 pub(super) fn initializer_store_value<H: Host>(vm: &Vm<H>, store: &crate::bytecode::InitializerStore, argument: impl Fn(u16) -> Value) -> Option<Value> {
@@ -269,29 +269,29 @@ pub(super) fn initializer_store_value<H: Host>(vm: &Vm<H>, store: &crate::byteco
     }
 }
 
-/// `lane_initialize_fields` while `callee`'s plan holds: the finished receiver, its fields
+/// `initialize_fields_in_lane` while `callee`'s plan holds: the finished receiver, its fields
 /// the arguments the plan's parameters name. A plan holds while its callee's layout and
 /// `prototype` do: the receiver's template is derived from those alone, and the epoch keeps
 /// the adds it planned free of setters. Apart from the planning, whose frame is larger.
 #[inline(always)]
-pub(super) fn lane_planned_construction<H: Host>(
+pub(super) fn planned_construction_in_lane<H: Host>(
     vm: &mut Vm<H>,
     callee: Value,
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<Value> {
-    planned_construction(vm, callee, lane_construct_argument(r, i))
+    planned_construction(vm, callee, construct_argument_in_lane(r, i))
 }
 
-/// `lane_planned_construction` of a plan of passed fields that fit the inline slots, where it
+/// `planned_construction_in_lane` of a plan of passed fields that fit the inline slots, where it
 /// calls nothing out of line (`Heap::alloc_planned_inline_quick`); `None`, before any effect,
-/// for anything else, which `lane_planned_construction` makes.
+/// for anything else, which `planned_construction_in_lane` makes.
 #[inline(always)]
-pub(super) fn lane_planned_inline_quick<H: Host>(vm: &mut Vm<H>, callee: Value, r: Registers, i: &LaneInstruction) -> Option<Value> {
-    planned_inline_quick(vm, callee, lane_construct_argument(r, i))
+pub(super) fn planned_inline_quick_in_lane<H: Host>(vm: &mut Vm<H>, callee: Value, r: Registers, i: &LaneInstruction) -> Option<Value> {
+    planned_inline_quick(vm, callee, construct_argument_in_lane(r, i))
 }
 
-/// `lane_planned_inline_quick` from the parameters' values `argument` gives: any construction
+/// `planned_inline_quick_in_lane` from the parameters' values `argument` gives: any construction
 /// site's quick case, a lane record's or a lane body's (`body_calls::constructed_in_place`).
 #[inline(always)]
 pub(super) fn planned_inline_quick<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
@@ -309,14 +309,14 @@ pub(super) fn planned_inline_quick<H: Host>(vm: &mut Vm<H>, callee: Value, argum
     vm.heap.alloc_planned_inline_quick(header, inline, len)
 }
 
-/// `lane_planned_construction` from the parameters' values `argument` gives.
+/// `planned_construction_in_lane` from the parameters' values `argument` gives.
 #[inline(always)]
 pub(super) fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
     // The plan in place: the allocation borrows the heap beside it, not a copy.
     let plan = &vm.lane_stack.construct_plans[index];
     if plan.kind != ConstructPlanKind::Passed {
-        return lane_defaulted_construction(vm, index, argument);
+        return defaulted_construction_in_lane(vm, index, argument);
     }
     let len = usize::from(plan.fields);
     if len <= INLINE_PROPERTY_COUNT {
@@ -331,11 +331,11 @@ pub(super) fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argum
 }
 
 /// Whether the running lane's frame constructs in place (`LaneContext::script_constructs`),
-/// which a body's constructions inherit (`lane_body_construction`).
+/// which a body's constructions inherit (`body_construction_in_lane`).
 ///
 /// # Safety
 /// `context` is the running lane's context.
-pub(in crate::vm) unsafe fn lane_context_constructs<H: Host>(context: *mut ()) -> bool {
+pub(in crate::vm) unsafe fn context_constructs_in_lane<H: Host>(context: *mut ()) -> bool {
     if !crate::DYNAMIC_EXECUTION_ENABLED { return false; }
     let cx = context.cast::<LaneContext<H>>();
     crate::staged::call_construct::concrete_admits_construct_run(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs })
@@ -349,7 +349,7 @@ pub(in crate::vm) unsafe fn lane_context_constructs<H: Host>(context: *mut ()) -
 ///
 /// # Safety
 /// `arguments` are the body's `argc` registers.
-pub(in crate::vm) unsafe fn lane_body_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
+pub(in crate::vm) unsafe fn body_construction_in_lane<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
     if !crate::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) || vm.heap.should_collect() {
         return None;
     }
@@ -357,7 +357,7 @@ pub(in crate::vm) unsafe fn lane_body_construction<H: Host>(vm: &mut Vm<H>, code
     let argument = |parameter: u16| if parameter < argc { unsafe { *arguments.add(usize::from(parameter)) } } else { Value::UNDEFINED };
     // A forwarding constructor's plan (`this.initialize(...)`) holds with its forwarding.
     let this = planned_construction(vm, callee, argument)
-        .or_else(|| lane_forwarded_fields(vm, callee, argument))
+        .or_else(|| forwarded_fields_in_lane(vm, callee, argument))
         .or_else(|| initializer_construction(vm, code, callee, argument))?;
     note_allocation(vm);
     Some(this)
@@ -367,7 +367,7 @@ pub(in crate::vm) unsafe fn lane_body_construction<H: Host>(vm: &mut Vm<H>, code
 /// initializer the body calls by its entry (`DirectCallee::forwarder`): allocated finished
 /// from the plan while it holds, whose forwarding has no fields of its own. `None` leaves
 /// the body to its helper path before any effect.
-pub(in crate::vm) fn lane_body_receiver<H: Host>(vm: &mut Vm<H>, callee: Value) -> Option<Value> {
+pub(in crate::vm) fn body_receiver_in_lane<H: Host>(vm: &mut Vm<H>, callee: Value) -> Option<Value> {
     if !crate::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) || vm.heap.should_collect() || vm.with_scope_entered {
         return None;
     }
@@ -395,16 +395,16 @@ fn initializer_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, cal
         || !Vm::<H>::inline_constructible(code.function_get(function as usize)?) {
         return None;
     }
-    let (this, added) = lane_initialize_fields(vm, code, callee, callee, function, argument)?;
+    let (this, added) = initialize_fields_in_lane(vm, code, callee, callee, function, argument)?;
     added.then_some(this)
 }
 
-/// `lane_planned_construction` under the plan at `index` with defaulted fields, whose values
+/// `planned_construction_in_lane` under the plan at `index` with defaulted fields, whose values
 /// it computes first; `None` for a forwarding constructor's plan, which holds only with its
-/// forwarding (`lane_forwarded_fields`). Out of line, so plans of plain fields keep their
+/// forwarding (`forwarded_fields_in_lane`). Out of line, so plans of plain fields keep their
 /// code.
 #[inline(never)]
-fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, argument: impl Fn(u16) -> Value) -> Option<Value> {
+fn defaulted_construction_in_lane<H: Host>(vm: &mut Vm<H>, index: usize, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let plan = &vm.lane_stack.construct_plans[index];
     if plan.kind == ConstructPlanKind::Forwarding {
         return None;
@@ -416,7 +416,7 @@ fn lane_defaulted_construction<H: Host>(vm: &mut Vm<H>, index: usize, argument: 
 /// A construction's parameter `k` as a plain activation sees it: argument `k`, or undefined
 /// when not passed.
 #[inline(always)]
-pub(super) fn lane_construct_argument(r: Registers, i: &LaneInstruction) -> impl Fn(u16) -> Value + '_ {
+pub(super) fn construct_argument_in_lane(r: Registers, i: &LaneInstruction) -> impl Fn(u16) -> Value + '_ {
     let argc = ImmediateLayout::argument_count(i.imm());
     move |parameter| if parameter < argc { r.get(i.c + parameter) } else { Value::UNDEFINED }
 }
@@ -432,6 +432,38 @@ pub(super) fn lane_construct_argument(r: Registers, i: &LaneInstruction) -> impl
 #[inline(always)]
 pub(super) fn holding_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -> Option<ConstructPlan> {
     holding_construct_plan_index(vm, callee).map(|index| vm.lane_stack.construct_plans[index])
+}
+
+/// `callee`'s plan while it holds, as a body keeps a receiver it builds as its field values
+/// (`compiled::ScalarConstructPlan`): only a plan of fields passed or constant, with no nested,
+/// forwarded or parent construction, whose shape names each field by a string.
+pub(in crate::vm) fn scalar_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -> Option<super::super::compiled::ScalarConstructPlan> {
+    use super::super::compiled::{ScalarConstructPlan, ScalarField};
+    let plan = &vm.lane_stack.construct_plans[holding_construct_plan_index(vm, callee)?];
+    let len = usize::from(plan.fields);
+    if plan.kind != ConstructPlanKind::Passed || plan.forwarded.is_some() || plan.nested.is_some()
+        || plan.super_parent != Value::UNDEFINED || (plan.defaulted | plan.computed) != 0 || len > CONSTRUCT_PLAN_FIELDS {
+        return None;
+    }
+    let keys = vm.shape_keys(plan.shape);
+    if keys.len() != len { return None; }
+    let fields = keys.iter().enumerate().map(|(field, key)| match key {
+        crate::vm::PropertyKey::String(atom) => Some((*atom, if plan.constant & (1 << field) != 0 {
+            ScalarField::Constant(plan.fallbacks[field])
+        } else {
+            ScalarField::Parameter(plan.parameters[field])
+        })),
+        _ => None,
+    }).collect::<Option<_>>()?;
+    Some(ScalarConstructPlan { callee, shape: plan.shape, fields })
+}
+
+/// Whether `callee`'s plan holds now (`holding_construct_plan_index`) and an allocation by it
+/// would not refuse (`body_construction_in_lane`): no construction under way, no collection due.
+/// A body that keeps a receiver as its field values (`compiled::ScalarConstructPlan`) tests it
+/// where the construction would run, so the receiver a leave allocates is the plan's.
+pub(in crate::vm) fn construct_plan_holds<H: Host>(vm: &Vm<H>, callee: Value) -> bool {
+    vm.construct_target.is_none() && !vm.heap.should_collect() && holding_construct_plan_index(vm, callee).is_some()
 }
 
 /// The construct plan cache index of `callee`'s plan while it holds (`holding_construct_plan`).
@@ -452,10 +484,12 @@ pub(super) fn record_forwarded_resolution<H: Host>(vm: &mut Vm<H>, index: usize,
 
 /// Makes plan `index` hold only while `objects`, which its proof read besides the callee
 /// (the callee's own layout, so its `prototype` and [[Prototype]] among them), keep their
-/// values and layouts: `renew` starts the plan's dependency, else it adds to it. A write to
-/// a slot of any of them, or a layout change anywhere, retires it (`watch_prototype_values`),
-/// so a use compares no epoch, layout or shape. The plan never holds where the reader
-/// table is full.
+/// values and layouts, and so do the chains above them, which its adds' chain proofs and a
+/// forwarding's `apply` read: `renew` starts the plan's dependency, else it adds to it. A
+/// write to a slot of any of them (`hold_prototype_values`), or a layout change of any of them
+/// or of a prototype above one (`Vm::hold_chain_layouts`), retires it, so a use compares no
+/// epoch, layout or shape; a change to a prototype on none of those chains leaves it. The
+/// plan never holds where a reader table is full.
 pub(super) fn watch_construct_plan<H: Host>(vm: &mut Vm<H>, index: usize, renew: bool, objects: &[Value]) {
     use std::rc::Rc;
     use crate::code_dependencies::DependentCode;
@@ -465,18 +499,22 @@ pub(super) fn watch_construct_plan<H: Host>(vm: &mut Vm<H>, index: usize, renew:
     let Some(watch) = vm.lane_stack.construct_watches[index].clone() else { return };
     let code: Rc<dyn DependentCode> = watch.clone();
     for &object in objects {
-        vm.heap.mark_prototype(object);
-        let shape = vm.heap.function(object).map(|function| function.object.exact_shape())
-            .or_else(|| vm.heap.object(object).map(|data| data.exact_shape()));
-        if !shape.is_some_and(|shape| crate::heap::subscribe_prototype_values(shape, &code)) {
+        // Marks every link, the object first, so the shape below is the one marked.
+        if !vm.hold_chain_layouts(object, &code) {
             watch.retire();
+            return;
+        }
+        let shape = vm.heap.object(object).map(|data| data.exact_shape());
+        if !shape.is_some_and(|shape| crate::heap::hold_prototype_values(shape, &code)) {
+            watch.retire();
+            return;
         }
     }
 }
 
-/// `lane_initialize_fields` of the stores `adds` makes to the receiver it is given, each passed
+/// `initialize_fields_in_lane` of the stores `adds` makes to the receiver it is given, each passed
 /// to its `each` as a cached add runs: the receiver, and whether every store was a cached add.
-pub(super) fn lane_initialize_stores<H: Host>(
+pub(super) fn initialize_stores_in_lane<H: Host>(
     vm: &mut Vm<H>,
     callee: Value,
     constructor: Value,
@@ -512,16 +550,16 @@ pub(super) fn lane_initialize_stores<H: Host>(
 }
 
 /// Where the lane continues after a returned construction (`return new C(...)`) made `this`
-/// in place: the innermost activation completed with it (`lane_complete_activation`), else
-/// the frame's own return of it (`lane_frame_return`).
+/// in place: the innermost activation completed with it (`complete_activation_in_lane`), else
+/// the frame's own return of it (`frame_return`).
 #[inline(always)]
-pub(super) fn lane_return_constructed<H: Host>(cx: *mut LaneContext<H>, ip: Ip, this: Value) -> Resumed {
-    // The common return first, as a `Return` record takes it (`lane_complete_plain_activation`),
+pub(super) fn return_constructed_in_lane<H: Host>(cx: *mut LaneContext<H>, ip: Ip, this: Value) -> Resumed {
+    // The common return first, as a `Return` record takes it (`complete_plain_activation_in_lane`),
     // where no leaf call runs.
     if unsafe { (*cx).leaf.call }.is_null()
-        && let Some(resumed) = lane_complete_plain_activation::<H, NOT_LEAF>(cx, this)
+        && let Some(resumed) = complete_plain_activation_in_lane::<H, NOT_LEAF>(cx, this)
     {
         return resumed;
     }
-    lane_complete_activation(cx, ip, this).unwrap_or_else(|| Resumed::Exit(lane_frame_return(unsafe { vm(cx) }, ip, this)))
+    complete_activation_in_lane(cx, ip, this).unwrap_or_else(|| Resumed::Exit(frame_return(unsafe { vm(cx) }, ip, this)))
 }

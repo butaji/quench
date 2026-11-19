@@ -26,7 +26,7 @@ impl CallerState {
     }
 
     /// What the body of a native frame (its `callee` descriptor, its `window`) runs with, which a
-    /// lane call into its callee would have made the context's (`lane_enter_window`). A direct
+    /// lane call into its callee would have made the context's (`enter_window_in_lane`). A direct
     /// callee runs in its caller's program.
     fn of_frame(callee: *const DirectCallee, window: usize) -> Self {
         // SAFETY: a frame names the caller-owned callee, whose view outlives the run.
@@ -121,7 +121,7 @@ impl LaneStack {
 /// Links the native header at `window`, whose table index is `index` (one-frame-one-call.md F5): its call
 /// record and caller base come from its descriptor, its argc from its call record, and it gets a side record
 /// naming the descriptor, pushed on top of the sides. Its caller registers are the header's own word, written
-/// at its push. The window takes the context words its call would have written (`lane_enter_window`).
+/// at its push. The window takes the context words its call would have written (`enter_window_in_lane`).
 fn link_header<H: Host>(cx: *mut LaneContext<H>, window: Registers, index: usize) {
     let vm = unsafe { vm(cx) };
     let stack = &mut vm.lane_stack;
@@ -183,7 +183,7 @@ pub(super) fn link_on_observe<H: Host>(cx: *mut LaneContext<H>, depth: usize) {
             }),
         });
     }
-    // The frame's window takes the context words its call would have written (`lane_enter_window`).
+    // The frame's window takes the context words its call would have written (`enter_window_in_lane`).
     let window = Registers(window_at as *mut Value);
     window.set_this(Value::from_bits(this));
     window.set_env(callee.target.env);
@@ -194,14 +194,14 @@ pub(super) fn link_on_observe<H: Host>(cx: *mut LaneContext<H>, depth: usize) {
 /// Runs `helper`, which pushes activations or runs guest code, with the context of the
 /// innermost native frame's body, as the lane's own calls run: they take their caller's state
 /// from the context. The frames are linked first, then a body entered through its cell, which has
-/// no activation yet, becomes one (`lane_materialize_running_leaf`): the record the helper runs
+/// no activation yet, becomes one (`materialize_running_leaf_in_lane`): the record the helper runs
 /// is that activation's, not the frame below it. The owner's state returns unless the helper left
 /// the lane in an activation of its own or ended the run.
 #[inline(always)]
 pub(super) fn in_innermost_frame<H: Host>(cx: *mut LaneContext<H>, helper: impl FnOnce() -> u64) -> u64 {
     let vm = unsafe { vm(cx) };
     vm.link_natives(cx);
-    lane_materialize_running_leaf(cx);
+    materialize_running_leaf_in_lane(cx);
     let Some(frame) = vm.lane_stack.top_native() else { return helper() };
     let owner = CallerState::of_context(cx);
     // Native frames are records on top of the records: a record index.

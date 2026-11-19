@@ -10,18 +10,19 @@ use super::{Concrete, Frame, Stage, Step, elements, entry, value};
 use crate::bytecode::Register;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
-/// Continue where register `register` holds a direct object or array record, which is an
-/// object and so an iterator result `RequireIteratorResult` accepts; any other value leaves at
-/// `miss`, where another object kind passes and a primitive throws.
+/// Continue where register `register` holds an object, which `RequireIteratorResult` accepts: a
+/// direct object or array record by its own word, else any other object kind the frame's
+/// `object_like` answers (the VM's `is_object_like`). Any other value, a primitive, leaves at `miss`
+/// and the general step throws.
 #[inline(always)]
 pub(crate) fn require_iterator_result<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, register: Register,
-    miss: S::Miss) -> Step<S::Word, F::Control> {
+    _miss: S::Miss) -> Step<S::Word, F::Control> {
     let word = frame.tagged(stage, register);
     let object = value::is_direct_object(stage, word);
     let array = value::is_direct_array(stage, word);
     let record = stage.any(object, array);
-    match stage.guard(record, miss) {
-        Some(()) => Step::Value(word),
+    match stage.choose_leaving(record, |_| Some(word), |stage| frame.object_like(stage, word).map(|()| word)) {
+        Some(word) => Step::Value(word),
         None => Step::Unresolved,
     }
 }
@@ -30,7 +31,6 @@ pub(crate) fn require_iterator_result<S: Stage, F: Frame<S>>(stage: &mut S, fram
 /// its own property key; any other value leaves at `miss`, where an integer, a symbol or an
 /// object takes the full conversion.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn to_property_key<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register,
     source: Register, miss: S::Miss) -> Step<S::Word, F::Control> {
     let word = frame.tagged(stage, source);
@@ -180,7 +180,7 @@ pub(crate) fn for_in_keyed_get<S: Stage>(stage: &mut S, (arrays, objects): (S::W
     let inline = super::object::inline_storage(stage, record);
     let layout = super::object::own_layout(stage, record, inline, super::object::Form::Either, 0,
         super::object::PackedAccess::Reload, miss)?;
-    Some(super::object::read_slot_at(stage, layout, slot, super::object::Rep::Tagged))
+    Some(super::object::read_slot_at(stage, layout, slot, crate::typed_ir::Representation::Tagged))
 }
 
 /// The interpreter's reading of `for_in_next`: the key the step over `state` yields, among the array
@@ -206,18 +206,18 @@ mod tests {
         for shape in 1..=2 {
             heap.register_property_shape(shape, shape as usize, None);
         }
-        let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let object = heap.alloc_object(Object::new(Value::NULL));
         heap.property_add(object, Value::integer(1), 1);
         heap.property_add(object, Value::integer(2), 2);
         let shape = heap.object(object).expect("an object").exact_shape();
         let snapshot = ArrayElements::from_slice(&[Value::integer(10), Value::integer(20)]);
-        let keys = heap.alloc(Cell::Array { object: ArrayObject::fresh(Value::NULL, snapshot) });
+        let keys = heap.alloc_array(ArrayObject::fresh(Value::NULL, snapshot));
         (heap, object, keys, shape)
     }
 
     fn state(heap: &mut Heap, (object, keys): (Value, Value), memo: [u64; 2]) -> Value {
         let elements = [object, keys, Value::integer(0), Value::from_bits(memo[0]), Value::from_bits(memo[1]), Value::UNDEFINED];
-        heap.alloc(Cell::Array { object: ArrayObject::fresh(Value::NULL, ArrayElements::from_slice(&elements)) })
+        heap.alloc_array(ArrayObject::fresh(Value::NULL, ArrayElements::from_slice(&elements)))
     }
 
     fn step(heap: &Heap, state: Value, epoch: u64) -> Option<Value> {

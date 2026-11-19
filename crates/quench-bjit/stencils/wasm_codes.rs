@@ -18,6 +18,31 @@ pub const GOTO: u8 = 5;
 pub const LOAD: u8 = 6;
 /// `memory[A + B] = D`, likewise.
 pub const STORE: u8 = 7;
+/// Calls the `WasmEntry` in the cell at address B with the arguments from register A on and
+/// the result to D; a trap's status leaves. Its row is a `call_` row (`wasm_name`).
+pub const CALL: u8 = 8;
+/// `D = A op B` on floats (width `W32` is f32), an `F64BinaryOperator` tag; a comparison
+/// leaves an i32 flag.
+pub const FLOAT_BINARY: u8 = 9;
+/// `D = op A` on floats, an `F64UnaryOperator` tag.
+pub const FLOAT_UNARY: u8 = 10;
+/// `D = op A`, a `ScalarConversionOperator` tag; a truncation traps.
+pub const CONVERT: u8 = 11;
+/// `D = (the i32 in hole 3) ? A : B`.
+pub const SELECT: u8 = 12;
+/// Traps: `unreachable`.
+pub const TRAP: u8 = 13;
+
+/// The float operators, the conversions.
+pub const FLOAT_BINARY_COUNT: u32 = 14;
+pub const FLOAT_UNARY_COUNT: u32 = 7;
+pub const CONVERT_COUNT: u32 = 33;
+
+/// The rows LLVM compiles with a constant-pool load (float bounds and masks), which the stencil
+/// build cannot relocate yet: the truncations and unsigned conversions, and copysign. The
+/// library leaves them out, and a function using one keeps its compiled entry.
+pub const CONVERT_NEEDS_CONSTANTS: [u32; 17] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 26];
+pub const FLOAT_BINARY_NEEDS_CONSTANTS: [u32; 1] = [6];
 
 /// The value types of an access.
 pub const T_I32: u8 = 0;

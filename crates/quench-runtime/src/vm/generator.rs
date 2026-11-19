@@ -1,10 +1,9 @@
 use super::activation::{
-    AsyncGeneratorOperation, AsyncGeneratorRequest, Completion, Continuation, GeneratorRecord, JobResume, JobRoot,
-    SuspendKind,
+    AsyncGeneratorOperation, AsyncGeneratorRequest, Completion, Continuation, GeneratorRecord, JobResume,
 };
-use super::dispatch_fast::JobEnd;
+use super::promise_async::StopOwner;
 use crate::heap::AwaitKind;
-use super::promise::{PromiseReaction, PromiseState};
+use super::promise::{PromiseState, ThenCapability};
 use super::*;
 mod job_windows;
 mod window_steps;
@@ -47,6 +46,10 @@ pub(crate) struct GeneratorResume {
     reuses_result: bool,
 }
 
+/// The reaction natives a `yield*` delegation hands the awaited result's `then`.
+const ASYNC_GENERATOR_DELEGATE_REACTIONS: [Native; 2] =
+    [Native::AsyncGeneratorDelegateFulfilled, Native::AsyncGeneratorDelegateRejected];
+
 impl GeneratorResume {
     /// The resume of a step whose result is the reused iteration object or a fresh one.
     pub(super) fn new(reuses_result: bool) -> Self {
@@ -59,6 +62,8 @@ impl GeneratorResume {
 /// delegate's result on), or a return.
 pub(super) enum MaterializedStop {
     Yielded { destination: crate::bytecode::Register, delegated_result: Option<Value> },
+    /// An async generator's frame awaiting in place (`Completion::AsyncRequest`).
+    Awaited { destination: crate::bytecode::Register },
     Returned,
 }
 
@@ -88,6 +93,7 @@ impl<H: Host> Vm<H> {
                 }
                 false
             }
+            MaterializedStop::Awaited { .. } => unreachable!("only an async generator's frame awaits in place"),
             MaterializedStop::Returned => {
                 self.finish_frame_scopes(&frame);
                 self.pool_frame(frame);
@@ -147,16 +153,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn generator_record_mut(
-        &mut self,
-        generator: Value,
-    ) -> Option<&mut GeneratorRecord> {
-        match self.heap.iterator_mut(generator) {
-            Some(IteratorRecord { ext, .. }) => ext.generator.as_deref_mut(),
-            _ => None,
-        }
-    }
-
     pub(super) fn call_generator(
         &mut self,
         p: &ResidualProgram,
@@ -178,24 +174,20 @@ impl<H: Host> Vm<H> {
             frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
         }
         if function.rest {
-            frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            frame.locals[fixed] = self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
                     args.get(fixed..).unwrap_or_default().to_vec(),
-                ),
-            });
+                ));
         }
         if let Some(slot) = function.self_binding_slot {
             frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
         }
         if let Some(slot) = function.arguments_slot {
             let mapped = function.arguments_are_mapped();
-            let arguments = self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            let arguments = self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.object_proto),
                     args.to_vec(),
-                ),
-            });
+                ));
             frame.locals[usize::from(slot)] = arguments;
             self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
             if function.arguments_alias_parameters()
@@ -214,7 +206,9 @@ impl<H: Host> Vm<H> {
         self.initialize_activation_bindings(&mut frame, false, Value::UNDEFINED, true);
         frame.captured = false;
         frame.with_base = self.with_stack.len();
+        frame.reserve_suspension_window(function);
         frame.prepare_registers(function.registers, function.initial_register);
+        frame.initialize_promoted_registers(function, args);
         if function.parameter_end_pc != 0 {
             self.frames.push(frame);
             let result = self.run_frame_general_until::<true>(
@@ -377,16 +371,14 @@ impl<H: Host> Vm<H> {
                         return Ok(());
                     }
                 };
-                let environment = vm.heap.alloc(Cell::Array {
-                    object: crate::heap::ArrayObject::new(
+                let environment = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                         Self::empty_object(vm.array_proto),
                         vec![
                             generator,
                             iterator,
                             Value::number(f64::from(destination)),
                         ],
-                    ),
-                });
+                    ));
                 let start =
                     vm.native_with_env(Native::AsyncGeneratorDelegateReturnStart, environment);
                 let completion = vm.promise_then(p, awaited, start, Value::UNDEFINED)?;
@@ -424,15 +416,13 @@ impl<H: Host> Vm<H> {
                     return Ok(());
                 }
             };
-            let environment = vm.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            let environment = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(vm.array_proto),
                     vec![generator, promise],
                 ),
             });
-            let fulfilled = vm.native_with_env(Native::AsyncGeneratorReturnFulfilled, environment);
-            let rejected = vm.native_with_env(Native::AsyncGeneratorReturnRejected, environment);
-            vm.promise_then_intrinsic(p, awaited, fulfilled, rejected)?;
+            let natives = [Native::AsyncGeneratorReturnFulfilled, Native::AsyncGeneratorReturnRejected];
+            vm.then_with_natives(p, awaited, natives, environment, ThenCapability::Resolving)?;
             Ok(())
         })
     }
@@ -564,28 +554,13 @@ impl<H: Host> Vm<H> {
         source: Value,
         target: Value,
     ) -> Result<(), JsError> {
-        let record = self
-            .promise_record(source)
-            .cloned()
-            .ok_or_else(|| JsError("async generator request result is not a Promise".into()))?;
-        self.observe_promise_rejection(source);
-        let reaction = PromiseReaction {
-            on_fulfilled: Value::UNDEFINED,
-            on_rejected: Value::UNDEFINED,
-            next: target,
-            execution_context: self.host.capture_job_context(self.promise_record(target).and_then(|record| record.host_context().get())).into(),
-        };
-        if record.state() == PromiseState::Pending {
-            self.promise_record_mut(source)
-                .expect("source Promise record exists")
-                .push_reaction(reaction);
-        } else {
-            self.enqueue_promise_reaction(p, reaction, record.state(), record.result());
+        if !self.is_promise(source) {
+            return Err(JsError("async generator request result is not a Promise".into()));
         }
-        Ok(())
+        self.attach_promise_reaction(p, source, Value::UNDEFINED, Value::UNDEFINED, target)
     }
 
-    fn yield_star_iterator(&self, generator: Value) -> Option<(Value, u16)> {
+    pub(super) fn yield_star_iterator(&self, generator: Value) -> Option<(Value, u16)> {
         let record = match self.heap.iterator(generator) {
             Some(IteratorRecord { ext, .. }) => ext.generator.as_ref()?,
             _ => return None,
@@ -799,8 +774,7 @@ impl<H: Host> Vm<H> {
             return Ok(promise);
         }
         let unwrapped = self.async_from_sync_result(p, adapter, result, false)?;
-        let env = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let env = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 vec![
                     generator,
@@ -811,9 +785,7 @@ impl<H: Host> Vm<H> {
                 ],
             ),
         });
-        let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
-        let rejected = self.native_with_env(Native::AsyncGeneratorDelegateRejected, env);
-        self.promise_then(p, unwrapped, fulfilled, rejected)
+        self.then_with_natives(p, unwrapped, ASYNC_GENERATOR_DELEGATE_REACTIONS, env, ThenCapability::Species)
     }
 
     fn close_suspended_iterators(
@@ -990,8 +962,7 @@ impl<H: Host> Vm<H> {
                 (result, false)
             };
             let promise = self.promise_for_value(p, result)?;
-            let env = self.heap.alloc(Cell::Array {
-                object: crate::heap::ArrayObject::new(
+            let env = self.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(self.array_proto),
                     vec![
                         generator,
@@ -1006,9 +977,7 @@ impl<H: Host> Vm<H> {
                     ],
                 ),
             });
-            let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
-            let rejected = self.native_with_env(Native::AsyncGeneratorDelegateRejected, env);
-            self.promise_then(p, promise, fulfilled, rejected)
+            self.then_with_natives(p, promise, ASYNC_GENERATOR_DELEGATE_REACTIONS, env, ThenCapability::Species)
         })();
         match operation {
             Ok(promise) => Ok(promise),
@@ -1312,11 +1281,11 @@ impl<H: Host> Vm<H> {
 
     /// Resumes `generator` as `next`, `return` or `throw` do, and says how it stopped, so a
     /// caller that only reads the result's `value` and `done` (`Vm::generator_iteration_step`)
-    /// need not allocate one. The step is a lane run rooted at the generator's record
-    /// (`LaneRoot::Job`, `Vm::run_job`), as an async generator's resumption is.
+    /// need not allocate one. The step is the resumption every suspended activation takes
+    /// (`Vm::resume_suspended`), a lane run rooted at the generator's record, in its realm.
     pub(super) fn resume_generator_step(
         &mut self,
-        _p: &ResidualProgram,
+        p: &ResidualProgram,
         generator: Value,
         args: &[Value],
         initial_error: Option<JsError>,
@@ -1325,25 +1294,21 @@ impl<H: Host> Vm<H> {
         if done {
             return initial_error.map_or(Ok(GeneratorStep::Done(Value::UNDEFINED)), Err);
         }
-        let job = JobRoot { object: generator, kind: SuspendKind::Generator };
-        let program = self.job_frame(job).ok_or_else(|| JsError("generator is suspended".into()))?.program;
+        let owner = StopOwner::Generator(generator);
+        if self.job_frame(owner.job()).is_none() {
+            return Err(JsError("generator is suspended".into()));
+        }
         if unstarted && let Some(error) = initial_error {
             return self.close_unstarted_generator(generator, error);
         }
-        let code = self
-            .programs
-            .get(program)
-            .ok_or_else(|| JsError("generator continuation program is unavailable".into()))?;
         let how = match initial_error {
             None => JobResume::Sends(args.first().copied().unwrap_or(Value::UNDEFINED)),
             Some(error) => JobResume::Throws(error),
         };
-        let previous_program = self.replace_active_program(program);
         let previous_global = self.switch_realm_global(realm);
-        let end = self.run_job(&code, job, how);
-        self.restore_active_program(previous_program);
+        let step = self.resume_suspended(p, owner, how);
         self.switch_realm_global(previous_global);
-        self.finish_generator_step(generator, end)
+        Ok(step?.expect("a sync generator's stop is its step"))
     }
 
     /// What a resumption of `generator` finds: its realm, whether it has completed and whether
@@ -1372,69 +1337,10 @@ impl<H: Host> Vm<H> {
         Err(error)
     }
 
-    /// How `generator`'s step ended, which its lane run did (`Vm::run_job`): the record already
-    /// suspended or completed where the lane ran it to a `yield`, a return or an uncaught raise,
-    /// and the frame its activation became is the general loop's to settle.
-    fn finish_generator_step(&mut self, generator: Value, end: JobEnd) -> Result<GeneratorStep, JsError> {
-        match end {
-            JobEnd::Returned(value) => Ok(GeneratorStep::Done(value)),
-            JobEnd::Suspended(value) | JobEnd::Yielded(value) => Ok(GeneratorStep::Yielded(value)),
-            JobEnd::Threw(error) => Err(error),
-            JobEnd::Frames(result) => self.finish_generator_frame(generator, result),
-        }
-    }
-
-    /// The step of `generator` whose activation became the frame on top of the stack, which
-    /// ended with `result`: a yield parks the frame in the record, a return completes it.
-    fn finish_generator_frame(
-        &mut self,
-        generator: Value,
-        result: Result<FrameOutcome, JsError>,
-    ) -> Result<GeneratorStep, JsError> {
-        let mut frame = self.frames.pop().expect("generator frame exists");
-        self.deactivate_frame(&mut frame, &result);
-        let outcome = match result {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                self.pool_frame(frame);
-                self.complete_generator(generator);
-                return Err(error);
-            }
-        };
-        self.generator_step_of(generator, frame, outcome)
-    }
-
-    /// The step of `generator` whose popped `frame` ended with `outcome`.
-    fn generator_step_of(&mut self, generator: Value, frame: Box<Frame>, outcome: FrameOutcome) -> Result<GeneratorStep, JsError> {
-        match outcome {
-            FrameOutcome::Yield { value, destination, delegated_result, frame: None } => {
-                Ok(self.park_generator_frame(generator, frame, (value, destination), delegated_result))
-            }
-            FrameOutcome::Complete(value) | FrameOutcome::ConstructComplete { value, .. } => {
-                self.pool_frame(frame);
-                self.complete_generator(generator);
-                Ok(GeneratorStep::Done(value))
-            }
-            FrameOutcome::Await { .. } => {
-                self.pool_frame(frame);
-                self.complete_generator(generator);
-                Err(JsError("await is not supported in a synchronous generator".into()))
-            }
-            FrameOutcome::ParameterInitializationComplete => {
-                self.pool_frame(frame);
-                Err(JsError("unexpected generator parameter initialization boundary".into()))
-            }
-            FrameOutcome::Yield { frame: Some(frame), .. } => {
-                self.pool_frame(frame);
-                Err(JsError("generator frame retained unexpectedly".into()))
-            }
-        }
-    }
-
     /// The step of `generator` whose frame yielded a value, `(value, destination)`, the register its
     /// next sent value goes to: the frame is the generator's continuation, and a `yield*` passes its
-    /// delegate's own result on.
-    fn park_generator_frame(
+    /// delegate's own result on (`Vm::settle_stop`).
+    pub(super) fn park_generator_frame(
         &mut self,
         generator: Value,
         frame: Box<Frame>,
@@ -1451,7 +1357,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn complete_generator(&mut self, generator: Value) {
+    pub(super) fn complete_generator(&mut self, generator: Value) {
         if let Some(record) = self.generator_record_mut(generator) {
             record.complete();
         }
@@ -1477,7 +1383,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         loop {
             let request = match self.generator_record_mut(generator) {
-                Some(record) if !record.is_executing() => record.requests.pop_front(),
+                Some(record) if !record.is_executing() => record.next_request(),
                 _ => None,
             };
             let Some(request) = request else {
@@ -1505,12 +1411,7 @@ impl<H: Host> Vm<H> {
                     self.async_generator_throw_ready(p, generator, request.value, request.promise)?;
                 }
             }
-            if self
-                .generator_record_mut(generator)
-                .is_some_and(|record| record.is_executing())
-            {
-                return Ok(());
-            }
+            // A request that left the generator executing ends the loop at the next pop.
         }
     }
 
@@ -1576,8 +1477,7 @@ impl<H: Host> Vm<H> {
                     return Ok(promise);
                 }
                 if record.is_completed() {
-                    let result = vm.iterator_result(Value::UNDEFINED, true)?;
-                    vm.promise_resolve_value(p, promise, result)?;
+                    vm.resolve_iterator_result(p, promise, Value::UNDEFINED, true)?;
                     return Ok(promise);
                 }
                 let Some(continuation) = record.suspended_continuation() else {
@@ -1602,7 +1502,7 @@ impl<H: Host> Vm<H> {
                 None => JobResume::Sends(value),
             };
             let previous_global = vm.switch_realm_global(realm);
-            let resumed = vm.resume_request(generator, promise, how);
+            let resumed = vm.resume_request(p, generator, promise, how);
             vm.switch_realm_global(previous_global);
             resumed?;
             Ok(promise)
@@ -1650,8 +1550,7 @@ impl<H: Host> Vm<H> {
             }
         }
         if delegated {
-            let result = self.iterator_result(value, false)?;
-            self.promise_resolve_value(p, promise, result)?;
+            self.resolve_iterator_result(p, promise, value, false)?;
             return Ok(());
         }
         // The yield awaits its value first; its continuation stays in the record.
@@ -1668,8 +1567,7 @@ impl<H: Host> Vm<H> {
         if let Some(record) = self.generator_record_mut(generator) {
             record.complete();
         }
-        let result = self.iterator_result(value, true)?;
-        self.promise_resolve_value(p, promise, result)
+        self.resolve_iterator_result(p, promise, value, true)
     }
 
     pub(super) fn fail_async_generator(

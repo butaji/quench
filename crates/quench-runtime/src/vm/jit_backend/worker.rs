@@ -25,6 +25,87 @@ impl<T> Pending<T> {
     }
 }
 
+/// Signals that work handed to the code generator's thread is done, so what it borrowed may go
+/// (`Done::wait`): the program keeps the data a job reads by pointer until then.
+pub(in crate::vm) struct Done(Receiver<()>);
+
+impl Done {
+    /// Waits for the work to finish; at once where it has (or never will: its thread is gone).
+    pub(in crate::vm) fn wait(&self) {
+        let _ = self.0.recv();
+    }
+}
+
+impl Drop for Done {
+    fn drop(&mut self) {
+        self.wait();
+    }
+}
+
+/// Runs `work` on the code generator's thread as `run_in_background` does, with a `Done` whose
+/// drop waits for it: for work that reads data the program owns by pointer.
+pub(in crate::vm) fn run_in_background_guarded<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> (Pending<T>, Done) {
+    let (finished, done) = std::sync::mpsc::sync_channel(1);
+    let pending = run_in_background(move || {
+        let result = work();
+        let _ = finished.send(());
+        result
+    });
+    (pending, Done(done))
+}
+
+/// A value moved to the code generator's thread and back, which is `Send` though its type is
+/// not (a lowering's job and result): it shares no reference count with a value the program's
+/// thread keeps (a job's program is a detached copy, `ResidualProgram::detached`; the direct
+/// callees it names it reads by pointer and never clones), and one thread at a time uses it.
+pub(in crate::vm) struct AssertSend<T>(pub(in crate::vm) T);
+
+// SAFETY: as the type's comment says: no part of it is counted by a value of another thread, and
+// the pointers it holds name data the program's thread keeps alive and leaves unchanged until
+// the work is done (`OffThread`'s guard).
+unsafe impl<T> Send for AssertSend<T> {}
+
+/// The one shape every compile driver takes (a lane body, a loop region, an image): its work,
+/// lowering and code generation, runs on the code generator's thread from owned inputs, and the
+/// program polls for the result between runs. Where the work reads data the program owns by
+/// pointer (a plan's direct callees), dropping the driver waits for it (`guarded`).
+pub(in crate::vm) struct OffThread<T> {
+    /// The work's end, which a drop waits for. First, so it drops before what the work reads.
+    done: Option<Done>,
+    result: Pending<AssertSend<T>>,
+}
+
+impl<T: 'static> OffThread<T> {
+    /// `work` on the code generator's thread, reading nothing the program owns.
+    pub(in crate::vm) fn start<W: 'static>(work: W, run: fn(W) -> T) -> Self {
+        let work = AssertSend(work);
+        Self { done: None, result: run_in_background(move || { let AssertSend(work) = work; AssertSend(run(work)) }) }
+    }
+
+    /// `work` on the code generator's thread, which reads data the program keeps alive until
+    /// it ends: dropping the driver waits for it.
+    pub(in crate::vm) fn guarded<W: 'static>(work: W, run: fn(W) -> T) -> Self {
+        let work = AssertSend(work);
+        let (result, done) = run_in_background_guarded(move || { let AssertSend(work) = work; AssertSend(run(work)) });
+        Self { done: Some(done), result }
+    }
+
+    /// A result already in hand (a tier that builds its code at once), polled as any other.
+    pub(in crate::vm) fn ready(result: T) -> Self {
+        Self::start(result, std::convert::identity)
+    }
+
+    /// The result once the work has run; `Ready(None)` if its thread is gone. Once ready,
+    /// what the work read may go.
+    pub(in crate::vm) fn poll(&mut self) -> Poll<Option<T>> {
+        let result = self.result.poll();
+        if result.is_ready() {
+            self.done = None;
+        }
+        result.map(|result| result.map(|AssertSend(result)| result))
+    }
+}
+
 /// Runs `work` on the code generator's thread, started on the first call.
 pub(in crate::vm) fn run_in_background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Pending<T> {
     static QUEUE: std::sync::OnceLock<Option<Sender<Work>>> = std::sync::OnceLock::new();

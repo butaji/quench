@@ -12,6 +12,7 @@
 use super::*;
 use super::call_plan::inline::{Callee, Context, InlineSite};
 use super::call_plan::{CallForm, CallShape, DirectFacts};
+use super::call_plan::builtin::{self, BuiltinCall};
 use super::super::{DirectCallee, DirectCandidates};
 use crate::bytecode::Function;
 use crate::compile::liveness::RegisterMasks;
@@ -46,10 +47,11 @@ impl InlineBody {
 
 /// The constant-pool indexes `instruction` may name: a loaded constant and its constant operands.
 fn named_constants(instruction: WideInstruction) -> impl Iterator<Item = usize> {
-    use crate::bytecode::{Class, OperandKind};
-    let loaded = (instruction.op().class() == Class::LoadConst).then(|| instruction.constant_index());
+    use crate::bytecode::OperandKind;
+    let loaded = crate::staged::Operation::<(), ()>::decode_constant_load(instruction).map(|(_, index)| index);
     let operand = |operand: crate::bytecode::Operand| (operand.kind() == Some(OperandKind::Constant)).then(|| usize::from(operand.payload()));
-    let binary = matches!(instruction.op().class(), Class::Binary | Class::NumericAdd | Class::NumericMultiply | Class::JumpBinaryFalse);
+    let binary = super::super::meaning_compiled::is_binary_arithmetic(instruction)
+        || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. }));
     let operands = binary.then(|| [operand(instruction.operand_b()), operand(instruction.operand_c())]).into_iter().flatten().flatten();
     loaded.into_iter().chain(operands)
 }
@@ -60,24 +62,41 @@ fn named_constants(instruction: WideInstruction) -> impl Iterator<Item = usize> 
 #[derive(Default)]
 pub(in crate::vm::compiled) struct Callees {
     pub(in crate::vm::compiled) owned: Box<[DirectCallee]>,
-    at: Vec<Option<usize>>,
+    /// By PC, the owned callees its call site recorded, latest first (`DirectCandidates`): the first is
+    /// the one a stitch may inline, every one a direct row of the call's chain calls.
+    at: Vec<Option<std::ops::Range<usize>>>,
     bodies: Vec<Option<InlineBody>>,
     /// By PC, the Stable fact holding the callee its call site recorded: the global cell its
     /// callee register is read from (`Vm::stable_callees`).
     stable: Vec<Option<GlobalFact>>,
+    /// By PC, the native function the call site's callee register holds, where a field read defines it
+    /// (`Vm::native_callees`), with the holder whose values the code depends on.
+    natives: Vec<Option<(crate::value::Value, crate::vm::Native, u32)>>,
 }
 
 /// Whether the call at `instruction` is a plain call a body's call chain makes: a call whose result
 /// is its register's, or one that returns its result (`return f(x)`), which the row after it
 /// completes with. The other forms record no callee (`call_plan::CallForm`).
 pub(super) fn chains(instruction: WideInstruction) -> bool {
-    CallForm::of(instruction.split_return().0) == Some(CallForm::Plain)
+    let plain = instruction.split_return().0;
+    CallForm::of(plain) == Some(CallForm::Plain) || is_method_call(plain)
+}
+
+/// Whether `instruction` is a method call `o.m(args)`, whose callee its site's call feedback records and whose chain reads it
+/// (`call_plan::Method`).
+pub(super) fn is_method_call(instruction: WideInstruction) -> bool {
+    instruction.op() == crate::bytecode::Op::CallMethod && CallForm::of(instruction) == Some(CallForm::Stepped)
 }
 
 /// The callee the call site `instruction` makes calls, if its body's call chain makes it: the
 /// latest its site reached.
 fn called<'a>(instruction: WideInstruction, site: &'a DirectCandidates) -> Option<&'a DirectCallee> {
     site.first().filter(|_| chains(instruction))
+}
+
+/// Every callee the call site `instruction` reached, latest first, if its body's call chain makes it.
+fn reached<'a>(instruction: WideInstruction, site: &'a DirectCandidates) -> &'a [DirectCallee] {
+    if chains(instruction) { site } else { &[] }
 }
 
 impl Callees {
@@ -88,19 +107,35 @@ impl Callees {
 
     /// The callee each call site of `code` calls (`candidates`, by PC), `body_of` the function it
     /// runs, and `stable` the Stable fact holding it by PC.
-    pub(in crate::vm::compiled) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(&DirectCallee) -> Option<InlineBody>, stable: Vec<Option<GlobalFact>>) -> Self {
+    pub(in crate::vm::compiled) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(&DirectCallee) -> Option<InlineBody>, stable: Vec<Option<GlobalFact>>,
+        natives: Vec<Option<(crate::value::Value, crate::vm::Native, u32)>>) -> Self {
         let mut owned = Vec::new();
         let at = code.iter().zip(candidates).map(|(instruction, site)| {
-            owned.push(called(*instruction, site)?.clone());
-            Some(owned.len() - 1)
+            let callees = reached(*instruction, site);
+            let start = owned.len();
+            owned.extend(callees.iter().cloned());
+            (!callees.is_empty()).then_some(start..owned.len())
         }).collect();
         let bodies = owned.iter().map(body_of).collect();
-        Self { owned: owned.into_boxed_slice(), at, bodies, stable }
+        Self { owned: owned.into_boxed_slice(), at, bodies, stable, natives }
+    }
+
+    /// The builtin each call site runs on its row, by PC: a site whose callee is a native the b-jit runs on one.
+    pub(super) fn builtins(&self) -> Vec<Option<BuiltinCall>> {
+        self.natives.iter().map(|native| {
+            let (value, native, _) = (*native)?;
+            Some(BuiltinCall { identity: value.to_bits(), row: builtin::of(native)? })
+        }).collect()
+    }
+
+    /// The holders the builtins' guards depend on: a change of a holder's values retires the body (`Body::holders`).
+    pub(super) fn native_holders(&self) -> Vec<u32> {
+        self.natives.iter().flatten().filter(|(_, native, _)| builtin::of(*native).is_some()).map(|(_, _, holder)| *holder).collect()
     }
 
     /// Whether every call of `code` is a direct one (`LaneMethod::closed`).
     pub(in crate::vm::compiled) fn closed(&self, code: &[WideInstruction]) -> bool {
-        code.iter().zip(&self.at).all(|(instruction, callee)| !instruction.op().is_call() || callee.is_some())
+        code.iter().zip(&self.at).all(|(instruction, callee)| !instruction.op().is_call() || (callee.is_some() && !is_method_call(*instruction)))
     }
 
     /// What each call site recorded of its callee, by PC.
@@ -109,16 +144,50 @@ impl Callees {
     /// Each owned callee's `cell` is the address of its function's live entry cell.
     pub(super) unsafe fn facts(&self) -> Vec<Option<DirectFacts>> {
         // SAFETY: the caller's contract.
-        self.at.iter().map(|callee| callee.map(|at| unsafe { DirectFacts::of(&self.owned[at]) })).collect()
+        self.at.iter().enumerate().map(|(pc, callees)| callees.as_ref().map(|at| unsafe { DirectFacts::of(&self.owned[at.start], self.held(pc, at.start)) })).collect()
+    }
+
+    /// What each call site recorded of every callee it reached, latest first, by PC: the targets of its
+    /// chain's direct rows.
+    ///
+    /// # Safety
+    /// As `facts`.
+    pub(super) unsafe fn targets(&self) -> Vec<Vec<DirectFacts>> {
+        // SAFETY: the caller's contract.
+        self.at.iter().enumerate().map(|(pc, callees)| callees.clone().into_iter().flatten().map(|at| unsafe { DirectFacts::of(&self.owned[at], self.held(pc, at)) }).collect()).collect()
+    }
+
+    /// Whether the callee `index` of the site at `pc` is the one its callee register holds by a Stable fact: the latest
+    /// callee the site recorded, whose global the fact names (`stable`).
+    fn held(&self, pc: usize, index: usize) -> bool {
+        self.stable.get(pc).is_some_and(Option::is_some) && self.at[pc].as_ref().is_some_and(|at| at.start == index)
+    }
+
+    /// The Stable facts the body's direct rows rely on (`held`): a body subscribes to them, so their change retires it,
+    /// which is what lets a row skip the callee register's identity check.
+    pub(in crate::vm::compiled) fn held_facts(&self) -> impl Iterator<Item = GlobalFact> + '_ {
+        self.stable.iter().flatten().filter_map(|held| Held::global(*held))
+    }
+
+    /// The captured identities the body's direct rows rely on (`Held::Captured`): its entry checks each once.
+    pub(in crate::vm::compiled) fn captured_identities(&self) -> impl Iterator<Item = (u16, u64)> + '_ {
+        self.stable.iter().flatten().filter_map(|held| match *held {
+            Held::Captured { slot, callee } => Some((slot, callee)),
+            Held::Global(_) => None,
+        })
     }
 
     /// The call `shape` planned as its callee's rows (`facts`: what each site recorded), in
     /// `context`, which it spends from; none where the callee stays a call.
     pub(super) fn inlined_call(&self, facts: &[Option<DirectFacts>], region: &LoopRegion, context: &mut Context, shape: &CallShape) -> Option<InlineSite> {
-        let at = (*self.at.get(shape.call_pc as usize)?)?;
+        // A method call's callee is read into a scratch register, not the callee register an inlined site proves.
+        if shape.method.is_some() {
+            return None;
+        }
+        let at = self.at.get(shape.call_pc as usize)?.as_ref()?.start;
         let (callee, body) = (&self.owned[at], self.bodies[at].as_ref()?);
         let numbers = |index: usize| body.numbers.get(&index).copied().or_else(|| region.number_constant(index));
-        let inlinable = Callee { function: callee.target.function, identity: callee.callee, code: &body.code, registers: body.registers, homes: &body.homes, numbers: &numbers, live: &body.live, stable: self.stable[shape.call_pc as usize], captures: (callee.capture_values.addr(), callee.capture_len) };
+        let inlinable = Callee { function: callee.target.function, identity: callee.callee, code: &body.code, registers: body.registers, homes: &body.homes, numbers: &numbers, live: &body.live, stable: self.stable[shape.call_pc as usize].and_then(Held::global), captures: (callee.capture_values.addr(), callee.capture_len) };
         let mut trial = context.clone();
         let site = InlineSite::plan(shape, facts[shape.call_pc as usize].as_ref()?, &inlinable, &mut trial)
             .inspect_err(|why| super::note(|_, rejects| *rejects.entry(format!("inline refused: {why:?}")).or_default() += 1))

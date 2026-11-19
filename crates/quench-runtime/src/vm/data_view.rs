@@ -1,29 +1,5 @@
 use super::*;
-
-const DATA_VIEW_METHODS: &[(&str, Native)] = &[
-    ("getInt8", Native::DataViewGetInt8),
-    ("getUint8", Native::DataViewGetUint8),
-    ("getInt16", Native::DataViewGetInt16),
-    ("getUint16", Native::DataViewGetUint16),
-    ("getInt32", Native::DataViewGetInt32),
-    ("getUint32", Native::DataViewGetUint32),
-    ("getFloat16", Native::DataViewGetFloat16),
-    ("getFloat32", Native::DataViewGetFloat32),
-    ("getFloat64", Native::DataViewGetFloat64),
-    ("getBigInt64", Native::DataViewGetBigInt64),
-    ("getBigUint64", Native::DataViewGetBigUint64),
-    ("setInt8", Native::DataViewSetInt8),
-    ("setUint8", Native::DataViewSetUint8),
-    ("setInt16", Native::DataViewSetInt16),
-    ("setUint16", Native::DataViewSetUint16),
-    ("setInt32", Native::DataViewSetInt32),
-    ("setUint32", Native::DataViewSetUint32),
-    ("setFloat16", Native::DataViewSetFloat16),
-    ("setFloat32", Native::DataViewSetFloat32),
-    ("setFloat64", Native::DataViewSetFloat64),
-    ("setBigInt64", Native::DataViewSetBigInt64),
-    ("setBigUint64", Native::DataViewSetBigUint64),
-];
+use super::native_rows::Holder;
 
 const DATA_VIEW_ACCESSORS: &[(&str, Native)] = &[
     ("buffer", Native::DataViewBufferGetter),
@@ -44,13 +20,12 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "DataView")?;
         self.data_view_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
-        self.install_data_view_for_realm(
-            program,
-            self.realm.globals,
-            constructor,
-            self.data_view_proto,
-        )
+            .alloc_object(Self::empty_object(self.object_proto));
+        let prototype = self.data_view_proto;
+        self.install_data_view_for_realm(program, self.realm.globals, constructor, prototype)?;
+        self.seal_initialized_intrinsic(constructor);
+        self.seal_initialized_intrinsic(prototype);
+        Ok(())
     }
 
     pub(super) fn install_data_view_for_realm(
@@ -80,11 +55,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
-        for (name, native) in DATA_VIEW_METHODS {
-            let method = self.native_with_realm(*native, global, global);
-            self.set_builtin_function_name(method, name)?;
-            self.set_builtin_value_named(prototype, name, method)?;
-        }
+        self.install_realm_native_rows(prototype, Holder::DataViewPrototype, global)?;
         for (name, native) in DATA_VIEW_ACCESSORS {
             let getter = self.native_with_realm(*native, global, global);
             self.set_builtin_function_name(getter, &format!("get {name}"))?;
@@ -209,150 +180,72 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Fast-lane implementation of the common Float64 DataView calls. It only
-    /// handles primitive arguments and fixed, ordinary buffers; anything that
-    /// could invoke coercion or require a spec error takes the general path.
-    pub(super) fn lane_data_view_float64(
-        &mut self,
-        native: Native,
-        this: Value,
-        args: &[Value],
-    ) -> Option<Value> {
-        let setter = match native {
-            Native::DataViewGetFloat64 => false,
-            Native::DataViewSetFloat64 => true,
-            _ => return None,
-        };
-        let (buffer, offset, length) = match self.heap.get(this)? {
-            Cell::DataView {
-                object,
-                buffer,
-                length,
-            } => (*buffer, object.offset, length.get()?),
-            _ => return None,
-        };
-        let index = args
-            .first()
-            .copied()
-            .unwrap_or(Value::UNDEFINED)
-            .as_number()?;
-        if !index.is_finite() || index < 0.0 || index.fract() != 0.0 || index > usize::MAX as f64 {
-            return None;
-        }
-        let index = index as usize;
-        if index.checked_add(DATA_VIEW_DOUBLE_WIDTH)? > length {
-            return None;
-        }
-        let little_endian = args
-            .get(if setter {
-                DATA_VIEW_SET_ENDIAN_ARGUMENT
-            } else {
-                DATA_VIEW_GET_ENDIAN_ARGUMENT
-            })
-            .copied()
-            .is_some_and(|value| value.as_bool().unwrap_or_else(|| self.truthy(value)));
-        let absolute = offset.checked_add(index)?;
-        if setter {
-            let value = args
-                .get(DATA_VIEW_VALUE_ARGUMENT)
-                .copied()
-                .unwrap_or(Value::UNDEFINED)
-                .as_number()?;
-            let Cell::ArrayBuffer {
-                bytes,
-                shared: false,
-                detached: false,
-                resizable: false,
-                immutable: false,
-                ..
-            } = self.heap.buffer_bytes_mut(buffer)?
-            else {
-                return None;
-            };
-            let bytes = bytes.lane_mut()?;
-            let target = bytes.get_mut(absolute..absolute.checked_add(8)?)?;
-            let encoded = if little_endian {
-                value.to_bits().to_le_bytes()
-            } else {
-                value.to_bits().to_be_bytes()
-            };
-            target.copy_from_slice(&encoded);
-            Some(Value::UNDEFINED)
-        } else {
-            let Cell::ArrayBuffer {
-                bytes,
-                shared: false,
-                detached: false,
-                resizable: false,
-                ..
-            } = self.heap.get(buffer)?
-            else {
-                return None;
-            };
-            if bytes.is_shared() || bytes.is_wasm_view() {
-                return None;
-            }
-            let bytes = bytes.read();
-            let source: [u8; 8] = bytes
-                .get(absolute..absolute.checked_add(8)?)?
-                .try_into()
-                .ok()?;
-            let bits = if little_endian {
-                u64::from_le_bytes(source)
-            } else {
-                u64::from_be_bytes(source)
-            };
-            Some(Value::number(f64::from_bits(bits)))
+    /// A DataView element get or set other than the BigInt ones, when it runs no guest code
+    /// and raises nothing: a DataView receiver of fixed length, an index (and a set's value)
+    /// whose ToNumber reads nothing (`Value::immediate_number`) and whose ToIndex is in range,
+    /// an element inside the view, and a buffer this heap owns that holds the view (writable
+    /// for a set). The endianness argument's ToBoolean reads nothing either. Then it is what C
+    /// does: one read of the view, one of its buffer, a bounds check, and the load or store
+    /// with its byte swap. `None` leaves the call to `data_view_native`, which raises what this
+    /// declines.
+    pub(super) fn plain_data_view_access(&mut self, native: Native, this: Value, args: &[Value]) -> Option<Value> {
+        // One match, one arm per element type, so each inlined copy folds its width,
+        // direction and conversion; no second call level or setter test per access.
+        match native {
+            Native::DataViewGetUint8 => self.data_view_access_of(Native::DataViewGetUint8, this, args),
+            Native::DataViewGetInt8 => self.data_view_access_of(Native::DataViewGetInt8, this, args),
+            Native::DataViewGetUint16 => self.data_view_access_of(Native::DataViewGetUint16, this, args),
+            Native::DataViewGetInt16 => self.data_view_access_of(Native::DataViewGetInt16, this, args),
+            Native::DataViewGetUint32 => self.data_view_access_of(Native::DataViewGetUint32, this, args),
+            Native::DataViewGetInt32 => self.data_view_access_of(Native::DataViewGetInt32, this, args),
+            Native::DataViewGetFloat16 => self.data_view_access_of(Native::DataViewGetFloat16, this, args),
+            Native::DataViewGetFloat32 => self.data_view_access_of(Native::DataViewGetFloat32, this, args),
+            Native::DataViewGetFloat64 => self.data_view_access_of(Native::DataViewGetFloat64, this, args),
+            Native::DataViewSetUint8 => self.data_view_access_of(Native::DataViewSetUint8, this, args),
+            Native::DataViewSetInt8 => self.data_view_access_of(Native::DataViewSetInt8, this, args),
+            Native::DataViewSetUint16 => self.data_view_access_of(Native::DataViewSetUint16, this, args),
+            Native::DataViewSetInt16 => self.data_view_access_of(Native::DataViewSetInt16, this, args),
+            Native::DataViewSetUint32 => self.data_view_access_of(Native::DataViewSetUint32, this, args),
+            Native::DataViewSetInt32 => self.data_view_access_of(Native::DataViewSetInt32, this, args),
+            Native::DataViewSetFloat16 => self.data_view_access_of(Native::DataViewSetFloat16, this, args),
+            Native::DataViewSetFloat32 => self.data_view_access_of(Native::DataViewSetFloat32, this, args),
+            Native::DataViewSetFloat64 => self.data_view_access_of(Native::DataViewSetFloat64, this, args),
+            _ => None,
         }
     }
 
-    /// A DataView element get or set other than the BigInt ones, when it runs no guest code
-    /// and raises nothing: a DataView receiver, an index (and a set's value) whose ToNumber
-    /// reads nothing (`Value::immediate_number`) and whose ToIndex is in range, a view in
-    /// bounds of its buffer, a writable buffer for a set, and an element inside the view.
-    /// The endianness argument's ToBoolean reads nothing either. `None` leaves the call to
-    /// `data_view_native`, which raises what this declines.
-    pub(super) fn plain_data_view_access(
-        &mut self,
-        native: Native,
-        this: Value,
-        args: &[Value],
-    ) -> Option<Value> {
-        if matches!(
-            native,
-            Native::DataViewGetBigInt64
-                | Native::DataViewGetBigUint64
-                | Native::DataViewSetBigInt64
-                | Native::DataViewSetBigUint64
-        ) {
+    /// `plain_data_view_access` inlined into a caller that knows `native`: the width, the
+    /// direction and the element conversion fold to constants, leaving the view read, the
+    /// bounds check and the load or store.
+    #[inline(always)]
+    pub(super) fn data_view_access_of(&mut self, native: Native, this: Value, args: &[Value]) -> Option<Value> {
+        let width = data_view_plain_width(native)?;
+        let Some(Cell::DataView { buffer, object, length }) = self.heap.get(this) else {
+            return None;
+        };
+        let (buffer, offset, length) = (*buffer, object.offset, length.get()?);
+        let index = data_view_plain_index(args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        if index.checked_add(width)? > length {
             return None;
         }
-        let (buffer, offset, length) = self.data_view_view(this)?;
-        let index = crate::units::to_index(args.first().copied().unwrap_or(Value::UNDEFINED).immediate_number()?)?;
-        if data_view_setter(native)
-            && (args.get(1).copied().unwrap_or(Value::UNDEFINED).immediate_number().is_none()
-                || matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { immutable: true, .. })))
-        {
-            return None;
-        }
-        let width = data_view_width(native);
-        if self.array_buffer_out_of_bounds(buffer, offset, length) || index.saturating_add(width) > length {
-            return None;
-        }
-        // The checks above are the general path's; what remains is the element itself.
         let setter = data_view_setter(native);
-        let little_endian = width > 1
-            && args
-                .get(if setter { DATA_VIEW_SET_ENDIAN_ARGUMENT } else { DATA_VIEW_GET_ENDIAN_ARGUMENT })
-                .is_some_and(|value| self.truthy(*value));
+        let endian = args.get(if setter { DATA_VIEW_SET_ENDIAN_ARGUMENT } else { DATA_VIEW_GET_ENDIAN_ARGUMENT });
+        let little_endian = width > DATA_VIEW_BYTE_WIDTH && endian.is_some_and(|value| value.as_bool().unwrap_or_else(|| self.truthy(*value)));
+        let (field, view_end) = (offset + index, offset.checked_add(length)?);
         if setter {
-            let value = args.get(DATA_VIEW_VALUE_ARGUMENT)?.immediate_number()?;
-            self.data_view_write(buffer, offset + index, width, data_view_bits_of_number(native, value), little_endian)
-                .ok()?;
+            let bits = data_view_bits_of_number(native, args.get(DATA_VIEW_VALUE_ARGUMENT)?.immediate_number()?);
+            let Some(Cell::ArrayBuffer { bytes, detached: false, immutable: false, .. }) = self.heap.buffer_bytes_mut(buffer) else {
+                return None;
+            };
+            let bytes = bytes.mut_in_lane().filter(|bytes| view_end <= bytes.len())?;
+            store_field(&mut bytes[field..field + width], bits, little_endian);
             return Some(Value::UNDEFINED);
         }
-        let bits = self.data_view_read(buffer, offset + index, width, little_endian).ok()?;
-        Some(Value::number(data_view_number_of_bits(native, bits)))
+        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(buffer) else {
+            return None;
+        };
+        let bytes = bytes.owned().filter(|bytes| view_end <= bytes.len())?;
+        Some(Value::number(data_view_number_of_bits(native, load_field(&bytes[field..field + width], little_endian))))
     }
 
     pub(super) fn data_view_native(
@@ -558,6 +451,7 @@ impl<H: Host> Vm<H> {
 }
 
 /// The Number a non-BigInt DataView get reads: the field's bits as its element type.
+#[inline(always)]
 fn data_view_number_of_bits(native: Native, bits: u64) -> f64 {
     match native {
         Native::DataViewGetInt8 => f64::from(bits as u8 as i8),
@@ -572,6 +466,7 @@ fn data_view_number_of_bits(native: Native, bits: u64) -> f64 {
 
 /// The bits a non-BigInt DataView set writes for `value`: its float encoding, or for an
 /// integer type ToUint32, whose low bytes (`data_view_write`) are ToUint8 and ToUint16 too.
+#[inline(always)]
 fn data_view_bits_of_number(native: Native, value: f64) -> u64 {
     match native {
         Native::DataViewSetFloat16 => u64::from(super::number::f64_to_half(value)),
@@ -582,6 +477,7 @@ fn data_view_bits_of_number(native: Native, value: f64) -> u64 {
 }
 
 /// Whether `native` is a DataView element `get` or `set` method.
+#[inline(always)]
 pub(super) const fn data_view_element(native: Native) -> bool {
     data_view_setter(native)
         || matches!(
@@ -601,6 +497,7 @@ pub(super) const fn data_view_element(native: Native) -> bool {
 }
 
 /// Whether `native` is a DataView `set` method.
+#[inline(always)]
 const fn data_view_setter(native: Native) -> bool {
     matches!(
         native,
@@ -619,6 +516,7 @@ const fn data_view_setter(native: Native) -> bool {
 }
 
 /// The bytes the DataView element `native` gets or sets.
+#[inline(always)]
 fn data_view_width(native: Native) -> usize {
     match native {
         Native::DataViewGetUint16
@@ -640,5 +538,60 @@ fn data_view_width(native: Native) -> usize {
         | Native::DataViewGetBigUint64
         | Native::DataViewSetBigUint64 => DATA_VIEW_DOUBLE_WIDTH,
         _ => DATA_VIEW_BYTE_WIDTH,
+    }
+}
+
+/// ToIndex of `index` when it reads nothing: an int32 as itself, any other immediate number
+/// through `to_index`.
+#[inline(always)]
+fn data_view_plain_index(index: Value) -> Option<usize> {
+    match index.as_int() {
+        Some(int) => usize::try_from(int).ok(),
+        None => crate::units::to_index(index.immediate_number()?),
+    }
+}
+
+/// The bytes a DataView element `native` other than the BigInt ones gets or sets; `None` for
+/// any other native.
+#[inline(always)]
+fn data_view_plain_width(native: Native) -> Option<usize> {
+    let bigint = matches!(
+        native,
+        Native::DataViewGetBigInt64 | Native::DataViewGetBigUint64 | Native::DataViewSetBigInt64 | Native::DataViewSetBigUint64
+    );
+    (data_view_element(native) && !bigint).then(|| data_view_width(native))
+}
+
+/// The unsigned integer `field` holds in the given byte order: one load and a swap.
+#[inline(always)]
+fn load_field(field: &[u8], little_endian: bool) -> u64 {
+    macro_rules! load {
+        ($int:ty) => {{
+            let bytes = field.try_into().expect("field width");
+            u64::from(if little_endian { <$int>::from_le_bytes(bytes) } else { <$int>::from_be_bytes(bytes) })
+        }};
+    }
+    match field.len() {
+        DATA_VIEW_BYTE_WIDTH => u64::from(field[0]),
+        DATA_VIEW_SHORT_WIDTH => load!(u16),
+        DATA_VIEW_WORD_WIDTH => load!(u32),
+        _ => load!(u64),
+    }
+}
+
+/// Stores the low bytes of `bits` into `field` in the given byte order: a swap and one store.
+#[inline(always)]
+fn store_field(field: &mut [u8], bits: u64, little_endian: bool) {
+    macro_rules! store {
+        ($int:ty) => {{
+            let value = bits as $int;
+            field.copy_from_slice(&if little_endian { value.to_le_bytes() } else { value.to_be_bytes() });
+        }};
+    }
+    match field.len() {
+        DATA_VIEW_BYTE_WIDTH => field[0] = bits as u8,
+        DATA_VIEW_SHORT_WIDTH => store!(u16),
+        DATA_VIEW_WORD_WIDTH => store!(u32),
+        _ => store!(u64),
     }
 }

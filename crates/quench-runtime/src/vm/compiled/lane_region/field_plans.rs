@@ -6,9 +6,9 @@
 use super::*;
 use super::super::object_slots::{field_load_groups, NativeFieldLoad};
 use crate::staged::ic::IcOp;
-use crate::staged::property::{Arm, FieldPlan, PlanSource, StorePlan};
+use crate::staged::property::{Arm, FieldPlan, PlanSource, PrototypeProof, StorePlan};
 use crate::staged::Form;
-use crate::staged::object::Rep;
+use crate::typed_ir::Representation;
 
 /// What one access's frame proved: the plan of its read and of its store.
 pub(super) struct LanePlans<'p> {
@@ -91,25 +91,55 @@ fn inherited_pairs(load: &NativeFieldLoad, folds_stable: bool) -> Vec<(u32, u64)
         constant.values().iter().map(|(link, value)| (*link, value.to_bits())).collect()).unwrap_or_default()
 }
 
-/// Registers the heap values a folding division's inherited loads name with `roots`, which the
-/// publication keeps alive (`FoldedRoots::embed_heap_identity`); `inherited_pairs` then names
-/// them by their bits.
-pub(super) fn embed_inherited(links: &[LinkInput], roots: &mut crate::folded_roots::FoldedRoots) {
-    for load in links.iter().flat_map(|link| Fast::of(&link.loads).loads()) {
-        for (_, value) in load.inherited.iter().flat_map(|constant| constant.values().iter()) {
-            roots.embed_heap_identity(*value);
+/// Registers the heap values a folding division's inherited loads name with the lowering's
+/// roots, which the publication keeps alive (`FoldedRoots::embed_heap_identity`), and the chains
+/// they were read through with its chains, whose prototypes' layouts it holds
+/// (`StableFacts::chains`); `inherited_pairs` then names the values by their bits.
+pub(super) fn embed_inherited(links: &[LinkInput], stable: &mut super::stable::StableUses) {
+    for constant in links.iter().flat_map(|link| Fast::of(&link.loads).loads()).filter_map(|load| load.inherited) {
+        for (_, value) in constant.values() {
+            stable.roots.embed_heap_identity(*value);
         }
+        stable.chains.extend(constant.chains());
     }
 }
 
+/// The layout id a single-shape own load was formed to (`NativeFieldLoad::formed`), where it names
+/// the load's shape: one compare of the record's word then proves the shape and the storage form
+/// (`IcOp::GuardLayout`), and the slot's form is the id's (`ic::form_of_layout`).
+fn formed_id(load: &NativeFieldLoad) -> Option<u32> {
+    load.formed.filter(|&id| load.holder.is_none() && (id as usize) < crate::heap::layouts::LAYOUT_CAPACITY
+        && crate::staged::ic::layout_shape(id) == load.shape)
+}
+
+/// The layout id a holder read guards its prototype by (`NativeFieldLoad::holder_id`), where it is
+/// a real id of the holder's exact shape: one compare of the prototype's own word then proves that
+/// shape and the storage form, as `formed_id` does for a receiver. Id 0 names no holder.
+fn holder_id(load: &NativeFieldLoad) -> Option<u32> {
+    let holder = load.holder?;
+    load.holder_id.filter(|&id| id != 0 && (id as usize) < crate::heap::layouts::LAYOUT_CAPACITY
+        && crate::staged::ic::layout_shape(id) == holder)
+}
+
 /// The ops that read `load` once the receiver's shape is proved: its own slot, a prototype's
-/// constant, or the slot of the prototype whose exact shape the load names.
-fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)]) -> Vec<IcOp<'a>> {
+/// constant, or the slot of the prototype whose exact shape the load names. `formed` is the
+/// layout id a single-shape load was guarded by (`formed_id`), whose form the slot is read in;
+/// a family's shapes are guarded one by one, so their slots keep the form the site observed.
+fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)], formed: Option<u32>) -> Vec<IcOp<'a>> {
     match load.holder {
-        None => vec![IcOp::LoadSlot { slot: load.slot, form: Form::of(load.storage, load.storage_len), storage_len: load.storage_len,
-            rep: if load.raw_double { Rep::Float64 } else { Rep::Tagged } }],
+        None => vec![IcOp::LoadSlot { slot: load.slot,
+            form: formed.map_or_else(|| Form::of(load.storage, load.storage_len), crate::staged::ic::form_of_layout),
+            storage_len: load.storage_len, rep: if load.raw_double { Representation::Float64 } else { Representation::Tagged } }],
         Some(_) if !pairs.is_empty() => vec![IcOp::PrototypeConstants(pairs)],
-        Some(holder) => vec![IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(load.slot)],
+        Some(holder) => {
+            // The prototype's layout id proves its shape (and storage form) in one compare where
+            // the entry kept it (`holder_id`); else its shape alone is compared.
+            let guard = match holder_id(load) {
+                Some(id) => IcOp::GuardLayout(id),
+                None => IcOp::GuardShape(holder),
+            };
+            vec![IcOp::Prototype, guard, IcOp::LoadPrototypeSlot(load.slot)]
+        }
     }
 }
 
@@ -117,7 +147,8 @@ fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)]) -> Vec<IcOp<'a>
 /// prototype constant is its own plan.
 fn single_plan<'a>(load: &NativeFieldLoad, ops: &'a [IcOp<'a>], pairs: &'a [(u32, u64)]) -> FieldPlan<'a> {
     match load.holder {
-        Some(holder) if !pairs.is_empty() => FieldPlan::Inherited { shape: load.shape, holder, constants: pairs },
+        Some(holder) if !pairs.is_empty() => FieldPlan::Inherited { shape: load.shape, constants: pairs,
+            proof: PrototypeProof::Watched { holder } },
         _ => FieldPlan::Ops(ops),
     }
 }
@@ -126,13 +157,14 @@ fn single_plan<'a>(load: &NativeFieldLoad, ops: &'a [IcOp<'a>], pairs: &'a [(u32
 /// family's per group.
 fn link_ops<'a>(fast: &Fast, pairs: &'a [Vec<(u32, u64)>]) -> Vec<Vec<IcOp<'a>>> {
     let loads = fast.loads();
-    let lists = loads.iter().zip(pairs).map(|(load, pairs)| load_ops(load, pairs));
+    let single = matches!(fast, Fast::Single(_));
+    let lists = loads.iter().zip(pairs).map(|(load, pairs)| load_ops(load, pairs, if single { formed_id(load) } else { None }));
     match fast {
         Fast::Single(load) => {
             // An own read whose receivers' storage form the site observed guards the whole word.
-            let guard = match load.formed {
-                Some(id) if load.holder.is_none() && crate::staged::ic::layout_shape(id) == load.shape => IcOp::GuardLayout(id),
-                _ => IcOp::GuardShape(load.shape),
+            let guard = match formed_id(load) {
+                Some(id) => IcOp::GuardLayout(id),
+                None => IcOp::GuardShape(load.shape),
             };
             lists.map(|ops| std::iter::once(guard).chain(ops).collect()).collect()
         }

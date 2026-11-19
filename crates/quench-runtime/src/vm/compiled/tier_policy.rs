@@ -5,7 +5,6 @@
 //! against, and what each memory policy lets compile. A tuning experiment changes a row here,
 //! never a controller.
 
-use crate::bytecode::Class;
 use crate::jit_mode::Tier;
 
 /// The thresholds every tier controller reads.
@@ -30,7 +29,7 @@ pub(in crate::vm) struct Tiers {
 #[cfg(test)]
 pub(in crate::vm) const TEST_PRIORS: Priors = Priors {
     interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
-    region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, plan_ns_per_ir: 1500,
+    region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, quick_body_share: 400, quick_compile_permille: 670, remaining_divisor: 4, plan_ns_per_ir: 1500,
 };
 
 /// The runs a loop-free function makes unlowered before a later call lowers it
@@ -68,9 +67,6 @@ pub(in crate::vm) struct Stitch {
     /// The inline depth: activations a leave inside inlined code materializes, the caller's
     /// included.
     pub(in crate::vm) max_depth: usize,
-    /// The opcode classes a callee body may hold: the numeric rows of the stencil library, its jumps
-    /// (the site's own rows), and the `Return` that becomes a move and a jump to the continuation.
-    pub(in crate::vm) classes: &'static [Class],
 }
 
 /// Parts per thousand, the unit of a prior's share.
@@ -94,11 +90,19 @@ pub(in crate::vm) struct Priors {
     /// (measured about 300 ns: some 1,100 instructions at 0.3 ns).
     pub(in crate::vm) region_entry_ns: u64,
     pub(in crate::vm) body_entry_ns: u64,
-    /// The same two for a b-jit body: stencil code runs about half the interpreter's time per
-    /// bytecode (values stay in the frame), and its entry is a lane record and a call into the
-    /// stitched code (a few dozen machine instructions), where a u-jit body's native entry crosses ABIs.
+    /// A b-jit body's per-bytecode time as a share of the interpreter's: stencil code runs about
+    /// half of it (values stay in the frame). Its entry is `body_entry_ns`, as a u-jit body's: both
+    /// publish a `LaneMethod` the one entry driver runs (`lane_body_entry`, `Vm::run_lane_body`),
+    /// whose binding of the lane frame is the crossing's cost, not the code the body enters.
     pub(in crate::vm) base_body_share: u64,
-    pub(in crate::vm) base_entry_ns: u64,
+    /// A u-jit body compiled without the mid-end (`CompileLevel::Quick`: no e-graph, no loop
+    /// unswitching), as a share of the interpreter's time per bytecode, and the share of an
+    /// optimized compile's time its compile takes, both per mille. Richards' compile profile
+    /// (Nov 18): of 972M Ir of Cranelift, the e-graph took 179M and poll unswitching 140M, so a
+    /// quick compile costs about two thirds; its code keeps the values the e-graph would have
+    /// folded, a third more time per bytecode than `body_share`.
+    pub(in crate::vm) quick_body_share: u64,
+    pub(in crate::vm) quick_compile_permille: u64,
     /// The divisor of the entries and the interpreter time so far that gives the credible lower
     /// bound of those to come, where the decision (a compile) is irreversible.
     pub(in crate::vm) remaining_divisor: u64,
@@ -172,9 +176,6 @@ pub(in crate::vm) struct LaneBody {
     /// runs: total Ir -2%, richards unchanged; Nov 18).
     pub(in crate::vm) max_callee_recompiles: u8,
     pub(in crate::vm) late_call_calls: u32,
-    /// The length below which a lane body without loops or inlined calls declines
-    /// (`Vm::compile_lane_method`).
-    pub(in crate::vm) min_instructions: usize,
     /// The longest callee body a unit or a call plan inlines (`staged::plan_entry`): each copy of it
     /// costs code and compile time at every call site, and short bodies (accessors, field updates)
     /// are where a call costs most relative to its work.
@@ -331,24 +332,31 @@ impl LaneBody {
 impl Tiers {
     /// The length a body without loops or calls needs for one entry to pay in the lane body
     /// `tier` compiles: none where every eligible compile is admitted (`Tiers::admits_all`), so
-    /// a fixture too short to repay one still gets its body. A Cranelift body asks
-    /// `min_instructions`; a stencil body asks the entries' crossing over the interpretation it saves per
-    /// bytecode (`interpreter_ns` less its `base_body_share`), a few bytecodes, as it compiles in microseconds.
+    /// a fixture too short to repay one still gets its body. Each tier asks the entry's crossing
+    /// (`body_entry_ns`, the one entry driver's) over the interpretation its code saves per
+    /// bytecode (`Priors::repaying_length`): a stencil body keeps `base_body_share` of it, a
+    /// Cranelift body `body_share`.
     pub(in crate::vm) fn amortizing_instructions(&self, tier: Tier) -> usize {
         if self.admits_all { return 0; }
         match tier {
-            Tier::Base => {
-                let saved = self.priors.interpreter_ns * (PER_MILLE - self.priors.base_body_share);
-                (self.priors.base_entry_ns * PER_MILLE).div_ceil(saved) as usize
-            }
-            Tier::Quick | Tier::Ultra => self.lane_body.min_instructions,
+            Tier::Base => self.priors.repaying_length(self.priors.base_body_share),
+            Tier::Quick | Tier::Ultra => self.priors.repaying_length(self.priors.body_share),
         }
+    }
+}
+
+impl Priors {
+    /// The fewest straight-line bytecodes whose interpretation, less the `share` per mille code
+    /// still takes of it, covers a body's entry (`body_entry_ns`): shorter, no entry repays itself.
+    pub(in crate::vm) fn repaying_length(&self, share: u64) -> usize {
+        let saved = (self.interpreter_ns * (PER_MILLE - share)).max(1);
+        (self.body_entry_ns * PER_MILLE).div_ceil(saved) as usize
     }
 }
 
 /// The tier that compiles and publishes lane bodies in this process's mode: `--b-jit`'s stencil
 /// bodies, `--q-jit`'s Quick lowering, or the Ultra lowering of every mode with it.
-pub(in crate::vm) fn lane_body_tier() -> Tier {
+pub(in crate::vm) fn body_tier_in_lane() -> Tier {
     if crate::jit_mode::base_only() {
         Tier::Base
     } else if crate::jit_mode::quick_only() {
@@ -377,7 +385,6 @@ const MEASURED: Tiers = Tiers {
         max_lifetimes: 8,
         max_callee_recompiles: 1,
         late_call_calls: 4096,
-        min_instructions: 40,
         max_inlined_instructions: 96,
         compile_poll_interval: 64,
         audit_period: 64,
@@ -391,13 +398,8 @@ const MEASURED: Tiers = Tiers {
         max_total_instructions: 96,
         window_registers: 32,
         max_depth: 3,
-        classes: &[
-            Class::Move, Class::ToNumeric, Class::LoadConst, Class::Binary, Class::NumericAdd, Class::NumericMultiply,
-            Class::IncDec, Class::Unary, Class::JumpBinaryFalse, Class::JumpTrue, Class::JumpFalse, Class::Jump, Class::Return,
-            Class::LoadCapture,
-        ],
     },
-    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, plan_ns_per_ir: 1500 },
+    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, quick_body_share: 400, quick_compile_permille: 670, remaining_divisor: 4, plan_ns_per_ir: 1500 },
     stress: false,
     admits_all: false,
     regexp_native_runs: 2000,
@@ -452,6 +454,7 @@ const BY_POLICY: [PolicyTiers; crate::MemoryPolicy::ALL.len()] = [
 
 /// The one tier predicate: whether any of `tiers` may run for a function under `policy` and the
 /// process's JIT mode (`jit_mode::tiers_allowed`).
+#[inline]
 pub(in crate::vm) fn tier_may_run(policy: crate::MemoryPolicy, tiers: &[crate::jit_mode::Tier]) -> bool {
     by_policy(policy).js_function_tiers && crate::jit_mode::tiers_allowed(tiers)
 }
@@ -461,19 +464,263 @@ pub(in crate::vm) const fn by_policy(policy: crate::MemoryPolicy) -> &'static Po
     &BY_POLICY[policy as usize]
 }
 
+// Lane entry (dispatch_fast): the runs a lane entry must repay
+/// The shortest straight-line lane run the general loop enters. Entering
+/// builds the lane context and memory view, which one or two lane
+/// instructions do not repay: on V8-v7 fixed work, three keeps every
+/// JavaScript benchmark within one percent of the general path or better
+/// (one and two cost DeltaBlue three percent), and leaves Wasm loops,
+/// whose runs are long, unchanged.
+pub(in crate::vm) const LANE_ENTRY_MIN_RUN: usize = 3;
+
+/// `LANE_ENTRY_MIN_RUN` in a function with no loop the lane runs whole: each call the
+/// general loop makes into it enters the lane anew, so a run must repay a fresh lane
+/// context.
+pub(in crate::vm) const LANE_ENTRY_MIN_CALL_RUN: usize = 8;
+
+// Loop sites (dispatch_fast/loop_body, loop_runs, loop_kernel): body planning, entry backoff, kernel floor
+/// The bodies a loop site plans, each from its predecessors' leaves.
+pub(in crate::vm) const LOOP_BODY_ATTEMPTS: u8 = 4;
+
+/// The runs of a loop's body that leave inside the loop before the next body plans around them.
+pub(in crate::vm) const LOOP_BODY_REOPTIMIZE: u16 = 16;
+
+/// The share of a loop body's runs, in percent, that may leave inside the loop for it to stay.
+pub(in crate::vm) const LOOP_BODY_KEEP_SHARE: u64 = 10;
+
+/// The backedges between looks for a loop body's compiling code.
+pub(in crate::vm) const LOOP_BODY_POLL: u16 = 16;
+
+/// The widest backoff after declined entries: `2^16 - 1` entries pass untried between attempts.
+pub(in crate::vm) const MAX_ENTRY_BACKOFF: u32 = 16;
+
+/// The fewest iterations worth a kernel's entry.
+pub(in crate::vm) const KERNEL_MIN_TRIP: u64 = 16;
+
+/// Entries declined for too few iterations before the kernel stands down for good.
+pub(in crate::vm) const KERNEL_SHORT_DECLINES: u32 = 64;
+
+// Lane bodies: compile admission (compiled/lane_compile, lane_region, lane_unit)
+/// A replanned body inlines with this fraction of the budget whose compile failed.
+pub(in crate::vm) const REPLAN_BUDGET_DIVISOR: usize = 2;
+
+/// The IR size above which a lane body's registers are allocated in one pass. The backtracking
+/// allocator's scratch memory grows with the function, and a body this large (JetStream-scale
+/// units of 23k-28k IR instructions) set the process's peak resident size while its code
+/// compiled: V8-v7 raytrace peaked at 40.0 MB with it and 33.0 MB without, richards and
+/// deltablue, whose largest bodies are 17k, keep it and the speed it buys (2026-11-11, lane
+/// mode, 5 interleaved runs). Smaller bodies keep backtracking: single-pass for all lost 20-30%
+/// on richards and deltablue.
+pub(in crate::vm) const LANE_BACKTRACKING_MAX_INSTS: usize = 20_000;
+
+/// The executable memory a lane body may take, a resource limit: the code and compile time a
+/// hot loop's inlined call graph (Richards' ~900 instructions) costs. A larger body is planned
+/// again with less inlined (`Vm::compile_lane_method`).
+pub(in crate::vm) const LANE_BODY_MAX_CODE_BYTES: usize = 115 * 1024;
+
+/// The callee instructions one unit inlines in all, the region's budget: what a lane body's
+/// code-size budget holds (`LANE_BODY_MAX_CODE_BYTES`), TurboFan's cumulative
+/// inlining budget (`max_inlined_bytecode_size_cumulative`). The planner spends it on the call
+/// sites by weight per instruction (`weights::select`).
+pub(in crate::vm) const MAX_UNIT_INLINED_INSTRUCTIONS: usize =
+    LANE_BODY_MAX_CODE_BYTES / super::lane_region::LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
+
+// Lane bodies: history, recurrence and loop views (body_tier_in_lane, dispatch_frame, program_store)
+/// The backward jumps a JavaScript activation takes in the general path before its function's
+/// lane view is derived and the lane runs its loop (`Vm::note_back_edge`). Deriving a view
+/// costs some hundreds of instructions per instruction of the function; a module body that
+/// loops a few times (over its exports, say) ran faster without one.
+pub(in crate::vm) const HOT_LOOP_BACK_EDGES: u16 = 16;
+
+/// The loop work, in instructions its back edges span per instruction of the function, after
+/// which a view-less activation derives its function's lane view (`HotLoop`). A view costs
+/// some hundreds of instructions per instruction of the whole function, so a short loop in a
+/// large body that runs once (a module body filling a table) ran
+/// faster without one. Measured in instructions, warm compile cache, against deriving at
+/// `HOT_LOOP_BACK_EDGES` alone (x86_64 VM, 2026-10-26): @babel/core -11.0% (one: +0.9%,
+/// four: -9.9%), and within 0.2% on schema-utils, axios, semver, ajv, eslint, jiti, undici
+/// and source-map.
+pub(in crate::vm) const LANE_VIEW_LOOP_PAYBACK: u32 = 8;
+
+/// The entries and the milliseconds of warming past which a function specializes by its
+/// recurrence alone (`LaneView::recurrent`).
+pub(in crate::vm) const RECURRENT_ENTRIES: u32 = 16;
+
+/// The completed handler runs of a body per credit to the callees it calls natively: a callee's
+/// completions inside those runs are bounded by the caller's, so the credit lags by fewer than this.
+pub(in crate::vm) const NATIVE_CREDIT_RUNS: u64 = 64;
+
+pub(in crate::vm) const RECURRENT_TICKS: u32 = 256;
+
+/// The most times a dropped body doubles the warm-up of the next.
+pub(in crate::vm) const MAX_DOUBLINGS: u8 = 7;
+
+/// The runs a function makes on the general path before it derives its lane view, which costs
+/// about a thousand instructions per bytecode instruction, so a function that runs fewer times
+/// costs no view. Measured in instructions against deriving at the second run: four takes 3.3%
+/// from the jiti npm scenario (Babel's many functions that run a few times) and 0.1-0.6% from
+/// semver, ajv, Babel, color-convert and typescript-eslint; eight adds at most 0.3%.
+pub(in crate::vm) const LANE_VIEW_DEFERRED_RUNS: u8 = 4;
+
+// Frameless calls (compiled/frameless)
+/// Recoveries of one function's frameless activations in one collection epoch after which
+/// its calls keep frames for the rest of the epoch.
+pub(in crate::vm) const MATERIALIZATION_LIMIT: u32 = 16;
+
+// OSR loop regions: compile admission (compiled/osr_loop, osr_compile)
+/// The most instructions a region spans. Native code polls termination only at backward
+/// jumps, so the bound keeps compile time and code size proportional to small loop bodies.
+pub(in crate::vm) const MAX_REGION_INSTRUCTIONS: usize = 512;
+
+/// The most registers, captures and arrays a region names, bounding entry guards and the
+/// entry record.
+pub(in crate::vm) const MAX_REGION_REGISTERS: usize = 128;
+
+pub(in crate::vm) const MAX_REGION_ARRAYS: usize = 8;
+
+pub(in crate::vm) const MAX_REGION_CAPTURES: usize = 16;
+
+pub(in crate::vm) const MAX_REGION_FIELDS: usize = 16;
+
+pub(in crate::vm) const MAX_REGION_FIELD_STORES: usize = 16;
+
+/// A lane region carries each inlined callee's full body and its guards, so a loop
+/// that inlines two calls may legitimately exceed one function's code budget. The code
+/// is published once per hot loop and retires with its site, so the larger per-site
+/// bound stays bounded by the lane plan's own admission.
+pub(in crate::vm) const REGION_CODE_BUDGET: usize = 2 * JS_COMPILED_MAX_CODE_BYTES;
+
+// Compiled code budgets (compiled.rs): roots, threaded copies, unrolling, Wasm in flight, lane entry
+pub(in crate::vm) const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
+
+pub(in crate::vm) const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
+
+pub(in crate::vm) const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
+
+/// A selective root may include a few hot callees learned from earlier
+/// indirect-call executions. Keep the profile-guided closure bounded so one
+/// polymorphic module cannot turn a tier promotion into eager compilation.
+pub(in crate::vm) const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
+
+pub(in crate::vm) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
+
+/// Instructions a threaded copy may repeat between a constant's jump and the
+/// branch table the constant decides; bounds the code each copy adds. A
+/// dispatch copy repeats its table too, which counts as its edges: TSF's
+/// 290-way state table, copied at each of its 503 jumps, compiled one
+/// function to 10.6 MB of edge moves (3.5 s, 220 MiB peak); charged by its
+/// edges it compiles in 0.1 s.
+pub(in crate::vm) const THREAD_BUDGET: usize = 16;
+
+/// Instructions all copies of an unrolled loop body may hold together, and the most copies.
+/// A body of up to a fourth of the budget runs as four copies: one interrupt check, one back
+/// edge and one set of loop-carried moves per four iterations (V8's optimizing tier unrolls
+/// small innermost Wasm loops for the same reasons); a body of more than half of it is not
+/// unrolled.
+pub(in crate::vm) const UNROLL_BUDGET: usize = 48;
+
+pub(in crate::vm) const MAX_UNROLL_FACTOR: usize = 4;
+
+/// The Cranelift IR instructions the compile workers may hold at once, queued and compiling,
+/// under each memory policy (`MemoryPolicy`). Every worker holds its function's whole IR and
+/// Cranelift's working set grows with it, so the parallel compile of a whole module peaks
+/// with the functions in flight; a function heavier than the bound compiles alone. A bound
+/// on the count of queued functions did not move the peak (one queued per worker instead
+/// of two, memory-first `--jit`, tsf-wasm 43.5-44.5 MB either way).
+/// Memory-first bounds them at 50,000, about a third of tsf-wasm's 157k (its largest function
+/// 53.6k). JetStream `--jit`, memory-first, unpinned x86_64, 4 cores, median of 6,
+/// 2026-10-27: tsf-wasm max RSS 46.6 -> 42.0 MB, Score 23.2 -> 22.1, First 11.2 -> 10.0;
+/// sqlite3-wasm 73.6 -> 58.4 MB, Score 16.7 -> 16.2, First 2.96 -> 2.80. Throughput keeps
+/// every worker fed (unbounded; the same rows, median of 8, were unchanged).
+pub(in crate::vm) const WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT: [Option<usize>; crate::MemoryPolicy::ALL.len()] =
+    [None, Some(50_000)];
+
+/// `compiled`'s body run directly on `arguments`, its parameters, when each is a Number
+/// its guards admit: the call a known callee makes without a frame (`js_jit_compiled_call`).
+/// The lane records a loop-free body runs below which a frameless activation is cheaper than
+/// the JavaScript tier's native entry of it. A direct native entry (`tier_prologue_in_lane`,
+/// `direct_call`, the shared entry) costs about 380 machine instructions past the
+/// activation, and a lane record about 20 (callgrind, typescript-lib under `--jit`,
+/// 2026-10-28: 9.7M native entries of 3- to 12-instruction predicates such as
+/// `isLineBreak`), so a body shorter than this cannot recoup its entries.
+pub(in crate::vm) const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
+
+// Program JIT admission and clocks (program_store): artifact and mapped-byte budgets, Wasm module compiles
+pub(in crate::vm) const JS_JIT_MAX_FUNCTIONS: usize = 64;
+
+// Executable mappings were once page-rounded. A 64 KiB cap then admitted only
+// sixteen tiny JS artifacts on 4 KiB systems, starving later high-frequency
+// helpers; the function-count cap still bounds artifact proliferation.
+pub(in crate::vm) const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
+
+pub(in crate::vm) const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
+
+/// How often, in work, a selective module reads the clock for `WasmModuleCompile::after`:
+/// often enough that a 20 ms bound lands within a few interpreted calls, rarely enough that
+/// the clock stays off an interpreted call's path.
+pub(in crate::vm) const WASM_JIT_MODULE_CLOCK_INTERVAL: u32 = 16;
+
+pub(in crate::vm) const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
+
+/// The eager artifacts of Wasm modules together. A module's eager artifact is all of its code
+/// at once, compiled before its first call: held to the shared ceiling, a module larger than
+/// it compiled and was then discarded, leaving every function interpreted and promoting hot
+/// roots one by one into a tier budget that filled (sqlite3-wasm, a 5.2 MiB artifact: Score
+/// 0.61 against 12.29 kept, first iteration 17.3 s against 3.3 s; max RSS unchanged at 100
+/// MiB, JetStream 3 `--jit`, Linux x86_64, 2026-10-24). This bounds a VM's eager Wasm code
+/// to a few large modules.
+pub(in crate::vm) const WASM_JIT_MAX_BASELINE_MAPPED_BYTES: usize = 32 * 1024 * 1024;
+
+/// One VM-local admission ceiling shared by JS and Wasm artifacts.
+pub(in crate::vm) const JIT_MAX_ARTIFACTS: usize = JS_JIT_MAX_FUNCTIONS + WASM_JIT_MAX_TIER_ROOTS;
+
+pub(in crate::vm) const JIT_MAX_MAPPED_BYTES: usize = WASM_JIT_MAX_TIER_MAPPED_BYTES;
+
+/// The share of a module's bytecodes, in per mille, its whole compile must hold code for to be
+/// kept. Below it most calls cross between native code and the interpreter, and each crossing
+/// (a general-path activation, a callout) costs more than the native function saves: the Wasm
+/// GC modules of JetStream 3 (j2cl-box2d, Dart-flute) compile a few tiny leaves and run 10-40%
+/// slower than with no JIT.
+pub(in crate::vm) const WASM_MODULE_MIN_COVERAGE: usize = 500;
+
+/// The fewest functions a module has for its whole compile's coverage to be weighed: a smaller
+/// module compiles in microseconds and makes few crossings, whatever it holds.
+pub(in crate::vm) const WASM_MODULE_WEIGHED_FUNCTIONS: usize = 64;
+
+// Native graph, regexp and JS region compile budgets (native_graph, regexp_native, js_compiled)
+// Bounds the working CFG, not the source function. Large unpartitioned native
+// graphs exhausted 14 GiB on a 50 KiB input; callers may choose any nonzero budget.
+#[cfg(feature = "aot")]
+pub(in crate::vm) const DEFAULT_REGION_INSTRUCTION_BUDGET: std::num::NonZeroUsize = std::num::NonZeroUsize::new(1024).unwrap();
+
+/// The largest native search, in bytes of machine code.
+pub(in crate::vm) const REGEXP_NATIVE_MAX_CODE_BYTES: usize = 256 * 1024;
+
+// Keep native regions short so an interpreter interrupt cannot be delayed by a large body.
+pub(in crate::vm) const JS_COMPILED_MAX_INSTRUCTIONS: usize = 256;
+
+pub(in crate::vm) const JS_COMPILED_MAX_REGISTERS: usize = 256;
+
+pub(in crate::vm) const JS_COMPILED_MAX_CODE_BYTES: usize = 64 * 1024;
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A stencil body pays for its entry in a few bytecodes (it compiles in microseconds and runs near the interpreter's
-    /// speed), a Cranelift body in `min_instructions`.
+    /// A body pays for the one entry both tiers' bodies cross in the bytecodes whose saved
+    /// interpretation covers it: a stencil body needs more than a Cranelift body, which saves more
+    /// per bytecode behind the same entry.
     #[test]
     fn each_lane_body_tier_has_its_own_amortizing_length() {
         let tiers = TierRows::PROCESS.table();
         if tiers.admits_all { return; }
         let (base, ultra) = (tiers.amortizing_instructions(Tier::Base), tiers.amortizing_instructions(Tier::Ultra));
-        assert!(base > 0 && base < ultra, "{base} and {ultra}");
-        assert_eq!([ultra, tiers.amortizing_instructions(Tier::Quick)], [tiers.lane_body.min_instructions; 2]);
+        let priors = &tiers.priors;
+        let saves = |share: u64, length: usize| length as u64 * priors.interpreter_ns * (PER_MILLE - share) / PER_MILLE;
+        assert!(saves(priors.base_body_share, base) >= priors.body_entry_ns && saves(priors.base_body_share, base - 1) < priors.body_entry_ns, "{base}");
+        assert!(saves(priors.body_share, ultra) >= priors.body_entry_ns && saves(priors.body_share, ultra - 1) < priors.body_entry_ns, "{ultra}");
+        assert!(ultra <= base, "{base} and {ultra}");
+        assert_eq!(ultra, tiers.amortizing_instructions(Tier::Quick));
     }
 
     #[test]
@@ -492,3 +739,12 @@ mod tests {
         }
     }
 }
+
+/// The call depth a recursion is followed to: `lane_facts::recursion_cycle` weighs a cycle through
+/// more functions than this as straight-line code, and the audit counts an entry made within this
+/// many activations of another of its function as a recursive one (`LaneView::audit_entry`).
+pub(in crate::vm) const RECURSION_DEPTH: usize = 4;
+
+/// The uncounted entries other bodies make while one body's audit runs, after which that audit,
+/// if its body is no longer entered, gives way (`lane_body_audit`): a few audit epochs' worth.
+pub(in crate::vm) const AUDIT_LEASE_ENTRIES: u32 = 1 << 16;

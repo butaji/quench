@@ -7,8 +7,10 @@ use crate::bytecode::{
 /// derives, and the root masks a collection reads.
 pub(crate) use set::RegisterSet; mod set;
 
-mod solve; mod masks; pub(crate) mod windows; pub(crate) mod budget;
-pub(crate) use solve::{add_suspended_exception_roots, analyze_graph, analyze_transfers, analyze_wide};
+mod solve; mod masks; pub(crate) mod windows; pub(crate) mod budget; pub(crate) mod buffers;
+// The interpreter runs raw webs once their opcode forms land (`raw-registers-design.md`).
+pub(crate) mod raw_webs;
+pub(crate) use solve::{add_suspended_exception_roots, analyze_graph, analyze_transfers, analyze_wide_with};
 pub(crate) use masks::RegisterMasks;
 use solve::LiveMask;
 
@@ -60,9 +62,9 @@ impl MethodArguments for crate::bytecode::ResidualProgram {
     }
 }
 
-/// Records which functions liveness covers and, for each covered one, its `Call`s whose
-/// result is dead (`dead_call_results`); the collector derives a covered function's per-pc
-/// root masks when it first finds one on the stack (`ResidualProgram::register_root_mask`).
+/// Records which functions liveness covers and each covered one's entry bound; the collector
+/// derives a covered function's per-pc root masks when it first finds one on the stack
+/// (`ResidualProgram::register_root_mask`).
 pub(crate) fn mark_register_roots<'a>(
     functions: impl IntoIterator<Item = &'a mut Function>,
     methods: &(impl MethodArguments + ?Sized),
@@ -74,12 +76,31 @@ pub(crate) fn mark_register_roots<'a>(
     }
 }
 
-/// `function`'s liveness coverage and dead call results, as `mark_register_roots` records them.
+/// `function`'s liveness coverage and entry bound, derived now from the tables it is given. Used
+/// where those tables are local and final (Wasm functions, which have no field or method sites).
 pub(crate) fn register_roots(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction]) -> crate::bytecode::RegisterRoots {
-    RegisterMasks::of(function, methods, fields, superinstructions).map_or_else(
-        || crate::bytecode::RegisterRoots::new(false),
-        |live| crate::bytecode::RegisterRoots::with_entry_live(true, entry_live(function, &live), dead_call_results(function, &live)),
-    )
+    crate::bytecode::RegisterRoots::with_entry_live(true, derive_entry_live(function, methods, fields, superinstructions))
+}
+
+/// `function`'s entry bound, derived from its masks as a collection derives them;
+/// `ALL_LIVE_AT_ENTRY` where they bound no register.
+pub(crate) fn derive_entry_live(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction]) -> u16 {
+    RegisterMasks::of(function, methods, fields, superinstructions)
+        .map_or(crate::bytecode::RegisterRoots::ALL_LIVE_AT_ENTRY, |live| entry_live(function, &live))
+}
+
+/// `function`'s register roots, given the live sets `solved` that the lowering solved for `function`
+/// as it stands (`analyze`, `None` where it was not solved). The entry bound is taken from `solved`
+/// where it is at hand. Otherwise the bound and the masks are derived on first ask from the
+/// program's tables (`ResidualProgram::entry_fill`, `ResidualProgram::shared_register_root_masks`),
+/// so a function nothing activates or collects is never analysed.
+pub(crate) fn register_roots_from(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction], solved: Option<Vec<RegisterSet>>) -> crate::bytecode::RegisterRoots {
+    // `RegisterMasks::of` declines over the budget and solves windows past the root map's width.
+    let Some(live) = solved.filter(|_| budget::admits(function) && function.registers <= ROOT_MAP_REGISTERS) else {
+        return crate::bytecode::RegisterRoots::new(true);
+    };
+    debug_assert!(analyze(function, methods, fields, superinstructions).as_ref() == Some(&live), "the solved live sets match the code");
+    crate::bytecode::RegisterRoots::with_entry_live(true, entry_live(function, &RegisterMasks::new(live)))
 }
 
 /// `function`'s live registers before each instruction, solved at the width `M`, which holds
@@ -108,22 +129,13 @@ fn entry_live(function: &Function, live: &RegisterMasks) -> u16 {
     (0..function.registers).rev().find(|&register| register_in(entry, usize::from(register))).map_or(0, |register| register + 1).max(function.params)
 }
 
-/// The pcs, in order, of `function`'s `Call`s that write their result to a register (no
-/// result flags) that is dead after the call, under `live`: a lane call may let the callee
-/// skip building a result nothing reads (`ImmediateLayout::LANE_CALL_RESULT_UNUSED_FLAG`).
-/// A lane derived each from the per-pc masks on its first run, 3-6% of the instructions of
-/// cached npm runs (axios, schema-utils, ajv-formats), which a compile-cache hit now keeps.
-fn dead_call_results(function: &Function, live: &RegisterMasks) -> crate::heap::ThinBoxSlice<u32> {
-    function
-        .instructions()
-        .enumerate()
-        .filter(|(pc, instruction)| {
-            instruction.op() == crate::bytecode::Op::Call
-                && instruction.result_flags() == 0
-                && live.get(pc + 1).is_some_and(|after| register_dead(after, usize::from(instruction.a() & crate::bytecode::REGISTER_MASK)))
-        })
-        .map(|(pc, _)| u32::try_from(pc).expect("a function's pcs fit u32"))
-        .collect()
+/// Whether the `Call` `instruction` at `pc` writes its result to a register (no result flags)
+/// that is dead after the call, under `live`: a lane call may let the callee skip building a
+/// result nothing reads (`ImmediateLayout::LANE_CALL_RESULT_UNUSED_FLAG`).
+pub(crate) fn call_result_dead(instruction: WideInstruction, pc: usize, live: &RegisterMasks) -> bool {
+    instruction.op().traits().has(crate::bytecode::Traits::PLAIN_CALL)
+        && instruction.result_flags() == 0
+        && live.get(pc + 1).is_some_and(|after| register_dead(after, usize::from(instruction.a() & crate::bytecode::REGISTER_MASK)))
 }
 
 pub(crate) fn analyze(
@@ -132,8 +144,7 @@ pub(crate) fn analyze(
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> Option<Vec<RegisterSet>> {
-    let transfers = transfers(function, methods, fields, superinstructions)?;
-    Some(analyze_wide(function, &transfers, &crate::bytecode::Successors::of_code(function)))
+    buffers::analyze_with(function, methods, fields, superinstructions, &mut crate::compile::CompileScratch::default())
 }
 
 /// Each instruction's (uses, definitions) register masks, for a function whose registers fit
@@ -144,7 +155,8 @@ pub(super) fn transfers(
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> Option<Vec<(RegisterSet, RegisterSet)>> {
-    (function.registers <= ROOT_MAP_REGISTERS && budget::admits(function)).then(|| all_transfers(function, methods, fields, superinstructions))
+    let mut table = Vec::new();
+    buffers::transfers_into(function, methods, fields, superinstructions, &mut table).then_some(table)
 }
 
 /// Every instruction's transfers, at the set's width: a body past it is solved per window.

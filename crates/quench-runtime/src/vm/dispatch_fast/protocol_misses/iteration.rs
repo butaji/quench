@@ -21,6 +21,6 @@ pub(in crate::vm::dispatch_fast) const fn iteration_miss_of<H: Host>(parameters:
         READS_EMITTED => iterator_step_reads_miss::<H, false> as Handler,
         READS_THREADED => iterator_step_reads_miss::<H, true> as Handler,
         BINDING => iterator_step_binding_miss::<H> as Handler,
-        _ => lane_general_step::<H>,
+        _ => general_step_in_lane::<H>,
     }
 }

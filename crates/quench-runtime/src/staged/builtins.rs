@@ -16,25 +16,14 @@ use super::{Concrete, Stage};
 use crate::Value;
 use crate::heap::ArrayObject;
 use crate::vm::operations::{NumberArithmetic, NumberRelation};
-use crate::vm::wtf16::Units;
 
 /// The storage width of a flat string's units, a property of the string's form.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum UnitWidth {
-    /// ASCII text, a byte a unit (`Units::Ascii`).
+    /// ASCII or Latin-1 text, a byte a unit (`Units::Ascii`, `Units::Latin1`).
     Narrow,
     /// UTF-16 text (`Units::Wide`).
     Wide,
-}
-
-impl UnitWidth {
-    #[inline(always)]
-    const fn bytes(self) -> u64 {
-        match self {
-            Self::Narrow => size_of::<u8>() as u64,
-            Self::Wide => size_of::<u16>() as u64,
-        }
-    }
 }
 
 /// The largest ASCII code unit.
@@ -56,12 +45,7 @@ fn int32_payload<S: Stage>(stage: &mut S, bits: S::Word, miss: S::Miss) -> Optio
 /// The unit at `index` of the `units` run, which `index` is within.
 #[inline(always)]
 fn unit_at<S: Stage>(stage: &mut S, width: UnitWidth, units: S::Word, index: S::Word) -> S::Word {
-    let offset = stage.mul_imm(index, width.bytes());
-    let address = stage.add(units, offset);
-    match width {
-        UnitWidth::Narrow => stage.load_u8(Region::HeapMeta.mutable(), address, 0),
-        UnitWidth::Wide => stage.load_u16(Region::HeapMeta.mutable(), address, 0),
-    }
+    super::code_units::code_unit(stage, width == UnitWidth::Wide, units, index)
 }
 
 /// `charCodeAt(index)` of the flat string of `length` units at `units`, `index` a value word:
@@ -78,6 +62,17 @@ pub(crate) fn char_code_at<S: Stage>(stage: &mut S, width: UnitWidth, units: S::
     }, |stage| stage.constant(Value::NAN.to_bits())))
 }
 
+/// `charCodeAt(index)` of the flat string of width `width` at `units` for an index the caller proves
+/// an int32 below the string's length: the unit as an int32, with no bounds test (`char_code_at`).
+/// `None` (leaving at `miss`) for an index that is no int32, which the native coerces.
+#[inline(always)]
+pub(crate) fn char_code_at_within<S: Stage>(stage: &mut S, width: UnitWidth, units: S::Word,
+    index: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let index = int32_payload(stage, index, miss)?;
+    let unit = unit_at(stage, width, units, index);
+    Some(super::value::int_word(stage, unit))
+}
+
 /// `charAt(index)` of the flat string at `units` where the unit is ASCII: that unit, whose
 /// one-character string the caller names (a shared string per unit). `None` (leaving at
 /// `miss`) for an index that is no int32 or outside the string, or a unit past ASCII.
@@ -87,6 +82,22 @@ pub(crate) fn char_at_ascii<S: Stage>(stage: &mut S, width: UnitWidth, units: S:
     let index = int32_payload(stage, index, miss)?;
     let inside = stage.ult(index, length);
     stage.guard(inside, miss)?;
+    char_at_unit(stage, width, units, index, miss)
+}
+
+/// `char_at_ascii` for an index the caller proves an int32 below the string's length: the same unit
+/// with no bounds test.
+#[inline(always)]
+pub(crate) fn char_at_ascii_within<S: Stage>(stage: &mut S, width: UnitWidth, units: S::Word,
+    index: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let index = int32_payload(stage, index, miss)?;
+    char_at_unit(stage, width, units, index, miss)
+}
+
+/// The ASCII unit at `index` (inside the string) of the flat string at `units`, leaving at `miss`
+/// for a unit past ASCII in a wide string.
+#[inline(always)]
+fn char_at_unit<S: Stage>(stage: &mut S, width: UnitWidth, units: S::Word, index: S::Word, miss: S::Miss) -> Option<S::Word> {
     let unit = unit_at(stage, width, units, index);
     // A narrow string's units are ASCII by its form.
     if width == UnitWidth::Wide {
@@ -177,22 +188,6 @@ pub(crate) fn is_integral<S: NumericStage>(stage: &mut S, domain: Domain, number
     }
 }
 
-/// The interpreter's `char_code_at` of a flat string's `units` at `index`.
-#[inline(always)]
-pub(crate) fn concrete_char_code_at(units: Units<'_>, index: Value) -> Option<Value> {
-    let (width, base, length) = unit_words(units);
-    char_code_at(&mut Concrete::new(std::ptr::null()), width, base, length, index.to_bits(), ())
-        .map(Value::from_bits)
-}
-
-/// The interpreter's `char_at_ascii` of a flat string's `units` at `index`: the ASCII byte.
-#[inline(always)]
-pub(crate) fn concrete_char_at_ascii(units: Units<'_>, index: Value) -> Option<u8> {
-    let (width, base, length) = unit_words(units);
-    char_at_ascii(&mut Concrete::new(std::ptr::null()), width, base, length, index.to_bits(), ())
-        .map(|unit| unit as u8)
-}
-
 /// The interpreter's `is_integral` of `value`: false for any value that is no Number.
 #[inline(always)]
 pub(crate) fn concrete_is_integral(value: Value) -> bool {
@@ -221,51 +216,12 @@ pub(crate) fn concrete_array_pop(record_base: *const ArrayObject, array: Value) 
     array_pop(&mut stage, backing, ()).map(Value::from_bits)
 }
 
-/// A run of units as the words a row reads: its width, address and length.
-#[inline(always)]
-fn unit_words(units: Units<'_>) -> (UnitWidth, u64, u64) {
-    match units {
-        Units::Ascii(bytes) => (UnitWidth::Narrow, bytes.as_ptr() as u64, bytes.len() as u64),
-        Units::Wide(units) => (UnitWidth::Wide, units.as_ptr() as u64, units.len() as u64),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::heap::{ArrayElements, NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
 
     fn stage() -> Concrete { Concrete::new(std::ptr::null()) }
-
-    #[test]
-    fn char_code_at_reads_units_of_either_width_and_answers_nan_outside() {
-        let narrow = Units::Ascii(b"aZ");
-        let wide = [0x61u16, 0x20ac];
-        let wide = Units::Wide(&wide);
-        let at = |units, index: Value| concrete_char_code_at(units, index).map(Value::to_bits);
-        assert_eq!(at(narrow, Value::integer(1)), Some(Value::integer(0x5a).to_bits()));
-        assert_eq!(at(wide, Value::integer(1)), Some(Value::integer(0x20ac).to_bits()));
-        for index in [2, 100, -1, i32::MIN] {
-            assert_eq!(at(narrow, Value::integer(index)), Some(Value::NAN.to_bits()), "{index} is outside");
-        }
-        assert_eq!(at(Units::Ascii(b""), Value::integer(0)), Some(Value::NAN.to_bits()));
-        assert_eq!(at(narrow, Value::number(0.5)), None, "a double index leaves to the native");
-        assert_eq!(at(narrow, Value::UNDEFINED), None, "an absent index leaves to the native");
-    }
-
-    #[test]
-    fn char_at_answers_ascii_units_and_leaves_the_rest() {
-        let wide = [0x61u16, 0x20ac, 0x7f];
-        let wide = Units::Wide(&wide);
-        let at = |units, index: i32| concrete_char_at_ascii(units, Value::integer(index));
-        assert_eq!(at(Units::Ascii(b"xy"), 1), Some(b'y'));
-        assert_eq!(at(wide, 0), Some(b'a'));
-        assert_eq!(at(wide, 1), None, "a unit past ASCII leaves");
-        assert_eq!(at(wide, 2), Some(0x7f), "the last ASCII unit stays");
-        assert_eq!(at(wide, 3), None, "outside leaves for the native's empty string");
-        assert_eq!(at(wide, -1), None);
-        assert_eq!(concrete_char_at_ascii(wide, Value::number(1.5)), None);
-    }
 
     #[test]
     fn length_is_an_int32_word_up_to_int32_and_leaves_past_it() {

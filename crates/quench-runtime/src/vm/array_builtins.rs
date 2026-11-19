@@ -1,64 +1,18 @@
 use super::*;
 
 const ARRAY_CONSTRUCTOR_LENGTH: f64 = 1.0;
-const ARRAY_PROTOTYPE_METHODS: &[(&str, Native)] = &[
-    ("push", Native::ArrayPush),
-    ("pop", Native::ArrayPop),
-    ("slice", Native::ArraySlice),
-    ("includes", Native::ArrayIncludes),
-    ("join", Native::ArrayJoin),
-    ("concat", Native::ArrayConcat),
-    ("flat", Native::ArrayFlat),
-    ("reverse", Native::ArrayReverse),
-    ("shift", Native::ArrayShift),
-    ("unshift", Native::ArrayUnshift),
-    ("splice", Native::ArraySplice),
-    ("fill", Native::ArrayFill),
-    ("at", Native::ArrayAt),
-    ("lastIndexOf", Native::ArrayLastIndexOf),
-    ("indexOf", Native::ArrayIndexOf),
-    ("copyWithin", Native::ArrayCopyWithin),
-    ("with", Native::ArrayWith),
-    ("forEach", Native::ArrayForEach),
-    ("map", Native::ArrayMap),
-    ("filter", Native::ArrayFilter),
-    ("some", Native::ArraySome),
-    ("every", Native::ArrayEvery),
-    ("find", Native::ArrayFind),
-    ("findIndex", Native::ArrayFindIndex),
-    ("findLast", Native::ArrayFindLast),
-    ("findLastIndex", Native::ArrayFindLastIndex),
-    ("group", Native::ArrayGroup),
-    ("groupToMap", Native::ArrayGroupToMap),
-    ("flatMap", Native::ArrayFlatMap),
-    ("reduce", Native::ArrayReduce),
-    ("reduceRight", Native::ArrayReduceRight),
-    ("toReversed", Native::ArrayToReversed),
-    ("toSpliced", Native::ArrayToSpliced),
-    ("sort", Native::ArraySort),
-    ("toSorted", Native::ArrayToSorted),
-    ("toString", Native::ArrayToString),
-    ("toLocaleString", Native::ArrayToLocaleString),
-    ("keys", Native::ArrayKeys),
-    ("values", Native::ArrayValues),
-    ("entries", Native::ArrayEntries),
-];
-const ARRAY_STATIC_METHODS: &[(&str, Native)] = &[
-    ("from", Native::ArrayFrom),
-    ("fromAsync", Native::ArrayFromAsync),
-    ("of", Native::ArrayOf),
-    ("isArray", Native::ArrayIsArray),
-];
+/// `Array.prototype`'s methods and `Array`'s static methods, in installation order: derived
+/// from the rows of `native_rows`.
+const ARRAY_PROTOTYPE_METHODS: &[(&str, Native)] = super::native_rows::ARRAY_PROTOTYPE_METHODS;
+const ARRAY_STATIC_METHODS: &[(&str, Native)] = super::native_rows::ARRAY_STATIC_METHODS;
 
 impl<H: Host> Vm<H> {
     pub(super) fn install_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let array = self.native_value(Native::Array);
-        self.array_proto = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        self.array_proto = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.object_proto),
                 Vec::new(),
-            ),
-        });
+            ));
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -179,7 +133,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_array_unscopables(&mut self, array_proto: Value) -> Result<(), JsError> {
         let unscopables = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         for name in [
             "at",
             "copyWithin",

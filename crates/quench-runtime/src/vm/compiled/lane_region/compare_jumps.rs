@@ -4,7 +4,7 @@
 //! staged step (whose answer picks the edge through `Frame::branch`). An operator the step does
 //! not name leaves the jump to the exact path.
 use super::*;
-use crate::staged::{Comparison, Domain, Nullish, Operation};
+use crate::staged::{nullish_of, Comparison, Domain, Operation};
 use crate::vm::operations::NumberRelation;
 
 impl Lowering<'_, '_> {
@@ -29,7 +29,32 @@ impl Lowering<'_, '_> {
             self.staged_jump(state, pc, instruction, comparison, operands);
             return true;
         }
+        if self.strict_equality_jump(state, pc, instruction, comparison) {
+            return true;
+        }
         self.relation_jump(state, pc, instruction, comparison)
+    }
+
+    /// A strict (in)equality jump of two operands not both typed Numbers, where the lane has its
+    /// helpers: the value lowering's `equality` decides the pair (identical words, the inline string
+    /// records, the cells helper for other string pairs), where the staged step would make the
+    /// `Decide` call-out for every pair its words leave. Whether it lowered, which ends the block.
+    fn strict_equality_jump(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, comparison: Comparison) -> bool {
+        let Comparison::Equality { strict: true, negated } = comparison else { return false };
+        let (left, right) = (instruction.operand_b(), instruction.operand_c());
+        if self.hoisted.contains_key(&pc) || self.helpers.is_numeric() || self.numbers_typed(state, left, right)
+            || !(self.operand_supported(left) && self.operand_supported(right)) {
+            return false;
+        }
+        let Some(equal) = self.equality(state, pc as u32, left, right, true) else { return false };
+        // The jump is taken where the comparison fails, as `staged_jump` takes it.
+        let holds = if negated { self.raw_binary_imm(Binary::Xor, equal, 1) } else { equal };
+        let target = instruction.jump_target() as usize;
+        if target <= pc { self.interrupt_check(state, pc as u32); }
+        let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
+        self.branch_if(holds, (fall, &[]), (taken, &[]));
+        self.continue_branch(state, pc, target, taken, fall);
+        true
     }
 
     /// The nullish test the facts settle on: an equality of a register with an operand typed exactly
@@ -40,7 +65,7 @@ impl Lowering<'_, '_> {
             nullish_comparison(&self.program.constants, instruction, register_type)?;
         let (b, c) = (instruction.operand_b(), instruction.operand_c());
         let other = if c.register_index() == Some(source) { b } else { c };
-        Some((Comparison::Nullish { expected: Nullish::of(expected)?, strict, negated }, [Operand::register(source), other]))
+        Some((Comparison::Nullish { expected: nullish_of(expected)?, strict, negated }, [Operand::register(source), other]))
     }
 
     /// Whether neither constant operand is anything but a Number: a register's type is for the
@@ -116,7 +141,7 @@ impl Lowering<'_, '_> {
         let target = instruction.jump_target() as usize;
         if target <= pc { self.interrupt_check(state, pc as u32); }
         let word = self.builder.use_var(held);
-        let holds = self.raw_compare_imm(Relation::Equal, word, Value::TRUE.to_bits() as i64);
+        let holds = crate::staged::value::boolean_truthy(&mut emit(&mut self.builder), word);
         let (taken, fall) = (self.builder.create_block(), self.builder.create_block());
         self.branch_if(holds, (fall, &[]), (taken, &[]));
         self.continue_branch(state, pc, target, taken, fall);

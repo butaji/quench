@@ -24,25 +24,7 @@ impl<H: Host> Vm<H> {
         let Some(record) = self.promise_record_mut(promise) else {
             return;
         };
-        let notification = match record.rejection() {
-            PromiseRejectionState::Unobserved => {
-                record.set_rejection(PromiseRejectionState::Observed);
-                None
-            }
-            PromiseRejectionState::AwaitingReport(_) => {
-                record.set_rejection(PromiseRejectionState::Observed);
-                None
-            }
-            PromiseRejectionState::Reported(id) => {
-                record.set_rejection(PromiseRejectionState::HandledReported(id));
-                Some(RejectionNotification::Handled(promise))
-            }
-            PromiseRejectionState::Reporting(_)
-            | PromiseRejectionState::Observed
-            | PromiseRejectionState::HandledReported(_)
-            | PromiseRejectionState::Handled(_) => None,
-        };
-        if let Some(notification) = notification {
+        if let Some(notification) = mark_rejection_observed(record, promise) {
             self.realm
                 .promise
                 .rejection_notifications
@@ -202,5 +184,28 @@ impl<H: Host> Vm<H> {
             self.enqueue_promise_reaction(p, reaction, state, result);
         }
         Ok(())
+    }
+}
+
+/// Marks the record of `promise` observed, as a reaction or a handled report marks it
+/// (`Vm::observe_promise_rejection`): the notification the host is owed, a rejection reported
+/// unhandled now being handled, which the caller queues.
+pub(super) fn mark_rejection_observed(
+    record: &mut super::promise::PromiseRecord,
+    promise: Value,
+) -> Option<RejectionNotification> {
+    match record.rejection() {
+        PromiseRejectionState::Unobserved | PromiseRejectionState::AwaitingReport(_) => {
+            record.set_rejection(PromiseRejectionState::Observed);
+            None
+        }
+        PromiseRejectionState::Reported(id) => {
+            record.set_rejection(PromiseRejectionState::HandledReported(id));
+            Some(RejectionNotification::Handled(promise))
+        }
+        PromiseRejectionState::Reporting(_)
+        | PromiseRejectionState::Observed
+        | PromiseRejectionState::HandledReported(_)
+        | PromiseRejectionState::Handled(_) => None,
     }
 }

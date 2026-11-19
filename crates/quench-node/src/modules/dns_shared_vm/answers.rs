@@ -3,6 +3,7 @@
 //! over c-ares 1.34's legacy reply parsers).
 
 use super::wire::{RecordData, RecordType, Response, Soa, CLASS_IN};
+use crate::modules::buffer_codec::latin1_text;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 /// c-ares status codes (`ares.h`); the discriminant is the code.
@@ -202,11 +203,6 @@ pub(crate) struct Reply {
     pub(crate) ttls: Option<Vec<u32>>,
 }
 
-/// c-ares hands JavaScript one byte per character (V8 one-byte strings).
-fn latin1(bytes: &[u8]) -> String {
-    bytes.iter().map(|&byte| char::from(byte)).collect()
-}
-
 fn text(value: impl Into<String>) -> Field {
     Field::Text(value.into())
 }
@@ -313,7 +309,7 @@ fn txt(response: &Response, typed: bool, items: &mut Vec<Option<Item>>) {
         if strings.is_empty() {
             continue;
         }
-        let entries = strings.iter().map(|string| latin1(string)).collect();
+        let entries = strings.iter().map(|string| latin1_text(string)).collect();
         items.push(Some(if typed {
             Item::Object(vec![property("entries", Field::Strings(entries)), property("type", text("TXT"))])
         } else {
@@ -340,9 +336,9 @@ fn naptr(response: &Response, typed: bool, items: &mut Vec<Option<Item>>) {
     for data in records_in(response, RecordType::Naptr, false) {
         if let RecordData::Naptr { order, preference, flags, service, regexp, replacement } = data {
             items.push(Some(Item::Object(vec![
-                property("flags", text(latin1(flags))),
-                property("service", text(latin1(service))),
-                property("regexp", text(latin1(regexp))),
+                property("flags", text(latin1_text(flags))),
+                property("service", text(latin1_text(service))),
+                property("regexp", text(latin1_text(regexp))),
                 property("replacement", text(replacement.clone())),
                 property("order", number(*order)),
                 property("preference", number(*preference)),
@@ -391,7 +387,7 @@ fn caa(response: &Response, items: &mut Vec<Option<Item>>) {
             items.push(Some(Item::Object(vec![
                 property("critical", number(*flags)),
                 property("type", text("CAA")),
-                (latin1(tag), text(latin1(value))),
+                (latin1_text(tag), text(latin1_text(value))),
             ])));
         }
     }

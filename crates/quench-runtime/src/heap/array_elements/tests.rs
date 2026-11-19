@@ -59,7 +59,7 @@ fn native_layout_matches_header_and_dense_backing() {
     );
     assert_eq!(
         NATIVE_HEADER_LENGTH_OFFSET,
-        std::mem::offset_of!(Header, len)
+        std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, len)
     );
     assert_eq!(NATIVE_HEADER_VALUES_OFFSET, std::mem::size_of::<Header>());
     assert_eq!(

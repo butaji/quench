@@ -5,10 +5,11 @@
 
 use super::Stage;
 use super::region::Region;
-use super::object::{Form, Layout, PackedAccess, arena_run, extras_pointer, formed_own_layout, has_extras, inline_storage, object_record_at, own_layout,
-    recorded_shape,
-    proto_link, proto_object_record_id, read_slot, read_slot_value, Rep};
+use super::object::{Form, Layout, PackedAccess, arena_run, formed_own_layout, object_record_at, recorded_shape, proto_link, proto_object_record_id, read_slot};
+
+pub(crate) use super::ic_read::*;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+use crate::typed_ir::Representation;
 
 /// One step of a proved property read, over the record the read has reached.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,12 +21,25 @@ pub(crate) enum IcOp<'a> {
     /// shape, the storage form, the prototype link and the flags, and the `LoadSlot` after it
     /// reads the form's layout, which the id's table entry names, with no test.
     GuardLayout(u32),
+    /// `GuardLayout` of a layout whose storage form the site fixed (a generated row's site
+    /// fact): the form is a constant of the row, so the load after it reads no table entry.
+    GuardFormed { id: u32, form: u32 },
+    /// The read of the one object whose record is at `record` as `value`, while `watch` holds
+    /// (`own_constant_read`): an own constant, as an enum member or a namespace export. A plan
+    /// that starts from the receiver's word compares the word with the object's own instead.
+    OwnConstant { record: u64, watch: u64, value: u64 },
+    /// A direct array's `length` from the receiver's word, its record among the array records
+    /// at `records` (`elements::array_length`); any other receiver or form misses.
+    ArrayLength { records: u64 },
+    /// A flat string's `length` from the receiver's word, its record among the string records
+    /// at `records` (`string_length::string_length`); any other receiver or form misses.
+    StringLength { records: u64 },
     /// The read moves to the record's prototype, an object record, else misses.
     Prototype,
     /// The value at `slot` of the record, whose guarded shapes keep at least `storage_len`
     /// values in `form`, an arena word of which encodes its value in `rep` (`read_slot`); it
     /// ends the read.
-    LoadSlot { slot: u16, form: Form, storage_len: usize, rep: Rep },
+    LoadSlot { slot: u16, form: Form, storage_len: usize, rep: Representation },
     /// The value at `slot` of a prototype record, which keeps its values in the arena past its
     /// extras (`Object::extras_storage_start`), else the read misses; it ends the read.
     LoadPrototypeSlot(u16),
@@ -41,6 +55,15 @@ pub(crate) enum IcOp<'a> {
     /// guards, and the watch at `watch` on the prototype's values still holds, else the read
     /// misses. The read starts from the receiver's word, not an object record. It ends the read.
     HeldString { watch: u64, value: u64 },
+    /// The value `Number.prototype` answered for a number primitive's read (`number_read`): the
+    /// reached word is a Number (an int32 or a double), whose one prototype stands for the shape
+    /// and link guards, and the watch at `watch` on the prototype's values still holds, else the
+    /// read misses. The read starts from the receiver's word, not an object record. It ends the read.
+    HeldNumber { watch: u64, value: u64 },
+    /// The own field at `slot` of the record, which a getter's hint returned for a receiver of
+    /// layout `guard` (`getter_own_read`): the record's layout is `guard` and the watch at `watch`
+    /// on its prototype's values still holds, else the read misses. It ends the read.
+    GetterOwn { guard: u64, watch: u64, slot: u16 },
 }
 
 /// The record a read starts from, with the facts its caller already holds for it: its
@@ -55,13 +78,15 @@ pub(crate) struct Reached<W, C> {
     pub(crate) word: Option<W>,
     /// The storage-form bits a `GuardLayout` proved: a static input of the slot's layout.
     pub(crate) formed: Option<u32>,
+    /// The record's auxiliary word (exact shape and storage-form bits), where the caller loaded it.
+    pub(crate) auxiliary: Option<W>,
 }
 
 impl<W, C> Reached<W, C> {
     /// A record the read reached with no facts of it held.
     #[inline(always)]
     pub(crate) fn bare(record: W) -> Self {
-        Self { record, shape: None, inline: None, word: None, formed: None }
+        Self { record, shape: None, inline: None, word: None, formed: None, auxiliary: None }
     }
 }
 
@@ -78,6 +103,11 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
                 guard_layout(stage, &at, id, miss)?;
                 at.formed = Some(layout_form(id));
             }
+            IcOp::GuardFormed { id, form } => {
+                guard_layout(stage, &at, id, miss)?;
+                debug_assert_eq!(layout_form(id), form, "a fixed form's layout names it");
+                at.formed = Some(form);
+            }
             IcOp::Prototype => {
                 let link = proto_link(stage, at.record);
                 let id = proto_object_record_id(stage, link, miss)?;
@@ -88,147 +118,23 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
             IcOp::LoadPrototypeSlot(slot) => return prototype_slot(stage, at.record, slot, miss),
             IcOp::PrototypeConstants(values) => return prototype_constants(stage, at.record, values, miss),
             IcOp::Held { guard, watch, value } => return holder_read(stage, at.record, guard, watch, value, miss),
+            IcOp::OwnConstant { record, watch, value } => return own_constant_read(stage, at.record, record, watch, value, miss),
+            IcOp::ArrayLength { records } => {
+                let records = site_word(stage, records);
+                return super::elements::array_length(stage, records, at.record, miss);
+            }
+            IcOp::StringLength { records } => {
+                let records = site_word(stage, records);
+                return super::string_length::string_length(stage, records, at.record, miss);
+            }
             IcOp::HeldString { watch, value } => return string_read(stage, at.record, watch, value, miss),
+            IcOp::HeldNumber { watch, value } => return number_read(stage, at.record, watch, value, miss),
+            IcOp::GetterOwn { guard, watch, slot } => return getter_own_read(stage, at.record, guard, watch, slot, miss),
         }
     }
     None
 }
 
-/// The value the hint `(guard, watch, value)` records for the object part at `record`: `None`
-/// (leaving at `miss`) where the record's layout (`Object::guard_word`: the interned pair of
-/// its whole auxiliary word, the exact shape with its storage form, and its prototype link and
-/// flags) differs, or the watch no longer holds. One compare of the layout id proves the shape
-/// and the prototype together.
-#[inline(always)]
-pub(crate) fn holder_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, watch: u64, value: u64,
-    miss: S::Miss) -> Option<S::Word> {
-    let words = stage.load_u32(Region::ShapeWord.mutable(), record,
-        crate::heap::NATIVE_OBJECT_LAYOUT.layout_offset as i32);
-    let guard = stage.site(guard);
-    let same = stage.eq_imm(words, guard);
-    stage.guard(same, miss)?;
-    let watch = stage.site(watch);
-    let holds = stage.assumption(watch);
-    stage.guard(holds, miss)?;
-    let zero = stage.constant(0);
-    let value = stage.site(value);
-    Some(stage.add_imm(zero, value))
-}
-
-/// The value the string hint `(watch, value)` records for the receiver word `word`: `None`
-/// (leaving at `miss`) for any receiver but a direct string, or once the watch on
-/// `String.prototype`'s values no longer holds.
-#[inline(always)]
-pub(crate) fn string_read<S: Stage>(stage: &mut S, word: S::Word, watch: u64, value: u64, miss: S::Miss) -> Option<S::Word> {
-    let string = super::value::is_direct_string(stage, word);
-    stage.guard(string, miss)?;
-    let watch = stage.site(watch);
-    let holds = stage.assumption(watch);
-    stage.guard(holds, miss)?;
-    let zero = stage.constant(0);
-    let value = stage.site(value);
-    Some(stage.add_imm(zero, value))
-}
-
-/// `IcOp::GuardShape`: continues where the reached record's exact shape is `shape`.
-#[inline(always)]
-pub(super) fn guard_shape<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<()> {
-    let exact = shape_word(stage, at);
-    let same = { let shape = stage.site(u64::from(shape)); stage.eq_imm(exact, shape) };
-    stage.guard(same, miss)
-}
-
-/// `IcOp::GuardLayout`: continues where the reached record's layout id is `id`.
-#[inline(always)]
-pub(super) fn guard_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, id: u32, miss: S::Miss) -> Option<()> {
-    let loaded = at.word.unwrap_or_else(|| layout_id(stage, at.record));
-    let same = { let id = stage.site(u64::from(id)); stage.eq_imm(loaded, id) };
-    stage.guard(same, miss)
-}
-
-/// The record's layout id (`Object::layout_id`), the one header word it keeps.
-#[inline(always)]
-pub(crate) fn layout_id<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
-    stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32)
-}
-
-/// The storage-form bits of layout `id`, read from its interned entry: a fact of the id, so a
-/// specializer folds it at compile time. `id` is one a record's layout matched (an interned
-/// id, its entry readable with no bound test).
-#[inline(always)]
-pub(crate) fn layout_form(id: u32) -> u32 {
-    crate::heap::layouts::word(id) as u32 & FORM_BITS
-}
-
-/// The exact shape of layout `id` (`Object::exact_shape`), any word (`layouts::auxiliary`).
-#[inline(always)]
-pub(crate) fn layout_shape(id: u32) -> u32 {
-    crate::heap::layouts::auxiliary(id) & !FORM_BITS
-}
-
-/// Every storage-form bit of an auxiliary word.
-pub(crate) const FORM_BITS: u32 = OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form;
-
-/// `IcOp::LoadSlot`: the value at `slot` of the reached record.
-#[inline(always)]
-fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u16, Rep), form: Form, storage_len: usize,
-    miss: S::Miss) -> Option<S::Word> {
-    let layout = slot_layout(stage, at, form, storage_len, miss)?;
-    Some(read_slot_value(stage, layout, slot, rep))
-}
-
-/// The layout `IcOp::LoadSlot` reads through: the reached record's, whose shape is guarded
-/// and keeps `storage_len` values in `form`. A caller that proved it before reads through it
-/// again instead of proving it twice (`property::kept_slot`).
-#[inline(always)]
-pub(super) fn slot_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, form: Form, storage_len: usize,
-    miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
-    if let Some(layout) = at.formed.and_then(|bits| super::object::proved_own_layout(stage, at.record, bits, storage_len)) {
-        return Some(layout);
-    }
-    let inline = at.inline.unwrap_or_else(|| inline_storage(stage, at.record));
-    own_layout(stage, at.record, inline, form, storage_len, PackedAccess::Reload, miss)
-}
-
-/// The reached record's exact shape word: the caller's where it holds one, else loaded.
-#[inline(always)]
-pub(super) fn shape_word<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>) -> S::Word {
-    at.shape.unwrap_or_else(|| super::object::exact_shape(stage, at.record))
-}
-
-/// `IcOp::PrototypeConstants`: the value `values` pair with the link of `record`'s prototype.
-#[inline(always)]
-fn prototype_constants<S: Stage>(stage: &mut S, record: S::Word, values: &[(u32, u64)], miss: S::Miss) -> Option<S::Word> {
-    let link = proto_link(stage, record);
-    let ((first, bits), rest) = values.split_first()?;
-    let mut matched = stage.eq_imm(link, u64::from(*first));
-    let mut read = stage.constant(*bits);
-    for (prototype, bits) in rest {
-        let same = stage.eq_imm(link, u64::from(*prototype));
-        let candidate = stage.constant(*bits);
-        read = stage.select(same, candidate, read);
-        matched = stage.any(matched, same);
-    }
-    stage.guard(matched, miss)?;
-    Some(read)
-}
-
-/// `IcOp::LoadPrototypeSlot` of the record at `record`.
-#[inline(always)]
-fn prototype_slot<S: Stage>(stage: &mut S, record: S::Word, slot: u16, miss: S::Miss) -> Option<S::Word> {
-    let inline = inline_storage(stage, record);
-    let in_arena = stage.not(inline);
-    stage.guard(in_arena, miss)?;
-    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
-    let extras = has_extras(stage, payload);
-    stage.guard(extras, miss)?;
-    let pointer = extras_pointer(stage, payload);
-    let present = stage.ne_imm(pointer, 0u32);
-    stage.guard(present, miss)?;
-    let start = stage.load_u32(Region::Payload.mutable(), pointer, OBJECT.extras_arena_start_offset as i32);
-    let run = arena_run(stage, start);
-    { let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64); Some(stage.load_site(Region::ObjectSlots.mutable(), run, offset)) }
-}
 
 /// The own field a site's hint proved: the value at `slot` of `object` where its exact shape
 /// is `shape`, else `None` (the interpreter's `GetField` hit: `GuardShape` then `LoadSlot`, the
@@ -242,23 +148,31 @@ pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, proper
     shape: u32, slot: u16) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
     let record = object as *const crate::heap::Object as u64;
-    // The word proves the shape and, by its storage-form bits, where the values live.
-    let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
-    // An exact shape has no form bits, so the whole word equals it only in the arena form,
-    // whose payload is the run's start: one compare proves the shape and the form.
-    // The caller's contract: an exact shape, so no form bit needs testing.
-    debug_assert_eq!(shape & (OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form), 0, "an exact shape has no form bit");
-    let whole = stage.eq_imm(word, u64::from(shape));
-    if stage.known(whole) == Some(true) {
+    own_field(&mut stage, record, shape, slot, ()).map(crate::value_vec::decode_staged_word)
+}
+
+/// The own field of the object record at `record` where its exact shape is `shape`: the interpreter's
+/// `GetField` hit (`concrete_own_field_hit`) and a stencil's inline-cache read (`quench-bjit/stencils/ic_rows.rs`)
+/// alike. The auxiliary word proves the shape and, by its storage-form bits, where the values live, so a flat
+/// run is one test away; `None`, leaving at `miss`, for another shape.
+#[inline(always)]
+pub(crate) fn own_field<S: Stage>(stage: &mut S, record: S::Word, shape: u32, slot: u16, miss: S::Miss) -> Option<S::Word> {
+    let word = super::object::header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
+    let expected = stage.site(u64::from(shape));
+    // The word is the shape with no storage-form bit: that shape, its values a wide flat run, on one compare.
+    let exact = stage.eq_imm(word, expected);
+    stage.choose_leaving(exact, #[inline(always)] |stage| {
         let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
-        let run = arena_run(&mut stage, payload);
-        let layout = Layout { slots: super::object::Slots::Flat(run), storage_len: usize::from(slot) + 1 };
-        return Some(crate::value_vec::decode_staged_word(read_slot(&mut stage, layout, slot, Rep::Tagged)));
-    }
-    let at = Reached { shape: Some(recorded_shape(&mut stage, word)), word: Some(word), ..Reached::bare(record) };
-    guard_shape(&mut stage, &at, shape, ())?;
-    let layout = formed_own_layout(&mut stage, record, word, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, ())?;
-    Some(crate::value_vec::decode_staged_word(read_slot(&mut stage, layout, slot, Rep::Tagged)))
+        let run = super::object::arena_run(stage, payload);
+        let layout = super::object::Layout { slots: super::object::Slots::Flat(run), storage_len: usize::from(slot) + 1 };
+        Some(read_slot(stage, layout, slot, Representation::Tagged))
+    }, #[inline(always)] |stage| {
+        let recorded = recorded_shape(stage, word);
+        let same = stage.eq_imm(recorded, expected);
+        stage.guard(same, miss)?;
+        let layout = formed_own_layout(stage, record, word, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, miss)?;
+        Some(read_slot(stage, layout, slot, Representation::Tagged))
+    })
 }
 
 /// `concrete_hinted_own_field_hit`'s form: the one the hint's bits name at run time.
@@ -298,8 +212,8 @@ pub(crate) unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &cra
     guard_layout(&mut stage, &at, hint, ())?;
     debug_assert!(form == HINTED_FORM || layout_form(hint) == form, "a fixed form's matched hint names it");
     let bits = if form == HINTED_FORM { layout_form(hint) } else { form };
-    let layout = slot_layout(&mut stage, &Reached { formed: Some(bits), ..at }, Form::Either, usize::from(slot) + 1, ())?;
-    let word = read_slot(&mut stage, layout, slot, Rep::Tagged);
+    let layout = slot_layout(&mut stage, &Reached { formed: Some(bits), ..at }, form_of_layout(hint), usize::from(slot) + 1, ())?;
+    let word = read_slot(&mut stage, layout, slot, Representation::Tagged);
     // Packed and narrow slots hold narrow values, never a raw double (`packed_read`,
     // `narrow_read`), so a fixed one of those forms skips the float-slot decode.
     if tagged || form == OBJECT.inline_form || form == OBJECT.narrow_form {
@@ -356,13 +270,13 @@ pub(crate) unsafe fn concrete_site_own_chain(property_values: *const crate::Valu
 #[cfg(not(stencil_build))]
 pub(crate) unsafe fn concrete_site_store(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64, value: crate::Value) -> bool {
     let mut stage = super::Concrete::storing(heap);
-    super::entry::site_store(&mut stage, (entries, records), object.to_bits(), offset, (value.to_bits(), true), ()).is_some()
+    super::entry::site_store(&mut stage, (entries, records), object.to_bits(), offset, (value.to_bits(), true, None), ()).is_some()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::heap::{Cell, Heap, Object};
+    use crate::heap::{Heap, Object};
     use crate::staged::Concrete;
     use crate::Value;
 
@@ -382,16 +296,16 @@ mod tests {
         for shape in 1..=2_u32 {
             heap.register_property_shape(shape, shape as usize, None);
         }
-        let prototype = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let prototype = heap.alloc_object(Object::new(Value::NULL));
         heap.property_add(prototype, Value::number(1.5), 1);
         heap.object_record_mut(prototype).unwrap().mark_as_prototype();
-        let object = heap.alloc(Cell::Object(Object::new(prototype)));
+        let object = heap.alloc_object(Object::new(prototype));
         heap.property_add(object, Value::number(7.0), 1);
         heap.property_add(object, Value::number(8.0), 2);
         let (own, holder) = (heap.object(object).unwrap().exact_shape(), heap.object(prototype).unwrap().exact_shape());
         let read = |receiver, holder| [IcOp::GuardShape(receiver), IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(0)];
         assert_eq!(concrete(&heap, &read(own, holder), object), Some(Value::number(1.5)));
-        let load = IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2, rep: Rep::Tagged };
+        let load = IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2, rep: Representation::Tagged };
         assert_eq!(concrete(&heap, &[IcOp::GuardShape(own), load], object), Some(Value::number(8.0)));
         assert_eq!(concrete(&heap, &[IcOp::GuardShape(holder), load], object), None);
         assert_eq!(concrete(&heap, &read(holder, holder), object), None);
@@ -404,9 +318,9 @@ mod tests {
     #[test]
     fn a_prototype_constant_is_selected_by_the_receivers_link() {
         let mut heap = Heap::new();
-        let prototype = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let prototype = heap.alloc_object(Object::new(Value::NULL));
         heap.object_record_mut(prototype).unwrap().mark_as_prototype();
-        let object = heap.alloc(Cell::Object(Object::new(prototype)));
+        let object = heap.alloc_object(Object::new(prototype));
         let link = heap.object(object).unwrap().proto_link().bits();
         let (one, two) = (Value::number(1.5).to_bits(), Value::number(2.5).to_bits());
         assert_eq!(concrete(&heap, &[IcOp::PrototypeConstants(&[(link ^ 1, one), (link, two)])], object), Some(Value::number(2.5)));
@@ -424,12 +338,12 @@ mod tests {
             heap.register_property_shape(shape, shape as usize, None);
         }
         for len in [1, wide] {
-            let prototype = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+            let prototype = heap.alloc_object(Object::new(Value::NULL));
             for slot in 0..len {
                 heap.property_add(prototype, Value::number(slot as f64 + 0.5), slot as u32 + 1);
             }
             heap.object_record_mut(prototype).unwrap().mark_as_prototype();
-            let object = heap.alloc(Cell::Object(Object::new(prototype)));
+            let object = heap.alloc_object(Object::new(prototype));
             let holder = heap.object(prototype).unwrap();
             for slot in 0..len {
                 // SAFETY: the prototype's exact shape holds `slot` outside dictionary storage.
@@ -449,13 +363,14 @@ mod tests {
             let at = Reached::bare(0);
             let record = trace.constant(0);
             let at = Reached { record, ..at };
-            let ops = [IcOp::GuardShape(shape), IcOp::LoadSlot { slot, form: Form::Either, storage_len: usize::from(slot) + 1, rep: Rep::Tagged }];
+            let ops = [IcOp::GuardShape(shape), IcOp::LoadSlot { slot, form: Form::Either, storage_len: usize::from(slot) + 1, rep: Representation::Tagged }];
             run(&mut trace, &ops, at, None, ()).expect("a load ends the read");
             trace
         };
         let (first, second) = (read(5, 1), read(6, 0));
         assert_eq!(first.ops, second.ops, "the trace never depends on a site value");
-        assert_eq!(first.holes, [5, 32, 8]);
-        assert_eq!(second.holes, [6, 0, 0]);
+        // Either form reads through one operand, the flat byte offset (`object::site_offset`).
+        assert_eq!(first.holes, [5, 8]);
+        assert_eq!(second.holes, [6, 0]);
     }
 }

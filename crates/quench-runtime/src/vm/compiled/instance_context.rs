@@ -69,27 +69,35 @@ pub(super) struct MemoryBinding {
 /// offsets in the two structs with the machine type of each, which generated code copies to
 /// enter another instance, and `CallContext::enter`, which the VM copies them with.
 macro_rules! switched {
-    ($($field:ident: $ty:expr),+ $(,)?) => {
+    (head: { $($field:ident: $ty:expr),+ $(,)? }, tail: { $($tail:ident: $tail_ty:expr),+ $(,)? }) => {
         /// The offset in a call context, the offset in a record and the machine type of each
         /// field that belongs to an instance.
-        pub(super) const SWITCHED: &[(i32, i32, ir::Type)] = &[$((
-            std::mem::offset_of!(CallContext, $field) as i32,
-            std::mem::offset_of!(InstanceContext, $field) as i32,
-            $ty,
-        )),+];
+        pub(super) const SWITCHED: &[(i32, i32, ir::Type)] = &[
+            $((
+                std::mem::offset_of!(CallContext, head.$field) as i32,
+                std::mem::offset_of!(InstanceContext, $field) as i32,
+                $ty,
+            ),)+
+            $((
+                std::mem::offset_of!(CallContext, $tail) as i32,
+                std::mem::offset_of!(InstanceContext, $tail) as i32,
+                $tail_ty,
+            ),)+
+        ];
 
         impl CallContext {
             /// Enters the instance of `record`: the context takes its words.
             pub(super) fn enter(&mut self, record: &InstanceContext) {
                 $(self.$field = record.$field;)+
+                $(self.$tail = record.$tail;)+
             }
         }
     };
 }
 
 switched! {
+    head: {
     env: types::I64,
-    instance: types::I64,
     globals: types::I64,
     table_words: types::I64,
     table: types::I64,
@@ -104,6 +112,8 @@ switched! {
     reference_call_site_count: types::I64,
     import_callout_counts: types::I64,
     import_callout_count: types::I64,
+    },
+    tail: { instance: types::I64 },
 }
 
 impl InstanceContext {
@@ -150,6 +160,23 @@ impl InstanceContext {
         self.instance as usize
     }
 
+    /// The body the record at `address` publishes for function `entry`, or 0 when it publishes
+    /// none for it, or `entry` is `NO_ENTRY`. A table row's `body` is this value (`TableTarget`).
+    pub(crate) fn published_body(address: usize, entry: u32) -> usize {
+        if address == 0 || entry == u32::MAX {
+            return 0;
+        }
+        // SAFETY: a row names a record its function keeps alive (the function's environment holds
+        // the record's cell), so the address is a live record.
+        let record = unsafe { &*(address as *const InstanceContext) };
+        // SAFETY: `compiled` is null or the artifact `publish` retained, which lives as long as
+        // the record (`retained`).
+        let Some(compiled) = (unsafe { record.compiled.as_ref() }) else {
+            return 0;
+        };
+        compiled.table.get(entry as usize).copied().unwrap_or(0)
+    }
+
     /// Fills the areas from the bindings of the environment, by slot.
     pub(super) fn bind(
         &mut self,
@@ -167,8 +194,10 @@ impl InstanceContext {
     /// Publishes `compiled` as the code the instance runs natively, and the memory it runs on:
     /// the artifact's words are written when it differs from the last, the memory's each time,
     /// as it may have grown.
-    pub(super) fn publish<H: Host>(&mut self, compiled: &Rc<CompiledProgram>, memory: &MemoryBinding) {
-        if !std::ptr::eq(self.compiled, Rc::as_ptr(compiled)) {
+    /// Returns whether the artifact changed, so the rows that name this instance take its bodies.
+    pub(super) fn publish<H: Host>(&mut self, compiled: &Rc<CompiledProgram>, memory: &MemoryBinding) -> bool {
+        let changed = !std::ptr::eq(self.compiled, Rc::as_ptr(compiled));
+        if changed {
             self.compiled = Rc::as_ptr(compiled);
             self.table = compiled.table.as_ptr();
             self.abi = compiled.abi();
@@ -189,6 +218,7 @@ impl InstanceContext {
         self.memory_base = memory.base;
         self.memory_length = memory.length;
         (self.guard_start, self.guard_end) = (start, end);
+        changed
     }
 }
 
@@ -353,34 +383,73 @@ impl<H: Host> Vm<H> {
         let Some(Cell::WasmInstance(record)) = self.heap.get_mut(record) else {
             return None;
         };
-        record.publish::<H>(compiled, &memory);
-        Some((&**record as *const InstanceContext, (memory.base, memory.length)))
+        let address = &**record as *const InstanceContext as usize;
+        let changed = record.publish::<H>(compiled, &memory);
+        if changed {
+            self.refresh_wasm_bodies(address, compiled);
+        }
+        Some((address as *const InstanceContext, (memory.base, memory.length)))
+    }
+
+    /// Rewrites the body of each row, in every Wasm table of the heap, that names the instance at
+    /// `address`: the bodies `compiled` publishes for it. Called when a publication changes the
+    /// artifact, so no row keeps a body the record no longer publishes.
+    fn refresh_wasm_bodies(&mut self, address: usize, compiled: &CompiledProgram) {
+        self.heap.for_each_wasm_table_mut(|elements| {
+            elements.refresh_bodies(|row| {
+                (row.instance == address as u64)
+                    .then(|| compiled.table.get(row.entry as usize).copied().unwrap_or(0))
+            });
+        });
     }
 }
 
-/// The values native code keeps alive across a call into another instance: the environments of
-/// the instances it is running in beyond its own, which no frame or table need hold.
+/// The values native code keeps alive across a call that can collect: the environments of the
+/// instances it is running in beyond its own (`wasm_instance_switch`), and the reference registers
+/// of the compiled frames it runs (`wasm_roots`), which no frame or table need hold.
+///
+/// The slots are a heap buffer of `capacity` values, owned by the record and freed with it. Code
+/// reads the buffer's base from `SLOTS` and the depth from `DEPTH`, and checks `CAPACITY` before it
+/// pushes.
 #[repr(C)]
 pub(crate) struct NativeRoots {
     depth: u64,
-    slots: [Value; NATIVE_ROOT_CAPACITY],
+    capacity: u64,
+    slots: *mut Value,
 }
 
-/// How many instances native code may be inside beyond the one it entered; a deeper call leaves
-/// through the VM, which roots its own.
-pub(super) const NATIVE_ROOT_CAPACITY: usize = 256;
+// SAFETY: the record owns its buffer outright and no other holder reads or writes it, so moving the
+// record to another thread moves the buffer with it.
+unsafe impl Send for NativeRoots {}
+
+/// How many roots native code may hold at once. A push past it traps `CallStackExhausted` (for a
+/// compiled frame) or leaves through the VM (for an instance switch), which roots its own.
+pub(super) const NATIVE_ROOT_CAPACITY: usize = 65536;
 
 impl NativeRoots {
     pub(super) const DEPTH: i32 = std::mem::offset_of!(Self, depth) as i32;
+    pub(super) const CAPACITY: i32 = std::mem::offset_of!(Self, capacity) as i32;
+    /// The base address of the buffer: root `k` is `size_of::<Value>()` bytes past it, `k` times.
     pub(super) const SLOTS: i32 = std::mem::offset_of!(Self, slots) as i32;
 
     pub(crate) fn new() -> Box<Self> {
-        Box::new(Self { depth: 0, slots: [Value::UNDEFINED; NATIVE_ROOT_CAPACITY] })
+        // Zeroed words, not `Value::UNDEFINED`: the allocator hands back untouched zero pages, so
+        // the buffer costs memory only as deep as roots are ever pushed. Only `..depth` is read,
+        // and every slot there was written first.
+        const _: () = assert!(size_of::<Value>() == size_of::<u64>() && align_of::<Value>() == align_of::<u64>());
+        let slots = vec![0_u64; NATIVE_ROOT_CAPACITY].into_boxed_slice();
+        Box::new(Self {
+            depth: 0,
+            capacity: NATIVE_ROOT_CAPACITY as u64,
+            slots: Box::into_raw(slots).cast::<Value>(),
+        })
     }
 
     /// The environments held now: the roots of a collection.
     pub(crate) fn live(&self) -> &[Value] {
-        &self.slots[..self.depth as usize]
+        // SAFETY: `slots` is the buffer `new` leaked, of `capacity` values, and every push keeps
+        // `depth` within it (`CAPACITY` checks).
+        unsafe { std::slice::from_raw_parts(self.slots, self.depth as usize) }
     }
 
     /// The depth an entry restores when it ends, whatever left native frames unreturned.
@@ -390,6 +459,14 @@ impl NativeRoots {
 
     pub(super) fn set_depth(&mut self, depth: u64) {
         self.depth = depth;
+    }
+}
+
+impl Drop for NativeRoots {
+    fn drop(&mut self) {
+        // SAFETY: `slots` is the boxed slice `new` leaked, of `capacity` values, and nothing else
+        // owns it.
+        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(self.slots.cast::<u64>(), self.capacity as usize)) });
     }
 }
 
@@ -454,7 +531,8 @@ mod tests {
     fn the_native_roots_hold_what_was_pushed_and_no_more() {
         let mut roots = NativeRoots::new();
         assert!(roots.live().is_empty());
-        roots.slots[0] = Value::from_bits(5);
+        // SAFETY: the buffer holds `capacity` values, and slot 0 is one of them.
+        unsafe { *roots.slots = Value::from_bits(5) };
         roots.set_depth(1);
         assert_eq!(roots.live(), [Value::from_bits(5)]);
         assert_eq!(roots.depth(), 1);

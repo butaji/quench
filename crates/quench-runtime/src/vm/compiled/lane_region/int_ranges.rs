@@ -9,6 +9,7 @@
 //! are rows of the same fixpoint that types every register, which widens a range that keeps
 //! growing instead of assuming one and checking it on the back edge.
 
+use crate::bytecode::JsDenotation;
 use super::*;
 use super::super::facts::{self, Model, Observed, ObservedRead, Point, Seeds, Text};
 use super::loop_versions::{Decision, Hoist, Induction, Nest, Resolved, Shape, Version};
@@ -17,6 +18,8 @@ use super::loop_versions::{Decision, Hoist, Induction, Nest, Resolved, Shape, Ve
 pub(super) struct IntRanges {
     overflow_free: CompoundBitSet,
     in_bounds: CompoundBitSet,
+    /// The string reads whose index the point proves below the string's length (`string_in_bounds`), by PC.
+    string_bounds: CompoundBitSet,
     /// The accesses whose indices their loop's entry compares with the array's length once
     /// (`Lowering::version_loops`), by PC (ascending).
     versioned: Vec<Version>,
@@ -33,13 +36,32 @@ pub(super) struct IntRanges {
     signless: Vec<usize>,
     /// The products no operands make a negative zero of.
     zero_free: CompoundBitSet,
+    /// The remainders whose dividend the point before them proves no negative, so no `-0` (`prove_at`).
+    non_negative_dividend: CompoundBitSet,
+    /// The remainders whose divisor the point before them proves no zero, so no zero-divisor test.
+    nonzero_divisor: CompoundBitSet,
+    /// The element stores whose value the point before them holds a Number of (`Point::numeric_store`).
+    numeric_stores: CompoundBitSet,
 }
 
 impl IntRanges {
     pub(super) fn new(instructions: usize) -> Self {
         Self { overflow_free: CompoundBitSet::with_capacity(instructions), in_bounds: CompoundBitSet::with_capacity(instructions),
-            versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions) }
+            string_bounds: CompoundBitSet::with_capacity(instructions),
+            versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions),
+            non_negative_dividend: CompoundBitSet::with_capacity(instructions), nonzero_divisor: CompoundBitSet::with_capacity(instructions),
+            numeric_stores: CompoundBitSet::with_capacity(instructions) }
     }
+
+    /// Whether the remainder at `pc` has a dividend no negative: its `-0` is no zero it can make.
+    pub(super) fn non_negative_dividend(&self, pc: usize) -> bool { self.non_negative_dividend.contains(pc) }
+
+    /// Whether the element store at `pc` stores a Number, by the facts' type of its value at `pc` (a
+    /// point the analysis never visits proves none).
+    pub(super) fn numeric_store(&self, pc: usize) -> bool { self.numeric_stores.contains(pc) }
+
+    /// Whether the remainder at `pc` has a divisor no zero: its zero-divisor test is redundant.
+    pub(super) fn nonzero_divisor(&self, pc: usize) -> bool { self.nonzero_divisor.contains(pc) }
 
     /// Whether the product at `pc` may keep the int32 zero for a negative one: no operands make a
     /// negative zero of it, or no consumer reads its sign.
@@ -62,6 +84,10 @@ impl IntRanges {
     pub(super) fn in_bounds(&self, pc: usize) -> bool {
         self.in_bounds.contains(pc) || self.versioned.binary_search_by_key(&pc, |version| version.pc).is_ok()
     }
+
+    /// Whether the string read at `pc` (a `charCodeAt` call or a `base[index]` of a string) has an
+    /// index below its string's length, so its row takes no bounds test (`Point::string_index_proven`).
+    pub(super) fn string_in_bounds(&self, pc: usize) -> bool { self.string_bounds.contains(pc) }
 
     /// The accesses whose indices their loop's entry compares with the array's length, by PC.
     pub(super) fn versioned(&self) -> &[Version] { &self.versioned }
@@ -108,7 +134,7 @@ impl Lowering<'_, '_> {
     /// hoisted typed array of a fixed kind, each of which yields a Number of the kind's element
     /// type: an integer kind's range, a typed-array load being its elements' own integers.
     fn element_reads(&self, instructions: &[WideInstruction]) -> Vec<ObservedRead> {
-        let typed: Vec<ObservedRead> = instructions.iter().enumerate().filter(|(_, instruction)| instruction.op().is_get_index())
+        let typed: Vec<ObservedRead> = instructions.iter().enumerate().filter(|(_, instruction)| matches!(crate::vm::compiled::performed(**instruction), Some(crate::staged::Operation::ElementRead { .. })))
             .filter_map(|(pc, instruction)| {
                 let array = self.loop_array(pc, instruction.operand_b().register_index())?;
                 Some(ObservedRead { pc, ty: array.views.observed_kind().and_then(NativeKind::new)?.element_type() })
@@ -127,7 +153,8 @@ impl Lowering<'_, '_> {
         leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) -> Vec<(Register, IntRange)> {
         if self.entering.is_empty() { return Vec::new(); }
         let dense = |pc: usize| self.hoisted_access(pc);
-        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
+        let typed = |pc: usize| self.typed_access(pc);
+        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense, typed: &typed };
         let reads = self.element_reads(instructions);
         let signless = self.signless_products(instructions);
         let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),
@@ -144,7 +171,8 @@ impl Lowering<'_, '_> {
     pub(super) fn prove_ranges(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
         leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, loops: &[(usize, usize)]) -> IntRanges {
         let dense = |pc: usize| self.hoisted_access(pc);
-        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
+        let typed = |pc: usize| self.typed_access(pc);
+        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense, typed: &typed };
         let reads = self.element_reads(instructions);
         let signless = self.signless_products(instructions);
         let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),
@@ -171,13 +199,48 @@ impl Lowering<'_, '_> {
             facts::IndexProof::Proven => { proved.in_bounds.insert(pc); }
             proof => seen.shapes.extend(self.shape(instructions, pc, point, proof)),
         }
+        if let Some((receiver, index)) = self.string_read(pc, instruction)
+            && point.int_range(index).is_some_and(|range| range.min >= 0) && point.string_index_proven(receiver, index) {
+            proved.string_bounds.insert(pc);
+        } else {
+            proved.string_bounds.remove(pc);
+        }
         let range = point.index_range(&self.program.constants, instruction, signless.binary_search(&pc).is_ok());
         if let Some(range) = range {
             proved.index_ranges.push((pc, range));
             if self.hoistable(pc, instruction, point) { seen.hoistable.push(pc); }
         }
+        if point.numeric_store(instruction) { proved.numeric_stores.insert(pc); } else { proved.numeric_stores.remove(pc); }
         if point.zero_free(&self.program.constants, instruction) { proved.zero_free.insert(pc); }
+        if let Some((dividend, divisor)) = self.remainder_ranges(point, instruction) {
+            if dividend.min >= 0 { proved.non_negative_dividend.insert(pc); }
+            if divisor.min > 0 || divisor.max < 0 { proved.nonzero_divisor.insert(pc); }
+        }
         if self.decidable(instruction, point) { seen.decisions.push(pc); }
+    }
+
+    /// The string and index register of the read at `pc` that reads a string's units at an index: a
+    /// `charCodeAt` call of an intrinsic (`native_calls::reads_string`) or an element read by a register.
+    fn string_read(&self, pc: usize, instruction: WideInstruction) -> Option<(crate::bytecode::Register, crate::bytecode::Register)> {
+        if super::native_calls::reads_string(&self.intrinsics, pc) {
+            return Some((instruction.register_c(), crate::bytecode::ImmediateLayout::call_window_base(instruction.imm())));
+        }
+        match crate::staged::Operation::<u64, ()>::of(instruction) {
+            Some(crate::staged::Operation::ElementRead { base, key }) => Some((base, key.register_index()?)),
+            _ => None,
+        }
+    }
+
+    /// The ranges of the operands of the `%` at `instruction` the point proves: a register's integer
+    /// range, or an int32 constant's singleton. `None` for any other instruction or an unranged operand.
+    fn remainder_ranges(&self, point: &Point, instruction: WideInstruction) -> Option<(IntRange, IntRange)> {
+        if instruction.op().js_denotation() != JsDenotation::NumericBinary || instruction.binary_operator() != crate::vm::operations::REMAINDER {
+            return None;
+        }
+        let range = |operand: Operand| operand.register_index().map_or_else(
+            || self.int32_constant(operand).map(|value| IntRange::singleton(i64::from(value))),
+            |register| point.int_range(register));
+        Some((range(instruction.operand_b())?, range(instruction.operand_c())?))
     }
 
     /// Whether the jump `instruction` is a relation the VM decides from two registers one of which

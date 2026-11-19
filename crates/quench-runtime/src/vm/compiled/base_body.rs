@@ -1,34 +1,36 @@
 //! A function's BaseJIT body (`--b-jit`): the whole function stitched from stencils
 //! (`base_region::function`) and published as a lane body, so the tier prologue enters it and
-//! its leaves resume the interpreter as a Cranelift body's do (`lane_body_entry`,
+//! its leaves resume the interpreter as a Cranelift body's do (`body_entry_in_lane`,
 //! `LaneExit`). A call site that recorded a stable callee calls its entry cell (the direct row,
 //! the callee's descriptor owned by the method like a Cranelift body's `direct`), any other call
 //! takes the helper row, and an instruction with no row leaves the body at its PC.
 
 use super::*;
 use super::base_region::callees::{Callees, InlineBody};
-use super::base_region::function::{build_body, Body, BodySpec};
+use super::base_region::function::{build_body, Body, BodySpec, ClassProto};
 use super::base_region::{Known, RealmProof};
 use super::lane_facts::bind_callees;
 use crate::code_dependencies::{InstanceofFact, Invalidation};
 use crate::vm::global_facts::GlobalTable;
-use crate::bytecode::{Class, Register, WideInstruction};
+use crate::bytecode::{Atom, Class, FieldLookup, Register, WideInstruction};
 use super::lane_region::StableFacts;
 use crate::compile::liveness::RegisterMasks;
+use crate::typed_ir::Type;
 
-/// The registers an entry's parameters hold as int32s, and as other Numbers: the types the body's
-/// entry rows assume (a parameter that is neither is a tagged word the rows test where they read it).
-fn observed(parameters: &[Value]) -> (Vec<Register>, Vec<Register>) {
-    let registers = |wanted: fn(Value) -> bool| (0..parameters.len()).filter(|k| wanted(parameters[*k])).map(|k| k as Register).collect();
-    (registers(|value| value.as_int().is_some()), registers(|value| value.as_int().is_none() && value.as_number().is_some()))
+/// The types an entry's parameters hold, by register: the types the body's entry rows assume (a parameter
+/// that is neither an int32 nor a Number is `Type::immediate`'s own type, which no unboxed row accepts).
+fn observed(parameters: &[Value]) -> Vec<Type> {
+    parameters.iter().map(|value| Type::immediate(*value)).collect()
 }
 
 /// Whether `code` indexes a register an entry's parameter holds a typed array in: a body has no row of a typed
 /// element (its loop regions do), so its first access of one would leave, and every entry after it.
 fn indexes_typed_parameter(code: &[WideInstruction], is_typed: impl Fn(Register) -> bool) -> bool {
-    code.iter().any(|instruction| match instruction.op().class() {
-        Class::GetIndex => instruction.operand_b().register_index().is_some_and(&is_typed),
-        Class::SetIndex => is_typed(instruction.register_b()),
+    // merge: kept HEAD: decoded_completed sees a result-flagged element access that `Operation::of` declines.
+    code.iter().any(|instruction| match crate::vm::compiled::decoded_completed(instruction) {
+        Some(crate::staged::Operation::ElementRead { base, .. }) => is_typed(base),
+        Some(crate::staged::Operation::ElementWrite { base, .. }) => is_typed(base),
+        // A frame local's base (`ElementReadOperand`) is no register an entry parameter holds.
         _ => false,
     })
 }
@@ -55,12 +57,14 @@ impl LaneMethod {
         }
         // SAFETY: `base_region::function` links its code behind `entry_body`, of the lane body ABI.
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
+        // `entry_rows` follows `entry_body` (`base_region::rows_entry_offset`).
+        let rows = super::base_region::row_entries(memory.pointer().addr(), body.number_guards, body.uses_this);
         Some(Self {
-            dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, atoms: body.atoms, instanceofs: body.instanceofs, layouts: body.layouts, slots: body.slot_types, ..Default::default() }, invalidation, _code: memory, entry,
+            dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, chains: body.chains, atoms: body.atoms, instanceofs: body.instanceofs, layouts: body.layouts, slots: body.slot_types, ..Default::default() }, invalidation, _code: memory, entry,
             recovery_space: super::super::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: body.names_shapes || !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
-            caller_registers: registers, frame_reach: body.scratch, amortizes: body.loops || body.covered >= tiers.amortizing_instructions(super::tier_policy::lane_body_tier()) || !direct.is_empty(),
-            direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, realm_bound,
+            caller_registers: registers, frame_reach: body.scratch, amortizes: body.loops || body.covered >= tiers.amortizing_instructions(super::tier_policy::Tier::Base) || !direct.is_empty(),
+            direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, rows, realm_bound,
         })
     }
 }
@@ -86,10 +90,11 @@ impl<H: Host> Vm<H> {
     /// callee register (`Vm::stable_callees`).
     pub(in crate::vm::compiled) fn stitch_callees(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], candidates: &[DirectCandidates]) -> Callees {
         let stable = self.stable_callees(program, function, code, &Callees::recorded(code, candidates));
-        // An arrow inlines as any callee does: a `this` read is no class a site admits (`Stitch::classes`), and a leave
-        // inside it makes its activation with its lexical `this` (`lane_call_this`).
+        // An arrow inlines as any callee does, unless it reads `this`: its lexical `this` is no receiver a site binds
+        // (`inline::Refused::Receiver`), and a leave inside it makes its activation with its lexical `this` (`call_this_in_lane`).
         let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.callee, callee.target.function);
-        Callees::of(code, candidates, &inline_body, stable)
+        let natives = self.native_callees(program, function, code);
+        Callees::of(code, candidates, &inline_body, stable, natives)
     }
 
     /// The realm a stitch finds its inlined callees in: the active one, which its entry proves active.
@@ -133,18 +138,23 @@ impl<H: Host> Vm<H> {
         let masks: Option<&std::rc::Rc<RegisterMasks>> = program.shared_register_root_masks(function);
         let code: Vec<_> = body.instructions().collect();
         if !super::base_region::covers(&code) { return LaneBodyOutcome::Declined }
+        // A body whose entry its work cannot repay (no loop, no call, too short for the stencil
+        // tier) is not stitched only for `publish_base_body` to refuse it.
+        if !super::body_may_amortize(self.programs.tiers(), body, crate::jit_mode::Tier::Base) && !caller.called_by_bodies() { return LaneBodyOutcome::Short }
         if indexes_typed_parameter(&code, |register| parameters.get(usize::from(register)).is_some_and(|value| self.is_typed_array(*value))) { return LaneBodyOutcome::Declined }
         let Some(region) = LoopRegion::of_function(code.clone(), self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
-        let (ints, doubles) = observed(parameters);
+        let seen = observed(parameters);
         let callees = self.stitch_callees(program, function, &code, &direct(self));
         let invalidation = Invalidation::default();
         // Where the VM and the program run specialized, the code holds Stable facts: stores run in place for the atoms no method cache names, prototype-held reads fold.
         let folds = self.specialized && program.specialized;
         let SiteFacts { constructors, presences, globals } = self.site_facts(folds, program, function, (&code, parameters), body);
+        let classes = self.class_prototypes(program, function, &code, parameters);
         let reads = |site: u16| self.native_field_read_descriptors(site);
         let instanceofs = |pc: usize| constructors.get(pc).copied().flatten().and_then(|constructor| self.instanceof_fact(constructor).map(|fact| (constructor, fact)));
         let adds = |site: u16, atom, chained| self.native_field_add(site, atom, chained);
         let names = |site: u16, atom| self.native_function_name(site, atom);
+        let fields = |site: u16| self.field_cache_filled(site);
         let known = Known {
             program, stitch: &self.programs.tiers().stitch, stores: folds.then(|| self.method_cache_atoms.bits()),
             reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
@@ -155,13 +165,63 @@ impl<H: Host> Vm<H> {
             typeof_names: &self.typeof_names,
             instanceofs: folds.then_some(&instanceofs as &dyn Fn(usize) -> Option<(Value, InstanceofFact)>),
             presences: folds.then_some(presences.as_slice()),
+            fields: folds.then_some(&fields as &dyn Fn(u16) -> bool),
             globals: globals.as_ref(),
+            classes: if folds { classes.as_slice() } else { &[] },
+            shapes: &[],
         };
         let speculated = widened(generic);
-        let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: [&ints, &doubles], kinds: &[] };
+        let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: &seen, kinds: &[] };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers::<H>()) }) else { return LaneBodyOutcome::Declined };
         self.publish_base_body(built, (function, body.registers), callees, (&code, invalidation), caller)
+    }
+
+    /// The prototypes `function`'s class-typed parameters enter with (`DeclaredTypes::parameter_classes`), each resolved
+    /// from the value the entry observed in its register (`class_prototype_of`), with the named reads `code` makes of it.
+    fn class_prototypes(&self, program: &ResidualProgram, function: u32, code: &[WideInstruction], parameters: &[Value]) -> Vec<ClassProto> {
+        let (Some(declared), Some(body)) = (program.declared_types.as_deref(), program.function_get(function as usize)) else { return Vec::new() };
+        let Some(start) = body.source_span.map(|span| span.start) else { return Vec::new() };
+        declared.parameter_classes.iter().filter(|entry| entry.function == start)
+            .filter_map(|entry| {
+                let register = super::lane_region::scalar::parameter_register(body, usize::from(entry.parameter))?;
+                let value = *parameters.get(usize::from(register))?;
+                self.class_prototype_of(program, code, (register, value), entry.class)
+            }).collect()
+    }
+
+    /// The class prototype the instance `value` in `register` enters with, where it is a direct object whose prototype's
+    /// `constructor` is the class constructor (`is_class_constructor`) whose source span starts at `class`. Its members are
+    /// the prototype's own data values of the names `code` reads of the register that the instance does not own (its exact
+    /// shape holds no such name, else the prototype's value would not be the read's). Which prototype is a choice of what to
+    /// fold: the entry checks the receiver's exact shape and link.
+    fn class_prototype_of(&self, program: &ResidualProgram, code: &[WideInstruction], (register, instance): (Register, Value), class: u32) -> Option<ClassProto> {
+        instance.direct_object_index()?;
+        let receiver = self.object_data(instance)?;
+        let shape = receiver.exact_shape();
+        let link = receiver.proto_link();
+        let prototype = Value::direct_object(link.object_record_id()?);
+        let data = self.object_data(prototype)?;
+        let slot = self.shape_slot(data.shape(), self.lookup_atom("constructor")?)?;
+        let constructor = self.heap.property_get(data, slot)?;
+        let Some(crate::heap::FunctionRecord { kind: crate::heap::FunctionKind::User(_, index), .. }) = self.heap.function(constructor) else { return None };
+        let body = program.function_get(*index as usize)?;
+        if !body.is_class_constructor || body.source_span.map(|span| span.start) != Some(class) { return None; }
+        let members = code.iter().filter_map(|instruction| match instruction.field_lookup()? {
+            FieldLookup::Atom { atom, base, .. } if base.register_index() == Some(register) => Some(atom),
+            _ => None,
+        }).filter(|atom| self.shape_slot(shape, *atom).is_none())
+            .filter_map(|atom| Some((atom, self.own_data_bits(prototype, atom)?))).collect();
+        Some(ClassProto { register, shape, link: link.bits(), holder: data.exact_shape(), members })
+    }
+
+    /// The bits of `object`'s own data property `atom`: `None` for an absent name, or where the shape may hold accessors
+    /// (`shape_may_have_accessors`), whose slot is no data value.
+    fn own_data_bits(&self, object: Value, atom: Atom) -> Option<u64> {
+        let data = self.object_data(object)?;
+        if self.shape_may_have_accessors(data.shape()) { return None; }
+        let slot = self.shape_slot(data.shape(), atom)?;
+        self.heap.property_get(data, slot).map(|value| value.to_bits())
     }
 }
 

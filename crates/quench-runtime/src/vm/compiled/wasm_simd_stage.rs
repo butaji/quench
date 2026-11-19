@@ -1,27 +1,33 @@
 //! The Wasm tier's vectors: the primitives of `WasmSimd` as Cranelift vector instructions (a
 //! native row) or a callout of the operator's kernel, the vector registers, and the lowering
-//! and analysis of each `Simd` step. A vector access checks through the staged memory rule.
+//! and analysis of each `Simd` step. A vector access checks and moves through the staged memory
+//! rules (`load_vector`, `store_vector`).
 
 use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
 use super::{
-    Analysis, AnalysisState, Emitter, Host, Kind, Region, SIMD_KERNEL_LEFT, SIMD_KERNEL_RESULT,
+    Analysis, AnalysisState, Emitter, Host, Kind, SIMD_KERNEL_LEFT, SIMD_KERNEL_RESULT,
     SIMD_KERNEL_RIGHT, SIMD_KERNEL_WORDS, Slot, VECTOR_IR, compiled_simd_kernel,
 };
 use crate::WasmType;
 use crate::bytecode::{Function, WideInstruction};
-use crate::staged::wasm_memory::{Access, check_access, effective_address};
-use crate::staged::machine::{Lane, MachineAccess, MachineStage, MachineVector};
+use crate::staged::machine::{MachineStage, MachineVector};
+use crate::staged::wasm_memory::effective_address;
+use crate::staged::wasm_memory_vector::{load_vector, store_vector};
 use crate::staged::wasm::Width;
-use crate::staged::wasm_simd::{Lanes, Native, Simd, WasmSimd, simd};
-use crate::wasm::integer::I64BinaryOperator as Binary;
+use crate::staged::wasm_simd::{Lanes, Native, Simd, WasmSimd, simd, simd_scalar};
 use crate::wasm::V128_BYTES;
 use crate::wasm::simd::SimdKernel;
-use cranelift_codegen::ir::{self, AbiParam, MemFlagsData, Signature, types};
+use cranelift_codegen::ir::{self, AbiParam, Signature, types};
 use cranelift_frontend::Variable;
 
 impl<H: Host> WasmSimd for Emitter<'_, '_, H> {
     type Value = ir::Value;
+    type Scalar = ir::Value;
+
+    fn constant_vector(&mut self, bits: u128) -> ir::Value {
+        self.vector_immediate(bits)
+    }
 
     /// One machine instruction with exactly the row's semantics.
     fn vector_native(
@@ -30,32 +36,26 @@ impl<H: Host> WasmSimd for Emitter<'_, '_, H> {
         left: ir::Value,
         right: Option<ir::Value>,
     ) -> ir::Value {
-        self.lane_operation(native, left, right)
+        self.operation_in_lane(native, left, right)
     }
 
-    /// The operator's own kernel (`SimdKernel::apply_bits`), which the interpreter runs too:
-    /// the operands go to words, `compiled_simd_kernel` computes, the result comes back.
+    /// The operator's own kernel (`SimdKernel::apply_bits`), which the interpreter runs too.
     fn vector_kernel(
         &mut self,
         selector: u32,
         left: ir::Value,
         right: Option<ir::Value>,
     ) -> ir::Value {
-        let (kernel, lane) = SimdKernel::of(selector).expect("an admitted selector");
-        let slot = self.kernel_words();
-        self.spill_operand(slot, SIMD_KERNEL_LEFT, left);
-        if let Some(right) = right {
-            self.spill_operand(slot, SIMD_KERNEL_RIGHT, right);
-        }
-        let mut signature = Signature::new(self.call_conv);
-        signature.params.push(AbiParam::new(types::I64));
-        signature.params.push(AbiParam::new(types::I64));
-        let signature = self.body.core.builder.import_signature(signature);
-        let target = self.constant(Width::I64, compiled_simd_kernel as *const () as usize as i64);
-        let selector = self.constant(Width::I64, i64::from(selector));
-        let words = self.slot_address(slot, 0);
-        self.call_signature(signature, target, &[selector, words]);
-        self.reload_result(slot, SIMD_KERNEL_RESULT, kernel.result_type(lane))
+        self.kernel(selector, left, right)
+    }
+
+    fn scalar_kernel(
+        &mut self,
+        selector: u32,
+        left: ir::Value,
+        right: Option<ir::Value>,
+    ) -> ir::Value {
+        self.kernel(selector, left, right)
     }
 
     fn vector_shuffle(
@@ -69,6 +69,24 @@ impl<H: Host> WasmSimd for Emitter<'_, '_, H> {
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
+    /// The kernel callout: the operands go to words, `compiled_simd_kernel` computes, and the
+    /// result comes back typed by the kernel (a vector, or a scalar of its result type).
+    fn kernel(&mut self, selector: u32, left: ir::Value, right: Option<ir::Value>) -> ir::Value {
+        let (kernel, lane) = SimdKernel::of(selector).expect("an admitted selector");
+        let slot = self.kernel_words();
+        self.spill_operand(slot, SIMD_KERNEL_LEFT, left);
+        if let Some(right) = right {
+            self.spill_operand(slot, SIMD_KERNEL_RIGHT, right);
+        }
+        let signature = crate::vm::compiled::call_signature::typed_signature(self.call_conv, &[types::I64, types::I64], &[]);
+        let signature = self.body.core.builder.import_signature(signature);
+        let target = self.constant(Width::I64, compiled_simd_kernel as *const () as usize as i64);
+        let selector = self.constant(Width::I64, i64::from(selector));
+        let words = self.slot_address(slot, 0);
+        self.call_signature(signature, target, &[selector, words]);
+        self.reload_result(slot, SIMD_KERNEL_RESULT, kernel.result_type(lane))
+    }
+
     /// The SIMD variable of `register`.
     fn vector(&mut self, register: u16) -> Variable {
         let index = usize::from(register);
@@ -123,22 +141,9 @@ impl<H: Host> Emitter<'_, '_, H> {
         }
     }
 
-    /// The host address and flags of a vector access at the 64-bit address in `register`. A
-    /// proven memory32 address fits the guard reservation, including the vector's last byte; an
-    /// access stays trapping, so even an unused load faults before later effects.
-    fn vector_access(&mut self, pc: usize, register: u16) -> (ir::Value, MemFlagsData) {
-        let index = self.read(register, Kind::I64);
-        let proven = self.plan.operand(pc) == Slot::Memory32Address;
-        infallible(check_access(self, Access::VECTOR, index, 0, proven));
-        let host = self.operate(Binary::Add, Width::I64, self.base, index);
-        if !(self.guarded && proven) {
-            return (host, self.flags(Region::LinearMemory));
-        }
-        let flags = MemFlagsData::new()
-            .with_trap_code(Some(ir::TrapCode::HEAP_OUT_OF_BOUNDS))
-            .with_endianness(ir::Endianness::Little)
-            .with_alias_region(Some(self.regions[Region::LinearMemory as usize]));
-        (host, flags)
+    /// Whether the access at `pc` has a 32-bit address the guard reservation proves in range.
+    fn vector_proven(&self, pc: usize) -> bool {
+        self.plan.operand(pc) == Slot::Memory32Address
     }
 
     /// Lowers a vector step.
@@ -165,14 +170,16 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.write(a, Kind::I64, value);
             }
             Simd::Load => {
-                let (host, flags) = self.vector_access(pc, c);
-                let value = self.raw_load(Lane::V128, flags, host, 0);
+                let index = self.read(c, Kind::I64);
+                let proven = self.vector_proven(pc);
+                let value = infallible(load_vector(self, index, 0, proven));
                 self.write_vector(a, value);
             }
             Simd::Store => {
-                let (host, flags) = self.vector_access(pc, c);
+                let index = self.read(c, Kind::I64);
+                let proven = self.vector_proven(pc);
                 let value = self.read_vector(a);
-                self.store_word(flags, value, host, 0);
+                infallible(store_vector(self, index, 0, value, proven));
             }
         }
     }
@@ -183,10 +190,15 @@ impl<H: Host> Emitter<'_, '_, H> {
         let right = kernel
             .right
             .map(|ty| self.simd_operand(instruction.c(), ty));
-        let value = simd(self, selector, left, right);
         match kernel.result_type(lane) {
-            WasmType::V128 => self.write_vector(instruction.a(), value),
-            ty => self.write(instruction.a(), Kind::of(ty).expect("planned"), value),
+            WasmType::V128 => {
+                let value = simd(self, selector, left, right);
+                self.write_vector(instruction.a(), value);
+            }
+            ty => {
+                let value = simd_scalar(self, selector, left, right);
+                self.write(instruction.a(), Kind::of(ty).expect("planned"), value);
+            }
         }
     }
 }

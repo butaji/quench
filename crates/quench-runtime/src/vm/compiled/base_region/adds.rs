@@ -7,7 +7,8 @@
 //! Facts the row relies on rather than checks: that no method cache names the atom (`Known::stores_in_place`,
 //! a Stable fact the body holds, `Decoded::atom`) and, for a store, that the receiver's prototype
 //! chain holds no setter or read-only name for it, proved for one prototype link (`AddSite::link`),
-//! which the row tests per receiver; any prototype's layout change retires the code.
+//! which the row tests per receiver; a layout change of a prototype on that chain retires the code
+//! (`Add::chain`).
 
 use super::*;
 use crate::staged::Form;
@@ -24,7 +25,7 @@ pub(super) struct Add {
 }
 
 /// An object register's frame offset travels in `ADD_OBJECT_BITS` bits of hole 2.
-const _: () = assert!((Register::MAX as u64) * SLOT < 1 << numeric::library::ADD_OBJECT_BITS);
+const _: () = assert!((Register::MAX as u64) * SLOT < 1 << numeric::site_bits::ADD_OBJECT_BITS);
 
 impl Add {
     /// The heap row that runs it.
@@ -32,15 +33,15 @@ impl Add {
         Heap::Add { form: self.form, this: self.this }
     }
 
-    /// The shape whose prototype-layout dependency the code holds for the chain proof, where the add has one.
-    pub(super) fn chain_owner(self) -> Option<u32> {
-        self.site.link.map(|_| self.site.transition.before)
+    /// The chain whose prototypes' layouts the code holds for the chain proof, where the add has one.
+    pub(super) fn chain(self) -> Option<crate::code_dependencies::PrototypeChain> {
+        self.site.link.map(|link| crate::code_dependencies::PrototypeChain { link, depth: self.site.depth })
     }
 
     /// The row's holes: the before and after layouts, the value operand's frame offset, and the slot
-    /// with the prototype link and the object register's frame offset (`library::ADD_*`).
+    /// with the prototype link and the object register's frame offset (`numeric::site_bits::ADD_*`).
     pub(super) fn holes(self, object: u64, value: u64) -> [u64; HOLES] {
-        use numeric::library::{ADD_AFTER_AT, ADD_LINK_AT, ADD_OBJECT_AT};
+        use numeric::site_bits::{ADD_AFTER_AT, ADD_LINK_AT, ADD_OBJECT_AT};
         let transition = self.site.transition;
         let [before, after] = transition.layouts.map(u64::from);
         let layouts = before | after << ADD_AFTER_AT;
@@ -51,7 +52,8 @@ impl Add {
 
 /// Whether the add instruction defines an own field (`DefineField`) rather than stores one.
 fn is_define(instruction: WideInstruction) -> bool {
-    instruction.op().class().eq(Class::DefineField)
+    matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Protocol {
+        step: crate::staged::Protocol::Class(crate::staged::protocol_classes::ClassStep::DefineField { .. }), .. }))
 }
 
 /// The receiver register of an add instruction: a define's object, a store's named register, or
@@ -66,7 +68,7 @@ fn receiver(instruction: WideInstruction) -> Option<Register> {
 pub(super) fn of(known: Known, instruction: WideInstruction) -> Option<Add> {
     let adds = known.adds?;
     let defines = is_define(instruction);
-    let stores = instruction.op().is_field_store() && !instruction.returns_from_frame() && !instruction.writes_current_this();
+    let stores = matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. })) && !instruction.returns_from_frame() && !instruction.writes_current_this();
     if !(defines || stores) || instruction.result_flags() != 0 {
         return None;
     }
@@ -107,10 +109,10 @@ pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, slow: Option<Pla
 mod tests {
     use super::*;
     use crate::staged::add_plan::Transition;
-    use numeric::library::{ADD_AFTER_AT, ADD_LINK_AT, ADD_OBJECT_AT};
+    use numeric::site_bits::{ADD_AFTER_AT, ADD_LINK_AT, ADD_OBJECT_AT};
 
     fn add(link: Option<u32>) -> Add {
-        Add { site: AddSite { transition: Transition { before: 5, after: 9, slot: 2, layouts: [5, 9] }, link }, form: Form::Arena, this: false }
+        Add { site: AddSite { transition: Transition { before: 5, after: 9, slot: 2, layouts: [5, 9] }, link, depth: 3 }, form: Form::Arena, this: false }
     }
 
     /// The holes carry what `heap_rows::add_row` unpacks: shapes, value offset, slot, link and object offset.
@@ -118,16 +120,16 @@ mod tests {
     fn the_holes_pack_the_transition_the_row_unpacks() {
         let [shapes, value, site, ..] = add(Some(0xABC)).holes(24, 16);
         assert_eq!((shapes & u64::from(u32::MAX), shapes >> ADD_AFTER_AT, value), (5, 9, 16));
-        let slot_mask = (1 << numeric::library::ADD_SLOT_BITS) - 1;
-        let link_mask = (1 << numeric::library::ADD_LINK_BITS) - 1;
+        let slot_mask = (1 << numeric::site_bits::ADD_SLOT_BITS) - 1;
+        let link_mask = (1 << numeric::site_bits::ADD_LINK_BITS) - 1;
         assert_eq!((site & slot_mask, (site >> ADD_LINK_AT) & link_mask, site >> ADD_OBJECT_AT), (2, 0xABC, 24));
     }
 
-    /// Only a chained add (a store) holds a prototype-layout dependency, owned by its before-shape.
+    /// Only a chained add (a store) holds a prototype-layout dependency, on the chain its proof read.
     #[test]
-    fn a_chained_add_owns_a_chain_dependency_and_a_define_none() {
-        assert_eq!(add(Some(1)).chain_owner(), Some(5));
-        assert_eq!(add(None).chain_owner(), None);
+    fn a_chained_add_holds_its_proofs_chain_and_a_define_none() {
+        assert_eq!(add(Some(1)).chain(), Some(crate::code_dependencies::PrototypeChain { link: 1, depth: 3 }));
+        assert_eq!(add(None).chain(), None);
     }
 
     /// The row library holds the row of every form of both receivers, chained or not.

@@ -8,8 +8,7 @@ use super::*;
 
 /// Iterations per chunk: each column holds this many f64s.
 pub(super) const CHUNK: usize = 256;
-/// The fewest iterations worth a kernel's entry.
-const MIN_TRIP: u64 = 16;
+use crate::vm::compiled::tier_policy::KERNEL_MIN_TRIP;
 /// The shortest chunk a load/store distance may impose.
 const MIN_CHUNK: usize = 16;
 /// Most distinct base arrays a kernel reads or writes.
@@ -97,20 +96,28 @@ fn operate(op: NodeOp, out: &mut [f64], a: Column, b: Column) {
     )
 }
 
+/// `operation` of two Numbers as the staged Number row computes it: the interpreter's stage
+/// (`Concrete`) runs `NumericStage::float_arithmetic` on the binary64 words.
 #[inline(always)]
 pub(super) fn arith(operation: NumberArithmetic, a: f64, b: f64) -> f64 {
-    match operation {
-        NumberArithmetic::Add => a + b,
-        NumberArithmetic::Subtract => a - b,
-        NumberArithmetic::Multiply => a * b,
-        NumberArithmetic::Divide => a / b,
-    }
+    let mut stage = crate::staged::Concrete::new(std::ptr::null());
+    f64::from_bits(crate::staged::NumericStage::float_arithmetic(&mut stage, operation, a.to_bits(), b.to_bits()))
 }
 
+/// `operation` of two Numbers as the staged bitwise row computes it: both operands' ToInt32 (the
+/// interpreter's stage), the int32 bitwise word, then its Number (unsigned for a zero-fill shift).
 #[inline(always)]
 fn bits(operation: NumberBitwise, a: f64, b: f64) -> f64 {
-    let int32 = |value: f64| crate::value::number_to_i32(value);
-    super::super::super::operations::number_bitwise_f64_result(operation, int32(a), int32(b))
+    use crate::staged::NumericStage;
+    let mut stage = crate::staged::Concrete::new(std::ptr::null());
+    let left = NumericStage::to_int32(&mut stage, a.to_bits(), ()).expect("the interpreter stage converts every Number");
+    let right = NumericStage::to_int32(&mut stage, b.to_bits(), ()).expect("the interpreter stage converts every Number");
+    let word = NumericStage::int_bitwise(&mut stage, operation, left, right);
+    f64::from_bits(if operation == NumberBitwise::ShiftRightUnsigned {
+        NumericStage::u32_to_f64(&mut stage, word)
+    } else {
+        NumericStage::i32_to_f64(&mut stage, word)
+    })
 }
 
 #[inline(always)]
@@ -192,7 +199,7 @@ impl LoopKernel {
     /// Runs the loop from the registers' current state (module documentation).
     pub(super) unsafe fn run<H: Host>(&self, cx: *mut LaneContext<H>, r: Registers, ip: Ip) {
         // SAFETY: the kernel's state, used by one run at a time (the body calls nothing).
-        let state = unsafe { &mut **self.state.get() };
+        let state: &mut State = unsafe { &mut **(*self.state.get()).get_or_insert_with(|| Box::new(State::EMPTY)) };
         let Some(()) = self.enter(cx, r, state) else {
             if crate::trace::Channel::LoopKernel.on() {
                 eprintln!("loop-kernel: entry declined ({} declines)", self.declines.get());
@@ -244,7 +251,7 @@ impl LoopKernel {
         self.scalars(cx, state, r)?;
         let step = state.steps[usize::from(shape.counter)];
         state.trip = trip_count(start as f64, step as f64, shape.relation, state.scalars[usize::from(shape.bound)]);
-        if state.trip < MIN_TRIP {
+        if state.trip < KERNEL_MIN_TRIP {
             self.declines.set(self.declines.get() + 1);
             return None;
         }
@@ -270,7 +277,7 @@ impl LoopKernel {
                 Scalar::Register(register) => r.get(register).as_number()?,
                 Scalar::Capture(imm) => {
                     let (depth, slot) = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
-                    super::super::lane_capture_value::<H>(cx, depth, slot)?.as_number()?
+                    super::super::capture_read_value::<H>(cx, depth, slot)?.as_number()?
                 }
                 Scalar::Length { register, atom } => {
                     // SAFETY: the running VM.
@@ -304,7 +311,7 @@ impl LoopKernel {
             let step = state.steps[usize::from(store.index)];
             limit = limit.min(fits(state.firsts[usize::from(store.index)], step, state.spans[usize::from(store.base)].writable));
         }
-        (limit >= MIN_TRIP).then_some(limit)
+        (limit >= KERNEL_MIN_TRIP).then_some(limit)
     }
 
     /// The chunk length that keeps every load of a stored array from reading an element an

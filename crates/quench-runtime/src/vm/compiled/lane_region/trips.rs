@@ -25,7 +25,7 @@ impl Lowering<'_, '_> {
     /// Adds the run's trips to its loop entry record, in the block the run leaves through.
     pub(super) fn flush_trips(&mut self) {
         let Some(trips) = self.trips else { return };
-        let offset = i32::try_from(std::mem::offset_of!(super::super::JsStepDispatch, loop_entry))
+        let offset = i32::try_from(std::mem::offset_of!(super::super::JsStepDispatch, head.loop_entry))
             .expect("dispatch offset fits i32");
         let payload = self.payload;
         let entry = self.raw_load(Lane::I64, regions::dispatch(), payload, offset);
@@ -36,7 +36,8 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(count);
         let run = self.builder.use_var(trips);
         let word = self.raw_load(Lane::I64, regions::miss_counter(), entry, 0);
-        let total = self.raw_binary(Binary::Add, word, run);
+        // The record's word is the budget left, so the run's trips are debited from it.
+        let total = self.raw_binary(Binary::Sub, word, run);
         self.store_word(regions::miss_counter(), total, entry, 0);
         self.goto(skip, &[]);
         self.builder.switch_to_block(skip);

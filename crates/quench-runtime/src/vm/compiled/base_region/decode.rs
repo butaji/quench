@@ -1,41 +1,44 @@
 use super::*;
 use crate::vm::global_facts::LexicalSlot;
 use crate::staged::property::StoreArm;
+use crate::staged::{BinaryClass, Constant, DecodeContext, NumberOperation, Operation};
 mod fields;
 use fields::{field_row, field_store_row};
-pub(super) use fields::stores_field;
+pub(super) use fields::{site_read_row, stores_field};
+mod numeric;
+pub(super) use numeric::{numeric_row, staged_binary, staged_unary};
 
-/// The row kind of a binary operator: the shared operation rows decide which Number operation an
-/// operator is (`vm::operations::number_rows`, the table every tier consumes), and the row
-/// vocabulary names each operation once. A relational jump takes only a relation, a `Binary` only an
-/// arithmetic or bitwise operation.
-pub(super) fn kind_of(operator: u32, relational: bool) -> Option<Kind> {
-    use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
-    if relational {
-        return NumberRelation::from_operator(operator).map(|relation| match relation {
-            NumberRelation::LessThan => Kind::Lt,
-            NumberRelation::LessEqual => Kind::Le,
-            NumberRelation::GreaterThan => Kind::Gt,
-            NumberRelation::GreaterEqual => Kind::Ge,
-            NumberRelation::Equal => Kind::Eq,
-            NumberRelation::NotEqual => Kind::Ne,
-        });
+/// The row kind of a `Binary`'s operator class (`staged::BinaryClass`, the one classification of the operators):
+/// an arithmetic, bitwise or remainder operator's row. A relation as a value, or any other operator, has no Number row.
+pub(super) fn kind_of(class: BinaryClass) -> Option<Kind> {
+    use crate::vm::operations::{NumberArithmetic, NumberBitwise};
+    Some(match class {
+        BinaryClass::Arithmetic(NumberArithmetic::Add) => Kind::Add,
+        BinaryClass::Arithmetic(NumberArithmetic::Subtract) => Kind::Sub,
+        BinaryClass::Arithmetic(NumberArithmetic::Multiply) => Kind::Mul,
+        BinaryClass::Arithmetic(NumberArithmetic::Divide) => Kind::Div,
+        BinaryClass::Remainder => Kind::Rem,
+        BinaryClass::Bitwise(NumberBitwise::And) => Kind::And,
+        BinaryClass::Bitwise(NumberBitwise::Or) => Kind::Or,
+        BinaryClass::Bitwise(NumberBitwise::Xor) => Kind::Xor,
+        BinaryClass::Bitwise(NumberBitwise::ShiftLeft) => Kind::Shl,
+        BinaryClass::Bitwise(NumberBitwise::ShiftRight) => Kind::Shr,
+        BinaryClass::Bitwise(NumberBitwise::ShiftRightUnsigned) => Kind::UShr,
+        BinaryClass::Relation(_) | BinaryClass::Other => return None,
+    })
+}
+
+/// The row kind of a Number relation: the compare-and-jump rows and the relational `kind_of` both take it.
+pub(super) fn relation_kind(relation: crate::vm::operations::NumberRelation) -> Kind {
+    use crate::vm::operations::NumberRelation;
+    match relation {
+        NumberRelation::LessThan => Kind::Lt,
+        NumberRelation::LessEqual => Kind::Le,
+        NumberRelation::GreaterThan => Kind::Gt,
+        NumberRelation::GreaterEqual => Kind::Ge,
+        NumberRelation::Equal => Kind::Eq,
+        NumberRelation::NotEqual => Kind::Ne,
     }
-    let arithmetic = NumberArithmetic::from_operator(operator).map(|operation| match operation {
-        NumberArithmetic::Add => Kind::Add,
-        NumberArithmetic::Subtract => Kind::Sub,
-        NumberArithmetic::Multiply => Kind::Mul,
-        NumberArithmetic::Divide => Kind::Div,
-    });
-    let remainder = (operator == crate::vm::operations::REMAINDER).then_some(Kind::Rem);
-    arithmetic.or(remainder).or_else(|| NumberBitwise::from_operator(operator).map(|operation| match operation {
-        NumberBitwise::And => Kind::And,
-        NumberBitwise::Or => Kind::Or,
-        NumberBitwise::Xor => Kind::Xor,
-        NumberBitwise::ShiftLeft => Kind::Shl,
-        NumberBitwise::ShiftRight => Kind::Shr,
-        NumberBitwise::ShiftRightUnsigned => Kind::UShr,
-    }))
 }
 
 /// An operand: a register of the activation or a constant `Value` word.
@@ -50,18 +53,25 @@ pub(super) enum Source {
 
 /// The receiver a folded prototype-held read stands on (`Heap::Held`): the exact shape and the
 /// prototype link the row proves of the receiver before it answers the value the holder held (the
-/// row's `hole`), and the holder's exact shape, whose values the code holds (a Stable fact).
+/// row's `hole`), the holder's exact shape, whose values the code holds, and the `depth` prototypes
+/// from the link the answer was read through, whose layouts it holds (Stable facts).
 #[derive(Clone, Copy)]
 pub(super) struct Folded {
     pub(super) shape: u32,
     pub(super) link: u32,
     pub(super) holder: u32,
+    pub(super) depth: u8,
 }
 
 impl Folded {
+    /// The chain the answer was read through (`StableFacts::chains`).
+    pub(super) fn chain(self) -> crate::code_dependencies::PrototypeChain {
+        crate::code_dependencies::PrototypeChain { link: self.link, depth: self.depth }
+    }
+
     /// The row's receiver word: the shape, and the link above `HELD_LINK_AT` bits.
     pub(super) fn word(self) -> u64 {
-        u64::from(self.shape) | u64::from(self.link) << numeric::library::HELD_LINK_AT
+        u64::from(self.shape) | u64::from(self.link) << numeric::site_bits::HELD_LINK_AT
     }
 }
 
@@ -82,10 +92,16 @@ pub(super) struct Decoded {
     pub(super) hole: u64,
     /// How an instruction no row takes runs (`steps`), in place of the numeric `kind`.
     pub(super) step: Option<Step>,
+    /// The instruction a helper step runs packed (`WideInstruction::words`), where a family covers its opcode
+    /// and the helper table has the packed helper (`steps::packed_words`).
+    pub(super) packed: Option<[u64; 2]>,
     /// The atom a field store holds unnamed by method caches (`Known::stores`), a Stable fact.
     pub(super) atom: Option<Atom>,
     /// The receiver a folded prototype-held read stands on, with its value in `hole`.
     pub(super) folded: Option<Folded>,
+    /// A named read of a class-typed parameter's prototype value (`declared::class_member_read`): a Linked held read
+    /// that `proofs::prove` makes a constant load where the receiver's shape is proven at the row.
+    pub(super) class_read: bool,
     /// The recorded transition an add row runs (`adds`), with the form its storage takes and whether
     /// the receiver is the activation's `this`.
     pub(super) add: Option<adds::Add>,
@@ -110,6 +126,10 @@ pub(super) struct Decoded {
     /// The observed type of the own slot a field store writes, where its site proves one own load
     /// (`NativeFieldLoad::ty`).
     pub(super) slot: Option<crate::typed_ir::Type>,
+    /// The exact shape whose slot `slot` is the type of, for a field store: an ungated store row
+    /// writes only into a receiver of this shape (`plan::site_holes`, hole 4), as the site's live
+    /// cache entry may name another shape, whose slot type nothing proved.
+    pub(super) slot_shape: Option<u32>,
     /// A site read's or store's one own flat entry (`decode::fields::ic_hole`: the exact shape, and the
     /// slot's byte offset above 32 bits), whose inline-cache row runs first and falls to the site row
     /// on a miss (`plan::ic_plan`).
@@ -121,11 +141,32 @@ pub(super) struct Decoded {
     /// identity guard): a Stable fact the code takes (`held_holders`), so the function's identity is
     /// not recycled while the code runs.
     pub(super) holder: Option<u32>,
+    /// The Stable cell of the global member the row folds (`GlobalRead::NativeMember`'s `cell`, or a held object's read): its fact is
+    /// subscribed by the body (`Stitched::push`), and its realm proved once (`globals::held_realm`).
+    pub(super) cell: Option<crate::vm::global_facts::StableCell>,
+    /// Every path proves the inline-cache access's receiver of its entry's shape (`proofs::prove`): the row
+    /// reads or writes the slot with no guard.
+    pub(super) proven: bool,
+    /// Where `proven`, the receiver's storage form is proven flat too (`proofs::prove`): the row's slot is the arena run's,
+    /// with no compare of the auxiliary word (`Heap::IcKnownGetFlat`, `Heap::IcKnownSetFlat`).
+    pub(super) flat: bool,
+    /// Some receiver proof reaches the row (`proofs::prove`), which a later row may stand on: the code
+    /// is not resumed here.
+    pub(super) relies: bool,
+    /// A proven store whose run-level stores test the region's entry made, and no call since (`proofs::prove`): the row
+    /// tests nothing of its own (`Heap::IcKnownSet`'s `admitted`), or the test `recheck` makes before it.
+    pub(super) admitted: bool,
+    /// A proven store a call cleared the run-level stores test for, which re-reads the run's stores word
+    /// before it (`Heap::Stores`, a mid-body guard), so the stores after it are admitted (`proofs::prove`).
+    pub(super) recheck: bool,
+    /// A generic `Binary` (its operator is data, so its step helper runs any operands): a numeric row whose site is a
+    /// string `+` (`Variant::Concat`) keeps the region running through that helper as its miss (`plan::concat_run`).
+    pub(super) generic: bool,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, ic: None, declined: None, holder: None }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, ic: None, declined: None, holder: None, cell: None, proven: false, flat: false, relies: false, admitted: false, recheck: false, generic: false }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -140,7 +181,7 @@ impl Decoded {
     /// `instanceof` of a constructor's `prototype`, a global object's slot, an add, or a store in place for an atom no method cache
     /// names. A change of the fact retires the code, and a run already inside it learns that from the invalidation word (`Heap::Live`).
     pub(super) fn holds_stable(&self) -> bool {
-        self.add.is_some() || self.folded.is_some() || matches!(self.heap, Some(Heap::SiteStore | Heap::ThisStore)) || self.instanceof.is_some() || self.global.is_some() || self.lexical.is_some()
+        self.add.is_some() || self.folded.is_some() || self.holder.is_some() || matches!(self.heap, Some(Heap::SiteStore | Heap::ThisStore)) || self.instanceof.is_some() || self.global.is_some() || self.lexical.is_some()
     }
 
     /// The observed type of the slot a store row writes in place: a global object's slot or a field's.
@@ -166,9 +207,9 @@ impl Decoded {
     /// the slot's observed type holds Number, so the store widens no observation and logs nothing.
     pub(super) fn admitted_tags(&self) -> u64 {
         if self.stored_slot_type().is_some_and(|ty| crate::typed_ir::Type::NUMBER.is_subtype(ty)) {
-            numeric::library::STORE_ADMITS_DOUBLES
+            numeric::site_bits::STORE_ADMITS_DOUBLES
         } else {
-            numeric::library::STORE_ADMITS_INT32
+            numeric::site_bits::STORE_ADMITS_INT32
         }
     }
 
@@ -178,17 +219,34 @@ impl Decoded {
         self.stored_slot_type().filter(|_| self.store_arm(place).is_none()).and(self.declined)
     }
 
-    /// Whether the store row writes its operand in `place` through the store gate: unless the value is
-    /// proven immediate, or is the int32 its slot's type holds (`store_arm`), it may need a barrier log.
+    /// Whether the store row writes its operand in `place` through the store gate.
+    ///
+    /// Invariant: an ungated row writes with no slot-type join, so it is chosen only where the plan
+    /// proved the slot's observed type admits every value the row can write (`store_arm`: the place's
+    /// type is the slot's, or the slot's int32 type holds the frame word once tested), and the value
+    /// needs no barrier log (immediate, or the tested int32). Every other store, including an
+    /// immediate (`Place::Const`, `Place::PinF`, a pinned int32) into a slot whose type the site does
+    /// not prove (no single own load, `Decoded::slot` `None`) or does not admit, is gated: the gate
+    /// refuses every store while slot types are tracked, so the interpreter's store joins the type.
+    /// Slot types only widen, so an admission proved here stays true while the code runs.
     pub(super) fn gated(&self, place: Place) -> bool {
-        !value_fact(place).is_subtype(crate::typed_ir::Type::IMMEDIATE)
-            && !self.store_arm(place).is_some_and(|arm| arm.holds.is_some())
+        match self.store_arm(place) {
+            None => true,
+            Some(arm) => arm.holds.is_none() && !value_fact(place).is_subtype(crate::typed_ir::Type::IMMEDIATE),
+        }
     }
 
     /// Whether the row makes a call or a step the interpreter's operation runs, either of which may
     /// run guest code that changes a Stable fact.
     pub(super) fn makes_calls(&self) -> bool {
         matches!(self.step, Some(Step::Call(_))) || self.step.is_some_and(Step::runs_helper)
+    }
+
+    /// Whether the plan gives the row an inline-cache row ahead of its site row (`plan::ic_plan`): a site read or store
+    /// with a cache entry, naming no second register and not completing. The proofs and the plan both ask this, so the
+    /// inline-cache row is taken exactly where the proofs credit its hit.
+    pub(super) fn takes_ic_row(&self) -> bool {
+        self.ic.is_some() && matches!(self.heap, Some(Heap::Site | Heap::SiteStore)) && self.also.is_none() && !self.completes
     }
 
     /// The registers the row names.
@@ -211,9 +269,16 @@ pub(super) fn source(numbers: Numbers, operand: crate::bytecode::Operand) -> Res
     }
 }
 
+/// The staged operation `instruction` denotes, decoded from its own fields alone (`DecodeContext::EMPTY`):
+/// the dispatch key of the planner's rows. `None` where the opcode has no such operation without a table
+/// or no decoder; those rows keep their class arm (a derivation debt, marked where they are).
+pub(super) fn staged_of(instruction: WideInstruction) -> Option<Operation<(), ()>> {
+    Operation::decode(instruction, crate::staged::DecodeContext::EMPTY)
+}
+
 pub(super) fn binary(numbers: Numbers, instruction: WideInstruction) -> Result<Decoded, String> {
     let operator = instruction.binary_operator();
-    let kind = kind_of(operator, false).ok_or_else(|| format!("{:?}:{operator}", instruction.op()))?;
+    let kind = kind_of(BinaryClass::of_operator(operator)).ok_or_else(|| format!("{:?}:{operator}", instruction.op()))?;
     Ok(Decoded::number(
         kind,
         Some(instruction.result_register()),
@@ -223,33 +288,66 @@ pub(super) fn binary(numbers: Numbers, instruction: WideInstruction) -> Result<D
     ))
 }
 
-pub(super) fn jump_binary(numbers: Numbers, instruction: WideInstruction) -> Result<Decoded, String> {
-    let operator = instruction.binary_operator_field();
-    let kind = kind_of(operator, true).ok_or_else(|| format!("{:?}:{operator}", instruction.op()))?;
-    Ok(Decoded::number(
-        kind,
-        None,
-        Some(source(numbers, instruction.operand_b())?),
-        Some(source(numbers, instruction.operand_c())?),
-        Some(instruction.jump_target()),
-    ))
+/// The row of a comparison jump that fails to its target (`Operation::CompareJump` with
+/// `negate`): its staged comparison as the row's relation; any other comparison is the step's.
+pub(super) fn relation_jump(numbers: Numbers, instruction: WideInstruction, comparison: crate::staged::compare::Comparison,
+    (left, right): (crate::bytecode::Operand, crate::bytecode::Operand)) -> Result<Decoded, String> {
+    use crate::staged::compare::Comparison;
+    let kind = match comparison {
+        Comparison::Relation { relation, .. } => relation_kind(relation),
+        Comparison::Equality { negated: false, .. } => Kind::Eq,
+        Comparison::Equality { negated: true, .. } => Kind::Ne,
+        _ => return Err("comparison: not a Number relation".to_string()),
+    };
+    Ok(Decoded::number(kind, None, Some(source(numbers, left)?), Some(source(numbers, right)?), Some(instruction.jump_target())))
 }
 
-pub(super) fn load_const(numbers: Numbers, instruction: WideInstruction) -> Result<Decoded, String> {
-    let number = numbers(instruction.constant_index()).ok_or_else(|| "LoadConst: not a Number".to_string())?;
+/// The row of a comparison jump no Number relation names (`BIT_TEST`, `NULLISH_EQ`/`NULLISH_NE`, `BOOL_TRUE`/`BOOL_FALSE`):
+/// `if (a & b)`, a loose test against `null` or `undefined` (`nullish_comparison`, the one derivation the lane
+/// shares), and `a === true` or `a === false` against a constant Boolean. The row runs the staged step of the same
+/// comparison, so each test reads only the operands it names.
+pub(super) fn test_row(numbers: Numbers, known: Known, instruction: WideInstruction) -> Option<Decoded> {
+    use crate::staged::compare::Comparison;
+    use crate::vm::operations::NumberBitwise;
+    let Some(Operation::CompareJump { comparison, left, right, negate: true }) = staged_of(instruction) else { return None };
+    let target = Some(instruction.jump_target());
+    match comparison {
+        Comparison::Bitwise(NumberBitwise::And) =>
+            Some(Decoded::number(Kind::BitTest, None, Some(source(numbers, left).ok()?), Some(source(numbers, right).ok()?), target)),
+        Comparison::Equality { strict: false, .. } => {
+            let nullish = crate::vm::compiled::nullish_comparison(&known.program.constants, instruction, |_| crate::typed_ir::Type::ANY)?;
+            let kind = if nullish.negated { Kind::NullishNe } else { Kind::NullishEq };
+            Some(Decoded::number(kind, None, Some(Source::Register(nullish.source)), None, target))
+        }
+        Comparison::Equality { strict: true, negated: false } => boolean_test(known, (left, right)).map(|(kind, register)| {
+            Decoded::number(kind, None, Some(Source::Register(register)), None, target)
+        }),
+        _ => None,
+    }
+}
+
+/// The Boolean identity test a register `===` a constant Boolean is: its row kind and the register.
+fn boolean_test(known: Known, (left, right): (crate::bytecode::Operand, crate::bytecode::Operand)) -> Option<(Kind, Register)> {
+    let constant = |operand: crate::bytecode::Operand| (operand.kind() == Some(OperandKind::Constant))
+        .then(|| known.constants.get(usize::from(operand.payload())).copied()).flatten();
+    let (register, expected) = match (left.register_index(), right.register_index()) {
+        (Some(register), None) => (register, constant(right)?),
+        (None, Some(register)) => (register, constant(left)?),
+        _ => return None,
+    };
+    if expected == Value::TRUE {
+        Some((Kind::BoolTrue, register))
+    } else if expected == Value::FALSE {
+        Some((Kind::BoolFalse, register))
+    } else {
+        None
+    }
+}
+
+pub(super) fn load_const(numbers: Numbers, destination: Register, index: usize) -> Result<Decoded, String> {
+    let number = numbers(index).ok_or_else(|| "LoadConst: not a Number".to_string())?;
     let word = Source::Constant(Value::number(number).to_bits());
-    Ok(Decoded::number(Kind::Move, Some(instruction.result_register()), Some(word), None, None))
-}
-
-pub(super) fn inc_dec(instruction: WideInstruction) -> Result<Decoded, String> {
-    let decrement = instruction.boolean_flag().ok_or("IncDec")?;
-    Ok(Decoded::number(
-        if decrement { Kind::Sub } else { Kind::Add },
-        Some(instruction.result_register()),
-        Some(Source::Register(instruction.register_b())),
-        Some(Source::Constant(Value::integer(1).to_bits())),
-        None,
-    ))
+    Ok(Decoded::number(Kind::Move, Some(destination), Some(word), None, None))
 }
 
 /// Whether `instruction` stores to a depth-0 capture and nothing else (`general_capture::lower_capture`'s
@@ -259,7 +357,7 @@ fn own_capture_store(instruction: WideInstruction) -> bool {
 }
 
 /// The row of a depth-0 capture access `heap` over `result` and `value`: a read, or a store, which the row
-/// makes where the run's slots admit every direct store (`JS_STEP_CAPTURE_STORES`). Where they do not, the slot
+/// makes where the run's slots admit every direct store (the stores bit of the window's `CONTEXT_BODY` word). Where they do not, the slot
 /// holds a marker (a loop's snapshot of a stored slot) or the binding is a root one (a global `var`'s shared
 /// slot, which the activation's dense view omits), a body has the interpreter's step behind the row
 /// (`Step::Fast`) and a loop region leaves into it.
@@ -321,18 +419,27 @@ fn store_local_row(instruction: WideInstruction) -> Option<Decoded> {
     Some(Decoded::heap(Heap::StoreLocal(slot), None, Some(Source::Register(instruction.register_a())), None))
 }
 
+/// `WasmBranchTable` (`Step::Switch`): the selector register (`a`) and the table's slot count (`hole`). Its entries are
+/// the `Jump`s after it, slots `0..=hole`; the planner lays a compare tree over them (`function::switch`).
+fn switch_row(instruction: WideInstruction) -> Option<Decoded> {
+    (instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::BranchTable).then(|| Decoded {
+        hole: u64::from(instruction.imm()),
+        a: Some(Source::Register(instruction.register_a())),
+        ..Decoded::step(Step::Switch, None)
+    })
+}
+
 /// The heap instructions: a capture, a dense element read or store, the proof that a base is an
 /// array, the activation's `this` and its local slots, and the named ones (`named_row`).
 pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
-    match instruction.op().class() {
-        Class::LoadCapture => capture_load_row(facts, instruction),
-        Class::StoreCapture => capture_store_row(facts, instruction),
-        Class::GetIndex => index_read_row(region, facts, instruction),
-        Class::SetIndex => Some(index_write_row(region, facts, instruction)),
-        Class::RequireObjectCoercible => Some(Decoded::heap(Heap::Array, None, Some(Source::Register(instruction.register_b())), None)),
-        Class::LoadThis => this_row(instruction),
-        Class::LoadLocalPlain => load_local_row(instruction),
-        Class::StoreLocalPlain => store_local_row(instruction),
+    match staged_of(instruction) {
+        Some(Operation::LoadCapture { .. }) => capture_load_row(facts, instruction),
+        Some(Operation::StoreCapture { .. }) => capture_store_row(facts, instruction),
+        Some(Operation::ElementRead { .. }) => index_read_row(region, facts, instruction),
+        Some(Operation::ElementWrite { .. }) => Some(index_write_row(region, facts, instruction)),
+        Some(Operation::LoadThis { .. }) => this_row(instruction),
+        Some(Operation::LoadLocalPlain { .. }) => load_local_row(instruction),
+        Some(Operation::StoreLocalPlain { result: None, .. }) => store_local_row(instruction),
         _ => named_row(region, facts, known, pc, instruction),
     }
 }
@@ -340,9 +447,10 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32,
 /// The heap instructions that name a field or a global: a recorded or cached field read or store, a
 /// membership test, and a global name's access (`globals`).
 fn named_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
-    match instruction.op().class() {
-        Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
-        Class::Binary => membership_row(known, pc, instruction, instruction.result_register()),
+    match staged_of(instruction) {
+        Some(Operation::GetField { .. }) if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
+        // derivation debt: no staged::Operation for a Binary with a Number constant operand (`Operation::Binary` takes registers only)
+        _ if instruction.op().class() == Class::Binary => membership_row(known, pc, instruction, instruction.result_register()),
         _ if instruction.op().traits().has(crate::bytecode::Traits::GLOBAL_NAME_ACCESS) => global_row(known, pc, instruction),
         _ if instruction.op().is_field_store() => field_store_row(known, instruction),
         _ => None,
@@ -353,11 +461,10 @@ fn named_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instructi
 /// string, a BigInt): the tagged word the compiling VM holds for it, written as it is
 /// (`Source::Value`), where the VM has the program's constants (`Known::constants`).
 fn value_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
-    if instruction.op().class() != Class::LoadConst || instruction.result_flags() != 0 {
-        return None;
-    }
-    let value = known.constants.get(instruction.constant_index())?;
-    Some(Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Value(value.to_bits())), None, None))
+    let table = |index: usize| known.constants.get(index).map(|value| Constant::untyped(*value));
+    let context = DecodeContext { constant_at: Some(&table), ..DecodeContext::EMPTY };
+    let Some(Operation::LoadConst { destination, constant }) = Operation::<(), ()>::decode(instruction, context) else { return None };
+    (instruction.result_flags() == 0).then(|| Decoded::number(Kind::Move, Some(destination), Some(Source::Value(constant.value.to_bits())), None, None))
 }
 
 /// The row of `instruction` at `pc`: a numeric or heap row where one takes it, else the step the
@@ -365,6 +472,8 @@ fn value_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
 pub(super) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
     numeric_row(&|index| region.number_constant(index), instruction)
         .flatten()
+        .or_else(|| test_row(&|index| region.number_constant(index), known, instruction))
+        .or_else(|| switch_row(instruction))
         .or_else(|| heap_row(region, facts, known, pc, instruction).filter(|_| instruction.result_flags() == 0)
             .map(|row| Decoded { declined: row.stored_slot_type().map(|_| lowering(instruction, known, helpers)), ..row }))
         .or_else(|| value_row(known, instruction))
@@ -384,48 +493,63 @@ fn names(known: Known, row: Decoded) -> Decoded {
 /// The row of a numeric instruction: `None` when the instruction is not one, `Some(None)` when it
 /// is one a row cannot take.
 pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Option<Option<Decoded>> {
+    use crate::staged::{NumberOperation, Operation};
     let copy = || Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Register(instruction.register_b())), None, None);
     let plain = instruction.result_flags() == 0;
-    Some(match instruction.op().class() {
-        Class::Move => plain.then(copy),
+    let number = |index: usize| numbers(index).map(|number| Constant::untyped(Value::number(number)));
+    let context = DecodeContext { constant_at: Some(&number), ..DecodeContext::EMPTY };
+    match Operation::<(), ()>::decode(instruction, context) {
+        Some(Operation::Move { .. }) => return Some(plain.then(copy)),
         // A Number operand is its own numeric value: the loop's entry guards and its own rows prove
         // it, and a function's row proves it itself (`checked`).
-        Class::ToNumeric => plain.then(|| Decoded { checked: true, ..copy() }),
-        Class::LoadConst => load_const(numbers, instruction).ok().filter(|_| plain),
-        Class::Binary | Class::NumericAdd | Class::NumericMultiply => binary(numbers, instruction).ok().filter(|_| plain),
-        Class::IncDec => inc_dec(instruction).ok().filter(|_| plain),
-        Class::JumpBinaryFalse => jump_binary(numbers, instruction).ok(),
-        Class::Jump => Some(Decoded::number(Kind::Jump, None, None, None, Some(instruction.jump_target()))),
-        Class::JumpTrue | Class::JumpFalse => Some(truthiness_jump(instruction)),
-        Class::Unary => unary_row(instruction).filter(|_| plain),
-        _ => return None,
-    })
+        Some(Operation::Number(NumberOperation::ToNumeric { .. })) => return Some(plain.then(|| Decoded { checked: true, ..copy() })),
+        Some(Operation::Jump) => return Some(Some(Decoded::number(Kind::Jump, None, None, None, Some(instruction.jump_target())))),
+        Some(Operation::JumpIf { register, taken }) => return Some(Some(truthiness_jump(instruction, register, taken))),
+        // A comparison jump (`JumpBinaryFalse`): a Number relation, or `==`/`===` (`!=`/`!==`)
+        // of Numbers, which the loop's entry guards and its rows prove its operands are.
+        Some(Operation::CompareJump { comparison, left, right, negate: true }) => return Some(relation_jump(numbers, instruction, comparison, (left, right)).ok()),
+        // `!x`: the boolean of its truthiness.
+        Some(Operation::LogicalNot { destination, source }) =>
+            return Some(plain.then(|| Decoded::number(Kind::Not, Some(destination), Some(Source::Register(source)), None, None))),
+        // `++`/`--`: the int32 update by one (the row's overflow leaves, as the staged one does).
+        Some(Operation::Number(NumberOperation::IncDec { destination, source, decrement, .. })) => return Some(plain.then(|| Decoded::number(
+            if decrement { Kind::Sub } else { Kind::Add }, Some(destination), Some(Source::Register(source)),
+            Some(Source::Constant(Value::integer(1).to_bits())), None))),
+        _ => {}
+    }
+    // `-x` and `+x`: the Number unary the interpreter's operations name (`NumberUnary`).
+    if let Some(operation) = crate::vm::operations::NumberUnary::from_js_instruction(instruction.op(), instruction.unary_operator()) {
+        return Some(unary_row(instruction, operation).filter(|_| plain));
+    }
+    if let Some((destination, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
+        return Some(load_const(numbers, destination, index).ok().filter(|_| plain));
+    }
+    if !super::super::meaning_compiled::is_binary_arithmetic(instruction) {
+        return None;
+    }
+    Some(binary(numbers, instruction).ok().filter(|_| plain))
 }
 
 /// A jump on a register's truthiness: taken where it is truthy (`JumpTrue`) or falsy.
 fn truthiness_jump(instruction: WideInstruction) -> Decoded {
-    let kind = if instruction.op().class() == Class::JumpTrue { Kind::JumpTrue } else { Kind::JumpFalse };
+    let kind = if matches!(staged_of(instruction), Some(Operation::JumpIf { taken: true, .. })) { Kind::JumpTrue } else { Kind::JumpFalse };
     Decoded::number(kind, None, Some(Source::Register(instruction.register_a())), None, Some(instruction.jump_target()))
 }
 
-/// The row of a unary operator over a register: `!` is the boolean of its truthiness, `-` the
-/// negation of a Number, `+` a Number as it is (proved, as `ToNumeric` is); any other operator is
-/// the interpreter's.
-fn unary_row(instruction: WideInstruction) -> Option<Decoded> {
+/// The row of a Number unary over a register: `-` the negation of a Number, `+` a Number as it
+/// is (proved, as `ToNumeric` is).
+fn unary_row(instruction: WideInstruction, operation: crate::vm::operations::NumberUnary) -> Option<Decoded> {
+    use crate::vm::operations::NumberUnary;
     let (result, operand) = (instruction.result_register(), Some(Source::Register(instruction.register_b())));
-    let operator = instruction.unary_operator();
     let row = |kind| Decoded::number(kind, Some(result), operand, None, None);
-    [
-        (UnaryOperator::LogicalNot, row(Kind::Not)),
-        (UnaryOperator::UnaryNegation, row(Kind::Neg)),
-        (UnaryOperator::UnaryPlus, Decoded { checked: true, ..row(Kind::Move) }),
-    ].into_iter().find(|(candidate, _)| *candidate as u32 == operator).map(|(_, decoded)| decoded)
+    Some(match operation {
+        NumberUnary::Negate => row(Kind::Neg),
+        NumberUnary::Plus => Decoded { checked: true, ..row(Kind::Move) },
+    })
 }
 
 /// Bits in a word's high half.
 pub(super) const HALF: u32 = 32;
-/// What a compile observed of its registers: the ints and the doubles.
-pub(super) const SEEN: usize = 2;
 /// The high 32 bits of an int word.
 pub(super) const INT_HIGH: u64 = crate::value::ValueLayout::INT_TAG >> HALF;
 

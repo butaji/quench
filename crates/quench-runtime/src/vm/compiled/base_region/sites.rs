@@ -10,10 +10,12 @@ use crate::vm::in_presence::InPresence;
 /// The operator of a comparison that is a `Binary`, which writes a boolean to a register, or a `JumpBinaryFalse`, which branches
 /// where the comparison fails.
 fn comparison_operator(instruction: WideInstruction) -> Option<u32> {
-    match instruction.op().class() {
-        Class::Binary => Some(instruction.binary_operator()),
-        Class::JumpBinaryFalse => Some(instruction.binary_operator_field()),
-        _ => None,
+    if super::super::meaning_compiled::is_binary(instruction) {
+        Some(instruction.binary_operator())
+    } else if super::super::meaning_compiled::is_jump_binary_false(instruction) {
+        Some(instruction.binary_operator_field())
+    } else {
+        None
     }
 }
 
@@ -68,7 +70,7 @@ fn membership_keys(code: &[WideInstruction], constants: &[Value]) -> Vec<Option<
         let key = match instruction.operand_b().kind()? {
             OperandKind::Constant => usize::from(instruction.operand_b().payload()),
             OperandKind::Register => match origin(code, &joins, pc, instruction.operand_b().register_index()?) {
-                Origin::Written(load) if load.op().class() == Class::LoadConst => load.constant_index(),
+                Origin::Written(load) => crate::staged::Operation::<(), ()>::decode_constant_load(load).map(|(_, index)| index)?,
                 _ => return None,
             },
             _ => return None,
@@ -85,13 +87,20 @@ pub(super) fn distinct<T: Ord>(facts: impl Iterator<Item = T>) -> Box<[T]> {
     facts.into()
 }
 
-/// The exact shapes of the holders whose values the rows hold folded (`Decoded::folded`), and the owners
-/// of the chain proofs the adding stores hold (`adds::Add::chain_owner`): the Stable facts the code
-/// takes, which a change of a value a prototype of that shape holds, or of any prototype's layout, retires it.
+/// The exact shapes of the holders whose values the rows hold folded (`Decoded::folded`) or whose native
+/// functions they stand on (`Decoded::holder`): the Stable facts the code takes, which a change of a value
+/// a prototype of that shape holds, or of its own layout, retires it.
 pub(super) fn held_holders(decoded: &[Decoded]) -> Box<[u32]> {
-    let chained = decoded.iter().filter_map(|row| row.add.and_then(adds::Add::chain_owner));
     let natives = decoded.iter().filter_map(|row| row.holder);
-    distinct(decoded.iter().filter_map(|row| row.folded.map(|folded| folded.holder)).chain(chained).chain(natives))
+    distinct(decoded.iter().filter_map(|row| row.folded.map(|folded| folded.holder)).chain(natives))
+}
+
+/// The prototype chains the folded rows read their answers through (`Folded::chain`) and the adding stores'
+/// chain proofs hold for (`adds::Add::chain`): the Stable facts the code takes, which a layout change or the
+/// death of a prototype on one retires it (`Heap::subscribe_prototype_chain`).
+pub(super) fn held_chains(decoded: &[Decoded]) -> Box<[crate::code_dependencies::PrototypeChain]> {
+    let added = decoded.iter().filter_map(|row| row.add.and_then(adds::Add::chain));
+    distinct(decoded.iter().filter_map(|row| row.folded.map(Folded::chain)).chain(added))
 }
 
 /// The atoms the rows hold unnamed by method caches (`Decoded::atom`): the Stable facts the code
@@ -115,13 +124,13 @@ pub(super) fn held_constructors(decoded: &[Decoded]) -> Box<[Value]> {
 
 /// The row of `key in object` over a register's object, where the VM remembers exactly one receiver layout answering the
 /// key (`Known::presences`): the boolean it answered to the register `dst`, while the object has that exact shape and prototype
-/// link (`Heap::Held`, the folded read's row over a constant), under the dependency on the prototypes' layouts that
-/// `Folded::holder` names.
+/// link (`Heap::Held`, the folded read's row over a constant), under the dependency on the layouts of the prototypes
+/// `Folded::chain` names, the whole chain the answer read.
 pub(super) fn membership_row(known: Known, pc: u32, instruction: WideInstruction, dst: Register) -> Option<Decoded> {
     let fact = known.presences?.get(pc as usize).copied().flatten().filter(|_| is_membership(instruction))?;
     let object = Some(Source::Register(instruction.operand_c().register_index()?));
     let row = Decoded::heap(Heap::Held, Some(dst), object, None);
-    Some(Decoded { hole: Value::boolean(fact.present).to_bits(), folded: Some(Folded { shape: fact.shape, link: fact.link, holder: fact.holder }), ..row })
+    Some(Decoded { hole: Value::boolean(fact.present).to_bits(), folded: Some(Folded { shape: fact.shape, link: fact.link, holder: fact.holder, depth: fact.depth }), ..row })
 }
 
 /// What the fast arm of the `instanceof` at `pc` stands on: its value and constructor registers, and the constructor's identity with
@@ -159,7 +168,7 @@ fn instanceof_jump(known: Known, pc: u32, instruction: WideInstruction, dst: Reg
 /// The rows of a `JumpBinaryFalse` of `instanceof` or `in` the VM remembers an answer for: the comparison's row, writing its boolean to
 /// the register `scratch`, then the jump to the instruction's target where that boolean is false.
 pub(super) fn compare_jump(known: Known, pc: u32, instruction: WideInstruction, scratch: Register) -> Option<Vec<Decoded>> {
-    (instruction.op().class() == Class::JumpBinaryFalse).then_some(())?;
+    matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. })).then_some(())?;
     let compared = instanceof_jump(known, pc, instruction, scratch).or_else(|| membership_row(known, pc, instruction, scratch))?;
     let jump = Decoded::number(Kind::JumpFalse, None, Some(Source::Register(scratch)), None, Some(instruction.jump_target()));
     Some(vec![compared, jump])
@@ -173,7 +182,8 @@ impl<H: crate::Host> crate::vm::Vm<H> {
         (0..code.len()).map(|pc| {
             let register = Some(code[pc]).filter(|instruction| is_instanceof(*instruction))?.operand_c().register_index()?;
             let named = match origin(code, &joins, pc, register) {
-                Origin::Written(load) if load.op().class() == Class::LoadName => self.global_value(program, load),
+                Origin::Written(load) if matches!(crate::staged::Operation::<(), ()>::decode_load_name(load, ()),
+                    Some(crate::staged::Operation::LoadName { receiver: None, .. })) => self.global_value(program, load),
                 Origin::Entry => parameters.get(usize::from(register)).copied(),
                 Origin::Written(_) | Origin::Merged => None,
             };

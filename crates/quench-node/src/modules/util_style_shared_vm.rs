@@ -383,13 +383,7 @@ fn nullish(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
         .is_some_and(|value| value.is_null() || value.is_undefined())
 }
 
-fn get(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-) -> Result<RootId, RootedError> {
-    context.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 fn set(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,

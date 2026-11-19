@@ -98,15 +98,15 @@ impl CallerView for FrameRecord {
     }
 
     fn binding_site(&self) -> Option<u32> {
-        self.binding_site_pc
+        self.binding_site_pc()
     }
 
     fn held_bindings(&self) -> &[(Atom, Value)] {
-        &self.dynamic_bindings
+        self.dynamic_bindings()
     }
 
     fn scope_chain<'a>(&'a self, _entered: &'a [Value]) -> &'a [Value] {
-        &self.with_objects
+        self.with_objects()
     }
 }
 

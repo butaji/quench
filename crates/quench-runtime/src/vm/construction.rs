@@ -99,6 +99,27 @@ fn finished_closure_slots(
 }
 
 impl<H: Host> Vm<H> {
+    /// The creation realm of a function record: its override, else the main realm.
+    #[inline(always)]
+    pub(super) fn record_realm(&self, record: &FunctionRecord) -> Value {
+        record.realm_override().unwrap_or(self.main_realm)
+    }
+
+    /// `record` as a function created in `realm`: only a realm other than the main one (and an
+    /// explicit `Value::NULL`) is stored, as an override.
+    pub(super) fn in_realm_record(&mut self, mut record: FunctionRecord, realm: Value) -> FunctionRecord {
+        if realm != self.main_realm {
+            self.heap.set_function_realm_override(&mut record, realm);
+        }
+        record
+    }
+
+    /// Allocates `record` as a function created in `realm` (`in_realm_record`).
+    pub(super) fn alloc_function_in(&mut self, record: FunctionRecord, realm: Value) -> Value {
+        let record = self.in_realm_record(record, realm);
+        self.heap.alloc_function(record)
+    }
+
     pub(super) fn function_realm(
         &mut self,
         p: &ResidualProgram,
@@ -121,7 +142,7 @@ impl<H: Host> Vm<H> {
                 }),
                 _,
             ) => Origin::Bound(*env),
-            (Some(FunctionRecord { realm, .. }), _) => Origin::Own(*realm),
+            (Some(record), _) => Origin::Own(self.record_realm(record)),
             (None, Some(Cell::Proxy { handler, .. })) if handler.is_null() => Origin::Revoked,
             (None, Some(Cell::Proxy { target, .. })) => Origin::Proxied(*target),
             _ => Origin::Current,
@@ -213,9 +234,18 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn set_function_name_key(&mut self, function: Value, key: Value, prefix: u32) {
+        // A string key is its own name: strings are immutable, so the closure shares the key's
+        // record instead of copying its text into a new one for every closure made with it.
+        if prefix == crate::bytecode::FUNCTION_NAME_PREFIX_NONE && self.heap.string(key).is_some() {
+            if let Some(slot) = self.inferred_function_name_slot(function) {
+                self.heap.property_set(function, slot, key);
+                self.capture_function_name(function, key);
+            }
+            return;
+        }
         let name = match self.heap.get(key) {
             _ if let Some(value) = self.heap.string(key)  => value.to_string(),
-            Some(Cell::Symbol(description)) => description
+            _ if let Some(description) = self.heap.symbol_data(key) => description
                 .as_ref()
                 .map_or_else(String::new, |description| format!("[{}]", description)),
             _ => return,
@@ -374,7 +404,7 @@ impl<H: Host> Vm<H> {
     /// from in the running realm: none under a `with` scope, nor for a call-only closure
     /// (`Value::known_closure`), whose function has none.
     #[inline(always)]
-    pub(super) fn lane_closure_template(&self, id: u32) -> Option<ClosureTemplate> {
+    pub(super) fn closure_template_in_lane(&self, id: u32) -> Option<ClosureTemplate> {
         if self.with_scope_entered {
             return None;
         }
@@ -444,9 +474,10 @@ impl<H: Host> Vm<H> {
     }
 
     /// A closure's object allocated finished: its own `length`, `name` and `prototype` under
-    /// `shape`, as the recorded adds would leave them, inline where they fit, else in the
-    /// property arena. Inline: a closure's making is mostly this, and its object returns
-    /// through no temporary.
+    /// `shape`, as the recorded adds would leave them, inline where they fit and have narrow
+    /// forms, else in the property arena. Inline: a closure's making is mostly this, and its
+    /// object returns through no temporary. A wide value takes the arena rather than boxing
+    /// `ObjectExtras` (`with_property_storage` has no arena of its own to widen into).
     #[inline(always)]
     pub(super) fn finished_closure_object(
         &mut self,
@@ -456,11 +487,14 @@ impl<H: Host> Vm<H> {
         prototype: Option<Value>,
     ) -> crate::heap::Object {
         if finished_closure_fits(prototype) {
-            return crate::heap::Object::with_property_storage(
-                function_prototype,
-                crate::value_vec::ValueVec::inline_property_storage(shape),
-                finished_closure_slots(&named, prototype),
-            );
+            let slots = finished_closure_slots(&named, prototype);
+            if crate::heap::Object::inline_values_narrow(&slots) {
+                return crate::heap::Object::with_property_storage(
+                    function_prototype,
+                    crate::value_vec::ValueVec::inline_property_storage(shape),
+                    slots,
+                );
+            }
         }
         let [length, name] = named;
         let values: [Value; FINISHED_CLOSURE_SLOTS] = [length, name, prototype.unwrap_or(Value::UNDEFINED)];
@@ -498,7 +532,7 @@ impl<H: Host> Vm<H> {
         let object = object.unwrap_or_else(|| {
             self.finished_closure_object(template.function_prototype, template.header.shape(), named, prototype)
         });
-        let record = FunctionRecord { object, realm: template.realm, kind: template.kind, env };
+        let record = self.in_realm_record(FunctionRecord { object, kind: template.kind, env }, template.realm);
         let function = match claimed {
             Some(function) => {
                 self.heap.fill_claimed_function_record(function, record);
@@ -513,6 +547,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// A closure of function `id` over `env`, in the scope chain of the innermost VM frame.
+    /// A closure that takes no environment (`ResidualProgram::closure_takes_no_environment`)
+    /// is made over `Value::NULL`.
     pub(super) fn closure_in_realm(
         &mut self,
         p: &ResidualProgram,
@@ -535,6 +571,19 @@ impl<H: Host> Vm<H> {
             self.with_stack[frame.with_base.min(self.with_stack.len())..].to_vec()
         });
         self.closure_over_scope(p, id, env, realm, &chain)
+    }
+
+    /// Notes that the active program's root starts another run (its root closure is made); from
+    /// its second, `root_slot_written_once` answers for no slot.
+    pub(in crate::vm) fn note_root_run(&self) {
+        self.programs.note_root_run(self.active_program);
+    }
+
+    /// Whether root `slot` of `program` is written once while the root has run at most once
+    /// (`ProgramStore::root_slot_written_once`): a read that found it initialized may keep the
+    /// value for every later read.
+    pub(crate) fn root_slot_written_once(&self, program: ProgramId, slot: u16) -> bool {
+        self.programs.root_slot_written_once(program, slot)
     }
 
     /// `function`'s own `prototype` property holding `prototype`, as a function's creation
@@ -754,7 +803,12 @@ impl<H: Host> Vm<H> {
                     let proto = vm.prototype_from_constructor(p, new_target)?;
                     let mut object = Self::empty_object(proto);
                     vm.capture_constructed_name(&mut object, callee, callee == new_target);
-                    vm.heap.alloc(Cell::Object(object))
+                    let start = object.shape();
+                    let object = vm.heap.alloc(Cell::Object(object));
+                    // `callee`'s body runs next on it: its constant layout and the storage
+                    // `new_target`'s receivers reach (`preshaped_receiver`).
+                    vm.preshape_receiver(object, start, callee, new_target);
+                    object
                 };
                 let previous_target = vm.construct_target;
                 vm.set_construct_target(Some(ConstructionTarget { callee, new_target }));
@@ -892,17 +946,14 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let Some(FunctionRecord {
-            kind: FunctionKind::User(program_id, id),
-            env,
-            realm,
-            ..
-        }) = self.heap.function(callee)
-        else {
+        let Some(record) = self.heap.function(callee) else {
             return None;
         };
-        let (program_id, id, env) = (*program_id, *id, *env);
-        if *realm != self.realm.globals || id == super::ROOT_FUNCTION_ID {
+        let FunctionKind::User(program_id, id) = record.kind else {
+            return None;
+        };
+        let env = record.env;
+        if self.record_realm(record) != self.realm.globals || id == super::ROOT_FUNCTION_ID {
             return None;
         }
         // A constructor of another program is pushed in its own, which the pushing loop
@@ -932,7 +983,7 @@ impl<H: Host> Vm<H> {
             && !function.is_generator
             && !function.derived_constructor
             && !function.class_initializer
-            && function.instance_initializer.is_none()
+            && function.instance_initializer().is_none()
     }
 
     /// A derived class constructor whose [[Construct]] the dispatch loop may push in place: its
@@ -949,10 +1000,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// The receiver an in-place [[Construct]] of `callee` allocates: an ordinary object
-    /// whose prototype is the callee's own data `prototype`, when that is an object.
+    /// whose prototype is the callee's own data `prototype`, when that is an object, in the
+    /// callee's constant layout (`preshaped_receiver`), as every caller runs its body next.
+    /// A construct plan's own allocations take the empty template (`inline_construct_template`):
+    /// a plan records the stores its body adds from it.
     pub(super) fn inline_construct_receiver(&mut self, callee: Value) -> Option<Value> {
         let object = self.inline_construct_template(callee)?;
-        Some(self.heap.alloc_object(object))
+        Some(self.alloc_construct_receiver(object, callee))
     }
 
     /// The object `inline_construct_receiver` allocates, before it is allocated.
@@ -999,13 +1053,17 @@ impl<H: Host> Vm<H> {
         if self.shape_is_dictionary(shape) {
             return self.heap.property_get(object, self.prototype_data_slot(constructor, shape, key)?);
         }
-        let memo = &self.shapes[shape as usize].prototype_slot;
-        let slot = match memo.get() {
+        let memo = &self.shapes[shape as usize];
+        let slot = match memo.prototype_slot() {
             PROTOTYPE_SLOT_UNKNOWN => {
                 let slot = self
                     .prototype_data_slot(constructor, shape, key)
-                    .map_or(PROTOTYPE_SLOT_NONE, |slot| slot as u32);
-                memo.set(slot);
+                    .map_or(PROTOTYPE_SLOT_NONE, |slot| u32::try_from(slot).unwrap_or(PROTOTYPE_SLOT_UNKNOWN));
+                if slot == PROTOTYPE_SLOT_UNKNOWN {
+                    // A slot past every memo: read it unmemoized.
+                    return self.heap.property_get(object, self.prototype_data_slot(constructor, shape, key)?);
+                }
+                memo.set_prototype_slot(slot);
                 slot
             }
             slot => slot,
@@ -1032,6 +1090,14 @@ impl<H: Host> Vm<H> {
         let shape = self.heap.function(constructor)?.object.shape();
         if self.shape_is_dictionary(shape) {
             return None;
+        }
+        // A shape whose `prototype` slot is not yet memoized learns it here, as the first
+        // construction of the shape would (`own_function_prototype_data`), so a plain function's
+        // first plan is recorded as a class's is.
+        if self.shapes[shape as usize].prototype_slot.get() == PROTOTYPE_SLOT_UNKNOWN
+            && let Some(prototype_atom) = self.known_prototype_atom()
+        {
+            let _ = self.own_function_prototype_data(constructor, prototype_atom);
         }
         match self.shapes[shape as usize].prototype_slot.get() {
             PROTOTYPE_SLOT_UNKNOWN | PROTOTYPE_SLOT_NONE => None,

@@ -240,7 +240,8 @@ fn concrete_remainder(left: NumberWord, right: NumberWord, domain: Domain) -> Op
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = number_frame(left, right);
     let operation = Operation::Number(NumberOperation::Remainder {
-        destination: 2, left: Operand::register(0), right: Operand::register(1), domain });
+        destination: 2, left: Operand::register(0), right: Operand::register(1), domain,
+        zero: NegativeZero::Exit, divisor_nonzero: false });
     match step(&mut stage, &mut frame, operation) {
         Step::Value(_) => Some(frame.values[2]),
         Step::Unresolved => None,

@@ -1,20 +1,22 @@
 //! One run of a lane body: the words an entry binds in the thread's lane frame, and the call
 //! through the body's entry word.
 
+use super::entry_protocol::{self, EntryDescriptor, EntryKind};
 use super::*;
 use crate::vm::tier_events::Event;
+use quench_bjit::call_record::LaneStatus;
 
 /// The activations a run's window has no pending push for: its caller pushed the body's own.
 pub(in crate::vm) const NO_PENDING_ACTIVATIONS: usize = 0;
 /// A body entered through its entry cell runs before the activation of its call exists
-/// (`dispatch_fast::lane_enter_cell_body`): one, which a leave pushes in the room reserved past
+/// (`dispatch_fast::enter_cell_body_in_lane`): one, which a leave pushes in the room reserved past
 /// the activations the run's frames start from.
 pub(in crate::vm) const CALLEE_ACTIVATION_PENDING: usize = 1;
 
 /// What one run of a lane body is given.
 pub(in crate::vm) struct BodyRun<'a> {
     pub(in crate::vm) method: &'a LaneMethod,
-    /// Whether the body may call bodies by their compiled entries (`lane_direct_calls`).
+    /// Whether the body may call bodies by their compiled entries (`direct_calls_in_lane`).
     pub(in crate::vm) direct_calls: bool,
     pub(in crate::vm) program: ProgramId,
     pub(in crate::vm) residual: &'a ResidualProgram,
@@ -34,7 +36,7 @@ pub(in crate::vm) struct BodyRun<'a> {
 impl<H: Host> Vm<H> {
     /// Runs `run`'s body; where it left, or that it returned.
     pub(in crate::vm) fn run_lane_body(&mut self, run: &BodyRun) -> LaneExit {
-        let frame = lane_frame();
+        let frame = frame_in_lane();
         self.programs.tier_events().record(Event::Entered);
         // SAFETY: the activation's capture slots outlive its body's run, which collects nothing.
         let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(super::super::dispatch_fast::capture_reads(run.captures)) }
@@ -45,16 +47,18 @@ impl<H: Host> Vm<H> {
         let outer_locals = unsafe { let dispatch = &(*frame).dispatch; (dispatch.native_locals, dispatch.local_count, dispatch.environment_storage) };
         let context = unsafe { self.bind_body_entry(frame, run) };
         let captures = entry_cell::capture_word(capture_values, capture_len, super::super::dispatch_fast::capture_stores(run.captures).is_some());
+        let descriptor = EntryDescriptor { kind: EntryKind::Body, receiver: run.receiver.to_bits(), captures, registers: run.registers.cast_const().cast(), entry: run.method.entry };
         // SAFETY: the body was compiled for this function, never allocates or collects, and
         // reads only the registers, constants and heap bases bound above.
-        let BodyReturn { status, value: word } = unsafe { self.call_body(run, context, captures) };
+        let returned = unsafe { self.call_body(run, &descriptor, context) };
+        let status = returned.status;
         // A body re-reads its locals' address after each call-out, and a run its call-outs make
         // binds its own: the run it returns into gets back the address it entered with.
         unsafe { let dispatch = &mut (*frame).dispatch; (dispatch.native_locals, dispatch.local_count, dispatch.environment_storage) = outer_locals };
         // SAFETY: as above; a completing body wrote the record before it returned.
-        let exit = LaneExit::read(status, word, || unsafe { (*frame).dispatch.returned_pc });
+        let exit = entry_protocol::exit(&descriptor, returned, || unsafe { (*frame).dispatch.returned_pc });
         self.programs.tier_events().record(Event::ended(exit));
-        if status == LANE_BODY_RETURNED { self.programs.tier_events().record(Event::Returned); }
+        if LaneStatus::of(status) == Some(LaneStatus::Returned) { self.programs.tier_events().record(Event::Returned); }
         exit
     }
 
@@ -93,37 +97,36 @@ impl<H: Host> Vm<H> {
             // frames onto the lane stack's own tops, which the dispatch points at. A body entered
             // through its cell has an activation pending, which a leave pushes first: it makes no
             // direct call, the frames of which would sit above that activation's room.
-            let words = self.lane_stack_words(if run.direct_calls && run.pending == NO_PENDING_ACTIVATIONS { SHADOW_FRAMES } else { 0 });
+            let words = self.stack_words_in_lane(if run.direct_calls && run.pending == NO_PENDING_ACTIVATIONS { SHADOW_FRAMES } else { 0 });
             (*dispatch).lane_frames_end = words.frames_end;
             (*dispatch).lane_values_top = words.values_top;
             (*dispatch).lane_values_end = words.values_end;
             (*dispatch).lane_activations_top = words.activations_top;
-            (*dispatch).plain_depth = words.plain_depth;
-            (*dispatch).plain_depth_limit = words.plain_depth_limit;
-            (*dispatch).activation_count = words.activation_count;
-            (*dispatch).body_table = words.body_table;
-            (*dispatch).body_top = words.body_top;
-            (*dispatch).native_table = words.native_table;
+            (*dispatch).head.plain_depth = words.plain_depth;
+            (*dispatch).head.plain_depth_limit = words.plain_depth_limit;
+            (*dispatch).head.activation_count = words.activation_count;
+            (*dispatch).head.body_table = words.body_table;
+            (*dispatch).head.body_top = words.body_top;
+            (*dispatch).head.native_table = words.native_table;
             &raw mut (*frame).context
         }
     }
 
-    /// The call of `run`'s entry on the context `bind_body_entry` made, through the
+    /// The call of `descriptor`'s entry on the context `bind_body_entry` made, through the
     /// fault-resuming trampoline where the body polls by fault.
     ///
     /// # Safety
-    /// As `enter_body`, for `run`'s body and the registers it names.
+    /// As `enter_body`, for `run`'s body and the registers `descriptor` names.
     #[inline(always)]
-    unsafe fn call_body(&self, run: &BodyRun, context: *mut CallContext, captures: u64) -> BodyReturn {
-        let (receiver, registers) = (run.receiver.to_bits(), run.registers.cast_const().cast());
+    unsafe fn call_body(&self, run: &BodyRun, descriptor: &EntryDescriptor, context: *mut CallContext) -> BodyReturn {
         // SAFETY: the frame's context is the one this entry owns until it returns.
         let context = unsafe { &mut *context };
         if run.method.fault_poll {
             // SAFETY: as the caller promises.
-            return unsafe { self.call_polling_body(run, context, receiver, captures, registers) };
+            return unsafe { self.call_polling_body(context, descriptor) };
         }
         // SAFETY: as the caller promises.
-        unsafe { (run.method.entry)(context, receiver, captures, registers) }
+        unsafe { (descriptor.entry)(context, descriptor.receiver, descriptor.captures, descriptor.registers) }
     }
 
     /// `call_body` of a body that polls by fault: through the trampoline that resumes the fault,
@@ -133,11 +136,11 @@ impl<H: Host> Vm<H> {
     /// # Safety
     /// As `call_body`.
     #[inline(never)]
-    unsafe fn call_polling_body(&self, run: &BodyRun, context: &mut CallContext, receiver: u64, captures: u64, registers: *const u64) -> BodyReturn {
+    unsafe fn call_polling_body(&self, context: &mut CallContext, descriptor: &EntryDescriptor) -> BodyReturn {
         // SAFETY: this entry owns the TLS binding until it returns. Reentrant entries
         // checkpoint it in `run_nested_lane_method`; the run bound the rest of it.
         context.bind_poll_page(native_poll_page(&self.execution_interrupt));
         // SAFETY: as the caller promises.
-        unsafe { enter_body(context, receiver, captures, registers, run.method.entry) }
+        unsafe { entry_protocol::enter(context, descriptor) }
     }
 }

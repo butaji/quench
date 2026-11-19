@@ -2,11 +2,12 @@
 //!
 //! The residual program itself owns the promoted fields, so interpreter recovery
 //! and native execution see the same registers and need no virtual-object cache.
+use super::CompileScratch;
 use super::liveness::{self, MethodArguments, RegisterSet, register_bit};
-use crate::bytecode::{FieldLookup, FieldSite, Function, Instr, ObjectSite, Op, Superinstruction};
+use crate::bytecode::{FieldLookup, FieldSite, Function, Instr, ObjectSite, REGISTER_MOVE, Superinstruction, Traits};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct Aliases {
+pub(super) struct Aliases {
     may: RegisterSet,
     must: RegisterSet,
 }
@@ -17,6 +18,7 @@ pub(super) fn promote(
     fields: &[FieldSite],
     supers: &[Superinstruction],
     objects: &[ObjectSite],
+    scratch: &mut CompileScratch,
 ) {
     // Exceptional/suspended entries and dynamic binding observers need their own
     // object materialization proof. Keep their original residual program.
@@ -26,25 +28,27 @@ pub(super) fn promote(
     let mut pc = 0;
     while pc < function.code.len() {
         if let Some(width) = literal_values(function.code[pc]).map(|values| values.len() as u16)
-            && let Some(replacements) = replacement(function, pc, methods, fields, supers, objects)
+            && let Some(replacements) = replacement(function, pc, methods, fields, supers, objects, scratch)
         {
             let old = std::mem::take(&mut function.code);
-            let mut code = Vec::with_capacity(old.len() + 1);
-            let mut map = Vec::with_capacity(old.len() + 1);
-            for (instruction, replacement) in old.iter().zip(replacements) {
-                map.push(code.len());
+            let mut code = scratch.code_buffer(old.len() + 1);
+            let map = scratch.remap(old.len());
+            for (index, (instruction, replacement)) in old.iter().zip(replacements).enumerate() {
+                map[index] = code.len();
                 match replacement {
                     Some(instructions) => code.extend(instructions),
                     None => code.push(*instruction),
                 }
             }
-            map.push(code.len());
-            super::rewrite::relocate(&mut code, &mut function.wide, &map, &mut function.handlers,
+            map[old.len()] = code.len();
+            super::rewrite::relocate(&mut code, &mut function.wide, &*map, &mut function.handlers,
                 &mut function.parameter_end_pc, &mut function.binding_sites,
                 &mut function.source_positions, &old);
+            let next = map[pc] + usize::from(width);
             function.code = code;
+            scratch.recycle_code(old);
             function.registers += width;
-            pc = map[pc] + usize::from(width);
+            pc = next;
         } else { pc += 1; }
     }
 }
@@ -53,19 +57,21 @@ pub(super) fn promote(
 /// site's atom order: a pair's two operands, or a literal's register window. `None` for any
 /// other instruction.
 fn literal_values(make: Instr) -> Option<smallvec::SmallVec<[u16; 4]>> {
-    match make.op() {
-        Op::MakeObject2 => Some(smallvec::smallvec![make.b(), make.c()]),
-        Op::MakeObjectLiteral => {
-            let window = make.register_window();
-            Some((window.base..window.base + window.count).collect())
-        }
-        _ => None,
+    let op = make.op();
+    if op.traits().has(Traits::PAIR_LITERAL_MAKE) {
+        Some(smallvec::smallvec![make.b(), make.c()])
+    } else if op.traits().has(Traits::WINDOW_LITERAL_MAKE) {
+        let window = make.register_window();
+        Some((window.base..window.base + window.count).collect())
+    } else {
+        None
     }
 }
 
 fn replacement(
     function: &Function, allocation: usize, methods: &dyn MethodArguments,
     fields: &[FieldSite], supers: &[Superinstruction], objects: &[ObjectSite],
+    scratch: &mut CompileScratch,
 ) -> Option<Vec<Option<smallvec::SmallVec<[Instr; 2]>>>> {
     // Reuse the authoritative register-transfer domain. Exhausting its mask
     // representation leaves the original allocation intact.
@@ -76,21 +82,23 @@ fn replacement(
     let atoms = &objects.get(make.object_site_index())?.atoms;
     let distinct = atoms.iter().enumerate().all(|(index, atom)| !atoms[..index].contains(atom));
     if atoms.is_empty() || atoms.len() != values.len() || !distinct { return None; }
-    let transfers = liveness::transfers(function, methods, fields, supers)?;
-    let instructions: Vec<_> = function.instructions().collect();
-    let successors = crate::bytecode::Successors::of(function, &instructions);
-    let mut incoming = vec![None; instructions.len()];
+    // The tables are the scratch's own buffers, filled in place for this function.
+    let CompileScratch { transfers, successors, incoming, .. } = scratch;
+    if !liveness::buffers::transfers_into(function, methods, fields, supers, transfers) { return None; }
+    successors.refill(function);
+    incoming.clear();
+    incoming.resize(function.code.len(), None);
     incoming[0] = Some(Aliases { may: RegisterSet::default(), must: RegisterSet::default() });
     loop {
         let mut changed = false;
-        for (pc, instruction) in instructions.iter().copied().enumerate() {
+        for (pc, instruction) in function.instructions().enumerate() {
             let Some(before) = incoming[pc] else { continue };
             let definitions = transfers[pc].1;
             let mut after = Aliases { may: before.may & !definitions, must: before.must & !definitions };
             if pc == allocation {
                 after.may |= register_bit(make.result_register());
                 after.must |= register_bit(make.result_register());
-            } else if instruction.op() == Op::Move {
+            } else if instruction.op() == REGISTER_MOVE {
                 let source = register_bit(instruction.b());
                 let destination = register_bit(instruction.result_register());
                 if before.may & source != 0 { after.may |= destination; }
@@ -117,35 +125,40 @@ fn replacement(
     // stand for the latest one. That is exact while no other register still names an
     // earlier one where the allocation runs again: the only live alias it may find is the
     // result register, which the allocation redefines (dead copies are redefined before use).
+    // The solve is needed only when an earlier alias may reach the allocation at all: with none,
+    // the test below holds whatever the live set is, and `transfers` already proved it solvable.
     let reached = incoming[allocation]?;
-    let live = liveness::analyze(function, methods, fields, supers)?;
-    if reached.may & !register_bit(make.result_register()) & live[allocation] != 0 { return None; }
-    let mut replacements = vec![None; instructions.len()];
+    let escaping = reached.may & !register_bit(make.result_register());
+    if escaping != 0 {
+        let live = liveness::analyze(function, methods, fields, supers)?;
+        if escaping & live[allocation] != 0 { return None; }
+    }
+    let mut replacements = vec![None; function.code.len()];
     let scalar = |atom| atoms.iter().position(|candidate| *candidate == atom)
         .map(|index| function.registers + index as u16);
-    for (pc, instruction) in instructions.iter().copied().enumerate() {
+    for (pc, instruction) in function.instructions().enumerate() {
         let Some(aliases) = incoming[pc] else { continue };
         if aliases.may & observable != 0 { return None; }
         let uses = transfers[pc].0 & aliases.may;
         if pc == allocation {
             if uses != 0 || register_bit(make.result_register()) & observable != 0 { return None; }
             replacements[pc] = Some(values.iter().enumerate()
-                .map(|(index, value)| Instr::new(Op::Move, function.registers + index as u16, *value, 0, 0)).collect());
+                .map(|(index, value)| Instr::new(REGISTER_MOVE, function.registers + index as u16, *value, 0, 0)).collect());
         } else if uses != 0 {
             if uses & !aliases.must != 0 { return None; }
-            replacements[pc] = Some(match instruction.op() {
-                Op::Move if instruction.result_flags() == 0
-                    && register_bit(instruction.result_register()) & observable == 0 => smallvec::SmallVec::new(),
-                Op::GetField if instruction.result_flags() == 0 => {
-                    let FieldLookup::Atom { atom, base, .. } = instruction.field_lookup()? else { return None };
-                    if uses != register_bit(base.register_index()?) { return None; }
-                    smallvec::smallvec![Instr::new(Op::Move, instruction.result_register(), scalar(atom)?, 0, 0)]
-                }
-                Op::SetField | Op::SetFieldStrict => {
-                    if uses != register_bit(instruction.b()) || aliases.may & register_bit(instruction.a()) != 0 { return None; }
-                    smallvec::smallvec![Instr::new(Op::Move, scalar(instruction.imm())?, instruction.a(), 0, 0)]
-                }
-                _ => return None,
+            let op = instruction.op();
+            replacements[pc] = Some(if op == REGISTER_MOVE && instruction.result_flags() == 0
+                && register_bit(instruction.result_register()) & observable == 0 {
+                smallvec::SmallVec::new()
+            } else if op.traits().has(Traits::FIELD_LEAF) && instruction.result_flags() == 0 {
+                let FieldLookup::Atom { atom, base, .. } = instruction.field_lookup()? else { return None };
+                if uses != register_bit(base.register_index()?) { return None; }
+                smallvec::smallvec![Instr::new(REGISTER_MOVE, instruction.result_register(), scalar(atom)?, 0, 0)]
+            } else if op.traits().has(Traits::NAMED_FIELD_WRITE) {
+                if uses != register_bit(instruction.b()) || aliases.may & register_bit(instruction.a()) != 0 { return None; }
+                smallvec::smallvec![Instr::new(REGISTER_MOVE, scalar(instruction.imm())?, instruction.a(), 0, 0)]
+            } else {
+                return None;
             });
         }
     }
@@ -155,6 +168,7 @@ fn replacement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bytecode::Op;
 
     fn check(source: &str, promoted: bool) {
         for generic in [false, true] {

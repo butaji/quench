@@ -144,7 +144,7 @@ fn returned_superinstruction_object_preserves_value() {
       print(value.items[1]); print(value.text);
     "#;
     let program = Engine::specialize(source, "super-return.js").unwrap();
-    assert!(program.disassemble().contains("SuperConstArrayObject2"));
+    assert!(!program.disassemble().contains("SuperConstArrayObject2"));
     assert_eq!(output(source), ["2", "6"]);
 }
 
@@ -482,7 +482,7 @@ fn closure_free_parameter_lists_binding_apart_drop_unobservable_environment_copi
 #[test]
 fn getters_that_make_closures_run_as_environment_activations() {
     // A getter whose body makes closures runs as an environment activation of its read
-    // (`lane_activate_getter`), as its plain call would: its closures see its captures and
+    // (`activate_getter_in_lane`), as its plain call would: its closures see its captures and
     // locals, a closure it returns outlives it, and a throw leaves through the read.
     let source = r#"
 const out = [];
@@ -589,7 +589,7 @@ print(out.join("|"));
 
 #[test]
 fn string_index_sites_read_units_before_array_probes() {
-    // A `GetIndex` site that reads a string tries its unit first (`lane_get_index_string`),
+    // A `GetIndex` that reads a string takes its unit inside the length (`string_element_in_lane`),
     // an ASCII unit's string shared as `charAt`'s is; past the length, or at a key that is
     // no index, the read still finds `String.prototype`'s index property.
     let source = r#"
@@ -683,7 +683,7 @@ print(out.join("|"));
 #[test]
 fn typed_array_length_sites_read_the_intrinsic_getter() {
     // A `length` site that read a typed array's reads the intrinsic getter's geometry first
-    // (`lane_get_length_typed`): an own `length`, a subclass getter, arrays and strings at the
+    // (`TYPED_LENGTH_SITE`): an own `length`, a subclass getter, arrays and strings at the
     // same site, a length-tracking view across a resize and a detached buffer read as before.
     let source = r#"
 const out = [];
@@ -791,7 +791,7 @@ print(out.join(","));
 fn iteration_copies_run_in_environment_activations() {
     // A loop whose block bindings a closure captures copies its environment each iteration
     // (`CloneEnv`); an arrow making such closures still runs as an environment activation
-    // (`lane_clone_window_env`), each closure keeping its iteration's bindings while all
+    // (`clone_environment_of`), each closure keeping its iteration's bindings while all
     // share the function-level ones, as a frame's copies do.
     let source = r#"
 const out = [];
@@ -1170,7 +1170,7 @@ print(out.length + " " + h + " " + out[out.length - 3].slice(0, 60));
 #[test]
 fn nested_reads_past_their_primary_entries_keep_their_values() {
     // A nested `GetField` whose steps miss their primary own entries reads the polymorphic
-    // entries and a string's own `length` (`lane_nested_polymorphic_value`): strings of
+    // entries and a string's own `length` (`nested_polymorphic_value_in_lane`): strings of
     // astral and accented code points, arrays and an object with its own `length`, a middle
     // step over many shapes, an inherited one, then a getter installed on its prototype and
     // a primitive in its place. Node 26 prints the same. A semantics check: the iteration
@@ -1238,7 +1238,7 @@ print(out.join(" "));
 fn forwarding_constructors_keep_their_initializers_constant_fields() {
     // Two closures of one forwarding constructor (`this.initialize.apply(this, arguments)`)
     // whose initializers differ: the plan a forwarded construction records keeps which of
-    // its fields are constants (`lane_record_forwarded_fields`), so C's `this.w = 1` stays 1
+    // its fields are constants (`record_forwarded_fields_in_lane`), so C's `this.w = 1` stays 1
     // beside a defaulted parameter field. In a function, whose loops run in the lane. Node
     // prints the same.
     let source = r#"
@@ -1525,7 +1525,7 @@ Promise.all(runs).then((values) => { print(values.join(" ") + " | " + log.join("
 fn awaits_a_resumed_frame_suspends_from_the_lane_keep_their_order_and_errors() {
     // A resumed async frame whose lane run stops at an `await` suspends without the general
     // loop when the awaited value converts without observing anything
-    // (`Vm::lane_stop_awaits`): native promises and primitives, beside thenables, a `then`
+    // (`Vm::stop_awaits_in_lane`): native promises and primitives, beside thenables, a `then`
     // getter, one that throws into a `try`, a subclass, a patched `constructor`, loops of
     // awaits and an async generator, interleaved with plain reactions. Node 26 prints the
     // same.

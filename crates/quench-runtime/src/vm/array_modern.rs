@@ -1,4 +1,5 @@
 use super::*;
+use super::promise::ThenCapability;
 use crate::heap::{ArrayFromAsyncAwait, ArrayFromAsyncState};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -52,36 +53,6 @@ impl<H: Host> Vm<H> {
         self.new_array_with_prototype(values, self.array_prototype_for_realm(self.realm.globals))
     }
 
-    /// Append an own data element to an unexposed dense array. No guest code runs.
-    pub(super) fn append_fresh_array_element(&mut self, array: Value, value: Value) -> usize {
-        let Some(length) = self.heap.grow_array_elements(array, |elements| {
-            elements.push(value);
-            elements.len()
-        }) else {
-            unreachable!("fresh array owner remains an array");
-        };
-        length
-    }
-
-    /// Store element `index` of a dense array no guest code reaches, at most one past its
-    /// end: its own data property, every element a default one. The store passes the write
-    /// barrier, since the array may have been promoted while guest code ran.
-    pub(super) fn store_fresh_array_element(&mut self, array: Value, index: usize, value: Value) {
-        let Some(object) = self.heap.array_store_mut(array, value) else {
-            unreachable!("fresh array owner remains an array");
-        };
-        let elements = super::index::mutable_array_elements(object.elements_mut());
-        if index < elements.len() {
-            elements.set(index, value);
-            return;
-        }
-        debug_assert_eq!(index, elements.len(), "a fresh array grows by one element at a time");
-        let capacity = elements.capacity();
-        elements.push(value);
-        let grown = elements.capacity() - capacity;
-        self.heap.charge_payload_growth(grown * size_of::<Value>());
-    }
-
     /// `store_fresh_array_element` of a map's result (`fresh_array_iteration`), which
     /// `hole_array` made with the receiver's length, below that length: the value written into
     /// the array record's own wide backing in place where the write barrier logs nothing
@@ -105,9 +76,7 @@ impl<H: Host> Vm<H> {
         values: Vec<Value>,
         prototype: Value,
     ) -> Value {
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), values),
-        })
+        self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(prototype), values))
     }
 
     fn array_to_string_native(
@@ -173,6 +142,11 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        // The plain body (`plain_array_of`) first: this realm's `Array` constructs a plain array of
+        // `args` with no guest code.
+        if let Some(array) = self.plain_array_of(constructor, args) {
+            return Ok(array);
+        }
         let target = if self.is_constructable(constructor) {
             self.construct_value(p, constructor, &[Value::number(args.len() as f64)])?
         } else {
@@ -227,12 +201,10 @@ impl<H: Host> Vm<H> {
             return Err(self.range_error(p, "invalid array length".into()));
         }
         let prototype = self.array_prototype_for_realm(self.realm.globals);
-        let array = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let array = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(prototype),
                 Vec::new(),
-            ),
-        });
+            ));
         self.heap.sparse_set_length(array, length);
         Ok(array)
     }
@@ -624,9 +596,8 @@ impl<H: Host> Vm<H> {
                     .heap
                     .root_value(state_root)
                     .expect("rooted Array.fromAsync continuation remains live");
-                let fulfilled = vm.native_with_env(Native::ArrayFromAsyncFulfilled, state_value);
-                let rejected = vm.native_with_env(Native::ArrayFromAsyncRejected, state_value);
-                vm.promise_then(p, promise, fulfilled, rejected)?;
+                let natives = [Native::ArrayFromAsyncFulfilled, Native::ArrayFromAsyncRejected];
+                vm.then_with_natives(p, promise, natives, state_value, ThenCapability::Species)?;
                 Ok(())
             })
         })();
@@ -676,14 +647,10 @@ impl<H: Host> Vm<H> {
                 if !self.is_object_like(value) {
                     return Err(self.type_error(p, "iterator result is not an object".into()));
                 }
-                let done_atom = self.runtime_atoms.done;
-                let done = self.get_property(p, value, done_atom)?;
-                if self.truthy(done) {
+                let Some(item) = self.iterator_result_value(p, value)? else {
                     self.set_array_from_async_length(p, state.result, state.index)?;
                     return self.promise_resolve_value(p, state.output, state.result);
-                }
-                let value_atom = self.runtime_atoms.value;
-                let item = self.get_property(p, value, value_atom)?;
+                };
                 self.array_from_async_map_or_store(p, state_value, state, item)
             }
             ArrayFromAsyncAwait::ArrayLikeValue => {
@@ -869,24 +836,13 @@ impl<H: Host> Vm<H> {
             return Err(self.range_error(p, "invalid array length".into()));
         }
         let roots = self.active_call_roots.len();
-        let mut undefined_count = 0;
-        if let Some(elements) = self.present_dense_elements(object, 0..length).map(|values| values.into_owned()) {
-            // SortIndexedProperties reads each present own data element, observing nothing.
-            let present = elements.into_iter().filter(|value| !value.is_undefined());
-            self.active_call_roots.extend(present);
-            undefined_count = length - (self.active_call_roots.len() - roots);
-        } else {
-            for index in 0..length {
-                let key = Value::number(index as f64);
-                if !mutate || self.has_property(p, object, key)? {
-                    match self.get_index(p, object, key)? {
-                        Value::UNDEFINED => undefined_count += 1,
-                        value => self.active_call_roots.push(value),
-                    }
-                }
+        let (mut values, undefined_count) = match self.dense_sort_values(object, length) {
+            Some((values, undefined_count)) => {
+                self.active_call_roots.extend_from_slice(&values);
+                (values, undefined_count)
             }
-        }
-        let mut values = self.active_call_roots[roots..].to_vec();
+            None => self.read_sort_values(p, object, length, mutate)?,
+        };
         let sorted = match comparator {
             Some(comparator) => self.with_prepared_callback(comparator, Value::UNDEFINED, |vm, prepared| {
                 super::sort::try_stable_sort_by(&mut values, |left, right| {
@@ -918,10 +874,7 @@ impl<H: Host> Vm<H> {
         }
         let sorted_count = values.len();
         // Each Set of a dense array's present element writes an own writable data element.
-        if sorted_count == length
-            && self.dense_array_length(object) == Some(length)
-            && self.present_dense_elements(object, 0..length).is_some()
-        {
+        if sorted_count == length && self.can_copy_back(object, length) {
             let Some(array) = self.heap.array_mut(object) else {
                 unreachable!("matched an array above");
             };

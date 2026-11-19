@@ -19,7 +19,8 @@ pub(super) mod relocatable_code;
 #[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) mod symbol_words;
 mod worker;
-pub(super) use worker::{Pending, run_in_background};
+pub(super) mod builder;
+pub(super) use worker::{OffThread, run_in_background};
 
 type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 
@@ -156,7 +157,7 @@ pub(super) fn target_isa() -> Option<Arc<TargetIsa>> {
 }
 
 /// The executable-memory ISA at `opt_level`: the Wasm tier's, which picks its own level.
-pub(super) fn target_isa_at(_opt_level: &str) -> Option<Arc<TargetIsa>> {
+pub(super) fn target_isa_at(_opt_level: &'static str) -> Option<Arc<TargetIsa>> {
     #[cfg(feature = "jit")]
     { target_isa_for(_opt_level, CodePublication::ExecutableMemory) }
     #[cfg(not(feature = "jit"))]
@@ -165,7 +166,7 @@ pub(super) fn target_isa_at(_opt_level: &str) -> Option<Arc<TargetIsa>> {
 
 #[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) fn target_isa_for(
-    opt_level: &str,
+    opt_level: &'static str,
     publication: CodePublication,
 ) -> Option<Arc<TargetIsa>> {
     target_isa_with(opt_level, publication, CompileLevel::Optimized)
@@ -179,14 +180,15 @@ pub(super) fn target_isa_level(level: CompileLevel) -> Option<Arc<TargetIsa>> {
 
 #[cfg(any(feature = "jit", feature = "aot"))]
 fn target_isa_with(
-    opt_level: &str,
+    opt_level: &'static str,
     publication: CodePublication,
     level: CompileLevel,
 ) -> Option<Arc<TargetIsa>> {
-    type IsaCache = HashMap<(String, CodePublication, CompileLevel), Arc<TargetIsa>>;
+    // Keyed by the level's static name: every compile asks, and an owned key allocated a string each time.
+    type IsaCache = HashMap<(&'static str, CodePublication, CompileLevel), Arc<TargetIsa>>;
     static CACHE: OnceLock<Mutex<IsaCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = (opt_level.to_owned(), publication, level);
+    let key = (opt_level, publication, level);
     let mut entries = cache.lock().ok()?;
     if let Some(isa) = entries.get(&key) {
         return Some(Arc::clone(isa));

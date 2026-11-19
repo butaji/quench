@@ -17,6 +17,7 @@
 
 use super::call::admit_room;
 use super::frame;
+use super::layout_offsets::{JS_STEP_BODY_TOP, JS_STEP_LANE_VALUES_TOP, JS_STEP_PLAIN_DEPTH, JS_STEP_RETURNED_PC};
 use super::region::Region;
 use super::value::{is_direct_array, is_direct_function, is_direct_object};
 use super::{word_bytes, Invocation, Passed, Stage, Step};
@@ -93,8 +94,8 @@ pub(crate) fn guard_received<S: Stage>(stage: &mut S, receiver: S::Word, miss: S
 }
 
 /// Whether `bits` names an object of any direct family (`Value::is_direct_object_family`): an
-/// ordinary object, array, function, promise or iterator. `object` is the test of the first, which
-/// the caller made.
+/// ordinary object, array, function, promise, iterator or collection. `object` is the test of the
+/// first, which the caller made.
 #[inline(always)]
 fn is_object_family<S: Stage>(stage: &mut S, bits: S::Word, object: S::Cond) -> S::Cond {
     let array = is_direct_array(stage, bits);
@@ -102,10 +103,12 @@ fn is_object_family<S: Stage>(stage: &mut S, bits: S::Word, object: S::Cond) -> 
     let family = stage.and_imm(bits, ValueLayout::HEAP_FAMILY_MASK);
     let promise = stage.eq_imm(family, ValueLayout::DIRECT_PROMISE_TAG);
     let iterator = stage.eq_imm(family, ValueLayout::DIRECT_ITERATOR_TAG);
+    let collection = stage.eq_imm(family, ValueLayout::DIRECT_COLLECTION_TAG);
     let records = stage.any(object, array);
     let others = stage.any(function, promise);
     let objects = stage.any(records, others);
-    stage.any(objects, iterator)
+    let iterators = stage.any(objects, iterator);
+    stage.any(iterators, collection)
 }
 
 /// The `this` a call binds for `receiver`. A strict callee takes any receiver as it is. A sloppy
@@ -256,6 +259,80 @@ pub(crate) fn pop_plain<S: Stage>(stage: &mut S, plain: S::Word, window: S::Word
     PlainCaller { call, registers, base }
 }
 
+/// The addresses the lane's running state lives at, from the dispatch payload: the values' top word,
+/// the plain-frame depth word (its registers word is `frame::PLAIN_REGISTERS_AT` past it), and the body
+/// table's top word. Read once where a call is admitted; every move writes through them.
+#[derive(Clone, Copy)]
+pub(crate) struct LaneTops<W> {
+    pub(crate) values_at: W,
+    pub(crate) plain_at: W,
+    pub(crate) body_top_at: W,
+}
+
+/// The lane's state addresses, from the dispatch payload.
+#[allow(dead_code)] // the b-jit stencils' call rows
+#[inline(always)]
+pub(crate) fn lane_tops<S: Stage>(stage: &mut S, payload: S::Word) -> LaneTops<S::Word> {
+    let values_at = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_LANE_VALUES_TOP as i32);
+    let plain_at = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_PLAIN_DEPTH as i32);
+    let body_top_at = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_BODY_TOP as i32);
+    LaneTops { values_at, plain_at, body_top_at }
+}
+
+/// Moves the values' top to `values`, through the word `tops` addresses.
+#[allow(dead_code)] // the b-jit stencils' call rows
+#[inline(always)]
+pub(crate) fn set_values<S: Stage>(stage: &mut S, tops: LaneTops<S::Word>, values: S::Word) {
+    stage.store_u64(Region::Frame.mutable(), tops.values_at, 0, values);
+}
+
+/// Moves the plain frames to `depth`, with the innermost window at `registers` (`PlainFrames`).
+#[allow(dead_code)] // the b-jit stencils' call rows
+#[inline(always)]
+pub(crate) fn set_plain<S: Stage>(stage: &mut S, tops: LaneTops<S::Word>, depth: S::Word, registers: S::Word) {
+    stage.store_u64(Region::Frame.mutable(), tops.plain_at, super::frame::PLAIN_DEPTH_AT as i32, depth);
+    stage.store_u64(Region::Frame.mutable(), tops.plain_at, super::frame::PLAIN_REGISTERS_AT as i32, registers);
+}
+
+/// The body table's top word moves to `depth`: one entry per plain depth (the running body of each frame).
+#[allow(dead_code)] // the b-jit stencils' call rows
+#[inline(always)]
+pub(crate) fn set_body_top<S: Stage>(stage: &mut S, tops: LaneTops<S::Word>, depth: S::Word) {
+    stage.store_u64(Region::Frame.mutable(), tops.body_top_at, 0, depth);
+}
+
+/// The header words a body frame writes below its window (the call protocol v2 context block).
+#[derive(Clone, Copy)]
+pub(crate) struct BodyHeader<W> {
+    pub(crate) call: W,
+    pub(crate) caller_registers: W,
+    pub(crate) caller_base: W,
+    pub(crate) packed: W,
+    pub(crate) callee: W,
+}
+
+/// Writes a body frame's header at `window`: each word at its `frame::CONTEXT_*` index counted down from
+/// register 0. The receiver and captures words are the caller's to write (`CONTEXT_THIS`, `CONTEXT_BODY`).
+#[allow(dead_code)] // the b-jit stencils' call rows
+#[inline(always)]
+pub(crate) fn push_body_header<S: Stage>(stage: &mut S, window: S::Word, header: BodyHeader<S::Word>) {
+    use super::frame::{CONTEXT_CALL, CONTEXT_CALLEE, CONTEXT_CALLER_BASE, CONTEXT_CALLER_REGISTERS, CONTEXT_PACKED};
+    let at = |index: usize| -((index * core::mem::size_of::<u64>()) as i32);
+    stage.store_u64(Region::Frame.mutable(), window, at(CONTEXT_CALL), header.call);
+    stage.store_u64(Region::Frame.mutable(), window, at(CONTEXT_CALLER_REGISTERS), header.caller_registers);
+    stage.store_u64(Region::Frame.mutable(), window, at(CONTEXT_CALLER_BASE), header.caller_base);
+    stage.store_u64(Region::Frame.mutable(), window, at(CONTEXT_PACKED), header.packed);
+    stage.store_u64(Region::Frame.mutable(), window, at(CONTEXT_CALLEE), header.callee);
+}
+
+/// Records `pc`, the record a raised exception unwinds from, in the dispatch payload
+/// (`JS_STEP_RETURNED_PC`) for the lane to read.
+#[allow(dead_code)] // the b-jit stencils' call rows
+#[inline(always)]
+pub(crate) fn record_raised_pc<S: Stage>(stage: &mut S, payload: S::Word, pc: S::Word) {
+    stage.store_u64(Region::Dispatch.mutable(), payload, JS_STEP_RETURNED_PC as i32, pc);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,7 +372,7 @@ mod tests {
     #[test]
     fn a_strict_callee_takes_any_receiver_and_a_sloppy_one_binds_by_the_value() {
         let mut heap = crate::heap::Heap::new();
-        let object = heap.alloc(crate::heap::Cell::Object(crate::heap::Object::new(Value::NULL)));
+        let object = heap.alloc_object(crate::heap::Object::new(Value::NULL));
         let text = heap.alloc_string("x".into());
         let global = Value::integer(99).to_bits();
         let bind = |receiver: Value, sloppy: Option<u64>| run(CallOperation::BindThis { receiver: receiver.to_bits(), sloppy });
@@ -311,7 +388,7 @@ mod tests {
     #[test]
     fn the_object_family_is_the_values_own() {
         let mut heap = crate::heap::Heap::new();
-        let object = heap.alloc(crate::heap::Cell::Object(crate::heap::Object::new(Value::NULL)));
+        let object = heap.alloc_object(crate::heap::Object::new(Value::NULL));
         let text = heap.alloc_string("x".into());
         let mut stage = Concrete::new(std::ptr::null());
         for value in [object, text, Value::UNDEFINED, Value::NULL, Value::integer(1), Value::number(1.5), Value::TRUE] {
@@ -361,3 +438,21 @@ mod tests {
         assert_eq!(crate::staged::Operation::<u64, ()>::Jump.admitted(FACTS), None);
     }
 }
+
+/// Where a call site goes on a status its call helper returns (`LaneHelper::Call`,
+/// `LaneHelper::ConstructCall`): completed with its result written, missed before any effect,
+/// or raised with the exception stashed. Any other status leaves the region with it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum HelperOutcome {
+    Completed,
+    Missed,
+    Raised,
+}
+
+/// The helper statuses a call site tests, in the order it tests them (the common one first),
+/// paired with where each goes: the one table both the helper and its call sites share.
+pub(crate) const HELPER_OUTCOMES: [(u32, HelperOutcome); 3] = [
+    (quench_bjit::call_record::LANE_CALL_COMPLETED, HelperOutcome::Completed),
+    (quench_bjit::call_record::LANE_CALL_MISSED, HelperOutcome::Missed),
+    (quench_bjit::call_record::LANE_CALL_RAISED, HelperOutcome::Raised),
+];

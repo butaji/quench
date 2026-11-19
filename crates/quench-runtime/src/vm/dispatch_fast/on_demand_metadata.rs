@@ -4,7 +4,7 @@ use super::*;
 
 impl<H: Host> Vm<H> {
     /// `LaneStack::note_site_callee` while a lane body may read the history: only the
-    /// JavaScript tiers inline a site's callees (`lane_site_targets`), so interpreted
+    /// JavaScript tiers inline a site's callees (`site_targets_in_lane`), so interpreted
     /// execution keeps no history, as V8's jitless mode allocates no feedback for an
     /// optimizing compiler it never runs (mandreel: 12.5 MB of history at its peak).
     pub(super) fn note_site_callee(&self, link: &std::cell::Cell<u16>, target: super::super::compiled::CallTarget) {
@@ -21,7 +21,7 @@ impl<H: Host> Vm<H> {
 /// every instruction of a function that may run once (mandreel's `global_init`: 614K records,
 /// 14 MB; babylonjs's module scope: 124K records, each iteration). Where a return already
 /// `retired`, only a caller that loops takes its view here; any other frame returns at its
-/// call record on the general path (`lane_frame_return`).
+/// call record on the general path (`frame_return`).
 pub(super) fn lane_completes_return<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall, frame: usize, retired: bool) -> bool {
     let vm = unsafe { vm(cx) };
     call.caller + 1 == frame
@@ -55,7 +55,7 @@ fn caller_loops<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCall) -> 
 /// A site whose caller counted past the threshold without specializing again
 /// (`LaneContext::late_settled`) counts nothing more in this run: only a count reaching the
 /// threshold acts.
-pub(super) fn lane_note_late_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, target: &ScriptCallTarget, argc: u16) {
+pub(super) fn record_late_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, target: &ScriptCallTarget, argc: u16) {
     if unsafe { (*cx).late_settled } == ip { return; }
     let vm = unsafe { vm(cx) };
     // The innermost frame's function: a native callee's frame is linked, so it is the activation's.
@@ -66,7 +66,7 @@ pub(super) fn lane_note_late_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, targ
     let Some(caller) = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view) else { return };
     if !caller.owns_record(ip) { return; }
     if caller.note_late_call() {
-        if lane_direct_callee(vm, caller, function, 0, argc, *target).is_some() { caller.respecialize(); }
+        if direct_callee_in_lane(vm, caller, function, 0, argc, *target).is_some() { caller.respecialize(); }
     } else if caller.late_calls_settled() {
         unsafe { (*cx).late_settled = ip };
     }

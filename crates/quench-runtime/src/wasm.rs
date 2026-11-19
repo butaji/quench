@@ -2,9 +2,10 @@
 //! and module validation belong to quench-wasm, not this execution core.
 
 use crate::bytecode::{
-    AtomTable, Constant, DispatchClass, Function, ImmediateLayout, Instr, Op, ProgramKind,
-    Register, ResidualProgram, WideInstruction,
+    AtomTable, Constant, Function, ImmediateLayout, Instr, Op, ProgramKind, Register,
+    ResidualProgram, WideInstruction,
 };
+use crate::staged::wasm_emit::{self, Emission, SelectorFamily};
 use crate::{Diagnostic, Engine};
 use std::rc::Rc;
 use wasmparser::{BinaryReaderError, Operator};
@@ -113,62 +114,6 @@ pub enum WasmReferenceInitializer {
     Null,
     Function(u32),
     Expression(WasmConstantExpression),
-}
-
-impl WasmReferenceInitializer {
-    fn validate(
-        &self,
-        name: &str,
-        ty: wasmparser::RefType,
-        signatures: &WasmSignatures,
-        globals: &[WasmGlobal],
-    ) -> Result<(), Diagnostic> {
-        match self {
-            Self::Null if ty.is_nullable() => Ok(()),
-            Self::Function(index)
-                if signatures.function_type_index(*index as usize).is_some_and(
-                    |actual| match ty.heap_type() {
-                        wasmparser::HeapType::FUNC => true,
-                        wasmparser::HeapType::Concrete(wasmparser::UnpackedIndex::Module(
-                            index,
-                        ))
-                        | wasmparser::HeapType::Exact(wasmparser::UnpackedIndex::Module(index)) => {
-                            signatures.matches_declaration(
-                                actual,
-                                &signatures.declarations,
-                                index,
-                                matches!(ty.heap_type(), wasmparser::HeapType::Exact(_)),
-                            )
-                        }
-                        _ => false,
-                    },
-                ) =>
-            {
-                Ok(())
-            }
-            Self::Expression(expression)
-                if signatures
-                    .declarations
-                    .callable_value_type(wasmparser::ValType::Ref(ty))
-                    .is_some_and(|target| {
-                        signatures.declarations.value_subtype(
-                            expression.value_type(),
-                            &signatures.declarations,
-                            target,
-                        )
-                    })
-                    || (ty.heap_type() == wasmparser::HeapType::FUNC
-                        && expression.produces_non_null_function()) =>
-            {
-                expression.validate(name, globals)?;
-                expression.validate_functions(name, signatures, globals)
-            }
-            _ => Err(Diagnostic::unsupported(
-                name,
-                "invalid Wasm reference initializer",
-            )),
-        }
-    }
 }
 
 /// Shared immutable module facts; a module need not contain any function.
@@ -733,9 +678,6 @@ impl Engine {
                 "too many Wasm instance bindings",
             ));
         }
-        for tag in tags {
-            tag.validate(name, types)?;
-        }
         let mut signature_pool =
             WasmSignatures::with_imports(name, imports, function_types, types)?;
         for element in elements {
@@ -751,32 +693,10 @@ impl Engine {
                     "unsupported Wasm element reference type",
                 ));
             }
-            if let WasmElementMode::Active { table, offset } = &element.mode {
-                let table = tables.get(*table as usize).ok_or_else(|| {
+            if let WasmElementMode::Active { table, .. } = &element.mode {
+                tables.get(*table as usize).ok_or_else(|| {
                     Diagnostic::unsupported(name, "Wasm element table out of bounds")
                 })?;
-                offset.validate(name, globals)?;
-                if Some(offset.value_type()) != WasmType::from_wasm(table.ty.index_type()) {
-                    return Err(Diagnostic::unsupported(
-                        name,
-                        "invalid Wasm element offset type",
-                    ));
-                }
-
-                if !types.reference_subtype(element.element_type, types, table.ty.element_type) {
-                    return Err(Diagnostic::unsupported(
-                        name,
-                        "incompatible Wasm element type",
-                    ));
-                }
-            }
-            for item in element.items.iter() {
-                item.validate(name, element.element_type, &signature_pool, globals)?;
-            }
-        }
-        for table in tables {
-            if let WasmTableInitializer::Reference(initializer) = &table.initializer {
-                initializer.validate(name, table.ty.element_type, &signature_pool, globals)?;
             }
         }
         for segment in data {
@@ -786,23 +706,10 @@ impl Engine {
                     "Wasm data segment exceeds index domain",
                 ));
             }
-            if let WasmDataMode::Active { memory, offset } = &segment.mode {
-                offset.validate(name, globals)?;
-                let memory = memories.get(*memory as usize).ok_or_else(|| {
+            if let WasmDataMode::Active { memory, .. } = &segment.mode {
+                memories.get(*memory as usize).ok_or_else(|| {
                     Diagnostic::unsupported(name, "Wasm data memory index out of bounds")
                 })?;
-                if Some(offset.value_type()) != WasmType::from_wasm(memory.ty.index_type()) {
-                    return Err(Diagnostic::unsupported(
-                        name,
-                        "invalid Wasm data offset type",
-                    ));
-                }
-            }
-        }
-        for (index, global) in globals.iter().enumerate() {
-            if let WasmGlobalInitializer::Expression(expression) = &global.initial {
-                expression.validate(name, &globals[..index])?;
-                expression.validate_functions(name, &signature_pool, &globals[..index])?;
             }
         }
         let mut import_indices: Vec<_> =
@@ -1566,7 +1473,7 @@ impl ModuleBindings<'_> {
                 if ty.is_defaultable() {
                     let slot = usize::from(params) + index;
                     lowering.load_default(0, ty)?;
-                    lowering.emit(Op::StoreLocal, 0, 0, 0, slot as u32)?;
+                    lowering.emit_emission(wasm_emit::store_local(0, slot as u16))?;
                 }
             }
         }
@@ -1575,7 +1482,7 @@ impl ModuleBindings<'_> {
             .filter_map(|(memory, register)| Some((lowering.globals.len() + memory, (*register)?)));
         let bindings: Vec<_> = global_slots.chain(memory_slots).collect();
         for (slot, register) in bindings {
-            lowering.emit(Op::WasmInstanceBinding, register, 0, 0, slot as u32)?;
+            lowering.emit_emission(wasm_emit::instance_binding(register, slot as u32))?;
         }
         plan.lower(position, &form, &mut |operator| {
             if lowering.controls.is_empty() {
@@ -1598,18 +1505,19 @@ impl ModuleBindings<'_> {
             length: params,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
-            declared_parameters: vec![].into(),
+            rare: None,
             rest: false,
             is_async: false,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
             instance_initializer: None,
+            constant_fields: Default::default(),
             super_home_atom: None,
             constructible: false,
             class_initializer: false,
             parameter_eval_arguments_error: false,
-            unaliased_arguments: false,
+            unaliased_arguments: false, rest_alias: false,
         prototype_unobservable: false,
             arguments_slot: None,
             simple_parameters: true,
@@ -1618,10 +1526,11 @@ impl ModuleBindings<'_> {
             local_atoms: vec![].into(),
             environment_atoms: vec![].into(),
             selective_capture_slots: None,
+            declared_functions: Default::default(),
+            declared_captures: Default::default(),
             local_registers: Vec::new().into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),
@@ -1629,17 +1538,11 @@ impl ModuleBindings<'_> {
             code: lowering.code,
             wide: lowering.wide,
             registers: lowering.registers,
-            dispatch: DispatchClass::General,
+            dispatch: Default::default(),
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
-            live_parameter_reflection: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: lowering.handlers.into(),
             register_roots: Default::default(),
             undefined_register: None,
@@ -1649,6 +1552,13 @@ impl ModuleBindings<'_> {
         // The lowering grew the code by doubling; the module keeps it for its life.
         let mut function = function;
         function.shrink_to_fit();
+        // i64 values no boxed use reaches live in their registers as machine words: their ops
+        // then run as the C op plus dispatch and decode (`compile::liveness::raw_webs`).
+        let constant_neutral = |index: usize| {
+            matches!(lowering_constants.get(settled, index), Some(Constant::WasmBits64(bits)) if crate::Value::from_bits64(*bits).is_some())
+        };
+        let returns_wide = matches!(signature.results.as_slice(), [WasmType::I64 | WasmType::F64]);
+        crate::compile::liveness::raw_webs::use_raw_forms(&mut function, &constant_neutral, returns_wide);
         *constants = lowering_constants;
         Ok(function)
     }
@@ -1740,7 +1650,7 @@ const MAX_REGISTER_LOCALS: usize = 4096;
 /// opcode; the remaining families carry their operator as a selector.
 enum NumericLowering {
     I32Binary(I32BinaryOperator),
-    Selector(Op, u32),
+    Selector(SelectorFamily, u32),
 }
 
 fn numeric_operator(operator: &Operator<'_>) -> Option<NumericLowering> {
@@ -1752,21 +1662,22 @@ fn numeric_operator(operator: &Operator<'_>) -> Option<NumericLowering> {
         })
 }
 
-fn selector_numeric_operator(operator: &Operator<'_>) -> Option<(Op, u32)> {
+fn selector_numeric_operator(operator: &Operator<'_>) -> Option<(SelectorFamily, u32)> {
     I32UnaryOperator::from_wasm(operator)
-        .map(|op| (Op::WasmI32Unary, op as u32))
-        .or_else(|| I64BinaryOperator::from_wasm(operator).map(|op| (Op::WasmI64Binary, op as u32)))
-        .or_else(|| I64UnaryOperator::from_wasm(operator).map(|op| (Op::WasmI64Unary, op as u32)))
+        .map(|op| (SelectorFamily::I32Unary, op as u32))
+        .or_else(|| I64BinaryOperator::from_wasm(operator).map(|op| (SelectorFamily::I64Binary, op as u32)))
+        .or_else(|| I64UnaryOperator::from_wasm(operator).map(|op| (SelectorFamily::I64Unary, op as u32)))
         .or_else(|| {
             ScalarConversionOperator::from_wasm(operator)
-                .map(|op| (Op::WasmScalarConvert, op as u32))
+                .map(|op| (SelectorFamily::ScalarConvert, op as u32))
         })
-        .or_else(|| F32BinaryOperator::from_wasm(operator).map(|op| (Op::WasmF32Binary, op as u32)))
-        .or_else(|| F32UnaryOperator::from_wasm(operator).map(|op| (Op::WasmF32Unary, op as u32)))
-        .or_else(|| F64BinaryOperator::from_wasm(operator).map(|op| (Op::WasmF64Binary, op as u32)))
-        .or_else(|| F64UnaryOperator::from_wasm(operator).map(|op| (Op::WasmF64Unary, op as u32)))
+        .or_else(|| F32BinaryOperator::from_wasm(operator).map(|op| (SelectorFamily::F32Binary, op as u32)))
+        .or_else(|| F32UnaryOperator::from_wasm(operator).map(|op| (SelectorFamily::F32Unary, op as u32)))
+        .or_else(|| F64BinaryOperator::from_wasm(operator).map(|op| (SelectorFamily::F64Binary, op as u32)))
+        .or_else(|| F64UnaryOperator::from_wasm(operator).map(|op| (SelectorFamily::F64Unary, op as u32)))
 }
 
+#[derive(Clone, Copy)]
 enum WasmCallTarget {
     Known(u16),
     Reference(Register),
@@ -1798,6 +1709,17 @@ impl Lowering<'_> {
         };
         self.code.push(instruction);
         Ok(())
+    }
+
+    /// Emits `instruction` through the lowering's one instruction buffer (`Lowering::emit`).
+    fn emit_emission(&mut self, instruction: Emission) -> Result<(), Diagnostic> {
+        self.emit(
+            instruction.op,
+            instruction.a,
+            instruction.b,
+            instruction.c,
+            instruction.imm,
+        )
     }
 
     fn push(&mut self) -> Result<Register, Diagnostic> {
@@ -1888,7 +1810,7 @@ impl Lowering<'_> {
         for position in 0..self.aliases.len() {
             match self.aliases[position].take() {
                 Some(Alias::Local(local)) => {
-                    self.emit(Op::Move, position as Register, local, 0, 0)?
+                    self.emit_emission(wasm_emit::move_register(position as Register, local))?
                 }
                 Some(Alias::I32(value)) => self.load_i32(position as Register, value)?,
                 Some(Alias::I64(value)) => self.load_scalar(position as Register, WasmValue::I64(i64::from(value)))?,
@@ -1936,7 +1858,7 @@ impl Lowering<'_> {
         for position in 0..usize::from(self.depth).min(self.aliases.len()) {
             if self.aliases[position] == Some(Alias::Local(local)) {
                 self.aliases[position] = None;
-                self.emit(Op::Move, position as Register, local, 0, 0)?;
+                self.emit_emission(wasm_emit::move_register(position as Register, local))?;
             }
         }
         Ok(())
@@ -2003,7 +1925,7 @@ impl Lowering<'_> {
                 instruction.imm(),
             );
         }
-        self.emit(Op::Move, local, value, 0, 0)
+        self.emit_emission(wasm_emit::move_register(local, value))
     }
 
     /// An i32 operator in its first-class form; a constant right operand
@@ -2025,7 +1947,7 @@ impl Lowering<'_> {
     /// is the stack value the mask consumes: its source and amount.
     fn take_bit_field_shift(&mut self, shifted: Register) -> Option<(Register, u16)> {
         let (_, shift) = self.fusable_last()?;
-        if shift.op() != I32BinaryOperator::ShiftRightUnsigned.immediate_op()
+        if !wasm_emit::is_immediate_of(shift, I32BinaryOperator::ShiftRightUnsigned)
             || shift.a() != shifted
             || self.is_local_register(shifted)
         {
@@ -2040,29 +1962,33 @@ impl Lowering<'_> {
     }
 
     fn i32_binary(&mut self, operator: I32BinaryOperator) -> Result<(), Diagnostic> {
-        let (op, right, immediate) = match self.top_i32_constant() {
-            Some(value) => {
+        let constant = self.top_i32_constant();
+        let right = match constant {
+            Some(_) => {
                 let position = self.pop_position()?;
                 self.take_alias(position);
-                (operator.immediate_op(), 0, value as u32)
+                0
             }
-            None => (operator.register_op(), self.pop()?, 0),
+            None => self.pop()?,
         };
         let left = self.pop()?;
         let result = self.push()?;
-        let bit_field = (op == I32BinaryOperator::And.immediate_op())
-            .then(|| self.take_bit_field_shift(left))
-            .flatten();
-        match bit_field {
-            Some((source, amount)) => self.emit(
-                Op::WasmI32ShiftRightUnsignedAndImmediate,
-                result,
-                source,
-                amount,
-                immediate,
-            )?,
-            None => self.emit(op, result, left, right, immediate)?,
-        }
+        let emission = match constant {
+            Some(value) => {
+                // A logical shift under a constant mask fuses into one bit-field extract.
+                let bit_field = (operator == I32BinaryOperator::And)
+                    .then(|| self.take_bit_field_shift(left))
+                    .flatten();
+                match bit_field {
+                    Some((source, amount)) => {
+                        wasm_emit::bit_field_extract(result, source, amount, value as u32)
+                    }
+                    None => wasm_emit::i32_binary_immediate(operator, result, left, value as u32),
+                }
+            }
+            None => wasm_emit::i32_binary(operator, result, left, right),
+        };
+        self.emit_emission(emission)?;
         self.produced(result);
         Ok(())
     }
@@ -2074,7 +2000,7 @@ impl Lowering<'_> {
         ty: wasmparser::ValType,
     ) -> Result<(), Diagnostic> {
         let constant = self.default_constant(ty)?;
-        self.emit(Op::LoadConst, result, 0, 0, constant)
+        self.emit_emission(wasm_emit::load_constant(result, constant))
     }
 
     fn default_constant(&mut self, ty: wasmparser::ValType) -> Result<u32, Diagnostic> {
@@ -2119,14 +2045,14 @@ impl Lowering<'_> {
                 }
                 (_, constant) => {
                     if let Some((start, count, value)) = run {
-                        self.emit(Op::WasmFillRegisters, 0, start, count, value)?;
+                        self.emit_emission(wasm_emit::fill_registers(start, count, value))?;
                     }
                     run = constant.map(|constant| (register, 1, constant));
                 }
             }
         }
         if let Some((start, count, value)) = run {
-            self.emit(Op::WasmFillRegisters, 0, start, count, value)?;
+            self.emit_emission(wasm_emit::fill_registers(start, count, value))?;
         }
         Ok(())
     }
@@ -2150,7 +2076,7 @@ impl Lowering<'_> {
 
     fn load_scalar(&mut self, result: Register, value: WasmValue) -> Result<(), Diagnostic> {
         let constant = self.scalar_constant(value)?;
-        self.emit(Op::LoadConst, result, 0, 0, constant)
+        self.emit_emission(wasm_emit::load_constant(result, constant))
     }
 
     fn emit_wasm_call(
@@ -2174,13 +2100,13 @@ impl Lowering<'_> {
                 "Wasm call exceeds argument window layout",
             ));
         }
-        let (op, callee, receiver) = match target {
-            WasmCallTarget::Known(function) => (Op::CallKnown, function, 0),
+        let receiver = match target {
+            WasmCallTarget::Known(_) => 0,
             WasmCallTarget::Reference(reference) => {
                 self.depth = self.depth.max(reference + 1);
                 let receiver = self.push()?;
-                self.emit(Op::LoadConst, receiver, 0, 0, VOID_RESULT_CONSTANT)?;
-                (Op::Call, reference, receiver)
+                self.emit_emission(wasm_emit::load_constant(receiver, VOID_RESULT_CONSTANT))?;
+                receiver
             }
         };
         self.depth = base;
@@ -2190,7 +2116,15 @@ impl Lowering<'_> {
         } else {
             result
         };
-        self.emit(op, destination, callee, receiver, immediate)?;
+        let call = match target {
+            WasmCallTarget::Known(function) => {
+                wasm_emit::call_known(destination, function, immediate)
+            }
+            WasmCallTarget::Reference(reference) => {
+                wasm_emit::call_through(destination, reference, receiver, immediate)
+            }
+        };
+        self.emit_emission(call)?;
         if tail {
             self.make_dead();
             return Ok(());
@@ -2201,17 +2135,11 @@ impl Lowering<'_> {
         }
         if usize::from(results) > SCALAR_RETURN_ARITY {
             let bundle = self.push()?;
-            self.emit(Op::Move, bundle, result, 0, 0)?;
+            self.emit_emission(wasm_emit::move_register(bundle, result))?;
             let index = self.push()?;
             for offset in 0..results {
                 self.load_scalar(index, WasmValue::I32(i32::from(offset)))?;
-                self.emit(
-                    Op::GetIndex,
-                    base + offset,
-                    crate::bytecode::Operand::register(bundle).0,
-                    crate::bytecode::Operand::register(index).0,
-                    0,
-                )?;
+                self.emit_emission(wasm_emit::get_index(base + offset, bundle, index))?;
             }
             self.depth = base + results;
         }
@@ -2246,7 +2174,7 @@ impl Lowering<'_> {
             if self.path == Reachability::Live {
                 let input = self.pop()?;
                 let result = self.push()?;
-                self.emit(Op::WasmI31, result, input, 0, op as u32)?;
+                self.emit_emission(wasm_emit::i31_operation(result, input, op))?;
             }
             return Ok(());
         }
@@ -2254,32 +2182,25 @@ impl Lowering<'_> {
             if self.path == Reachability::Dead {
                 return Ok(());
             }
-            let (op, selector) = match numeric {
+            let (family, selector) = match numeric {
                 NumericLowering::I32Binary(operator) => return self.i32_binary(operator),
-                NumericLowering::Selector(op, selector) => (op, selector),
+                NumericLowering::Selector(family, selector) => (family, selector),
             };
-            if op == Op::WasmI64Binary
+            if family == SelectorFamily::I64Binary
                 && let Some(value) = self.top_i64_constant()
             {
                 let position = self.pop_position()?;
                 self.take_alias(position);
                 let left = self.pop()?;
                 let result = self.push()?;
-                self.emit(Op::WasmI64BinaryImmediate, result, left, value as u16, selector)?;
+                self.emit_emission(wasm_emit::i64_binary_immediate(result, left, value, selector))?;
                 self.produced(result);
                 return Ok(());
             }
-            let right = if op
-                .field_layout(crate::bytecode::InstructionField::C)
-                .is_register_field()
-            {
-                self.pop()?
-            } else {
-                0
-            };
+            let right = if family.takes_right() { self.pop()? } else { 0 };
             let left = self.pop()?;
             let result = self.push()?;
-            self.emit(op, result, left, right, selector)?;
+            self.emit_emission(family.emit(result, left, right, selector))?;
             self.produced(result);
             return Ok(());
         }
@@ -2332,10 +2253,10 @@ impl Lowering<'_> {
                 if let Some(binding) = self.global_register(global_index) {
                     if write {
                         let value = self.pop()?;
-                        return self.emit(Op::WasmGlobalSet, value, binding, 0, 0);
+                        return self.emit_emission(wasm_emit::global_set(value, binding));
                     }
                     let result = self.push()?;
-                    self.emit(Op::WasmGlobalGet, result, binding, 0, 0)?;
+                    self.emit_emission(wasm_emit::global_get(result, binding))?;
                     self.produced(result);
                     return Ok(());
                 }
@@ -2346,17 +2267,12 @@ impl Lowering<'_> {
                     self.depth += 1;
                 }
                 let binding = self.instance_binding(global_index as usize)?;
-                self.emit(
-                    if write {
-                        Op::WasmGlobalSet
-                    } else {
-                        Op::WasmGlobalGet
-                    },
-                    register,
-                    binding,
-                    0,
-                    0,
-                )?;
+                let emission = if write {
+                    wasm_emit::global_set(register, binding)
+                } else {
+                    wasm_emit::global_get(register, binding)
+                };
+                self.emit_emission(emission)?;
                 self.depth = depth;
                 Ok(())
             }
@@ -2382,17 +2298,19 @@ impl Lowering<'_> {
                     }
                     return Ok(());
                 }
-                let (op, register) = match operator {
-                    Operator::LocalGet { .. } => (Op::LoadLocal, self.push()?),
-                    Operator::LocalSet { .. } => (Op::StoreLocal, self.pop()?),
+                // The bound above keeps the local index within the local count, a u16.
+                let slot = local_index as u16;
+                let emission = match operator {
+                    Operator::LocalGet { .. } => wasm_emit::load_local(self.push()?, slot),
+                    Operator::LocalSet { .. } => wasm_emit::store_local(self.pop()?, slot),
                     Operator::LocalTee { .. } => {
                         let register = self.pop()?;
                         self.push()?;
-                        (Op::StoreLocal, register)
+                        wasm_emit::store_local(register, slot)
                     }
                     _ => unreachable!(),
                 };
-                self.emit(op, register, 0, 0, local_index)
+                self.emit_emission(emission)
             }
             Operator::Call { function_index } | Operator::ReturnCall { function_index } => {
                 let signature = self
@@ -2419,7 +2337,7 @@ impl Lowering<'_> {
                     })?),
                     None => {
                         let reference = self.push()?;
-                        self.emit(Op::WasmRefFunc, reference, 0, 0, function_index)?;
+                        self.emit_emission(wasm_emit::ref_func(reference, function_index))?;
                         // The imported target is scratch, outside the argument window.
                         self.depth -= 1;
                         WasmCallTarget::Reference(reference)

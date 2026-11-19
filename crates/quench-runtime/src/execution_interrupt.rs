@@ -1,13 +1,50 @@
 //! Owned execution cancellation. Neither the handle nor native wakeups carry a Vm.
 use std::sync::{
     Arc, Mutex, Weak,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
 };
 
-/// The lane floor (`ExecutionInterrupt::lane_floor`) that sends a run's next safepoint jump
+/// The lane floor (`ExecutionInterrupt::floor_in_lane`) that sends a run's next safepoint jump
 /// through its slow path: no stack address lies at or above it.
 pub(crate) const LANE_FLOOR_RAISED: usize = usize::MAX;
 type NativeWaker = dyn Fn() + Send + Sync;
+
+/// The process-wide attention byte compiled code polls first: nonzero while any state's attention
+/// flag is raised. It may read nonzero when no run needs attention (the poll then reads the run's
+/// own flag), but never zero while a run's flag is raised.
+static ATTENTION: AtomicU8 = AtomicU8::new(0);
+/// How many states have their attention flag raised; `ATTENTION` is zero only when it is zero.
+static ATTENTION_STATES: AtomicUsize = AtomicUsize::new(0);
+
+/// The address of the process-wide attention byte, which a b-jit poll reads before its run's flag.
+pub(crate) fn attention_address() -> u64 {
+    std::ptr::addr_of!(ATTENTION) as usize as u64
+}
+
+/// Raises `flag`, counting it among the raised states and setting the process-wide byte.
+fn raise(flag: &AtomicBool) {
+    if !flag.swap(true, Ordering::SeqCst) {
+        ATTENTION_STATES.fetch_add(1, Ordering::SeqCst);
+    }
+    ATTENTION.store(1, Ordering::SeqCst);
+}
+
+/// Lowers `flag`; the process-wide byte falls when no state is raised. A state raised after the
+/// count fell to zero stores the byte again after its own count, so the byte is never lost.
+fn lower(flag: &AtomicBool) {
+    if flag.swap(false, Ordering::SeqCst) && ATTENTION_STATES.fetch_sub(1, Ordering::SeqCst) == 1 {
+        ATTENTION.store(0, Ordering::SeqCst);
+        if ATTENTION_STATES.load(Ordering::SeqCst) != 0 {
+            ATTENTION.store(1, Ordering::SeqCst);
+        }
+    }
+}
+
+impl Drop for State {
+    fn drop(&mut self) {
+        lower(&self.attention);
+    }
+}
 #[derive(Default)]
 struct State {
     requested: AtomicBool,
@@ -39,20 +76,20 @@ impl PollPage {
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
     const HINT: usize = 1 << 29;
 
-    #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
+    #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
     fn new() -> Option<Self> {
         // The protection granule is a host property (16 KiB on Apple Silicon).
         let bytes = usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).ok()?;
         if bytes == 0 { return None; }
-        #[cfg(target_os = "linux")]
+        #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
         let hint = Self::HINT as *mut libc::c_void;
-        #[cfg(target_os = "macos")]
+        #[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
         let hint = std::ptr::null_mut();
         // Code addresses the page by a 32-bit displacement: every VM's must lie low, also once
         // the hint is taken (`MAP_32BIT`).
-        #[cfg(target_os = "linux")]
+        #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
         let low = libc::MAP_32BIT;
-        #[cfg(target_os = "macos")]
+        #[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
         let low = 0;
         // SAFETY: an anonymous private read-only page; the result is checked.
         let pointer = unsafe {
@@ -72,19 +109,19 @@ impl PollPage {
             address: pointer as usize,
             bytes,
         };
-        #[cfg(target_os = "linux")]
+        #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
         if page.address + page.bytes > i32::MAX as usize { return None; }
         Some(page)
     }
 
-    #[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos"))))]
+    #[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos"))))]
     fn new() -> Option<Self> {
         None
     }
 
     /// Makes every later read fault; idempotent.
     fn close(&self) {
-        #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
+        #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
         // SAFETY: the page this value maps.
         unsafe {
             let changed = libc::mprotect(
@@ -102,7 +139,7 @@ impl PollPage {
 
 impl Drop for PollPage {
     fn drop(&mut self) {
-        #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
+        #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
         // SAFETY: the page this value maps; no compiled code of its VM runs any more.
         unsafe {
             libc::munmap(self.address as *mut libc::c_void, self.bytes);
@@ -126,7 +163,7 @@ impl ExecutionInterrupt {
         }
         // Either this request sees the poll page or the page's creation sees the request.
         std::sync::atomic::fence(Ordering::SeqCst);
-        self.state.attention.store(true, Ordering::SeqCst);
+        raise(&self.state.attention);
         // Either the running lane sees the raised floor or its entry sees the request
         // (`dispatch_fast`'s `run_fast_lane`).
         self.state.lane_floor.store(LANE_FLOOR_RAISED, Ordering::SeqCst);
@@ -151,7 +188,7 @@ impl ExecutionInterrupt {
     /// dispatch to the body that has published.
     pub(crate) fn request_tier_up(&self) {
         self.state.tier_up.store(true, Ordering::SeqCst);
-        self.state.attention.store(true, Ordering::SeqCst);
+        raise(&self.state.attention);
     }
 
     /// Whether a tier-up request is raised and not yet cleared by a header dispatch.
@@ -159,9 +196,10 @@ impl ExecutionInterrupt {
         self.state.tier_up.load(Ordering::Acquire)
     }
 
-    /// Clears a raised tier-up request at a loop header's dispatch.
+    /// Clears a raised tier-up request at a loop header's dispatch. The common case, no request
+    /// raised, is one plain load, not a locked read-modify-write per backward jump.
     pub(crate) fn clear_tier_up(&self) {
-        if self.state.tier_up.swap(false, Ordering::SeqCst) {
+        if self.state.tier_up.load(Ordering::Acquire) && self.state.tier_up.swap(false, Ordering::SeqCst) {
             self.settle_attention();
         }
     }
@@ -169,9 +207,9 @@ impl ExecutionInterrupt {
     /// Lowers the polled byte unless a request still holds it: a request that lands between the
     /// store and the re-read sees the lowered byte and raises it again.
     fn settle_attention(&self) {
-        self.state.attention.store(false, Ordering::SeqCst);
+        lower(&self.state.attention);
         if self.state.requested.load(Ordering::SeqCst) || self.state.tier_up.load(Ordering::SeqCst) {
-            self.state.attention.store(true, Ordering::SeqCst);
+            raise(&self.state.attention);
         }
     }
 
@@ -180,7 +218,7 @@ impl ExecutionInterrupt {
         self.state.requested.load(Ordering::Acquire)
     }
     /// The owner's lane floor, which lives as long as this handle's state.
-    pub(crate) fn lane_floor(&self) -> &AtomicUsize {
+    pub(crate) fn floor_in_lane(&self) -> &AtomicUsize {
         &self.state.lane_floor
     }
     /// Register a native, idempotent cancellation wakeup for a blocked operation.

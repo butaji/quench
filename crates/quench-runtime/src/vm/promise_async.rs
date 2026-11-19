@@ -1,11 +1,11 @@
 use super::activation::{Completion, Continuation};
-use super::promise::{PromiseReaction, PromiseState};
+use super::promise::PromiseState;
 use super::*;
 use crate::heap::{AwaitKind, AwaitRole, AwaitState};
 
 /// What an await reaction resumes with, read from its `AwaitState`.
 #[derive(Clone, Copy, Debug)]
-struct AwaitResume {
+pub(in crate::vm) struct AwaitResume {
     /// The spent state itself, whose reaction is running: the activation's next await
     /// suspends into it again (`Vm::await_again`). `None` for the run of an async generator's
     /// request, which awaits in a state of its own.
@@ -86,41 +86,13 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    /// Settles `promise`, the result of an async call, by the outcome of its first run: a return
-    /// resolves it, an await suspends the frame into a continuation resumed when the awaited value
+    /// Settles `promise`, the result of an async call, by the outcome of its first run, as any
+    /// async activation's stop settles (`Vm::settle_stop`): a return resolves it, an await
+    /// suspends the frame its outcome carries into a continuation resumed when the awaited value
     /// settles.
     fn settle_async_call(&mut self, p: &ResidualProgram, promise: Value, outcome: super::FrameOutcome) -> Result<(), JsError> {
-        match outcome {
-            super::FrameOutcome::Complete(value)
-            | super::FrameOutcome::ConstructComplete { value, .. } => {
-                self.promise_resolve_value(p, promise, value)?
-            }
-            super::FrameOutcome::Await {
-                value,
-                destination,
-                frame: Some(frame),
-            } => {
-                let continuation = self.suspend_activation(
-                    frame,
-                    Completion::Await(value),
-                    Some(destination),
-                    promise,
-                );
-                self.enqueue_async_resume(p, AwaitKind::function(continuation), promise, value)?;
-            }
-            super::FrameOutcome::Await { frame: None, .. } => {
-                return Err(JsError("async frame lost at suspension".into()));
-            }
-            super::FrameOutcome::Yield { .. } => {
-                return Err(JsError("yield is not valid in an async function".into()));
-            }
-            super::FrameOutcome::ParameterInitializationComplete => {
-                return Err(JsError(
-                    "unexpected generator parameter initialization boundary".into(),
-                ));
-            }
-        }
-        Ok(())
+        let resume = AwaitResume { state: None, promise, role: AwaitRole::AsyncFunction, rejected: false };
+        self.settle_stop(p, StopOwner::Async(resume), None, Ok(outcome)).map(drop)
     }
 
     /// Starts the body of an async root, a module with a top-level `await`, as a job over its
@@ -143,7 +115,12 @@ impl<H: Host> Vm<H> {
         let continuation = Continuation::suspend(frame, Completion::Await(Value::UNDEFINED), None, promise);
         let kind = AwaitKind::function(continuation);
         let state = self.heap.alloc_await_state(AwaitState::arm(kind, self.realm.globals, promise));
-        self.with_call_roots([state], |vm| vm.resume_await(p, state, false, Value::UNDEFINED)).map(drop)
+        // A due collection runs first, where none of the body is on the stack (`resume_await`).
+        self.with_call_roots([state], |vm| {
+            vm.maybe_collect(p);
+            vm.resume_await(p, state, false, Value::UNDEFINED)
+        })
+        .map(drop)
     }
 
     /// `call_user_maybe_async` of async function `id` of `p` that a lane run calls: its frame
@@ -170,7 +147,7 @@ impl<H: Host> Vm<H> {
             };
             let continuation = Continuation::suspend(frame, Completion::Await(Value::UNDEFINED), None, promise);
             let kind = AwaitKind::function(continuation);
-            let state = vm.heap.alloc_await_state(AwaitState::arm(kind, vm.realm.globals, promise));
+            let state = vm.armed_await_state(kind, promise);
             vm.with_call_roots([state], |vm| vm.start_await_job(p, state))?;
             Ok(promise)
         })
@@ -197,6 +174,21 @@ impl<H: Host> Vm<H> {
             let promise = self.promise_object().expect("a promise without lifecycle hooks runs no guest code");
             self.heap.root(promise)
         })
+    }
+
+    /// The promise of a settling lane call (`LaneStack::settling`) whose activation stops now,
+    /// taken off its entry `root`: the rooted one, unrooted, or one made now for a call that
+    /// deferred it to its awaiting caller, as `settling_root` makes it but never rooted.
+    ///
+    /// The root `settling_root` would push lasted only until `release_settled_call_root` popped
+    /// it again, with nothing between: making the promise without lifecycle hooks, which
+    /// settling calls exclude, runs no guest code and collects nothing, so the caller holds it
+    /// as `release_settled_call_root` would have handed it back.
+    pub(super) fn settling_promise(&mut self, root: Option<crate::heap::RootId>) -> Value {
+        match root {
+            Some(root) => self.release_settled_call_root(root),
+            None => self.promise_object().expect("a promise without lifecycle hooks runs no guest code"),
+        }
     }
 
     /// The promise an async call pushed in place settles (`PendingGeneralCall::completion`),
@@ -270,11 +262,76 @@ impl<H: Host> Vm<H> {
             AwaitKind::AsyncGeneratorAwait { generator }
             | AwaitKind::AsyncGeneratorYield { generator } => Some(*generator),
         };
-        let state = self.heap.alloc_await_state(AwaitState::arm(kind, self.realm.globals, promise));
-        // Host lifecycle observers can run before a reaction holds the state.
-        self.with_call_roots([state, source], |vm| {
-            vm.attach_await_reactions(p, state, promise, generator, source)
-        })
+        let state = self.armed_await_state(kind, promise);
+        self.attach_await(p, state, promise, generator, source)
+    }
+
+    /// `attach_await_reactions` of `state`, the await state armed for an await of `source`,
+    /// with the two call roots only a host that observes promise lifecycles needs: its
+    /// observers can run before a reaction holds the state.
+    ///
+    /// Without one, nothing between here and the installed reaction allocates on the heap,
+    /// collects or runs guest code: `attach_await_reactions` materializes no promise and goes
+    /// straight to `attach_promise_reaction`, which marks the source observed, captures the
+    /// host's job context (a host call that sees no value), and pushes the reaction onto the
+    /// source's record or enqueues its job; the error of a non-promise object source is a Rust
+    /// string. So `state` and `source`, which the caller holds, stay live and unmoved without
+    /// the push and pop of the roots.
+    #[inline(always)]
+    fn attach_await(
+        &mut self,
+        p: &ResidualProgram,
+        state: Value,
+        promise: Value,
+        generator: Option<Value>,
+        source: Value,
+    ) -> Result<(), JsError> {
+        if !self.host.observes_promise_lifecycle() {
+            return self.attach_promise_reaction(p, source, state, state, Value::UNDEFINED);
+        }
+        self.with_call_roots([state, source], |vm| vm.attach_await_reactions(p, state, promise, generator, source))
+    }
+
+    /// An await state armed with `kind` in the current realm, settling `promise`: the spare
+    /// state (`spare_await_state`) where one waits, armed anew as `await_again` arms a spent
+    /// one, else a fresh one. The spare is spent and no reaction, job or continuation names
+    /// it (`keep_spare_await_state`), so arming it is indistinguishable from allocating.
+    fn armed_await_state(&mut self, kind: AwaitKind, promise: Value) -> Value {
+        let realm = self.realm.globals;
+        let spare = std::mem::replace(&mut self.spare_await_state, Value::UNDEFINED);
+        if !spare.is_undefined()
+            && let Some(state) = self.heap.await_state_mut(spare)
+        {
+            debug_assert!(matches!(state, AwaitState::Spent), "only a spent await state is kept spare");
+            *state = AwaitState::arm(kind, realm, promise);
+            return spare;
+        }
+        self.heap.alloc_await_state(AwaitState::arm(kind, realm, promise))
+    }
+
+    /// Keeps `state`, the await state of an async generator's `yield` whose fulfilled reaction
+    /// is running and has spent it (`resume_awaited`), as the spare the next await arms
+    /// (`armed_await_state`) instead of allocating, where no spare waits yet.
+    ///
+    /// Nothing names the state any more: `attach_await_reactions` made it both handlers of
+    /// one reaction, the one whose job is running, which reads it no further
+    /// (`run_promise_reaction` settles no capability for an await); the yield's frame stays
+    /// parked in its generator's record, not in the state; and the job's call roots, which
+    /// hold it until the job ends, only keep it alive. A host that observes promise lifecycles
+    /// keeps its fresh states, which its resources may be tied to.
+    pub(super) fn keep_spare_await_state(&mut self, state: Value) {
+        if self.spare_await_state.is_undefined()
+            && !self.host.observes_promise_lifecycle()
+            && self.heap.await_state(state).is_some_and(|state| matches!(state, AwaitState::Spent))
+        {
+            self.spare_await_state = state;
+        }
+    }
+
+    /// Lets the spare await state go (`spare_await_state`), so the collection before a
+    /// snapshot frees it: a snapshot holds no await state.
+    pub(crate) fn forget_spare_await_state(&mut self) {
+        self.spare_await_state = Value::UNDEFINED;
     }
 
     /// `enqueue_async_resume` of an activation that awaits again from the reaction of its last
@@ -296,12 +353,7 @@ impl<H: Host> Vm<H> {
         let state = self.heap.await_state_mut(spent).expect("a running await reaction keeps its state");
         debug_assert!(matches!(state, AwaitState::Spent), "an await state re-arms only once spent");
         *state = AwaitState::arm(kind, realm, resume.promise);
-        let roots = self.active_call_roots.len();
-        self.active_call_roots.push(spent);
-        self.active_call_roots.push(source);
-        let attached = self.attach_await_reactions(p, spent, resume.promise, resume.role.generator(), source);
-        self.active_call_roots.truncate(roots);
-        attached
+        self.attach_await(p, spent, resume.promise, resume.role.generator(), source)
     }
 
     fn attach_await_reactions(
@@ -317,9 +369,8 @@ impl<H: Host> Vm<H> {
             && !self.is_promise(source)
             && !self.is_object_like(source)
         {
-            self.with_call_roots([Some(source), Some(promise), generator].into_iter().flatten(), |vm| {
-                let parent = vm.promise_record(promise).and_then(|record| record.host_context().get());
-                let awaited = vm.promise_object_with_parent(parent)?;
+            self.with_call_roots([source, promise, generator.unwrap_or(Value::UNDEFINED)], |vm| {
+                let awaited = vm.fresh_derived_promise(promise)?;
                 vm.with_call_roots([awaited], |vm| vm.promise_resolve_value(p, awaited, source))?;
                 Ok(awaited)
             })?
@@ -330,40 +381,18 @@ impl<H: Host> Vm<H> {
         // observation, even though the continuation consumes no result value.
         // The observer read above stands: without one, nothing above ran guest code.
         let next = if observes {
-            self.with_call_roots([source], |vm| {
-                vm.promise_object_with_parent(
-                    vm.promise_record(source).and_then(|record| record.host_context().get()),
-                )
-            })?
+            self.with_call_roots([source], |vm| vm.fresh_derived_promise(source))?
         } else {
             Value::UNDEFINED
         };
-        // Init observers can settle the source reentrantly; read its state only
-        // after creating the reaction's observable resource.
-        // `source` is a Promise, or a primitive standing for the fulfilled one an `await`
-        // never materializes.
-        let (source_state, result) = match self.promise_record(source) {
-            Some(record) => (record.state(), record.result()),
-            None if !self.is_object_like(source) => (PromiseState::Fulfilled, source),
-            None => return Err(JsError("await source is not a Promise".into())),
-        };
-        self.observe_promise_rejection(source);
-        let reaction = PromiseReaction {
-            on_fulfilled: state,
-            on_rejected: state,
-            next,
-            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context().get())).into(),
-        };
-        if source_state == PromiseState::Pending {
-            self.promise_record_mut(source)
-                .expect("await source Promise record exists")
-                .push_reaction(reaction);
-        } else {
-            self.enqueue_promise_reaction(p, reaction, source_state, result);
-        }
-        Ok(())
+        // Init observers can settle the source reentrantly: the reaction reads its state
+        // only once the reaction's observable resource exists.
+        self.attach_promise_reaction(p, source, state, state, next)
     }
 }
 
+mod job_chain;
 mod job_resume;
+mod requests;
 mod settle;
+pub(in crate::vm) use settle::StopOwner;

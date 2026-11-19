@@ -1,3 +1,4 @@
+use super::native_rows::Holder;
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::object_keys::EnumerableOwnPropertyKind;
 use super::object_symbols::PropertyCopyKind;
@@ -14,7 +15,7 @@ impl<H: Host> Vm<H> {
         if !proto.is_null() && self.object_data(proto).is_none() && !self.is_wasm_gc_object(proto) {
             return None;
         }
-        Some(self.heap.alloc(Cell::Object(Self::empty_object(proto))))
+        Some(self.heap.alloc_object(Self::empty_object(proto)))
     }
 
     pub(super) fn intrinsic_builtin_prototype(&mut self, native: Native) -> Value {
@@ -211,7 +212,8 @@ impl<H: Host> Vm<H> {
                 Some(Cell::Proxy { .. }) if proxy_array => "Array",
                 Some(Cell::Proxy { .. }) if self.is_function(value) => "Function",
                 _ if self.heap.is_string(value)  => "String",
-                Some(Cell::BigInt(_) | Cell::Symbol(_)) => "Object",
+                Some(Cell::BigInt(_)) => "Object",
+                _ if self.heap.is_symbol(value) => "Object",
                 Some(Cell::Date { .. }) => "Date",
                 Some(Cell::RegExp { .. }) => "RegExp",
                 Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
@@ -264,6 +266,14 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        // The plain body answers when every copy is an ordinary data copy; it declines before
+        // any guest code could observe a difference, so only the spec slow tail is left below.
+        // A fast call that already declined (`declined_fast`) is not tried again.
+        if self.declined_fast.take() != Some(Native::ObjectAssign)
+            && let Some(target) = self.plain_object_assign(args)
+        {
+            return Ok(target);
+        }
         // The arguments and the target stay reachable on the call roots while sources' getters
         // and the target's setters run.
         self.with_call_roots(args.iter().copied(), |vm| {
@@ -427,58 +437,13 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    pub(super) fn install_object_extra(
-        &mut self,
-        program: &ResidualProgram,
-        object: Value,
-    ) -> Result<(), JsError> {
-        self.install_object_prototype_methods(program, self.object_proto, None)?;
-        for (name, native) in [
-            ("getOwnPropertyNames", Native::ObjectGetOwnPropertyNames),
-            (
-                "getOwnPropertyDescriptor",
-                Native::ObjectGetOwnPropertyDescriptor,
-            ),
-            ("getOwnPropertySymbols", Native::ObjectGetOwnPropertySymbols),
-            (
-                "getOwnPropertyDescriptors",
-                Native::ObjectGetOwnPropertyDescriptors,
-            ),
-            ("defineProperty", Native::ObjectDefineProperty),
-            ("defineProperties", Native::ObjectDefineProperties),
-            ("values", Native::ObjectValues),
-            ("entries", Native::ObjectEntries),
-            ("fromEntries", Native::ObjectFromEntries),
-            ("is", Native::ObjectIs),
-        ] {
-            self.set_builtin_named(program, object, name, native)?;
-        }
-        Ok(())
-    }
-
     pub(super) fn install_object_prototype_methods(
         &mut self,
         program: &ResidualProgram,
         prototype: Value,
         realm: Option<Value>,
     ) -> Result<(), JsError> {
-        for (name, native) in [
-            ("toLocaleString", Native::ObjectPrototypeToLocaleString),
-            ("toString", Native::ObjectPrototypeToString),
-            ("valueOf", Native::ObjectPrototypeValueOf),
-            ("hasOwnProperty", Native::ObjectPrototypeHasOwnProperty),
-            (
-                "propertyIsEnumerable",
-                Native::ObjectPrototypePropertyIsEnumerable,
-            ),
-            ("__lookupGetter__", Native::ObjectPrototypeLookupGetter),
-            ("__lookupSetter__", Native::ObjectPrototypeLookupSetter),
-            ("__defineGetter__", Native::ObjectPrototypeDefineGetter),
-            ("__defineSetter__", Native::ObjectPrototypeDefineSetter),
-            ("isPrototypeOf", Native::ObjectPrototypeIsPrototypeOf),
-        ] {
-            self.set_realm_builtin_named(program, prototype, name, native, realm)?;
-        }
+        self.install_rows_in_realm(program, prototype, Holder::ObjectPrototype, realm)?;
         let prototype_atom = self.intern_atom("__proto__");
         let getter = self.realm_native_value_optional(Native::ObjectPrototypeProtoGetter, realm);
         let setter = self.realm_native_value_optional(Native::ObjectPrototypeProtoSetter, realm);
@@ -565,7 +530,14 @@ impl<H: Host> Vm<H> {
             Native::ObjectDefineProperty => self.object_define_property(p, args),
             Native::ObjectDefineProperties => self.object_define_properties(p, args),
             _ if let Some(kind) = EnumerableOwnPropertyKind::of(native) => {
-                self.enumerable_own_properties(p, args.first().copied().unwrap_or(Value::UNDEFINED), kind)
+                let object = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if self.declined_fast.take() != Some(native)
+                    && self.is_object_like(object)
+                    && let Some(listed) = self.plain_enumerable_own_properties(object, kind)
+                {
+                    return Ok(listed);
+                }
+                self.enumerable_own_properties(p, object, kind)
             }
             Native::ObjectFromEntries => {
                 self.object_from_entries(p, args.first().copied().unwrap_or(Value::UNDEFINED))
@@ -647,7 +619,7 @@ impl<H: Host> Vm<H> {
                 .get(&(self.realm.globals, Native::Object))
                 .copied()
                 .unwrap_or(self.object_proto);
-            let result = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+            let result = self.heap.alloc_object(Self::empty_object(prototype));
             let result = self.heap.root(result);
             result_root = Some(result);
             loop {
@@ -674,10 +646,12 @@ impl<H: Host> Vm<H> {
                     let raw_key = self.heap.root_value(key).unwrap();
                     let property_key = self.to_property_key(p, raw_key)?;
                     self.heap.update_root(key, property_key);
-                    let key = match self.heap.get(property_key).cloned() {
-                        Some(Cell::Symbol(_)) => PropertyKey::symbol(property_key),
-                        _ if let Some(atom) = self.string_key_atom(property_key) => PropertyKey::string(atom),
-                        _ => unreachable!("ToPropertyKey returns a string or symbol"),
+                    let key = if self.heap.is_symbol(property_key) {
+                        PropertyKey::symbol(property_key)
+                    } else if let Some(atom) = self.string_key_atom(property_key) {
+                        PropertyKey::string(atom)
+                    } else {
+                        unreachable!("ToPropertyKey returns a string or symbol")
                     };
                     let object = self.heap.root_value(result).unwrap();
                     let value = self.heap.root_value(value).unwrap();
@@ -720,8 +694,8 @@ impl<H: Host> Vm<H> {
     pub(super) fn ordered_shape(&self, data: &Object) -> Vec<(Atom, usize)> {
         let mut entries = self
             .shape_entries(data.shape())
-            .filter_map(|(key, slot)| match *key {
-                PropertyKey::String(atom) => Some((atom, *slot as usize)),
+            .filter_map(|(key, slot)| match key {
+                PropertyKey::String(atom) => Some((atom, slot as usize)),
                 PropertyKey::Symbol(_) | PropertyKey::Private(..) => None,
             })
             .collect::<Vec<_>>();

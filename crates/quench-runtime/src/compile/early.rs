@@ -50,20 +50,6 @@ pub(super) fn class_eval_references_arguments(statements: &[Statement<'_>]) -> b
     arguments.0
 }
 
-pub(super) fn eval_return_outside_function(program: &Program<'_>) -> Option<oxc_span::Span> {
-    struct Returns(Option<oxc_span::Span>);
-    impl<'a> Visit<'a> for Returns {
-        fn visit_return_statement(&mut self, statement: &oxc_ast::ast::ReturnStatement<'a>) {
-            self.0.get_or_insert(statement.span);
-        }
-        fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {}
-        fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {}
-    }
-    let mut returns = Returns(None);
-    returns.visit_program(program);
-    returns.0
-}
-
 pub(super) fn normalize_dynamic_function_body(source: &str) -> Cow<'_, str> {
     if dynamic_body_is_strict(source) || !has_line_leading_html_close(source) {
         return Cow::Borrowed(source);
@@ -223,6 +209,9 @@ fn regexp_literal_error_uncached(text: &str) -> Option<RegExpEarlyError> {
     Some(if quench_regexp::is_stack_exhaustion_message(&error) { RegExpEarlyError::StackExhausted } else { RegExpEarlyError::Syntax(error) })
 }
 
+/// V8's report for a regular expression whose modifier flags are malformed.
+const INVALID_MODIFIERS_MESSAGE: &str = "SyntaxError: invalid regular expression modifiers";
+
 /// Validate `(?flags-flags:...)` groups. A character class is atoms, never groups:
 /// `[(?-i)]` is a class of `(`, `?`-`i` and `)`. Classes nest only under the `v` flag.
 fn validate_modifier_groups(pattern: &str, nested_classes: bool) -> Result<(), String> {
@@ -285,7 +274,7 @@ fn validate_modifier_group(pattern: &str, start: usize) -> Result<usize, String>
         || !valid_modifier_flags(&disable, disable.is_empty())
         || enable.chars().any(|flag| disable.contains(flag))
     {
-        return Err("SyntaxError: invalid regular expression modifiers".into());
+        return Err(INVALID_MODIFIERS_MESSAGE.into());
     }
     Ok(cursor)
 }
@@ -296,7 +285,7 @@ fn read_modifier_flags(bytes: &[u8], start: usize) -> Result<(String, usize), St
         end += 1;
     }
     let flags = std::str::from_utf8(&bytes[start..end])
-        .map_err(|_| "SyntaxError: invalid regular expression modifiers".to_owned())?;
+        .map_err(|_| INVALID_MODIFIERS_MESSAGE.to_owned())?;
     Ok((flags.to_owned(), end))
 }
 
@@ -432,24 +421,43 @@ pub(super) fn expression_makes_function(expression: &Expression<'_>) -> bool {
     makes.0
 }
 
-pub(super) fn parameters_contain_direct_eval(params: &FormalParameters<'_>) -> bool {
-    let mut finder = DirectEvalFinder(false);
-    finder.visit_formal_parameters(params);
-    finder.0
+/// The direct-eval facts of one function's own code: its parameters (when it has a list), body
+/// and expression body, not the functions nested in them.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct DirectEvalFacts {
+    /// A direct eval, which may name the function's bindings at run time.
+    pub(super) eval: bool,
+    /// A direct eval, `with` statement or `delete` of a name in the body or expression body,
+    /// which may give the functions nested in it binding sites to resolve through.
+    binds_in_body: bool,
 }
 
-pub(super) fn body_contains_direct_eval(body: &[Statement<'_>]) -> bool {
-    let mut finder = DirectEvalFinder(false);
+impl DirectEvalFacts {
+    /// Whether the function may bind names dynamically: a direct eval anywhere in its code, or
+    /// a dynamic binding form in its body.
+    pub(super) fn binds_dynamically(self) -> bool {
+        self.eval || self.binds_in_body
+    }
+}
+
+/// Gathers `DirectEvalFacts` in one walk of a function's own code.
+pub(super) fn direct_eval_facts(
+    params: Option<&FormalParameters<'_>>,
+    body: &[Statement<'_>],
+    expression: Option<&Expression<'_>>,
+) -> DirectEvalFacts {
+    let mut finder = DirectEvalFinder { facts: DirectEvalFacts::default(), in_body: false };
+    if let Some(params) = params {
+        finder.visit_formal_parameters(params);
+    }
+    finder.in_body = true;
     for statement in body {
         finder.visit_statement(statement);
     }
-    finder.0
-}
-
-pub(super) fn expression_contains_direct_eval(expression: &Expression<'_>) -> bool {
-    let mut finder = DirectEvalFinder(false);
-    finder.visit_expression(expression);
-    finder.0
+    if let Some(expression) = expression {
+        finder.visit_expression(expression);
+    }
+    finder.facts
 }
 
 /// How a body reaches its own `arguments` binding, ordered so the widest use found wins.
@@ -497,9 +505,6 @@ pub(super) struct FixedRegisterLocalFacts<'a> {
     closures: Option<ClosureReach<'a>>,
     /// Whether the walk gathered what `closures` reach, rather than only that there are some.
     reached: bool,
-    /// The body itself may suspend at an `await` (a `for await`, an `await using`), not
-    /// counting the functions it makes.
-    pub(super) suspends: bool,
 }
 
 /// What functions and classes nested in a body may reach of its bindings, read without
@@ -569,8 +574,6 @@ pub(super) fn fixed_register_local_facts<'a>(
         /// Whether `closures` gathers what the functions and classes reach, or only that the
         /// body makes one.
         reaches: bool,
-        /// The body itself awaits: an `await`, a `for await` or an `await using`.
-        suspends: bool,
         /// The body itself has a loop.
         loops_seen: bool,
     }
@@ -588,7 +591,6 @@ pub(super) fn fixed_register_local_facts<'a>(
                 last_references: rustc_hash::FxHashMap::default(),
                 closures: None,
                 reaches,
-                suspends: false,
                 loops_seen: false,
             }
         }
@@ -811,7 +813,6 @@ pub(super) fn fixed_register_local_facts<'a>(
         }
 
         fn visit_for_of_statement(&mut self, statement: &oxc_ast::ast::ForOfStatement<'a>) {
-            self.suspends |= statement.r#await;
             self.loops += 1;
             self.loops_seen = true;
             walk::walk_for_of_statement(self, statement);
@@ -858,16 +859,6 @@ pub(super) fn fixed_register_local_facts<'a>(
             walk::walk_unary_expression(self, expression);
         }
 
-        fn visit_await_expression(&mut self, expression: &oxc_ast::ast::AwaitExpression<'a>) {
-            self.suspends = true;
-            walk::walk_await_expression(self, expression);
-        }
-
-        fn visit_variable_declaration(&mut self, declaration: &oxc_ast::ast::VariableDeclaration<'a>) {
-            self.suspends |= declaration.kind == oxc_ast::ast::VariableDeclarationKind::AwaitUsing;
-            walk::walk_variable_declaration(self, declaration);
-        }
-
         fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
             self.make_closure(function.id.as_ref(), |reach| reach.visit_function(function, flags));
         }
@@ -902,7 +893,6 @@ pub(super) fn fixed_register_local_facts<'a>(
         nested_written_names: facts.nested_written_names,
         reached: facts.reaches,
         closures: facts.closures,
-        suspends: facts.suspends,
     }
 }
 
@@ -954,61 +944,40 @@ pub(super) fn is_direct_eval_call(call: &CallExpression<'_>) -> bool {
         && matches!(call.callee.without_parentheses(), Expression::Identifier(id) if id.name == "eval")
 }
 
-struct DirectEvalFinder(bool);
-
-/// Whether a body (not its nested functions) may give the functions nested in it binding
-/// sites to resolve through: a direct eval, a `with` statement, or `delete` of a name.
-pub(super) fn body_may_bind_dynamically(
-    body: &[Statement<'_>],
-    expression: Option<&Expression<'_>>,
-) -> bool {
-    let mut finder = DynamicBindingFinder(false);
-    for statement in body {
-        finder.visit_statement(statement);
-    }
-    if let Some(expression) = expression {
-        finder.visit_expression(expression);
-    }
-    finder.0
+struct DirectEvalFinder {
+    facts: DirectEvalFacts,
+    /// Whether the walk is in the body or expression body rather than the parameters.
+    in_body: bool,
 }
 
-struct DynamicBindingFinder(bool);
+impl DirectEvalFinder {
+    fn mark_dynamic(&mut self) {
+        self.facts.binds_in_body |= self.in_body;
+    }
+}
 
-impl<'a> Visit<'a> for DynamicBindingFinder {
+impl<'a> Visit<'a> for DirectEvalFinder {
     fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
         if is_direct_eval_call(call) {
-            self.0 = true;
+            self.facts.eval = true;
+            self.mark_dynamic();
         } else {
             walk::walk_call_expression(self, call);
         }
     }
 
-    fn visit_with_statement(&mut self, _: &oxc_ast::ast::WithStatement<'a>) {
-        self.0 = true;
+    fn visit_with_statement(&mut self, statement: &oxc_ast::ast::WithStatement<'a>) {
+        self.mark_dynamic();
+        walk::walk_with_statement(self, statement);
     }
 
     fn visit_unary_expression(&mut self, expression: &oxc_ast::ast::UnaryExpression<'a>) {
         if expression.operator == oxc_syntax::operator::UnaryOperator::Delete
             && matches!(expression.argument.without_parentheses(), Expression::Identifier(_))
         {
-            self.0 = true;
-        } else {
-            walk::walk_unary_expression(self, expression);
+            self.mark_dynamic();
         }
-    }
-
-    fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {}
-
-    fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {}
-}
-
-impl<'a> Visit<'a> for DirectEvalFinder {
-    fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
-        if is_direct_eval_call(call) {
-            self.0 = true;
-        } else {
-            walk::walk_call_expression(self, call);
-        }
+        walk::walk_unary_expression(self, expression);
     }
 
     fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {}
@@ -1317,6 +1286,9 @@ fn validate_loop_body(body: &Statement<'_>, strict: bool) -> Option<String> {
     validate_nested(std::slice::from_ref(body), strict)
 }
 
+/// V8's report for a lexical declaration that repeats a name in its block.
+const DUPLICATE_LEXICAL_DECLARATION: &str = "SyntaxError: duplicate lexical declaration";
+
 fn validate_block(statements: &[Statement<'_>], strict: bool) -> Option<String> {
     let mut lexical = FxHashSet::default();
     let mut functions = FxHashSet::default();
@@ -1336,7 +1308,7 @@ fn validate_block(statements: &[Statement<'_>], strict: bool) -> Option<String> 
                     collect_pattern_names(&item.id, &mut names);
                     for name in names {
                         if !lexical.insert(name.clone()) {
-                            return Some("SyntaxError: duplicate lexical declaration".into());
+                            return Some(DUPLICATE_LEXICAL_DECLARATION.into());
                         }
                     }
                 }
@@ -1345,14 +1317,14 @@ fn validate_block(statements: &[Statement<'_>], strict: bool) -> Option<String> 
                 if let Some(identifier) = &class.id
                     && !lexical.insert(identifier.name.to_string())
                 {
-                    return Some("SyntaxError: duplicate lexical declaration".into());
+                    return Some(DUPLICATE_LEXICAL_DECLARATION.into());
                 }
             }
             Statement::FunctionDeclaration(function) => {
                 if let Some(identifier) = &function.id {
                     let name = identifier.name.to_string();
                     if !lexical.insert(name.clone()) && (strict || !functions.contains(&name)) {
-                        return Some("SyntaxError: duplicate lexical declaration".into());
+                        return Some(DUPLICATE_LEXICAL_DECLARATION.into());
                     }
                     functions.insert(name);
                 }
@@ -1685,13 +1657,20 @@ pub(super) fn collect_pattern_names(pattern: &BindingPattern<'_>, names: &mut im
     pattern_names(pattern, &mut |name| names.extend(std::iter::once(name.to_string())));
 }
 
-/// Calls `name` with each name `pattern` binds, borrowed from the source.
-fn pattern_names<'a>(pattern: &BindingPattern<'a>, name: &mut impl FnMut(&'a str)) {
+/// Calls `name` with each name `pattern` binds, borrowed from the source, in source order:
+/// a nested rest element (`[...a]`, `{...r}`) binds its name too.
+pub(super) fn pattern_names<'a>(pattern: &BindingPattern<'a>, name: &mut impl FnMut(&'a str)) {
     match pattern {
         BindingPattern::BindingIdentifier(identifier) => name(identifier.name.as_str()),
         BindingPattern::AssignmentPattern(pattern) => pattern_names(&pattern.left, name),
-        BindingPattern::ArrayPattern(pattern) => pattern.elements.iter().flatten().for_each(|element| pattern_names(element, name)),
-        BindingPattern::ObjectPattern(pattern) => pattern.properties.iter().for_each(|property| pattern_names(&property.value, name)),
+        BindingPattern::ArrayPattern(pattern) => {
+            pattern.elements.iter().flatten().for_each(|element| pattern_names(element, name));
+            if let Some(rest) = &pattern.rest { pattern_names(&rest.argument, name); }
+        }
+        BindingPattern::ObjectPattern(pattern) => {
+            pattern.properties.iter().for_each(|property| pattern_names(&property.value, name));
+            if let Some(rest) = &pattern.rest { pattern_names(&rest.argument, name); }
+        }
     }
 }
 

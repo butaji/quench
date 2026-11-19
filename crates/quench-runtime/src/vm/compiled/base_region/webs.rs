@@ -69,7 +69,13 @@ impl Decoded {
     pub(super) fn successors(&self, k: usize, count: usize, span: &Span) -> impl Iterator<Item = Next> {
         let fall = (self.kind != Kind::Jump && !self.completes && self.step.is_none_or(Step::falls)).then(|| if k + 1 < count { Next::Row(k + 1) } else { Next::Leave(span.backedge + 1) });
         let branch = self.target.map(|target| row_at(span, target).map_or(Next::Leave(target), Next::Row));
-        fall.into_iter().chain(branch)
+        // A switch's entries are the `Jump`s after it: slots `0..=hole`, the last the no-match entry.
+        let table: Vec<Next> = if matches!(self.step, Some(Step::Switch)) {
+            (k + 1..=k + 1 + self.hole as usize).map(|at| if at < count { Next::Row(at) } else { Next::Leave(span.backedge + 1) }).collect()
+        } else {
+            Vec::new()
+        };
+        fall.into_iter().chain(branch).chain(table)
     }
 }
 
@@ -95,17 +101,6 @@ struct Defs {
 /// The running totals of `sizes`, from 0.
 fn prefix(sizes: impl Iterator<Item = usize>) -> Vec<usize> {
     std::iter::once(0).chain(sizes.scan(0, |total, size| { *total += size; Some(*total) })).collect()
-}
-
-/// The positions of the set bits of `word`, ascending.
-fn bits_of(mut word: u64) -> impl Iterator<Item = usize> {
-    std::iter::from_fn(move || {
-        (word != 0).then(|| {
-            let bit = word.trailing_zeros() as usize;
-            word &= word - 1;
-            bit
-        })
-    })
 }
 
 impl Defs {
@@ -155,147 +150,51 @@ impl Defs {
     /// The definitions of `column` that `state` holds, in order.
     fn held<'a>(&'a self, state: &'a [u64], column: usize) -> impl Iterator<Item = Def> + 'a {
         let words = &state[self.words[column]..self.words[column + 1]];
-        words.iter().enumerate().flat_map(move |(at, word)| bits_of(*word).map(move |bit| Def { column, local: at * WORD + bit }))
+        words.iter().enumerate().flat_map(move |(at, word)| crate::bitset::word_members(at, *word).map(move |local| Def { column, local }))
     }
 }
 
-/// `into` united with `from`; whether it grew.
-fn merge(into: &mut [u64], from: &[u64]) -> bool {
-    let mut grew = false;
-    for (word, extra) in into.iter_mut().zip(from) {
-        let before = *word;
-        *word |= extra;
-        grew |= *word != before;
+/// The definitions reaching each row and each branch target outside the region
+/// (`webs::solve`), one bit column per named register. A row control never reaches (it follows
+/// a jump, or an instruction that is a leave) is taken as entered with the region's entry
+/// values: its webs are never run, but they must exist.
+fn flow(span: &Span, decoded: &[Decoded], defs: &Defs) -> Flow {
+    let (count, width) = (decoded.len(), defs.width());
+    // Every named register is entered with its first definition.
+    let mut seed = vec![0; width];
+    for column in 0..defs.columns() {
+        seed[defs.words[column]] |= 1;
     }
-    grew
+    let transfer = |k: usize, out: &mut [u64]| for def in defs.written[k].into_iter().flatten() {
+        out[defs.words[def.column]..defs.words[def.column + 1]].fill(0);
+        out[defs.words[def.column] + def.local / WORD] |= 1 << (def.local % WORD);
+    };
+    let successors = |k: usize, next: &mut dyn FnMut(crate::webs::Next)| for step in decoded[k].successors(k, count, span) {
+        next(match step { Next::Row(row) => crate::webs::Next::Row(row), Next::Leave(pc) => crate::webs::Next::Leave(pc) });
+    };
+    crate::webs::solve(count, width * WORD, &seed, &transfer, &successors, width > 0)
 }
 
-/// The definitions reaching each row and each branch target outside the region: states of
-/// `width` words, row `k`'s at `k * width`.
-struct Flow {
-    width: usize,
-    at: Vec<u64>,
-    leaf_pcs: Vec<Pc>,
-    leaves: Vec<u64>,
-}
-
-/// The branch targets outside the region, ascending.
-fn leave_targets(span: &Span, decoded: &[Decoded]) -> Vec<Pc> {
-    let count = decoded.len();
-    let outside = decoded.iter().enumerate().flat_map(|(k, row)| row.successors(k, count, span));
-    let mut pcs: Vec<Pc> = outside.filter_map(|next| if let Next::Leave(pc) = next { Some(pc) } else { None }).collect();
-    pcs.sort_unstable();
-    pcs.dedup();
-    pcs
-}
-
-impl Flow {
-    fn row(&self, k: usize) -> &[u64] {
-        &self.at[k * self.width..(k + 1) * self.width]
-    }
-
-    fn leaf(&self, k: usize) -> &[u64] {
-        &self.leaves[k * self.width..(k + 1) * self.width]
-    }
-
-    /// Merges `out`, the state after a row, into where control goes next; a row whose state grew
-    /// is queued.
-    fn deliver(&mut self, next: Next, out: &[u64], work: &mut Vec<usize>) {
-        let width = self.width;
-        match next {
-            Next::Row(row) => {
-                if merge(&mut self.at[row * width..(row + 1) * width], out) {
-                    work.push(row);
-                }
-            }
-            Next::Leave(pc) => {
-                let leaf = self.leaf_pcs.binary_search(&pc).expect("a collected leave target");
-                merge(&mut self.leaves[leaf * width..(leaf + 1) * width], out);
-            }
-        }
-    }
-
-    /// Propagates the states of the rows in `work` to their successors until nothing grows.
-    fn run(&mut self, span: &Span, decoded: &[Decoded], defs: &Defs, work: &mut Vec<usize>) {
-        let mut out = vec![0; self.width];
-        while let Some(k) = work.pop() {
-            out.copy_from_slice(self.row(k));
-            for def in defs.written[k].into_iter().flatten() {
-                out[defs.words[def.column]..defs.words[def.column + 1]].fill(0);
-                out[defs.words[def.column] + def.local / WORD] |= 1 << (def.local % WORD);
-            }
-            for next in decoded[k].successors(k, decoded.len(), span) {
-                self.deliver(next, &out, work);
-            }
-        }
-    }
-
-    /// The first row no definition reaches: every row control reaches holds the entry definition
-    /// of each named register, so an empty state is a row control never reaches.
-    fn unreached(&self, count: usize) -> Option<usize> {
-        (self.width > 0).then(|| (0..count).find(|k| self.row(*k).iter().all(|word| *word == 0))).flatten()
-    }
-
-    /// A row control never reaches (it follows a jump, or an instruction that is a leave) is taken
-    /// as entered with the region's entry values: its webs are never run, but they must exist.
-    fn of(span: &Span, decoded: &[Decoded], defs: &Defs) -> Self {
-        let (count, width) = (decoded.len(), defs.width());
-        let leaf_pcs = leave_targets(span, decoded);
-        let mut flow = Self { width, at: vec![0; count * width], leaves: vec![0; leaf_pcs.len() * width], leaf_pcs };
-        // Every named register is entered with its first definition.
-        for column in 0..defs.columns() {
-            flow.at[defs.words[column]] |= 1;
-        }
-        let entry = flow.row(0).to_vec();
-        let mut work = vec![0];
-        loop {
-            flow.run(span, decoded, defs, &mut work);
-            let Some(k) = flow.unreached(count) else { return flow };
-            flow.at[k * width..(k + 1) * width].copy_from_slice(&entry);
-            work.push(k);
-        }
-    }
-}
+type Flow = crate::webs::Reaching;
 
 /// The union-find of definitions: each node a definition, numbered by `Defs::node`.
-struct Sets {
-    parent: Vec<usize>,
-}
+type Sets = crate::webs::DefSets;
 
-impl Sets {
-    fn root(&mut self, mut node: usize) -> usize {
-        while self.parent[node] != node {
-            self.parent[node] = self.parent[self.parent[node]];
-            node = self.parent[node];
-        }
-        node
-    }
-
-    fn union(&mut self, a: usize, b: usize) {
-        let (a, b) = (self.root(a), self.root(b));
-        self.parent[b] = a;
-    }
-
-    /// Joins the definitions of `column` that `state` holds.
-    fn join_held(&mut self, defs: &Defs, state: &[u64], column: usize) {
-        let mut held = defs.held(state, column).map(|def| defs.node(def));
-        let Some(first) = held.next() else { return };
-        for other in held {
-            self.union(first, other);
-        }
-    }
+/// Joins the definitions of `column` that `state` holds.
+fn join_held(sets: &mut Sets, defs: &Defs, state: &[u64], column: usize) {
+    sets.join_all(defs.held(state, column).map(|def| defs.node(def)));
 }
 
 /// The union-find of definitions where one value of a register is live or read, or the register
 /// is left whole (`merged`).
 fn joined(span: &Span, decoded: &[Decoded], merged: &Bits, defs: &Defs, flow: &Flow) -> Sets {
-    let mut sets = Sets { parent: (0..defs.total()).collect() };
+    let mut sets = Sets::new(defs.total());
     let whole = |register: Register| merged.contains(usize::from(register));
     for (k, row) in decoded.iter().enumerate() {
         let pc = span.header + k as Pc;
         for (column, register) in defs.named.iter().enumerate() {
             if span.is_live(pc, *register) || row.reads().any(|read| read == *register) || whole(*register) {
-                sets.join_held(defs, flow.row(k), column);
+                join_held(&mut sets, defs, flow.row(k), column);
             }
         }
     }
@@ -313,7 +212,7 @@ fn join_leaves(sets: &mut Sets, span: &Span, defs: &Defs, flow: &Flow, whole: &i
     for (leaf, pc) in flow.leaf_pcs.iter().enumerate() {
         for (column, register) in defs.named.iter().enumerate() {
             if span.is_live(*pc, *register) || whole(*register) {
-                sets.join_held(defs, flow.leaf(leaf), column);
+                join_held(sets, defs, flow.leaves.row(leaf), column);
             }
         }
     }
@@ -361,10 +260,11 @@ impl Renamer<'_> {
             };
             let (a, b, base) = (source(row.a), source(row.b), row.base.map(|register| read(register)));
             let [dst, also] = defs.written[k].map(|def| def.map(|def| self.web(def)));
-            renamed.push(Decoded { dst, also, a, b, base, ..*row });
+            // The packed instruction names the original registers, which the renaming moves: a renamed row runs the general step.
+            renamed.push(Decoded { dst, also, a, b, base, packed: None, ..*row });
             at.extend(here);
         }
-        let leaf_at = (0..flow.leaf_pcs.len()).flat_map(|leaf| self.table(flow.leaf(leaf))).collect();
+        let leaf_at = (0..flow.leaf_pcs.len()).flat_map(|leaf| self.table(flow.leaves.row(leaf))).collect();
         (Webs { orig: self.orig, named: defs.named.clone(), at, leaf_pcs: flow.leaf_pcs.clone(), leaf_at }, renamed)
     }
 }
@@ -373,7 +273,7 @@ impl Webs {
     /// The rows renamed to webs. A register in `merged` is one web.
     pub(super) fn split(span: &Span, decoded: &[Decoded], merged: &Bits) -> (Self, Vec<Decoded>) {
         let defs = Defs::of(decoded);
-        let flow = Flow::of(span, decoded, &defs);
+        let flow = flow(span, decoded, &defs);
         let sets = joined(span, decoded, merged, &defs, &flow);
         Renamer { defs: &defs, flow: &flow, number: vec![NO_WEB; defs.total()], sets, orig: Vec::new() }.rename(decoded)
     }

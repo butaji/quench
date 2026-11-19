@@ -12,11 +12,11 @@
 //! claim. A `with` object can only redirect a name the analysis classified by its syntax,
 //! which hands the binding's value nowhere new.
 
-mod deferred;
+pub(in crate::compile) mod deferred;
 pub(super) use deferred::{compiles_at_load, invoked_where_made};
 
 use oxc_ast::ast::{
-    AssignmentExpression, AssignmentOperator, AssignmentTarget, CallExpression, Expression,
+    ArrowFunctionExpression, AssignmentExpression, AssignmentOperator, AssignmentTarget, CallExpression, Expression,
     ExpressionStatement, Function, IdentifierReference, SequenceExpression, VariableDeclarator,
 };
 use oxc_ast_visit::{Visit, walk};
@@ -100,6 +100,18 @@ struct References {
     arguments_reads: Vec<Span>,
     /// The function expressions seen so far, checked against `arguments_reads` at the end.
     functions: Vec<Span>,
+    /// The non-async arrows, plain whatever they read (`visit_arrow_function_expression`).
+    plain_arrows: FxHashSet<u32>,
+}
+
+/// The source start of `value` where it is a function expression or an arrow: the closures a
+/// binding may hold as its only value (`Initial::Function`, `Use::StoresFunction`).
+fn function_start(value: &Expression<'_>) -> Option<u32> {
+    match value.without_parentheses() {
+        Expression::FunctionExpression(function) => Some(function.span.start),
+        Expression::ArrowFunctionExpression(arrow) => Some(arrow.span.start),
+        _ => None,
+    }
 }
 
 impl References {
@@ -120,9 +132,9 @@ impl References {
     fn discarded_assignment(&mut self, assignment: &AssignmentExpression<'_>) {
         if assignment.operator == AssignmentOperator::Assign
             && let AssignmentTarget::AssignmentTargetIdentifier(target) = &assignment.left
-            && let Expression::FunctionExpression(function) = assignment.right.without_parentheses()
+            && let Some(start) = function_start(&assignment.right)
         {
-            self.mark(target, Use::StoresFunction(function.span.start));
+            self.mark(target, Use::StoresFunction(start));
         }
     }
 }
@@ -136,6 +148,8 @@ impl<'a> Visit<'a> for References {
                 self.plain_functions.insert(function.start);
             }
         }
+        let arrows = std::mem::take(&mut self.plain_arrows);
+        self.plain_functions.extend(arrows);
     }
 
     fn visit_identifier_reference(&mut self, it: &IdentifierReference<'a>) {
@@ -172,12 +186,21 @@ impl<'a> Visit<'a> for References {
         {
             let initial = match it.init.as_ref().map(Expression::without_parentheses) {
                 None => Initial::Nothing,
-                Some(Expression::FunctionExpression(function)) => Initial::Function(function.span.start),
-                Some(_) => Initial::Other,
+                Some(value) => function_start(value).map_or(Initial::Other, Initial::Function),
             };
             self.declarators.push((symbol, initial));
         }
         walk::walk_variable_declarator(self, it);
+    }
+
+    fn visit_arrow_function_expression(&mut self, it: &ArrowFunctionExpression<'a>) {
+        // An arrow has no `prototype`, no own `arguments` (a read names its maker's) and no name
+        // its body could read it by: stored only into a binding read only as a callee, its value
+        // goes nowhere else. Its `this` is its maker's, read through the environment either way.
+        if !it.r#async {
+            self.plain_arrows.insert(it.span.start);
+        }
+        walk::walk_arrow_function_expression(self, it);
     }
 
     fn visit_function(&mut self, it: &Function<'a>, flags: ScopeFlags) {

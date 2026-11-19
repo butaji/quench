@@ -6,6 +6,7 @@
 //! another environment shares leaves at the instruction, where the interpreter raises its `ReferenceError` or resolves
 //! the slot, and only then. A store has no barrier of its own: the activation's environment lives within a lane run,
 //! which collects nothing. The slots are those the b-jit makes rows of (`base_region::env_owned`).
+use crate::bytecode::Class;
 use super::*;
 use super::super::lane_unit::Origin;
 use crate::bytecode::InstructionField;
@@ -25,12 +26,13 @@ enum Access {
 impl Lowering<'_, '_> {
     /// The payload's environment storage word.
     pub(super) fn environment_word(&mut self) -> ir::Value {
-        emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, environment_storage))
+        emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.environment_storage))
     }
 
     /// The storage word again, after an operation that made the environment.
+    /// A numeric body (no entry facts) holds no environment word: its locals live in no window.
     pub(super) fn reload_environment(&mut self) {
-        let variable = self.entry.as_ref().expect("entry facts").environment;
+        let Some(variable) = self.entry.as_ref().map(|entry| entry.environment) else { return };
         let word = self.environment_word();
         self.builder.def_var(variable, word);
     }
@@ -46,9 +48,9 @@ impl Lowering<'_, '_> {
         if !(caller && self.body_entry() && self.completion.status_and_pc() && instruction.result_flags() == 0) { return None; }
         let held = |register: Register| (register < self.unit.registers).then_some(register);
         let access = match instruction.op().class() {
-            Class::LoadLocal if !instruction.writes_numeric_local() => Access::Read(held(instruction.result_register())?),
-            Class::StoreLocal | Class::StoreVarBinding => self.store_access(function, instruction)?,
-            Class::InitializeTdz => Access::Open,
+            _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::LoadLocal) && !instruction.writes_numeric_local() => Access::Read(held(instruction.result_register())?),
+            _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::StoreLocal) || crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::StoreVarBinding) => self.store_access(function, instruction)?,
+            _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::InitializeTdz) => Access::Open,
             _ => return None,
         };
         Some((slot, access))
@@ -61,7 +63,7 @@ impl Lowering<'_, '_> {
         let held = |register: Register| (register < self.unit.registers).then_some(register);
         let source = held(instruction.register_a())?;
         if function.is_self_binding_slot(instruction.local_slot()) { return None; }
-        if instruction.op().class() == Class::StoreVarBinding {
+        if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::StoreVarBinding) {
             return function.parent.is_some().then_some(Access::Write { source, result: None, define: false });
         }
         Some(Access::Write {

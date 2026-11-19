@@ -20,7 +20,7 @@ fn operand_values<H: Host>(cx: *mut LaneContext<H>, r: Registers, step: ValueSte
     match step {
         ValueStep::Unary => Some([r.get(instruction.register_b()); OPERANDS]),
         ValueStep::Binary | ValueStep::CompareJump => {
-            Some([lane_operand_value(cx, r, instruction.operand_b().0)?, lane_operand_value(cx, r, instruction.operand_c().0)?])
+            Some([operand_value_in_lane(cx, r, instruction.operand_b().0)?, operand_value_in_lane(cx, r, instruction.operand_c().0)?])
         }
     }
 }
@@ -42,14 +42,14 @@ fn make<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, (step, instruction): (V
 /// body's own `Return` row completes the activation with it.
 ///
 /// # Safety
-/// As `lane_body_step`; `record` is the record at `call_pc`.
-pub(super) unsafe fn lane_activation_value_step<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: WideInstruction) -> Option<u64> {
+/// As `body_general_step`; `record` is the record at `call_pc`.
+pub(super) unsafe fn activation_value_step<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: WideInstruction) -> Option<u64> {
     let instruction = record.without_return();
     let step = instruction.op().value_step().filter(|_| instruction.result_flags() == 0)?;
     let r = unsafe { (*cx).registers };
     let Some(values) = operand_values(cx, r, step, instruction) else { return Some(LANE_CALL_MISSED) };
     let ip = unsafe { (*cx).base.add(call_pc as usize) };
-    let Some(made) = lane_in_place(cx, ip, |vm, code| make(vm, code, (step, instruction), values)) else { return Some(LANE_CALL_MISSED) };
+    let Some(made) = in_place_in_lane(cx, ip, |vm, code| make(vm, code, (step, instruction), values)) else { return Some(LANE_CALL_MISSED) };
     // Guest code the step ran may have made the activations frames, whose registers these are.
     let after = unsafe { (*cx).registers };
     if let Some(value) = made.value { after.set(instruction.result_register(), value); }

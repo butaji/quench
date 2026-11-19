@@ -18,4 +18,5 @@ mod platform;
 #[cfg(target_os = "macos")]
 #[path = "darwin.rs"]
 mod platform;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) use platform::Kernel;

@@ -8,52 +8,79 @@ impl<H: Host> Vm<H> {
     /// A native call's value where its common case completes in place: the steady cases
     /// first (`Vm::steady_native_value`), then Math, the pure string methods, objects, collections
     /// and arrays, and primitives. `None` leaves the call to the native itself.
+    #[inline(always)]
     pub(in crate::vm) fn in_place_native_value(&mut self, code: &ResidualProgram, native: Native, callee: Value,
         receiver: Value, args: &[Value]) -> Option<Value> {
         self.in_place_native_value_inline(code, native, callee, receiver, args)
     }
 
     /// `in_place_native_value` inlined into its caller: the lane's native call
-    /// (`lane_string_or_native_call`) enters the family function from its own frame.
+    /// (`string_or_native_call_in_lane`) enters the family function from its own frame.
     #[inline(always)]
     pub(in crate::vm) fn in_place_native_value_inline(&mut self, code: &ResidualProgram, native: Native, callee: Value,
         receiver: Value, args: &[Value]) -> Option<Value> {
         // One table read selects the families that can answer `native` (`IN_PLACE_FAMILIES`),
         // tried in the same order the cascade of all eight tried them.
         let families = IN_PLACE_FAMILIES[native as usize];
-        if families == 0 {
+        // The steady cases are the common ones: tried here, in the caller, so they do not carry
+        // the frame of the whole cascade (`in_place_family_value`).
+        if families & STEADY != 0 && let Some(value) = self.steady_native_value(native, receiver, args) {
+            return Some(value);
+        }
+        if (families & !STEADY) == 0 {
             return None;
         }
-        let tries = |family: u16| families & family != 0;
-        if tries(STEADY) && let Some(value) = self.steady_native_value(native, receiver, args) {
-            return Some(value);
-        }
-        if tries(MATH) && let Some(value) = math_value(native, args) {
-            return Some(value);
-        }
-        if tries(PURE_STRING) && let Some(value) = self.pure_string_method_call(code, native, receiver, args) {
-            return Some(value);
-        }
-        if tries(OBJECT) && let Some(value) = object_value(self, code, native, receiver, args) {
-            return Some(value);
-        }
-        if tries(COLLECTION) && let Some(value) = collection_value(self, code, native, receiver, args) {
-            return Some(value);
-        }
-        if tries(ARRAY) && let Some(value) = array_value(self, code, native, callee, receiver, args) {
-            return Some(value);
-        }
-        if tries(INTERNAL_SLOT) && let Some(value) = internal_slot_value(self, native, callee, receiver) {
-            return Some(value);
-        }
-        if tries(PRIMITIVE) && let Some(value) = primitive_value(self, native, receiver, args) {
-            return Some(value);
-        }
-        if tries(PRIMITIVE_LEAF) {
-            return primitive_leaf_value(self, code, native, receiver, args);
-        }
-        None
+        in_place_family_value(self, code, native, callee, receiver, args, families)
     }
+
+    /// `value`, the in-place body's answer for `native`. Where that body declined (`None`), the
+    /// call goes on to `native`'s general call with `declined_fast` naming it, so the general
+    /// native skips the same body a second time.
+    #[inline(always)]
+    pub(in crate::vm) fn fast_declined(&mut self, native: Native, value: Option<Value>) -> Option<Value> {
+        if value.is_none() {
+            self.declined_fast = Some(native);
+        }
+        value
+    }
+}
+
+/// `in_place_native_value` after its steady case: a native's in-place row (`in_place_row_value`),
+/// else the families of `families` other than `STEADY`, in order, each answering or declining.
+/// Out of line, so the steady case inlined into the caller does not carry this cascade's frame.
+#[inline(never)]
+fn in_place_family_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, callee: Value,
+    receiver: Value, args: &[Value], families: u16) -> Option<Value> {
+    // A native with an in-place row answers from its row's body alone (`in_place_row_value`).
+    if families & ROW != 0 {
+        return super::native_calls::in_place_row_value(vm, code, native, receiver, args);
+    }
+    let tries = |family: u16| families & family != 0;
+    if tries(MATH) && let Some(value) = math_value(native, args) {
+        return Some(value);
+    }
+    if tries(PURE_STRING) && let Some(value) = vm.pure_string_method_call(code, native, receiver, args) {
+        return Some(value);
+    }
+    if tries(OBJECT) && let Some(value) = object_value(vm, code, native, receiver, args) {
+        return Some(value);
+    }
+    if tries(COLLECTION) && let Some(value) = collection_value(vm, code, native, receiver, args) {
+        return Some(value);
+    }
+    if tries(ARRAY) && let Some(value) = array_value(vm, code, native, callee, receiver, args) {
+        return Some(value);
+    }
+    if tries(INTERNAL_SLOT) && let Some(value) = internal_slot_value(vm, native, callee, receiver) {
+        return Some(value);
+    }
+    if tries(PRIMITIVE) && let Some(value) = primitive_value(vm, native, receiver, args) {
+        return Some(value);
+    }
+    if tries(PRIMITIVE_LEAF) {
+        return primitive_leaf_value(vm, code, native, receiver, args);
+    }
+    None
 }
 
 // The in-place families, one bit each, in the order `in_place_native_value` tries them.
@@ -66,11 +93,17 @@ const ARRAY: u16 = 1 << 5;
 const INTERNAL_SLOT: u16 = 1 << 6;
 const PRIMITIVE: u16 = 1 << 7;
 const PRIMITIVE_LEAF: u16 = 1 << 8;
+/// A native with an in-place row (`native_calls::in_place_row`): its row's body answers it alone.
+const ROW: u16 = 1 << 9;
 
 /// The families whose functions below can answer `native`: each family's arms, listed
 /// beside the function that holds them. A native outside every family completes through
-/// the native itself, with no in-place attempt.
+/// the native itself, with no in-place attempt. A native with an in-place row is answered by
+/// that row alone, so its family arms are not listed here.
 const fn in_place_families(native: Native) -> u16 {
+    if super::native_calls::in_place_row(native).is_some() {
+        return ROW;
+    }
     let mut families = 0;
     // `Vm::steady_native_value`.
     if matches!(native, Native::ArrayPush | Native::ArrayPop | Native::StringCharCodeAt | Native::StringCharAt
@@ -87,20 +120,23 @@ const fn in_place_families(native: Native) -> u16 {
     }
     if matches!(native, Native::ObjectCreate | Native::ObjectPrototypeHasOwnProperty
         | Native::ObjectPrototypePropertyIsEnumerable | Native::ObjectHasOwn | Native::ObjectIs | Native::ReflectGet
-        | Native::ReflectHas | Native::ObjectKeys | Native::ObjectValues | Native::ObjectEntries
-        | Native::ReflectGetPrototypeOf | Native::ObjectPrototypeToString | Native::SymbolFor)
+        | Native::ReflectHas | Native::ObjectValues | Native::ObjectEntries
+        | Native::ReflectGetPrototypeOf | Native::ObjectPrototypeToString | Native::SymbolFor
+        | Native::ObjectGetPrototypeOf)
     {
         families |= OBJECT;
     }
     if matches!(native, Native::MapSet | Native::MapDelete | Native::MapClear | Native::SetAdd | Native::SetDelete
-        | Native::SetClear | Native::ArrayBufferIsView)
+        | Native::SetClear | Native::ArrayBufferIsView | Native::TypedArrayAt | Native::Uint8ArrayIndexOf
+        | Native::Uint8ArrayIncludes | Native::Uint8ArrayFill)
         || super::super::data_view::data_view_element(native)
         || super::super::date::date_reads(native)
     {
         families |= COLLECTION;
     }
-    if matches!(native, Native::ArrayIndexOf | Native::ArrayIncludes | Native::ArraySplice | Native::ArrayUnshift
-        | Native::ArrayShift | Native::ArrayIteratorNext)
+    if matches!(native, Native::ArraySplice | Native::ArrayUnshift
+        | Native::ArrayShift | Native::ArrayIteratorNext | Native::ArrayFrom | Native::ArrayOf | Native::ArrayLastIndexOf
+        | Native::ArrayReverse | Native::ArrayToReversed | Native::ArrayWith)
     {
         families |= ARRAY;
     }
@@ -111,7 +147,8 @@ const fn in_place_families(native: Native) -> u16 {
     }
     if matches!(native, Native::StringFromCharCode | Native::Boolean | Native::String | Native::Number
         | Native::NumberString | Native::StringLocaleCompare | Native::GlobalIsNaN | Native::GlobalIsFinite
-        | Native::NumberIsNaN | Native::NumberIsFinite | Native::NumberIsInteger | Native::NumberIsSafeInteger)
+        | Native::NumberIsNaN | Native::NumberIsFinite | Native::NumberIsInteger | Native::NumberIsSafeInteger
+        | Native::NumberFixed)
     {
         families |= PRIMITIVE;
     }
@@ -195,10 +232,10 @@ fn math_value(native: Native, args: &[Value]) -> Option<Value> {
 
 /// Object queries whose steps observe nothing: `Object.create` without properties, an own
 /// property query by a string key (`Vm::plain_own_property_query`), `Object.is`, an object's
-/// keys, values or entries its shape lists (`Vm::plain_enumerable_own_properties`), `super`
+/// values or entries its shape lists (`Vm::plain_enumerable_own_properties`), `super`
 /// reads (`Reflect.get` and `Reflect.getPrototypeOf` of an ordinary target, whose data
-/// property read ignores the receiver), `Symbol.for` of a string and
-/// `Object.prototype.toString` (`object_to_string_in_place`).
+/// property read ignores the receiver), `Symbol.for` of a string and `Object.prototype.toString`
+/// (`object_to_string_in_place`). `Object.keys` and `Object.assign` are rows (`native_calls`).
 fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
     let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
     match native {
@@ -210,9 +247,15 @@ fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native,
         Native::ObjectIs => vm.call_object_native(code, Native::ObjectIs, args).ok(),
         Native::ReflectGet | Native::ReflectHas => reflect_value(vm, native, args),
         // An object's own enumerable properties, where its shape lists them.
-        _ if let Some(kind) = super::super::object_keys::EnumerableOwnPropertyKind::of(native) =>
-            vm.plain_enumerable_own_properties(argument, kind),
+        _ if let Some(kind) = super::super::object_keys::EnumerableOwnPropertyKind::of(native) => {
+            let listed = vm.plain_enumerable_own_properties(argument, kind);
+            vm.fast_declined(native, listed)
+        }
         Native::ReflectGetPrototypeOf => Some(vm.heap.ordinary_object(*args.first()?)?.proto()),
+        Native::ObjectGetPrototypeOf => {
+            let prototype = vm.plain_object_get_prototype_of(args);
+            vm.fast_declined(native, prototype)
+        }
 
         Native::ObjectPrototypeToString => object_to_string_in_place(vm, code, receiver),
         // The registry lookup of a string key, which ToString leaves as it is.
@@ -261,16 +304,69 @@ fn object_to_string_in_place<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, re
 /// mutators (`Vm::plain_collection_mutation`, a dense `Map#set` first), a DataView element
 /// get or set that raises nothing, a Date getter of a Date, and `ArrayBuffer.isView`.
 fn collection_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
-    match native {
-        Native::MapSet if vm.map_set(receiver, args) => Some(receiver),
-        Native::MapSet | Native::MapDelete | Native::MapClear | Native::SetAdd | Native::SetDelete | Native::SetClear =>
-            vm.plain_collection_mutation(code, native, receiver, args),
-        Native::ArrayBufferIsView => Some(Value::boolean(vm.is_array_buffer_view(args.first().copied().unwrap_or(Value::UNDEFINED)))),
-        _ if super::super::data_view::data_view_element(native) => vm.plain_data_view_access(native, receiver, args),
-        _ if super::super::date::date_reads(native) => vm.plain_date_get(native, receiver),
+    match COLLECTION_ARMS[native as usize] {
+        MAP_SET_ARM if vm.map_set(receiver, args) => Some(receiver),
+        MAP_SET_ARM | MUTATION_ARM => vm.plain_collection_mutation(code, native, receiver, args),
+        ARRAY_BUFFER_IS_VIEW_ARM => Some(Value::boolean(vm.is_array_buffer_view(args.first().copied().unwrap_or(Value::UNDEFINED)))),
+        DATA_VIEW_ARM => vm.plain_data_view_access(native, receiver, args),
+        DATE_ARM => vm.plain_date_get(native, receiver),
+        TYPED_AT_ARM => vm.plain_typed_at(native, receiver, args),
+        TYPED_INDEX_OF_ARM => vm.plain_typed_index_of(native, receiver, args),
+        TYPED_INCLUDES_ARM => vm.plain_typed_includes(native, receiver, args),
+        TYPED_FILL_ARM => vm.plain_typed_fill(native, receiver, args),
         _ => None,
     }
 }
+
+// The arms of `collection_value`, one code each, in `COLLECTION_ARMS`.
+const NO_COLLECTION_ARM: u8 = 0;
+/// `Map.prototype.set`: its dense step first, then the general mutation.
+const MAP_SET_ARM: u8 = 1;
+/// The Map and Set mutators other than `set` (`plain_collection_mutation`).
+const MUTATION_ARM: u8 = 2;
+const ARRAY_BUFFER_IS_VIEW_ARM: u8 = 3;
+const DATA_VIEW_ARM: u8 = 4;
+const DATE_ARM: u8 = 5;
+const TYPED_AT_ARM: u8 = 6;
+const TYPED_INDEX_OF_ARM: u8 = 7;
+const TYPED_INCLUDES_ARM: u8 = 8;
+const TYPED_FILL_ARM: u8 = 9;
+
+/// The `collection_value` arm of `native`, or `NO_COLLECTION_ARM`.
+const fn collection_arm(native: Native) -> u8 {
+    if matches!(native, Native::MapSet) {
+        MAP_SET_ARM
+    } else if matches!(native, Native::MapDelete | Native::MapClear | Native::SetAdd | Native::SetDelete | Native::SetClear) {
+        MUTATION_ARM
+    } else if matches!(native, Native::ArrayBufferIsView) {
+        ARRAY_BUFFER_IS_VIEW_ARM
+    } else if super::super::data_view::data_view_element(native) {
+        DATA_VIEW_ARM
+    } else if super::super::date::date_reads(native) {
+        DATE_ARM
+    } else if matches!(native, Native::TypedArrayAt) {
+        TYPED_AT_ARM
+    } else if matches!(native, Native::Uint8ArrayIndexOf) {
+        TYPED_INDEX_OF_ARM
+    } else if matches!(native, Native::Uint8ArrayIncludes) {
+        TYPED_INCLUDES_ARM
+    } else if matches!(native, Native::Uint8ArrayFill) {
+        TYPED_FILL_ARM
+    } else {
+        NO_COLLECTION_ARM
+    }
+}
+
+/// `collection_arm` of every native, by discriminant: one table read selects the arm.
+const COLLECTION_ARMS: [u8; Native::COUNT as usize] = {
+    let mut table = [NO_COLLECTION_ARM; Native::COUNT as usize];
+    let mut index = 0;
+    while index < Native::COUNT {
+        table[index as usize] = collection_arm(Native::from_discriminant(index).unwrap());
+        index += 1;
+    }
+    table
+};
 
 /// Natives that read the receiver's own record or the realm's state: a string's or function's text
 /// (`String.prototype.toString`, `Function.prototype.toString`), a Map's iterators
@@ -289,19 +385,28 @@ fn internal_slot_value<H: Host>(vm: &mut Vm<H>, native: Native, callee: Value, r
         Native::RegExpLegacyGetter => return vm.regexp_legacy_getter_in_place(callee, receiver),
         _ => return None,
     };
-    matches!(vm.heap.get(receiver), Some(Cell::Map { .. })).then(|| vm.collection_iterator(receiver, kind).ok()).flatten()
+    vm.heap.is_map(receiver).then(|| vm.collection_iterator(receiver, kind).ok()).flatten()
 }
 
-/// A dense array's `indexOf`, `includes`, `splice`, `unshift` and `shift`, and an array iterator's step
-/// over a plain array.
+/// A dense array's `splice`, `unshift`, `shift` and `lastIndexOf`, and the array-building and
+/// reversing methods over a plain array, and an array iterator's step over a plain array.
+/// The rows of `native_calls` answer the others (`in_place_row_value`).
 fn array_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, callee: Value, receiver: Value,
     args: &[Value]) -> Option<Value> {
     match native {
-        Native::ArrayIndexOf | Native::ArrayIncludes => vm.dense_search_call(native, receiver, args),
         Native::ArraySplice => vm.plain_array_splice(code, callee, receiver, args),
         Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
         Native::ArrayShift => vm.plain_array_shift(receiver),
         Native::ArrayIteratorNext => vm.plain_array_iterator_next(callee, receiver),
+        Native::ArrayFrom => vm.plain_array_from(receiver, args),
+        Native::ArrayOf => vm.plain_array_of(receiver, args),
+        Native::ArrayLastIndexOf => vm.plain_array_last_index_of(receiver, args),
+        Native::ArrayReverse => vm.plain_array_reverse(receiver, args),
+        Native::ArrayToReversed => vm.plain_array_to_reversed(receiver, args),
+        Native::ArrayWith => {
+            let with = vm.plain_array_with(receiver, args);
+            vm.fast_declined(native, with)
+        }
         _ => None,
     }
 }
@@ -321,6 +426,8 @@ fn primitive_value<H: Host>(vm: &mut Vm<H>, native: Native, receiver: Value, arg
         Native::Number if !args.is_empty() => vm.primitive_to_number(argument).map(Value::number),
         Native::NumberString if args.first().is_none_or(|radix| radix.is_undefined() || radix.as_number() == Some(DECIMAL)) =>
             Some(vm.heap.alloc_string(super::super::wtf16::JsString::from_number(receiver.as_number()?))),
+        Native::NumberString => vm.plain_number_to_string(receiver, args),
+        Native::NumberFixed => vm.plain_number_to_fixed(receiver, args),
         Native::StringLocaleCompare => default_locale_compare(vm, receiver, args),
         Native::GlobalIsNaN | Native::GlobalIsFinite =>
             super::super::number::global_number_predicate(native, vm.primitive_to_number(argument)?).map(Value::boolean),

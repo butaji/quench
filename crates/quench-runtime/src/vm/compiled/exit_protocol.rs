@@ -11,9 +11,9 @@
 //! The b-jit leave stubs (`base_region::link`) emit `LaneExit::Entry.word()` and so share the
 //! encoding; their per-stub tables are not built from an `ExitTable` (documented adapter).
 
-use super::{lane_unit, LaneExit, LoopRegion, RETURN_STATUS_BASE, LANE_BODY_RETURNED, LANE_BODY_THREW, NATIVE_JS_STOPPED, TERMINATED_STATUS};
-use super::entry_cell::LANE_BODY_NOT_ENTERED;
+use super::{lane_unit, LaneExit, LoopRegion, RETURN_STATUS_BASE};
 use crate::value::Value;
+use quench_bjit::call_record::LaneStatus;
 
 /// What a leave is, which a leave word holds in its top two bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,10 +42,13 @@ impl ExitKind {
         Self::KINDS[(word >> Self::SHIFT) as usize]
     }
 
-    fn word(self, place: u64) -> u64 {
+    const fn word(self, place: u64) -> u64 {
         (self as u64) << Self::SHIFT | place
     }
 }
+
+// The b-jit's callee leave word is this protocol's: one encoding, two crates.
+const _: () = assert!(ExitKind::Callee.word(0) == quench_bjit::call_record::CALLEE_EXIT);
 
 impl LaneExit {
     /// Whether the run ended the activation, by its return or by an exception, rather than
@@ -78,15 +81,15 @@ impl LaneExit {
     /// How a native run that returned `status` and wrote `word` ended: the one reader of the
     /// result. `returned_pc` names the record that completes the activation, read only then.
     pub(super) fn read(status: u32, word: u64, returned_pc: impl FnOnce() -> usize) -> Self {
-        match status {
-            _ if i64::from(status) == TERMINATED_STATUS => Self::Terminated,
-            LANE_BODY_RETURNED => Self::Returned { pc: returned_pc(), value: Value::from_bits(word) },
-            LANE_BODY_THREW => Self::Threw { pc: returned_pc() },
-            NATIVE_JS_STOPPED => Self::decode(word),
-            LANE_BODY_NOT_ENTERED => Self::Stub,
-            _ if status >= RETURN_STATUS_BASE => Self::At((status - RETURN_STATUS_BASE) as usize),
+        match LaneStatus::of(status) {
+            Some(LaneStatus::Terminated) => Self::Terminated,
+            Some(LaneStatus::Returned) => Self::Returned { pc: returned_pc(), value: Value::from_bits(word) },
+            Some(LaneStatus::Threw) => Self::Threw { pc: returned_pc() },
+            Some(LaneStatus::NativeJsStopped) => Self::decode(word),
+            Some(LaneStatus::NotEntered) => Self::Stub,
+            None if status >= RETURN_STATUS_BASE => Self::At((status - RETURN_STATUS_BASE) as usize),
             // Dispatch reaches an invalid PC only before any instruction ran.
-            _ => Self::At(0),
+            None => Self::At(0),
         }
     }
 
@@ -110,7 +113,7 @@ impl LaneExit {
 
 /// How a loop region's run ended: its exit, in the one vocabulary every tier's leave word
 /// decodes to, and whether it ended inside the native frames a callee's entry pushed on the lane
-/// stack, where the lane reads and continues it (`dispatch_fast::lane_region_left`). Whether a
+/// stack, where the lane reads and continues it (`dispatch_fast::region_left_in_lane`). Whether a
 /// leave at a caller PC is a guard inside the loop or the loop's normal continuation is a
 /// function of the region (`LoopRegion::holds_exit`), not a second exit vocabulary.
 #[derive(Clone, Copy, Debug)]
@@ -150,18 +153,12 @@ pub(super) enum Source {
     Scratch(u16),
 }
 
-/// How a live value is stored: the representation the lane reads back.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Repr {
-    Tagged,
-}
-
-/// A value live across a leave: its unit register, where the leave stores it, and how.
+/// A value live across a leave: its unit register and where the leave stores it. Every live
+/// value is stored tagged, so no representation is recorded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct LiveValue {
     pub(super) slot: u16,
     pub(super) source: Source,
-    pub(super) repr: Repr,
 }
 
 /// What a leave is and the values it stores that its caller's registers do not already hold.
@@ -175,13 +172,16 @@ pub(super) struct ExitSig {
 /// leaves there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ExitSite {
-    pub(super) sig: usize,
-    pub(super) exit: LaneExit,
+    /// The leave's word (`LaneExit::word`), which `LaneExit::decode` reads back; the table's key.
+    /// Kept as a word, not a `LaneExit`, which holds a `Value` and is three words wide.
+    word: u64,
+    pub(super) sig: u32,
     pub(super) id: u32,
-    pub(super) unit_pc: usize,
+    pub(super) unit_pc: u32,
 }
 
-/// A unit's leaves, each place once, ordered by leave word, over its interned sigs.
+/// A unit's leaves, each place once, ordered by leave word, over its interned sigs. Built once per
+/// compile and kept by the body it publishes, so its tables hold no capacity past their length.
 #[derive(Default)]
 pub(in crate::vm) struct ExitTable {
     sigs: Vec<ExitSig>,
@@ -203,6 +203,8 @@ impl ExitTable {
             };
             table.add(exit, sig, unit_pc);
         }
+        table.sigs.shrink_to_fit();
+        table.sites.shrink_to_fit();
         table
     }
 
@@ -211,7 +213,7 @@ impl ExitTable {
         let live = unit.chain(frame).into_iter().flat_map(|index| {
             let inlined = unit.frames[index];
             inlined.base..inlined.base + inlined.registers
-        }).map(|register| LiveValue { slot: register, source: Source::Scratch(register - unit.caller_registers), repr: Repr::Tagged });
+        }).map(|register| LiveValue { slot: register, source: Source::Scratch(register - unit.caller_registers) });
         ExitSig { kind: ExitKind::Inlined, live: live.collect() }
     }
 
@@ -224,25 +226,28 @@ impl ExitTable {
 
     /// Adds the leave `exit` unless an earlier unit PC already leaves there.
     fn add(&mut self, exit: LaneExit, sig: usize, unit_pc: usize) {
-        let Err(at) = self.sites.binary_search_by_key(&exit.word(), |site| site.exit.word()) else { return };
+        let word = exit.word();
+        let Err(at) = self.sites.binary_search_by_key(&word, |site| site.word) else { return };
         let id = self.sites.len() as u32;
-        self.sites.insert(at, ExitSite { sig, exit, id, unit_pc });
+        let sig = u32::try_from(sig).expect("a unit interns fewer sigs than a u32 holds");
+        let unit_pc = u32::try_from(unit_pc).expect("a unit has fewer PCs than a u32 holds");
+        self.sites.insert(at, ExitSite { word, sig, id, unit_pc });
     }
 
     /// The site at the place `exit` leaves, which only a leave at a PC has.
     pub(super) fn site(&self, exit: LaneExit) -> Option<&ExitSite> {
         if !matches!(exit, LaneExit::At(_) | LaneExit::Inlined { .. }) { return None; }
-        self.sites.binary_search_by_key(&exit.word(), |site| site.exit.word()).ok().map(|index| &self.sites[index])
+        self.sites.binary_search_by_key(&exit.word(), |site| site.word).ok().map(|index| &self.sites[index])
     }
 
     /// The diagnostic name of the leave `exit` (`QUENCH_LANE_BODY`): its site id and, for an
     /// inlined leave, where its sig stores each live value (`slot>scratch`).
     pub(in crate::vm) fn describe(&self, exit: LaneExit) -> String {
         let Some(site) = self.site(exit) else { return String::new() };
-        let sig = &self.sigs[site.sig];
+        let sig = &self.sigs[site.sig as usize];
         if sig.kind != ExitKind::Inlined { return format!(" s{}", site.id); }
-        let stores = sig.live.iter().map(|value| match (value.source, value.repr) {
-            (Source::Scratch(at), Repr::Tagged) => format!("{}>{at}", value.slot),
+        let stores = sig.live.iter().map(|value| match value.source {
+            Source::Scratch(at) => format!("{}>{at}", value.slot),
         });
         format!(" s{} {}", site.id, stores.collect::<Vec<_>>().join(","))
     }
@@ -282,6 +287,16 @@ mod tests {
         assert_eq!(LaneExit::read(TERMINATED_STATUS as u32, 0, || unreachable!()), LaneExit::Terminated);
         let returned = LaneExit::read(LANE_BODY_RETURNED, Value::UNDEFINED.to_bits(), || 5);
         assert!(matches!(returned, LaneExit::Returned { pc: 5, .. }));
+    }
+
+    #[test]
+    fn a_single_status_classifies_to_its_class_and_back() {
+        for (status, class) in SINGLE_STATUS {
+            assert_eq!(classify(status), class);
+            assert_eq!(status_of(class), Some(status));
+        }
+        assert_eq!(classify(NATIVE_JS_STOPPED), StatusClass::Leave);
+        assert_eq!(status_of(StatusClass::Leave), None);
     }
 
     /// Every producer of a leave word stops with `NATIVE_JS_STOPPED` (the stencil entry thunks

@@ -1,5 +1,5 @@
 //! A compiled lane body's calls of natives that call back into JavaScript
-//! (`dispatch_fast::native_calls::lane_body_native_out`) run without the body leaving.
+//! (`dispatch_fast::native_calls::body_native_out_in_lane`) run without the body leaving.
 use super::*;
 use crate::Engine;
 use crate::test_host::TestHost;
@@ -86,7 +86,7 @@ fn a_compiled_body_calls_natives_that_call_back_without_leaving() {
 }
 
 /// Array callback methods called from a compiled body run their callbacks as lane
-/// activations (`array_steps::lane_body_array_iteration`) and the body continues after the
+/// activations (`array_steps::body_array_iteration_in_lane`) and the body continues after the
 /// iteration: the output equals the interpreter's and no call leaves the body.
 #[test]
 fn a_compiled_body_iterates_arrays_and_collections_without_leaving() {
@@ -98,10 +98,10 @@ fn assert_body_stays(source: &str) {
     let (interpreted, _) = run_source(crate::ExecutionMode::Interpreted, source);
     let (compiled, vm) = run_source(crate::ExecutionMode::Compiled, source);
     assert_eq!(interpreted, compiled);
-    let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
+    let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
     let reports: Vec<String> = views.iter()
         .filter_map(super::program_store::derived_lane_view)
-        .filter_map(|view| view.tier().body_stats.report(0, view.lane_body_state(), &|_, _| None))
+        .filter_map(|view| view.tier().body_stats.report(0, view.body_state_in_lane(), &|_, _| None))
         .collect();
     let run = reports.iter().find(|report| report.contains("\"completed\":") && !report.contains("\"completed\":0,"));
     let run = run.unwrap_or_else(|| panic!("a body completes: {reports:?}"));

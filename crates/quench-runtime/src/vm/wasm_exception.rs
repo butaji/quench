@@ -1,5 +1,84 @@
-//! Exception identity and payload use the shared heap and typed error transport.
+//! Exception identity and payload use the shared heap and typed error transport. The checks are the
+//! rules of `staged::wasm_exception`, run on the heap by `ExceptionStage`.
 use super::*;
+use crate::staged::machine::{Machine, MachineStage};
+use crate::staged::wasm_exception::{self as rules, WasmException};
+
+/// The VM's heap, as a stage the exception rules run on (`staged::wasm_exception`). A reference is
+/// its Value bits; a flag is 0 or 1.
+pub(in crate::vm) struct ExceptionStage<'a, H: Host> {
+    pub(in crate::vm) vm: &'a mut Vm<H>,
+}
+
+impl<H: Host> Machine for ExceptionStage<'_, H> {
+    type Word = u64;
+}
+
+impl<H: Host> MachineStage for ExceptionStage<'_, H> {
+    type Exit = JsError;
+
+    crate::staged::wasm_concrete::scalar_operators! {}
+
+    fn trap_when(&mut self, flag: u64, trap: crate::WasmTrap) -> Result<(), JsError> {
+        if flag == 0 { Ok(()) } else { Err(JsError::wasm_trap_error(trap)) }
+    }
+}
+
+impl<H: Host> WasmException for ExceptionStage<'_, H> {
+    fn is_tag(&mut self, value: u64) -> u64 {
+        u64::from(matches!(self.vm.heap.get(Value::from_bits(value)), Some(Cell::WasmTag { .. })))
+    }
+
+    fn is_null(&mut self, value: u64) -> u64 {
+        u64::from(Value::from_bits(value).is_null())
+    }
+
+    fn is_wasm_exception(&mut self, value: u64) -> u64 {
+        u64::from(matches!(self.vm.heap.get(Value::from_bits(value)), Some(Cell::WasmException { .. })))
+    }
+
+    fn tag_of(&mut self, value: u64) -> u64 {
+        match self.vm.heap.get(Value::from_bits(value)) {
+            Some(Cell::WasmException { tag, .. }) => tag.to_bits(),
+            _ => 0,
+        }
+    }
+
+    fn js_tag(&mut self) -> u64 {
+        self.vm.wasm_js.js_tag.to_bits()
+    }
+
+    fn payload_present(&mut self, exception: u64, index: u32) -> u64 {
+        match self.vm.heap.get(Value::from_bits(exception)) {
+            Some(Cell::WasmException { payload, .. }) => u64::from((index as usize) < payload.len()),
+            // `WebAssembly.JSTag`'s one `externref` parameter is the thrown value itself.
+            _ => u64::from(index == 0),
+        }
+    }
+
+    fn payload_word(&mut self, exception: u64, index: u32) -> u64 {
+        match self.vm.heap.get(Value::from_bits(exception)) {
+            Some(Cell::WasmException { payload, .. }) => payload
+                .get(index as usize)
+                .map_or(Value::UNDEFINED.to_bits(), |value| value.to_bits()),
+            _ if index == 0 => exception,
+            _ => Value::UNDEFINED.to_bits(),
+        }
+    }
+
+    fn reject_when(&mut self, flag: u64, reason: &'static str) -> Result<(), JsError> {
+        if flag == 0 { Ok(()) } else { Err(JsError::validation(reason.into())) }
+    }
+
+    fn raise(&mut self, value: u64, wasm: u64) -> JsError {
+        let value = Value::from_bits(value);
+        if wasm != 0 {
+            JsError::thrown_wasm_exception(value)
+        } else {
+            JsError::thrown(value, "uncaught exception".into())
+        }
+    }
+}
 
 impl<H: Host> Vm<H> {
     pub(super) fn wasm_exception_new(
@@ -7,6 +86,7 @@ impl<H: Host> Vm<H> {
         tag: Value,
         payload: Vec<Value>,
     ) -> Result<Value, JsError> {
+        rules::new_tag(&mut ExceptionStage { vm: &mut *self }, tag.to_bits())?;
         let Some(Cell::WasmTag { declarations, ty, .. }) = self.heap.get(tag) else {
             return Err(JsError::validation("invalid Wasm exception tag".into()));
         };
@@ -30,52 +110,29 @@ impl<H: Host> Vm<H> {
         }))
     }
 
+    /// A catch's test of `exception` against `expected` (`rules::matches`).
     pub(super) fn wasm_exception_matches(
-        &self,
+        &mut self,
         exception: Value,
         expected: Value,
     ) -> Result<bool, JsError> {
-        if !matches!(self.heap.get(expected), Some(Cell::WasmTag { .. })) {
-            return Err(JsError::validation("invalid Wasm catch tag".into()));
-        }
-        match self.heap.get(exception) {
-            Some(Cell::WasmException { tag, .. }) => Ok(*tag == expected),
-            // A JavaScript exception is caught by `WebAssembly.JSTag` alone.
-            _ => Ok(expected == self.wasm_js.js_tag),
-        }
+        let flag = rules::matches(&mut ExceptionStage { vm: &mut *self }, exception.to_bits(), expected.to_bits())?;
+        Ok(flag != 0)
     }
 
+    /// The payload word of `exception` at `index` (`rules::payload`).
     pub(super) fn wasm_exception_payload(
-        &self,
+        &mut self,
         exception: Value,
         index: u32,
     ) -> Result<Value, JsError> {
-        let Some(Cell::WasmException { payload, .. }) = self.heap.get(exception) else {
-            // `WebAssembly.JSTag`'s one `externref` parameter is the thrown value itself.
-            return (index == 0)
-                .then_some(exception)
-                .ok_or_else(|| JsError::validation("Wasm exception payload index out of bounds".into()));
-        };
-        payload
-            .get(index as usize)
-            .copied()
-            .ok_or_else(|| JsError::validation("Wasm exception payload index out of bounds".into()))
+        let bits = rules::payload(&mut ExceptionStage { vm: &mut *self }, exception.to_bits(), index)?;
+        Ok(Value::from_bits(bits))
     }
 
-    pub(super) fn wasm_throw_ref(&self, exception: Value) -> JsError {
-        match self.heap.get(exception) {
-            _ if exception.is_null() => {
-                JsError::wasm_trap_error(crate::WasmTrap::NullExceptionReference)
-            }
-            // An exception of `WebAssembly.JSTag` reaches JavaScript as its payload.
-            Some(Cell::WasmException { tag, payload }) if *tag == self.wasm_js.js_tag => {
-                let value = payload.first().copied().unwrap_or(Value::UNDEFINED);
-                JsError::thrown(value, "uncaught exception".into())
-            }
-            Some(Cell::WasmException { .. }) => JsError::thrown_wasm_exception(exception),
-            // A JavaScript exception a Wasm handler caught by reference is rethrown as itself.
-            _ => JsError::thrown(exception, "uncaught exception".into()),
-        }
+    /// The error `throw_ref` of `exception` raises (`rules::throw_ref`).
+    pub(super) fn wasm_throw_ref(&mut self, exception: Value) -> JsError {
+        rules::throw_ref(&mut ExceptionStage { vm: &mut *self }, exception.to_bits())
     }
 }
 

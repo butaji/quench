@@ -6,7 +6,7 @@
 //! `entries`, which grows by recorded sites. Walks over every cache (collection, invalidation)
 //! visit only recorded sites.
 
-use super::super::site_table::SiteTable;
+use super::super::site_table::CacheSiteTable;
 use super::super::{EMPTY_METHOD_CACHE, MethodCache};
 use super::METHOD_CACHE_WAYS;
 
@@ -17,7 +17,7 @@ const NO_SLOT: u32 = u32::MAX;
 
 #[derive(Default)]
 pub(in crate::vm) struct MethodCacheTable {
-    slots: SiteTable<u32>,
+    slots: CacheSiteTable<u32>,
     entries: Vec<MethodWays>,
     /// The site of each entry of `entries`; `NO_SLOT` for one in `free`.
     entry_sites: Vec<u32>,
@@ -33,7 +33,7 @@ impl MethodCacheTable {
 
     /// A table of `len` sites, none recorded.
     pub(in crate::vm) fn with_empty(len: usize) -> Self {
-        Self { slots: SiteTable::with_empty(len), ..Self::default() }
+        Self { slots: CacheSiteTable::with_empty(len), ..Self::default() }
     }
 
     /// Appends `additional` sites, none recorded.
@@ -85,6 +85,7 @@ impl MethodCacheTable {
 
     /// Every recorded site's ways, in no particular order (sites emptied by a reclaimed program
     /// read as empty ways).
+    #[cfg(any(test, feature = "profile-aggregate"))]
     pub(in crate::vm) fn recorded(&self) -> impl Iterator<Item = &MethodWays> {
         self.entries.iter()
     }
@@ -109,16 +110,18 @@ impl MethodCacheTable {
     }
 
     /// Empties the sites in `sites`, whose program was reclaimed.
+    /// The site indices only read here; their pages are then handed back
+    /// (`SiteTable::empty_range`), so a range's empty sites stay off the resident set.
     pub(in crate::vm) fn empty_sites(&mut self, sites: std::ops::Range<usize>) {
-        for site in sites {
+        for site in sites.clone() {
             let slot = self.slots.get(site);
             if slot != NO_SLOT {
                 self.entries[slot as usize] = EMPTY_WAYS;
                 self.entry_sites[slot as usize] = NO_SLOT;
                 self.free.push(slot);
-                self.slots.set(site, NO_SLOT);
             }
         }
+        self.slots.empty_range(sites);
     }
 
     /// Drops every site.

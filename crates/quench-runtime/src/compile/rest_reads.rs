@@ -6,7 +6,11 @@
 //! (`f(...rest)`, a `Move` of it into the window of the `CallSpread` right after) becomes
 //! `CallRest`, which spreads the kept values where the register holds `undefined`.
 use super::liveness::{self, MethodArguments, register_bit};
-use crate::bytecode::{FieldLookup, FieldSite, Function, Instr, Op, Superinstruction};
+use crate::bytecode::{FieldLookup, FieldSite, Function, Instr, Op, Superinstruction, Traits, the_op};
+
+const REST_INDEX_READ_OP: Op = the_op(Traits::REST_INDEX_READ);
+const REST_LENGTH_READ_OP: Op = the_op(Traits::REST_LENGTH_READ);
+const REST_SPREAD_CALL_OP: Op = the_op(Traits::REST_SPREAD_CALL);
 
 /// Rewrites `function`'s reads of its rest parameter where every use is `rest[key]` or
 /// `rest.length` and no instruction writes it.
@@ -40,24 +44,28 @@ pub(super) fn rewrite(
         if definitions & bit != 0 { return; }
         if uses & bit == 0 { continue; }
         let replacement = match instruction.op() {
-            Op::GetIndex if instruction.result_flags() == 0 && instruction.b() == rest && instruction.c() != rest =>
-                Instr::try_new(Op::RestGet, instruction.result_register(), instruction.c(), rest, u32::from(fixed)),
-            Op::GetField if instruction.result_flags() == 0 => match instruction.field_lookup() {
+            op if op.traits().has(Traits::ELEMENT_LOAD) && instruction.result_flags() == 0 && instruction.b() == rest && instruction.c() != rest =>
+                Instr::try_new(REST_INDEX_READ_OP, instruction.result_register(), instruction.c(), rest, u32::from(fixed)),
+            op if op.traits().has(Traits::FIELD_LEAF) && instruction.result_flags() == 0 => match instruction.field_lookup() {
                 Some(FieldLookup::Atom { atom, base, .. }) if is_length(atom) && base.register_index() == Some(rest) =>
-                    Instr::try_new(Op::RestLength, instruction.result_register(), rest, 0, u32::from(fixed)),
+                    Instr::try_new(REST_LENGTH_READ_OP, instruction.result_register(), rest, 0, u32::from(fixed)),
                 _ => None,
             },
             // `Move window, rest` straight into `CallSpread` of that one-value window: the
             // move stays, the call spreads what it moved (`CallRest`).
-            Op::Move if instruction.result_flags() == 0 && instruction.b() == rest => {
+            op if op.traits().has(Traits::REGISTER_COPY) && instruction.result_flags() == 0 && instruction.b() == rest => {
                 let window = instruction.result_register();
-                let Some(call) = code.get(pc + 1).copied().filter(|call| {
-                    call.op() == Op::CallSpread && !entered[pc + 1] && !call.direct_eval() && !call.parameter_eval()
+                // The call is the next instruction that is not a no-op, and no jump enters the
+                // span between them.
+                let Some(next) = (pc + 1..code.len()).find(|&at| !code[at].op().traits().has(Traits::NO_OP)) else { return };
+                let Some(call) = code.get(next).copied().filter(|call| {
+                    call.op().traits().has(Traits::SPREAD_CALL) && !entered[pc + 1..=next].iter().any(|&entry| entry)
+                        && !call.direct_eval() && !call.parameter_eval()
                         && call.call_window().base == window && call.call_window().count == 1
                         && window != rest && call.b() != rest && call.c() != rest
                 }) else { return };
-                let Some(spread) = Instr::try_new(Op::CallRest, call.a(), call.b(), call.c(), call.imm()) else { return };
-                replacements.push((pc + 1, spread));
+                let Some(spread) = Instr::try_new(REST_SPREAD_CALL_OP, call.a(), call.b(), call.c(), call.imm()) else { return };
+                replacements.push((next, spread));
                 continue;
             }
             _ => None,

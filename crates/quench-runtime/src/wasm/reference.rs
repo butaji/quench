@@ -1,9 +1,10 @@
 //! A cast target retains a heap-type index; its declaration graph stays in the program.
+use super::numeric::selectors;
 use super::{Lowering, Reachability};
-use crate::{Diagnostic, bytecode::Op};
+use crate::{Diagnostic, staged::wasm_emit};
 use wasmparser::{AbstractHeapType, HeapType, Operator, RefType, UnpackedIndex};
 
-super::numeric::selectors! { ExternalConversion;
+selectors! { @decoded ExternalConversion;
     Internalize, AnyConvertExtern;
     Externalize, ExternConvertAny;
 }
@@ -172,13 +173,11 @@ impl Lowering<'_> {
             if self.path == Reachability::Live {
                 let input = self.pop()?;
                 let result = self.push()?;
-                self.emit(
-                    Op::WasmExternalConversion,
+                self.emit_emission(wasm_emit::external_conversion(
                     result,
                     input,
-                    0,
                     conversion as u32,
-                )?;
+                ))?;
             }
             return Ok(true);
         }
@@ -188,7 +187,7 @@ impl Lowering<'_> {
                     let right = self.pop()?;
                     let left = self.pop()?;
                     let result = self.push()?;
-                    self.emit(Op::WasmRefEq, result, left, right, 0)?;
+                    self.emit_emission(wasm_emit::ref_eq(result, left, right))?;
                 }
                 return Ok(true);
             }
@@ -229,33 +228,26 @@ impl Lowering<'_> {
                     ));
                 }
                 if self.path == Reachability::Live {
-                    let descriptor = if described { self.pop()? } else { 0 };
+                    let descriptor = if described { Some(self.pop()?) } else { None };
                     let reference = self.pop()?;
                     self.push()?; // Both branch and fallthrough carry the original reference.
                     let condition = self.push()?;
                     self.depth -= 1;
-                    self.emit(
-                        if described {
-                            Op::WasmDescriptorTest
-                        } else {
-                            Op::WasmRefTest
-                        },
+                    self.emit_emission(wasm_emit::ref_test(
                         condition,
                         reference,
                         descriptor,
                         target.tag(),
-                    )?;
+                    ))?;
                     if matches!(
                         operator,
                         Operator::BrOnCastFail { .. } | Operator::BrOnCastDescEqFail { .. }
                     ) {
-                        self.emit(
-                            Op::WasmI32Unary,
+                        self.emit_emission(wasm_emit::i32_unary(
                             condition,
                             condition,
-                            0,
-                            super::integer::I32UnaryOperator::EqualZero as u32,
-                        )?;
+                            super::integer::I32UnaryOperator::EqualZero,
+                        ))?;
                     }
                     self.branch_if(relative_depth, super::control::Condition::Value(condition))?;
                 }
@@ -287,22 +279,15 @@ impl Lowering<'_> {
             ));
         }
         if self.path == Reachability::Live {
-            let descriptor = if described { self.pop()? } else { 0 };
+            let descriptor = if described { Some(self.pop()?) } else { None };
             let input = self.pop()?;
             let result = self.push()?;
-            self.emit(
-                if described {
-                    Op::WasmDescriptorCast
-                } else if cast {
-                    Op::WasmRefCast
-                } else {
-                    Op::WasmRefTest
-                },
-                result,
-                input,
-                descriptor,
-                target.tag(),
-            )?;
+            let instruction = if cast {
+                wasm_emit::ref_cast(result, input, descriptor, target.tag())
+            } else {
+                wasm_emit::ref_test(result, input, descriptor, target.tag())
+            };
+            self.emit_emission(instruction)?;
         }
         Ok(true)
     }

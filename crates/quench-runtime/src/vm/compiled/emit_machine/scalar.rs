@@ -3,12 +3,12 @@
 //! written over the operators (traps, their order, NaN canonicalization) is the interpreter's
 //! (`staged::wasm`, `staged::wasm_float`); this file only says what one operator is on the machine.
 
-use super::{Builds, lane_of, machine_type};
+use super::{Builds, of_in_lane, machine_type};
 use super::super::{Emitter, Host, scalar_ir};
-use crate::staged::machine::{Binary, Lane, MachineScalar, MachineStage, Relation, Unary};
+use crate::staged::machine::{Binary, Lane, MachineOperator, MachineScalar, MachineStage, Order, Relation, Unary};
 use crate::staged::wasm::Width;
-use crate::staged::wasm_float::{Float, Truncation};
-use crate::wasm::conversion::{ScalarConversionOperator as Conversion, truncation_bounds};
+use crate::staged::wasm_float::{Float, Truncation, truncation_limits};
+use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{I64BinaryOperator as IntegerBinary, I64UnaryOperator as IntegerUnary};
 use cranelift_codegen::ir::{
@@ -20,66 +20,36 @@ use cranelift_codegen::ir::{
 use cranelift_frontend::FunctionBuilder;
 use std::convert::Infallible;
 
-/// The machine condition of each integer relation.
-const INTEGER_CONDITIONS: [(Relation, IntCC); 10] = [
-    (Relation::Equal, IntCC::Equal),
-    (Relation::NotEqual, IntCC::NotEqual),
-    (Relation::SignedLess, IntCC::SignedLessThan),
-    (Relation::SignedLessEqual, IntCC::SignedLessThanOrEqual),
-    (Relation::SignedGreater, IntCC::SignedGreaterThan),
-    (Relation::SignedGreaterEqual, IntCC::SignedGreaterThanOrEqual),
-    (Relation::UnsignedLess, IntCC::UnsignedLessThan),
-    (Relation::UnsignedLessEqual, IntCC::UnsignedLessThanOrEqual),
-    (Relation::UnsignedGreater, IntCC::UnsignedGreaterThan),
-    (Relation::UnsignedGreaterEqual, IntCC::UnsignedGreaterThanOrEqual),
-];
+/// The integer condition of `relation`, built from the order it tests and its signedness
+/// (`Relation::order`); `None` for a float relation.
+fn integer_condition(relation: Relation) -> Option<IntCC> {
+    let (order, false) = relation.order() else { return None };
+    let unsigned = match order {
+        Order::Equal => return Some(IntCC::Equal),
+        Order::NotEqual => return Some(IntCC::NotEqual),
+        Order::Less => IntCC::UnsignedLessThan,
+        Order::LessEqual => IntCC::UnsignedLessThanOrEqual,
+        Order::Greater => IntCC::UnsignedGreaterThan,
+        Order::GreaterEqual => IntCC::UnsignedGreaterThanOrEqual,
+        Order::Unordered | Order::UnorderedEqual => return None,
+    };
+    Some(if relation.is_signed() { unsigned.signed() } else { unsigned })
+}
 
-/// The machine condition of each float relation.
-const FLOAT_CONDITIONS: [(Relation, FloatCC); 8] = [
-    (Relation::FloatEqual, FloatCC::Equal),
-    (Relation::FloatNotEqual, FloatCC::NotEqual),
-    (Relation::FloatLess, FloatCC::LessThan),
-    (Relation::FloatLessEqual, FloatCC::LessThanOrEqual),
-    (Relation::FloatGreater, FloatCC::GreaterThan),
-    (Relation::FloatGreaterEqual, FloatCC::GreaterThanOrEqual),
-    (Relation::FloatUnordered, FloatCC::Unordered),
-    (Relation::FloatUnorderedEqual, FloatCC::UnorderedOrEqual),
-];
-
-/// The relation of each Wasm integer comparison operator.
-const INTEGER_RELATIONS: [(IntegerBinary, Relation); 10] = [
-    (IntegerBinary::Equal, Relation::Equal),
-    (IntegerBinary::NotEqual, Relation::NotEqual),
-    (IntegerBinary::LessSigned, Relation::SignedLess),
-    (IntegerBinary::LessUnsigned, Relation::UnsignedLess),
-    (IntegerBinary::GreaterSigned, Relation::SignedGreater),
-    (IntegerBinary::GreaterUnsigned, Relation::UnsignedGreater),
-    (IntegerBinary::LessEqualSigned, Relation::SignedLessEqual),
-    (IntegerBinary::LessEqualUnsigned, Relation::UnsignedLessEqual),
-    (IntegerBinary::GreaterEqualSigned, Relation::SignedGreaterEqual),
-    (IntegerBinary::GreaterEqualUnsigned, Relation::UnsignedGreaterEqual),
-];
-
-/// The row of each Wasm integer arithmetic operator; the signed remainder is guarded
-/// (`signed_remainder`).
-const INTEGER_ROWS: [(IntegerBinary, Binary); 16] = [
-    (IntegerBinary::Add, Binary::Add),
-    (IntegerBinary::Subtract, Binary::Sub),
-    (IntegerBinary::Multiply, Binary::Mul),
-    (IntegerBinary::MultiplyHighSigned, Binary::MulHighSigned),
-    (IntegerBinary::MultiplyHighUnsigned, Binary::MulHighUnsigned),
-    (IntegerBinary::And, Binary::And),
-    (IntegerBinary::Or, Binary::Or),
-    (IntegerBinary::Xor, Binary::Xor),
-    (IntegerBinary::ShiftLeft, Binary::ShiftLeft),
-    (IntegerBinary::ShiftRightSigned, Binary::ShiftRightSigned),
-    (IntegerBinary::ShiftRightUnsigned, Binary::ShiftRightUnsigned),
-    (IntegerBinary::RotateLeft, Binary::RotateLeft),
-    (IntegerBinary::RotateRight, Binary::RotateRight),
-    (IntegerBinary::DivideSigned, Binary::DivideSigned),
-    (IntegerBinary::DivideUnsigned, Binary::DivideUnsigned),
-    (IntegerBinary::RemainderUnsigned, Binary::RemainderUnsigned),
-];
+/// The float condition of `relation` (`Relation::order`); `None` for an integer relation.
+fn float_condition(relation: Relation) -> Option<FloatCC> {
+    let (order, true) = relation.order() else { return None };
+    Some(match order {
+        Order::Equal => FloatCC::Equal,
+        Order::NotEqual => FloatCC::NotEqual,
+        Order::Less => FloatCC::LessThan,
+        Order::LessEqual => FloatCC::LessThanOrEqual,
+        Order::Greater => FloatCC::GreaterThan,
+        Order::GreaterEqual => FloatCC::GreaterThanOrEqual,
+        Order::Unordered => FloatCC::Unordered,
+        Order::UnorderedEqual => FloatCC::UnorderedOrEqual,
+    })
+}
 
 /// The relation of each Wasm float comparison operator.
 const FLOAT_RELATIONS: [(FloatBinary, Relation); 6] = [
@@ -223,9 +193,9 @@ fn compare(builder: &mut FunctionBuilder<'_>, relation: Relation, a: ir::Value, 
     if let (Some(a), Some(b)) = (known_integer(builder, a), known_integer(builder, b))
         && let Some(holds) = decided(relation, a, b) { return builder.ins().iconst(types::I8, i64::from(holds)); }
     let ins = builder.ins();
-    match row(&FLOAT_CONDITIONS, relation) {
+    match float_condition(relation) {
         Some(condition) => ins.fcmp(condition, a, b),
-        None => ins.icmp(row(&INTEGER_CONDITIONS, relation).expect("a relation"), a, b),
+        None => ins.icmp(integer_condition(relation).expect("a relation"), a, b),
     }
 }
 
@@ -236,7 +206,7 @@ fn compare_imm(builder: &mut FunctionBuilder<'_>, relation: Relation, a: ir::Val
         let signed = if width >= 64 { bits } else { ((unsigned << (64 - width)) as i64) >> (64 - width) };
         if let Some(holds) = decided(relation, known, (unsigned, signed)) { return builder.ins().iconst(types::I8, i64::from(holds)); }
     }
-    let condition = row(&INTEGER_CONDITIONS, relation).expect("an integer relation");
+    let condition = integer_condition(relation).expect("an integer relation");
     let ins = builder.ins();
     if relation.is_signed() { ins.icmp_imm_s(condition, a, bits) } else { ins.icmp_imm_u(condition, a, bits) }
 }
@@ -284,7 +254,7 @@ fn float_unary(builder: &mut FunctionBuilder<'_>, operation: Unary, a: ir::Value
 
 impl<'b, B: Builds<'b>> MachineScalar for B {
     fn raw_lane(&mut self, value: ir::Value) -> Lane {
-        lane_of(self.function_builder().func.dfg.value_type(value))
+        of_in_lane(self.function_builder().func.dfg.value_type(value))
     }
     fn raw_const(&mut self, lane: Lane, bits: i64) -> ir::Value { constant(self.function_builder(), lane, bits) }
     fn raw_binary(&mut self, operation: Binary, a: ir::Value, b: ir::Value) -> ir::Value {
@@ -383,13 +353,13 @@ impl<H: Host> MachineStage for Emitter<'_, '_, H> {
     }
 
     fn operate(&mut self, operator: IntegerBinary, _width: Width, left: ir::Value, right: ir::Value) -> ir::Value {
-        if let Some(relation) = row(&INTEGER_RELATIONS, operator) {
-            let flag = self.raw_compare(relation, left, right);
-            return self.flag_word(flag);
-        }
-        match row(&INTEGER_ROWS, operator) {
-            Some(operation) => self.raw_binary(operation, left, right),
-            None => self.signed_remainder(left, right),
+        match operator.machine() {
+            MachineOperator::Relation(relation) => {
+                let flag = self.raw_compare(relation, left, right);
+                self.flag_word(flag)
+            }
+            MachineOperator::Binary(operation) => self.raw_binary(operation, left, right),
+            MachineOperator::SignedRemainder => self.signed_remainder(left, right),
         }
     }
 
@@ -443,7 +413,7 @@ impl<H: Host> MachineStage for Emitter<'_, '_, H> {
             Float::F64 => value,
         };
         let truncated = self.raw_unary(Unary::Truncate, wide);
-        let (lower, limit) = truncation_bounds(truncation.width.bits(), truncation.signed);
+        let (lower, limit) = truncation_limits(truncation.width.bits(), truncation.signed);
         let lower = self.raw_const(Lane::F64, lower.to_bits() as i64);
         let limit = self.raw_const(Lane::F64, limit.to_bits() as i64);
         let below = self.raw_compare(Relation::FloatLess, truncated, lower);
@@ -453,7 +423,7 @@ impl<H: Host> MachineStage for Emitter<'_, '_, H> {
     }
 
     fn convert(&mut self, operator: Conversion, value: ir::Value) -> ir::Value {
-        let result = lane_of(scalar_ir(operator.result_type()));
+        let result = of_in_lane(scalar_ir(operator.result_type()));
         self.raw_unary(conversion_row(operator, result), value)
     }
 

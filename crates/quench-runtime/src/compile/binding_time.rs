@@ -31,7 +31,7 @@ fn folded(value: &Expression<'_>, depth: u32, names: Names<'_>) -> Option<Consta
         Expression::NumericLiteral(value) => Some(Constant::Number(value.value)),
         Expression::StringLiteral(value) => Some(super::string::constant(value)),
         Expression::BigIntLiteral(value) => {
-            Some(Constant::BigInt(crate::bigint::decimal_literal(&value.value)))
+            Some(Constant::BigInt(Box::new(crate::bigint::decimal_literal(&value.value))))
         }
         Expression::BooleanLiteral(value) => Some(Constant::Boolean(value.value)),
         Expression::NullLiteral(_) => Some(Constant::Null),
@@ -45,6 +45,16 @@ fn folded(value: &Expression<'_>, depth: u32, names: Names<'_>) -> Option<Consta
         Expression::BinaryExpression(value) => binary_at(value, depth.checked_sub(1)?, names),
         value => folded(transparent(value)?, depth, names),
     }
+}
+
+/// `value` without the parentheses and TypeScript type-only wrappers around it (`transparent`):
+/// the expression that runs. TypeScript keeps a reference's `this` and `typeof`'s tolerance of
+/// a missing name through `obj.m!()` or `typeof (x as any)`, as through parentheses.
+pub(super) fn evaluated<'a>(mut value: &'a Expression<'a>) -> &'a Expression<'a> {
+    while let Some(operand) = transparent(value) {
+        value = operand;
+    }
+    value
 }
 
 /// The operand of an expression that evaluates to its operand: parentheses and TypeScript's

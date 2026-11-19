@@ -40,14 +40,74 @@ pub(super) fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLo
 /// The slot of an entry whose property was deleted (`ShapeLookupIndex::remove`).
 pub(super) const VACANT_SLOT: u32 = u32::MAX;
 
+/// A shape's properties in definition order with their slots (`Vm::shape_entries`): read
+/// from its lookup index where it has one, else from its transition chain.
+#[derive(Clone)]
+pub(super) enum ShapeEntries<'a> {
+    Indexed(std::slice::Iter<'a, (PropertyKey, u32)>),
+    Walked(smallvec::IntoIter<[(PropertyKey, u32); WALKED_SHAPE_ENTRIES]>),
+}
+
+/// The entries a walked shape keeps inline (`ShapeEntries::Walked`); a wider chain spills.
+const WALKED_SHAPE_ENTRIES: usize = 8;
+
+impl Iterator for ShapeEntries<'_> {
+    type Item = (PropertyKey, u32);
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Indexed(entries) => entries.find(|(_, slot)| *slot != VACANT_SLOT).copied(),
+            Self::Walked(entries) => entries.next(),
+        }
+    }
+}
+
 impl<H: Host> Vm<H> {
     /// The properties of `shape` in definition order, with their slots.
-    pub(super) fn shape_entries(&self, shape: u32) -> impl Iterator<Item = &(PropertyKey, u32)> + Clone {
-        self.shape_lookup_index(shape).live_entries()
+    ///
+    /// A shape without a lookup index whose chain holds no deletion and is no dictionary
+    /// lists exactly its chain's adds, each of a key the chain lacked
+    /// (`transition_data_property_shape`): those are read off the chain, so listing a
+    /// shape's keys (`Object.keys`, a spread, a copy) gives it no lookup index. An index,
+    /// one boxed record with its entries, positions and attributes, cost several times the
+    /// shape itself on every shape whose keys a program ever listed. A wide shape listed
+    /// again and again still earns its index (`note_long_shape_walk`).
+    pub(super) fn shape_entries(&self, shape: u32) -> ShapeEntries<'_> {
+        if let Some(entries) = self.walked_shape_entries(shape) {
+            return ShapeEntries::Walked(entries.into_iter());
+        }
+        ShapeEntries::Indexed(self.shape_lookup_index(shape).entries.iter())
     }
     /// How many properties `shape` holds.
     pub(super) fn shape_entry_count(&self, shape: u32) -> usize {
-        self.shape_lookup_index(shape).live_len()
+        match self.walked_shape_entries(shape) {
+            Some(entries) => entries.len(),
+            None => self.shape_lookup_index(shape).live_len(),
+        }
+    }
+    /// `shape`'s entries read off its chain, when it has no lookup index and its chain makes
+    /// them exactly its adds (`shape_entries`).
+    fn walked_shape_entries(&self, shape: u32) -> Option<smallvec::SmallVec<[(PropertyKey, u32); WALKED_SHAPE_ENTRIES]>> {
+        let entry = &self.shapes[shape as usize];
+        if entry.lookup_index.get().is_some() || entry.is_dictionary() || entry.facts.deletions() {
+            return None;
+        }
+        let mut entries = smallvec::SmallVec::<[(PropertyKey, u32); WALKED_SHAPE_ENTRIES]>::new();
+        let mut current = Some(shape);
+        let mut distance = 0usize;
+        while let Some(id) = current {
+            let link = &self.shapes[id as usize];
+            if let ShapeTransition::Add { key, slot, .. } = link.transition {
+                entries.push((key, slot));
+            }
+            current = link.parent();
+            distance += 1;
+        }
+        if distance >= super::object::SHAPE_INDEX_WALK_DISTANCE {
+            self.note_long_shape_walk(shape);
+        }
+        entries.reverse();
+        Some(entries)
     }
     pub(super) fn shape_lookup_index(&self, shape: u32) -> &ShapeLookupIndex {
         self.shapes[shape as usize].lookup_index.get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)))

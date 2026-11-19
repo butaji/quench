@@ -3,7 +3,7 @@
 //! `new.target` it had (`replay::arrow_wrapper`): the skim leaves a body that names any of
 //! them to the whole parse, so what the arrow reads of them is what its wrapper gives it.
 use super::{Nesting, is_stand_in, reparse, text_alone};
-use crate::compile::{Compiler, replay};
+use crate::compile::{Compiler, LAZY_FUNCTION_BODY_NOT_ALONE, replay};
 use oxc_ast::ast::{ArrowFunctionBody, ArrowFunctionExpression};
 
 /// Whether the block body of `arrow` is a released body's stand-in.
@@ -36,7 +36,7 @@ impl Compiler<'_> {
         let id = match reparsed.as_ref().ok().and_then(|reparsed| reparsed.arrow()).filter(|again| again.span == arrow.span) {
             Some(again) => self.compile_arrow_function(again, context),
             None => {
-                self.reject(arrow.span, "SyntaxError: a lazily parsed function body does not compile alone");
+                self.reject(arrow.span, LAZY_FUNCTION_BODY_NOT_ALONE);
                 self.compile_arrow_function(arrow, context)
             }
         };

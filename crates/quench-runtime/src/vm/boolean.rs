@@ -17,7 +17,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "Boolean")?;
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -40,14 +40,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
-        for (name, native) in [
-            ("toString", Native::BooleanToString),
-            ("valueOf", Native::BooleanValueOf),
-        ] {
-            let method = self.native_with_realm(native, global, global);
-            self.set_builtin_function_name(method, name)?;
-            self.set_builtin_value_named(prototype, name, method)?;
-        }
+        self.install_realm_native_rows(prototype, super::native_rows::Holder::BooleanPrototype, global)?;
         if global == self.realm.globals {
             self.global(p, "Boolean", constructor)
         } else {

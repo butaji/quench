@@ -1,5 +1,3 @@
-use super::typed_array_install::{TYPED_ARRAY_BASE_METHODS, TYPED_ARRAY_CALLBACK_METHODS};
-use super::typed_array_install::{UINT8_ARRAY_PROTOTYPE_METHODS, UINT8_ARRAY_STATIC_METHODS};
 use super::*;
 
 /// Direct-mapped entries of `TypedArrayGeometryProofs`, by name and prototype (a DataView reads
@@ -11,22 +9,25 @@ const TYPED_ARRAY_GEOMETRY_ENTRIES: usize = 8;
 
 /// That reading `atom` from a typed array whose own shape lacks it, with prototype
 /// `prototype`, calls `getter`: every prototype before the holder lacks the name, which the
-/// holder keeps as that accessor. Proved under one `prototype_layout_epoch`, which any
-/// prototype change or collection advances.
+/// holder keeps as that accessor. Held under the cell of the links up to the holder
+/// (`Vm::chain_cell`), which a change to one of them, or its death, retires.
 #[derive(Clone, Copy)]
 struct TypedArrayGeometryProof {
-    /// The receiver's own shape, which proved itself neither a dictionary nor holding the name.
-    shape: u32,
-    prototype: Value,
+    /// The receiver's layout id (`Object::layout_id`): its own shape, which proved itself
+    /// neither a dictionary nor holding the name, and its prototype, one fact compared once.
+    layout: u32,
     atom: Atom,
-    epoch: u64,
+    cell: crate::heap::ChainCell,
     /// The intrinsic accessor's native (`Vm::pure_native_getter`), fixed with the getter.
     native: Native,
 }
 
-/// The proof slot of `atom` read through `prototype`: a lookup and the proof it finds share it.
-fn geometry_slot(atom: Atom, prototype: Value) -> usize {
-    (atom as usize).wrapping_add(prototype.to_bits() as usize) % TYPED_ARRAY_GEOMETRY_ENTRIES
+/// The proof slot of `atom` read from a receiver of layout `layout`: a lookup and the proof
+/// it finds share it.
+#[inline(always)]
+fn geometry_slot(atom: Atom, layout: u32) -> usize {
+    const { assert!(TYPED_ARRAY_GEOMETRY_ENTRIES.is_power_of_two()) };
+    ((atom as usize) ^ (layout as usize)) & (TYPED_ARRAY_GEOMETRY_ENTRIES - 1)
 }
 
 #[derive(Default)]
@@ -43,49 +44,50 @@ impl<H: Host> Vm<H> {
     }
 
     /// `typed_array_geometry_read` inlined into its caller: a typed array's `length` site
-    /// (`lane_get_length_typed`) reads it once per loop test.
+    /// (`TYPED_LENGTH_SITE`) reads it once per loop test.
     #[inline(always)]
     pub(super) fn typed_array_geometry_read_inline(&mut self, object: Value, atom: Atom) -> Option<Value> {
         let data = self.virtual_field_view(object)?;
         if data.has_side_descriptors() {
             return None;
         }
-        let (shape, prototype) = (data.shape(), data.proto());
-        let epoch = crate::heap::prototype_layout_epoch();
-        let index = geometry_slot(atom, prototype);
-        let native = match self.typed_array_geometry.0[index].get() {
-            Some(proof) if proof.shape == shape && proof.prototype == prototype && proof.atom == atom && proof.epoch == epoch => {
-                proof.native
+        let layout = data.layout_id();
+        let native = match self.typed_array_geometry.0[geometry_slot(atom, layout)].get() {
+            Some(proof) if proof.layout == layout && proof.atom == atom && proof.cell.holds() => proof.native,
+            _ => {
+                let (shape, prototype) = (data.shape(), data.proto());
+                self.prove_geometry_getter(layout, shape, prototype, atom)?
             }
-            _ => self.prove_geometry_getter(shape, prototype, atom, epoch)?,
         };
-        if native == Native::TypedArrayLengthGetter
-            && let Some(length) = self.typed_cached_length(object)
-        {
-            return Some(length);
+        if native == Native::TypedArrayLengthGetter {
+            if let Some(length) = self.typed_cached_length(object) {
+                return Some(length);
+            }
+            // The view's entry is the length proved once: make it here, so the next read of
+            // this view hits it rather than walking its buffer again.
+            self.fill_typed_view(object);
+            if let Some(length) = self.typed_cached_length(object) {
+                return Some(length);
+            }
         }
         self.pure_native_value(native, object)
     }
 
     /// The native getter `typed_array_geometry_read` reads `atom` through from a receiver of
-    /// own shape `shape` and prototype `prototype`, proved and recorded under `epoch`; `None`
-    /// where the shape is a dictionary or holds the name, or no intrinsic native accessor answers.
-    fn prove_geometry_getter(&mut self, shape: u32, prototype: Value, atom: Atom, epoch: u64) -> Option<Native> {
+    /// layout `layout`, own shape `shape` and prototype `prototype`, proved and recorded under
+    /// the cell of its chain to the holder; `None` where the shape is a dictionary or holds the
+    /// name, or no intrinsic native accessor answers.
+    #[inline(never)]
+    fn prove_geometry_getter(&mut self, layout: u32, shape: u32, prototype: Value, atom: Atom) -> Option<Native> {
         if self.shape_is_dictionary(shape) || self.shape_slot(shape, atom).is_some() {
             return None;
         }
         let (getter, depth) = self.typed_array_geometry_getter(prototype, atom)?;
         let native = self.pure_native_getter(getter)?;
         // Every link up to the holder becomes a prototype first, so a later change to one
-        // advances the epoch and retires the proof.
-        let mut link = prototype;
-        for _ in 0..depth {
-            self.heap.mark_prototype(link);
-            link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
-        }
-        if crate::heap::prototype_layout_epoch() == epoch {
-            let index = geometry_slot(atom, prototype);
-            self.typed_array_geometry.0[index].set(Some(TypedArrayGeometryProof { shape, prototype, atom, epoch, native }));
+        // retires the proof's cell; marking one that was no prototype yet changes no layout.
+        if let Some(cell) = u8::try_from(depth).ok().and_then(|depth| self.chain_cell(prototype, depth)) {
+            self.typed_array_geometry.0[geometry_slot(atom, layout)].set(Some(TypedArrayGeometryProof { layout, atom, cell, native }));
         }
         Some(native)
     }
@@ -200,41 +202,8 @@ impl<H: Host> Vm<H> {
             "BYTES_PER_ELEMENT",
             Value::number(1.0),
         )?;
-        for &(name, native) in TYPED_ARRAY_BASE_METHODS {
-            self.set_builtin_named(program, self.typed_array_proto, name, native)?;
-        }
-        for &(name, native) in UINT8_ARRAY_PROTOTYPE_METHODS {
-            self.set_builtin_named(program, self.uint8_array_proto, name, native)?;
-        }
-        for &(name, native, _) in TYPED_ARRAY_CALLBACK_METHODS {
-            let method = self.native_with_realm(native, Value::NULL, self.realm.globals);
-            self.set_builtin_function_name(method, name)?;
-            self.set_builtin_value_named(self.typed_array_proto, name, method)?;
-        }
-        let to_string_atom = self.intern_atom("toString");
-        let to_string = self.get_property(program, self.array_proto, to_string_atom)?;
-        self.set_builtin_value_named(self.typed_array_proto, "toString", to_string)?;
-        let last_index_of = self.native_with_realm(
-            Native::TypedArrayLastIndexOf,
-            Value::NULL,
-            self.realm.globals,
-        );
-        self.set_builtin_function_name(last_index_of, "lastIndexOf")?;
-        self.set_builtin_value_named(self.typed_array_proto, "lastIndexOf", last_index_of)?;
-        let sort = self.native_with_realm(Native::TypedArraySort, Value::NULL, self.realm.globals);
-        self.set_builtin_function_name(sort, "sort")?;
-        self.set_builtin_value_named(self.typed_array_proto, "sort", sort)?;
-        for (name, native) in [
-            ("at", Native::TypedArrayAt),
-            ("toReversed", Native::TypedArrayToReversed),
-            ("toSorted", Native::TypedArrayToSorted),
-            ("with", Native::TypedArrayWith),
-            ("toLocaleString", Native::TypedArrayToLocaleString),
-        ] {
-            let method = self.native_with_realm(native, Value::NULL, self.realm.globals);
-            self.set_builtin_function_name(method, name)?;
-            self.set_builtin_value_named(self.typed_array_proto, name, method)?;
-        }
+        self.install_native_rows(program, self.typed_array_proto, super::native_rows::Holder::TypedArrayPrototype)?;
+        self.install_native_rows(program, self.uint8_array_proto, super::native_rows::Holder::Uint8ArrayPrototype)?;
         for (name, native) in [
             ("buffer", Native::TypedArrayBufferGetter),
             ("byteLength", Native::TypedArrayByteLengthGetter),
@@ -259,9 +228,7 @@ impl<H: Host> Vm<H> {
             );
         }
         self.global(program, "Uint8Array", uint8_array)?;
-        for &(name, native) in UINT8_ARRAY_STATIC_METHODS {
-            self.set_builtin_named(program, uint8_array, name, native)?;
-        }
+        self.install_native_rows(program, uint8_array, super::native_rows::Holder::Uint8ArrayConstructor)?;
         self.realm.intrinsics.builtin_prototypes.insert(
             (self.realm.globals, Native::Uint8Array),
             self.uint8_array_proto,
@@ -334,13 +301,7 @@ impl<H: Host> Vm<H> {
         ) {
             return self.typed_array_modern_native(p, native, this, args);
         }
-        if let Some(array_native) =
-            TYPED_ARRAY_CALLBACK_METHODS
-                .iter()
-                .find_map(|(_, typed_native, array_native)| {
-                    (*typed_native == native).then_some(*array_native)
-                })
-        {
+        if let Some(array_native) = super::native_rows::shared_array_native(native) {
             return self.typed_array_callback_native(p, array_native, this, args);
         }
         if native == Native::ArrayBufferIsView {
@@ -975,9 +936,7 @@ impl<H: Host> Vm<H> {
         this: Value,
     ) -> Result<Value, JsError> {
         let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(this) else {
-            let method = TYPED_ARRAY_BASE_METHODS
-                .iter()
-                .find_map(|(name, candidate)| (*candidate == native).then_some(*name));
+            let method = super::native_rows::method_name(super::native_rows::Holder::TypedArrayPrototype, native);
             let message = if matches!(native, Native::Uint8ArrayJoin | Native::Uint8ArraySlice) {
                 let receiver = self.typed_array_receiver_diagnostic(p, this)?;
                 format!(
@@ -993,9 +952,7 @@ impl<H: Host> Vm<H> {
         };
         let buffer = *buffer;
         if self.typed_array_out_of_bounds(this) || self.array_buffer_detached(buffer) {
-            let method = TYPED_ARRAY_BASE_METHODS
-                .iter()
-                .find_map(|(name, candidate)| (*candidate == native).then_some(*name));
+            let method = super::native_rows::method_name(super::native_rows::Holder::TypedArrayPrototype, native);
             let message = if let Some(method) = method {
                 let state = if native == Native::Uint8ArrayKeys {
                     "detached"
@@ -1030,7 +987,7 @@ impl<H: Host> Vm<H> {
             match self.heap.get(this) {
                 Some(Cell::DataView { .. }) => "#<DataView>".to_owned(),
                 Some(Cell::Date { .. }) => "[object Date]".to_owned(),
-                Some(Cell::Symbol(description)) => {
+                _ if let Some(description) = self.heap.symbol_data(this) => {
                     format!("Symbol({})", description.as_deref().unwrap_or(""))
                 }
                 Some(Cell::BigInt(_)) => self.to_string(p, this)?,

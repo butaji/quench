@@ -3,6 +3,7 @@
 //! a 16-byte handle where they took 64 (jsdom-d3-startup: 23K Maps of one to three
 //! entries per document, each 176 bytes in two blocks before).
 
+use crate::heap::growth::{GrowthPolicy, grown_capacity};
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
 use std::marker::PhantomData;
 use std::ptr::NonNull;
@@ -141,7 +142,9 @@ impl<T> Table<T> {
     #[cold]
     #[inline(never)]
     fn grow(&mut self) {
-        self.reallocate(Self::fitted((self.capacity() * 2).max(2)));
+        // Called only when full, so `len + 1` is `capacity + 1`: the doubling still decides.
+        let grown = grown_capacity(self.capacity(), self.len() + 1, GrowthPolicy::Double { minimum: 2 });
+        self.reallocate(Self::fitted(grown));
     }
 
 }

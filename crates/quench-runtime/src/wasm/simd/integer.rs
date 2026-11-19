@@ -1,6 +1,6 @@
 //! Integer lane projections and SIMD-specific saturation/grouping rules.
 
-use super::{WasmValue, lane, lane_mask, map_lanes, replace};
+use super::{WasmValue, lane, width_mask, map_lanes, replace};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 
 const PAIR_LANES: u32 = 2;
@@ -37,7 +37,7 @@ fn saturate(value: i128, width: u32, sign: Signedness) -> u64 {
             let bound = 1_i128 << (width - 1);
             (-bound, bound - 1)
         }
-        Signedness::Unsigned => (0, lane_mask(width) as i128),
+        Signedness::Unsigned => (0, width_mask(width) as i128),
     };
     value.clamp(minimum, maximum) as u64
 }
@@ -47,7 +47,7 @@ fn numeric(value: WasmValue, width: u32) -> u64 {
         WasmValue::I64(value) => value as u64,
         WasmValue::I32(value) => {
             if value != 0 {
-                lane_mask(width) as u64
+                width_mask(width) as u64
             } else {
                 0
             }
@@ -421,8 +421,8 @@ mod tests {
                     assert_eq!(binary(left, right, width, op), expected, "{op:?} width {width}");
                 }
                 for op in shifts {
-                    let lane_count = u64::from(count % width);
-                    let expected = map_lanes(left, None, width, |bits, _| binary_lane(bits, lane_count, width, op));
+                    let total_lanes = u64::from(count % width);
+                    let expected = map_lanes(left, None, width, |bits, _| binary_lane(bits, total_lanes, width, op));
                     assert_eq!(shift(left, count, width, op), expected, "{op:?} width {width}");
                 }
             }

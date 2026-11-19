@@ -146,13 +146,13 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         let header = match owner {
             Owner::Temporary => {
                 let records = headers::object_table_base(stage.builder, entry, self.payload);
-                let functions = emit_js_record_base(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
+                let functions = emit_js_record_base(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
                 ObjectHeader::prove_readable(stage.builder, object, records, functions, miss)
             }
             Owner::This => self.object_header(stage.builder, entry, None, readable, miss),
             Owner::Register(register) => self.object_header(stage.builder, entry, Some(register), readable, miss),
         };
-        Some(Reached { shape: Some(header.shape), inline: Some(header.inline), word: header.word, ..Reached::bare(header.address) })
+        Some(Reached { shape: Some(header.shape), inline: Some(header.inline), word: header.word, auxiliary: header.auxiliary, ..Reached::bare(header.address) })
     }
 
     /// The shape the owner's header holds as a constant, or its kept layout's.
@@ -244,6 +244,10 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         self.loop_slot_store(stage, site, value, miss)
     }
 
+    fn entry_slot_raw(&self) -> bool {
+        self.fields.as_ref().and_then(|fields| fields.held.slot).is_some_and(|slot| slot.domain == Type::NUMBER)
+    }
+
     /// The direct store, and where it declines (a shape, the barrier or the storage does not
     /// admit it) the VM's store, which logs what it must; past the join only the proofs that
     /// held before the store do.
@@ -330,7 +334,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
 
 /// Word `word` of the loop's entry record (`JsStepDispatch::loop_entry`).
 pub(super) fn entry_record_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, word: u32) -> ir::Value {
-    let entry = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, loop_entry));
+    let entry = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.loop_entry));
     let offset = i32::try_from(usize::try_from(word).expect("entry word fits usize")
         * std::mem::size_of::<u64>()).expect("entry word offset fits i32");
     emit(builder).load_u64(Region::LoopEntry.readonly(), entry, offset)

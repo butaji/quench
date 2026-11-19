@@ -10,9 +10,17 @@ use std::ops::Range;
 mod heap_builder;
 mod error_message;
 mod plain_write;
-pub(crate) use plain_write::JsonPlainCache;
+mod parse_stacks;
+mod byte_class;
+use byte_class::{byte_class, byte_class_of, exponent_mark, JsonByteClass, WHITESPACE_BYTES};
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::{
+    __m128i, _mm_and_si128, _mm_cmpeq_epi16, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_min_epu8, _mm_movemask_epi8,
+    _mm_or_si128, _mm_packs_epi16, _mm_set1_epi16, _mm_set1_epi8, _mm_setzero_si128,
+};
 use error_message::json_syntax_message;
 use heap_builder::{short_run_ends, JsonBuildError, JsonHeapBuilder};
+use parse_stacks::{JsonFrame, JsonStacks};
 pub(super) use heap_builder::JsonParseCache;
 
 const JSON_NULL_INITIAL: u16 = b'n' as u16;
@@ -20,8 +28,6 @@ const JSON_TRUE_INITIAL: u16 = b't' as u16;
 const JSON_FALSE_INITIAL: u16 = b'f' as u16;
 const JSON_QUOTE: u16 = b'"' as u16;
 const JSON_ESCAPE: u16 = b'\\' as u16;
-const JSON_ARRAY_START: u16 = b'[' as u16;
-const JSON_OBJECT_START: u16 = b'{' as u16;
 const JSON_OBJECT_END: u16 = b'}' as u16;
 const JSON_ARRAY_END: u16 = b']' as u16;
 const JSON_COMMA: u16 = b',' as u16;
@@ -34,24 +40,10 @@ const JSON_HEX_ESCAPE_DIGITS: usize = 4;
 const JSON_HEX_LETTER_VALUE_START: u16 = 10;
 const JSON_BACKSPACE: u16 = b'\x08' as u16;
 const JSON_FORM_FEED: u16 = b'\x0C' as u16;
-const JSON_WHITESPACE: [u16; 4] = [b' ' as u16, b'\t' as u16, b'\n' as u16, b'\r' as u16];
-/// `JSON_WHITESPACE` as a bit per unit value, every one of which is below `u64::BITS`.
-const JSON_WHITESPACE_MASK: u64 = {
-    let mut mask = 0;
-    let mut index = 0;
-    while index < JSON_WHITESPACE.len() {
-        assert!((JSON_WHITESPACE[index] as u32) < u64::BITS);
-        mask |= 1 << JSON_WHITESPACE[index];
-        index += 1;
-    }
-    mask
-};
-
 /// Whether byte runs `a` and `b` are equal, compared inline a word at a time: the runs a
 /// parse compares, keys and repeated strings, are mostly a few words long.
 #[inline(always)]
 fn same_ascii(a: &[u8], b: &[u8]) -> bool {
-    let word = |bytes: &[u8], at: usize| u64::from_le_bytes(bytes[at..at + WORD_BYTES].try_into().expect("a word"));
     let length = a.len();
     if length != b.len() {
         return false;
@@ -59,54 +51,171 @@ fn same_ascii(a: &[u8], b: &[u8]) -> bool {
     if length < WORD_BYTES {
         return short_run_ends(a) == short_run_ends(b);
     }
-    let mut at = 0;
-    while at + WORD_BYTES < length {
-        if word(a, at) != word(b, at) {
-            return false;
-        }
-        at += WORD_BYTES;
-    }
-    // The last word ends at the end, overlapping the one before when the length is not a
-    // multiple of a word.
-    word(a, length - WORD_BYTES) == word(b, length - WORD_BYTES)
+    let (a_words, a_tail) = a.as_chunks::<WORD_BYTES>();
+    let (b_words, _) = b.as_chunks::<WORD_BYTES>();
+    // A partial last word is compared as the word that ends the text, overlapping the one
+    // before it.
+    a_words.iter().zip(b_words).all(|(a_word, b_word)| a_word == b_word)
+        && (a_tail.is_empty() || a.last_chunk::<WORD_BYTES>() == b.last_chunk::<WORD_BYTES>())
 }
 
-/// The length of the run of `units` no byte ends (`ends_string_run`), from whole 16-byte
-/// blocks: `Ok` when a block holds its end, else `Err` of the bytes the blocks covered.
+/// Bytes in one SIMD block: an SSE2 register, which the byte scans read whole.
+const SIMD_BLOCK_BYTES: usize = 16;
+
+/// The bytes of `block` in one SSE2 register, read by an unaligned load.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse2_load(block: &[u8; SIMD_BLOCK_BYTES]) -> __m128i {
+    // SAFETY: SSE2 is part of the x86_64 baseline, and the load reads exactly the block's bytes.
+    unsafe { _mm_loadu_si128(block.as_ptr().cast()) }
+}
+
+/// The mask of the bytes of `block` that end a string run (`ends_string_run`): bit `i` is set
+/// when byte `i` is a quote, an escape or a control byte.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse2_run_end_mask(block: __m128i) -> u32 {
+    // SAFETY: SSE2 is part of the x86_64 baseline, and these intrinsics touch no memory.
+    unsafe {
+        // A byte is a control byte exactly when its unsigned minimum with the last one is itself.
+        let control = _mm_cmpeq_epi8(_mm_min_epu8(block, _mm_set1_epi8(LAST_CONTROL_CHARACTER as i8)), block);
+        let quote = _mm_cmpeq_epi8(block, _mm_set1_epi8(JSON_QUOTE as i8));
+        let escape = _mm_cmpeq_epi8(block, _mm_set1_epi8(JSON_ESCAPE as i8));
+        _mm_movemask_epi8(_mm_or_si128(_mm_or_si128(quote, escape), control)) as u32
+    }
+}
+
+/// The mask of the bytes of `block` that are JSON whitespace: bit `i` is set when byte `i` is one.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse2_whitespace_mask(block: __m128i) -> u32 {
+    // SAFETY: SSE2 is part of the x86_64 baseline, and these intrinsics touch no memory.
+    unsafe {
+        let mut whitespace = _mm_setzero_si128();
+        for byte in WHITESPACE_BYTES {
+            whitespace = _mm_or_si128(whitespace, _mm_cmpeq_epi8(block, _mm_set1_epi8(byte as i8)));
+        }
+        _mm_movemask_epi8(whitespace) as u32
+    }
+}
+
+/// The length of the run of `units` no byte ends (`ends_string_run`), from whole blocks: `Ok`
+/// of the offset of the first ending byte, else `Err` of the bytes the blocks covered.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn sse2_run_blocks(units: &[u8]) -> Result<usize, usize> {
-    use std::arch::x86_64::{
-        __m128i, _mm_cmpeq_epi8, _mm_loadu_si128, _mm_min_epu8, _mm_movemask_epi8, _mm_or_si128, _mm_set1_epi8,
-    };
-    const BLOCK_BYTES: usize = size_of::<__m128i>();
-    let mut offset = 0;
-    // SAFETY: SSE2 is part of the x86_64 baseline, and each load reads a whole block of
-    // `units`.
-    unsafe {
-        let quote = _mm_set1_epi8(JSON_QUOTE as i8);
-        let escape = _mm_set1_epi8(JSON_ESCAPE as i8);
-        let last_control = _mm_set1_epi8(LAST_CONTROL_CHARACTER as i8);
-        while offset + BLOCK_BYTES <= units.len() {
-            let block = _mm_loadu_si128(units.as_ptr().add(offset).cast());
-            // A byte is a control byte exactly when its unsigned minimum with the last one is
-            // itself.
-            let control = _mm_cmpeq_epi8(_mm_min_epu8(block, last_control), block);
-            let ends = _mm_or_si128(_mm_or_si128(_mm_cmpeq_epi8(block, quote), _mm_cmpeq_epi8(block, escape)), control);
-            let mask = _mm_movemask_epi8(ends) as u32;
-            if mask != 0 {
-                return Ok(offset + mask.trailing_zeros() as usize);
-            }
-            offset += BLOCK_BYTES;
+    let (blocks, _) = units.as_chunks::<SIMD_BLOCK_BYTES>();
+    for (index, block) in blocks.iter().enumerate() {
+        let mask = sse2_run_end_mask(sse2_load(block));
+        if mask != 0 {
+            return Ok(index * SIMD_BLOCK_BYTES + mask.trailing_zeros() as usize);
         }
     }
-    Err(offset)
+    Err(blocks.len() * SIMD_BLOCK_BYTES)
 }
 
-/// Whether `unit` is one of `JSON_WHITESPACE`.
+/// `sse2_run_blocks` of the tail after its whole blocks, which is shorter than a block. The
+/// tail is padded with quotes, which end a run: an end at or past the tail's length is no end
+/// of the tail's own bytes.
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
-fn is_json_whitespace(unit: u16) -> bool {
-    u32::from(unit) < u64::BITS && JSON_WHITESPACE_MASK >> unit & 1 != 0
+fn sse2_run_tail(tail: &[u8]) -> Option<usize> {
+    let mut block = [JSON_QUOTE as u8; SIMD_BLOCK_BYTES];
+    block[..tail.len()].copy_from_slice(tail);
+    let position = sse2_run_end_mask(sse2_load(&block)).trailing_zeros() as usize;
+    (position < tail.len()).then_some(position)
+}
+
+/// Units in one SSE2 block of 16-bit units: a register of eight lanes.
+#[cfg(target_arch = "x86_64")]
+const WIDE_BLOCK_UNITS: usize = 8;
+
+/// The bits of a wide block's mask: one per unit of the block.
+#[cfg(target_arch = "x86_64")]
+const WIDE_BLOCK_MASK: u32 = (1 << WIDE_BLOCK_UNITS) - 1;
+
+/// The mask of the units of a wide block that end a string run (`ends_string_run`): bit `i`
+/// is set when unit `i` is a quote, an escape or a control unit. A unit is a control unit
+/// exactly when none of its bits past the control range is set.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse2_wide_run_end_mask(block: &[u16; WIDE_BLOCK_UNITS]) -> u32 {
+    // SAFETY: SSE2 is part of the x86_64 baseline, and the load reads exactly the block's units.
+    unsafe {
+        let units = _mm_loadu_si128(block.as_ptr().cast());
+        let quote = _mm_cmpeq_epi16(units, _mm_set1_epi16(JSON_QUOTE as i16));
+        let escape = _mm_cmpeq_epi16(units, _mm_set1_epi16(JSON_ESCAPE as i16));
+        let control_bits = _mm_set1_epi16(!(LAST_CONTROL_CHARACTER as i16));
+        let control = _mm_cmpeq_epi16(_mm_and_si128(units, control_bits), _mm_setzero_si128());
+        let ends = _mm_or_si128(_mm_or_si128(quote, escape), control);
+        // Each lane is all ones or all zeros, which saturating packs keeps; the second copy
+        // of the lanes is masked off.
+        let packed = _mm_packs_epi16(ends, ends);
+        (_mm_movemask_epi8(packed) as u32) & WIDE_BLOCK_MASK
+    }
+}
+
+/// `sse2_run_blocks` of 16-bit units, a block of eight at a time.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse2_wide_run_blocks(units: &[u16]) -> Result<usize, usize> {
+    let (blocks, _) = units.as_chunks::<WIDE_BLOCK_UNITS>();
+    for (index, block) in blocks.iter().enumerate() {
+        let mask = sse2_wide_run_end_mask(block);
+        if mask != 0 {
+            return Ok(index * WIDE_BLOCK_UNITS + mask.trailing_zeros() as usize);
+        }
+    }
+    Err(blocks.len() * WIDE_BLOCK_UNITS)
+}
+
+/// `sse2_run_tail` of 16-bit units: the tail is padded with quotes, which end a run.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse2_wide_run_tail(tail: &[u16]) -> Option<usize> {
+    let mut block = [JSON_QUOTE; WIDE_BLOCK_UNITS];
+    block[..tail.len()].copy_from_slice(tail);
+    let position = sse2_wide_run_end_mask(&block).trailing_zeros() as usize;
+    (position < tail.len()).then_some(position)
+}
+
+/// The whitespace bytes at the start of `units` in whole blocks: the count stops in the block
+/// that holds the first byte which is not whitespace, or at the last whole block.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn sse2_whitespace_blocks(units: &[u8]) -> usize {
+    let (blocks, _) = units.as_chunks::<SIMD_BLOCK_BYTES>();
+    for (index, block) in blocks.iter().enumerate() {
+        // Whitespace bytes are the set bits of the mask, so the first clear bit ends the run.
+        let run = (!sse2_whitespace_mask(sse2_load(block))).trailing_zeros() as usize;
+        if run < SIMD_BLOCK_BYTES {
+            return index * SIMD_BLOCK_BYTES + run;
+        }
+    }
+    blocks.len() * SIMD_BLOCK_BYTES
+}
+
+/// The whitespace bytes at the start of `units`, one table load per byte.
+#[inline(always)]
+fn scalar_whitespace_run(units: &[u8]) -> usize {
+    units.iter().take_while(|&&byte| byte_class_of(byte) == JsonByteClass::Whitespace).count()
+}
+
+/// `string_run_length` of bytes a word at a time, for targets without SSE2 blocks. The tail is
+/// padded with quotes to a word, as `sse2_run_tail` pads to a block.
+#[cfg(not(target_arch = "x86_64"))]
+fn word_run_length(units: &[u8]) -> Option<usize> {
+    let (words, tail) = units.as_chunks::<WORD_BYTES>();
+    for (index, word) in words.iter().enumerate() {
+        let ends = json_escape_bytes(u64::from_le_bytes(*word));
+        if ends != 0 {
+            return Some(index * WORD_BYTES + (ends.trailing_zeros() / u8::BITS) as usize);
+        }
+    }
+    let mut padded = [JSON_QUOTE as u8; WORD_BYTES];
+    padded[..tail.len()].copy_from_slice(tail);
+    let position = (json_escape_bytes(u64::from_le_bytes(padded)).trailing_zeros() / u8::BITS) as usize;
+    (position < tail.len()).then_some(words.len() * WORD_BYTES + position)
 }
 
 enum JsonValue {
@@ -119,59 +228,203 @@ enum JsonValue {
     Object(Vec<(JsString, JsonValue)>),
 }
 
-struct JsonSerialization {
+/// The plans `JsonWriter::recent_plans` holds.
+const JSON_RECENT_PLANS: usize = 8;
+
+/// The containers being written, inline up to this nesting.
+const JSON_PLAIN_INLINE_ANCESTORS: usize = 16;
+
+/// The bytes of a member's key text (`JsonMember::key`) before its quoted key: the comma.
+const JSON_KEY_TEXT_COMMA: usize = 1;
+
+/// JSON.stringify's arguments past the value, as its steps read them: the replacer function,
+/// the property list of a replacer array, and the gap. The steady call passes none.
+#[derive(Default)]
+struct JsonOptions {
     replacer: Option<Value>,
     property_list: Option<Vec<Atom>>,
     gap: String,
-    ancestors: Vec<Value>,
+}
+
+/// Why the writer stopped: the steady call met a value that needs the specification's steps,
+/// having observed nothing (`Plain`), or a step threw.
+enum JsonStop {
+    Plain,
+    Thrown(JsError),
+}
+
+impl From<JsError> for JsonStop {
+    fn from(error: JsError) -> Self {
+        Self::Thrown(error)
+    }
+}
+
+/// What SerializeJSONProperty did with a value: wrote it, or omitted it (`false`).
+type JsonStep = Result<bool, JsonStop>;
+
+/// The state of one stringification. What a shape and prototype decide (lacking `toJSON`, an
+/// object's members) holds while the epochs it was decided under hold, which only guest code
+/// moves; the specification's steps report each place it may have run
+/// (`JsonWriter::after_guest_code`).
+struct JsonWriter {
     to_json: Atom,
-    /// The text written so far, and the nesting depth of the value being written.
+    /// The root value's key in its wrapper object.
+    empty: Atom,
+    options: JsonOptions,
+    /// The containers being written: the cycle test, and the gap's indentation depth.
+    ancestors: smallvec::SmallVec<[Value; JSON_PLAIN_INLINE_ANCESTORS]>,
     output: JsonText,
-    depth: usize,
-    /// Member plans of the plain objects serialized so far, by shape and prototype
-    /// (`Vm::json_object_plan`). They are shape facts, so they hold only while no guest code
-    /// runs: the property steps (`Vm::json_serialize_property`) drop them all.
-    plans: rustc_hash::FxHashMap<(u32, Value), Option<JsonObjectPlan>>,
-    /// Counts the property steps taken, each of which drops `plans`: a plan read under one
-    /// count holds until it changes.
+    /// The collection and prototype layout epochs the plans were proved under.
+    epochs: (u64, u64),
+    /// Counts the places guest code may have run: a plan or a dense array proved under one
+    /// count describes its object while the count holds.
     steps: u64,
+    array_lacks_to_json: Option<(u32, Value)>,
+    /// The members of each ordinary object's (shape, prototype) written so far, or `None`
+    /// when objects of it take the specification's steps.
+    object_plans: rustc_hash::FxHashMap<(u32, Value), Option<std::rc::Rc<[JsonMember]>>>,
+    /// Recently used plans by (shape, prototype), one per shape's low bits: a payload's few
+    /// kinds of object recur, nested inside one another, which this answers without hashing.
+    recent_plans: [Option<((u32, Value), std::rc::Rc<[JsonMember]>)>; JSON_RECENT_PLANS],
+    /// The `,"key":` text of every planned member: an object's keys recur across the objects
+    /// of a payload, so each shape's are quoted once. Only a new run clears it, so the plans a
+    /// run is writing keep their text when the proofs are dropped.
+    key_text: JsonText,
 }
 
-/// An object's enumerable own data members, when it is an ordinary object of a
-/// non-dictionary shape that no `toJSON` reaches: serializing it reads each slot, which runs
-/// no guest code.
-type JsonObjectPlan = std::rc::Rc<[JsonPlanMember]>;
-
-/// One member of a `JsonObjectPlan`: its key, the slot holding its value, and the key as
-/// QuoteJSONString writes it.
-struct JsonPlanMember {
-    key: Atom,
-    slot: usize,
-    quoted: Box<[u8]>,
+/// One enumerable data member of a planned object: its key, its slot, and its `,"key":`
+/// text's range in `JsonWriter::key_text`, whose first byte, the comma, a first written
+/// member skips.
+#[derive(Clone, Copy)]
+struct JsonMember {
+    atom: Atom,
+    slot: u32,
+    key: (u32, u32),
 }
 
-impl JsonSerialization {
-    /// Starts a member of an array or object that already holds `written` members: the
-    /// separator, then the line break and indentation a gap asks for.
+/// The members of an object being written, fixed as it is entered (SerializeJSONObject's K):
+/// its plan's, whose slots hold their values while `steps` holds, or keys whose values are
+/// read by key.
+enum JsonMembers {
+    Planned { plan: std::rc::Rc<[JsonMember]>, steps: u64 },
+    Keys(super::object_keys::EnumerableKeys<Atom>),
+}
+
+impl JsonMembers {
+    fn len(&self) -> usize {
+        match self {
+            Self::Planned { plan, .. } => plan.len(),
+            Self::Keys(keys) => keys.len(),
+        }
+    }
+}
+
+/// What stringifications keep between calls (`Vm::json_plain`): the writer, with its text
+/// buffer and the member plans of the (shape, prototype) pairs met, as V8 keeps a map's "fast
+/// serializable" bit. A plan is a fact of a shape and a prototype chain, so it holds while the
+/// collection epoch (shape ids, prototype records) and the prototype layout epoch (a prototype
+/// gaining `toJSON` or an accessor) both stay where they were when it was made.
+#[derive(Default)]
+pub(crate) struct JsonPlainCache {
+    /// Boxed so a call moves the state out and back as one pointer; a nested call (from a
+    /// `toJSON` or replacer) finds none and makes its own.
+    write: Option<Box<JsonWriter>>,
+}
+
+impl JsonWriter {
+    fn new(to_json: Atom, empty: Atom, epochs: (u64, u64)) -> Self {
+        Self {
+            to_json,
+            empty,
+            options: JsonOptions::default(),
+            ancestors: Default::default(),
+            output: JsonText::new(),
+            epochs,
+            steps: 0,
+            array_lacks_to_json: None,
+            object_plans: Default::default(),
+            recent_plans: Default::default(),
+            key_text: JsonText::new(),
+        }
+    }
+
+    /// Forgets every proof, keeping the plans being written their key text.
+    fn forget_proofs(&mut self) {
+        self.array_lacks_to_json = None;
+        self.object_plans.clear();
+        self.recent_plans = Default::default();
+    }
+
+    /// Forgets every plan and its key text, between runs.
+    fn forget_plans(&mut self) {
+        self.forget_proofs();
+        self.key_text.clear();
+    }
+
+    /// Starts a run under `epochs`: plans proved under others are forgotten.
+    fn prove(&mut self, epochs: (u64, u64)) {
+        if self.epochs != epochs {
+            self.forget_plans();
+            self.epochs = epochs;
+        }
+    }
+
+    /// Records that guest code may have run, leaving `epochs`: no planned slot or dense
+    /// element proved before is read again, and plans proved under other epochs are dropped.
+    fn after_guest_code(&mut self, epochs: (u64, u64)) {
+        self.steps += 1;
+        if self.epochs != epochs {
+            self.forget_proofs();
+            self.epochs = epochs;
+        }
+    }
+
+    /// Starts a member of the innermost container, which already holds `written` members:
+    /// the separator, then the line break and indentation a gap asks for.
     fn begin_member(&mut self, written: usize) {
         if written != 0 {
             self.output.push(b',');
         }
-        if !self.gap.is_empty() {
+        if !self.options.gap.is_empty() {
             self.output.push(b'\n');
-            write_indent(&mut self.output, &self.gap, self.depth);
+            write_indent(&mut self.output, &self.options.gap, self.ancestors.len());
         }
     }
 
-    /// Closes an array or object of `written` members with `close`.
+    /// `begin_member` and the planned member's quoted key and colon, from its key text.
+    fn begin_planned_member(&mut self, member: JsonMember, written: usize) {
+        let (start, end) = (member.key.0 as usize, member.key.1 as usize);
+        if self.options.gap.is_empty() {
+            let start = start + if written == 0 { JSON_KEY_TEXT_COMMA } else { 0 };
+            self.output.extend_from_slice(&self.key_text[start..end]);
+        } else {
+            self.begin_member(written);
+            self.output.extend_from_slice(&self.key_text[start + JSON_KEY_TEXT_COMMA..end]);
+            self.output.push(b' ');
+        }
+    }
+
+    /// The text between a member's key and its value.
+    fn write_colon(&mut self) {
+        self.output.extend_from_slice(if self.options.gap.is_empty() { b":" } else { b": " });
+    }
+
+    /// Closes the innermost container of `written` members with `close`.
     fn end_container(&mut self, written: usize, close: u8) {
-        if written != 0 && !self.gap.is_empty() {
+        if written != 0 && !self.options.gap.is_empty() {
             self.output.push(b'\n');
-            write_indent(&mut self.output, &self.gap, self.depth);
+            write_indent(&mut self.output, &self.options.gap, self.ancestors.len() - 1);
         }
         self.output.push(close);
     }
 }
+
+/// `JSON.stringify(value, replacer, space)`'s argument positions.
+const JSON_REPLACER_ARGUMENT: usize = 1;
+const JSON_SPACE_ARGUMENT: usize = 2;
+
+/// SerializeJSONValue's TypeError for a BigInt.
+const JSON_BIGINT_MESSAGE: &str = "Do not know how to serialize a BigInt";
 
 /// The key SerializeJSONProperty reads from its holder: an array index, or a property name.
 /// Its string value is allocated only for the `toJSON` and replacer calls that receive it.
@@ -198,38 +451,36 @@ fn json_text_str(text: &[u8]) -> &str {
     unsafe { std::str::from_utf8_unchecked(text) }
 }
 
-fn json_text_string(text: JsonText) -> String {
-    debug_assert!(std::str::from_utf8(&text).is_ok(), "JSON text is written as UTF-8");
-    // SAFETY: as above, every byte sequence written is UTF-8.
-    unsafe { String::from_utf8_unchecked(text) }
-}
-
 fn write_json_string(value: &JsString, output: &mut JsonText) {
     match value.units() {
         Units::Ascii(bytes) => write_json_utf8(bytes, output),
-        Units::Wide(units) => {
-            output.push(b'"');
-            let mut index = 0;
-            while index < units.len() {
-                let unit = units[index];
-                let scalar = if let Some(code_point) = units
-                    .get(index + 1)
-                    .and_then(|low| unicode::decode_surrogate_pair(unit, *low))
-                {
-                    index += 2;
-                    Some(char::from_u32(code_point).expect("valid surrogate pair"))
-                } else {
-                    index += 1;
-                    char::from_u32(u32::from(unit))
-                };
-                match scalar {
-                    Some(scalar) => write_json_scalar(scalar, output),
-                    None => write_unicode_escape(u32::from(unit), output),
-                }
-            }
-            output.push(b'"');
+        Units::Latin1(bytes) => write_json_units(&bytes.iter().map(|byte| u16::from(*byte)).collect::<Vec<u16>>(), output),
+        Units::Wide(units) => write_json_units(units, output),
+    }
+}
+
+/// QuoteJSONString of UTF-16 `units`, each lone surrogate escaped as `\uXXXX`.
+fn write_json_units(units: &[u16], output: &mut JsonText) {
+    output.push(b'"');
+    let mut index = 0;
+    while index < units.len() {
+        let unit = units[index];
+        let scalar = if let Some(code_point) = units
+            .get(index + 1)
+            .and_then(|low| unicode::decode_surrogate_pair(unit, *low))
+        {
+            index += 2;
+            Some(char::from_u32(code_point).expect("valid surrogate pair"))
+        } else {
+            index += 1;
+            char::from_u32(u32::from(unit))
+        };
+        match scalar {
+            Some(scalar) => write_json_scalar(scalar, output),
+            None => write_unicode_escape(u32::from(unit), output),
         }
     }
+    output.push(b'"');
 }
 
 /// QuoteJSONString of UTF-8 `text`. Every byte QuoteJSONString escapes is ASCII and no
@@ -415,6 +666,8 @@ const JSON_INLINE_NUMBER_LENGTH: usize = 64;
 const JSON_EXACT_INTEGER_DIGITS: usize = 15;
 /// Decimal digits a `u64` accumulates without overflow.
 const JSON_MANTISSA_DIGITS: usize = 19;
+/// The base of the decimal digits a number's mantissa and exponent accumulate in.
+const JSON_DECIMAL_BASE: u64 = 10;
 /// The integers up to this are all exact doubles.
 const EXACT_DOUBLE_INTEGER: u64 = 1 << f64::MANTISSA_DIGITS;
 /// The powers of ten that are exact doubles: 10^22 is the last, as 5^22 < 2^53 < 5^23.
@@ -463,17 +716,27 @@ trait JsonUnit: Copy {
     fn ends_string_run(self) -> bool {
         ends_string_run(self.unit())
     }
-    /// The units of `units` before the first that `ends_string_run`; `None` when none does.
+    /// The units of `units` before the first that `ends_string_run`; `None` when none does. A
+    /// length returned is the index of the ending unit, which lies within `units`.
     #[inline(always)]
     fn string_run_length(units: &[Self]) -> Option<usize> {
         units.iter().position(|unit| unit.ends_string_run())
+    }
+    /// The units of `units` at its start that are JSON whitespace.
+    #[inline(always)]
+    fn whitespace_run_length(units: &[Self]) -> usize {
+        units.iter().take_while(|unit| byte_class(unit.unit()) == JsonByteClass::Whitespace).count()
+    }
+    /// Whether `units` start with the ASCII `text`.
+    #[inline(always)]
+    fn starts_with_ascii(units: &[Self], text: &[u8]) -> bool {
+        units.len() >= text.len() && units.iter().zip(text).all(|(unit, &byte)| unit.unit() == u16::from(byte))
     }
     /// Whether `units` start with `key`, an ASCII key whose text needs no escape, and then
     /// the quote that closes it: the source of a string whose units are `key`.
     #[inline(always)]
     fn starts_key(units: &[Self], key: &[u8]) -> bool {
-        units.get(key.len()).is_some_and(|unit| unit.unit() == JSON_QUOTE)
-            && units.iter().zip(key).all(|(unit, &byte)| unit.unit() == u16::from(byte))
+        units.get(key.len()).is_some_and(|unit| unit.unit() == JSON_QUOTE) && Self::starts_with_ascii(units, key)
     }
     /// `units` as a run of string units.
     fn run(units: &[Self]) -> JsonStringUnits<'_>;
@@ -489,28 +752,41 @@ impl JsonUnit for u8 {
     fn ends_string_run(self) -> bool {
         STRING_RUN_ENDS[usize::from(self)]
     }
-    /// Sixteen bytes at a time where SSE2 is the baseline (`sse2_run_blocks`), then a word
-    /// at a time (`json_escape_bytes`, the bytes that end a run), then the rest one by one.
+    /// Sixteen bytes at a time where SSE2 is the baseline (`sse2_run_blocks`), with the tail
+    /// as one padded block (`sse2_run_tail`); elsewhere a word at a time (`word_run_length`).
     #[inline(always)]
     fn string_run_length(units: &[u8]) -> Option<usize> {
         #[cfg(target_arch = "x86_64")]
-        let offset = match sse2_run_blocks(units) {
-            Ok(length) => return Some(length),
-            Err(scanned) => scanned,
-        };
-        #[cfg(not(target_arch = "x86_64"))]
-        let offset = 0;
-        let (words, remainder) = units[offset..].as_chunks::<WORD_BYTES>();
-        let mut offset = offset;
-        for word in words {
-            let word = u64::from_le_bytes(*word);
-            let ends = json_escape_bytes(word);
-            if ends != 0 {
-                return Some(offset + (ends.trailing_zeros() / u8::BITS) as usize);
+        {
+            match sse2_run_blocks(units) {
+                Ok(length) => Some(length),
+                Err(scanned) => sse2_run_tail(&units[scanned..]).map(|length| scanned + length),
             }
-            offset += WORD_BYTES;
         }
-        remainder.iter().position(|unit| unit.ends_string_run()).map(|position| offset + position)
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            word_run_length(units)
+        }
+    }
+    /// The whitespace run's first `SIMD_BLOCK_BYTES` bytes by one table load each; from a
+    /// whole block of whitespace, the rest in SSE2 blocks (`sse2_whitespace_blocks`), then by
+    /// one table load per byte again.
+    #[inline(always)]
+    fn whitespace_run_length(units: &[u8]) -> usize {
+        let head = scalar_whitespace_run(&units[..units.len().min(SIMD_BLOCK_BYTES)]);
+        if head < SIMD_BLOCK_BYTES {
+            return head;
+        }
+        #[cfg(target_arch = "x86_64")]
+        let blocks = sse2_whitespace_blocks(&units[SIMD_BLOCK_BYTES..]);
+        #[cfg(not(target_arch = "x86_64"))]
+        let blocks = 0;
+        let offset = SIMD_BLOCK_BYTES + blocks;
+        offset + scalar_whitespace_run(&units[offset..])
+    }
+    #[inline(always)]
+    fn starts_with_ascii(units: &[u8], text: &[u8]) -> bool {
+        units.get(..text.len()) == Some(text)
     }
     #[inline(always)]
     fn starts_key(units: &[u8], key: &[u8]) -> bool {
@@ -528,6 +804,24 @@ impl JsonUnit for u8 {
 impl JsonUnit for u16 {
     #[inline(always)] fn unit(self) -> u16 {
         self
+    }
+    /// Eight units at a time where SSE2 is the baseline (`sse2_wide_run_blocks`), with the
+    /// tail as one padded block (`sse2_wide_run_tail`); elsewhere one unit at a time.
+    #[inline(always)]
+    fn string_run_length(units: &[u16]) -> Option<usize> {
+        #[cfg(target_arch = "x86_64")]
+        {
+            match sse2_wide_run_blocks(units) {
+                Ok(length) => Some(length),
+                Err(scanned) => {
+                    sse2_wide_run_tail(&units[scanned..]).map(|length| scanned + length)
+                }
+            }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            units.iter().position(|unit| unit.ends_string_run())
+        }
     }
     #[inline(always)]
     fn run(units: &[u16]) -> JsonStringUnits<'_> {
@@ -553,10 +847,16 @@ impl Utf8Byte {
         unsafe { std::slice::from_raw_parts(text.as_ptr().cast::<Self>(), text.len()) }
     }
 
+    /// The bytes of `units`, which are a `str`'s.
+    #[inline(always)]
+    fn bytes(units: &[Self]) -> &[u8] {
+        // SAFETY: `Utf8Byte` is a transparent `u8`.
+        unsafe { std::slice::from_raw_parts(units.as_ptr().cast::<u8>(), units.len()) }
+    }
+
     /// The text of a run of whole UTF-8 characters.
     fn text(units: &[Self]) -> &str {
-        // SAFETY: `Utf8Byte` is a transparent `u8`.
-        let bytes = unsafe { std::slice::from_raw_parts(units.as_ptr().cast::<u8>(), units.len()) };
+        let bytes = Self::bytes(units);
         debug_assert!(std::str::from_utf8(bytes).is_ok(), "a run bounded by ASCII terminators is whole UTF-8 text");
         // SAFETY: the units are a `str`'s (`Utf8Byte::of`), and a run bounded by ASCII
         // terminators, which no UTF-8 sequence holds, is whole characters of it.
@@ -574,13 +874,19 @@ impl JsonUnit for Utf8Byte {
     }
     #[inline(always)]
     fn string_run_length(units: &[Self]) -> Option<usize> {
-        // SAFETY: `Utf8Byte` is a transparent `u8`.
-        u8::string_run_length(unsafe { std::slice::from_raw_parts(units.as_ptr().cast::<u8>(), units.len()) })
+        u8::string_run_length(Self::bytes(units))
+    }
+    #[inline(always)]
+    fn whitespace_run_length(units: &[Self]) -> usize {
+        u8::whitespace_run_length(Self::bytes(units))
+    }
+    #[inline(always)]
+    fn starts_with_ascii(units: &[Self], text: &[u8]) -> bool {
+        u8::starts_with_ascii(Self::bytes(units), text)
     }
     #[inline(always)]
     fn starts_key(units: &[Self], key: &[u8]) -> bool {
-        // SAFETY: `Utf8Byte` is a transparent `u8`.
-        u8::starts_key(unsafe { std::slice::from_raw_parts(units.as_ptr().cast::<u8>(), units.len()) }, key)
+        u8::starts_key(Self::bytes(units), key)
     }
     fn run(units: &[Self]) -> JsonStringUnits<'_> {
         let text = Self::text(units);
@@ -623,8 +929,21 @@ fn parse_json_text<B: JsonBuilder>(text: &JsString, builder: &mut B) -> Result<B
     }
     match text.units() {
         Units::Ascii(bytes) => JsonParser::new(bytes, builder).parse(),
+        Units::Latin1(bytes) => JsonParser::new(&bytes.iter().map(|byte| u16::from(*byte)).collect::<Vec<u16>>(), builder).parse(),
         Units::Wide(units) => JsonParser::new(units, builder).parse(),
     }
+}
+
+/// What opening a value leads to: a container opened on the frames, or a complete value.
+enum JsonOpened<V> {
+    Container,
+    Value(V),
+}
+
+/// What completing a value leads to: the root's value, or the next member of a container.
+enum JsonCompleted<V> {
+    Root(V),
+    Member,
 }
 
 /// What a parse makes of each JSON value: the source-bearing `JsonValue` tree a reviver
@@ -658,6 +977,12 @@ trait JsonBuilder {
     ) -> Self::Value;
     /// A primitive parsed from `source`, the text a reviver's context exposes.
     fn primitive(&mut self, value: Self::Value, source: Units<'_>) -> Self::Value;
+    /// The empty stacks a parse gathers members on: a builder that parses again lends its own.
+    fn stacks(&mut self) -> JsonStacks<Self::Value, Self::Key, Self::Layout> {
+        JsonStacks::with_room()
+    }
+    /// The stacks a parse finished with, which a builder that parses again keeps.
+    fn keep_stacks(&mut self, _stacks: JsonStacks<Self::Value, Self::Key, Self::Layout>) {}
 }
 
 #[derive(Clone, Copy)]
@@ -757,41 +1082,40 @@ pub(crate) fn json_literal_length(text: &str) -> Option<usize> {
     (!check.proto_key).then_some(length)
 }
 
-/// A container whose members a parse is gathering: where its members start on the parse's
-/// stacks, and an object's layout so far.
-enum JsonFrame<L> {
-    Array { values: usize },
-    Object { values: usize, keys: usize, layout: L },
-}
-
 /// A parse of `units` into `builder`'s values, iterative as V8's `JsonParser` is, so nesting
 /// is bounded by memory rather than the native stack. Containers gather their members on
-/// two stacks the whole parse shares, so each takes exactly its members' storage once.
+/// two stacks the whole parse shares, so each takes exactly its members' storage once. The
+/// builder lends the stacks (`JsonBuilder::stacks`) and takes them back when the parse ends.
 struct JsonParser<'a, 'b, T, B: JsonBuilder> {
     units: &'a [T],
     index: usize,
     builder: &'b mut B,
     values: Vec<B::Value>,
     keys: Vec<B::Key>,
+    frames: Vec<JsonFrame<B::Layout>>,
 }
 
-/// The members a parse's stacks start with room for, which most texts' containers fit.
-const JSON_STACK_START: usize = 16;
+/// The stacks go back to the builder whether the parse finished or stopped at an error.
+impl<T, B: JsonBuilder> Drop for JsonParser<'_, '_, T, B> {
+    fn drop(&mut self) {
+        let stacks = JsonStacks {
+            values: std::mem::take(&mut self.values),
+            keys: std::mem::take(&mut self.keys),
+            frames: std::mem::take(&mut self.frames),
+        };
+        self.builder.keep_stacks(stacks);
+    }
+}
 
 impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
     fn new(units: &'a [T], builder: &'b mut B) -> Self {
-        Self {
-            units,
-            index: 0,
-            builder,
-            values: Vec::with_capacity(JSON_STACK_START),
-            keys: Vec::with_capacity(JSON_STACK_START),
-        }
+        let JsonStacks { values, keys, frames } = builder.stacks();
+        Self { units, index: 0, builder, values, keys, frames }
     }
 
     /// The JSON text that is all of the units.
     fn parse(mut self) -> Result<B::Value, JsonParseError> {
-        let value = self.value()?;
+        let value = self.root_value()?;
         match self.token() {
             None => Ok(value),
             Some(_) => Err(self.error(JsonSyntax::NonWhitespaceAfter)),
@@ -800,101 +1124,158 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
 
     /// The JSON text the units start with, and the units it spans.
     fn parse_prefix(mut self) -> Result<(B::Value, usize), JsonParseError> {
-        let value = self.value()?;
+        let value = self.root_value()?;
         Ok((value, self.index))
     }
 
-    /// The JSON value at the current unit, which the parse moves past.
-    fn value(&mut self) -> Result<B::Value, JsonParseError> {
-        let mut frames: Vec<JsonFrame<B::Layout>> = Vec::with_capacity(JSON_STACK_START);
-        'value: loop {
-            let token = self.token();
-            let start = self.index;
-            let mut value = match token {
-                Some(JSON_QUOTE) => {
-                    let text = self.string()?;
-                    self.builder.string(text)
-                }
-                Some(JSON_MINUS | JSON_DIGIT_START..=JSON_DIGIT_END) => match self.number()? {
-                    JsonNumber::Integer(value) => self.builder.integer(value),
-                    JsonNumber::Float(value) => self.builder.number(value),
-                },
-                Some(JSON_OBJECT_START) => {
-                    self.index += 1;
-                    let parent = frames.iter().rev().find_map(|frame| match frame {
-                        JsonFrame::Object { layout, .. } => Some(layout),
-                        JsonFrame::Array { .. } => None,
-                    });
-                    let layout = self.builder.layout(parent);
-                    let (values, keys) = (self.values.len(), self.keys.len());
-                    if self.token() == Some(JSON_OBJECT_END) {
-                        self.index += 1;
-                        self.builder.object(layout, self.keys.drain(keys..), self.values.drain(values..))
-                    } else {
-                        // The frame holds the layout its keys advance in place: a copy made
-                        // right after their stores would read them back through memory.
-                        frames.push(JsonFrame::Object { values, keys, layout });
-                        let Some(JsonFrame::Object { layout, .. }) = frames.last_mut() else {
-                            unreachable!("the frame is an object's")
-                        };
-                        self.member_key(layout, JsonSyntax::ExpectedPropertyNameOrBrace)?;
-                        continue 'value;
-                    }
-                }
-                Some(JSON_ARRAY_START) => {
-                    self.index += 1;
-                    let values = self.values.len();
-                    if self.token() == Some(JSON_ARRAY_END) {
-                        self.index += 1;
-                        self.builder.array(self.values.drain(values..))
-                    } else {
-                        frames.push(JsonFrame::Array { values });
-                        continue 'value;
-                    }
-                }
-                Some(JSON_NULL_INITIAL) => self.literal(b"null", JsonLiteral::Null)?,
-                Some(JSON_TRUE_INITIAL) => self.literal(b"true", JsonLiteral::True)?,
-                Some(JSON_FALSE_INITIAL) => self.literal(b"false", JsonLiteral::False)?,
-                _ => return Err(self.error(JsonSyntax::Unexpected)),
+    /// The JSON value at the current unit, which the parse moves past. The frames leave the
+    /// parser meanwhile, so a frame's layout and the parser are borrowed apart.
+    fn root_value(&mut self) -> Result<B::Value, JsonParseError> {
+        let mut frames = std::mem::take(&mut self.frames);
+        let value = self.value(&mut frames);
+        self.frames = frames;
+        value
+    }
+
+    /// `root_value`, gathering containers on `frames`: each value opened is completed, and the
+    /// completed value that is the root's ends the parse.
+    fn value(&mut self, frames: &mut Vec<JsonFrame<B::Layout>>) -> Result<B::Value, JsonParseError> {
+        loop {
+            let value = match self.open(frames)? {
+                JsonOpened::Container => continue,
+                JsonOpened::Value(value) => value,
             };
-            if B::KEEPS_SOURCE && !matches!(token, Some(JSON_OBJECT_START | JSON_ARRAY_START)) {
-                value = self.builder.primitive(value, T::run(&self.units[start..self.index]).units());
-            }
-            // Each container the value completes is the value its parent takes next.
-            loop {
-                let Some(frame) = frames.last_mut() else {
-                    return Ok(value);
-                };
-                let token = self.token();
-                self.values.push(value);
-                value = match (frame, token) {
-                    (JsonFrame::Array { .. }, Some(JSON_COMMA)) => {
-                        self.index += 1;
-                        continue 'value;
-                    }
-                    (JsonFrame::Array { values }, Some(JSON_ARRAY_END)) => {
-                        self.index += 1;
-                        let values = *values;
-                        frames.pop();
-                        self.builder.array(self.values.drain(values..))
-                    }
-                    (JsonFrame::Array { .. }, _) => return Err(self.error(JsonSyntax::ExpectedCommaOrBracket)),
-                    (JsonFrame::Object { layout, .. }, Some(JSON_COMMA)) => {
-                        self.index += 1;
-                        self.member_key(layout, JsonSyntax::ExpectedDoubleQuotedPropertyName)?;
-                        continue 'value;
-                    }
-                    (JsonFrame::Object { .. }, Some(JSON_OBJECT_END)) => {
-                        self.index += 1;
-                        let Some(JsonFrame::Object { values, keys, layout }) = frames.pop() else {
-                            unreachable!("the frame is an object's")
-                        };
-                        self.builder.object(layout, self.keys.drain(keys..), self.values.drain(values..))
-                    }
-                    (JsonFrame::Object { .. }, _) => return Err(self.error(JsonSyntax::ExpectedCommaOrBrace)),
-                };
+            if let JsonCompleted::Root(value) = self.complete(frames, value)? {
+                return Ok(value);
             }
         }
+    }
+
+    /// Starts the value at the current unit, which the parse moves past: a primitive or an
+    /// empty container is complete, and a container with members is opened on `frames`.
+    fn open(&mut self, frames: &mut Vec<JsonFrame<B::Layout>>) -> Result<JsonOpened<B::Value>, JsonParseError> {
+        let class = self.token().map(byte_class);
+        let start = self.index;
+        let value = match class {
+            Some(JsonByteClass::ObjectStart) => return self.open_object(frames),
+            Some(JsonByteClass::ArrayStart) => return self.open_array(frames),
+            Some(JsonByteClass::Quote) => {
+                let text = self.string()?;
+                self.builder.string(text)
+            }
+            Some(JsonByteClass::Minus | JsonByteClass::Digit) => match self.number()? {
+                JsonNumber::Integer(value) => self.builder.integer(value),
+                JsonNumber::Float(value) => self.builder.number(value),
+            },
+            Some(JsonByteClass::Null) => self.literal(b"null", JsonLiteral::Null)?,
+            Some(JsonByteClass::True) => self.literal(b"true", JsonLiteral::True)?,
+            Some(JsonByteClass::False) => self.literal(b"false", JsonLiteral::False)?,
+            _ => return Err(self.error(JsonSyntax::Unexpected)),
+        };
+        Ok(JsonOpened::Value(self.with_source(value, start)))
+    }
+
+    /// `value` of the primitive that starts at unit `start`, with its source text when the
+    /// builder keeps source text.
+    #[inline(always)]
+    fn with_source(&mut self, value: B::Value, start: usize) -> B::Value {
+        if B::KEEPS_SOURCE {
+            self.builder.primitive(value, T::run(&self.units[start..self.index]).units())
+        } else {
+            value
+        }
+    }
+
+    /// Opens the object at the current unit: an empty object is complete, and an object with
+    /// members is opened on `frames`, its first key read.
+    fn open_object(&mut self, frames: &mut Vec<JsonFrame<B::Layout>>) -> Result<JsonOpened<B::Value>, JsonParseError> {
+        self.index += 1;
+        let parent = frames.iter().rev().find_map(|frame| match frame {
+            JsonFrame::Object { layout, .. } => Some(layout),
+            JsonFrame::Array { .. } => None,
+        });
+        let layout = self.builder.layout(parent);
+        let (values, keys) = (self.values.len(), self.keys.len());
+        // One read of the next token decides both the empty object and the first key, which
+        // `quoted_key` takes from the quote already read.
+        match self.token() {
+            Some(JSON_OBJECT_END) => {
+                self.index += 1;
+                let value = self.builder.object(layout, self.keys.drain(keys..), self.values.drain(values..));
+                return Ok(JsonOpened::Value(value));
+            }
+            Some(JSON_QUOTE) => {}
+            _ => return Err(self.error(JsonSyntax::ExpectedPropertyNameOrBrace)),
+        }
+        // The frame holds the layout its keys advance in place: a copy made right after
+        // their stores would read them back through memory.
+        frames.push(JsonFrame::Object { values, keys, layout });
+        let Some(JsonFrame::Object { layout, .. }) = frames.last_mut() else {
+            unreachable!("the frame is an object's")
+        };
+        self.quoted_key(layout)?;
+        Ok(JsonOpened::Container)
+    }
+
+    /// Opens the array at the current unit: an empty array is complete, and an array with
+    /// members is opened on `frames`.
+    fn open_array(&mut self, frames: &mut Vec<JsonFrame<B::Layout>>) -> Result<JsonOpened<B::Value>, JsonParseError> {
+        self.index += 1;
+        let values = self.values.len();
+        if self.token() == Some(JSON_ARRAY_END) {
+            self.index += 1;
+            let value = self.builder.array(self.values.drain(values..));
+            return Ok(JsonOpened::Value(value));
+        }
+        frames.push(JsonFrame::Array { values });
+        Ok(JsonOpened::Container)
+    }
+
+    /// Hands the completed `value` to the innermost container on `frames`, which takes it as
+    /// its next member. A container the value closes is complete in turn, so the value moves
+    /// up the frames until a comma leaves a container for its next member, or no frame is left.
+    fn complete(
+        &mut self,
+        frames: &mut Vec<JsonFrame<B::Layout>>,
+        mut value: B::Value,
+    ) -> Result<JsonCompleted<B::Value>, JsonParseError> {
+        loop {
+            let Some(frame) = frames.last_mut() else {
+                return Ok(JsonCompleted::Root(value));
+            };
+            let token = self.token();
+            self.values.push(value);
+            value = match (frame, token) {
+                (JsonFrame::Array { .. }, Some(JSON_COMMA)) => {
+                    self.index += 1;
+                    return Ok(JsonCompleted::Member);
+                }
+                (JsonFrame::Array { values }, Some(JSON_ARRAY_END)) => {
+                    self.index += 1;
+                    let values = *values;
+                    frames.pop();
+                    self.builder.array(self.values.drain(values..))
+                }
+                (JsonFrame::Array { .. }, _) => return Err(self.error(JsonSyntax::ExpectedCommaOrBracket)),
+                (JsonFrame::Object { layout, .. }, Some(JSON_COMMA)) => {
+                    self.index += 1;
+                    self.member_key(layout, JsonSyntax::ExpectedDoubleQuotedPropertyName)?;
+                    return Ok(JsonCompleted::Member);
+                }
+                (JsonFrame::Object { .. }, Some(JSON_OBJECT_END)) => self.close_object(frames),
+                (JsonFrame::Object { .. }, _) => return Err(self.error(JsonSyntax::ExpectedCommaOrBrace)),
+            };
+        }
+    }
+
+    /// Closes the object on top of `frames` at its `}`, which the parse moves past: the
+    /// object of its gathered keys and values.
+    fn close_object(&mut self, frames: &mut Vec<JsonFrame<B::Layout>>) -> B::Value {
+        self.index += 1;
+        let Some(JsonFrame::Object { values, keys, layout }) = frames.pop() else {
+            unreachable!("the frame is an object's")
+        };
+        self.builder.object(layout, self.keys.drain(keys..), self.values.drain(values..))
     }
 
     /// `syntax` at the current unit.
@@ -912,6 +1293,12 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         if self.token() != Some(JSON_QUOTE) {
             return Err(self.error(missing));
         }
+        self.quoted_key(layout)
+    }
+
+    /// `member_key` of a key whose opening quote is the current unit, which the caller read.
+    #[inline(always)]
+    fn quoted_key(&mut self, layout: &mut B::Layout) -> Result<(), JsonParseError> {
         let text = &self.units[self.index + 1..];
         let key = match self.builder.expected_key(layout, |key| T::starts_key(text, key)) {
             Some((key, length)) => {
@@ -933,13 +1320,26 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
 
     /// A literal, whose first unit the caller matched.
     fn literal(&mut self, expected: &[u8], value: JsonLiteral) -> Result<B::Value, JsonParseError> {
-        for &unit in expected {
-            if self.peek() != Some(u16::from(unit)) {
-                return Err(self.error(JsonSyntax::Unexpected));
-            }
-            self.index += 1;
+        if !T::starts_with_ascii(&self.units[self.index..], expected) {
+            return Err(self.literal_mismatch(expected));
         }
+        self.index += expected.len();
         Ok(self.builder.literal(value))
+    }
+
+    /// The error of `literal` at the first unit that differs from `expected`, or at the end of
+    /// the text when it ends first.
+    #[cold]
+    fn literal_mismatch(&self, expected: &[u8]) -> JsonParseError {
+        let matched = self.units[self.index..]
+            .iter()
+            .zip(expected)
+            .take_while(|(unit, byte)| unit.unit() == u16::from(**byte))
+            .count();
+        JsonParseError {
+            syntax: JsonSyntax::Unexpected,
+            position: self.index + matched,
+        }
     }
 
     /// A string's code units, from its opening quote, which the caller matched: a run of the
@@ -1025,31 +1425,63 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
     fn number(&mut self) -> Result<JsonNumber, JsonParseError> {
         let start = self.index;
         let negative = self.take_if(b'-');
+        let (mantissa, digits) = self.integer_part()?;
+        if let Some(integer) = self.exact_integer(mantissa, digits, negative) {
+            return Ok(integer);
+        }
+        let (mantissa, digits, scale) = self.decimal_part(mantissa, digits)?;
+        let power = EXACT_POWERS_OF_TEN.get(scale.unsigned_abs() as usize);
+        if digits <= JSON_MANTISSA_DIGITS
+            && mantissa <= EXACT_DOUBLE_INTEGER
+            && let Some(&power) = power
+        {
+            let magnitude = if scale < 0 { mantissa as f64 / power } else { mantissa as f64 * power };
+            return Ok(JsonNumber::Float(if negative { -magnitude } else { magnitude }));
+        }
+        Ok(JsonNumber::Float(self.convert_literal(start)))
+    }
+
+    /// The integer part of a number from the current unit: its digits' value, and how many
+    /// digits it has. A leading zero ends the part, so a digit after it is an error.
+    #[inline(always)]
+    fn integer_part(&mut self) -> Result<(u64, usize), JsonParseError> {
         let integer_start = self.index;
-        let mut mantissa = 0_u64;
-        match self.peek() {
+        let mantissa = match self.peek() {
             Some(JSON_DIGIT_START) => {
                 self.index += 1;
                 if self.digit_value().is_some() {
                     return Err(self.error(JsonSyntax::Unexpected));
                 }
+                0
             }
-            Some(JSON_DIGIT_START..=JSON_DIGIT_END) => mantissa = self.accumulate_digits(mantissa),
+            Some(JSON_DIGIT_START..=JSON_DIGIT_END) => self.accumulate_digits(0),
             _ => return Err(self.error(JsonSyntax::NoNumberAfterMinus)),
+        };
+        Ok((mantissa, self.index - integer_start))
+    }
+
+    /// The integer of `digits` digits and value `mantissa`, when no fraction or exponent
+    /// continues it and it is short enough to be exact: an `i32` when it fits, else a double.
+    #[inline(always)]
+    fn exact_integer(&self, mantissa: u64, digits: usize, negative: bool) -> Option<JsonNumber> {
+        let next = self.peek();
+        let continued = next == Some(u16::from(b'.')) || exponent_mark(next);
+        if continued || digits > JSON_EXACT_INTEGER_DIGITS {
+            return None;
         }
-        let exponent_mark = |unit: Option<u16>| unit.is_some_and(|unit| unit == b'e' as u16 || unit == b'E' as u16);
-        let mut digits = self.index - integer_start;
-        let fraction = self.peek() == Some(u16::from(b'.'));
-        if !fraction && !exponent_mark(self.peek()) && digits <= JSON_EXACT_INTEGER_DIGITS {
-            return Ok(match i32::try_from(mantissa) {
-                Ok(magnitude) if !negative => JsonNumber::Integer(magnitude),
-                Ok(magnitude) if magnitude != 0 => JsonNumber::Integer(-magnitude),
-                _ => JsonNumber::Float(if negative { -(mantissa as f64) } else { mantissa as f64 }),
-            });
-        }
+        Some(match i32::try_from(mantissa) {
+            Ok(magnitude) if !negative => JsonNumber::Integer(magnitude),
+            Ok(magnitude) if magnitude != 0 => JsonNumber::Integer(-magnitude),
+            _ => JsonNumber::Float(if negative { -(mantissa as f64) } else { mantissa as f64 }),
+        })
+    }
+
+    /// The fraction and exponent after an integer part of `mantissa` and `digits`: the
+    /// mantissa with the fraction's digits, the digits in all, and the power of ten the
+    /// mantissa is scaled by.
+    fn decimal_part(&mut self, mut mantissa: u64, mut digits: usize) -> Result<(u64, usize, i32), JsonParseError> {
         let mut scale = 0_i32;
-        if fraction {
-            self.index += 1;
+        if self.take_if(b'.') {
             if self.digit_value().is_none() {
                 return Err(self.error(JsonSyntax::UnterminatedFraction));
             }
@@ -1061,29 +1493,30 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         }
         if exponent_mark(self.peek()) {
             self.index += 1;
-            let exponent_negative = self.take_if(b'-');
-            if !exponent_negative {
-                self.take_if(b'+');
-            }
-            if self.digit_value().is_none() {
-                return Err(self.error(JsonSyntax::ExponentMissingNumber));
-            }
-            let mut exponent = 0_i32;
-            while let Some(digit) = self.digit_value() {
-                exponent = exponent.saturating_mul(10).saturating_add(digit as i32);
-                self.index += 1;
-            }
-            scale = scale.saturating_add(if exponent_negative { -exponent } else { exponent });
+            scale = scale.saturating_add(self.exponent()?);
         }
-        let power = EXACT_POWERS_OF_TEN.get(scale.unsigned_abs() as usize);
-        if digits <= JSON_MANTISSA_DIGITS
-            && mantissa <= EXACT_DOUBLE_INTEGER
-            && let Some(&power) = power
-        {
-            let magnitude = if scale < 0 { mantissa as f64 / power } else { mantissa as f64 * power };
-            return Ok(JsonNumber::Float(if negative { -magnitude } else { magnitude }));
+        Ok((mantissa, digits, scale))
+    }
+
+    /// The signed exponent after an exponent mark, which the parse moves past.
+    fn exponent(&mut self) -> Result<i32, JsonParseError> {
+        let negative = self.take_if(b'-');
+        if !negative {
+            self.take_if(b'+');
         }
-        // SAFETY: the literal is ASCII by construction.
+        if self.digit_value().is_none() {
+            return Err(self.error(JsonSyntax::ExponentMissingNumber));
+        }
+        let mut exponent = 0_i32;
+        while let Some(digit) = self.digit_value() {
+            exponent = exponent.saturating_mul(JSON_DECIMAL_BASE as i32).saturating_add(digit as i32);
+            self.index += 1;
+        }
+        Ok(if negative { -exponent } else { exponent })
+    }
+
+    /// The literal from unit `start` to the current one, converted to a double in full.
+    fn convert_literal(&self, start: usize) -> f64 {
         let literal = &self.units[start..self.index];
         let mut inline = [0_u8; JSON_INLINE_NUMBER_LENGTH];
         let long;
@@ -1096,8 +1529,9 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
             long = literal.iter().map(|unit| unit.unit() as u8).collect::<Vec<_>>();
             &long
         };
+        // SAFETY: the literal is ASCII by construction.
         let text = unsafe { std::str::from_utf8_unchecked(bytes) };
-        Ok(JsonNumber::Float(text.parse::<f64>().expect("the grammar admits only decimal literals")))
+        text.parse::<f64>().expect("the grammar admits only decimal literals")
     }
 
     /// `mantissa` followed by the decimal digits from the current unit, which the parse moves
@@ -1106,11 +1540,8 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
     fn accumulate_digits(&mut self, mut mantissa: u64) -> u64 {
         let units = self.units;
         let mut at = self.index;
-        while let Some(unit) = units.get(at)
-            && let digit = unit.unit().wrapping_sub(JSON_DIGIT_START)
-            && digit <= JSON_DIGIT_END - JSON_DIGIT_START
-        {
-            mantissa = mantissa.wrapping_mul(10).wrapping_add(u64::from(digit));
+        while let Some(digit) = units.get(at).and_then(|unit| decimal_digit(unit.unit())) {
+            mantissa = mantissa.wrapping_mul(JSON_DECIMAL_BASE).wrapping_add(digit);
             at += 1;
         }
         self.index = at;
@@ -1120,25 +1551,22 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
     /// The value of the current unit when it is a decimal digit.
     #[inline(always)]
     fn digit_value(&self) -> Option<u64> {
-        self.peek()
-            .filter(|unit| (JSON_DIGIT_START..=JSON_DIGIT_END).contains(unit))
-            .map(|unit| u64::from(unit - JSON_DIGIT_START))
+        self.peek().and_then(decimal_digit)
     }
 
     /// The next unit past whitespace, which the parse moves past.
     #[inline(always)]
     fn token(&mut self) -> Option<u16> {
         match self.peek() {
-            Some(unit) if is_json_whitespace(unit) => self.token_after_whitespace(),
+            Some(unit) if byte_class(unit) == JsonByteClass::Whitespace => self.token_after_whitespace(),
             unit => unit,
         }
     }
 
-    #[cold]
+    /// The next unit after the run of whitespace at the current unit, which the parse moves
+    /// past. Whitespace is one or two bytes in most JSON, so the run is scanned in place.
     fn token_after_whitespace(&mut self) -> Option<u16> {
-        while self.peek().is_some_and(is_json_whitespace) {
-            self.index += 1;
-        }
+        self.index += T::whitespace_run_length(&self.units[self.index..]);
         self.peek()
     }
 
@@ -1158,6 +1586,13 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
     }
 }
 
+/// The value of `unit` when it is a decimal digit.
+#[inline(always)]
+fn decimal_digit(unit: u16) -> Option<u64> {
+    let digit = unit.wrapping_sub(JSON_DIGIT_START);
+    (digit <= JSON_DIGIT_END - JSON_DIGIT_START).then_some(u64::from(digit))
+}
+
 fn hex_digit(unit: u16) -> Option<u16> {
     match unit {
         value if (b'0' as u16..=b'9' as u16).contains(&value) => Some(value - b'0' as u16),
@@ -1174,7 +1609,7 @@ fn hex_digit(unit: u16) -> Option<u16> {
 impl<H: Host> Vm<H> {
     fn json_object(&mut self) -> Value {
         let prototype = self.realm_object_prototype(self.realm.globals);
-        self.heap.alloc(Cell::Object(Self::empty_object(prototype)))
+        self.heap.alloc_object(Self::empty_object(prototype))
     }
 
     pub(super) fn json_raw_json(
@@ -1433,43 +1868,29 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// JSON.stringify(value, replacer, space): the plain writer (`json_stringify_steady`) first,
+    /// which answers plain data with no replacer or gap; otherwise the replacer and the gap,
+    /// read in order, then the one writer (`json_run`) under them.
     pub(super) fn json_stringify(
         &mut self,
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let replacer = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let space = args.get(2).copied().unwrap_or(Value::UNDEFINED);
-        if replacer.is_undefined() && space.is_undefined()
-            && let Some(result) = self.json_stringify_plain(value)
+        if self.declined_fast.take() != Some(Native::JsonStringify)
+            && let Some(text) = self.json_stringify_steady(args)
         {
-            return Ok(result);
+            return Ok(text);
         }
-        let (replacer, property_list) = self.json_replacer(p, replacer)?;
+        let argument = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);
+        let space = argument(JSON_SPACE_ARGUMENT);
+        let (replacer, property_list) = self.json_replacer(p, argument(JSON_REPLACER_ARGUMENT))?;
         let gap = self.with_call_roots([space], |vm| vm.json_gap(p, space))?;
-        let mut state = JsonSerialization {
-            replacer,
-            property_list,
-            gap,
-            ancestors: Vec::new(),
-            to_json: self.intern_atom("toJSON"),
-            output: JsonText::new(),
-            depth: 0,
-            plans: Default::default(),
-            steps: 0,
-        };
-        let holder = self.json_object();
-        let empty = self.intern_atom("");
-        let serialized = self.with_call_roots([holder], |vm| {
-            vm.set_property(holder, empty, value)?;
-            vm.json_serialize_property(p, holder, JsonKey::Name(empty), &mut state)
-        });
-        if !serialized? {
-            return Ok(Value::UNDEFINED);
-        }
-        let text = json_text_string(state.output);
-        Ok(self.heap.alloc_string(text.into()))
+        let options = JsonOptions { replacer, property_list, gap };
+        self.json_run(Some(p), args.first().copied().unwrap_or(Value::UNDEFINED), options)
+            .map_err(|stop| match stop {
+                JsonStop::Thrown(error) => error,
+                JsonStop::Plain => unreachable!("a run with a program takes every step"),
+            })
     }
 
     fn json_replacer(
@@ -1547,151 +1968,73 @@ impl<H: Host> Vm<H> {
         Ok(String::new())
     }
 
+    /// SerializeJSONProperty's steps for a member the writer does not write as it is
+    /// (`json_write_member`): [[Get]] of `key` unless its value was read already (`value`),
+    /// `toJSON`, the replacer, then SerializeJSONValue. Each may run guest code, after which the
+    /// writer re-proves its plans (`JsonWriter::after_guest_code`).
     fn json_serialize_property(
         &mut self,
         p: &ResidualProgram,
         holder: Value,
         key: JsonKey,
-        state: &mut JsonSerialization,
-    ) -> Result<bool, JsError> {
+        value: Option<Value>,
+        w: &mut JsonWriter,
+    ) -> JsonStep {
         let _stack = self.enter_stack()?;
-        // The steps may run guest code, which can change the shapes plans describe.
-        state.plans.clear();
-        state.steps += 1;
-        let holder_root = self.heap.root(holder);
-        let result = (|| {
-            let holder = self.heap.root_value(holder_root).unwrap_or(holder);
-            let mut value = match key {
-                JsonKey::Index(index) => self.get_index(p, holder, Value::number(index as f64))?,
-                JsonKey::Name(atom) => self.get_property(p, holder, atom)?,
-            };
-            let mut value_root = self.heap.root(value);
-            if self.is_object_like(value) || matches!(self.heap.get(value), Some(Cell::BigInt(_))) {
-                let value_now = self.heap.root_value(value_root).unwrap_or(value);
-                let method = match self.get_property(p, value_now, state.to_json) {
-                    Ok(method) => method,
-                    Err(error) => {
-                        self.heap.release_root(value_root);
-                        return Err(error);
-                    }
-                };
-                if self.is_function(method) {
-                    let method_root = self.heap.root(method);
-                    let key_value = self.json_key_value(key);
-                    let this = self.heap.root_value(value_root).unwrap_or(value);
-                    let replacement = self.call_value(
-                        p,
-                        self.heap.root_value(method_root).unwrap_or(method),
-                        this,
-                        &[key_value],
-                    );
-                    self.heap.release_root(method_root);
-                    self.heap.release_root(value_root);
-                    value = replacement?;
-                    value_root = self.heap.root(value);
-                }
-            }
-            if let Some(replacer) = state.replacer {
-                let replacer_root = self.heap.root(replacer);
-                let key_value = self.json_key_value(key);
-                let holder = self.heap.root_value(holder_root).unwrap_or(holder);
-                let mut value = self.heap.root_value(value_root).unwrap_or(value);
-                let replacement = self.call_value(
-                    p,
-                    self.heap.root_value(replacer_root).unwrap_or(replacer),
-                    holder,
-                    &[key_value, value],
-                );
-                self.heap.release_root(replacer_root);
-                self.heap.release_root(value_root);
-                value = replacement?;
-                value_root = self.heap.root(value);
-            }
-            let value = self.heap.root_value(value_root).unwrap_or(value);
-            let serialized = self.json_serialize_value(p, value, state);
-            self.heap.release_root(value_root);
-            serialized
-        })();
-        self.heap.release_root(holder_root);
-        result
+        let (to_json, replacer) = (w.to_json, w.options.replacer);
+        let value = self.with_call_roots([holder], |vm| {
+            vm.json_property_value(p, holder, key, value, to_json, replacer)
+        })?;
+        w.after_guest_code(self.json_epochs());
+        self.with_call_roots([value], |vm| vm.json_serialize_value(p, value, w))
     }
 
-    /// SerializeJSONProperty of a container's member, given the member's value when reading
-    /// it runs no guest code (`plain_named_get`, a present dense element). With no replacer,
-    /// a value that is no object or BigInt, or one that no `toJSON` reaches
-    /// (`plain_property_lookup`), serializes as it is: the property steps would call nothing.
-    /// Any other member takes them (`json_serialize_property`).
-    fn json_member(
+    /// SerializeJSONProperty's value: `Get(holder, key)` unless `value` was read already,
+    /// replaced by its `toJSON` call's result, then by the replacer's.
+    fn json_property_value(
         &mut self,
         p: &ResidualProgram,
         holder: Value,
         key: JsonKey,
         value: Option<Value>,
-        state: &mut JsonSerialization,
-    ) -> Result<bool, JsError> {
-        if state.replacer.is_none()
-            && let Some(value) = value
-        {
-            let calls_nothing = if self.is_object_like(value) {
-                self.json_object_plan(value, state).is_some()
-                    || self.json_lacks_to_json(value, state.to_json)
-            } else {
-                !matches!(self.heap.get(value), Some(Cell::BigInt(_)))
-            };
-            if calls_nothing {
-                // A nested container recurses here, as the property steps would.
-                let _stack = self.enter_stack()?;
-                return self.json_serialize_value(p, value, state);
-            }
-        }
-        self.json_serialize_property(p, holder, key, state)
-    }
-
-    /// The member plan of `object` (`JsonObjectPlan`), derived once per shape and prototype
-    /// while no guest code runs; `None` for any object the plan does not describe.
-    fn json_object_plan(
-        &self,
-        object: Value,
-        state: &mut JsonSerialization,
-    ) -> Option<JsonObjectPlan> {
-        let data = self.heap.object_record(object)?;
-        let shape_key = (data.shape(), data.proto());
-        if let Some(plan) = state.plans.get(&shape_key) {
-            return plan.clone();
-        }
-        let plan = self.derive_json_object_plan(object, data, state.to_json);
-        state.plans.insert(shape_key, plan.clone());
-        plan
-    }
-
-    fn derive_json_object_plan(
-        &self,
-        object: Value,
-        data: &Object,
         to_json: Atom,
-    ) -> Option<JsonObjectPlan> {
-        let shape = data.shape();
-        if self.shape_is_dictionary(shape)
-            || data.has_side_descriptors()
-            || data.is_raw_json()
-            || self.boxed_primitive_data(object).is_some()
-            || !self.json_lacks_to_json(object, to_json)
-        {
-            return None;
+        replacer: Option<Value>,
+    ) -> Result<Value, JsError> {
+        let value = match (value, key) {
+            (Some(value), _) => value,
+            (None, JsonKey::Index(index)) => self.get_index(p, holder, Value::number(index as f64))?,
+            (None, JsonKey::Name(atom)) => self.get_property(p, holder, atom)?,
+        };
+        let value = self.with_call_roots([value], |vm| vm.json_to_json(p, key, value, to_json))?;
+        let Some(replacer) = replacer else {
+            return Ok(value);
+        };
+        self.with_call_roots([value, replacer], |vm| {
+            let key_value = vm.json_key_value(key);
+            vm.call_value(p, replacer, holder, &[key_value, value])
+        })
+    }
+
+    /// `value`, or the result of its `toJSON` method called with `key`, for an object or
+    /// BigInt whose `toJSON` is callable.
+    fn json_to_json(
+        &mut self,
+        p: &ResidualProgram,
+        key: JsonKey,
+        value: Value,
+        to_json: Atom,
+    ) -> Result<Value, JsError> {
+        if !self.is_object_like(value) && !matches!(self.heap.get(value), Some(Cell::BigInt(_))) {
+            return Ok(value);
         }
-        let accessors = self.shape_may_have_accessors(shape);
-        self.shape_enumerable_keys(object)?
-            .into_iter()
-            .map(|key| {
-                let slot = self.property_shape_slot(shape, PropertyKey::string(key))?;
-                let accessor = accessors && self.slot_attributes(data, slot)?.accessor;
-                (self.plain_named_key(key) && !accessor).then(|| {
-                    let mut quoted = Vec::new();
-                    self.write_json_key(key, &mut quoted);
-                    JsonPlanMember { key, slot, quoted: quoted.into_boxed_slice() }
-                })
-            })
-            .collect()
+        let method = self.get_property(p, value, to_json)?;
+        if !self.is_function(method) {
+            return Ok(value);
+        }
+        self.with_call_roots([method], |vm| {
+            let key_value = vm.json_key_value(key);
+            vm.call_value(p, method, value, &[key_value])
+        })
     }
 
     /// Whether `Get(value, "toJSON")` finds nothing, decided without running guest code, for
@@ -1731,25 +2074,38 @@ impl<H: Host> Vm<H> {
         self.heap.alloc_string(text)
     }
 
+    /// SerializeJSONValue of `value`, after `toJSON` and the replacer: plain data as it is
+    /// (`json_write_primitive`, `json_write_plain_container`), else the specification's steps.
+    /// Unwrapping a boxed primitive may run guest code.
     fn json_serialize_value(
         &mut self,
         p: &ResidualProgram,
         value: Value,
-        state: &mut JsonSerialization,
-    ) -> Result<bool, JsError> {
-        if let Some(serialized) = self.json_serialize_primitive(value, &mut state.output) {
-            return Ok(serialized);
+        w: &mut JsonWriter,
+    ) -> JsonStep {
+        if let Some(written) = self.json_write_primitive(value, &mut w.output) {
+            return Ok(written);
+        }
+        if let Some(written) = self.json_write_plain_container(Some(p), value, w)? {
+            return Ok(written);
+        }
+        if self.is_function(value) {
+            return Ok(false);
         }
         let unboxed = self.json_unbox(p, value)?;
         if unboxed != value {
-            return self.json_serialize_value(p, unboxed, state);
+            w.after_guest_code(self.json_epochs());
+            return self.json_serialize_value(p, unboxed, w);
         }
-        let value = unboxed;
         if let Some(raw) = self.json_raw_text(value) {
-            state.output.append_bytes(raw.as_bytes());
+            w.output.extend_from_slice(raw.as_bytes());
             return Ok(true);
         }
-        if self.heap.object_record(value).is_some() || self.heap.promise(value).is_some() {
+        if self.heap.object_record(value).is_some()
+            || self.heap.promise(value).is_some()
+            || self.heap.is_map(value)
+            || self.heap.is_set(value)
+        {
             return self.json_serialize_object(p, value, state).map(|()| true);
         }
         if let Some(array) = self.heap.array(value) {
@@ -1766,25 +2122,20 @@ impl<H: Host> Vm<H> {
                 write_json_string(&text, &mut state.output);
                 Ok(true)
             }
-            Some(Cell::Symbol(_)) => Ok(false),
+            _ if self.heap.is_symbol(value) => Ok(false),
             Some(Cell::BigInt(_)) => {
                 Err(self.type_error(p, "Do not know how to serialize a BigInt".into()))
             }
-            Some(Cell::Function(_)) | None => Ok(false),
-            Some(Cell::Array { .. } | Cell::Promise(_)) => {
-                unreachable!("heap.array and heap.promise classify their values before this match")
+            None => Ok(false),
+            Some(Cell::Promise(_)) => {
+                unreachable!("heap.array, heap.promise and the collection accessors classify their values before this match")
             }
             _ if self.is_array(p, value)? => {
                 self.json_serialize_array(p, value, state).map(|()| true)
             }
-            Some(Cell::Object(_)) => {
-                self.json_serialize_object(p, value, state).map(|()| true)
-            }
             Some(Cell::Proxy { .. })
             | Some(Cell::Date { .. })
             | Some(Cell::Error(_))
-            | Some(Cell::Map { .. })
-            | Some(Cell::Set { .. })
             | Some(Cell::ShadowRealm { .. })
             | Some(Cell::WeakMap { .. })
             | Some(Cell::WeakSet { .. })
@@ -1807,8 +2158,7 @@ impl<H: Host> Vm<H> {
             | Some(Cell::WasmTable { .. }) => {
                 self.json_serialize_object(p, value, state).map(|()| true)
             }
-            Some(Cell::Iterator(_))
-            | Some(Cell::ArrayFromAsyncState(_))
+            Some(Cell::ArrayFromAsyncState(_))
             | Some(Cell::AwaitState(_))
             | Some(Cell::PromiseResolvingState { .. })
             | Some(Cell::WasmElements(_))
@@ -1825,29 +2175,41 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Whether `value` serializes, where it is undefined, a function, null, a boolean or a number,
-    /// whose text is appended to `output`; `None` for any other value.
-    fn json_serialize_primitive(&self, value: Value, output: &mut JsonText) -> Option<bool> {
-        if value.is_undefined() || value.is_deleted() || self.is_function(value) {
-            return Some(false);
+    /// SerializeJSONValue's last steps, for a value no earlier step writes: an object or
+    /// array by the specification's steps (an exotic object is an array if IsArray says so),
+    /// a BigInt's TypeError, or an omitted internal value.
+    fn json_serialize_heap_value(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+        w: &mut JsonWriter,
+    ) -> JsonStep {
+        if let Some(text) = self.heap.string(value).cloned() {
+            write_json_string(&text, &mut w.output);
+            return Ok(true);
         }
-        if value.is_null() {
-            output.extend_from_slice(b"null");
-            return Some(true);
+        if self.heap.is_symbol(value) {
+            return Ok(false);
         }
-        if let Some(value) = value.as_bool() {
-            output.extend_from_slice(if value { b"true" } else { b"false" });
-            return Some(true);
-        }
-        if let Some(value) = value.as_number() {
-            if value.is_finite() {
-                crate::number_to_string::write(value, output);
-            } else {
-                output.extend_from_slice(b"null");
+        let is_array = if self.heap.object_record(value).is_some() || self.heap.promise(value).is_some()
+            || self.heap.is_map(value) || self.heap.is_set(value) {
+            false
+        } else if let Some(array) = self.heap.array(value) {
+            // An arguments object is an ordinary object to IsArray, so it serializes as one.
+            !array.is_arguments_object()
+        } else {
+            match json_cell_form(self.heap.get(value)) {
+                JsonForm::BigInt => return Err(self.type_error(p, JSON_BIGINT_MESSAGE.into()).into()),
+                JsonForm::Omitted => return Ok(false),
+                JsonForm::Object => self.is_array(p, value)?,
             }
-            return Some(true);
-        }
-        None
+        };
+        let written = if is_array {
+            self.json_write_array(Some(p), value, w)
+        } else {
+            self.json_write_object(Some(p), value, None, w)
+        };
+        written.map(|()| true)
     }
 
     fn json_unbox(&mut self, p: &ResidualProgram, value: Value) -> Result<Value, JsError> {
@@ -1871,98 +2233,7 @@ impl<H: Host> Vm<H> {
         self.heap.string(self.own_property(value, raw)?).map(|text| text.host_string().to_owned())
     }
 
-    fn json_serialize_array(
-        &mut self,
-        p: &ResidualProgram,
-        array: Value,
-        state: &mut JsonSerialization,
-    ) -> Result<(), JsError> {
-        self.json_push_ancestor(p, array, state)?;
-        let result = self.with_call_roots([array], |vm| {
-            let length = vm.array_like_length(p, array)?;
-            state.output.push(b'[');
-            state.depth += 1;
-            for index in 0..length {
-                state.begin_member(index);
-                let element = vm
-                    .present_dense_elements(array, index..index + 1)
-                    .map(|element| element[0]);
-                if !vm.json_member(p, array, JsonKey::Index(index), element, state)? {
-                    state.output.append_bytes(b"null");
-                }
-            }
-            state.depth -= 1;
-            state.end_container(length, b']');
-            Ok(())
-        });
-        state.ancestors.pop();
-        result
-    }
-
-    fn json_serialize_object(
-        &mut self,
-        p: &ResidualProgram,
-        object: Value,
-        state: &mut JsonSerialization,
-    ) -> Result<(), JsError> {
-        self.json_push_ancestor(p, object, state)?;
-        let result = self.with_call_roots([object], |vm| {
-            let plan = if state.property_list.is_none() && state.replacer.is_none() {
-                vm.json_object_plan(object, state)
-            } else {
-                None
-            };
-            let planned_steps = state.steps;
-            let keys = match &plan {
-                Some(_) => super::object_keys::EnumerableKeys::new(),
-                None => match &state.property_list {
-                    Some(property_list) => property_list.iter().copied().collect(),
-                    None => vm.json_enumerable_keys(p, object)?,
-                },
-            };
-            let count = plan.as_ref().map_or(keys.len(), |plan| plan.len());
-            state.output.push(b'{');
-            state.depth += 1;
-            let mut written = 0;
-            for index in 0..count {
-                // The member is written before its value is known; an omitted value
-                // takes it back.
-                let member = state.output.len();
-                state.begin_member(written);
-                let key = match &plan {
-                    Some(plan) => {
-                        state.output.append_bytes(&plan[index].quoted);
-                        plan[index].key
-                    }
-                    None => {
-                        vm.write_json_key(keys[index], &mut state.output);
-                        keys[index]
-                    }
-                };
-                state.output.append_bytes(if state.gap.is_empty() { b":" } else { b": " });
-                // A plan read for this object holds while no member took the property steps.
-                let planned = plan.as_ref().filter(|_| state.steps == planned_steps).and_then(|plan| {
-                    vm.heap
-                        .ordinary_object(object)
-                        .and_then(|data| vm.heap.property_get(data, plan[index].slot))
-                });
-                let value = planned.or_else(|| vm.plain_named_get(object, key));
-                if vm.json_member(p, object, JsonKey::Name(key), value, state)? {
-                    written += 1;
-                } else {
-                    state.output.truncate(member);
-                }
-            }
-            state.depth -= 1;
-            state.end_container(written, b'}');
-            Ok(())
-        });
-        state.ancestors.pop();
-        result
-    }
-
     /// QuoteJSONString of the property name `atom`, written from the atom's own text.
-    /// `write_json_key` through the stringification's quoted keys (`JsonPlainWrite`).
     fn write_json_key(&self, atom: Atom, output: &mut JsonText) {
         match self.atom_text(atom) {
             AtomText::Host(text) => write_json_utf8(text.as_bytes(), output),
@@ -1970,18 +2241,21 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn json_push_ancestor(
+    /// SerializeJSONObject's K for an object the writer has no plan for: the replacer's
+    /// property list, or the object's enumerable own string keys, whose gathering may run
+    /// guest code (a Proxy's traps). The steady call stops here.
+    fn json_member_keys(
         &mut self,
-        p: &ResidualProgram,
-        value: Value,
-        state: &mut JsonSerialization,
-    ) -> Result<(), JsError> {
-        // Every ancestor and `value` is an object, whose SameValue is its identity.
-        if state.ancestors.contains(&value) {
-            return Err(self.type_error(p, "Converting circular structure to JSON".into()));
+        p: Option<&ResidualProgram>,
+        object: Value,
+        w: &mut JsonWriter,
+    ) -> Result<super::object_keys::EnumerableKeys<Atom>, JsonStop> {
+        if let Some(property_list) = &w.options.property_list {
+            return Ok(property_list.iter().copied().collect());
         }
-        state.ancestors.push(value);
-        Ok(())
+        let keys = self.json_enumerable_keys(p.ok_or(JsonStop::Plain)?, object)?;
+        w.after_guest_code(self.json_epochs());
+        Ok(keys)
     }
 
     fn json_enumerable_keys(
@@ -2027,6 +2301,42 @@ impl<H: Host> Vm<H> {
     }
 }
 
+/// How SerializeJSONValue writes a heap value that no earlier step classified.
+enum JsonForm {
+    /// An object (an array, if IsArray says so).
+    Object,
+    /// SerializeJSONValue throws a TypeError.
+    BigInt,
+    /// No JSON value: a function, or an internal record no guest value is.
+    Omitted,
+}
+
+/// The `JsonForm` of `cell`. Strings, symbols, arrays and promises are classified by earlier
+/// steps; they are listed so the match stays exhaustive.
+fn json_cell_form(cell: Option<&Cell>) -> JsonForm {
+    use crate::heap::Cell as C;
+    match cell {
+        Some(C::BigInt(_)) => JsonForm::BigInt,
+        Some(
+            C::Object(_) | C::Array { .. } | C::Promise(_) | C::Proxy { .. } | C::Date { .. } | C::Error(_)
+            | C::Collection(_) | C::ShadowRealm { .. } | C::WeakMap { .. } | C::WeakSet { .. }
+            | C::WeakRef { .. } | C::FinalizationRegistry { .. } | C::RegExp { .. } | C::TypedArray { .. }
+            | C::ArrayBuffer { .. } | C::DataView { .. } | C::TemporalDuration { .. }
+            | C::TemporalPlainDate { .. } | C::TemporalPlainDateTime { .. } | C::TemporalPlainMonthDay { .. }
+            | C::TemporalPlainYearMonth { .. } | C::TemporalZonedDateTime { .. } | C::TemporalInstant { .. }
+            | C::WasmObject { .. } | C::WasmGlobal { .. } | C::WasmMemory { .. } | C::WasmTable { .. },
+        ) => JsonForm::Object,
+        None
+        | Some(
+            C::Function(_) | C::Iterator(_) | C::ArrayFromAsyncState(_) | C::AwaitState(_)
+            | C::PromiseResolvingState { .. } | C::WasmElements(_) | C::WasmBits64(_) | C::WasmInstance(_)
+            | C::WasmGc { .. } | C::WasmExtern(_) | C::AccessorPair { .. } | C::WasmTag { .. }
+            | C::WasmException { .. } | C::WasmV128(_) | C::BindingReference { .. }
+            | C::WasmHostFunction { .. },
+        ) => JsonForm::Omitted,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{JsString, JsonParser, JsonTreeBuilder, JsonUnit, JsonValue, WORD_BYTES, write_json_string};
@@ -2049,6 +2359,32 @@ mod tests {
                             <u8 as JsonUnit>::string_run_length(&units),
                             expected,
                             "prefix {prefix:#x} length {length} position {position} byte {ending:#x}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wide_string_runs_end_where_each_unit_scan_ends() {
+        // Units that end no run before, and a spread of units that do, at every position of
+        // three 8-unit blocks and a partial one, as the per-unit definition finds it.
+        let fill = [b'a' as u16, 0x00e9, 0x3042, 0xd83e, b' ' as u16, 0x0100];
+        let endings: Vec<u16> = (0..=0x7f_u16).chain([0x80, 0xe9, 0x3042, 0xd800, 0xffff]).collect();
+        for &prefix in &fill {
+            for length in 0..(3 * 8 + 3) {
+                for position in 0..=length {
+                    for &ending in &endings {
+                        let mut units = vec![prefix; length];
+                        if position < length {
+                            units[position] = ending;
+                        }
+                        let expected = units.iter().position(|unit| unit.ends_string_run());
+                        assert_eq!(
+                            <u16 as JsonUnit>::string_run_length(&units),
+                            expected,
+                            "prefix {prefix:#x} length {length} position {position} unit {ending:#x}"
                         );
                     }
                 }

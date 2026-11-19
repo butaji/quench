@@ -25,6 +25,12 @@ impl<H: Host> Vm<H> {
         if !length.is_finite() || length < 0.0 || length.fract() != 0.0 || length > f64::from(u32::MAX) {
             return None;
         }
+        // A length dense storage holds anyway (`sparse_set_length` materializes it with holes)
+        // is one allocation of holes, with no sparse record made and then materialized.
+        let length_units = length as usize;
+        if length_units <= crate::heap::MAX_DENSE_ARRAY_HOLE_LENGTH {
+            return Some(self.heap.alloc_literal_array(prototype, length_units, |_| Value::DELETED));
+        }
         let array = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()),
         });
@@ -75,12 +81,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// The array of `values` with `prototype`. Out of line: the cell it builds lives in its
-    /// own frame, not its caller's.
+    /// The array of `values` with `prototype`, copied once from the argument slice into its
+    /// elements (`alloc_literal_array_from_parts`), with no intermediate `Vec`. Out of line: the
+    /// cell it builds lives in its own frame, not its caller's.
     #[inline(never)]
     fn array_of_values(&mut self, prototype: Value, values: &[Value]) -> Value {
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), values.to_vec()),
-        })
+        self.heap.alloc_literal_array_from_parts(prototype, &[values])
     }
 }

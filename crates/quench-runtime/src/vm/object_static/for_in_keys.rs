@@ -87,7 +87,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `for_in_state` for the lane's `ForInStart` over an object the memo lists.
-    pub(in crate::vm) fn lane_for_in_state(&mut self, object: Value, keys: Value) -> Value {
+    pub(in crate::vm) fn for_in_state_in_lane(&mut self, object: Value, keys: Value) -> Value {
         self.for_in_state(object, keys)
     }
 
@@ -128,7 +128,7 @@ impl<H: Host> Vm<H> {
         }
         // Its own backing, not a young run, which the cursor's first write would copy.
         let object = crate::heap::ArrayObject::fresh(self.array_proto, ArrayElements::from_slice(&elements));
-        self.heap.alloc(Cell::Array { object })
+        self.heap.alloc_array(object)
     }
 
     /// The next key of the for-in `state` that is still an enumerable property of its
@@ -344,8 +344,6 @@ impl<H: Host> Vm<H> {
 impl<H: Host> Vm<H> {
     /// The array of for-in `keys` with `prototype`.
     pub(super) fn alloc_for_in_key_array(&mut self, keys: crate::heap::ArrayElements, prototype: Value) -> Value {
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), keys),
-        })
+        self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(prototype), keys))
     }
 }

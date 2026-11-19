@@ -12,7 +12,7 @@
 //! as its own bytes, so its relocation offsets move with it unchanged. A row that does not
 //! decode into runs ending in unconditional jumps, or does not re-encode, keeps its built bytes.
 
-use iced_x86::{BlockEncoder, BlockEncoderOptions, Decoder, DecoderOptions, Instruction, InstructionBlock, Mnemonic};
+use iced_x86::{BlockEncoder, BlockEncoderOptions, Decoder, DecoderOptions, FlowControl, Instruction, InstructionBlock, Mnemonic};
 use std::ops::Range;
 
 /// A relocation as `build.rs` reads it: (offset, class, hole index, addend).
@@ -38,11 +38,6 @@ const JCC_NEAR_BASE: u8 = 0x80;
 const CONDITION_MASK: u8 = 0x0f;
 const JCC_NEAR: std::ops::RangeInclusive<u8> = JCC_NEAR_BASE..=JCC_NEAR_BASE + CONDITION_MASK;
 const JCC_LEN: usize = 2 + REL32_BYTES;
-/// Instructions that end a row or leave it by something other than a direct jump.
-const NOT_A_ROW_BODY: [Mnemonic; 14] = [
-    Mnemonic::Ret, Mnemonic::Retf, Mnemonic::Iretq, Mnemonic::Ud2, Mnemonic::Hlt, Mnemonic::Int3, Mnemonic::Call, Mnemonic::Jmp,
-    Mnemonic::Loop, Mnemonic::Loope, Mnemonic::Loopne, Mnemonic::Jrcxz, Mnemonic::Jecxz, Mnemonic::Jcxz,
-];
 
 /// A row's code split into its hot part (`..hot_len`, ending in `jmp HOLE_NEXT`) and cold part.
 pub(crate) struct Layout {
@@ -101,7 +96,14 @@ fn flow_of(instr: &Instruction, bytes: &[u8], hole: bool) -> Option<Flow> {
     if instr.is_jcc_short_or_near() {
         return Some(Flow::Branch(Some(instr.near_branch_target())));
     }
-    (!NOT_A_ROW_BODY.contains(&instr.mnemonic())).then_some(Flow::Plain)
+    (!leaves_row(instr)).then_some(Flow::Plain)
+}
+
+/// Whether an instruction ends a row or leaves it other than by a direct jump: any flow change that is
+/// not a near or short `jmp`/`jcc` (returns, calls, interrupts, exceptions, indirect and `loop`/`jrcxz`
+/// branches). `hlt` changes no flow, so it is named.
+fn leaves_row(instr: &Instruction) -> bool {
+    instr.flow_control() != FlowControl::Next || instr.mnemonic() == Mnemonic::Hlt
 }
 
 /// The row's instructions, in address order, or `None` where it does not decode.

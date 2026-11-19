@@ -53,7 +53,7 @@ fn depart(vm: &mut Vm<TestHost>, anchor: Value, shape: u32, round: i32) -> u32 {
 fn osr_site(vm: &Vm<TestHost>, function_id: usize) -> crate::vm::dispatch_fast::OsrSiteDiagnostics {
     let osr = vm
         .programs
-        .lane_views(crate::vm::program_store::ProgramId::MAIN)
+        .views_in_lane(crate::vm::program_store::ProgramId::MAIN)
         .unwrap()
         .get(function_id)
         .and_then(crate::vm::program_store::derived_lane_view)

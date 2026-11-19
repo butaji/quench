@@ -1,14 +1,14 @@
 //! Reads that meet an accessor: answered without an activation where the getter's call runs
-//! no guest code.
+//! no guest code. The answers and activations are `AccessorCall`'s (`accessor_protocol.rs`).
 use super::*;
 use crate::vm::AccessorForward;
 use crate::vm::accessor_cache::GetterEntryRead;
 
 /// A read whose site caches an accessor (`Vm::cached_field_getter`) whose getter is a pure
 /// native read (`Vm::pure_native_getter_value`) or a frameless read target, answered as the
-/// getter's call would return (`lane_call_read`): `[[Get]]` calls it on the base with no
+/// getter's call would return (`call_read_in_lane`): `[[Get]]` calls it on the base with no
 /// arguments, and neither runs guest code. `Some(None)` is a cached getter that must be
-/// called (`lane_getter_activation`); `None`, a site with no accessor entry for `object`.
+/// called (`getter_activation_in_lane`); `None`, a site with no accessor entry for `object`.
 ///
 /// # Safety
 /// `cx` is the running lane's context.
@@ -70,7 +70,7 @@ unsafe fn getter_forward<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, object:
     if let Some(value) = unsafe { constant_body_value::<H>(target) } {
         return (!value.is_heap()).then_some(AccessorForward::Constant(value));
     }
-    if lane_direct_call_this(vm, target, object) != Some(object) {
+    if direct_call_this_in_lane(vm, target, object) != Some(object) {
         return None;
     }
     match target.entry {
@@ -92,7 +92,7 @@ unsafe fn getter_forward<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget, object:
 }
 
 /// The constant the body of `target` returns where it is `LoadConst` and `Return` of it
-/// (`specialize_constant_returns`'s `lane_return_constant`, a plain leaf's form included):
+/// (`specialize_constant_returns`'s `return_constant_miss` row, a plain leaf's form included):
 /// a call of it is that constant, whatever its receiver and arguments.
 ///
 /// # Safety
@@ -105,8 +105,8 @@ unsafe fn constant_body_value<H: Host>(target: &ScriptCallTarget) -> Option<Valu
     // SAFETY: the program store keeps a derived view alive with its program; its first
     // record is the body's first instruction.
     let first = unsafe { &*(*target.view).records() };
-    let constant = first.handler == lane_return_constant::<H, NOT_LEAF> as Handler as *const ()
-        || first.handler == lane_return_constant::<H, PLAIN_LEAF> as Handler as *const ();
+    let constant = first.handler == return_row!(crate::bytecode::RETURN_ROW, returning_code(CONSTANT_KIND, NOT_LEAF)) as Handler as *const ()
+        || first.handler == return_row!(crate::bytecode::RETURN_ROW, returning_code(CONSTANT_KIND, PLAIN_LEAF)) as Handler as *const ();
     constant.then(|| first.constant())
 }
 
@@ -120,7 +120,7 @@ unsafe fn lane_getter_answer<H: Host>(cx: *mut LaneContext<H>, getter: Value, ob
     if let Some(value) = (unsafe { vm(cx) }).pure_native_getter_value(getter, object) {
         return Some(value);
     }
-    let target = lane_script_target(cx, getter)?;
+    let target = script_target_in_lane(cx, getter)?;
     unsafe { lane_script_getter_answer(cx, &target, object) }
 }
 
@@ -134,9 +134,9 @@ unsafe fn lane_script_getter_answer<H: Host>(cx: *mut LaneContext<H>, target: &S
     if target.entry == CallEntry::Reads {
         // A getter only the general path has called has not run its read in the lane yet: it
         // takes the kind its first run would.
-        // SAFETY: as `lane_call_read`; the context's program outlives the lane run.
+        // SAFETY: as `call_read_in_lane`; the context's program outlives the lane run.
         let (entry, code) = unsafe { ((*target.view).records(), &*(*cx).code) };
-        if unsafe { (*entry).handler } == lane_returning_field_first::<H, NOT_LEAF> as *const () {
+        if unsafe { (*entry).handler } == row_returning_field_first::<H, NOT_LEAF> as *const () {
             requicken::<H>(entry, returning_field_first_kind::<H, NOT_LEAF>(unsafe { vm(cx) }, code, unsafe { &*entry }));
         }
     } else if let Some(value) = unsafe { constant_body_value::<H>(target) } {
@@ -145,16 +145,16 @@ unsafe fn lane_script_getter_answer<H: Host>(cx: *mut LaneContext<H>, target: &S
     } else if !target.entry.answered_by_read() {
         return None;
     }
-    let this = lane_direct_call_this(unsafe { vm(cx) }, target, object)?;
-    unsafe { lane_call_read(cx, target, ReadArguments::NONE, this) }
+    let this = direct_call_this_in_lane(unsafe { vm(cx) }, target, object)?;
+    unsafe { call_read_in_lane(cx, target, ReadArguments::NONE, this) }
 }
 
 /// A lane read of `base` at the record `i` (at `ip`) that met `getter`: its value where a read
 /// answers the getter's call (`lane_getter_answer`), else the getter's activation
-/// (`lane_activate_getter`), whose completion is the read's value. Only a read that writes its
+/// (`activate_getter_in_lane`), whose completion is the read's value. Only a read that writes its
 /// register is answered in place: a returning read (`RETURN_REGISTER`) completes its
 /// activation, which only the getter's activation does. A native getter is called in place
-/// (`lane_call_native`); `Err` after such a call that raised leaves the error in
+/// (`call_native_in_lane`); `Err` after such a call that raised leaves the error in
 /// `Vm::lane_raised`. The answer's read may have made the activations frames, so the
 /// registers are the context's again.
 pub(super) fn lane_read_getter<H: Host>(
@@ -178,9 +178,9 @@ pub(super) fn lane_read_getter<H: Host>(
             }
             return lane_native_getter(cx, ip, i, native, getter, base);
         }
-        return lane_activate_getter(cx, r, ip, getter, base, None);
+        return activate_getter_in_lane(cx, r, ip, getter, base, None);
     }
-    let target = lane_script_target(cx, getter);
+    let target = script_target_in_lane(cx, getter);
     if reads
         && let Some(target) = &target
         && let Some(value) = unsafe { lane_script_getter_answer(cx, target, base) }
@@ -195,7 +195,7 @@ pub(super) fn lane_read_getter<H: Host>(
         r.set(i.a, value);
         return Ok((r, following(ip)));
     }
-    lane_activate_getter(cx, r, ip, getter, base, target)
+    activate_getter_in_lane(cx, r, ip, getter, base, target)
 }
 
 /// What a getter site's `GetField` record does after one walk of its site's accessor entries
@@ -204,9 +204,9 @@ pub(super) enum GetterStep {
     /// A trivial getter's forward (`Vm::getter_entry_read`): the read's value, no call.
     Answer(Value),
     /// The getter's read or call (`lane_read_getter`), found without the fact table's probe
-    /// and the second walk `lane_getter_activation` makes.
+    /// and the second walk `getter_activation_in_lane` makes.
     Read(Result<(Registers, Ip), Ip>),
-    /// No entry proves the base: `lane_getter_activation`'s lookups decide.
+    /// No entry proves the base: `getter_activation_in_lane`'s lookups decide.
     Miss,
 }
 
@@ -214,21 +214,21 @@ pub(super) enum GetterStep {
 /// `this`: the entry of the base's layout gives the forward, which only a read that writes its
 /// register takes in place (a returning read completes its activation, which only the call
 /// does), or the getter, which a lane allowed script calls reads or calls as
-/// `lane_getter_activation` would. A nested read, and any base no entry proves, is `Miss`.
+/// `getter_activation_in_lane` would. A nested read, and any base no entry proves, is `Miss`.
 #[inline(always)]
 pub(super) fn lane_getter_step<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> GetterStep {
     if i.b == crate::bytecode::FieldBase::NESTED {
         return GetterStep::Miss;
     }
     // SAFETY: the running lane's context and registers.
-    let Some(base) = (unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }) else {
+    let Some(base) = (unsafe { field_base_in_lane(cx, r, crate::bytecode::FieldBase(i.b)) }) else {
         return GetterStep::Miss;
     };
     let vm = unsafe { vm(cx) };
     let reads = i.a & crate::bytecode::RETURN_REGISTER == 0;
     match vm.getter_entry_read(base, vm.field_cache_index(i.c)) {
         GetterEntryRead::Answer(value, _) if reads => GetterStep::Answer(value),
-        // `lane_getter_activation` declines a lane without script calls before any lookup.
+        // `getter_activation_in_lane` declines a lane without script calls before any lookup.
         GetterEntryRead::Answer(_, getter) | GetterEntryRead::Call(getter) if unsafe { (*cx).script_calls } => {
             GetterStep::Read(lane_read_getter(cx, r, ip, i, getter, base))
         }
@@ -236,7 +236,7 @@ pub(super) fn lane_getter_step<H: Host>(cx: *mut LaneContext<H>, r: Registers, i
     }
 }
 
-/// The getter call `lane_activate_kept` makes for `target`, of the running program, with
+/// The getter call `activate_kept_in_lane` makes for `target`, of the running program, with
 /// receiver `this` and no arguments, as the plain call it is (getters-as-calls.md): the
 /// header goes below the window straight from the read's words (`lane_enter_plain_window`),
 /// with no `Activation` value, no `LaneStack::header_flags` test and no keeping-record words. Its
@@ -245,7 +245,7 @@ pub(super) fn lane_getter_step<H: Host>(cx: *mut LaneContext<H>, r: Registers, i
 /// changes nothing, for any call that is not such a plain call: a returning read (whose
 /// admission the kept path tests), a `with` scope, an entry that does not activate its
 /// registers alone (keeping, environment, settling), another program's target, or no room
-/// by the plain compare; `lane_activate_kept` takes those. A leaf getter that binds its
+/// by the plain compare; `activate_kept_in_lane` takes those. A leaf getter that binds its
 /// receiver runs as a leaf instead, with no header (`lane_run_leaf_getter`).
 #[inline(always)]
 pub(super) fn lane_push_getter<H: Host>(
@@ -282,12 +282,12 @@ pub(super) fn lane_push_getter<H: Host>(
         vm.programs.record_js_jit_lane_entry(target.program(), target.function);
         return Some(entered);
     }
-    // No values passed: the fill leaves every parameter `undefined`, as `lane_push_passed`'s
+    // No values passed: the fill leaves every parameter `undefined`, as `push_passed_in_lane`'s
     // of an empty slice does (a dangling, aligned pointer, never read for a count of 0).
     let none: &[Value] = &[];
-    let callee_registers = lane_fill_window(vm, target, none.as_ptr(), 0);
+    let callee_registers = fill_window_in_lane(vm, target, none.as_ptr(), 0);
     let entered = lane_enter_plain_window(cx, vm, r, ip, target, callee_registers, depth, 0, this);
-    // `lane_enter_window_of`'s `COUNTED`: a getter's call is no proved call, so the tier's
+    // `enter_window_of_in_lane`'s `COUNTED`: a getter's call is no proved call, so the tier's
     // diagnostics still count its entry.
     vm.programs.record_js_jit_lane_entry(target.program(), target.function);
     Some(entered)
@@ -297,9 +297,9 @@ pub(super) fn lane_push_getter<H: Host>(
 /// `CONTEXT_LEAF`), as `script_call_leaf_miss` makes a leaf call (`lane_run_leaf`) with no
 /// values: the window at the lane stack's top filled, the leaf record entered with the read
 /// record at `ip` as its call. The leaf's return (`lane_return_leaf_header`,
-/// `lane_complete_leaf` → `lane_resume_leaf_caller`) writes the call record's `a`, which a
+/// `complete_leaf_in_lane` → `lane_resume_leaf_caller`) writes the call record's `a`, which a
 /// `GetField` names as its destination, and resumes at `following(ip)`: what the plain
-/// header's return does (`write_call_result`). A materialization (`lane_materialize_leaf`)
+/// header's return does (`write_call_result`). A materialization (`materialize_leaf_in_lane`)
 /// pushes the activation `lane_push_getter`'s plain push would have: the read record as its
 /// call, `Completion::Plain`, no values. Only receiver-binding forms are taken: the others'
 /// materialization rebinds `this` from the call record's `c`, which a `GetField` holds its site
@@ -310,7 +310,7 @@ pub(super) fn lane_push_getter<H: Host>(
 /// # Safety
 /// `cx` is the running lane's context, with no leaf running; `target` passed
 /// `lane_push_getter`'s plain tests (running program, no `with` scope, room by `plain_room`);
-/// `this` is its binding of the read's base (`lane_call_this`).
+/// `this` is its binding of the read's base (`call_this_in_lane`).
 #[inline(always)]
 unsafe fn lane_run_leaf_getter<H: Host>(
     cx: *mut LaneContext<H>,
@@ -361,71 +361,35 @@ fn lane_native_getter<H: Host>(
     getter: Value,
     base: Value,
 ) -> Result<(Registers, Ip), Ip> {
-    match lane_native_complete(cx, ip, i, lane_call_native(cx, ip, native, getter, base, &[])) {
+    match native_complete_in_lane(cx, ip, i, call_native_in_lane(cx, ip, native, getter, base, &[])) {
         Resumed::At(r, next, _) => Ok((r, next)),
         Resumed::Exit(next) => Err(next),
     }
 }
 
 script_handler! {
-    /// `lane_get_field_getter` at a site whose getter returns an own field of the receiver
-    /// (`lane_hold_getter_hint`): the record's hint (`Vm::holder_hint_hit`), whose shape, link and
-    /// watch tests stand for the getter's call and its read. Any other read takes
-    /// `lane_get_field_getter_refresh`.
-    pub(super) fn lane_get_field_getter_hinted<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let value = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }
-            .and_then(|base| vm.getter_hint_hit(i.call_link.get(), i.imm(), base));
-        let Some(value) = value else {
-            sibling!(lane_get_field_getter_refresh::<H>, r, ip, Carried::script(cx))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-script_handler! {
-    /// `lane_get_field_getter_hinted` past its hint: the read the getter's answer makes
-    /// (`lane_getter_answer`), whose getter's own field becomes the hint
-    /// (`lane_hold_getter_hint`). A getter the answer declines takes `lane_get_field_getter`.
+    /// The generated getter read (`GETTER_THIS`, `GETTER_REGISTER`) past its hint: the read the
+    /// getter's answer makes (`AccessorCall::getter_answer`), whose getter's own field becomes the
+    /// hint (`AccessorCall::hold_getter_hint`). A getter the answer declines takes `get_field_getter_miss`.
     #[inline(never)]
-    fn lane_get_field_getter_refresh<>(cx, r, ip, i, view) {
-        let base = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) };
-        let Some(value) = base.and_then(|base| unsafe { lane_hold_getter_hint(cx, ip, i, base) }) else {
-            requicken::<H>(ip, lane_get_field_getter::<H>);
-            sibling!(lane_get_field_getter::<H>, r, ip, Carried::script(cx))
+    pub(super) fn row_get_field_getter_refresh<>(cx, r, ip, i, view) {
+        let base = unsafe { field_base_in_lane(cx, r, crate::bytecode::FieldBase(i.b)) };
+        let Some(value) = base.and_then(|base| unsafe { AccessorCall::of(cx).hold_getter_hint(ip, i, base) }) else {
+            requicken::<H>(ip, protocol_handler::<H, { crate::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>());
+            sibling!(get_field_getter_miss::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
-}
-
-/// What the getter the site cached answers for `base` (`lane_getter_answer`), made the record's
-/// hint where the getter returns an own field of its receiver; any other getter moves the record
-/// to `lane_get_field_getter` for good.
-///
-/// # Safety
-/// `cx` is the running lane's context and `ip` the `GetField` record `i`.
-unsafe fn lane_hold_getter_hint<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction, base: Value) -> Option<Value> {
-    let vm = unsafe { vm(cx) };
-    let site = vm.field_cache_index(i.c);
-    let getter = vm.cached_field_getter(base, i.imm(), site)?;
-    let value = unsafe { lane_getter_answer(cx, getter, base) }?;
-    let slot = lane_getter_field_slot(cx, getter, base)
-        .filter(|_| !vm.is_private_name(i.imm()) && vm.cached_accessor_on_prototype(base, i.imm(), site));
-    if !slot.is_some_and(|slot| set_getter_hint(vm, ip, i.imm(), base, slot)) {
-        requicken::<H>(ip, lane_get_field_getter::<H>);
-    }
-    Some(value)
 }
 
 /// The `FieldOperand::shape` of a record whose hint is a getter's own-field return
-/// (`Vm::getter_hint_hit`), as `HOLDER_HINT` no object's exact shape.
+/// (`Vm::getter_hint_operands`), as `HOLDER_HINT` no object's exact shape.
 const GETTER_HINT: u32 = super::super::NO_FIELD_RECEIVER - 3;
 
 /// Makes the own field `slot` of `base`, which the record's getter returns, the hint of the
 /// `GetField` record at `ip`, in place of the one it holds; whether the record holds it.
-fn set_getter_hint<H: Host>(vm: &mut Vm<H>, ip: Ip, atom: Atom, base: Value, slot: u16) -> bool {
+pub(super) fn set_getter_hint<H: Host>(vm: &mut Vm<H>, ip: Ip, atom: Atom, base: Value, slot: u16) -> bool {
     if holds_loop_site(ip) {
         return false;
     }
@@ -437,22 +401,4 @@ fn set_getter_hint<H: Host>(vm: &mut Vm<H>, ip: Ip, atom: Atom, base: Value, slo
     };
     set_record_hint(ip, GETTER_HINT, index);
     true
-}
-
-/// The own slot of `base` that `getter`, a frameless read body, returns (`return this.field`),
-/// by the field cache entry its record answers with.
-fn lane_getter_field_slot<H: Host>(cx: *mut LaneContext<H>, getter: Value, base: Value) -> Option<u16> {
-    let target = lane_script_target(cx, getter).filter(|target| target.entry == CallEntry::Reads)?;
-    let vm = unsafe { vm(cx) };
-    (lane_direct_call_this(vm, &target, base)? == base).then_some(())?;
-    // SAFETY: a `CallEntry::Reads` target of the running program.
-    let LeafRead::Field { base: field_base, kind: RETURNING_FIELD_OWN, cache } = unsafe { LeafRead::of::<H>(&target) }? else {
-        return None;
-    };
-    let entry = vm.field_cache_entry(cache);
-    let receiver = vm.heap.object_record_by_id(base.direct_object_index()?);
-    (crate::bytecode::FieldBase(field_base) == crate::bytecode::FieldBase::THIS
-        && entry.holder == NO_FIELD_HOLDER
-        && entry.receiver == receiver.exact_shape())
-    .then_some(entry.slot)
 }
