@@ -851,6 +851,13 @@ impl<H: Host> Vm<H> {
             Native::IntlInitialize => self
                 .install_intl_for_realm(p, self.realm.globals, self.object_proto)
                 .map(|()| Value::UNDEFINED),
+            Native::ReflectInitialize => self.install_reflect(p).map(|()| Value::UNDEFINED),
+            Native::ProxyInitialize => self.install_proxy(p).map(|()| Value::UNDEFINED),
+            Native::WeakRefInitialize => self.install_weak_ref(p).map(|()| Value::UNDEFINED),
+            Native::FinalizationRegistryInitialize => {
+                self.install_finalization_registry(p).map(|()| Value::UNDEFINED)
+            }
+            Native::DataViewInitialize => self.install_data_view(p).map(|()| Value::UNDEFINED),
             Native::TemporalInitialize => self.install_temporal(p).map(|()| Value::UNDEFINED),
             Native::IsHTMLDDA => Ok(Value::NULL),
             Native::Proxy => Err(self.type_error(p, "Proxy must be called with new".into())),

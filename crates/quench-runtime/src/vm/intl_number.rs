@@ -60,6 +60,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        self.ensure_intl_intrinsics(p)?;
         let constructor = self
             .realm
             .intrinsics

@@ -663,6 +663,11 @@ pub(crate) enum Native {
     AtomicsInitialize,
     WebAssemblyInitialize,
     IntlInitialize,
+    ReflectInitialize,
+    ProxyInitialize,
+    WeakRefInitialize,
+    FinalizationRegistryInitialize,
+    DataViewInitialize,
 }
 
 /// A native's traits, each derived once at compile time from its defining predicate

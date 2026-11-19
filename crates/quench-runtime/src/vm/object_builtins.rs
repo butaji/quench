@@ -70,6 +70,15 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
+    /// The `Proxy` constructor, built when script first observes the global `Proxy`.
+    pub(super) fn install_proxy(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        let proxy = self.native_value(Native::Proxy);
+        self.set_builtin_function_name(proxy, "Proxy")?;
+        self.set_builtin_named(program, proxy, "revocable", Native::ProxyRevocable)?;
+        self.seal_initialized_intrinsic(proxy);
+        self.global(program, "Proxy", proxy)
+    }
+
     pub(super) fn install_object(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let object = self.native_value(Native::Object);
         self.set_builtin_function_name(object, "Object")?;
@@ -115,10 +124,7 @@ impl<H: Host> Vm<H> {
             );
         }
         self.set_builtin_named(program, object, "keys", Native::ObjectKeys)?;
-        let proxy = self.native_value(Native::Proxy);
-        self.set_builtin_function_name(proxy, "Proxy")?;
-        self.set_builtin_named(program, proxy, "revocable", Native::ProxyRevocable)?;
-        self.global(program, "Proxy", proxy)?;
+        self.install_lazy_builtin_namespace(program, "Proxy", Native::ProxyInitialize)?;
         self.install_object_extra(program, object)?;
         for (name, native) in [
             ("create", Native::ObjectCreate),
