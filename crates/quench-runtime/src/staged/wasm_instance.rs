@@ -25,7 +25,7 @@ pub(crate) enum Instance {
 }
 
 impl Instance {
-    pub(crate) fn of(op: Op) -> Option<Self> {
+    pub(crate) const fn of(op: Op) -> Option<Self> {
         match op.class() {
             Class::Move => Some(Self::Move),
             Class::LoadConst => Some(Self::Constant),

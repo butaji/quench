@@ -46,6 +46,8 @@ use crate::wasm::integer::{
     I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator,
 };
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
+use crate::staged::wasm_flow::Flow as WasmFlow;
+use crate::staged::wasm_instance::Instance;
 
 /// The arithmetic operators the lane decides per operator (`lane_operator`,
 /// `lane_returning_operator`): `$pick!(OPERATOR)` of `$operator`'s, else `None`; or with
@@ -11157,10 +11159,11 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// The registers a fill defines are the staged constant window (`Instance::Fill`).
     fn lane_fill_registers<>(cx, r, ip, i, view) {
         let value = i.constant();
-        for offset in 0..i.c {
-            r.set(i.b + offset, value);
+        for register in Instance::Fill.constant_registers(*i).into_iter().flatten() {
+            r.set(register, value);
         }
         next!(cx, r, following(ip), view)
     }
@@ -21271,7 +21274,9 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
             Class::WasmI32ShiftRightUnsignedAnd => {
                 return LaneHandler::producer(lane_bit_field::<H, ACC>);
             }
-            Class::WasmSelect => return LaneHandler::producer(lane_select::<H, ACC>),
+            _ if matches!(WasmFlow::of(op), Some(WasmFlow::Select)) => {
+                return LaneHandler::producer(lane_select::<H, ACC>);
+            }
             Class::WasmI32AddJump => {
                 return LaneHandler::producer(lane_add_jump_nonzero::<H, BACKWARD, ACC>);
             }
@@ -21380,15 +21385,15 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::StringCaseIndex => Some(lane_string_case_index::<H>),
         Class::LoadLocal | Class::LoadEnvLocal => Some(lane_load_local::<H>),
         Class::StoreCapture => Some(lane_store_capture::<H>),
-        Class::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
-        Class::WasmGlobalGet => Some(lane_global_get::<H>),
+        _ if matches!(Instance::of(opcode), Some(Instance::Binding)) => Some(lane_instance_binding::<H, false>),
+        _ if matches!(Instance::of(opcode), Some(Instance::GlobalGet)) => Some(lane_global_get::<H>),
         Class::WasmSimd => Some(lane_wasm_simd::<H>),
         Class::WasmMemoryLoad => Some(lane_wasm_memory_load::<H>),
         Class::WasmMemoryAddress => Some(lane_wasm_memory_address::<H>),
         Class::WasmMemoryStore => Some(lane_wasm_memory_store::<H>),
         Class::WasmSimdShuffle => Some(lane_wasm_simd_shuffle::<H>),
-        Class::WasmGlobalSet => Some(lane_global_set::<H>),
-        Class::WasmFillRegisters => Some(lane_fill_registers::<H>),
+        _ if matches!(Instance::of(opcode), Some(Instance::GlobalSet)) => Some(lane_global_set::<H>),
+        _ if matches!(Instance::of(opcode), Some(Instance::Fill)) => Some(lane_fill_registers::<H>),
         Class::CallKnown => Some(known_call_handler::<H>()),
         Class::Call => Some(lane_script_call::<H, ANY_ARGC, false>),
         Class::CallArray => Some(lane_call_array::<H>),
