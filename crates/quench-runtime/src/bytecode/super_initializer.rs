@@ -2,7 +2,7 @@
 //! (`Function::super_initializer`).
 use super::{
     AtomTable, Constant, ConstructArguments, Function, ImmediateLayout, InitializerConstant, InitializerStore,
-    InitializerValue, Op, Register, SUPER_BASE_BINDING, WideInstruction,
+    InitializerValue, Register, SUPER_BASE_BINDING, Traits, WideInstruction,
 };
 use smallvec::SmallVec;
 
@@ -27,12 +27,12 @@ pub(super) fn calls_super_base(
     [active, base, receiver, call]: [&WideInstruction; 4],
     window: Option<Register>,
 ) -> bool {
-    active.op() == Op::LoadCapture
-        && base.op() == Op::LoadName
+    active.op().traits().has(Traits::CAPTURE_LOAD)
+        && base.op().traits().has(Traits::NAME_LEAF)
         && usize::try_from(base.atom_index()).ok().and_then(|atom| atoms.get(atom)) == Some(SUPER_BASE_BINDING)
-        && receiver.op() == Op::LoadConst
+        && receiver.op().traits().has(Traits::CONSTANT_LOAD)
         && matches!(constants.get(receiver.constant_index()), Some(Constant::Undefined))
-        && call.op() == Op::Call
+        && call.op().traits().has(Traits::PLAIN_CALL)
         && call.b() == base.result_register()
         && call.c() == receiver.result_register()
         && ImmediateLayout::argument_count(call.imm()) == 1
@@ -57,13 +57,16 @@ impl Temporaries<'_> {
         if instruction.result_flags() != 0 {
             return false;
         }
-        let value = match instruction.op() {
-            Op::LoadLocalPlain => u16::try_from(instruction.local_slot())
+        let op = instruction.op();
+        let value = if op.traits().has(Traits::PLAIN_LOCAL_LOAD) {
+            u16::try_from(instruction.local_slot())
                 .ok()
                 .filter(|parameter| *parameter < self.params)
-                .map(|parameter| InitializerValue::Parameter { parameter, fallback: None }),
-            Op::LoadConst => InitializerConstant::of(self.constants, instruction.constant_index()).map(InitializerValue::Constant),
-            _ => None,
+                .map(|parameter| InitializerValue::Parameter { parameter, fallback: None })
+        } else if op.traits().has(Traits::CONSTANT_LOAD) {
+            InitializerConstant::of(self.constants, instruction.constant_index()).map(InitializerValue::Constant)
+        } else {
+            None
         };
         value.map(|value| self.written.push((instruction.result_register(), value))).is_some()
     }
@@ -80,11 +83,14 @@ fn super_base(records: &mut impl Iterator<Item = WideInstruction>, atoms: &AtomT
     let (active, base, receiver, mut call) = (records.next()?, records.next()?, records.next()?, records.next()?);
     // A body that does not start with this shape is not a super initializer; reading a
     // result register before proving the opcode would ask a field the layout does not have.
-    if active.op() != Op::LoadCapture || base.op() != Op::LoadName || receiver.op() != Op::LoadConst {
+    if !active.op().traits().has(Traits::CAPTURE_LOAD)
+        || !base.op().traits().has(Traits::NAME_LEAF)
+        || !receiver.op().traits().has(Traits::CONSTANT_LOAD)
+    {
         return None;
     }
     let mut window = active.result_register();
-    if call.op() == Op::Move && call.result_flags() == 0 && call.register_b() == window {
+    if call.op().traits().has(Traits::REGISTER_COPY) && call.result_flags() == 0 && call.register_b() == window {
         window = call.result_register();
         call = records.next()?;
     }
@@ -140,7 +146,7 @@ impl Function {
         let mut records = self.instructions();
         let parent = super_base(&mut records, atoms, constants)?;
         let mut temporaries = Temporaries { params: self.params, constants, written: SmallVec::new() };
-        let construct = temporaries.written_until(&mut records).filter(|record| record.op() == Op::Construct)?;
+        let construct = temporaries.written_until(&mut records).filter(|record| record.op().traits().has(Traits::CONSTRUCTION))?;
         let ConstructArguments::Registers(window) = construct.construct_arguments() else {
             return None;
         };
@@ -177,12 +183,12 @@ impl Function {
 /// Whether `construct`, `check` and `binds` are the `super(...)` construction of the parent in
 /// register `parent`, the check it makes, and the binding of its result as the receiver.
 fn binds_parent_construct(parent: Register, [construct, check, binds]: [&WideInstruction; 3]) -> bool {
-    construct.op() == Op::Construct
+    construct.op().traits().has(Traits::CONSTRUCTION)
         && construct.is_super_construct()
         && construct.result_flags() == 0
         && construct.b() == parent
-        && check.op() == Op::SuperCallCheck
-        && binds.op() == Op::InitializeThis
+        && check.op().traits().has(Traits::SUPER_CALL_CHECK)
+        && binds.op().traits().has(Traits::BINDS_THIS)
         && binds.a() == construct.result_register()
 }
 
@@ -190,10 +196,10 @@ fn binds_parent_construct(parent: Register, [construct, check, binds]: [&WideIns
 /// of the list (the first parameter) and the spread of the list into it.
 fn rest_spread(records: &mut impl Iterator<Item = WideInstruction>) -> Option<Register> {
     let (array, list, append) = (records.next()?, records.next()?, records.next()?);
-    (array.op() == Op::MakeArray
-        && list.op() == Op::LoadLocalPlain
+    (array.op().traits().has(Traits::ARRAY_MAKE)
+        && list.op().traits().has(Traits::PLAIN_LOCAL_LOAD)
         && list.local_slot() == 0
-        && append.op() == Op::AppendArray
+        && append.op().traits().has(Traits::ARRAY_APPEND)
         && append.register_a() == array.result_register()
         && append.optional_register_b() == Some(list.result_register())
         && append.boolean_field(super::InstructionField::C) == Some(true))
@@ -202,7 +208,7 @@ fn rest_spread(records: &mut impl Iterator<Item = WideInstruction>) -> Option<Re
 
 /// Whether `record` returns a temporary holding `undefined`.
 fn returns_undefined(temporaries: &Temporaries<'_>, record: &WideInstruction) -> bool {
-    record.op() == Op::Return && temporaries.value(record.register_a()) == Some(InitializerValue::Constant(InitializerConstant::Undefined))
+    record.op().traits().has(Traits::RETURN_VALUE) && temporaries.value(record.register_a()) == Some(InitializerValue::Constant(InitializerConstant::Undefined))
 }
 
 /// The stores to `this` of the temporaries `records` writes, up to the return of `undefined`

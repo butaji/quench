@@ -10,7 +10,7 @@ pub(super) use crate::bytecode::OpSet;
 
 /// The one op each role names, derived from the catalog. The rewriter spells its ops by role,
 /// never by name: `NOP` is the filler of removed instructions, `MOVE` the register copy.
-const NOP: Op = the_op(Traits::NO_OP);
+pub(super) const NOP: Op = the_op(Traits::NO_OP);
 const MOVE: Op = the_op(Traits::REGISTER_COPY);
 const RETURN: Op = the_op(Traits::RETURN_VALUE);
 const JUMP: Op = the_op(Traits::UNCONDITIONAL_JUMP);
@@ -200,13 +200,11 @@ pub(super) fn coalesce_promoted_moves(
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) {
+    // The `Nop`s the passes leave in place are dropped by the one compaction `lower_settled` ends with.
     let mut liveness = None;
-    let mut changed = coalesce_distant_producer_moves(function, methods, field_sites, superinstructions, &mut liveness);
-    changed |= forward_move_sources(function, methods, field_sites, superinstructions, &mut liveness);
-    changed |= remove_dead_moves(function, methods, field_sites, superinstructions, &mut liveness);
-    if changed {
-        remove_nops(function, &mut liveness);
-    }
+    coalesce_distant_producer_moves(function, methods, field_sites, superinstructions, &mut liveness);
+    forward_move_sources(function, methods, field_sites, superinstructions, &mut liveness);
+    remove_dead_moves(function, methods, field_sites, superinstructions, &mut liveness);
 }
 
 /// Removes each `Move` or `LoadConst` whose destination no path reads before writing it again:
@@ -273,33 +271,26 @@ fn hand_on(
 }
 
 /// Drops every `Nop`, relocating jumps, handlers and source positions onto the instruction
-/// that followed it. The transfer masks of the instructions that stay are handed on with them,
-/// and so are their live sets: a `Nop` passes its successor's live set through unchanged, so
-/// only the handler roots `add_suspended_exception_roots` adds after a call move, to the
-/// instruction that now follows it.
-fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
-    let (mut transfers, mut live, successors) = match liveness.take() {
-        Some(CodeFacts::Live(analysis)) => (Some(analysis.transfers), Some(analysis.live), Some(analysis.successors)),
-        Some(CodeFacts::Transfers(transfers)) => (Some(transfers), None, None),
-        None => (None, None, None),
-    };
+/// that followed it. The per-pc live sets, when given, are compacted with the same map: a `Nop`
+/// passes its successor's live set through, so a dropped entry loses nothing.
+pub(super) fn remove_nops(function: &mut BcFunction, live: &mut Option<Vec<RegisterSet>>) {
+    if !function.code.iter().any(|instruction| instruction.op() == NOP) {
+        return;
+    }
     let old = std::mem::take(&mut function.code);
     let mut code = Vec::with_capacity(old.len());
     let mut map = vec![0usize; old.len() + 1];
     for (pc, &instruction) in old.iter().enumerate() {
         map[pc] = code.len();
         if instruction.op() != NOP {
-            if let Some(transfers) = &mut transfers {
-                transfers[code.len()] = transfers[pc];
-            }
-            if let Some(live) = &mut live {
+            if let Some(live) = live.as_mut() {
                 live[code.len()] = live[pc];
             }
             code.push(instruction);
         }
     }
     map[old.len()] = code.len();
-    if let Some(live) = &mut live {
+    if let Some(live) = live.as_mut() {
         live[code.len()] = live[old.len()];
         live.truncate(code.len() + 1);
     }
@@ -314,20 +305,6 @@ fn remove_nops(function: &mut BcFunction, liveness: &mut Option<CodeFacts>) {
         &old,
     );
     function.code = code;
-    *liveness = match (transfers, live) {
-        (Some(mut transfers), Some(mut live)) => {
-            transfers.truncate(function.code.len());
-            liveness::add_suspended_exception_roots(function, &mut live);
-            let successors = successors.expect("live facts carry their successors").relocated(&map);
-            debug_assert!(liveness::analyze_transfers(function, &transfers) == live && successors == crate::bytecode::Successors::of_code(function), "facts handed past dropped Nops match the code");
-            Some(CodeFacts::Live(CodeLiveness { successors, transfers, live }))
-        }
-        (Some(mut transfers), None) => {
-            transfers.truncate(function.code.len());
-            Some(CodeFacts::Transfers(transfers))
-        }
-        _ => None,
-    };
 }
 
 /// The liveness of a function's code as it stands: each instruction's transfer masks and the
@@ -667,17 +644,23 @@ pub(super) fn return_through_shared_returns(function: &mut BcFunction) {
         if function.instruction_at(pc).op() != RETURN {
             continue;
         }
-        let (producer, next) = (function.instruction_at(pc - 1), function.instruction_at(pc));
+        // The producer is the nearest instruction before the `Return` that is not a `Nop`.
+        let Some(producer_pc) = (0..pc).rev().find(|&at| function.code[at].op() != NOP) else {
+            continue;
+        };
+        let (producer, next) = (function.instruction_at(producer_pc), function.instruction_at(pc));
         if !fuses(producer.op(), RETURN, |recipe| matches!(recipe, Recipe::ReturnResult))
             || producer.result_flags() != 0
             || producer.result_register() != next.register_a()
-            || boundaries
-                .get_or_insert_with(|| region_boundaries(function.code.len(), &function.handlers, function.parameter_end_pc, &[]))
-                .contains(pc)
         {
             continue;
         }
-        let packed = &mut function.code[pc - 1];
+        let boundaries = boundaries
+            .get_or_insert_with(|| region_boundaries(function.code.len(), &function.handlers, function.parameter_end_pc, &[]));
+        if (producer_pc + 1..=pc).any(|at| boundaries.contains(at)) {
+            continue;
+        }
+        let packed = &mut function.code[producer_pc];
         if packed.is_wide() {
             function.wide[packed.wide_index()].set_returns_from_frame();
         } else {
@@ -843,68 +826,53 @@ fn rewrite_super_window(
     function: &mut BcFunction,
     superinstructions: &mut SiteTable<'_, Superinstruction>,
 ) -> bool {
-    // Code holding no rule's op sequence keeps every instruction where it is.
+    // The windows are over the live instructions: a `Nop` an earlier fusion left in place is
+    // skipped, and the pcs it occupies are covered by the protected check of the window.
+    let live = live_positions(&function.code);
     let matches_rule = |rule: &SuperRule| {
-        function
-            .code
-            .windows(rule.pattern.len())
-            .any(|window| window.iter().map(|instruction| instruction.op()).eq(rule.pattern.iter().copied()))
+        live.windows(rule.pattern.len()).any(|window| {
+            window.iter().map(|&pc| function.code[pc].op()).eq(rule.pattern.iter().copied())
+        })
     };
     if !SUPER_RULES.iter().any(matches_rule) {
         return false;
     }
-    let old = std::mem::take(&mut function.code);
     let protected = protected_positions(
-        &old,
+        &function.code,
         &function.wide,
         &function.handlers,
         function.parameter_end_pc,
         &function.binding_sites,
     );
-    let mut code = Vec::with_capacity(old.len());
-    let mut map = vec![0; old.len() + 1];
-    let mut index = 0;
     let mut changed = false;
-    while index < old.len() {
-        map[index] = code.len();
-        let replacement = SUPER_RULES.iter().find_map(|rule| {
+    let mut at = 0;
+    while at < live.len() {
+        let fused = SUPER_RULES.iter().find_map(|rule| {
             let width = rule.pattern.len();
-            let window = old.get(index..index + width)?;
-            if (1..width).any(|offset| protected.contains(index + offset))
-                || window.iter().any(|instruction| instruction.is_wide())
-                || window
-                    .iter()
-                    .map(|instruction| instruction.op())
-                    .ne(rule.pattern.iter().copied())
+            let positions = live.get(at..at + width)?;
+            let (first, last) = (positions[0], positions[width - 1]);
+            if (first + 1..=last).any(|pc| protected.contains(pc))
+                || positions.iter().any(|&pc| function.code[pc].is_wide())
+                || positions.iter().map(|&pc| function.code[pc].op()).ne(rule.pattern.iter().copied())
             {
                 return None;
             }
-            (rule.fuse)(window, superinstructions).map(|instruction| (instruction, width))
+            let window: Vec<Instr> = positions.iter().map(|&pc| function.code[pc]).collect();
+            (rule.fuse)(&window, superinstructions).map(|instruction| (instruction, width))
         });
-        if let Some((instruction, width)) = replacement {
-            for offset in 1..width {
-                map[index + offset] = code.len();
+        match fused {
+            Some((instruction, width)) => {
+                let positions = &live[at..at + width];
+                function.code[positions[0]] = instruction;
+                for &pc in &positions[1..] {
+                    function.code[pc] = Instr::new(NOP, 0, 0, 0, 0);
+                }
+                at += width;
+                changed = true;
             }
-            code.push(instruction);
-            index += width;
-            changed = true;
-        } else {
-            code.push(old[index]);
-            index += 1;
+            None => at += 1,
         }
     }
-    map[old.len()] = code.len();
-    relocate(
-        &mut code,
-        &mut function.wide,
-        &map,
-        &mut function.handlers,
-        &mut function.parameter_end_pc,
-        &mut function.binding_sites,
-        &mut function.source_positions,
-        &old,
-    );
-    function.code = code;
     changed
 }
 
@@ -935,6 +903,22 @@ fn fuse_const_array_object2(
         0,
         site,
     ))
+}
+
+/// The pcs of `code`'s instructions that are not `Nop`s, in order.
+pub(super) fn live_positions(code: &[Instr]) -> Vec<usize> {
+    (0..code.len()).filter(|&pc| code[pc].op() != NOP).collect()
+}
+
+/// The first pc after `pc` whose instruction is not a `Nop`: the instruction control reaches
+/// next, since a `Nop` falls through. `None` past the end.
+pub(super) fn next_live(code: &[Instr], pc: usize) -> Option<usize> {
+    (pc + 1..code.len()).find(|&next| code[next].op() != NOP)
+}
+
+/// How many of `code`'s instructions are not `Nop`s: the count the code would have compacted.
+pub(super) fn live_count(code: &[Instr]) -> usize {
+    code.iter().filter(|instruction| instruction.op() != NOP).count()
 }
 
 /// `protected_positions` of `function` as it stands.
@@ -999,103 +983,87 @@ fn rewrite_once(
             && !second.is_wide()
             && !rules_for(first.op(), second.op()).is_empty()
     };
-    // A pass without a rule-shaped pair or a `Nop` changes nothing, and liveness is needed
-    // only to judge pairs.
-    let has_pair = function.code.windows(2).any(|pair| rewrites_pair(&pair[0], &pair[1]));
-    if !has_pair && !function.code.iter().any(|instruction| instruction.op() == NOP) {
+    // A pass without a rule-shaped pair changes nothing, and liveness is needed only to judge
+    // pairs. A pair is an instruction and the next one that is not a `Nop`.
+    let has_pair = (0..function.code.len()).any(|pc| {
+        next_live(&function.code, pc)
+            .is_some_and(|next| rewrites_pair(&function.code[pc], &function.code[next]))
+    });
+    if !has_pair {
         return false;
     }
-    let analysis = has_pair
-        .then(|| CodeLiveness::of(current, function, methods, field_sites.as_slice(), superinstructions))
-        .flatten();
-    let (mut transfers, live) = analysis.map_or((None, None), |CodeLiveness { transfers, live, successors }| (Some(transfers), Some((live, successors))));
-    let old = std::mem::take(&mut function.code);
+    let Some(CodeLiveness { mut transfers, live, successors }) =
+        CodeLiveness::of(current, function, methods, field_sites.as_slice(), superinstructions)
+    else {
+        return false;
+    };
     let protected = protected_positions(
-        &old,
+        &function.code,
         &function.wide,
         &function.handlers,
         function.parameter_end_pc,
         &function.binding_sites,
     );
-    let mut code = Vec::with_capacity(old.len());
-    // A kept instruction keeps its transfer masks, which name registers and not positions, and
-    // moves to a pc no later than its old one, so the masks move down in place; only a pair's
-    // replacement, at these pcs, derives its own (mandreel `global_init`: a second table of
-    // 20 MB at a cold load's peak).
-    let mut replaced = Vec::new();
-    let mut map = vec![0usize; old.len() + 1];
-    let mut index = 0;
-    let mut changed = false;
-    while index < old.len() {
-        map[index] = code.len();
-        if old[index].op() == NOP {
-            index += 1;
-            changed = true;
+    // A pair fuses in place: the replacement takes the first pc and the second becomes a `Nop`
+    // that `remove_nops` drops once lowering ends. No pc moves, so the live sets, indexed by pc,
+    // stay those of the code each pair is judged on.
+    let mut rewritten = Vec::new();
+    for index in 0..function.code.len() {
+        let first = function.code[index];
+        if first.op() == NOP || first.is_wide() {
             continue;
         }
-        let rewritten = old
-            .get(index + 1)
-            .filter(|second| !protected.contains(index + 1) && !old[index].is_wide() && !second.is_wide())
-            .and_then(|second| {
-                let first = old[index];
-                let rules = rules_for(first.op(), second.op());
-                if rules.is_empty() {
-                    return None;
-                }
-                // The same control-flow facts justify frame roots and every
-                // removed register write. An unavailable map keeps the pair.
-                let (live, successors) = live.as_ref()?;
-                let original_definitions =
-                    liveness::definitions(first.as_wide(), superinstructions)
-                        | liveness::definitions(second.as_wide(), superinstructions);
-                let live_out = liveness::live_out(successors, live, index + 1);
-                rules.iter().find_map(|&rule| {
-                    let replacement = apply_rule(rule, first, *second, field_sites, &function.source_positions, index)?;
-                    let removed_definitions = original_definitions
-                        & !liveness::definitions(replacement.as_wide(), superinstructions);
-                    (live_out & removed_definitions == 0).then_some(replacement)
-                })
-            });
-        if let Some(instruction) = rewritten {
-            map[index + 1] = code.len();
-            replaced.push(code.len());
-            code.push(instruction);
-            index += 2;
-            changed = true;
-        } else {
-            transfers.iter_mut().for_each(|transfers| transfers[code.len()] = transfers[index]);
-            code.push(old[index]);
-            index += 1;
+        let Some(second_pc) = next_live(&function.code, index) else {
+            continue;
+        };
+        let second = function.code[second_pc];
+        // Every pc the pair swallows, the `Nop`s between included, must be a plain fallthrough.
+        if second.is_wide() || (index + 1..=second_pc).any(|pc| protected.contains(pc)) {
+            continue;
+        }
+        let rules = rules_for(first.op(), second.op());
+        if rules.is_empty() {
+            continue;
+        }
+        // The same control-flow facts justify frame roots and every removed register write.
+        let original_definitions = liveness::definitions(first.as_wide(), superinstructions)
+            | liveness::definitions(second.as_wide(), superinstructions);
+        let live_out = liveness::live_out(&successors, &live, second_pc);
+        let replacement = rules.iter().find_map(|&rule| {
+            let replacement = apply_rule(
+                rule,
+                first,
+                second,
+                field_sites,
+                &function.source_positions,
+                index,
+                second_pc,
+            )?;
+            let removed_definitions =
+                original_definitions & !liveness::definitions(replacement.as_wide(), superinstructions);
+            (live_out & removed_definitions == 0).then_some(replacement)
+        });
+        if let Some(instruction) = replacement {
+            function.code[index] = instruction;
+            function.code[second_pc] = Instr::new(NOP, 0, 0, 0, 0);
+            rewritten.extend([index, second_pc]);
         }
     }
-    map[old.len()] = code.len();
-    if !changed {
-        function.code = old;
-        if let (Some(transfers), Some((live, successors))) = (transfers, live) {
-            *current = Some(CodeFacts::Live(CodeLiveness { transfers, live, successors }));
-        }
+    if rewritten.is_empty() {
+        *current = Some(CodeFacts::Live(CodeLiveness { transfers, live, successors }));
         return false;
     }
     drop(live);
-    relocate(
-        &mut code,
-        &mut function.wide,
-        &map,
-        &mut function.handlers,
-        &mut function.parameter_end_pc,
-        &mut function.binding_sites,
-        &mut function.source_positions,
-        &old,
+    drop(successors);
+    update_transfers(
+        &mut transfers,
+        &rewritten,
+        function,
+        methods,
+        field_sites.as_slice(),
+        superinstructions,
     );
-    function.code = code;
-    *current = transfers.map(|mut transfers| {
-        transfers.truncate(function.code.len());
-        for pc in replaced {
-            let replacement = function.widened(function.code[pc]);
-            transfers[pc] = liveness::transfer(replacement, methods, field_sites.as_slice(), superinstructions);
-        }
-        CodeFacts::Transfers(transfers)
-    });
+    *current = Some(CodeFacts::Transfers(transfers));
     true
 }
 
@@ -1106,6 +1074,7 @@ fn apply_rule(
     field_sites: &mut SiteTable<'_, FieldSite>,
     source_positions: &crate::bytecode::SourcePositions,
     pc: usize,
+    second_pc: usize,
 ) -> Option<Instr> {
     let replacement = apply_recipe(recipe, first, second, field_sites)?;
     let replacement = sound_replacement(first, second, replacement)?;
@@ -1123,7 +1092,7 @@ fn apply_rule(
             if site.sources[0].is_none() {
                 site.sources[0] = at(pc);
             }
-            site.sources[2] = at(pc + 1);
+            site.sources[2] = at(second_pc);
         }
     Some(replacement)
 }
@@ -1586,6 +1555,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
         function.code = code;
         function.registers = registers;
         rewrite_once(function, &[] as &[MethodSiteSpec], &mut SiteTable::default(), &[], &mut None);
+        remove_nops(function, &mut None);
         std::mem::take(&mut function.code)
     }
 

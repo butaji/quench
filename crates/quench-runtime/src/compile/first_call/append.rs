@@ -228,7 +228,7 @@ impl<'a> Compiler<'a> {
         let layouts = capture_layout::inputs(&facts, &dynamic, |at| capture_layout::mapped_arguments(&functions[at]));
         for (at, function) in functions.iter_mut().enumerate() {
             capture_layout::apply_function(function, (first as usize) + at, &layouts[at], &self.atoms);
-            self.settle_dispatch(function);
+            self.settle_dispatch_only(function);
             function.shrink_to_fit();
         }
         Some(functions)

@@ -1,6 +1,6 @@
 //! What a function's activation layout depends on besides its captures, read alike by the
 //! compiler's layout (`compile::capture_layout`) and the validator.
-use super::super::{Function, Op};
+use super::super::{Function, Traits};
 
 impl Function {
     /// Whether no construction protocol names the function's slots: a derived constructor's
@@ -10,7 +10,6 @@ impl Function {
         !self.derived_constructor
             && !self.class_initializer
             && !(self.is_class_constructor
-                && self.instructions_of(|op| matches!(op,
-                    Op::DefineField | Op::DefinePrivateField | Op::DefineComputedField | Op::MarkPrivateName)).next().is_some())
+                && self.instructions_of(|op| op.traits().has(Traits::INSTANCE_ELEMENT_DEFINE)).next().is_some())
     }
 }

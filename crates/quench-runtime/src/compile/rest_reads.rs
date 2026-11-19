@@ -55,13 +55,17 @@ pub(super) fn rewrite(
             // move stays, the call spreads what it moved (`CallRest`).
             op if op.traits().has(Traits::REGISTER_COPY) && instruction.result_flags() == 0 && instruction.b() == rest => {
                 let window = instruction.result_register();
-                let Some(call) = code.get(pc + 1).copied().filter(|call| {
-                    call.op().traits().has(Traits::SPREAD_CALL) && !entered[pc + 1] && !call.direct_eval() && !call.parameter_eval()
+                // The call is the next instruction that is not a no-op, and no jump enters the
+                // span between them.
+                let Some(next) = (pc + 1..code.len()).find(|&at| !code[at].op().traits().has(Traits::NO_OP)) else { return };
+                let Some(call) = code.get(next).copied().filter(|call| {
+                    call.op().traits().has(Traits::SPREAD_CALL) && !entered[pc + 1..=next].iter().any(|&entry| entry)
+                        && !call.direct_eval() && !call.parameter_eval()
                         && call.call_window().base == window && call.call_window().count == 1
                         && window != rest && call.b() != rest && call.c() != rest
                 }) else { return };
                 let Some(spread) = Instr::try_new(REST_SPREAD_CALL_OP, call.a(), call.b(), call.c(), call.imm()) else { return };
-                replacements.push((pc + 1, spread));
+                replacements.push((next, spread));
                 continue;
             }
             _ => None,
