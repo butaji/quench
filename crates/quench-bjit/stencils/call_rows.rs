@@ -163,7 +163,7 @@ type HelperPacked = unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64;
 /// decoding the record. The status the helper answers picks the successor. `call_helper` and `call_helper_packed`
 /// are the two expansions, so the row's contract is written once.
 macro_rules! helper_row {
-    ($(#[$doc:meta])* $name:ident, $packed:literal) => {
+    ($(#[$doc:meta])* $name:ident, $packed:expr) => {
         $(#[$doc])*
         #[unsafe(no_mangle)]
         pub unsafe extern "rust-preserve-none" fn $name(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {

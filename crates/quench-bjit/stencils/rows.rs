@@ -10,7 +10,7 @@
 //! target's fixed rows (`entry*.rs`) belong to the shard built with `--cfg fixed_rows`.
 #![no_std]
 #![feature(explicit_tail_calls, rust_preserve_none_cc, core_float_math)]
-#![allow(incomplete_features, non_upper_case_globals, dead_code, unused_imports)]
+#![allow(incomplete_features, non_upper_case_globals, unused_imports)]
 extern crate core as std;
 
 /// The row's staged work's word, or the row leaves through exit 0 with nothing written.
@@ -25,7 +25,7 @@ macro_rules! need {
 
 #[cfg(fixed_rows)]
 mod call_rows;
-mod codes;
+pub mod codes;
 #[cfg(all(fixed_rows, target_arch = "x86_64"))]
 mod entry;
 #[cfg(all(fixed_rows, target_arch = "aarch64"))]

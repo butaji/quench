@@ -2,8 +2,6 @@
 //! operation. The one definition `numeric.rs` (the semantics), `library.rs` (which rows exist) and
 //! the runtime (which row it plans) all read.
 
-#![allow(dead_code)]
-
 #[macro_use]
 #[path = "row_catalog.rs"]
 mod row_catalog;

@@ -7,7 +7,8 @@
 
 use super::*;
 use super::super::compiled::LANE_CALL_COMPLETED;
-use crate::bytecode::Operand;
+use super::super::field_cache::FieldCacheProbe;
+use crate::bytecode::{Atom, FieldBase, FieldLookup, Operand};
 use crate::staged::{DecodeContext, Operation};
 
 /// The staged operation the packed helper runs directly, decoded from `instruction`, where it has a direct arm.
@@ -41,6 +42,9 @@ pub(in crate::vm) unsafe fn direct<H: Host>(cx: *mut LaneContext<H>, first: u64,
         Operation::ElementRead { base, key } => element_read(vm, code, frame, instruction, base, key),
         Operation::ElementWrite { value, base, key } => element_write(vm, frame, value, base, key),
         Operation::Binary { left, right, operator, .. } => binary(vm, frame, instruction, left, right, operator),
+        Operation::GetField { lookup: FieldLookup::Atom { atom, base, cache_site }, .. } => {
+            field_read(vm, code, frame, instruction, atom, base, cache_site)
+        }
         _ => false,
     };
     done.then_some(LANE_CALL_COMPLETED)
@@ -66,6 +70,24 @@ fn element_write<H: Host>(vm: &mut Vm<H>, frame: usize, value: Register, base: R
         return false;
     };
     vm.store_present_element(object, index, value)
+}
+
+/// `GetField`'s read of an atom through a register base, from the field cache (`Vm::cached_field_hit`, the probe
+/// `get_field_cached` makes first). A probe that misses, a private name, and a function-information name (whose
+/// preparation may allocate) decline.
+fn field_read<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: usize, instruction: WideInstruction, atom: Atom, base: FieldBase, cache_site: u16) -> bool {
+    let Some(register) = base.register_index() else {
+        return false;
+    };
+    if vm.is_private_name(atom) || vm.reads_function_info(atom) {
+        return false;
+    }
+    let object = vm.read(frame, register);
+    let FieldCacheProbe::Hit(value) = vm.cached_field_hit(code, object, cache_site) else {
+        return false;
+    };
+    vm.write(frame, instruction.result_register(), value);
+    true
 }
 
 /// A binary operator on two operands `Vm::number_binary` answers (Numbers, no user code), written by

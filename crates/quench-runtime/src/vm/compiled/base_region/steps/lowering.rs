@@ -9,8 +9,6 @@ use super::super::decode::{staged_binary, staged_of, staged_unary};
 use super::super::super::{LaneHelper, LaneHelpers};
 use super::Step;
 use crate::staged::{Operation, Protocol};
-use crate::bytecode::Op;
-use quench_bjit::call::{self, CallRow};
 
 /// The most registers a step the helper makes writes: its result, and the `this` a name call
 /// defines beside its callee.
