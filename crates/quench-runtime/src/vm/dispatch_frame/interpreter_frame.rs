@@ -8,6 +8,8 @@ use crate::host::Host;
 use crate::staged::protocol_literals::LiteralStep;
 use crate::staged::{Allocation, CallOut, Concrete, Constant, Edge, NumericFrame, Operation, Step};
 use crate::staged::Frame as _;
+use crate::staged::CallFrame as _;
+use crate::staged::invoke::CallForm;
 use crate::vm::call_out::{CallSite, Loaded};
 use crate::vm::var_owner::VarOwner;
 use crate::vm::{StepResult, Vm};
@@ -82,12 +84,10 @@ pub(in crate::vm) struct InterpreterFrame<'a, H: Host> {
 }
 
 impl<'a, H: Host> InterpreterFrame<'a, H> {
-    /// `operation` run on frame `frame`'s registers and locals and the VM's own answers, where it
-    /// decides it (`RowRun::Declined` where it does not). `pc` is the resume PC of `instruction`,
-    /// which a `Yield` takes its destination from.
+    /// The frame over the running activation `frame` of the VM `vm`, its registers and locals read and written in
+    /// place; `pc` is the resume PC the row's effects are made at.
     #[inline(always)]
-    pub(in crate::vm) fn step_row(vm: *mut Vm<H>, program: &'a ResidualProgram, frame: usize, pc: usize,
-        allow_inline_calls: bool, instruction: WideInstruction, operation: Operation<u64, ()>) -> RowRun {
+    fn over(vm: *mut Vm<H>, program: &'a ResidualProgram, frame: usize, pc: usize, allow_inline_calls: bool) -> Self {
         // SAFETY: `vm` is the running VM, live for the row. The register and local pointers are the
         // running activation's, which stay allocated for the activation's run.
         let (registers, locals, locals_len, function) = unsafe {
@@ -95,7 +95,7 @@ impl<'a, H: Host> InterpreterFrame<'a, H> {
             (running.registers.as_mut_ptr(), running.locals.as_mut_ptr(), running.locals.len(), running.function)
         };
         let site = CallSite { owner: VarOwner::Frame(frame), function, resume: pc };
-        let mut interpreted = Self {
+        Self {
             vm,
             program,
             site,
@@ -107,7 +107,36 @@ impl<'a, H: Host> InterpreterFrame<'a, H> {
             resume: None,
             allow_inline_calls,
             pushed: None,
-        };
+        }
+    }
+
+    /// The general call `form` of the call-family record `instruction` at resume PC `pc` on frame `frame`, run
+    /// after the record's staged row declined (`CallFrame::call_general`). Its completion is `Done` where the
+    /// call completed its result, else the step the VM's call ends in (`Stop`).
+    #[inline(always)]
+    pub(in crate::vm) fn call_row(vm: *mut Vm<H>, program: &'a ResidualProgram, frame: usize, pc: usize,
+        allow_inline_calls: bool, instruction: WideInstruction, form: CallForm) -> RowRun {
+        let mut interpreted = Self::over(vm, program, frame, pc, allow_inline_calls);
+        let step = interpreted.call_general(form, instruction, pc);
+        if let Some(error) = interpreted.raised.take() {
+            return RowRun::Stop(Err(error));
+        }
+        if let Some(pushed) = interpreted.pushed.take() {
+            return RowRun::Stop(Ok(pushed));
+        }
+        match step {
+            Some(_) => RowRun::Done(Edge::Following),
+            None => RowRun::Declined,
+        }
+    }
+
+    /// `operation` run on frame `frame`'s registers and locals and the VM's own answers, where it
+    /// decides it (`RowRun::Declined` where it does not). `pc` is the resume PC of `instruction`,
+    /// which a `Yield` takes its destination from.
+    #[inline(always)]
+    pub(in crate::vm) fn step_row(vm: *mut Vm<H>, program: &'a ResidualProgram, frame: usize, pc: usize,
+        allow_inline_calls: bool, instruction: WideInstruction, operation: Operation<u64, ()>) -> RowRun {
+        let mut interpreted = Self::over(vm, program, frame, pc, allow_inline_calls);
         let step = crate::staged::step(&mut Concrete::new(std::ptr::null()), &mut interpreted, operation);
         if let Some(error) = interpreted.raised.take() {
             return RowRun::Stop(Err(error));
@@ -524,7 +553,28 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
 
 impl<H: Host> crate::staged::GlobalFrame<Concrete> for InterpreterFrame<'_, H> {}
 
-impl<H: Host> crate::staged::CallFrame<Concrete> for InterpreterFrame<'_, H> {}
+impl<H: Host> crate::staged::CallFrame<Concrete> for InterpreterFrame<'_, H> {
+    /// The call's general form, run by the VM on the running activation (`Vm::call_form_step`). Its
+    /// completion is a result the frame defines (`Step::Value`, the row's edge follows), or the step
+    /// the call ends in (`pushed`, the activation or tail call the run stops on, or a return); a raise
+    /// is stashed for the runner.
+    #[inline(always)]
+    fn call_general(&mut self, form: CallForm, instruction: WideInstruction, pc: usize) -> Option<Step<u64, InterpreterControl>> {
+        let VarOwner::Frame(frame) = self.site.owner else { return None };
+        let (program, allow) = (self.program, self.allow_inline_calls);
+        match self.vm().call_form_step(program, frame, form, instruction, pc, allow) {
+            Ok(StepResult::Continue) => Some(Step::Value(0)),
+            Ok(result) => {
+                self.pushed = Some(result);
+                Some(Step::Value(0))
+            }
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
+    }
+}
 
 impl<H: Host> crate::staged::ElementFrame<Concrete> for InterpreterFrame<'_, H> {}
 

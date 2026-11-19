@@ -1,10 +1,9 @@
 # Derivation debt: each place a tier decides an opcode's meaning outside its staged row
 # (`staged/coverage_tests.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are
 # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.
-# total 1874
+# total 1860
 <catalog> unstaged:Await 1
 <catalog> unstaged:CacheTemplateObject 1
-<catalog> unstaged:CallFirstChunk 1
 <catalog> unstaged:CreateRegExpLiteral 1
 <catalog> unstaged:GetAsyncIterator 1
 <catalog> unstaged:IteratorCleanupPop 1
@@ -347,15 +346,6 @@ vm/construction.rs fn:lane_* 1
 vm/data_view.rs fn:lane_* 1
 vm/dispatch.rs is:is_ordinary_call 1
 vm/dispatch.rs op:Binary 1
-vm/dispatch.rs op:Call 1
-vm/dispatch.rs op:CallArray 2
-vm/dispatch.rs op:CallFirstChunk 1
-vm/dispatch.rs op:CallForwardingArguments 2
-vm/dispatch.rs op:CallKnown 1
-vm/dispatch.rs op:CallMethod 1
-vm/dispatch.rs op:CallSpread 3
-vm/dispatch.rs op:CallThisMethod 1
-vm/dispatch.rs op:Construct 1
 vm/dispatch.rs op:GetField 1
 vm/dispatch.rs op:GetIndex 1
 vm/dispatch.rs op:JumpBinaryFalse 1

@@ -1183,7 +1183,7 @@ opcodes!($;
     // the rest register, `undefined` where the entry kept the values passed, which it spreads.
     CallRest => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call; class CallRest; staged Names; traits CALL_LINK, @ Returnable, @ fields(ResultRegister, Register, Register),
     // A first-call stub's body: calls its chunk with its arguments and `new.target` (`Vm::call_first_chunk`).
-    CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused; traits FIRST_CALL_STUB, @ Register, @ fields(ResultRegister, Register, Register),
+    CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused; staged Call; traits FIRST_CALL_STUB, @ Register, @ fields(ResultRegister, Register, Register),
     WasmSegmentDrop => Effect::WRITES_HEAP; layout Scalar; meaning WasmInstanceSlot; class WasmSegmentDrop; traits WASM_OPCODE, @ Register, @ fields(Unused, Unused, Unused),
     // Synthetic records only: the lane view's prologue records, which no bytecode holds. A frameless activation
     // of a function the JavaScript tier may claim starts at `TierPrologue` (`imm` the function, `a` its parameter
