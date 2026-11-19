@@ -367,6 +367,11 @@ impl<H: Host> Vm<H> {
         excluded: &[Value],
         kind: PropertyCopyKind,
     ) -> bool {
+        // `Object.assign` onto an empty target takes the source's shape when no key could meet
+        // `__proto__`, an accessor or a read-only property on the target's chain.
+        if matches!(kind, PropertyCopyKind::Set) && excluded.is_empty() && self.adopt_source_shape_for_set(target, source) {
+            return true;
+        }
         let Some(slots) = self.shape_enumerable_slots(source) else {
             return false;
         };
