@@ -1,17 +1,29 @@
-/* WSL type layer, run 1a (a C port of Node.unify, UnificationContext, the type classes' unifyImpl and
- * typeVariableUnify, ProtocolDecl.inherits/hasHeir, InferTypesForCall and ResolveOverloadImpl).
- * Results are booleans for now: error reasons are not built yet. The literal types (IntLiteralType
- * and friends), NullType and NativeTypeInstance are created only by the checker and are not reached
- * here; value_type reports them with fatal_unsupported. */
+/* WSL type layer (a C port of Node.unify, UnificationContext, the type classes' unifyImpl and
+ * typeVariableUnify, ProtocolDecl.inherits/hasHeir, InferTypesForCall and ResolveOverloadImpl), with the
+ * literal types (IntLiteralType, UintLiteralType, FloatLiteralType, DoubleLiteralType, NullType). A literal
+ * expression's type is a literal type node made with it (lit_expr_new); the native kind dispatch of
+ * Intrinsics.js is in wsl-intrinsics.h. Results are booleans for now: error reasons are not built yet.
+ * NativeTypeInstance is not ported. */
 #ifndef WSL_TYPES_H
 #define WSL_TYPES_H
 
 #include <setjmp.h>
 #include "wsl-synth.h"
+#include "wsl-intrinsics.h"
 
 /* ---- classification ---- */
+/* the four GenericLiteralType classes and NullType (a Type) */
+static int is_lit_type(const Ast *n) { return n->tag >= A_INTLITERALTYPE && n->tag <= A_DOUBLELITERALTYPE; }
+static int is_lit_type_or_null(const Ast *n) { return is_lit_type(n) || n->tag == A_NULLTYPE; }
+/* Type instanceof: the nodes that unify as types (literal types included) */
+static int is_jstype(const Ast *n) { return is_type_node(n) || is_lit_type_or_null(n); }
+/* isLiteral: literal types, NullType and the literal expressions */
+static int is_literal_node(const Ast *n) {
+  return is_lit_type_or_null(n) || (n->tag >= A_INTLITERAL && n->tag <= A_DOUBLELITERAL);
+}
+
 static int ut_is_unifiable(const Ast *n) {
-  return n->tag == A_TYPEVARIABLE || n->tag == A_CONSTEXPRTYPEPARAM;
+  return n->tag == A_TYPEVARIABLE || n->tag == A_CONSTEXPRTYPEPARAM || is_lit_type_or_null(n);
 }
 
 /* instanceof Value for the nodes that unify against a constexpr parameter */
@@ -31,7 +43,9 @@ static Ast *ut_value_type(const Ast *n) {
   switch (n->tag) {
   case A_VARIABLEDECL: return n->u.varDecl.type;
   case A_FUNCPARAMETER: case A_CONSTEXPRTYPEPARAM: return n->u.named.type;
-  default: fatal_unsupported("value type of a literal or reference (literal types are not ported)", n);
+  case A_INTLITERAL: case A_UINTLITERAL: case A_FLOATLITERAL: case A_DOUBLELITERAL: case A_NULLLITERAL:
+    return n->type;
+  default: fatal_unsupported("value type of a reference", n);
   }
   return NULL;
 }
@@ -259,7 +273,9 @@ static int ut_tv_impl(UCtx *c, Ast *self, Ast *other) {
 static int ut_typevar_unify(UCtx *c, Ast *self, Ast *other) {
   switch (self->tag) {
   case A_TYPEVARIABLE:
-    if (!is_type_node(other)) return 0;
+  case A_INTLITERALTYPE: case A_UINTLITERALTYPE: case A_FLOATLITERALTYPE: case A_DOUBLELITERALTYPE:
+  case A_NULLTYPE:
+    if (!is_jstype(other)) return 0;
     return ut_tv_impl(c, self, other);
   case A_CONSTEXPRTYPEPARAM:
     if (!ut_is_value(other)) return 0;
@@ -281,6 +297,8 @@ static int ut_unify_impl(UCtx *c, Ast *self, Ast *other) {
     return 1;
   case A_TYPEVARIABLE:
   case A_CONSTEXPRTYPEPARAM:
+  case A_INTLITERALTYPE: case A_UINTLITERALTYPE: case A_FLOATLITERALTYPE: case A_DOUBLELITERALTYPE:
+  case A_NULLTYPE:
     return ut_typevar_unify(c, self, other);
   case A_PTRTYPE:
   case A_ARRAYREFTYPE:
@@ -332,8 +350,26 @@ static int ut_unify_inner(UCtx *c, Ast *self, Ast *other) {
 }
 
 /* ---- verify ---- */
+/* GenericLiteralType.verifyAsArgument and NullType.verifyAsArgument, on the root of the literal */
+static int lit_verify_as_argument(UCtx *c, Ast *n) {
+  Ast *realThis = uc_find(c, n);
+  if (n->tag == A_NULLTYPE) return realThis->tag == A_PTRTYPE || realThis->tag == A_ARRAYREFTYPE;
+  double v = lit_value(n);
+  switch (n->tag) {
+  case A_INTLITERALTYPE: return ty_is_number(realThis) && nt_can_represent(nt_kind(realThis), v);
+  case A_UINTLITERALTYPE: return ty_is_int(realThis) && !ty_is_signed(realThis) && nt_can_represent(nt_kind(realThis), v);
+  case A_FLOATLITERALTYPE:
+  case A_DOUBLELITERALTYPE: return ty_is_floating(realThis) && nt_can_represent(nt_kind(realThis), v);
+  default: fatal_unsupported("verifyAsArgument of a literal type", n);
+  }
+  return 0;
+}
+
 static int ut_verify_as_argument(UCtx *c, Ast *n) {
   switch (n->tag) {
+  case A_INTLITERALTYPE: case A_UINTLITERALTYPE: case A_FLOATLITERALTYPE: case A_DOUBLELITERALTYPE:
+  case A_NULLTYPE:
+    return lit_verify_as_argument(c, n);
   case A_TYPEVARIABLE: {
     Ast *realThis = uc_find(c, n);
     if (realThis->tag != A_TYPEVARIABLE) return 0;
@@ -364,23 +400,42 @@ static int ut_verify_as_parameter(UCtx *c, Ast *n) {
   return 0;
 }
 
-/* UnificationContext.verify (the prepareToVerify pass only matters for literal types) */
+/* UnificationContext.verify. Two phases: a literal type whose root is a type variable or a literal
+ * prepares to unify that root with its preferred type (GenericLiteralType.prepareToVerify); then the
+ * type parameters and the arguments are verified. Literal arguments are not counted as variables. */
+typedef struct { Ast *root; Ast *pref; } LitPrep;
 static int uc_verify_pub(UCtx *c) {
+  int total = 2 * c->nmap + c->nextra;
+  Ast **nodes = arena_alloc(sizeof(Ast *) * (total ? total : 1));
+  int nn = uc_nodes(c, nodes);
+  LitPrep *preps = arena_alloc(sizeof(LitPrep) * (nn ? nn : 1));
+  int np = 0;
+  for (int i = 0; i < nn; i++) {
+    if (!is_lit_type(nodes[i])) continue;
+    Ast *root = uc_find(c, nodes[i]);
+    if (root->tag != A_TYPEVARIABLE && !is_literal_node(root)) continue;
+    preps[np].root = root;
+    preps[np].pref = literal_preferred(nodes[i]->u.litType.owner);
+    np++;
+  }
+  for (int i = 0; i < np; i++)
+    if (!ut_unify(c, preps[i].root, preps[i].pref)) return 0;
   for (int i = 0; i < c->ntps; i++)
     if (!ut_verify_as_parameter(c, c->tps[i])) return 0;
-  int total = 2 * c->nmap + c->nextra;
   Ast **args = arena_alloc(sizeof(Ast *) * (total ? total : 1));
   int nargs = uc_type_arguments(c, args);
   Ast **set = arena_alloc(sizeof(Ast *) * (nargs ? nargs : 1));
-  int nset = 0;
+  int nset = 0, nvar = 0;
   for (int i = 0; i < nargs; i++) {
     if (!ut_verify_as_argument(c, args[i])) return 0;
+    if (is_literal_node(args[i])) continue;
     Ast *r = uc_find(c, args[i]);
     int seen = 0;
     for (int j = 0; j < nset; j++) if (set[j] == r) { seen = 1; break; }
     if (!seen) set[nset++] = r;
+    nvar++;
   }
-  return nset == nargs;
+  return nset == nvar;
 }
 
 /* Node.equals: a context when the two types unify and verify, else NULL */
@@ -451,8 +506,8 @@ static int proto_has_heir(Ast *proto, Ast *type) {
  * bit 0 is Node.unify, bit 1 is Node.equals. Order: struct fields (statement order), function
  * parameter and return types (functions map order), protocol signature types (statement order). */
 typedef struct { Ast **out; int n; int cap; } TypeList;
-/* the types the run 1a harness covers: no array sizes, constexpr parameters or literals (their
- * unification needs the literal types, which are not ported yet) */
+/* the types the unify harness covers: any type whose element types are plain (array sizes, constexpr
+ * parameters and literals inside them unify as values, with their literal types) */
 static int ut_plain(const Ast *t) {
   switch (t->tag) {
   case A_TYPEREF:
@@ -462,6 +517,8 @@ static int ut_plain(const Ast *t) {
   case A_PTRTYPE:
   case A_ARRAYREFTYPE:
     return ut_plain(t->u.ref.elementType);
+  case A_ARRAYTYPE:
+    return ut_plain(t->u.arrayType.elementType);
   case A_TYPEVARIABLE: case A_STRUCTTYPE: case A_ENUMTYPE: case A_NATIVETYPE:
     return 1;
   default:
@@ -476,7 +533,8 @@ static void harness_fn(void *cx, Ast *f) {
   for (int i = 0; i < f->u.func.parameters.n; i++) tl_push(t, f->u.func.parameters.v[i]->u.named.type);
   tl_push(t, f->u.func.returnType);
 }
-static void unify_harness(Program *p, Buf *b) {
+/* the first 60 plain types of the input, in the harness order (__harnessTypes in the node reference) */
+static TypeList harness_types(Program *p) {
   enum { CAP = 60 };
   TypeList tl = {arena_alloc(sizeof(Ast *) * CAP), 0, CAP};
   for (int i = 0; i < p->statements.n; i++) {
@@ -494,24 +552,119 @@ static void unify_harness(Program *p, Buf *b) {
       tl_push(&tl, s->u.func.returnType);
     }
   }
+  return tl;
+}
+
+/* one cell of a harness row: bit 0 is unify(a, b), bit 1 is equals(a, b); E on an unwound stack overflow */
+static void harness_cell(Buf *b, Ast *a, Ast *x) {
+  char one[2] = {'E', 0};
+  UT_DEPTH = 0;
+  UT_ARMED = 1;
+  if (setjmp(UT_JMP) == 0) {
+    UCtx *c = uc_new(NULL, 0);
+    int u = ut_unify(c, a, x);
+    int e = ut_equals(a, x) != NULL;
+    one[0] = (char)('0' + (u ? 1 : 0) + (e ? 2 : 0));
+  }
+  UT_ARMED = 0;
+  buf_str(b, one);
+}
+
+static void unify_harness(Program *p, Buf *b) {
+  TypeList tl = harness_types(p);
   char head[32];
   snprintf(head, sizeof head, "types %d\n", tl.n);
   buf_str(b, head);
   for (int i = 0; i < tl.n; i++) {
-    for (int j = 0; j < tl.n; j++) {
-      char one[2] = {'E', 0};
-      UT_DEPTH = 0;
-      UT_ARMED = 1;
-      if (setjmp(UT_JMP) == 0) {
-        UCtx *c = uc_new(NULL, 0);
-        int u = ut_unify(c, tl.out[i], tl.out[j]);
-        int e = ut_equals(tl.out[i], tl.out[j]) != NULL;
-        one[0] = (char)('0' + (u ? 1 : 0) + (e ? 2 : 0));
-      }
-      UT_ARMED = 0;
-      buf_str(b, one);
-    }
+    for (int j = 0; j < tl.n; j++) harness_cell(b, tl.out[i], tl.out[j]);
     buf_str(b, "\n");
+  }
+}
+
+/* --literal: each literal type (the four GenericLiteralTypes with the values below, and NullType) against
+ * every harness type. A literal's preferred type is the native type its name gives (int32, uint32,
+ * float32, float64), resolved here as name resolution does for literals in the program. */
+static Ast *native_named(Program *p, const char *name) {
+  for (int i = 0; i < p->statements.n; i++) {
+    Ast *st = p->statements.v[i];
+    if (st->tag == A_NATIVETYPE && strcmp(st->u.nativeType.name, name) == 0) return st;
+  }
+  return NULL;
+}
+
+static void literal_harness(Program *p, Buf *b) {
+  TypeList tl = harness_types(p);
+  static const long long INT_VALUES[] = {0, 1, 255, 256, -1, 65535, 2147483647LL, -2147483648LL,
+                                         2147483648LL, 4294967295LL, 4294967296LL, 16777217LL, 9007199254740992LL};
+  static const double FLT_VALUES[] = {0, 0.5, -2.5, 0.1, 16777217, 3.4e38, 1e40, 4294967296.0, -0.25};
+  static const char *PREF[4] = {"int32", "uint32", "float32", "float64"};
+  static const AstTag TAGS[4] = {A_INTLITERAL, A_UINTLITERAL, A_FLOATLITERAL, A_DOUBLELITERAL};
+  char head[32];
+  snprintf(head, sizeof head, "literal %d\n", tl.n);
+  buf_str(b, head);
+  for (int ki = 0; ki < 4; ki++) {
+    int nv = ki < 2 ? (int)(sizeof INT_VALUES / sizeof *INT_VALUES) : (int)(sizeof FLT_VALUES / sizeof *FLT_VALUES);
+    for (int vi = 0; vi < nv; vi++) {
+      Ast *e = lit_expr_new(TAGS[ki], 0);
+      if (ki < 2) e->u.intLit.value = INT_VALUES[vi];
+      else e->u.fltLit.value = FLT_VALUES[vi];
+      literal_preferred(e)->u.typeRef.type = native_named(p, PREF[ki]);
+      buf_fmt(b, "%d %d ", ki, vi);
+      for (int j = 0; j < tl.n; j++) harness_cell(b, e->type, tl.out[j]);
+      buf_str(b, "\n");
+    }
+  }
+  Ast *nl = lit_expr_new(A_NULLLITERAL, 0);
+  buf_str(b, "4 0 ");
+  for (int j = 0; j < tl.n; j++) harness_cell(b, nl->type, tl.out[j]);
+  buf_str(b, "\n");
+}
+
+
+/* --intrinsics: the same properties of each native type, printed as IEEE bits (the properties Intrinsics.js
+ * defines for the kind; the others are not called). */
+static void hex_bits(Buf *b, double v) {
+  uint64_t x;
+  memcpy(&x, &v, 8);
+  buf_fmt(b, "%016llx", (unsigned long long)x);
+}
+
+static void intrinsics_harness(Program *p, Buf *b) {
+  static const double VALUES[] = {0, 1, -1, 255, 256, 65535, 2147483647, -2147483648.0, 2147483648.0,
+                                  4294967295.0, 4294967296.0, 16777217, 0.5, -2.5, 3.4e38, 1e40, -0.25};
+  static const char *NAMES[7] = {"void", "int32", "uint32", "uint8", "float32", "float64", "bool"};
+  static const char *FMT[4] = {"IntLiteral", "UintLiteral", "FloatLiteral", "DoubleLiteral"};
+  int nv = (int)(sizeof VALUES / sizeof *VALUES);
+  for (int ni = 0; ni < 7; ni++) {
+    NtKind k = nt_kind(native_named(p, NAMES[ni]));
+    const char *name = NAMES[ni];
+    int isInt = nt_is_int(k);
+    int canRep = isInt || k == NT_FLOAT32 || k == NT_FLOAT64;
+    int fmtOk[4];
+    for (int f = 0; f < 4; f++) fmtOk[f] = isInt ? f < 2 : nt_is_floating(k);
+    buf_fmt(b, "%s size %d\n", name, nt_size(k));
+    if (isInt) { buf_fmt(b, "%s default ", name); hex_bits(b, nt_default_value(k)); buf_str(b, "\n"); }
+    for (int vi = 0; vi < nv; vi++) {
+      double v = VALUES[vi];
+      if (canRep) { buf_fmt(b, "%s canRepresent ", name); hex_bits(b, v); buf_fmt(b, " %d\n", nt_can_represent(k, v)); }
+      if (isInt) {
+        buf_fmt(b, "%s createLiteral ", name); hex_bits(b, v); buf_str(b, " ");
+        hex_bits(b, nt_create_literal(k, v)); buf_str(b, "\n");
+        buf_fmt(b, "%s successorValue ", name); hex_bits(b, v); buf_str(b, " ");
+        hex_bits(b, nt_successor(k, v)); buf_str(b, "\n");
+      }
+      for (int f = 0; f < 4; f++) {
+        if (!fmtOk[f]) continue;
+        buf_fmt(b, "%s formatValue %s ", name, FMT[f]); hex_bits(b, v); buf_str(b, " ");
+        hex_bits(b, nt_format_value(k, (LitKind)f, v)); buf_str(b, "\n");
+      }
+    }
+    if (isInt)
+      for (int a = 0; a < nv; a++)
+        for (int c = 0; c < nv; c++) {
+          buf_fmt(b, "%s valuesEqual ", name); hex_bits(b, VALUES[a]); buf_str(b, " "); hex_bits(b, VALUES[c]);
+          buf_fmt(b, " %d\n", nt_values_equal(k, VALUES[a], VALUES[c]));
+        }
   }
 }
 

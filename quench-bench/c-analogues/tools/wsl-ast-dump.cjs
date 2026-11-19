@@ -53,7 +53,7 @@ const run = code => vm.runInContext(code, ctx);
 // (functions map order), protocol signature types (statement order). One character per ordered
 // pair: bit 0 is Node.unify, bit 1 is Node.equals.
 const resolveMode = process.argv.includes("--resolve");
-const unifyMode = process.argv.includes("--unify") || resolveMode;
+const unifyMode = process.argv.includes("--unify") || resolveMode || process.argv.includes("--literal") || process.argv.includes("--intrinsics");
 // --resolve: for each function in map order, its own parameter types (AutoWrapped) resolved against
 // its overload list: "index bit" (index -1 with "-" when nothing resolves; bit is whether the
 // substituted return type equals the declared one).
@@ -77,11 +77,12 @@ if (resolveMode) run(`function __resolveHarness(p) {
     }
     return text;
 }`);
-if (unifyMode && !resolveMode) run(`function __unifyHarness(p) {
-    const NL = String.fromCharCode(10);
+const literalMode = process.argv.includes("--literal");
+const intrinsicsMode = process.argv.includes("--intrinsics");
+run(`function __harnessTypes(p) {
     const plain = t => {
         if (t instanceof TypeRef) return t.typeArguments.every(plain);
-        if (t instanceof PtrType || t instanceof ArrayRefType) return plain(t.elementType);
+        if (t instanceof PtrType || t instanceof ArrayRefType || t instanceof ArrayType) return plain(t.elementType);
         return t instanceof TypeVariable || t instanceof StructType || t instanceof EnumType || t instanceof NativeType;
     };
     const out = [];
@@ -89,6 +90,32 @@ if (unifyMode && !resolveMode) run(`function __unifyHarness(p) {
     for (const t of p.types.values()) if (t instanceof StructType) for (const f of t.fields) push(f.type);
     for (const funcs of p.functions.values()) for (const f of funcs) { for (const q of f.parameters) push(q.type); push(f.returnType); }
     for (const pr of p.protocols.values()) for (const s of pr.signatures) { for (const q of s.parameters) push(q.type); push(s.returnType); }
+    return out;
+}`);
+// --intrinsics: the native types' properties (Intrinsics.js), each value as its IEEE bits, one line per result.
+if (intrinsicsMode) run(`function __intrinsicsHarness(p) {
+    const NL = String.fromCharCode(10);
+    const hex = x => { const d = new Float64Array([x]); return new BigUint64Array(d.buffer)[0].toString(16).padStart(16, "0"); };
+    const values = [0, 1, -1, 255, 256, 65535, 2147483647, -2147483648, 2147483648, 4294967295, 4294967296, 16777217, 0.5, -2.5, 3.4e38, 1e40, -0.25];
+    const formats = ["IntLiteral", "UintLiteral", "FloatLiteral", "DoubleLiteral"];
+    let text = "";
+    for (const name of ["void", "int32", "uint32", "uint8", "float32", "float64", "bool"]) {
+        const t = p.types.get(name);
+        text += name + " size " + t.size + NL;
+        if (t.defaultValue !== undefined) text += name + " default " + hex(t.defaultValue) + NL;
+        for (const v of values) {
+            if (t.canRepresent) text += name + " canRepresent " + hex(v) + " " + (t.canRepresent(v) ? 1 : 0) + NL;
+            if (t.createLiteral) text += name + " createLiteral " + hex(v) + " " + hex(t.createLiteral(null, v).value) + NL;
+            if (t.successorValue) text += name + " successorValue " + hex(v) + " " + hex(t.successorValue(v)) + NL;
+            for (const f of formats) if (t["formatValueFrom" + f]) text += name + " formatValue " + f + " " + hex(v) + " " + hex(t["formatValueFrom" + f](v)) + NL;
+        }
+        if (t.valuesEqual) for (const a of values) for (const b of values) text += name + " valuesEqual " + hex(a) + " " + hex(b) + " " + (t.valuesEqual(a, b) ? 1 : 0) + NL;
+    }
+    return text;
+}`);
+if (unifyMode && !resolveMode && !literalMode && !intrinsicsMode) run(`function __unifyHarness(p) {
+    const NL = String.fromCharCode(10);
+    const out = __harnessTypes(p);
     let text = "types " + out.length + NL;
     for (const a of out) {
         let row = "";
@@ -99,6 +126,37 @@ if (unifyMode && !resolveMode) run(`function __unifyHarness(p) {
         }
         text += row + NL;
     }
+    return text;
+}`);
+// --literal: each literal type (the four GenericLiteralTypes with the values below, and NullType) against
+// every harness type. The preferred type of a literal is the native type its name gives.
+if (literalMode) run(`function __literalHarness(p) {
+    const NL = String.fromCharCode(10);
+    const out = __harnessTypes(p);
+    const intValues = [0, 1, 255, 256, -1, 65535, 2147483647, -2147483648, 2147483648, 4294967295, 4294967296, 16777217, 9007199254740992];
+    const fltValues = [0, 0.5, -2.5, 0.1, 16777217, 3.4e38, 1e40, 4294967296, -0.25];
+    const kinds = [
+        ["IntLiteralType", "int32", intValues], ["UintLiteralType", "uint32", intValues],
+        ["FloatLiteralType", "float32", fltValues], ["DoubleLiteralType", "float64", fltValues]];
+    const cell = (lt, t) => {
+        try { return String.fromCharCode(48 + (lt.unify(new UnificationContext(), t) ? 1 : 0) + (lt.equals(t) ? 2 : 0)); }
+        catch (e) { if (!(e instanceof RangeError)) throw e; return "E"; }
+    };
+    let text = "literal " + out.length + NL;
+    kinds.forEach(([name, native, values], ki) => {
+        const Cls = eval(name);
+        values.forEach((value, vi) => {
+            const lt = new Cls(null, value);
+            lt.preferredType.type = p.types.get(native);
+            let row = ki + " " + vi + " ";
+            for (const t of out) row += cell(lt, t);
+            text += row + NL;
+        });
+    });
+    const nullType = new NullType(null);
+    let row = "4 0 ";
+    for (const t of out) row += cell(nullType, t);
+    text += row + NL;
     return text;
 }`);
 
@@ -323,7 +381,7 @@ const rows = inputs.map((input, i) => {
     try {
         if (unifyMode) {
             if (input.kind === "doLex") { dump = ""; }
-            else { anonRoles.clear(); resolveInput(input, stage); dump = run(resolveMode ? "__resolveHarness(__p)" : "__unifyHarness(__p)"); }
+            else { anonRoles.clear(); resolveInput(input, stage); dump = run(resolveMode ? "__resolveHarness(__p)" : literalMode ? "__literalHarness(__p)" : intrinsicsMode ? "__intrinsicsHarness(__p)" : "__unifyHarness(__p)"); }
         } else if (input.kind === "doLex") {
             const toks = lexTokens(input.text);
             dump = toks.join("\n");

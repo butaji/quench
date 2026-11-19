@@ -20,7 +20,9 @@ typedef enum {
   A_COMMA, A_NULLLITERAL, A_BOOLLITERAL, A_VARIABLEREF, A_CALL, A_DOT, A_INDEX,
   A_DEREF, A_MAKEPTR, A_MAKEARRAYREF, A_LOGICALNOT, A_LOGICAL, A_ASSIGN, A_RMW,
   A_INTLITERAL, A_UINTLITERAL, A_FLOATLITERAL, A_DOUBLELITERAL,
-  A_IDENTITY, A_ENUMLITERAL, A_ANONVAR
+  A_IDENTITY, A_ENUMLITERAL, A_ANONVAR,
+  /* literal types (GenericLiteralType and NullType): the type of a literal expression, see lit_type_new */
+  A_INTLITERALTYPE, A_UINTLITERALTYPE, A_FLOATLITERALTYPE, A_DOUBLELITERALTYPE, A_NULLTYPE
 } AstTag;
 
 typedef struct Ast Ast;
@@ -30,6 +32,7 @@ struct Ast {
   AstTag tag;
   int origin;                 /* index of the origin token in the source, -1 if none */
   int native;                 /* 1 if the origin kind is "native" (the standard library), else 0 */
+  Ast *type;                  /* Value.type of a literal expression: its literal type node (NULL otherwise) */
   union {
     /* FuncDef, NativeFunc, ProtocolFuncDecl */
     struct { const char *name; int isCast; const char *shaderType; int isRestricted;
@@ -108,6 +111,8 @@ struct Ast {
     struct { long long value; Ast *preferred; } intLit;   /* preferred: GenericLiteralType.preferredType */
     /* FloatLiteral, DoubleLiteral: value is the double (float literals are rounded to float) */
     struct { double value; Ast *preferred; } fltLit;
+    /* literal types: the literal expression whose type this is (its value and preferredType are read from it) */
+    struct { Ast *owner; } litType;
   } u;
 };
 
@@ -157,6 +162,26 @@ static Ast *ast_new(AstTag tag, int origin) {
   a->tag = tag;
   a->origin = origin;
   a->native = AST_ORIGIN_NATIVE;
+  return a;
+}
+
+/* A literal expression's literal type (GenericLiteralType / NullType). The JS constructor makes it with
+ * the literal; here the literal makes it with ast_new. Its value and preferredType are the owner's. */
+static Ast *lit_type_new(AstTag kind, Ast *owner) {
+  Ast *t = ast_new(kind, owner->origin);
+  t->native = owner->native;
+  t->u.litType.owner = owner;
+  return t;
+}
+
+/* A literal expression of tag `tag` with its type (NullLiteral or one of the four GenericLiterals). */
+static Ast *lit_expr_new(AstTag tag, int origin) {
+  Ast *a = ast_new(tag, origin);
+  AstTag kind = tag == A_NULLLITERAL ? A_NULLTYPE
+              : tag == A_INTLITERAL ? A_INTLITERALTYPE
+              : tag == A_UINTLITERAL ? A_UINTLITERALTYPE
+              : tag == A_FLOATLITERAL ? A_FLOATLITERALTYPE : A_DOUBLELITERALTYPE;
+  a->type = lit_type_new(kind, a);
   return a;
 }
 
@@ -317,6 +342,11 @@ static const char *ast_class_name(const Ast *n) {
   case A_IDENTITY: return "IdentityExpression";
   case A_ENUMLITERAL: return "EnumLiteral";
   case A_ANONVAR: return "AnonymousVariable";
+  case A_INTLITERALTYPE: return "IntLiteralType";
+  case A_UINTLITERALTYPE: return "UintLiteralType";
+  case A_FLOATLITERALTYPE: return "FloatLiteralType";
+  case A_DOUBLELITERALTYPE: return "DoubleLiteralType";
+  case A_NULLTYPE: return "NullType";
   }
   return "?";
 }
@@ -523,6 +553,10 @@ static void dump_node(Buf *b, const Ast *n, int depth) {
     return;
   case A_ANONVAR:
     return;   /* an AnonymousVariable is only ever a reference target */
+  case A_INTLITERALTYPE: case A_UINTLITERALTYPE: case A_FLOATLITERALTYPE: case A_DOUBLELITERALTYPE:
+  case A_NULLTYPE:
+    fprintf(stderr, "literal types are not parse output; the dump does not print them\n");
+    exit(9);
   case A_RMW:
     end_scalars(b, n);
     dump_child(b, n->u.rmw.lValue, depth + 1);

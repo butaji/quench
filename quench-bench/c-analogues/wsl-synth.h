@@ -124,6 +124,7 @@ static Ast *rw(const Rw *r, Ast *n) {
   case A_DOUBLELITERAL: {
     /* Rewriter.visitGenericLiteral: always an IntLiteral with the same value; the preferred type is cloned */
     Ast *t = mk_from(A_INTLITERAL, n);
+    t->type = lit_type_new(n->type->tag, t);   /* Rewriter.visitGenericLiteralType: the source's literal type */
     double v = (n->tag == A_INTLITERAL || n->tag == A_UINTLITERAL) ? (double)n->u.intLit.value : n->u.fltLit.value;
     if (v != (double)(long long)v) fatal_unsupported("non-integral literal in a type", n);
     t->u.intLit.value = (long long)v;

@@ -20,6 +20,7 @@ static Ast *ast_clone(const Ast *n) {
   if (!n) return NULL;
   Ast *c = arena_alloc(sizeof(Ast));
   memcpy(c, n, sizeof(Ast));
+  if (n->type) c->type = lit_type_new(n->type->tag, c);   /* a literal's type is its own node */
   switch (n->tag) {
   case A_FUNCDEF:
   case A_NATIVEFUNC:

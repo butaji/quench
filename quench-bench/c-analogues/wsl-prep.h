@@ -325,8 +325,9 @@ static Ast *unify_node(Ast *n) {
 }
 
 static Ast *lit_new(AstTag tag, int origin, int native) {
-  Ast *a = ast_new(tag, origin);
+  Ast *a = lit_expr_new(tag, origin);
   a->native = native;
+  a->type->native = native;
   return a;
 }
 

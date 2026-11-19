@@ -400,7 +400,7 @@ static void parse_type_arguments(Parser *P, AstList *out) {
 static Ast *parse_term(Parser *P) {
   Tok t;
   if (tok_present(t = TRY(P, "null"))) {
-    return ast_new(A_NULLLITERAL, t.index);
+    return lit_expr_new(A_NULLLITERAL, t.index);
   }
   if (tok_present(t = try_consume_kind(P, "identifier"))) {
     Ast *a = ast_new(A_VARIABLEREF, t.index);
@@ -413,7 +413,7 @@ static Ast *parse_term(Parser *P) {
     long long v = 0;
     for (int i = 0; i < t.len; i++) { v = v * 10 + (t.text[i] - '0'); if (v > 0x7fffffffLL * 10) v = 0x7fffffffLL * 10; }
     if (!canonical || v > 0x7fffffffLL) P_FAIL_FMT(P, "Integer literal is not an integer: %.*s", t.len, t.text);
-    Ast *a = ast_new(A_INTLITERAL, t.index);
+    Ast *a = lit_expr_new(A_INTLITERAL, t.index);
     a->u.intLit.value = v;
     return a;
   }
@@ -423,7 +423,7 @@ static Ast *parse_term(Parser *P) {
     long long v = 0;
     for (int i = 0; i < digits; i++) { v = v * 10 + (t.text[i] - '0'); if (v > 0xffffffffLL * 10) v = 0xffffffffLL * 10; }
     if (!canonical || v > 0xffffffffLL) P_FAIL_FMT(P, "Integer literal is not 32-bit unsigned integer: %.*s", t.len, t.text);
-    Ast *a = ast_new(A_UINTLITERAL, t.index);
+    Ast *a = lit_expr_new(A_UINTLITERAL, t.index);
     a->u.intLit.value = v;
     return a;
   }
@@ -445,7 +445,7 @@ static Ast *parse_term(Parser *P) {
       }
       unsigned long long limit = isInt ? 0x7fffffffULL : 0xffffffffULL;
       if (!canonical || v > limit) P_FAIL_FMT(P, "Hex integer literal is not an integer: %.*s", h.len, h.text);
-      Ast *a = ast_new(isInt ? A_INTLITERAL : A_UINTLITERAL, h.index);
+      Ast *a = lit_expr_new(isInt ? A_INTLITERAL : A_UINTLITERAL, h.index);
       a->u.intLit.value = (long long)v;
       return a;
     }
@@ -458,11 +458,11 @@ static Ast *parse_term(Parser *P) {
     char *text = arena_strndup(t.text, n);
     double value = strtod(text, NULL);
     if (d) {
-      Ast *a = ast_new(A_DOUBLELITERAL, t.index);
+      Ast *a = lit_expr_new(A_DOUBLELITERAL, t.index);
       a->u.fltLit.value = value;
       return a;
     }
-    Ast *a = ast_new(A_FLOATLITERAL, t.index);
+    Ast *a = lit_expr_new(A_FLOATLITERAL, t.index);
     a->u.fltLit.value = (double)(float)value;
     return a;
   }
