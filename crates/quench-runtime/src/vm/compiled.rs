@@ -3284,6 +3284,28 @@ pub(super) struct CompiledOsrRegion {
     /// the dispatch at (`osr_lane::bind_captures`), kept between runs so an entry fills it in
     /// place instead of allocating it. A run entered while another runs takes an empty one.
     dense: std::cell::Cell<Vec<crate::Value>>,
+    /// What the parked dispatch was last fully bound for (`EntryStamp`): an entry that finds
+    /// the same rebinds only the words a run changes (`JsStepDispatch::rewarm_region`).
+    stamp: std::cell::Cell<Option<EntryStamp>>,
+}
+
+/// The activation a region's parked dispatch was bound for: its VM, program and function,
+/// its VM frame (by index and by the frame's own address, which a pop and push at the same
+/// index changes), the lane context and register file, and whether the program runs
+/// specialized. An entry of the same activation (a loop entered again by an outer loop of
+/// the same frame, the case region entry costs most in) finds its frame, register and local
+/// words, `this` slot and capture view as they were: the run binds only what changes between
+/// runs, about a tenth of a full rebind.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct EntryStamp {
+    vm: usize,
+    program: ProgramId,
+    function: u32,
+    frame: usize,
+    frame_record: usize,
+    lane_context: usize,
+    registers: usize,
+    specialized: bool,
 }
 
 
@@ -3370,15 +3392,30 @@ impl CompiledOsrRegion {
         let outcome = match self.parked.take().filter(|_| self.crossing == Crossing::General) {
             Some(mut dispatch) => unsafe {
                 let vm = &mut *vm;
-                match vm.programs.get(program) {
-                    Some(residual) => {
-                        dispatch.rebind_region(vm, program, &residual, frame, registers);
-                        let _captures = bind(&mut dispatch, &residual, vm);
-                        let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
-                        self.parked.set(Some(dispatch));
-                        run
+                let frame_record = vm.frames.get(frame).map_or(0, |record| std::ptr::from_ref::<super::Frame>(&**record).addr());
+                let warm = |specialized| EntryStamp { vm: std::ptr::from_ref(vm).addr(), program, function, frame, frame_record, lane_context,
+                    registers: registers.addr(), specialized };
+                // The same activation as the last full bind: rebind only what a run changes.
+                let stamp = self.stamp.get().filter(|stamp| *stamp == warm(stamp.specialized));
+                if let Some(stamp) = stamp {
+                    dispatch.rewarm_region(vm, stamp.specialized);
+                    osr_lane::bind_loop::<H>(&mut dispatch, region, entry, lane_context);
+                    osr_lane::bind_captures::<H>(&mut dispatch, region, entry, lane_context, calls, &mut dense);
+                    let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
+                    self.parked.set(Some(dispatch));
+                    run
+                } else {
+                    match vm.programs.get(program) {
+                        Some(residual) => {
+                            dispatch.rebind_region(vm, program, &residual, frame);
+                            bind(&mut dispatch, &residual, vm, true);
+                            self.stamp.set(Some(warm(residual.specialized)));
+                            let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
+                            self.parked.set(Some(dispatch));
+                            run
+                        }
+                        None => RegionRun::own(LaneExit::Terminated),
                     }
-                    None => RegionRun::own(LaneExit::Terminated),
                 }
             },
             None => unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
@@ -4700,13 +4737,34 @@ impl JsStepDispatch {
     fn rebind_region<H: Host>(&mut self, vm: &mut Vm<H>, program_id: ProgramId, program: &ResidualProgram, frame: usize, registers: *mut Value) {
         self.bind_lane_storage(std::ptr::from_mut(vm));
         (self.program_id, self.frame) = (program_id, frame);
-        self.native_registers = registers;
-        self.set_captures_word(0);
+        self.reset_region_run();
+        self.refresh_heap_bases(vm, program);
+    }
+
+    /// The run state a region's run leaves, reset to `idle`'s.
+    #[inline(always)]
+    fn reset_region_run(&mut self) {
+        (self.capture_values, self.capture_len, self.capture_stores) = (std::ptr::null(), 0, 0);
         (self.inlined, self.exit_line, self.returned_pc) = (0, 0, 0);
         (self.lane_values_top, self.lane_values_end, self.lane_activations_top, self.lane_frames_end) = (0, 0, 0, 0);
         self.environment_storage = crate::heap::absent_environment_storage();
         self.outcome = None;
-        self.refresh_heap_bases(vm, program);
+    }
+
+    /// Readies a region's parked dispatch for another run of the activation it was last fully
+    /// bound for (`EntryStamp`): its program, frame, register, local and body words, `this` slot
+    /// and frame capture view stand (the run binds its captures itself, `osr_lane::bind_captures`).
+    /// What the VM may have changed since is bound again: its run storage, the run state, the
+    /// bases (a compare-only pass while nothing moved), the frameless stacks' tops, the program's
+    /// field entries (a moved cache table moves them) and the store specialization.
+    #[inline]
+    fn rewarm_region<H: Host>(&mut self, vm: &mut Vm<H>, program_specialized: bool) {
+        self.bind_run_storage(vm);
+        self.reset_region_run();
+        self.refresh_object_bases(vm);
+        vm.frameless.bind(self);
+        self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
+        self.stores_specialized = usize::from(vm.specialized && program_specialized);
     }
 
     /// Refresh the additional frame and array views read by native code.
