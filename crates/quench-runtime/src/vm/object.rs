@@ -4684,11 +4684,24 @@ impl<H: Host> Vm<H> {
         let Some((set, cache)) = self.field_add_entry_for(site, shape, atom, link) else {
             return false;
         };
-        let (target_shape, slot) = (cache.target_shape, cache.slot);
+        let (target_shape, slot, transition) = (cache.target_shape, cache.slot, cache.transition());
         if !cache.proof_holds(link) && !self.prove_field_add_chain(set, shape, atom, link) {
             return false;
         }
-        self.apply_cached_field_add(object, atom, shape, target_shape, slot, value);
+        // An object record outside dictionary storage, whose exact shape is the entry's source
+        // (`proved_field_add_hit`), takes the add as the proved hit does (`add_by_transition`):
+        // the staged row, the plain or reserved append, else the moving add
+        // `apply_cached_field_add` makes.
+        let Some(record_id) = object.direct_object_index().filter(|&id| self.heap.object_record_by_id(id).exact_shape() == shape) else {
+            self.apply_cached_field_add(object, atom, shape, target_shape, slot, value);
+            return true;
+        };
+        debug_assert_eq!(slot as usize, self.shapes[shape as usize].storage_len());
+        self.add_by_transition(object, record_id, transition, value);
+        if self.method_caches_may_name(atom) {
+            self.invalidate_method_caches_for_prototype_add(object, atom);
+        }
+        self.profile.field_cache_hit(0, 0);
         true
     }
 

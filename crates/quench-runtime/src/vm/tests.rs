@@ -24418,12 +24418,17 @@ fn learned_receivers_keep_construction_semantics() {
         CP.prototype = { kind: "new" };
         const cp = new CP(1);
         out.push(cp.kind, Object.keys(cp).join(""));
+        globalThis.wides = [];
+        function Wide(n) { this.f0 = n; this.f1 = n + 1; this.f2 = n + 2; this.f3 = 0.5; this.f4 = typeof n; this.f5 = null; this.f6 = n * 2; this.f7 = true; this.f8 = n; this.f9 = n; this.f10 = n; this.f11 = n + 0.25; }
+        let w; for (let i = 0; i < 3000; i++) { w = new Wide(i); if (i % 10 === 0) wides.push(w); }
+        out.push(Object.keys(w).length, w.f11 + w.f6);
         print(out.join(" "));
     "#;
     // After collections, which evacuate the reserved runs of the survivors and restart the
     // sampling, the survivors keep their values and take more adds.
     let after = r#"
-        const ok = keep.length === 30 && keep.every((o, k) => o.a === k * 100 && o.c === k * 100 + 1.5 && Object.keys(o).join("") === "abcdef");
+        const ok = keep.length === 30 && keep.every((o, k) => o.a === k * 100 && o.c === k * 100 + 1.5 && Object.keys(o).join("") === "abcdef")
+            && wides.length === 300 && wides.every((o, k) => o.f11 === k * 10 + 0.25 && o.f6 === k * 20 && o.f4 === "number" && Object.keys(o).length === 12);
         for (const o of keep) o.g = 1;
         let more; for (let i = 0; i < 3000; i++) more = new Plain(i, 2);
         print([ok, keep.every(o => o.g === 1 && Object.keys(o).join("") === "abcdefg"), Object.keys(more).join(""), more.c].join(" "));
@@ -24431,7 +24436,7 @@ fn learned_receivers_keep_construction_semantics() {
     let expected = concat!(
         "abcdef 6001.5 abcdf proto e false abd ro true abc 0 abc abcd abcd abcde true 2999 ",
         "{\"other\":1} {\"a\":\"number\",\"b\":2,\"c\":3,\"d\":4} abz 28 acgef 18 false abc ",
-        "abcdef 5998 true a abcd o abc false new abc",
+        "abcdef 5998 true a abcd o abc false new abc 12 8997.25",
     );
     let program = Engine::specialize(source, "learned-receivers.js").unwrap();
     let others = Engine::specialize(others, "learned-receivers-others.js").unwrap();
