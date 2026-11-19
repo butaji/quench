@@ -5,9 +5,11 @@ use super::super::LaneHelper;
 use quench_bjit::{call, exit_stub, padded_holes, patch_successor, EXIT_STUB_LEN, HOLES};
 
 mod entry;
-pub(super) use entry::{EntryRow, entry_rows};
+pub(super) use entry::{EntryRow, entry_rows, INT32_BIT};
 use entry::guard_mask;
 mod exits;
+mod proven;
+use proven::Proven;
 pub(super) use exits::Target;
 use exits::{append_routines, exit_addresses, exit_targets, Leave, Leaves};
 
@@ -271,6 +273,16 @@ impl Layout<'_> {
 }
 
 
+/// The parts of the planned rows in layout order, each with its row's first part (`starts`). A row's own rows run before
+/// and after it at its PC: a branch to the PC lands on the first.
+fn body_parts<'a>(planned: &'a [Planned], starts: &[usize]) -> Vec<Part<'a>> {
+    let mut parts = Vec::new();
+    for (row, start) in planned.iter().zip(starts) {
+        parts.extend(row.pre.iter().chain(std::iter::once(row)).chain(&row.post).map(|part| (part, *start)));
+    }
+    parts
+}
+
 /// The index of each planned row's first part among all parts.
 fn row_starts(planned: &[Planned]) -> Vec<usize> {
     let mut at = 0;
@@ -308,18 +320,12 @@ fn branch_target(layout: &Layout, leaves: &mut Leaves, starts: &[usize], (row, r
 /// region reaches (the leave rows, the exit routines and each exiting row's stub) is placed after it
 /// (`place_rows`).
 pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<(Vec<u8>, ResumeTable, u64), String> {
-    // A row's own rows run before and after it at its PC: a branch to the PC lands on the first.
-    let (starts, mut parts) = (row_starts(planned), Vec::new());
-    for (row, start) in planned.iter().zip(&starts) {
-        parts.extend(row.pre.iter().chain(std::iter::once(row)).chain(&row.post).map(|part| (part, *start)));
-    }
+    let starts = row_starts(planned);
+    let parts = body_parts(planned, &starts);
     let body: Vec<&Planned> = parts.iter().map(|(part, _)| *part).collect();
     let entry = entry_rows(layout, &layout.webs.entry_live(&layout.span), 0)?;
     let (g, n) = (entry.len(), body.len());
-    // The proven-arguments entry: none for a loop region.
-    let proven = (layout.ending == Ending::Body).then(|| proven_unboxes(&entry));
-    let guards = if proven.is_some() { guard_mask(&entry) } else { u64::MAX };
-    let past = entry.iter().take_while(|row| row.guards()).count();
+    let proven = Proven::new(layout, &entry);
     let (mut leaves, failed) = Leaves::open(layout)?;
     let targets = parts.iter().map(|part| branch_target(layout, &mut leaves, &starts, *part, n, g)).collect::<Result<Vec<_>, _>>()?;
     let (body_exits, routines) = exit_targets(layout, &body, (g, g + n), &mut leaves)?;
@@ -329,11 +335,8 @@ pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<(Vec<u8>, Res
     holes.extend(body.iter().map(|row| row.holes));
     holes.extend(std::iter::repeat_n([0; HOLES], leaves.0.len()));
     holes.extend(stubs.iter().flat_map(Stub::holes));
-    let unbox_at = holes.len();
-    if let Some(unboxes) = &proven {
-        holes.extend(unboxes.iter().map(|(_, row_holes)| *row_holes));
-        holes.push([0; HOLES]);
-    }
+    let proven_at = holes.len();
+    holes.extend(proven.iter().flat_map(Proven::holes));
     let hole_fns: Vec<Box<dyn Fn(u32) -> u64 + '_>> =
         holes.iter().map(|h| Box::new(move |i: u32| h[i as usize]) as Box<dyn Fn(u32) -> u64>).collect();
     let failed_row = g + n + failed;
@@ -342,28 +345,19 @@ pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<(Vec<u8>, Res
     rows.extend(body.iter().enumerate().map(|(k, row)| Placed { stencil: row.stencil, hole: &*hole_fns[g + k], taken: targets[k], cold: row.cold }));
     rows.extend(leaves.0.iter().enumerate().map(|(k, (_, stencil))| Placed { stencil, hole: &*hole_fns[g + n + k], taken: None, cold: false }));
     let jumps = place_stubs(&mut rows, &stubs, &jump, &hole_fns, failed_row);
-    // The proven entry, behind the stubs: its unboxing rows, then a jump to the first row past the guards (`past`).
     let proven_row = rows.len();
-    let extra = proven.as_ref().map_or(0, |unboxes| unboxes.len() + 1);
-    if let Some(unboxes) = &proven {
-        let skip = numeric::stencil(numeric::Row { kind: Kind::Jump, dst: Place::Mem, a: Place::Mem, b: Place::Mem, speculate: true })?;
-        rows.extend(unboxes.iter().enumerate().map(|(k, (stencil, _))| Placed { stencil: *stencil, hole: &*hole_fns[unbox_at + k], taken: None, cold: true }));
-        rows.push(Placed { stencil: skip, hole: &*hole_fns[unbox_at + unboxes.len()], taken: Some(past), cold: true });
+    if let Some(proven) = &proven {
+        proven.place(&mut rows, &hole_fns, proven_at)?;
     }
-    // Behind the body: the leave rows, then each stub's rows and jump, which are the rows `place_stubs` appended, then the proven entry's.
+    // Behind the body: the leave rows, then each stub's rows and jump (`place_stubs`), then the proven entry's.
     let exits: Vec<Vec<Target>> = entry.iter().map(|row| row.exits(failed_row)).chain(body_exits)
         .chain(std::iter::repeat_with(Vec::new).take(leaves.0.len()))
         .chain(stubs.iter().flat_map(|stub| stub.exits(failed_row)))
-        .chain(std::iter::repeat_with(Vec::new).take(extra))
+        .chain(std::iter::repeat_with(Vec::new).take(proven.as_ref().map_or(0, Proven::len)))
         .collect();
     debug_assert_eq!(exits.len(), rows.len());
     let (code, offsets, thunk) = place_rows(layout.ending, &rows, (&exits, &routines), &jumps, proven_row)?;
-    Ok((code, ResumeTable::of(thunk, &stubs, &jumps, &offsets)?, guards))
-}
-
-/// The unboxing row and holes of each pinned Number guard of `entry`, in order (`EntryRow::unbox`).
-fn proven_unboxes(entry: &[EntryRow]) -> Vec<(&'static Stencil, [u64; HOLES])> {
-    entry.iter().filter_map(|row| row.unbox.map(|stencil| (stencil, row.holes))).collect()
+    Ok((code, ResumeTable::of(thunk, &stubs, &jumps, &offsets)?, proven.as_ref().map_or(u64::MAX, |_| guard_mask(&entry))))
 }
 
 

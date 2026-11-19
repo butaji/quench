@@ -8,10 +8,12 @@ use super::*;
 use super::super::facts::{self, Observed, Seeds, Text};
 use super::super::lane_region::{leaders, writes};
 use super::call_plan::{CallForm, CallShape};
+use super::link::INT32_BIT;
 use crate::bytecode::{Constant, Function, Register, WideInstruction};
 use crate::typed_ir::Type;
 
-/// Per PC of `function`, the mask of its call's arguments proven Numbers (bit `k`: argument `k`), zero where no call is
+/// Per PC of `function`, the mask of its call's arguments proven Numbers (bit `k`: argument `k`) and int32s (bit
+/// `INT32_BIT + k`, which implies bit `k`), zero where no call is
 /// or no argument is proven; `None` where the analysis models less than the function does (`exact::exact_pcs`'s conditions).
 pub(super) fn proven_arguments(function: &Function, constants: &[Constant], numbers: &[Register]) -> Option<Box<[u64]>> {
     if !function.handlers.is_empty() || function.is_generator || function.is_async || function.has_dynamic_scope_access() || function.arguments_slot.is_some() {
@@ -33,9 +35,12 @@ pub(super) fn proven_arguments(function: &Function, constants: &[Constant], numb
             return;
         }
         let shape = CallShape::of(pc as u32, instruction, CallForm::Plain);
-        masks[pc] = (0..u32::from(shape.argc).min(u64::BITS))
-            .filter(|&k| point.holds_number(shape.window + k as Register))
-            .fold(0u64, |mask, k| mask | 1u64 << k);
+        masks[pc] = (0..u32::from(shape.argc).min(INT32_BIT)).fold(0u64, |mask, k| {
+            let register = shape.window + k as Register;
+            let number = if point.holds_number(register) { 1u64 << k } else { 0 };
+            let int32 = if point.holds_int32(register) { 1u64 << (INT32_BIT + k) } else { 0 };
+            mask | number | int32
+        });
     });
     Some(masks.into_boxed_slice())
 }

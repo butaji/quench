@@ -190,17 +190,23 @@ fn guard_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) 
     Out::Next(frame.s)
 }
 
-/// `guard_row` with its tag test left out (`UNBOX`): the pinned destination takes the frame slot's word as it holds it, a
-/// pinned int32 its low word, a pinned double its binary64 bits (an int word widened). Only where the entry proved the
-/// slot a Number: the caller's argument proof (`CallRecord::proven_args`) is what makes the test redundant.
+/// `guard_row` with its tag test left out (`UNBOX`): a pinned double takes the frame slot's word as a binary64 (an int
+/// word widened). Only where the caller's argument proof (`CallRecord::proven_args`) holds the slot a Number, which is
+/// what makes the test redundant.
 #[inline(always)]
 fn unbox_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
     let word = read_place::<MEM, LEFT>(&frame.s);
-    let (value, rep) = match D {
-        PIN..=LAST_INT_PIN => (word as u32 as u64, Representation::Int32),
-        _ => (if is_int(word) { widen(word) } else { word }, Representation::Float64),
-    };
-    frame.write(&mut Concrete::from_hole(0), DEST, value, rep);
+    let value = if is_int(word) { widen(word) } else { word };
+    frame.write(&mut Concrete::from_hole(0), DEST, value, Representation::Float64);
+    Out::Next(frame.s)
+}
+
+/// `guard_row` with its tag test left out (`UNBOX_INT`): a pinned int32 takes the frame slot's low word. Only where the
+/// caller's argument proof holds the slot an int32 (`CallRecord::proven_args`'s int32 bits).
+#[inline(always)]
+fn unbox_int_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    let word = read_place::<MEM, LEFT>(&frame.s);
+    frame.write(&mut Concrete::from_hole(0), DEST, word as u32 as u64, Representation::Int32);
     Out::Next(frame.s)
 }
 
@@ -392,6 +398,7 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
         JUMP | JUMP_POLL | JUMP_WATCH | POLL => control_row::<K, D, A, B>(frame),
         GUARD => guard_row(frame),
         UNBOX => unbox_row(frame),
+        UNBOX_INT => unbox_int_row(frame),
         JUMP_TRUE => truth_row::<true, D, A, B>(frame),
         JUMP_FALSE => truth_row::<false, D, A, B>(frame),
         NOT | NEG => unary_row::<K, D, A, B>(frame),

@@ -72,6 +72,7 @@ pub enum Kind {
     Guard = library::GUARD,
     /// `Guard` into a pinned destination with its tag test left out (`stencils/numeric.rs`'s `unbox_row`).
     Unbox = library::UNBOX,
+    UnboxInt = library::UNBOX_INT,
     /// Set the high half of the int slot named by hole 0 to the int tag.
     TagInit = library::TAG_INIT,
     /// Write a pinned double (operand `a`) to the frame slot at hole 0 as a canonical Number word.

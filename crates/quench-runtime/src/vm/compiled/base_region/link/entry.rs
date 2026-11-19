@@ -11,7 +11,7 @@ pub(in super::super) struct EntryRow {
     pub(in super::super) number: Option<Register>,
     /// The register an int32 guard checks (a pinned int32 or an int slot); `None` for any other row.
     pub(in super::super) int32: Option<Register>,
-    /// The unboxing row a pinned guard runs in the proven-arguments entry (`UNBOX`, the guard's tag test left out);
+    /// The unboxing row a pinned guard runs in the proven-arguments entry (`UNBOX` or `UNBOX_INT`, the guard's tag test left out);
     /// `None` for a slot guard, which writes nothing and that entry skips.
     pub(in super::super) unbox: Option<&'static Stencil>,
 }
@@ -53,10 +53,14 @@ pub(in super::super) fn guard_mask(entry: &[EntryRow]) -> u64 {
 }
 
 /// A row of a slot's entry guard (`kind`: `Guard`, or `TagInit` for a dead int slot) into `dst`, its source the frame slot at
-/// `offset`; `register` is the orig register it checks. A pinned destination also gets its unboxing row (`Kind::Unbox`).
+/// `offset`; `register` is the orig register it checks. A pinned destination also gets its unboxing row (`Kind::Unbox`, `Kind::UnboxInt`).
 fn number_guard(kind: Kind, dst: Place, offset: u64, register: Register) -> Result<EntryRow, String> {
     let row = |kind| numeric::Row { kind, dst, a: Place::Mem, b: Place::Mem, speculate: true };
-    let unbox = matches!(dst, Place::Pin(_) | Place::PinF(_)).then(|| numeric::stencil(row(Kind::Unbox))).transpose()?;
+    let unbox = match dst {
+        Place::Pin(_) => Some(numeric::stencil(row(Kind::UnboxInt))?),
+        Place::PinF(_) => Some(numeric::stencil(row(Kind::Unbox))?),
+        _ => None,
+    };
     let int32 = matches!(dst, Place::Pin(_) | Place::MemInt);
     let guarded = (kind == Kind::Guard).then_some(register);
     Ok(EntryRow {
