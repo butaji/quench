@@ -1086,7 +1086,7 @@ fn materialize_chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatc
             Err(failure) => { recovered.failure = Some(failure); break; }
         }
     }
-    let call_pc = chain[0].call_pc as usize;
+    let call_pc = chain[0].link.call_pc as usize;
     dispatch.outcome = Some(JsNativeStep { instruction_pc: call_pc, next_pc: call_pc + 1,
         result: Ok(StepResult::ResumeFrames(Box::new(recovered))) });
 }
@@ -1097,16 +1097,17 @@ fn materialize_chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatc
 fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usize, entry: ChainFrame)
     -> Result<super::dispatch_frame::PendingGeneralCall, (u32, JsError)> {
     let body = program.function(vm.frames[caller].function as usize);
-    let instruction = body.widened(body.code[entry.call_pc as usize]);
+    let call_pc = entry.link.call_pc as u32;
+    let instruction = body.widened(body.code[call_pc as usize]);
     // The activation the instruction's step pushes (`Vm::pushed_frame`).
-    let (callee, window, receiver, completion) = vm.pushed_frame(caller, instruction, entry.callee, entry.this);
+    let (callee, window, receiver, completion) = vm.pushed_frame(caller, instruction, entry.link.callee, entry.link.this);
     let env = vm.heap.function(callee).expect("admitted inline closure").env;
     let passed: *const [Value] = vm.register_window(caller, window);
     let target = (vm.frames[caller].program, entry.function, env);
     // SAFETY: the caller's window outlives the callee's setup.
-    let pushed = vm.push_in_loop_activation(program, caller, entry.call_pc as usize + 1, target, callee, receiver,
+    let pushed = vm.push_in_loop_activation(program, caller, call_pc as usize + 1, target, callee, receiver,
         unsafe { &*passed }, instruction.result_register(), completion).expect("a recovered callee shares its caller's program");
-    let super::StepResult::PushFrame { call_guard: guard, completion, .. } = pushed.map_err(|error| (entry.call_pc, error))? else {
+    let super::StepResult::PushFrame { call_guard: guard, completion, .. } = pushed.map_err(|error| (call_pc, error))? else {
         unreachable!("an in-loop push pushes a frame")
     };
     let frame = vm.frames.last_mut().expect("recovered inline frame");
@@ -1117,7 +1118,7 @@ fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usiz
     frame.pc_is_resume = true;
     vm.active_registers = frame.registers.as_mut_ptr();
     Ok(super::dispatch_frame::PendingGeneralCall {
-        caller, caller_cursor: None, call_pc: entry.call_pc, destination: instruction.result_register(),
+        caller, caller_cursor: None, call_pc: call_pc, destination: instruction.result_register(),
         completion, returns: instruction.returns_from_frame(), call_guard: Some(guard), caller_program: None,
     })
 }

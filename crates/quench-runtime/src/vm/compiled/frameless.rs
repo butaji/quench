@@ -207,7 +207,7 @@ pub(super) fn chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch
             else { unreachable!("a frameless callee is an admitted user function") };
         let registers = window;
         window = window.wrapping_add(usize::from(program.function(function as usize).registers));
-        ChainFrame { function, call_pc: record.call_pc as u32, source_pc, registers, this: record.this, callee: record.callee }
+        ChainFrame { function, source_pc, registers, link: *record }
     }).collect();
     if let Some(last) = records.last() {
         let epoch = vm.heap.collection_epoch();
@@ -239,6 +239,9 @@ pub(super) fn leave<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch
 #[derive(Clone, Copy)]
 #[cfg(feature = "native-execution")]
 pub(in crate::vm) struct ChainFrame {
-    pub(super) function: u32, pub(super) call_pc: u32, pub(super) source_pc: u32, pub(super) registers: *const Value,
-    pub(super) this: Value, pub(super) callee: Value,
+    pub(super) function: u32, pub(super) source_pc: u32, pub(super) registers: *const Value,
+    /// The link's call record (its PC, where a header holds the call's `Ip`), receiver and callee:
+    /// the `ShadowRecord` the native caller wrote, which the header words of the link repeat
+    /// (`frame::CONTEXT_CALL`, `CONTEXT_THIS`, `CONTEXT_CALLEE`). Taken whole, not field by field.
+    pub(super) link: ShadowRecord,
 }
