@@ -145,6 +145,16 @@ pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + supe
 
     fn int_fact(&self) -> Self::Fact;
     fn number_fact(&self) -> Self::Fact;
+
+    /// Write `word`, of `fact`, to frame local slot `local` (a numeric local target); `false` where this
+    /// frame keeps no locals of its own.
+    #[inline(always)]
+    fn store_numeric_local(&mut self, _stage: &mut S, _local: Register, _word: S::Word, _fact: Self::Fact) -> bool { false }
+
+    /// Whether a Number row its words leave takes the VM's general operator in place (`CallOut::Binary`,
+    /// `ToNumeric`, `IncDec`). A frame that keeps declining answers `false`, and the row stays unresolved.
+    #[inline(always)]
+    fn general_operators(&self) -> bool { false }
 }
 
 /// The int32 operation that leaves at an overflow and at a negative zero.
@@ -193,7 +203,11 @@ pub(crate) enum NumberOperation {
 #[inline(always)]
 pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: NumberOperation) -> Step<S::Word, F::Control> {
-    match operation {
+    #[cfg(not(stencil_build))]
+    let general = if frame.general_operators() { general_binary(&operation) } else { None };
+    #[cfg(stencil_build)]
+    let general: Option<(super::CallOut, Option<Register>)> = None;
+    let step = match operation {
         NumberOperation::Arithmetic { destination, left, right, operation, domain, overflow, zero } =>
             arithmetic(stage, frame, destination, left, right, operation, domain, (overflow, zero)),
         NumberOperation::Relation { left, right, relation, domain } =>
@@ -213,7 +227,31 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         NumberOperation::Math { destination, source, operation } => math(stage, frame, destination, source, operation),
         NumberOperation::Extreme { destination, left, right, maximum } => extreme(stage, frame, destination, (left, right), maximum),
         NumberOperation::Imul { destination, left, right } => imul(stage, frame, destination, left, right),
+    };
+    match (general, step) {
+        (Some((call, destination)), Step::Unresolved) => super::callout::calling(stage, frame, call, destination),
+        (_, step) => step,
     }
+}
+
+/// The general binary operation a Number operation computes where its words do not decide it: the
+/// `Binary` of its operator over its operands (`CallOut::Binary`), with the register it defines. `None`
+/// for an operation that is no binary operator's, or whose operand is neither a register nor a constant
+/// (the call-out takes those alone). A relation's value is left out where it is `==` or `===`, which
+/// one relation names both of.
+#[cfg(not(stencil_build))]
+fn general_binary(operation: &NumberOperation) -> Option<(super::CallOut, Option<Register>)> {
+    let (destination, left, right, operator) = match *operation {
+        NumberOperation::Arithmetic { destination, left, right, operation, .. } => (destination, left, right, operation.binary_operator()),
+        NumberOperation::Remainder { destination, left, right, .. } => (destination, left, right, BinaryOperator::Remainder as u32),
+        NumberOperation::Bitwise { destination, left, right, operation } => (destination, left, right, operation.binary_operator()),
+        NumberOperation::RelationValue { destination, left, right, relation, .. }
+            if !matches!(relation, NumberRelation::Equal | NumberRelation::NotEqual) =>
+            (destination, left, right, relation.binary_operator()),
+        _ => return None,
+    };
+    (super::generic::is_value_operand(left) && super::generic::is_value_operand(right))
+        .then_some((super::CallOut::Binary { left, right, operator }, Some(destination)))
 }
 
 /// The Math function `operation` of one Number `source`, as a double.
@@ -482,7 +520,7 @@ fn to_numeric<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     let miss = frame.miss();
     match frame.prove_number(stage, source, miss) {
         Some(()) => Step::Value(frame.move_register(stage, destination, source)),
-        None => Step::Unresolved,
+        None => general_update(stage, frame, super::CallOut::ToNumeric { source }, destination),
     }
 }
 
@@ -493,10 +531,13 @@ fn increment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     overflow: Overflow) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let operation = if decrement { NumberArithmetic::Subtract } else { NumberArithmetic::Add };
+    let update = super::CallOut::IncDec { source, decrement };
     let Some(value) = frame.int_operand(stage, Operand::register(source), miss) else {
         // A stage that found the operand no int32 (the interpreter's, or a tier that knows it a
-        // binary64) steps the binary64 by one.
-        let Some(number) = frame.number_operand(stage, Operand::register(source), miss) else { return Step::Unresolved };
+        // binary64) steps the binary64 by one; any other operand is the VM's update.
+        let Some(number) = frame.number_operand(stage, Operand::register(source), miss) else {
+            return general_update(stage, frame, update, destination);
+        };
         let one = stage.f64_constant(1.0);
         let result = stage.float_arithmetic(operation, number, one);
         let fact = frame.number_fact();
@@ -504,7 +545,19 @@ fn increment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         return Step::Value(result);
     };
     let one = stage.i32_constant(1);
-    int_arithmetic_result(stage, frame, destination, value, one, operation, (overflow, NegativeZero::Exit), miss)
+    match int_arithmetic_result(stage, frame, destination, value, one, operation, (overflow, NegativeZero::Exit), miss) {
+        // An int32 overflow is the VM's update, which steps it as a double.
+        Step::Unresolved => general_update(stage, frame, update, destination),
+        step => step,
+    }
+}
+
+/// The VM's general operation `call` (ToNumeric or an update) defining `destination`, where the frame takes
+/// the general operator in place (`NumericFrame::general_operators`); otherwise the row stays unresolved.
+#[inline(always)]
+fn general_update<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, call: super::CallOut,
+    destination: Register) -> Step<S::Word, F::Control> {
+    if frame.general_operators() { super::callout::calling(stage, frame, call, Some(destination)) } else { Step::Unresolved }
 }
 
 #[inline(always)]

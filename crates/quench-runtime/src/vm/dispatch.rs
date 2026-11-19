@@ -10,9 +10,19 @@
 //   AppendArray, ForInStart; and Delete, which takes the same `staged_value_step` call-out, as do CloneEnv,
 //   LoadThis, LoadCallee, LoadImportMeta, InitializeThis, ResolveName, LoadResolvedName, StoreResolvedName,
 //   DeleteName, ArgumentsLength and ArgumentGet.
-// - Row, then a per-opcode miss: LoadConst, InitializeTdz, GetField, GetIndex, ToNumeric, SetField, SetFieldStrict,
-//   SetIndex, Binary, NumericAdd, NumericMultiply, IncDec, Unary, JumpBinaryFalse. Each miss is that
-//   opcode's own semantics, not a staged row's.
+// - Row, then a per-opcode miss: GetField, GetIndex, SetField, SetFieldStrict, SetIndex, Binary, NumericAdd,
+//   NumericMultiply, Unary, JumpBinaryFalse. Each miss is that opcode's own semantics, not a staged row's.
+//   What keeps each from its arm alone:
+//   - GetField, GetIndex: the interpreter's record has no read plan (`NoPlans`), and an accessor needs the
+//     inline getter (`try_inline_getter`), which takes `pc` and `allow_inline_calls` from `step`.
+//   - SetField, SetFieldStrict, SetIndex: the stores have no call-out (`CallOut`) yet.
+//   - Binary, NumericAdd, NumericMultiply: `decode_binary` declines an operand that is neither a register nor
+//     a constant, and under `stencil_build` every operator that is no Number's.
+//   - Unary: `decode_unary` declines the operators the stencil build does not stage, and a non-int32 operand's
+//     update has no call-out.
+//   - JumpBinaryFalse: a constant operand, a nullish test, and a bitwise test have no call-out (`Decide` takes
+//     registers, and the nullish and bitwise decisions are not calls).
+// - Run-only (`Declined` is unreachable): LoadConst, ToNumeric, IncDec.
 // - Row that stops the run: Return, Throw.
 // - Call forms with their own convention (spread, forwarded arguments, inline and known targets, per-form
 //   misses): Call, CallArray, CallSpread, CallForwardingArguments, CallKnown, CallMethod, CallThisMethod,
@@ -602,11 +612,14 @@ impl<H: Host> Vm<H> {
             Op::Nop => {}
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
             Op::LoadConst => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::of(p)) {
+                // The constant the instruction names: an index outside the program is a validation error.
+                let constant = self.active_constant(i.constant_index())
+                    .ok_or_else(|| JsError::validation("constant index is outside program".into()))?;
+                let operation = crate::staged::Operation::<u64, ()>::LoadConst {
+                    destination: i.result_register(), constant: crate::staged::Constant::untyped(constant) };
+                match self.run_row(p, f, i, pc, operation) {
                     RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        return self.load_const_miss(f, i);
-                    }
+                    RowRun::Declined => unreachable!("the interpreter frame answers every constant load"),
                     RowRun::Stop(stop) => return stop,
                 }
             }
@@ -730,9 +743,7 @@ impl<H: Host> Vm<H> {
             Op::ToNumeric => {
                 match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        return self.to_numeric_miss(p, f, i);
-                    }
+                    RowRun::Declined => unreachable!("the interpreter frame answers every ToNumeric"),
                     RowRun::Stop(stop) => return stop,
                 }
             }
@@ -825,9 +836,7 @@ impl<H: Host> Vm<H> {
             Op::IncDec => {
                 match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        return self.inc_dec_miss(p, f, i);
-                    }
+                    RowRun::Declined => unreachable!("the interpreter frame answers every increment"),
                     RowRun::Stop(stop) => return stop,
                 }
             }
@@ -1257,20 +1266,46 @@ impl<H: Host> Vm<H> {
         if self.pending_row.take().is_some() {
             return RowRun::Declined;
         }
-        match Self::decode_row(i, context) {
-            Some(operation) => self.run_row(p, f, i, pc, operation),
+        // A record that writes `this` is the miss path's: its store into `this` is the arm's own.
+        if i.writes_current_this() {
+            return RowRun::Declined;
+        }
+        match Self::decode_row_completed(i, context) {
+            Some((operation, completes)) => self.run_row_completed(p, f, i, pc, operation, completes),
             None => RowRun::Declined,
         }
     }
 
-    #[inline(never)]
-    fn load_const_miss(&mut self, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
-        debug_assert_eq!(self.frames[f].program, self.active_program);
-        let value = self.active_constant(i.constant_index()).ok_or_else(|| {
-            JsError::validation("constant index is outside program".into())
-        })?;
-        self.write(f, i.result_register(), value);
-        Ok(StepResult::Continue)
+    /// The staged row `i` decodes to under `context`, and the result flags it completes its frame by
+    /// (`Operation::decode_completed`). A record whose opcode takes no result flags decodes as `decode_row` does.
+    #[inline(always)]
+    fn decode_row_completed(i: WideInstruction, context: crate::staged::DecodeContext<'_>)
+        -> Option<(crate::staged::Operation<u64, ()>, crate::bytecode::Register)> {
+        if i.result_flags() == 0 || i.op().result_layout().allowed_flags() == 0 {
+            return Self::decode_row(i, context).map(|operation| (operation, 0));
+        }
+        crate::staged::Operation::<u64, ()>::decode_completed(i, context)
+    }
+
+    /// Runs `operation` as its staged row, then completes the frame as the record asks: a return of the
+    /// value the row wrote to its result register, or the numeric local the result writes.
+    #[inline(always)]
+    fn run_row_completed(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize,
+        operation: crate::staged::Operation<u64, ()>, completes: crate::bytecode::Register) -> RowRun {
+        let run = self.run_row(p, f, i, pc, operation);
+        if !matches!(run, RowRun::Done(_)) {
+            return run;
+        }
+        if completes & crate::bytecode::RETURN_REGISTER != 0 {
+            return RowRun::Stop(Ok(StepResult::Return(self.read(f, i.result_register()))));
+        }
+        if let Some(local) = i.numeric_local_target() {
+            let value = self.read(f, i.result_register());
+            self.frames[f].locals[local as usize] = value;
+            self.profile
+                .virtual_opcode(self.frames[f].program.raw(), crate::staged::STORE_LOCAL_PLAIN_ROW as usize);
+        }
+        run
     }
 
     #[inline(never)]
@@ -1313,32 +1348,6 @@ impl<H: Host> Vm<H> {
         } else {
             self.write(f, i.result_register(), v);
         }
-        Ok(StepResult::Continue)
-    }
-
-    #[inline(never)]
-    fn inc_dec_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
-        let input = self.read(f, i.register_b());
-        let is_decrement = i.boolean_flag().expect("validated boolean immediate");
-        // ToNumeric, then Number::add or BigInt::add of one (ECMA-262 13.4).
-        let value = match number_increment(input, is_decrement) {
-            Some(value) => value,
-            None => {
-                let numeric = self.to_numeric(p, input)?;
-                match number_increment(numeric, is_decrement) {
-                    Some(value) => value,
-                    None => self.numeric_update(p, numeric, is_decrement)?,
-                }
-            }
-        };
-        self.write(f, i.result_register(), value);
-        Ok(StepResult::Continue)
-    }
-
-    #[inline(never)]
-    fn to_numeric_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
-        let value = self.to_numeric(p, self.read(f, i.register_b()))?;
-        self.write(f, i.result_register(), value);
         Ok(StepResult::Continue)
     }
 

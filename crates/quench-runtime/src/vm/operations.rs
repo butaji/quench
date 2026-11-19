@@ -29,6 +29,14 @@ pub(super) const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualTha
 macro_rules! number_relation_operators {
     ($($relation:ident => [$($operator:ident),+ $(,)?], $stage_method:ident;)+) => {
         impl NumberRelation {
+            /// The binary operator a relation denotes, the first of its group. `Equal` and `NotEqual` name
+            /// two operators each (`==` and `===`), so a caller that needs one of them must not ask.
+            pub(crate) fn binary_operator(self) -> u32 {
+                match self {
+                    $(Self::$relation => [$(BinaryOperator::$operator as u32),+][0],)+
+                }
+            }
+
             #[inline(always)]
             pub(crate) fn from_operator(op: u32) -> Option<Self> {
                 $(
@@ -46,6 +54,13 @@ number_relation_rows!(number_relation_operators);
 macro_rules! number_arithmetic_operators {
     ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
         impl NumberArithmetic {
+            /// The binary operator this arithmetic operation denotes (`from_operator`'s inverse).
+            pub(crate) fn binary_operator(self) -> u32 {
+                match self {
+                    $(Self::$operation => BinaryOperator::$operator as u32,)+
+                }
+            }
+
             #[inline(always)]
             pub(crate) fn from_operator(operator: u32) -> Option<Self> {
                 $(
@@ -137,6 +152,13 @@ number_unary_rows!(number_unary_operators);
 macro_rules! number_bitwise_operators {
     ($($operation:ident => $operator:ident, $stage_method:ident;)+) => {
         impl NumberBitwise {
+            /// The binary operator this bitwise operation denotes (`from_operator`'s inverse).
+            pub(crate) fn binary_operator(self) -> u32 {
+                match self {
+                    $(Self::$operation => BinaryOperator::$operator as u32,)+
+                }
+            }
+
             /// `from_operator` of a decoded operator, as one match.
             #[inline(always)]
             pub(crate) fn from_binary_operator(operator: BinaryOperator) -> Option<Self> {

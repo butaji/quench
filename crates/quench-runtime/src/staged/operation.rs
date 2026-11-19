@@ -263,14 +263,17 @@ impl<W, P> Operation<W, P> {
     /// operation with no completion.
     pub(crate) fn decode_completed(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Self, crate::bytecode::Register)> {
         use crate::bytecode::{RETURN_REGISTER, SET_THIS_REGISTER};
-        // A numeric local target is where the result goes, not how it completes: it stays.
-        // (It shares its bit with the `this` write: only `ReturnableAndThis` reads that bit as one.)
+        // The returned flags are the completions only: a return, or a `this` write. A numeric local target
+        // is where the result goes, not how it completes, so it is left to the record (`writes_numeric_local`);
+        // it shares its bit with the `this` write, and only the layout tells them apart.
         let layout = instruction.op().result_layout();
         let completing = (layout.allowed_flags() & RETURN_REGISTER)
             | if matches!(layout, crate::bytecode::ResultLayout::ReturnableAndThis) { SET_THIS_REGISTER } else { 0 };
         let flags = instruction.result_flags() & completing;
         if instruction.result_flags() & !layout.allowed_flags() != 0 { return None; }
-        let plain = if flags != 0 { instruction.without_result_flags() } else { instruction };
+        // Every allowed flag is a completion or the numeric local target, which the row's caller writes
+        // (`writes_numeric_local`), so the plain record carries none of them.
+        let plain = if instruction.result_flags() != 0 { instruction.without_result_flags() } else { instruction };
         Some((Self::decode(plain, context)?, flags))
     }
 

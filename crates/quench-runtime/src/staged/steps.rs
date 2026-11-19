@@ -13,7 +13,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         property @ (Operation::GetField { .. } | Operation::SetField { .. } | Operation::StoreField { .. } | Operation::FieldGetHost { .. }
             | Operation::FieldAdd { .. } | Operation::IndexGetHost { .. }) => super::property::property_step(stage, frame, property),
         keyed @ (Operation::Delete { .. } | Operation::ElementRead { .. } | Operation::ElementReadOperand { .. } | Operation::ElementWrite { .. }) => keyed_step(stage, frame, keyed),
-        Operation::IncDecLocal { .. } => Step::Unresolved,
+        Operation::IncDecLocal { local, source, decrement } => inc_dec_local(stage, frame, local, source, decrement),
         Operation::Void { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. } | Operation::Binary { .. }
             | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
         Operation::WasmJump(jump) => super::wasm_jump::step(stage, frame, jump),
@@ -190,6 +190,51 @@ fn local_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             if frame.store_local(stage, slot, hole, miss) { Step::Value(hole) } else { Step::Unresolved }
         }
         _ => Step::Unresolved,
+    }
+}
+
+/// `IncDecLocal`: the `++` (or `--`) of `source` written to frame local `local`, by the Number step of an
+/// int32 or binary64 operand, else the VM's update (`CallOut::IncDec`). Defines the updated value.
+#[inline(always)]
+fn inc_dec_local<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, local: Register, source: Register,
+    decrement: bool) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    let operation = if decrement { crate::vm::operations::NumberArithmetic::Subtract } else { crate::vm::operations::NumberArithmetic::Add };
+    let operand = crate::bytecode::Operand::register(source);
+    let (word, fact) = match frame.int_operand(stage, operand, miss) {
+        Some(value) => {
+            let one = stage.i32_constant(1);
+            let (sum, overflowed) = stage.int_arithmetic(operation, value, one);
+            match stage.guard_false(overflowed, miss) {
+                Some(()) => (frame.int_result(stage, sum), frame.int_fact()),
+                None => return inc_dec_local_by_vm(stage, frame, local, source, decrement),
+            }
+        }
+        None => match frame.number_operand(stage, operand, miss) {
+            Some(number) => {
+                let one = stage.f64_constant(1.0);
+                (stage.float_arithmetic(operation, number, one), frame.number_fact())
+            }
+            None => return inc_dec_local_by_vm(stage, frame, local, source, decrement),
+        },
+    };
+    if frame.store_numeric_local(stage, local, word, fact) { Step::Value(word) } else { Step::Unresolved }
+}
+
+/// The VM's update of `source` written to local `local` (`inc_dec_local`'s other operands).
+#[inline(always)]
+fn inc_dec_local_by_vm<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, local: Register, source: Register,
+    decrement: bool) -> Step<S::Word, F::Control> {
+    if !frame.general_operators() {
+        return Step::Unresolved;
+    }
+    match frame.vm_step(stage, super::CallOut::IncDec { source, decrement }, None) {
+        // The update has run, so the local must take it: a frame that answers an update keeps its locals.
+        Some((word, fact)) => {
+            assert!(frame.store_numeric_local(stage, local, word, fact), "a frame that answers an update keeps its numeric local");
+            Step::Value(word)
+        }
+        None => Step::Unresolved,
     }
 }
 

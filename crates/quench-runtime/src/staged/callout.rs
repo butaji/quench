@@ -28,6 +28,8 @@ pub(crate) const TAG_CLONE_ENV: u8 = 16;
 pub(crate) const TAG_ARGUMENT_GET: u8 = 17;
 // merge: HEAD's Accessor keeps its variant (used by vm/call_out.rs) under a fresh tag, since theirs took 16 and 17.
 pub(crate) const TAG_ACCESSOR: u8 = 18;
+pub(crate) const TAG_TO_NUMERIC: u8 = 19;
+pub(crate) const TAG_INC_DEC: u8 = 20;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -88,6 +90,11 @@ pub(crate) enum CallOut {
     /// site's cached accessor, which no register holds, so the VM resolves it from the site.
     #[allow(dead_code)]
     Accessor { receiver: Register, atom: u32, site: u16 } = TAG_ACCESSOR,
+    /// ToNumeric of `source` (`Vm::to_numeric`): a non-Number value's conversion, which may run guest code.
+    ToNumeric { source: Register } = TAG_TO_NUMERIC,
+    /// The `++` (or `--`) of `source` (`decrement`) by the VM's update: a Number's step, else ToNumeric and
+    /// the BigInt update (`Vm::inc_dec_value`). Defines the updated value.
+    IncDec { source: Register, decrement: bool } = TAG_INC_DEC,
 }
 
 /// The registers the VM reads for a `CallOut`: up to two of fixed place, and a list a call
@@ -164,7 +171,8 @@ impl CallOut {
             Self::Equality { left, right, .. } | Self::Binary { left, right, .. } => return Operands::of_operands([Some(left), Some(right)]),
             Self::Delete { base: left, key: right, .. }
                 | Self::Decide { left, right, .. } | Self::EnumeratedGet { base: left, key: right } => [Some(left), Some(right)],
-            Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
+            Self::PropertyKey { source: operand } | Self::ForInNext { state: operand }
+                | Self::ToNumeric { source: operand } | Self::IncDec { source: operand, .. } => [None, Some(operand)],
             Self::ArgumentGet { index, .. } => [Some(index), None],
             Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
             Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. }

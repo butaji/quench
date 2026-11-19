@@ -255,6 +255,8 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
     fn vm_step(&mut self, _stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, InterpreterFact)> {
         if !matches!(operation,
             CallOut::LoadName { .. } | CallOut::GlobalTypeof { .. } | CallOut::GlobalWrite { .. } | CallOut::ForInNext { .. }
+                | CallOut::Binary { .. } | CallOut::Equality { .. } | CallOut::PropertyKey { .. } | CallOut::Decide { .. }
+                | CallOut::ToNumeric { .. } | CallOut::IncDec { .. }
                 | CallOut::Protocol { step: crate::staged::Protocol::Value(crate::staged::protocol_values::ValueStep::GetAsyncIterator)
                     | crate::staged::Protocol::Literal(crate::staged::protocol_literals::LiteralStep::CacheTemplate { .. }
                         | crate::staged::protocol_literals::LiteralStep::LoadTemplate { .. }), .. })
@@ -414,4 +416,23 @@ impl<H: Host> NumericFrame<Concrete> for InterpreterFrame<'_, H> {
 
     #[inline(always)]
     fn number_fact(&self) -> InterpreterFact { InterpreterFact::Double }
+
+    /// The interpreter takes the VM's general operator in place: a Number row its words leave is the VM's.
+    #[inline(always)]
+    fn general_operators(&self) -> bool { true }
+
+    /// The local `local` takes `word` as `fact` boxes it: an int32 word as its value, a binary64 word as a Number.
+    #[inline(always)]
+    fn store_numeric_local(&mut self, _stage: &mut Concrete, local: Register, word: u64, fact: InterpreterFact) -> bool {
+        if usize::from(local) >= self.locals_len {
+            return false;
+        }
+        let value = match fact {
+            InterpreterFact::Value => Value::from_bits(word),
+            InterpreterFact::Double => Value::number(f64::from_bits(word)),
+        };
+        // SAFETY: `local` is inside the frame's local slots.
+        unsafe { *self.locals.add(usize::from(local)) = value };
+        true
+    }
 }

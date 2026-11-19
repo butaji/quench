@@ -49,6 +49,8 @@ impl<H: Host> Vm<H> {
         }
         match operation {
             CallOut::PropertyKey { .. } => self.to_property_key(p, operand).map(Some),
+            CallOut::ToNumeric { .. } => self.to_numeric(p, operand).map(Some),
+            CallOut::IncDec { decrement, .. } => self.inc_dec_value(p, operand, decrement).map(Some),
             CallOut::Equality { .. } | CallOut::Binary { .. } | CallOut::Delete { .. } | CallOut::Decide { .. } =>
                 self.operator_step(p, site, operation, (first, operand)),
             CallOut::ForInNext { .. } => Ok(Some(self.for_in_next(p, operand)?.unwrap_or(Value::DELETED))),
@@ -61,6 +63,21 @@ impl<H: Host> Vm<H> {
             CallOut::Accessor { atom, site: cache, .. } =>
                 self.get_field_cached(p, first.expect("an accessor read names its receiver"), atom, cache).map(Some),
             _ => self.name_step(p, site, operation, first),
+        }
+    }
+
+    /// `++` (or `--`) of `input`: the Number step, else ToNumeric and the step of the converted value
+    /// (its BigInt update). The value the update defines.
+    pub(super) fn inc_dec_value(&mut self, p: &ResidualProgram, input: Value, is_decrement: bool) -> Result<Value, JsError> {
+        match super::dispatch::number_increment(input, is_decrement) {
+            Some(value) => Ok(value),
+            None => {
+                let numeric = self.to_numeric(p, input)?;
+                match super::dispatch::number_increment(numeric, is_decrement) {
+                    Some(value) => Ok(value),
+                    None => self.numeric_update(p, numeric, is_decrement),
+                }
+            }
         }
     }
 
