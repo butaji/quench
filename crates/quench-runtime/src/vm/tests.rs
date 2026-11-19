@@ -24336,3 +24336,121 @@ fn declared_class_layouts_allocate_receivers_without_showing_fields_early() {
         assert_eq!(shape(&vm, first), shape(&vm, second));
     }
 }
+
+#[test]
+fn learned_receivers_keep_construction_semantics() {
+    // Constructors whose receivers are learned to reach more values than the inline slots hold
+    // (`preshaped_receiver`'s slack tracking) take a reserved run, and every add still runs the
+    // full assignment or define: setters, read-only and frozen names, a non-extensible
+    // prototype, a Proxy in the chain, `super()`, a returned object, a throw midway, deletes and
+    // redefinitions, `preventExtensions`, class fields, another `new.target` and a replaced
+    // `prototype` each keep their semantics. Each body has a store no construct plan models
+    // (`typeof`, a sum of two parameters), so its receiver is allocated empty.
+    let source = r#"
+        const out = [];
+        globalThis.keep = [];
+        function Plain(a, b) { this.a = a; this.b = b; this.c = a + b; this.d = 0.5; this.e = "e"; this.f = null; }
+        let p; for (let i = 0; i < 3000; i++) { p = new Plain(i, 1.5); if (i % 100 === 0) keep.push(p); }
+        out.push(Object.keys(p).join(""), p.a + p.b + p.c + p.d);
+    "#;
+    // The other constructors run after the first's count is read: one could take its entry.
+    let others = r#"
+        const seen = [];
+        Object.defineProperty(Plain.prototype, "e", { set(v) { seen.push(v); }, get() { return "proto"; }, configurable: true });
+        const q = new Plain(1, 2);
+        out.push(Object.keys(q).join(""), q.e, seen.join(""), q.hasOwnProperty("e"));
+        function RO(k) { this.a = typeof k; this.b = 2; this.c = 3; this.d = 4; }
+        for (let i = 0; i < 3000; i++) new RO(i);
+        Object.defineProperty(RO.prototype, "c", { value: "ro", writable: false });
+        const r = new RO(1);
+        out.push(Object.keys(r).join(""), r.c);
+        class ROS { constructor(k) { this.a = typeof k; this.b = 2; this.c = 3; this.d = 4; } }
+        for (let i = 0; i < 3000; i++) new ROS(i);
+        Object.defineProperty(ROS.prototype, "b", { value: 0, writable: false });
+        try { new ROS(1); out.push("no"); } catch (e) { out.push(e instanceof TypeError); }
+        function FZ(k) { this.a = typeof k; this.b = 2; this.c = 3; this.x = 9; }
+        for (let i = 0; i < 3000; i++) new FZ(i);
+        FZ.prototype.x = 0; Object.freeze(FZ.prototype);
+        const fz = new FZ(1);
+        out.push(Object.keys(fz).join(""), fz.x);
+        function NX(k) { this.a = typeof k; this.b = 2; this.c = 3; }
+        for (let i = 0; i < 3000; i++) new NX(i);
+        Object.preventExtensions(NX.prototype);
+        out.push(Object.keys(new NX(1)).join(""));
+        function PX(k) { this.a = typeof k; this.b = 2; this.c = 3; this.d = 4; }
+        for (let i = 0; i < 3000; i++) new PX(i);
+        const traps = [];
+        Object.setPrototypeOf(PX.prototype, new Proxy({}, { set(t, k, v, recv) { traps.push(k); return Reflect.set(t, k, v, recv); } }));
+        const px = new PX(1);
+        out.push(traps.join(""), Object.keys(px).join(""));
+        class Base { constructor(n) { this.a = typeof n; this.b = n; this.c = n; } }
+        class Derived extends Base { constructor(n) { super(n); this.d = n; this.e = n; } }
+        let dv; for (let i = 0; i < 3000; i++) { new Base(i); dv = new Derived(i); }
+        out.push(Object.keys(dv).join(""), Object.getPrototypeOf(dv) === Derived.prototype, dv.e);
+        function RT(k) { this.a = typeof k; this.b = 2; this.c = 3; if (k) return { other: k }; this.d = 4; }
+        let rt; for (let i = 0; i < 3000; i++) rt = new RT(i % 2);
+        out.push(JSON.stringify(rt), JSON.stringify(new RT(0)));
+        let partial;
+        function TH(k) { this.a = typeof k; this.b = 2; if (k) { partial = this; throw new Error("x"); } this.c = 3; this.d = 4; this.e = 5; }
+        for (let i = 0; i < 3000; i++) new TH(0);
+        try { new TH(1); } catch (e) {}
+        partial.z = 26;
+        out.push(Object.keys(partial).join(""), partial.z + partial.b);
+        function DL(k) { this.a = typeof k; this.b = 2; this.c = 3; delete this.b; Object.defineProperty(this, "g", { get() { return 7; }, enumerable: true, configurable: true }); this.e = 5; this.f = 6; }
+        let dl; for (let i = 0; i < 3000; i++) dl = new DL(i);
+        out.push(Object.keys(dl).join(""), dl.g + dl.e + dl.f, "b" in dl);
+        function PE(k) { this.a = typeof k; this.b = 2; this.c = 3; Object.preventExtensions(this); this.d = 4; }
+        let pe; for (let i = 0; i < 3000; i++) pe = new PE(i);
+        out.push(Object.keys(pe).join(""));
+        class CF { a = 1; b = "x"; c = null; d; constructor(v) { this.e = v; this.f = v * 2; } }
+        let cf; for (let i = 0; i < 3000; i++) cf = new CF(i);
+        out.push(Object.keys(cf).join(""), cf.f, cf.d === undefined);
+        class OB { a = 1; b = Object.keys(this).join(""); c = 3; d = 4; }
+        let ob; for (let i = 0; i < 3000; i++) ob = new OB();
+        out.push(ob.b, Object.keys(ob).join(""));
+        function NT(k) { this.a = typeof k; this.b = 2; this.c = 3; }
+        function Other() {}
+        Other.prototype.tag = "o";
+        let nt; for (let i = 0; i < 3000; i++) nt = Reflect.construct(NT, [i], Other);
+        out.push(nt.tag, Object.keys(nt).join(""), nt instanceof NT);
+        function CP(k) { this.a = typeof k; this.b = 2; this.c = 3; }
+        for (let i = 0; i < 3000; i++) new CP(i);
+        CP.prototype = { kind: "new" };
+        const cp = new CP(1);
+        out.push(cp.kind, Object.keys(cp).join(""));
+        print(out.join(" "));
+    "#;
+    // After collections, which evacuate the reserved runs of the survivors and restart the
+    // sampling, the survivors keep their values and take more adds.
+    let after = r#"
+        const ok = keep.length === 30 && keep.every((o, k) => o.a === k * 100 && o.c === k * 100 + 1.5 && Object.keys(o).join("") === "abcdef");
+        for (const o of keep) o.g = 1;
+        let more; for (let i = 0; i < 3000; i++) more = new Plain(i, 2);
+        print([ok, keep.every(o => o.g === 1 && Object.keys(o).join("") === "abcdefg"), Object.keys(more).join(""), more.c].join(" "));
+    "#;
+    let expected = concat!(
+        "abcdef 6001.5 abcdf proto e false abd ro true abc 0 abc abcd abcd abcde true 2999 ",
+        "{\"other\":1} {\"a\":\"number\",\"b\":2,\"c\":3,\"d\":4} abz 28 acgef 18 false abc ",
+        "abcdef 5998 true a abcd o abc false new abc",
+    );
+    let program = Engine::specialize(source, "learned-receivers.js").unwrap();
+    let others = Engine::specialize(others, "learned-receivers-others.js").unwrap();
+    let rest = Engine::specialize(after, "learned-receivers-after.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        if mode == crate::ExecutionMode::Interpreted {
+            // The previous receiver, complete, is what the next one learns from.
+            let plain = vm.intern_atom("Plain");
+            let plain = vm.own_property(vm.realm.globals, plain).unwrap();
+            assert_eq!(vm.learned_receiver_slots(plain), Some(6));
+        }
+        vm.execute(&others).unwrap();
+        vm.collect_slow(&program, false);
+        vm.collect_slow(&program, true);
+        vm.execute(&rest).unwrap();
+        assert_eq!(output.borrow().as_slice(), [expected, "true true abcdf 3001"]);
+    }
+}

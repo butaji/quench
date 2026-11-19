@@ -195,6 +195,8 @@ impl<H: Host> Vm<H> {
             constructed_shapes: _,
             // Names constructors and shapes of the running heap; a restored heap derives its own.
             preshaped_receivers: _,
+            // Names constructors and layouts of the running heap; a restored heap learns its own.
+            learned_receivers: _,
             // Templates name roots of the running heap; a restored heap starts without any,
             // and its hosts capture them again.
             object_templates: _,

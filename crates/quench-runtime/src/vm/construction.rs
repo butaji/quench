@@ -737,8 +737,9 @@ impl<H: Host> Vm<H> {
                     vm.capture_constructed_name(&mut object, callee, callee == new_target);
                     let start = object.shape();
                     let object = vm.heap.alloc(Cell::Object(object));
-                    // `callee`'s body runs next on it: its declared layout (`preshaped_receiver`).
-                    vm.preshape_receiver(object, start, callee);
+                    // `callee`'s body runs next on it: its declared layout or the storage
+                    // `new_target`'s receivers reach (`preshaped_receiver`).
+                    vm.preshape_receiver(object, start, callee, new_target);
                     object
                 };
                 let previous_target = vm.construct_target;

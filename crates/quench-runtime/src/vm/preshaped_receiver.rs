@@ -20,7 +20,27 @@
 //!
 //! Any other path that allocates an empty receiver for the same class stays correct: its defines
 //! add the fields one by one, reaching the same shape, as before.
+//!
+//! Receivers made with their learned storage (slack tracking): any other constructor's receiver,
+//! plain JavaScript or a class whose fields have initializers, starts with no properties and
+//! gains them one add at a time, each along the transition its site caches. What it reaches is
+//! learned per `new.target` (`LearnedReceiver`) from the receivers already made: the storage
+//! length of the last one when the next is allocated, the most of a few per young cycle. A
+//! receiver of a constructor that reached more values than the inline slots hold is allocated
+//! over an empty young run reserved for that many (`Heap::reserve_receiver_run`), so its adds
+//! append in place (`Heap::record_property_append_reserved`) instead of moving its values from
+//! the inline slots to the arena and then from class to class as it grows.
+//!
+//! Invariant: only storage is learned, never a shape. The receiver keeps the template's shape and
+//! prototype, and every add still runs the full [[Set]] or define, through its cache or not, and
+//! walks the same transitions, so whatever the chain holds (setters, read-only names, a Proxy, a
+//! frozen or non-extensible prototype), whatever the body does (throws midway, returns another
+//! object, deletes or redefines what it added) and whichever `new.target` a `super()` passes,
+//! every object is exactly the one the unlearned construction makes. A wrong count costs only
+//! memory (unused reserved words) or the moves it would have saved.
 use super::*;
+use crate::heap::InlineObjectHeader;
+use crate::value_vec::INLINE_PROPERTY_COUNT;
 
 /// Entries in the direct-mapped `Vm::preshaped_receivers` memo; a power of two.
 pub(super) const PRESHAPED_RECEIVER_ENTRIES: usize = 64;
@@ -61,22 +81,68 @@ impl PreshapedReceiver {
     }
 }
 
+/// Entries in the direct-mapped `Vm::learned_receivers` table; a power of two.
+pub(super) const LEARNED_RECEIVER_ENTRIES: usize = 64;
+/// The most values a learned receiver's run is reserved for; a constructor that adds more grows
+/// past it as before.
+const LEARNED_SLOTS_MAX: usize = 32;
+/// The receivers each young cycle samples per `new.target` before its count holds for the rest
+/// of the cycle.
+const LEARNED_SAMPLES: u8 = 4;
+
+/// What the receivers of constructions with `new_target` reached (the module's slack tracking):
+/// the storage length `slots` they reach, sampled `samples` times this young cycle from the
+/// previous receiver, `last`, when the next is allocated; and the receiver template of layout
+/// `template` (inline storage, no properties, no extras) with `header`, its prototype and shape
+/// over arena storage, which a reserved receiver takes. Kept across collections, which only
+/// forget `last` and restart the sampling (`forget_learned_receiver_samples`): `new_target` and
+/// the layouts only key a hint, and any count is sound.
+#[derive(Clone, Copy)]
+pub(super) struct LearnedReceiver {
+    new_target: Value,
+    last: Value,
+    template: u32,
+    header: InlineObjectHeader,
+    slots: u8,
+    samples: u8,
+}
+
+impl LearnedReceiver {
+    /// An entry no construction matches: no `new.target` is `undefined`.
+    pub(super) const EMPTY: Self = Self {
+        new_target: Value::UNDEFINED,
+        last: Value::UNDEFINED,
+        template: u32::MAX,
+        header: InlineObjectHeader::EMPTY,
+        slots: 0,
+        samples: 0,
+    };
+
+    #[inline(always)]
+    fn index(new_target: Value) -> usize {
+        new_target.heap_index().unwrap_or_default() as usize & (LEARNED_RECEIVER_ENTRIES - 1)
+    }
+}
+
 impl<H: Host> Vm<H> {
     /// Allocates the receiver template `object` of a construction whose body `constructor` runs
-    /// first thing, in the constructor's declared layout (`preshape_receiver`).
+    /// first thing, with `constructor` its `new.target`, in the constructor's declared layout or
+    /// with its learned storage (`preshape_receiver`).
     #[inline]
     pub(super) fn alloc_construct_receiver(&mut self, object: Object, constructor: Value) -> Value {
         let start = object.shape();
         let this = self.heap.alloc_object(object);
-        self.preshape_receiver(this, start, constructor);
+        self.preshape_receiver(this, start, constructor, constructor);
         this
     }
 
     /// Gives `this`, a just-allocated empty receiver of template shape `start` that no code has
     /// seen, whose construction runs `constructor`'s body next, the layout that body's first
-    /// defines make (the module's invariant); a constructor with none leaves it as it is.
+    /// defines make (the module's invariant); a constructor with none leaves its shape as it
+    /// is, and gives it the storage `new_target`'s receivers were learned to reach
+    /// (`reserve_learned_receiver`).
     #[inline]
-    pub(super) fn preshape_receiver(&mut self, this: Value, start: u32, constructor: Value) {
+    pub(super) fn preshape_receiver(&mut self, this: Value, start: u32, constructor: Value, new_target: Value) {
         let index = PreshapedReceiver::index(constructor, start);
         let mut entry = self.preshaped_receivers[index];
         if entry.constructor != constructor || entry.start != start {
@@ -84,6 +150,7 @@ impl<H: Host> Vm<H> {
             self.preshaped_receivers[index] = entry;
         }
         if entry.len == 0 {
+            self.reserve_learned_receiver(this, new_target);
             return;
         }
         let len = usize::from(entry.len);
@@ -97,6 +164,98 @@ impl<H: Host> Vm<H> {
             if self.method_caches_may_name(atom) {
                 self.invalidate_method_caches_for_prototype_add(this, atom);
             }
+        }
+    }
+
+    /// Gives `this`, a just-allocated receiver of a construction with `new_target` that no code
+    /// has seen, a young run reserved for the values `new_target`'s receivers reach, where they
+    /// reach more than its inline slots hold (`Heap::reserve_receiver_run`; the module's slack
+    /// tracking); while the cycle samples, first learns from the previous receiver. Its shape
+    /// and properties stay as they are.
+    #[inline]
+    fn reserve_learned_receiver(&mut self, this: Value, new_target: Value) {
+        let index = LearnedReceiver::index(new_target);
+        let mut entry = self.learned_receivers[index];
+        if entry.new_target != new_target || entry.samples < LEARNED_SAMPLES {
+            entry = self.sample_learned_receiver(index, this, new_target);
+        }
+        let slots = usize::from(entry.slots);
+        if slots <= INLINE_PROPERTY_COUNT || self.heap.reserve_receiver_run(this, entry.template, entry.header, slots) {
+            return;
+        }
+        self.reserve_learned_template(index, this, slots);
+    }
+
+    /// `reserve_learned_receiver` past its entry's template, which `this` does not have: the
+    /// first reservation for `new_target`, or one whose `prototype` changed. Derives the entry's
+    /// template and header from `this` where it is such a template, and reserves by them.
+    #[cold]
+    #[inline(never)]
+    fn reserve_learned_template(&mut self, index: usize, this: Value, slots: usize) {
+        let Some(data) = self.object_data(this) else { return };
+        let (layout, prototype, shape) = (data.layout_id(), data.proto(), data.shape());
+        if layout == self.learned_receivers[index].template
+            || data.inline_properties().is_none()
+            || data.has_extras()
+            || data.has_exotic_access()
+            || self.shape_is_dictionary(shape)
+            || self.shapes[shape as usize].storage_len() != 0
+        {
+            // A nursery without the room, or no template.
+            return;
+        }
+        let header = InlineObjectHeader::of_run(prototype, shape);
+        let entry = &mut self.learned_receivers[index];
+        entry.template = layout;
+        entry.header = header;
+        self.heap.reserve_receiver_run(this, layout, header, slots);
+    }
+
+    /// The entry of `new_target`, made where another held its index, after one more sample: the
+    /// storage length of its previous receiver, which its construction has completed unless
+    /// constructions of `new_target` nest. The first sample of a young cycle replaces the
+    /// count and the next ones raise it, so the count follows what the constructor builds now.
+    #[cold]
+    #[inline(never)]
+    fn sample_learned_receiver(&mut self, index: usize, this: Value, new_target: Value) -> LearnedReceiver {
+        let mut entry = self.learned_receivers[index];
+        if entry.new_target != new_target {
+            entry = LearnedReceiver { new_target, ..LearnedReceiver::EMPTY };
+        }
+        let last = std::mem::replace(&mut entry.last, this);
+        if let Some(observed) = self.receiver_storage_len(last) {
+            let observed = observed.min(LEARNED_SLOTS_MAX) as u8;
+            entry.slots = if entry.samples == 0 { observed } else { entry.slots.max(observed) };
+            entry.samples += 1;
+        }
+        self.learned_receivers[index] = entry;
+        entry
+    }
+
+    /// How many values `receiver`'s storage holds, outside dictionary storage; `None` for
+    /// anything else (no object, as `undefined` after a collection).
+    fn receiver_storage_len(&self, receiver: Value) -> Option<usize> {
+        let data = self.object_data(receiver)?;
+        if data.properties().is_dictionary() {
+            return None;
+        }
+        let shape = data.shape();
+        (!self.shape_is_dictionary(shape)).then(|| self.shapes[shape as usize].storage_len())
+    }
+
+    /// The count `new_target`'s receivers were learned to reach, while its entry holds.
+    #[cfg(test)]
+    pub(super) fn learned_receiver_slots(&self, new_target: Value) -> Option<u8> {
+        let entry = &self.learned_receivers[LearnedReceiver::index(new_target)];
+        (entry.new_target == new_target).then_some(entry.slots)
+    }
+
+    /// Restarts every learned receiver's sampling for the next young cycle: the receivers
+    /// `last` names may be gone. Counts and templates stay as hints until resampled.
+    pub(super) fn forget_learned_receiver_samples(&mut self) {
+        for entry in self.learned_receivers.iter_mut() {
+            entry.last = Value::UNDEFINED;
+            entry.samples = 0;
         }
     }
 

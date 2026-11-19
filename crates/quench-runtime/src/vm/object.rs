@@ -2123,6 +2123,11 @@ impl<H: Host> Vm<H> {
         {
             return false;
         }
+        let layout = receiver.layout_id();
+        if layout != transition.layouts[0] {
+            let (shape, link) = (receiver.exact_shape(), receiver.proto_link());
+            self.adopt_wide_run_add_layouts(self.field_cache_index(site), shape, atom, Some(link), layout);
+        }
         self.add_by_transition(object, record_id, transition, value);
         self.profile.field_cache_hit(0, 0);
         true
@@ -2132,8 +2137,10 @@ impl<H: Host> Vm<H> {
     /// (`Object::admits_cached_add`), along the cached `transition`: the staged add row first
     /// (`staged::add`, which proves the before-shape and plain storage and needs no call), then,
     /// where the store gate is closed (slot representations are tracked, or the barrier would log
-    /// the value), the plain append that observes the write, else the add that moves storage or
-    /// allocates (`Heap::record_property_add_moving`).
+    /// the value), the plain append that observes the write, then the append into a learned
+    /// receiver's reserved run past its length's class (`Heap::record_property_append_reserved`,
+    /// `preshaped_receiver`), else the add that moves storage or allocates
+    /// (`Heap::record_property_add_moving`).
     #[inline(always)]
     fn add_by_transition(&mut self, object: Value, record_id: u32, transition: Transition, value: Value) {
         // SAFETY: `record_id` names the live record of `object`; the row proves the rest.
@@ -2143,6 +2150,7 @@ impl<H: Host> Vm<H> {
         let (slot, shape) = (usize::from(transition.slot), transition.after);
         if !(self.heap.object_record_by_id(record_id).admits_plain_append(slot, value)
             && self.heap.record_property_append_plain(record_id, slot, value, shape))
+            && !self.heap.record_property_append_reserved(record_id, slot, value, shape)
         {
             self.heap.record_property_add_moving(object, slot, value, shape);
         }
@@ -2183,9 +2191,44 @@ impl<H: Host> Vm<H> {
         if self.method_caches_may_name(atom) {
             return false;
         }
+        let layout = receiver.layout_id();
+        if layout != transition.layouts[0] {
+            let shape = receiver.exact_shape();
+            self.adopt_wide_run_add_layouts(self.field_cache_index(site), shape, atom, None, layout);
+        }
         self.add_by_transition(object, record_id, transition, value);
         self.profile.field_cache_hit(0, 0);
         true
+    }
+
+    /// Moves the add entry of cache site index `site` for receivers of `shape` adding `atom`
+    /// (for an adding store, the one whose chain proof holds for prototype `link`) to the
+    /// layouts of a receiver of `layout`, where that is a wide arena run's and the entry
+    /// recorded inline or extras storage: a learned receiver's (`preshaped_receiver`), whose
+    /// constructor's first receiver, made before the count was learned, recorded the site. The
+    /// staged add row (`add_by_transition`), which guards the layout it recorded, then takes the
+    /// learned receivers' adds; any other receiver's take the plain or moving add, as every add
+    /// the row leaves. One way only, so receivers of both kinds never move the entry back and
+    /// forth.
+    #[cold]
+    #[inline(never)]
+    fn adopt_wide_run_add_layouts(&mut self, site: usize, shape: u32, atom: Atom, link: Option<ProtoLink>, layout: u32) {
+        if !Object::layout_is_wide_run(layout) {
+            return;
+        }
+        let set = self.field_add_indices.get(site);
+        if set == NO_FIELD_ADD_SET {
+            return;
+        }
+        let set = &mut self.field_add_sets[set as usize];
+        let Some(index) = set.matching(shape, atom).find(|&index| link.is_none_or(|link| set.entry(index).proof_holds(link))) else {
+            return;
+        };
+        let entry = set.entry_mut(index);
+        if Object::layout_is_wide_run(entry.layouts[0]) {
+            return;
+        }
+        entry.layouts = Object::add_layouts(layout, entry.target_shape);
     }
 
     /// The add `atom`'s site recorded that compiled code may run (`staged::add::site_add`): a define's

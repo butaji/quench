@@ -2336,6 +2336,9 @@ pub(crate) struct Vm<H> {
     /// `Vm::preshape_receiver` answers: the declared layout a construction allocates its
     /// receiver in; cleared by every collection.
     preshaped_receivers: Box<[preshaped_receiver::PreshapedReceiver; preshaped_receiver::PRESHAPED_RECEIVER_ENTRIES]>,
+    /// What constructions' receivers reach, per `new.target` (`Vm::preshape_receiver`'s slack
+    /// tracking); kept across collections, which restart its sampling.
+    learned_receivers: Box<[preshaped_receiver::LearnedReceiver; preshaped_receiver::LEARNED_RECEIVER_ENTRIES]>,
     /// The host's object templates (`object_template`), indexed by their ids.
     object_templates: Vec<object_template::ObjectTemplate>,
     method_caches: method_cache::MethodCacheTable,

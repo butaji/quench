@@ -23,6 +23,15 @@ impl super::Object {
         super::super::layouts::intern(super::header_word((word >> u32::BITS) as u32, properties.into_parts().1))
     }
 
+    /// Whether a record of layout `layout` keeps its values in a wide arena run (or an empty
+    /// vector without one) of an ordinary, unmarked object outside dictionary storage: no
+    /// inline, extras or narrow storage form, no constant mark, no exotic access. An add into
+    /// such storage keeps every bit of the layout but the shape (`layout_with_shape`).
+    pub(crate) fn layout_is_wide_run(layout: u32) -> bool {
+        use crate::value_vec::{CONSTANT_FORM, DICTIONARY_STORAGE, EXOTIC_ACCESS, STORAGE_FORM};
+        super::super::layouts::auxiliary(layout) & (STORAGE_FORM | CONSTANT_FORM | DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0
+    }
+
     /// The layouts an add site records from a receiver of layout `layout` moving to shape
     /// `shape` (`staged::add_plan::Transition::layouts`): the layout the staged rows guard and
     /// the one they store.
