@@ -20,7 +20,8 @@ impl From<ElementViews> for Views {
         match views {
             ElementViews::Dense => Self::Dense,
             ElementViews::Typed(Some(kind)) if NativeKind::new(kind).is_some() => Self::Typed(kind),
-            ElementViews::Typed(_) => Self::Frame,
+            // The rows read a double backing through its record (`elements::record_element`).
+            ElementViews::Typed(_) | ElementViews::Double => Self::Frame,
         }
     }
 }

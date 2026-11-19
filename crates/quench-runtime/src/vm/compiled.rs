@@ -528,6 +528,27 @@ pub(super) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload
     (values, stage.raw_unary(Unary::Narrow(Lane::I32), length))
 }
 
+/// The raw doubles of the array `base` (tagged) whose backing is double and holds no hole
+/// (`staged::elements::double_view`): their first word and their 64-bit count, as a typed view
+/// holds them; `writable` also proves in-place replacement. Any other base or backing leaves
+/// through `fallback`, with nothing read.
+pub(super) fn emit_double_array_view(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value,
+    writable: bool, fallback: ir::Block) -> (ir::Value, ir::Value) {
+    let mut stage = object_slots::emit(builder);
+    let record_base = emit_array_record_base(&mut stage, payload);
+    crate::staged::elements::double_view(&mut stage, record_base, base, writable, fallback)
+        .expect("the emit stage continues past its guards")
+}
+
+/// `emit_dense_array_reload` of a double view (`emit_double_array_view`): the backing read again,
+/// empty once it is no longer double (`staged::elements::reloaded_double_view`).
+pub(super) fn emit_double_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
+    let mut stage = object_slots::emit(builder);
+    let record_base = emit_array_record_base(&mut stage, payload);
+    let record = crate::staged::elements::array_record(&mut stage, record_base, base);
+    crate::staged::elements::reloaded_double_view(&mut stage, record)
+}
+
 /// The address of `view`'s present element `index` (an int32) and its value; an index past
 /// the elements (a negative one among them, compared unsigned) or a hole leaves through
 /// `fallback`.

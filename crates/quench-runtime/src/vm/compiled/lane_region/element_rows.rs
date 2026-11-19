@@ -56,7 +56,7 @@ impl Lowering<'_, '_> {
         self.hole_leaves = array.is_some() && !self.generic.contains(&pc);
         let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key })
             else { unreachable!("an element read yields a value or leaves at its miss edge") };
-        if array.is_some_and(|array| matches!(array.views, ElementViews::Typed(_))) {
+        if array.is_some_and(|array| matches!(array.views, ElementViews::Typed(_) | ElementViews::Double)) {
             self.set_number(state, destination, value);
         } else {
             self.set_tagged(state, destination, value);
@@ -98,7 +98,9 @@ impl Lowering<'_, '_> {
         match array.views {
             ElementViews::Dense => frame_elements::Held::Dense(super::super::DenseArrayView {
                 values, length, writable: array.writable, uncounted: array.writable, double: None }, proved),
-            ElementViews::Typed(_) => frame_elements::Held::Typed(TypedView { values, length, kind: self.hoisted_kind(array), within: proved.1 }),
+            // A double backing's words are a `Float64Array`'s (`ElementViews::observed_kind`).
+            ElementViews::Typed(_) | ElementViews::Double =>
+                frame_elements::Held::Typed(TypedView { values, length, kind: self.hoisted_kind(array), within: proved.1 }),
         }
     }
 
@@ -124,7 +126,11 @@ impl Lowering<'_, '_> {
             held => {
                 self.held_view = held.map(|array| self.held_array(array, (false, self.ranges.in_bounds(pc))));
                 self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementWrite { value, base, key });
-                self.reload_dense_arrays(pc);
+                // A store through a typed or double view leaves where it misses, calling no VM
+                // step, so no backing moved and no view is read again.
+                if !held.is_some_and(|array| matches!(array.views, ElementViews::Typed(_) | ElementViews::Double)) {
+                    self.reload_dense_arrays(pc);
+                }
             }
         }
         state.proofs.arrays.clear();

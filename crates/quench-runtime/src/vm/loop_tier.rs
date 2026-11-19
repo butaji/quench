@@ -339,17 +339,26 @@ fn native_store_loads<H: Host>(machine: &Vm<H>, region: &super::super::compiled:
 /// every one a record array, each written one a dense array whose elements a store replaces
 /// in place (`Vm::try_replace_record_element`), no prototype claiming an index of it; or every
 /// one a typed array a register holds whose elements the loop may address in place
-/// (`Vm::lane_typed_array_elements`), which its code views at the loop's header. A mix, or
-/// any other value, declines the entry.
+/// (`Vm::lane_typed_array_elements`), which its code views at the loop's header. Record arrays
+/// whose backings are all double are viewed as their raw doubles (`ElementViews::Double`); where
+/// any is not, each is viewed dense, a double one widening first. A mix, or any other value,
+/// declines the entry.
 pub(super) fn lane_loop_arrays<H: Host>(vm: &mut Vm<H>, r: Registers, region: &LoopRegion, entry: &mut LoopEntry)
     -> Option<ElementViews> {
+    let value_of = |(register, field): (crate::bytecode::Register, Option<usize>), entry: &LoopEntry| match field {
+        None => r.get(register),
+        Some(index) => entry.field_value(region, index),
+    };
+    let doubles = !region.arrays.is_empty() && region.arrays.iter().all(|array| {
+        vm.heap.record_array(value_of((array.register, array.field), &*entry)).is_some_and(|object| object.elements().double_values().is_some())
+    });
     let mut views = None;
     for array in &region.arrays {
-        let value = match array.field {
-            None => r.get(array.register),
-            Some(index) => entry.field_value(region, index),
-        };
-        let found = if vm.heap.record_array(value).is_some() {
+        let value = value_of((array.register, array.field), &*entry);
+        let found = if vm.heap.record_array(value).is_some() && doubles {
+            push_double_array(vm, value, array.written, entry)?;
+            ElementViews::Double
+        } else if vm.heap.record_array(value).is_some() {
             push_dense_array(vm, value, array.written, entry)?;
             ElementViews::Dense
         } else {
@@ -362,6 +371,21 @@ pub(super) fn lane_loop_arrays<H: Host>(vm: &mut Vm<H>, r: Registers, region: &L
         views = Some(views.map_or(Some(found), |seen: ElementViews| seen.common(found))?);
     }
     Some(views.unwrap_or_default())
+}
+
+/// Pushes the raw doubles of the record array `value`, whose backing is double
+/// (`ElementViews::Double`), read in place; a `written` one must be dense, its backing owned
+/// alone, and no prototype may claim an index of it, as `push_dense_array` requires.
+fn push_double_array<H: Host>(vm: &mut Vm<H>, value: Value, written: bool, entry: &mut LoopEntry) -> Option<()> {
+    if written && (vm.dense_array_length(value).is_none() || !vm.prototypes_hold_no_index(value)) {
+        return None;
+    }
+    let elements = vm.heap.record_array(value)?.elements();
+    if written && elements.owner_count() != 1 {
+        return None;
+    }
+    let words = elements.double_values()?;
+    entry.push_array(words.as_ptr().cast_mut(), words.len(), words.len())
 }
 
 /// Pushes the record array `value`'s elements; a `written` one must be dense, its backing

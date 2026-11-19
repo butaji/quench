@@ -358,17 +358,52 @@ fn unbarred_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, barred: 
 }
 
 /// The `length` of the direct array `base` as the int32 word it reads as: its dense backing's
-/// count, which an array without extras (an arguments object, sparse elements) has as its
-/// length. `None` (leaving at `miss`) for any other value, an array with extras, or a length
-/// past int32.
+/// count, of any form, which an array without extras (an arguments object, sparse elements) has
+/// as its length. `None` (leaving at `miss`) for any other value, an array with extras, or a
+/// length past int32.
 #[inline(always)]
 pub(crate) fn array_length<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, miss: S::Miss) -> Option<S::Word> {
-    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
-    let backing = array_backing(stage, record_base, base, miss)?;
+    use crate::heap::{ENCODED_LEN, NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
+    let backing = flagged_backing(stage, record_base, base, miss)?;
     let payload = stage.load_u64(Region::Payload.mutable(), backing.record, (ARRAY.object_offset + OBJECT.payload_offset) as i32);
     let plain = super::object::plain_payload(stage, payload);
     stage.guard(plain, miss)?;
-    super::value::length_value(stage, backing.length, miss)
+    // A narrow or double backing counts its values as a wide one does, under its form's flag.
+    let count = stage.and_imm(backing.length, u64::from(!ENCODED_LEN));
+    super::value::length_value(stage, count, miss)
+}
+
+/// The raw doubles of the direct array `base` among the array records at `records`, whose backing
+/// is double (`heap::DOUBLE_LEN`) and counts no hole, writable where `writable`: their first word
+/// and count, which a loop reads and writes as a `Float64Array`'s elements
+/// (`lane_region::ElementViews::Double`). `None` (leaving at `miss`) for any other value or backing.
+#[inline(always)]
+pub(crate) fn double_view<S: Stage>(stage: &mut S, records: S::Word, base: S::Word, writable: bool,
+    miss: S::Miss) -> Option<(S::Word, S::Word)> {
+    let view = prove_view(stage, records, base, writable, miss)?;
+    let flag = view.double?;
+    let double = stage.ne_imm(flag, 0u32);
+    stage.guard(double, miss)?;
+    // A double backing's count of others is of its holes (`heap::DOUBLE_LEN`).
+    let holes = stage.load_u32(Region::Elements.mutable(), view.values, crate::heap::OTHERS_FROM_VALUES);
+    let packed = stage.eq_imm(holes, 0u32);
+    stage.guard(packed, miss)?;
+    Some((view.values, view.length))
+}
+
+/// A `double_view` of the array record `record` read again after a helper that may have changed
+/// its backing: its first word, and its count while the backing is still double, else zero (its
+/// words are `Value`s again, `ArrayElements::make_mut`), so every access through the view leaves
+/// at its bounds test. A double backing gains no hole in place: its writers write Numbers alone.
+#[inline(always)]
+pub(crate) fn reloaded_double_view<S: Stage>(stage: &mut S, record: S::Word) -> (S::Word, S::Word) {
+    use crate::heap::{DOUBLE_LEN, ENCODED_LEN};
+    let Backing { values, length, .. } = record_backing(stage, record);
+    let flag = stage.and_imm(length, u64::from(DOUBLE_LEN));
+    let double = stage.ne_imm(flag, 0u32);
+    let count = stage.and_imm(length, u64::from(!ENCODED_LEN));
+    let empty = stage.constant(0);
+    (values, stage.select(double, count, empty))
 }
 
 /// Replaces the present element at `address` of the dense backing at `values`, which held

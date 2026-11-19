@@ -724,6 +724,12 @@ pub(in crate::vm) enum ElementViews {
     #[default]
     Dense,
     Typed(Option<crate::heap::TypedArrayKind>),
+    /// Record arrays whose backings are double (`heap::DOUBLE_LEN`) and hold no hole, each read
+    /// and written in place as the raw doubles a `Float64Array` holds (`elements::double_view`):
+    /// an element read is a bounds test and one 8-byte load into a Float64 register, a Number
+    /// store one 8-byte store. A helper that may change a backing reads it again
+    /// (`reload_dense_arrays`), and one no longer double reads as empty.
+    Double,
 }
 
 impl ElementViews {
@@ -740,6 +746,8 @@ impl ElementViews {
     fn observed_kind(self) -> Option<crate::heap::TypedArrayKind> {
         match self {
             Self::Typed(kind) => kind,
+            // A double backing's words are a `Float64Array`'s.
+            Self::Double => Some(crate::heap::TypedArrayKind::Float64),
             Self::Dense => None,
         }
     }
@@ -3934,6 +3942,11 @@ impl Lowering<'_, '_> {
                     self.builder.def_var(variables.room, unproved);
                 }
                 ElementViews::Typed(_) => self.hoist_typed_view(array, bits, variables, exit),
+                ElementViews::Double => {
+                    let (values, length) = super::emit_double_array_view(&mut self.builder, self.payload, bits, array.writable, exit);
+                    self.builder.def_var(variables.values, values);
+                    self.builder.def_var(variables.length, length);
+                }
             }
         }
     }
@@ -3999,16 +4012,22 @@ impl Lowering<'_, '_> {
     }
 
     /// After the element store's helper, which may grow any record array's backing, through
-    /// whichever register names it: every dense view hoisted around `pc` reads its backing
-    /// again (`emit_dense_array_reload`), and its append room is proved again
+    /// whichever register names it: every dense or double view hoisted around `pc` reads its
+    /// backing again (`emit_dense_array_reload`, `emit_double_array_reload`), and its append room is proved again
     /// (`forget_append_rooms`). A typed region's views, which no such store moves, stay.
     fn reload_dense_arrays(&mut self, pc: usize) {
         self.forget_append_rooms(pc);
         let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied()
-            .filter(|array| array.views == ElementViews::Dense && (array.header..=array.back).contains(&pc)).collect();
+            .filter(|array| matches!(array.views, ElementViews::Dense | ElementViews::Double) && (array.header..=array.back).contains(&pc)).collect();
         for array in arrays {
             let variables = self.array_variables(array);
             let bits = self.builder.use_var(variables.bits);
+            if array.views == ElementViews::Double {
+                let (values, length) = super::emit_double_array_reload(&mut self.builder, self.payload, bits);
+                self.builder.def_var(variables.values, values);
+                self.builder.def_var(variables.length, length);
+                continue;
+            }
             let (values, length) = super::emit_dense_array_reload(&mut self.builder, self.payload, bits);
             // A grown backing may count its values again; stores through the view keep none.
             if array.writable {

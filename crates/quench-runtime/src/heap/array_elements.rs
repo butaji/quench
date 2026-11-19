@@ -108,7 +108,11 @@ pub(crate) const NARROW_LEN: u32 = 1 << 31;
 ///   writing `double_word`s alone, on a backing of one owner;
 /// - the staged in-place replacement through a view proved writable and double
 ///   (`staged::elements::replace_present`'s double arm): a Number that is no int32, whose
-///   `Value` word is its double's bits, NaN canonical, so the word it writes is `double_word`'s.
+///   `Value` word is its double's bits, NaN canonical, so the word it writes is `double_word`'s;
+/// - a u-jit loop's store through its hoisted double view (`lane_region::ElementViews::Double`,
+///   proved writable by `staged::elements::double_view`), a `Float64Array` store of a Number's
+///   double below the length: a NaN it computes may be another NaN's bits, which every reader
+///   canonicalizes (`decode_double`), and never `Value::DELETED`'s, which no arithmetic makes.
 ///
 /// No other native write reaches one: the staged views proved wide (`array_backing`, a loop's
 /// hoisted view, `writable_backing`, the appends) miss on this flag; a view proved wide before
