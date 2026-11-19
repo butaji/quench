@@ -20,7 +20,7 @@ mod typed_array_kind;
 mod wasm_fields;
 pub(crate) use await_state::{AwaitKind, AwaitRole, AwaitState};
 pub(crate) use wasm_fields::{TableTarget, TableWords, WasmGcFields, WasmTableElements};
-pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
+pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow, for_each_typed_array};
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 pub(crate) use prototype_values::{PrototypeValueWatch, subscribe_prototype_values, watch_prototype_values};
 pub(crate) use global_values::{GlobalCell, GlobalFact, GlobalLayoutFact, global_layout_fact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_layout, subscribe_global_value};
