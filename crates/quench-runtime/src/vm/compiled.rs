@@ -7831,7 +7831,7 @@ impl<H: Host> Vm<H> {
         let result = self.run_pushed_body(program, callee);
         // A construction yields the activation's own receiver, which a derived constructor's
         // `super()` binds in the body.
-        let outcome = self.complete_user_frame(program, result, constructed.is_some());
+        let outcome = self.complete_user_frame(result, constructed.is_some());
         drop(call_guard);
         self.finish_pushed_call(caller, destination, call, outcome?)
     }

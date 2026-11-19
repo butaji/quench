@@ -252,13 +252,14 @@ impl FunctionCompiler<'_, '_> {
         self.load_atom_reference(atom, None)
     }
 
-    /// The declaration index of script-top-level lexical `atom` for a read or write of it from a
-    /// nested function that no `with` or sloppy direct eval can shadow. Such a name is the script's
-    /// own global binding, which `LoadGlobalLexical` and `StoreGlobalLexical` reach by index.
+    /// The declaration index of script-top-level lexical `atom` for a read or write of it that no
+    /// `with` or, from a nested function, sloppy direct eval can shadow. Such a name is the script's
+    /// own global binding, which `LoadGlobalLexical` and `StoreGlobalLexical` reach by index. The
+    /// root's own reads and its declarations' initializations take it too: a direct eval cannot
+    /// shadow the root's own top-level lexicals (a conflicting `var` is an early error).
     fn root_lexical_declaration(&self, atom: Atom) -> Option<u32> {
-        if self.function_id == 0
-            || self.with_depth != self.inherited_with_depth
-            || !self.outer_names_static()
+        if self.with_depth != self.inherited_with_depth
+            || (self.function_id != 0 && !self.outer_names_static())
         {
             return None;
         }

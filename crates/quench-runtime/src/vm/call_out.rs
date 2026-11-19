@@ -118,7 +118,7 @@ impl<H: Host> Vm<H> {
 
     /// The store of `value` to environment local `slot` of the activation `owner` names: a `with`
     /// scope's binding first, then the initialization, constant and function-name rules, a global
-    /// `var`'s property, and at last the activation's binding with its mirrors. Whether the store
+    /// `var`'s property, and at last the activation's binding. Whether the store
     /// defines the instruction's result: a sloppy assignment to a function's own name does not.
     pub(super) fn store_env_local(&mut self, p: &ResidualProgram, owner: VarOwner, slot: usize, value: Value,
         initialize: bool) -> Result<bool, JsError> {
@@ -141,7 +141,6 @@ impl<H: Host> Vm<H> {
             self.store_global_var(p, atom, value, function.strict)?;
             return Ok(true);
         }
-        self.mirror_global_lexical_binding(p, owner, slot, value);
         *self.owner_binding_mut(p, owner, slot).ok_or_else(|| JsError("invalid local environment".into()))? = value;
         self.mapped_argument_store(p, owner, slot, value);
         Ok(true)

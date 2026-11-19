@@ -19,8 +19,6 @@ pub(super) enum NameLocation {
     Named(crate::bytecode::EvalBinding),
     /// A realm global lexical binding.
     GlobalLexical(Atom),
-    /// The running script's global lexical binding in frame `frame`, at slot `slot`.
-    ActiveGlobalLexical(usize, usize),
     /// The innermost object environment that has the name, and the key it was found by.
     WithObject(Value, Value),
     /// The value an intrinsic name stands for, which no binding can shadow.
@@ -154,8 +152,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The location of the layers a by-name read of `atom` searches after the named bindings:
-    /// the activation's own local, the realm's global lexical bindings, the outer static owner
-    /// and the running script's global lexical binding.
+    /// the activation's own local, the realm's global lexical bindings and the outer static owner.
     fn location_beyond_bindings(&self, p: &ResidualProgram, owner: VarOwner, atom: Atom, lookup: &NameLookup) -> Option<NameLocation> {
         let view = self.owner_view(owner);
         let function = view.function();
@@ -178,8 +175,6 @@ impl<H: Host> Vm<H> {
         {
             return Some(NameLocation::EnvironmentSlot(env, slot));
         }
-        let (frame, slot) = self.active_global_lexical_binding(atom)?;
-        self.active_global_lexical_at(frame, slot)?;
-        Some(NameLocation::ActiveGlobalLexical(frame, slot))
+        None
     }
 }

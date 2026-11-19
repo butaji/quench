@@ -480,7 +480,6 @@ impl<H: Host> Vm<H> {
         let outcome = Err(self.guest_exhaustion_error(p.kind));
         let mut frame = self.frames.pop().unwrap();
         self.deactivate_frame(&mut frame, &outcome);
-        self.persist_global_lexical_bindings(p, &frame);
         match outcome {
             Err(error) => error,
             Ok(_) => unreachable!(),
@@ -513,7 +512,7 @@ impl<H: Host> Vm<H> {
         } else {
             self.run_frame_general(p, frame_index)
         };
-        self.complete_user_frame(p, result, capture_constructor_this)
+        self.complete_user_frame(result, capture_constructor_this)
     }
 
     /// The cursor of a call of function `id` of the active program `p` that enters `view`, a
@@ -561,13 +560,11 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn complete_user_frame(
         &mut self,
-        p: &ResidualProgram,
         result: Result<FrameOutcome, JsError>,
         capture_constructor_this: bool,
     ) -> Result<FrameOutcome, JsError> {
         let mut frame = self.frames.pop().unwrap();
         self.deactivate_frame(&mut frame, &result);
-        self.persist_global_lexical_bindings(p, &frame);
         match result? {
             FrameOutcome::Complete(value) => {
                 let outcome = if capture_constructor_this {
@@ -2610,7 +2607,6 @@ impl<H: Host> Vm<H> {
                         let promise = self.release_settled_call_root(pending.completion.take_promise().expect("a settling call"));
                         // SAFETY: as for `p` at the top of the loop.
                         let callee_code = unsafe { &*executing_residual };
-                        self.persist_global_lexical_bindings(callee_code, &suspended);
                         let continuation = self.suspend_activation(
                             suspended,
                             super::activation::Completion::Await(value),
@@ -2707,7 +2703,6 @@ impl<H: Host> Vm<H> {
                     let result = Err(unhandled);
                     let mut failed_frame = self.frames.pop().unwrap();
                     self.deactivate_frame(&mut failed_frame, &result);
-                    self.persist_global_lexical_bindings(p, &failed_frame);
                     frame = pending.caller;
                     pc = self.frames[frame].pc;
                     if let Some(saved) = pending.caller_program.take() {
