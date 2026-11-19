@@ -1176,6 +1176,12 @@ impl JsString {
         (read.take().expect("read once"))(self.flat_unkept().view())
     }
 
+    /// Whether the string holds the flat form a string record reads in place (`native_string`): its
+    /// units held by the record, short or ASCII or wide, rather than a rope, a slice or parts.
+    pub(crate) fn holds_record_form(&self) -> bool {
+        matches!(&self.repr, Repr::Flat(FlatUnits::Short(_) | FlatUnits::Ascii(_) | FlatUnits::Wide(_)))
+    }
+
     /// Whether this is a rope of ASCII units not made flat yet.
     pub(crate) fn is_unflattened_ascii_rope(&self) -> bool {
         matches!(&self.repr, Repr::Shared(inner) if inner.ascii && inner.flat.get().is_none() && inner.unflattened_host().is_none())
