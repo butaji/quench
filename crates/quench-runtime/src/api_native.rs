@@ -1,5 +1,5 @@
 use {super::Runtime, crate::{Host, JsError, RootId, RootedError, Value, vm::Vm}};
-#[path = "api_collection.rs"] mod collection; pub use collection::CollectionContext;
+#[path = "api_collection.rs"] mod collection; pub use collection::CollectionContext; #[path = "api_native_values.rs"] mod values; pub use values::Detach;
 
 /// Immutable host Script code compiled for one runtime state. It retains no
 /// guest objects; each evaluation creates fresh runtime metadata and functions

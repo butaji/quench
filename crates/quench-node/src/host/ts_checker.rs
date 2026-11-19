@@ -11,8 +11,24 @@
 //! (default `$XDG_CACHE_HOME/quench/ts-facts`, else `~/.cache/quench/ts-facts`), and
 //! `QUENCH_TS_CHECKER_WAIT=1` waits for the worker on a cache miss.
 
-#[allow(dead_code)]
 mod protocol;
+
+// The worker writes language sets in these bits; they must stay the runtime's `ValueType` bits.
+const _: () = {
+    use quench_runtime::ValueType as T;
+    use protocol::*;
+    let pairs = [
+        (LANGUAGE_UNDEFINED, T::Undefined), (LANGUAGE_NULL, T::Null), (LANGUAGE_BOOLEAN, T::Boolean),
+        (LANGUAGE_NUMBER, T::Number), (LANGUAGE_STRING, T::String), (LANGUAGE_SYMBOL, T::Symbol),
+        (LANGUAGE_BIGINT, T::BigInt), (LANGUAGE_OBJECT, T::Object), (LANGUAGE_FUNCTION, T::Function),
+    ];
+    let mut index = 0;
+    while index < pairs.len() {
+        assert!(pairs[index].0 == 1 << pairs[index].1 as u16);
+        index += 1;
+    }
+    assert!(LANGUAGE_ANY == u16::MAX);
+};
 
 use std::hash::{Hash, Hasher};
 use std::io::Write;
@@ -59,7 +75,7 @@ pub(crate) fn prepare(path: &Path, compiled: &str, body: Range<usize>, disk_offs
 
 fn version_key(path: &Path, text: &str) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
-    (protocol::PROTOCOL_VERSION, protocol::TSRS_REVISION, path, text).hash(&mut hasher);
+    (protocol::PROTOCOL_VERSION, protocol::TYPESCRIPT_VERSION, protocol::TSRS_REVISION, path, text).hash(&mut hasher);
     hasher.finish()
 }
 

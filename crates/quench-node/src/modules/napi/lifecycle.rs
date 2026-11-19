@@ -1,6 +1,6 @@
 //! Handle scopes, references, wrapping, finalization and per-environment data.
 
-use super::abi::{node_api, CleanupHook, Finalize};
+use super::abi::{node_api, Finalize};
 use super::objects::object;
 use super::values::value_type;
 use super::{api, enter, js_api, out, Context, Env, NapiValue, Status, Thrown, NULL_VALUE};
@@ -439,21 +439,21 @@ node_api! {
         api(env, |env, _| out(result, env.instance_data.get().map_or(std::ptr::null_mut(), |data| data.data)))
     }
 
-    fn napi_add_env_cleanup_hook(env: *mut Env, hook: Option<CleanupHook>, argument: *mut c_void) -> Status {
+    fn napi_open_callback_scope(env: *mut Env, _resource: NapiValue, _context: *mut c_void, result: *mut *mut c_void) -> Status {
         api(env, |env, _| {
-            let hook = hook.ok_or(Status::InvalidArg)?;
-            env.cleanup_hooks.borrow_mut().push((hook, argument as usize));
+            out(result, (env as *const Env).cast_mut().cast())?;
+            env.open_callback_scopes.set(env.open_callback_scopes.get() + 1);
             Ok(())
         })
     }
 
-    fn napi_remove_env_cleanup_hook(env: *mut Env, hook: Option<CleanupHook>, argument: *mut c_void) -> Status {
+    fn napi_close_callback_scope(env: *mut Env, scope: *mut c_void) -> Status {
         api(env, |env, _| {
-            let hook = hook.ok_or(Status::InvalidArg)?;
-            let mut hooks = env.cleanup_hooks.borrow_mut();
-            if let Some(index) = hooks.iter().rposition(|&(candidate, data)| candidate as usize == hook as usize && data == argument as usize) {
-                hooks.remove(index);
+            if scope.is_null() {
+                return Err(Status::InvalidArg);
             }
+            let open = env.open_callback_scopes.get().checked_sub(1).ok_or(Status::CallbackScopeMismatch)?;
+            env.open_callback_scopes.set(open);
             Ok(())
         })
     }
