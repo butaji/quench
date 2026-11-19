@@ -784,7 +784,20 @@ impl<H: Host> Vm<H> {
             Runner::RowOnly => match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                 RowRun::Done(_) => Ok(StepResult::Continue),
                 RowRun::Stop(stop) => stop,
-                RowRun::Declined => unreachable!("a row-only opcode's staged row decides it"),
+                // A unary whose specialized row (a Number or typeof form) left the operand: the general
+                // `Unary` of the record, which the interpreter frame answers by its call-out.
+                RowRun::Declined if i.op() == Op::Unary => {
+                    let operation = crate::staged::Operation::<u64, ()>::Unary {
+                        destination: i.result_register(), source: i.register_b(), operator: i.unary_operator(),
+                    };
+                    let completes = i.result_flags() & crate::bytecode::RETURN_REGISTER;
+                    match self.run_row_completed(p, f, i, pc, allow_inline_calls, operation, completes) {
+                        RowRun::Done(_) => Ok(StepResult::Continue),
+                        RowRun::Stop(stop) => stop,
+                        RowRun::Declined => unreachable!("the interpreter frame answers the general unary row"),
+                    }
+                }
+                RowRun::Declined => unreachable!("a row-only opcode's staged row decides it: {:?}", i.op()),
             },
             // An arithmetic binary: its staged row first, then the record's general `Binary` on a miss. The Number
             // relation of `==` or `===` leaves a pair that is no Number, and that relation names both operators, so

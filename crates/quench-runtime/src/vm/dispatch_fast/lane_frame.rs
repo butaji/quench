@@ -2114,7 +2114,10 @@ pub(in crate::vm::dispatch_fast) const fn row_produces(op: Op) -> bool {
 }
 
 pub(in crate::vm::dispatch_fast) const fn admits_row(op: Op) -> bool {
-    (matches!(op.control_flow_layout(), crate::bytecode::ControlFlowLayout::Fallthrough) || returns_raw_row(op))
+    // A suspension point's lane handler is its suspension row (`generator_yields::suspend_handler`),
+    // which parks the activation: the general step it would miss to cannot suspend in place.
+    !op.traits().has(crate::bytecode::Traits::SUSPENDS)
+    && (matches!(op.control_flow_layout(), crate::bytecode::ControlFlowLayout::Fallthrough) || returns_raw_row(op))
         && (matches!(op.staged(), Some(crate::bytecode::Decoder::Flow))
             || op.traits().has(crate::bytecode::Traits::ROW_HANDLER))
 }

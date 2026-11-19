@@ -4578,7 +4578,7 @@ lane_handler! {
         let mut next = pc + 1;
         match vm.step(code, frame, instruction, &mut next, false) {
             Ok(StepResult::Continue) => {}
-            Ok(_) => unreachable!("an in-place step only continues"),
+            Ok(_) => unreachable!("an in-place step only continues: {:?}", instruction.op()),
             Err(error) => {
                 vm.lane_completion.raise(error);
                 return exit(ip);
