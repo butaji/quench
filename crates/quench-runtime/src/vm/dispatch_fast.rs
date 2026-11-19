@@ -5392,7 +5392,7 @@ script_handler! {
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
         vm.fill_typed_view(base);
-        if !vm.typed_set_quick::<KIND>(base, key, value) {
+        if !vm.typed_cached_store_number::<KIND>(base, key, value) {
             if KIND == super::typed_array_access::ANY_TYPED_KIND {
                 sibling!(set_index_typed_full_in_lane::<H>, r, ip, view)
             }
@@ -5412,7 +5412,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `set_index_typed_in_lane` past its quick store (`Vm::typed_set_quick`): any Number stored
+    /// `set_index_typed_in_lane` past its quick store (`Vm::typed_cached_store_number` after `fill_typed_view`): any Number stored
     /// at an index of a typed array (`Vm::typed_array_set_number`), or the generic order.
     #[inline(never)]
     fn set_index_typed_full_in_lane<>(cx, r, ip, i, view) {
