@@ -192,19 +192,17 @@ static void nr_funcdef(NameCtx *outer, Ast *n) {
 
 /* _handlePropertyAccess: the overloads of the get, set and and accessors of a dot or index. */
 static void nr_property(NameCtx *c, Ast *n, const char *getName, const char *setName, const char *andName,
-                        int *hasGet, int *hasSet, int *hasAnd, AstList *getOv, AstList *setOv, AstList *andOv) {
+                        int *hasGet, int *hasSet, int *hasAnd, AstList **getOv, AstList **setOv, AstList **andOv) {
   NameEntry *g = nc_get(c, K_FUNC, getName);
   NameEntry *s = nc_get(c, K_FUNC, setName);
   NameEntry *a = nc_get(c, K_FUNC, andName);
   *hasGet = g != NULL;
   *hasSet = s != NULL;
   *hasAnd = a != NULL;
-  memset(getOv, 0, sizeof *getOv);
-  memset(setOv, 0, sizeof *setOv);
-  memset(andOv, 0, sizeof *andOv);
-  if (g) *getOv = g->funcs;
-  if (s) *setOv = s->funcs;
-  if (a) *andOv = a->funcs;
+  /* the overload lists are live: a later addition to a name shows in every reference to it */
+  *getOv = g ? &g->funcs : NULL;
+  *setOv = s ? &s->funcs : NULL;
+  *andOv = a ? &a->funcs : NULL;
   if (!g && !a) {
     char msg[600];
     snprintf(msg, sizeof msg, "Cannot find either %s or %s", getName, andName);
@@ -243,7 +241,7 @@ static void nr_protocol_func_decl(NameCtx *c, Ast *n) {
     name_throw(n, "", msg);
   }
   n->u.func.hasOv = 1;
-  n->u.func.ov = e->funcs;
+  n->u.func.ov = &e->funcs;
 }
 
 static void nr_type_ref(NameCtx *c, Ast *n) {
@@ -339,7 +337,7 @@ static void nr_call(NameCtx *c, Ast *n) {
   NameEntry *funcs = nc_get(c, K_FUNC, n->u.call.name);
   if (funcs) {
     n->u.call.hasOv = 1;
-    n->u.call.ov = funcs->funcs;
+    n->u.call.ov = &funcs->funcs;
   } else {
     const char *orig = n->u.call.name;
     NameEntry *t = nc_get(c, K_TYPE, n->u.call.name);
@@ -365,7 +363,7 @@ static void nr_call(NameCtx *c, Ast *n) {
       name_throw(n, "", msg);
     }
     n->u.call.hasOv = 1;
-    n->u.call.ov = cast->funcs;
+    n->u.call.ov = &cast->funcs;
   }
   each_child_list(&n->u.call.typeArguments, nr_child, c);
   each_child_list(&n->u.call.argumentList, nr_child, c);

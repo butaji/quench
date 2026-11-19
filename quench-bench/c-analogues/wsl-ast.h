@@ -34,7 +34,7 @@ struct Ast {
     /* FuncDef, NativeFunc, ProtocolFuncDecl */
     struct { const char *name; int isCast; const char *shaderType; int isRestricted;
              Ast *returnType; AstList typeParameters; AstList parameters; Ast *body;
-             int hasOv; AstList ov; } func;   /* ov: possibleOverloads (ProtocolFuncDecl) */
+             int hasOv; AstList *ov; } func;   /* ov: possibleOverloads (ProtocolFuncDecl), live */
     /* TypeRef */
     struct { const char *name; AstList typeArguments; Ast *type; } typeRef;   /* type: resolved target */
     /* PtrType, ArrayRefType */
@@ -81,13 +81,13 @@ struct Ast {
     struct { const char *name; int anon; Ast *variable; } varRef;
     /* CallExpression */
     struct { const char *name; AstList typeArguments; AstList argumentList;
-             int hasOv; AstList ov; int isCast; Ast *returnType; } call;
+             int hasOv; AstList *ov; int isCast; Ast *returnType; } call;
     /* DotExpression */
     struct { const char *fieldName; Ast *base;
-             int hasGet, hasSet, hasAnd; AstList getOv, setOv, andOv; } dot;
+             int hasGet, hasSet, hasAnd; AstList *getOv, *setOv, *andOv; } dot;
     /* IndexExpression */
     struct { Ast *base; Ast *index;
-             int hasGet, hasSet, hasAnd; AstList getOv, setOv, andOv; } index;
+             int hasGet, hasSet, hasAnd; AstList *getOv, *setOv, *andOv; } index;
     /* DereferenceExpression */
     struct { Ast *ptr; } deref;
     /* MakePtrExpression, MakeArrayRefExpression */
@@ -212,7 +212,7 @@ static void buf_ref_target(Buf *b, const char *label, const Ast *t) {
 }
 static void buf_ref_list(Buf *b, const char *label, const AstList *l, int has) {
   buf_fmt(b, " %s=", label);
-  if (!has) { buf_str(b, "\"-\""); return; }
+  if (!has || !l) { buf_str(b, "\"-\""); return; }
   buf_str(b, "\"[");
   for (int i = 0; i < l->n; i++) {
     if (i) buf_str(b, ",");
@@ -227,19 +227,19 @@ static void end_scalars(Buf *b, const Ast *n) {
     switch (n->tag) {
     case A_TYPEREF: buf_ref_target(b, "type", n->u.typeRef.type); break;
     case A_VARIABLEREF: buf_ref_target(b, "variable", n->u.varRef.variable); break;
-    case A_CALL: buf_ref_list(b, "overloads", &n->u.call.ov, n->u.call.hasOv); break;
+    case A_CALL: buf_ref_list(b, "overloads", n->u.call.ov, n->u.call.hasOv); break;
     case A_DOT:
-      buf_ref_list(b, "getOverloads", &n->u.dot.getOv, n->u.dot.hasGet);
-      buf_ref_list(b, "setOverloads", &n->u.dot.setOv, n->u.dot.hasSet);
-      buf_ref_list(b, "andOverloads", &n->u.dot.andOv, n->u.dot.hasAnd);
+      buf_ref_list(b, "getOverloads", n->u.dot.getOv, n->u.dot.hasGet);
+      buf_ref_list(b, "setOverloads", n->u.dot.setOv, n->u.dot.hasSet);
+      buf_ref_list(b, "andOverloads", n->u.dot.andOv, n->u.dot.hasAnd);
       break;
     case A_INDEX:
-      buf_ref_list(b, "getOverloads", &n->u.index.getOv, n->u.index.hasGet);
-      buf_ref_list(b, "setOverloads", &n->u.index.setOv, n->u.index.hasSet);
-      buf_ref_list(b, "andOverloads", &n->u.index.andOv, n->u.index.hasAnd);
+      buf_ref_list(b, "getOverloads", n->u.index.getOv, n->u.index.hasGet);
+      buf_ref_list(b, "setOverloads", n->u.index.setOv, n->u.index.hasSet);
+      buf_ref_list(b, "andOverloads", n->u.index.andOv, n->u.index.hasAnd);
       break;
     case A_PROTOCOLREF: buf_ref_target(b, "protocolDecl", n->u.nameOnly.target); break;
-    case A_PROTOCOLFUNCDECL: buf_ref_list(b, "overloads", &n->u.func.ov, n->u.func.hasOv); break;
+    case A_PROTOCOLFUNCDECL: buf_ref_list(b, "overloads", n->u.func.ov, n->u.func.hasOv); break;
     case A_RETURN: buf_ref_target(b, "func", n->u.ret.func); break;
     case A_ENUMLITERAL: buf_ref_target(b, "member", n->u.enumLit.member); break;
     case A_INTLITERAL:

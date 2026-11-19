@@ -14,6 +14,7 @@
 #include "wsl-clone.h"
 #include "wsl-prep.h"
 #include "wsl-names.h"
+#include "wsl-synth.h"
 
 static uint32_t fnv_bytes(uint32_t h, const char *s, size_t n) {
   for (size_t i = 0; i < n; i++) {
@@ -138,6 +139,9 @@ static void std_parse_once(void) {
 
 static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t statuscap) {
   arena_reset_to(STD_MARK);
+  /* a throw unwinds the recursion stacks without popping them */
+  RC_N = 0;
+  TDR_N = 0;
   jmp_buf top;
   WSL_NH = 0;
   WSL_HANDLERS[WSL_NH++] = &top;
@@ -163,6 +167,22 @@ static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t sta
     NameCtx *global = program_global_ctx(&PREP_OUT);
     names_types(&PREP_OUT, global);
     names_protocols(&PREP_OUT, global);
+    if (STAGE >= 3) {
+      /* resolveTypeDefsInTypes, resolveTypeDefsInProtocols, checkRecursiveTypes, then the synthesis */
+      for (int k = 0; k < PREP_OUT.statements.n; k++) {
+        Ast *st = PREP_OUT.statements.v[k];
+        if (st->tag == A_TYPEDEF || st->tag == A_STRUCTTYPE || st->tag == A_ENUMTYPE || st->tag == A_NATIVETYPE)
+          tdr_visit(st);
+      }
+      for (int k = 0; k < PREP_OUT.statements.n; k++) {
+        Ast *st = PREP_OUT.statements.v[k];
+        if (st->tag == A_PROTOCOLDECL) tdr_visit(st);
+      }
+      for (int k = 0; k < PREP_OUT.statements.n; k++) rc_visit(PREP_OUT.statements.v[k]);
+      synth_struct_accessors(&PREP_OUT, global, PREP_OUT.statements.n);
+      synth_enum_functions(&PREP_OUT, global, PREP_OUT.statements.n);
+    }
+    if (STAGE >= 4) names_functions(&PREP_OUT, global);
   }
   WSL_NH = 0;
   buf_str(b, "program\n");
