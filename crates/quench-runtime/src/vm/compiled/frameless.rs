@@ -194,6 +194,7 @@ fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir:
 
 /// The function an admitted frameless callee runs: the callee is an admitted user function
 /// (`general_frameless_admit`), so its heap kind names it.
+#[cfg(feature = "native-execution")]
 pub(super) fn admitted_function<H: Host>(vm: &Vm<H>, callee: Value) -> u32 {
     let Some(crate::heap::FunctionKind::User(_, function)) = vm.heap.function(callee).map(|callee| callee.kind)
         else { unreachable!("a frameless callee is an admitted user function") };

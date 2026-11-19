@@ -276,7 +276,7 @@ fn advance_into_native_frames<H: Host>(cx: *mut LaneContext<H>) -> Option<(&'sta
         for above in 0..headers {
             let index = base + depth - 1 - above;
             let side_at = unsafe { (*stack.sides.get()).len() } - 1 - above;
-            let side = unsafe { &mut (*stack.sides.get())[side_at] };
+            let side = unsafe { &mut (&mut *stack.sides.get())[side_at] };
             let desc = unsafe { &*(stack.native_table[index] as *const super::super::compiled::DirectCallee) };
             unsafe { &*desc.target.view }.note_native_leave();
             let frame = (desc as *const DirectCallee, stack.body_table[index], window.0.addr());
@@ -310,7 +310,8 @@ pub(super) fn discard_frames<H: Host>(cx: *mut LaneContext<H>) {
             vm.lane_stack.records_mut().set_len(len - count);
         }
     }
-    if let Some(window) = outer { vm.lane_stack.values.release_window(window); }
+    // SAFETY: the window belonged to the outermost discarded native record, now gone.
+    if let Some(window) = outer { unsafe { vm.lane_stack.values.release_window(window) }; }
 }
 
 /// Retires the bodies of the native headers the lane continues in, innermost out, as `retire_bodies` does for

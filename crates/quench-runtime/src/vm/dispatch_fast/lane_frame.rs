@@ -1037,7 +1037,7 @@ fn call_frame<H: Host, const OP: u16, const ACC: u8, const MISS: u16>(cx: *mut L
         let vm = unsafe { vm(cx) };
         frame.call = Some(LaneCall {
             context: cx.cast(),
-            stack: &raw const vm.lane_stack,
+            stack: &raw const *vm.lane_stack,
             globals: &raw const vm.realm.globals,
             record: std::ptr::from_ref(i),
             ip,

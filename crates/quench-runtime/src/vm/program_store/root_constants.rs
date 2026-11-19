@@ -63,7 +63,7 @@ impl ProgramStore {
 
     /// Hands each record that keeps a root slot's value, of program `only` or of every
     /// program, to `revert` with its view, and forgets it.
-    pub(crate) fn retire_root_constant_sites(
+    pub(in crate::vm) fn retire_root_constant_sites(
         &self,
         only: Option<ProgramId>,
         mut revert: impl FnMut(&super::super::dispatch_fast::LaneView, u32),

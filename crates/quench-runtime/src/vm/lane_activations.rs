@@ -41,8 +41,6 @@ impl LaneActivations {
     pub(super) fn top_ptr(&self) -> *mut Activation { self.top }
     #[inline(always)]
     pub(super) fn is_empty(&self) -> bool { self.top == self.base }
-    #[inline(always)]
-    pub(super) fn is_full(&self) -> bool { self.top == self.end }
 
     /// The address of the top word, which emitted code bumps through a pointer as the lane does.
     #[inline(always)]
@@ -113,21 +111,6 @@ impl LaneActivations {
         (!self.is_empty()).then(|| unsafe { &mut *self.top.sub(1) })
     }
 
-    /// The activation `depth` above the base, if it is below the top.
-    #[inline(always)]
-    pub(super) fn get(&self, depth: usize) -> Option<&Activation> {
-        let at = self.base.wrapping_add(depth);
-        // SAFETY: `at` is below `top`, so it is an initialized activation.
-        (at < self.top).then(|| unsafe { &*at })
-    }
-
-    #[inline(always)]
-    pub(super) fn get_mut(&mut self, depth: usize) -> Option<&mut Activation> {
-        let at = self.base.wrapping_add(depth);
-        // SAFETY: `at` is below `top`, so it is an initialized activation.
-        (at < self.top).then(|| unsafe { &mut *at })
-    }
-
     /// Drops the innermost activation, which holds no drop glue; its slot stays as it is,
     /// unread by the region, until the next push.
     ///
@@ -161,15 +144,6 @@ impl LaneActivations {
 
     pub(super) fn truncate(&mut self, len: usize) {
         if len < self.len() { self.top = self.base.wrapping_add(len); }
-    }
-
-    /// Empties the activations, yielding them outermost first. The slots stay in the
-    /// allocation, which nothing pushes into while the caller holds the region.
-    pub(super) fn drain(&mut self) -> impl Iterator<Item = Activation> + use<> {
-        let (base, len) = (self.base, self.len());
-        self.top = base;
-        // SAFETY: the `len` slots were initialized and are read once each.
-        (0..len).map(move |depth| unsafe { base.add(depth).read() })
     }
 
     /// Makes room for `additional` more activations; whether they moved.

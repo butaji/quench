@@ -107,12 +107,6 @@ const fn leaf_binds_this(form: LeafForm) -> bool {
     crate::staged::call_leaf::binds_this(form)
 }
 
-/// Whether a leaf of `form` runs in its own environment (`CAPTURE_LEAF`, `CONTEXT_LEAF`).
-#[inline(always)]
-const fn leaf_swaps_env(form: LeafForm) -> bool {
-    crate::staged::call_leaf::swaps_env(form)
-}
-
 /// One instruction of a lane view.
 #[repr(C)]
 pub(super) struct LaneInstruction {
@@ -11268,7 +11262,7 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
     // Every cell body is published here (`tier_machine::publish` from `specialized`): the
     // proved calls of the view, which skip the cell body, lose their proof.
     if !published && own.entry_published() {
-        unsafe { vm(cx) }.unprove_view_entries(own);
+        unsafe { self::vm(cx) }.unprove_view_entries(own);
     }
     warming
 }
@@ -19229,7 +19223,7 @@ pub(in crate::vm) fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, fu
     let (capture_values, capture_len) = unsafe { crate::heap::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
         .unwrap_or((std::ptr::null(), 0));
     Some(super::compiled::DirectCallee {
-        target, method, body, call: view.records().wrapping_add(pc).addr(), caller_base: view.records().addr(), function: target.function, cell: view_of.entry_cell(),
+        target, method, body, call: view.records().wrapping_add(pc).addr(), caller_base: view.records().addr(), cell: view_of.entry_cell(),
         callee: target.callee, registers: target.registers, sloppy, lexical, capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), forwarder: None,
     })
 }

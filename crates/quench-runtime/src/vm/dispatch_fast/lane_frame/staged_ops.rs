@@ -258,7 +258,7 @@ impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
         }
         debug_assert!(leaf != NOT_LEAF || target.entry.activates(), "a proved plain call's entry activates");
         call.target.set(std::ptr::from_ref(target));
-        let lexical = || Some(crate::staged::Bound { this: target.lexical_this.to_bits(),
+        let lexical = || Some(crate::staged::plan::Bound { this: target.lexical_this.to_bits(),
             arguments: crate::staged::plan::WordList { start: 0, count: 0 } });
         let (sloppy, bound) = if call.form.plain {
             // A plain call's receiver is `undefined` by its record, whose `this` is its target's.

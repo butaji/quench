@@ -102,7 +102,7 @@ impl LaneStack {
     /// calls no `activations` while it walks.
     pub(super) fn walk_innermost(&self) -> Walk<'_> {
         // SAFETY: the walk's contract above.
-        let (records, sides, segments) = unsafe { (&self.records_unspilled()[..], &(*self.sides.get())[..], &(*self.segments.get())[..]) };
+        let (records, sides, segments) = unsafe { (&self.records_unspilled()[..], (&*self.sides.get()).as_slice(), (&*self.segments.get()).as_slice()) };
         Walk {
             stack: self,
             records,

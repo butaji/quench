@@ -538,12 +538,6 @@ impl<H: Host> Vm<H> {
         self.heap.alloc_string("ModuleSource".into())
     }
 
-    pub(super) fn call_native_guarded(&mut self, p: &ResidualProgram, native: Native, this: Value, args: &[Value],
-        callee: Value) -> Result<Value, JsError> {
-        #[cfg(feature = "profile-lane-exits")] self.record_native_call(native, callee, this, args);
-        self.as_native_activation(native, callee, |vm| vm.call_native(p, native, this, args))
-    }
-
     /// `call_native_guarded` of `Vm::call_value_with_target_inner`, whose callers hold the
     /// arguments for the call (`call_value` roots them; the `_from_frame` calls' frame is parked
     /// at the call, which the collector scans at the call's liveness), so the native roots only

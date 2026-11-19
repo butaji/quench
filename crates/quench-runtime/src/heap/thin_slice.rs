@@ -162,27 +162,6 @@ impl<T, const P: usize> ThinBoxSlice<T, P> {
     /// slice itself, then its header.
     pub(crate) const IN_PLACE_WORDS: usize = 2;
 
-    /// Lays out at `words` a slice of the `len` elements that follow its `IN_PLACE_WORDS`,
-    /// and returns it: a view that owns nothing, which its caller must never drop, valid
-    /// while the words stay put and hold their layout.
-    ///
-    /// # Safety
-    /// `words` is valid for writes of `IN_PLACE_WORDS` words and the `len` initialized
-    /// elements follow them.
-    #[inline(always)]
-    pub(crate) unsafe fn lay_out_in_place(words: *mut usize, len: usize) -> *const Self {
-        const { assert!(Self::ELEMENTS_OFFSET == size_of::<usize>()) };
-        debug_assert_eq!(len & MARK_BIT, 0);
-        // SAFETY: as the caller guarantees; the header word precedes the elements by
-        // `ELEMENTS_OFFSET`, as an allocated slice's does.
-        unsafe {
-            let header = words.add(1);
-            header.write(len);
-            words.write(header as usize);
-        }
-        words.cast::<Self>()
-    }
-
     /// A slice of `len` elements made in place by `element(index)`, or `None` when one is
     /// missing, which drops those made before it, or when no room is left for them.
     pub(crate) fn try_from_fn(len: usize, mut element: impl FnMut(usize) -> Option<T>) -> Option<Self> {

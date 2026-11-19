@@ -143,7 +143,9 @@ pub(crate) fn admit_native<S: Stage>(stage: &mut S, cell: S::Word, expected: S::
 pub(crate) fn enter_cached<S: Stage>(stage: &mut S, held: S::Word, expected: Option<u64>, cell: S::Word, miss: S::Miss)
     -> Option<S::Word> {
     if let Some(expected) = expected {
-        super::protocol::guard_callee(stage, held, expected, miss)?;
+        // `protocol::guard_callee`, written out: the stencil build includes this file without `protocol`.
+        let same = stage.eq_imm(held, expected);
+        stage.guard(same, miss)?;
     }
     Some(stage.load_u64(Region::EntryCell.mutable(), cell, CELL.entry_offset))
 }

@@ -3997,18 +3997,6 @@ impl EnvironmentSlots {
         Some(Self(storage))
     }
 
-    /// Slots that own `values`, in order.
-    /// Dense storage of the `len` owned slots that follow its `IN_PLACE_SLOTS_WORDS` words
-    /// at `words`, as `ThinBoxSlice::lay_out_in_place`: a view its caller never drops.
-    ///
-    /// # Safety
-    /// As `ThinBoxSlice::lay_out_in_place`; each slot is an owned value.
-    #[inline(always)]
-    pub(crate) unsafe fn lay_out_in_place(words: *mut Value, len: usize) -> *const Self {
-        // SAFETY: as the caller guarantees; a slot is a `Value`, a word.
-        unsafe { super::thin_slice::ThinBoxSlice::<EnvironmentSlot, ENVIRONMENT_PREFIX_WORDS>::lay_out_in_place(words.cast(), len).cast() }
-    }
-
     /// `len` slots, each `DELETED` but slot `k` of each bit `k` of `captured`, which holds
     /// `values[k]`: one fill of the storage, then one write per captured slot.
     ///

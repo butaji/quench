@@ -166,7 +166,7 @@ impl FrameRecord {
     /// (`lane_eval`): its closure `callee`, its receiver and the environment its closure
     /// captured, with no registers or locals of its own until the window is pulled.
     pub(in crate::vm) fn for_eval(program: ProgramId, function: u32, callee: Value, this: Value, env: Value) -> Box<Self> {
-        let mut record = Self {
+        let record = Self {
             receiver: this.to_bits(),
             context: CallContext::Function(callee),
             reflected_parameters: 0,
@@ -233,7 +233,7 @@ impl FrameRecord {
             initialized_registers: _, capture_cache: _, with_base: _, js_jit_interpreter_started: _,
             fixed_this: _, js_jit_skip_entry_once,
         } = *frame;
-        let mut record = Self {
+        let record = Self {
             receiver: this.to_bits(), context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
             live_registers: None, suspended_epoch: 0, window_plan: None, js_jit_skip_entry_once, environment_window: false,
@@ -354,7 +354,7 @@ impl Snap for FrameRecord {
     }
 
     fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
-        let mut record = Self {
+        let record = Self {
             context: Snap::unsnap(reader)?,
             reflected_parameters: Snap::unsnap(reader)?,
             original_arguments: Snap::unsnap(reader)?,
