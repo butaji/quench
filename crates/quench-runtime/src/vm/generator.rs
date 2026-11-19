@@ -419,8 +419,7 @@ impl<H: Host> Vm<H> {
             let environment = vm.heap.alloc_array(crate::heap::ArrayObject::new(
                     Self::empty_object(vm.array_proto),
                     vec![generator, promise],
-                ),
-            });
+                ));
             let natives = [Native::AsyncGeneratorReturnFulfilled, Native::AsyncGeneratorReturnRejected];
             vm.then_with_natives(p, awaited, natives, environment, ThenCapability::Resolving)?;
             Ok(())
@@ -783,8 +782,7 @@ impl<H: Host> Vm<H> {
                     Value::FALSE,
                     Value::TRUE,
                 ],
-            ),
-        });
+            ));
         self.then_with_natives(p, unwrapped, ASYNC_GENERATOR_DELEGATE_REACTIONS, env, ThenCapability::Species)
     }
 
@@ -975,8 +973,7 @@ impl<H: Host> Vm<H> {
                             Value::FALSE
                         },
                     ],
-                ),
-            });
+                ));
             self.then_with_natives(p, promise, ASYNC_GENERATOR_DELEGATE_REACTIONS, env, ThenCapability::Species)
         })();
         match operation {
