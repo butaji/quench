@@ -2,11 +2,15 @@
 //! and operand registers. The operator semantics are `wasm_simd_rules`, re-exported here for the
 //! tiers' lowering.
 
+#[cfg(not(stencil_build))]
 use crate::bytecode::{Class, InstructionField, Op, WideInstruction};
+#[cfg(not(stencil_build))]
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
+#[cfg(not(stencil_build))]
 use crate::wasm::simd::SimdKernel;
 pub(crate) use super::wasm_simd_rules::{Lanes, Native, NativeOp, WasmSimd, simd, simd_scalar};
 
+#[cfg(not(stencil_build))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Simd {
     /// `a = operator(b, c)`; the selector (the operator and its lane immediate) is `imm`.
@@ -22,6 +26,7 @@ pub(crate) enum Simd {
     Store,
 }
 
+#[cfg(not(stencil_build))]
 impl Simd {
     /// The vector step `op` is, with `tag` its selector where the opcode takes one: a selector
     /// or access the tiers do not run is none.
