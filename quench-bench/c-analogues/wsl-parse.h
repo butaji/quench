@@ -28,7 +28,7 @@
 static jmp_buf *WSL_HANDLERS[64];
 static int WSL_NH;
 static char WSL_ERR_CLASS[32];
-static char WSL_ERR_MSG[512];
+static char WSL_ERR_MSG[16384];   /* a type error can list every overload that failed */
 static int WSL_ERR_SYNTAX;
 
 /* Raises an error. Syntax errors can be caught by backtracking scopes; the rest cannot. */
@@ -496,14 +496,13 @@ static Ast *mk_dot(int origin, Ast *base, const char *field) {
   a->u.dot.fieldName = field;
   return a;
 }
-static Ast *mk_var_ref(int origin, const char *name, int anon) {
+/* A variable reference; an anon ref (1 old, 2 new value of a read-modify-write) names the
+ * read-modify-write's own anonymous variable, which the caller passes. */
+static Ast *mk_var_ref(int origin, const char *name, int anon, Ast *var) {
   Ast *a = ast_new(A_VARIABLEREF, origin);
   a->u.varRef.name = name;
   a->u.varRef.anon = anon;
-  if (anon) {
-    /* VariableRef.wrap(anonVar): an old or new value of a read-modify-write, bound at creation */
-    a->u.varRef.variable = ast_new(A_ANONVAR, origin);
-  }
+  a->u.varRef.variable = var;
   return a;
 }
 static const char *tok_string(Tok t) { return arena_strndup(t.text, t.len); }
@@ -661,18 +660,24 @@ static Ast *emit_increment(Tok token, Ast *old, Ast *extraArg) {
   if (extraArg) list_push(&c->u.call.argumentList, extraArg);
   return c;
 }
-static Ast *finish_post_increment(Tok token, Ast *left) {
+/* ReadModifyWriteExpression(token, left): its old and new value variables are the targets of its anon refs */
+static Ast *new_rmw(Tok token, Ast *left) {
   Ast *rmw = ast_new(A_RMW, token.index);
   rmw->u.rmw.lValue = left;
-  rmw->u.rmw.newValueExp = emit_increment(token, mk_var_ref(token.index, "anonVar", 1), NULL);
-  rmw->u.rmw.resultExp = mk_var_ref(token.index, "anonVar", 1);
+  rmw->u.rmw.oldVar = ast_new(A_ANONVAR, token.index);
+  rmw->u.rmw.newVar = ast_new(A_ANONVAR, token.index);
+  return rmw;
+}
+static Ast *finish_post_increment(Tok token, Ast *left) {
+  Ast *rmw = new_rmw(token, left);
+  rmw->u.rmw.newValueExp = emit_increment(token, mk_var_ref(token.index, "anonVar", 1, rmw->u.rmw.oldVar), NULL);
+  rmw->u.rmw.resultExp = mk_var_ref(token.index, "anonVar", 1, rmw->u.rmw.oldVar);
   return rmw;
 }
 static Ast *finish_pre_increment(Tok token, Ast *left, Ast *extraArg) {
-  Ast *rmw = ast_new(A_RMW, token.index);
-  rmw->u.rmw.lValue = left;
-  rmw->u.rmw.newValueExp = emit_increment(token, mk_var_ref(token.index, "anonVar", 1), extraArg);
-  rmw->u.rmw.resultExp = mk_var_ref(token.index, "anonVar", 2);
+  Ast *rmw = new_rmw(token, left);
+  rmw->u.rmw.newValueExp = emit_increment(token, mk_var_ref(token.index, "anonVar", 1, rmw->u.rmw.oldVar), extraArg);
+  rmw->u.rmw.resultExp = mk_var_ref(token.index, "anonVar", 2, rmw->u.rmw.newVar);
   return rmw;
 }
 

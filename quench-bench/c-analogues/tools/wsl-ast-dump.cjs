@@ -402,12 +402,35 @@ function parseInput(input) {
     return program;
 }
 
+// --check: the checker (Check.js) on the stage-6 state. Every Expression the checker visits is traced in
+// visit order with the type its visit returned ("E class origin type"); a call also traces its chosen
+// overload and result ("C name overload -> type"). A type error stops the input: its status carries the message.
+const checkMode = process.argv.includes("--check");
+if (checkMode) run(`function __checkHarness(p) {
+    const NL = String.fromCharCode(10);
+    const lines = [];
+    const orig = Node.prototype.visit;
+    Node.prototype.visit = function(visitor) {
+        const r = orig.call(this, visitor);
+        if (visitor instanceof Checker && this instanceof Expression) {
+            lines.push("E " + __cls(this) + " " + (this.origin ? (this.origin.originKind === "native" ? "n" : "u") + this.origin.index : "-") + " " + (r ? r.toString() : "-"));
+            if (this instanceof CallExpression) lines.push("C " + this.name + " " + (this.func ? this.func.toDeclString() : "-") + " -> " + (this.resultType ? this.resultType.toString() : "-"));
+        }
+        return r;
+    };
+    try { check(p); } finally { Node.prototype.visit = orig; }
+    return lines.join(NL);
+}`);
+ctx.__cls = classOf;
+
 const rows = inputs.map((input, i) => {
     let status = "ok";
     let dump = "";
     let nodes = 0;
     try {
-        if (unifyMode) {
+        if (checkMode) {
+            if (input.kind !== "doLex") { anonRoles.clear(); resolveInput(input, 6); dump = run("__checkHarness(__p)"); }
+        } else if (unifyMode) {
             if (input.kind === "doLex") { dump = ""; }
             else { anonRoles.clear(); resolveInput(input, stage); dump = run(resolveMode ? "__resolveHarness(__p)" : literalMode ? "__literalHarness(__p)" : intrinsicsMode ? "__intrinsicsHarness(__p)" : reasonsMode ? "__reasonsHarness(__p)" : "__unifyHarness(__p)"); }
         } else if (input.kind === "doLex") {
@@ -431,6 +454,16 @@ const rows = inputs.map((input, i) => {
     return { i, kind: input.kind, textHash: hex8(fnv(input.text)), status, nodes, dump, dumpHash: hex8(fnv(dump)) };
 });
 
+if (checkMode) {
+    const out = [];
+    for (const r of rows) {
+        if (r.kind === "doLex") continue;
+        out.push("input " + r.i + " " + r.kind + " " + r.status);
+        if (r.dump) out.push(r.dump);
+    }
+    console.log(out.join("\n"));
+    process.exit(0);
+}
 if (unifyMode) {
     const fs = require("fs");
     const bytes = Buffer.from(rows.map(r => r.dump).join(""));

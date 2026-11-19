@@ -164,7 +164,16 @@ static Ast *rw(const Rw *r, Ast *n) {
   case A_PROTOCOLDECL:
   case A_FUNCDEF:
   case A_NATIVEFUNC:
-    return n;   /* the Rewriter returns these as they are */
+  case A_INTLITERALTYPE: case A_UINTLITERALTYPE: case A_FLOATLITERALTYPE: case A_DOUBLELITERALTYPE:
+  case A_NULLTYPE:
+    return n;   /* the Rewriter returns these as they are (AutoWrapper: the literal and null types) */
+  case A_BOOLLITERAL:
+    return n;
+  case A_ENUMLITERAL: {   /* Rewriter.visitEnumLiteral: a new EnumLiteral of the same member */
+    Ast *t = mk_from(A_ENUMLITERAL, n);
+    t->u.enumLit.member = n->u.enumLit.member;
+    return t;
+  }
   default:
     fatal_unsupported("Rewriter", n);
   }

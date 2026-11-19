@@ -22,11 +22,23 @@ typedef enum {
   A_INTLITERAL, A_UINTLITERAL, A_FLOATLITERAL, A_DOUBLELITERAL,
   A_IDENTITY, A_ENUMLITERAL, A_ANONVAR,
   /* literal types (GenericLiteralType and NullType): the type of a literal expression, see lit_type_new */
-  A_INTLITERALTYPE, A_UINTLITERALTYPE, A_FLOATLITERALTYPE, A_DOUBLELITERALTYPE, A_NULLTYPE
+  A_INTLITERALTYPE, A_UINTLITERALTYPE, A_FLOATLITERALTYPE, A_DOUBLELITERALTYPE, A_NULLTYPE,
+  /* ConvertPtrToArrayRefExpression (made by the checker for @ on a pointer; becomes the expression) */
+  A_CONVERTPTR
 } AstTag;
 
 typedef struct Ast Ast;
 typedef struct { Ast **v; int n, cap; } AstList;
+
+/* The checker's results for a property access (PropertyAccessExpression fields, wsl-check.h). lv is
+ * isLValue (1 or 0). The overload calls and result types are NULL when unresolved; errGet, errAnd and
+ * errSet are the messages of the failed attempts. */
+typedef struct {
+  Ast *baseType, *resGet, *resAnd, *callGet, *callAnd, *callSet;
+  const char *errGet, *errAnd, *errSet;
+  int lv;
+  const char *lvReason, *addrSpace;
+} PropChk;
 
 struct Ast {
   AstTag tag;
@@ -82,27 +94,27 @@ struct Ast {
     struct { int value; } boolLit;
     /* VariableRef; anon: 0 named, 1 old value of a ReadModifyWrite, 2 new value */
     struct { const char *name; int anon; Ast *variable; } varRef;
-    /* CallExpression */
+    /* CallExpression; func, resultType, argTypes, actualTA: the checker's results (wsl-check.h) */
     struct { const char *name; AstList typeArguments; AstList argumentList;
-             int hasOv; AstList *ov; int isCast; Ast *returnType; } call;
-    /* DotExpression */
+             int hasOv; AstList *ov; int isCast; Ast *returnType;
+             Ast *func; Ast *resultType; AstList argTypes; AstList actualTA; } call;
+    /* DotExpression, IndexExpression: the checker's results are in pc (PropChk, wsl-check.h) */
     struct { const char *fieldName; Ast *base;
-             int hasGet, hasSet, hasAnd; AstList *getOv, *setOv, *andOv; } dot;
-    /* IndexExpression */
+             int hasGet, hasSet, hasAnd; AstList *getOv, *setOv, *andOv; PropChk pc; } dot;
     struct { Ast *base; Ast *index;
-             int hasGet, hasSet, hasAnd; AstList *getOv, *setOv, *andOv; } index;
-    /* DereferenceExpression */
-    struct { Ast *ptr; } deref;
-    /* MakePtrExpression, MakeArrayRefExpression */
-    struct { Ast *lValue; } lvalueRef;
+             int hasGet, hasSet, hasAnd; AstList *getOv, *setOv, *andOv; PropChk pc; } index;
+    /* DereferenceExpression; addrSpace is set by the checker */
+    struct { Ast *ptr; const char *addrSpace; } deref;
+    /* MakePtrExpression, MakeArrayRefExpression (numElements: set by the checker), ConvertPtrToArrayRefExpression */
+    struct { Ast *lValue; Ast *numElements; } lvalueRef;
     /* LogicalNot */
     struct { Ast *operand; } notExpr;
     /* LogicalExpression */
     struct { const char *text; Ast *left; Ast *right; } logical;
     /* Assignment */
     struct { Ast *lhs; Ast *rhs; } assign;
-    /* ReadModifyWriteExpression */
-    struct { Ast *lValue; Ast *newValueExp; Ast *resultExp; } rmw;
+    /* ReadModifyWriteExpression: oldVar and newVar are the anonymous variables its anon refs share */
+    struct { Ast *lValue; Ast *newValueExp; Ast *resultExp; Ast *oldVar, *newVar; } rmw;
     /* IdentityExpression (a rewritten node): target */
     struct { Ast *target; } identity;
     /* EnumLiteral */
@@ -342,6 +354,7 @@ static const char *ast_class_name(const Ast *n) {
   case A_IDENTITY: return "IdentityExpression";
   case A_ENUMLITERAL: return "EnumLiteral";
   case A_ANONVAR: return "AnonymousVariable";
+  case A_CONVERTPTR: return "ConvertPtrToArrayRefExpression";
   case A_INTLITERALTYPE: return "IntLiteralType";
   case A_UINTLITERALTYPE: return "UintLiteralType";
   case A_FLOATLITERALTYPE: return "FloatLiteralType";
@@ -525,6 +538,7 @@ static void dump_node(Buf *b, const Ast *n, int depth) {
     dump_child(b, n->u.deref.ptr, depth + 1);
     return;
   case A_MAKEPTR:
+  case A_CONVERTPTR:
   case A_MAKEARRAYREF:
     end_scalars(b, n);
     dump_child(b, n->u.lvalueRef.lValue, depth + 1);

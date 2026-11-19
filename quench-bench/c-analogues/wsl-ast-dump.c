@@ -16,6 +16,7 @@
 #include "wsl-names.h"
 #include "wsl-types.h"
 #include "wsl-synth.h"
+#include "wsl-check.h"
 
 static uint32_t fnv_bytes(uint32_t h, const char *s, size_t n) {
   for (size_t i = 0; i < n; i++) {
@@ -121,6 +122,7 @@ static void bench_parse(int iterations) {
  * then folds constexprs. The standard library is parsed once and kept below the arena mark. */
 static int STAGE = 0;
 static int UNIFY_MODE = 0;   /* --unify (1): the pairwise unification harness; --resolve (2): the overload harness */
+static int CHECK_MODE = 0;   /* --check: the checker on the stage-6 state, with its expression trace */
 static Program STD_PROG, PREP_IN, PREP_OUT;
 static size_t STD_MARK;
 
@@ -156,6 +158,8 @@ static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t sta
   CUR_ORIGIN = i == 0 ? "/internal/stdlib" : "/internal/test";
   CUR_TEXT = in->text;
   CUR_LEN = in->len;
+  ORIGIN_TEXT = in->text;
+  ORIGIN_LEN = in->len;
   CUR_LINEOFF = i == 0 ? 27 : 0;
   CUR_NATIVE = i == 0;
   if (i == 0) {
@@ -189,6 +193,11 @@ static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t sta
     if (STAGE >= 5) resolve_typedefs_in_functions(&PREP_OUT);
     if (STAGE >= 6) flatten_protocol_extends(&PREP_OUT);
   }
+  if (CHECK_MODE) {
+    check_program(&PREP_OUT);
+    WSL_NH = 0;
+    return 0;
+  }
   WSL_NH = 0;
   if (UNIFY_MODE) {
     if (UNIFY_MODE == 2) resolve_harness(&PREP_OUT, b);
@@ -218,11 +227,13 @@ int main(int argc, char **argv) {
     else if (strcmp(argv[i], "--intrinsics") == 0) UNIFY_MODE = 4;
     else if (strcmp(argv[i], "--reasons") == 0) UNIFY_MODE = 5;
     else if (strcmp(argv[i], "--clone") == 0) CLONE_FLAG = 1;
+    else if (strcmp(argv[i], "--check") == 0) CHECK_MODE = 1;
     else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dumpAt = atoi(argv[++i]);
     else if (strcmp(argv[i], "--bench") == 0 && i + 1 < argc) benchIterations = atoi(argv[++i]);
     else root = argv[i];
   }
   collect_inputs(root);
+  if (CHECK_MODE) STAGE = 6;
   REFS_ON = STAGE >= 2;
   if (STAGE >= 1) std_parse_once();
   if (benchIterations > 0) {
@@ -234,6 +245,21 @@ int main(int argc, char **argv) {
   int ok = 0, nerr = 0;
   long totalNodes = 0;
   Buf dumpOut = {0};
+  for (int i = 0; CHECK_MODE && i < NINPUTS; i++) {
+    /* --check (as tools/wsl-ast-dump.cjs --check): the input line, then the trace of a checked input */
+    const Input *in = &INPUTS[i];
+    if (i > 0 && in->native) continue;
+    char status[16400] = "ok";
+    Buf b = {0};
+    CHK_TRACE.n = 0;
+    prepare_one(i, in, &b, status, sizeof status);
+    printf("input %d %s %s\n", i, i == 0 ? "stdlib" : "doPrep", status);
+    if (CHK_TRACE.n && strcmp(status, "ok") == 0) {
+      CHK_TRACE.s[CHK_TRACE.n - 1] = 0;   /* the trace's last newline: console.log supplies it */
+      printf("%s\n", CHK_TRACE.s);
+    }
+  }
+  if (CHECK_MODE) return 0;
   for (int i = 0; i < NINPUTS; i++) {
     const Input *in = &INPUTS[i];
     const char *kind = i == 0 ? "stdlib" : in->native ? "doLex" : "doPrep";

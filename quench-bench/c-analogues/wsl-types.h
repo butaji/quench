@@ -32,7 +32,7 @@ static int ut_is_value(const Ast *n) {
   switch (n->tag) {
   case A_INTLITERAL: case A_UINTLITERAL: case A_FLOATLITERAL: case A_DOUBLELITERAL:
   case A_VARIABLEREF: case A_VARIABLEDECL: case A_FUNCPARAMETER: case A_CONSTEXPRTYPEPARAM:
-  case A_IDENTITY:
+  case A_IDENTITY: case A_ENUMLITERAL:
     return 1;
   default:
     return 0;
@@ -46,6 +46,7 @@ static Ast *ut_value_type(const Ast *n) {
   case A_FUNCPARAMETER: case A_CONSTEXPRTYPEPARAM: return n->u.named.type;
   case A_INTLITERAL: case A_UINTLITERAL: case A_FLOATLITERAL: case A_DOUBLELITERAL: case A_NULLLITERAL:
     return n->type;
+  case A_ENUMLITERAL: return n->u.enumLit.member->u.nameOnly.target;   /* EnumLiteral.type */
   default: fatal_unsupported("value type of a reference", n);
   }
   return NULL;
@@ -211,7 +212,16 @@ static Overload infer_types_for_call(Ast *func, Ast **targs, int ntargs, Ast **a
     return overload_fail(CAT("Wrong number of type arguments (passed ", js_num(ntargs), ", require ", js_num(tps->n), ")"));
   if (nargs != params->n)
     return overload_fail(CAT("Wrong number of arguments (passed ", js_num(nargs), ", require ", js_num(params->n), ")"));
-  UCtx *c = uc_new(tps->v, tps->n);
+  /* typeParametersForCallResolution: a protocol signature also unifies its protocol's type variable */
+  Ast **ctps = tps->v;
+  int nctps = tps->n;
+  if (func->tag == A_PROTOCOLFUNCDECL && func->u.func.protocolDecl) {
+    ctps = arena_alloc(sizeof(Ast *) * (tps->n + 1));
+    for (int i = 0; i < tps->n; i++) ctps[i] = tps->v[i];
+    ctps[tps->n] = func->u.func.protocolDecl->u.protocolDecl.typeVariable;
+    nctps = tps->n + 1;
+  }
+  UCtx *c = uc_new(ctps, nctps);
   for (int i = 0; i < ntargs; i++)
     if (!ut_unify(c, targs[i], tps->v[i]))
       return overload_fail(CAT("Type argument #", js_num(i + 1), " for parameter ", js_tostr(tps->v[i]),
@@ -245,6 +255,22 @@ static const char *overload_failure_string(const Ast *f, const char *reason) {
   return CAT(js_decl(f), " did not match because: ", reason);
 }
 
+static UCtx *ut_equals(Ast *a, Ast *b);
+
+/* UnificationContext.conversionCost: a literal type argument costs 0 when its root equals its preferred type
+ * (GenericLiteralType.conversionCost), 1 otherwise; the other type arguments cost 0. */
+static int uc_conversion_cost(UCtx *c) {
+  int total = 2 * c->nmap + c->nextra;
+  Ast **nodes = arena_alloc(sizeof(Ast *) * (total ? total : 1));
+  int n = uc_nodes(c, nodes), cost = 0;
+  for (int i = 0; i < n; i++) {
+    Ast *x = nodes[i];
+    if (!is_lit_type(x) || uc_in_tps(c, x)) continue;
+    if (!ut_equals(uc_find(c, x), literal_preferred(x->u.litType.owner))) cost++;
+  }
+  return cost;
+}
+
 /* resolveOverloadImpl */
 static Overload resolve_overload(AstList *fs, Ast **targs, int ntargs, Ast **args, int nargs, Ast *ret, int allowEntry) {
   Overload none = {0};
@@ -266,7 +292,16 @@ static Overload resolve_overload(AstList *fs, Ast **targs, int ntargs, Ast **arg
   none.fails = fails;
   none.nfails = nf;
   if (!ns) return none;
-  /* conversionCost is 0 for every node reached so far (literal types are not ported), so all survive */
+  /* only the successes of the least conversion cost survive */
+  int minCost = -1;
+  int *cost = arena_alloc(sizeof(int) * ns);
+  for (int i = 0; i < ns; i++) {
+    cost[i] = uc_conversion_cost(succ[i].ctx);
+    if (minCost < 0 || cost[i] < minCost) minCost = cost[i];
+  }
+  int kept = 0;
+  for (int i = 0; i < ns; i++) if (cost[i] == minCost) succ[kept++] = succ[i];
+  ns = kept;
   int anyRestricted = 0;
   for (int i = 0; i < ns; i++) if (succ[i].func->u.func.isRestricted) anyRestricted = 1;
   if (anyRestricted) {
@@ -377,6 +412,8 @@ static int ut_unify_impl(UCtx *c, Ast *self, Ast *other) {
   case A_FLOATLITERAL:
   case A_DOUBLELITERAL:
     return other->tag == self->tag && self->u.fltLit.value == other->u.fltLit.value;
+  case A_ENUMLITERAL:   /* EnumLiteral.unifyImpl: the same member (Node.unify already tried the typevar) */
+    return other->tag == A_ENUMLITERAL && self->u.enumLit.member == other->u.enumLit.member;
   default:
     if (ut_typevar_unify(c, other, self)) return 1;
     return self == other;

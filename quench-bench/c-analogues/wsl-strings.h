@@ -170,6 +170,42 @@ static const char *js_tostr(const Ast *n) {
     return cat(3, js_tostr(n->u.named.type), " ", n->u.named.name);
   case A_FUNCDEF: case A_NATIVEFUNC: case A_PROTOCOLFUNCDECL:
     return js_decl(n);
+  case A_MAKEARRAYREF: /* MakeArrayRefExpression.toString */
+    return cat(5, "@", n->u.lvalueRef.numElements ? cat(3, "<<", js_tostr(n->u.lvalueRef.numElements), ">>") : "",
+               "(", js_tostr(n->u.lvalueRef.lValue), ")");
+  case A_MAKEPTR:
+    return cat(3, "&(", js_tostr(n->u.lvalueRef.lValue), ")");
+  case A_CONVERTPTR:
+    return cat(3, "@(", js_tostr(n->u.lvalueRef.lValue), ")");
+  case A_LOGICALNOT:
+    return cat(3, "!(", js_tostr(n->u.notExpr.operand), ")");
+  case A_LOGICAL:
+    return cat(7, "(", js_tostr(n->u.logical.left), " ", n->u.logical.text, " ", js_tostr(n->u.logical.right), ")");
+  case A_DEREF:
+    return cat(3, "*(", js_tostr(n->u.deref.ptr), ")");
+  case A_ASSIGN:
+    return cat(3, js_tostr(n->u.assign.lhs), " = ", js_tostr(n->u.assign.rhs));
+  case A_COMMA:
+    return cat(3, "(", js_join(&n->u.comma.list, ","), ")");
+  case A_RMW:
+    return cat(10, "RMW(", js_tostr(n->u.rmw.lValue), ", anonVar<old>, anonVar<new>, ", js_tostr(n->u.rmw.newValueExp), ", ",
+               js_tostr(n->u.rmw.resultExp), ")", "", "", "");
+  case A_BOOLLITERAL:
+    return n->u.boolLit.value ? "true" : "false";
+  case A_NULLLITERAL:
+    return "null";
+  case A_ENUMLITERAL:
+    return cat(3, n->u.enumLit.member->u.nameOnly.target->u.enumType.name, ".", n->u.enumLit.member->u.nameOnly.name);
+  case A_DOT:   /* DotExpression.toString */
+    return cat(5, "(", js_tostr(n->u.dot.base), ".", n->u.dot.fieldName, ")");
+  case A_INDEX: /* IndexExpression.toString */
+    return cat(5, "(", js_tostr(n->u.index.base), "[", js_tostr(n->u.index.index), "])");
+  case A_CALL: { /* CallExpression.toString; the actual type arguments show once the call is resolved */
+    const char *head = n->u.call.isCast ? cat(2, "operator ", js_tostr(n->u.call.returnType)) : n->u.call.name;
+    const char *actual = n->u.call.func ? cat(3, "<<", js_join(&n->u.call.actualTA, ","), ">>") : "";
+    return cat(6, head, "<", js_join(&n->u.call.typeArguments, ","), ">", actual,
+               cat(3, "(", js_join(&n->u.call.argumentList, ","), ")"));
+  }
   default:
     return js_tostr_unsupported(n);
   }
