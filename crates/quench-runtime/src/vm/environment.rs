@@ -110,8 +110,32 @@ impl<H: Host> Vm<H> {
             .and_then(|atom| self.realm.global_lexical_bindings.get(&atom).copied())
     }
 
+    /// Runs the root activation `root` of `p` to completion, recorded in `active_roots` while it
+    /// runs. The root's frame is pushed at the frame count taken here, so deferred lane activations
+    /// are materialized first: they would otherwise land below the root.
+    pub(super) fn call_root(&mut self, p: &ResidualProgram, root: Value, this: Value) -> Result<Value, JsError> {
+        self.materialize_deferred_lane();
+        self.active_roots.push(self.frames.len());
+        let result = self.call_value(p, root, this, &[]);
+        self.active_roots.pop();
+        result
+    }
+
+    /// The frame index of the innermost running root activation of `program` (`active_roots`).
+    fn active_root_of(&self, program: super::ProgramId) -> Option<usize> {
+        self.active_roots.iter().rev().copied().find(|&index| {
+            self.frames.get(index).is_some_and(|active| {
+                active.function == super::ROOT_FUNCTION_ID && active.program == program
+            })
+        })
+    }
+
+    /// The running script root that declares global lexical `atom` in the active realm, as its frame
+    /// index and binding slot: the innermost such root of `active_roots`. Roots nest only through
+    /// host script evaluation, so the walk is over those, not over the frames.
     pub(super) fn active_global_lexical_binding(&self, atom: Atom) -> Option<(usize, usize)> {
-        self.frames.iter().enumerate().rev().find_map(|(index, frame)| {
+        self.active_roots.iter().rev().find_map(|&index| {
+            let frame = self.frames.get(index)?;
             if frame.function != super::ROOT_FUNCTION_ID || frame.this != self.realm.globals {
                 return None;
             }
@@ -2053,9 +2077,7 @@ impl<H: Host> Vm<H> {
             if self.realm.global_lexical_bindings.contains_key(&atom) {
                 self.bind_global_lexical(atom, value);
             }
-            let owner = self.frames.iter().rposition(|active| {
-                active.function == super::ROOT_FUNCTION_ID && active.program == owner_id
-            });
+            let owner = self.active_root_of(owner_id);
             if let Some(owner) = owner {
                 let (owner_env, captured) = (self.frames[owner].env, self.frames[owner].captured);
                 if captured && owner_env != env {
