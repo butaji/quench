@@ -1,6 +1,6 @@
 //! The lane's suspensions as staged rows: `await`, `yield` and `yield*` step their rows
 //! (`staged::suspend`, `staged::delegation`) on a `LaneFrame` whose `LaneSuspends` answers the
-//! effect with the lane's in-place suspension (`generator_yields::lane_suspend_at`), and the
+//! effect as a control the handler makes in place (`generator_yields::lane_suspend_at`), and the
 //! delegation's steps with what the lane finishes without guest code: the own `done` and `value`
 //! of a plain iterator result (`Vm::own_iterator_result_parts`), ToBoolean of a primitive, and a
 //! delegate generator's step made in place (`generator_windows::lane_delegate_in_place`). Every
@@ -16,6 +16,9 @@ use crate::vm::activation::{JobRoot, SuspendKind};
 pub(in crate::vm::dispatch_fast) enum LaneControl {
     Edge(Edge),
     Resumed(Resumed),
+    /// The row's suspension, which the handler makes in place once the row stops
+    /// (`generator_yields::lane_suspend_at`).
+    Suspend(Suspending<u64>),
 }
 
 /// How the running activation suspends in place (`generator_yields::lane_suspend_at`).
@@ -65,7 +68,6 @@ pub(in crate::vm::dispatch_fast) struct LaneSuspends {
     cx: *mut (),
     ip: Ip,
     suspender: Suspender,
-    suspend: fn(*mut (), Ip, Suspender, Suspending<u64>) -> Resumed,
     in_place: fn(*mut (), Registers, Ip, [Value; 3]) -> Option<Resumed>,
     result_parts: fn(*mut (), Value) -> Option<(Value, bool)>,
 }
@@ -77,8 +79,6 @@ impl LaneSuspends {
             cx: cx.cast(),
             ip,
             suspender,
-            suspend: |context, ip, suspender, suspending|
-                super::super::generator_yields::lane_suspend_at(context.cast::<LaneContext<H>>(), ip, suspender, suspending),
             in_place: |context, r, ip, [delegate, method, input]|
                 super::super::generator_windows::lane_delegate_in_place(context.cast::<LaneContext<H>>(), r, ip, (delegate, method, input)),
             result_parts: |context, result| unsafe { vm(context.cast::<LaneContext<H>>()) }.own_iterator_result_parts(result),
@@ -90,10 +90,6 @@ impl LaneSuspends {
         self.suspender.asynchronous()
     }
 
-    /// The row's `suspending` made in place by the chosen suspender.
-    pub(super) fn suspend(self, suspending: Suspending<u64>) -> Resumed {
-        (self.suspend)(self.cx, self.ip, self.suspender, suspending)
-    }
 
     /// The word of a delegation `step` the lane reads without guest code: `done` and `value` of
     /// a plain iterator result, ToBoolean of a primitive; `None` for any other step (GetIterator,
@@ -116,11 +112,6 @@ impl LaneSuspends {
     }
 }
 
-/// The suspension row of `kind` of the record `i`: its value in `b`, resuming into `a`.
-fn suspension_row(i: &LaneInstruction, kind: Suspension) -> Operation<u64, ()> {
-    Operation::Suspend { kind, destination: i.a & crate::bytecode::REGISTER_MASK, value: i.b }
-}
-
 /// The `yield` row the lane runs: an async generator's value converted as an `await`'s source
 /// (`YieldConversion::AwaitSource`, which the general path's PromiseResolve settles alike).
 pub(in crate::vm::dispatch_fast) const LANE_YIELD: Suspension = Suspension::Yield { conversion: YieldConversion::AwaitSource };
@@ -136,14 +127,23 @@ pub(in crate::vm::dispatch_fast) fn yield_star_kind(i: &LaneInstruction) -> Susp
 /// its staged row on the lane's frame, the activation suspending in place by `suspender`: a
 /// completed `yield*` continues after the record, a suspension or in-place step where the lane
 /// goes on, and a row the frame declined, before any effect, exits at the record.
-#[inline(never)]
+// Inlined into each handler, so a suspender known there folds the frame and the suspension.
+#[inline(always)]
 pub(in crate::vm::dispatch_fast) fn lane_suspension<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction,
     (kind, suspender): (Suspension, Suspender)) -> Resumed {
     let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
+    // Only an async activation's conversion resolves promises through the lane's host.
+    let mut frame = if suspender.asynchronous() {
+        LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx)
+    } else {
+        LaneFrame::<ACC_NONE>::new(r, Carried::script(cx))
+    };
     frame.suspends = Some(LaneSuspends::of::<H>(cx, ip, suspender));
-    match crate::staged::step(&mut stage, &mut frame, suspension_row(i, kind)) {
+    let destination = i.a & crate::bytecode::REGISTER_MASK;
+    match crate::staged::suspension_step(&mut stage, &mut frame, kind, destination, i.b) {
         Step::Value(_) => Resumed::At(r, following(ip), Carried::script(cx)),
+        Step::Control(LaneControl::Suspend(suspending)) =>
+            super::super::generator_yields::lane_suspend_at(cx, ip, suspender, suspending),
         Step::Control(LaneControl::Resumed(resumed)) => resumed,
         Step::Control(LaneControl::Edge(_)) => unreachable!("a suspension row takes no edge"),
         Step::Unresolved => Resumed::Exit(exit(ip)),
