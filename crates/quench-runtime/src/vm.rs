@@ -1532,7 +1532,8 @@ impl ShapeLookupIndex {
     }
 }
 /// Facts a shape inherits from its chain: once a transition introduces one, every descendant
-/// keeps it. Two bytes, so `Shape` keeps its size.
+/// keeps it. Two bytes, so `Shape` keeps its size; the top three bits hold the shape's
+/// dictionary trigger (`DICTIONARY_MASK`).
 #[derive(Clone, Copy, Default)]
 struct ShapeFacts(u16);
 impl ShapeFacts {
@@ -1596,6 +1597,37 @@ impl ShapeFacts {
         )
     }
 
+    /// The dictionary trigger, in the top three bits: zero for none, else the trigger's
+    /// index plus one. Set per shape (`Shape::child`), not by `extended_by`.
+    const DICTIONARY_SHIFT: u32 = 13;
+    const DICTIONARY_MASK: u16 = 0b111 << Self::DICTIONARY_SHIFT;
+
+    /// These facts with `trigger` as the dictionary trigger.
+    fn with_dictionary_trigger(self, trigger: Option<DictionaryTrigger>) -> Self {
+        let code: u16 = match trigger {
+            None => 0,
+            Some(DictionaryTrigger::PropertyCount) => 1,
+            Some(DictionaryTrigger::DeletionPattern) => 2,
+            Some(DictionaryTrigger::PrototypeUse) => 3,
+            Some(DictionaryTrigger::ModuleNamespace) => 4,
+        };
+        Self((self.0 & !Self::DICTIONARY_MASK) | (code << Self::DICTIONARY_SHIFT))
+    }
+
+    #[inline(always)]
+    fn dictionary_trigger(self) -> Option<DictionaryTrigger> {
+        match (self.0 & Self::DICTIONARY_MASK) >> Self::DICTIONARY_SHIFT {
+            0 => None,
+            1 => Some(DictionaryTrigger::PropertyCount),
+            2 => Some(DictionaryTrigger::DeletionPattern),
+            3 => Some(DictionaryTrigger::PrototypeUse),
+            _ => Some(DictionaryTrigger::ModuleNamespace),
+        }
+    }
+
+    #[inline(always)]
+    fn is_dictionary(self) -> bool { self.0 & Self::DICTIONARY_MASK != 0 }
+
     fn accessor_pairs(self) -> bool { self.0 & Self::ACCESSOR_PAIRS != 0 }
     fn accessors(self) -> bool { self.0 & Self::ACCESSORS != 0 }
     fn default_attributes(self) -> bool { self.0 & Self::NON_DEFAULT_ATTRIBUTES == 0 }
@@ -1621,32 +1653,45 @@ struct Shape {
     transition: ShapeTransition,
     /// Property slots an object of this shape stores (slot indices are `u32`).
     storage_len: u32,
-    dictionary_trigger: Option<DictionaryTrigger>,
+    /// The chain's facts and, in its top bits, the dictionary trigger
+    /// (`ShapeFacts::dictionary_trigger`).
     facts: ShapeFacts,
+    /// This immutable shape's lazily derived memos in one word (`ShapeMemo`): its own data
+    /// `prototype` slot, whether its keys include an array-index name, and the long walks
+    /// spent toward a lookup index.
+    memo: std::cell::Cell<u16>,
     lookup_index: OnceCell<Box<ShapeLookupIndex>>,
-    /// Lookups that walked at least `SHAPE_INDEX_WALK_DISTANCE` transitions
-    /// from this shape before it had an index.
-    long_walks: std::cell::Cell<u8>,
-    /// Memo of this immutable shape's own data `prototype` slot, which every `new F` reads:
-    /// `PROTOTYPE_SLOT_UNKNOWN` until first derived, `PROTOTYPE_SLOT_NONE` when absent or an
-    /// accessor. Dictionary shapes never memoize.
-    prototype_slot: std::cell::Cell<u32>,
-    /// Memo of whether this immutable shape's keys include an array-index name: `None` until
-    /// first derived (`Vm::shape_has_index_key`). Dictionary shapes never memoize.
-    index_keys: std::cell::Cell<Option<bool>>,
     /// The child of this shape's latest cached transition (`NO_LAST_CHILD` before one), tried
     /// before the transition index: objects of one layout grow by the same keys in turn.
     last_child: std::cell::Cell<u32>,
 }
-// Every object layout and property key costs one shape; keep the record compact.
+// Every object layout and property key costs one shape; keep the record compact: 4 (parent)
+// + 24 (transition) + 4 (storage_len) + 2 (facts with the dictionary trigger) + 2 (memo) + 8
+// (lookup index) + 4 (last child) = 48, where separate memo and trigger fields made 56.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(size_of::<Shape>() == 56);
+const _: () = assert!(size_of::<Shape>() == 48);
 /// `Shape::parent` of the root shape.
 const NO_PARENT_SHAPE: u32 = u32::MAX;
 /// `Shape::last_child` before the shape has a cached transition.
 const NO_LAST_CHILD: u32 = u32::MAX;
 const PROTOTYPE_SLOT_UNKNOWN: u32 = u32::MAX;
 const PROTOTYPE_SLOT_NONE: u32 = u32::MAX - 1;
+/// The bits of `Shape::memo`. The `prototype` slot memo takes the low ten bits: a slot below
+/// `MEMO_PROTOTYPE_NONE` is memoized as itself, a slot at or past it (a function with a
+/// thousand own properties before `prototype`) is never memoized and is derived again.
+struct ShapeMemo;
+impl ShapeMemo {
+    const PROTOTYPE_MASK: u16 = (1 << 10) - 1;
+    const PROTOTYPE_UNKNOWN: u16 = Self::PROTOTYPE_MASK;
+    const PROTOTYPE_NONE: u16 = Self::PROTOTYPE_MASK - 1;
+    const INDEX_KEYS_SHIFT: u32 = 10;
+    const INDEX_KEYS_MASK: u16 = 0b11 << Self::INDEX_KEYS_SHIFT;
+    const LONG_WALKS_SHIFT: u32 = 12;
+    const LONG_WALKS_MAX: u8 = 15;
+    const INITIAL: u16 = Self::PROTOTYPE_UNKNOWN;
+}
+// The long-walk count reaches `SHAPE_INDEX_LONG_WALKS` in its four bits.
+const _: () = assert!(object::SHAPE_INDEX_LONG_WALKS <= ShapeMemo::LONG_WALKS_MAX);
 /// The shape table's initial capacity, above what a builtin realm uses (about 1900 shapes).
 /// A table this large is mapped by the allocator on its own, so it grows by remapping in
 /// place, never leaving a copied-out table behind, and only the shapes in use are resident.
@@ -1671,6 +1716,66 @@ impl Shape {
         self.storage_len as usize
     }
 
+    /// What made this shape and its descendants dictionaries, if anything did.
+    #[inline(always)]
+    fn dictionary_trigger(&self) -> Option<DictionaryTrigger> {
+        self.facts.dictionary_trigger()
+    }
+
+    /// Whether this shape is a dictionary's (`dictionary_trigger`).
+    #[inline(always)]
+    fn is_dictionary(&self) -> bool {
+        self.facts.is_dictionary()
+    }
+
+    /// The memo of this shape's own data `prototype` slot: `PROTOTYPE_SLOT_UNKNOWN` until
+    /// derived, `PROTOTYPE_SLOT_NONE` when absent or an accessor.
+    #[inline(always)]
+    fn prototype_slot(&self) -> u32 {
+        match self.memo.get() & ShapeMemo::PROTOTYPE_MASK {
+            ShapeMemo::PROTOTYPE_UNKNOWN => PROTOTYPE_SLOT_UNKNOWN,
+            ShapeMemo::PROTOTYPE_NONE => PROTOTYPE_SLOT_NONE,
+            slot => u32::from(slot),
+        }
+    }
+
+    /// Memoizes `slot` as `prototype_slot`; a slot past the memo's range stays unknown.
+    fn set_prototype_slot(&self, slot: u32) {
+        let bits = match slot {
+            PROTOTYPE_SLOT_NONE => ShapeMemo::PROTOTYPE_NONE,
+            slot if slot < u32::from(ShapeMemo::PROTOTYPE_NONE) => slot as u16,
+            _ => return,
+        };
+        self.memo.set((self.memo.get() & !ShapeMemo::PROTOTYPE_MASK) | bits);
+    }
+
+    /// The memo of whether this shape's keys include an array-index name, once derived.
+    #[inline(always)]
+    fn index_keys(&self) -> Option<bool> {
+        match (self.memo.get() & ShapeMemo::INDEX_KEYS_MASK) >> ShapeMemo::INDEX_KEYS_SHIFT {
+            0 => None,
+            1 => Some(false),
+            _ => Some(true),
+        }
+    }
+
+    fn set_index_keys(&self, found: bool) {
+        let bits = (if found { 2 } else { 1 }) << ShapeMemo::INDEX_KEYS_SHIFT;
+        self.memo.set((self.memo.get() & !ShapeMemo::INDEX_KEYS_MASK) | bits);
+    }
+
+    /// Lookups that walked at least `SHAPE_INDEX_WALK_DISTANCE` transitions from this shape
+    /// before it had an index.
+    #[inline(always)]
+    fn long_walks(&self) -> u8 {
+        (self.memo.get() >> ShapeMemo::LONG_WALKS_SHIFT) as u8
+    }
+
+    fn set_long_walks(&self, walks: u8) {
+        let walks = u16::from(walks.min(ShapeMemo::LONG_WALKS_MAX));
+        self.memo.set((self.memo.get() & !(0xF << ShapeMemo::LONG_WALKS_SHIFT)) | (walks << ShapeMemo::LONG_WALKS_SHIFT));
+    }
+
     fn child(
         parent: Option<u32>,
         transition: ShapeTransition,
@@ -1682,12 +1787,9 @@ impl Shape {
             parent: parent.unwrap_or(NO_PARENT_SHAPE),
             transition,
             storage_len: u32::try_from(storage_len).expect("object property index exceeds u32"),
-            dictionary_trigger,
-            facts: parent_facts.extended_by(transition),
+            facts: parent_facts.extended_by(transition).with_dictionary_trigger(dictionary_trigger),
+            memo: std::cell::Cell::new(ShapeMemo::INITIAL),
             lookup_index: OnceCell::new(),
-            long_walks: std::cell::Cell::new(0),
-            prototype_slot: std::cell::Cell::new(PROTOTYPE_SLOT_UNKNOWN),
-            index_keys: std::cell::Cell::new(None),
             last_child: std::cell::Cell::new(NO_LAST_CHILD),
         }
     }
@@ -3006,7 +3108,7 @@ impl<H: Host> Vm<H> {
             heap.cell_payload_bytes,
             shape_table_bytes,
             self.shapes.len(),
-            self.shapes.iter().filter(|shape| shape.dictionary_trigger.is_some()).count(),
+            self.shapes.iter().filter(|shape| shape.is_dictionary()).count(),
             shape_lookup_bytes,
             transition_table_bytes,
             descriptor_side_table_bytes,

@@ -116,7 +116,7 @@ const EMPTY_SHAPE: u32 = 0;
 /// Transitions a shape lookup may walk before the walk counts as long.
 const SHAPE_INDEX_WALK_DISTANCE: usize = 32;
 /// Long walks from one shape after which that shape gets a lookup index.
-const SHAPE_INDEX_LONG_WALKS: u8 = 8;
+pub(super) const SHAPE_INDEX_LONG_WALKS: u8 = 8;
 pub(super) const FIELD_CACHE_SLOT_CAPACITY: usize = u16::MAX as usize + 1;
 /// `AccessorFieldCache::holder` of an accessor the receiver holds itself.
 pub(super) const OWN_ACCESSOR: Value = Value::UNDEFINED;
@@ -252,7 +252,7 @@ impl<H: Host> Vm<H> {
         if let Some(index) = entry.lookup_index.get() {
             return index.slot(key).map(|slot| slot as usize);
         }
-        if entry.dictionary_trigger.is_some() {
+        if entry.is_dictionary() {
             return self.shape_lookup_index(shape).slot(key).map(|slot| slot as usize);
         }
         if let Some(slot) = self.shape_slot_memo.get(shape, key) {
@@ -323,9 +323,9 @@ impl<H: Host> Vm<H> {
     #[cold]
     pub(super) fn note_long_shape_walk(&self, shape: u32) {
         let entry = &self.shapes[shape as usize];
-        let walks = entry.long_walks.get() + 1;
+        let walks = entry.long_walks() + 1;
         if walks < SHAPE_INDEX_LONG_WALKS {
-            entry.long_walks.set(walks);
+            entry.set_long_walks(walks);
             return;
         }
         entry
@@ -479,7 +479,7 @@ impl<H: Host> Vm<H> {
         let next = u32::try_from(self.shapes.len()).expect("object shape table exhausted");
         let dictionary_trigger = match transition {
             ShapeTransition::Dictionary { trigger } => Some(trigger),
-            _ => self.shapes[parent as usize].dictionary_trigger,
+            _ => self.shapes[parent as usize].dictionary_trigger(),
         };
         let parent_facts = self.shapes[parent as usize].facts;
         // The object that grew has moved to the child, so the parent's lookup index moves
@@ -487,7 +487,7 @@ impl<H: Host> Vm<H> {
         // one; an object left on the parent rebuilds it after `SHAPE_INDEX_LONG_WALKS` long
         // walks. Otherwise every intermediate shape of a growing wide object (the global
         // object during bootstrap) kept a full index, or each one walked its whole chain anew.
-        let long_walks = self.shapes[parent as usize].long_walks.get();
+        let long_walks = self.shapes[parent as usize].long_walks();
         let lookup_index = self.shapes[parent as usize]
             .lookup_index
             .take()
@@ -499,7 +499,7 @@ impl<H: Host> Vm<H> {
             dictionary_trigger,
             parent_facts,
         );
-        child.long_walks.set(long_walks);
+        child.set_long_walks(long_walks);
         if let Some(index) = lookup_index {
             child.lookup_index = OnceCell::from(index);
         }
@@ -521,14 +521,14 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn shape_is_dictionary(&self, shape: u32) -> bool {
-        self.shapes[shape as usize].dictionary_trigger.is_some()
+        self.shapes[shape as usize].is_dictionary()
     }
     /// Whether a property of `shape` may be an accessor: a dictionary shape keeps its
     /// attributes outside its transitions, any other knows from its chain (`ShapeFacts`).
     #[inline(always)]
     pub(super) fn shape_may_have_accessors(&self, shape: u32) -> bool {
         let entry = &self.shapes[shape as usize];
-        entry.dictionary_trigger.is_some() || entry.facts.accessors()
+        entry.is_dictionary() || entry.facts.accessors()
     }
     /// Whether a property of `shape` may be an accessor with a setter (`ShapeFacts::ACCESSOR_PAIRS`):
     /// a dictionary shape keeps its attributes outside its transitions, any other knows from
@@ -536,7 +536,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn shape_may_have_accessor_pairs(&self, shape: u32) -> bool {
         let entry = &self.shapes[shape as usize];
-        entry.dictionary_trigger.is_some() || entry.facts.accessor_pairs()
+        entry.is_dictionary() || entry.facts.accessor_pairs()
     }
     /// Whether a property of `shape` may be keyed by a symbol or private name (`ShapeFacts::HAS_SYMBOL_KEY`):
     /// a dictionary shape keeps its keys outside its transitions, any other knows from its chain.
@@ -662,7 +662,7 @@ impl<H: Host> Vm<H> {
         if self.shape_is_dictionary(shape) {
             return true;
         }
-        if let Some(known) = self.shapes[shape as usize].index_keys.get() {
+        if let Some(known) = self.shapes[shape as usize].index_keys() {
             return known;
         }
         let mut current = Some(shape);
@@ -671,7 +671,7 @@ impl<H: Host> Vm<H> {
                 break false;
             };
             let candidate = &self.shapes[id as usize];
-            if let Some(known) = candidate.index_keys.get() {
+            if let Some(known) = candidate.index_keys() {
                 break known;
             }
             if let ShapeTransition::Add {
@@ -684,7 +684,7 @@ impl<H: Host> Vm<H> {
             }
             current = candidate.parent();
         };
-        self.shapes[shape as usize].index_keys.set(Some(found));
+        self.shapes[shape as usize].set_index_keys(found);
         found
     }
 

@@ -274,7 +274,7 @@ impl<H: Host> Vm<H> {
             writer.u32(shape.parent);
             shape.transition.snap(&mut writer)?;
             writer.u32(shape.storage_len);
-            shape.dictionary_trigger.snap(&mut writer)?;
+            shape.dictionary_trigger().snap(&mut writer)?;
         }
         shape_constructors.snap(&mut writer)?;
         shape_accessors.snap(&mut writer)?;
