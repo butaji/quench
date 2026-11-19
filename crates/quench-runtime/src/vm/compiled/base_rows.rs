@@ -17,10 +17,46 @@ use std::sync::Mutex;
 
 use quench_bjit::numeric::library::TYPED_KINDS;
 
-/// The heap catalog (`quench-bjit/stencils/row_catalog.rs`), mounted for `heap_code_of!`; its consts are quench-bjit's.
-#[macro_use]
-#[path = "../../../../quench-bjit/stencils/row_catalog.rs"]
-mod row_catalog;
+/// The heap catalog's macro (`quench-bjit/stencils/row_catalog.rs`, exported by the lib) and its heap row names
+/// (`row_names.rs`, the lib's copy); `heap_code_of!` reads each row's catalog line.
+use quench_bjit::catalog;
+use quench_bjit::numeric::row_names;
+
+/// The heap rows' codes as one expression over `$heap` (a `Heap`): each chunk is a `match` whose arms are the catalog's
+/// patterns (`Heap::X => row`, a family's offset after `=>`) and whose catch-all is `None`; the chunks are tried in turn.
+macro_rules! heap_code_match {
+    (@chunks $heap:tt, $acc:expr;) => {
+        $acc
+    };
+    (@chunks $heap:tt, $acc:expr; [$end:ident $table:ident: $($body:tt)*] $($rest:tt)*) => {
+        heap_code_match!(@chunks $heap, $acc.or_else(|| heap_code_match!(@go $heap, []; $($body)*)); $($rest)*)
+    };
+    (@go $heap:tt, [$($arms:tt)*];) => {
+        match $heap {
+            $($arms)*
+            _ => None,
+        }
+    };
+    (@go $heap:tt, [$($arms:tt)*]; reserve $n:expr $(, $($rest:tt)*)?) => {
+        heap_code_match!(@go $heap, [$($arms)*]; $($($rest)*)?)
+    };
+    (@go $heap:tt, [$($arms:tt)*]; $(#[$m:meta])* $name:ident : uses($($u:tt)*) $(x $n:ident)? = $pat:pat $(=> $off:expr)? $(, $($rest:tt)*)?) => {
+        heap_code_match!(@go $heap, [$($arms)* $pat => Some(row_names::$name $(+ $off)?),]; $($($rest)*)?)
+    };
+    (@go $heap:tt, [$($arms:tt)*]; $(#[$m:meta])* $name:ident : uses($($u:tt)*) $(x $n:ident)? $(, $($rest:tt)*)?) => {
+        heap_code_match!(@go $heap, [$($arms)*]; $($($rest)*)?)
+    };
+    ($heap:tt heap { $($chunk:tt)* } number { $($kinds:tt)* }) => {
+        heap_code_match!(@chunks $heap, None; $($chunk)*).unwrap_or_else(|| unreachable!("a heap variant without a catalog row"))
+    };
+}
+
+/// `$heap`'s code: the catalog's heap rows as one expression (`heap_code_match!`).
+macro_rules! heap_code_of {
+    ($heap:tt) => {
+        catalog!(heap_code_match($heap))
+    };
+}
 
 /// The stencil layout numbers (`staged/layout_offsets.rs`, shared with the stencils by `#[path]`) are the
 /// runtime's own: each is a `const` check against the runtime's `offset_of!`, `size_of` or layout const.
@@ -204,7 +240,7 @@ pub(super) enum Heap {
     Append,
     /// The property add of a `DefineField` or an adding `SetField` (`staged::add::site_add`): the value
     /// operand (hole 1) joins the object register (its frame offset in hole 2) or, with `this`, the
-    /// activation's receiver, by the transition holes 0 and 2 carry (`library::ADD_AFTER_AT`,
+    /// activation's receiver, by the transition holes 0 and 2 carry (`numeric::site_bits::ADD_AFTER_AT`,
     /// `ADD_OBJECT_AT`), where the receiver holds the before-shape in `form`'s storage and, for the
     /// row's `entry` variant, the prototype link hole 2 names. A hit continues at TAKEN; a miss leaves
     /// into the helper step after the row, or the leave a guarded row makes.
@@ -214,8 +250,8 @@ pub(super) enum Heap {
     /// leaves into the helper step after it, which takes any other step and the exhausted one's jump.
     ForIn,
     /// The fast arm of `SetFunctionName` (`staged::naming::site_name`): the function in the frame slot
-    /// whose offset hole 2 carries (`library::NAME_FUNCTION_AT`) takes the name word of hole 1 in the slot
-    /// hole 2 names, moving between the shapes of hole 0 (`library::ADD_AFTER_AT`), where it holds the empty
+    /// whose offset hole 2 carries (`numeric::site_bits::NAME_FUNCTION_AT`) takes the name word of hole 1 in the slot
+    /// hole 2 names, moving between the shapes of hole 0 (`numeric::site_bits::ADD_AFTER_AT`), where it holds the empty
     /// name in `form`'s storage. A hit continues at TAKEN; a miss leaves into the helper step after the row.
     Name { form: Form },
     /// A staged row of the `library::STAGED_FIRST..=STAGED_LAST` run (`staged_rows.rs`), by its code: a fast arm over the
@@ -320,7 +356,7 @@ mod catalog_tests {
             Heap::GlobalStore, Heap::LexicalRead, Heap::LexicalWrite, Heap::Word, Heap::CalleeCapture, Heap::Append, Heap::ForIn,
         ];
         all.extend((0..library::TYPED_KINDS).flat_map(|kind| [Heap::TypedIndex(kind), Heap::TypedStore(kind)]));
-        all.extend((library::STAGED_FIRST..=library::STAGED_LAST).map(Heap::Staged));
+        all.extend((row_names::STAGED_FIRST..=row_names::STAGED_LAST).map(Heap::Staged));
         for flag in [false, true] {
             all.push(Heap::IcSet { int: flag });
             all.push(Heap::TypeofIs { index: 0, negated: flag });

@@ -5,10 +5,6 @@
 use crate::wasm_families::*;
 use crate::wasm_kinds::*;
 
-/// The routines around a function's rows (`wasm_entry.rs` on x86-64, `wasm_entry_a64.rs` on AArch64): its entry and the leaves
-/// with a word, with none, and with a trap's status. `build.rs` requires each to be a built row.
-pub const ROUTINES: [&str; 4] = ["entry_wasm", "leave_wasm_word", "leave_wasm_void", "leave_wasm_trap"];
-
 /// A row as codes: kind, operator tag, width, shape.
 pub type WasmCode = (u8, u32, u8, u8);
 

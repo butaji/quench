@@ -117,7 +117,7 @@ fn define(state: &mut State, program: &ResidualProgram, instruction: WideInstruc
 fn forward(incoming: &mut [Option<State>], state: State, program: &ResidualProgram,
     (pc, instruction): (usize, WideInstruction), (header, back): (usize, usize)) {
     let mut targets = successors(pc, instruction).into_iter().enumerate()
-        .filter_map(|(edge, target)| target.filter(|target| *target > pc && *target <= back).map(|target| (edge, target))).peekable();
+        .filter_map(|(edge, target)| (target > pc && target <= back).then_some((edge, target))).peekable();
     let mut state = Some(state);
     while let Some((edge, target)) = targets.next() {
         let mut next = if targets.peek().is_some() { state.as_ref().unwrap().clone() } else { state.take().unwrap() };

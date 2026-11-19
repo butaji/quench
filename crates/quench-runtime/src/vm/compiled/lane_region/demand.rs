@@ -265,7 +265,7 @@ pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit:
     let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); blocks.len()];
     for (index, (_, end)) in blocks.iter().enumerate() {
         let last = unit.instructions[end - 1];
-        for successor in successors(end - 1, last).into_iter().flatten() {
+        for successor in successors(end - 1, last).into_iter() {
             if let Some(&target) = block_of.get(successor) && target != usize::MAX { predecessors[target].push(index); }
         }
     }
@@ -288,7 +288,7 @@ impl Lowering<'_, '_> {
                 (&|pc, register| self.is_live(pc, register), &after)));
             if defs.contains(register) { return demand; }
             if !instruction.op().control_flow_layout().falls_through() || instruction.op().control_flow_layout().jumps() {
-                return successors(at, instruction).into_iter().flatten().filter_map(|target| self.demands.row(target))
+                return successors(at, instruction).into_iter().filter_map(|target| self.demands.row(target))
                     .fold(demand, |demand, row| demand.union(row[register]));
             }
         }

@@ -19,7 +19,6 @@ use super::call_plan::{CallForm, CallShape, DirectFacts};
 use super::callees::{chains, Callees};
 use super::super::LaneHelpers;
 use crate::bytecode::Function;
-use crate::vm::dispatch_fast::operand_feedback::OperandClass;
 use crate::heap::GlobalFact;
 use quench_bjit::call_record::CallRecord;
 use quench_bjit::{padded_holes, HOLES};
@@ -250,7 +249,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
     let seen = super::declared::seen(function, ending, spec.seen);
     let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), &seen);
-    feedback_admits(&mut decoded, &kinds);
+    feedback_admits(&mut decoded, &kinds, spec.known.fields);
     let shaped: Vec<Register> = prototypes.iter().map(|proto| proto.register).collect();
     // The entry seeds the direct objects it checks: the declared ones, and each shape-checked receiver (`Heap::Shape`).
     let objects: Vec<Register> = super::declared::exact_objects(function, &prototypes).into_iter().chain(shapes.iter().map(|proto| proto.register)).collect();
@@ -282,7 +281,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let seeded: Vec<Register> = numbers.iter().copied().chain(pinned_doubles).collect();
     let proven_args = super::call_args::proven_arguments(function, &spec.known.program.constants, &seeded, &pinned_ints).unwrap_or_default();
     let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities };
-    let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
+    let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), &decoded, reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
     let (code, resumes, number_guards) = link(&layout, &planned)?;
     residuals::report_rows(&layout, region.header, &decoded, &planned, code.len());
@@ -302,12 +301,14 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
         uses_this: crate::bytecode::activation_reads_this(spec.known.program, function) })
 }
 
-/// Admits a packed helper row only where its site's operand feedback is Number-only (`OperandClass` below `Any`):
-/// the direct arm declines any other operand, so a site that met one would run the general step on every
-/// execution. An inlined row has no site of its own, and is not admitted.
-fn feedback_admits(decoded: &mut [Decoded], kinds: &[Option<OperandKinds>]) {
+/// Admits a packed helper row only where its site's feedback admits its direct arm (`family_helpers::admits`):
+/// a binary site met Number operands only, an element site met a dense or typed element. Another site would
+/// run the general step on every execution. An inlined row has no site of its own, and is not admitted.
+fn feedback_admits(decoded: &mut [Decoded], kinds: &[Option<OperandKinds>], fields: Option<&dyn Fn(u16) -> bool>) {
     for (row, site) in decoded.iter_mut().zip(kinds) {
-        if row.packed.is_some() && !site.is_some_and(|site| site.class() != OperandClass::Any) {
+        if let Some(words) = row.packed
+            && !crate::vm::dispatch_fast::family_helpers::admits(words, *site, fields)
+        {
             row.packed = None;
         }
     }

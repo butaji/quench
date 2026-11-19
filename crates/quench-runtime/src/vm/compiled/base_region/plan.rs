@@ -153,7 +153,7 @@ fn heap_variant(heap: Heap, hole: u64) -> bool {
 fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [u64; 3]) -> Option<[u64; HOLES]> {
     let upper = crate::value::NarrowLayout::upper_words() as u64;
     let folded = decoded.folded.map_or(0, Folded::word);
-    let object = dst_hole | a_hole << numeric::library::SITE_OBJECT_AT;
+    let object = dst_hole | a_hole << numeric::site_bits::SITE_OBJECT_AT;
     Some(padded_holes(match heap {
         Heap::IcGet | Heap::IcKnownGet => { let ic = decoded.ic.unwrap_or_default(); [object, upper, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
         Heap::IcSet { .. } | Heap::IcKnownSet { admitted: false, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic & u64::from(u32::MAX), ic >> u32::BITS] }
@@ -185,7 +185,7 @@ pub(super) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bo
         Heap::Field | Heap::TypedLength => [dst_hole, decoded.hole, 0],
         Heap::Instanceof => {
             let link = decoded.instanceof.map_or(0, |(_, fact)| u64::from(fact.link));
-            [dst_hole | a_hole << numeric::library::SITE_OBJECT_AT, b_hole | link << numeric::library::HELD_LINK_AT, decoded.hole]
+            [dst_hole | a_hole << numeric::site_bits::SITE_OBJECT_AT, b_hole | link << numeric::site_bits::HELD_LINK_AT, decoded.hole]
         }
         _ => [dst_hole, a_hole, b_hole],
     }))
@@ -303,7 +303,7 @@ fn chosen_row(kind: Kind, [dst, a, b]: [Place; 3], variant: Variant, general: bo
 pub(super) fn method_read(receiver: Register, cache: u16, scratch: Register) -> Result<(&'static Stencil, [u64; HOLES]), String> {
     let row = HeapRow { heap: Heap::Site, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
     let (dst_hole, a_hole) = (u64::from(scratch) * SLOT, u64::from(receiver) * SLOT);
-    let object = dst_hole | a_hole << numeric::library::SITE_OBJECT_AT;
+    let object = dst_hole | a_hole << numeric::site_bits::SITE_OBJECT_AT;
     let upper = crate::value::NarrowLayout::upper_words() as u64;
     let entry = super::decode::site_read_row(receiver, cache, scratch).hole;
     Ok((base_rows::stencil(row)?, padded_holes([object, upper, entry, 0, 0])))

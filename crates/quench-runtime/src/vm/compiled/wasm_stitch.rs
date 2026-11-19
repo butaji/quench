@@ -23,7 +23,7 @@ use super::CONTEXT_MEMORY_LENGTH;
 
 /// The frame word a register is, past the header words.
 const fn slot(register: u16) -> u64 {
-    8 * (codes::FRAME_HEADER_WORDS + register as u64)
+    8 * (quench_bjit::FRAME_HEADER_WORDS + register as u64)
 }
 
 /// The word an integer constant is at `width`: an i32 zero-extended.

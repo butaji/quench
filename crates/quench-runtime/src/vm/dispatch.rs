@@ -26,7 +26,7 @@
 // row, then the form's general body (`call_forms.rs`) on the interpreter frame (`InterpreterFrame::call_row`).
 
 use super::*;
-use super::dispatch_frame::{InterpreterFrame, RowRun};
+use super::dispatch_fast::operand_feedback::OperandKinds;
 
 mod call_forms;
 mod increment;
@@ -824,6 +824,48 @@ impl<H: Host> Vm<H> {
                     RowRun::Stop(stop) => return stop,
                 }
             }
+            Op::DefinePrivateField => {
+                self.initialize_private_field(
+                    p,
+                    self.read(f, i.register_b()),
+                    self.read(f, i.register_c()),
+                    i.atom_index(),
+                    self.read(f, i.register_a()),
+                )?;
+            }
+            Op::DefineField => {
+                let object = self.read(f, i.register_b());
+                let value = self.read(f, i.register_a());
+                self.define_field_cached(p, object, i.atom_index(), value, i.cache_site_index(), self.frames[f].function)?;
+            }
+            Op::DefineComputedField => {
+                let object = self.read(f, i.register_b());
+                let key = self.read(f, i.register_c());
+                let key = self.to_property_key(p, key)?;
+                let key = match self.heap.get(key).cloned() {
+                    _ if let Some(atom) = self.string_key_atom(key) => PropertyKey::string(atom),
+                    _ if self.heap.is_symbol(key) => PropertyKey::symbol(key),
+                    _ => return Err(JsError::validation("invalid class field key".into())),
+                };
+                self.define_class_field(p, object, key, self.read(f, i.register_a()))?;
+            }
+            Op::SetThisField | Op::SetThisFieldStrict => {
+                let this = self.checked_this_binding(p, f)?;
+                self.set_field_cached(
+                    p,
+                    this,
+                    i.atom_index(),
+                    self.read(f, i.register_a()),
+                    i.cache_site_index(),
+                    i.op().field_store().is_some_and(|store| store.strict),
+                )?;
+            }
+            Op::SetIndex => self.step_index_set(p, f, i, *pc)?,
+            Op::DefineArrayElement => {
+                let (array, value) = (self.read(f, i.register_b()), self.read(f, i.register_a()));
+                self.define_array_literal_element(p, array, i.array_index() as usize, value)?;
+            }
+            Op::Move => self.write(f, i.result_register(), self.read(f, i.register_b())),
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
                 match self.step_row_of(p, f, i, pc, allow_inline_calls, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
@@ -881,25 +923,31 @@ impl<H: Host> Vm<H> {
         if !self.row_admitted(p, f, operation) {
             return RowRun::Declined;
         }
-        let run = InterpreterFrame::step_row(self as *mut Self, p, f, *pc, allow_inline_calls, i, operation);
-        if matches!(run, RowRun::Done(Edge::Target)) {
-            *pc = i.jump_target() as usize;
-            if matches!(operation, Operation::Jump) {
-                self.frames[f].pc = *pc;
-                self.frames[f].pc_is_resume = true;
-                self.maybe_collect(p);
+        let v = match self.element_read_kind(base, key) {
+            Some((value, kind)) => {
+                self.note_element_kind(f, pc - 1, kind);
+                value
             }
-        }
-        run
+            None => self.get_index(p, base, key)?,
+        };
+        self.write(f, i.result_register(), v);
+        Ok(None)
     }
 
-    /// The staged row `i` decodes to under `context`: a general row, a name load (under no context:
-    /// its proof is the frame's), or the lane's suspension and string-case rows.
-    #[inline(always)]
-    pub(super) fn decode_row(i: WideInstruction, context: crate::staged::DecodeContext<'_>) -> Option<crate::staged::Operation<u64, ()>> {
-        crate::staged::Operation::<u64, ()>::decode(i, context)
-            .or_else(|| crate::staged::Operation::<u64, ()>::decode_load_name(i, ()))
-            .or_else(|| crate::staged::Operation::<u64, ()>::decode_lane(i))
+    /// `SetIndex` of the record `i` in frame `f`: a store to a present dense element (`store_present_element`),
+    /// else the general index store (`set_index_mode`).
+    fn step_index_set(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize) -> Result<(), JsError> {
+        #[cfg(feature = "profile-aggregate")]
+        self.profile.index_dispatch(true, false);
+        let (object, key, value) = (self.read(f, i.register_b()), self.read(f, i.register_c()), self.read(f, i.register_a()));
+        if let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok())
+            && self.store_present_element(object, index, value)
+        {
+            self.note_element_kind(f, pc - 1, OperandKinds::DENSE);
+            return Ok(());
+        }
+        let strict = p.function(self.frames[f].function as usize).strict || i.boolean_flag().expect("validated boolean immediate");
+        self.set_index_mode(p, object, key, value, strict)
     }
 
     /// Whether the staged row `operation` may run on frame `f`: the checked local rows need the

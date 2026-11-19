@@ -52,7 +52,7 @@ fn cached_read(known: Known, (object, first, second): (Option<Register>, u16, Op
         (false, false, true) => Heap::Held,
         (true, false, true) => Heap::ThisHeld,
     };
-    let hole = entry_offset(first) | second.map_or(0, |second| entry_offset(second) << numeric::library::CHAIN_SECOND_AT);
+    let hole = entry_offset(first) | second.map_or(0, |second| entry_offset(second) << numeric::site_bits::CHAIN_SECOND_AT);
     let row = Decoded::heap(heap, Some(dst), object.map(Source::Register), None);
     match folded {
         Some((folded, value)) => Decoded { hole: value, folded: Some(folded), ..row },

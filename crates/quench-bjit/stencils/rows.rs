@@ -25,7 +25,13 @@ macro_rules! need {
 
 #[cfg(fixed_rows)]
 mod call_rows;
+#[macro_use]
+#[path = "row_catalog.rs"]
+mod row_catalog;
+use codes::TYPED_KINDS;
 pub mod codes;
+pub mod site_bits;
+pub mod row_names;
 #[cfg(all(fixed_rows, target_arch = "x86_64"))]
 mod entry;
 #[cfg(all(fixed_rows, target_arch = "aarch64"))]

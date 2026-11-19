@@ -70,22 +70,22 @@ fn unary_row(instruction: WideInstruction, operation: crate::vm::operations::Num
 /// value. `kind_of` names none of them for a value form, so they reach the lowering (`steps::fast_arm`).
 pub(in super::super) fn staged_binary(operator: u32) -> Option<u8> {
     [
-        (BinaryOperator::Remainder, numeric::library::STAGED_REMAINDER),
-        (BinaryOperator::LessThan, numeric::library::STAGED_RELVAL_LT),
-        (BinaryOperator::LessEqualThan, numeric::library::STAGED_RELVAL_LE),
-        (BinaryOperator::GreaterThan, numeric::library::STAGED_RELVAL_GT),
-        (BinaryOperator::GreaterEqualThan, numeric::library::STAGED_RELVAL_GE),
-        (BinaryOperator::Equality, numeric::library::STAGED_LOOSE_EQ),
-        (BinaryOperator::Inequality, numeric::library::STAGED_LOOSE_NE),
-        (BinaryOperator::StrictEquality, numeric::library::STAGED_STRICT_EQ),
-        (BinaryOperator::StrictInequality, numeric::library::STAGED_STRICT_NE),
+        (BinaryOperator::Remainder, numeric::row_names::STAGED_REMAINDER),
+        (BinaryOperator::LessThan, numeric::row_names::STAGED_RELVAL_LT),
+        (BinaryOperator::LessEqualThan, numeric::row_names::STAGED_RELVAL_LE),
+        (BinaryOperator::GreaterThan, numeric::row_names::STAGED_RELVAL_GT),
+        (BinaryOperator::GreaterEqualThan, numeric::row_names::STAGED_RELVAL_GE),
+        (BinaryOperator::Equality, numeric::row_names::STAGED_LOOSE_EQ),
+        (BinaryOperator::Inequality, numeric::row_names::STAGED_LOOSE_NE),
+        (BinaryOperator::StrictEquality, numeric::row_names::STAGED_STRICT_EQ),
+        (BinaryOperator::StrictInequality, numeric::row_names::STAGED_STRICT_NE),
     ].into_iter().find(|(candidate, _)| *candidate as u32 == operator).map(|(_, code)| code)
 }
 
 /// The staged row of a `Unary` that no unary row takes: `~` and `void`.
 pub(in super::super) fn staged_unary(operator: u32) -> Option<u8> {
     [
-        (UnaryOperator::BitwiseNot, numeric::library::STAGED_BITWISE_NOT),
-        (UnaryOperator::Void, numeric::library::STAGED_VOID),
+        (UnaryOperator::BitwiseNot, numeric::row_names::STAGED_BITWISE_NOT),
+        (UnaryOperator::Void, numeric::row_names::STAGED_VOID),
     ].into_iter().find(|(candidate, _)| *candidate as u32 == operator).map(|(_, code)| code)
 }

@@ -65,7 +65,7 @@ pub(super) struct Folded {
 impl Folded {
     /// The row's receiver word: the shape, and the link above `HELD_LINK_AT` bits.
     pub(super) fn word(self) -> u64 {
-        u64::from(self.shape) | u64::from(self.link) << numeric::library::HELD_LINK_AT
+        u64::from(self.shape) | u64::from(self.link) << numeric::site_bits::HELD_LINK_AT
     }
 }
 
@@ -200,9 +200,9 @@ impl Decoded {
     /// the slot's observed type holds Number, so the store widens no observation and logs nothing.
     pub(super) fn admitted_tags(&self) -> u64 {
         if self.stored_slot_type().is_some_and(|ty| crate::typed_ir::Type::NUMBER.is_subtype(ty)) {
-            numeric::library::STORE_ADMITS_DOUBLES
+            numeric::site_bits::STORE_ADMITS_DOUBLES
         } else {
-            numeric::library::STORE_ADMITS_INT32
+            numeric::site_bits::STORE_ADMITS_INT32
         }
     }
 

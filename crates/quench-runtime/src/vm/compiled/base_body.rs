@@ -154,6 +154,7 @@ impl<H: Host> Vm<H> {
         let instanceofs = |pc: usize| constructors.get(pc).copied().flatten().and_then(|constructor| self.instanceof_fact(constructor).map(|fact| (constructor, fact)));
         let adds = |site: u16, atom, chained| self.native_field_add(site, atom, chained);
         let names = |site: u16, atom| self.native_function_name(site, atom);
+        let fields = |site: u16| self.field_cache_filled(site);
         let known = Known {
             program, stitch: &self.programs.tiers().stitch, stores: folds.then(|| self.method_cache_atoms.bits()),
             reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
@@ -164,6 +165,7 @@ impl<H: Host> Vm<H> {
             typeof_names: &self.typeof_names,
             instanceofs: folds.then_some(&instanceofs as &dyn Fn(usize) -> Option<(Value, InstanceofFact)>),
             presences: folds.then_some(presences.as_slice()),
+            fields: folds.then_some(&fields as &dyn Fn(u16) -> bool),
             globals: globals.as_ref(),
             classes: if folds { classes.as_slice() } else { &[] },
             shapes: &[],

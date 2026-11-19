@@ -144,7 +144,7 @@ fn entered_region(source: &str, views: ElementViews, entering: IntRange) -> ir::
     let program = crate::Engine::specialize(source, "index-math.js").unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let (header, backedge) = unit.instructions.iter().enumerate().find_map(|(pc, instruction)|
-        successors(pc, *instruction).into_iter().flatten().find(|target| *target <= pc).map(|target| (target, pc)))
+        successors(pc, *instruction).into_iter().find(|target| *target <= pc).map(|target| (target, pc)))
         .expect("the function has a loop");
     let entries: Vec<(Register, IntRange)> = (0..unit.registers).map(|register| (register, entering)).collect();
     let isa = super::super::super::jit_backend::target_isa().unwrap();

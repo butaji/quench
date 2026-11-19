@@ -6,6 +6,9 @@
 //! context and pins) is `stencils/rows.rs`'s, assigned by LLVM, and `PINNED` and `PINNED_F`
 //! count the pins while their indexes stay abstract (`stencils/codes.rs`).
 
+#[macro_use]
+#[path = "../stencils/row_catalog.rs"]
+mod row_catalog;
 pub mod class;
 pub mod patch;
 #[cfg(test)]
@@ -34,6 +37,10 @@ pub mod wasm {
 pub use class::{EXIT, LOCAL, NEXT, TAKEN, ABS64, BRANCH14, BRANCH19, BRANCH26, MOVW, REL32};
 pub use patch::{HOLES, Imm32, padded_holes, PatchError, patch_successor, patch_value};
 pub use stub::{EXIT_STUB_LEN, exit_stub};
+
+/// The frame's header words before the registers: the result pointer, the memory base and its
+/// length (the call row reloads the pins from them). The stitcher reads it; `build.rs` does not.
+pub const FRAME_HEADER_WORDS: u64 = 3;
 
 /// Pinned int registers a stencil takes, and the double registers (xmm0 to xmm7) after them.
 pub const PINNED: usize = 4;
@@ -338,6 +345,9 @@ mod rustc_tests {
 
     /// The routines around a region's rows (`stencils/entry.rs`).
     const ROUTINES: [&str; 4] = ["entry_thunk", "entry_resume", "leave_word", "leave_pop"];
+    /// The routines around a wasm function's rows (`wasm_entry.rs`, x86-64): its entry and the leaves with a word,
+    /// with none, and with a trap's status.
+    const WASM_ROUTINES: [&str; 4] = ["entry_wasm", "leave_wasm_word", "leave_wasm_void", "leave_wasm_trap"];
 
     /// Every row the library names was built, and canonicalizing is idempotent.
     #[test]
@@ -359,7 +369,8 @@ mod rustc_tests {
         for code in crate::wasm::wasm_library() {
             assert!(rustc::stencil(&crate::wasm::wasm_name(code)).is_some(), "{code:?}");
         }
-        for name in crate::wasm::ROUTINES {
+        #[cfg(target_arch = "x86_64")]
+        for name in WASM_ROUTINES {
             assert!(rustc::stencil(name).is_some(), "{name}");
         }
     }
@@ -391,7 +402,8 @@ mod rustc_tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn cache_rows_patch_their_entry_holes_and_take_their_successors() {
-        use super::numeric::library::{heap_canonical, heap_name, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_ROW, MEM};
+        use super::numeric::library::{heap_canonical, heap_name, MEM};
+        use super::numeric::row_names::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_ROW};
         let row = |heap, chained| {
             let stencil = rustc::stencil(&heap_name(heap_canonical((heap, chained, MEM, MEM, MEM)))).expect("a cache row");
             let mut values: Vec<u32> = stencil.imm32.iter().map(|field| field.index).collect();
