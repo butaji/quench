@@ -333,6 +333,19 @@ fn stencil(name: &str) -> Option<Stencil> {
     quench_bjit::rustc::stencil(name)
 }
 
+/// The entry for `params` arguments and `rest` zeroed registers: the variant of its parameter
+/// count (`wasm_entry.rs`, unzeroed when `rest` is 0), else the generic entry. A target without
+/// the variants (AArch64) has the generic entry alone.
+fn entry_stencil(params: usize, rest: u64) -> Option<Stencil> {
+    let variants = if rest == 0 { &ENTRY_UNZEROED } else { &ENTRY_ZEROED };
+    variants.get(params).and_then(|name| stencil(name)).or_else(|| stencil("entry_wasm"))
+}
+
+/// The x86-64 entry variants by parameter count, zeroing the registers after the arguments.
+const ENTRY_ZEROED: [&str; 5] = ["entry_wasm_p0", "entry_wasm_p1", "entry_wasm_p2", "entry_wasm_p3", "entry_wasm_p4"];
+/// The same, for an entry with no registers after its arguments.
+const ENTRY_UNZEROED: [&str; 5] = ["entry_wasm_p0_nz", "entry_wasm_p1_nz", "entry_wasm_p2_nz", "entry_wasm_p3_nz", "entry_wasm_p4_nz"];
+
 /// The code of `function`: the entry, the trap routine, then the rows, every successor patched;
 /// `None` where an instruction has no rows yet. The code is position independent: it calls and
 /// jumps only within itself.
@@ -450,10 +463,7 @@ pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &
         .map(|((planned, stencil), hole)| Row { stencil, hole: &**hole, taken: planned.taken.map(|target| row_index(target, &first)) })
         .collect();
 
-    let entry = stencil("entry_wasm")?;
     let trap = stencil("leave_wasm_trap")?;
-    let rows_at = entry.code.len() + trap.code.len();
-    let mut code = vec![0u8; rows_at + stencils.iter().map(|stencil| stencil.code.len()).sum::<usize>()];
     // The parameters follow the instance bindings (`Function::parameter_registers`).
     let first_parameter = function.parameter_registers?;
     let rest = u64::from(function.registers).checked_sub(u64::from(first_parameter) + params as u64)?;
@@ -461,6 +471,9 @@ pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &
     // A v128 local starts as zero like any other: the vector area follows the registers, so the
     // entry's zeroing runs on through its two words per register.
     let rest = if vectors { rest + 2 * u64::from(function.registers) } else { rest };
+    let entry = entry_stencil(params, rest)?;
+    let rows_at = entry.code.len() + trap.code.len();
+    let mut code = vec![0u8; rows_at + stencils.iter().map(|stencil| stencil.code.len()).sum::<usize>()];
     let entry_holes = padded_holes([wasm_stitch_simd::frame_bytes(function.registers, vectors), params as u64, rest, slot(first_parameter)]);
     patch_routine(&entry, &mut code[..entry.code.len()], &entry_holes, rows_at)?;
     code[entry.code.len()..rows_at].copy_from_slice(&trap.code);
