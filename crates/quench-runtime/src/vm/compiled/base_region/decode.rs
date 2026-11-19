@@ -413,8 +413,8 @@ pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
     let plain = instruction.result_flags() == 0;
     let number = |index: usize| numbers(index).map(|number| Constant::untyped(Value::number(number)));
     let context = DecodeContext { constant_at: Some(&number), ..DecodeContext::EMPTY };
-    Some(match Operation::<(), ()>::decode(instruction, context) {
-        Some(Operation::Move { .. }) => plain.then(copy),
+    match Operation::<(), ()>::decode(instruction, context) {
+        Some(Operation::Move { .. }) => return Some(plain.then(copy)),
         // A Number operand is its own numeric value: the loop's entry guards and its own rows prove
         // it, and a function's row proves it itself (`checked`).
         Some(Operation::Number(NumberOperation::ToNumeric { .. })) => return Some(plain.then(|| Decoded { checked: true, ..copy() })),
