@@ -1174,6 +1174,8 @@ impl<H: Host> Vm<H> {
             .flatten()
     }
 
+    /// The value of a Map `get` (`undefined` when absent), or the presence of `key` for a
+    /// `has`; one hash of the key and one probe, whatever the lookup.
     #[inline(always)]
     pub(super) fn pure_collection_lookup(
         &self,
@@ -1181,36 +1183,31 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         key: Value,
     ) -> Option<Value> {
-        match native {
-            Native::MapGet => {
-                let entries = self.heap.map_entries(receiver)?;
-                Some(
-                    self.collection_entry_index(entries, key, self.same_value_zero_hash(key))
-                        .map_or(Value::UNDEFINED, |index| entries.value_at(index)),
-                )
-            }
-            Native::MapHas => {
-                let entries = self.heap.map_entries(receiver)?;
-                Some(Value::boolean(self.collection_entry_index(entries, key, self.same_value_zero_hash(key)).is_some()))
-            }
-            Native::SetHas => {
-                let entries = self.heap.set_entries(receiver)?;
-                Some(Value::boolean(self.collection_entry_index(entries, key, self.same_value_zero_hash(key)).is_some()))
-            }
-            _ => match (native, self.heap.get(receiver)?) {
-                // A value that cannot be held weakly is never a key.
-                (Native::WeakMapGet, Cell::WeakMap { entries, .. }) => Some(entries.get(key).unwrap_or(Value::UNDEFINED)),
-                (Native::WeakMapHas, Cell::WeakMap { entries, .. }) => Some(Value::boolean(entries.contains(key))),
-                (Native::WeakSetHas, Cell::WeakSet { .. }) => Some(Value::boolean(self.weak_set_has(receiver, key))),
-                _ => None,
-            },
+        match (native, self.heap.get(receiver)?) {
+            (Native::MapGet, Cell::Map { entries, .. }) => Some(
+                self.collection_entry_index(entries, key, self.same_value_zero_hash(key))
+                    .map_or(Value::UNDEFINED, |index| entries.value_at(index)),
+            ),
+            (Native::MapHas, Cell::Map { entries, .. }) => Some(self.has_key(entries, key)),
+            (Native::SetHas, Cell::Set { entries, .. }) => Some(self.has_key(entries, key)),
+            // A value that cannot be held weakly is never a key.
+            (Native::WeakMapGet, Cell::WeakMap { entries, .. }) => Some(entries.get(key).unwrap_or(Value::UNDEFINED)),
+            (Native::WeakMapHas, Cell::WeakMap { entries, .. }) => Some(Value::boolean(entries.contains(key))),
+            (Native::WeakSetHas, Cell::WeakSet { .. }) => Some(Value::boolean(self.weak_set_has(receiver, key))),
+            _ => None,
         }
     }
 
-    /// `Map.prototype.set` of `map` with its `args`, which runs no guest code: the key's
-    /// entry takes the value, or a new entry is appended. `false`, with nothing written,
-    /// when `map` is no Map.
-    /// Set.prototype.add's effect on a Set; `false` for any other receiver.
+    /// Whether `key` is an entry of the collection `entries` (`Map.prototype.has`,
+    /// `Set.prototype.has`), by one hash and one probe.
+    #[inline(always)]
+    fn has_key<T: crate::heap::CollectionEntry>(&self, entries: &crate::heap::CollectionEntries<T>, key: Value) -> Value {
+        Value::boolean(self.collection_entry_index(entries, key, self.same_value_zero_hash(key)).is_some())
+    }
+
+    /// Set.prototype.add's effect on a Set; `false` for any other receiver. The value is
+    /// canonicalized, then hashed once; a probe that finds it adds nothing, and a miss
+    /// appends the entry.
     pub(super) fn set_add(&mut self, set: Value, value: Value) -> bool {
         if !self.heap.is_set(set) {
             return false;
@@ -1227,6 +1224,9 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// `Map.prototype.set` of `map` with its `args`, which runs no guest code: the key's
+    /// entry takes the value, or a new entry is appended. `false`, with nothing written,
+    /// when `map` is no Map.
     pub(super) fn map_set(&mut self, map: Value, args: &[Value]) -> bool {
         let Some(entries) = self.heap.map_entries(map) else { return false };
         // Map.prototype.set stores -0 as +0 (`canonical_collection_key`).

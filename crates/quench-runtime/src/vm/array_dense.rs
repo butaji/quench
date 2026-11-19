@@ -85,25 +85,11 @@ impl<H: Host> Vm<H> {
         (total <= MAX_ARRAY_LENGTH).then(|| self.array_of_segments(&segments, total))
     }
 
-    /// A new array of `segments`' `total` values, gathered by whole-segment copies into one
-    /// buffer (on the stack for a short result) and copied once into the result's run: no
-    /// per-element dispatch.
+    /// A new array of `segments`' `total` values, one allocation of the exact length: each value
+    /// is read from its backing as the result's run is filled, with no intermediate buffer.
     fn array_of_segments(&mut self, segments: &[ConcatSegment], total: usize) -> Value {
-        let mut stack = [Value::UNDEFINED; CONCAT_STACK_VALUES];
-        let mut heap = Vec::new();
-        let buffer: &mut [Value] = if total <= CONCAT_STACK_VALUES {
-            &mut stack[..total]
-        } else {
-            heap.resize(total, Value::UNDEFINED);
-            &mut heap
-        };
-        let mut at = 0;
-        for segment in segments {
-            let len = segment.len();
-            segment.write(&mut buffer[at..at + len]);
-            at += len;
-        }
-        self.array_of(buffer)
+        let mut reader = ConcatReader { segments, segment: 0, offset: 0 };
+        self.heap.alloc_literal_array(self.array_proto, total, |_| reader.next_value())
     }
 
     /// `item`'s segment of a `concat` result in one look at its record: an ordinary Array of
@@ -269,9 +255,6 @@ fn slice_bound(value: Option<Value>, default: usize, length: usize) -> Option<us
     }
 }
 
-/// The longest `concat` result gathered on the stack.
-const CONCAT_STACK_VALUES: usize = 16;
-
 /// One item of `array_concat_dense`'s result: a primitive, or a dense array's backing, wide
 /// or narrow, with its length.
 #[derive(Clone, Copy)]
@@ -281,19 +264,37 @@ enum ConcatSegment {
     Narrow(*const u32, usize),
 }
 
-impl ConcatSegment {
-    /// Writes this segment's values into `out`, which is as long as the segment.
+/// The values of a `concat` result in order, read from its segments: each call gives the next.
+struct ConcatReader<'a> {
+    segments: &'a [ConcatSegment],
+    segment: usize,
+    offset: usize,
+}
+
+impl ConcatReader<'_> {
+    /// The next value of the result, moving past the segments already read through.
     #[inline(always)]
-    fn write(self, out: &mut [Value]) {
-        // SAFETY: each backing is still the array's: nothing ran since it was read.
+    fn next_value(&mut self) -> Value {
+        while self.offset >= self.segments[self.segment].len() {
+            self.segment += 1;
+            self.offset = 0;
+        }
+        let value = self.segments[self.segment].get(self.offset);
+        self.offset += 1;
+        value
+    }
+}
+
+impl ConcatSegment {
+    /// The value at `offset`, below `len`, of this segment.
+    #[inline(always)]
+    fn get(self, offset: usize) -> Value {
+        // SAFETY: `offset` is below the backing's length, and each backing is still the array's:
+        // nothing ran since it was read, and the result's run is written with no collection.
         match self {
-            Self::Value(value) => out[0] = value,
-            Self::Wide(base, len) => out.copy_from_slice(unsafe { std::slice::from_raw_parts(base, len) }),
-            Self::Narrow(base, len) => {
-                for (slot, word) in out.iter_mut().zip(unsafe { std::slice::from_raw_parts(base, len) }) {
-                    *slot = Value::from_narrow(*word);
-                }
-            }
+            Self::Value(value) => value,
+            Self::Wide(base, _) => unsafe { *base.add(offset) },
+            Self::Narrow(base, _) => Value::from_narrow(unsafe { *base.add(offset) }),
         }
     }
 

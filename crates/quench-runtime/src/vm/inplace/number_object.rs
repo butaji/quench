@@ -18,10 +18,7 @@ const DECIMAL_RADIX: i32 = 10;
 const MIN_RADIX: i32 = 2;
 /// The largest radix `toString` takes here.
 const MAX_RADIX: i32 = 36;
-/// The digit characters of a radix up to 36, lowercase.
-use super::super::string_extra::RADIX_DIGITS;
-/// A sign and the 32 binary digits of an int32.
-const INT_RADIX_TEXT_LEN: usize = 33;
+use super::super::string_extra::with_radix_text;
 /// 10^0 through 10^MAX_FIXED_DIGITS, each exact in a u128.
 const POWERS_OF_TEN: [u128; MAX_FIXED_DIGITS + 1] = {
     let mut powers = [1u128; MAX_FIXED_DIGITS + 1];
@@ -51,28 +48,25 @@ impl<H: Host> Vm<H> {
     }
 
     /// `Number.prototype.toString(radix)` of a Number receiver. Radix 10 or absent writes the
-    /// Number's shortest decimal text (`number_to_string::write`), as the general path does. An
-    /// int32 receiver with a radix in 2..=36 writes its digits in that radix; any other case
-    /// answers `None`.
+    /// Number's shortest decimal text (`number_to_string::write`), as the general path does. A
+    /// finite Number with a radix in 2..=36 writes its digits in that radix (`radix_text`); NaN,
+    /// the infinities and any other case answer `None`.
     pub(in crate::vm) fn plain_number_to_string(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
         let radix = match args.first().copied() {
             None => DECIMAL_RADIX,
             Some(value) if value.is_undefined() => DECIMAL_RADIX,
             Some(value) => value.as_int()?,
         };
+        let number = receiver.as_number()?;
         if radix == DECIMAL_RADIX {
-            let number = receiver.as_number()?;
             let mut text = SmallVec::<[u8; NUMBER_INLINE_LEN]>::new();
             crate::number_to_string::write(number, &mut text);
             return Some(self.heap.alloc_ascii_run(&text));
         }
-        if !(MIN_RADIX..=MAX_RADIX).contains(&radix) {
+        if !(MIN_RADIX..=MAX_RADIX).contains(&radix) || !number.is_finite() {
             return None;
         }
-        let value = receiver.as_int()?;
-        let mut buffer = [0u8; INT_RADIX_TEXT_LEN];
-        let start = write_int_radix(value, radix as u32, &mut buffer);
-        Some(self.heap.alloc_ascii_run(&buffer[start..]))
+        Some(with_radix_text(number, radix as u32, |text| self.heap.alloc_ascii_run(text)))
     }
 
     /// `Object.getPrototypeOf(object)` of an ordinary object (`Heap::ordinary_object`), whose
@@ -139,24 +133,4 @@ fn fixed_rounded(number: f64, digits: usize) -> Option<u128> {
         return None;
     }
     Some((scaled + (1u128 << (shift - 1))) >> shift)
-}
-
-/// Writes `value` in `radix` (2..=36) into the end of `buffer`, with a leading `-` for a
-/// negative value, and returns where the text starts.
-fn write_int_radix(value: i32, radix: u32, buffer: &mut [u8; INT_RADIX_TEXT_LEN]) -> usize {
-    let mut magnitude = value.unsigned_abs();
-    let mut start = buffer.len();
-    loop {
-        start -= 1;
-        buffer[start] = RADIX_DIGITS[(magnitude % radix) as usize];
-        magnitude /= radix;
-        if magnitude == 0 {
-            break;
-        }
-    }
-    if value < 0 {
-        start -= 1;
-        buffer[start] = b'-';
-    }
-    start
 }

@@ -188,9 +188,11 @@ impl<H: Host> Vm<H> {
             return Some(Ok(if result_used { this } else { Value::UNDEFINED }));
         };
         let input = self.heap.string(this)?.clone();
-        if let Err(error) = self.record_regexp_legacy_pending(receiver, input, Rc::clone(matcher), last.start) {
-            return Some(Err(error));
-        }
+        let owner = match self.regexp_legacy_owner(receiver) {
+            Ok(owner) => owner,
+            Err(error) => return Some(Err(error)),
+        };
+        self.record_regexp_legacy_pending(owner, input, Rc::clone(matcher), last.start);
         Some(match output {
             _ if too_long => Err(self.range_error(p, "Invalid string length".into())),
             None => Ok(Value::UNDEFINED),

@@ -128,8 +128,8 @@ impl<H: Host> Vm<H> {
             let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
                 unreachable!("a steady call's receiver is a RegExp");
             };
-            let matcher = Self::regexp_matcher(meta)?;
-            self.record_regexp_legacy_pending(receiver, input, matcher, matched.range.start)?;
+            let (owner, matcher) = (meta.legacy_constructor, Self::regexp_matcher(meta)?);
+            self.record_regexp_legacy_pending(owner, input, matcher, matched.range.start);
             return Ok(Value::UNDEFINED);
         }
         self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched))

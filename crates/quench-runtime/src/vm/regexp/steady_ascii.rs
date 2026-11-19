@@ -147,7 +147,8 @@ impl<H: Host> Vm<H> {
         }
         // Nothing reads the result: only the legacy statics remain, found again from the
         // match's start if read.
-        self.record_regexp_legacy_pending(receiver, input, regex, matched.range.start)?;
+        let owner = self.regexp_legacy_owner(receiver)?;
+        self.record_regexp_legacy_pending(owner, input, regex, matched.range.start);
         Ok(if exec { Value::UNDEFINED } else { Value::TRUE })
     }
 }

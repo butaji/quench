@@ -106,7 +106,8 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn pure_string_in_place(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         match native {
-            Native::StringIndexOf | Native::StringIncludes | Native::StringStartsWith =>
+            Native::StringIndexOf | Native::StringLastIndexOf | Native::StringIncludes | Native::StringStartsWith
+            | Native::StringEndsWith =>
                 self.string_search_in_place(native, receiver, args),
             Native::StringSlice | Native::StringSubstring | Native::StringSubstr =>
                 self.substring_in_place(native, receiver, args),
@@ -535,21 +536,22 @@ impl<H: Host> Vm<H> {
             }
             Native::ParseInt => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let text = self.to_string(p, value)?;
+                // A string argument is read in place; any other is converted by ToString first.
+                let text = if self.heap.is_string(value) { None } else { Some(self.to_string(p, value)?) };
                 let radix = match args.get(1).copied() {
                     Some(value) => crate::value::number_to_u32(self.to_number(p, value)?) as i32,
                     None => 0,
                 };
-                // Radix 10 (or absent): the shared int32 form of the text (`staged::parse_int`), which the b-jit's row answers too.
-                if (radix == 0 || radix == 10) && let Some(int) = crate::staged::parse_int::decimal_int32(text.encode_utf16()) {
-                    return Ok(Value::integer(int));
-                }
-                Ok(Value::number(super::string_extra::parse_integer(
-                    &text, radix,
-                )))
+                Ok(Value::number(match (&text, self.heap.string(value)) {
+                    (None, Some(string)) => string.read_units(|units| super::string_extra::parse_integer_units(units, radix)),
+                    _ => super::string_extra::parse_integer(text.as_deref().unwrap_or_default(), radix),
+                }))
             }
             Native::NumberParseFloat => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if let Some(string) = self.heap.string(value) {
+                    return Ok(Value::number(string.read_units(super::number::parse_float_units)));
+                }
                 let text = self.to_string(p, value)?;
                 Ok(Value::number(super::number::parse_float(&text)))
             }
