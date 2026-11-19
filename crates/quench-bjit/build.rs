@@ -141,7 +141,9 @@ fn main() {
     let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 && builds_v3(&out) { &VARIANTS } else { &VARIANTS[..1] };
     let watched = stencil_sources(&out).unwrap_or_else(|| sources::watched(manifest));
     watch(&watched);
-    let sources = cache::sources_key(&rustc(), manifest, &watched, &EXTRA_WATCHED);
+    // `EXTRA_WATCHED` reruns the script but is not in the key: the supernode list and the opcode table reach a shard
+    // only through its instance file, and the flags file through its arguments, which the key holds.
+    let sources = cache::sources_key(&rustc(), manifest, &watched, &[]);
     let jobs: Vec<Shard> = variants.iter().flat_map(|(_, cpu)| (0..parts.len()).map(|shard| shard_job(&out, shard, *cpu, sources))).collect();
     if jobs.iter().any(|job| !job.cached()) {
         type_check(&out);
