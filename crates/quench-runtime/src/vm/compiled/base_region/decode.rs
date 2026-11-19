@@ -130,6 +130,9 @@ pub(super) struct Decoded {
     /// identity guard): a Stable fact the code takes (`held_holders`), so the function's identity is
     /// not recycled while the code runs.
     pub(super) holder: Option<u32>,
+    /// The Stable cell of the global member the row folds (`GlobalRead::NativeMember`'s `cell`, or a held object's read): its fact is
+    /// subscribed by the body (`Stitched::push`), and its realm proved once (`globals::held_realm`).
+    pub(super) cell: Option<crate::vm::global_facts::StableCell>,
     /// Every path proves the inline-cache access's receiver of its entry's shape (`proofs::prove`): the row
     /// reads or writes the slot with no guard.
     pub(super) proven: bool,
@@ -152,7 +155,7 @@ pub(super) struct Decoded {
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, ic: None, declined: None, holder: None, proven: false, flat: false, relies: false, admitted: false, recheck: false, generic: false }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, ic: None, declined: None, holder: None, cell: None, proven: false, flat: false, relies: false, admitted: false, recheck: false, generic: false }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {

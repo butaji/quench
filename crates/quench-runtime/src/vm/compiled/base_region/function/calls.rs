@@ -40,7 +40,7 @@ pub(super) fn math_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -
     (shape.form == CallForm::Plain && (1..=2).contains(&shape.argc)).then_some(())?;
     let local = (shape.call_pc - region.header) as usize;
     let defined = (0..local).rev().find(|at| region.instructions()[*at].written_registers().any(|register| register == shape.callee))?;
-    let GlobalRead::NativeMember { value, native, holder, .. } = *sites.known.globals?.get(&(region.header as usize + defined))? else { return None };
+    let GlobalRead::NativeMember { value, native, holder, cell, .. } = *sites.known.globals?.get(&(region.header as usize + defined))? else { return None };
     let kind = fold::math_kind(native)?;
     let binary = matches!(kind, Kind::Min | Kind::Max | Kind::Imul);
     (u16::from(binary) + 1 == shape.argc as u16).then_some(())?;
@@ -50,7 +50,7 @@ pub(super) fn math_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -
     // the holder's exact shape is held (a change of its values retires the body, and a run inside it learns that from the
     // invalidation word after a call), as `fold::pairs` holds it for a folded call. The identity guard is then none.
     if sole_definition(region, defined, local, shape.callee) {
-        return Some(vec![Decoded { holder: Some(holder), ..operation }]);
+        return Some(vec![Decoded { holder: Some(holder), cell, ..operation }]);
     }
     let guard = Decoded { hole: value.to_bits(), holder: Some(holder), ..Decoded::heap(Heap::Identity, None, Some(Source::Register(shape.callee)), None) };
     Some(vec![guard, operation])

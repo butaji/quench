@@ -49,7 +49,7 @@ fn fold_at(region: &LoopRegion, known: Known<'_>, plans: &impl Fn(WideInstructio
     let read = code[k];
     let pc = region.header + k as u32;
     (!lands.contains(k) && read.op().is_get_field() && read.result_flags() == 0).then_some(())?;
-    let &GlobalRead::NativeMember { native, holder, .. } = known.globals?.get(&(pc as usize))? else { return None };
+    let &GlobalRead::NativeMember { native, holder, cell, .. } = known.globals?.get(&(pc as usize))? else { return None };
     (native == crate::vm::Native::StringCharCodeAt || math_kind(native).is_some()).then_some(())?;
     let callee = read.result_register();
     let Some(FieldLookup::Atom { base, .. }) = read.field_lookup() else { return None };
@@ -62,7 +62,7 @@ fn fold_at(region: &LoopRegion, known: Known<'_>, plans: &impl Fn(WideInstructio
     // One or two arguments: `row_of` takes exactly the arity the native's operation reads (`Math.sqrt(x)`, `Math.min(i, 777)`).
     (shape.callee == callee && shape.this == receiver && (1..=2).contains(&shape.argc) && j + 1 < code.len() && !region.is_live(at + 1, callee)).then_some(())?;
     (reads.iter().all(|register| !writes.contains(register)) && !writes.contains(&receiver) && !writes.contains(&callee) && !reads.contains(&callee)).then_some(())?;
-    let row = Decoded { holder: Some(holder), ..row_of(native, &shape)? };
+    let row = Decoded { holder: Some(holder), cell, ..row_of(native, &shape)? };
     let completion = shape.returning.then(|| Decoded { a: Some(Source::Register(shape.result)), ..Decoded::step(Step::Return, None) });
     Some(Fold { read: pc, call: region.header + j as u32, row, completion, arithmetic })
 }

@@ -367,7 +367,11 @@ fn number_plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant, h
 /// interpreter's `+` makes (the concatenation included). The region keeps running where a leave would end it each
 /// iteration; the helper is off the loop's steady path (`steps::behind`).
 fn concat_run(decoded: &Decoded, layout: &Layout, pc: u32, fast: Planned, helpers: LaneHelpers) -> Result<Planned, String> {
-    let slow = steps::plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?;
+    // Two register operands: the call-out of the operation (`CallOut::Binary`, `Vm::binary`, the concatenation) is the miss.
+    // A constant operand has no register call-out, so the generic step makes the operation.
+    let registers = matches!((decoded.a, decoded.b), (Some(Source::Register(_)), Some(Source::Register(_))));
+    let helper = if registers { LaneHelper::VmStep } else { LaneHelper::Step };
+    let slow = steps::plan_helper(layout, pc, decoded, (helper, helpers))?;
     let behind_parts = 1 + slow.pre.len() + slow.post.len();
     let run = Planned { node: None, exits: vec![Exit::Ahead(1)], branch: decoded.completes.then_some(Branch::Part(1 + behind_parts)), ..fast };
     Ok(steps::behind(run, slow))

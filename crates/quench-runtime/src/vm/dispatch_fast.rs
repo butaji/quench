@@ -10993,10 +10993,10 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
         outcome
     };
     if now {
-        own.specialize_lane_body_now(lane_body_entry::<H>, specialize);
+        own.specialize_lane_body_now(lane_body_entry::<H>, looped.is_some(), specialize);
         own.lane_body().is_some()
     } else {
-        own.specialize_lane_body(lane_body_entry::<H>, specialize)
+        own.specialize_lane_body(lane_body_entry::<H>, false, specialize)
     }
 }
 

@@ -24,7 +24,7 @@ use super::*;
 use crate::code_dependencies::SlotDependency;
 use crate::heap::{GlobalFact, GlobalLayoutFact};
 use crate::typed_ir::Type;
-use crate::vm::global_facts::{GlobalRead, GlobalSlot, LexicalSlot};
+use crate::vm::global_facts::{GlobalRead, GlobalSlot, LexicalSlot, StableCell};
 use quench_bjit::{padded_holes, HOLES};
 
 /// The global object's slot a row holds: the fact the VM took (`Vm::stable_global_slot`) and the
@@ -72,6 +72,11 @@ pub(super) fn global_row(known: Known, pc: u32, instruction: WideInstruction) ->
         }
         GlobalRead::Slot(slot) | GlobalRead::NativeSlot { slot, .. } => slot_row(known, instruction, Access::of(slot)?),
         GlobalRead::Lexical(slot) => lexical_row(instruction, slot),
+        // A held object (`lane_sites::held_objects`): its load is the constant, held by the cell's fact, with no read per use.
+        GlobalRead::Stable { value, fact, global, realm_offset, .. } if instruction.op().loads_name() => Some(Decoded {
+            cell: Some(StableCell { fact, global, realm_offset }),
+            ..word_row(instruction, value)
+        }),
         _ => None,
     }
 }
@@ -192,7 +197,9 @@ pub(super) fn receiver_row(homes: &Homes, register: Register, pc: u32) -> Result
 pub(super) fn held_realm(decoded: &[Decoded]) -> Option<RealmProof> {
     let proof = |global: Value, realm_offset: i32| RealmProof { global: global.to_bits(), offset: u64::from(realm_offset.unsigned_abs()) };
     decoded.iter().find_map(|row| {
-        row.global.map(|access| proof(access.slot.global, access.slot.realm_offset)).or_else(|| row.lexical.map(|slot| proof(slot.global, slot.realm_offset)))
+        row.global.map(|access| proof(access.slot.global, access.slot.realm_offset))
+            .or_else(|| row.lexical.map(|slot| proof(slot.global, slot.realm_offset)))
+            .or_else(|| row.cell.map(|cell| proof(cell.global, cell.realm_offset)))
     })
 }
 

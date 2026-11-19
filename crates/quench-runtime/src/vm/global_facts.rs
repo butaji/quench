@@ -38,6 +38,16 @@ pub(crate) struct LexicalSlot {
     pub(crate) realm_offset: i32,
 }
 
+/// The Stable cell a folded read of a global's member holds (`GlobalRead::NativeMember`'s `cell`): the cell's fact, and the global
+/// object and realm offset it is of (`GlobalRead::Stable`). A row that folds the read carries it, so its body subscribes to the
+/// fact (a reassignment retires the body) and proves the realm once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StableCell {
+    pub(crate) fact: GlobalFact,
+    pub(crate) global: Value,
+    pub(crate) realm_offset: i32,
+}
+
 /// What a lane body's by-name global read takes when it is compiled (`Vm::lane_global_reads`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GlobalRead {
@@ -68,7 +78,7 @@ pub(crate) enum GlobalRead {
     /// `folds` where the receiver is that global, so the read itself may fold to the value; a
     /// method read by name off an unknown receiver (`x.push`) only names the call's candidate,
     /// and the read still runs: the receiver may hold its own member of that name.
-    NativeMember { value: Value, native: super::Native, holder: u32, folds: bool },
+    NativeMember { value: Value, native: super::Native, holder: u32, folds: bool, cell: Option<StableCell> },
     /// A `Slot` read (the b-jit's) of a global name whose function is the native `native` (`parseInt`) when the body was
     /// compiled, held by the global object's watched exact shape `holder` (`NativeMember`'s code dependency). The read is the
     /// slot's; a call of the register it defines guards the function's identity (`base_region::function::native_call`).

@@ -359,16 +359,15 @@ impl LaneView {
     /// the body is still warming or specialized, so its prologue stays. A specialized body is
     /// a fact of the view from then on: its prologue record enters it with `entry`, which
     /// tests nothing the specialization proved (`lane_body_entry`).
-    pub(super) fn specialize_lane_body(&self, entry: Handler, work: impl FnOnce(super::super::compiled::LaneBodyWork) -> super::super::compiled::LaneBodyOutcome) -> bool {
+    pub(super) fn specialize_lane_body(&self, entry: Handler, looped: bool, work: impl FnOnce(super::super::compiled::LaneBodyWork) -> super::super::compiled::LaneBodyOutcome) -> bool {
         if self.declined_by_mode() { return false; }
-        let epochs = &self.tier().body_epoch;
-        epochs.set(epochs.get().wrapping_add(1));
         self.settle_retired_body();
         // SAFETY: as `lane_body`; specializing runs no lane body, and the body is out of the view while the VM works on it.
         let body = unsafe { &mut *self.tier().tier_lane.get() };
         if awaits_look(body) { return true; }
         let (outcome, entries, recompiles, stuck, looks) = match std::mem::replace(body, LaneBody::Declined) {
-            LaneBody::Unspecialized { entries, recompiles, stuck } if self.attempts_at(entries.saturating_add(1)) || self.recurrent(entries.saturating_add(1)) => {
+            // A looping caller's trips ask for the attempt at once: its entries may not advance (a single call).
+            LaneBody::Unspecialized { entries, recompiles, stuck } if looped || self.attempts_at(entries.saturating_add(1)) || self.recurrent(entries.saturating_add(1)) => {
                 if !self.affords_compile() {
                     *body = LaneBody::Unspecialized { entries, recompiles, stuck };
                     return false;
@@ -390,6 +389,11 @@ impl LaneView {
             settled => { *body = settled; return !matches!(body, LaneBody::Declined); }
         };
         *body = self.body_after(outcome, entry, entries, recompiles, stuck, looks);
+        // A state change moves the epoch; a body still warming (its entries counted) does not, so a refused loop backs off.
+        if !matches!(body, LaneBody::Unspecialized { .. }) {
+            let epochs = &self.tier().body_epoch;
+            epochs.set(epochs.get().wrapping_add(1));
+        }
         !matches!(body, LaneBody::Declined)
     }
 
@@ -444,9 +448,9 @@ impl LaneView {
 
     /// `specialize_lane_body` at once, past the warm-up: a hot loop's backward jump has run
     /// its calls, so their sites have linked (`lane_loop_retire`).
-    pub(super) fn specialize_lane_body_now(&self, entry: Handler, specialize: impl FnOnce(super::super::compiled::LaneBodyWork) -> super::super::compiled::LaneBodyOutcome) {
+    pub(super) fn specialize_lane_body_now(&self, entry: Handler, looped: bool, specialize: impl FnOnce(super::super::compiled::LaneBodyWork) -> super::super::compiled::LaneBodyOutcome) {
         self.skip_warm_up();
-        self.specialize_lane_body(entry, specialize);
+        self.specialize_lane_body(entry, looped, specialize);
         // Its entries are few (the loop is what is hot): the next one compiles where this one
         // waited for its callees' bodies (`LaneBodyOutcome::Deferred`).
         self.skip_warm_up();
