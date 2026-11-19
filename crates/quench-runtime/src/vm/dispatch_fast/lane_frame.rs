@@ -349,6 +349,11 @@ pub(in crate::vm::dispatch_fast) struct LaneCall {
 pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     registers: Registers,
     view: Carried,
+    /// The register the carried accumulator stands for (the record's field B where `ACC` is
+    /// `ACC_B`, `row_frame`); `NO_ACCUMULATOR` elsewhere. A row reads the accumulator only for
+    /// this register: another operand it reads (an array literal's element beside its array)
+    /// is the file's, which every producer writes.
+    accumulated: u16,
     /// The activation's `this` (`LaneContext::this`): `Value::DELETED` where the lane does
     /// not hold it.
     this: Value,
@@ -828,7 +833,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame for an operation that reads no `this`.
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
-        Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
+        Self { registers, view, accumulated: NO_ACCUMULATOR, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
             capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, suspends: None, entry: None, call: None }
     }
 
@@ -1053,7 +1058,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     fn read(&mut self, _stage: &mut Concrete, register: Register) -> u64 {
         // The carried accumulator stands for field B, the one register a single-operand row reads;
         // a row that reads several (one with heap records) reads the file, which every producer writes.
-        if self.heap.is_some() { return self.registers.get(register).to_bits(); }
+        if self.heap.is_some() || register != self.accumulated { return self.registers.get(register).to_bits(); }
         read::<ACC, ACC_B>(self.registers, register, self.view).to_bits()
     }
 
@@ -2155,8 +2160,19 @@ fn scope_reads<H: Host, const FLAG: u8>(cx: *mut LaneContext<H>, ip: super::Ip, 
 
 /// The frame `generated_row` steps opcode `OP`'s row over: the register file and the carried view, and
 /// the running frame's local slots where the row is a local one (`Decoder::Local`).
+/// The carried accumulator stands for the record's field B alone (`LaneFrame::accumulated`).
 #[inline(always)]
 fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneContext<H>, r: Registers, ip: super::Ip, i: &LaneInstruction, view: Carried) -> LaneFrame<ACC> {
+    let mut frame = row_frame_of::<H, OP, ACC, FLAG>(cx, r, ip, i, view);
+    if ACC == ACC_B {
+        frame.accumulated = i.b;
+    }
+    frame
+}
+
+/// `row_frame` before its accumulated register.
+#[inline(always)]
+fn row_frame_of<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneContext<H>, r: Registers, ip: super::Ip, i: &LaneInstruction, view: Carried) -> LaneFrame<ACC> {
     if const { returns_raw_row(LaneFields::<OP>::OPCODE) } {
         // A raw return completes the Wasm activation it returns to (`lane_complete_wasm_activation`).
         let complete: unsafe fn(*mut (), Value) -> Option<Resumed> = |context, value| super::lane_complete_wasm_activation::<H>(context.cast(), value);
