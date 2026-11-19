@@ -6,6 +6,7 @@
 use super::callout::calling;
 use super::{CallOut, Constant, GlobalBinding, Operation, NumericFrame, NumericStage, Register, Step};
 use crate::typed_ir::Type;
+#[cfg(not(stencil_build))]
 use crate::bytecode::{Op, WideInstruction};
 use crate::Value;
 
@@ -36,7 +37,9 @@ pub(crate) enum Protocol {
     Value(super::protocol_values::ValueStep),
     /// An activation-variable step: a local, a `var` binding, TDZ, an argument (`protocol_owned`).
     Owned(super::protocol_owned::OwnedVarStep),
-    /// A Wasm GC, reference, table, memory-init, atomic or exception step (`protocol_wasm`).
+    /// A Wasm GC, reference, table, memory-init, atomic or exception step (`protocol_wasm`), which
+    /// names an opcode and so is the runtime's alone: no stencil row makes one.
+    #[cfg(not(stencil_build))]
     Wasm(super::protocol_wasm::WasmHostStep),
 }
 
@@ -44,6 +47,7 @@ pub(crate) enum Protocol {
 /// (`dispatch_fast::specialize_environment_window`) carries its register count above them.
 pub(crate) const ENVIRONMENT_CLONE_PLAN_MASK: u32 = u16::MAX as u32;
 
+#[cfg(not(stencil_build))]
 /// The staged operation `instruction` denotes among the name, environment and iteration
 /// opcodes; `None` for any other opcode.
 #[inline(always)]
@@ -77,6 +81,7 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
     })
 }
 
+#[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     /// The name read `instruction` (`LoadName`, or a call's `LoadNameCall`) denotes under the
     /// tier's `proof` of the global it names; `None` for any other opcode.
@@ -91,6 +96,7 @@ impl<W, P> Operation<W, P> {
     }
 }
 
+#[cfg(not(stencil_build))]
 /// The iteration and spread steps of `decode`, with the registers `Vm::call_out` reads.
 #[inline(always)]
 fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>> {
@@ -271,7 +277,7 @@ fn load_name<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         (Some(()), receiver) => {
             if let Some(receiver) = receiver {
                 let undefined = Value::UNDEFINED;
-                let (word, fact) = frame.constant(stage, Constant { value: undefined, ty: Type::immediate(undefined) });
+                let (word, fact) = frame.constant(stage, Constant { value: undefined, ty: Type::UNDEFINED });
                 frame.write(stage, receiver, word, fact);
             }
             Step::Value(stage.constant(0))

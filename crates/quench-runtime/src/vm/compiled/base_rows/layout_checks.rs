@@ -18,6 +18,9 @@ const _: () = assert!(L::CAPTURE_ADDRESS_PAD == u64::BITS - quench_bjit::shared_
 const _: () = assert!(offset_of!(JsStepDispatch, head) == 0);
 
 // The layout structs: every field of each is the runtime's.
+// NATIVE_RECORD_CURSOR_LAYOUT
+const _: () = assert!(crate::heap::NATIVE_RECORD_CURSOR_LAYOUT.next_offset == L::NATIVE_RECORD_CURSOR_LAYOUT.next_offset);
+const _: () = assert!(crate::heap::NATIVE_RECORD_CURSOR_LAYOUT.limit_offset == L::NATIVE_RECORD_CURSOR_LAYOUT.limit_offset);
 // NATIVE_OBJECT_LAYOUT
 const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.record_capacity == L::NATIVE_OBJECT_LAYOUT.record_capacity);
 const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.record_size == L::NATIVE_OBJECT_LAYOUT.record_size);

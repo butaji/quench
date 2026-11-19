@@ -139,7 +139,10 @@ impl<'a, const D: u8, const A: u8, const B: u8> NumericFrame<Concrete> for Place
 
 impl<'a, const D: u8, const A: u8, const B: u8> GlobalFrame<Concrete> for PlacesView<'a, D, A, B> {}
 impl<'a, const D: u8, const A: u8, const B: u8> CallFrame<Concrete> for PlacesView<'a, D, A, B> {}
-impl<'a, const D: u8, const A: u8, const B: u8> PropertyFrame<Concrete> for PlacesView<'a, D, A, B> {}
+impl<'a, const D: u8, const A: u8, const B: u8> PropertyFrame<Concrete> for PlacesView<'a, D, A, B> {
+    type Plans = crate::staged::NoPlans;
+    fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
+}
 
 impl<'a, const D: u8, const A: u8, const B: u8> ElementFrame<Concrete> for PlacesView<'a, D, A, B> {
     #[inline(always)]
@@ -172,7 +175,7 @@ pub(crate) fn entry_dense<const H: u8>(payload: usize) -> ElementView<u64> {
     let record = word_at(payload, JS_STEP_LOOP_ENTRY);
     let offset = stage_site(&mut stage);
     let (values, length) = entry::entry_backing(&mut stage, record, offset);
-    ElementView::Dense(DenseView { values, length, packed: false, within: false })
+    ElementView::Dense(DenseView { values, length, packed: false, within: false, double: None })
 }
 
 /// The typed view the loop's entry recorded for the array whose entry words lie at the offset of the site

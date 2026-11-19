@@ -6,6 +6,45 @@
 /// An int32 shift count is its low five bits (ECMAScript ToUint32 of the count, modulo 32).
 pub(crate) const WORD32_SHIFT_MASK: u32 = u32::BITS - 1;
 
+/// The parser's binary operator codes the shared rows name (`oxc_ast::ast::BinaryOperator as u32`):
+/// literals, because the stencil build has no parser; `operations.rs` checks each against the parser's.
+pub(crate) const EQUALITY_OPERATOR: u32 = 0;
+pub(crate) const INEQUALITY_OPERATOR: u32 = 1;
+pub(crate) const STRICT_EQUALITY_OPERATOR: u32 = 2;
+pub(crate) const STRICT_INEQUALITY_OPERATOR: u32 = 3;
+/// The `in` operator.
+pub(crate) const IN_OPERATOR: u32 = 20;
+/// The `instanceof` operator.
+pub(crate) const INSTANCEOF_OPERATOR: u32 = 21;
+
+/// Whether an equality operator is strict and whether it is negated; `None` for any other.
+#[inline(always)]
+pub(crate) fn equality_operator(op: u32) -> Option<(bool, bool)> {
+    // The four operators are consecutive from an aligned first, each negation right after
+    // its test and the strict pair after the loose one, so two bits of the offset decide
+    // them, with no table of branches.
+    const NEGATED: u32 = INEQUALITY_OPERATOR - EQUALITY_OPERATOR;
+    const STRICT: u32 = STRICT_EQUALITY_OPERATOR - EQUALITY_OPERATOR;
+    const _: () = assert!(
+        NEGATED == 1
+            && STRICT == 2
+            && STRICT_INEQUALITY_OPERATOR - EQUALITY_OPERATOR == STRICT | NEGATED
+            && EQUALITY_OPERATOR.is_multiple_of(STRICT << 1)
+    );
+    let offset = op.wrapping_sub(EQUALITY_OPERATOR);
+    (offset <= STRICT | NEGATED).then_some((offset & STRICT != 0, offset & NEGATED != 0))
+}
+
+/// The equality operator that is `strict` and `negated`: the inverse of `equality_operator`.
+pub(crate) fn equality_binary_operator(strict: bool, negated: bool) -> u32 {
+    match (strict, negated) {
+        (false, false) => EQUALITY_OPERATOR,
+        (false, true) => INEQUALITY_OPERATOR,
+        (true, false) => STRICT_EQUALITY_OPERATOR,
+        (true, true) => STRICT_INEQUALITY_OPERATOR,
+    }
+}
+
 /// A stage supplies the machine operation for each semantic Number relation.
 /// The relation table below is shared by interpreter values and native emitters.
 pub(crate) trait NumberRelationStage<T> {

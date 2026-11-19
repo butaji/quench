@@ -464,6 +464,7 @@ macro_rules! direct_accesses {
         }
     }
 }
+#[cfg(not(stencil_build))]
 direct_accesses! { crate::wasm::memory::MemoryLoad;
     I32Load => WasmI32Load;
     I64Load => WasmI64Load;
@@ -480,6 +481,7 @@ direct_accesses! { crate::wasm::memory::MemoryLoad;
     I64Load32S => WasmI64Load32S;
     I64Load32U => WasmI64Load32U;
 }
+#[cfg(not(stencil_build))]
 direct_accesses! { crate::wasm::memory::MemoryStore;
     I32Store => WasmI32Store;
     I64Store => WasmI64Store;

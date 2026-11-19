@@ -1,10 +1,14 @@
 #[path = "../../quench-runtime/src/staged/stage.rs"] mod stage;
-pub(crate) use stage::{RecordSpace, Stage, Table, word_bytes, word_offset, Passed};
+pub(crate) use stage::{StagedRecordSpace, Stage, Table, word_bytes, word_offset, Passed};
 pub(crate) type Concrete = crate::stage::StencilStage;
 #[path = "../../quench-runtime/src/staged/region.rs"] #[allow(dead_code)] pub(crate) mod region;
 #[path = "../../quench-runtime/src/staged/register_frame.rs"] mod register_frame;
-pub(crate) use register_frame::{Constant, Frame, Step, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
+pub(crate) use register_frame::{Constant, Frame, Step, bound_this, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
 pub(crate) use crate::bytecode::Register;
+// The names the runtime's `staged.rs` root gives its leaves' `use super::*`.
+pub(crate) use crate::bytecode::{FieldBase, FieldLookup, Operand};
+pub(crate) use crate::typed_ir::Type;
+pub(crate) use object::Form;
 #[path = "../../quench-runtime/src/staged/global.rs"] mod global;
 pub(crate) use global::{lexical_read, GlobalBinding, GlobalFrame};
 #[path = "../../quench-runtime/src/staged/math.rs"] pub(crate) mod math;
@@ -25,7 +29,6 @@ pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, Nu
 #[path = "../../quench-runtime/src/staged/entry.rs"] pub(crate) mod entry;
 #[path = "../../quench-runtime/src/staged/frame.rs"] #[allow(dead_code)] pub(crate) mod frame;
 #[path = "../../quench-runtime/src/staged/call.rs"] pub(crate) mod call;
-#[path = "../../quench-runtime/src/staged/protocol.rs"] #[allow(dead_code)] pub(crate) mod protocol;
 #[path = "../../quench-runtime/src/staged/ic.rs"] pub(crate) mod ic;
 #[path = "../../quench-runtime/src/staged/slot_store.rs"] pub(crate) mod slot_store;
 #[path = "../../quench-runtime/src/staged/iteration.rs"] pub(crate) mod iteration;
@@ -50,18 +53,26 @@ pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, Nu
 #[path = "../../quench-runtime/src/staged/operation.rs"] mod operation;
 pub(crate) use operation::Operation;
 #[path = "../../quench-runtime/src/staged/steps.rs"] mod steps;
-pub(crate) use steps::{step, row_step, RowStep, step_flow, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_arith};
+pub(crate) use steps::{step, RowStep, step_flow, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_arith};
 #[path = "../../quench-runtime/src/staged/names.rs"] mod names;
 pub(crate) use names::Protocol;
+#[path = "../../quench-runtime/src/staged/protocol_literals.rs"] pub(crate) mod protocol_literals;
+#[path = "../../quench-runtime/src/staged/protocol_classes.rs"] pub(crate) mod protocol_classes;
+#[path = "../../quench-runtime/src/staged/protocol_values.rs"] pub(crate) mod protocol_values;
+#[path = "../../quench-runtime/src/staged/protocol_owned.rs"] pub(crate) mod protocol_owned;
+#[path = "../../quench-runtime/src/staged/suspend.rs"] mod suspend;
+pub(crate) use suspend::{await_source, suspend as suspension_step, SuspendEffect, Suspending, Suspension, YieldConversion};
+#[path = "../../quench-runtime/src/staged/delegation.rs"] mod delegation;
+pub(crate) use delegation::DelegationStep;
 #[path = "../../quench-runtime/src/staged/captures.rs"] mod captures;
 #[path = "../../quench-runtime/src/staged/control.rs"] mod control;
 #[path = "../../quench-runtime/src/staged/generic.rs"] mod generic;
 #[path = "../../quench-runtime/src/staged/callout.rs"] mod callout;
-pub(crate) use callout::{CallOut, OperandValues};
+pub(crate) use callout::CallOut;
 #[path = "../../quench-runtime/src/staged/spread.rs"] mod spread;
 pub(crate) use spread::Passing;
 #[path = "../../quench-runtime/src/staged/compare.rs"] pub(crate) mod compare;
-pub(crate) use compare::{Comparison, Nullish};
+pub(crate) use compare::{nullish_of, Comparison};
 #[path = "../../quench-runtime/src/staged/delete.rs"] mod delete;
 #[path = "../../quench-runtime/src/staged/heap.rs"] mod heap;
 #[path = "../../quench-runtime/src/staged/element_rows.rs"] pub(crate) mod element_rows;
@@ -85,11 +96,16 @@ pub(crate) use invoke::{CallFrame, Entered, Room};
 pub(crate) use plan::{plan_entry, CalleeKind, CallEntry, DirectPlan, Identity, Resolved};
 #[path = "../../quench-runtime/src/staged/native_call.rs"] mod native_call;
 #[path = "../../quench-runtime/src/staged/allocation.rs"] mod allocation;
-pub(crate) use allocation::Allocation;
+pub(crate) use allocation::{Allocation, InlineEmpty};
 #[path = "../../quench-runtime/src/staged/effects.rs"] pub(crate) mod effects;
 #[path = "../../quench-runtime/src/staged/flow.rs"] pub(crate) mod flow;
-// The Wasm families `step` dispatches to (pure word arithmetic over the stage).
-#[path = "../../quench-runtime/src/staged/wasm_simd.rs"] mod wasm_simd;
+// The Wasm jumps `step` dispatches to (pure word arithmetic over the stage); the Concrete-only Wasm
+// families are the runtime's alone. The Wasm call rows' staged ABI, roots and instance words.
+#[path = "../../quench-runtime/src/staged/wasm_jump.rs"] pub(crate) mod wasm_jump;
+pub(crate) use wasm_jump::{BranchTable, WasmJump};
+#[path = "../../quench-runtime/src/staged/wasm_call.rs"] #[allow(dead_code)] pub(crate) mod wasm_call;
+#[path = "../../quench-runtime/src/staged/wasm_roots.rs"] pub(crate) mod wasm_roots;
+#[path = "../../quench-runtime/src/staged/wasm_instance.rs"] #[allow(dead_code)] pub(crate) mod wasm_instance;
 
 #[path = "../../quench-runtime/src/staged/edge.rs"] mod edge;
 pub(crate) use edge::Edge;

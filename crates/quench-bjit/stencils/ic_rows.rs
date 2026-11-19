@@ -168,7 +168,10 @@ pub(crate) fn run<const KIND: u8, const CHAINED: bool, const D: u8, const A: u8>
         IC_GET_HOLDER_ROW => get_row::<true, CHAINED, D>(s, payload),
         IC_SET_INT_ROW => set_row::<true, CHAINED, A>(s, payload),
         IC_PROOF_ROW => proof(s, payload),
-        IC_KNOWN_GET_ROW => known_get::<D>(s, payload),
+        // A known get is always followed by its site row, so its entry flag says instead whether the
+        // fact store proved the slot a Number (`false`: proved; `base_region::plan::ic_plan`).
+        IC_KNOWN_GET_ROW if CHAINED => known_get::<D, false>(s, payload),
+        IC_KNOWN_GET_ROW => known_get::<D, true>(s, payload),
         IC_KNOWN_SET_ROW => known_set::<false, A, false>(s, payload),
         IC_KNOWN_SET_INT_ROW => known_set::<true, A, false>(s, payload),
         IC_KNOWN_SET_ADMITTED_ROW => known_set::<false, A, true>(s, payload),

@@ -107,10 +107,10 @@ pub(crate) enum Operation<W, P> {
     /// `left == right` (or `===`; negated for `!=`, `!==`) where the two words decide it: the
     /// same word, two int32s, or `null` and `undefined` under `==`. Any other pair leaves at the
     /// miss edge, where the VM compares (strings, BigInts, conversions that run guest code).
-    Equality { destination: Register, left: Register, right: Register, strict: bool, negated: bool },
+    Equality { destination: Register, left: Operand, right: Operand, strict: bool, negated: bool },
     /// Any other `Binary` of two registers (a string or BigInt relation, an arithmetic of other
     /// than Numbers, `instanceof`, `in`): the VM's own operation, a callout.
-    Binary { destination: Register, left: Register, right: Register, operator: u32 },
+    Binary { destination: Register, left: Operand, right: Operand, operator: u32 },
     /// Define `destination` from environment slot `slot` (`environment::environment_slot`); a
     /// sparse storage or an internal marker leaves at the frame's miss edge.
     LoadEnvLocal { destination: Register, slot: u16 },
@@ -189,6 +189,90 @@ pub(crate) enum Operation<W, P> {
     /// `left` compared with `right` (`Comparison`), jumping to the target when the comparison
     /// holds, or fails where `negate` (`JumpBinaryFalse`); otherwise continue after it.
     CompareJump { comparison: Comparison, left: Operand, right: Operand, negate: bool },
+    /// Define `destination` with the function the running activation runs (`Frame::callee`); where
+    /// the frame does not hold it, leave at the frame's miss edge.
+    LoadCallee { destination: Register },
+    /// Define `destination` with whether `typeof source` is the name at `index` in `TYPEOF_NAMES`,
+    /// negated where `negated` (`UNARY_TYPEOF_IS`); a heap value leaves at the frame's miss edge.
+    TypeofTest { destination: Register, source: Register, index: u64, negated: bool },
+    /// Define `destination` with the `typeof` result string of register `source`'s value (`typeof x`):
+    /// the interned string of its name, where the tag decides the name or the frame's kind of a heap
+    /// value does (`Frame::type_of`); a value neither decides leaves at the frame's miss edge.
+    TypeofString { destination: Register, source: Register },
+    /// Define element `index` of the literal array in `array` as `value` (`DefineArrayElement`), a
+    /// fresh hole of that array; the frame's element definer answers it (`Frame::define_element`).
+    DefineElement { array: Register, index: u32, value: Register },
+    /// Define `destination` with element `index` of the arguments binding in local `slot`: a keeping
+    /// activation's kept value, else the frame's or the VM's read (`CallOut::ArgumentGet`).
+    ArgumentGet { destination: Register, index: Register, slot: u16 },
+    /// Clone the running activation's environment by environment clone plan `plan`: a frame's own
+    /// environment, or an environment window's (`CallOut::CloneEnv`). Defines no register.
+    CloneEnv { plan: u32 },
+    /// SetFunctionName of the function in register `function` to the program atom `name` through cache
+    /// `site`: the frame's own naming (`Frame::set_function_name`); a frame that holds none leaves at the
+    /// miss edge, where the interpreter names it. Defines no register.
+    SetFunctionName { function: Register, name: u32, site: u16 },
+    /// Suspend the activation (`Suspension`: `await`, `yield`, `yield*`) with the value of `value`,
+    /// resuming with what it receives next in `destination` (`suspend::suspend`, which asks the
+    /// frame: `Frame::suspend_await`, `suspend_yield`, `suspend_yield_star`).
+    Suspend { kind: super::Suspension, destination: Register, value: Register },
+    #[cfg(not(stencil_build))]
+    /// A Wasm float, float conversion or select (`wasm_float`); the frame's Wasm words decide it, and
+    /// a trap or an operand the frame does not hold leaves at the miss edge.
+    WasmFloat(wasm_float::WasmFloatOperation),
+    #[cfg(not(stencil_build))]
+    /// A Wasm i32 or i64 register or immediate operator (`wasm_int`), which the row answers from its words.
+    WasmInt(wasm_int::WasmIntOperation),
+    /// A Wasm i32 conditional jump or fused add-and-jump over int32 operands (`wasm_jump`).
+    WasmJump(WasmJump),
+    /// A Wasm branch table: control goes to the entry its index picks (`Edge::Entry`, `wasm_jump`).
+    BranchTable(BranchTable),
+    #[cfg(not(stencil_build))]
+    /// A Wasm global's load or store, or a register window's fill (`wasm_state`).
+    WasmState(wasm_state::WasmStateOperation),
+    #[cfg(not(stencil_build))]
+    /// A Wasm direct load or store of the function's memory (`wasm_access`).
+    WasmAccess(wasm_access::WasmAccessOperation),
+    #[cfg(not(stencil_build))]
+    /// A Wasm SIMD operator or byte shuffle on the lane's vector registers (`wasm_simd`).
+    WasmVector(wasm_simd::VectorOperation),
+    /// A property add of `value` to the object at the record table `records`, through a site's
+    /// transition `edge` (and the prototype `link` a chained site must hold), storing it in `form`
+    /// (`add::site_add`). The tier names the object word and the site's words: a register's or the
+    /// activation's receiver, so one variant serves the register and `this` add rows. No opcode
+    /// decodes to it; a stencil row builds it. Leaves at the miss edge where the add declines.
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    AddSite { records: W, object: W, edge: add::Edge<W>, link: Option<W>, form: Form, value: W },
+    /// A function's inferred name `name` written to the function word `function`'s empty name slot
+    /// through a site's naming edge (`naming::site_name`, the `(edge, empty)` pair). No opcode decodes
+    /// to it; a stencil row builds it. Leaves at the miss edge where the naming declines.
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    NamingSite { records: W, function: W, naming: (add::Edge<W>, W), form: Form, name: W },
+    /// `value instanceof constructor` into `destination`, decided by the frame's words of the value
+    /// and the constructor (`Frame::instance_of`, the walk `object::instanceof_by_words`); the frame's
+    /// default leaves it to the VM's `Binary` callout. Leaves at the miss edge where the walk declines.
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    InstanceOf { destination: Register, value: Register, constructor: Register },
+    /// Continue where register `source` holds a direct array (the array identity test, `Frame::direct_array`);
+    /// any other value leaves at the miss edge.
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    DirectArray { source: Register },
+    /// Define `destination` with the `length` of the direct array in register `source` (`Frame::array_length`).
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    ArrayLength { destination: Register, source: Register },
+    /// Define `destination` with the `length` of the typed array in register `source` (`Frame::typed_length`).
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    TypedLength { destination: Register, source: Register },
+    /// Append the value in register `value` to the array in register `array`, where its backing has
+    /// room and is writable (`Frame::array_append`); a value the frame does not append leaves at the miss edge.
+    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
+    ArrayAppend { array: Register, value: Register },
+    /// Define `destination` with the script-top-level binding the declaration `declaration` names (its
+    /// position in the root's global lexicals), through cache `site`; a temporal dead zone is the VM's to raise.
+    GlobalLexicalLoad { destination: Register, declaration: u32, site: u16 },
+    /// The store of `source` to the script-top-level binding the declaration `declaration` names, through
+    /// cache `site`, an initialization where `initialize`; the VM makes it (const and dead zone rules included).
+    GlobalLexicalStore { source: Register, declaration: u32, site: u16, initialize: bool },
 }
 
 impl<W, P> Operation<W, P> {
@@ -202,6 +286,8 @@ impl<W, P> Operation<W, P> {
     }
 }
 
+/// Queries over instructions read the opcode catalog, which the stencil build does not have.
+#[cfg(not(stencil_build))]
 impl Operation<u64, ()> {
     /// The operation `instruction` denotes, decoded with no tables (`DecodeContext::EMPTY`): what a
     /// tier asks an instruction's meaning by, where the row's operands need no table.
@@ -290,7 +376,6 @@ impl Operation<u64, ()> {
     /// The field cache sites `instruction` reads (`true`) or stores through (`false`), as the
     /// program's field sites name them: a named read's lookup (its site, or the sites of a
     /// nested lookup), and a field store's cache site.
-    #[cfg(not(stencil_build))]
     pub(crate) fn field_cache_sites(instruction: WideInstruction, field_sites: &[crate::bytecode::FieldSite]) -> Vec<(u16, bool)> {
         if Self::is_field_read(instruction) {
             return match instruction.field_lookup() {

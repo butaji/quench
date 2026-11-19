@@ -21,8 +21,7 @@
 //! (`LENGTH_ROW`, an array's or a string's) takes the destination in hole 0 and the base word's frame offset in hole 1. A
 //! capture store (`CAPTURE_SET_ROW`) takes its value operand in hole 0 and the slot and its byte
 //! offset in holes 1 and 2. A field store (`SITE_STORE_ROW`) takes the object register's frame
-//! offset in hole 0, its value operand in hole 1 and the cache entry's byte offset in hole 2; an
-//! ungated one the admitted tags in hole 3 and the shape its slot type was proved of in hole 4. A
+//! offset in hole 0, its value operand in hole 1 and the cache entry's byte offset in hole 2. A
 //! chained site read (`ENTRY`) carries both entry offsets in hole 2. The rows of the activation's
 //! receiver (`THIS_SITE_ROW`, `THIS_STORE_ROW`) take it from their window's header (`context_word`), so their hole 0 is the
 //! destination alone (a read) or unused (a store).
@@ -38,6 +37,9 @@ use crate::bytecode::Operand;
 use crate::layout::{CONTEXT_BODY, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED, JS_STEP_STRING_RECORD_BASE};
 use crate::layout::shared_words::{capture_len, capture_values};
 use crate::ic_rows;
+use crate::layout::{JS_STEP_ARRAY_CURSOR, JS_STEP_EMPTY_ARRAY_LAYOUT, JS_STEP_EMPTY_ARRAY_PAYLOAD, JS_STEP_EMPTY_OBJECT_LAYOUT, JS_STEP_EMPTY_OBJECT_PAYLOAD,
+    JS_STEP_OBJECT_CURSOR, NATIVE_ARRAY_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT};
+use crate::layout::words::{DIRECT_ARRAY_TAG, DIRECT_OBJECT_TAG};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of};
 use crate::words::{canonical, hole, hole64, hop, int_word};
 use crate::places::{DEST, LEFT, RIGHT, Places, finish, finish_fast};
@@ -45,153 +47,12 @@ pub(crate) use crate::stage::stage_site;
 pub(crate) use crate::words::{context_word, payload, set_context_word, word_at};
 use crate::stage::StencilStage;
 use crate::staged::{Frame, Operation, Stage, Step, step, step_local, step_value, string_length};
-use crate::codes::{ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, APPEND_ROW, ARRAY_ROW, CALLEE_CAPTURE_ROW, CAPTURE_IDENTITY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAR_CODE_AT_ROW, CONSTANT_ROW, DECLARED_ROW, ENV_DEFINE_ROW, HELD_LINK_AT, PROTOTYPE_ROW, SHAPE_ROW, STORES_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, FOR_IN_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, HELD_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_INT_ADMITTED_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ADMITTED_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, IC_SET_ROW, IDENTITY_ROW, INDEX_ROW, INSTANCEOF_ROW, KEY_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LIVE_ROW, LOAD_CHECKED_ROW, LOAD_LOCAL_ROW, MEM, NAME_ARENA_ROW, NAME_EITHER_ROW, OBJECT_ROW, PARSE_INT_ROW, REALM_ROW, SITE_ROW, SITE_STORE_ROW, STAGED_FIRST, STAGED_LAST, STORE_CHECKED_ROW, STORE_LOCAL_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, TYPED_INDEX_LAST, TYPED_INDEX_ROW, TYPED_LENGTH_ROW, TYPED_STORE_LAST, TYPED_STORE_ROW, TYPEOF_INDEX_ROW, TYPEOF_ISNOT_ROW, TYPEOF_IS_ROW, TYPEOF_STRING_ROW};
+use crate::codes::{EMPTY_ARRAY_ROW, EMPTY_OBJECT_ROW, LAST_INT_PIN, MEMINT, PIN, PINF, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, APPEND_ROW, ARRAY_ROW, CALLEE_CAPTURE_ROW, CAPTURE_IDENTITY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAR_CODE_AT_ROW, CONSTANT_ROW, DECLARED_ROW, ENV_DEFINE_ROW, HELD_LINK_AT, PROTOTYPE_ROW, SHAPE_ROW, STORES_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, FOR_IN_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, HELD_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_INT_ADMITTED_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ADMITTED_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, IC_SET_ROW, IDENTITY_ROW, INDEX_ROW, INSTANCEOF_ROW, KEY_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LIVE_ROW, LOAD_CHECKED_ROW, LOAD_LOCAL_ROW, MEM, NAME_ARENA_ROW, NAME_EITHER_ROW, OBJECT_ROW, PARSE_INT_ROW, REALM_ROW, SITE_ROW, SITE_STORE_ROW, STAGED_FIRST, STAGED_LAST, STORE_CHECKED_ROW, STORE_LOCAL_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, TYPED_INDEX_LAST, TYPED_INDEX_ROW, TYPED_LENGTH_ROW, TYPED_STORE_LAST, TYPED_STORE_ROW, TYPEOF_INDEX_ROW, TYPEOF_ISNOT_ROW, TYPEOF_IS_ROW, TYPEOF_STRING_ROW};
 use crate::staged::{code_units, environment, parse_int};
 use crate::places_view::{ELEMENT_SITES, PlacesView, entry_dense, entry_typed};
 use crate::{environment_rows, key_rows, name_rows, site_rows, staged_rows};
 
-unsafe extern "C" {
-    static HOLE_V0: u8;
-    static HOLE_V1: u8;
-}
-
-#[inline(always)]
-pub(crate) fn word_at(base: usize, offset: usize) -> u64 {
-    // SAFETY: a layout offset of a live record, as every staged load.
-    unsafe { ((base + offset) as *const u64).read() }
-}
-
-/// The activation's dispatch payload: the context's adapter pointer.
-#[inline(always)]
-pub(crate) fn payload(s: &S) -> usize {
-    word_at(s.ctx, CALL_CONTEXT_ADAPTER_PAYLOAD) as usize
-}
-
-/// The array word an `ENTRY == false` row names: the frame slot at hole `H`.
-#[inline(always)]
-fn array_word<const H: u8>(s: &S) -> u64 {
-    word_at(s.frame, hole::<H>())
-}
-
-/// The backing `(values, length)` of the array an access names: the entry record's (the offset
-/// at hole `H`, never looked up per access) or the array word's, proved a direct array.
-#[inline(always)]
-fn backing<const ENTRY: bool, const H: u8, const WRITABLE: bool>(s: &S, payload: usize) -> Option<(u64, u64, elements::Backing<u64>)> {
-    let mut stage = StencilStage::from_hole(H);
-    if ENTRY {
-        let record = word_at(payload, JS_STEP_LOOP_ENTRY);
-        let offset = stage_site(&mut stage);
-        let (values, length) = entry::entry_backing(&mut stage, record, offset);
-        return Some((values, length, elements::Backing { record: 0, header: 0, values, length }));
-    }
-    let base = array_word::<H>(s);
-    let record_base = word_at(payload, JS_STEP_ARRAY_RECORD_BASE);
-    let backing = elements::array_backing(&mut stage, record_base, base, ())?;
-    if WRITABLE {
-        elements::writable_backing(&mut stage, backing, ())?;
-    }
-    Some((backing.values, backing.length, backing))
-}
-
-#[inline(always)]
-pub(crate) fn stage_site(stage: &mut StencilStage) -> u64 {
-    stage.site(0)
-}
-
-/// The hole holding the site table an element access reads its shape facts from.
-const ELEMENT_SITES: u8 = 3;
-
-/// A `u32` word of the record at `base + offset`: a cursor's `next` or `limit`.
-#[inline(always)]
-fn word32_at(base: usize, offset: usize) -> u32 {
-    // SAFETY: a layout offset of a live cursor, read whole as `NATIVE_RECORD_CURSOR_LAYOUT` names it.
-    unsafe { ((base.wrapping_add(offset)) as *const u32).read_unaligned() }
-}
-
-/// Writes a `u32` word of a cursor or record the run owns, before any safepoint.
-#[inline(always)]
-fn put_word32(base: usize, offset: usize, value: u32) {
-    // SAFETY: a layout offset of a cursor or a fresh record of the run, which nothing else reads yet.
-    unsafe { ((base.wrapping_add(offset)) as *mut u32).write_unaligned(value) }
-}
-
-/// Writes a `u64` word of a fresh record the run owns, before any safepoint.
-#[inline(always)]
-fn put_word64(base: usize, offset: usize, value: u64) {
-    // SAFETY: as `put_word32`.
-    unsafe { ((base.wrapping_add(offset)) as *mut u64).write_unaligned(value) }
-}
-
-/// An empty allocation of kind `KIND` (`EMPTY_OBJECT_ROW` or `EMPTY_ARRAY_ROW`): while the kind's cursor has a
-/// run left (`next < limit`) and its template is captured, the cursor's `next` is bumped, the record of the
-/// bumped id gets the template's two words, and the destination (hole 0) takes the direct reference of that id.
-/// No occupancy is written: the run was occupied when it was claimed. Every other case exits 0 with nothing
-/// written, so the lane's helper or the interpreter makes the object. Nothing here can panic.
-#[inline(always)]
-fn empty_row<const KIND: u8, const D: u8>(s: S, payload: usize) -> Out {
-    let (cursor_at, records_at, record_size, tag, layout_at, words_at) = if KIND == EMPTY_OBJECT_ROW {
-        (JS_STEP_OBJECT_CURSOR, JS_STEP_OBJECT_RECORD_BASE, NATIVE_OBJECT_LAYOUT.record_size, DIRECT_OBJECT_TAG,
-            JS_STEP_EMPTY_OBJECT_LAYOUT, JS_STEP_EMPTY_OBJECT_PAYLOAD)
-    } else {
-        (JS_STEP_ARRAY_CURSOR, JS_STEP_ARRAY_RECORD_BASE, NATIVE_ARRAY_LAYOUT.record_size, DIRECT_ARRAY_TAG,
-            JS_STEP_EMPTY_ARRAY_LAYOUT, JS_STEP_EMPTY_ARRAY_PAYLOAD)
-    };
-    // A tagged reference cannot land in an int or double place: such a destination leaves before anything is written.
-    if D == MEMINT || (PIN..=LAST_INT_PIN).contains(&D) || D >= PINF {
-        return Out::Exit(s);
-    }
-    let cursor = word_at(payload, cursor_at) as usize;
-    let records = word_at(payload, records_at) as usize;
-    let layout = word_at(payload, layout_at);
-    if cursor == 0 || records == 0 || layout == 0 {
-        return Out::Exit(s);
-    }
-    let next = word32_at(cursor, NATIVE_RECORD_CURSOR_LAYOUT.next_offset);
-    let limit = word32_at(cursor, NATIVE_RECORD_CURSOR_LAYOUT.limit_offset);
-    if next >= limit {
-        return Out::Exit(s);
-    }
-    let words = word_at(payload, words_at);
-    put_word32(cursor, NATIVE_RECORD_CURSOR_LAYOUT.next_offset, next.wrapping_add(1));
-    let record = records.wrapping_add((next as usize).wrapping_mul(record_size));
-    put_word64(record, NATIVE_OBJECT_LAYOUT.payload_offset, words);
-    put_word32(record, NATIVE_OBJECT_LAYOUT.layout_offset, layout as u32);
-    deliver::<D>(s, tag | u64::from(next))
-}
-
-/// The `length` of the array or string word at hole 1 (`string_length::length_of`).
-#[inline(always)]
-fn length_row<const D: u8>(s: S, payload: usize) -> Out {
-    let mut stage = StencilStage::from_hole(0);
-    let base = array_word::<HOLE_A>(&s);
-    let records = (word_at(payload, JS_STEP_ARRAY_RECORD_BASE), word_at(payload, JS_STEP_STRING_RECORD_BASE));
-    deliver::<D>(s, need!(s, string_length::length_of(&mut stage, records, base, ())))
-}
-
-/// Whether the row's staged work was done and fit its place: it continues, else it leaves.
-#[inline(always)]
-fn finish<const D: u8, const A: u8>(frame: Places<D, A, MEM>, done: bool) -> Out {
-    if frame.writes_fit(done) { Out::Next(frame.s) } else { Out::Exit(frame.s) }
-}
-
-/// A row's hit continues at TAKEN, past the helper step laid out after it where it is a fast arm; a miss
-/// leaves as it did.
-#[inline(always)]
-pub(crate) fn hop(out: Out) -> Out {
-    match out {
-        Out::Next(s) => Out::Taken(s),
-        left => left,
-    }
-}
-
-/// A fast arm's row: where its proof held and its places fit it continues at TAKEN, past the
-/// helper step laid out after it, else it leaves into that step.
-#[inline(always)]
-pub(crate) fn finish_fast<const D: u8, const A: u8>(frame: Places<D, A, MEM>, done: bool) -> Out {
-    hop(finish(frame, done))
-}
-
-/// The activation's `this` into the destination (`staged::load_this`).
+/// `this` (`LoadThis`): the activation's receiver defined into the destination, where it holds one.
 #[inline(always)]
 fn this_row<const D: u8>(s: S) -> Out {
     let mut frame = Places::<D, MEM, MEM>::new(s);
@@ -298,6 +159,8 @@ fn shape_row(s: S) -> Out {
         source: word_at(s.frame, hole::<0>()),
         records: word_at(payload(&s), JS_STEP_OBJECT_RECORD_BASE),
         shape: hole64::<HOLE_A>(),
+        // The row reads either storage form, as the record's inline flag says.
+        form: crate::staged::object::Form::Either,
     };
     guard_row(s, guard)
 }
@@ -350,10 +213,6 @@ fn index_row<const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) 
             None => Out::Exit(frame.s),
         }
     }
-    let (values, length, _) = need!(s, backing::<ENTRY, HOLE_A, false>(&s, payload));
-    let mut stage = StencilStage::from_hole(ELEMENT_SITES);
-    let word = need!(s, elements::read_element(&mut stage, elements::DenseView { values, length, packed: false, within: false, double: None }, u64::from(index as u32), ()));
-    deliver::<D>(s, word)
 }
 
 /// An element store: the array is hole 0, the value hole 1, the index hole 2. A dense store is the
@@ -417,6 +276,64 @@ fn typed_length_row<const D: u8>(s: S) -> Out {
     let length = Operation::TypedLength { destination: DEST, source: LEFT };
     let done = matches!(step(&mut StencilStage::from_hole(HOLE_A), &mut frame, length), Step::Value(_));
     finish(frame, done)
+}
+
+/// A `u32` word of the record at `base + offset`: a cursor's `next` or `limit`.
+#[inline(always)]
+fn word32_at(base: usize, offset: usize) -> u32 {
+    // SAFETY: a layout offset of a live cursor, read whole as `NATIVE_RECORD_CURSOR_LAYOUT` names it.
+    unsafe { ((base.wrapping_add(offset)) as *const u32).read_unaligned() }
+}
+
+/// Writes a `u32` word of a cursor or record the run owns, before any safepoint.
+#[inline(always)]
+fn put_word32(base: usize, offset: usize, value: u32) {
+    // SAFETY: a layout offset of a cursor or a fresh record of the run, which nothing else reads yet.
+    unsafe { ((base.wrapping_add(offset)) as *mut u32).write_unaligned(value) }
+}
+
+/// Writes a `u64` word of a fresh record the run owns, before any safepoint.
+#[inline(always)]
+fn put_word64(base: usize, offset: usize, value: u64) {
+    // SAFETY: as `put_word32`.
+    unsafe { ((base.wrapping_add(offset)) as *mut u64).write_unaligned(value) }
+}
+
+/// An empty allocation of kind `KIND` (`EMPTY_OBJECT_ROW` or `EMPTY_ARRAY_ROW`): while the kind's cursor has a
+/// run left (`next < limit`) and its template is captured, the cursor's `next` is bumped, the record of the
+/// bumped id gets the template's two words, and the destination (hole 0) takes the direct reference of that id.
+/// No occupancy is written: the run was occupied when it was claimed. Every other case exits 0 with nothing
+/// written, so the lane's helper or the interpreter makes the object. Nothing here can panic.
+#[inline(always)]
+fn empty_row<const KIND: u8, const D: u8>(s: S, payload: usize) -> Out {
+    let (cursor_at, records_at, record_size, tag, layout_at, words_at) = if KIND == EMPTY_OBJECT_ROW {
+        (JS_STEP_OBJECT_CURSOR, JS_STEP_OBJECT_RECORD_BASE, NATIVE_OBJECT_LAYOUT.record_size, DIRECT_OBJECT_TAG,
+            JS_STEP_EMPTY_OBJECT_LAYOUT, JS_STEP_EMPTY_OBJECT_PAYLOAD)
+    } else {
+        (JS_STEP_ARRAY_CURSOR, JS_STEP_ARRAY_RECORD_BASE, NATIVE_ARRAY_LAYOUT.record_size, DIRECT_ARRAY_TAG,
+            JS_STEP_EMPTY_ARRAY_LAYOUT, JS_STEP_EMPTY_ARRAY_PAYLOAD)
+    };
+    // A tagged reference cannot land in an int or double place: such a destination leaves before anything is written.
+    if D == MEMINT || (PIN..=LAST_INT_PIN).contains(&D) || D >= PINF {
+        return Out::Exit(s);
+    }
+    let cursor = word_at(payload, cursor_at) as usize;
+    let records = word_at(payload, records_at) as usize;
+    let layout = word_at(payload, layout_at);
+    if cursor == 0 || records == 0 || layout == 0 {
+        return Out::Exit(s);
+    }
+    let next = word32_at(cursor, NATIVE_RECORD_CURSOR_LAYOUT.next_offset);
+    let limit = word32_at(cursor, NATIVE_RECORD_CURSOR_LAYOUT.limit_offset);
+    if next >= limit {
+        return Out::Exit(s);
+    }
+    let words = word_at(payload, words_at);
+    put_word32(cursor, NATIVE_RECORD_CURSOR_LAYOUT.next_offset, next.wrapping_add(1));
+    let record = records.wrapping_add((next as usize).wrapping_mul(record_size));
+    put_word64(record, NATIVE_OBJECT_LAYOUT.payload_offset, words);
+    put_word32(record, NATIVE_OBJECT_LAYOUT.layout_offset, layout as u32);
+    deliver::<D>(s, tag | u64::from(next))
 }
 
 /// `ArrayLength`: the `length` of the direct array at hole 1, defined into the destination. A string's
@@ -526,6 +443,7 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         STORES_ROW => stores_row(s),
         CHAR_CODE_AT_ROW => char_code_at_row::<D, B>(s, payload),
         PARSE_INT_ROW => parse_int_row::<D>(s, payload),
+        EMPTY_OBJECT_ROW | EMPTY_ARRAY_ROW => empty_row::<KIND, D>(s, payload),
         _ => element_row::<KIND, ENTRY, D, A, B>(s, payload),
     }
 }

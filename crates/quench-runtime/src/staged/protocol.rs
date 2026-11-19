@@ -317,6 +317,7 @@ pub(crate) enum HelperOutcome {
     Raised,
 }
 
+#[cfg(not(stencil_build))]
 /// The helper statuses a call site tests, in the order it tests them (the common one first),
 /// paired with where each goes: the one table both the helper and its call sites share.
 pub(crate) const HELPER_OUTCOMES: [(u32, HelperOutcome); 3] = [

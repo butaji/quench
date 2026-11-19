@@ -6,18 +6,21 @@
 
 use super::value::{is_direct_string, is_int};
 use super::*;
+#[cfg(not(stencil_build))]
 use crate::bytecode::OperandKind;
 use crate::value::ValueLayout;
 #[cfg(not(stencil_build))]
 use crate::vm::operations::equality_operator;
 use crate::Value;
 
+#[cfg(not(stencil_build))]
 /// Whether `operand` names a register or a program constant: the operands a `Binary` or an
 /// `Equality` row reads (`NumericFrame::operand_word`).
 fn is_value_operand(operand: Operand) -> bool {
     matches!(operand.kind(), Some(OperandKind::Register | OperandKind::Constant))
 }
 
+#[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     /// The `Binary`, `ToPropertyKey` and `JumpBinaryFalse` operations of `decode`; `None` where
     /// an operand is no register or the instruction returns from the frame.
@@ -90,7 +93,7 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 #[inline(always)]
 fn void<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register) -> Step<S::Word, F::Control> {
-    let undefined = Constant { value: Value::UNDEFINED, ty: Type::immediate(Value::UNDEFINED) };
+    let undefined = Constant { value: Value::UNDEFINED, ty: Type::UNDEFINED };
     let (value, fact) = frame.constant(stage, undefined);
     frame.write(stage, destination, value, fact);
     Step::Value(value)

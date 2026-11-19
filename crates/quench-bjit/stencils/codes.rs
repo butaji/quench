@@ -46,8 +46,12 @@ pub const MATH_LAST: u8 = ROUND;
 
 
 
-/// The typed-array kinds, the runtime's enum (`layout::typed_array_catalog`, mounted once for both builds).
-use crate::layout::typed_array_catalog::TypedArrayKind;
+/// The typed-array kinds, the runtime's own enum, mounted here once for every build that includes the codes
+/// (the stencils' `layout` re-exports it).
+#[allow(dead_code)]
+#[path = "../../quench-runtime/src/heap/cell/typed_array_catalog.rs"]
+pub(crate) mod typed_array_catalog;
+use typed_array_catalog::TypedArrayKind;
 
 /// The planned typed array kinds: each typed row family (`TYPED_INDEX_ROW`, `TYPED_STORE_ROW`) has one row per kind.
 pub const TYPED_KINDS: u8 = TypedArrayKind::COUNT as u8;

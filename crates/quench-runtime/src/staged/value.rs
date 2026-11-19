@@ -184,9 +184,12 @@ pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::C
     let integer_truthy = stage.ne_imm(payload, 0u32);
     let past = is_double(stage, bits);
     let tagged = stage.not(past);
-    let falsy = [crate::Value::NULL, crate::Value::UNDEFINED, crate::Value::DELETED, crate::Value::FALSE]
+    // The four falsy immediates, folded by hand: an iterator fold is an out-of-line call (and a
+    // panic path) in a stencil, which may carry no relocation but its holes.
+    let [null, undefined, deleted, false_word] = [crate::Value::NULL, crate::Value::UNDEFINED, crate::Value::DELETED, crate::Value::FALSE]
         .map(|value| stage.eq_imm(bits, value.to_bits()));
-    let falsy = falsy.into_iter().reduce(|any, each| stage.any(any, each)).expect("four falsy immediates");
+    let (nullish, marked) = (stage.any(null, undefined), stage.any(deleted, false_word));
+    let falsy = stage.any(nullish, marked);
     let immediate_truthy = stage.not(falsy);
     let double_truthy = stage.number_truthy(bits);
     let tagged_truthy = stage.pick(integer, integer_truthy, immediate_truthy);

@@ -1,6 +1,6 @@
 use super::{
     Effect, FieldBase, FieldLayout, FieldLookup, ImmediateLayout, ImmediateRole, InstructionField,
-    Op, Operand, REGISTER_MASK, RETURN_REGISTER, Register, ResultLayout, SET_THIS_REGISTER,
+    ConstructArguments, Op, Operand, REGISTER_MASK, RETURN_REGISTER, Register, RegisterWindow, ResultLayout, SET_THIS_REGISTER,
 };
 
 const PACKED_PAIR_LOW_BITS: u32 = 8;
@@ -9,25 +9,6 @@ const PACKED_PAIR_SOURCE_SHIFT: u32 = u16::BITS;
 const PACKED_PAIR_SOURCE_MASK: u32 = u16::MAX as u32;
 const PACKED_PAIR_LOW_MASK: u32 = (1 << PACKED_PAIR_LOW_BITS) - 1;
 const PACKED_PAIR_HIGH_MASK: u32 = (1 << PACKED_PAIR_HIGH_BITS) - 1;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RegisterWindow {
-    pub(crate) base: Register,
-    pub(crate) count: u16,
-}
-
-impl RegisterWindow {
-    /// The window's last register, when it has one.
-    pub(crate) fn last(self) -> Option<Register> {
-        self.count.checked_sub(1).map(|offset| self.base + offset)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ConstructArguments {
-    Registers(RegisterWindow),
-    Array(Register),
-}
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct WideInstruction {

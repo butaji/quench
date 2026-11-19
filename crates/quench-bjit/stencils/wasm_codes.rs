@@ -248,9 +248,9 @@ pub const LAST_COMPARISON: u32 = 24;
 pub const SHARED_UNARY: u32 = 6;
 pub const UNARY_COUNT: u32 = 7;
 
-/// The row kinds, in table order. Each family says what the library builds for its kind: the
-/// stencil symbol of every row is `w_<kind>_<op>_<width>_<shape>`, or `call_w_...` for a row that
-/// calls (`wasm_library.rs`, `wasm_name`).
+// The row kinds, in table order. Each family says what the library builds for its kind: the
+// stencil symbol of every row is `w_<kind>_<op>_<width>_<shape>`, or `call_w_...` for a row that
+// calls (`wasm_library.rs`, `wasm_name`).
 wasm_row_kinds! {
     // A binary or unary operator at each width, its second operand a register or an immediate.
     // `D = A op B`; a comparison branches through `JUMP_IF`.

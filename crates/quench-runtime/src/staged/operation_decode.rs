@@ -22,7 +22,16 @@ impl<W, P> Operation<W, P> {
             Decoder::Element => Self::decode_element(instruction),
             Decoder::Call => Self::decode_call(instruction, context),
             Decoder::Names => names::decode(instruction),
-            Decoder::Proved => None,
+            Decoder::WasmFloat => Self::decode_wasm_float(instruction),
+            // Under the tier's proof of the allocation (`decode_literal`), so none here.
+            Decoder::Proved | Decoder::Literal => None,
+            Decoder::WasmInt => Self::decode_wasm_int(instruction),
+            Decoder::WasmJump => Self::decode_wasm_jump(instruction),
+            Decoder::WasmState => Self::decode_wasm_state(instruction, context),
+            Decoder::WasmMemory => Self::decode_wasm_access(instruction, context),
+            Decoder::WasmVector => Self::decode_wasm_vector(instruction, context),
+            // A lane row is the lane's own (`decode_lane`): the plan keeps its generic or exit route for it.
+            Decoder::Lane => None,
         }
     }
 
@@ -65,6 +74,22 @@ impl<W, P> Operation<W, P> {
         names::decode(instruction)
     }
 
+    /// The literal operations of `decode` (`Decoder::Literal`) under the tier's `proof` of the
+    /// allocation: the allocation a literal, closure or constant array record makes
+    /// (`Allocation::decode`, which an array literal's element definitions do not change: the
+    /// array is a hole array and each definition is `DefineElement`), and an element definition.
+    #[inline(always)]
+    pub(crate) fn decode_literal(instruction: WideInstruction, proof: P) -> Option<Self> {
+        match instruction.op() {
+            Op::DefineArrayElement => Some(Self::DefineElement {
+                array: instruction.register_b(), index: instruction.imm(), value: instruction.register_a() }),
+            _ => {
+                let (destination, allocation) = Allocation::decode(instruction, &[])?;
+                Some(Self::Allocate { destination, allocation, proof })
+            }
+        }
+    }
+
     /// The register moves and control transfers of `decode`, from any record a tier holds
     /// (`Fields`): the one flow decoder, the bytecode's and the lane's alike.
     #[inline(always)]
@@ -76,13 +101,13 @@ impl<W, P> Operation<W, P> {
             Op::LoadConst => Self::LoadConst {
                 destination: instruction.result_register(),
                 constant: instruction.constant(context)? },
-            Op::Nop => Self::Nop,
-            Op::Throw => Self::Throw { source: instruction.register_a() },
             Op::Jump => Self::Jump,
             Op::JumpFalse => Self::JumpIf {
                 register: instruction.register_a(), taken: false },
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
+            Op::Throw => Self::Throw { source: instruction.register_a() },
+            Op::Nop => Self::Nop,
             _ => Self::Return { source: instruction.register_a() },
         })
     }
@@ -97,7 +122,6 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The property operations of `decode`: a plain named read, a named store and `delete`.
-    #[inline(always)]
     pub(crate) fn decode_property(instruction: WideInstruction) -> Option<Self> {
         match instruction.op() {
             Op::GetField => Self::decode_get_field(instruction),
@@ -112,7 +136,6 @@ impl<W, P> Operation<W, P> {
 
     /// A named read that completes no frame and writes no `this`; a nested lookup's base is the
     /// tier's own (`FieldBase::NESTED`).
-    #[inline(always)]
     fn decode_get_field(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0 { return None; }
         let lookup = instruction.field_lookup()?;
@@ -128,6 +151,8 @@ impl<W, P> Operation<W, P> {
     pub(crate) fn decode_value(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::LoadThis => Self::LoadThis {
+                destination: instruction.result_register() },
+            Op::LoadCallee => Self::LoadCallee {
                 destination: instruction.result_register() },
             Op::RequireObjectCoercible => Self::RequireObjectCoercible {
                 register: instruction.register_b() },
@@ -157,15 +182,44 @@ impl<W, P> Operation<W, P> {
     fn decode_unary(instruction: WideInstruction) -> Option<Self> {
         let (destination, source) = (instruction.result_register(), instruction.register_b());
         let operator = instruction.unary_operator();
+        if let Some((index, negated)) = crate::bytecode::typeof_test(operator) {
+            return Some(Self::TypeofTest { destination, source, index: index as u64, negated });
+        }
         Some(match operator {
+            #[cfg(not(stencil_build))]
             _ if operator == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot { destination, source },
+            // A `typeof` that returns from the frame is the general step's (the record returns the value).
+            #[cfg(not(stencil_build))]
+            _ if operator == oxc_ast::ast::UnaryOperator::Typeof as u32 && !instruction.returns_from_frame() =>
+                Self::TypeofString { destination, source },
             _ if operator == crate::bytecode::UNARY_TYPEOF_INDEX => Self::TypeofIndex { destination, source },
+            #[cfg(not(stencil_build))]
             _ if operator == oxc_ast::ast::UnaryOperator::BitwiseNot as u32 =>
                 Self::Number(NumberOperation::BitwiseNot { destination, source: Operand::register(source) }),
+            #[cfg(not(stencil_build))]
+            _ if operator == oxc_ast::ast::UnaryOperator::UnaryNegation as u32 =>
+                Self::number_unary(destination, source, crate::vm::operations::NumberUnary::Negate),
+            #[cfg(not(stencil_build))]
+            _ if operator == oxc_ast::ast::UnaryOperator::UnaryPlus as u32 =>
+                Self::number_unary(destination, source, crate::vm::operations::NumberUnary::Plus),
+            #[cfg(not(stencil_build))]
             _ if operator == oxc_ast::ast::UnaryOperator::Void as u32 && !instruction.returns_from_frame() =>
                 Self::Void { destination },
             _ => return None,
         })
+    }
+
+    /// `operation` of a Number `source` in the int32 domain: an int32 operand decides it, a double
+    /// or a value no Number leaves to the frame's miss edge (`Unary`'s arm).
+    #[inline(always)]
+    fn number_unary(destination: Register, source: Register, operation: crate::vm::operations::NumberUnary) -> Self {
+        Self::Number(NumberOperation::Unary { destination, source: Operand::register(source), operation, domain: Domain::Int32 })
+    }
+
+    /// The Wasm integer operations of `decode` (`Decoder::WasmInt`), from a record's wide fields.
+    #[inline(always)]
+    pub(crate) fn decode_wasm_int(instruction: WideInstruction) -> Option<Self> {
+        wasm_int::decode(instruction).map(Self::WasmInt)
     }
 
     /// The local-slot operations of `decode`.

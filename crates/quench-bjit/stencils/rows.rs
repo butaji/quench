@@ -64,7 +64,7 @@ mod wasm_entry;
 mod wasm_entry;
 mod wasm_rows;
 mod words;
-pub(crate) use facade::{Value, ValueType, bytecode, heap, operations, typed_ir, units, value, value_vec, vm};
+pub(crate) use facade::{Value, ValueType, bytecode, float_layout, heap, operations, typed_ir, units, value, value_vec, vm};
 pub(crate) use wasm::{WasmTrap, WasmType};
 
 use numeric::{Out, S};

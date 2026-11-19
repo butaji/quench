@@ -32,6 +32,7 @@ mod call_plan;
 pub(crate) use call_plan::{CALL_PLAN_FLAG_COUNT, CallPlan};
 mod instruction;
 mod register_list;
+mod operand_forms;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
 mod numeric_ops; mod op_classes; mod op_scan; mod typeof_names; mod unary_operators; mod rest_alias;
@@ -72,10 +73,10 @@ pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl 
 }
 pub(crate) use control_flow::{ControlEdge, Successors, branch_table_entries, entered_only_by_fallthrough, for_each_instruction_successor, reachable_from};
 pub use instruction::Instr;
-pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
+pub(crate) use instruction::WideInstruction;
 pub(crate) use register_list::{ARRAY_LITERAL_WINDOW, RegisterList};
+pub(crate) use operand_forms::{ConstructArguments, FieldBase, FieldLookup, RegisterWindow, REGISTER_MASK, RETURN_REGISTER, SET_THIS_REGISTER};
 pub(crate) use numeric_ops::specialized_numeric_op;
-pub(crate) const RETURN_REGISTER: Register = 1 << 15;
 /// Property cache sites are 16-bit. A program with more sites than that gives every site
 /// past the range this last one, for which the VM never records a cache entry, so those
 /// sites always take the uncached lookup.
@@ -93,8 +94,6 @@ pub(crate) const UNIQUE_CACHE_SITES: u16 = SHARED_UNCACHED_SITE - NAME_SHARED_CA
 /// The realm index a global lexical declaration's slot holds while the active realm binds no
 /// binding of its name there (`GlobalDeclarations::slots`).
 pub(crate) const NO_REALM_BINDING: u16 = u16::MAX;
-pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
-pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
 pub(crate) const INLINE_OBJECT_SITE_ATOMS: usize = 2;
 pub(crate) use crate::units::MAX_ARRAY_LENGTH;
 pub(crate) const NO_OPTIONAL_REGISTER: Register = 0;
@@ -486,16 +485,6 @@ property_definition_modes!(
     EnumerableGetter,
     EnumerableSetter,
 );
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FieldLookup {
-    Atom {
-        atom: Atom,
-        base: FieldBase,
-        cache_site: u16,
-    },
-    Site(usize),
-}
 
 impl Op {
     /// Whether an instruction of this op with field `b` names an atom by its immediate: an
@@ -3503,37 +3492,6 @@ pub(crate) struct ForwardedThisMethod {
     pub(crate) apply: (Atom, u16),
     pub(crate) call_pc: u32,
     pub(crate) call_result: u16,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(transparent)]
-pub(crate) struct FieldBase(pub(crate) u16);
-
-impl FieldBase {
-    pub(crate) const THIS: Self = Self(u16::MAX);
-    pub(crate) const NESTED: u16 = u16::MAX - 1;
-    const LOCAL_FLAG: u16 = 0x4000;
-
-    #[inline(always)]
-    pub(crate) fn register(value: Register) -> Self {
-        debug_assert!(value <= REGISTER_MASK);
-        Self(value)
-    }
-
-    #[inline(always)] pub(crate) fn register_index(self) -> Option<Register> {
-        (self.0 <= REGISTER_MASK).then_some(self.0)
-    }
-
-    #[inline(always)]
-    pub(crate) fn local(value: u16) -> Option<Self> {
-        (value <= REGISTER_MASK).then_some(Self(Self::LOCAL_FLAG | value))
-    }
-
-    #[inline(always)] pub(crate) fn local_index(self) -> Option<u16> {
-        (self.0 & Self::LOCAL_FLAG != 0
-            && self.0 & !(Self::LOCAL_FLAG | REGISTER_MASK) == 0)
-            .then_some(self.0 & REGISTER_MASK)
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

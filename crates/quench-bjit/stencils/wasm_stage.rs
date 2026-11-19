@@ -37,7 +37,7 @@ impl StencilMemory {
     }
 
     #[inline(always)]
-    fn at(&self, index: u64, offset: u32) -> *mut u8 {
+    pub(crate) fn at(&self, index: u64, offset: u32) -> *mut u8 {
         self.base.wrapping_add((index + u64::from(offset)) as usize)
     }
 }

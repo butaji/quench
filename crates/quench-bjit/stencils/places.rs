@@ -11,7 +11,7 @@
 use crate::bytecode::{Operand, Register};
 use crate::codes::*;
 use crate::heap_rows::{context_word, payload, word_at};
-use crate::layout::{CONTEXT_THIS, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS};
+use crate::layout::{CONTEXT_THIS, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_EPOCH, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_OBJECT_RECORD_BASE};
 use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, Step, value};
 use crate::typed_ir::Representation;
 use crate::words::*;
@@ -184,6 +184,16 @@ pub(crate) fn deliver_number<const D: u8>(mut s: S, word: u64) -> Out {
             Out::Next(s)
         }
         _ => deliver::<D>(s, word),
+    }
+}
+
+/// The row's outcome for the staged step `step` over `frame`: `next` where the step produced its word
+/// and every result fit its place, else the row leaves with the state as it was.
+#[inline(always)]
+pub(crate) fn settle<const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>, step: Step<u64, ()>, next: fn(S) -> Out) -> Out {
+    match step {
+        Step::Value(_) if !frame.refused => next(frame.s),
+        _ => Out::Exit(frame.s),
     }
 }
 
@@ -447,7 +457,10 @@ fn local_slot(s: &S, slot: u16) -> Option<usize> {
     (locals != 0 && u64::from(slot) < count).then(|| locals + usize::from(slot) * core::mem::size_of::<u64>())
 }
 
-impl<const D: u8, const A: u8, const B: u8> crate::staged::PropertyFrame<Concrete> for Places<D, A, B> {}
+impl<const D: u8, const A: u8, const B: u8> crate::staged::PropertyFrame<Concrete> for Places<D, A, B> {
+    type Plans = crate::staged::NoPlans;
+    fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
+}
 
 impl<const D: u8, const A: u8, const B: u8> NumericFrame<Concrete> for Places<D, A, B> {
     /// ToInt32 of the operand: an int place as it is, a double truncated (`bitwise_place`).

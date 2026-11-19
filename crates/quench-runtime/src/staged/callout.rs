@@ -24,8 +24,11 @@ pub(crate) const TAG_LOAD_NAME: u8 = 12;
 pub(crate) const TAG_SUPER_CALL: u8 = 13;
 pub(crate) const TAG_DECIDE: u8 = 14;
 pub(crate) const TAG_ENUMERATED_GET: u8 = 15;
-pub(crate) const TAG_GLOBAL_LEXICAL_LOAD: u8 = 16;
-pub(crate) const TAG_GLOBAL_LEXICAL_STORE: u8 = 17;
+pub(crate) const TAG_CLONE_ENV: u8 = 16;
+pub(crate) const TAG_ARGUMENT_GET: u8 = 17;
+pub(crate) const TAG_ACCESSOR: u8 = 18;
+pub(crate) const TAG_GLOBAL_LEXICAL_LOAD: u8 = 19;
+pub(crate) const TAG_GLOBAL_LEXICAL_STORE: u8 = 20;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -77,6 +80,15 @@ pub(crate) enum CallOut {
     Decide { left: Register, right: Register, operator: u32 } = TAG_DECIDE,
     /// `base[key]` of a for-in's enumerated read whose state's memo did not answer: the element read.
     EnumeratedGet { base: Register, key: Register } = TAG_ENUMERATED_GET,
+    /// The running activation's environment cloned by environment clone plan `plan`, the copy a
+    /// `for (let ...)` iteration's closures capture. It defines no register.
+    CloneEnv { plan: u32 } = TAG_CLONE_ENV,
+    /// The `[[Get]]` of `atom` on `receiver` through cache `site` by the VM's field read
+    /// (`Vm::get_field_cached`): where the site cached a getter, the getter runs by the
+    /// interpreter's own activation (`call_value`) with `receiver` as `this`. The getter is the
+    /// site's cached accessor, which no register holds, so the VM resolves it from the site.
+    #[allow(dead_code)]
+    Accessor { receiver: Register, atom: u32, site: u16 } = TAG_ACCESSOR,
     /// The script-top-level binding `declaration` names, read through cache `site` (`LoadGlobalLexical`).
     GlobalLexicalLoad { declaration: u32, site: u16 } = TAG_GLOBAL_LEXICAL_LOAD,
     /// `source` to the script-top-level binding `declaration` names, through cache `site`, `initialize`
@@ -93,6 +105,7 @@ pub(crate) struct Operands {
     pub(crate) list: Option<Arguments>,
 }
 
+#[cfg(not(stencil_build))]
 /// The values of a `CallOut`'s operands, read by the tier from its own registers or constants.
 pub(crate) struct OperandValues<V> {
     pub(crate) fixed: [Option<V>; 2],
@@ -117,6 +130,7 @@ impl Operands {
             .chain(self.list.into_iter().flat_map(move |list| list.registers(records)))
     }
 
+    #[cfg(not(stencil_build))]
     /// The operands' values, each operand read by `read` in the order `registers` names them, the
     /// list's as registers.
     pub(crate) fn read<V>(self, records: &[Register], mut read: impl FnMut(Operand) -> V) -> OperandValues<V> {
@@ -136,7 +150,8 @@ impl CallOut {
         match self {
             Self::Decide { left, right, operator } if equality_operator(operator).is_some_and(|(strict, _)| strict) =>
                 Some(([left, right], operator)),
-            Self::Equality { left, right, strict: true, negated } => Some(([left, right], equality_binary_operator(true, negated))),
+            Self::Equality { left, right, strict: true, negated } =>
+                Some(([left.register_index()?, right.register_index()?], equality_binary_operator(true, negated))),
             _ => None,
         }
     }
@@ -159,10 +174,12 @@ impl CallOut {
             Self::Delete { base: left, key: right, .. }
                 | Self::Decide { left, right, .. } | Self::EnumeratedGet { base: left, key: right } => [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
+            Self::ArgumentGet { index, .. } => [Some(index), None],
             Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. }
                 | Self::GlobalLexicalStore { source: operand, .. } => [Some(operand), None],
             Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. }
-                | Self::GlobalLexicalLoad { .. } => [None, None],
+                | Self::CloneEnv { .. } | Self::GlobalLexicalLoad { .. } => [None, None],
+            Self::Accessor { receiver, .. } => [Some(receiver), None],
             Self::Protocol { operands, .. } => operands,
             Self::Spread { callee, receiver, arguments, .. } =>
                 return Operands { fixed: [Some(Operand::register(callee)), Some(Operand::register(receiver))], list: Some(arguments) },

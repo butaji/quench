@@ -2,7 +2,9 @@
 //! definition every tier runs, and its step is the interpreter's own helper over the running
 //! activation (`Vm::owner_step`), which the host makes (`Vm::call_out` -> `Vm::owned_var_step`).
 use super::Protocol;
-use crate::bytecode::{InstructionField, Op, Register, WideInstruction};
+use crate::bytecode::Register;
+#[cfg(not(stencil_build))]
+use crate::bytecode::{InstructionField, Op, WideInstruction};
 
 /// An activation-variable (local, var binding, TDZ, argument) step the host makes by the interpreter's own definition.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -20,6 +22,7 @@ pub(crate) enum OwnedVarStep {
     ArgumentGet { slot: usize },
 }
 
+#[cfg(not(stencil_build))]
 /// The step `instruction` denotes among these opcodes, with the register it defines and its (at
 /// most two) operand registers, which `Vm::call_out` reads; `None` for any other opcode.
 #[inline(always)]

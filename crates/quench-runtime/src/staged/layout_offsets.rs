@@ -141,6 +141,19 @@ pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
     integrity_mask: VALUE_VEC_INTEGRITY_BITS,
 };
 
+/// A hot record space's allocation cursor (`heap::records::RecordCursor`): two `u32` words, `next` then
+/// `limit`, which the empty-allocation rows bump (`heap_rows::empty_row`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeRecordCursorLayout {
+    pub(crate) next_offset: usize,
+    pub(crate) limit_offset: usize,
+}
+
+pub(crate) const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCursorLayout {
+    next_offset: 0,
+    limit_offset: size_of::<u32>(),
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeTypedArrayLayout {
     pub(crate) entry_size: usize,
@@ -255,6 +268,18 @@ pub(crate) const JS_STEP_ARRAY_RECORD_BASE: usize = core::mem::offset_of!(super:
 /// (`JsStepDispatch::environment_storage`), which the environment rows read their slots through
 /// (`staged::environment::environment_slot`).
 pub(crate) const JS_STEP_ENV_STORAGE: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, environment_storage);
+/// The empty allocations' cursor and template words (`JsStepHead::object_cursor` and after).
+pub(crate) const JS_STEP_OBJECT_CURSOR: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, object_cursor);
+pub(crate) const JS_STEP_EMPTY_OBJECT_LAYOUT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_layout);
+pub(crate) const JS_STEP_EMPTY_OBJECT_PAYLOAD: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_payload);
+pub(crate) const JS_STEP_EMPTY_OBJECT_PROTO: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_object_proto);
+pub(crate) const JS_STEP_ARRAY_CURSOR: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_cursor);
+pub(crate) const JS_STEP_EMPTY_ARRAY_LAYOUT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_array_layout);
+pub(crate) const JS_STEP_EMPTY_ARRAY_PAYLOAD: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_array_payload);
+pub(crate) const JS_STEP_EMPTY_ARRAY_PROTO: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, empty_array_proto);
+pub(crate) const JS_STEP_ASCII_UNIT_STRINGS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, ascii_unit_strings);
+pub(crate) const JS_STEP_ARMED_ARRAY_PROOFS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, armed_array_proofs);
+pub(crate) const JS_STEP_ARRAY_CHAIN_INDEX_FREE_ADDRESS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_chain_index_free_address);
 /// The activation's local slots and their count (`native_locals`, `local_count`).
 pub(crate) const JS_STEP_NATIVE_LOCALS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, native_locals);
 pub(crate) const JS_STEP_LOCAL_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, local_count);

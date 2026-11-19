@@ -2,36 +2,43 @@
 //! independent rustc invocations and the merge of their stencil tables. Pure data operations, so
 //! the unit tests (compiled into `quench-bjit`'s test build) can check them without rustc.
 
-/// Target instances per shard. rustc holds every monomorphized row of its crate in memory at
-/// once: one invocation over the ~26k rows peaked near 6 GB (about 0.23 MB per row), so 4096 rows
-/// keep a shard near 1 GB plus the fixed cost of the shared row definitions.
-pub const ROWS_PER_SHARD: usize = 4096;
+/// The compile weight one shard holds at most, in row units. rustc holds every monomorphized
+/// row of its crate in memory at once, and a row's cost is its kind's (`NUMBER_WEIGHT` and after): a shard of
+/// 4096 number rows peaked near 4.6 GB, one of 4000 other heap rows near 9.3 GB, and one with 960
+/// element rows near 14 GB. At this budget a shard stays near 3 to 4 GB beside the fixed cost of
+/// the shared row definitions.
+pub const SHARD_WEIGHT: usize = 3072;
 
-/// Most shard compilations running at once: eight shards of about 1 GB fit a 16 GB machine
+/// The weights of a row's kind, in units of a number row's cost: a heap row inlines its staged
+/// step, and an element row (an index read or store) the whole element family's.
+pub const NUMBER_WEIGHT: usize = 1;
+pub const HEAP_WEIGHT: usize = 2;
+pub const ELEMENT_WEIGHT: usize = 14;
+
+/// Most shard compilations running at once: two shards of `SHARD_WEIGHT` fit a 16 GB machine
 /// beside the linker and the other crates cargo builds in parallel.
-pub const MAX_WORKERS: usize = 8;
+pub const MAX_WORKERS: usize = 2;
 
-/// The shard count for `rows` instances: at least one, so the fixed rows always have a home.
-pub fn shard_count(rows: usize) -> usize {
-    rows.div_ceil(ROWS_PER_SHARD).max(1)
+/// `items` in contiguous slices, each as long as its weights (`weight`) fit `SHARD_WEIGHT`, and
+/// at least one item a slice; at least one slice, so the fixed rows always have a home.
+pub fn split<T>(items: &[T], weight: impl Fn(&T) -> usize) -> Vec<&[T]> {
+    let mut parts = Vec::new();
+    let (mut start, mut held) = (0, 0);
+    for (at, item) in items.iter().enumerate() {
+        let cost = weight(item);
+        if at > start && held + cost > SHARD_WEIGHT {
+            parts.push(&items[start..at]);
+            (start, held) = (at, 0);
+        }
+        held += cost;
+    }
+    if start < items.len() || parts.is_empty() {
+        parts.push(&items[start..]);
+    }
+    parts
 }
 
-/// `items` in `shard_count` contiguous slices whose lengths differ by at most one.
-pub fn split<T>(items: &[T]) -> Vec<&[T]> {
-    let count = shard_count(items.len());
-    let (base, extra) = (items.len() / count, items.len() % count);
-    let mut start = 0;
-    (0..count)
-        .map(|shard| {
-            let end = start + base + usize::from(shard < extra);
-            let part = &items[start..end];
-            start = end;
-            part
-        })
-        .collect()
-}
-
-/// Concurrent compilations for `shards` shards on a machine with `parallelism` threads.
+/// The rustc processes to run at once over `shards` shards on `parallelism` cores.
 pub fn workers(shards: usize, parallelism: usize) -> usize {
     shards.min(parallelism).min(MAX_WORKERS).max(1)
 }
@@ -53,25 +60,23 @@ mod tests {
 
     #[test]
     fn small_lists_make_one_shard() {
-        assert_eq!(shard_count(0), 1);
-        assert_eq!(split::<u8>(&[]).len(), 1);
-        assert_eq!(shard_count(ROWS_PER_SHARD), 1);
-        assert_eq!(shard_count(ROWS_PER_SHARD + 1), 2);
+        assert_eq!(split::<u8>(&[], |_| NUMBER_WEIGHT).len(), 1);
+        assert_eq!(split(&[0u8; SHARD_WEIGHT], |_| NUMBER_WEIGHT).len(), 1);
+        assert_eq!(split(&[0u8; SHARD_WEIGHT + 1], |_| NUMBER_WEIGHT).len(), 2);
     }
 
     #[test]
-    fn split_is_contiguous_balanced_and_complete() {
-        let items: Vec<usize> = (0..ROWS_PER_SHARD * 3 + 5).collect();
-        let parts = split(&items);
-        assert_eq!(parts.len(), 4);
+    fn split_is_contiguous_within_weight_and_complete() {
+        let items: Vec<usize> = (0..SHARD_WEIGHT * 3 + 5).collect();
+        let weight = |item: &usize| if item % 7 == 0 { ELEMENT_WEIGHT } else { NUMBER_WEIGHT };
+        let parts = split(&items, weight);
         assert_eq!(parts.concat(), items);
-        let (min, max) = (parts.iter().map(|p| p.len()).min().unwrap(), parts.iter().map(|p| p.len()).max().unwrap());
-        assert!(max - min <= 1 && max <= ROWS_PER_SHARD);
+        assert!(parts.iter().all(|part| part.iter().map(weight).sum::<usize>() <= SHARD_WEIGHT));
     }
 
     #[test]
     fn workers_are_bounded() {
-        assert_eq!(workers(3, 64), 3);
+        assert_eq!(workers(2, 64), 2);
         assert_eq!(workers(100, 64), MAX_WORKERS);
         assert_eq!(workers(100, 2), 2);
         assert_eq!(workers(1, 0), 1);

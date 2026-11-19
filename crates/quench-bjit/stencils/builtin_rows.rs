@@ -21,7 +21,7 @@ use crate::layout::{
     JS_STEP_ASCII_UNIT_STRINGS, JS_STEP_STRING_RECORD_BASE,
 };
 use crate::stage::StencilStage;
-use crate::staged::{builtins, elements, math, object, strings};
+use crate::staged::{builtins, elements, math, object, strings, Stage};
 use crate::words::{S, hole64};
 use crate::{Row, Value};
 use core::mem::{offset_of, transmute};

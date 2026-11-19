@@ -5,7 +5,9 @@
 //! allocates in place, a specializer calls out to an allocator that leaves for a due
 //! collection first.
 
-use crate::bytecode::{Op, Register, RegisterList, RegisterWindow, WideInstruction};
+use crate::bytecode::{Register, RegisterList, RegisterWindow};
+#[cfg(not(stencil_build))]
+use crate::bytecode::{Op, WideInstruction};
 
 /// What an allocation row makes. Every operand is static: the registers it reads are named by
 /// a window, never passed as words, so each tier reads them from its own register homes.
@@ -40,6 +42,7 @@ pub(crate) enum Allocation {
     Concat { window: RegisterWindow },
 }
 
+#[cfg(not(stencil_build))]
 /// The element registers of the array literal `make` makes when the `following` instructions
 /// begin with its definitions, one per index in order and none of the array itself; `None` for
 /// an array of holes, a literal past the window, or one whose definitions do not follow.
@@ -67,11 +70,12 @@ impl Allocation {
     pub(crate) fn inline_empty(self) -> Option<InlineEmpty> {
         match self {
             Self::Empty => Some(InlineEmpty::Object),
-            Self::Array { length: 0 } => Some(InlineEmpty::Array),
+            Self::Array { length: 0, .. } => Some(InlineEmpty::Array),
             _ => None,
         }
     }
 
+    #[cfg(not(stencil_build))]
     /// The register `instruction` defines and the allocation it makes, given the instructions
     /// `following` it (an array literal's element definitions); `None` for an opcode that makes
     /// no such value.
@@ -94,6 +98,7 @@ impl Allocation {
         Some((instruction.result_register(), allocation))
     }
 
+    #[cfg(not(stencil_build))]
     /// The allocations whose value a table the function carries describes: a regular expression
     /// literal, a constant array and a literal template.
     fn decode_site_backed(instruction: WideInstruction) -> Option<Self> {

@@ -269,6 +269,7 @@ pub(crate) enum RowStep {
     Full,
 }
 
+#[cfg(not(stencil_build))]
 /// The part of `step` opcode `op`'s row reaches.
 pub(crate) const fn row_step(op: Op) -> RowStep {
     match op.staged() {
@@ -294,6 +295,7 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
     }
 }
 
+#[cfg(not(stencil_build))]
 /// `step` of a Wasm integer row (`RowStep::WasmInt`) on the interpreter's stage and frame; any
 /// other operation is unresolved.
 #[inline(always)]
@@ -372,6 +374,7 @@ pub(crate) fn step_keyed<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fra
     keyed_step(stage, frame, operation)
 }
 
+#[cfg(not(stencil_build))]
 /// `step` of a Wasm float row (`RowStep::WasmFloat`) on the interpreter's stage and frame; any
 /// other operation is unresolved.
 #[inline(always)]
@@ -382,6 +385,7 @@ pub(crate) fn step_wasm_float<F: Frame<Concrete>>(stage: &mut Concrete, frame: &
     }
 }
 
+#[cfg(not(stencil_build))]
 /// `step` of an instance-state row (`RowStep::WasmState`) on the interpreter's stage and frame.
 #[inline(always)]
 pub(crate) fn step_wasm_state<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
@@ -391,6 +395,7 @@ pub(crate) fn step_wasm_state<F: Frame<Concrete>>(stage: &mut Concrete, frame: &
     }
 }
 
+#[cfg(not(stencil_build))]
 /// `step` of a direct memory row (`RowStep::WasmMemory`) on the interpreter's stage and frame.
 #[inline(always)]
 pub(crate) fn step_wasm_access<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
@@ -400,6 +405,7 @@ pub(crate) fn step_wasm_access<F: Frame<Concrete>>(stage: &mut Concrete, frame: 
     }
 }
 
+#[cfg(not(stencil_build))]
 /// `step` of a Wasm vector row (`RowStep::WasmVector`) on the interpreter's stage and frame; any
 /// other operation is unresolved.
 #[inline(always)]

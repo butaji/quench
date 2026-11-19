@@ -2222,37 +2222,15 @@ pub(super) fn exponentiate(base: f64, exponent: f64) -> f64 {
     crate::staged::math::power(base, exponent)
 }
 
-/// Whether an equality operator is strict and whether it is negated; `None` for any other.
-#[inline(always)]
-pub(crate) fn equality_operator(op: u32) -> Option<(bool, bool)> {
-    const EQUALITY: u32 = BinaryOperator::Equality as u32;
-    const INEQUALITY: u32 = BinaryOperator::Inequality as u32;
-    const STRICT_EQUALITY: u32 = BinaryOperator::StrictEquality as u32;
-    const STRICT_INEQUALITY: u32 = BinaryOperator::StrictInequality as u32;
-    // The four operators are consecutive from an aligned first, each negation right after
-    // its test and the strict pair after the loose one, so two bits of the offset decide
-    // them, with no table of branches.
-    const NEGATED: u32 = INEQUALITY - EQUALITY;
-    const STRICT: u32 = STRICT_EQUALITY - EQUALITY;
-    const _: () = assert!(
-        NEGATED == 1
-            && STRICT == 2
-            && STRICT_INEQUALITY - EQUALITY == STRICT | NEGATED
-            && EQUALITY.is_multiple_of(STRICT << 1)
-    );
-    let offset = op.wrapping_sub(EQUALITY);
-    (offset <= STRICT | NEGATED).then_some((offset & STRICT != 0, offset & NEGATED != 0))
-}
-
-/// The equality operator that is `strict` and `negated`: the inverse of `equality_operator`.
-pub(crate) fn equality_binary_operator(strict: bool, negated: bool) -> u32 {
-    match (strict, negated) {
-        (false, false) => BinaryOperator::Equality as u32,
-        (false, true) => BinaryOperator::Inequality as u32,
-        (true, false) => BinaryOperator::StrictEquality as u32,
-        (true, true) => BinaryOperator::StrictInequality as u32,
-    }
-}
+// The binary operator codes the shared rows name (`number_rows.rs`) are the parser's.
+const _: () = assert!(
+    EQUALITY_OPERATOR == BinaryOperator::Equality as u32
+        && INEQUALITY_OPERATOR == BinaryOperator::Inequality as u32
+        && STRICT_EQUALITY_OPERATOR == BinaryOperator::StrictEquality as u32
+        && STRICT_INEQUALITY_OPERATOR == BinaryOperator::StrictInequality as u32
+        && IN_OPERATOR == BinaryOperator::In as u32
+        && INSTANCEOF_OPERATOR == BinaryOperator::Instanceof as u32
+);
 
 /// The entry that runs a native's call (`Vm::call_native_dispatch`), one per family of
 /// natives that share an implementation; `Table` for the natives no family claims.

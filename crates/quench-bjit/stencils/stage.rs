@@ -215,17 +215,9 @@ impl Stage for StencilStage {
     fn load_f64(&mut self, _at: Access, base: u64, offset: i32) -> u64 { self.read::<u64>(base, offset) }
     #[inline(always)]
     fn box_number(&mut self, number: u64) -> u64 {
-        // `Value::number`: an integral double in int32 range (not `-0`) is an int32, NaN the
-        // canonical NaN, any other double its own bits.
-        let double = f64::from_bits(number);
-        let integer = double as i32;
-        if f64::from(integer) == double && (integer != 0 || number >> 63 == 0) {
-            crate::layout::words::INT_TAG | u64::from(integer as u32)
-        } else if double.is_nan() {
-            crate::layout::words::CANONICAL_NAN
-        } else {
-            number
-        }
+        // `Value::number` (`words::canonical`): its truncation is the target's own instruction, where
+        // a saturating `as` cast would load its bounds from a constant pool a stencil may not use.
+        crate::words::canonical(f64::from_bits(number))
     }
     #[inline(always)]
     fn store_u8(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u8) }
