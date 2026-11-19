@@ -277,49 +277,46 @@ fn lane_suspend_generator<H: Host>(
 ) -> Resumed {
     let vm = unsafe { vm(cx) };
     let depth = vm.lane_stack.activation_count() - 1;
-    let activation = *vm.lane_stack.activations().last().expect("a running generator's activation");
-    let ActivationKind::Script(script) = activation.kind() else {
-        unreachable!("a generator runs as a script activation");
-    };
-    vm.suspend_generator_window(script.callee, pc, destination, value, depth);
-    vm.lane_stack.pop_activation();
-    let (memory, _) = lane_restore_caller(cx, &activation);
-    let result = passed_on.unwrap_or_else(|| vm.generator_step_result(value, false, script.completion == Completion::Generates));
+    // Read where it is (no spill): a generator's frame is a heap-window record.
+    let running = vm.lane_stack.top_return().expect("a running generator's activation");
+    let completion = running.completion.expect("a generator runs as a script activation");
+    vm.suspend_generator_window(running.callee, pc, destination, value, depth);
+    let frame = vm.lane_stack.pop_activation().expect("a running generator's activation");
+    let (memory, _) = lane_restore_caller(cx, &frame);
+    let result = passed_on.unwrap_or_else(|| vm.generator_step_result(value, false, completion == Completion::Generates));
     // The result may be a fresh allocation, which the caller's safepoints collect after.
     note_allocation(vm);
-    lane_resume_generated(&activation, memory, result)
+    lane_resume_generated(&frame, memory, result)
 }
 
-/// The return of the generator activation, popped with its caller restored (`memory`), with
-/// `value`: the generator completes, and its caller resumes with the step's final result.
+/// The return of the generator activation (`frame`, its return words), popped with its caller
+/// restored (`memory`), with `value`: the generator completes, and its caller resumes with the
+/// step's final result.
 pub(super) fn lane_generator_returned<H: Host>(
     cx: *mut LaneContext<H>,
-    activation: &Activation,
+    frame: &FrameReturn,
     memory: MemoryView,
     value: Value,
 ) -> Resumed {
     let vm = unsafe { vm(cx) };
-    let ActivationKind::Script(script) = activation.kind() else {
-        unreachable!("a generator runs as a script activation");
-    };
-    vm.finish_generator_window(script.callee);
-    let result = vm.generator_step_result(value, true, script.completion == Completion::Generates);
+    let completion = frame.completion.expect("a generator runs as a script activation");
+    vm.finish_generator_window(frame.callee);
+    let result = vm.generator_step_result(value, true, completion == Completion::Generates);
     note_allocation(vm);
-    lane_resume_generated(activation, memory, result)
+    lane_resume_generated(frame, memory, result)
 }
 
 /// The caller of a generator `activation` it left (`lane_suspend_generator`,
 /// `lane_generator_returned`) resumes with the step's `result`: after its call, in the call's
 /// register, or, for a delegate's step, at the `yield*` itself with the result in its state
 /// register.
-fn lane_resume_generated(activation: &Activation, memory: MemoryView, result: Value) -> Resumed {
-    if activation.script().is_some_and(|script| script.completion == Completion::Delegates) {
+fn lane_resume_generated(frame: &FrameReturn, memory: MemoryView, result: Value) -> Resumed {
+    if frame.completion == Some(Completion::Delegates) {
         // SAFETY: the `yield*` record belongs to the caller's live view.
-        let (state, _) = ImmediateLayout::register_pair(unsafe { (*activation.call()).imm() });
-        activation.caller_registers().set(state, result);
-        return lane_resume_at(activation, memory, activation.call());
+        let (state, _) = ImmediateLayout::register_pair(unsafe { (*frame.call).imm() });
+        return lane_resume_at(frame, memory, frame.call, Some((state, result)));
     }
-    lane_resume_after_call(activation, memory, result)
+    lane_resume_after_call(frame, memory, result)
 }
 
 /// `yield` of the running generator activation (`running_generator`): the frame suspends in

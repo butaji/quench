@@ -70,18 +70,19 @@ pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     })
 }
 
-/// What the call of `activation`, which completed with `value` and receiver `this`, yields
+/// What the call of the returned `frame`, which completed with `value` and receiver `this`, yields
 /// before a forwarder's or a promise's substitution: [[Construct]] of an ordinary constructor
 /// its returned object, otherwise the receiver it allocated; a setter's store
 /// (`Completion::Assigns`) the value stored, which the caller's register still holds.
 #[inline(always)]
-pub(super) fn completed_value<H: Host>(vm: &Vm<H>, activation: &Activation, completion: Completion, this: Value, value: Value) -> Value {
+pub(super) fn completed_value<H: Host>(vm: &Vm<H>, frame: &FrameReturn, completion: Completion, this: Value, value: Value) -> Value {
     match completion {
         // The construct family's completion row (`staged::call_construct::construct_value`).
         completion if completion.constructs() =>
             Value::from_bits(crate::staged::call_construct::concrete_construct_value(value.to_bits(), this.to_bits(), vm.is_object_like(value))),
         // SAFETY: the call record belongs to the caller's live view.
-        Completion::Assigns | Completion::AssignsTrapped => activation.caller_registers().get(unsafe { (*activation.call()).a }),
+        Completion::Assigns | Completion::AssignsTrapped =>
+            crate::staged::call_complete::concrete_call_result(frame.caller_registers.0.expose_provenance() as u64, unsafe { (*frame.call).a }),
         _ => value,
     }
 }

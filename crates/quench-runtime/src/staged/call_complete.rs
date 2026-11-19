@@ -42,6 +42,85 @@ pub(crate) fn concrete_write_call_result(registers: u64, result: Register, value
     write_call_result(&mut super::Concrete::new(std::ptr::null()), registers, result, value.to_bits());
 }
 
+/// The value the caller's result register `result` holds in the window at `registers`: a
+/// setter's store yields it (`Completion::Assigns`), the value its caller stored. Reads one word.
+#[inline(always)]
+pub(crate) fn call_result<S: Stage>(stage: &mut S, registers: S::Word, result: Register) -> S::Word {
+    stage.load_u64(Region::Frame.readonly(), registers, word_offset(result))
+}
+
+/// `call_result` on machine words.
+#[inline(always)]
+pub(crate) fn concrete_call_result(registers: u64, result: Register) -> Value {
+    Value::from_bits(call_result(&mut super::Concrete::new(std::ptr::null()), registers, result))
+}
+
+/// The receiver of the frame returning from the window at `window`, its `this` context word
+/// (`frame::CONTEXT_THIS`): what a construction yields for a non-object, a body's construct
+/// completion takes, and the caller's restore hands back. Reads one word of the frame region.
+#[inline(always)]
+pub(crate) fn returning_this<S: Stage>(stage: &mut S, window: S::Word) -> S::Word {
+    stage.load_u64(Region::Frame.readonly(), window, -((frame::CONTEXT_THIS * 8) as i32))
+}
+
+/// `returning_this` on a machine word.
+#[inline(always)]
+pub(crate) fn concrete_returning_this(window: u64) -> Value {
+    Value::from_bits(returning_this(&mut super::Concrete::new(std::ptr::null()), window))
+}
+
+/// Whether the return of a frame whose packed word is `packed` into the call record whose
+/// result word is `destination` is the header's plain return (`protocol::pop_plain`, then
+/// `write_call_result`): no side flag, and a call that keeps its result, or, where `into_body`
+/// (a lane body's call, which completes its own activation next), a returning one too. Any
+/// other return is a side record's completion or a returning call's chain. Reads the two words.
+#[inline(always)]
+pub(crate) fn plain_return_admits<S: Stage>(stage: &mut S, packed: S::Word, destination: S::Word, into_body: S::Cond) -> S::Cond {
+    let plain = completes_plainly(stage, packed);
+    let returning = returns_callee_completion(stage, destination);
+    let keeps = stage.not(returning);
+    let completes = stage.any(keeps, into_body);
+    stage.all(plain, completes)
+}
+
+/// `plain_return_admits` of the frame at `window` returning into a call record whose result
+/// word is `destination`, its packed word loaded.
+#[inline(always)]
+pub(crate) fn concrete_plain_return_admits(window: u64, destination: Register, into_body: bool) -> bool {
+    let stage = &mut super::Concrete::new(std::ptr::null());
+    let packed = frame_packed(stage, window);
+    plain_return_admits(stage, packed, u64::from(destination), into_body)
+}
+
+/// Whether a settling call's return settles its promise in the lane: unless the host observes
+/// promise lifecycles, whose hooks may run guest code, so the frame's pending call settles it.
+/// Reads the fact; writes nothing.
+#[inline(always)]
+pub(crate) fn settles_in_lane<S: Stage>(stage: &mut S, observes_lifecycle: S::Cond) -> S::Cond {
+    stage.not(observes_lifecycle)
+}
+
+/// `settles_in_lane` on a machine fact.
+#[inline(always)]
+pub(crate) fn concrete_settles_in_lane(observes_lifecycle: bool) -> bool {
+    settles_in_lane(&mut super::Concrete::new(std::ptr::null()), observes_lifecycle)
+}
+
+/// Whether a settling call's return yields its value with no promise: a call whose result only
+/// the `await` after it reads (no rooted promise) returning a primitive, which awaiting
+/// fulfills as the promise would. Reads the two facts; writes nothing.
+#[inline(always)]
+pub(crate) fn settles_without_promise<S: Stage>(stage: &mut S, rooted: S::Cond, object: S::Cond) -> S::Cond {
+    let either = stage.any(rooted, object);
+    stage.not(either)
+}
+
+/// `settles_without_promise` on machine facts.
+#[inline(always)]
+pub(crate) fn concrete_settles_without_promise(rooted: bool, object: bool) -> bool {
+    settles_without_promise(&mut super::Concrete::new(std::ptr::null()), rooted, object)
+}
+
 /// Whether a returning call is admitted to the lane: it is, unless the host makes the call a
 /// proper tail call and the caller is strict, which the general dispatch path takes instead.
 /// Reads the two facts; writes nothing.
@@ -106,6 +185,24 @@ pub(crate) fn side_flags<S: Stage>(stage: &mut S, keeps: S::Cond, env: S::Cond, 
 #[inline(always)]
 pub(crate) fn concrete_side_flags(keeps: bool, env: bool, crosses: bool, completes: bool) -> u64 {
     side_flags(&mut super::Concrete::new(std::ptr::null()), keeps, env, crosses, completes)
+}
+
+/// Write `flags` as the side-record flags of the frame header below `window`
+/// (`frame::SIDE_FLAGS`), its function, other flags and argc kept: a frame given another
+/// completion after its push (a setter's store, a trap, a callback, a Wasm import's callee).
+/// Reads and writes the packed word.
+#[inline(always)]
+pub(crate) fn write_side_flags<S: Stage>(stage: &mut S, window: S::Word, flags: S::Word) {
+    let packed = frame_packed(stage, window);
+    let kept = stage.and_imm(packed, !frame::SIDE_FLAGS);
+    let packed = stage.or(kept, flags);
+    stage.store_u64(Region::Frame.mutable(), window, -((frame::CONTEXT_PACKED * 8) as i32), packed);
+}
+
+/// `write_side_flags` on machine words.
+#[inline(always)]
+pub(crate) fn concrete_write_side_flags(window: u64, flags: u64) {
+    write_side_flags(&mut super::Concrete::new(std::ptr::null()), window, flags);
 }
 
 /// What a side record's completion runs past the header's pop, selected by the flags of the
@@ -182,6 +279,35 @@ mod tests {
         let side = concrete_side_completion(crate::staged::protocol::plain_packed(4, 1, frame::ENV_FLAG | frame::COMPLETION_FLAG));
         assert!(side.sided && !side.crosses && side.completes);
         assert!(!concrete_side_completion(crate::staged::protocol::plain_packed(4, 1, 0)).sided);
+    }
+
+    #[test]
+    fn the_header_return_admits_a_plain_frame_into_a_keeping_call() {
+        use crate::staged::protocol::plain_packed;
+        let plain = plain_packed(3, 1, 0);
+        let sided = plain_packed(3, 1, frame::ENV_FLAG);
+        let run = |packed, destination, into_body| plain_return_admits(&mut Concrete::new(std::ptr::null()), packed, u64::from(destination), into_body);
+        assert!(run(plain, 2, false));
+        assert!(!run(plain, RETURN_REGISTER | 2, false), "a returning call takes the chain");
+        assert!(run(plain, RETURN_REGISTER | 2, true), "a body's call completes its own activation next");
+        assert!(!run(sided, 2, true), "a side record completes past the pop");
+        let mut words = [0_u64; 9];
+        words[8 - frame::CONTEXT_PACKED] = plain;
+        words[8 - frame::CONTEXT_THIS] = 41;
+        let window = words.as_mut_ptr().wrapping_add(8) as u64;
+        assert!(concrete_plain_return_admits(window, 1, false));
+        assert_eq!(concrete_returning_this(window).to_bits(), 41);
+        let mut registers = [0_u64, 9];
+        assert_eq!(concrete_call_result(registers.as_mut_ptr() as u64, 1).to_bits(), 9);
+    }
+
+    #[test]
+    fn a_settlement_stays_in_the_lane_unless_observed() {
+        assert!(concrete_settles_in_lane(false));
+        assert!(!concrete_settles_in_lane(true));
+        assert!(concrete_settles_without_promise(false, false));
+        assert!(!concrete_settles_without_promise(true, false));
+        assert!(!concrete_settles_without_promise(false, true));
     }
 
     #[test]

@@ -29,8 +29,8 @@ pub(super) fn settle_raised_window<H: Host>(cx: *mut LaneContext<H>, record: Ip)
         return None;
     }
     let owner = unsafe { (*cx).root };
-    vm.lane_stack.pop_activation()?;
-    lane_restore_caller(cx, activation.record());
+    let popped = vm.lane_stack.pop_activation()?;
+    lane_restore_caller(cx, &popped);
     Some(match (owner, script.completion) {
         (LaneRoot::Job(job), Completion::ResumesJob) => {
             vm.finish_job_window(job);

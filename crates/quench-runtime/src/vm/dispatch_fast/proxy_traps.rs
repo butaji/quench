@@ -178,11 +178,8 @@ fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, target: Value
 /// store's trap returns a falsish value, which is the store's `TypeError`. It returns from
 /// its frame, so that its pending call checks it (`CallCompletion::Trapped`).
 #[inline(always)]
-pub(super) fn trap_result_needs_general_path<H: Host>(vm: &Vm<H>, activation: Option<&Activation>, value: Value) -> bool {
-    let Some(ActivationKind::Script(script)) = activation.map(|activation| activation.kind()) else {
-        return false;
-    };
-    if !matches!(script.completion, Completion::ReadsTrapped | Completion::AssignsTrapped) {
+pub(super) fn trap_result_needs_general_path<H: Host>(vm: &Vm<H>, completion: Option<Completion>, value: Value) -> bool {
+    if !matches!(completion, Some(Completion::ReadsTrapped | Completion::AssignsTrapped)) {
         return false;
     }
     let Some((_, check)) = vm.lane_stack.trap_checks.last() else {
