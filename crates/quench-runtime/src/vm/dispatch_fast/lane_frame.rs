@@ -2488,7 +2488,73 @@ pub(in crate::vm::dispatch_fast) const fn jumps_by_row(op: Op) -> bool {
 
 /// Opcode `OP`'s jump row in direction `backward`.
 pub(in crate::vm::dispatch_fast) const fn jump_row<H: Host, const OP: u16>(backward: bool) -> Handler {
-    if backward { row_jump::<H, OP, true, FLAG_UNREAD> } else { row_jump::<H, OP, false, FLAG_UNREAD> }
+    if backward {
+        row_jump::<H, OP, true, FLAG_UNREAD, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }>
+    } else {
+        row_jump::<H, OP, false, FLAG_UNREAD, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }>
+    }
+}
+
+/// A backward jump's target run (`FUSED_TARGET`), run in the jump's record `$ip` once the jump is taken: the
+/// back edge's fuel check (a safepoint at the target, before its run, as `take_jump` makes it), then the
+/// target's prefix row `$prefix` when it is not `NO_LINK` (a value row: its register write and its
+/// accumulator carry on, as a chain's link does), then the conditional test `$test` at the record after the
+/// prefix (or at the target) over its own fields, which continues at the test's taken or fall-through edge.
+/// A miss takes the missing row's own miss at its record, as a fused record's miss does. Every path returns.
+/// `$cx`, `$r`, `$ip` and `$carried` are the handler's own names; `$prefix` and `$test` are its const params.
+macro_rules! target_run {
+    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $test:ident) => {{
+        // SAFETY: the view records the distance to a validated jump target.
+        let target: super::Ip = unsafe { $ip.byte_offset((*$ip).jump()) };
+        if script_fuel_out($cx) {
+            return super::safepoint_at::<H>($ip, target, $carried.acc);
+        }
+        let mut at: super::Ip = target;
+        let mut carried: Carried = $carried;
+        if const { $prefix != crate::staged::NO_LINK } {
+            // SAFETY: as the target above.
+            let prefix_i = unsafe { &*at };
+            // The prefix at flag `$flag`: a value row, as `fused_rows`' link `A` runs.
+            macro_rules! prefix_at { ($flag:expr) => {{
+                let fields = LaneFields::<$prefix, { $flag }>(prefix_i);
+                let Some(operation) = row_decode!($prefix, { $flag }, fields) else { sibling!(lane_general_step::<H>, $r, at, carried) };
+                let mut stage = Concrete::new(std::ptr::null());
+                let mut frame = row_frame::<H, $prefix, ACC_NONE, { $flag }>($cx, $r, at, prefix_i, carried);
+                match row_step!(LaneFields::<$prefix>::OPCODE, &mut stage, &mut frame, operation) {
+                    Step::Value(value) => {
+                        if const { !crate::staged::row_writes_result(LaneFields::<$prefix>::OPCODE) } {
+                            $r.set(prefix_i.a, Value::from_bits(value));
+                        }
+                        if const { row_produces(LaneFields::<$prefix>::OPCODE) } {
+                            carried = Carried { acc: Slot::of(Value::from_bits(value)), ..carried };
+                        }
+                        at = following(at);
+                    }
+                    Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$prefix>::OPCODE) }, $r, at, carried),
+                }
+            }}; }
+            if const { LaneFields::<$prefix>::FLAG_ROLE } {
+                if prefix_i.imm() != 0 { prefix_at!(FLAG_SET) } else { prefix_at!(FLAG_CLEAR) }
+            } else {
+                prefix_at!(FLAG_UNREAD)
+            }
+        }
+        // SAFETY: `at` is the target or the record the prefix falls through to, a validated record of the view.
+        let test_i = unsafe { &*at };
+        let fields = LaneFields::<$test, { FLAG_UNREAD }>(test_i);
+        let Some(operation) = row_decode!($test, { FLAG_UNREAD }, fields) else { sibling!(lane_general_step::<H>, $r, at, carried) };
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = row_frame::<H, $test, ACC_NONE, FLAG_UNREAD>($cx, $r, at, test_i, carried);
+        match row_step!(LaneFields::<$test>::OPCODE, &mut stage, &mut frame, operation) {
+            Step::Control(Edge::Target) => {
+                // SAFETY: as the read of `test_i` above.
+                let backward_test = unsafe { (*at).jump() } <= 0;
+                resume!($cx, super::take_jump::<H>($cx, $r, at, backward_test, carried, None))
+            }
+            Step::Control(Edge::Following) | Step::Value(_) => next!($cx, $r, following(at), carried),
+            Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG_UNREAD>(LaneFields::<$test>::OPCODE) }, $r, at, carried),
+        }
+    }};
 }
 
 /// Opcode `$op`'s staged operation decoded from `$fields` by its row family's one decoder. Each
@@ -2537,8 +2603,10 @@ lane_handler! {
     /// `generated_row` is: the record's decoder (flow, or generic for a comparison) reads it, the row
     /// steps on `Concrete` over the lane's frame, and its edge picks the continuation. A jump to
     /// its target runs the lane's jump (`take_jump`), whose backward edge (`BACKWARD`, which the
-    /// view fixes per record) is a safepoint.
-    pub(super) fn row_jump<OP: u16, BACKWARD: bool, FLAG: u8>(cx, r, ip, i, view) {
+    /// view fixes per record) is a safepoint. `TEST` (not `NO_LINK`) is a backward jump's `FUSED_TARGET`
+    /// target run: its target's `PREFIX` row (or none) and then the test `TEST`, run in this record
+    /// (`target_run`). Any other `TEST` takes the jump as it always does.
+    pub(super) fn row_jump<OP: u16, BACKWARD: bool, FLAG: u8, PREFIX: u16, TEST: u16>(cx, r, ip, i, view) {
         // A loop site's backward jump (`FLAG_LOOP`) warming up takes its jump here, with the fuel
         // spent here, as the site's body does. Fuel out, or a site past its warm-up, leaves to that
         // body (`loop_jump_miss`), which spends the fuel and decides the site itself.
@@ -2570,7 +2638,13 @@ lane_handler! {
         let carried = if const { LaneFields::<OP>::RESULT_A } { Carried::script_in(cx, view) } else { view };
         let mut frame = row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
-            Step::Control(Edge::Target) => resume!(cx, super::take_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
+            Step::Control(Edge::Target) => {
+                if const { TEST != crate::staged::NO_LINK } {
+                    target_run!(cx, r, ip, carried, PREFIX, TEST)
+                } else {
+                    resume!(cx, super::take_jump::<H>(cx, r, ip, BACKWARD, carried, None))
+                }
+            }
             // A table's entry is the jump record `k` places after the table record (validation places
             // `entries` of them after it), and the lane jumps from that record.
             Step::Control(Edge::Entry(k)) => resume!(cx, super::take_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
@@ -3141,10 +3215,10 @@ lane_handler! {
     /// `FUSED_DEAD_FIRST` skips `A`'s register write (installed only where liveness proves
     /// `A`'s register dead and `B` does not name it); `FUSED_RAW` keeps `A`'s double result as its
     /// bits (`LaneFrame::raw_result`), which `B`, a Number operator, reads as its operand.
-    /// `FUSED_TARGET` (a backward `B` whose target holds the conditional test `TARGET`): the
-    /// back edge's fuel check, then `TARGET`'s row over the target record's own fields, which
-    /// continues at its taken or fall-through edge. Any other mode ignores `TARGET`.
-    pub(super) fn fused_rows<A: u16, B: u16, BACKWARD: bool, MODE: u8, TARGET: u16>(cx, r, ip, i, view) {
+    /// `FUSED_TARGET` (a backward `B` whose target run holds: `PREFIX` (or none) then the test `TEST`):
+    /// the back edge's fuel check and the target run in this record (`target_run`), which continues at
+    /// the test's taken or fall-through edge. Any other mode ignores `PREFIX` and `TEST`.
+    pub(super) fn fused_rows<A: u16, B: u16, BACKWARD: bool, MODE: u8, TEST: u16, PREFIX: u16>(cx, r, ip, i, view) {
         // Row `A` at flag `$flag`: a flagged row (`LaneFields::FLAG_ROLE`) reads its flag here,
         // from the record, rather than requickening (`generated_row`).
         macro_rules! step_a { ($flag:expr) => {{
@@ -3194,33 +3268,7 @@ lane_handler! {
             match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Control(Edge::Target) => {
                     if const { MODE == crate::staged::FUSED_TARGET } {
-                        // The back edge's target holds the test `TARGET`: its fuel check (the jump's
-                        // own, before its target runs), then the test over its own record. The test's
-                        // jump direction is its record's distance, as `take_jump`'s direction is.
-                        let test_ip = unsafe { ip.byte_offset((*ip).jump()) };
-                        if BACKWARD && script_fuel_out(cx) {
-                            return super::safepoint_at::<H>(ip, test_ip, carried.acc);
-                        }
-                        // SAFETY: the view records the distance to a validated jump target.
-                        let test_i = unsafe { &*test_ip };
-                        let fields = LaneFields::<TARGET>(test_i);
-                        let decoded = if const { matches!(LaneFields::<TARGET>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
-                            Operation::decode_generic(crate::staged::Fields::wide(fields))
-                        } else {
-                            Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY)
-                        };
-                        let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, test_ip, carried) };
-                        let mut stage = Concrete::new(std::ptr::null());
-                        let mut frame = row_frame::<H, TARGET, ACC_NONE, FLAG_UNREAD>(cx, r, test_ip, test_i, carried);
-                        match row_step!(LaneFields::<TARGET>::OPCODE, &mut stage, &mut frame, operation) {
-                            Step::Control(Edge::Target) => {
-                                // SAFETY: as the read of `test_i` above.
-                                let backward_test = unsafe { (*test_ip).jump() } <= 0;
-                                resume!(cx, super::take_jump::<H>(cx, r, test_ip, backward_test, carried, None))
-                            }
-                            Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(test_ip), carried),
-                            Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG_UNREAD>(LaneFields::<TARGET>::OPCODE) }, r, test_ip, carried),
-                        }
+                        target_run!(cx, r, ip, carried, PREFIX, TEST)
                     } else {
                         resume!(cx, super::take_jump::<H>(cx, r, ip, BACKWARD, carried, None))
                     }
@@ -3372,7 +3420,7 @@ pub(in crate::vm::dispatch_fast) const fn chain_row<H: Host, const L0: u16, cons
 
 /// Whether `handler` is opcode `OP`'s window row (`FLAG_WINDOW`): a local record of a plain slot in
 /// an environment window's function, which `window_local_handler` gives its row.
-fn is_window_row<H: Host, const OP: u16>(handler: *const ()) -> bool {
+pub(in crate::vm::dispatch_fast) fn is_window_row<H: Host, const OP: u16>(handler: *const ()) -> bool {
     generated_row::<H, OP, ACC_NONE, FLAG_WINDOW> as Handler as *const () == handler
 }
 
@@ -3437,7 +3485,7 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
 
 /// Opcode pair `(A, B)`'s fused record handler for `B`'s jump direction `backward`.
 pub(in crate::vm::dispatch_fast) const fn fused_row<H: Host, const A: u16, const B: u16, const MODE: u8>(backward: bool) -> Handler {
-    if backward { fused_rows::<H, A, B, true, MODE, B> } else { fused_rows::<H, A, B, false, MODE, B> }
+    if backward { fused_rows::<H, A, B, true, MODE, B, { crate::staged::NO_LINK }> } else { fused_rows::<H, A, B, false, MODE, B, { crate::staged::NO_LINK }> }
 }
 
 /// Whether `handler` is opcode `OP`'s plain row in any direction: its value row with no
