@@ -100,25 +100,17 @@ pub(crate) struct NativeArrayLayout {
     pub(crate) integrity_mask: u32,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NativeRecordCursorLayout {
-    pub(crate) size: usize,
-    pub(crate) align: usize,
     pub(crate) next_offset: usize,
     pub(crate) limit_offset: usize,
-    pub(crate) records_per_block: usize,
 }
 
 /// The runtime's `records::RecordCursor`: two `u32` words, `next` then `limit`. Read by the
 /// runtime's `stencil_layout_matches` test and by the empty-allocation rows (`heap_rows::empty_row`).
-#[allow(dead_code)]
 pub(crate) const NATIVE_RECORD_CURSOR_LAYOUT: NativeRecordCursorLayout = NativeRecordCursorLayout {
-    size: 8,
-    align: 4,
     next_offset: 0,
     limit_offset: 4,
-    records_per_block: 1024,
 };
 
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
