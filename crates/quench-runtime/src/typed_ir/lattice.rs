@@ -79,8 +79,8 @@ impl Type {
     /// The types whose values name no heap record (a Number, a Boolean, `null`, `undefined`):
     /// the tag layout's non-reference words, which a store writes with no barrier.
     pub(crate) const IMMEDIATE: Self = Self(TypeKind::Language(
-        (Languages::of(ValueType::Number) | Languages::of(ValueType::Boolean)
-            | Languages::of(ValueType::Null) | Languages::of(ValueType::Undefined)).bits()));
+        Languages::of(ValueType::Number).union(Languages::of(ValueType::Boolean))
+            .union(Languages::of(ValueType::Null)).union(Languages::of(ValueType::Undefined)).bits()));
     pub(crate) const NUMBER: Self = Self::language(ValueType::Number);
     /// The integers of the whole int32 span, the widest range an int32-represented value holds.
     pub(crate) const INT32: Self = Self(TypeKind::Int(IntRange::FULL));

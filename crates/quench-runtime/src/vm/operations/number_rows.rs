@@ -163,7 +163,7 @@ macro_rules! number_unary_rows {
     }};
 }
 pub(crate) use number_unary_rows;
-number_unary_rows!(number_unary);
+self::number_unary_rows!(number_unary);
 
 /// The int32 operations used by JavaScript bitwise expressions. Keeping their
 /// operator mapping and operation selection in one stage lets the interpreter
