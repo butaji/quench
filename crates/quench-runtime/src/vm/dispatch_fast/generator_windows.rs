@@ -74,7 +74,7 @@ pub(super) fn running_generator<H: Host>(vm: &Vm<H>) -> bool {
     vm.lane_stack.activations().last().and_then(Activation::script).is_some_and(|script| script.completion.is_generator())
 }
 
-/// `lane_generator_step` of a for-of step of a generator's `next` that the lane resumes as an
+/// `generator_step_miss` of a for-of step of a generator's `next` that the lane resumes as an
 /// activation (`resume_generator_in_lane`); `None` leaves any other step, and a step that returns
 /// its result from the frame, to the general ones.
 #[inline(never)]
@@ -368,7 +368,7 @@ pub(super) fn generator_returned_in_lane<H: Host>(
 /// The caller of a generator `activation` it left (`suspend_generator_in_lane`,
 /// `generator_returned_in_lane`) resumes with the step's `value` and `done`, or the delegate's own
 /// result `passed_on`: a for-of step's reads take them in their registers and the caller goes
-/// on past them (`Completion::StepReads`), as `lane_iterator_step_reads` makes an array's step;
+/// on past them (`Completion::StepReads`), as `iterator_step_reads_miss` makes an array's step;
 /// any other caller takes the step's result object after its call, in the call's register, or,
 /// for a delegate's step, at the `yield*` itself in its state register.
 fn resume_generated_in_lane<H: Host>(vm: &mut Vm<H>, activation: &Activation, memory: MemoryView, (value, done): (Value, bool), passed_on: Option<Value>) -> Resumed {

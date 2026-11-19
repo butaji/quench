@@ -1380,7 +1380,7 @@ print(rounds[0] === rounds[299] ? rounds[0] : "unsteady");
 #[test]
 fn for_of_steps_that_read_done_and_value_in_place_keep_iteration_semantics() {
     // A for-of step over a plain array writes its `done` and `value` registers itself
-    // (`lane_iterator_step_reads`): arrays with holes, growing and shrinking under the loop,
+    // (`iterator_step_reads_miss`): arrays with holes, growing and shrinking under the loop,
     // `break` and `continue`, destructuring, typed arrays and strings, generators, a patched
     // `%ArrayIteratorPrototype%.next`, an own `Symbol.iterator`, a throw out of the body and
     // a binding that outlives the loop. Node 26 prints the same.

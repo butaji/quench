@@ -179,7 +179,7 @@ fn body_script_call<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target: &
 }
 
 /// `body_script_call` of a target whose body is a read: the read's hit completes it, as the
-/// lane's own call does (`lane_script_call`), its value in the call's register, which the
+/// lane's own call does (`script_call_miss`), its value in the call's register, which the
 /// body reads.
 ///
 /// # Safety
@@ -341,7 +341,7 @@ fn construct_forwarded<H: Host>(vm: &mut Vm<H>, call: &BodyCall, callee: Value) 
 
 /// The target a lane body's call of `callee` activates: the site's linked entry, else the one
 /// the lane's call resolves for a script function of the running program
-/// (`lane_script_call_resolve`: `Vm::resolve_script_call_target`), which links the site.
+/// (`script_call_resolve_miss`: `Vm::resolve_script_call_target`), which links the site.
 fn body_call_target_in_lane<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, callee: Value, link: &std::cell::Cell<u16>) -> Option<*const ScriptCallTarget> {
     vm.linked_script_call_entry(callee, link).or_else(|| {
         if matches!(vm.heap.function(callee), Some(FunctionRecord { kind: FunctionKind::Native(_), .. })) || vm.cross_call_entry(callee).is_some() {

@@ -798,7 +798,7 @@ fn strict_terminal_calls_preserve_catch_and_finally_handlers() {
 #[test]
 fn lane_generator_iteration_steps_keep_generator_semantics() {
     // A for-of step of an intrinsic generator `next` resumes the generator in place with a
-    // reused result (`lane_generator_step`): delegation passes its inner result on, a throw
+    // reused result (`generator_step_miss`): delegation passes its inner result on, a throw
     // and a break close as before, a patched `next`, a running generator and a done one take
     // the general step, and nested and repeated loops see their own values.
     let source = r#"

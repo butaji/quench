@@ -60,6 +60,6 @@ const fn leaf_miss_of_form<H: Host>(payload: u8) -> Handler {
         (THIS_LEAF, 2) => script_call_leaf_miss::<H, THIS_LEAF, 2> as Handler,
         (THIS_LEAF, 3) => script_call_leaf_miss::<H, THIS_LEAF, 3> as Handler,
         (THIS_LEAF, 4) => script_call_leaf_miss::<H, THIS_LEAF, 4> as Handler,
-        _ => lane_script_call_full::<H>,
+        _ => script_call_full_miss::<H>,
     }
 }

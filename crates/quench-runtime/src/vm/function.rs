@@ -416,7 +416,7 @@ impl<H: Host> Vm<H> {
 
     /// A plain call forwarding without an observable step of its own (`forwarded_call`) to a
     /// user function the loop pushes in place, with the forwarded receiver and arguments
-    /// (`lane_function_call`): `f.call(thisArg, ...args)`, a bound function without bound arguments.
+    /// (`function_call_miss`): `f.call(thisArg, ...args)`, a bound function without bound arguments.
     #[inline(never)]
     pub(super) fn try_forwarded_user_call(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize,
         callee: Value) -> Option<Result<StepResult, JsError>> {
