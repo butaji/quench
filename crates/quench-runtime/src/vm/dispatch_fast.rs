@@ -8330,9 +8330,9 @@ fn safepoint_writing<H: Host>(
 // no calls.
 
 /// The head record of a move pair followed by a jump (`(Move, Move, Jump)`, a `FUSED_CHAINS`
-/// entry) in direction `backward`. The pair's two moves and the jump run as one record.
-fn move_pair_jump_handler<H: Host>(backward: bool) -> Handler {
-    lane_frame::chain_row::<H, { crate::staged::MOVE_ROW }, { crate::staged::MOVE_ROW }, { crate::staged::JUMP_ROW }, { crate::staged::NO_LINK }, { crate::staged::FUSED_PLAIN }>(backward)
+/// entry). The pair's two moves and the jump run as one record, whichever way the jump goes.
+fn move_pair_jump_handler<H: Host>() -> Handler {
+    lane_frame::chain_row::<H, { crate::staged::MOVE_ROW }, { crate::staged::MOVE_ROW }, { crate::staged::JUMP_ROW }, { crate::staged::NO_LINK }, { crate::staged::FUSED_PLAIN }>()
 }
 
 
@@ -17409,9 +17409,17 @@ fn derive_lane_view<'live, H: Host>(
     };
     // Adjacent generated rows the staged pair list names run as one generated record.
     // Wasm records fuse too (a bit-field extraction then its i32 operator).
-    let mut fused = lane_frame::fuse_chains::<H>(&mut records, live().map(|masks| &**masks), function.handlers.is_empty());
-    fuse_target_backedges::<H>(&mut records, loop_tier);
-    fused.extend(lane_frame::fuse_rows::<H>(&mut records, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
+    // A host that runs no lane (`Host::RUNS_LANE` false) never runs these records, so it instantiates no fusion
+    // handler: the tables of `fuse_chains`, `fuse_target_backedges` and `fuse_rows` are gated on the host.
+    let mut fused = if const { H::RUNS_LANE } {
+        lane_frame::fuse_chains::<H>(&mut records, live().map(|masks| &**masks), function.handlers.is_empty())
+    } else {
+        Vec::new()
+    };
+    if const { H::RUNS_LANE } {
+        fuse_target_backedges::<H>(&mut records, loop_tier);
+        fused.extend(lane_frame::fuse_rows::<H>(&mut records, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
+    }
     // A record reads the accumulator its predecessor produced only when control reaches it
     // from that predecessor running its own handler. A fusion replaces a record's handler, or
     // runs records ahead of it and lands past them, without carrying what the replaced or
@@ -17572,9 +17580,7 @@ fn install_loop_sites<'live, H: Host>(
     // chain can sit ahead of one.
     let fused_into = |pc: usize| {
         let pair = pc >= 2
-            && [move_pair_jump_handler::<H>(false), move_pair_jump_handler::<H>(true)]
-                .iter()
-                .any(|&handler| records[pc - 2].handler == handler as *const ());
+            && (if const { H::RUNS_LANE } { records[pc - 2].handler == move_pair_jump_handler::<H>() as *const () } else { false });
         // A branch table takes its entry's jump offset the same way (`row_jump`, `Edge::Entry`):
         // babel-minify-wtb's generator `switch` under --jit jumped to a site read as an offset.
         pair || table_entries.contains(pc)
@@ -17862,7 +17868,8 @@ fn target_run_holds<H: Host, const PREFIX: u16, const COPY: u16, const TEST: u16
 fn pair_target_form<H: Host, const A: u16, const B: u16, const PREFIX: u16, const TEST: u16>() -> TargetForm {
     (
         target_run_holds::<H, PREFIX, { crate::staged::NO_LINK }, TEST> as fn(*const (), &dyn Fn(usize) -> *const ()) -> bool,
-        lane_frame::fused_rows::<H, A, B, true, { crate::staged::FUSED_TARGET }, TEST, PREFIX> as Handler,
+        // `B` is a jump whose direction is its distance (`fused_rows` reads `BACKWARD` only for a branch table).
+        lane_frame::fused_rows::<H, A, B, false, { crate::staged::FUSED_TARGET }, TEST, PREFIX> as Handler,
     )
 }
 
