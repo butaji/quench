@@ -138,7 +138,7 @@ fn main() {
         fs::write(instance_file(&out, shard), part.iter().map(|(row, _)| row.as_str()).collect::<String>()).unwrap();
     }
     fs::write(call_rows_file(&out), call_rows::invocations()).unwrap();
-    let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 { &VARIANTS } else { &VARIANTS[..1] };
+    let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 && builds_v3(&out) { &VARIANTS } else { &VARIANTS[..1] };
     let watched = stencil_sources(&out).unwrap_or_else(|| sources::watched(manifest));
     watch(&watched);
     let sources = cache::sources_key(&rustc(), manifest, &watched, &EXTRA_WATCHED);
@@ -259,6 +259,20 @@ fn shard_job(out: &Path, shard: usize, cpu: Option<&'static str>, sources: u128)
     args.extend(["-o".into(), object.clone().into(), SOURCE.into()]);
     let envs = [(INSTANCES_VAR, instances), (CALL_ROWS_VAR, call_rows_file(out))];
     Shard { cpu, args, envs, key_file: object.with_extension("key"), object, key }
+}
+
+/// Environment variable that builds the V3 library in a profile other than `release` (any non-empty value).
+const V3_VAR: &str = "QUENCH_STENCILS_V3";
+
+/// Whether this build compiles the x86-64-v3 library as well as the baseline. Only the `release` profile (the
+/// shipping artifact) does, or a build with `V3_VAR` set: the V3 shards are half of a stencil rebuild, and the
+/// dev-loop profile (`experiment`) keeps the baseline rows in both tables, which the runtime's choice of table
+/// (`runs_v3`) then runs on every CPU. The profile is the directory cargo builds in: `OUT_DIR` is
+/// `<target>/[<triple>/]<profile>/build/<package>/out`.
+fn builds_v3(out: &Path) -> bool {
+    println!("cargo::rerun-if-env-changed={V3_VAR}");
+    let profile = out.ancestors().nth(3).and_then(Path::file_name).and_then(|name| name.to_str()).unwrap_or_default();
+    profile == "release" || !env::var(V3_VAR).unwrap_or_default().is_empty()
 }
 
 /// Prints the rerun triggers: `watched` and `EXTRA_WATCHED`.
