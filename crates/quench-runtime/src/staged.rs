@@ -97,6 +97,7 @@ pub(crate) mod double_view;
 pub(crate) mod element_rows;
 pub(crate) mod typed_elements;
 pub(crate) mod typed_view;
+pub(crate) mod data_view;
 mod element_frame;
 pub(crate) use element_frame::ElementFrame;
 pub(crate) mod entry;

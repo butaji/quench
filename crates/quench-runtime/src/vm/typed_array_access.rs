@@ -365,23 +365,58 @@ impl<H: Host> Vm<H> {
         crate::staged::typed_view::concrete_typed_read(view, index).map(f64::from_bits)
     }
 
-    /// The slow arm of the staged typed view proof: publishes the elements of the typed array
-    /// `object` in its record's native prefix as its buffer is now, which stays true until the
-    /// next buffer event (`buffer_relocations`); a view native code cannot address is withdrawn
-    /// instead. Whether it is addressable.
+    /// The slow arm of the staged typed view proof: publishes the elements of the typed array or DataView
+    /// `object` in its record's native prefix as its buffer is now, which stays true until the next buffer
+    /// event (`buffer_relocations`); a view native code cannot address is withdrawn instead. Whether it is
+    /// addressable.
     pub(super) fn publish_typed_view(&mut self, object: Value) -> bool {
-        if matches!(self.heap.get(object), Some(Cell::TypedArray { object, .. }) if object.native.is_retracted()) {
+        if matches!(self.heap.get(object), Some(Cell::TypedArray { object, .. } | Cell::DataView { object, .. }) if object.native.is_retracted()) {
             return false;
         }
-        let unshared = self.typed_array_elements_in_lane(object, true);
-        let published = unshared.or_else(|| self.typed_array_elements_in_lane(object, false))
-            .and_then(|(data, length, _)| Some((data, u32::try_from(i32::try_from(length).ok()?).ok()?)));
-        let Some(Cell::TypedArray { object: record, .. }) = self.heap.get_mut(object) else { return false };
+        let unshared = self.view_elements_in_lane(object, true);
+        let published = unshared.or_else(|| self.view_elements_in_lane(object, false))
+            .and_then(|(data, length)| Some((data, u32::try_from(i32::try_from(length).ok()?).ok()?)));
+        let record = match self.heap.get_mut(object) {
+            Some(Cell::TypedArray { object, .. } | Cell::DataView { object, .. }) => object,
+            _ => return false,
+        };
         match published {
             Some((data, length)) => record.native.publish(data, length, unshared.is_some()),
             None => record.native.retract(),
         }
         published.is_some()
+    }
+
+    /// The elements of the typed array or DataView `object` as native code reads them (`publish_typed_view`): the first
+    /// element's address and their count, over bytes that `writable` lets it store to.
+    fn view_elements_in_lane(&mut self, object: Value, writable: bool) -> Option<(*mut u8, usize)> {
+        if matches!(self.heap.get(object), Some(Cell::DataView { .. })) {
+            return self.data_view_elements_in_lane(object, writable);
+        }
+        self.typed_array_elements_in_lane(object, writable).map(|(data, length, _)| (data, length))
+    }
+
+    /// The bytes of the DataView `object` as native code reads them: its view's first byte and its byte length, for a view of
+    /// fixed length that lies inside its buffer's bytes. Over a store, the buffer must be mutable and owned alone
+    /// (`BufferBytes::mut_in_lane`). A length-tracking view or one out of its buffer's bounds has no such elements.
+    fn data_view_elements_in_lane(&mut self, object: Value, writable: bool) -> Option<(*mut u8, usize)> {
+        let Some(Cell::DataView { buffer, object: view, length }) = self.heap.get(object) else { return None };
+        let (buffer, offset, length) = (*buffer, view.offset, length.get()?);
+        let end = offset.checked_add(length)?;
+        let Some(Cell::ArrayBuffer { bytes, detached: false, immutable, .. }) = self.heap.get_mut(buffer) else {
+            return None;
+        };
+        let (base, byte_length) = if writable {
+            if *immutable { return None; }
+            let store = bytes.mut_in_lane()?;
+            (store.as_mut_ptr(), store.len())
+        } else {
+            match bytes.read() {
+                crate::heap::BufferRead::Borrowed(store) => (store.as_ptr().cast_mut(), store.len()),
+                _ => return None,
+            }
+        };
+        (end <= byte_length).then(|| (base.wrapping_add(offset), length))
     }
 
     pub(super) fn typed_array_get(&mut self, object: Value, index: usize) -> Option<Value> {

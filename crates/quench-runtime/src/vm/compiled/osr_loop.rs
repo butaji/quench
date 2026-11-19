@@ -2153,13 +2153,10 @@ fn admit(
         opcode if crate::staged::reads_named_field(opcode) => {
             admit_loaded(admission, instruction, tagged)?;
         }
-        // A tagged value is stored as the lane's element store takes it.
+        // A tagged value is stored as the lane's element store takes it. A value the loop does not define is an
+        // unchanged entry value, which may be any tagged value (`admit_stored`), as a field store's is.
         opcode if crate::staged::writes_element(opcode) => {
-            if tagged.contains(&instruction.register_a()) {
-                admission.tagged(instruction.register_a())?;
-            } else {
-                admission.number(instruction.register_a())?;
-            }
+            admit_stored(admission, instruction.register_a(), tagged, defined_registers)?;
             if !dynamic_arrays.contains(&instruction.register_b()) {
                 admission.array(instruction.register_b(), true)?;
             }
