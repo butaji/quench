@@ -194,7 +194,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Resumed {
     });
     // The pushed frame's guard narrows the activations the thread admits.
     vm.lane_stack.refresh_activation_limit();
-    lane_enter_frame(cx, caller + 1, 0)
+    enter_frame_in_lane(cx, caller + 1, 0)
 }
 
 /// A Wasm call of `function`, which native code holds, made from the lane beside its
@@ -210,7 +210,7 @@ fn lane_call_compiled<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, fu
     let i = unsafe { &*ip };
     // SAFETY: the window is the caller's registers, read into raw words before native code
     // runs, so before guest code could make the activations frames.
-    let args = unsafe { lane_call_window(r, i) };
+    let args = unsafe { call_window_in_lane(r, i) };
     let vm = unsafe { vm(cx) };
     let (program, env) = (unsafe { (*cx).program }, instance_env_in_lane(cx));
     let Some(called) = in_place_in_lane(cx, ip, |vm, _| vm.run_compiled(program, env, function, args).transpose()) else {
@@ -263,7 +263,7 @@ fn lane_call_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, m
         _ => return None,
     };
     // SAFETY: the window is the caller's registers, copied before guest code runs.
-    let args: smallvec::SmallVec<[Value; 8]> = unsafe { lane_call_window(r, i) }.iter().copied().collect();
+    let args: smallvec::SmallVec<[Value; 8]> = unsafe { call_window_in_lane(r, i) }.iter().copied().collect();
     if args.len() != signature.params.len() {
         return None;
     }
@@ -326,7 +326,7 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
     }
     let (callee, result) = (plan.callee, plan.result);
     // SAFETY: the window is the caller's registers.
-    let window = unsafe { lane_call_window(r, i) };
+    let window = unsafe { call_window_in_lane(r, i) };
     if window.len() != usize::from(plan.argc) {
         return None;
     }
@@ -365,7 +365,7 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
     {
         return None;
     }
-    let this = lane_call_this(vm, &target, Value::UNDEFINED)?;
+    let this = call_this_in_lane(vm, &target, Value::UNDEFINED)?;
     let instance = unsafe { (*cx).instance };
     let (registers, start) = push_passed_in_lane::<H, true, false>(cx, r, ip, &target, args.as_ptr(), argc16.min(target.params), this, false);
     if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations_mut().last_mut().map(|activation| activation.kind_mut()) {
@@ -374,7 +374,7 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
     vm.lane_stack.to_wasm.push(ToWasmCall { instance, memory: memory_binding, result });
     unsafe {
         (*cx).inline_calls = false;
-        lane_set_script_calls(cx, true);
+        set_script_calls_in_lane(cx, true);
         (*cx).instance = Value::DELETED;
     }
     let view = Carried::script(cx);

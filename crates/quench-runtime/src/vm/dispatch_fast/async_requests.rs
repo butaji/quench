@@ -26,7 +26,7 @@ pub(super) fn async_generator_next_in_lane<H: Host>(cx: *mut LaneContext<H>, r: 
         return None;
     }
     // SAFETY: the call's window is registers of the running function.
-    let sent = unsafe { lane_call_window(r, i) }.first().copied().unwrap_or(Value::UNDEFINED);
+    let sent = unsafe { call_window_in_lane(r, i) }.first().copied().unwrap_or(Value::UNDEFINED);
     let (registers, start) = resume_request_in_lane(cx, r, ip, i, generator, sent)?;
     Some(Resumed::At(registers, start, Carried::script(cx)))
 }
@@ -45,7 +45,7 @@ pub(super) fn async_generator_throw_in_lane<H: Host>(cx: *mut LaneContext<H>, r:
     }
     let (function, pc) = vm.throws_in_place(generator)?;
     // SAFETY: the call's window is registers of the running function.
-    let thrown = unsafe { lane_call_window(r, i) }.first().copied().unwrap_or(Value::UNDEFINED);
+    let thrown = unsafe { call_window_in_lane(r, i) }.first().copied().unwrap_or(Value::UNDEFINED);
     resume_request_in_lane(cx, r, ip, i, generator, Value::UNDEFINED)?;
     // The error raises at the `yield` the frame suspended at, the record before its resume point.
     let suspended = pc.saturating_sub(1);

@@ -16,7 +16,7 @@ pub(super) fn apply_activation_in_lane<H: Host>(
     native: Native,
 ) -> Option<Result<(Registers, Ip), Ip>> {
     // SAFETY: the call's window is registers of the running function.
-    let args = unsafe { lane_call_window(r, i) };
+    let args = unsafe { call_window_in_lane(r, i) };
     let argument = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);
     let (callee, receiver, list) = match native {
         Native::FunctionApply => (r.get(i.c), argument(0), argument(1)),
@@ -82,7 +82,7 @@ pub(super) fn list_activation_in_lane<H: Host>(
         let Some(activated) = passed_target_in_lane(cx, target, args.len()) else {
             return Some(Err(passed_frame_call_in_lane(cx, r, ip, i, target, receiver, FrameCallArguments::List(args)).into_loop()));
         };
-        let Some(this) = lane_call_this(vm, &activated, receiver) else {
+        let Some(this) = call_this_in_lane(vm, &activated, receiver) else {
             #[cfg(feature = "profile-lane-exits")]
             super::lane_exits::record_detail("applied forwarding this declined".into());
             return Some(Err(exit(ip)));
@@ -99,7 +99,7 @@ pub(super) fn list_activation_in_lane<H: Host>(
             vm.heap.array_elements(list).map_or_else(smallvec::SmallVec::new, |elements| elements.range(0..length).collect());
         return Some(Err(passed_frame_call_in_lane(cx, r, ip, i, callee, receiver, FrameCallArguments::List(&elements)).into_loop()));
     };
-    let Some(this) = lane_call_this(vm, &target, receiver) else {
+    let Some(this) = call_this_in_lane(vm, &target, receiver) else {
         return Some(Err(exit(ip)));
     };
     // Read after the resolution above, which runs no guest code but may allocate.

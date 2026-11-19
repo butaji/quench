@@ -60,7 +60,7 @@ fn array_callback_activation_in_lane<H: Host>(
 ) -> Option<(PreparedShape, PreparedEntry)> {
     let mut resolved = None;
     let target = callback_target_in_lane(cx, ip, callback, &mut resolved)?;
-    let this = lane_call_this(unsafe { vm(cx) }, target, this_arg)?;
+    let this = call_this_in_lane(unsafe { vm(cx) }, target, this_arg)?;
     // SAFETY: the running lane's context, which nothing else accesses.
     let mut shape = PreparedShape::of(unsafe { &*cx }, ip, target, array_callback_argument_count(native))?;
     if let ActivationKind::Script(script) = shape.activation.kind_mut() {

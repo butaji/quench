@@ -277,7 +277,7 @@ impl<H: Host> AccessorCall<H> {
     /// The activation of the trap `target` (`trap_target`) called on `handler` with
     /// `arguments` for the access record at `ip`. `Err` carries the record to continue at.
     fn activate_trap<const N: usize>(&self, r: Registers, ip: Ip, (target, crosses): (ScriptCallTarget, bool), handler: Value, arguments: &[Value; N]) -> Result<(Registers, Ip), Ip> {
-        let Some(this) = lane_call_this(unsafe { vm(self.cx) }, &target, handler) else {
+        let Some(this) = call_this_in_lane(unsafe { vm(self.cx) }, &target, handler) else {
             return Err(exit(ip));
         };
         let passed = ActivationArguments::Kept(arguments.as_ptr(), N);
@@ -341,7 +341,7 @@ impl<H: Host> AccessorCall<H> {
             return self.store_forwarded(r, ip, object, atom, value);
         };
         let target = self.trap_target(trap)?;
-        lane_call_this(vm, &target.0, handler)?;
+        call_this_in_lane(vm, &target.0, handler)?;
         Some(match self.activate_trap(r, ip, target, handler, &arguments) {
             Ok((registers, next)) => {
                 let access = if strict { TrapAccess::StrictStore } else { TrapAccess::Store };
@@ -366,7 +366,7 @@ impl<H: Host> AccessorCall<H> {
         }
         let setter = stored_setter(vm, object, i.imm(), site)?;
         let target = script_target_in_lane(self.cx, setter).filter(|target| !target.forwards())?;
-        let this = lane_call_this(vm, &target, object)?;
+        let this = call_this_in_lane(vm, &target, object)?;
         // SAFETY: the record's value register is one of the running function's.
         let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };
         Some(match activate_kept_in_lane::<H, false>(self.cx, r, ip, &target, stored, this) {

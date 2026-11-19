@@ -91,7 +91,7 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm::compiled) fn stitch_callees(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], candidates: &[DirectCandidates]) -> Callees {
         let stable = self.stable_callees(program, function, code, &Callees::recorded(code, candidates));
         // An arrow inlines as any callee does, unless it reads `this`: its lexical `this` is no receiver a site binds
-        // (`inline::Refused::Receiver`), and a leave inside it makes its activation with its lexical `this` (`lane_call_this`).
+        // (`inline::Refused::Receiver`), and a leave inside it makes its activation with its lexical `this` (`call_this_in_lane`).
         let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.callee, callee.target.function);
         Callees::of(code, candidates, &inline_body, stable)
     }

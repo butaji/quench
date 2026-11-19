@@ -100,7 +100,7 @@ fn direct_eval_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip,
     let EvalWindow { record, entries } = promote_window(cx, r, ip, parameter_eval)?;
     // SAFETY: the context's program outlives the lane run; the call's window is registers of
     // the running function.
-    let (code, args) = unsafe { (&*(*cx).code, lane_call_window(r, i)) };
+    let (code, args) = unsafe { (&*(*cx).code, call_window_in_lane(r, i)) };
     let receiver = r.get(i.c);
     let previous = (std::mem::replace(&mut vm.direct_eval, true), std::mem::replace(&mut vm.parameter_eval, parameter_eval));
     // SAFETY: as `promote_window`.

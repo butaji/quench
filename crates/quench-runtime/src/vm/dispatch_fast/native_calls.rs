@@ -71,7 +71,7 @@ script_handler! {
         let native = const { math_row_native(ROW) };
         let value = if callee_is_native(vm, r.get(i.b), native) {
             // SAFETY: the call's window is registers of the running function.
-            super::number::math_inline_call(native, unsafe { lane_call_window(r, i) })
+            super::number::math_inline_call(native, unsafe { call_window_in_lane(r, i) })
         } else {
             None
         };
@@ -183,7 +183,7 @@ script_handler! {
             // `lane_native_call`'s does.
             // SAFETY: the call's window is registers of the running function; the context's
             // program outlives the lane run.
-            let (args, code) = unsafe { (lane_call_window(r, i), &*(*cx).code) };
+            let (args, code) = unsafe { (call_window_in_lane(r, i), &*(*cx).code) };
             let result_used = ImmediateLayout::call_result_used_in_lane(i.imm());
             match args.first().and_then(|&subject| vm.steady_regexp_call(code, native, r.get(i.c), subject, result_used)) {
                 Some(Ok(value)) => Some(value),
@@ -196,7 +196,7 @@ script_handler! {
             }
         } else {
             // SAFETY: the call's window is registers of the running function.
-            vm.steady_native_value(native, r.get(i.c), unsafe { lane_call_window(r, i) })
+            vm.steady_native_value(native, r.get(i.c), unsafe { call_window_in_lane(r, i) })
         };
         let Some(value) = value else {
             sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
@@ -262,7 +262,7 @@ script_handler! {
     pub(super) fn reflect_get_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         // SAFETY: the window is registers of the running function, read before anything runs.
-        let window = unsafe { lane_call_window(r, i) };
+        let window = unsafe { call_window_in_lane(r, i) };
         if i.a & crate::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted_in_lane(cx) {
             return exit(ip);
         }
