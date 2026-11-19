@@ -130,6 +130,7 @@ pub(super) fn bitwise(lookup: Lookup<'_>, operation: NumberBitwise, operands: [O
         NumberBitwise::Or if left == zero => right,
         NumberBitwise::And | NumberBitwise::Or | NumberBitwise::Xor => left.bitwise_hull(right),
         NumberBitwise::ShiftRight => left.shift_right(right).unwrap_or(IntRange::FULL),
+        NumberBitwise::ShiftRightUnsigned => left.shift_right_unsigned(right).unwrap_or(IntRange::FULL),
         _ => IntRange::FULL,
     }
 }
@@ -146,6 +147,9 @@ pub(in crate::vm::compiled) fn result(lookup: Lookup<'_>, constants: &[Constant]
         .then(|| NumberBitwise::from_js_instruction(instruction.op(), instruction.binary_operator())).flatten();
     match bitwise_operation {
         Some(operation @ (NumberBitwise::And | NumberBitwise::Or | NumberBitwise::Xor | NumberBitwise::ShiftRight)) =>
+            Some(bitwise(lookup, operation, [instruction.operand_b(), instruction.operand_c()])),
+        // A zero-fill shift by a known nonzero count is an int32 (`NumberBitwise::result_is_int32`).
+        Some(operation @ NumberBitwise::ShiftRightUnsigned) if lookup(instruction.operand_c()).is_some_and(|count| IntRange::FULL.shift_right_unsigned(count).is_some()) =>
             Some(bitwise(lookup, operation, [instruction.operand_b(), instruction.operand_c()])),
         Some(_) => None,
         None => exact(lookup, instruction).filter(IntRange::fits_int32),

@@ -113,6 +113,18 @@ impl IntRange {
         let shift = (count.min as u32) & crate::value::WORD32_SHIFT_MASK;
         Some(Self { min: self.min >> shift, max: self.max >> shift })
     }
+
+    /// The range of `self >>> count` where `count` is one known shift of nonzero amount. A
+    /// shift of 1 or more leaves [0, 2^31); a non-negative operand shifts its bounds. Any other
+    /// operand is reinterpreted as a uint32 first, so only the upper bound of the shifted uint32
+    /// is known. A zero shift keeps the uint32, which is not an int32: `None`.
+    pub(crate) fn shift_right_unsigned(self, count: Self) -> Option<Self> {
+        if count.min != count.max { return None; }
+        let shift = (count.min as u32) & crate::value::WORD32_SHIFT_MASK;
+        if shift == 0 { return None; }
+        if self.min >= 0 { return Some(Self { min: self.min >> shift, max: self.max >> shift }); }
+        Some(Self { min: 0, max: i64::from(u32::MAX >> shift) })
+    }
 }
 
 #[cfg(test)]
@@ -220,5 +232,22 @@ mod tests {
         assert_eq!(IntRange::FULL.widen(beyond), IntRange { min: IntRange::WORD.min, max: IntRange::FULL.max });
         let word = IntRange { min: IntRange::WORD.min, max: IntRange::WORD.max };
         assert_eq!(word.widen(IntRange::singleton(0)), word);
+    }
+
+    #[test]
+    fn zero_fill_shift_by_a_known_count_encloses_every_uint32_outcome() {
+        let ranges = [IntRange { min: -3, max: 2 }, IntRange { min: 0, max: 9 }, IntRange { min: -40, max: -1 }];
+        for left in ranges {
+            for shift in 1..32_i64 {
+                let range = left.shift_right_unsigned(IntRange::singleton(shift)).expect("nonzero shift");
+                assert!(range.fits_int32());
+                for x in left.min.max(i32::MIN.into())..=left.max.min(i32::MAX.into()) {
+                    let result = (x as i32 as u32 >> shift) as i64;
+                    assert!(range.contains(IntRange::singleton(result)), "{x} >>> {shift}");
+                }
+            }
+        }
+        assert!(IntRange::FULL.shift_right_unsigned(IntRange::singleton(0)).is_none());
+        assert!(IntRange::FULL.shift_right_unsigned(IntRange { min: 1, max: 2 }).is_none());
     }
 }
