@@ -176,6 +176,29 @@ impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
     #[inline(always)]
     fn this(&mut self, _stage: &mut Concrete) -> u64 { Value::DELETED.to_bits() }
 
+    /// The running activation's bound `this`; an unbound one raises, which the runner throws.
+    #[inline(always)]
+    fn this_value(&mut self, _stage: &mut Concrete) -> Option<(u64, InterpreterFact)> {
+        let (program, site) = (self.program, self.site);
+        let vm = self.vm();
+        let frame = vm.owner_frame(site.owner)?;
+        match vm.checked_this_binding(program, frame) {
+            Ok(this) => Some((this.to_bits(), InterpreterFact::Value)),
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn callee_value(&mut self, _stage: &mut Concrete) -> Option<(u64, InterpreterFact)> {
+        let site = self.site;
+        let vm = self.vm();
+        let frame = vm.owner_frame(site.owner)?;
+        Some((vm.frames[frame].context.callee().unwrap_or(Value::UNDEFINED).to_bits(), InterpreterFact::Value))
+    }
+
     #[inline(always)]
     fn define_this(&mut self, stage: &mut Concrete, destination: Register, this: u64) {
         self.write(stage, destination, this, InterpreterFact::Value);

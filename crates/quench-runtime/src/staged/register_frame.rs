@@ -267,11 +267,17 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn scoped_local_store(&mut self, _stage: &mut S, _slot: u16, _value: S::Word) -> Option<()> { None }
 
+    /// The running activation's bound `this`, as a word and the fact the frame keeps of it; `None`
+    /// where the frame holds none (an unbound `this`, or a frame that does not hold it), which leaves
+    /// the row to its miss edge.
+    #[inline(always)]
+    fn this_value(&mut self, _stage: &mut S) -> Option<(S::Word, Self::Fact)> { None }
+
     /// The function the running activation runs (its self binding's value), as a word and the fact
     /// the frame keeps of it; `None` where the frame does not hold it, leaving the read to the
     /// interpreter.
     #[inline(always)]
-    fn callee(&mut self, _stage: &mut S) -> Option<(S::Word, Self::Fact)> { None }
+    fn callee_value(&mut self, _stage: &mut S) -> Option<(S::Word, Self::Fact)> { None }
 
     /// A rest view's read (`Protocol::RestView`): `rest.length` (`get` false) or `rest[key]`
     /// of the values its activation kept past its first `fixed` parameters; `None` where the
@@ -406,6 +412,10 @@ pub(crate) fn bound_this<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, mi
 /// marker); `miss` where it does not.
 #[inline(always)]
 pub(crate) fn load_this<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, miss: S::Miss) -> Step<S::Word, F::Control> {
+    if let Some((this, fact)) = frame.this_value(stage) {
+        frame.write(stage, destination, this, fact);
+        return Step::Value(this);
+    }
     match bound_this(stage, frame, miss) {
         Some(this) => {
             frame.define_this(stage, destination, this);

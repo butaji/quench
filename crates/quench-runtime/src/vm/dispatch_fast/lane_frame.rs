@@ -1023,6 +1023,12 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
+    fn this_value(&mut self, stage: &mut Concrete) -> Option<(u64, Boxing)> {
+        let this = self.this(stage);
+        (this != Value::DELETED.to_bits()).then_some((this, Boxing::Value))
+    }
+
+    #[inline(always)]
     fn define_this(&mut self, _stage: &mut Concrete, destination: Register, this: u64) {
         self.registers.set(destination, Value::from_bits(this));
     }
@@ -1279,7 +1285,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn callee(&mut self, _stage: &mut Concrete) -> Option<(u64, Boxing)> {
+    fn callee_value(&mut self, _stage: &mut Concrete) -> Option<(u64, Boxing)> {
         let (context, read) = self.callee?;
         // SAFETY: the running lane's context, live for the row's step.
         Some((unsafe { read(context) }?.to_bits(), Boxing::Value))

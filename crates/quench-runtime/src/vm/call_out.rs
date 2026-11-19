@@ -295,6 +295,24 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
 
     fn this(&mut self, _stage: &mut Concrete) -> u64 { Value::DELETED.to_bits() }
 
+    /// The running activation's `this`, where bound; an unbound `this` (a TDZ read) raises, which the
+    /// row's caller throws.
+    fn this_value(&mut self, _stage: &mut Concrete) -> Option<(u64, ())> {
+        let frame = self.vm.owner_frame(self.site.owner).expect("a this read names its frame");
+        match self.vm.checked_this_binding(self.program, frame) {
+            Ok(this) => Some((this.to_bits(), ())),
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
+    }
+
+    fn callee_value(&mut self, _stage: &mut Concrete) -> Option<(u64, ())> {
+        let frame = self.vm.owner_frame(self.site.owner).expect("a callee read names its frame");
+        Some((self.vm.frames[frame].context.callee().unwrap_or(Value::UNDEFINED).to_bits(), ()))
+    }
+
     fn define_this(&mut self, stage: &mut Concrete, destination: Register, this: u64) {
         self.write(stage, destination, this, ());
     }

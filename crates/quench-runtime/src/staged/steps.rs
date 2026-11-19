@@ -106,7 +106,7 @@ fn string_case_index<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: 
 #[inline(always)]
 fn load_callee<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register) -> Step<S::Word, F::Control> {
-    let Some((value, fact)) = frame.callee(stage) else { return Step::Unresolved };
+    let Some((value, fact)) = frame.callee_value(stage) else { return Step::Unresolved };
     frame.write(stage, destination, value, fact);
     Step::Value(value)
 }

@@ -7,8 +7,10 @@
 //   StoreCapture, LoadName, LoadNameCall, LoadNameTypeof. (LoadEnvLocal, StoreVarBinding, StoreEnvLocal and
 //   StoreName take `owner_step` alone, with no row first, and must keep that.)
 // - Lane-result call-outs (`GenericStep::LaneResult`): ToPropertyKey, GetIterator, IteratorClose,
-//   AppendArray, ForInStart; and Delete, which takes the same `staged_value_step` call-out.
-// - Row, then a per-opcode miss: LoadConst, GetField, GetIndex, ToNumeric, SetField, SetFieldStrict,
+//   AppendArray, ForInStart; and Delete, which takes the same `staged_value_step` call-out, as do CloneEnv,
+//   LoadThis, LoadCallee, LoadImportMeta, InitializeThis, ResolveName, LoadResolvedName, StoreResolvedName,
+//   DeleteName, ArgumentsLength and ArgumentGet.
+// - Row, then a per-opcode miss: LoadConst, InitializeTdz, GetField, GetIndex, ToNumeric, SetField, SetFieldStrict,
 //   SetIndex, Binary, NumericAdd, NumericMultiply, IncDec, Unary, JumpBinaryFalse. Each miss is that
 //   opcode's own semantics, not a staged row's.
 // - Row that stops the run: Return, Throw.
@@ -19,12 +21,11 @@
 // - Literal allocation under the tier's proof (`Decoder::Literal`, `Operation::decode_literal`): MakeClosure,
 //   MakeObject, MakeObject2, MakeObjectLiteral, SuperConstArrayObject2, MakeArray, MakeConstArray,
 //   MakeLiteralTemplate, CreateRegExpLiteral, StringConcat.
-// - Hand semantics with no staged row yet: CloneEnv (environment clone plan), LoadThis, LoadCallee,
-//   LoadImportMeta, InitializeThis, InitializeTdz, CallFirstChunk, ResolveName, LoadResolvedName, StoreResolvedName, DeleteName,
+// - Hand semantics with no staged row yet: CallFirstChunk,
 //   RequireObjectCoercible, RequireIteratorResult, SetFunctionName (these three need frame methods the
 //   host frame does not implement), SetThisField, SetThisFieldStrict (the frame holds no `this` for a row),
 //   DefineArrayElement (its element definer is the interpreter frame's, not a call-out),
-//   ArgumentsLength, ArgumentGet, WasmBranchTable.
+//   WasmBranchTable.
 
 use super::*;
 use super::dispatch_frame::{InterpreterFrame, RowRun};
@@ -599,11 +600,6 @@ impl<H: Host> Vm<H> {
     ) -> Result<StepResult, JsError> {
         match i.op() {
             Op::Nop => {}
-            Op::CloneEnv => {
-                let clones = &p.function(self.frames[f].function as usize).environment_clones;
-                let plan = &clones[i.environment_clone_index()];
-                self.clone_frame_environment(f, &plan.fresh, clones.resets(plan))?;
-            }
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
             Op::LoadConst => {
                 match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::of(p)) {
@@ -640,59 +636,7 @@ impl<H: Host> Vm<H> {
                     RowRun::Stop(stop) => return stop,
                 }
             }
-            Op::LoadThis => {
-                let this = self.checked_this_binding(p, f)?;
-                self.write(f, i.result_register(), this);
-            }
-            Op::LoadCallee => {
-                // The function the frame runs, as its activation filled its self binding.
-                let callee = self.frames[f].context.callee().unwrap_or(Value::UNDEFINED);
-                self.write(f, i.result_register(), callee);
-            }
             Op::CallFirstChunk => self.call_first_chunk(p, f, i, *pc)?,
-            Op::LoadImportMeta => {
-                let program = self.frames[f].program;
-                let import_meta = if let Some(value) = self.programs.import_meta(program) {
-                    value
-                } else {
-                    let value = self
-                        .heap
-                        .alloc_object(Self::empty_object(Value::NULL));
-                    if let Some(source_name) = self.programs.source_name(program).map(str::to_owned)
-                    {
-                        let url = self.host.import_meta_url(&source_name);
-                        let url = self.heap.alloc_string(url.into());
-                        let url_atom = self.intern_atom("url");
-                        self.set_property(value, url_atom, url)?;
-                        if let Some(filename) = self.host.import_meta_filename(&source_name) {
-                            let filename_value = self.heap.alloc_string(filename.as_str().into());
-                            let filename_atom = self.intern_atom("filename");
-                            self.set_property(value, filename_atom, filename_value)?;
-                            let dirname = std::path::Path::new(&filename)
-                                .parent()
-                                .and_then(|path| path.to_str());
-                            if let Some(dirname) = dirname {
-                                let dirname_value = self.heap.alloc_string(dirname.into());
-                                let dirname_atom = self.intern_atom("dirname");
-                                self.set_property(value, dirname_atom, dirname_value)?;
-                            }
-                        }
-                        if self.host.initializes_import_meta() {
-                            let mut context = crate::NativeContext::new(self);
-                            let import_meta = context.scoped_value(value);
-                            H::initialize_import_meta(&mut context, &source_name, import_meta)
-                                .map_err(|error| context.finish_error(error))?;
-                        }
-                    }
-                    self.programs.set_import_meta(program, value);
-                    value
-                };
-                self.write(f, i.result_register(), import_meta);
-            }
-            Op::InitializeThis => {
-                let value = self.read(f, i.register_a());
-                self.initialize_this_binding(p, f, value)?;
-            }
             // The template object cache: a literal-site call-out row (`protocol_literals`), which the frame answers.
             Op::CacheTemplateObject | Op::LoadCachedTemplateObject => {
                 match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
@@ -783,39 +727,6 @@ impl<H: Host> Vm<H> {
                     RowRun::Stop(stop) => return stop,
                 }
             }
-            Op::ResolveName => {
-                let strict = i
-                    .boolean_field(crate::bytecode::InstructionField::B)
-                    .ok_or_else(|| JsError::validation("invalid resolve-name flag".into()))?;
-                let value = with_binding_site_pc!(
-                    self,
-                    VarOwner::Frame(f),
-                    *pc,
-                    self.resolve_name(p, i.atom_index(), strict)
-                )?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::LoadResolvedName => {
-                let strict = i
-                    .boolean_field(crate::bytecode::InstructionField::C)
-                    .ok_or_else(|| JsError::validation("invalid resolved-name flag".into()))?;
-                let object = self.read(f, i.register_b());
-                let value = self.load_resolved_name(p, object, i.atom_index(), strict)?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::DeleteName => {
-                let value =
-                    with_binding_site_pc!(self, VarOwner::Frame(f), *pc, self.delete_name(p, i.atom_index()))?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::StoreResolvedName => {
-                let strict = i
-                    .boolean_field(crate::bytecode::InstructionField::C)
-                    .ok_or_else(|| JsError::validation("invalid resolved-name flag".into()))?;
-                let object = self.read(f, i.register_b());
-                let atom = i.atom_index();
-                self.store_resolved_name(p, object, atom, self.read(f, i.register_a()), strict)?;
-            }
             Op::ToNumeric => {
                 match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
@@ -825,7 +736,9 @@ impl<H: Host> Vm<H> {
                     RowRun::Stop(stop) => return stop,
                 }
             }
-            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart | Op::Delete => {
+            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart | Op::Delete
+            | Op::CloneEnv | Op::LoadThis | Op::LoadCallee | Op::LoadImportMeta | Op::InitializeThis | Op::ResolveName
+            | Op::LoadResolvedName | Op::StoreResolvedName | Op::DeleteName | Op::ArgumentsLength | Op::ArgumentGet => {
                 self.staged_value_step(p, super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc }, i)?;
             }
             Op::RequireObjectCoercible => {
@@ -840,20 +753,21 @@ impl<H: Host> Vm<H> {
                     RowRun::Stop(stop) => return stop,
                 }
             }
-            Op::ArgumentsLength | Op::ArgumentGet => {
-                let binding = self.load_local_binding(p, VarOwner::Frame(f), i.local_slot(), None)?;
-                let key = crate::staged::reads_argument(i.op()).then(|| self.read(f, i.register_b()));
-                let value = self.read_arguments_binding(p, f, binding, key)?;
-                self.write(f, i.result_register(), value);
-            }
             Op::SetFunctionName => {
                 self.set_function_name(p, self.read(f, i.register_a()), (i.atom_index(), i.cache_site_index()))?;
             }
+            // The TDZ opening runs its staged row first; a row that leaves (a slot it does not hold plainly) is the hand write.
             Op::InitializeTdz => {
-                let slot = i.local_slot();
-                *self
-                    .owner_binding_mut(p, VarOwner::Frame(f), slot)
-                    .ok_or_else(|| JsError("invalid local slot".into()))? = Value::DELETED;
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        let slot = i.local_slot();
+                        *self
+                            .owner_binding_mut(p, VarOwner::Frame(f), slot)
+                            .ok_or_else(|| JsError("invalid local slot".into()))? = Value::DELETED;
+                    }
+                    RowRun::Stop(stop) => return stop,
+                }
             }
             Op::GetAsyncIterator => {
                 match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
@@ -1325,7 +1239,8 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn row_admitted(&self, p: &ResidualProgram, f: usize, operation: crate::staged::Operation<u64, ()>) -> bool {
         match operation {
-            crate::staged::Operation::LoadLocalChecked { .. } | crate::staged::Operation::StoreLocalChecked { .. } => {
+            crate::staged::Operation::LoadLocalChecked { .. } | crate::staged::Operation::StoreLocalChecked { .. }
+            | crate::staged::Operation::InitializeLocal { .. } => {
                 let function = self.frames[f].function;
                 p.function(function as usize).has_plain_locals(function == super::ROOT_FUNCTION_ID)
             }
