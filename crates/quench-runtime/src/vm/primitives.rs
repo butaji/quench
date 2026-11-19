@@ -89,8 +89,12 @@ impl<H: Host> Vm<H> {
         if !self.pure_string_admitted(native, receiver, args) {
             return None;
         }
-        self.pure_string_in_place(native, receiver, args)
-            .or_else(|| self.pure_string_general(p, native, receiver, args))
+        if let Some(value) = self.pure_string_in_place(native, receiver, args) {
+            return Some(value);
+        }
+        // The general body, which tries the same in-place body first, skips it this once.
+        self.declined_fast = Some(native);
+        self.pure_string_general(p, native, receiver, args)
     }
 
     /// The admission of `pure_string_method_call`: a pure String method on a string receiver,
@@ -258,14 +262,10 @@ impl<H: Host> Vm<H> {
             }
             Native::StringIndexOf | Native::StringLastIndexOf | Native::StringIncludes | Native::StringStartsWith
             | Native::StringEndsWith => self.string_search_general(p, native, this, args),
-            Native::StringReplace => match self.replace_string_pattern(p, native, this, args) {
-                Some(result) => result,
-                None => self.string_replace_native(p, this, args, false),
-            },
-            Native::StringReplaceAll => match self.replace_string_pattern(p, native, this, args) {
-                Some(result) => result,
-                None => self.string_replace_native(p, this, args, true),
-            },
+            // `string_replace_native` tries `replace_string_pattern` first.
+            Native::StringReplace => self.string_replace_native(p, this, args, false),
+            // `string_replace_native` tries `replace_string_pattern` first.
+            Native::StringReplaceAll => self.string_replace_native(p, this, args, true),
             Native::StringSplit => self.string_split_native(p, this, args),
             Native::StringTrim | Native::StringTrimStart | Native::StringTrimEnd => {
                 let Some(receiver) = self.heap.string(this).cloned() else {
