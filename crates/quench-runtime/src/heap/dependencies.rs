@@ -10,10 +10,104 @@
 //! The table lives in its own allocation, which the heap owns and each watched
 //! prototype's extras point to (`Watch`): a layout change, made through the prototype's
 //! own `Object` methods, retires its subject without reaching the heap.
+//!
+//! A proof held outside the table, in a cache of plain words, keeps the validity cell of the
+//! chain it read (`ChainCell`), which every subject of the chain lists: a change to one of
+//! them, or its death, retires the cell, and a use is one load and one compare. So a change to
+//! a prototype re-proves only what depends on it, never every prototype-dependent fact in the
+//! VM. The events no subject names (a collection that may reuse a dead prototype's record, a
+//! shape compaction, a restore) retire every cell (`Dependencies::retire_cells`) with the
+//! global `prototype_layout_epoch`. A dependency object may hold the same subjects
+//! (`Dependencies::hold_layouts`).
 
 use crate::value::Value;
 use std::cell::UnsafeCell;
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// A prototype chain's validity cell (as V8's prototype validity cells): it holds while every
+/// prototype of one chain keeps the layout it had when the cell was made
+/// (`Dependencies::chain_cell`), and retires for good at the first change to one of them, to
+/// any one's death, or at an event no subject names (`Dependencies::retire_cells`). A proof
+/// made about a chain keeps the chain's cell, so a change to a prototype retires only the
+/// proofs whose chain holds it: a prototype built elsewhere leaves them standing.
+///
+/// A copy of plain words, so a proof held in a direct-mapped table keeps it as it kept an
+/// epoch, and a use is one load and one compare: the cell's word still holds `id`. Words live
+/// in a thread's slab (`CELL_SLAB`) that never frees them, so a cell outlives any table; a
+/// retired word is reused under a new id, which no earlier cell names.
+#[derive(Clone, Copy)]
+pub(crate) struct ChainCell {
+    word: &'static AtomicU64,
+    id: u64,
+}
+
+impl ChainCell {
+    /// Whether every prototype of the cell's chain keeps the layout it was made under.
+    #[inline(always)]
+    pub(crate) fn holds(self) -> bool {
+        self.word.load(Ordering::Relaxed) == self.id
+    }
+
+    /// A new cell, holding until retired.
+    fn new() -> Self {
+        let word = CELL_SLAB.try_with(|slab| {
+            let mut free = slab.borrow_mut();
+            if free.is_empty() {
+                let chunk: &'static [AtomicU64] = (0..CELL_CHUNK).map(|_| AtomicU64::new(0)).collect::<Vec<_>>().leak();
+                free.extend(chunk.iter());
+            }
+            free.pop()
+        });
+        // A slab that cannot be reached (a thread exiting) gives a word of its own.
+        let word: &'static AtomicU64 = match word {
+            Ok(Some(word)) => word,
+            _ => Box::leak(Box::new(AtomicU64::new(0))),
+        };
+        let id = NEXT_CELL_ID.fetch_add(1, Ordering::Relaxed);
+        word.store(id, Ordering::Relaxed);
+        Self { word, id }
+    }
+
+    /// Retires the cell, whose word then serves another; a retired cell stays retired.
+    fn retire(self) {
+        if self.holds() {
+            self.word.store(0, Ordering::Relaxed);
+            // A slab gone with its thread only loses the word.
+            let _ = CELL_SLAB.try_with(|slab| slab.borrow_mut().push(self.word));
+        }
+    }
+}
+
+/// Cells are equal when they are one cell: ids are never reused.
+impl PartialEq for ChainCell {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for ChainCell {}
+
+impl std::fmt::Debug for ChainCell {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_tuple("ChainCell").field(&self.id).field(&self.holds()).finish()
+    }
+}
+
+/// Words a slab allocates at once (`ChainCell::new`).
+const CELL_CHUNK: usize = 256;
+
+/// The next cell id: process-wide, so no cell of any table or thread repeats another's id.
+static NEXT_CELL_ID: AtomicU64 = AtomicU64::new(1);
+
+thread_local! {
+    /// The words no holding cell names, for new cells (`ChainCell`).
+    static CELL_SLAB: std::cell::RefCell<Vec<&'static AtomicU64>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The length past which a subject's cell list drops the cells already retired, at each power
+/// of two, amortized over the pushes that grew it (`Dependencies::chain_cell`).
+const CELL_READERS_PRUNE: usize = 8;
 
 /// Prototypes an inherited field load may traverse to its holder, or to the end of the chain
 /// for an absent name. Node's stream objects (an `IncomingMessage` above `Readable`, `Stream`,
@@ -205,11 +299,33 @@ struct Table {
     free: Vec<u32>,
     /// The intrinsic-builtin fuses, which watched prototypes hold.
     fuses: crate::code_dependencies::Fuses,
+    /// Per subject, the chain cells whose chain holds it (`ChainCell`).
+    cell_readers: Vec<Vec<ChainCell>>,
+    /// Per subject, the dependencies held on its layout (`Dependencies::hold_layouts`): data
+    /// dependencies (`code_dependencies::new_dependency`), whose retirement drops no code, so
+    /// a retirement never reenters the table.
+    layout_readers: crate::code_dependencies::CodeReaders,
+    /// The cell last made for each chain, by its first subject and length: every proof about
+    /// one chain shares it while it holds. A chain is its first prototype's links, so while no
+    /// subject of the cell changed, the chain of that length from its first subject is the one
+    /// the cell was made for.
+    chain_cells: rustc_hash::FxHashMap<(u32, usize), ChainCell>,
+}
+
+impl Drop for Table {
+    /// Retires every cell the table made, whose words return to the slab.
+    fn drop(&mut self) {
+        self.retire_cells();
+    }
 }
 
 impl Table {
     fn retire(&mut self, subject: u32) {
         self.fuses.note_layout_change(subject);
+        if let Some(cells) = self.cell_readers.get_mut(subject as usize) {
+            std::mem::take(cells).into_iter().for_each(ChainCell::retire);
+        }
+        self.layout_readers.retire(subject);
         if let (Some(store), Some(entries)) = (self.fact_store, self.fact_readers.get_mut(subject as usize)) {
             for entry in std::mem::take(entries) {
                 store.clear(entry);
@@ -232,6 +348,24 @@ impl Table {
                 self.retire_kind(kind);
             }
         }
+    }
+
+    /// Lists `cell` as reading `subject`, first dropping the list's retired cells where it
+    /// reaches a power of two past `CELL_READERS_PRUNE`, amortized over the pushes that grew it.
+    fn push_cell_reader(&mut self, subject: u32, cell: ChainCell) {
+        let cells = &mut self.cell_readers[subject as usize];
+        if cells.len() >= CELL_READERS_PRUNE && cells.len().is_power_of_two() {
+            cells.retain(|cell| cell.holds());
+        }
+        cells.push(cell);
+    }
+
+    /// Retires every chain cell: an event no subject names (a collection that may reuse a dead
+    /// prototype's record, a shape compaction, a restore).
+    fn retire_cells(&mut self) {
+        self.chain_cells.drain().for_each(|(_, cell)| cell.retire());
+        self.cell_readers.iter_mut().flat_map(std::mem::take).for_each(ChainCell::retire);
+        self.layout_readers.reset();
     }
 
     /// Clears every proof of `kind`; the subjects that recorded a reader of it keep the
@@ -322,6 +456,7 @@ impl Dependencies {
                 table.readers.push(0);
                 table.inherited_readers.push(Vec::new());
                 table.fact_readers.push(Vec::new());
+                table.cell_readers.push(Vec::new());
                 (table.readers.len() - 1) as u32
             }
         };
@@ -361,6 +496,58 @@ impl Dependencies {
             table.fact_readers.iter_mut().flat_map(std::mem::take).for_each(|entry| store.clear(entry));
         }
         table.fuses.forget_all();
+        table.retire_cells();
+    }
+
+    /// Retires every chain cell (`Table::retire_cells`), for an event no subject names: a
+    /// collection that may let a dead prototype's record be reused, or a shape compaction,
+    /// which renumbers the shapes proofs name.
+    pub(crate) fn retire_cells(&mut self) {
+        self.table_mut().retire_cells();
+    }
+
+    /// The cell of the chain whose prototypes' subjects are `subjects`, nearest first: one
+    /// that holds while none of them changes or dies (`ChainCell`). Every proof about one chain
+    /// shares its cell; a cell for no prototype holds until an event no subject names.
+    pub(crate) fn chain_cell(&self, subjects: &[u32]) -> ChainCell {
+        // SAFETY: as `table`: no reference to the table is live across this call.
+        let table = unsafe { &mut *self.0.get() };
+        let key = (subjects.first().copied().unwrap_or(u32::MAX), subjects.len());
+        if let Some(cell) = table.chain_cells.get(&key).copied().filter(|cell| cell.holds()) {
+            return cell;
+        }
+        let cell = ChainCell::new();
+        for subject in subjects {
+            table.push_cell_reader(*subject, cell);
+        }
+        table.chain_cells.insert(key, cell);
+        cell
+    }
+
+    /// Makes `dependency` retire when one of `subjects` changes its layout or dies, or at an
+    /// event no subject names (`retire_cells`); `false` where the reader table is full. Only a
+    /// data dependency (`code_dependencies::new_dependency`), whose retirement runs nothing.
+    pub(crate) fn hold_layouts(&self, subjects: &[u32], dependency: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
+        // SAFETY: as `table`: no reference to the table is live across this call.
+        let table = unsafe { &mut *self.0.get() };
+        subjects.iter().all(|subject| table.layout_readers.subscribe(*subject, dependency))
+    }
+
+    /// A cell of its own that holds while none of `subjects`, prototypes of any relation,
+    /// changes or dies: for a proof that read several objects' layouts, not one chain. With no
+    /// subject, the shared cell of no chain (`chain_cell`), which an event no subject names
+    /// retires.
+    pub(crate) fn subjects_cell(&self, subjects: &[u32]) -> ChainCell {
+        if subjects.is_empty() {
+            return self.chain_cell(subjects);
+        }
+        // SAFETY: as `table`: no reference to the table is live across this call.
+        let table = unsafe { &mut *self.0.get() };
+        let cell = ChainCell::new();
+        for subject in subjects {
+            table.push_cell_reader(*subject, cell);
+        }
+        cell
     }
 
     /// The intrinsic-builtin fuses (`code_dependencies::Fuses`).
@@ -507,5 +694,67 @@ impl Watch {
             // SAFETY: as `retire`.
             unsafe { (*table.as_ref().get()).fuses.note_slot_write(subject, slot) };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Three watched prototypes: `parent`, `child` above it, and `other` on no chain of theirs.
+    fn three() -> (Dependencies, [Watch; 3]) {
+        let mut dependencies = Dependencies::default();
+        let watches = [dependencies.watch(), dependencies.watch(), dependencies.watch()];
+        (dependencies, watches)
+    }
+
+    #[test]
+    fn a_cell_retires_at_a_change_on_its_chain_only() {
+        let (dependencies, [child, parent, other]) = three();
+        let subject = |watch: &Watch| watch.subject().unwrap();
+        let chain = dependencies.chain_cell(&[subject(&child), subject(&parent)]);
+        let parent_only = dependencies.chain_cell(&[subject(&parent)]);
+        let other_only = dependencies.chain_cell(&[subject(&other)]);
+        assert_eq!(dependencies.chain_cell(&[subject(&child), subject(&parent)]), chain, "one chain shares one cell");
+        other.retire();
+        assert!(chain.holds() && parent_only.holds(), "a prototype on neither chain retires neither");
+        assert!(!other_only.holds());
+        child.retire();
+        assert!(!chain.holds(), "a change to the chain's first prototype retires it");
+        assert!(parent_only.holds(), "a change below the parent keeps the parent's own chain");
+        let chain = dependencies.chain_cell(&[subject(&child), subject(&parent)]);
+        assert!(chain.holds() && chain != parent_only, "a retired chain takes a new cell");
+        parent.retire();
+        assert!(!chain.holds() && !parent_only.holds(), "a change to the parent retires every chain through it");
+    }
+
+    #[test]
+    fn a_dying_prototype_and_a_global_event_retire_cells_and_layout_holds() {
+        let (mut dependencies, [child, parent, other]) = three();
+        let subject = |watch: &Watch| watch.subject().unwrap();
+        let chain = dependencies.chain_cell(&[subject(&child), subject(&parent)]);
+        let set = dependencies.subjects_cell(&[subject(&other), subject(&parent)]);
+        let held = crate::code_dependencies::new_dependency();
+        let dependency: std::rc::Rc<dyn crate::code_dependencies::DependentCode> = held.clone();
+        assert!(dependencies.hold_layouts(&[subject(&other)], &dependency));
+        dependencies.release(subject(&child));
+        assert!(!chain.holds(), "a dead prototype's chains retire, so no proof names its reused record");
+        assert!(set.holds() && held.is_published());
+        let none = dependencies.chain_cell(&[]);
+        assert!(none.holds(), "the cell of no chain holds until an event no subject names");
+        dependencies.retire_cells();
+        assert!(!set.holds() && !none.holds() && !held.is_published(), "a global event retires every cell");
+        let fresh = dependencies.subjects_cell(&[subject(&other)]);
+        other.retire();
+        assert!(!fresh.holds(), "a subjects cell retires at a change to any of its subjects");
+    }
+
+    #[test]
+    fn a_retired_cells_word_serves_a_new_cell_under_a_new_id() {
+        let (dependencies, [child, ..]) = three();
+        let first = dependencies.subjects_cell(&[child.subject().unwrap()]);
+        child.retire();
+        let second = dependencies.subjects_cell(&[child.subject().unwrap()]);
+        assert!(!first.holds() && second.holds(), "a reused word holds only for the cell that took it");
     }
 }

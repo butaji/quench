@@ -15,24 +15,31 @@ use rustc_hash::FxHashSet;
 /// that proved it found `constructor` in a data slot of a prototype and the constructor's own
 /// `@@species` holding the intrinsic getter, and both objects are watched prototypes whose
 /// values it watches (`heap::watch_prototype_values`, holder then constructor): a write to their
-/// slots advances the intrinsic epoch, a change to any prototype's layout the chain epoch, and
-/// either retires it, as does a collection. A use reads no slot: a layout id and two epochs.
+/// slots advances the intrinsic epoch, and a change to the layout of a prototype up to the
+/// holder, or of the constructor, retires one of its cells (`Vm::chain_cell`); either retires
+/// it, as does a collection that frees one. A use reads no slot: a layout id, an epoch and two
+/// cells.
 pub(super) struct PromiseSpeciesProof {
     layout: u32,
-    epochs: (u64, u64),
+    intrinsic_epoch: u64,
+    /// The cells of the chain from the receiver's prototype to the holder, and of the
+    /// constructor, whose own `@@species` the proof read.
+    cells: [crate::heap::ChainCell; 2],
     realm: Value,
     /// Keeps the subscriptions whose retirement advances the intrinsic epoch.
     _watches: [crate::heap::PrototypeValueWatch; 2],
 }
 
 /// That promises of one layout read `then` as plain data inherited from their prototype,
-/// holding `then`: the receiver's layout fixes its own keys and prototype link, the chain epoch
-/// every prototype's layout, and the intrinsic epoch the prototype's values, which a write to
-/// them advances while the prototype's values are watched (`heap::watch_prototype_values`).
+/// holding `then`: the receiver's layout fixes its own keys and prototype link, the
+/// prototype's cell its layout (`Vm::chain_cell`), and the intrinsic epoch the prototype's
+/// values, which a write to them advances while the prototype's values are watched
+/// (`heap::watch_prototype_values`).
 #[derive(Clone, Copy)]
 pub(super) struct PromiseThenMemo {
     layout: u32,
-    epochs: (u64, u64),
+    intrinsic_epoch: u64,
+    cell: crate::heap::ChainCell,
     realm: Value,
     then: Value,
 }
@@ -4844,13 +4851,14 @@ impl<H: Host> Vm<H> {
     }
 
     /// The `then` a resolution reads from promise `value` (`PromiseThenMemo`), where the memo
-    /// holds for it: one layout compare and two epoch compares instead of the read.
+    /// holds for it: one layout compare, an epoch compare and a cell's instead of the read.
     #[inline(always)]
     fn memoized_resolution_then(&self, value: Value) -> Option<Value> {
         let memo = self.promise_then_memo.get()?;
         let object = &self.heap.promise(value)?.object;
         (object.layout_id() == memo.layout
-            && memo.epochs == (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch())
+            && memo.intrinsic_epoch == crate::heap::intrinsic_epoch()
+            && memo.cell.holds()
             && memo.realm == self.realm.globals)
             .then_some(memo.then)
     }
@@ -4877,9 +4885,11 @@ impl<H: Host> Vm<H> {
         if crate::heap::watch_prototype_values(holder.exact_shape()).is_none() {
             return;
         }
+        let Some(cell) = self.chain_cell(prototype, 1) else { return };
         self.promise_then_memo.set(Some(PromiseThenMemo {
             layout,
-            epochs: (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch()),
+            intrinsic_epoch: crate::heap::intrinsic_epoch(),
+            cell,
             realm: self.realm.globals,
             then,
         }));
@@ -4937,7 +4947,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether the `PromiseSpeciesProof` answers `promise`: a receiver of the proved layout
-    /// (shape and prototype), with no side descriptors, under the epochs the proof was made in.
+    /// (shape and prototype), with no side descriptors, under the epoch and cells the proof was
+    /// made in.
     #[inline]
     fn promise_species_proved(&self, promise: Value) -> bool {
         let proofs = self.promise_species_proof.borrow();
@@ -4948,7 +4959,8 @@ impl<H: Host> Vm<H> {
             return false;
         };
         data.layout_id() == proof.layout
-            && proof.epochs == (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch())
+            && proof.intrinsic_epoch == crate::heap::intrinsic_epoch()
+            && proof.cells.iter().all(|cell| cell.holds())
             && !data.has_side_descriptors()
             && proof.realm == self.realm.globals
     }
@@ -4962,7 +4974,7 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.heap.ordinary_object(promise) else {
             return;
         };
-        let (layout, key) = (data.layout_id(), PropertyKey::string(self.runtime_atoms.constructor));
+        let (layout, key, prototype) = (data.layout_id(), PropertyKey::string(self.runtime_atoms.constructor), data.proto());
         let Some(SymbolLoadAnswer::Inherited { hops, .. }) =
             self.symbol_load_proofs.answer(data.layout_id(), key)
         else {
@@ -4974,13 +4986,16 @@ impl<H: Host> Vm<H> {
             let Some(link) = self.heap.object(holder) else { return };
             holder = link.proto();
         }
-        self.heap.mark_prototype(holder);
-        self.heap.mark_prototype(constructor);
+        let (Some(chain), Some(own)) = (self.chain_cell(prototype, hops), self.chain_cell(constructor, 1)) else {
+            *self.promise_species_proof.borrow_mut() = None;
+            return;
+        };
         let watch = |object| self.heap.object(object).and_then(|data| crate::heap::watch_prototype_values(data.exact_shape()));
         *self.promise_species_proof.borrow_mut() = watch(holder).zip(watch(constructor))
             .map(|(holder, constructor)| PromiseSpeciesProof {
                 layout,
-                epochs: (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch()),
+                intrinsic_epoch: crate::heap::intrinsic_epoch(),
+                cells: [chain, own],
                 realm: self.realm.globals,
                 _watches: [holder, constructor],
             });

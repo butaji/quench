@@ -845,7 +845,7 @@ impl<H: Host> Vm<H> {
     /// (`inherited_index_absent`), whichever the index.
     pub(super) fn prototypes_hold_no_index(&self, object: Value) -> bool {
         let first = self.object_data(object).map(|data| data.proto());
-        // The epoch's proof answers a chain it covers without the walk.
+        // The held proof answers a chain it covers without the walk.
         if first.is_some_and(|first| self.chain_holds_no_index(first)) {
             return true;
         }
@@ -2394,7 +2394,7 @@ impl<H: Host> Vm<H> {
         Some((hit.value, index))
     }
 
-    /// `inherited_field_hit` while the entry's proof holds (the prototype layout epoch and
+    /// `inherited_field_hit` while the entry's proof holds (its chain's subjects unchanged and
     /// the receiver's prototype it was made under) and the holder is an object record: no
     /// chain walk and no call, so a lane handler inlining it saves no registers. `None`
     /// leaves any other read to `inherited_field_hit`.
@@ -2521,9 +2521,10 @@ impl<H: Host> Vm<H> {
     }
 
     /// The value prototype-held hint `index` (`hold_holder_hint`) holds for a read of `atom`
-    /// from the direct object or array `object`: a receiver of its shape and prototype under
-    /// the epoch it was read in reads it again, whose prototype, marked, has changed neither
-    /// layout nor values since. `None` for any other receiver, name or epoch, or no such hint.
+    /// from the direct object or array `object`: a receiver of its shape and prototype reads it
+    /// again while the hint's watch holds, whose prototype, marked, has changed neither layout
+    /// nor values since. `None` for any other receiver or name, a retired watch, or no such
+    /// hint.
     #[inline(always)]
     pub(super) fn holder_hint_hit(&self, index: u16, atom: Atom, object: Value) -> Option<Value> {
         self.holder_hint_hit_in(index, atom, self.hinted_receiver(object)?)
@@ -3291,15 +3292,14 @@ impl<H: Host> Vm<H> {
     /// Records the accessor a field read (a store, with `stores`) at `site` meets on `object` or a prototype of it,
     /// when shapes answer every lookup from `object` to the holder. An own accessor's entry
     /// names no holder (`OWN_ACCESSOR`): a receiver of its shape holds its own accessor in
-    /// that slot. Every prototype passed becomes a prototype first, so a later change to one
-    /// advances `prototype_layout_epoch` and retires the entry.
+    /// that slot. Every prototype passed becomes a prototype first, and the entry keeps their
+    /// chain's cell, so a later change to one retires the entry (`Vm::chain_cell`).
     pub(super) fn record_accessor_field_cache(&mut self, object: Value, atom: Atom, site: usize, stores: bool) {
         // The shared overflow site serves reads of every atom; an entry there would answer
         // one name's read with another's getter.
         if !self.field_cache_records(site) {
             return;
         }
-        let epoch = crate::heap::prototype_layout_epoch();
         let Some(receiver) = self.shape_property_lookup(object, atom) else {
             return;
         };
@@ -3311,6 +3311,10 @@ impl<H: Host> Vm<H> {
                 && !receiver.has_side_descriptors()
                 && self.slot_holds_accessor_part(receiver, slot, stores);
             if own_getter {
+                let Some(cell) = self.chain_cell(prototype, 0) else {
+                    return;
+                };
+                let slot_accessor = self.slot_accessor(receiver_shape, slot);
                 self.record_accessor_fact(object, atom, receiver_layout, 0, slot, Value::UNDEFINED);
                 self.record_accessor_entry(
                     site,
@@ -3320,8 +3324,8 @@ impl<H: Host> Vm<H> {
                         prototype,
                         holder: OWN_ACCESSOR,
                         slot: slot as u16,
-                        slot_accessor: self.slot_accessor(receiver_shape, slot),
-                        epoch,
+                        slot_accessor,
+                        cell,
                         next: NO_ACCESSOR_FIELD,
                         getter: Value::UNDEFINED,
                         answer: FieldCache::own(0, 0),
@@ -3357,15 +3361,11 @@ impl<H: Host> Vm<H> {
             return;
         }
         let slot_accessor = self.slot_accessor(holder_object.shape(), slot);
-        let mut link = prototype;
-        for _ in 0..depth {
-            self.heap.mark_prototype(link);
-            link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
-        }
-        // Marking a link that was no prototype yet leaves the epoch where it was.
-        if crate::heap::prototype_layout_epoch() != epoch {
+        // Marking a link that was no prototype yet changes no layout, so the walk's answer
+        // holds under the cell made after it.
+        let Some(cell) = self.chain_cell(prototype, depth) else {
             return;
-        }
+        };
         self.record_accessor_fact(object, atom, receiver_layout, depth, slot, holder);
         self.record_accessor_entry(
             site,
@@ -3376,7 +3376,7 @@ impl<H: Host> Vm<H> {
                 holder,
                 slot: slot as u16,
                 slot_accessor,
-                epoch,
+                cell,
                 next: NO_ACCESSOR_FIELD,
                 getter: Value::UNDEFINED,
                 answer: FieldCache::own(0, 0),
@@ -3644,8 +3644,9 @@ impl<H: Host> Vm<H> {
     }
 
     /// An inherited data field cached by `inherited_field`: the receiver keeps its shape and
-    /// each prototype up to the holder still has its recorded shape, which an entry proved under
-    /// the current `prototype_layout_epoch` knows without the walk. Consulted on the miss path,
+    /// each prototype up to the holder still has its recorded shape, which an entry whose chain
+    /// proof the subjects of those prototypes still hold (`InheritedFieldCache::proved`) knows
+    /// without the walk. Consulted on the miss path,
     /// so the inline cache tiers keep their shape. A walk's hit comes with the proof
     /// `prove_inherited_chain` records.
     #[inline(always)]
@@ -4905,9 +4906,9 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether the chain from the prototype `link` names still has the shapes the add entry
-    /// of `shape` and `atom` recorded, which then holds that proof under the current
-    /// `prototype_layout_epoch`. Every link becomes a prototype first, so a later change to
-    /// any of them advances the epoch and retires the proof.
+    /// of `shape` and `atom` recorded, which then holds that proof under the chain's cell.
+    /// Every link becomes a prototype first, so a later change to any of them retires the
+    /// proof (`Vm::chain_cell`).
     #[cold]
     #[inline(never)]
     fn prove_field_add_chain(&mut self, set: usize, shape: u32, atom: Atom, link: ProtoLink) -> bool {
@@ -4918,9 +4919,9 @@ impl<H: Host> Vm<H> {
             let Some(proved) = self.prove_add_chain(&cache, link) else {
                 continue;
             };
-            if let Some(epoch) = proved {
+            if let Some(cell) = proved {
                 let cache = self.field_add_sets[set].entry_mut(index);
-                cache.proved_epoch = epoch;
+                cache.proved = Some(cell);
                 cache.proved_prototype = link;
             }
             return true;
@@ -4929,11 +4930,10 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether the chain from the prototype `link` names still has the shapes `cache`
-    /// recorded, with the epoch that proof then holds under; `Some(None)` when marking its
-    /// links advanced the epoch past the walk, which then proves only this add.
-    fn prove_add_chain(&mut self, cache: &FieldAddCache, link: ProtoLink) -> Option<Option<u64>> {
+    /// recorded, with the chain's cell that proof then holds under; `Some(None)` where a link
+    /// has no subject, so the walk proves only this add.
+    fn prove_add_chain(&mut self, cache: &FieldAddCache, link: ProtoLink) -> Option<Option<crate::heap::ChainCell>> {
         let (proto, depth) = (link.prototype(), cache.prototype_depth);
-        let epoch = crate::heap::prototype_layout_epoch();
         // Entries record only non-dictionary source and prototype shapes, a shape's
         // dictionary state is fixed when it is created, and shape compaction clears these
         // caches, so a matching shape needs no dictionary probe here or along the chain.
@@ -4941,10 +4941,9 @@ impl<H: Host> Vm<H> {
         if !self.field_add_prototype_chain_matches(proto, chain) {
             return None;
         }
-        self.mark_prototype_links(proto, depth);
-        // Marking a link that was no prototype yet leaves the epoch where it was, so the
-        // proof made before it holds.
-        Some((crate::heap::prototype_layout_epoch() == epoch).then_some(epoch))
+        // Marking a link that was no prototype yet changes no layout, so the walk made before
+        // it holds under the cell made after.
+        Some(self.chain_cell(proto, depth))
     }
 
     /// A keyed `[[Set]]` adding the plain name `atom` (`plain_named_key`) to `object` by the
@@ -4968,8 +4967,8 @@ impl<H: Host> Vm<H> {
             let Some(proved) = self.prove_add_chain(&cache, link) else {
                 return false;
             };
-            if let Some(epoch) = proved {
-                self.keyed_adds[index].proved_epoch = epoch;
+            if let Some(cell) = proved {
+                self.keyed_adds[index].proved = Some(cell);
                 self.keyed_adds[index].proved_prototype = link;
             }
         }
@@ -5010,16 +5009,6 @@ impl<H: Host> Vm<H> {
         let guarded = self.guarded_field_add(&guard);
         self.keyed_adds[keyed_add_index(shape, atom)] =
             FieldAddCache { atom, source_shape: shape, target_shape, slot, ..guarded };
-    }
-
-    /// Marks the `depth` links of the chain from `proto` as prototypes, so a later change to
-    /// any of them advances `prototype_layout_epoch`.
-    pub(super) fn mark_prototype_links(&mut self, proto: Value, depth: u8) {
-        let mut link = proto;
-        for _ in 0..depth {
-            self.heap.mark_prototype(link);
-            link = self.heap.object_record(link).map_or(Value::NULL, Object::proto);
-        }
     }
 
     #[inline(always)]

@@ -984,7 +984,13 @@ impl<H: Host> Vm<H> {
         self.prune_function_values(full || self.heap.rc_active());
         self.prune_module_functions();
         self.prune_wasm_exported_functions();
-        self.prune_dead_private_homes();
+        // A home stays reachable through its environment; entries of swept environments go
+        // before their slots can name new cells.
+        let heap = &self.heap;
+        self.private_homes
+            .retain(|key, _| heap.is_live(key.environment));
+        self.private_site_homes.prune_dead(|value| heap.is_live(value));
+        self.private_classes.prune_dead(|value| heap.is_live(value));
         if full && self.programs.has_unchecked_reclaimable() {
             self.reclaim_unreferenced_programs();
         }
@@ -1119,6 +1125,7 @@ impl<H: Host> Vm<H> {
     fn compact_live_shapes(&mut self, live_shapes: Vec<u32>) {
         // Compiled code and proofs name shapes by id, which compaction renumbers.
         crate::heap::advance_prototype_layout_epoch();
+        self.heap.dependencies_mut().retire_cells();
         self.bound_parts_layout.set(None);
         let old_shapes = std::mem::replace(&mut self.shapes, vec![Shape::root()]);
         #[cfg(feature = "profile-memory")]

@@ -110,7 +110,7 @@ impl<H: Host> Vm<H> {
         if array.has_extras() || array.is_arguments_object() || array.has_indexed_descriptors() || array.has_side_descriptors() || array.proto() != self.array_proto {
             return None;
         }
-        let (shape, epoch) = (array.shape(), crate::heap::prototype_layout_epoch());
+        let shape = array.shape();
         let elements = array.elements();
         let segment = if let Some(values) = elements.wide_values() {
             if !elements.holds_only_int32() && values.iter().any(|value| value.is_deleted()) {
@@ -121,7 +121,7 @@ impl<H: Host> Vm<H> {
             let words = elements.narrow_words()?;
             ConcatSegment::Narrow(words.as_ptr(), words.len())
         };
-        if self.concat_spreadable_proof != Some((shape, epoch)) && !self.prove_concat_spreadable_absent(shape, symbol, epoch) {
+        if !self.concat_spreadable_proved(shape) && !self.prove_concat_spreadable_absent(shape, symbol) {
             return None;
         }
         Some(segment)
@@ -180,8 +180,7 @@ impl<H: Host> Vm<H> {
     /// neither its own shape nor `Array.prototype` nor `Object.prototype` (the whole chain) has
     /// the key. Then `Get(item, @@isConcatSpreadable)` reads `undefined` without running guest
     /// code and IsArray holds, so `concat` spreads it. A proof for the item's shape holds while
-    /// the prototype layout epoch does: any change to either prototype's shape or prototype
-    /// advances it.
+    /// the cell of the two prototypes does: a change to either one's layout retires it.
     pub(super) fn concat_spreadable_absent(&mut self, item: Value, symbol: Value) -> bool {
         let Some(array) = self.heap.array(item) else {
             return false;
@@ -189,16 +188,22 @@ impl<H: Host> Vm<H> {
         if array.is_arguments_object() || array.has_side_descriptors() || array.proto() != self.array_proto {
             return false;
         }
-        let (shape, epoch) = (array.shape(), crate::heap::prototype_layout_epoch());
-        if self.concat_spreadable_proof == Some((shape, epoch)) {
+        let shape = array.shape();
+        if self.concat_spreadable_proved(shape) {
             return true;
         }
-        self.prove_concat_spreadable_absent(shape, symbol, epoch)
+        self.prove_concat_spreadable_absent(shape, symbol)
+    }
+
+    /// Whether `concat_spreadable_proof` holds for arrays of `shape`.
+    #[inline(always)]
+    fn concat_spreadable_proved(&self, shape: u32) -> bool {
+        self.concat_spreadable_proof.is_some_and(|(proved, cell)| proved == shape && cell.holds())
     }
 
     #[cold]
     #[inline(never)]
-    fn prove_concat_spreadable_absent(&mut self, shape: u32, symbol: Value, epoch: u64) -> bool {
+    fn prove_concat_spreadable_absent(&mut self, shape: u32, symbol: Value) -> bool {
         let key = PropertyKey::symbol(symbol);
         if self.shape_is_dictionary(shape) || self.property_shape_slot(shape, key).is_some() {
             return false;
@@ -212,11 +217,11 @@ impl<H: Host> Vm<H> {
         if !lacks(self, array_proto, object_proto) || !lacks(self, object_proto, Value::NULL) {
             return false;
         }
-        self.heap.mark_prototype(array_proto);
-        self.heap.mark_prototype(object_proto);
-        // Marking an object that was no prototype yet leaves the epoch where it was.
-        if crate::heap::prototype_layout_epoch() == epoch {
-            self.concat_spreadable_proof = Some((shape, epoch));
+        // Marking an object that was no prototype yet changes no layout, so the finding holds
+        // under the cell of the two made after it: `Array.prototype`, then `Object.prototype`,
+        // its prototype.
+        if let Some(cell) = self.chain_cell(array_proto, 2) {
+            self.concat_spreadable_proof = Some((shape, cell));
         }
         true
     }

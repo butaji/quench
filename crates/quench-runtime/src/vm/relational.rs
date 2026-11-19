@@ -285,7 +285,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn record_instanceof(&self, value: Value, constructor: Value) -> Option<bool> {
         let proof = &self.instanceof_proofs[instanceof_holder_index(constructor)];
-        if proof.0 != constructor || !proof.2.as_ref().is_some_and(|watch| watch.is_published()) {
+        if proof.0 != constructor || !proof.2.as_ref().is_some_and(|(watch, cell)| watch.is_published() && cell.holds()) {
             return None;
         }
         let target = proof.1;
@@ -303,6 +303,58 @@ impl<H: Host> Vm<H> {
             }
             object = self.heap.object_record_by_id(link.object_record_id()?);
         }
+    }
+
+    /// `steady_instanceof` through the proof `constructor` holds (`Vm::instanceof_proofs`):
+    /// its `prototype` link, read once and kept while no slot or layout of the constructor
+    /// (marked a prototype) changes, nor the chain it inherits `@@hasInstance` through, so a
+    /// use reads neither its layout nor its `prototype`.
+    #[inline(always)]
+    pub(super) fn proved_instanceof(&mut self, value: Value, constructor: Value) -> Option<bool> {
+        let proof = &self.instanceof_proofs[instanceof_holder_index(constructor)];
+        if proof.0 != constructor || !proof.2.as_ref().is_some_and(|(watch, cell)| watch.is_published() && cell.holds()) {
+            return self.prove_instanceof(value, constructor);
+        }
+        let target = proof.1;
+        if Self::primitive_instance(value, &self.heap) {
+            return Some(false);
+        }
+        self.instanceof_chain(value, target)
+    }
+
+    /// `proved_instanceof` without a current proof: the steady case, which then records one.
+    #[inline(never)]
+    fn prove_instanceof(&mut self, value: Value, constructor: Value) -> Option<bool> {
+        let holds = self.steady_instanceof(value, constructor)?;
+        if let Some(target) = self.steady_instanceof_target(constructor)
+            && let Some((shape, link)) = self.heap.function(constructor).map(|function| (function.object.exact_shape(), function.object.proto_link()))
+            && let Some(chain) = self.inheriting_cell(link)
+        {
+            self.heap.mark_prototype(constructor);
+            let watch = crate::code_dependencies::new_dependency();
+            let code: std::rc::Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();
+            // The mark may have changed the exact shape the subscription names.
+            let shape = self.heap.function(constructor).map_or(shape, |function| function.object.exact_shape());
+            // The constructor's own values and layout retire the watch; the chain it inherits
+            // `@@hasInstance` through retires the cell. Another prototype's change leaves both.
+            if crate::heap::hold_prototype_values(shape, &code) {
+                self.instanceof_proofs[instanceof_holder_index(constructor)] = (constructor, target, Some((watch, chain)));
+            }
+        }
+        Some(holds)
+    }
+
+    /// The cell under which a constructor whose prototype `link` names inherits the native
+    /// `@@hasInstance`: of no chain where the link is the native holder's, else the remembered
+    /// holder's (`remember_inheriting_holder`), where it still holds.
+    fn inheriting_cell(&mut self, link: ProtoLink) -> Option<crate::heap::ChainCell> {
+        if link == self.instanceof_has_instance_link {
+            return self.chain_cell(Value::NULL, 0);
+        }
+        let holder = link.prototype();
+        self.instanceof_inheriting_holders[instanceof_holder_index(holder)]
+            .filter(|(held, cell)| *held == holder && cell.holds())
+            .map(|(_, cell)| cell)
     }
 
     /// The object of `value`, a heap object other than a proxy, whose prototype link
@@ -501,22 +553,29 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn remembers_inheriting_holder(&self, holder: Value) -> bool {
         self.instanceof_inheriting_holders[instanceof_holder_index(holder)]
-            == Some((holder, crate::heap::prototype_layout_epoch()))
+            .is_some_and(|(held, cell)| held == holder && cell.holds())
     }
 
-    /// Records that `holder` inherits the remembered native `@@hasInstance` holder, after
-    /// marking each link up to it a prototype so a change to any retires the record.
+    /// Records that `holder` inherits the remembered native `@@hasInstance` holder, under the
+    /// cell of the links up to it, each marked a prototype first, so a change to any retires
+    /// the record (`Vm::chain_cell`). The native holder's own `@@hasInstance` is read-only and
+    /// non-configurable, so it is no link of the cell.
     fn remember_inheriting_holder(&mut self, holder: Value) {
         let mut current = holder;
+        let mut depth = 0u8;
         while current != self.instanceof_has_instance_holder {
-            self.heap.mark_prototype(current);
             let Some(object) = self.heap.object(current) else {
                 return;
             };
             current = object.proto();
+            let Some(deeper) = depth.checked_add(1) else {
+                return;
+            };
+            depth = deeper;
         }
-        self.instanceof_inheriting_holders[instanceof_holder_index(holder)] =
-            Some((holder, crate::heap::prototype_layout_epoch()));
+        if let Some(cell) = self.chain_cell(holder, depth) {
+            self.instanceof_inheriting_holders[instanceof_holder_index(holder)] = Some((holder, cell));
+        }
     }
 
     fn verify_has_instance_holder(&mut self, holder: Value) -> bool {

@@ -2601,7 +2601,8 @@ pub(super) struct LaneStack {
     /// Constructors' plans (`initialize_fields_in_lane`, `planned_receiver_in_lane`).
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
     /// Per plan, the one dependency its proof is (`watch_construct_plan`): published while
-    /// every object the plan read keeps its values and layout.
+    /// every object the plan read keeps its values and layout, and the chains above them their
+    /// layouts.
     construct_watches: Box<[Option<crate::heap::PrototypeValueWatch>; CONSTRUCT_PLANS]>,
     /// The reads call sites answered (`ReadMemo`), each in the slot its record names
     /// (`CallOperand::memo`).
@@ -7295,8 +7296,8 @@ fn lane_private_field_slot<H: Host>(
 
 /// `lane_private_field_slot` at site `site`: a record's address, or an address inside it for
 /// a nested read's step (`lane_field_value`), which no other record's site can be. A site
-/// whose home is one value for good (`Vm::unique_private_homes`) answers from the receiver's
-/// shape alone, before the running function's scope is found.
+/// whose name belongs to a class evaluated once (`PrivateClasses::unique_name`) answers from
+/// the receiver's shape alone, before the running function's scope is found.
 #[inline(always)]
 fn lane_private_field_slot_at<H: Host>(
     cx: *mut LaneContext<H>,
@@ -7307,7 +7308,7 @@ fn lane_private_field_slot_at<H: Host>(
 ) -> Option<usize> {
     {
         let vm = unsafe { vm(cx) };
-        if vm.unique_private_homes()
+        if vm.private_classes.unique_name(atom)
             && let Some(slot) = vm.private_site_homes.unique_field_slot(site, vm.object_data(object)?.shape())
         {
             return Some(slot);
@@ -7319,12 +7320,16 @@ fn lane_private_field_slot_at<H: Host>(
 
 /// Makes the slot site `ip`'s entry recorded for an object of `shape` (`lane_private_field_slot`)
 /// the hint of its `GetField` or `SetField` record (`lane_get_private_field`,
-/// `lane_private_field_store`), where its home is one value
-/// for good: the entry recorded it under the site's home, in a shape no edit in place changes,
-/// and a shape compaction clears both. A record of a site that recorded none keeps its hint.
+/// `lane_private_field_store`), where its private name `atom` belongs to a class evaluated
+/// once: the entry recorded it under that class's home (`SiteHome::unique`), the site's for
+/// good while the name stays unique, in a shape no edit in place changes, and a shape
+/// compaction clears both. A record of a site that recorded none keeps its hint. A hit
+/// compares the receiver's shape and reads the name's word (`PrivateClasses::unique_name`):
+/// a second evaluation of the class, or eval code that sees the name, clears it, which
+/// disables the hints of that name's sites alone.
 #[inline(never)]
-fn hint_private_field<H: Host>(vm: &Vm<H>, ip: Ip, shape: u32, slot: usize) {
-    if vm.unique_private_homes()
+fn hint_private_field<H: Host>(vm: &Vm<H>, ip: Ip, atom: crate::bytecode::Atom, shape: u32, slot: usize) {
+    if vm.private_classes.unique_name(atom)
         && vm.private_site_homes.unique_field_slot(ip.addr(), shape) == Some(slot)
         && let Ok(slot) = u16::try_from(slot)
         && slot != NO_CALL_LINK
@@ -7365,8 +7370,8 @@ fn lane_field_step<H: Host>(
 
 /// The store of private field `atom` of `object` at the record `ip`, under its brand there
 /// (`lane_private_field_slot`). `false` leaves the store, a private accessor's or method's
-/// included, to the general path. A site whose home is one value for good compares the
-/// receiver's shape with the record's hint (`hint_private_field`) first: a private store
+/// included, to the general path. A site whose name belongs to a class evaluated once compares
+/// the receiver's shape with the record's hint (`hint_private_field`) first: a private store
 /// record never goes back to the generated own-field store, which reads the hint too
 /// (`lane_set_field_miss` moves it to `lane_set_object_field` or `lane_set_this_field` before
 /// any private hint is written).
@@ -7383,7 +7388,7 @@ fn lane_private_field_store<H: Host>(
         let vm = unsafe { vm(cx) };
         // SAFETY: `ip` is a `SetField` record of a live view, whose operand is `field`.
         let hint = unsafe { &*ip }.field_hint();
-        if vm.unique_private_homes() && vm.object_data(object).is_some_and(|data| data.shape() == hint.receiver) {
+        if vm.object_data(object).is_some_and(|data| data.shape() == hint.receiver) && vm.private_classes.unique_name(atom) {
             vm.heap.property_set(object, usize::from(hint.slot), value);
             return true;
         }
@@ -7393,7 +7398,7 @@ fn lane_private_field_store<H: Host>(
     };
     let vm = unsafe { vm(cx) };
     if let Some(shape) = vm.object_data(object).map(|data| data.shape()) {
-        hint_private_field(vm, ip, shape, slot);
+        hint_private_field(vm, ip, atom, shape, slot);
     }
     vm.heap.property_set(object, slot, value);
     true
@@ -7590,20 +7595,21 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let object = r.get(i.b);
-        // A site whose home is one value for good answers a shape it saw carry the name from
-        // the shape alone (`PrivateSiteHomes::unique_carrier`).
+        let atom = i.imm();
+        // A site whose name belongs to a class evaluated once answers a shape it saw carry the
+        // name from the shape alone (`PrivateSiteHomes::unique_carrier`).
         let known = {
             let vm = unsafe { vm(cx) };
-            vm.unique_private_homes()
+            vm.private_classes.unique_name(atom)
                 && vm.object_data(object).is_some_and(|data| vm.private_site_homes.unique_carrier(ip.addr(), data.shape()))
         };
-        let carries = if known { Some(true) } else { lane_private_brand(cx, ip, code, i.imm()).and_then(|brand| {
+        let carries = if known { Some(true) } else { lane_private_brand(cx, ip, code, atom).and_then(|brand| {
             let vm = unsafe { vm(cx) };
             let shape = vm.object_data(object)?.shape();
             let carries = vm.has_private_name(object, brand);
-            if carries && vm.unique_private_homes() && vm.private_shape_cacheable(shape) {
+            if carries && vm.private_shape_cacheable(shape) && vm.private_classes.register(atom, brand.home) {
                 match vm.private_field_slot(object, brand) {
-                    Some(slot) => vm.private_site_homes.record_field_slot(ip.addr(), brand.home, shape, slot),
+                    Some(slot) => vm.private_site_homes.record_field_slot(ip.addr(), brand.home, shape, slot, true),
                     None => vm.private_site_homes.record_brand_shape(ip.addr(), brand.home, shape),
                 }
             }
@@ -7632,12 +7638,13 @@ script_handler! {
         };
         let read = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }.and_then(|object| {
             {
-                // A site whose home is one value for good (`Vm::unique_private_homes`): the
-                // receiver's shape names the private key with that home, so it proves the
-                // brand. The record's hint holds the field's shape and slot
-                // (`hint_private_field`), the site's entry a method's or accessor's brand.
+                // A site whose name belongs to a class evaluated once
+                // (`PrivateClasses::unique_name`): the receiver's shape names the private key
+                // with that class's home, the site's for good, so it proves the brand. The
+                // record's hint holds the field's shape and slot (`hint_private_field`), the
+                // site's entry a method's or accessor's brand.
                 let vm = unsafe { vm(cx) };
-                if vm.unique_private_homes() {
+                if vm.private_classes.unique_name(i.imm()) {
                     let data = vm.object_data(object)?;
                     let shape = data.shape();
                     let hint = i.field_hint();
@@ -7652,7 +7659,7 @@ script_handler! {
             if let Some(slot) = lane_private_field_slot(cx, ip, code, object, i.imm()) {
                 let vm = unsafe { vm(cx) };
                 let data = vm.object_data(object)?;
-                hint_private_field(vm, ip, data.shape(), slot);
+                hint_private_field(vm, ip, i.imm(), data.shape(), slot);
                 return vm.heap.property_get(data, slot).map(PrivateRead::Value);
             }
             let brand = private_brand_in_lane(cx, ip, code, i.imm())?;
@@ -7663,10 +7670,11 @@ script_handler! {
                 None if vm.has_private_name(object, brand) => {
                     let element = vm.site_private_element(ip.addr(), brand, object)?;
                     // The brand is the shape's (a key under the brand's home), so the site's
-                    // next reads of this shape answer the element from the shape alone.
-                    if vm.unique_private_homes()
-                        && let Some(shape) = vm.object_data(object).map(|data| data.shape())
+                    // next reads of this shape answer the element from the shape alone, where
+                    // the home is the class's that owns the name.
+                    if let Some(shape) = vm.object_data(object).map(|data| data.shape())
                         && vm.private_shape_cacheable(shape)
+                        && vm.private_classes.register(i.imm(), brand.home)
                     {
                         vm.private_site_homes.record_brand_shape(ip.addr(), brand.home, shape);
                     }

@@ -20,9 +20,9 @@ pub(crate) struct InPresence {
     /// The exact shape of the receiver's prototype (its own where it has none): the holder whose layout the answer
     /// depends on, which a code holding the answer subscribes to (`heap::subscribe_prototype_values`).
     pub(crate) holder: u32,
-    /// The prototype-layout epoch the answer holds under: the walk marked every link of the chain a prototype, so any
-    /// change to one, and every collection, ends it (`Vm::instanceof_inheriting_holders` holds its proofs alike).
-    epoch: u64,
+    /// The cell of the receiver's whole chain (`Vm::chain_cell`): the walk marked every link of it a prototype, so a
+    /// change to one, or its death, ends the answer, and a change to a prototype off the chain leaves it.
+    cell: crate::heap::ChainCell,
 }
 
 /// The `Vm::in_presences` entry a receiver of `shape` asked about `atom` takes.
@@ -40,33 +40,36 @@ impl<H: Host> Vm<H> {
             return;
         }
         let index = presence_index(shape, atom);
-        let epoch = crate::heap::prototype_layout_epoch();
-        let current_answer = self.in_presences[index].is_some_and(|entry| (entry.atom, entry.shape, entry.link, entry.present, entry.epoch) == (atom, shape, link, present, epoch));
+        let current_answer = self.in_presences[index]
+            .is_some_and(|entry| (entry.atom, entry.shape, entry.link, entry.present) == (atom, shape, link, present) && entry.cell.holds());
         if current_answer {
             return;
         }
         let holder = self.heap.object_record(proto).map_or(shape, Object::exact_shape);
+        // Every link to the chain's end is a record a shape names exactly, so the chain's cell covers all the answer
+        // read.
         let mut current = proto;
-        while let Some(data) = self.heap.object_record(current) {
+        let mut depth = 0u8;
+        while !current.is_null() {
+            let Some(data) = self.heap.object_record(current) else { return };
             if self.shape_is_dictionary(data.shape()) {
                 return;
             }
-            let next = data.proto();
-            self.heap.mark_prototype(current);
-            current = next;
+            current = data.proto();
+            let Some(deeper) = depth.checked_add(1) else { return };
+            depth = deeper;
         }
-        // Marking a link a prototype may itself advance the epoch: the answer holds under the one after it.
-        let epoch = crate::heap::prototype_layout_epoch();
-        self.in_presences[index] = Some(InPresence { atom, shape, link, present, holder, epoch });
+        // Marking a link that was no prototype yet changes no layout: the answer holds under the cell made after it.
+        let Some(cell) = self.chain_cell(proto, depth) else { return };
+        self.in_presences[index] = Some(InPresence { atom, shape, link, present, holder, cell });
     }
 
     /// What `key in object` answered for the key `atom` where exactly one receiver layout answered it and its answer
     /// still holds (no prototype has changed its layout since): the fact a code may hold under the dependency on the
     /// prototypes' values and layouts.
     pub(in crate::vm) fn presence_fact(&self, atom: Atom) -> Option<InPresence> {
-        let epoch = crate::heap::prototype_layout_epoch();
         let mut answers = self.in_presences.iter().flatten().filter(|entry| entry.atom == atom);
-        let only = answers.next().copied().filter(|entry| entry.epoch == epoch)?;
+        let only = answers.next().copied().filter(|entry| entry.cell.holds())?;
         answers.next().is_none().then_some(only)
     }
 }

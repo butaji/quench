@@ -16500,11 +16500,11 @@ fn shared_osr_shape_invalidation_retires_only_dependent_code() {
     assert_eq!(before.currently_compiled_sites, 1);
     assert_eq!(state(&vm, scalar_id).currently_compiled_sites, 1);
 
-    let epoch = crate::heap::prototype_layout_epoch();
+    // A watched prototype's layout change retires its own chain cells and all code holding
+    // prototype values, not the global epoch.
     let mutate_atom = vm.intern_atom("mutatePrototype");
     let mutate = vm.own_property(vm.realm.globals, mutate_atom).unwrap();
     vm.call_value(&program, mutate, Value::UNDEFINED, &[]).unwrap();
-    assert!(crate::heap::prototype_layout_epoch() > epoch);
     let sum_atom = vm.intern_atom("sum");
     let sum = vm.own_property(vm.realm.globals, sum_atom).unwrap();
     let head_atom = vm.intern_atom("nativeOwnHead");
@@ -18511,11 +18511,28 @@ fn lane_in_place_steps_keep_private_brands_and_field_definitions() {
     );
 }
 
+/// Whether the private name `#label`, whose identity the VM interned once, belongs to a class
+/// evaluated once (`PrivateClasses::unique_name`), so its warm sites answer from shapes alone.
+fn private_name_unique(vm: &Vm<TestHost>, label: &str) -> bool {
+    let suffix = format!(":{label}");
+    let count = vm.atom_text.len() + vm.atom_sequence.appended_len();
+    let names = (0..count as crate::bytecode::Atom)
+        .filter(|atom| {
+            let name = vm.atom_name(*atom);
+            name.starts_with("\0quench:private:") && name.ends_with(&suffix)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(names.len(), 1, "one identity for #{label}");
+    vm.private_classes.unique_name(names[0])
+}
+
 #[test]
 fn lane_private_sites_read_by_shape_while_homes_are_unique() {
     // Warm private reads, stores, method reads and `#x in` answer from the receiver's shape
-    // while every class was evaluated once; a second evaluation of a class makes a second
-    // home, after which a warmed site still refuses an object of the first home's class.
+    // while the class owning the name was evaluated once; a second evaluation of a class
+    // makes a second home and shares that class's names alone, after which a warmed site of
+    // one still refuses an object of the first home's class, and the other classes' sites
+    // keep their shapes.
     let source = r#"
       const out = [];
       class V {
@@ -18576,6 +18593,69 @@ fn lane_private_sites_read_by_shape_while_homes_are_unique() {
         output.borrow().as_slice(),
         ["9006000|TypeError|TypeError|oi|TypeError|14000|a|{\"a\":1}|1|6000|TypeError|false|true|1|2000"]
     );
+    // `make`'s class was evaluated twice; `V` once, so its sites still read by shape.
+    assert!(private_name_unique(&vm, "x"));
+    assert!(!private_name_unique(&vm, "p"));
+}
+
+#[test]
+fn lane_private_class_factories_keep_other_classes_sites() {
+    // Class factories and mixins evaluated on every iteration share only their own names: a
+    // top-level class's sites, and an outer class's name read from a class nested in it and
+    // evaluated each time, keep answering from shapes, while each factory class still refuses
+    // another evaluation's objects. Eval code that sees a name shares that name alone.
+    let source = r#"
+      const out = [];
+      class Solo {
+        #solo = 1;
+        static read(o) { return o.#solo; }
+      }
+      const mixin = (Base) => class extends Base { #mix = 2; static mix(o) { return o.#mix; } };
+      function factory(n) { return class { #fac = n; static fac(o) { return o.#fac; } }; }
+      class Outer {
+        #outer = 3;
+        static nest() { return class { #inner = 4; static both(o, i) { return o.#outer + i.#inner; } }; }
+      }
+      class Ev { #ev = 5; read() { return eval("this.#ev"); } plain(o) { return o.#ev; } }
+      const solo = new Solo();
+      const outer = new Outer();
+      const ev = new Ev();
+      let total = 0;
+      for (let i = 0; i < 3000; i++) {
+        const M = mixin(Object);
+        const F = factory(i);
+        const N = Outer.nest();
+        total += Solo.read(solo) + M.mix(new M()) + F.fac(new F()) + N.both(outer, new N()) + ev.plain(ev);
+      }
+      out.push(total);
+      const F1 = factory(1), F2 = factory(2);
+      try { F1.fac(new F2()); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      const M1 = mixin(Object), M2 = mixin(Object);
+      try { M1.mix(new M2()); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      const N1 = Outer.nest(), N2 = Outer.nest();
+      try { N1.both(outer, new N2()); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      try { Solo.read({}); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      try { Solo.read(outer); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      out.push(ev.read(), ev.plain(ev));
+      try { ev.plain(solo); out.push("leak"); } catch (e) { out.push(e.constructor.name); }
+      let after = 0;
+      for (let i = 0; i < 2000; i++) after += Solo.read(solo) + N1.both(outer, new N1());
+      out.push(after);
+      print(out.join("|"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "lane-private-class-factories.js").unwrap()).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["4543500|TypeError|TypeError|TypeError|TypeError|TypeError|5|5|TypeError|16000"]
+    );
+    assert!(private_name_unique(&vm, "solo"));
+    assert!(private_name_unique(&vm, "outer"));
+    assert!(!private_name_unique(&vm, "inner"));
+    assert!(!private_name_unique(&vm, "mix"));
+    assert!(!private_name_unique(&vm, "fac"));
+    assert!(!private_name_unique(&vm, "ev"));
 }
 
 #[test]
@@ -24616,4 +24696,121 @@ fn learned_receivers_keep_construction_semantics() {
         vm.execute(&rest).unwrap();
         assert_eq!(output.borrow().as_slice(), [expected, "true true abcdf 3001"]);
     }
+}
+
+/// Per-prototype validity (`heap::ChainCell`): a layout change to one prototype retires only
+/// the cells of chains that hold it, so proofs about other prototypes stay proved, while a
+/// change anywhere on a proof's chain (an add, a delete, a redefinition, a freeze, a
+/// `setPrototypeOf` of a link or a write of `__proto__`) retires it.
+#[test]
+fn a_prototype_change_retires_only_the_chains_that_hold_it() {
+    let program = Engine::specialize(r#"
+        class A { m() { return 1; } }
+        class B { m() { return 2; } }
+        class C extends A {}
+        globalThis.a = new A(); globalThis.b = new B(); globalThis.c = new C();
+        const fresh = () => ({});
+        globalThis.addToB = () => { B.prototype.extra = 1; };
+        globalThis.addToC = () => { C.prototype.own = 1; };
+        globalThis.addToA = () => { A.prototype.later = 1; };
+        globalThis.deleteFromB = () => { delete B.prototype.m; };
+        globalThis.defineOnB = () => { Object.defineProperty(B.prototype, 'k', { get() { return 3; } }); };
+        globalThis.freezeB = () => { Object.freeze(B.prototype); };
+        globalThis.relinkB = () => { Object.setPrototypeOf(B.prototype, fresh()); };
+        globalThis.protoWriteC = () => { C.prototype.__proto__ = B.prototype; };
+        globalThis.addToObject = () => { Object.prototype.everywhere = 1; };
+        globalThis.makeUnrelated = () => { const p = { q: 1 }; const o = Object.create(p); p.r = 2; return o; };
+    "#, "prototype-validity-cells.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let global = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        vm.own_property(vm.realm.globals, atom).unwrap()
+    };
+    let call = |vm: &mut Vm<TestHost>, name: &str| {
+        let function = global(vm, name);
+        vm.call_value(&program, function, Value::UNDEFINED, &[]).unwrap();
+    };
+    let prototype = |vm: &mut Vm<TestHost>, name: &str| {
+        let object = global(vm, name);
+        vm.heap.object(object).unwrap().proto()
+    };
+    let (a_proto, b_proto, c_proto) = (prototype(&mut vm, "a"), prototype(&mut vm, "b"), prototype(&mut vm, "c"));
+    let cells = |vm: &mut Vm<TestHost>| {
+        [a_proto, b_proto, c_proto].map(|proto| vm.chain_cell_to_end(proto).expect("an ordinary chain has a cell"))
+    };
+
+    let [a, b, c] = cells(&mut vm);
+    assert_eq!(vm.chain_cell_to_end(a_proto), Some(a), "proofs about one chain share its cell");
+    call(&mut vm, "makeUnrelated");
+    assert!(a.holds() && b.holds() && c.holds(), "prototypes built elsewhere retire nothing");
+    call(&mut vm, "addToB");
+    assert!(a.holds() && c.holds(), "a change to B.prototype keeps the chains without it");
+    assert!(!b.holds(), "a change to B.prototype retires its own chain");
+
+    let [a, b, c] = cells(&mut vm);
+    call(&mut vm, "addToC");
+    assert!(a.holds() && b.holds(), "a change below A.prototype keeps A's chain");
+    assert!(!c.holds());
+
+    let [a, b, c] = cells(&mut vm);
+    call(&mut vm, "addToA");
+    assert!(b.holds(), "a change to A.prototype keeps B's chain");
+    assert!(!a.holds() && !c.holds(), "a change to A.prototype retires every chain through it");
+
+    for change in ["deleteFromB", "defineOnB", "relinkB", "freezeB"] {
+        let [a, b, c] = cells(&mut vm);
+        call(&mut vm, change);
+        assert!(a.holds() && c.holds(), "{change} keeps the chains without B.prototype");
+        assert!(!b.holds(), "{change} retires B.prototype's chain");
+    }
+
+    let [a, b, c] = cells(&mut vm);
+    call(&mut vm, "protoWriteC");
+    assert!(a.holds() && b.holds(), "relinking C.prototype keeps the chains it left and joined");
+    assert!(!c.holds(), "a `__proto__` write retires the chain of the object written");
+
+    let [a, b, c] = cells(&mut vm);
+    call(&mut vm, "addToObject");
+    assert!(!a.holds() && !b.holds() && !c.holds(), "Object.prototype is on every chain");
+
+    let [a, ..] = cells(&mut vm);
+    vm.heap.dependencies_mut().retire_cells();
+    assert!(!a.holds(), "an event no prototype names retires every cell");
+}
+
+/// A proof keyed on a chain's cell (`Vm::iterator_absence_proof`) survives a change to an
+/// unrelated, watched prototype and retires at a change on its chain.
+#[test]
+fn a_proof_survives_an_unrelated_prototype_change() {
+    let program = Engine::specialize(r#"
+        class Other {}
+        globalThis.other = new Other();
+        globalThis.pair = [1, 2];
+        globalThis.growOther = () => { Other.prototype.extra = 1; };
+        globalThis.patchIterator = () => {
+            Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]())).marker = 1;
+        };
+    "#, "prototype-validity-proofs.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let global = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        vm.own_property(vm.realm.globals, atom).unwrap()
+    };
+    let call = |vm: &mut Vm<TestHost>, name: &str| {
+        let function = global(vm, name);
+        vm.call_value(&program, function, Value::UNDEFINED, &[]).unwrap();
+    };
+    let pair = global(&mut vm, "pair");
+    let key = super::property_key::PropertyKey::string(vm.runtime_atoms.iterator_return);
+    let proto = vm.array_iterator_proto;
+    assert!(vm.array_pattern_fits(pair, 1), "an intact pair fits a one-element pattern");
+    assert!(vm.iterator_absence_proved(proto, key), "the fit proves the array iterator lacks `return`");
+    call(&mut vm, "growOther");
+    assert!(vm.iterator_absence_proved(proto, key), "a change off the chain keeps the proof");
+    call(&mut vm, "patchIterator");
+    assert!(!vm.iterator_absence_proved(proto, key), "a change to %IteratorPrototype% retires it");
+    assert!(vm.array_pattern_fits(pair, 1), "and the next fit proves it again");
+    assert!(vm.iterator_absence_proved(proto, key));
 }

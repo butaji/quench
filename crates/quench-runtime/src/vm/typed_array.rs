@@ -9,15 +9,15 @@ const TYPED_ARRAY_GEOMETRY_ENTRIES: usize = 8;
 
 /// That reading `atom` from a typed array whose own shape lacks it, with prototype
 /// `prototype`, calls `getter`: every prototype before the holder lacks the name, which the
-/// holder keeps as that accessor. Proved under one `prototype_layout_epoch`, which any
-/// prototype change or collection advances.
+/// holder keeps as that accessor. Held under the cell of the links up to the holder
+/// (`Vm::chain_cell`), which a change to one of them, or its death, retires.
 #[derive(Clone, Copy)]
 struct TypedArrayGeometryProof {
     /// The receiver's layout id (`Object::layout_id`): its own shape, which proved itself
     /// neither a dictionary nor holding the name, and its prototype, one fact compared once.
     layout: u32,
     atom: Atom,
-    epoch: u64,
+    cell: crate::heap::ChainCell,
     /// The intrinsic accessor's native (`Vm::pure_native_getter`), fixed with the getter.
     native: Native,
 }
@@ -52,12 +52,11 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let layout = data.layout_id();
-        let epoch = crate::heap::prototype_layout_epoch();
         let native = match self.typed_array_geometry.0[geometry_slot(atom, layout)].get() {
-            Some(proof) if proof.layout == layout && proof.atom == atom && proof.epoch == epoch => proof.native,
+            Some(proof) if proof.layout == layout && proof.atom == atom && proof.cell.holds() => proof.native,
             _ => {
                 let (shape, prototype) = (data.shape(), data.proto());
-                self.prove_geometry_getter(layout, shape, prototype, atom, epoch)?
+                self.prove_geometry_getter(layout, shape, prototype, atom)?
             }
         };
         if native == Native::TypedArrayLengthGetter {
@@ -76,24 +75,19 @@ impl<H: Host> Vm<H> {
 
     /// The native getter `typed_array_geometry_read` reads `atom` through from a receiver of
     /// layout `layout`, own shape `shape` and prototype `prototype`, proved and recorded under
-    /// `epoch`; `None` where the shape is a dictionary or holds the name, or no intrinsic native
-    /// accessor answers.
+    /// the cell of its chain to the holder; `None` where the shape is a dictionary or holds the
+    /// name, or no intrinsic native accessor answers.
     #[inline(never)]
-    fn prove_geometry_getter(&mut self, layout: u32, shape: u32, prototype: Value, atom: Atom, epoch: u64) -> Option<Native> {
+    fn prove_geometry_getter(&mut self, layout: u32, shape: u32, prototype: Value, atom: Atom) -> Option<Native> {
         if self.shape_is_dictionary(shape) || self.shape_slot(shape, atom).is_some() {
             return None;
         }
         let (getter, depth) = self.typed_array_geometry_getter(prototype, atom)?;
         let native = self.pure_native_getter(getter)?;
         // Every link up to the holder becomes a prototype first, so a later change to one
-        // advances the epoch and retires the proof.
-        let mut link = prototype;
-        for _ in 0..depth {
-            self.heap.mark_prototype(link);
-            link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
-        }
-        if crate::heap::prototype_layout_epoch() == epoch {
-            self.typed_array_geometry.0[geometry_slot(atom, layout)].set(Some(TypedArrayGeometryProof { layout, atom, epoch, native }));
+        // retires the proof's cell; marking one that was no prototype yet changes no layout.
+        if let Some(cell) = u8::try_from(depth).ok().and_then(|depth| self.chain_cell(prototype, depth)) {
+            self.typed_array_geometry.0[geometry_slot(atom, layout)].set(Some(TypedArrayGeometryProof { layout, atom, cell, native }));
         }
         Some(native)
     }
