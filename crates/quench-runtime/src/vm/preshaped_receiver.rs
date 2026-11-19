@@ -250,6 +250,12 @@ impl<H: Host> Vm<H> {
         (entry.new_target == new_target).then_some(entry.slots)
     }
 
+    /// Forgets every learned receiver: the heap they name is gone (a reset or a restored
+    /// snapshot), so a sampled receiver's record may now be free.
+    pub(super) fn forget_learned_receivers(&mut self) {
+        self.learned_receivers.fill(LearnedReceiver::EMPTY);
+    }
+
     /// Restarts every learned receiver's sampling for the next young cycle: the receivers
     /// `last` names may be gone. Counts and templates stay as hints until resampled.
     pub(super) fn forget_learned_receiver_samples(&mut self) {

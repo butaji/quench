@@ -3201,6 +3201,7 @@ impl<H: Host> Vm<H> {
         // SAFETY: initialization runs outside any native body, before reuse.
         unsafe { self.programs.retire_native_calls(); }
         self.heap.reset();
+        self.forget_learned_receivers();
         self.natives = Default::default();
         self.frames.clear();
         self.frame_pool.clear();

@@ -381,6 +381,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_atoms");
         self.heap = Heap::read_snapshot(&mut reader, self.heap.memory_policy())?;
+        self.forget_learned_receivers();
         self.intern_typeof_names();
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_heap");
