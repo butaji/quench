@@ -115,7 +115,7 @@ mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body;
 pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
 pub(super) use lane_facts::bind_callees as bind_region_callees;
 pub(super) use lane_region::ElementViews;
-pub(in crate::vm) use lane_region::inlines_keeping_arrays;
+pub(in crate::vm) use lane_region::inlines_in_loop;
 use osr_compile::OsrFacts;
 use crate::typed_ir;
 

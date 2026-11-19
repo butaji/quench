@@ -62,6 +62,17 @@ impl Inline {
         matches!(self, Self::Builtin(builtin) if builtin.mutates_arrays())
     }
 
+    /// Whether a loop holds the operation natively: it changes no array, or it appends to one
+    /// and reloads the views the append may move (`Lowering::hoisted_push`).
+    const fn holds_in_loop(self) -> bool {
+        !self.mutates_arrays() || self.appends()
+    }
+
+    /// Whether the operation appends a value to an array (`push`).
+    const fn appends(self) -> bool {
+        matches!(self, Self::Builtin(Builtin::Push))
+    }
+
     /// The operation on `numbers`: a Float64 value; `Imul` is lowered by the caller.
     fn emit(self, builder: &mut FunctionBuilder<'_>, numbers: &[ir::Value]) -> ir::Value {
         let mut stage = super::super::object_slots::emit(builder);
@@ -77,16 +88,27 @@ impl Inline {
 /// Each with the function it held and the exact shape of the prototype holding it.
 pub(super) type Intrinsics = Vec<Option<(Value, Inline, u32)>>;
 
-/// Whether a lane body runs a call of `native` inline and the call changes no array: a loop
-/// whose calls are all such runs natively in a body (`loop_body::offer_body`).
-pub(in crate::vm) fn inlines_keeping_arrays(native: Native) -> bool {
-    Inline::of(native).is_some_and(|inline| !inline.mutates_arrays())
+/// Whether a lane body runs a call of `native` inline and a loop holds it natively: the call
+/// changes no array, or appends to one (`holds_in_loop`). A loop whose calls are all such runs
+/// natively in a body (`loop_body::offer_body`).
+pub(in crate::vm) fn inlines_in_loop(native: Native) -> bool {
+    Inline::of(native).is_some_and(Inline::holds_in_loop)
 }
 
-/// Whether the call at `pc` runs inline and changes no array, so a loop holds it natively and
-/// the Stable facts its code folded survive it.
+/// Whether the call at `pc` runs inline and changes no array, so the Stable facts its code
+/// folded survive it.
 pub(super) fn keeps_arrays(intrinsics: &Intrinsics, pc: usize) -> bool {
     intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| !inline.mutates_arrays())
+}
+
+/// Whether a loop holds the call at `pc` natively (`holds_in_loop`).
+pub(super) fn holds_in_loop(intrinsics: &Intrinsics, pc: usize) -> bool {
+    intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.holds_in_loop())
+}
+
+/// Whether the call at `pc` appends to an array (`appends`): the array's length may grow.
+pub(super) fn appends(intrinsics: &Intrinsics, pc: usize) -> bool {
+    intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.appends())
 }
 
 /// The calls of `unit` that run inline, by PC: a call's callee register was defined by a field
@@ -124,7 +146,7 @@ impl Lowering<'_, '_> {
         let same = self.is_identity(held, callee);
         emit_js_guard(&mut self.builder, same, exit);
         match inline {
-            Inline::Builtin(builtin) => self.builtin_call(state, instruction, builtin, exit),
+            Inline::Builtin(builtin) => self.builtin_call(state, pc, instruction, builtin, exit),
             _ => self.math_call(state, instruction, inline, exit),
         }
         true

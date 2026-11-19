@@ -63,9 +63,11 @@ fn array_source(unit: &super::super::lane_unit::Unit, leaders: &CompoundBitSet, 
 /// register's array has the region's `views`; a capture's, a typed array's. A source a lowered
 /// loop around another proves too is proved there alone: its view is proved once for the whole nest,
 /// where the base is invariant (`loops` hold only native operations, which cannot change a view).
+/// The receiver of an append (`push`) is a writable view too, where the region's arrays are dense:
+/// the append stores within the view's room (`Lowering::hoisted_push`).
 pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize, usize)], leaders: &CompoundBitSet,
     captured: impl Fn(usize, usize) -> bool, views: ElementViews, typed_captures: &[u16],
-    lowered: impl Fn(usize) -> bool) -> Vec<LoopArray> {
+    intrinsics: &super::native_calls::Intrinsics, lowered: impl Fn(usize) -> bool) -> Vec<LoopArray> {
     let mut arrays = Vec::new();
     for &(header, back) in loops {
         let body = &unit.instructions[header..=back];
@@ -75,6 +77,7 @@ pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
             let (base, stores) = match instruction.op() {
                 _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) => (instruction.operand_b().register_index(), false),
                 _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementWrite { .. })) => (Some(instruction.register_b()), true),
+                _ if super::native_calls::appends(intrinsics, pc) => (Some(instruction.register_c()), true),
                 _ => continue,
             };
             let Some(source) = base.and_then(|base| array_source(unit, leaders, &written, |at| captured(header, at),
@@ -82,6 +85,8 @@ pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
             // A double region stores raw doubles: a typed capture's raw NaN could carry a hole's
             // bits (`heap::DOUBLE_LEN`), so its elements are read boxed, NaN canonical.
             if views == ElementViews::Double && matches!(source, ArraySource::Capture(_)) { continue; }
+            // An append's array is a dense register's: the view of any other kind leaves the append to its helper.
+            if super::native_calls::appends(intrinsics, pc) && (views != ElementViews::Dense || matches!(source, ArraySource::Capture(_))) { continue; }
             match arrays[first..].iter_mut().find(|array: &&mut LoopArray| array.source == source) {
                 Some(array) => array.writable |= stores,
                 None => {

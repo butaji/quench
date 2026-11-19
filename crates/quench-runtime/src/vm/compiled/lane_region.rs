@@ -47,7 +47,7 @@ mod int_ranges_tests;
 mod global_reads;
 #[path = "lane_region/native_calls.rs"] mod native_calls;
 #[path = "lane_region/builtin_calls.rs"] mod builtin_calls;
-pub(in crate::vm) use native_calls::inlines_keeping_arrays;
+pub(in crate::vm) use native_calls::inlines_in_loop;
 #[path = "lane_region/stable.rs"]
 mod stable;
 #[path = "lane_region/polls.rs"]
@@ -1315,7 +1315,7 @@ fn retains_array_views(constants: &[crate::bytecode::Constant], instruction: Wid
 }
 
 /// Whether a loop may hold `instruction` natively: a read, an own-field or element store, or a
-/// call lowered as an intrinsic that changes no array (`native_calls::keeps_arrays`).
+/// call lowered as an intrinsic the loop holds (`native_calls::holds_in_loop`).
 fn stays_native(constants: &[Constant], instruction: WideInstruction, intrinsic: bool) -> bool {
     intrinsic || reads_only(constants, instruction) || stores_own(instruction) || stores_element(instruction)
 }
@@ -1338,13 +1338,14 @@ fn local_loops(unit: &super::lane_unit::Unit, constants: &[crate::bytecode::Cons
             && target(candidate).is_some_and(|to| (header + 1..=back).contains(&to) || (to == header && pc > back)));
         if (entries != 1 && !entry_header) || side
             || (header + 1..=back).contains(&start)
-            || !body.iter().enumerate().all(|(offset, candidate)| stays_native(constants, *candidate, native_calls::keeps_arrays(intrinsics, header + offset))) { continue }
+            || !body.iter().enumerate().all(|(offset, candidate)| stays_native(constants, *candidate, native_calls::holds_in_loop(intrinsics, header + offset))) { continue }
         loops.push((header, back));
     }
     loops
 }
 
-fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loops: &[(usize, usize)]) -> BTreeMap<usize, Vec<InvariantRead>> {
+fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loops: &[(usize, usize)],
+    intrinsics: &native_calls::Intrinsics) -> BTreeMap<usize, Vec<InvariantRead>> {
     let mut hoists = BTreeMap::new();
     let boundaries = leaders(&unit.instructions);
     for &(header, back) in loops {
@@ -1352,8 +1353,9 @@ fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loo
         let written: BTreeSet<Register> = body.iter().flat_map(|candidate| writes(*candidate)).collect();
         let stored: BTreeSet<Atom> = body.iter().filter(|candidate| stores_own(**candidate))
             .map(|candidate| candidate.atom_index()).collect();
-        // An element store may append, which changes its array's `length`.
-        let resizes = body.iter().any(|candidate| stores_element(*candidate));
+        // An element store or an append may grow its array, which changes its `length`.
+        let resizes = body.iter().enumerate().any(|(offset, candidate)|
+            stores_element(*candidate) || native_calls::appends(intrinsics, header + offset));
         let mut reads: Vec<InvariantRead> = body.iter().enumerate().filter_map(|(offset, candidate)| {
             let pc = header + offset;
             if matches!(crate::vm::compiled::performed(candidate), Some(crate::staged::Operation::LoadCapture { .. }))
@@ -1941,11 +1943,11 @@ pub(super) fn lower(
     lowering.require_object_latches(&instructions, &leaders, &loops);
     for &pc in generic { lowering.facts.widen(pc); }
     if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, &loops, &leaders)); }
-    lowering.hoists = invariant_reads(program, unit, &loops);
+    lowering.hoists = invariant_reads(program, unit, &loops, &lowering.intrinsics);
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders,
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && matches!(crate::vm::compiled::performed(&instructions[at]), Some(crate::staged::Operation::LoadCapture { .. })))),
-        lowering.views, typed_captures, |pc| coverage.lowered(pc));
+        lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
     lowering.entering = lowering.entering_ranges(entry_pc);
     lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
     lowering.ranges = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);

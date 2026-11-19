@@ -56,7 +56,7 @@ fn continues<T>(row: Option<T>) -> T {
 impl Lowering<'_, '_> {
     /// The call `builtin` whose callee `exit` guarded: its result is the call's register, or
     /// the call leaves through `exit` before it changes anything.
-    pub(super) fn builtin_call(&mut self, state: &mut State, instruction: WideInstruction, builtin: Builtin, exit: ir::Block) {
+    pub(super) fn builtin_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, builtin: Builtin, exit: ir::Block) {
         let argument = ImmediateLayout::call_window_base(instruction.imm());
         let (receiver, result) = (instruction.register_c(), instruction.result_register());
         match builtin {
@@ -69,7 +69,7 @@ impl Lowering<'_, '_> {
                 self.define(state, result, character, RegisterFact::definition(Type::language(crate::ValueType::String), Representation::Tagged));
             }
             Builtin::Push => {
-                let length = self.push(state, receiver, argument, exit);
+                let length = self.push(state, pc, receiver, argument, exit);
                 self.set_int(state, result, length);
             }
             Builtin::Pop => {
@@ -127,21 +127,43 @@ impl Lowering<'_, '_> {
     }
 
     /// `push` of the value in `argument` onto the array in `receiver`: its new length, an
-    /// int32. The VM reserves the room and proves the append plain (`LaneHelper::AppendRoom`:
-    /// dense, extensible, its backing its own, no prototype holding an index), which it
-    /// declines where a collection is due; the row then appends a value no write barrier logs.
-    fn push(&mut self, state: &mut State, receiver: Register, argument: Register, exit: ir::Block) -> ir::Value {
+    /// int32. A loop's hoisted dense array appends within its proved room (`hoisted_push`);
+    /// any other array has the VM reserve the room and prove the append plain
+    /// (`LaneHelper::AppendRoom`: dense, extensible, its backing its own, no prototype holding
+    /// an index), which it declines where a collection is due; the row then appends a value no
+    /// write barrier logs.
+    fn push(&mut self, state: &mut State, pc: usize, receiver: Register, argument: Register, exit: ir::Block) -> ir::Value {
         let (array, value) = (self.tagged(state, receiver), self.tagged(state, argument));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
         continues(builtins::unreferenced(&mut stage, value, exit));
+        if let Some(hoisted) = self.loop_array(pc, Some(receiver)).filter(|hoisted| hoisted.views == ElementViews::Dense) {
+            return self.hoisted_push(hoisted, pc, array, value, exit);
+        }
         let room = self.helper_call(LaneHelper::AppendRoom, &[array]);
         let granted = self.raw_compare_imm(Relation::NotEqual, room, 0);
         emit_js_guard(&mut self.builder, granted, exit);
+        // The reserve may have moved the backing of every view hoisted around `pc`.
+        self.reload_dense_arrays(pc);
         let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, head.array_record_base));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
         let backing = continues(elements::array_backing(&mut stage, records, array, exit));
         let length = continues(builtins::array_push_one(&mut stage, backing, room, value, exit));
         self.raw_unary(Unary::Narrow(Lane::I32), length)
+    }
+
+    /// `push` of `value` onto the loop's hoisted dense array `array` (`base` tagged): the element
+    /// stored at its length within the proved room, else after a reserve (`dense_append`), and the
+    /// new length, which the array's view holds. The general push leaves at `exit` before it
+    /// changes anything.
+    fn hoisted_push(&mut self, array: LoopArray, pc: usize, base: ir::Value, value: ir::Value, exit: ir::Block) -> ir::Value {
+        let (_, length) = self.hoisted_view(array);
+        let done = self.builder.create_block();
+        self.dense_append(array, pc as u32, length, value, base, done);
+        self.goto(exit, &[]);
+        self.builder.switch_to_block(done);
+        self.builder.seal_block(done);
+        let variables = self.array_variables(array);
+        self.builder.use_var(variables.length)
     }
 
     /// `pop` of the array in `receiver`: its last element, which the backing no longer holds,
