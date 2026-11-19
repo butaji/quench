@@ -1554,6 +1554,9 @@ impl ShapeFacts {
     const NAME_RECONFIGURED: u16 = 1 << 7;
     /// The function's own `length` was redefined (`ShapeTransition::FunctionLengthReconfigured`).
     const LENGTH_RECONFIGURED: u16 = 1 << 8;
+    /// A transition added a property under a non-string key: a symbol or a private name (any
+    /// `PropertyKey` but `String`). Read by `Vm::shape_may_have_symbol_keys`.
+    const HAS_SYMBOL_KEY: u16 = 1 << 9;
 
     fn extended_by(self, transition: ShapeTransition) -> Self {
         let introduced = |fact: bool, bit: u16| if fact { bit } else { 0 };
@@ -1577,7 +1580,8 @@ impl ShapeFacts {
                 | introduced(matches!(transition, ShapeTransition::Delete { .. } | ShapeTransition::Vacant), Self::DELETIONS)
                 | introduced(matches!(transition, ShapeTransition::FunctionName { .. }), Self::FUNCTION_NAMED)
                 | introduced(matches!(transition, ShapeTransition::FunctionNameReconfigured), Self::NAME_RECONFIGURED)
-                | introduced(matches!(transition, ShapeTransition::FunctionLengthReconfigured), Self::LENGTH_RECONFIGURED),
+                | introduced(matches!(transition, ShapeTransition::FunctionLengthReconfigured), Self::LENGTH_RECONFIGURED)
+                | introduced(matches!(transition, ShapeTransition::Add { key, .. } if !matches!(key, property_key::PropertyKey::String(_))), Self::HAS_SYMBOL_KEY),
         )
     }
 
@@ -1590,6 +1594,7 @@ impl ShapeFacts {
     fn function_named(self) -> bool { self.0 & Self::FUNCTION_NAMED != 0 }
     fn name_reconfigured(self) -> bool { self.0 & Self::NAME_RECONFIGURED != 0 }
     fn length_reconfigured(self) -> bool { self.0 & Self::LENGTH_RECONFIGURED != 0 }
+    fn has_symbol_key(self) -> bool { self.0 & Self::HAS_SYMBOL_KEY != 0 }
 }
 /// Each shape's storage length and its parent's id and length, in table order (a parent
 /// precedes its children): the table as the heap registers slot owners from it.
@@ -2022,6 +2027,9 @@ pub(crate) struct Vm<H> {
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     /// Each shape's own enumerable string keys as atoms, by shape id (`Vm::own_enumerable_keys_cached`).
     enumerable_key_lists: Vec<Option<std::rc::Rc<[Atom]>>>,
+    /// Each shape's own enumerable string keys as string values, by shape id
+    /// (`Vm::own_enumerable_key_values_cached`). Not kept by the heap: cleared at every collection.
+    enumerable_key_value_lists: Vec<Option<std::rc::Rc<[Value]>>>,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
     /// Every atom, hashed by its text (`atom_keys::text_hash`); equal hashes are told apart
@@ -3078,7 +3086,7 @@ impl<H: Host> Vm<H> {
         self.promise_species_proof.take();
         self.promise_then_memo.take();
         self.heap.dependencies_mut().retire_all();
-        self.enumerable_keys.clear(); self.enumerable_key_lists.clear(); self.heap.clear_string_atoms(); self.concat_memo.clear();
+        self.enumerable_keys.clear(); self.enumerable_key_lists.clear(); self.enumerable_key_value_lists.clear(); self.heap.clear_string_atoms(); self.concat_memo.clear();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();
