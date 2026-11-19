@@ -29,18 +29,32 @@ pub(crate) struct FlatString<W> {
 pub(crate) fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
     -> Option<FlatString<S::Word>> {
     let (record, short, wide) = super::string_length::flat_record(stage, record_base, value, miss)?;
-    // Every form keeps the words of both layouts inside the record, so each is read and the
-    // form selects.
-    let pointer = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_POINTER_OFFSET);
-    let shared_units = stage.add_imm(pointer, form::shared_units_offset());
-    let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
-    let short_units = stage.add_imm(record, form::SHORT_UNITS_OFFSET);
-    let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
-    let units = stage.select(short, short_units, shared_units);
-    let length = stage.select(short, short_length, shared_length);
+    let units = record_units(stage, record, short);
+    let length = record_length(stage, record, short);
     let (one, zero) = (stage.constant(1), stage.constant(0));
     let wide = stage.select(wide, one, zero);
     Some(FlatString { units, length, wide })
+}
+
+/// The units of the flat string whose record is `record`, in the form `short` names: the record's
+/// own, else its shared buffer's. Every form keeps the words of both layouts inside the record, so
+/// each is read and the form selects. A record's suballocations may change when the VM runs, so a
+/// row reads them where it uses them, not held across a safepoint.
+#[inline(always)]
+pub(crate) fn record_units<S: Stage>(stage: &mut S, record: S::Word, short: S::Cond) -> S::Word {
+    let pointer = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_POINTER_OFFSET);
+    let shared_units = stage.add_imm(pointer, form::shared_units_offset());
+    let short_units = stage.add_imm(record, form::SHORT_UNITS_OFFSET);
+    stage.select(short, short_units, shared_units)
+}
+
+/// The length of the flat string whose record is `record`, in the form `short` names. A string's
+/// length never changes, so a loop may hold it (`loop_strings`).
+#[inline(always)]
+pub(crate) fn record_length<S: Stage>(stage: &mut S, record: S::Word, short: S::Cond) -> S::Word {
+    let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
+    let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
+    stage.select(short, short_length, shared_length)
 }
 
 /// `row` of `string` at its own width.
