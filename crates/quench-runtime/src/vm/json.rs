@@ -1800,7 +1800,9 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if let Some(text) = self.json_stringify_steady(args) {
+        if self.declined_fast.take() != Some(Native::JsonStringify)
+            && let Some(text) = self.json_stringify_steady(args)
+        {
             return Ok(text);
         }
         let argument = |index: usize| args.get(index).copied().unwrap_or(Value::UNDEFINED);

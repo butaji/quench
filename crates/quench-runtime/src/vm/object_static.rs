@@ -566,7 +566,8 @@ impl<H: Host> Vm<H> {
             Native::ObjectDefineProperties => self.object_define_properties(p, args),
             _ if let Some(kind) = EnumerableOwnPropertyKind::of(native) => {
                 let object = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if self.is_object_like(object)
+                if self.declined_fast.take() != Some(native)
+                    && self.is_object_like(object)
                     && let Some(listed) = self.plain_enumerable_own_properties(object, kind)
                 {
                     return Ok(listed);

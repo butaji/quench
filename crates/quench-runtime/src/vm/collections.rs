@@ -686,7 +686,9 @@ impl<H: Host> Vm<H> {
             }
             Native::MapGet | Native::MapHas => {
                 let key = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if let Some(found) = self.pure_collection_lookup(native, this, key) {
+                if self.declined_fast.take() != Some(native)
+                    && let Some(found) = self.pure_collection_lookup(native, this, key)
+                {
                     return Ok(found);
                 }
                 self.require_brand(p, this, Brand::Map, "Map method")?;
