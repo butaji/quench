@@ -42,7 +42,7 @@ ASYNC_HELPERS = """JetStream.getBinary = async function (path) {
 JetStream.getString = async function (path) { return __jsRowBytes(path).toString("utf8"); };
 """
 # Runs the program as a classic script in the global realm, as JetStream's shells do: `this` is
-# the global object and `module`/`exports` are absent, so UMD bundles install their globals.
+# (the shell runs files as scripts; this runs the same text as a CommonJS entry, as quench compile does)
 RUNNER = "require('vm').runInThisContext(require('fs').readFileSync(process.argv[1], 'utf8'), { filename: process.argv[1] });"
 WASM_PRERUN = """globalThis.quit = globalThis.abort = () => {};
 globalThis.Module = { preRun: [], postRun: [], noInitialRun: true, print: () => {}, printErr: () => {} };
@@ -61,7 +61,7 @@ def header_fields(text):
     return fields
 
 
-DRIVER_KEYS = ("class", "deterministic", "preload", "exports", "group")
+DRIVER_KEYS = ("class", "deterministic", "preload", "exports", "group", "namespace")
 
 
 def driver_options(text):
@@ -94,6 +94,7 @@ def analogue(path, root):
         preload=[(name, os.path.join(root, value)) for name, value in preload],
         exports=[name for name in options.get("exports", "").split(",") if name],
         group=options.get("group", ""),
+        namespaces=[tuple(entry.split("@", 1)) for entry in options.get("namespace", "").split(",") if entry],
         root=root,
     )
 
@@ -109,7 +110,6 @@ def prelude(a):
         "globalThis.self = globalThis;",
         # A failed console.assert is a failed validation: it must exit the program non-zero.
         "console.assert = (condition, ...details) => { if (!condition) throw new Error(\"Assertion failed: \" + details.join(\" \")); };",
-        "globalThis.module = undefined; globalThis.exports = undefined;",
         READ_BYTES,
         f"globalThis.JetStream = {{ preload: {{ {preload} }}, resources: {{ {preload} }} }};",
     ]
@@ -128,6 +128,12 @@ def file_text(a, file):
         return open(path, encoding="utf8").read()
     exports = "".join(f"globalThis.{name} = {name};" for name in a["exports"])
     return f"(0, eval)(__jsRowBytes({js_string(path)}).toString(\"utf8\") + \"\\n;{exports}\");\n"
+
+
+def namespace_text(a, file):
+    """After a UMD bundle that runs as a CommonJS entry, its namespace is `module.exports`: the
+    global that the bundle sets in a shell (`this` is the global object there) is bound from it."""
+    return "".join(f"globalThis.{name} = module.exports;\n" for name, bundle in a["namespaces"] if bundle == file)
 
 
 def reset(a):
@@ -172,7 +178,7 @@ def compose(a):
             parts.append("{\n" + file_text(a, file) + run_body(dict(a, cls="Default"), a["iterations"], False) + "}\n")
         parts.append(f"console.log({js_string(a['row'] + ' ' + str(a['iterations']) + ' iterations')});\n")
         return "\n".join(parts)
-    parts.extend(file_text(a, file) + "\n" for file in a["files"])
+    parts.extend(file_text(a, file) + "\n" + namespace_text(a, file) for file in a["files"])
     parts.append(run_body(a, a["iterations"]))
     return "\n".join(parts)
 
@@ -186,7 +192,7 @@ def main(argv):
         with tempfile.TemporaryDirectory() as directory:
             script = os.path.join(directory, "program.js")
             open(script, "w", encoding="utf8").write(text)
-            result = subprocess.run([node, "-e", RUNNER, script], capture_output=True, text=True)
+            result = subprocess.run([node, script], capture_output=True, text=True)
             sys.stdout.write(result.stdout[-400:])
             sys.stderr.write(result.stderr[-1500:])
             return result.returncode

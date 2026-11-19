@@ -25,7 +25,6 @@ const CXX_COMPILER: &str = "c++";
 const CXX_EXTENSIONS: [&str; 2] = ["cc", "cpp"];
 const C_OPTIMIZATION: &str = "-O2";
 const C_LIBRARIES: &str = "-lm";
-const JETSTREAM: &str = "quench-bench/jetstream";
 const PROGRAM_NAME: &str = "program.js";
 const C_NAME: &str = "c";
 const AOT_NAME: &str = "aot";
@@ -82,7 +81,7 @@ fn compile_inputs(analogue: &Analogue, jetstream: &Path) -> Vec<String> {
 /// The C reference: the analogue's driver and sources compiled with `-O2` into `directory`.
 fn compile_c(config: &Config, analogue: &Analogue, directory: &Path) -> Result<PathBuf, String> {
     let binary = directory.join(C_NAME);
-    let jetstream = config.root.join(JETSTREAM);
+    let jetstream = config.jetstream.clone();
     let mut command = config.command(c_compiler(analogue));
     command.arg(C_OPTIMIZATION).arg(OUTPUT_OPTION).arg(&binary).args(compile_inputs(analogue, &jetstream)).arg(C_LIBRARIES);
     checked(&mut command, "the C compile")?;
@@ -122,7 +121,7 @@ pub fn measure(config: &Config, analogue: &Analogue, host: &Path, compiler: &Pat
     let directory = scratch(config, &analogue.row);
     fresh(&directory)?;
     let script = directory.join(PROGRAM_NAME);
-    let text = program::compose(analogue, &config.root.join(JETSTREAM))?;
+    let text = program::compose(analogue, &config.jetstream)?;
     fs::write(&script, text).map_err(|error| format!("{}: {error}", script.display()))?;
     let c = compile_c(config, analogue, &directory)?;
     let aot = compile_aot(config, compiler, &script, &directory)?;
@@ -134,7 +133,8 @@ pub fn measure(config: &Config, analogue: &Analogue, host: &Path, compiler: &Pat
             actual.stdout, actual.code, expected.stdout, expected.code
         ));
     }
-    let c_time = best(config, &c, &[analogue.iterations.to_string()])?;
+    let c_arguments = [analogue.iterations.to_string(), config.jetstream.display().to_string()];
+    let c_time = best(config, &c, &c_arguments)?;
     let aot_time = best(config, &aot, &[])?;
     Ok(aot_time.as_secs_f64() / c_time.as_secs_f64())
 }

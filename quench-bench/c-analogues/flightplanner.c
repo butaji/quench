@@ -1423,7 +1423,7 @@ static int validate(void) {
 }
 
 int main(int argc, char **argv) {
-  const char *root = argc > 1 ? argv[1] : "quench-bench/jetstream";
+  const char *root = argc > 2 ? argv[2] : "quench-bench/jetstream";
   char path[1024];
 
   table_init(&faa_waypoints, 1 << 18);
@@ -1444,7 +1444,7 @@ int main(int argc, char **argv) {
   load_expectations((const char *)exp, n);
   free(exp);
 
-  int iterations = 120;
+  int iterations = argc > 1 ? atoi(argv[1]) : 120;
   struct timespec a, b;
   clock_gettime(CLOCK_MONOTONIC, &a);
   for (int i = 0; i < iterations; i++) run_iteration();

@@ -29,11 +29,11 @@ const SEEDED_RANDOM: &str = "(() => {
 })();
 ";
 
-/// The shell's globals: `print`, `self`, no CommonJS `module`/`exports` (UMD bundles then install
-/// their globals as shells do), and a failed `console.assert` as a thrown validation failure.
+/// The shell's globals: `print`, `self`, and a failed `console.assert` as a thrown validation
+/// failure. The entry runs as a CommonJS module (as `quench compile` compiles it), so a UMD bundle's
+/// `this` is `module.exports`; `namespace=` binds that to the global the bundle sets in a shell.
 const HOST_SURFACE: &str = "globalThis.print = globalThis.print ?? console.log;
 globalThis.self = globalThis;
-globalThis.module = undefined; globalThis.exports = undefined;
 console.assert = (condition, ...details) => { if (!condition) throw new Error(\"Assertion failed: \" + details.join(\" \")); };
 ";
 
@@ -130,6 +130,16 @@ fn file_text(driver: &Driver, jetstream: &Path, file: &str) -> Result<String, St
     ))
 }
 
+/// The globals bound from `module.exports` after `file`, if the row names it as a namespace.
+fn namespace_text(driver: &Driver, file: &str) -> String {
+    driver
+        .namespaces
+        .iter()
+        .filter(|(_, bundle)| bundle == file)
+        .map(|(global, _)| format!("globalThis.{global} = module.exports;\n"))
+        .collect()
+}
+
 /// The driver loop for `count` iterations of the row's `Benchmark`, reporting the row's line when
 /// `report` is set.
 fn run_body(driver: &Driver, row: &str, count: u64, report: bool) -> String {
@@ -158,6 +168,7 @@ pub fn compose(analogue: &Analogue, jetstream: &Path) -> Result<String, String> 
     for file in &analogue.files {
         program.push_str(&file_text(driver, jetstream, file)?);
         program.push('\n');
+        program.push_str(&namespace_text(driver, file));
     }
     program.push_str(&run_body(driver, row, count, true));
     Ok(program)

@@ -10,8 +10,8 @@
 #include "json-analogue.h"
 
 int main(int argc, char **argv) {
-  const int iterations = 20; /* // iterations: header */
-  const char *root = argc > 1 ? argv[1] : "quench-bench/jetstream";
+  const int iterations = argc > 1 ? atoi(argv[1]) : 20; /* // iterations: header */
+  const char *root = argc > 2 ? argv[2] : "quench-bench/jetstream";
   char path[4096];
   snprintf(path, sizeof path, "%s/SeaMonster/inspector-json-payload.js.z", root);
 

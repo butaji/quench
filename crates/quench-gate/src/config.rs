@@ -21,6 +21,9 @@ const PASSED_FLAG: &str = "--passed";
 const ONLY_FLAG: &str = "--only";
 const STRICT_FLAG: &str = "--strict";
 const SUITES_FLAG: &str = "--suites";
+const JETSTREAM_FLAG: &str = "--jetstream";
+/// The JetStream checkout (a submodule) the AOT step reads its rows from, relative to the root.
+const DEFAULT_JETSTREAM: &str = "quench-bench/jetstream";
 /// How many directories above this crate's manifest the workspace root lies (`crates/quench-gate`).
 const ROOT_DEPTH: usize = 2;
 
@@ -41,6 +44,8 @@ pub struct Config {
     /// Run the AOT conformance sub-steps as well (`--suites`).
     pub suites: bool,
     pub root: PathBuf,
+    /// The JetStream checkout the rows' files and the C analogues' data come from (`--jetstream`).
+    pub jetstream: PathBuf,
     /// Cargo's target directory.
     pub target: PathBuf,
 }
@@ -50,7 +55,8 @@ impl Config {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(ROOT_DEPTH).map(Path::to_path_buf).ok_or("the gate crate lies outside its workspace")?;
         let target = root.join(env::var_os(TARGET_VARIABLE).unwrap_or_else(|| DEFAULT_TARGET.into()));
         let jobs = thread::available_parallelism().map_or(1, NonZeroUsize::get);
-        let mut config = Self { jobs, quick: false, record: false, passed: false, only: None, strict: false, suites: false, root, target };
+        let jetstream = root.join(DEFAULT_JETSTREAM);
+        let mut config = Self { jobs, quick: false, record: false, passed: false, only: None, strict: false, suites: false, root, target, jetstream };
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -61,8 +67,9 @@ impl Config {
                 SUITES_FLAG => config.suites = true,
                 name if !name.starts_with('-') => config.only = Some(name.to_owned()),
                 ONLY_FLAG => config.only = Some(args.next().ok_or_else(|| format!("{ONLY_FLAG} needs a step name"))?),
+                JETSTREAM_FLAG => config.jetstream = config.root.join(args.next().ok_or_else(|| format!("{JETSTREAM_FLAG} needs a directory"))?),
                 JOBS_FLAG => config.jobs = args.next().and_then(|jobs| jobs.parse().ok()).filter(|jobs| *jobs > 0).ok_or_else(|| format!("{JOBS_FLAG} needs a positive number"))?,
-                other => return Err(format!("unknown argument `{other}`; usage: quench-gate [{QUICK_FLAG}] [{JOBS_FLAG} N] [{RECORD_FLAG}] [{PASSED_FLAG}] [{ONLY_FLAG} STEP] [{STRICT_FLAG}] [{SUITES_FLAG}]")),
+                other => return Err(format!("unknown argument `{other}`; usage: quench-gate [{QUICK_FLAG}] [{JOBS_FLAG} N] [{RECORD_FLAG}] [{PASSED_FLAG}] [{ONLY_FLAG} STEP] [{STRICT_FLAG}] [{SUITES_FLAG}] [{JETSTREAM_FLAG} DIR]")),
             }
         }
         Ok(config)

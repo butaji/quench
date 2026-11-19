@@ -26,6 +26,8 @@ pub struct Driver {
     pub exports: Vec<String>,
     /// Each file is one subtest with its own `Benchmark` (JetStream's grouped `Sunspider`).
     pub per_file: bool,
+    /// `(global, file)` pairs: after `file` (a UMD bundle) the global is its `module.exports`.
+    pub namespaces: Vec<(String, String)>,
 }
 
 impl Class {
@@ -37,6 +39,20 @@ impl Class {
             other => Err(format!("unknown benchmark class `{other}`")),
         }
     }
+}
+
+/// The `global@file` entries of a `namespace=` value.
+fn namespaces(value: &str) -> Result<Vec<(String, String)>, String> {
+    value
+        .split(',')
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            entry
+                .split_once('@')
+                .map(|(global, file)| (global.to_owned(), file.to_owned()))
+                .ok_or_else(|| format!("namespace `{entry}` is not `global@file`"))
+        })
+        .collect()
 }
 
 /// The `name=path` entries of a `preload=` value, which is `name=path[,name=path...]`.
@@ -65,6 +81,7 @@ impl Driver {
                 "preload" => driver.preload = preloads(value)?,
                 "exports" => driver.exports = value.split(',').filter(|name| !name.is_empty()).map(str::to_owned).collect(),
                 "group" => driver.per_file = value == "file",
+                "namespace" => driver.namespaces = namespaces(value)?,
                 other => return Err(format!("unknown driver field `{other}`")),
             }
         }
