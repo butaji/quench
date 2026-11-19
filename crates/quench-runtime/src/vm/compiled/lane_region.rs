@@ -380,6 +380,24 @@ pub(super) struct LoweredLane {
     pub(super) scalar: Option<ir::Function>,
 }
 
+/// The direct calls whose result a published callee's summary types (`TypeSummary::result`), as the
+/// facts' observed reads: each candidate's summary joins the result, and a candidate without one
+/// types none. A returning call (its result is its activation's) and a construction are not typed: the
+/// first completes the body with a value its completion does not check, and a construction's result is its receiver.
+pub(super) fn call_results(direct: &DirectSites, instructions: &[WideInstruction]) -> Vec<super::facts::ObservedRead> {
+    direct.iter().filter_map(|(&pc, callees)| {
+        let instruction = *instructions.get(pc)?;
+        let Some(crate::staged::Operation::Call(crate::staged::CallOperation::Site(site))) = crate::vm::compiled::decoded(instruction) else { return None };
+        if site.constructs() || site.returns || instruction.returns_from_frame() { return None; }
+        let ty = callees.iter().try_fold(Type::NEVER, |ty, callee| {
+            // SAFETY: the plan owns its direct callees for as long as it lowers (`LoweringJob::direct_sites`).
+            let callee = unsafe { &**callee };
+            callee.summary().map(|summary| ty.join(summary.result))
+        })?;
+        (ty != Type::NEVER && ty != Type::ANY).then_some(super::facts::ObservedRead { pc, ty })
+    }).collect()
+}
+
 /// One typed numeric return edge, materialized after joining all return facts.
 struct NumberReturn {
     block: ir::Block,
@@ -445,12 +463,25 @@ pub(super) struct LoweredRegion {
     /// Whether a loop of the region hoists an array view, so a typed variant may differ.
     pub(super) hoists_arrays: bool,
     pub(super) stable: StableFacts,
+    /// The body's type summary (`TypeSummary`), where it is a whole function's body.
+    pub(super) summary: Option<TypeSummary>,
+}
+
+/// What a published lane body assumes of its arguments and what its activation returns natively,
+/// so a direct caller types the call's result with it (`call_results`). The parameters are the
+/// entry types the body's entry guards admit (`ANY` where the body guards none); the result is the
+/// join of the types its own activation returns, from the facts at each return. A value a leave
+/// returns to the caller is not in the result: the caller guards the result at its completion.
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::vm) struct TypeSummary {
+    pub(in crate::vm) params: Vec<Type>,
+    pub(in crate::vm) result: Type,
 }
 
 impl Default for LoweredRegion {
     /// A region that lowered nothing (`LoweredLane`'s default): an empty function.
     fn default() -> Self {
-        Self { number_result: None, function: ir::Function::new(), native: 0, fault_poll: false, hoists_arrays: false, stable: StableFacts::default() }
+        Self { number_result: None, function: ir::Function::new(), native: 0, fault_poll: false, hoists_arrays: false, stable: StableFacts::default(), summary: None }
     }
 }
 
@@ -1815,6 +1846,14 @@ pub(super) fn lower(
     builder.append_block_param(stop, types::I64);
     builder.set_cold_block(leave);
     builder.set_cold_block(stop);
+    // A numeric region leaves at its calls (`native_calls` is off), so it types none of them.
+    let numeric_reads: Vec<super::facts::ObservedRead>;
+    let number_reads = if numeric {
+        numeric_reads = number_reads.iter().copied()
+            .filter(|read| !unit.instructions.get(read.pc).is_some_and(|instruction| matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Call(_)))))
+            .collect();
+        &numeric_reads[..]
+    } else { number_reads };
     let observed = super::facts::Observed(number_reads);
     let mut lowering = Lowering {
         builder,
@@ -2077,6 +2116,15 @@ pub(super) fn lower(
         lowering.proving_entry = false;
         lowering.goto(target, &[]);
     }
+    // The parameters' entry types, as the entry block guards them (`entry_conform` conforms each live
+    // register to the entry's fact): a summary's arguments (`TypeSummary::params`).
+    let summary_params = (completion == Completion::Body && matches!(coverage, Coverage::Prefix)).then(|| {
+        let types = lowering.facts.at(entry_pc).unwrap_or(&[]);
+        (0..usize::from(function.params)).map(|register| match types.get(register) {
+            Some(ty) if lowering.is_live(entry_pc, register as Register) => *ty,
+            _ => Type::ANY,
+        }).collect::<Vec<Type>>()
+    });
     let mut census = clif_census::Census::new();
     let emitted = |lowering: &Lowering<'_, '_>| lowering.builder.func.dfg.num_insts();
     let mut mark = emitted(&lowering);
@@ -2176,6 +2224,7 @@ pub(super) fn lower(
         return None;
     }
     let number_result = numeric.then(|| lowering.finish_number_returns());
+    let summary = summary_params.map(|params| TypeSummary { params, result: lowering.returned_type(&instructions, &leaders, &writes) });
     let native_count = lowering.native;
     let hoists_arrays = !lowering.loop_arrays.is_empty();
     let mut polls = std::mem::take(&mut lowering.polls);
@@ -2188,7 +2237,7 @@ pub(super) fn lower(
     let decided = known_branches::decide(&mut native);
     if clif_census::enabled() { eprintln!("QUENCH_CLIF_DECIDED {decided}"); }
     if fault_poll { specialize_closed_polls(&mut native, &reentries, &mut polls, helpers, context, isa); }
-    Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable })
+    Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable, summary })
 }
 
 impl Lowering<'_, '_> {
@@ -2409,6 +2458,31 @@ impl Lowering<'_, '_> {
         self.interrupt_check(state, pc);
         let exit = self.guard_exit(state, pc);
         self.step(state, frame::Edges::ValueGuarded { miss: exit }, crate::staged::Operation::Return { source: register });
+    }
+
+    /// The join of the types the body's own activation returns, from the facts at each return
+    /// (`TypeSummary::result`). A return of the function's own record (`Origin::Caller`) returns the
+    /// value its `Return` names, typed before it, or the result an operator flagged to return defines,
+    /// typed after it. A return the facts do not type joins `ANY`; a body that never returns natively is `ANY`.
+    fn returned_type(&self, instructions: &[WideInstruction], leaders: &CompoundBitSet,
+        written: &dyn Fn(WideInstruction) -> Vec<Register>) -> Type {
+        let native_calls = self.native_calls;
+        let mut defined: Vec<Option<Type>> = vec![None; instructions.len()];
+        self.facts.for_each_definition(instructions, leaders, &self.program.constants, written, native_calls, |pc, register, ty| {
+            if register == instructions[pc].result_register() { defined[pc] = Some(ty); }
+        });
+        let mut returned = Type::NEVER;
+        for (pc, instruction) in instructions.iter().enumerate() {
+            if !matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))) { continue; }
+            let ty = match crate::vm::compiled::decoded(instruction) {
+                Some(crate::staged::Operation::Return { source }) => self.facts.before(pc, source, instructions,
+                    leaders, &self.program.constants, written, native_calls),
+                _ if instruction.returns_from_frame() => defined[pc].unwrap_or(Type::ANY),
+                _ => continue,
+            };
+            returned = returned.join(ty);
+        }
+        if returned == Type::NEVER { Type::ANY } else { returned }
     }
 
     /// The semantic join selects one ABI format for every successful return.
@@ -3594,6 +3668,9 @@ impl Lowering<'_, '_> {
         self.reload_property_arena();
         self.reload_result(state, site.result);
         if let Some(ty) = returns { self.conform_declared_result(state, pc, site.result, ty); }
+        // A direct call whose callee's summary types its result (`call_results`): the facts assume that
+        // type after the call, so the completion checks it once, whichever path completed it.
+        if let Some(ty) = self.observed.at(pc) { self.conform_declared_result(state, pc, site.result, ty); }
         true
     }
 
