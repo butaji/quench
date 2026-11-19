@@ -21,6 +21,7 @@
 #include "wsl-inline.h"
 #include "wsl-visit.h"
 #include "wsl-inliner.h"
+#include "wsl-eval.h"
 
 static uint32_t fnv_bytes(uint32_t h, const char *s, size_t n) {
   for (size_t i = 0; i < n; i++) {
@@ -132,6 +133,7 @@ static int CHECK_MODE = 0;   /* --check: the checker on the stage-6 state, with 
 static int VISIT_MODE = 0;   /* --visit: the post-check state, the instances, then the Visitor.js traversal trace (wsl-visit.h) */
 static int INSTANTIATE_MODE = 0;   /* --instantiate: the post-check state, then the instances of inline()'s first loop */
 static int INLINE_MODE = 0;   /* --inline: inline() on the post-check state, then the instances with their EPtrs and the buffers */
+static int EVAL_MODE = 0;   /* --eval: inline(), then the evaluator on each non-generic function without parameters */
 static int EBUF_MODE = 0;   /* --ebuf: LateChecker, the layout and EBufferBuilder of each instance, then the EBuffers */
 static int LAYOUT_MODE = 0;   /* --layout: LateChecker and the layout of each instance, then the layout log */
 static int LATE_MODE = 0;   /* --late: the post-check state, then LateChecker's traversal trace of each instance (wsl-late.h) */
@@ -256,6 +258,15 @@ static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t sta
     inline_dump(b);
     return 0;
   }
+  if (EVAL_MODE) {
+    check_program(&PREP_OUT);
+    post_check_passes(&PREP_OUT);
+    EBUF_COUNT = 0;
+    EBUF_NALL = 0;
+    inline_program(&PREP_OUT);
+    eval_dump(b, &PREP_OUT);
+    return 0;
+  }
   if (PROPS_MODE) {
     check_program(&PREP_OUT);
     for (int k = 0; k < PREP_OUT.statements.n; k++) littype_visit(PREP_OUT.statements.v[k]);
@@ -305,12 +316,13 @@ int main(int argc, char **argv) {
     else if (strcmp(argv[i], "--layout") == 0) { LAYOUT_MODE = 1; DUMP_NO_ROLES = 1; }
     else if (strcmp(argv[i], "--ebuf") == 0) { EBUF_MODE = 1; DUMP_NO_ROLES = 1; }
     else if (strcmp(argv[i], "--inline") == 0) { INLINE_MODE = 1; DUMP_NO_ROLES = 1; }
+    else if (strcmp(argv[i], "--eval") == 0) { EVAL_MODE = 1; DUMP_NO_ROLES = 1; }
     else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dumpAt = atoi(argv[++i]);
     else if (strcmp(argv[i], "--bench") == 0 && i + 1 < argc) benchIterations = atoi(argv[++i]);
     else root = argv[i];
   }
   collect_inputs(root);
-  if (CHECK_MODE || LATE_MODE || LAYOUT_MODE || EBUF_MODE || INLINE_MODE) STAGE = 6;
+  if (CHECK_MODE || LATE_MODE || LAYOUT_MODE || EBUF_MODE || INLINE_MODE || EVAL_MODE) STAGE = 6;
   REFS_ON = STAGE >= 2;
   if (STAGE >= 1) std_parse_once();
   if (benchIterations > 0) {
@@ -337,7 +349,7 @@ int main(int argc, char **argv) {
     }
   }
   if (CHECK_MODE) return 0;
-  for (int i = 0; (LATE_MODE || LAYOUT_MODE || EBUF_MODE || INLINE_MODE) && i < NINPUTS; i++) {
+  for (int i = 0; (LATE_MODE || LAYOUT_MODE || EBUF_MODE || INLINE_MODE || EVAL_MODE) && i < NINPUTS; i++) {
     /* --late (as tools/wsl-ast-dump.cjs --late): the input line, then the LateChecker trace (kept up to an error) */
     const Input *in = &INPUTS[i];
     if (i > 0 && in->native) continue;
@@ -348,7 +360,7 @@ int main(int argc, char **argv) {
     if (b.n) printf("%s\n", b.s);
     free(b.s);
   }
-  if (LATE_MODE || LAYOUT_MODE || EBUF_MODE || INLINE_MODE) return 0;
+  if (LATE_MODE || LAYOUT_MODE || EBUF_MODE || INLINE_MODE || EVAL_MODE) return 0;
   for (int i = 0; i < NINPUTS; i++) {
     const Input *in = &INPUTS[i];
     const char *kind = i == 0 ? "stdlib" : in->native ? "doLex" : "doPrep";

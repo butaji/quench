@@ -529,7 +529,9 @@ if (layoutMode) run(`function __layoutHarness(p) {
 // recorded by a subclass installed over the global EBuffer binding (__allBuffers); eBufferCount restarts per input.
 // The instance trees are printed by dumpRoots (ebufMode adds the EPtr scalars there).
 const inlineMode = process.argv.includes("--inline");
-const ebufMode = process.argv.includes("--ebuf") || inlineMode;   // --inline prints the EPtrs too
+// --eval: inline() as --inline, then Evaluator.runFunc on each non-generic function without parameters (not native)
+const evalMode = process.argv.includes("--eval");
+const ebufMode = process.argv.includes("--ebuf") || inlineMode || evalMode;   // --inline prints the EPtrs too
 if (ebufMode) {
     run("var __allBuffers = [];");
     run("(function() { const Orig = EBuffer; EBuffer = class extends Orig { constructor(size) { super(size); __allBuffers.push(this); } }; })()");
@@ -552,10 +554,48 @@ if (ebufMode) run(`function __ebufHarness(p) {
     return insts;
 }`);
 // --inline: inline() (Inline.js) on the post-check state; the EBuffer registry restarts first.
-if (inlineMode) run(`function __inlineHarness(p) {
+if (inlineMode || evalMode) run(`function __inlineHarness(p) {
     eBufferCount = 0;
     __allBuffers.length = 0;
     inline(p);
+}`);
+// --eval: each non-generic function, in the order of inline()'s first loop; the ones without parameters that are not
+// native run Evaluator.runFunc on their inlined body. The value is the cell's bits: n<hex> for a number (NaN is nan),
+// b0/b1, null, undef, ptr <EPtr>, arr <EArrayRef>; a WTrapError is "trap <message>" and any other error is "err".
+if (evalMode) run(`function __evalDescribe(v) {
+    if (v === undefined) return "undef";
+    if (v === null) return "null";
+    if (typeof v === "boolean") return v ? "b1" : "b0";
+    if (typeof v === "number") {
+        if (v !== v) return "nan";
+        const dv = new DataView(new ArrayBuffer(8));
+        dv.setFloat64(0, v);
+        return "n" + dv.getBigUint64(0).toString(16).padStart(16, "0");
+    }
+    if (v instanceof EPtr) return "ptr " + v.toString();
+    if (v instanceof EArrayRef) return "arr " + v.toString();
+    return "other";
+}`);
+if (evalMode) run(`function __evalHarness(p) {
+    const NL = String.fromCharCode(10);
+    const lines = [];
+    let idx = 0;
+    for (const funcList of p.functions.values())
+        for (const f of funcList) {
+            if (f.typeParameters.length) continue;
+            const i = idx++;
+            const inst = p.funcInstantiator.getUnique(f, []);
+            if (inst.isNative || inst.parameters.length) continue;
+            let r;
+            try {
+                const ptr = new Evaluator(p).runFunc(inst);
+                r = ptr === null ? "fell" : __evalDescribe(ptr.loadValue());
+            } catch (e) {
+                r = e instanceof WTrapError ? "trap " + e.syntaxErrorMessage : "err";
+            }
+            lines.push("eval " + i + " " + f.name + " " + r);
+        }
+    return lines.join(NL);
 }`);
 if (postMode || instantiateMode || visitMode || lateMode || layoutMode || ebufMode) run(`function __postHarness(p) {
     check(p);
@@ -594,7 +634,13 @@ const rows = inputs.map((input, i) => {
     let dump = "";
     let nodes = 0;
     try {
-        if (inlineMode) {
+        if (evalMode) {
+            if (input.kind !== "doLex") {
+                anonRoles.clear(); resolveInput(input, 6); run("__postHarness(__p)");
+                run("__inlineHarness(__p)");
+                dump = run("__evalHarness(__p)");
+            }
+        } else if (inlineMode) {
             if (input.kind !== "doLex") {
                 anonRoles.clear(); resolveInput(input, 6); run("__postHarness(__p)");
                 run("__inlineHarness(__p)");

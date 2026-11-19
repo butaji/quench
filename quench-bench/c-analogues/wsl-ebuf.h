@@ -9,20 +9,67 @@
 #ifndef WSL_EBUF_H
 #define WSL_EBUF_H
 
-typedef struct { uint8_t kind; double v; } Cell;   /* kind: CELL_UNDEF, CELL_NULL, CELL_NUM, CELL_BOOL */
-enum { CELL_UNDEF = 0, CELL_NULL = 1, CELL_NUM = 2, CELL_BOOL = 3 };
+typedef struct { uint8_t kind; double v; void *p; } Cell;   /* kind: CELL_UNDEF, CELL_NULL, CELL_NUM, CELL_BOOL, CELL_PTR (p: EPtrV *), CELL_ARR (p: ArrRefV *) */
+enum { CELL_UNDEF = 0, CELL_NULL = 1, CELL_NUM = 2, CELL_BOOL = 3, CELL_PTR = 4, CELL_ARR = 5 };
 typedef struct EBuf { int index; int64_t n; Cell *cells; } EBuf;
 struct EPtrV { EBuf *buf; int64_t off; };
+/* EArrayRef (EArrayRef.js): ptr is NULL for a reference made from a null pointer; len is its length (a JS number) */
+typedef struct { EPtrV *ptr; double len; } ArrRefV;
 
 static int EBUF_COUNT;          /* eBufferCount */
 static EBuf **EBUF_ALL;         /* every buffer made, in creation order */
 static int EBUF_NALL, EBUF_ACAP;
 
+/* The evaluator's heap (wsl-eval.h). While EB_OWN is set, the buffers, their cells and the EPtrs are made here, not in the
+ * AST arena: a list of chunks that eb_reset() makes reusable after each run (the arena cannot give back what a long
+ * loop allocates). Buffers made here are not in the EBuffer registry (the --eval mode does not dump them). */
+typedef struct { char *base; size_t used, cap; } EbChunk;
+static EbChunk *EB_CH;
+static int EB_NCH, EB_CURCH;
+static int EB_OWN;
+static void *eb_alloc(size_t n) {
+  if (!EB_OWN) return arena_alloc(n);
+  n = (n + 15) & ~(size_t)15;
+  if (!EB_NCH) {
+    EB_NCH = 8;
+    EB_CH = calloc(EB_NCH, sizeof(EbChunk));
+  }
+  for (;;) {
+    EbChunk *c = &EB_CH[EB_CURCH];
+    if (c->used + n <= c->cap) {
+      void *p = c->base + c->used;
+      c->used += n;
+      memset(p, 0, n);
+      return p;
+    }
+    EB_CURCH++;
+    if (EB_CURCH == EB_NCH) {
+      int cap = EB_NCH * 2;
+      EbChunk *nv = calloc(cap, sizeof(EbChunk));
+      memcpy(nv, EB_CH, sizeof(EbChunk) * EB_NCH);
+      free(EB_CH);
+      EB_CH = nv;
+      EB_NCH = cap;
+    }
+    c = &EB_CH[EB_CURCH];
+    if (c->cap < n) {
+      free(c->base);
+      size_t cap = n > ((size_t)64 << 20) ? n : ((size_t)64 << 20);
+      c->base = malloc(cap);
+      if (!c->base) { fprintf(stderr, "out of memory\n"); exit(4); }
+      c->cap = cap;
+    }
+    c->used = 0;
+  }
+}
+static void eb_reset(void) { EB_CURCH = 0; if (EB_NCH) EB_CH[0].used = 0; }
+
 static EBuf *ebuf_new(int64_t n) {
-  EBuf *b = arena_alloc(sizeof(EBuf));
+  EBuf *b = eb_alloc(sizeof(EBuf));
   b->index = EBUF_COUNT++;
   b->n = n;
-  b->cells = arena_alloc(sizeof(Cell) * (size_t)(n ? n : 1));
+  b->cells = eb_alloc(sizeof(Cell) * (size_t)(n ? n : 1));
+  if (EB_OWN) return b;
   memset(b->cells, 0, sizeof(Cell) * (size_t)(n ? n : 1));
   if (EBUF_NALL == EBUF_ACAP) {
     int cap = EBUF_ACAP ? EBUF_ACAP * 2 : 256;
@@ -47,7 +94,7 @@ static void ebuf_set(EBuf *b, int64_t i, Cell v) {
 }
 
 static EPtrV *eptr_new(EBuf *b, int64_t off) {
-  EPtrV *p = arena_alloc(sizeof(EPtrV));
+  EPtrV *p = eb_alloc(sizeof(EPtrV));
   p->buf = b;
   p->off = off;
   return p;
@@ -63,6 +110,12 @@ static const char *eptr_str(const EPtrV *p) {
   return cat(1, tmp);
 }
 
+/* EArrayRef.toString: "A:<" + ptr + ", " + length + ">" (a null ptr joins as "") */
+static const char *arrref_str(const ArrRefV *r) {
+  const char *ptr = r->ptr ? eptr_str(r->ptr) : "null";
+  return cat(5, "A:<", ptr, ", ", js_num(r->len), ">");
+}
+
 /* Buffer.toString: "B<index>:[" + the cells joined by "," + "]" */
 static const char *ebuf_str(const EBuf *b) {
   Buf s = {0};
@@ -72,6 +125,8 @@ static const char *ebuf_str(const EBuf *b) {
     const Cell *c = &b->cells[i];
     if (c->kind == CELL_NUM) buf_str(&s, js_num(c->v));
     else if (c->kind == CELL_BOOL) buf_str(&s, c->v != 0 ? "true" : "false");
+    else if (c->kind == CELL_PTR) buf_str(&s, eptr_str(c->p));
+    else if (c->kind == CELL_ARR) buf_str(&s, arrref_str(c->p));
   }
   buf_str(&s, "]");
   return s.s;
