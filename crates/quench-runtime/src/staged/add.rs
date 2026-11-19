@@ -73,7 +73,6 @@ pub(crate) fn add_property<S: Stage>(stage: &mut S, record: S::Word, record_id: 
 /// shapes are not read: a change to any prototype's layout retires the code
 /// (`heap::subscribe_prototype_values`), so only what varies per receiver, its link, is tested.
 #[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
 pub(crate) fn site_add<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, (edge, link): (Edge<S::Word>, Option<S::Word>),
     form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
     let present = stage.ne_imm(records, 0u32);

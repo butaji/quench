@@ -1615,7 +1615,6 @@ enum ActivationKind {
     /// (`Activation::native`, the callee's descriptor, receiver, body and window) and this
     /// tag, no link state. `NativeFrames::link` makes it a `Script` activation when the lane
     /// first observes it; the prefix stays, as the descriptor of the frame above it.
-    #[allow(dead_code)] // written by emitted code (`call_frames`), read as the tag
     Native = KIND_NATIVE,
     Script(ScriptActivation) = KIND_SCRIPT,
     /// A Wasm activation keeps its caller's memory for the return and its requested

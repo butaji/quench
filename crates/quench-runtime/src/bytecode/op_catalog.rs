@@ -351,6 +351,9 @@ impl Traits {
     /// An op that builds an object literal from its site (`MakeObject2`, `MakeObjectLiteral`) or from a
     /// superinstruction whose object is one (`SuperConstArrayObject2`): the profile's object-literal sites.
     pub(crate) const OBJECT_LITERAL: Self = Self(1 << 42);
+    /// A Wasm opcode (its catalog name begins `Wasm`): its own compiler owns the memory, tables and
+    /// typed registers it reads, so the b-jit compiles no function holding one (`base_region::covers`).
+    pub(crate) const WASM_OPCODE: Self = Self(1 << 43);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }

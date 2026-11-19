@@ -213,37 +213,6 @@ pub(crate) enum Operation<W, P> {
     WasmAccess(wasm_access::WasmAccessOperation),
     /// A Wasm SIMD operator or byte shuffle on the lane's vector registers (`wasm_simd`).
     WasmVector(wasm_simd::VectorOperation),
-    /// A property add of `value` to the object at the record table `records`, through a site's
-    /// transition `edge` (and the prototype `link` a chained site must hold), storing it in `form`
-    /// (`add::site_add`). The tier names the object word and the site's words: a register's or the
-    /// activation's receiver, so one variant serves the register and `this` add rows. No opcode
-    /// decodes to it; a stencil row builds it. Leaves at the miss edge where the add declines.
-    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
-    AddSite { records: W, object: W, edge: add::Edge<W>, link: Option<W>, form: Form, value: W },
-    /// A function's inferred name `name` written to the function word `function`'s empty name slot
-    /// through a site's naming edge (`naming::site_name`, the `(edge, empty)` pair). No opcode decodes
-    /// to it; a stencil row builds it. Leaves at the miss edge where the naming declines.
-    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
-    NamingSite { records: W, function: W, naming: (add::Edge<W>, W), form: Form, name: W },
-    /// `value instanceof constructor` into `destination`, decided by the frame's words of the value
-    /// and the constructor (`Frame::instance_of`, the walk `object::instanceof_by_words`); the frame's
-    /// default leaves it to the VM's `Binary` callout. Leaves at the miss edge where the walk declines.
-    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
-    InstanceOf { destination: Register, value: Register, constructor: Register },
-    /// Continue where register `source` holds a direct array (the array identity test, `Frame::direct_array`);
-    /// any other value leaves at the miss edge.
-    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
-    DirectArray { source: Register },
-    /// Define `destination` with the `length` of the direct array in register `source` (`Frame::array_length`).
-    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
-    ArrayLength { destination: Register, source: Register },
-    /// Define `destination` with the `length` of the typed array in register `source` (`Frame::typed_length`).
-    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
-    TypedLength { destination: Register, source: Register },
-    /// Append the value in register `value` to the array in register `array`, where its backing has
-    /// room and is writable (`Frame::array_append`); a value the frame does not append leaves at the miss edge.
-    #[allow(dead_code)] // no opcode decodes to it: a stencil row builds it
-    ArrayAppend { array: Register, value: Register },
     /// The tier prologue of a frameless activation of `function` with `parameters` parameters
     /// (`TierPrologue`, a lane's synthetic record): the JavaScript tier enters it, and the activation
     /// continues where that completes it (`prologue::PrologueFrame::tier_prologue`).

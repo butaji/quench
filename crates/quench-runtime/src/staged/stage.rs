@@ -2,7 +2,6 @@
 //! stencil build (`quench-bjit/build.rs`) compiles the same trait the interpreter and the
 //! specializers use.
 
-use crate::typed_ir::Type;
 use super::region::{Access, Region};
 
 /// Bytes in one word of memory a stage addresses (a register of a window is one).
@@ -106,17 +105,11 @@ pub(crate) trait Stage {
     fn load_table(&mut self, at: Access, address: Self::Word) -> Self::Word;
     fn add(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     fn or(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
-    /// Bitwise and of two words: the b-jit stencil rows' `Stage` impl uses it, not this crate's.
-    #[allow(dead_code)]
-    fn and(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     fn add_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
     fn mul_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
     fn and_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
     fn or_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
     fn shr_imm(&mut self, a: Self::Word, shift: impl Into<Self::Imm>) -> Self::Word;
-    /// `a` shifted left by `b` (a word, not a site constant: a mask's bit index). As `and`.
-    #[allow(dead_code)]
-    fn shl(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     /// The low 32 bits shifted right arithmetically, zero-extended to the word.
     fn sar32_imm(&mut self, a: Self::Word, shift: u32) -> Self::Word;
     fn eq_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Cond;
@@ -245,24 +238,6 @@ pub(crate) trait Stage {
         -> (Self::Cond, Self::Cond) where Self: Sized {
         super::object::walk_prototypes(self, records, object, target, max_depth)
     }
-
-    // Stage v2: additions with defaults, so a stage written before them is unchanged.
-
-    /// The fact this stage keeps of `word`; the interpreter keeps none.
-    #[inline(always)]
-    #[allow(dead_code)]
-    fn ty(&self, _word: Self::Word) -> Type {
-        Type::ANY
-    }
-
-    /// `word` with `ty` proved of it, after a guard that tested it: a later operation on the
-    /// word sees the fact. A stage without facts returns the word unchanged.
-    #[inline(always)]
-    #[allow(dead_code)]
-    fn refine(&mut self, word: Self::Word, _ty: Type) -> Self::Word {
-        word
-    }
-
 }
 
 /// The process tables an operation addresses from a base.

@@ -658,13 +658,6 @@ vm/dispatch_fast/loop_kernel/shape.rs Class:Nop 2
 vm/dispatch_fast/loop_kernel/shape.rs Class:NumericAdd 1
 vm/dispatch_fast/loop_kernel/shape.rs Class:NumericMultiply 1
 vm/dispatch_fast/loop_resume.rs fn:lane_* 1
-vm/dispatch_fast/mapped_windows.rs Class:LoadEnvLocal 1
-vm/dispatch_fast/mapped_windows.rs Class:LoadLocal 1
-vm/dispatch_fast/mapped_windows.rs Class:LoadLocalPlain 1
-vm/dispatch_fast/mapped_windows.rs Class:StoreEnvLocal 1
-vm/dispatch_fast/mapped_windows.rs Class:StoreLocal 1
-vm/dispatch_fast/mapped_windows.rs Class:StoreLocalPlain 1
-vm/dispatch_fast/mapped_windows.rs fn:lane_* 2
 vm/dispatch_fast/name_probe.rs Class:LoadName 1
 vm/dispatch_fast/name_probe.rs Class:LoadNameCall 1
 vm/dispatch_fast/name_probe.rs fn:lane_* 1

@@ -3322,8 +3322,8 @@ fn jump_row_backward<H: Host, const OP: u16>(handler: *const ()) -> bool {
 ///
 /// # Safety
 /// `cx` is the running lane's context and `r` its register file. Called through
-/// `LaneHost::allocate`, a constant function pointer in the inlined frame `staged_allocate`
-/// builds, so the call inlines and each handler keeps only its allocation's arm.
+/// `LaneHost::allocate`, a constant function pointer in the inlined frame a row builds, so the
+/// call inlines and each handler keeps only its allocation's arm.
 #[inline(always)]
 unsafe fn allocation_in_lane<H: Host>(cx: *mut (), r: Registers, allocation: Allocation) -> Option<Value> {
     let cx = cx.cast::<LaneContext<H>>();
@@ -3572,31 +3572,6 @@ fn concat_value_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, window: 
         |_: &Vm<H>, part: usize| r.get((base + part) as Register))?;
     note_allocation(vm);
     Some(value)
-}
-
-/// `allocation` into `destination` by the staged operation, in the lane context `cx`'s own run;
-/// false, writing nothing, where the general path must make it.
-// merge: HEAD-only helper, kept; no caller remains in the merged tree yet.
-#[allow(dead_code)]
-#[inline(always)]
-pub(super) fn staged_allocate<H: Host>(cx: *mut LaneContext<H>, r: Registers, destination: u16, allocation: Allocation) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
-    matches!(crate::staged::step(&mut stage, &mut frame, Operation::Allocate { destination, allocation, proof: () }), Step::Value(_))
-}
-
-/// The by-name load of record `i` (a call's, with a receiver, where `call`) by the staged
-/// `LoadName` row over `binding`, in the lane context `cx`'s own run; false, writing nothing,
-/// where the binding does not answer it.
-// merge: HEAD-only helper, kept; no caller remains in the merged tree yet.
-#[allow(dead_code)]
-#[inline(always)]
-pub(super) fn staged_load_name<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction, call: bool,
-    binding: NameBinding) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx).named(binding);
-    let row = Operation::LoadName { destination: i.a, atom: i.imm(), site: i.c, receiver: call.then_some(i.b), proof: () };
-    matches!(crate::staged::step(&mut stage, &mut frame, row), Step::Value(_))
 }
 
 /// `delete base[key]` into `destination` by the staged operation, in the lane context `cx`'s own

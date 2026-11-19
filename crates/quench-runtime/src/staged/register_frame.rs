@@ -325,26 +325,6 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn instance_of(&mut self, _stage: &mut S, _value: S::Word, _constructor: S::Word) -> Option<S::Cond> { None }
 
-    /// Continues where register `source` holds a direct array; `None` where the frame does not
-    /// decide it, leaving the row to its miss edge.
-    #[inline(always)]
-    fn direct_array(&mut self, _stage: &mut S, _source: Register) -> Option<()> { None }
-
-    /// The length of the direct array in register `source` as an int32 and its fact; `None` leaves
-    /// the read to the VM.
-    #[inline(always)]
-    fn array_length(&mut self, _stage: &mut S, _source: Register) -> Option<(S::Word, Self::Fact)> { None }
-
-    /// The length of the typed array in register `source` as an int32 and its fact; `None` leaves
-    /// the read to the VM.
-    #[inline(always)]
-    fn typed_length(&mut self, _stage: &mut S, _source: Register) -> Option<(S::Word, Self::Fact)> { None }
-
-    /// Appends `value` to the array in register `array` where its backing is writable and has room;
-    /// `None` leaves the append to the VM, which grows it.
-    #[inline(always)]
-    fn array_append(&mut self, _stage: &mut S, _array: Register, _value: S::Word) -> Option<()> { None }
-
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;

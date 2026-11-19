@@ -5,9 +5,8 @@
 use super::Constant;
 use crate::bytecode::{MethodSite, Op, Register, ResidualProgram, WideInstruction};
 
-/// The tables a decode reads: the constants a `LoadConst` names, the method sites a method call
-/// names, and the call records (the registers each method site passes, from its
-/// `argument_start`).
+/// The tables a decode reads: the constants a `LoadConst` names and the method sites a method call
+/// names (whose argument registers the call's own record holds).
 #[derive(Clone, Copy)]
 pub(crate) struct DecodeContext<'a> {
     pub(crate) constants: &'a [Constant],
@@ -15,20 +14,18 @@ pub(crate) struct DecodeContext<'a> {
     /// table, the compiling VM's values): `None` where `constants` is the whole table.
     pub(crate) constant_at: Option<&'a dyn Fn(usize) -> Option<Constant>>,
     pub(crate) method_sites: &'a [MethodSite],
-    #[allow(dead_code)] // read by the form-generic lane helpers
-    pub(crate) call_records: &'a [Register],
 }
 
 impl DecodeContext<'static> {
     /// No table: a tier that decodes only the rows whose operands the record holds.
-    pub(crate) const EMPTY: Self = Self { constants: &[], constant_at: None, method_sites: &[], call_records: &[] };
+    pub(crate) const EMPTY: Self = Self { constants: &[], constant_at: None, method_sites: &[] };
 }
 
 impl<'a> DecodeContext<'a> {
-    /// The method sites and call records of `program`; its constants are the tier's to type
+    /// The method sites of `program`; its constants are the tier's to type
     /// (`of_constants`), so a `LoadConst` decodes only where the tier gives them.
     pub(crate) fn of(program: &'a ResidualProgram) -> Self {
-        Self { constants: &[], constant_at: None, method_sites: &program.method_sites, call_records: &program.method_arguments }
+        Self { constants: &[], constant_at: None, method_sites: &program.method_sites }
     }
 
     /// Only the constants `constants`.
