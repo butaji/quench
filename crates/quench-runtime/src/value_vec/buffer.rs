@@ -1,5 +1,6 @@
 use crate::Value;
 use crate::staged::property_buffer::PropertyBufferHead;
+use crate::heap::growth::{GrowthPolicy, grown_capacity};
 use std::{
     mem::ManuallyDrop,
     ops::{Deref, DerefMut},
@@ -268,7 +269,7 @@ impl PropertyBuffer {
         // a write initializes it, whether or not the OS reclaimed it.
         unsafe {
             libc::madvise(
-                self.base.as_ptr().add(first).cast(),
+                self.head.base.as_ptr().add(first).cast(),
                 (last - first) * size_of::<Value>(),
                 advice,
             );

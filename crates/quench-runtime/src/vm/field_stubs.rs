@@ -15,7 +15,7 @@ use super::object::PolymorphicHit;
 
 /// Bits of an entry's index (`stub_index`).
 const FIELD_STUB_BITS: u32 = 12;
-/// Entries of the table once its first entry is recorded: 4096 of 16 bytes, 64 KiB for the VM,
+/// Entries of the table once its first entry is recorded: 4096 of 20 bytes, 80 KiB for the VM,
 /// none before a read reaches it.
 const FIELD_STUB_ENTRIES: usize = 1 << FIELD_STUB_BITS;
 
@@ -35,7 +35,7 @@ impl FieldStub {
 /// hit here, answering in its place, counts in too.
 const POLYMORPHIC_HIT_TIER: usize = 2;
 
-const _: () = assert!(std::mem::size_of::<FieldStub>() == 16);
+const _: () = assert!(std::mem::size_of::<FieldStub>() == 20);
 
 /// The table (`Vm::field_stubs`): empty until its first entry, and `written` while any entry
 /// may be recorded, so a clear of an untouched table writes nothing.

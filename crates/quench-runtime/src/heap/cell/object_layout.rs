@@ -3,6 +3,13 @@
 use super::*;
 
 impl Object {
+    /// The record's two stored words, `(payload, layout)`, as they are written. A fresh empty
+    /// object's pair depends only on its prototype, so generated allocation copies it
+    /// (`JsStepDispatch::empty_object_layout`).
+    pub(crate) fn stored_words(&self) -> (u64, u32) {
+        (self.head.payload, self.head.layout)
+    }
+
     /// An object of header words `meta` and `auxiliary` (`layout`) and `payload`.
     #[inline(always)]
     pub(super) fn from_header(meta: u32, auxiliary: u32, payload: u64) -> Self {

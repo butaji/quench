@@ -87,6 +87,36 @@ pub(crate) fn note_intrinsic_change() {
     INTRINSIC_EPOCH.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Declares `Native`, one entry per builtin function kind, in discriminant order. The order fixes
+/// the discriminants that tables index and snapshots serialize, so entries never move. An entry
+/// marked `: unshared` is not a shared function object: `Vm::native_value` never builds it.
+/// `Native::COUNT` (`heap/cell/snapshot.rs`) is the list's length: `ALL`'s type states it, so a
+/// list of another length does not compile.
+macro_rules! natives {
+    ($( $(#[$meta:meta])* $variant:ident $(: $flag:ident)? ),* $(,)?) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[repr(u16)]
+        pub(crate) enum Native {
+            $( $(#[$meta])* $variant, )*
+        }
+
+        impl Native {
+            /// Every native in discriminant order: `ALL[n as usize]` has discriminant `n`.
+            pub(crate) const ALL: [Native; Native::COUNT as usize] = [$(Native::$variant),*];
+
+            /// Whether this native is a shared function object, which `Vm::native_value` builds on
+            /// first read and every realm shares.
+            pub(crate) const fn has_shared_function(self) -> bool {
+                /// Each native's `unshared` flag, by discriminant.
+                const UNSHARED: [bool; Native::COUNT as usize] = [$(natives!(@unshared $($flag)?)),*];
+                !UNSHARED[self as usize]
+            }
+        }
+    };
+    (@unshared) => { false };
+    (@unshared unshared) => { true };
+}
+
 #[rustfmt::skip]
 natives! {
     Print, HostDone, CreateRealm, IsHTMLDDA, EvalScript, CollectGarbage, RealmTypeError, Eval, Function, FunctionPrototype, FunctionPrototypeHasInstance, FunctionCaller, DynamicImport, AbstractModuleSource, AbstractModuleSourceToStringTag, ShadowRealm, ShadowRealmEvaluate, ShadowRealmImportValue, ShadowRealmImportValueFulfilled, ShadowRealmWrappedFunction,
