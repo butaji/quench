@@ -3,6 +3,13 @@
 //! (`CallPlan::registers_only`). A plain slot has no observer but these accesses, its dead
 //! zone is never read, and its frame storage is reached only through them, so the register
 //! holds exactly what the slot would; opening its dead zone writes nothing anyone reads.
+//!
+//! A store that also keeps its value in a register (`StoreLocalPlain` with a copy, the fused
+//! `rewrite::StoreLoadLocal`) becomes the store's move and a copy that reads the local, not
+//! the stored register: the stored register is then dead after the store, so its producer
+//! computes straight into the local (`coalesce_distant_producer_moves`) and the copy's reader
+//! reads the local (`forward_move_sources`). A copy into the stored register itself already
+//! holds the value and needs no move.
 
 use super::liveness::ROOT_MAP_REGISTERS;
 use super::rewrite::{fixed_width, relocate};
@@ -252,12 +259,7 @@ pub(super) fn promote<'a>(
             }
             (Op::StoreLocalPlain, Some(target)) => {
                 let source = instruction.register_a();
-                // A store that also keeps its value in a register becomes two moves. The copy
-                // reads the local, not the stored value, so the value's register is dead after
-                // the store and its producer can compute straight into the local
-                // (`coalesce_distant_producer_moves`); copy propagation then lets the copy's
-                // reader read the local (`forward_move_sources`). A copy into the stored
-                // value's own register already holds the value and needs no move.
+                // A store that also keeps its value elsewhere copies it from the local (module doc).
                 if let Some(copy) = instruction.optional_register_b().filter(|&copy| copy != source) {
                     let store = WideInstruction::new(Op::Move, target, source, 0, 0);
                     code.push(encode(store, Instr::new(Op::Nop, 0, 0, 0, 0), &mut function.wide));
