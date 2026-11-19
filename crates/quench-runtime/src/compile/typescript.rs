@@ -170,7 +170,7 @@ mod tests {
         let program = Engine::specialize_typescript(source, "declared.cts").unwrap();
         let declared = |name: &str| (0..program.functions.len()).filter_map(|index| program.function_get(index))
             .find(|function| function.name.is_some_and(|atom| program.atoms.get(atom as usize) == Some(name)))
-            .map(|function| function.declared_parameters.to_vec());
+            .map(|function| function.declared_parameters().to_vec());
         use crate::ValueType as V;
         let bit = |kind: V| 1_u16 << kind as u16;
         assert_eq!(declared("add").unwrap(), vec![bit(V::Number), super::DECLARED_ANY,
@@ -201,14 +201,14 @@ mod tests {
         let declared = |name: Option<&str>| (0..program.functions.len()).filter_map(|index| program.function_get(index))
             .find(|function| function.name.map(|atom| program.atoms.get(atom as usize).map(|text| &*text)) == name.map(Some)
                 && (name.is_some() || function.is_arrow))
-            .map(|function| function.declared_parameters.to_vec());
+            .map(|function| function.declared_parameters().to_vec());
         assert_eq!(declared(Some("move")).unwrap(), vec![bit(V::Number), bit(V::String), super::DECLARED_ANY]);
         assert_eq!(declared(Some("plain")).unwrap(), vec![bit(V::Object) | bit(V::Function)]);
         assert_eq!(declared(None).unwrap(), vec![bit(V::Number)]);
         // Another text compiles without them.
         let other = Engine::specialize_typescript(&format!("{source}\n"), "checked.cts").unwrap();
         assert!(other.functions.iter().enumerate().filter_map(|(index, _)| other.function_get(index))
-            .filter(|function| function.is_arrow).all(|function| function.declared_parameters.is_empty()));
+            .filter(|function| function.is_arrow).all(|function| function.declared_parameters().is_empty()));
     }
 
     #[test]

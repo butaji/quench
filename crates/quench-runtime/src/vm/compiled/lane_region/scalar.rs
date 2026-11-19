@@ -224,7 +224,7 @@ pub(super) fn checkable(bits: u16) -> bool {
 /// an annotation that lies costs an exit, never a wrong result. A Number set, or a set
 /// `checkable` names, is such a type; any other set stays `ANY`.
 pub(super) fn declared_entry_types(function: &crate::bytecode::Function, written: &CompoundBitSet, initial: &mut [Type]) {
-    for (index, declared) in function.declared_parameters.iter().enumerate() {
+    for (index, declared) in function.declared_parameters().iter().enumerate() {
         let ty = Type::languages(*declared);
         if ty != Type::NUMBER && !checkable(*declared) { continue; }
         let Some(register) = parameter_register(function, index) else { continue };

@@ -1074,8 +1074,8 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         for atom in &function.parameter_atoms {
             out.atom(*atom);
         }
-        out.u32(function.declared_parameters.len() as u32);
-        for declared in &function.declared_parameters {
+        out.u32(function.declared_parameters().len() as u32);
+        for declared in function.declared_parameters() {
             out.u16(*declared);
         }
         out.u8(u8::from(function.rest));
@@ -1083,7 +1083,7 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         out.u8(u8::from(function.is_generator));
         out.u8(u8::from(function.is_class_constructor));
         out.u8(u8::from(function.derived_constructor));
-        out.option_u32(function.instance_initializer);
+        out.option_u32(function.instance_initializer());
         out.option_atom(function.super_home_atom);
         out.u8(u8::from(function.constructible));
         out.u8(u8::from(function.class_initializer));
@@ -1446,13 +1446,24 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             length,
             parameter_end_pc,
             parameter_atoms: parameter_atoms.into(),
-            declared_parameters: declared_parameters.into(),
+            rare: crate::bytecode::FunctionRare {
+                declared_parameters: declared_parameters.into(),
+                global_declarations: super::GlobalDeclarations {
+                    lexical: global_lexical_atoms,
+                    var: global_var_atoms,
+                    function: global_function_atoms,
+                    annex_b_var: global_annex_b_var_atoms,
+                    immutable: global_immutable_atoms,
+                }
+                .boxed(),
+                instance_initializer,
+            }
+            .boxed(),
             rest,
             is_async,
             is_generator,
             is_class_constructor,
             derived_constructor,
-            instance_initializer,
             super_home_atom,
             constructible,
             prototype_unobservable,
@@ -1471,14 +1482,6 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             environment_clones,
             name_bindings: crate::bytecode::NameBindings::flat(name_bindings),
             lexical_atoms: lexical_atoms.into(),
-            global_declarations: super::GlobalDeclarations {
-                lexical: global_lexical_atoms,
-                var: global_var_atoms,
-                function: global_function_atoms,
-                annex_b_var: global_annex_b_var_atoms,
-                immutable: global_immutable_atoms,
-            }
-            .boxed(),
             binding_sites: binding_sites.into(),
             source_positions,
             code,

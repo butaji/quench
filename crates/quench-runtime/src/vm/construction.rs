@@ -840,7 +840,7 @@ impl<H: Host> Vm<H> {
             && !function.is_generator
             && !function.derived_constructor
             && !function.class_initializer
-            && function.instance_initializer.is_none()
+            && function.instance_initializer().is_none()
     }
 
     /// The receiver an in-place [[Construct]] of `callee` allocates: an ordinary object

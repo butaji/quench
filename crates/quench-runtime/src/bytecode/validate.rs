@@ -625,7 +625,7 @@ impl ResidualProgram {
             } else {
 function.plain_local_slots(&self.superinstructions)
             };
-            if let Some(initializer) = function.instance_initializer {
+            if let Some(initializer) = function.instance_initializer() {
                 let valid = self
                     .functions
                     .get(initializer as usize)
@@ -635,7 +635,7 @@ function.plain_local_slots(&self.superinstructions)
                             && plan.parent == function.parent
                             && plan.class_initializer
                             && !plan.constructible
-                            && plan.instance_initializer.is_none()
+                            && plan.instance_initializer().is_none()
                     });
                 if !valid {
                     return Err(format!(
@@ -1289,13 +1289,12 @@ mod tests {
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
-            declared_parameters: vec![].into(),
+            rare: None,
             rest: false,
             is_async: false,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
-            instance_initializer: None,
             super_home_atom: None,
             constructible: true,
             class_initializer: false,
@@ -1312,7 +1311,6 @@ mod tests {
             local_registers: vec![].into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),

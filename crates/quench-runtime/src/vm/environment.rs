@@ -187,7 +187,7 @@ impl<H: Host> Vm<H> {
                 .programs
                 .get(program_id)
                 .ok_or_else(|| JsError("constructor program is unavailable".into()))?;
-            if let Some(initializer) = program.function(function as usize).instance_initializer {
+            if let Some(initializer) = program.function(function as usize).instance_initializer() {
                 let previous = self.replace_active_program(program_id);
                 let result = self.call_user(
                     &program,

@@ -115,7 +115,7 @@ impl Function {
         self.derived_constructor
             && self.handlers.is_empty()
             && self.arguments_slot.is_none()
-            && self.instance_initializer.is_none()
+            && self.instance_initializer().is_none()
             && !self.rest
             && self.simple_parameters
     }
@@ -129,7 +129,7 @@ impl Function {
             && self.params == 1
             && self.handlers.is_empty()
             && self.arguments_slot.is_none()
-            && self.instance_initializer.is_none()
+            && self.instance_initializer().is_none()
     }
 
     /// The body as a `SuperInitializer`, for a derived constructor of simple parameters with

@@ -174,13 +174,12 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
-            declared_parameters: vec![].into(),
+            rare: None,
             rest: false,
             is_async: false,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
-            instance_initializer: None,
             super_home_atom: None,
             constructible: true,
             class_initializer: false,
@@ -197,7 +196,6 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             local_registers: Vec::new().into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions,
@@ -302,13 +300,12 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
-            declared_parameters: vec![].into(),
+            rare: None,
             rest: false,
             is_async: false,
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
-            instance_initializer: None,
             super_home_atom: None,
             constructible: true,
             class_initializer: false,
@@ -325,7 +322,6 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             local_registers: Vec::new().into(),
             inherited_with_scope: false,
             lexical_atoms: vec![].into(),
-            global_declarations: None,
             name_bindings: Default::default(),
             binding_sites: vec![].into(),
             source_positions: Default::default(),
@@ -466,9 +462,9 @@ fn instance_initializer_plan_survives_round_trip_and_rejects_invalid_owners() {
     // The invalid variants below change records in place, which needs them compiled.
     program.compile_released();
     let owner = (0..program.functions.len())
-        .position(|index| program.function(index).instance_initializer.is_some())
+        .position(|index| program.function(index).instance_initializer().is_some())
         .unwrap();
-    let initializer = program.function(owner).instance_initializer.unwrap();
+    let initializer = program.function(owner).instance_initializer().unwrap();
     let path = std::env::temp_dir().join(format!(
         "quench-instance-initializer-{}",
         std::process::id()
@@ -477,14 +473,14 @@ fn instance_initializer_plan_survives_round_trip_and_rejects_invalid_owners() {
     let bytes = std::fs::read(&path).unwrap();
     let decoded = ResidualProgram::read_binary(&path).unwrap();
     assert_eq!(
-        decoded.function(owner).instance_initializer,
+        decoded.function(owner).instance_initializer(),
         Some(initializer)
     );
     decoded.write_binary(&path).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
     for plan in [program.functions.len() as u32, owner as u32, 0] {
         let mut invalid = program.clone();
-        invalid.functions[owner].instance_initializer = Some(plan);
+        invalid.functions[owner].set_instance_initializer(plan);
         invalid.write_binary(&path).unwrap();
         assert!(ResidualProgram::read_binary(&path).is_err());
     }
@@ -886,4 +882,18 @@ fn load_encoded_records_decode_as_records_compiled_again() {
         // The encoding took the load's records; another compiles them again, as a clone does.
         assert_eq!(decode(&encoded).1, atoms);
     }
+}
+
+/// The function record's budget: 376 bytes before the TypeScript signature, global
+/// declarations and instance initializer moved behind `Function::rare` (one pointer for
+/// the three, in place of 24 bytes).
+const FUNCTION_RECORD_BUDGET: usize = 360;
+
+#[test]
+fn function_record_stays_within_its_size_budget() {
+    assert!(
+        size_of::<Function>() <= FUNCTION_RECORD_BUDGET,
+        "Function is {} bytes",
+        size_of::<Function>()
+    );
 }

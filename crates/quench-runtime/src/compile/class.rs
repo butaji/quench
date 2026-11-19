@@ -308,7 +308,7 @@ impl FunctionCompiler<'_, '_> {
             // A replay of the function enclosing the class finds the constructor as the load
             // left it.
             if let Some(constructor) = self.owner.functions.get_mut(constructor_id) {
-                constructor.instance_initializer = Some(initializer);
+                constructor.set_instance_initializer(initializer);
             }
         }
         let class_value = self.reg();

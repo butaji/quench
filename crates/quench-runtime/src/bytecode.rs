@@ -1372,18 +1372,11 @@ pub struct Function {
     pub length: u16,
     pub parameter_end_pc: u32,
     pub(crate) parameter_atoms: crate::heap::ThinBoxSlice<Atom>,
-    /// The language types (`typed_ir::Type::language` bits) each parameter's TypeScript
-    /// annotation declares, by argument index; empty where none declares one. A seed, not a
-    /// proof: a tier that relies on one checks it once where the argument enters
-    /// (`compile::typescript::declared_parameters`).
-    pub(crate) declared_parameters: crate::heap::ThinBoxSlice<u16>,
     pub rest: bool,
     pub is_async: bool,
     pub is_generator: bool,
     pub is_class_constructor: bool,
     pub derived_constructor: bool,
-    /// Instance-element initialization run when this derived constructor binds `this`.
-    pub instance_initializer: Option<u32>,
     /// Lexical HomeObject captured by methods and arrows containing `super`.
     pub super_home_atom: Option<Atom>,
     pub constructible: bool,
@@ -1422,9 +1415,6 @@ pub struct Function {
     /// so unresolved names in descendants can still observe its outer locals.
     pub(crate) inherited_with_scope: bool,
     pub(crate) lexical_atoms: crate::heap::ThinBoxSlice<Atom>,
-    /// What a Script or eval body declares in the global scope; `None` for every other
-    /// function, which declares nothing there.
-    pub global_declarations: Option<Box<GlobalDeclarations>>,
     /// Bindings a dynamic name lookup in this function can see.
     pub(crate) name_bindings: NameBindings,
     /// Lexical projections at eval calls and dynamic name operations.
@@ -1474,6 +1464,34 @@ pub struct Function {
     pub(crate) parameter_registers: Option<u16>,
     /// The value every register holds when an activation starts.
     pub(crate) initial_register: InitialRegister,
+    /// The parts few functions set (`FunctionRare`), behind one pointer: `None` for most.
+    pub(crate) rare: Option<Box<FunctionRare>>,
+}
+
+/// The parts of a function record that few functions set, boxed together so each other
+/// function pays one pointer for all of them (`Function::rare`).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct FunctionRare {
+    /// The language types (`typed_ir::Type::language` bits) each parameter's TypeScript
+    /// annotation declares, by argument index; empty where none declares one. A seed, not a
+    /// proof: a tier that relies on one checks it once where the argument enters
+    /// (`compile::typescript::declared_parameters`).
+    pub(crate) declared_parameters: crate::heap::ThinBoxSlice<u16>,
+    /// What a Script or eval body declares in the global scope; `None` for every other
+    /// function, which declares nothing there.
+    pub(crate) global_declarations: Option<Box<GlobalDeclarations>>,
+    /// Instance-element initialization run when this derived constructor binds `this`.
+    pub(crate) instance_initializer: Option<u32>,
+}
+
+impl FunctionRare {
+    /// The rare parts, boxed only when one is set.
+    pub(crate) fn boxed(self) -> Option<Box<Self>> {
+        let empty = self.declared_parameters.is_empty()
+            && self.global_declarations.is_none()
+            && self.instance_initializer.is_none();
+        (!empty).then(|| Box::new(self))
+    }
 }
 
 // Every compiled function keeps one record for the program's life (a fastify server holds
@@ -1481,8 +1499,9 @@ pub struct Function {
 // once compiled sit behind thin slices. `code`, `wide` and `source_positions` stay as the
 // compiler builds them: its passes rewrite them, and its rewrite loop measured slower when
 // their layout changed.
-// `declared_parameters` (8 bytes) carries TypeScript parameter types into the fact store.
-const _: () = assert!(size_of::<Function>() == 376);
+// `declared_parameters`, `global_declarations` and `instance_initializer` live in `rare`
+// (one pointer for all three; the old fields were 24 bytes). The record was 376 bytes;
+// `bytecode/tests.rs` asserts the bound.
 
 /// The facts about a function that are read before its first call: when its closure is
 /// made, by `IsConstructor` and brand checks, by `Function.prototype.toString`, and by an
@@ -1961,8 +1980,33 @@ impl Function {
         self.source_positions.shrink_to_fit();
     }
 
+    /// The TypeScript parameter types, by argument index (`FunctionRare::declared_parameters`).
+    pub(crate) fn declared_parameters(&self) -> &[u16] {
+        match &self.rare {
+            Some(rare) => &rare.declared_parameters[..],
+            None => &[],
+        }
+    }
+
+    /// The class constructor's instance initializer (`FunctionRare::instance_initializer`).
+    pub(crate) fn instance_initializer(&self) -> Option<u32> {
+        self.rare.as_deref().and_then(|rare| rare.instance_initializer)
+    }
+
+    /// Sets the instance initializer, boxing the rare parts on first use.
+    pub(crate) fn set_instance_initializer(&mut self, initializer: u32) {
+        self.rare.get_or_insert_with(Default::default).instance_initializer = Some(initializer);
+    }
+
+    /// Sets what a Script or eval body declares globally (`FunctionRare::global_declarations`).
+    pub(crate) fn set_global_declarations(&mut self, declarations: Option<Box<GlobalDeclarations>>) {
+        if declarations.is_some() || self.rare.is_some() {
+            self.rare.get_or_insert_with(Default::default).global_declarations = declarations;
+        }
+    }
+
     fn global_declarations_or_none(&self) -> Option<&GlobalDeclarations> {
-        self.global_declarations.as_deref()
+        self.rare.as_deref().and_then(|rare| rare.global_declarations.as_deref())
     }
 
     pub fn global_lexical_atoms(&self) -> &[Atom] {
@@ -2336,7 +2380,7 @@ impl Function {
             // A field initializer or static block keeps its instance's implicit bindings; an
             // arrow inside one (also `class_initializer`) binds none of its own.
             || (self.class_initializer && !self.is_arrow)
-            || self.instance_initializer.is_some()
+            || self.instance_initializer().is_some()
             || self.inherited_with_scope
             || self.instructions_of(name_bindings::may_read_binding).any(|instruction| {
                 name_bindings::reads_hidden_name(instruction, tables)
@@ -2888,7 +2932,7 @@ impl Function {
         if !self.derived_constructor
             || !self.handlers.is_empty()
             || self.arguments_slot.is_some()
-            || self.instance_initializer.is_some()
+            || self.instance_initializer().is_some()
             || self.is_async
             || self.is_generator
         {
