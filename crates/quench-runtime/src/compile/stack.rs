@@ -1,47 +1,8 @@
-//! Bound AST traversal before recursive semantic and lowering passes.
-use oxc_ast::ast::{AssignmentTarget, BindingPattern, Expression, Program, Statement};
-use oxc_ast_visit::{Visit, walk};
+//! Bound AST traversal before recursive semantic and lowering passes. The walk itself lives in
+//! `checks`, shared with the other read-only passes.
+use oxc_ast::ast::Program;
 
-/// A walk entering one transition per level, as the recursive passes after it do, against
-/// the budget left where it starts (`StackBudget`).
-struct Validator {
-    budget: crate::stack::StackBudget,
-    depth: usize,
-    exhausted: bool,
-}
-
-impl Validator {
-    fn descend(&mut self, visit: impl FnOnce(&mut Self)) {
-        if self.exhausted {
-            return;
-        }
-        if !self.budget.admits(self.depth) {
-            self.exhausted = true;
-            return;
-        }
-        self.depth += 1;
-        visit(self);
-        self.depth -= 1;
-    }
-}
-
-impl<'a> Visit<'a> for Validator {
-    fn visit_expression(&mut self, expression: &Expression<'a>) {
-        self.descend(|this| walk::walk_expression(this, expression));
-    }
-
-    fn visit_statement(&mut self, statement: &Statement<'a>) {
-        self.descend(|this| walk::walk_statement(this, statement));
-    }
-
-    fn visit_binding_pattern(&mut self, pattern: &BindingPattern<'a>) {
-        self.descend(|this| walk::walk_binding_pattern(this, pattern));
-    }
-
-    fn visit_assignment_target(&mut self, target: &AssignmentTarget<'a>) {
-        self.descend(|this| walk::walk_assignment_target(this, target));
-    }
-}
+use super::checks::{Passes, walk};
 
 pub(crate) fn validate_parsed(parsed: &oxc_parser::ParserReturn<'_>) -> Result<(), crate::stack::StackExhausted> {
     if parsed.stack_exhausted {
@@ -50,30 +11,12 @@ pub(crate) fn validate_parsed(parsed: &oxc_parser::ParserReturn<'_>) -> Result<(
     validate(&parsed.program)
 }
 
-/// Counted nesting levels one source byte can open. Each level (expression, statement, binding
-/// pattern, assignment target) owns at least one byte of its span beyond its child's, except
-/// the byte-free wrapper of an expression statement without its `;`, which occurs only at a
-/// path's leaf.
-const LEVELS_PER_SOURCE_BYTE: usize = 2;
-/// The byte-free levels a path's leaf may add beyond `LEVELS_PER_SOURCE_BYTE`.
-const LEAF_LEVELS: usize = 2;
-
-/// The deepest nesting a program's text admits: `LEVELS_PER_SOURCE_BYTE` levels per byte of its
-/// span, plus the leaf's.
-fn depth_bound(program: &Program<'_>) -> usize {
-    let bytes = program.span.end.saturating_sub(program.span.start) as usize;
-    bytes * LEVELS_PER_SOURCE_BYTE + LEAF_LEVELS
-}
-
 pub(super) fn validate(program: &Program<'_>) -> Result<(), crate::stack::StackExhausted> {
-    let budget = crate::stack::StackBudget::here();
-    // A short text cannot nest past the budget, so the walk that would admit every level is skipped.
-    if budget.admits_tree(depth_bound(program)) {
-        return Ok(());
+    if walk(program, Passes { depth: true, ..Passes::default() }).stack_exhausted {
+        Err(crate::stack::StackExhausted)
+    } else {
+        Ok(())
     }
-    let mut validator = Validator { budget, depth: 0, exhausted: false };
-    validator.visit_program(program);
-    if validator.exhausted { Err(crate::stack::StackExhausted) } else { Ok(()) }
 }
 
 #[cfg(test)]

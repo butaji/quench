@@ -3,13 +3,11 @@
 //! runtime errors without rewriting guest source.
 
 use oxc_allocator::Allocator;
-use oxc_ast::ast::{
-    AssignmentExpression, AssignmentTargetMaybeDefault, AssignmentTargetRest, Expression,
-    SimpleAssignmentTarget,
-};
-use oxc_ast_visit::{Visit, walk};
+use oxc_ast::ast::{Expression, Program, SimpleAssignmentTarget};
 use oxc_parser::{CALL_ASSIGNMENT_TARGET_MARKER, ParseOptions, Parser, ParserReturn};
-use oxc_span::{GetSpan, SourceType, Span};
+use oxc_span::{SourceType, Span};
+
+use super::checks::{Passes, walk};
 
 pub(super) fn parse_program<'a>(
     allocator: &'a Allocator,
@@ -93,55 +91,7 @@ pub(super) fn invalid_parsed_target(parsed: &ParserReturn<'_>) -> Option<Span> {
     parsed.has_call_assignment_targets.then(|| invalid_target(&parsed.program)).flatten()
 }
 
-pub(super) fn invalid_target(program: &oxc_ast::ast::Program<'_>) -> Option<Span> {
-    struct Targets {
-        invalid: Option<Span>,
-    }
-    impl<'a> Visit<'a> for Targets {
-        fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
-            if assignment.operator.is_logical()
-                && assignment
-                    .left
-                    .as_simple_assignment_target()
-                    .and_then(call_target)
-                    .is_some()
-            {
-                self.invalid.get_or_insert_with(|| assignment.left.span());
-            }
-            walk::walk_assignment_expression(self, assignment);
-        }
-
-        fn visit_assignment_target_maybe_default(
-            &mut self,
-            target: &AssignmentTargetMaybeDefault<'a>,
-        ) {
-            let binding = match target {
-                AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => {
-                    Some(&default.binding)
-                }
-                _ => target.as_assignment_target(),
-            };
-            if let Some(call) = binding
-                .and_then(|binding| binding.as_simple_assignment_target())
-                .and_then(call_target)
-            {
-                self.invalid.get_or_insert_with(|| call.span());
-            }
-            walk::walk_assignment_target_maybe_default(self, target);
-        }
-
-        fn visit_assignment_target_rest(&mut self, rest: &AssignmentTargetRest<'a>) {
-            if let Some(call) = rest
-                .target
-                .as_simple_assignment_target()
-                .and_then(call_target)
-            {
-                self.invalid.get_or_insert_with(|| call.span());
-            }
-            walk::walk_assignment_target_rest(self, rest);
-        }
-    }
-    let mut targets = Targets { invalid: None };
-    targets.visit_program(program);
-    targets.invalid
+/// The first call assignment target Annex B rejects in `program`.
+pub(super) fn invalid_target(program: &Program<'_>) -> Option<Span> {
+    walk(program, Passes { targets: true, ..Passes::default() }).invalid_target
 }

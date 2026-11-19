@@ -4,8 +4,6 @@
 //! (`Function::declared_parameters`).
 
 use oxc_ast::ast::*;
-use oxc_ast_visit::{Visit, walk};
-use oxc_span::Span;
 
 use crate::typed_ir::language_bit;
 
@@ -77,53 +75,6 @@ fn declared_language(ty: &TSType<'_>) -> u16 {
         TSType::TSUnionType(union) => union.types.iter().fold(0, |set, member| set | declared_language(member)),
         _ => DECLARED_ANY,
     }
-}
-
-/// What admission leaves without a run-time meaning yet: decorators.
-pub(super) fn unsupported_runtime_syntax(program: &Program<'_>) -> Option<(Span, &'static str)> {
-    #[derive(Default)]
-    struct Check {
-        error: Option<(Span, &'static str)>,
-    }
-
-    impl Check {
-        fn decorated(&mut self, decorators: &[Decorator<'_>], span: Span) {
-            if !decorators.is_empty() {
-                self.error.get_or_insert((span, "TypeScript decorators need a runtime meaning"));
-            }
-        }
-    }
-
-    impl<'a> Visit<'a> for Check {
-        fn visit_formal_parameter(&mut self, parameter: &FormalParameter<'a>) {
-            self.decorated(&parameter.decorators, parameter.span);
-            walk::walk_formal_parameter(self, parameter);
-        }
-
-        fn visit_class(&mut self, class: &Class<'a>) {
-            self.decorated(&class.decorators, class.span);
-            walk::walk_class(self, class);
-        }
-
-        fn visit_property_definition(&mut self, property: &PropertyDefinition<'a>) {
-            self.decorated(&property.decorators, property.span);
-            walk::walk_property_definition(self, property);
-        }
-
-        fn visit_accessor_property(&mut self, accessor: &AccessorProperty<'a>) {
-            self.decorated(&accessor.decorators, accessor.span);
-            walk::walk_accessor_property(self, accessor);
-        }
-
-        fn visit_method_definition(&mut self, method: &MethodDefinition<'a>) {
-            self.decorated(&method.decorators, method.span);
-            walk::walk_method_definition(self, method);
-        }
-    }
-
-    let mut check = Check::default();
-    check.visit_program(program);
-    check.error
 }
 
 #[cfg(test)]

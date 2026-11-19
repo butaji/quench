@@ -109,11 +109,17 @@ fn chunk_analysis(parsed: &oxc_parser::ParserReturn<'_>, name: &str, skimmed: Op
 /// Whether the chunk's text, a function alone, parsed and checked as a script; the early errors
 /// of the program's analysis are the load's where the load `skimmed` it.
 fn chunk_parses_alone(parsed: &oxc_parser::ParserReturn<'_>, skimmed: bool) -> bool {
-    !parsed.stack_exhausted
-        && parsed.diagnostics.is_empty()
-        && stack::validate(&parsed.program).is_ok()
+    if parsed.stack_exhausted || !parsed.diagnostics.is_empty() {
+        return false;
+    }
+    let found = crate::compile::checks::walk(&parsed.program, crate::compile::checks::Passes {
+        depth: true,
+        targets: parsed.has_call_assignment_targets,
+        ..Default::default()
+    });
+    !found.stack_exhausted
         && early::regexp_early_error(parsed).is_none()
-        && annex_b_targets::invalid_parsed_target(parsed).is_none()
+        && found.invalid_target.is_none()
         && (skimmed || early::program_early_errors(&parsed.program, false).1.is_empty())
 }
 
