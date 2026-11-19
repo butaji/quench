@@ -4,6 +4,7 @@
 use super::super::*;
 use super::ascii_text::{ascii_bytes, owned_flat_ascii};
 use crate::vm::wtf16::{JsString, MAX_STRING_UNITS, Units};
+use std::mem::MaybeUninit;
 
 /// The ASCII byte that separates `join`ed elements when none is given.
 const DEFAULT_JOIN_SEPARATOR: &[u8] = b",";
@@ -73,7 +74,7 @@ impl<H: Host> Vm<H> {
         };
         let covered = length.min(elements.len());
         let (stop, text_len) = self.join_prefix_extent(array, elements, covered, separator.len());
-        let text = JsString::from_ascii_zeroed_with(text_len, |out| {
+        let text = JsString::from_ascii_filled(text_len, |out| {
             self.write_join_prefix(array, elements, stop, separator, out);
         });
         (text, stop)
@@ -99,8 +100,9 @@ impl<H: Host> Vm<H> {
     }
 
     /// Writes the join text of the first `stop` elements of `array` with `separator` between them
-    /// into `out`, which `join_prefix_extent` sized over the same elements.
-    fn write_join_prefix(&self, array: Value, elements: &crate::heap::ArrayElements, stop: usize, separator: &[u8], out: &mut [u8]) {
+    /// into `out`, which `join_prefix_extent` sized over the same elements. Every byte of `out` is
+    /// written, as the final assertion checks.
+    fn write_join_prefix(&self, array: Value, elements: &crate::heap::ArrayElements, stop: usize, separator: &[u8], out: &mut [MaybeUninit<u8>]) {
         let mut at = 0;
         for (index, value) in elements.range(0..stop).enumerate() {
             if index > 0 {
@@ -152,9 +154,18 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// Copies `bytes` into `out` at `at`, returning the offset past them.
-fn put(out: &mut [u8], at: usize, bytes: &[u8]) -> usize {
-    out[at..at + bytes.len()].copy_from_slice(bytes);
+/// Copies `bytes` into `out` at `at`, returning the offset past them; a single byte is one store.
+#[inline(always)]
+fn put(out: &mut [MaybeUninit<u8>], at: usize, bytes: &[u8]) -> usize {
+    if let [byte] = bytes {
+        out[at].write(*byte);
+        return at + 1;
+    }
+    let target = &mut out[at..at + bytes.len()];
+    // SAFETY: `target` has exactly `bytes.len()` slots, which `bytes` cannot overlap (it is a
+    // borrow of the heap or of a formatting buffer, never of `out`); `u8` and `MaybeUninit<u8>`
+    // share a layout, so the copy initializes the slots.
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), target.as_mut_ptr().cast::<u8>(), bytes.len()) };
     at + bytes.len()
 }
 

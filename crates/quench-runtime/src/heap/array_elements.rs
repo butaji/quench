@@ -967,14 +967,19 @@ impl UniqueElements {
         unsafe { self.0.values().add(index).write(value) };
     }
 
-    /// `value` at every index of `range`.
+    /// `value` at every index of `range`: one pass that counts the others it overwrites and
+    /// stores `value` over them.
     pub(crate) fn fill(&mut self, range: std::ops::Range<usize>, value: Value) {
         assert!(range.start <= range.end && range.end <= self.0.len(), "array fill out of bounds");
-        self.recount(other(value) * range.len() as u32, others(&self[range.clone()]));
-        for index in range {
-            // SAFETY: the range is within the length of this unique backing.
-            unsafe { self.0.values().add(index).write(value) };
+        let added = other(value) * range.len() as u32;
+        // SAFETY: the range is within the length of this unique backing, which owns its values.
+        let slots = unsafe { std::slice::from_raw_parts_mut(self.0.values().add(range.start), range.len()) };
+        let mut removed = 0;
+        for slot in slots {
+            removed += other(*slot);
+            *slot = value;
         }
+        self.recount(added, removed);
     }
 
     /// The values in reverse order; the count of other values is unchanged.

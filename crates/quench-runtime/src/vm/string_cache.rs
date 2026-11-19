@@ -3,6 +3,11 @@ use super::*;
 /// The parts a `StringConcat` converts without a heap list: a template of up to four
 /// substitutions and their text.
 const STRING_CONCAT_INLINE_PARTS: usize = 9;
+/// The ToString text of the immediate values a concatenation joins without a heap string.
+const TRUE_TEXT: &[u8] = b"true";
+const FALSE_TEXT: &[u8] = b"false";
+const NULL_TEXT: &[u8] = b"null";
+const UNDEFINED_TEXT: &[u8] = b"undefined";
 /// The bytes `Vm::ascii_string_concat` joins on the stack before it allocates.
 /// The most text a string of parts may hold in its known parts (regexp -3% at 256, flat at 64):
 /// past it the copy a flat concatenation makes costs more than its record saves, and a string
@@ -252,13 +257,25 @@ impl<H: Host> Vm<H> {
     /// result past the string length limit, which the general step makes or raises.
     pub(super) fn pure_string_concat_apart(&mut self, p: &ResidualProgram, count: usize,
         part: impl Fn(&Self, usize) -> Value + Copy) -> Option<Value> {
-        if let Some(text) = self.ascii_string_concat(count, part) {
+        // Each part is read once: the reads are pure, and both passes below use the values.
+        let mut values = smallvec::SmallVec::<[Value; STRING_CONCAT_INLINE_PARTS]>::with_capacity(count);
+        for index in 0..count {
+            values.push(part(self, index));
+        }
+        self.pure_values_concat(p, &values)
+    }
+
+    /// `pure_string_concat_apart` of the part values `values`, already read: the ASCII join, else
+    /// the converted join when every part converts to a string purely.
+    fn pure_values_concat(&mut self, p: &ResidualProgram, values: &[Value]) -> Option<Value> {
+        let part = |_: &Self, index: usize| values[index];
+        if let Some(text) = self.ascii_string_concat(values.len(), part) {
             return Some(self.heap.alloc_string(text));
         }
-        if !(0..count).all(|index| self.converts_to_string_purely(part(self, index))) {
+        if !values.iter().all(|&value| self.converts_to_string_purely(value)) {
             return None;
         }
-        self.converted_string_concat(p, count, part).ok()
+        self.converted_string_concat(p, values.len(), part).ok()
     }
 
     /// `string_concat` that runs no guest code: a string of parts, or `pure_string_concat_apart`.
@@ -273,10 +290,11 @@ impl<H: Host> Vm<H> {
         self.string_concat(p, usize::from(window.count), |vm, part| vm.frames[f].registers[start + part])
     }
 
-    /// `string_concat` of parts that are numbers and flat ASCII strings, short together: each
-    /// part written once into a buffer on the stack (a number formatted in place), then the
-    /// buffer copied once into the result's storage. `None` for any other part, which
-    /// `converted_string_concat` converts, or for a result past `JsString::copies_whole`.
+    /// `string_concat` of parts that are numbers, booleans, null, undefined and flat ASCII
+    /// strings, short together: each part written once into a buffer on the stack (a number
+    /// formatted in place), then the buffer copied once into the result's storage. `None` for
+    /// any other part, which `converted_string_concat` converts, or for a result past
+    /// `JsString::copies_whole`.
     #[inline(always)]
     pub(super) fn ascii_string_concat(&self, count: usize, part: impl Fn(&Self, usize) -> Value) -> Option<JsString> {
         let mut text = StackText::new();
@@ -286,6 +304,12 @@ impl<H: Host> Vm<H> {
                 text.append(itoa::Buffer::new().format(int).as_bytes());
             } else if let Some(number) = value.as_number() {
                 crate::number_to_string::write(number, &mut text);
+            } else if let Some(boolean) = value.as_bool() {
+                text.append(if boolean { TRUE_TEXT } else { FALSE_TEXT });
+            } else if value.is_null() {
+                text.append(NULL_TEXT);
+            } else if value.is_undefined() {
+                text.append(UNDEFINED_TEXT);
             } else {
                 match self.heap.flat_text(value)? {
                     crate::heap::FlatText::Record(super::wtf16::Units::Ascii(bytes)) => text.append(bytes),

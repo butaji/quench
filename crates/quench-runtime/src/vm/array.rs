@@ -514,7 +514,7 @@ impl<H: Host> Vm<H> {
             };
             super::index::mutable_array_elements(array_object.elements_mut()).fill(in_dense, value);
         }
-        if self.heap.fills_sparse_tail(array, &indices) {
+        if indices.end > dense && self.heap.fills_sparse_tail(array, &indices) {
             self.heap.fill_array_tail(array, value);
             return true;
         }

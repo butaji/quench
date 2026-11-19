@@ -421,6 +421,8 @@ impl<H: Host> Vm<H> {
             .collect::<smallvec::SmallVec<[Option<Atom>; PLAIN_COPY_INLINE_PROPERTIES]>>();
         let mut copies =
             smallvec::SmallVec::<[(Atom, Value, PlainCopyWrite); PLAIN_COPY_INLINE_PROPERTIES]>::new();
+        // The target's record is one lookup for every key of the loop.
+        let target_object = self.object_data(target);
         for (atom, slot) in slots.iter() {
             if excluded.contains(&Some(*atom)) {
                 continue;
@@ -435,8 +437,7 @@ impl<H: Host> Vm<H> {
             let key = PropertyKey::string(*atom);
             let write = match self.property_shape_slot(target_shape, key) {
                 Some(slot) => {
-                    let Some(attributes) = self.object_data(target).and_then(|object| self.slot_attributes(object, slot))
-                    else {
+                    let Some(attributes) = target_object.and_then(|object| self.slot_attributes(object, slot)) else {
                         return false;
                     };
                     // CreateDataProperty keeps a default data property's attributes; `Set` writes
