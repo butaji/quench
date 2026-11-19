@@ -3597,6 +3597,7 @@ unsafe fn delete_value_in_lane<H: Host>(cx: *mut (), base: Value, key: Value) ->
 /// in the inlined frame `row_frame` builds, so the call inlines.
 #[inline(always)]
 unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [first, second]: [Option<Value>; 2]) -> Option<Value> {
+    use crate::staged::protocol_classes::ClassStep;
     let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
     match call {
         // A built-in iterator whose chain lacks `return` closes with `undefined`.
@@ -3653,6 +3654,62 @@ unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [first, second]: 
                 return None;
             }
             Some(vm.load_template_object(frame, site))
+        }
+        // `SetFunctionNameKey` (`Vm::set_function_name_key`): the function named by a key, which runs no guest
+        // code (a string or symbol key names it; any other key names nothing, as the VM's helper does).
+        CallOut::Protocol { step: Protocol::Class(ClassStep::SetFunctionNameKey { prefix }), .. } => {
+            let (function, key) = (first?, second?);
+            vm.set_function_name_key(function, key, prefix);
+            note_allocation(vm);
+            Some(Value::UNDEFINED)
+        }
+        // `DefineComputedField` (`Vm::define_class_field` of the key's conversion): a primitive key converts
+        // without guest code, and an object key's `toString` or `valueOf` runs guest code, so it takes the
+        // general step. A proxy target's define runs its trap, and a keeping activation beside the lane
+        // holds registers that are not the frame's, so both leave to the general step too.
+        CallOut::Protocol { step: Protocol::Class(ClassStep::DefineComputedField { key: key_register }), .. } => {
+            if !vm.lane_stack.activations().is_empty() {
+                return None;
+            }
+            let (value, object) = (first?, second?);
+            if vm.proxy_parts(object).is_some() {
+                return None;
+            }
+            // SAFETY: the context's program outlives the lane run, and its registers are the running frame's.
+            let (program, source) = unsafe {
+                let context = cx.cast::<LaneContext<H>>();
+                (&*(*context).code, (*context).registers.get(key_register))
+            };
+            if vm.is_object_like(source) {
+                return None;
+            }
+            let source = vm.to_property_key(program, source).ok()?;
+            let key = if let Some(atom) = vm.string_key_atom(source) {
+                crate::vm::PropertyKey::string(atom)
+            } else if vm.heap.is_symbol(source) {
+                crate::vm::PropertyKey::symbol(source)
+            } else {
+                return None;
+            };
+            vm.define_class_field(program, object, key, value).ok()?;
+            note_allocation(vm);
+            Some(Value::UNDEFINED)
+        }
+        // `CopyDataProperties` (`Vm::copy_plain_data_properties`): a plain copy runs no guest code and cannot
+        // throw; a copy it declines leaves to the row's miss, which takes the general step. The exclusions are
+        // the running frame's registers, so a keeping activation beside the lane leaves the copy to its miss.
+        CallOut::Protocol { step: Protocol::Literal(crate::staged::protocol_literals::LiteralStep::CopyDataProperties { exclusions }), .. } => {
+            if !vm.lane_stack.activations().is_empty() {
+                return None;
+            }
+            let (target, source) = (first?, second?);
+            // SAFETY: as for `DefineComputedField`.
+            let exclusions = unsafe { (*cx.cast::<LaneContext<H>>()).registers }.get(exclusions);
+            if !vm.copy_plain_data_properties(target, source, exclusions) {
+                return None;
+            }
+            note_allocation(vm);
+            Some(Value::UNDEFINED)
         }
         // A spread onto the literal's array with no elisions before it, from a source whose
         // iteration runs no guest code: the append defines no register, so its value is unused.
