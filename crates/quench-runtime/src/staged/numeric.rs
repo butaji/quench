@@ -351,6 +351,7 @@ fn int_case<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, d
     let (offset, _) = stage.int_arithmetic(NumberArithmetic::Subtract, value, low);
     let fallback = stage.i32_constant(i32::from(count));
     let slot = stage.select(inside, offset, fallback);
+    let slot = frame.int_result(stage, slot);
     let fact = frame.int_fact();
     frame.write(stage, destination, slot, fact);
     Step::Value(slot)
@@ -361,6 +362,7 @@ fn imul<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 ) -> Step<S::Word, F::Control> {
     let Some((left, right)) = operands(stage, frame, left, right, Domain::Int32) else { return Step::Unresolved };
     let result = super::math::multiply(stage, left, right);
+    let result = frame.int_result(stage, result);
     let fact = frame.int_fact();
     frame.write(stage, destination, result, fact);
     Step::Value(result)
