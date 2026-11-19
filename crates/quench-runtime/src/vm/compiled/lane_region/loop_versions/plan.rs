@@ -201,7 +201,7 @@ impl Lowering<'_, '_> {
     }
 
     /// The int32 `operand` is, where it is a constant one.
-    pub(super) fn int32_constant(&self, operand: Operand) -> Option<i32> {
+    pub(in super::super) fn int32_constant(&self, operand: Operand) -> Option<i32> {
         let value = super::super::super::facts::constant_number(&self.program.constants, operand)?;
         (value == f64::from(value as i32)).then_some(value as i32)
     }

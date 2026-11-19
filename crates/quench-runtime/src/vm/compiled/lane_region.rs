@@ -2169,6 +2169,21 @@ impl Lowering<'_, '_> {
         false
     }
 
+    /// Whether the int32 remainder written to `register` at `pc` is read only by a sum or difference
+    /// (`Add` or `Subtract`) whose own result only its ToInt32 is read of (`truncated`), and `register`
+    /// is dead past that sum unless the sum writes it. ToInt32 reads a `-0` and a `0` alike, and a sum
+    /// with either differs from the other in the sign of a zero only, so the remainder's sign is unread.
+    pub(super) fn truncated_sum_operand(&self, pc: usize, register: Register) -> bool {
+        let (at, reader) = self.reader(pc + 1, register);
+        let Some(next) = self.unit.instructions.get(at).copied() else { return false };
+        if !crate::staged::meaning::means(next, crate::staged::meaning::Meaning::Binary) || next.returns_from_frame()
+            || next.writes_current_this() || next.result_flags() != 0 { return false; }
+        if !matches!(crate::vm::compiled::number_arithmetic(next, next.binary_operator()),
+            Some(crate::vm::operations::NumberArithmetic::Add | crate::vm::operations::NumberArithmetic::Subtract)) { return false; }
+        let reads = [next.operand_b(), next.operand_c()].iter().filter(|operand| operand.register_index() == Some(reader)).count();
+        reads > 0 && (next.result_register() == reader || self.dead_after(at, reader)) && self.truncated(at, next.result_register())
+    }
+
     /// Whether only the ToInt32 of the int32 result written to `register` at `pc` is read: through
     /// at most `TRUNCATION_CHAIN` sums or differences with an int32 constant, into a bitwise
     /// operator (`truncated`). Each sum adds less than 2^31 to an exact integer, so a chain from a
@@ -4625,7 +4640,7 @@ impl Lowering<'_, '_> {
             return Some(true);
         }
         match (arithmetic, bitwise) {
-            _ if remainder => { self.remainder(state, destination, [left, right], exit); }
+            _ if remainder => { self.remainder(state, pc, destination, [left, right], exit); }
             (Some(arithmetic), _) => { self.arithmetic(state, pc, instruction, arithmetic, exit)?; }
             (_, Some(bitwise)) => {
                 let left_int = self.operand_to_int32(state, left, exit)?;

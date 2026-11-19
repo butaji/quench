@@ -20,7 +20,7 @@ use crate::codes::{STAGED_BITWISE_NOT, STAGED_COERCIBLE, STAGED_LOOSE_EQ, STAGED
 use crate::numeric::any_double;
 use crate::places::{DEST, LEFT, Places, RIGHT, finish};
 use crate::stage::StencilStage;
-use crate::staged::{Concrete, Domain, NumberOperation, Operation, Step, step_generic, step_local, step_number, step_value};
+use crate::staged::{Concrete, Domain, NegativeZero, NumberOperation, Operation, Step, step_generic, step_local, step_number, step_value};
 use crate::vm::operations::NumberRelation;
 use crate::words::{HOLE_A, Out, S, exit_here, hole};
 
@@ -49,7 +49,8 @@ const fn value_relation_of(kind: u8) -> NumberRelation {
 #[inline(always)]
 pub(crate) fn remainder_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
     let (left, right) = (Operand::register(LEFT), Operand::register(RIGHT));
-    let remainder = |domain: Domain| NumberOperation::Remainder { destination: DEST, left, right, domain };
+    let remainder = |domain: Domain| NumberOperation::Remainder { destination: DEST, left, right, domain,
+        zero: NegativeZero::Exit, divisor_nonzero: false };
     let done = if any_double(D, A, B) {
         number(&mut frame, remainder(Domain::Float64))
     } else if frame.both_int() {
