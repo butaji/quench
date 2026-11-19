@@ -248,6 +248,9 @@ impl<H: Host> Vm<H> {
 }
 
 impl<H: Host> Vm<H> {
+    /// The walk that proves `guard`'s owner is still the holder of `atom` for `object`: each
+    /// prototype up to the owner must still lack the name, and the owner must keep its shape.
+    /// A hit runs it only when the entry's chain cell no longer holds (`method_cache_holder`).
     fn method_cache_owner(&self, object: Value, atom: Atom, guard: MethodGuard) -> Option<Value> {
         let mut owner = object;
         for depth in 0..=guard.depth {
@@ -270,6 +273,9 @@ impl<H: Host> Vm<H> {
         None
     }
 
+    /// The guard of the method `atom` of `receiver` as the walk finds it. Its `cell` is None:
+    /// making the cell marks the chain's links as prototypes, so `call_method_site_safe` makes it
+    /// where the entry is recorded.
     fn method_cache_guard(&self, receiver: Value, atom: Atom) -> Option<MethodGuard> {
         let receiver_shape = self.object_data(receiver)?.shape();
         if self.shape_is_dictionary(receiver_shape) {
@@ -295,6 +301,7 @@ impl<H: Host> Vm<H> {
                     owner_shape: data.shape(),
                     slot: slot as u16,
                     depth,
+                    cell: None,
                 });
             }
             if self.property_attributes(owner, key).is_some() {
@@ -433,6 +440,7 @@ impl<H: Host> Vm<H> {
             && let Ok(target) = self.call_target(callee)
         {
             let cache_proto = if guard.depth == 0 { this } else { proto };
+            let guard = MethodGuard { cell: self.method_chain_cell(proto, guard.depth), ..guard };
             #[cfg(feature = "profile-aggregate")]
             self.profile_method_refill(cache_site, shape, cache_proto, target);
             self.record_method_cache(
@@ -448,6 +456,14 @@ impl<H: Host> Vm<H> {
             );
         }
         self.call_value_with_target_from_frame(p, callee, this, arguments.as_slice(), None)
+    }
+
+    /// The validity cell of the links a method lookup walks past the receiver: the `depth`
+    /// prototypes from `prototype`, the receiver's own link. It holds while none of them changes
+    /// its layout or dies, which is what the walk proved; `None` where the chain has no cell, so
+    /// hits of the entry keep walking.
+    fn method_chain_cell(&mut self, prototype: Value, depth: u16) -> Option<crate::heap::ChainCell> {
+        self.chain_cell(prototype, u8::try_from(depth).ok()?)
     }
 }
 
@@ -475,14 +491,23 @@ impl<H: Host> Vm<H> {
             .and_then(|set| set.entries[..usize::from(set.len)].iter().find(|entry| serves(entry)).copied())
             .map(|entry| (entry, METHOD_CACHE_WAYS));
         let (entry, tier) = inline.or_else(megamorphic)?;
-        let owner = self.method_cache_owner(this, atom, entry.guard)?;
-        let owner_data = self.object_data(owner)?;
-        if owner_data.shape() != entry.guard.owner_shape {
-            return None;
-        }
+        let owner_data = self.method_cache_holder(this, atom, entry.guard)?;
         let callee = self.heap.property_get(owner_data, entry.guard.slot as usize)?;
         (entry.callee == callee).then_some(())?;
         Some((callee, entry.target?, tier))
+    }
+
+    /// The object holding the method `atom` that an entry of `guard` serves for `object`. While
+    /// the entry's chain cell holds, no prototype of the chain has changed layout, so the owner
+    /// is `guard.owner` as recorded and the hit reads one load. Otherwise the walk proves the
+    /// owner and its shape, as before the cell.
+    fn method_cache_holder(&self, object: Value, atom: Atom, guard: MethodGuard) -> Option<&Object> {
+        if guard.cell.is_some_and(|cell| cell.holds()) {
+            return self.object_data(guard.owner);
+        }
+        let owner = self.method_cache_owner(object, atom, guard)?;
+        let owner_data = self.object_data(owner)?;
+        (owner_data.shape() == guard.owner_shape).then_some(owner_data)
     }
 
     /// The method `atom` of `this` that method site `site` caches, loaded as `call_method_site_safe`

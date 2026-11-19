@@ -1125,6 +1125,10 @@ struct MethodGuard {
     owner_shape: u32,
     slot: u16,
     depth: u16,
+    /// The validity cell of the chain from the receiver's prototype through the owner: a hit
+    /// whose entry serves the receiver's shape and prototype reads the owner with no walk while
+    /// it holds (`Vm::method_cache_holder`). `None` where the chain has no cell.
+    cell: Option<crate::heap::ChainCell>,
 }
 struct MethodCacheSet {
     site: usize,
@@ -1917,6 +1921,7 @@ const EMPTY_METHOD_GUARD: MethodGuard = MethodGuard {
     owner_shape: u32::MAX,
     slot: 0,
     depth: 0,
+    cell: None,
 };
 const EMPTY_METHOD_CACHE: MethodCache = MethodCache {
     shape: u32::MAX,

@@ -18,7 +18,6 @@ mod proxy_set;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct SpeciesSlotProof {
     shape: u32,
-    epoch: u64,
     slot: usize,
 }
 
@@ -55,12 +54,14 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.object_data(constructor) else {
             return false;
         };
-        let (shape, epoch) = (data.shape(), crate::heap::prototype_layout_epoch());
+        // The proof is of the constructor's own non-dictionary shape alone, which fixes the
+        // slot: no prototype is read, so no prototype's change can stale it.
+        let shape = data.shape();
         let getter = match self.species_slot_proof.get() {
-            Some(proof) if proof.shape == shape && proof.epoch == epoch => {
+            Some(proof) if proof.shape == shape => {
                 self.heap.property_get(data, proof.slot)
             }
-            _ => self.prove_species_slot(constructor, shape, epoch),
+            _ => self.prove_species_slot(constructor, shape),
         };
         getter.is_some_and(|getter| {
             matches!(
@@ -79,13 +80,13 @@ impl<H: Host> Vm<H> {
     /// getter (`ShapeAttributes::slot_getter` on a non-dictionary shape).
     #[cold]
     #[inline(never)]
-    fn prove_species_slot(&self, constructor: Value, shape: u32, epoch: u64) -> Option<Value> {
+    fn prove_species_slot(&self, constructor: Value, shape: u32) -> Option<Value> {
         let key = PropertyKey::symbol(self.well_known_symbols.get(WellKnownSymbol::Species)?);
         if let Some(slot) = self.property_shape_slot(shape, key)
             && !self.shape_is_dictionary(shape)
             && self.shape_slot_attributes(shape, slot).is_some_and(ShapeAttributes::slot_getter)
         {
-            self.species_slot_proof.set(Some(SpeciesSlotProof { shape, epoch, slot }));
+            self.species_slot_proof.set(Some(SpeciesSlotProof { shape, slot }));
         }
         self.property_attributes(constructor, key)
             .and_then(|attributes| attributes.getter.filter(|_| attributes.accessor))
