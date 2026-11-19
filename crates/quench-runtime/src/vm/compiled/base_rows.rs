@@ -15,6 +15,13 @@ use quench_bjit::Stencil;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use quench_bjit::numeric::library::TYPED_KINDS;
+
+/// The heap catalog (`quench-bjit/stencils/row_catalog.rs`), mounted for `heap_code_of!`; its consts are quench-bjit's.
+#[macro_use]
+#[path = "../../../../quench-bjit/stencils/row_catalog.rs"]
+mod row_catalog;
+
 /// The stencil layout numbers (`staged/layout_offsets.rs`, shared with the stencils by `#[path]`) are the
 /// runtime's own: each is a `const` check against the runtime's `offset_of!`, `size_of` or layout const.
 /// The stencils are x86-64 only, so the checks are too.
@@ -79,6 +86,12 @@ pub(super) enum Heap {
     /// `admitted`: the store's run-level test is the region's entry (`Heap::Stores`), which holds with no call since
     /// (`base_region::proofs`), so the row tests nothing of its own.
     IcKnownSet { int: bool, admitted: bool },
+    /// `IcKnownGet` of a receiver whose entry proved its shape and flat form (`ShapeFlat`, `base_region::proofs`): the
+    /// arena slot at hole 3 (its byte offset), no compare; hole 2 is zero and unread.
+    IcKnownGetFlat,
+    /// `IcKnownSet` of a receiver whose entry proved its shape and flat form: the flat slot's byte offset follows the
+    /// atom (hole 3) where not `admitted`, else is hole 2; no shape is compared (holes as the stencil reads them).
+    IcKnownSetFlat { int: bool, admitted: bool },
     /// Leaves through exit 0 unless the object register at hole 0 is a direct object: what an access's miss
     /// runs after its site row, so the receiver is proved one on every edge out of the access.
     IcProof,
@@ -126,6 +139,8 @@ pub(super) enum Heap {
     /// The entry test of a loop-invariant receiver (`base_region::link::entry_rows`): the register at hole 0 holds a direct
     /// object of the exact shape in hole 1 (`guard::shape`), else the entry leaves with nothing written.
     Shape,
+    /// `Shape` whose object is also in the flat form (`guard::shape` at `Form::Arena`): its values are the arena run's.
+    ShapeFlat,
     /// The entry test that the run stores specialized (`base_region::link::entry_rows`, `guard::stores`): else the entry
     /// leaves with nothing written.
     Stores,
@@ -209,7 +224,7 @@ pub(super) enum Heap {
     Staged(u8),
 }
 
-/// The storage forms an add row exists for, in the order of `library::ADD_ROWS` (packed, arena, either).
+/// The storage forms an add row exists for, in the order of the catalog's add rows (packed, arena, either).
 pub(super) const FORMS: [Form; 3] = [Form::Packed, Form::Arena, Form::Either];
 
 /// A heap row: its operation and where its operands and destination live.
@@ -225,116 +240,11 @@ pub(super) struct HeapRow {
 }
 
 impl Heap {
-    /// The row's code in `quench_bjit::numeric::library`.
+    /// The row's code in `quench_bjit::numeric::library`: the catalog line of the row names its variant (`row_catalog.rs`).
     pub(super) fn code(self) -> u8 {
-        self.slot_code().or_else(|| self.element_code()).or_else(|| self.object_code()).or_else(|| self.test_code()).or_else(|| self.global_code()).or_else(|| self.staged_code()).unwrap_or_else(|| self.other_code())
-    }
-
-    /// The code of a staged row, which names its own (`library::STAGED_*`).
-    fn staged_code(self) -> Option<u8> {
         match self {
-            Heap::Staged(code) => Some(code),
-            _ => None,
-        }
-    }
-
-    /// The code of a row addressed by a frame, capture or environment slot.
-    fn slot_code(self) -> Option<u8> {
-        Some(match self {
-            Heap::Capture(_) => library::CAPTURE_ROW,
-            Heap::CaptureSet(_) => library::CAPTURE_SET_ROW,
-            Heap::EnvLocal(_) => library::ENV_ROW,
-            Heap::EnvStore(_) => library::ENV_SET_ROW,
-            Heap::EnvDefine(_) => library::ENV_DEFINE_ROW,
-            Heap::LoadLocal(_) => library::LOAD_LOCAL_ROW,
-            Heap::StoreLocal(_) => library::STORE_LOCAL_ROW,
-            Heap::LoadChecked(_) => library::LOAD_CHECKED_ROW,
-            Heap::StoreChecked(_) => library::STORE_CHECKED_ROW,
-            _ => return None,
-        })
-    }
-
-    /// The code of a row that reads or writes an array's or typed array's elements.
-    fn element_code(self) -> Option<u8> {
-        Some(match self {
-            Heap::Index => library::INDEX_ROW,
-            Heap::Store => library::STORE_ROW,
-            Heap::TypedIndex(kind) => library::TYPED_INDEX_ROW + kind,
-            Heap::TypedStore(kind) => library::TYPED_STORE_ROW + kind,
-            Heap::TypedLength => library::TYPED_LENGTH_ROW,
-            _ => return None,
-        })
-    }
-
-    /// The code of a row that reads or writes an object's fields or sites.
-    fn object_code(self) -> Option<u8> {
-        Some(match self {
-            Heap::Field => library::FIELD_ROW,
-            Heap::Site | Heap::SiteChain => library::SITE_ROW,
-            Heap::ThisSite | Heap::ThisChain => library::THIS_SITE_ROW,
-            Heap::SiteStore => library::SITE_STORE_ROW,
-            Heap::ThisStore => library::THIS_STORE_ROW,
-            Heap::IcGet => library::IC_GET_ROW,
-            Heap::IcSet { int: false } => library::IC_SET_ROW,
-            Heap::IcSet { int: true } => library::IC_SET_INT_ROW,
-            Heap::IcKnownGet => library::IC_KNOWN_GET_ROW,
-            Heap::IcKnownSet { int: false, admitted: false } => library::IC_KNOWN_SET_ROW,
-            Heap::IcKnownSet { int: true, admitted: false } => library::IC_KNOWN_SET_INT_ROW,
-            Heap::IcKnownSet { int: false, admitted: true } => library::IC_KNOWN_SET_ADMITTED_ROW,
-            Heap::IcKnownSet { int: true, admitted: true } => library::IC_KNOWN_SET_INT_ADMITTED_ROW,
-            Heap::IcProof => library::IC_PROOF_ROW,
-            Heap::This => library::THIS_ROW,
-            Heap::Held | Heap::ThisHeld => library::HELD_ROW,
-            _ => return None,
-        })
-    }
-
-    /// The code of a row that tests a value: its identity, type or prototype chain.
-    fn test_code(self) -> Option<u8> {
-        Some(match self {
-            Heap::Identity => library::IDENTITY_ROW,
-            Heap::Declared => library::DECLARED_ROW,
-            Heap::CaptureIdentity => library::CAPTURE_IDENTITY_ROW,
-            Heap::Prototype => library::PROTOTYPE_ROW,
-            Heap::Shape => library::SHAPE_ROW,
-            Heap::Stores => library::STORES_ROW,
-            Heap::TypeofIndex => library::TYPEOF_INDEX_ROW,
-            Heap::TypeofString => library::TYPEOF_STRING_ROW,
-            Heap::Instanceof => library::INSTANCEOF_ROW,
-            Heap::TypeofIs { negated: false, .. } => library::TYPEOF_IS_ROW,
-            Heap::TypeofIs { negated: true, .. } => library::TYPEOF_ISNOT_ROW,
-            Heap::Live => library::LIVE_ROW,
-            Heap::Object => library::OBJECT_ROW,
-            Heap::Key => library::KEY_ROW,
-            _ => return None,
-        })
-    }
-
-    /// The code of a row that reads or writes the realm's globals.
-    fn global_code(self) -> Option<u8> {
-        Some(match self {
-            Heap::Realm => library::REALM_ROW,
-            Heap::GlobalRead => library::GLOBAL_READ_ROW,
-            Heap::GlobalStore => library::GLOBAL_STORE_ROW,
-            Heap::LexicalRead => library::LEXICAL_READ_ROW,
-            Heap::CalleeCapture => library::CALLEE_CAPTURE_ROW,
-            Heap::LexicalWrite => library::LEXICAL_WRITE_ROW,
-            _ => return None,
-        })
-    }
-
-    /// The code of the remaining rows: arrays, constants, names and adds.
-    fn other_code(self) -> u8 {
-        match self {
-            Heap::Length => library::LENGTH_ROW,
-            Heap::EmptyObject => library::EMPTY_OBJECT_ROW,
-            Heap::EmptyArray => library::EMPTY_ARRAY_ROW,
-            Heap::Word => library::CONSTANT_ROW,
-            Heap::Append => library::APPEND_ROW,
-            Heap::ForIn => library::FOR_IN_ROW,
-            Heap::Name { form } => library::NAME_ROWS[usize::from(form == Form::Arena)],
-            Heap::Add { form, this } => library::ADD_ROWS[usize::from(this) * FORMS.len() + FORMS.iter().position(|known| *known == form).unwrap_or_default()],
-            _ => unreachable!("every other row has a code of an earlier group"),
+            Heap::Staged(code) => code,
+            _ => heap_code_of!(self),
         }
     }
 
@@ -354,7 +264,7 @@ impl Heap {
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
     /// which a register held in a pinned register as a Number does not have there.
     pub(super) fn reads_frame_word(self) -> bool {
-        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::Declared | Heap::Prototype | Heap::Shape | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
+        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::Declared | Heap::Prototype | Heap::Shape | Heap::ShapeFlat | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value
@@ -403,9 +313,9 @@ mod catalog_tests {
         let mut all = vec![
             Heap::Capture(0), Heap::Index, Heap::Store, Heap::TypedLength, Heap::Field, Heap::Site, Heap::SiteChain,
             Heap::ThisSite, Heap::ThisChain, Heap::Length, Heap::CharCodeAt, Heap::ParseInt, Heap::SiteStore, Heap::ThisStore,
-            Heap::IcGet, Heap::IcKnownGet, Heap::IcProof, Heap::CaptureSet(0), Heap::This, Heap::LoadLocal(0), Heap::EnvLocal(0),
+            Heap::IcGet, Heap::IcKnownGet, Heap::IcKnownGetFlat, Heap::IcProof, Heap::CaptureSet(0), Heap::This, Heap::LoadLocal(0), Heap::EnvLocal(0),
             Heap::EnvStore(0), Heap::EnvDefine(0), Heap::StoreLocal(0), Heap::LoadChecked(0), Heap::StoreChecked(0), Heap::Identity,
-            Heap::Declared, Heap::CaptureIdentity, Heap::Prototype, Heap::Shape, Heap::Stores, Heap::Held, Heap::ThisHeld, Heap::Realm,
+            Heap::Declared, Heap::CaptureIdentity, Heap::Prototype, Heap::Shape, Heap::ShapeFlat, Heap::Stores, Heap::Held, Heap::ThisHeld, Heap::Realm,
             Heap::Live, Heap::Object, Heap::Key, Heap::TypeofIndex, Heap::TypeofString, Heap::Instanceof, Heap::GlobalRead,
             Heap::GlobalStore, Heap::LexicalRead, Heap::LexicalWrite, Heap::Word, Heap::CalleeCapture, Heap::Append, Heap::ForIn,
         ];
@@ -416,6 +326,7 @@ mod catalog_tests {
             all.push(Heap::TypeofIs { index: 0, negated: flag });
             for admitted in [false, true] {
                 all.push(Heap::IcKnownSet { int: flag, admitted });
+                all.push(Heap::IcKnownSetFlat { int: flag, admitted });
             }
         }
         for form in FORMS {

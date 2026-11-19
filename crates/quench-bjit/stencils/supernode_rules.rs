@@ -307,7 +307,8 @@ pub fn roles(node: &Node) -> u8 {
 /// Which of (destination, first, second) a Number kind reads or writes, as a role mask.
 fn read_roles(kind: u8) -> u8 {
     match kind {
-        _ if is_compare(kind) => FIRST_ROLE | SECOND_ROLE,
+        _ if is_compare(kind) || kind == BIT_TEST => FIRST_ROLE | SECOND_ROLE,
+        NULLISH_EQ | NULLISH_NE | BOOL_TRUE | BOOL_FALSE => FIRST_ROLE,
         _ if is_copy(kind) => DESTINATION_ROLE | FIRST_ROLE,
         _ => ALL_ROLES,
     }

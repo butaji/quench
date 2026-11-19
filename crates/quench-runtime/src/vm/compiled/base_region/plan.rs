@@ -156,10 +156,15 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
     let object = dst_hole | a_hole << numeric::library::SITE_OBJECT_AT;
     Some(padded_holes(match heap {
         Heap::IcGet | Heap::IcKnownGet => { let ic = decoded.ic.unwrap_or_default(); [object, upper, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
-        Heap::IcSet { .. } | Heap::IcKnownSet { .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic & u64::from(u32::MAX), ic >> u32::BITS] }
-        // Hole 4: the shape an ungated store's slot-type proof is of (`Decoded::slot_shape`).
-        Heap::SiteStore => [base, a_hole, decoded.hole, decoded.admitted_tags(), u64::from(decoded.slot_shape.unwrap_or_default())],
-        Heap::ThisStore => [0, a_hole, decoded.hole, decoded.admitted_tags(), u64::from(decoded.slot_shape.unwrap_or_default())],
+        Heap::IcSet { .. } | Heap::IcKnownSet { admitted: false, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic & u64::from(u32::MAX), ic >> u32::BITS] }
+        // An admitted store takes no atom test, so its shape is hole 2 (`slot_store::own_flat_known`) and the offset hole 3.
+        Heap::IcKnownSet { admitted: true, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
+        // The flat rows read no shape: the offset follows the atom where the store tests it (`IcKnownSetFlat`), else leads.
+        Heap::IcKnownGetFlat => { let ic = decoded.ic.unwrap_or_default(); [object, upper, 0, ic >> u32::BITS, 0] }
+        Heap::IcKnownSetFlat { admitted: false, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic >> u32::BITS, 0] }
+        Heap::IcKnownSetFlat { admitted: true, .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, ic >> u32::BITS, 0, 0] }
+        Heap::SiteStore => [base, a_hole, decoded.hole, decoded.admitted_tags(), 0],
+        Heap::ThisStore => [0, a_hole, decoded.hole, decoded.admitted_tags(), 0],
         Heap::ThisSite | Heap::ThisChain => [dst_hole, upper, decoded.hole, 0, 0],
         Heap::Site | Heap::SiteChain => [object, upper, decoded.hole, 0, 0],
         Heap::Held => [object, folded, decoded.hole, 0, 0],
@@ -231,7 +236,7 @@ fn ic_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hol
     let Some(_) = decoded.ic.filter(|_| matches!(heap, Heap::Site | Heap::SiteStore)) else { return Ok(site) };
     let receiver = if heap == Heap::Site { a_hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
     let proof = (!decoded.completes).then(|| proof_row(receiver, pc)).transpose()?;
-    if decoded.also.is_some() || decoded.completes || !site.post.is_empty() {
+    if !decoded.takes_ic_row() {
         // No inline-cache row: the site row runs, then the proof, which holds the receiver's shape for the rows after it.
         if let Some(proof) = proof {
             site.node = None;
@@ -240,11 +245,13 @@ fn ic_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hol
         return Ok(site);
     }
     let int = decoded.slot.is_some_and(|ty| ty.is_subtype(crate::typed_ir::Type::INT32));
-    let ic = match (heap, decoded.proven) {
-        (Heap::Site, false) => Heap::IcGet,
-        (Heap::Site, true) => Heap::IcKnownGet,
-        (_, false) => Heap::IcSet { int },
-        (_, true) => Heap::IcKnownSet { int, admitted: decoded.admitted },
+    let ic = match (heap, decoded.proven, decoded.flat) {
+        (Heap::Site, false, _) => Heap::IcGet,
+        (Heap::Site, true, false) => Heap::IcKnownGet,
+        (Heap::Site, true, true) => Heap::IcKnownGetFlat,
+        (_, false, _) => Heap::IcSet { int },
+        (_, true, false) => Heap::IcKnownSet { int, admitted: decoded.admitted },
+        (_, true, true) => Heap::IcKnownSetFlat { int, admitted: decoded.admitted },
     };
     // A known get whose slot the fact store proved a Number (`Decoded::typed`, kept by `repr::keep_typed_reads`)
     // takes the row variant that delivers to its pinned double untested: its entry flag cleared.
@@ -333,21 +340,24 @@ fn number_plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): 
     let exits = polls || !matches!(kind, Kind::Jump | Kind::Move) || holds_number(dst);
     // A poll row also names where the run's backward-edge counter lives (`jump_row`).
     let counter = [std::mem::offset_of!(super::super::CallContext, head.adapter_payload) as u64, std::mem::offset_of!(super::super::JsStepDispatch, head.loop_entry) as u64];
-    let holes = padded_holes(if polls { [interrupt, counter[0], counter[1]] } else { [dst_hole, a_hole, b_hole] });
+    // A poll reads the process-wide attention byte first (hole 3), so its common case is one byte load.
+    let attention = crate::execution_interrupt::attention_address();
+    let holes = padded_holes(if polls { [interrupt, counter[0], counter[1], attention] } else { [dst_hole, a_hole, b_hole, 0] });
     Ok(Planned { node: Some(Node::Number(numeric::library::canonical(row.code()))), ..Planned::single(stencil, holes, decoded.target, exits.then_some(pc)) })
 }
 
 /// A number row partially evaluated on its immediate operand, the way the C compiler treats the same
 /// expression: a commutative operation takes its immediate second (the form a row encodes into its
 /// instruction), and an operation whose immediate is its neutral element (`x | 0`, `x + 0`) over an
-/// int32 operand into an int32 home is the move of that operand. Only where the library has the
-/// folded row: otherwise the row as decoded.
+/// int32 operand into an int32 home or a frame slot (which takes the int word) is the move of that operand. Only where
+/// the library has the folded row: otherwise the row as decoded.
 fn folded(kind: Kind, [dst, a, b]: [(Place, u64); 3]) -> ((Kind, [Place; 3]), [u64; 3]) {
     let int32 = |place: Place| matches!(place, Place::Pin(_) | Place::MemInt);
     let (a, b) = if kind.commutes() && a.0 == Place::Imm && b.0 != Place::Imm { (b, a) } else { (a, b) };
     let neutral = b.0 == Place::Imm && kind.neutral() == Some(b.1 as u32 as i32);
     let moved = (Kind::Move, [dst.0, a.0, Place::Mem]);
-    if neutral && int32(a.0) && int32(dst.0) && numeric::stencil(numeric::Row { kind: Kind::Move, dst: dst.0, a: a.0, b: Place::Mem, speculate: true }).is_ok() {
+    let home = int32(dst.0) || dst.0 == Place::Mem;
+    if neutral && int32(a.0) && home && numeric::stencil(numeric::Row { kind: Kind::Move, dst: dst.0, a: a.0, b: Place::Mem, speculate: true }).is_ok() {
         return (moved, [dst.1, a.1, 0]);
     }
     ((kind, [dst.0, a.0, b.0]), [dst.1, a.1, b.1])

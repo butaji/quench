@@ -36,7 +36,8 @@ impl Lowering<'_, '_> {
         self.builder.switch_to_block(count);
         let run = self.builder.use_var(trips);
         let word = self.raw_load(Lane::I64, regions::miss_counter(), entry, 0);
-        let total = self.raw_binary(Binary::Add, word, run);
+        // The record's word is the budget left, so the run's trips are debited from it.
+        let total = self.raw_binary(Binary::Sub, word, run);
         self.store_word(regions::miss_counter(), total, entry, 0);
         self.goto(skip, &[]);
         self.builder.switch_to_block(skip);

@@ -223,8 +223,20 @@ pub(super) fn calls_in_place(instruction: WideInstruction, helpers: LaneHelpers)
     chains(instruction) && instruction.result_flags() == 0 && call_plan::helper_address(helpers, LaneHelper::RegionCall).is_some()
 }
 
-/// Whether `instruction` is a global name store or `typeof`, or a script-top-level lexical's load or store,
-/// a call-out the VM makes in place (`LaneHelper::VmStep`) that writes at most one register.
+/// The packed words of `instruction` where its step is the helper step and a family covers its opcode
+/// (`dispatch_fast::family_helpers::covers`), with the helper table holding the packed helper: the helper
+/// row then runs the instruction as decoded here, not from its PC.
+fn packed_words(step: Step, instruction: WideInstruction, helpers: LaneHelpers) -> Option<[u64; 2]> {
+    let covered = step == Step::Helper && crate::vm::dispatch_fast::family_helpers::covers(instruction.op())
+        && call_plan::helper_address(helpers, LaneHelper::StepPacked).is_some();
+    covered.then(|| {
+        let (first, imm) = instruction.words();
+        [first, u64::from(imm)]
+    })
+}
+
+/// Whether `instruction` is a global name store or `typeof`, a call-out the VM makes in place
+/// (`LaneHelper::VmStep`) that writes at most one register.
 fn calls_out(instruction: WideInstruction) -> bool {
     let call = crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::EMPTY).and_then(|row| row.call_out());
     instruction.result_flags() == 0 && matches!(call, Some((crate::staged::CallOut::GlobalWrite { .. } | crate::staged::CallOut::GlobalTypeof { .. }
@@ -281,7 +293,8 @@ pub(super) fn decode_step(pc: u32, instruction: WideInstruction, known: Known, (
             let add = adds::of(known, instruction).filter(|add| matches!(step, Step::Fast(fast) | Step::Guard(fast) if fast == add.heap()));
             let name = names::of(known, instruction).filter(|name| matches!(step, Step::Fast(fast) | Step::Guard(fast) if fast == name.heap()));
             let result = written.next();
-            Decoded { target, a: read, b: right, base, also: written.next(), add, name, atom: add.map(|_| instruction.atom_index()), ..Decoded::step(step, result) }
+            let packed = packed_words(step, instruction, helpers);
+            Decoded { target, a: read, b: right, base, also: written.next(), add, name, atom: add.map(|_| instruction.atom_index()), packed, ..Decoded::step(step, result) }
         }
     }
 }
@@ -355,10 +368,15 @@ pub(super) fn leave(pc: u32) -> Result<Planned, String> {
 /// completed, branched or missed (nothing ran: the leave at the record), or left, where the step ran in frames it made
 /// of the lane's activations (a frame-needing step of a native callee) and the body leaves past it: the row's
 /// (status, word) exit.
-fn helper_chain(layout: &Layout, pc: u32, reloads: &[(Place, Register)], (helper, helpers): (LaneHelper, LaneHelpers)) -> Result<Planned, String> {
-    let address = call_plan::helper_address(helpers, helper).ok_or("step: no helper address")?;
+fn helper_chain(layout: &Layout, pc: u32, reloads: &[(Place, Register)], (helper, helpers): (LaneHelper, LaneHelpers), packed: Option<[u64; 2]>) -> Result<Planned, String> {
+    // A step the planner decoded runs the packed helper (`LaneHelper::StepPacked`), which takes its instruction as is.
+    let packed = packed.filter(|_| helper == LaneHelper::Step).and_then(|words| call_plan::helper_address(helpers, LaneHelper::StepPacked).map(|address| (address, words)));
+    let (address, packed) = match packed {
+        Some((address, words)) => (address, Some(words)),
+        None => (call_plan::helper_address(helpers, helper).ok_or("step: no helper address")?, None),
+    };
     let (spills, record) = (layout.spills(pc), layout.record(pc));
-    chained(call_plan::plan_step(record, address, &spills, reloads)?, spills.len(), Vec::new())
+    chained(call_plan::plan_step(record, address, packed, &spills, reloads)?, spills.len(), Vec::new())
 }
 
 /// The pinned registers a row at `pc` reloads before it continues: those live at the next
@@ -370,7 +388,7 @@ fn reloads(layout: &Layout, decoded: &Decoded, pc: u32) -> Vec<(Place, Register)
 /// The chain of a step at `pc` that `helper` makes, which also branches to the target of its instruction where
 /// it jumps.
 fn plan_helper(layout: &Layout, pc: u32, decoded: &Decoded, helper: (LaneHelper, LaneHelpers)) -> Result<Planned, String> {
-    let row = helper_chain(layout, pc, &reloads(layout, decoded, pc), helper)?;
+    let row = helper_chain(layout, pc, &reloads(layout, decoded, pc), helper, decoded.packed)?;
     match decoded.target {
         Some(target) => branching(row, layout, (pc, target)),
         None => Ok(row),
@@ -402,7 +420,7 @@ fn completion(layout: &Layout, pc: u32, web: Register) -> Result<Vec<Planned>, S
 /// after it and no registers are reloaded; a helper that did not raise (it ran beside a native
 /// callee's frames, where it makes nothing) falls to the leave at the record, as every exit does.
 fn plan_throw(layout: &Layout, pc: u32, helpers: LaneHelpers) -> Result<Planned, String> {
-    let mut row = helper_chain(layout, pc, &[], (LaneHelper::Step, helpers))?;
+    let mut row = helper_chain(layout, pc, &[], (LaneHelper::Step, helpers), None)?;
     row.post.push(Planned { exits: vec![Exit::At(layout.record(pc))], ..Planned::single(call::stencil(CallRow::Here)?, [0; HOLES], None, None) });
     Ok(row)
 }
@@ -489,8 +507,9 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     let helper = if shape.form == CallForm::Plain { layout.ending.call_helper() } else { shape.form.helper() };
     let helper = call_plan::helper_address(helpers, helper).ok_or("call: no helper address")?;
     let (spills, reloads) = (layout.spills(pc), if shape.returning { Vec::new() } else { layout.spills(pc + 1) });
-    let plan = CallPlan { shape, direct: layout.callee(shape.call_pc), helper, spills: &spills, reloads: &reloads, builtin: layout.builtin(shape.call_pc) };
-    let CallChain { parts, record, choice } = call_plan::plan_call(&plan)?;
+    let proven_args = if layout.inlined(pc) { 0 } else { layout.proven_args.get(shape.call_pc as usize).copied().unwrap_or(0) };
+    let plan = CallPlan { shape, direct: layout.callees(shape.call_pc), helper, spills: &spills, reloads: &reloads, proven_args };
+    let CallChain { parts, records: record, choice } = call_plan::plan_call(&plan)?;
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     #[cfg(test)]
     if choice == Choice::Direct {

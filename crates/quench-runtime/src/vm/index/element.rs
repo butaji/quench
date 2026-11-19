@@ -4,6 +4,14 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    /// The data element an array holds at `index` (present, not a hole), which a read takes with no
+    /// guest code and no allocation. Accessor indices are stored as holes, so a present dense element is
+    /// a data property. `None` leaves the read to the general path.
+    #[inline(always)]
+    pub(in crate::vm) fn dense_element(&self, object: Value, index: usize) -> Option<Value> {
+        self.heap.array(object)?.elements().get(index).filter(|value| !value.is_deleted())
+    }
+
     /// `get_index` of `object` at the array index `index` (the key `key`): the value or error
     /// of the read where the element storage, a Proxy, a typed array, a string or an accessor
     /// index decides it; `None` leaves the read to the named-key walk.
@@ -15,14 +23,7 @@ impl<H: Host> Vm<H> {
         key: Value,
         index: usize,
     ) -> Option<Result<Value, JsError>> {
-        // Accessor indices are stored as holes, so a present dense element is a data property.
-        if let Some(array_object) = self.heap.array(object)
-            && let Some(value) = array_object
-                .elements()
-                .get(index)
-                
-                .filter(|value| !value.is_deleted())
-        {
+        if let Some(value) = self.dense_element(object, index) {
             #[cfg(feature = "profile-aggregate")]
             self.profile.index_get(ARRAY_INDEX_GET_DENSE);
             return Some(Ok(value));

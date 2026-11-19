@@ -542,9 +542,9 @@ complexity crates/quench-runtime/src/heap.rs::Heap::collect_with_object_roots 67
 complexity crates/quench-runtime/src/heap.rs::Heap::mark_value 26
 complexity crates/quench-runtime/src/heap.rs::Heap::sweep_serial 19
 complexity crates/quench-runtime/src/heap/access.rs::Heap::move_collection_iterators 11
-complexity crates/quench-runtime/src/heap/cell.rs::Cell::profile_variant_name 40
-complexity crates/quench-runtime/src/heap/cell.rs::EnvironmentSlots::iteration_copy 14
-complexity crates/quench-runtime/src/heap/cell.rs::Object::encode_other_proto 11
+complexity crates/quench-runtime/src/heap/cell/cell_variants.rs::Cell::profile_variant_name 40
+complexity crates/quench-runtime/src/heap/cell/environment_slots.rs::EnvironmentSlots::iteration_copy 14
+complexity crates/quench-runtime/src/heap/cell/object_layout.rs::Object::encode_other_proto 11
 complexity crates/quench-runtime/src/heap/cell/snapshot.rs::Cell::read_snapshot 28
 complexity crates/quench-runtime/src/heap/cell/snapshot.rs::Cell::write_snapshot 32
 complexity crates/quench-runtime/src/heap/environment_trace.rs::Heap::trace_environment_edge 35
@@ -1345,7 +1345,7 @@ file-lines crates/quench-runtime/src/compile/rewrite.rs 1668
 file-lines crates/quench-runtime/src/heap.rs 4447
 file-lines crates/quench-runtime/src/heap/access.rs 836
 file-lines crates/quench-runtime/src/heap/array_elements.rs 664
-file-lines crates/quench-runtime/src/heap/cell.rs 3943
+file-lines crates/quench-runtime/src/heap/cell.rs 1829
 file-lines crates/quench-runtime/src/heap/cell/snapshot.rs 1128
 file-lines crates/quench-runtime/src/heap/environment_trace.rs 543
 file-lines crates/quench-runtime/src/heap/memory_profile.rs 736
@@ -2567,8 +2567,8 @@ function-lines crates/quench-runtime/src/heap/access.rs::Heap::move_collection_i
 function-lines crates/quench-runtime/src/heap/access.rs::Heap::object_and_arena_mut 50
 function-lines crates/quench-runtime/src/heap/array_elements/tests.rs::every_write_keeps_the_others_count_exact 46
 function-lines crates/quench-runtime/src/heap/array_elements/tests.rs::native_layout_matches_header_and_dense_backing 61
-function-lines crates/quench-runtime/src/heap/cell.rs::Cell::profile_variant_name 46
-function-lines crates/quench-runtime/src/heap/cell.rs::EnvironmentSlots::iteration_copy 86
+function-lines crates/quench-runtime/src/heap/cell/cell_variants.rs::Cell::profile_variant_name 46
+function-lines crates/quench-runtime/src/heap/cell/environment_slots.rs::EnvironmentSlots::iteration_copy 86
 function-lines crates/quench-runtime/src/heap/cell.rs::Native::is_math_function 43
 function-lines crates/quench-runtime/src/heap/cell/snapshot.rs::Cell::read_snapshot 116
 function-lines crates/quench-runtime/src/heap/cell/snapshot.rs::Cell::write_snapshot 194
@@ -4658,7 +4658,7 @@ magic crates/quench-runtime/src/heap.rs::Heap::marked 2
 magic crates/quench-runtime/src/heap.rs::Heap::marked_words 2
 magic crates/quench-runtime/src/heap.rs::Heap::new 5
 magic crates/quench-runtime/src/heap.rs::Heap::sweep_serial 2
-magic crates/quench-runtime/src/heap/cell.rs::EnvironmentSlots::sparse_position 1
+magic crates/quench-runtime/src/heap/cell/environment_slots.rs::EnvironmentSlots::sparse_position 1
 magic crates/quench-runtime/src/heap/cell/snapshot.rs::read_call_site 1
 magic crates/quench-runtime/src/heap/cell/snapshot.rs::read_stack_data 1
 magic crates/quench-runtime/src/heap/cell/snapshot.rs::write_call_site 1

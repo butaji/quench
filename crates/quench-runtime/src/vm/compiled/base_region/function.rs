@@ -73,6 +73,10 @@ pub(in crate::vm::compiled) struct Body {
     /// Whether its inline-cache rows hold shape ids, which a shape compaction renumbers
     /// (`LaneMethod::names_shapes`).
     pub(in crate::vm::compiled) names_shapes: bool,
+    /// The parameter registers whose Number guards its proven-arguments entry skips (`RowEntries::numbers`).
+    pub(in crate::vm::compiled) number_guards: u64,
+    /// Whether the activation reads its `this` (`RowEntries::uses_this`), so a direct call writes the receiver for it.
+    pub(in crate::vm::compiled) uses_this: bool,
 }
 
 /// What a stitch decides its call sites by: the callees they recorded and the stitch's budget, the
@@ -99,32 +103,6 @@ struct Sites<'a> {
 pub(super) fn skipped() -> Planned {
     static EMPTY: Stencil = Stencil { code: Vec::new(), relocs: Vec::new(), imm32: Vec::new(), next_jump: None, tail_len: 0, raw_len: 0, hot_len: 0 };
     Planned::single(&EMPTY, [0; HOLES], None, None)
-}
-
-/// Whether loop regions keep their call rows: always in a build; a test chooses (`with_region_call_rows`),
-/// as the protocol tests (a callee's throw, a callee changing what the entry recorded) do.
-#[cfg(not(test))]
-fn region_call_rows() -> bool {
-    true
-}
-
-#[cfg(test)]
-fn region_call_rows() -> bool {
-    REGION_CALL_ROWS.with(std::cell::Cell::get)
-}
-
-#[cfg(test)]
-thread_local! {
-    static REGION_CALL_ROWS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Runs `body` with the calling thread's loop regions keeping their call rows.
-#[cfg(test)]
-pub(in crate::vm) fn with_region_call_rows<R>(body: impl FnOnce() -> R) -> R {
-    let previous = REGION_CALL_ROWS.with(|rows| rows.replace(true));
-    let result = body();
-    REGION_CALL_ROWS.with(|rows| rows.set(previous));
-    result
 }
 
 /// What a body is built for: its function and registers, the rows whose int32 speculation failed
@@ -161,10 +139,13 @@ pub(in crate::vm::compiled) struct ClassProto {
 
 /// A loop-invariant receiver and the exact shape its field accesses saw at the region's entry: the entry checks the shape
 /// once (`Heap::Shape`), and every access of the register the proofs carry takes its known-shape row (`proofs::prove`).
+/// `flat`: every access saw the shape in flat form too, so the entry checks the form (`Heap::ShapeFlat`) and the accesses
+/// take the flat rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::vm::compiled) struct ShapeProto {
     pub(in crate::vm::compiled) register: crate::bytecode::Register,
     pub(in crate::vm::compiled) shape: u32,
+    pub(in crate::vm::compiled) flat: bool,
 }
 
 /// The body of the function `spec` names that `region` spans, over the callees its call sites
@@ -270,7 +251,9 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let shaped: Vec<Register> = prototypes.iter().map(|proto| proto.register).collect();
     // The entry seeds the direct objects it checks: the declared ones, and each shape-checked receiver (`Heap::Shape`).
     let objects: Vec<Register> = super::declared::exact_objects(function, &prototypes).into_iter().chain(shapes.iter().map(|proto| proto.register)).collect();
-    proofs::prove(&span, &mut decoded, &reached, &objects, &shaped);
+    let loops: Vec<Register> = shapes.iter().map(|proto| proto.register).collect();
+    let flat: Vec<Register> = shapes.iter().filter(|proto| proto.flat).map(|proto| proto.register).collect();
+    proofs::prove(&span, &mut decoded, &reached, &objects, &shaped, &loops, &flat);
     // The run's stores word is checked at the entry where a store is admitted on it (`Heap::Stores`); a store that re-reads
     // the word itself (`Decoded::recheck`) needs no entry test, and the stores after it are admitted by that test.
     let stores = decoded.iter().any(|row| row.admitted && !row.recheck);
@@ -290,10 +273,15 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let mut identities: Vec<(u16, u64)> = sites.callees.captured_identities().collect();
     identities.sort_unstable();
     identities.dedup();
-    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, guards, numbers, prototypes, shapes, stores, identities };
+    // The entry guards hold the pinned int32 and double webs live at the header (`entry_rows`, which every entry runs), so
+    // the argument proof starts from them as well as from the declared Numbers.
+    let (pinned_ints, pinned_doubles) = super::call_args::entry_pins(&homes, &webs, &span);
+    let seeded: Vec<Register> = numbers.iter().copied().chain(pinned_doubles).collect();
+    let proven_args = super::call_args::proven_arguments(function, &spec.known.program.constants, &seeded, &pinned_ints).unwrap_or_default();
+    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities };
     let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
-    let (code, resumes) = link(&layout, &planned)?;
+    let (code, resumes, number_guards) = link(&layout, &planned)?;
     residuals::report_rows(&layout, region.header, &decoded, &planned, code.len());
     let exits = decoded.iter().enumerate().filter(|(k, row)| reached.contains(*k) && leaves(&layout, row)).count();
     let loops = decoded.iter().enumerate().any(|(k, row)| row.target.is_some_and(|target| target <= k as u32));
@@ -307,5 +295,6 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let names_shapes = decoded.iter().any(|row| row.ic.is_some());
     Ok(Body { code, covered, exits, loops, records, frames: stitched.frames, stable: distinct(stitched.facts.into_iter().chain(held_stores(spec.known, region)).chain(sites.callees.held_facts())), atoms, holders,
         instanceofs: held_instanceofs(&decoded), constructors: held_constructors(&decoded), bare,
-        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes, scratch, names_shapes })
+        layouts: held_layouts(&decoded), slot_types: held_slot_types(&decoded), resumes, scratch, names_shapes, number_guards,
+        uses_this: crate::bytecode::activation_reads_this(spec.known.program, function) })
 }

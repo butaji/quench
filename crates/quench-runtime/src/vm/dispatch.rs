@@ -768,12 +768,8 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::GetIndex => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        return self.get_index_miss(p, f, i, pc, allow_inline_calls);
-                    }
-                    RowRun::Stop(stop) => return stop,
+                if let Some(result) = self.step_index_get(p, f, i, *pc, allow_inline_calls)? {
+                    return Ok(result);
                 }
             }
             Op::CheckPrivate => {
@@ -1375,265 +1371,22 @@ impl<H: Host> Vm<H> {
         Ok(StepResult::Continue)
     }
 
-    /// Runs `operation`, decoded from `i` at resume PC `pc`, as its staged row on the running frame
-    /// `f` (`InterpreterFrame::step_row`). A taken jump sets `pc`, and a back-edge jump publishes its
-    /// PC and checks for a due collection.
-    #[inline(always)]
-    fn run_row(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize,
-        operation: crate::staged::Operation<u64, ()>) -> RowRun {
-        use crate::staged::{Edge, Operation};
-        if !self.row_admitted(p, f, operation) {
-            return RowRun::Declined;
-        }
-        let run = InterpreterFrame::step_row(self as *mut Self, p, f, *pc, i, operation);
-        if matches!(run, RowRun::Done(Edge::Target)) {
-            *pc = i.jump_target() as usize;
-            if matches!(operation, Operation::Jump) {
-                self.frames[f].pc = *pc;
-                self.frames[f].pc_is_resume = true;
-                self.maybe_collect(p);
-            }
-        }
-        run
-    }
-
-    /// The staged row `i` decodes to under `context`: a general row, a name load (under no context:
-    /// its proof is the frame's), or the lane's suspension and string-case rows.
-    #[inline(always)]
-    pub(super) fn decode_row(i: WideInstruction, context: crate::staged::DecodeContext<'_>) -> Option<crate::staged::Operation<u64, ()>> {
-        crate::staged::Operation::<u64, ()>::decode(i, context)
-            .or_else(|| crate::staged::Operation::<u64, ()>::decode_load_name(i, ()))
-            .or_else(|| crate::staged::Operation::<u64, ()>::decode_lane(i))
-    }
-
-    /// Whether the staged row `operation` may run on frame `f`: the checked local rows need the
-    /// frame's slots to be its own (`Function::has_plain_locals`); every other row is admitted.
-    #[inline(always)]
-    pub(super) fn row_admitted(&self, p: &ResidualProgram, f: usize, operation: crate::staged::Operation<u64, ()>) -> bool {
-        match operation {
-            crate::staged::Operation::LoadLocalChecked { .. } | crate::staged::Operation::StoreLocalChecked { .. } => {
-                let function = self.frames[f].function;
-                p.function(function as usize).has_plain_locals(function == super::ROOT_FUNCTION_ID)
-            }
-            _ => true,
-        }
-    }
-
-    /// `i` decoded under `context` and run as its staged row (`run_row`). The fast prelude already
-    /// decoded this instruction and tried its row where it declined (`pending_row`): the arm runs its
-    /// miss path without decoding or trying the row again.
-    #[inline(always)]
-    fn step_row_of(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize,
-        context: crate::staged::DecodeContext<'_>) -> RowRun {
-        if self.pending_row.take().is_some() {
-            return RowRun::Declined;
-        }
-        match Self::decode_row(i, context) {
-            Some(operation) => self.run_row(p, f, i, pc, operation),
-            None => RowRun::Declined,
-        }
-    }
-
-    #[inline(never)]
-    fn load_const_miss(&mut self, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
-        debug_assert_eq!(self.frames[f].program, self.active_program);
-        let value = self.active_constant(i.constant_index()).ok_or_else(|| {
-            JsError::validation("constant index is outside program".into())
-        })?;
-        self.write(f, i.result_register(), value);
-        Ok(StepResult::Continue)
-    }
-
-    #[inline(never)]
-    fn binary_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, _pc: &mut usize) -> Result<StepResult, JsError> {
-        let operator = i.binary_operator();
-        let left_operand = i.operand_b();
-        let right_operand = i.operand_c();
-        self.profile
-            .binary(operator as usize, left_operand.0, right_operand.0);
-        let left = self.resolve_operand(p, f, left_operand)?;
-        let right = self.resolve_operand(p, f, right_operand)?;
-        #[cfg(feature = "profile-aggregate")]
-        {
-            let integer = self.numeric_integer_binary(operator, left, right).is_some();
-            self.profile.regional_binary(
-                self.frames[f].program.raw(),
-                self.frames[f].function,
-                (*pc - 1) as u32,
-                integer,
-            );
-            if !crate::staged::binary(i.op()) {
-                self.profile.numeric_binary_path(
-                    operator as usize,
-                    integer,
-                    left.as_int().is_some() && right.as_int().is_some(),
-                );
-            }
-        }
-        let v = match self.number_binary(operator, left, right) {
-            Some(value) => value,
-            None => self.binary(p, operator, left, right)?,
-        };
-        if i.returns_from_frame() {
-            return Ok(StepResult::Return(v));
-        }
-        if let Some(local) = i.numeric_local_target() {
-            self.frames[f].locals[local as usize] = v;
-            self.profile
-                .virtual_opcode(self.frames[f].program.raw(), crate::staged::STORE_LOCAL_PLAIN_ROW as usize);
-        } else {
-            self.write(f, i.result_register(), v);
-        }
-        Ok(StepResult::Continue)
-    }
-
-    #[inline(never)]
-    fn inc_dec_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
-        let input = self.read(f, i.register_b());
-        let is_decrement = i.boolean_flag().expect("validated boolean immediate");
-        // ToNumeric, then Number::add or BigInt::add of one (ECMA-262 13.4).
-        let value = match number_increment(input, is_decrement) {
-            Some(value) => value,
-            None => {
-                let numeric = self.to_numeric(p, input)?;
-                match number_increment(numeric, is_decrement) {
-                    Some(value) => value,
-                    None => self.numeric_update(p, numeric, is_decrement)?,
-                }
-            }
-        };
-        self.write(f, i.result_register(), value);
-        Ok(StepResult::Continue)
-    }
-
-    #[inline(never)]
-    fn to_numeric_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
-        let value = self.to_numeric(p, self.read(f, i.register_b()))?;
-        self.write(f, i.result_register(), value);
-        Ok(StepResult::Continue)
-    }
-
-    #[inline(never)]
-    fn unary_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
-        let v = self.unary(p, i.unary_operator(), self.read(f, i.register_b()))?;
-        if i.returns_from_frame() {
-            return Ok(StepResult::Return(v));
-        }
-        self.write(f, i.result_register(), v);
-        Ok(StepResult::Continue)
-    }
-
-    #[inline(never)]
-    fn jump_binary_false_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize) -> Result<StepResult, JsError> {
-        let operator = i.binary_operator_field();
-        let left_operand = i.operand_b();
-        let right_operand = i.operand_c();
-        self.profile
-            .binary(operator as usize, left_operand.0, right_operand.0);
-        let left = self.resolve_operand(p, f, left_operand)?;
-        let right = self.resolve_operand(p, f, right_operand)?;
-        if !self.binary_truthy(p, operator, left, right)? {
-            *pc = i.jump_target() as usize;
-        }
-        Ok(StepResult::Continue)
-    }
-
-    #[inline(never)]
-    fn get_field_step_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool) -> Result<StepResult, JsError> {
-        let lookup = i.field_lookup().ok_or_else(|| {
-            JsError::validation("invalid nested field lookup encoding".into())
-        })?;
-        let v = match lookup {
-            crate::bytecode::FieldLookup::Site(site) => self.resolve_field(p, f, site)?,
-            crate::bytecode::FieldLookup::Atom {
-                atom,
-                base,
-                cache_site,
-            } => {
-                let base = self.resolve_field_base(p, f, base)?;
-                // A read fused with its frame's return pushes the getter as a call
-                // whose completion returns from the frame (`PendingGeneralCall::returns`);
-                // a getter is no tail call, so a strict frame pushes it too.
-                if allow_inline_calls
-                    && !i.writes_current_this()
-                    && let Some(getter) =
-                        self.cached_field_getter(base, atom, self.field_cache_index(cache_site))
-                    && let Some(result) =
-                        self.try_inline_getter(p, f, *pc, getter, base, i.result_register())
-                {
-                    return result;
-                }
-                // A private field reads straight from the object's private elements;
-                // methods, accessors and a missing brand take the ordinary [[Get]].
-                match self.is_private_name(atom).then(|| self.private_field_value(p, base, atom)).flatten() {
-                    Some(value) => value,
-                    None => self.get_field_cached(p, base, atom, cache_site)?,
-                }
-            }
-        };
-        if i.writes_current_this() {
-            let crate::bytecode::FieldLookup::Site(site) = lookup else {
-                unreachable!("field sink is only attached to nested field lookup")
-            };
-            let sink = p.field_sites[site].sink.expect("fused field sink");
-            self.with_field_source(f, site, crate::bytecode::FieldPart::Sink, |vm| vm.set_field_cached(
-                p, vm.frames[f].this, sink.0, v, sink.1,
-                p.function(vm.frames[f].function as usize).strict,
-            ))?;
-        }
-        if i.returns_from_frame() {
-            return Ok(StepResult::Return(v));
-        }
-        self.write(f, i.result_register(), v);
-        Ok(StepResult::Continue)
-    }
-
-    #[inline(never)]
-    fn get_index_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool) -> Result<StepResult, JsError> {
+    /// `GetIndex` of the record `i` at `pc` in frame `f`: the element written to its result register, or
+    /// `Some` where an inlined getter answered the read with the call's own result.
+    fn step_index_get(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize, allow_inline_calls: bool) -> Result<Option<StepResult>, JsError> {
         #[cfg(feature = "profile-aggregate")]
         self.profile.index_dispatch(false, false);
         let base = self.resolve_operand(p, f, i.operand_b())?;
         let key = self.resolve_operand(p, f, i.operand_c())?;
         if allow_inline_calls
             && let Some(getter) = self.proved_symbol_getter(base, key)
-            && let Some(result) =
-                self.try_inline_getter(p, f, *pc, getter, base, i.result_register())
+            && let Some(result) = self.try_inline_getter(p, f, pc, getter, base, i.result_register())
         {
-            return result;
+            return result.map(Some);
         }
         let v = self.get_index(p, base, key)?;
         self.write(f, i.result_register(), v);
-        Ok(StepResult::Continue)
-    }
-
-    #[inline(never)]
-    fn set_field_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
-        let object = self.read(f, i.register_b());
-        let value = self.read(f, i.register_a());
-        self.set_field_cached(
-            p,
-            object,
-            i.atom_index(),
-            value,
-            i.cache_site_index(),
-            i.op().field_store().is_some_and(|store| store.strict),
-        )?;
-        Ok(StepResult::Continue)
-    }
-
-    #[inline(never)]
-    fn set_index_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
-        #[cfg(feature = "profile-aggregate")]
-        self.profile.index_dispatch(true, false);
-        self.set_index_mode(
-            p,
-            self.read(f, i.register_b()),
-            self.read(f, i.register_c()),
-            self.read(f, i.register_a()),
-            p.function(self.frames[f].function as usize).strict
-                || i.boolean_flag().expect("validated boolean immediate"),
-        )?;
-        Ok(StepResult::Continue)
+        Ok(None)
     }
 
     /// An opcode with no arm of its own in `step`: a row the catalog stages among the names and

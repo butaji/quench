@@ -223,7 +223,22 @@ pub(in crate::vm) unsafe extern "C" fn body_general_step<H: Host>(vm: u64, resid
     status
 }
 
-unsafe fn body_general_step_record<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
+/// `lane_body_step` for a row the planner packed (`LaneHelper::StepPacked`, `CallRow::HelperPacked`): its family
+/// runs the instruction the planner decoded, `first` and `imm` (`family_helpers::direct`), where it can; else the
+/// general step, which decodes the record at `call_pc` as `lane_body_step` does.
+///
+/// # Safety
+/// As `lane_body_step`, and `first` and `imm` are the packed words of the record at `call_pc`.
+pub(in crate::vm) unsafe extern "C" fn lane_body_step_packed<H: Host>(vm: u64, residual: u64, context: u64, call_pc: u64, first: u64, imm: u64) -> u64 {
+    let cx = context as usize as *mut LaneContext<H>;
+    // SAFETY: the caller's contract.
+    if let Some(status) = unsafe { family_helpers::direct::<H>(cx, first, imm) } {
+        return status;
+    }
+    unsafe { lane_body_step::<H>(vm, residual, context, call_pc) }
+}
+
+unsafe fn lane_body_step_record<H: Host>(_vm: u64, _residual: u64, context: u64, call_pc: u64) -> u64 {
     let cx = context as usize as *mut LaneContext<H>;
     native_frames::in_innermost_frame(cx, || unsafe { body_general_step_in(cx, call_pc) })
 }

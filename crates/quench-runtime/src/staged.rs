@@ -96,6 +96,8 @@ pub(crate) use element_frame::ElementFrame;
 pub(crate) mod entry;
 pub(crate) mod environment;
 pub(crate) mod ic;
+pub(crate) mod ic_flat;
+pub(crate) mod ic_read;
 pub(crate) mod object;
 mod narrow;
 pub(crate) mod store;
@@ -182,6 +184,9 @@ pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, bound_this, jump
 
 mod operation;
 pub(crate) use operation::Operation;
+
+mod binary_class;
+pub(crate) use binary_class::BinaryClass;
 
 mod edge;
 pub(crate) use edge::Edge;

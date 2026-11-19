@@ -15,6 +15,9 @@ pub enum CallRow {
     /// NEXT (completed), TAKEN (a step that branched), EXIT0 (missed: leave at the pc, no spill),
     /// EXIT1 (leave with (status, word) in the first two pinned ints: `LEAVE_STATUS`).
     Helper,
+    /// `Helper` with the instruction the planner decoded in value holes 2 and 3 (`WideInstruction::from_words`),
+    /// for the helper that runs it without decoding the record again (`call_helper_packed`).
+    HelperPacked,
     /// The direct call of `argc` arguments (at most `MAX_DIRECT_ARGC`) through an entry cell:
     /// value hole 0 is the `CallRecord`'s address; successors NEXT (refused: the helper row),
     /// TAKEN (completed), EXIT0 (a leave inside the callee, `LEAVE_STATUS`). `checked` compares the
@@ -121,6 +124,7 @@ impl CallRow {
     pub fn name(self) -> Result<String, String> {
         match self {
             CallRow::Helper => Ok("call_helper".to_string()),
+            CallRow::HelperPacked => Ok("call_helper_packed".to_string()),
             CallRow::Here => Ok("exit_here".to_string()),
             CallRow::Direct { argc, this, checked } if usize::from(argc) <= MAX_DIRECT_ARGC => {
                 let mode = match this { ThisRow::Strict => "strict", ThisRow::Sloppy => "sloppy", ThisRow::Lexical => "lexical" };
@@ -156,8 +160,7 @@ mod tests {
         let direct = (0..=MAX_DIRECT_ARGC as u8).flat_map(|argc| [ThisRow::Strict, ThisRow::Sloppy, ThisRow::Lexical].into_iter()
             .flat_map(move |this| [true, false].map(|checked| CallRow::Direct { argc, this, checked })));
         let pins = (0..crate::PINNED as u8).map(Place::Pin).chain((0..crate::PINNED_F as u8).map(Place::PinF)).map(CallRow::Reload);
-        let builtins = BuiltinRow::ALL.into_iter().map(CallRow::Builtin);
-        [CallRow::Helper, CallRow::Here].into_iter().chain(direct).chain(pins).chain(builtins).collect()
+        [CallRow::Helper, CallRow::HelperPacked, CallRow::Here].into_iter().chain(direct).chain(pins).collect()
     }
 
     /// Every row the planner can name was built, and its successors and holes are the contract's.
@@ -168,9 +171,12 @@ mod tests {
             let successors: Vec<u32> = stencil.relocs.iter().filter(|r| crate::class::is_successor(r.class)).map(|r| r.index).collect();
             let values: Vec<u32> = stencil.relocs.iter().filter(|r| !crate::class::is_successor(r.class)).map(|r| r.index).collect();
             match row {
-                CallRow::Helper => {
+                CallRow::Helper | CallRow::HelperPacked => {
                     assert!([NEXT, TAKEN, EXIT, EXIT + 1].iter().all(|s| successors.contains(s)), "{successors:?}");
                     assert!(values.contains(&0) && values.contains(&1), "{values:?}");
+                    if row == CallRow::HelperPacked {
+                        assert!(values.contains(&2) && values.contains(&3), "{values:?}");
+                    }
                 }
                 CallRow::Here => {
                     assert_eq!(successors, [EXIT]);

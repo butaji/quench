@@ -107,6 +107,16 @@ impl Point {
         ranges::exact(&ranges::lookup(&self.types, constants), instruction).is_some_and(|range| range.fits_int32())
     }
 
+    /// Whether `register` holds a Number at this point on every path into it (`Type::NUMBER`).
+    pub(in crate::vm::compiled) fn holds_number(&self, register: Register) -> bool {
+        self.types.get(usize::from(register)).is_some_and(|ty| ty.is_subtype(Type::NUMBER))
+    }
+
+    /// Whether `register` holds an int32 at this point on every path into it (`Type::INT32`).
+    pub(in crate::vm::compiled) fn holds_int32(&self, register: Register) -> bool {
+        self.types.get(usize::from(register)).is_some_and(|ty| ty.is_subtype(Type::INT32))
+    }
+
     /// The range of the result of the arithmetic of `instruction` where it leaves int32 but is
     /// an integer Number of `IntRange::WORD` (`ranges::index_range`).
     pub(in crate::vm::compiled) fn index_range(&self, constants: &[Constant], instruction: WideInstruction, signless: bool) -> Option<IntRange> {

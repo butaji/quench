@@ -31,6 +31,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 mod adds;
+mod call_args;
 mod names;
 mod call_plan;
 mod sites;
@@ -66,7 +67,7 @@ use decode::*;
 use entry_facts::*;
 use globals::*;
 use link::*;
-pub(in crate::vm::compiled) use link::rows_entry_offset;
+pub(in crate::vm::compiled) use link::{row_entries, rows_entry_offset};
 use plan::*;
 use repr::*;
 pub(in crate::vm) use resume::ResumeTable;

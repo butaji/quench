@@ -13,6 +13,9 @@
 mod row_catalog;
 pub use row_catalog::*;
 
+/// The catalog's codes: each row's const, and the heap tables (`row_catalog.rs`).
+catalog!(row_catalog());
+
 
 /// The pinned registers the row ABI fixes (`rows.rs`): the int32 pins are r14, r15, rdi and rsi (x22..x25 on
 /// AArch64), the double pins xmm0..7 (d0..d7). These two counts are the only places codes the ABI gives; every
@@ -85,11 +88,8 @@ const fn non_native_kinds() -> [u8; non_native_count()] {
     }
     kinds
 }
-/// Every naming row's code.
-pub const NAME_ROWS: [u8; 2] = [NAME_EITHER_ROW, NAME_ARENA_ROW];
-/// Every add row's code.
-pub const ADD_ROWS: [u8; 6] = [ADD_PACKED_ROW, ADD_ARENA_ROW, ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW];
-
+/// Bits below the function register's frame offset in a naming row's hole 2, which carries the slot beneath it.
+pub const NAME_FUNCTION_AT: u32 = ADD_SLOT_BITS;
 /// Bits below the after-shape in an add row's hole 0, which carries the before-shape beneath it.
 pub const ADD_AFTER_AT: u32 = WORD_HALF;
 /// An add row's hole 2: the slot in its low `ADD_SLOT_BITS`, the prototype link a chained add proves

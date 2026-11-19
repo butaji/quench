@@ -29,6 +29,11 @@ pub(crate) enum ConstructArguments {
     Array(Register),
 }
 
+/// The width of an operand field in the two-word form of a `WideInstruction` (`words`): the opcode and
+/// the three operands each take one field of the first word.
+const WORD_FIELD_BITS: u32 = u16::BITS;
+const WORD_FIELD_MASK: u64 = u16::MAX as u64;
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct WideInstruction {
     op: Op,
@@ -98,7 +103,14 @@ impl WideInstruction {
     /// Every field of the instruction as two words, equal exactly where the instructions are
     /// (`lane_facts::plan_key`).
     #[inline] pub(crate) const fn words(self) -> (u64, u32) {
-        ((self.op as u16 as u64) | (self.a as u64) << 16 | (self.b as u64) << 32 | (self.c as u64) << 48, self.imm)
+        ((self.op as u16 as u64) | (self.a as u64) << WORD_FIELD_BITS | (self.b as u64) << 2 * WORD_FIELD_BITS | (self.c as u64) << 3 * WORD_FIELD_BITS, self.imm)
+    }
+
+    /// The inverse of `words`: the instruction the two words name, `None` where the first holds no opcode.
+    #[inline] pub(crate) fn from_words(first: u64, imm: u32) -> Option<Self> {
+        let op = Op::from_index((first & WORD_FIELD_MASK) as usize)?;
+        let field = |index: u32| (first >> (index * WORD_FIELD_BITS)) as u16;
+        Some(Self::new(op, field(1), field(2), field(3), imm))
     }
 
     #[inline] pub(crate) const fn op(self) -> Op {

@@ -36,13 +36,13 @@ fn stage() -> Concrete {
 
 /// The binary64 bits of the int32 in the low half of `value`.
 #[inline(always)]
-fn widen(value: u64) -> u64 {
+pub(crate) fn widen(value: u64) -> u64 {
     stage().i32_to_f64(value)
 }
 
 /// The place's value in its own representation.
 #[inline(always)]
-fn read_place<const P: u8, const H: u8>(s: &S) -> u64 {
+pub(crate) fn read_place<const P: u8, const H: u8>(s: &S) -> u64 {
     match P {
         // SAFETY: the frame slot at hole `H` is a live register of the activation.
         MEM => unsafe { (slot::<H>(s) as *const u64).read() },
@@ -405,8 +405,7 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     }
     #[inline(always)]
     fn count_edge(&mut self, _stage: &mut Concrete) -> Option<()> {
-        crate::places_guard::count_edge(&self.s);
-        Some(())
+        crate::places_guard::count_edge(&self.s).then_some(())
     }
     #[inline(always)]
     fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, Representation) {

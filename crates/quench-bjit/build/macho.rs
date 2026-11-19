@@ -6,91 +6,20 @@
 
 use crate::bytes::{ObjectReloc, ObjectRow, c_string, is_row_name, u32_at, u64_at};
 use crate::class::{ABS64, BRANCH26};
+use object::LittleEndian;
 use std::mem::{offset_of, size_of};
 
 /// The Mach-O structures this reader walks, in the spec's field order (`mach_header_64`,
 /// `load_command`, `segment_command_64`, `section_64`, `symtab_command`, `nlist_64`,
 /// `relocation_info`); their offsets are taken with `offset_of!`, their sizes with `size_of`.
-#[allow(dead_code)]
-#[repr(C)]
-struct MachHeader64 {
-    magic: u32,
-    cputype: i32,
-    cpusubtype: i32,
-    filetype: u32,
-    ncmds: u32,
-    sizeofcmds: u32,
-    flags: u32,
-    reserved: u32,
-}
-
-#[allow(dead_code)]
-#[repr(C)]
-struct LoadCommand {
-    cmd: u32,
-    cmdsize: u32,
-}
-
-#[allow(dead_code)]
-#[repr(C)]
-struct SegmentCommand64 {
-    cmd: u32,
-    cmdsize: u32,
-    segname: [u8; 16],
-    vmaddr: u64,
-    vmsize: u64,
-    fileoff: u64,
-    filesize: u64,
-    maxprot: i32,
-    initprot: i32,
-    nsects: u32,
-    flags: u32,
-}
-
-#[allow(dead_code)]
-#[repr(C)]
-struct Section64 {
-    sectname: [u8; 16],
-    segname: [u8; 16],
-    addr: u64,
-    size: u64,
-    offset: u32,
-    align: u32,
-    reloff: u32,
-    nreloc: u32,
-    flags: u32,
-    reserved1: u32,
-    reserved2: u32,
-    reserved3: u32,
-}
-
-#[allow(dead_code)]
-#[repr(C)]
-struct SymtabCommand {
-    cmd: u32,
-    cmdsize: u32,
-    symoff: u32,
-    nsyms: u32,
-    stroff: u32,
-    strsize: u32,
-}
-
-#[allow(dead_code)]
-#[repr(C)]
-struct Nlist64 {
-    n_strx: u32,
-    n_type: u8,
-    n_sect: u8,
-    n_desc: u16,
-    n_value: u64,
-}
-
-#[allow(dead_code)]
-#[repr(C)]
-struct RelocationInfo {
-    r_address: i32,
-    r_info: u32,
-}
+/// The layouts are `object`'s.
+type MachHeader64 = object::macho::MachHeader64<LittleEndian>;
+type LoadCommand = object::macho::LoadCommand<LittleEndian>;
+type SegmentCommand64 = object::macho::SegmentCommand64<LittleEndian>;
+type Section64 = object::macho::Section64<LittleEndian>;
+type SymtabCommand = object::macho::SymtabCommand<LittleEndian>;
+type Nlist64 = object::macho::Nlist64<LittleEndian>;
+type RelocationInfo = object::macho::Relocation<LittleEndian>;
 
 const MACH_MAGIC_64: u32 = object::macho::MH_MAGIC_64 as u32;
 const CPU_TYPE_ARM64: u32 = object::macho::CPU_TYPE_ARM64 as u32;
@@ -119,7 +48,7 @@ const N_SECT: u8 = object::macho::N_SECT as u8;
 const N_EXT: u8 = object::macho::N_EXT as u8;
 /// `relocation_info`'s `r_info` is a bitfield: symbol number, pc-relative, length, extern, type.
 const RELOC_SIZE: usize = size_of::<RelocationInfo>();
-const RELOC_WORD: usize = offset_of!(RelocationInfo, r_info);
+const RELOC_WORD: usize = offset_of!(RelocationInfo, r_word1);
 const RELOC_SYMBOL_MASK: u32 = 0x00ff_ffff;
 const RELOC_PCREL_SHIFT: u32 = 24;
 const RELOC_LENGTH_SHIFT: u32 = 25;

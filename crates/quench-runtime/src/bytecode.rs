@@ -4593,7 +4593,8 @@ pub use flow_view::{FlowFunction, FlowInstruction};
 #[cfg(test)]
 mod tests;
 mod validate;
-mod written_once;
+mod this_reads;
+pub(crate) use this_reads::activation_reads_this;
 
 /// Whether function `id` of `code`, an arrow, or an arrow it makes through arrows alone,
 /// reads an implicit binding of the activation it would resolve in: `this`, `arguments`,

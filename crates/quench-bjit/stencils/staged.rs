@@ -1,7 +1,7 @@
 #[path = "../../quench-runtime/src/staged/stage.rs"] mod stage;
 pub(crate) use stage::{RecordSpace, Stage, Table, word_bytes, word_offset, Passed};
 pub(crate) type Concrete = crate::stage::StencilStage;
-#[path = "../../quench-runtime/src/staged/region.rs"] #[allow(dead_code)] pub(crate) mod region;
+#[path = "../../quench-runtime/src/staged/region.rs"] pub(crate) mod region;
 #[path = "../../quench-runtime/src/staged/register_frame.rs"] mod register_frame;
 pub(crate) use register_frame::{Constant, Frame, Step, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
 pub(crate) use crate::bytecode::Register;
@@ -23,10 +23,12 @@ pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, Nu
 #[path = "../../quench-runtime/src/staged/parse_int.rs"] pub(crate) mod parse_int;
 #[path = "../../quench-runtime/src/staged/typed_elements.rs"] pub(crate) mod typed_elements;
 #[path = "../../quench-runtime/src/staged/entry.rs"] pub(crate) mod entry;
-#[path = "../../quench-runtime/src/staged/frame.rs"] #[allow(dead_code)] pub(crate) mod frame;
+#[path = "../../quench-runtime/src/staged/frame.rs"] pub(crate) mod frame;
 #[path = "../../quench-runtime/src/staged/call.rs"] pub(crate) mod call;
 #[path = "../../quench-runtime/src/staged/protocol.rs"] #[allow(dead_code)] pub(crate) mod protocol;
 #[path = "../../quench-runtime/src/staged/ic.rs"] pub(crate) mod ic;
+#[path = "../../quench-runtime/src/staged/ic_flat.rs"] pub(crate) mod ic_flat;
+#[path = "../../quench-runtime/src/staged/ic_read.rs"] pub(crate) mod ic_read;
 #[path = "../../quench-runtime/src/staged/slot_store.rs"] pub(crate) mod slot_store;
 #[path = "../../quench-runtime/src/staged/iteration.rs"] pub(crate) mod iteration;
 #[path = "../../quench-runtime/src/staged/array_iteration.rs"] pub(crate) mod array_iteration;

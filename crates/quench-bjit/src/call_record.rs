@@ -48,6 +48,9 @@ pub struct CallRecord {
     pub args_register: u16,
     pub result_register: u16,
     pub argument_places: [u8; PLACED_ARGUMENTS],
+    /// The arguments the caller proves Numbers (bit `k`: argument `k`). The row enters the callee's proven-arguments
+    /// entry where every guard its cell names (`EntryCell::numbers`) is covered by these bits.
+    pub proven_args: u64,
 }
 
 /// Two cache lines: the record is aligned to one.

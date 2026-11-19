@@ -19,7 +19,7 @@ use crate::vm::operations::{I32BitwiseStage, NumberArithmetic, NumberBitwise, Nu
 pub(crate) use crate::words::*;
 
 pub(crate) use crate::codes::*;
-pub(crate) use crate::places::{deliver, deliver_number, index_of, number_word};
+pub(crate) use crate::places::{deliver, index_of, number_word, read_place, widen};
 
 const fn arithmetic_of(kind: u8) -> NumberArithmetic {
     match kind {
@@ -131,9 +131,34 @@ fn compare_row<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: b
     } else {
         Domain::Float64
     };
-    let comparison = Comparison::Relation { relation: relation_of(K), domain };
+    compare_jump(frame, Comparison::Relation { relation: relation_of(K), domain })
+}
+
+/// The staged `CompareJump` of `comparison` over the row's registers LEFT and RIGHT, negated: it branches to the taken
+/// successor where the comparison fails. Every jump row runs it, so each test is the staged step's own.
+#[inline(always)]
+fn compare_jump<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>, comparison: Comparison) -> Out {
     let operation = Operation::CompareJump { comparison, left: Operand::register(LEFT), right: Operand::register(RIGHT), negate: true };
     branched(step_generic(&mut Concrete::from_hole(0), &mut frame, operation), frame)
+}
+
+/// `if (a & b)`: the staged bitwise test of the two operands' ToInt32 (`Comparison::Bitwise`).
+#[inline(always)]
+fn bit_test_row<const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>) -> Out {
+    compare_jump(frame, Comparison::Bitwise(NumberBitwise::And))
+}
+
+/// `a == null` or `a == undefined` (`NEGATED`: `!=`), loosely: the tested operand's tag decides it, and the row reads
+/// no second operand.
+#[inline(always)]
+fn nullish_row<const NEGATED: bool, const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>) -> Out {
+    compare_jump(frame, Comparison::Nullish { expected: crate::ValueType::Null, strict: false, negated: NEGATED })
+}
+
+/// `a === true` (`EXPECTED`) or `a === false`: the identity of the tested word.
+#[inline(always)]
+fn boolean_row<const EXPECTED: bool, const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>) -> Out {
+    compare_jump(frame, Comparison::Boolean { expected: EXPECTED, negated: false })
 }
 
 /// A bitwise row: the interpreter's `NumberBitwise` of two operands' ToInt32, defining an int32
@@ -190,11 +215,37 @@ fn guard_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) 
     Out::Next(frame.s)
 }
 
-/// Whether an interrupt was requested: the context's pointer (at hole 0) to a byte, nonzero.
-/// The frame's `safepoint` answers it for the staged `Operation::Safepoint`.
+/// `guard_row` with its tag test left out (`UNBOX`): a pinned double takes the frame slot's word as a binary64 (an int
+/// word widened). Only where the caller's argument proof (`CallRecord::proven_args`) holds the slot a Number, which is
+/// what makes the test redundant.
+#[inline(always)]
+fn unbox_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    let word = read_place::<MEM, LEFT>(&frame.s);
+    let value = if is_int(word) { widen(word) } else { word };
+    frame.write(&mut Concrete::from_hole(0), DEST, value, Representation::Float64);
+    Out::Next(frame.s)
+}
+
+/// `guard_row` with its tag test left out (`UNBOX_INT`): a pinned int32 takes the frame slot's low word. Only where the
+/// caller's argument proof holds the slot an int32 (`CallRecord::proven_args`'s int32 bits).
+#[inline(always)]
+fn unbox_int_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    let word = read_place::<MEM, LEFT>(&frame.s);
+    frame.write(&mut Concrete::from_hole(0), DEST, word as u32 as u64, Representation::Int32);
+    Out::Next(frame.s)
+}
+
+/// Whether an interrupt was requested. The process-wide attention byte (hole 3, an absolute word the planner
+/// patches with `execution_interrupt::attention_address`) is read first: zero means none is requested, one
+/// means the run's own byte (the context's pointer at hole 0) decides. The frame's `safepoint` answers it for
+/// the staged `Operation::Safepoint`.
 #[inline(always)]
 pub(crate) fn interrupted(s: &S) -> bool {
-    unsafe { *(((s.ctx + hole::<0>()) as *const *const u8).read()) != 0 }
+    // SAFETY: hole 3 is the address of the attention byte, which lives for the process; hole 0's pointer is the run's flag.
+    unsafe {
+        ((hole64::<HOLE_FOURTH>() as usize as *const u8).read()) != 0
+            && *(((s.ctx + hole::<0>()) as *const *const u8).read()) != 0
+    }
 }
 
 /// The staged `Operation::Safepoint` over the row's places: whether the row may continue.
@@ -377,6 +428,8 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
         LT..=NE => compare_row::<K, D, A, B, SPEC>(frame),
         JUMP | JUMP_POLL | JUMP_WATCH | POLL => control_row::<K, D, A, B>(frame),
         GUARD => guard_row(frame),
+        UNBOX => unbox_row(frame),
+        UNBOX_INT => unbox_int_row(frame),
         JUMP_TRUE => truth_row::<true, D, A, B>(frame),
         JUMP_FALSE => truth_row::<false, D, A, B>(frame),
         NOT | NEG => unary_row::<K, D, A, B>(frame),
@@ -385,6 +438,11 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
         MIN | MAX => extreme_row::<K, D, A, B>(frame),
         IMUL => imul_row::<D, A, B, SPEC>(frame),
         CLZ32 => clz32_row::<D, A, B>(frame),
+        BIT_TEST => bit_test_row::<D, A, B>(frame),
+        NULLISH_EQ => nullish_row::<false, D, A, B>(frame),
+        NULLISH_NE => nullish_row::<true, D, A, B>(frame),
+        BOOL_TRUE => boolean_row::<true, D, A, B>(frame),
+        BOOL_FALSE => boolean_row::<false, D, A, B>(frame),
         _ => tag_init(frame.s),
     }
 }

@@ -42,7 +42,7 @@
 use crate::layout::call_record::{helper_outcome, CallRecord, LaneStatus, Outcome, CALLEE_EXIT, PLACED_ARGUMENTS, REGISTER_BYTES};
 use crate::codes::{LAST_DOUBLE_PIN, LAST_INT_PIN, MEM, PIN, PINF};
 use crate::heap_rows::{payload, set_context_word, word_at};
-use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_FRAMES_END, JS_STEP_LANE_VALUES_END, JS_STEP_RESIDUAL, JS_STEP_VM, CONTEXT_BODY, CONTEXT_THIS, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
+use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_USES_THIS_AT, CELL_RECOVERY_AT, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_FRAMES_END, JS_STEP_LANE_VALUES_END, JS_STEP_RESIDUAL, JS_STEP_VM, CONTEXT_BODY, CONTEXT_THIS, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
 use crate::places::Places;
 use crate::stage::StencilStage;
 use crate::staged::region::Region;
@@ -191,6 +191,46 @@ pub unsafe extern "rust-preserve-none" fn call_helper(frame: usize, ctx: usize, 
     }
 }
 
+/// The packed helper row's values holes after the helper's: the instruction's first word (its opcode
+/// and operands) and its immediate (`WideInstruction::from_words`).
+const HOLE_PACKED_FIRST: u8 = 2;
+const HOLE_PACKED_IMM: u8 = 3;
+/// A packed step helper (`lane_body_step_packed`): (vm, residual, lane context, call pc, first word, immediate) -> status.
+type HelperPacked = unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64;
+
+/// Helper row `call_helper_packed`: `call_helper` with the instruction its planner decoded passed as holes
+/// V2 and V3, so the helper runs it without decoding the record again. Its successors and exits are `call_helper`'s.
+#[unsafe(no_mangle)]
+pub unsafe extern "rust-preserve-none" fn call_helper_packed(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
+    unsafe {
+        let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
+        let payload = payload(&s);
+        let helper: HelperPacked = transmute(hole64::<HOLE_HELPER>() as usize);
+        let status = helper(word_at(payload, JS_STEP_VM), word_at(payload, JS_STEP_RESIDUAL), word_at(payload, JS_STEP_LANE_CONTEXT), hole64::<HOLE_CALL_PC>(),
+            hole64::<HOLE_PACKED_FIRST>(), hole64::<HOLE_PACKED_IMM>());
+        match helper_outcome(status) {
+            Outcome::Next => go!(HOLE_NEXT, dead(&s)),
+            Outcome::Taken => go!(HOLE_TAKEN, dead(&s)),
+            Outcome::Missed => {
+                core::hint::cold_path();
+                go!(HOLE_EXIT0, dead(&s))
+            }
+            Outcome::Left => {
+                core::hint::cold_path();
+                go!(HOLE_EXIT1, leaving(&s, LaneStatus::NativeJsStopped as u32, CALLEE_EXIT))
+            }
+            Outcome::Raised => {
+                core::hint::cold_path();
+                go!(HOLE_EXIT1, raising(&s, payload, hole64::<HOLE_CALL_PC>()))
+            }
+            Outcome::Terminated => {
+                core::hint::cold_path();
+                go!(HOLE_EXIT1, leaving(&s, LaneStatus::Terminated as u32, 0))
+            }
+        }
+    }
+}
+
 /// How a direct call ended.
 enum Entered {
     /// Refused before any effect, or the callee's cell held the stub: the helper takes the call.
@@ -281,13 +321,25 @@ unsafe fn push<const ARGC: usize>(s: &S, file: u64, record: usize, a: &Admitted,
         // protocol's fill writes as its prefix, then `undefined` to `written` registers.
         let passed = argument_words::<ARGC>(s, file, record);
         protocol::fill_call(&mut StencilStage::from_hole(0), a.top as u64, &passed, Passed::List { file, registers: &[] }, written as u16);
-        // The callee's own header: its receiver and captures word, in the gap its window leaves below register 0.
-        set_context_word(a.top, CONTEXT_THIS, this);
+        // The callee's own header: its receiver (only where its activation reads `this`: the cell's word says so, read
+        // now, so a republish that changes it is seen by the next call) and captures word, in the gap its window leaves below register 0.
+        if word_at(a.cell, CELL_USES_THIS_AT) != 0 {
+            set_context_word(a.top, CONTEXT_THIS, this);
+        }
         set_context_word(a.top, CONTEXT_BODY, captures);
         let native = crate::staged::call::NativeFrame { callee: word_at(record, offset_of!(CallRecord, descriptor)), this, body: word_at(a.cell, CELL_BODY_AT), window: a.top as u64 };
         crate::staged::call::push_native(&mut StencilStage::from_hole(0), a.shadow as u64, native);
         set_tops(a, a.top + ((a.room + FRAME_CONTEXT_WORDS) << WORD_SHIFT), a.shadow + word_at(record, offset_of!(CallRecord, frame_bytes)) as usize);
     }
+}
+
+/// The row entry a direct call enters: the callee's proven-arguments entry where every Number guard it skips (the cell's
+/// `numbers`) is one the call's proven arguments (`CallRecord::proven_args`) cover, else its row entry; 0 where it has none.
+#[inline(always)]
+fn row_entry(cell: usize, record: usize) -> usize {
+    let proven = word_at(cell, CELL_PROVEN_AT) as usize;
+    let covered = word_at(cell, CELL_NUMBERS_AT) & !word_at(record, offset_of!(CallRecord, proven_args)) == 0;
+    if covered && proven != 0 { proven } else { word_at(cell, CELL_ROWS_AT) as usize }
 }
 
 /// Where each status of the callee goes: a completion pops its window and frame and stores its word
@@ -361,7 +413,7 @@ unsafe fn enter<const ARGC: usize, const MODE: u8, const CHECKED: bool>(s: &S) -
         let captures = word_at(record, offset_of!(CallRecord, captures));
         push::<ARGC>(s, file, record, &admitted, this, captures);
         // A body with a row entry runs its rows (the row ABI); else its lane body entry.
-        let rows = word_at(admitted.cell, CELL_ROWS_AT) as usize;
+        let rows = row_entry(admitted.cell, record);
         let returned = if rows != 0 {
             let entry: RowsEntry = transmute(rows);
             let RowsReturn { value, status } = entry(admitted.top, s.ctx, this, captures);

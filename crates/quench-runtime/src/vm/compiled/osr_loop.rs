@@ -1257,6 +1257,9 @@ pub(super) const MAX_INDEXED_LENGTH: usize = i32::MAX as usize;
 /// The first record word counts executions of the region's own backward edge: the iterations
 /// a run completed natively, which weigh what its entry paid for (`LoopSite::note_run`).
 const ENTRY_BACKEDGE_COUNT: usize = 0;
+/// The backward edges one native run may take before it leaves to the interpreter, which re-enters the loop (a run's
+/// budget is the record's first word, primed here and debited by the stencils' `count_edge` and the lane's flush).
+pub(crate) const BACKEDGE_BUDGET: i64 = 1 << 20;
 pub(super) const ENTRY_CAPTURES: usize = 1;
 
 /// The entry word of the region's `index`th field: the single home of the record's field
@@ -1282,26 +1285,17 @@ const ENTRY_WORDS: usize =
 impl LoopEntry {
     pub(crate) fn new() -> Self {
         let mut words = [std::mem::MaybeUninit::uninit(); ENTRY_WORDS];
-        // The backward-edge counter is the one leading word native code reads before any push.
-        words[ENTRY_BACKEDGE_COUNT].write(0);
-        Self { words, length: ENTRY_CAPTURES, scratch: [std::mem::MaybeUninit::uninit(); MAX_REGION_REGISTERS], seed: 0 }
+        // The backward-edge budget is the one leading word native code reads before any push.
+        words[ENTRY_BACKEDGE_COUNT].write(BACKEDGE_BUDGET as u64);
+        Self { words, length: ENTRY_CAPTURES, scratch: [std::mem::MaybeUninit::uninit(); MAX_REGION_REGISTERS] }
     }
 
-    /// Number of taken executions of this region's backward edge in the most recent run.
+    /// Number of taken executions of this region's backward edge in the most recent run: the budget less what the
+    /// word has left.
     pub(crate) fn backedge_count(&self) -> u64 {
-        // SAFETY: `new` initializes the counter word.
-        unsafe { self.words[ENTRY_BACKEDGE_COUNT].assume_init() }.wrapping_sub(self.seed)
-    }
-
-    /// Lets a b-jit region's run take at most `budget` backward edges: the counter starts
-    /// `budget` below zero, and the stencil jump that counts it to zero leaves at the jump
-    /// (`quench-bjit`'s `count_backedge`), so a loop due to move to u-jit leaves its stencil
-    /// code mid-run instead of running it to the loop's end (`LoopTier::promote`). Cranelift
-    /// code counts on past zero; `backedge_count` reads from the seed either way.
-    pub(crate) fn set_backedge_budget(&mut self, budget: u64) {
-        let budget = budget.max(1);
-        self.seed = 0u64.wrapping_sub(budget);
-        self.words[ENTRY_BACKEDGE_COUNT].write(self.seed);
+        // SAFETY: `new` initializes the budget word.
+        let left = unsafe { self.words[ENTRY_BACKEDGE_COUNT].assume_init() } as i64;
+        (BACKEDGE_BUDGET - left).max(0) as u64
     }
 
     /// The record's words. Native OSR may also update the private first counter word.
