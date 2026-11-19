@@ -19,7 +19,7 @@
 //! * `LoadLocal` is the read that leaves for the same marker (`staged::read_initialized_local`).
 //!
 //! A body also runs as the lane activation of a function with an environment window
-//! (`dispatch_fast::lane_activate_environment`), which keeps the locals its closures capture in the storage its
+//! (`dispatch_fast::activate_environment_in_lane`), which keeps the locals its closures capture in the storage its
 //! slots word names, in place among the locals or in the environment a closure made. Its body reads that
 //! storage through the payload (`JsStepDispatch::environment_storage`, set at each entry), by the rows of
 //! `staged::environment::environment_slot`, `environment_slot_store` and `environment_slot_define` (`ENV_ROW`,
@@ -39,7 +39,7 @@ fn frame_owned(function: &Function, id: u32, slot: usize) -> bool {
 /// Whether `slot` of `function` (index `id`) lives in the storage of an activation's environment window, as the
 /// window handlers' `ENVIRONMENT` flavor reads it (`specialize_environment_window`): the function resolves no names at
 /// run time and no mapped `arguments` aliases the slot.
-pub(in crate::vm) fn env_owned(function: &Function, id: u32, slot: usize) -> bool {
+pub(in crate::vm::compiled) fn env_owned(function: &Function, id: u32, slot: usize) -> bool {
     id != crate::vm::ROOT_FUNCTION_ID && function.local_slot_uses_environment(slot) && !function.has_dynamic_scope_access()
         && crate::vm::arguments::mapped_arguments_slot(function, slot).is_none()
 }
@@ -53,18 +53,22 @@ fn env_row(function: &Function, id: u32, instruction: WideInstruction) -> Option
     let plain_store = || instruction.optional_register_b().is_none() && instruction.result_flags() == 0
         && !function.is_self_binding_slot(instruction.local_slot());
     let define = |slot: u16, value: Source| Decoded { a: Some(value), ..Decoded::step(Step::Fast(Heap::EnvDefine(slot)), None) };
-    match instruction.op().class() {
-        Class::LoadLocal | Class::LoadEnvLocal if !instruction.writes_numeric_local() => {
+    use crate::staged::{protocol_owned::OwnedVarStep, Operation, Protocol};
+    match crate::vm::compiled::decoded(instruction) {
+        Some(Operation::Protocol { step: Protocol::Owned(OwnedVarStep::LoadLocal { .. }), .. }) | Some(Operation::LoadEnvLocal { .. })
+            if !instruction.writes_numeric_local() => {
             owned().map(|slot| Decoded::step(Step::Fast(Heap::EnvLocal(slot)), Some(instruction.result_register())))
         }
-        Class::StoreLocal | Class::StoreEnvLocal if plain_store() => {
+        Some(Operation::Protocol { step: Protocol::Owned(OwnedVarStep::StoreLocal { .. }), .. }) | Some(Operation::StoreEnvLocal { .. })
+            if plain_store() => {
             let value = Source::Register(instruction.register_a());
             match instruction.boolean_field(InstructionField::C)? {
                 false => owned().map(|slot| Decoded { a: Some(value), ..Decoded::step(Step::Fast(Heap::EnvStore(slot)), None) }),
                 true => owned().map(|slot| define(slot, value)),
             }
         }
-        Class::InitializeTdz => owned().map(|slot| define(slot, Source::Value(Value::DELETED.to_bits()))),
+        Some(Operation::Protocol { step: Protocol::Owned(OwnedVarStep::InitializeTdz { .. }), .. }) =>
+            owned().map(|slot| define(slot, Source::Value(Value::DELETED.to_bits()))),
         _ => None,
     }
 }
@@ -80,15 +84,19 @@ fn frame_row(function: &Function, id: u32, instruction: WideInstruction) -> Opti
     let owned = |slot: usize| u16::try_from(slot).ok().filter(|_| frame_owned(function, id, slot));
     let store = |slot: u16, value: Source| Decoded { a: Some(value), ..Decoded::step(Step::Fast(Heap::StoreLocal(slot)), None) };
     let checked = |slot: u16, value: Source| Decoded { a: Some(value), ..Decoded::step(Step::Fast(Heap::StoreChecked(slot)), None) };
-    match instruction.op().class() {
-        Class::LoadLocal if !instruction.writes_numeric_local() => {
+    use crate::staged::{protocol_owned::OwnedVarStep, Operation, Protocol};
+    match crate::vm::compiled::decoded(instruction) {
+        Some(Operation::Protocol { step: Protocol::Owned(OwnedVarStep::LoadLocal { .. }), .. }) if !instruction.writes_numeric_local() => {
             owned(instruction.local_slot()).map(|slot| Decoded::step(Step::Fast(Heap::LoadChecked(slot)), Some(instruction.result_register())))
         }
-        Class::StoreLocal if instruction.optional_register_b().is_none() && instruction.boolean_field(InstructionField::C) == Some(false) => {
+        Some(Operation::Protocol { step: Protocol::Owned(OwnedVarStep::StoreLocal { .. }), .. })
+            if instruction.optional_register_b().is_none() && instruction.boolean_field(InstructionField::C) == Some(false) => {
             owned(instruction.local_slot()).map(|slot| checked(slot, Source::Register(instruction.register_a())))
         }
-        Class::InitializeTdz => owned(instruction.local_slot()).map(|slot| store(slot, Source::Value(Value::DELETED.to_bits()))),
-        Class::StoreLocal if instruction.optional_register_b().is_none() && instruction.boolean_field(InstructionField::C) == Some(true) => {
+        Some(Operation::Protocol { step: Protocol::Owned(OwnedVarStep::InitializeTdz { .. }), .. }) =>
+            owned(instruction.local_slot()).map(|slot| store(slot, Source::Value(Value::DELETED.to_bits()))),
+        Some(Operation::Protocol { step: Protocol::Owned(OwnedVarStep::StoreLocal { .. }), .. })
+            if instruction.optional_register_b().is_none() && instruction.boolean_field(InstructionField::C) == Some(true) => {
             owned(instruction.local_slot()).map(|slot| store(slot, Source::Register(instruction.register_a())))
         }
         _ => None,

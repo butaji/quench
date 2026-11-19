@@ -2,12 +2,14 @@
 
 use super::machine::{Machine, MachineStage};
 use super::wasm::Width;
-use super::wasm_float::{Float, Truncation};
-use crate::wasm::conversion::{ScalarConversionOperator, saturate, truncation_bounds};
+use super::wasm_float::{
+    Float, Truncation, copysign_bits, saturated, truncation_limits, unsigned_to_f32, unsigned_to_f64, widen,
+};
+use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 use crate::wasm::numeric::{canonical_nan_bits, sign_mask};
-use crate::{WasmTrap, WasmValue};
+use crate::WasmTrap;
 
 pub(crate) struct ConcreteWasm;
 
@@ -24,6 +26,9 @@ macro_rules! sign_extend {
 /// `$signed` or `$unsigned` values. Division is plain: the staged traps have run.
 macro_rules! integer_width {
     ($binary:ident, $unary:ident, $signed:ty, $unsigned:ty, $wide:ty, $wide_unsigned:ty) => {
+        // Always inlined: a handler whose operator is a constant keeps only its arm (the match
+        // left out of line cost about 10 Ir per i32 operator in the interpreter).
+        #[inline(always)]
         fn $binary(operator: Binary, left: $signed, right: $signed) -> $signed {
             let (unsigned_left, unsigned_right) = (left as $unsigned, right as $unsigned);
             let amount = right as u32;
@@ -64,6 +69,7 @@ macro_rules! integer_width {
             }
         }
 
+        #[inline(always)]
         fn $unary(operator: Unary, value: $signed) -> $signed {
             match operator {
                 Unary::EqualZero => <$signed>::from(value == 0),
@@ -81,10 +87,27 @@ macro_rules! integer_width {
 integer_width!(operate_i32, operate_unary_i32, i32, u32, i64, u64);
 integer_width!(operate_i64, operate_unary_i64, i64, u64, i128, u128);
 
+/// A rounding or root of a `$float`: the standard library's method in the runtime, `core`'s float
+/// math in the stencil build, which has no standard library.
+#[cfg(not(stencil_build))]
+macro_rules! float_math {
+    ($float:ident, $operation:ident, $value:expr) => {
+        $value.$operation()
+    };
+}
+#[cfg(stencil_build)]
+macro_rules! float_math {
+    ($float:ident, $operation:ident, $value:expr) => {
+        core::$float::math::$operation($value)
+    };
+}
+
 /// The float operators at one width, on the IEEE bits `$bits` of a `$float`, zero-extended to a
 /// word; a comparison's word is its flag. The extrema are the machine's.
 macro_rules! float_width {
-    ($binary:ident, $unary:ident, $float:ty, $bits:ty) => {
+    ($binary:ident, $unary:ident, $float:ident, $bits:ty) => {
+        // Inlined: a stencil row's operator is a constant, so its one arm stays and nothing is called.
+        #[inline(always)]
         fn $binary(operator: FloatBinary, left: $float, right: $float) -> u64 {
             let value: Result<$float, bool> = match operator {
                 FloatBinary::Add => Ok(left + right),
@@ -99,7 +122,7 @@ macro_rules! float_width {
                     Ok(<$float>::from_bits(left.to_bits() & right.to_bits()))
                 }
                 FloatBinary::Maximum => Ok(left.max(right)),
-                FloatBinary::CopySign => Ok(left.copysign(right)),
+                FloatBinary::CopySign => unreachable!("CopySign is `copysign_bits`"),
                 FloatBinary::Equal => Err(left == right),
                 FloatBinary::NotEqual => Err(left != right),
                 FloatBinary::Less => Err(left < right),
@@ -113,6 +136,7 @@ macro_rules! float_width {
             }
         }
 
+        #[inline(always)]
         fn $unary(operator: FloatUnary, value: $float) -> u64 {
             const SIGN: $bits = sign_mask(<$bits>::BITS) as $bits;
             const INFINITY: $bits = <$float>::INFINITY.to_bits();
@@ -128,11 +152,11 @@ macro_rules! float_width {
             let bits = match operator {
                 FloatUnary::Absolute => value.to_bits() & !SIGN,
                 FloatUnary::Negate => value.to_bits() ^ SIGN,
-                FloatUnary::Ceiling => quieted(value.ceil()),
-                FloatUnary::Floor => quieted(value.floor()),
-                FloatUnary::Truncate => quieted(value.trunc()),
-                FloatUnary::Nearest => quieted(value.round_ties_even()),
-                FloatUnary::SquareRoot => quieted(value.sqrt()),
+                FloatUnary::Ceiling => quieted(float_math!($float, ceil, value)),
+                FloatUnary::Floor => quieted(float_math!($float, floor, value)),
+                FloatUnary::Truncate => quieted(float_math!($float, trunc, value)),
+                FloatUnary::Nearest => quieted(float_math!($float, round_ties_even, value)),
+                FloatUnary::SquareRoot => quieted(float_math!($float, sqrt, value)),
             };
             bits as u64
         }
@@ -141,15 +165,6 @@ macro_rules! float_width {
 
 float_width!(operate_f32, operate_unary_f32, f32, u32);
 float_width!(operate_f64, operate_unary_f64, f64, u64);
-
-/// The float a word holds, exactly, as an f64.
-#[inline]
-fn float_value(float: Float, word: u64) -> f64 {
-    match float {
-        Float::F32 => f64::from(f32::from_bits(word as u32)),
-        Float::F64 => f64::from_bits(word),
-    }
-}
 
 impl Machine for ConcreteWasm {
     type Word = u64;
@@ -189,13 +204,14 @@ impl MachineStage for ConcreteWasm {
 
     #[inline(always)]
     fn operate_float(&mut self, operator: FloatBinary, float: Float, left: u64, right: u64) -> u64 {
-        match float {
-            Float::F32 => operate_f32(
+        match (operator, float) {
+            (FloatBinary::CopySign, _) => copysign_bits(float, left, right),
+            (_, Float::F32) => operate_f32(
                 operator,
                 f32::from_bits(left as u32),
                 f32::from_bits(right as u32),
             ),
-            Float::F64 => operate_f64(operator, f64::from_bits(left), f64::from_bits(right)),
+            (_, Float::F64) => operate_f64(operator, f64::from_bits(left), f64::from_bits(right)),
         }
     }
 
@@ -209,7 +225,7 @@ impl MachineStage for ConcreteWasm {
 
     #[inline(always)]
     fn float_unordered(&mut self, float: Float, left: u64, right: u64) -> u64 {
-        u64::from(float_value(float, left).is_nan() || float_value(float, right).is_nan())
+        u64::from(widen(float, left).is_nan() || widen(float, right).is_nan())
     }
 
     #[inline(always)]
@@ -224,21 +240,90 @@ impl MachineStage for ConcreteWasm {
 
     #[inline(always)]
     fn truncation_overflows(&mut self, truncation: Truncation, value: u64) -> u64 {
-        let truncated = float_value(truncation.float, value).trunc();
-        let (lower, limit) = truncation_bounds(truncation.width.bits(), truncation.signed);
+        let truncated = float_math!(f64, trunc, widen(truncation.float, value));
+        let (lower, limit) = truncation_limits(truncation.width.bits(), truncation.signed);
         u64::from(truncated < lower || truncated >= limit)
     }
 
     #[inline(always)]
     fn convert(&mut self, operator: ScalarConversionOperator, value: u64) -> u64 {
-        if let Some(truncation) = operator.truncation() {
-            let value = float_value(truncation.float, value);
-            let width = truncation.width;
-            return self.constant(width, saturate(value, width.bits(), truncation.signed));
+        use ScalarConversionOperator as Conversion;
+        // A trapping truncation's operand is in range, where it truncates as it saturates.
+        if let Some((truncation, _)) = operator.float_to_integer() {
+            return saturated(widen(truncation.float, value), truncation.width.bits(), truncation.signed);
         }
-        operator
-            .apply(WasmValue::from_bits(operator.source_type(), value))
-            .expect("only a truncation traps")
-            .word()
+        // A 32-bit word is its payload zero-extended, as `WasmValue::from_bits` reads it.
+        let low = value as u32;
+        let single = || f32::from_bits(low);
+        let double = || f64::from_bits(value);
+        match operator {
+            Conversion::WrapI64 | Conversion::ExtendI32Unsigned => u64::from(low),
+            Conversion::ExtendI32Signed => i64::from(low as i32) as u64,
+            Conversion::ConvertI32SignedF32 => u64::from((low as i32 as f32).to_bits()),
+            Conversion::ConvertI32UnsignedF32 => u64::from((low as f32).to_bits()),
+            Conversion::ConvertI64SignedF32 => u64::from((value as i64 as f32).to_bits()),
+            Conversion::ConvertI64UnsignedF32 => u64::from(unsigned_to_f32(value).to_bits()),
+            Conversion::ConvertI32SignedF64 => f64::from(low as i32).to_bits(),
+            Conversion::ConvertI32UnsignedF64 => f64::from(low).to_bits(),
+            Conversion::ConvertI64SignedF64 => (value as i64 as f64).to_bits(),
+            Conversion::ConvertI64UnsignedF64 => unsigned_to_f64(value).to_bits(),
+            Conversion::PromoteF32 => f64::from(single()).to_bits(),
+            Conversion::DemoteF64 => u64::from((double() as f32).to_bits()),
+            Conversion::ReinterpretF32I32 | Conversion::ReinterpretI32F32 => u64::from(low),
+            Conversion::ReinterpretF64I64 | Conversion::ReinterpretI64F64 => value,
+            _ => unreachable!("float-to-integer conversions returned above"),
+        }
     }
 }
+
+/// Methods that are `ConcreteWasm`'s: one definition, delegated.
+macro_rules! delegated {
+    ($($name:ident($($argument:ident: $ty:ty),*) -> $result:ty;)+) => {$(
+        #[inline(always)]
+        fn $name(&mut self, $($argument: $ty),*) -> $result {
+            $crate::staged::wasm_concrete::ConcreteWasm.$name($($argument),*)
+        }
+    )+};
+}
+pub(crate) use delegated;
+
+/// The operators of a `MachineStage` over `ConcreteWasm`: every method but `trap_when`, whose trap
+/// the stage's own `Exit` makes. `scalar_stage` and the VM's heap stage both expand it.
+macro_rules! scalar_operators {
+    () => {
+        $crate::staged::wasm_concrete::delegated! {
+                constant(width: $crate::staged::wasm::Width, value: i64) -> u64;
+                operate(operator: $crate::wasm::integer::I64BinaryOperator, width: $crate::staged::wasm::Width, left: u64, right: u64) -> u64;
+                operate_unary(operator: $crate::wasm::integer::I64UnaryOperator, width: $crate::staged::wasm::Width, value: u64) -> u64;
+                operate_float(operator: $crate::wasm::float::F64BinaryOperator, float: $crate::staged::wasm_float::Float, left: u64, right: u64) -> u64;
+                operate_float_unary(operator: $crate::wasm::float::F64UnaryOperator, float: $crate::staged::wasm_float::Float, value: u64) -> u64;
+                float_unordered(float: $crate::staged::wasm_float::Float, left: u64, right: u64) -> u64;
+                float_constant(float: $crate::staged::wasm_float::Float, bits: u64) -> u64;
+                select(flag: u64, taken: u64, other: u64) -> u64;
+                truncation_overflows(truncation: $crate::staged::wasm_float::Truncation, value: u64) -> u64;
+                convert(operator: $crate::wasm::conversion::ScalarConversionOperator, value: u64) -> u64;
+            }
+    };
+}
+pub(crate) use scalar_operators;
+
+/// The scalar primitives of a stage over machine state: `scalar_operators`, with `trap_when` as
+/// `ConcreteWasm` makes it.
+macro_rules! scalar_stage {
+    ($($stage:ty),+) => {$(
+        impl $crate::staged::machine::Machine for $stage {
+            type Word = u64;
+        }
+
+        impl $crate::staged::machine::MachineStage for $stage {
+            type Exit = $crate::WasmTrap;
+
+            $crate::staged::wasm_concrete::scalar_operators! {}
+
+            $crate::staged::wasm_concrete::delegated! {
+                trap_when(flag: u64, trap: $crate::WasmTrap) -> Result<(), $crate::WasmTrap>;
+            }
+        }
+    )+};
+}
+pub(crate) use scalar_stage;

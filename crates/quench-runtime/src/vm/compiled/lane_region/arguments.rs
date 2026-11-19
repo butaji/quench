@@ -19,7 +19,7 @@ impl Lowering<'_, '_> {
     }
 
     /// `ArgumentGet` of that binding at an integer index a keeping activation kept or an
-    /// unmaterialized binding holds (`lane_argument_get`); any other key leaves at the record.
+    /// unmaterialized binding holds; any other key leaves at the record.
     pub(super) fn arguments_get(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> Option<bool> {
         let index = self.tagged(state, instruction.register_b());
         self.arguments_read(state, pc, instruction, LaneHelper::ArgumentGet, &[index])
@@ -30,7 +30,7 @@ impl Lowering<'_, '_> {
     /// which reads the materialized object.
     fn arguments_read(&mut self, state: &mut State, pc: u32, instruction: WideInstruction, helper: LaneHelper, operands: &[ir::Value]) -> Option<bool> {
         let exit = self.guard_exit(state, pc);
-        let context = super::emit_lane_context(&mut self.builder, self.payload, exit);
+        let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.lane_context));
         let slot = self.raw_const(Lane::I64, i64::from(instruction.local_slot() as u16));
         let mut arguments = vec![context, slot];
         arguments.extend_from_slice(operands);

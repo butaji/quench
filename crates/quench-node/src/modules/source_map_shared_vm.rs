@@ -2,6 +2,7 @@
 //! `--enable-source-maps`, `process.setSourceMapsEnabled` and `module.setSourceMapsSupport`
 //! set, the cache of the source maps loaded modules name, and `module.SourceMap`.
 use super::event_constructor_shared_vm::get;
+use super::util_shared_vm::validate_boolean;
 use crate::host::shared_vm::{commonjs, operation};
 use crate::host::NodeHost;
 use quench_runtime::{DescriptorFields, NativeContext, RootId, RootedError};
@@ -57,18 +58,7 @@ fn is_undefined(c: &Context<'_>, value: RootId) -> bool {
     c.rooted_value(value).is_some_and(|value| value.is_undefined())
 }
 
-fn put(c: &mut Context<'_>, target: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let key = c.string_rooted(name);
-    c.define_data_property_rooted(target, key, value, true, true, true)?;
-    Ok(())
-}
-
-fn validate_boolean(c: &mut Context<'_>, value: RootId, name: &str) -> Result<bool, RootedError> {
-    match c.rooted_value(value).and_then(|value| value.as_bool()) {
-        Some(value) => Ok(value),
-        None => Err(super::util_shared_vm::argument_type_error(c, value, name, "boolean")?),
-    }
-}
+use crate::modules::util_shared_vm::named_put as put;
 
 /// `module.getSourceMapsSupport()`: a frozen `{ enabled, nodeModules, generatedCode }`.
 pub(crate) fn get_support(c: &mut Context<'_>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {

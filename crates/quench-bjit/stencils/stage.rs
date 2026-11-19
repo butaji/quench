@@ -7,18 +7,31 @@
 use crate::layout::{
     words::{HEAP_TAG, TAG_MASK},
     JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT, JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT, JS_STEP_PROPERTY_BUFFER, JS_STEP_SLOTS_TRACKED,
+    JS_STEP_STORES_SPECIALIZED,
     LAYOUT_TABLE_BASE, NATIVE_OBJECT_LAYOUT as OBJECT, PROPERTY_BUFFER_BASE,
 };
-use crate::staged::{RecordSpace, Stage, Table};
+use crate::staged::{Passed, StagedRecordSpace, Stage, Table};
 use crate::words::{hole, HOLE_FOURTH, HOLE_THIRD, LAST_HOLE};
 use crate::typed_ir::Type;
 use crate::staged::region::{Access, Region};
 
+// Statics, not functions: an operation with no stencil form reads one, so its relocation fails the
+// build as a call's would, but the path holds no call, which would keep LLVM from unrolling a loop
+// over static data (an IC's ops) whose unrolled form never reaches it.
 unsafe extern "C" {
-    fn UNSUPPORTED_assumption(a: u64) -> u64;
-    fn UNSUPPORTED_number_operator(a: u64, b: u64, c: u64) -> u64;
-    fn UNSUPPORTED_shape_in(a: u64) -> u64;
-    fn UNSUPPORTED_site(a: u64) -> u64;
+    static UNSUPPORTED_assumption: u8;
+    static UNSUPPORTED_number_operator: u8;
+    static UNSUPPORTED_shape_in: u8;
+    static UNSUPPORTED_site: u8;
+}
+
+/// The word an unsupported operation answers: a volatile read of its `UNSUPPORTED_*` static, which
+/// no optimization folds away, so the relocation stays and fails the build.
+macro_rules! unsupported {
+    ($symbol:ident) => {
+        // SAFETY: never run; the relocation against the static fails the build.
+        u64::from(unsafe { core::ptr::read_volatile(&raw const $symbol) })
+    };
 }
 
 /// The stencil stage; `sites` is the number of the next value hole a `site` call names,
@@ -80,6 +93,22 @@ impl StencilStage {
     }
 }
 
+impl StencilStage {
+    /// The dispatch word that says the run stores specialized (`JS_STEP_STORES_SPECIALIZED`), read from `payload`;
+    /// `slot_store::store_admitted` tests it.
+    #[inline(always)]
+    pub(crate) fn stores_specialized(&mut self, payload: u64) -> u64 {
+        self.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_STORES_SPECIALIZED as i32)
+    }
+}
+
+/// The per-site operand of the row's stage: the address of its next value hole (`Stage::site`), which the
+/// stitcher patches into the instruction that uses it.
+#[inline(always)]
+pub(crate) fn stage_site(stage: &mut StencilStage) -> u64 {
+    stage.site(0)
+}
+
 impl Stage for StencilStage {
     type Word = u64;
     type Proof = ();
@@ -99,7 +128,7 @@ impl Stage for StencilStage {
                 HOLE_THIRD => hole::<HOLE_THIRD>() as u64,
                 HOLE_FOURTH => hole::<HOLE_FOURTH>() as u64,
                 LAST_HOLE => hole::<LAST_HOLE>() as u64,
-                _ => UNSUPPORTED_site(n as u64),
+                _ => unsupported!(UNSUPPORTED_site),
             }
         }
     }
@@ -110,8 +139,8 @@ impl Stage for StencilStage {
     }
     #[inline(always)]
     fn shape_in_site(&mut self, shape: u64, _shapes: &[u32]) -> bool {
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_shape_in(shape) != 0 }
+        let _ = shape;
+        unsupported!(UNSUPPORTED_shape_in) != 0
     }
     #[inline(always)]
     fn constant(&mut self, bits: u64) -> u64 { bits }
@@ -144,6 +173,7 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn and(&mut self, a: u64, b: u64) -> u64 { a & b }
     #[inline(always)]
+    #[inline(always)]
     fn add_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { a.wrapping_add(imm.into()) }
     #[inline(always)]
     fn mul_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { a.wrapping_mul(imm.into()) }
@@ -154,7 +184,6 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn shr_imm(&mut self, a: u64, shift: impl Into<u64>) -> u64 { a >> shift.into() }
     #[inline(always)]
-    fn shl(&mut self, a: u64, b: u64) -> u64 { a << (b & 63) }
     #[inline(always)]
     fn sar32_imm(&mut self, a: u64, shift: u32) -> u64 { u64::from(((a as u32 as i32) >> shift) as u32) }
     #[inline(always)]
@@ -197,6 +226,12 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn load_f64(&mut self, _at: Access, base: u64, offset: i32) -> u64 { self.read::<u64>(base, offset) }
     #[inline(always)]
+    fn box_number(&mut self, number: u64) -> u64 {
+        // `Value::number` (`words::canonical`): its truncation is the target's own instruction, where
+        // a saturating `as` cast would load its bounds from a constant pool a stencil may not use.
+        crate::words::canonical(f64::from_bits(number))
+    }
+    #[inline(always)]
     fn store_u8(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u8) }
     #[inline(always)]
     fn store_u16(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u16) }
@@ -211,7 +246,7 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn clamp_u8(&mut self, a: u64) -> u64 { crate::units::clamp_u8(a) }
     #[inline(always)]
-    fn store_gate(&mut self, space: RecordSpace, record_id: u64, value: u64) -> bool {
+    fn store_gate(&mut self, space: StagedRecordSpace, record_id: u64, value: u64) -> bool {
         let word = |offset: usize| {
             // SAFETY: a payload word at a layout offset; a row that stores was given the live payload.
             unsafe { ((self.payload as usize + offset) as *const u64).read() }
@@ -219,13 +254,13 @@ impl Stage for StencilStage {
         if word(JS_STEP_SLOTS_TRACKED) != 0 {
             return false;
         }
-        // A value that names no heap record joins no barrier log (`RecordSpace::store_logs`).
+        // A value that names no heap record joins no barrier log (`StagedRecordSpace::store_logs`).
         if value & TAG_MASK != HEAP_TAG {
             return true;
         }
         let (blocks_at, count_at) = match space {
-            RecordSpace::Object => (JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT),
-            RecordSpace::Function => (JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
+            StagedRecordSpace::Object => (JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT),
+            StagedRecordSpace::Function => (JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
         };
         let block = record_id >> OBJECT.mark_records_per_block.trailing_zeros();
         if block >= word(count_at) {
@@ -240,13 +275,13 @@ impl Stage for StencilStage {
     }
     #[inline(always)]
     fn assumption(&mut self, watch: u64) -> bool {
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_assumption(watch) != 0 }
+        let _ = watch;
+        unsupported!(UNSUPPORTED_assumption) != 0
     }
     #[inline(always)]
     fn number_operator(&mut self, operator: u64, passed: u64, constant: u64) -> (u64, bool) {
-        // SAFETY: never run; the symbol fails the build.
-        (unsafe { UNSUPPORTED_number_operator(operator, passed, constant) }, false)
+        let _ = (operator, passed, constant);
+        (unsupported!(UNSUPPORTED_number_operator), false)
     }
     #[inline(always)]
     fn not(&mut self, cond: bool) -> bool { !cond }
@@ -256,12 +291,12 @@ impl Stage for StencilStage {
     fn pick(&mut self, cond: bool, then: bool, otherwise: bool) -> bool { if cond { then } else { otherwise } }
     #[inline(always)]
     fn number_truthy(&mut self, bits: u64) -> bool {
-        crate::vm::operations::number_is_truthy(f64::from_bits(bits))
+        crate::vm::operations::number_truthiness(&mut crate::vm::operations::NumberF64Stage, f64::from_bits(bits))
     }
     #[inline(always)]
     fn shape_in(&mut self, shape: u64, _shapes: &[u32]) -> bool {
-        // SAFETY: never run; the symbol fails the build.
-        unsafe { UNSUPPORTED_shape_in(shape) != 0 }
+        let _ = shape;
+        unsupported!(UNSUPPORTED_shape_in) != 0
     }
     #[inline(always)]
     fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {
@@ -301,6 +336,33 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn walk_prototypes(&mut self, records: u64, object: u64, target: u64, max_depth: u32) -> (bool, bool) {
         crate::staged::object::walk_prototypes_loop(self, records, object, target, max_depth)
+    }
+    /// `fill_by_rows` with volatile stores: the window's prefix, the arguments it holds room for,
+    /// then `undefined`. The stores are volatile so LLVM cannot make the loop a `memcpy` or `memset`
+    /// call, which a stencil may not make. The window's `registers` words lie at the lane stack's
+    /// top, which admission proved free.
+    #[inline(always)]
+    fn fill_window(&mut self, top: u64, undefined: u64, prefix: &[u64], passed: Passed<'_, u64>, registers: u16) {
+        let store = |index: usize, value: u64| {
+            // SAFETY: as above; `index` is below `registers`.
+            unsafe { (top.wrapping_add((index * 8) as u64) as *mut u64).write_volatile(value) }
+        };
+        let mut next = 0_usize;
+        for bits in prefix.iter().take(usize::from(registers)) {
+            store(next, *bits);
+            next += 1;
+        }
+        for index in 0..passed.count().min(usize::from(registers) - next) {
+            let value = match passed {
+                Passed::Window { arguments, .. } => self.load_u64(Region::Frame.mutable(), arguments, (index * 8) as i32),
+                Passed::List { file, registers: indices } => self.load_u64(Region::Frame.mutable(), file, i32::from(indices[index]) * 8),
+            };
+            store(next, value);
+            next += 1;
+        }
+        for register in next..usize::from(registers) {
+            store(register, undefined);
+        }
     }
 }
 

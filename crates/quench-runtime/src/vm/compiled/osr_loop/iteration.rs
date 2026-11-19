@@ -5,8 +5,10 @@ use super::{exits_before_effects, MethodCalls, WideInstruction};
 /// or the inliner may still run inlined. A region whose method calls the inliner declined
 /// (`MethodCalls::Exit`) leaves at each, so a call blocks it as any exit does. A loop every
 /// iteration of which leaves runs in its function's lane body instead; the error is the
-/// first exit that blocks it.
-pub(super) fn iterates_natively(instructions: &[WideInstruction], header: u32, method_calls: MethodCalls) -> Result<(), usize> {
+/// first exit that blocks it. A method call the lane runs in place (`native_call`, by absolute PC) is no
+/// exit even under `MethodCalls::Exit`: the lane lowers it as an intrinsic and guards its callee.
+pub(super) fn iterates_natively(instructions: &[WideInstruction], header: u32, method_calls: MethodCalls,
+    native_call: &dyn Fn(usize) -> bool) -> Result<(), usize> {
     let last = instructions.len() - 1;
     let (mut seen, mut pending, mut blocked) = (crate::bitset::BitSet::new(instructions.len()), vec![0], usize::MAX);
     while let Some(offset) = pending.pop() {
@@ -14,7 +16,8 @@ pub(super) fn iterates_natively(instructions: &[WideInstruction], header: u32, m
         if !seen.insert(offset) {
             continue;
         }
-        if exits_before_effects(instruction) && !(method_calls.runs_calls() && instruction.op().is_ordinary_call()) {
+        let call = crate::staged::calls_ordinary(instruction.op());
+        if exits_before_effects(instruction) && !(call && (method_calls == MethodCalls::Inliner || native_call(header as usize + offset))) {
             blocked = blocked.min(offset);
             continue;
         }

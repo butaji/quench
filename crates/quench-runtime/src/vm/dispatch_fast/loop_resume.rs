@@ -24,11 +24,11 @@ fn resumable_site<'v>(own: &'v LaneView, pc: u32) -> Option<(&'v LoopSite, &'v s
 /// Runs the loop's published code from `pc` on the activation's registers `r`, and where the
 /// lane continues after it; `None` where no code re-enters there or its entry record cannot be
 /// built, and the caller resumes the interpreter at `pc`.
-pub(super) fn lane_loop_resume<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView, pc: usize) -> Option<LaneBodyLeft> {
+pub(super) fn resume_loop<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView, pc: usize) -> Option<LaneBodyLeft> {
     let (site, region) = resumable_site(own, pc as u32)?;
     let mut entry = super::super::compiled::LoopEntry::new();
-    let views = lane_loop_entry(cx, r, region, &mut entry)?;
-    let continuation = lane_loop_run(cx, r, site, region, &mut entry, views, pc as u32);
+    let views = loop_entry_in_lane(cx, r, region, &mut entry)?;
+    let continuation = loop_run_in_lane(cx, r, site, region, &mut entry, views, pc as u32);
     count_continuation(cx, &continuation);
     if matches!(continuation, LoopContinuation::Jump) {
         site.note_decline();
@@ -50,7 +50,7 @@ pub(super) fn lane_loop_resume<H: Host>(cx: *mut LaneContext<H>, r: Registers, o
         LoopContinuation::Threw(next) => LaneBodyLeft::Raised(at(next)),
         LoopContinuation::Callee => {
             let mut carried = Carried::script(cx);
-            // SAFETY: `lane_body_call` set both before the region left.
+            // SAFETY: `body_call_helper` set both before the region left.
             let (registers, resume) = unsafe { ((*cx).registers, (*cx).callee_resume) };
             carried.acc = Slot::of(unsafe { (*cx).callee_acc });
             LaneBodyLeft::Resume(registers, resume, carried)

@@ -8,8 +8,7 @@
 //! once at entry (`Heap::Realm`) says the VM runs the realm whose global object that is.
 //!
 //! 1. A load reads the slot live (`Heap::GlobalRead`), a Number where the slot's type says so.
-//! 2. A `typeof` whose slot type spells one name is that name (`Heap::Word`).
-//! 3. A store of a value its place's type fits to the slot's is one direct write (`Heap::GlobalStore`),
+//! 2. A store of a value its place's type fits to the slot's is one direct write (`Heap::GlobalStore`),
 //!    through the store gate where the value may be a heap reference; any other store, and any
 //!    access with no slot fact, is the VM's own (`Step::CallOut`) or the interpreter's.
 //!
@@ -25,7 +24,7 @@ use super::*;
 use crate::code_dependencies::SlotDependency;
 use crate::heap::{GlobalFact, GlobalLayoutFact};
 use crate::typed_ir::Type;
-use crate::vm::global_facts::{GlobalRead, GlobalSlot, LexicalSlot};
+use crate::vm::global_facts::{GlobalRead, GlobalSlot, LexicalSlot, StableCell};
 use quench_bjit::{padded_holes, HOLES};
 
 /// The global object's slot a row holds: the fact the VM took (`Vm::stable_global_slot`) and the
@@ -68,20 +67,25 @@ pub(super) fn value_fact(place: Place) -> Type {
 /// The row of the by-name access at `pc`, where the table (`Known::globals`) holds one a row takes.
 pub(super) fn global_row(known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     match *known.globals?.get(&(pc as usize))? {
-        GlobalRead::Constant(value) if instruction.op().is_throwing_name_load() => {
-            Some(word_row(instruction, value, None))
+        GlobalRead::Constant(value) if super::super::meaning_compiled::loads_name(instruction) => {
+            Some(word_row(instruction, value))
         }
-        GlobalRead::Slot(slot) => slot_row(known, instruction, Access::of(slot)?),
+        GlobalRead::Slot(slot) | GlobalRead::NativeSlot { slot, .. } => slot_row(known, instruction, Access::of(slot)?),
         GlobalRead::Lexical(slot) => lexical_row(instruction, slot),
+        // A held object (`lane_sites::held_objects`): its load is the constant, held by the cell's fact, with no read per use.
+        GlobalRead::Stable { value, fact, global, realm_offset, .. } if instruction.op().loads_name() => Some(Decoded {
+            cell: Some(StableCell { fact, global, realm_offset }),
+            ..word_row(instruction, value)
+        }),
         _ => None,
     }
 }
 
-/// The row of an access of the global object's slot: a load reads it, a `typeof` is the name its
-/// type spells, and a store writes it.
+/// The row of an access of the global object's slot: a load reads it (a `typeof`'s load too, whose
+/// value the `Unary` after it names), and a store writes it.
 fn slot_row(known: Known, instruction: WideInstruction, access: Access) -> Option<Decoded> {
-    match instruction.op().class() {
-        Class::LoadName | Class::LoadNameCall => Some(Decoded {
+    if loads_global(instruction) {
+        Some(Decoded {
             hole: access.offset(),
             global: Some(access),
             also: receiver(instruction),
@@ -91,47 +95,58 @@ fn slot_row(known: Known, instruction: WideInstruction, access: Access) -> Optio
                 None,
                 None,
             )
-        }),
-        Class::LoadNameTypeof => Some(word_row(
-            instruction,
-            access.slot.typeof_name?,
-            Some(access),
-        )),
-        Class::StoreName => store_row(known, instruction, access),
-        _ => None,
+        })
+    } else if stores_name(instruction) {
+        store_row(known, instruction, access)
+    } else {
+        None
     }
 }
 
 /// The row of an access of a global lexical binding's word at its address: a load reads it, leaving where it is in its dead zone, and a store
 /// writes it where it is initialized. Any other access is the VM's.
 fn lexical_row(instruction: WideInstruction, slot: LexicalSlot) -> Option<Decoded> {
-    let row = match instruction.op().class() {
-        Class::LoadName | Class::LoadNameCall => Decoded { also: receiver(instruction), ..Decoded::heap(Heap::LexicalRead, Some(instruction.result_register()), None, None) },
-        Class::StoreName => Decoded::heap(Heap::LexicalWrite, None, Some(Source::Register(instruction.register_a())), None),
-        _ => return None,
+    let row = if named_load(instruction) {
+        Decoded { also: receiver(instruction), ..Decoded::heap(Heap::LexicalRead, Some(instruction.result_register()), None, None) }
+    } else if stores_name(instruction) {
+        Decoded::heap(Heap::LexicalWrite, None, Some(Source::Register(instruction.register_a())), None)
+    } else {
+        return None;
     };
     Some(Decoded { hole: slot.address as u64, lexical: Some(slot), ..row })
 }
 
 /// Whether `instruction` stores to a global name, which may write a field of the global object that a
-/// loop's entry record holds (`Facts::Entry`).
+/// loop's entry record holds (`Facts::Entry`), or to a script-top-level lexical, which writes the realm's record.
 pub(super) fn stores_name(instruction: WideInstruction) -> bool {
     instruction.op().class() == Class::StoreName
+        || matches!(crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::EMPTY),
+            Some(crate::staged::Operation::GlobalLexicalStore { .. }))
+}
+
+/// Whether `instruction` is a by-name read, `LoadName` or a call's `LoadNameCall`: the decode names both
+/// (`Operation::decode_load_name`), whose proof decides nothing about which opcode it is.
+fn named_load(instruction: WideInstruction) -> bool {
+    crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()).is_some()
+}
+
+/// Whether `instruction` loads a global name's value: a by-name read (`named_load`), or the load a
+/// `typeof` reads (`Operation::GlobalTypeof`).
+fn loads_global(instruction: WideInstruction) -> bool {
+    named_load(instruction)
+        || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::GlobalTypeof { .. }))
 }
 
 /// The register a name call's `undefined` receiver is defined in.
 fn receiver(instruction: WideInstruction) -> Option<Register> {
-    instruction
-        .op()
-        .is_load_name_call()
-        .then(|| instruction.register_b())
+    matches!(crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()),
+        Some(crate::staged::Operation::LoadName { receiver: Some(_), .. })).then(|| instruction.register_b())
 }
 
-/// The row that defines the load's result as the constant `value`, holding the slot it was folded from.
-fn word_row(instruction: WideInstruction, value: Value, global: Option<Access>) -> Decoded {
+/// The row that defines the load's result as the constant `value`, an immutable global's.
+fn word_row(instruction: WideInstruction, value: Value) -> Decoded {
     Decoded {
         hole: value.to_bits(),
-        global,
         also: receiver(instruction),
         ..Decoded::heap(Heap::Word, Some(instruction.result_register()), None, None)
     }
@@ -163,7 +178,7 @@ pub(super) fn global_holes(
     Some(padded_holes(match heap {
         Heap::GlobalRead => [dst_hole, id, decoded.hole],
         Heap::GlobalStore => [id, a_hole, decoded.hole],
-        Heap::LexicalRead => [dst_hole, decoded.hole, 0],
+        Heap::LexicalRead | Heap::CalleeCapture => [dst_hole, decoded.hole, 0],
         Heap::LexicalWrite => [0, a_hole, decoded.hole],
         Heap::Word => [dst_hole, decoded.hole, 0],
         _ => return None,
@@ -192,7 +207,9 @@ pub(super) fn receiver_row(homes: &Homes, register: Register, pc: u32) -> Result
 pub(super) fn held_realm(decoded: &[Decoded]) -> Option<RealmProof> {
     let proof = |global: Value, realm_offset: i32| RealmProof { global: global.to_bits(), offset: u64::from(realm_offset.unsigned_abs()) };
     decoded.iter().find_map(|row| {
-        row.global.map(|access| proof(access.slot.global, access.slot.realm_offset)).or_else(|| row.lexical.map(|slot| proof(slot.global, slot.realm_offset)))
+        row.global.map(|access| proof(access.slot.global, access.slot.realm_offset))
+            .or_else(|| row.lexical.map(|slot| proof(slot.global, slot.realm_offset)))
+            .or_else(|| row.cell.map(|cell| proof(cell.global, cell.realm_offset)))
     })
 }
 
@@ -208,12 +225,14 @@ pub(super) fn held_layouts(decoded: &[Decoded]) -> Box<[GlobalLayoutFact]> {
     distinct(decoded.iter().filter_map(|row| row.global.map(|access| access.slot.layout).or_else(|| row.lexical.map(|slot| slot.layout))))
 }
 
-/// The slot types the rows rely on, each once: a write of another type retires the code.
+/// The slot types the rows rely on, each once: a global object's slots, and the field slots a read takes
+/// unchecked (`Decoded::typed`). A write of another type retires the code.
 pub(super) fn held_slot_types(decoded: &[Decoded]) -> Box<[SlotDependency]> {
     let mut types: Vec<SlotDependency> = decoded
         .iter()
         .filter_map(|row| row.global)
         .filter_map(|access| access.slot.dependency)
+        .chain(decoded.iter().filter_map(|row| row.typed))
         .collect();
     types.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
     types.dedup();

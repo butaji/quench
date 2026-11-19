@@ -6,9 +6,7 @@
 //! declarations rather than a copy of every outer name.
 
 use super::{Atom, EvalBinding, EvalBindingLocation, Function};
-use super::Op;
-// The one reader, `Function::stored_slot`, is a test of the aot image.
-#[cfg(all(test, feature = "aot"))]
+use super::{Op, Traits};
 use super::WideInstruction;
 use std::rc::Rc;
 
@@ -154,10 +152,10 @@ impl Function {
     /// The local slot a store of this function writes: a local store's own, or the slot named
     /// as a by-name store's atom, which a script root keeps for the global var its functions
     /// capture.
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(test)]
     pub(crate) fn stored_slot(&self, instruction: WideInstruction) -> Option<usize> {
         match instruction.op() {
-            Op::StoreLocal | Op::StoreEnvLocal => Some(instruction.local_slot()),
+            op if op.traits().has(Traits::LOCAL_SLOT_STORE) => Some(instruction.local_slot()),
             op if op.stores_name() => self.local_atoms.iter().position(|atom| *atom == instruction.atom_index()),
             _ => None,
         }
@@ -172,16 +170,7 @@ pub(super) fn reads_hidden_name(instruction: super::WideInstruction, tables: &im
 
 /// The ops that read the implicit bindings an environment holds, by their form.
 pub(super) fn reads_binding_op(op: Op) -> bool {
-    matches!(
-        op,
-        Op::ResolveName
-            | Op::LoadResolvedName
-            | Op::DeleteName
-            | Op::StoreResolvedName
-            | Op::StoreVarBinding
-            | Op::InitializeThis
-            | Op::SuperCallCheck
-    )
+    op.traits().has(Traits::BINDING_FORM)
 }
 
 /// The ops `body_binding_reads_beside_clones` examines: those that name a binding, read one by

@@ -13,8 +13,8 @@ impl Lowering<'_, '_> {
         let row = Operation::decode(instruction, crate::staged::DecodeContext::EMPTY)?;
         let held = |register: Register| register < self.unit.registers;
         let supported = match row {
-            Operation::ElementRead { base, key } => held(base) && self.operand_supported(key),
-            Operation::ElementWrite { value, base, key } => [value, base, key].into_iter().all(held),
+            Operation::ElementRead { base, key, .. } => held(base) && self.operand_supported(key),
+            Operation::ElementWrite { value, base, key, .. } => [value, base, key].into_iter().all(held),
             _ => false,
         };
         supported.then_some(row)
@@ -28,8 +28,13 @@ impl Lowering<'_, '_> {
     /// The element row at `pc`, lowered by its definition; whether control falls through.
     pub(super) fn element_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         match self.element_row(instruction).expect("an element row decodes") {
-            Operation::ElementRead { base, key } => self.element_read(state, pc, (instruction.result_register(), base, key)),
-            Operation::ElementWrite { value, base, key } => self.element_write(state, (pc, instruction), (value, base, key)),
+            Operation::ElementRead { base, key, .. } => {
+                let destination = instruction.result_register();
+                let falls = self.element_read(state, pc, (destination, base, key));
+                if falls { self.conform_declared_rest_read(state, pc, base, destination); }
+                falls
+            }
+            Operation::ElementWrite { value, base, key, .. } => self.element_write(state, (pc, instruction), (value, base, key)),
             _ => unreachable!("an element row is a read or a write"),
         }
     }
@@ -46,9 +51,22 @@ impl Lowering<'_, '_> {
         let packed = self.observed.at(pc).is_some();
         let within = self.ranges.in_bounds(pc);
         self.held_view = array.map(|array| self.held_array(array, (packed, within)));
-        let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key })
-            else { unreachable!("an element read yields a value or leaves at its miss edge") };
-        if array.is_some_and(|array| matches!(array.views, ElementViews::Typed(_))) {
+        // A hoisted array's hole leaves, until the read has left often enough to be widened
+        // (`LoopTier::left_at`), whose recompile then takes the VM's read.
+        self.hole_leaves = array.is_some() && !self.generic.contains(&pc);
+        let value = match (array, key.register_index()) {
+            // A base no loop array holds, read by a register key: a string's unit (`string_or_row`).
+            (None, Some(index)) => {
+                let string_within = self.ranges.string_in_bounds(pc);
+                self.string_or_row(state, (destination, base, index, key), string_within, exit)
+            }
+            _ => {
+                let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key, destination })
+                    else { unreachable!("an element read yields a value or leaves at its miss edge") };
+                value
+            }
+        };
+        if array.is_some_and(|array| matches!(array.views, ElementViews::Typed(_) | ElementViews::Double)) {
             self.set_number(state, destination, value);
         } else {
             self.set_tagged(state, destination, value);
@@ -59,6 +77,40 @@ impl Lowering<'_, '_> {
             None => {}
         }
         true
+    }
+
+    /// `base[index]` where `base` holds a string: its one-unit string from the ASCII unit table
+    /// (`strings::string_char_at`), joined with the element row otherwise. A string the row does
+    /// not read (a rope, a wide unit, a unit with no string yet, an index outside the string)
+    /// leaves at `exit`, as the row leaves for a value that is no array.
+    fn string_or_row(&mut self, state: &mut State, (destination, base, index, key): (Register, Register, Register, crate::bytecode::Operand),
+        within: bool, exit: ir::Block) -> ir::Value {
+        let bits = self.tagged(state, base);
+        let is_string = { let mut stage = super::super::object_slots::emit(&mut self.builder); crate::staged::value::is_direct_string(&mut stage, bits) };
+        let (string, row, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        self.branch_if(is_string, (string, &[]), (row, &[]));
+        self.builder.switch_to_block(string);
+        let key_word = self.tagged(state, index);
+        let records = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.string_record_base));
+        let table = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.ascii_unit_strings));
+        let character = {
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            let units = crate::staged::strings::flat_string(&mut stage, records, bits, exit).expect("the emit stage continues past its guards");
+            let row = if within {
+                crate::staged::strings::string_char_at_within(&mut stage, units, key_word, table, exit)
+            } else {
+                crate::staged::strings::string_char_at(&mut stage, units, key_word, table, exit)
+            };
+            row.expect("the emit stage continues past its guards")
+        };
+        let joined = self.builder.append_block_param(join, ir::types::I64);
+        self.goto(join, &[character]);
+        self.builder.switch_to_block(row);
+        let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key, destination })
+            else { unreachable!("an element read yields a value or leaves at its miss edge") };
+        self.goto(join, &[value]);
+        self.builder.switch_to_block(join);
+        joined
     }
 
     /// Whether `array` is a hoisted typed array of a fixed kind whose elements are all int32s.
@@ -84,13 +136,23 @@ impl Lowering<'_, '_> {
         true
     }
 
+    /// Whether the loop's array `array` is a register its entering facts type as a string: such a
+    /// base is no array, so its element reads take the string row and it is no hoisted view.
+    pub(super) fn string_base(&self, array: &LoopArray) -> bool {
+        let super::loop_arrays::ArraySource::Register(register) = array.source else { return false };
+        self.facts.at(array.header).and_then(|types| types.get(usize::from(register)).copied())
+            .is_some_and(|ty| ty.is_subtype(Type::language(crate::ValueType::String)))
+    }
+
     /// The view the hoisted `array`'s entering edge proved, which its element rows read and write through.
     fn held_array(&mut self, array: LoopArray, proved: (bool, bool)) -> frame_elements::Held {
         let (values, length) = self.hoisted_view(array);
         match array.views {
             ElementViews::Dense => frame_elements::Held::Dense(super::super::DenseArrayView {
-                values, length, writable: array.writable, uncounted: array.writable }, proved),
-            ElementViews::Typed(_) => frame_elements::Held::Typed(TypedView { values, length, kind: self.hoisted_kind(array), within: proved.1 }),
+                values, length, writable: array.writable, uncounted: array.writable, double: None }, proved),
+            // A double backing's words are a `Float64Array`'s (`ElementViews::observed_kind`).
+            ElementViews::Typed(_) | ElementViews::Double =>
+                frame_elements::Held::Typed(TypedView { values, length, kind: self.hoisted_kind(array), within: proved.1 }),
         }
     }
 
@@ -109,14 +171,20 @@ impl Lowering<'_, '_> {
         }
         let exit = self.guard_exit(state, pc as u32);
         let number = state.values[usize::from(value)].value.ty.is_subtype(Type::NUMBER);
-        let array = self.loop_array(pc, Some(base)).filter(|array| number && array.writable);
+        // A reference is stored through a hoisted dense view too, past its barrier gate (`store_gate`);
+        // a typed view takes a Number alone.
+        let array = self.loop_array(pc, Some(base))
+            .filter(|array| array.writable && (number || array.views == ElementViews::Dense));
         match array {
             Some(array) if array.views == ElementViews::Dense && self.left_here =>
-                self.dense_element_write(state, array, pc as u32, instruction, exit),
+                self.dense_element_write(state, array, pc as u32, instruction, number, exit),
             held => {
                 self.held_view = held.map(|array| self.held_array(array, (false, self.ranges.in_bounds(pc))));
-                self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementWrite { value, base, key });
-                self.reload_dense_arrays(pc);
+                self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementWrite { value, base, key, strict: instruction.boolean_flag().unwrap_or(false) });
+                // A store through a held view leaves where it misses (`index_set_host`) and calls no
+                // helper, so no backing moved and no view is read again. Only the general row may
+                // call the VM's store, which may move any backing.
+                if held.is_none() { self.reload_dense_arrays(pc); }
             }
         }
         state.proofs.arrays.clear();
@@ -125,4 +193,9 @@ impl Lowering<'_, '_> {
         state.proofs.stable = false;
         true
     }
+}
+
+/// Whether the element write `instruction` is strict code's, whose refused store raises (`Operation::ElementWrite::strict`).
+fn element_write_strict(instruction: WideInstruction) -> bool {
+    matches!(crate::vm::compiled::decoded(instruction), Some(Operation::ElementWrite { strict: true, .. }))
 }

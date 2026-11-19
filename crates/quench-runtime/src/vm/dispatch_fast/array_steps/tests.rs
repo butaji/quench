@@ -34,7 +34,7 @@ var result = out.join("|");
 "#;
 
 /// `reduce` and `reduceRight` over dense arrays step their callbacks' lane activations
-/// (`lane_begin_array_iteration`) with the accumulator first: initial values and their
+/// (`begin_array_iteration_in_lane`) with the accumulator first: initial values and their
 /// absence, holes and inherited elements, array-likes, strings and typed arrays on the native's
 /// loop, the length read once, a strict callback's `this`, collections inside callbacks,
 /// throws, nesting, callbacks that become frames, and bound and native callbacks behave as
@@ -54,5 +54,53 @@ fn lane_reducers_keep_reduce_semantics() {
         let name = vm.intern_atom("result");
         let value = vm.own_property(vm.realm.globals, name).unwrap();
         assert_eq!(vm.to_string(&program, value).unwrap(), "62|4,32,21,10|5:7@4|7:5@2|0p2|TypeError|TypeError|init|7|>a0c2|CBA|123|6|true|60|59|r3|3.3|6|15|NaN");
+    }
+}
+
+const PLAIN_CALLBACKS: &str = r#"var gc = typeof $262 !== "undefined" ? $262.gc : typeof globalThis.gc === "function" ? globalThis.gc : function () {};
+var out = [];
+var a = [1, 2, 3, 4];
+out.push(a.map(x => x * 2).join(","));
+out.push(a.filter(x => x % 2 === 0).join(","));
+var s = 0; a.forEach(x => { s += x; }); out.push(s);
+out.push(a.reduce((t, v) => t + v, 0), a.reduce((t, v) => t + v), a.reduceRight((t, v) => t + "" + v, ""));
+out.push(a.some(x => x > 3), a.every(x => x > 0), a.find(x => x > 2), a.findIndex(x => x > 2));
+function inner(b) { return b.map(y => y + 1).reduce((t, v) => t + v, 0); }
+out.push(a.map(x => inner([x, x])).join(","));
+var m = [1, 2, 3, 4, 5];
+out.push(m.map((x, i) => { if (i === 0) m.length = 2; return x; }).join(","));
+try { a.map(x => { if (x === 3) throw new RangeError("m" + x); return x; }); } catch (e) { out.push(e.message); }
+out.push(a.map(x => { var junk = []; for (var j = 0; j < 50; j++) junk.push({ j: j }); gc(); return junk.length + x; }).join(","));
+var o = {}, t;
+[1].forEach(function () { "use strict"; t = this; }, o);
+out.push(t === o);
+function id(v) { return v; }
+out.push(a.map(x => id(x)).join(","));
+var result = out.join("|");
+"#;
+
+/// Callbacks that keep nothing (arrows, strict functions) step as plain activations returning
+/// through the array steps' trampoline (`array_step_returned`): every method's step, nesting
+/// over plain frames, a receiver shortened mid-iteration (the native's loop takes the holes),
+/// a throw, collections inside callbacks, `thisArg`, and a returning call (which spills the
+/// header into the step's record) behave as the specification says (expected string worked by
+/// hand, not yet checked against `node --expose-gc`), specialized or not.
+#[test]
+fn lane_plain_array_steps_keep_semantics() {
+    for specialized in [false, true] {
+        let mut vm = Vm::new(TestHost::default().with_test262());
+        let program = if specialized {
+            Engine::specialize(PLAIN_CALLBACKS, "lane-plain-steps.js")
+        } else {
+            Engine::compile(crate::ExecutionRequest { source: PLAIN_CALLBACKS, name: "lane-plain-steps.js", kind: crate::SourceKind::Script })
+        }
+        .unwrap();
+        vm.execute(&program).unwrap();
+        let name = vm.intern_atom("result");
+        let value = vm.own_property(vm.realm.globals, name).unwrap();
+        assert_eq!(
+            vm.to_string(&program, value).unwrap(),
+            "2,4,6,8|2,4|10|10|10|4321|true|true|3|2|4,6,8,10|1,2,,,|m3|51,52,53,54|true|1,2,3,4"
+        );
     }
 }

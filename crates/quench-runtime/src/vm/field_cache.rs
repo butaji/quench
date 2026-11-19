@@ -48,7 +48,7 @@ impl<H: Host> Vm<H> {
             })
     }
 
-    /// A global name read as the lane takes it (`dispatch_fast::lane_load_global_name_refresh`):
+    /// A global name read as the lane takes it (`dispatch_fast::global_name_refresh_miss`):
     /// an initialized global lexical binding of the name, else the global object's own data
     /// field with the hint that names it, else the site's cached field.
     pub(super) fn global_name_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> GlobalNameRead {
@@ -67,6 +67,35 @@ impl<H: Host> Vm<H> {
             object::FieldCacheProbe::Hit(value) => GlobalNameRead::Value(value, None),
             _ => GlobalNameRead::Miss,
         }
+    }
+
+    /// The value of the active realm's global lexical binding at `index`, where a hint names it
+    /// (`dispatch_fast::lane_load_root_lexical`, `lane_load_name_lexical`): the binding there while
+    /// it is `atom`'s and initialized. The index is only a locator, so a stale one, or a binding
+    /// in its temporal dead zone, gives `None` and the caller takes its walk or refresh.
+    #[inline(always)]
+    pub(super) fn global_lexical_at(&self, atom: Atom, index: u16) -> Option<Value> {
+        self.realm
+            .global_lexical_bindings
+            .get_index(usize::from(index))
+            .filter(|(bound, value)| **bound == atom && !value.is_deleted())
+            .map(|(_, value)| *value)
+    }
+
+    /// The store of `value` to the global lexical binding `atom` through its realm index slot, where
+    /// `global_lexical_at`'s guard holds and the binding is mutable and initialized: the store the
+    /// by-name path makes (`store_global_lexical_assignment`), without its lookup. Otherwise `false`,
+    /// and the by-name store settles it: a temporal dead zone, a const, or a stale index.
+    pub(super) fn global_lexical_store_at(&mut self, atom: Atom, index: u16, value: Value) -> bool {
+        let index = usize::from(index);
+        let Some((bound, current)) = self.realm.global_lexical_bindings.get_index(index) else {
+            return false;
+        };
+        if *bound != atom || current.is_deleted() || self.realm.immutable_global_lexical_bindings.contains(&atom) {
+            return false;
+        }
+        self.assign_global_lexical_at(index, value);
+        true
     }
 
     #[inline(always)]
@@ -138,13 +167,11 @@ impl<H: Host> Vm<H> {
     ) -> Option<&'a Object> {
         let class = self.atom_class(atom);
         let kind = match cell {
-            Cell::Object(_) | Cell::Promise(_) => ReceiverKind::Ordinary,
+            Cell::Promise(_) => ReceiverKind::Ordinary,
             Cell::Proxy { .. } => return None,
-            Cell::Array { .. } if class.contains(AtomClass::ARRAY_INDEX) => return None,
             Cell::TypedArray { .. } if class.contains(AtomClass::TYPED_ARRAY_INDEX) => {
                 return None;
             }
-            Cell::Function(function) => return self.shape_property_lookup_function(function, atom),
             _ => ReceiverKind::Exotic,
         };
         self.shape_answers(cell.object()?, atom, kind)
@@ -201,5 +228,13 @@ impl<H: Host> Vm<H> {
         let holder = self.heap.object(receiver.proto())?;
         let entry = self.megamorphic_field_cache(self.field_cache_index(site), receiver.exact_shape(), holder.exact_shape())?;
         (entry.holder != NO_FIELD_HOLDER).then(|| self.heap.property_get(holder, usize::from(entry.slot)))?
+    }
+
+    /// Whether the field cache site `site`'s primary entry holds a receiver: a plan-time admission fact for a
+    /// field row's direct arm. The arm checks the entry at run time, so a stale answer costs only a decline.
+    pub(in crate::vm) fn field_cache_filled(&self, site: u16) -> bool {
+        // SAFETY: the active layout reserves every compiler-emitted site, as `cached_field_store_hit` reads it.
+        let cache = unsafe { self.field_caches.get_unchecked(self.field_cache_index(site)) };
+        cache.receiver != EMPTY_CACHE.receiver
     }
 }

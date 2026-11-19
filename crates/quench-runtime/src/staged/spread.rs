@@ -6,6 +6,7 @@
 
 use super::callout::calling;
 use super::{Arguments, NumericFrame, NumericStage, Operation, Step};
+#[cfg(not(stencil_build))]
 use crate::bytecode::{ConstructArguments, Op, WideInstruction};
 
 /// What the argument registers of a call-out call hold.
@@ -17,16 +18,26 @@ pub(crate) enum Passing {
     Array,
     /// One register holding an iterable, whose values are spread into the arguments.
     Iterable,
+    /// One register holding a rest parameter kept as a view (`CallRest`): its array, spread as
+    /// `Iterable` spreads one, or `undefined`, for the values the activation kept past its fixed
+    /// parameters.
+    Rest,
 }
 
+#[cfg(not(stencil_build))]
 /// The call-out row of a spread call or a super construction; `None` for any other instruction,
 /// and for a direct eval, which the host decides.
+#[inline(always)]
 pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>> {
     let destination = || instruction.result_register();
     Some(match instruction.op() {
-        Op::CallSpread | Op::CallArray if !instruction.direct_eval() && !instruction.parameter_eval() => {
+        Op::CallSpread | Op::CallArray | Op::CallRest if !instruction.direct_eval() && !instruction.parameter_eval() => {
             let window = instruction.call_window();
-            let passing = if instruction.op() == Op::CallSpread { Passing::Iterable } else { Passing::Array };
+            let passing = match instruction.op() {
+                Op::CallSpread => Passing::Iterable,
+                Op::CallRest => Passing::Rest,
+                _ => Passing::Array,
+            };
             Operation::SpreadCall { destination: destination(), callee: instruction.register_b(), receiver: instruction.register_c(),
                 arguments: Arguments::Window { first: window.base, count: window.count }, passing }
         }
@@ -66,13 +77,13 @@ mod tests {
     #[test]
     fn a_spread_call_names_its_callee_receiver_and_one_argument_register() {
         let imm = ImmediateLayout::call_immediate(7, 1, false, false);
-        for (op, passing) in [(Op::CallSpread, Passing::Iterable), (Op::CallArray, Passing::Array)] {
+        for (op, passing) in [(Op::CallSpread, Passing::Iterable), (Op::CallArray, Passing::Array), (Op::CallRest, Passing::Rest)] {
             let (call, result) = decoded(op, imm).and_then(|row| row.call_out()).expect("a spread call is a call-out row");
             let arguments = Arguments::Window { first: 7, count: 1 };
             assert_eq!(call, CallOut::Spread { callee: 5, receiver: 6, arguments, passing }, "{op:?}");
             assert_eq!(result, Some(4));
             let operands = call.operands();
-            assert_eq!((operands.fixed, operands.list), ([Some(5), Some(6)], Some(arguments)));
+            assert_eq!((operands.fixed, operands.list), ([Some(crate::bytecode::Operand::register(5)), Some(crate::bytecode::Operand::register(6))], Some(arguments)));
             assert_eq!(operands.registers(&[]).collect::<Vec<_>>(), [5, 6, 7]);
         }
         let eval = ImmediateLayout::call_immediate(7, 1, true, false);

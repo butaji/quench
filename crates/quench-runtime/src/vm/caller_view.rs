@@ -98,15 +98,15 @@ impl CallerView for FrameRecord {
     }
 
     fn binding_site(&self) -> Option<u32> {
-        self.binding_site_pc
+        self.binding_site_pc()
     }
 
     fn held_bindings(&self) -> &[(Atom, Value)] {
-        &self.dynamic_bindings
+        self.dynamic_bindings()
     }
 
     fn scope_chain<'a>(&'a self, _entered: &'a [Value]) -> &'a [Value] {
-        &self.with_objects
+        self.with_objects()
     }
 }
 
@@ -131,8 +131,8 @@ impl<H: Host> Vm<H> {
         if !caller.owns_environment() {
             return caller.environment();
         }
-        match self.heap.get(caller.environment()) {
-            Some(Cell::Environment { parent, .. }) => *parent,
+        match self.heap.environment(caller.environment()) {
+            Some(crate::heap::EnvironmentRecord { parent, .. }) => *parent,
             _ => Value::NULL,
         }
     }

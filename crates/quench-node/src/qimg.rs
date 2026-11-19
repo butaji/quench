@@ -70,15 +70,6 @@ fn write_output(out: &str, file: Vec<u8>) -> Result<(), String> {
 
 /// `compile <entry.js> -o <out> [entry args]`: `<out>.qimg` is an image file (run with
 /// `quench-node <out>.qimg`), any other name an executable.
-/// `compile` as the build that has it defines it: the AOT builder's command in a compiler
-/// build, and the ahead-image recorder in a produced image.
-fn compile_command(arguments: Vec<String>) -> Result<ExitCode, String> {
-    #[cfg(feature = "aot")]
-    { crate::aot::cli::run(arguments) }
-    #[cfg(not(feature = "aot"))]
-    { compile(arguments) }
-}
-
 pub fn compile(arguments: Vec<String>) -> Result<ExitCode, String> {
     let (entry, rest) = arguments.split_first().ok_or("usage: quench-node compile <entry.js> -o <out>")?;
     let flag = rest.iter().position(|argument| argument == "-o").ok_or("compile needs -o <out>")?;
@@ -125,11 +116,10 @@ pub(crate) fn install(runtime: &mut Runtime<NodeHost>) {
     });
 }
 
-/// The command line's AOT command, if it is one: `compile ...` or `<x>.qimg ...`.
+/// The image command line, if it is one: an executable with an embedded image, or `<x>.qimg ...`.
 pub fn route(arguments: &[String]) -> Option<Result<ExitCode, String>> {
     if let Some(payload) = embedded() { return Some(run_file("this executable", &payload, arguments.iter().cloned())); }
     match arguments {
-        [command, rest @ ..] if command == "compile" || command == "build" => Some(compile_command(rest.to_vec())),
         [image, rest @ ..] if image.ends_with(EXTENSION) => Some(run(image, rest.iter().cloned())),
         _ => None,
     }

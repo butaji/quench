@@ -28,7 +28,7 @@ impl Heap {
                     unsafe { record.write(object) };
                     value
                 }
-                None => self.insert_admitted_object_record(object),
+                None => self.insert_object_record(object),
             },
             None => self.alloc_object_with_properties(prototype, header.shape(), &values[..len]),
         }
@@ -49,7 +49,7 @@ impl Heap {
                 unsafe { record.write(object) };
                 value
             }
-            None => self.insert_admitted_object_record(object),
+            None => self.insert_object_record(object),
         }
     }
 
@@ -62,8 +62,15 @@ impl Heap {
             return None;
         }
         let object = Object::from_inline_header(header, inline)?;
-        let id = self.object_records.claim_uninit_quick()?;
-        self.allocated += 1;
+        // The cursor's next id is the call-free case; a spent cursor takes the per-id claim.
+        let id = match self.object_records.cursor_take() {
+            Some(id) => id,
+            None => {
+                let id = self.object_records.claim_uninit_quick()?;
+                self.allocated += 1;
+                id
+            }
+        };
         // SAFETY: the claimed record is uninitialized and written whole, before any safepoint.
         unsafe { self.object_records.record_ptr(id).write(object) };
         Some(Value::direct_object(id))
@@ -76,66 +83,71 @@ impl Heap {
     /// and admit its values (`ValueArena::note_plan_values`), before then.
     #[inline(always)]
     pub(crate) fn claim_object_record(&mut self) -> Option<(Value, *mut Object)> {
-        let id = self.object_records.claim_uninit()?;
-        self.allocated += 1;
+        let id = self.object_records.bump_id(&mut self.allocated)?;
         Some((Value::direct_object(id), self.object_records.record_ptr(id)))
     }
 
-    /// `alloc_object` of an object with no properties, which admit no slot values.
-    #[inline(always)]
-    pub(crate) fn alloc_empty_object(&mut self, object: Object) -> Value {
-        debug_assert!(object.exact_shape() == object.shape() && self.properties.shape_length(object.exact_shape()) == 0);
-        self.mark_prototype(object.proto());
-        self.insert_admitted_object_record(object)
+    /// Gives `object`, a constructor's receiver that no code has seen, allocated from a template
+    /// of layout `template` (no properties, inline storage, no extras: `Vm::reserve_learned_receiver`
+    /// derives it so), the header `header` of the same prototype and shape over arena storage,
+    /// an empty young run reserved for the `slots` values its constructor's receivers reached
+    /// (`ValueArena::young_reserved_run`). The receiver's shape, prototype and properties are as
+    /// before; only where its values will go changes, so the adds its construction makes append
+    /// in place, from the first, up to `slots` (`record_property_append_reserved`), where the
+    /// inline slots and each length's class would move them. `false` changes nothing: a
+    /// receiver of another layout, or a nursery without the room.
+    pub(crate) fn reserve_receiver_run(&mut self, object: Value, template: u32, header: InlineObjectHeader, slots: usize) -> bool {
+        // As `alloc_planned_object`, an aggregate profile takes no young run for a new object.
+        let Some(record_id) = object.direct_object_index().filter(|_| !cfg!(feature = "profile-aggregate")) else {
+            return false;
+        };
+        let Self { object_records, properties, .. } = &mut *self;
+        // SAFETY: direct-object Values name live records; nothing is stored, so the barrier
+        // logs nothing.
+        let data = unsafe { object_records.get_live_mut_unbarriered(record_id) };
+        if data.layout_id() != template {
+            return false;
+        }
+        let Some(start) = properties.young_reserved_run(slots) else {
+            return false;
+        };
+        // The template's inline storage holds no values and it has no extras, so nothing is
+        // lost: the record is rewritten whole, as a planned allocation writes it.
+        *data = Object::from_run_header(header, start);
+        true
     }
 
-    /// Where compiled code finds the fast claim of a direct object record, as byte offsets from
-    /// the `Heap`: with `free_word` nonzero, id = `free_word_base + 63 - lzcnt(free_word)`;
-    /// clear that bit of `free_word`, set it in the word `*free_word_occupied`, add 1 to
-    /// `live` and to `allocated`, and write the 16-byte record at `base + id * 16`. A zero
-    /// `free_word` leaves for `claim_object_record`, which handles every other case.
-    #[allow(dead_code)] // read by the u-jit emitter once it claims inline
-    pub(crate) const OBJECT_CLAIM: ObjectClaimLayout = {
-        use std::mem::offset_of as at;
-        let records = at!(Heap, object_records);
-        ObjectClaimLayout {
-            free_word: records + at!(ObjectRecordSpace, free_word),
-            free_word_base: records + at!(ObjectRecordSpace, free_word_base),
-            free_word_occupied: records + at!(ObjectRecordSpace, free_word_occupied),
-            base: records + at!(ObjectRecordSpace, base),
-            live: records + at!(ObjectRecordSpace, live),
-            allocated: at!(Heap, allocated),
+    /// The cached add of `value` at `slot` to object record `record_id`, moving to `shape`, into
+    /// the run reserved for it (`reserve_receiver_run`, `Object::admits_reserved_append`): the
+    /// store alone, where `record_property_append_plain` would find no room. A store the write
+    /// barrier would log, or a record without the reservation's room, is left to the caller
+    /// (`false`, nothing changed).
+    #[inline(always)]
+    pub(crate) fn record_property_append_reserved(&mut self, record_id: u32, slot: usize, value: Value, shape: u32) -> bool {
+        if self.object_records.store_logs(record_id, value) {
+            return false;
         }
-    };
-}
+        let Self { object_records, properties, .. } = &mut *self;
+        // SAFETY: the caller read the record from a direct-object Value; `&mut self` is
+        // exclusive, and the barrier logs nothing for this store.
+        let data = unsafe { object_records.get_live_mut_unbarriered(record_id) };
+        if !data.admits_reserved_append(properties, slot) {
+            return false;
+        }
+        data.append_reserved(properties, slot, value, shape);
+        self.settle_widened();
+        #[cfg(feature = "profile-memory")]
+        self.note_object_slots(Value::direct_object(record_id), slot + 1);
+        true
+    }
 
-/// The byte offsets of `Heap::OBJECT_CLAIM`.
-#[allow(dead_code)]
-#[derive(Clone, Copy)]
-pub(crate) struct ObjectClaimLayout {
-    pub(crate) free_word: usize,
-    pub(crate) free_word_base: usize,
-    pub(crate) free_word_occupied: usize,
-    pub(crate) base: usize,
-    pub(crate) live: usize,
-    pub(crate) allocated: usize,
-}
-
-#[cfg(test)]
-mod claim_layout_tests {
-    use super::*;
-
-    #[test]
-    fn the_inline_claim_sequence_matches_claim_object_record() {
-        let mut heap = Heap::new();
-        let first = heap.claim_object_record().expect("a fresh space claims");
-        // SAFETY: the claimed record is written before the next claim.
-        unsafe { first.1.write(Object::new(Value::NULL)) };
-        let layout = Heap::OBJECT_CLAIM;
-        let at = |offset: usize| (&heap as *const Heap).cast::<u8>().wrapping_add(offset);
-        let (free_word, base) = unsafe { (*at(layout.free_word).cast::<u64>(), *at(layout.free_word_base).cast::<u32>()) };
-        assert!(free_word == 0 || base as u64 + 63 >= u64::from(free_word.leading_zeros()));
-        assert_eq!(unsafe { *at(layout.live).cast::<usize>() }, 1);
-        assert_eq!(unsafe { *at(layout.allocated).cast::<usize>() }, 1);
+    /// `alloc_object` of a fresh object of `prototype` with no properties (`Object::new`),
+    /// which admits no slot values: the prototype as given, not decoded back from the layout.
+    #[inline(always)]
+    pub(crate) fn alloc_empty_object(&mut self, prototype: Value) -> Value {
+        let object = Object::new(prototype);
+        debug_assert!(object.exact_shape() == object.shape() && self.properties.shape_length(object.exact_shape()) == 0);
+        self.mark_prototype(prototype);
+        self.insert_object_record(object)
     }
 }

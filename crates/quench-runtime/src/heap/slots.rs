@@ -151,7 +151,7 @@ mod reservation {
 
         /// Makes the next slab readable and writable.
         pub(super) fn extend(&mut self) {
-            assert!(self.accessible < self.reserved, "heap cell limit reached");
+            assert!(self.accessible < self.reserved, "legacy slots exhausted: a heap holds 2^25 legacy slots");
             let bytes = SLOTS_PER_SLAB * size_of::<Slot>();
             // SAFETY: the slab lies inside the reservation, after every accessible slot.
             let result = unsafe {
@@ -209,7 +209,7 @@ impl SlotArena {
         if self.len == self.capacity() {
             let reservation = self
                 .reservation
-                .get_or_insert_with(|| reservation::Reservation::new(super::MAX_HEAP_CELLS));
+                .get_or_insert_with(|| reservation::Reservation::new(super::LEGACY_SLOT_CAPACITY));
             reservation.extend();
             self.base = reservation.base.as_ptr();
         }

@@ -42,7 +42,6 @@ fn interrupt_owner_address(cursor: &mut cranelift_codegen::cursor::FuncCursor<'_
     let build = cursor.ins();
     match helpers.table_address(LaneHelper::InterruptOwner) {
         HelperAddress::Embedded(address) => build.iconst(types::I64, address),
-        #[cfg(feature = "aot")]
         HelperAddress::Loaded { table, offset } => build.load(types::I64, super::super::invariant(), table, offset),
     }
 }
@@ -55,11 +54,9 @@ fn specialize_interrupt_owner(function: &mut ir::Function, helpers: LaneHelpers,
     use cranelift_codegen::cursor::{Cursor, FuncCursor};
     let entry = function.layout.entry_block().expect("native entry");
     let after = match helpers {
-        #[cfg(feature = "aot")]
         LaneHelpers::Bound(table, _) => match function.dfg.value_def(table) {
             ir::ValueDef::Result(inst, _) => Some(inst), _ => unreachable!("bound helper table"),
         },
-        #[cfg(feature = "aot")]
         LaneHelpers::Linked(..) => unreachable!("helpers bind before lowering"),
         _ => None,
     };
@@ -67,9 +64,7 @@ fn specialize_interrupt_owner(function: &mut ir::Function, helpers: LaneHelpers,
     if let Some(inst) = after { cursor.goto_inst(inst); cursor.next_inst(); }
     else { cursor.goto_inst(cursor.func.layout.first_inst(entry).expect("entry instruction")); }
     let address = interrupt_owner_address(&mut cursor, helpers);
-    let mut signature = ir::Signature::new(isa.default_call_conv());
-    signature.params.push(ir::AbiParam::new(types::I64));
-    signature.returns.push(ir::AbiParam::new(types::I64));
+    let signature = crate::vm::compiled::call_signature::typed_signature(isa.default_call_conv(), &[types::I64], &[types::I64]);
     let signature = cursor.func.import_signature(signature);
     let call = cursor.ins().call_indirect(signature, address, &[context]);
     let exclusive = cursor.func.dfg.inst_results(call)[0];
@@ -96,10 +91,11 @@ impl Lowering<'_, '_> {
             self.step(state, frame::Edges::Value, crate::staged::Operation::Safepoint { proof });
             return;
         }
+        // The shared back-edge poll (`staged::poll`): one flag load and one guard. The exit is cold;
+        // whatever an interrupted loop does afterwards runs there, not on the edge.
         let interrupt = self.interrupt;
         let exit = self.guard_exit(state, pc);
-        let proof = super::super::EmitProof::Safepoint { interrupt, miss: Some(exit), fault_poll: false };
-        self.step(state, frame::Edges::ValueGuarded { miss: exit }, crate::staged::Operation::Safepoint { proof });
+        crate::staged::poll::back_edge_poll(&mut super::super::object_slots::emit(&mut self.builder), interrupt, exit).expect("a guard always emits");
     }
 
     pub(super) fn emit_fault_poll(&mut self) {

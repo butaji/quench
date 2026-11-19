@@ -63,34 +63,44 @@ fn folded_hash(hash: u64) -> u32 {
     (hash ^ (hash >> u32::BITS)) as u32
 }
 
-/// The SameValueZero hash of a number key: both zeros and every NaN hash alike. A small
-/// integer's bits end in dozens of zeros, which a multiplicative hash would keep at the
-/// bottom, where the index picks buckets, so splitmix64's output function (Steele, Lea and
-/// Flood, OOPSLA 2014) mixes every bit into every other.
+/// The multiplier of the Fx hash: one multiply per word, whose product carries the input's
+/// low bits into its high bits, where the key index reads its tags.
+const FX_MULTIPLIER: u64 = 0x51_7c_c1_b7_27_22_0a_95;
+
+/// The hash of a key's 64-bit word: the word's high half folded into its low half, then one
+/// multiply. The fold brings a value's tag bits into the bits the multiply spreads, so small
+/// integers' doubles, whose low bits are zero, still spread over the index's buckets.
+#[inline(always)]
+fn word_key_hash(word: u64) -> u64 {
+    (word ^ (word >> u32::BITS)).wrapping_mul(FX_MULTIPLIER)
+}
+
+/// The SameValueZero hash of a number key: both zeros and every NaN hash alike, and every
+/// other number by its bits (`word_key_hash`).
 #[inline(always)]
 pub(crate) fn number_key_hash(number: f64) -> u64 {
     let bits = if number == 0.0 { 0 } else if number.is_nan() { f64::NAN.to_bits() } else { number.to_bits() };
-    let x = (bits ^ (bits >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    let x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    x ^ (x >> 31)
+    word_key_hash(bits)
 }
 
 impl super::Heap {
     /// The SameValueZero hash of a key that is no number: a string by its text hash, a
-    /// BigInt by value, anything else by identity. Kept out of line, so a number key's
-    /// hash stays a few inlined instructions.
+    /// BigInt by value, anything else by identity (its value word). Kept out of line, so a
+    /// number key's hash stays a few inlined instructions.
     #[inline(never)]
     pub(crate) fn non_number_key_hash(&self, key: Value) -> u64 {
         use std::hash::{Hash, Hasher};
         if let Some(hash) = self.string_hash(key) {
             return u64::from(hash);
         }
-        let mut hasher = rustc_hash::FxHasher::default();
         match self.get(key) {
-            Some(super::Cell::BigInt(value)) => value.hash(&mut hasher),
-            _ => key.hash(&mut hasher),
+            Some(super::Cell::BigInt(value)) => {
+                let mut hasher = rustc_hash::FxHasher::default();
+                value.hash(&mut hasher);
+                hasher.finish()
+            }
+            _ => word_key_hash(key.to_bits()),
         }
-        hasher.finish()
     }
 }
 
@@ -285,10 +295,13 @@ impl<T: CollectionEntry> CollectionEntries<T> {
         };
         match self.index() {
             Some(index) => index.find(hash, matches),
-            None => {
-                let hashes = self.table.hashes();
-                (0..slots.len()).find(|&slot| hashes[slot] == hash && matches(slot))
-            }
+            None => self
+                .table
+                .hashes()
+                .iter()
+                .enumerate()
+                .find(|&(slot, &slot_hash)| slot_hash == hash && matches(slot))
+                .map(|(slot, _)| slot),
         }
     }
 

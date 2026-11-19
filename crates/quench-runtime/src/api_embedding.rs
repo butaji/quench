@@ -20,6 +20,13 @@ impl fmt::Display for RootedError {
 impl std::error::Error for RootedError {}
 
 impl RootedError {
+    /// Why the script compile that failed with this error rejected its source, when it was a
+    /// compile failure. The thrown SyntaxError is the same for both kinds; `None` for errors
+    /// that did not come from a compile's diagnostics.
+    pub fn compile_failure(&self) -> Option<crate::CompileFailureKind> {
+        self.error.compile_failure()
+    }
+
     /// Report a host failure without manufacturing a guest exception identity.
     pub fn host(message: impl Into<String>) -> Self {
         Self {

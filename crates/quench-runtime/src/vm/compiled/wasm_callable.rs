@@ -39,7 +39,7 @@ impl<H: Host> Analysis<'_, H> {
         for caller in allowed.iter() {
             let function = self.code.function(caller);
             for packed in &function.code {
-                let instruction = super::super::dispatch_fast::decoded_instruction(function, *packed);
+                let instruction = function.widened(*packed);
                 // A direct call names its callee in a function-index field.
                 if instruction.op().field_layout(InstructionField::B) == FieldLayout::FunctionIndex {
                     edges.push((u32::from(instruction.known_function_index()), caller as u32));

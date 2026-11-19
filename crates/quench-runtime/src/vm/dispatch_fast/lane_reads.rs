@@ -100,18 +100,19 @@ impl Reads {
     pub(super) const NONE: Self = Self { constants: &[], immediate: None, locals: None, captures: None };
 
     /// The reads of a comparison jump of the running lane's `cx`, whose record holds `immediate`.
-    fn of_jump<H: Host>(cx: *mut LaneContext<H>, immediate: Option<Value>) -> Self {
+    #[inline(always)]
+    pub(super) fn of_jump<H: Host>(cx: *mut LaneContext<H>, immediate: Option<Value>) -> Self {
         let context: *mut () = cx.cast();
         Self { constants: unsafe { (*cx).constants }, immediate,
             locals: Some(LocalReads { context, read: |context, slot|
-                lane_plain_local_operand(context.cast::<LaneContext<H>>(), slot) }),
+                plain_local_operand(context.cast::<LaneContext<H>>(), slot) }),
             captures: None }
     }
 
     /// The reads of a capture access of the running lane's `cx`.
     pub(super) fn of_captures<H: Host>(cx: *mut LaneContext<H>) -> Self {
         Self { captures: Some(CaptureReads { context: cx.cast(), read: |context, depth, slot, root|
-            lane_capture_read(context.cast::<LaneContext<H>>(), depth, slot, root) }), ..Self::NONE }
+            capture_slot_read(context.cast::<LaneContext<H>>(), depth, slot, root) }), ..Self::NONE }
     }
 
     /// The value of a constant or local operand. Inlined, as `capture`: a call here would take the
@@ -142,11 +143,11 @@ impl Reads {
 /// The capture `slot` past the running function's own scope, by the lane's own lookups, which run
 /// no guest code: a frame run's remembered walk, an activation's walk memo (`LaneContext::outer`)
 /// or a new walk it then remembers; with `root`, the root environment's projected binding
-/// (`lane_projected_capture`). A read at the function's own scope is the walk handler's, which
+/// (`projected_capture`). A read at the function's own scope is the walk handler's, which
 /// also finds the function's dense slots (`LaneContext::capture`).
-fn lane_capture_read<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16, root: bool) -> Option<Value> {
+fn capture_slot_read<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16, root: bool) -> Option<Value> {
     if root {
-        return lane_projected_capture(cx, depth, slot);
+        return projected_capture(cx, depth, slot);
     }
     if depth == 0 {
         return None;

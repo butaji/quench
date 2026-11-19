@@ -22,20 +22,25 @@ use crate::heap::GlobalFact;
 pub(super) enum What {
     Row(Decoded),
     Site(InlineSite),
+    /// A PC that plans no row: a field read folded into its call (`fold`), whose call's row leaves at this PC.
+    Folded,
+    /// A row that leaves at the PC of the instruction it stands for (`fold`), not at its own.
+    Resume(Decoded, u32),
 }
 
 impl What {
     /// Whether it makes a call or a step the interpreter's operation runs, either of which may
     /// change a global a folded fact holds.
     fn changes_globals(&self) -> bool {
-        matches!(self, Self::Row(row) if row.makes_calls())
+        matches!(self, Self::Row(row) | Self::Resume(row, _) if row.makes_calls())
     }
 
     /// The rows it places: a site's are its callee's behind the callee's proof, which is a row
     /// unless a Stable fact holds it and nothing before may have changed it (`changed`).
     fn len(&self, changed: bool) -> usize {
         match self {
-            Self::Row(_) => 1,
+            Self::Row(_) | Self::Resume(..) => 1,
+            Self::Folded => 0,
             Self::Site(site) => usize::from(matches!(site.proof, Proof::Guard(..)) || changed) + site.rows.len(),
         }
     }
@@ -58,8 +63,8 @@ pub(super) struct Stitched {
     pub(super) copies: Vec<Vec<(Register, Register)>>,
     /// The Stable facts the sites fold: the code is subscribed to each.
     pub(super) facts: Vec<GlobalFact>,
-    /// The first row of each caller PC of the span (PC, row): where the interpreter's resume at the PC
-    /// re-enters the program (`resume`).
+    /// The first row of each caller PC of the span that has rows (PC, row): where the interpreter's resume at the PC
+    /// re-enters the program (`resume`); a folded read has none.
     pub(super) entries: Vec<(u32, u32)>,
 }
 
@@ -110,8 +115,10 @@ pub(super) fn stitch(region: &LoopRegion, parts: Vec<Part>, registers: u16, inva
     let tops = parts.iter().filter_map(|part| if let What::Site(site) = &part.what { Some(site.top as usize) } else { None });
     let rows = starts[starts.len() - 1] as usize;
     let capacity = rows + leaves.len();
+    // A folded read has no first row to resume at: its PC re-enters nowhere (the interpreter takes it).
+    let folded: Vec<u32> = parts.iter().filter(|part| matches!(part.what, What::Folded)).map(|part| part.pc).collect();
     let mut stitched = Stitched { rows: Vec::with_capacity(capacity), origins: Vec::with_capacity(capacity), live: Live::new(tops.fold(usize::from(registers), usize::max)), frames: Vec::new(), copies: Vec::new(), facts: Vec::new(),
-        entries: (region.header..).zip(&starts).take(starts.len() - 1).map(|(pc, row)| (pc, *row)).collect() };
+        entries: (region.header..).zip(&starts).take(starts.len() - 1).filter(|(pc, _)| !folded.contains(pc)).map(|(pc, row)| (pc, *row)).collect() };
     let row_of = |target: u32| match target.checked_sub(region.header).filter(|local| (*local as usize) < starts.len() - 1) {
         Some(local) => starts[local as usize],
         None => (rows + leaves.iter().position(|leave| *leave == target).expect("a leave row for each target outside")) as u32,
@@ -122,6 +129,11 @@ pub(super) fn stitch(region: &LoopRegion, parts: Vec<Part>, registers: u16, inva
                 let row = Decoded { target: row.target.map(row_of), ..row };
                 stitched.push(row, Origin::Caller(part.pc), callers(region, part.pc, registers));
             }
+            What::Resume(row, resume) => {
+                let row = Decoded { target: row.target.map(row_of), ..row };
+                stitched.push(row, Origin::Caller(resume), callers(region, resume, registers));
+            }
+            What::Folded => {}
             What::Site(site) => stitched.site(region, part.pc, registers, site, invalidation.filter(|_| changed)),
         }
     }
@@ -133,6 +145,8 @@ pub(super) fn stitch(region: &LoopRegion, parts: Vec<Part>, registers: u16, inva
 
 impl Stitched {
     fn push(&mut self, row: Decoded, origin: Origin, live: impl Iterator<Item = Register>) {
+        // A row that folds a global member holds its cell's fact: the body subscribes to it, so a reassignment retires the body.
+        self.facts.extend(row.cell.map(|cell| cell.fact));
         self.rows.push(row);
         self.origins.push(origin);
         self.live.push(live);

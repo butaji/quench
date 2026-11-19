@@ -2,10 +2,12 @@
 //! patched holes, tagged-word tests and the float to int conversions that need no constant pool.
 //! Value representation only: what a Number operation computes is `staged::numeric`'s.
 
-use crate::layout::words::{CANONICAL_NAN, FIRST_TAG_FIELD, INT_TAG, TAG_SHIFT};
+use crate::layout::words::{CANONICAL_NAN, FIRST_TAG_FIELD, INT_TAG, TAG_FIELD_SPAN, TAG_SHIFT};
+use crate::layout::CALL_CONTEXT_ADAPTER_PAYLOAD;
 
 pub(crate) const FIRST_TAG: u64 = FIRST_TAG_FIELD << TAG_SHIFT;
-pub(crate) const TAG_SPAN: u64 = 6 << TAG_SHIFT;
+/// The tag fields are `TAG_FIELD_SPAN + 1` values from the first tag's field on.
+pub(crate) const TAG_SPAN: u64 = (TAG_FIELD_SPAN + 1) << TAG_SHIFT;
 pub(crate) const HIGH_SHIFT: u32 = 32;
 pub(crate) const INT_HIGH: u64 = INT_TAG >> HIGH_SHIFT;
 /// Byte offset of the upper half of a tagged word.
@@ -126,6 +128,38 @@ pub(crate) fn slot<const H: u8>(s: &S) -> usize {
     s.frame.wrapping_add(hole::<H>())
 }
 
+/// The state a successor receives where nothing is live: the frame and context, pinned
+/// registers junk (no successor reads them).
+#[inline(always)]
+pub(crate) fn dead(s: &S) -> S {
+    S { frame: s.frame, ctx: s.ctx, p: [junk(), junk(), junk(), junk()], f: [junk_f64(), junk_f64(), junk_f64(), junk_f64(), junk_f64(), junk_f64(), junk_f64(), junk_f64()] }
+}
+
+/// A word no successor reads (every pinned register is dead past a call): an empty assembly
+/// output, so the row writes nothing into the register, where zeroing it cost an instruction
+/// per register (12 per call: 4 integer `xor`, 8 `vxorps`). Not `pure`: LLVM would merge the
+/// calls into one value and copy it into every register.
+#[inline(always)]
+pub(crate) fn junk() -> usize {
+    let word: usize;
+    // SAFETY: an empty template; the register's prior contents are the value.
+    unsafe { core::arch::asm!("/* {0} */", out(reg) word, options(nomem, nostack, preserves_flags)) };
+    word
+}
+
+/// `junk` for a pinned double.
+#[inline(always)]
+pub(crate) fn junk_f64() -> f64 {
+    let word: f64;
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: as `junk`.
+    unsafe { core::arch::asm!("/* {0} */", out(xmm_reg) word, options(nomem, nostack, preserves_flags)) };
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: as `junk`.
+    unsafe { core::arch::asm!("/* {0} */", out(vreg) word, options(nomem, nostack, preserves_flags)) };
+    word
+}
+
 #[inline(always)]
 pub(crate) fn is_int(x: u64) -> bool {
     x >> TAG_SHIFT == INT_TAG >> TAG_SHIFT
@@ -194,6 +228,7 @@ pub(crate) fn canonical(f: f64) -> u64 {
     }
 }
 
+
 #[inline(always)]
 pub(crate) fn f64_to_i32(f: f64) -> Option<i32> {
     let wide = truncate64(f);
@@ -210,4 +245,49 @@ pub(crate) fn both_int(x: u64, y: u64) -> bool {
 #[inline(always)]
 pub(crate) fn has_int_high(x: u64) -> bool {
     x >> HIGH_SHIFT == INT_HIGH
+}
+
+/// The machine word at `base + offset`, a layout offset of a live record or of the dispatch payload.
+#[inline(always)]
+pub(crate) fn word_at(base: usize, offset: usize) -> u64 {
+    // SAFETY: a layout offset of a live record, as every staged load.
+    unsafe { ((base + offset) as *const u64).read() }
+}
+
+/// The activation's dispatch payload: the context's adapter pointer.
+#[inline(always)]
+pub(crate) fn payload(s: &S) -> usize {
+    word_at(s.ctx, CALL_CONTEXT_ADAPTER_PAYLOAD) as usize
+}
+
+/// The header word `index` (a `staged::frame` `CONTEXT_*`) of the window at `frame`: the context words
+/// count down from its register 0, so a window's receiver and captures word are its own.
+#[inline(always)]
+pub(crate) fn context_word(frame: usize, index: usize) -> u64 {
+    // SAFETY: a window's context words lie below its registers, as every frame's header does.
+    unsafe { ((frame as *const u64).sub(index)).read() }
+}
+
+/// Writes the header word `index` of the window at `frame` (`context_word`'s pair).
+#[inline(always)]
+pub(crate) fn set_context_word(frame: usize, index: usize, word: u64) {
+    // SAFETY: as `context_word`; the caller owns the window it writes a callee's header of.
+    unsafe { ((frame as *mut u64).sub(index)).write(word) }
+}
+
+/// A row's hit continues at TAKEN, past the helper step laid out after it where it is a fast arm; a miss
+/// leaves as it did.
+#[inline(always)]
+pub(crate) fn hop(out: Out) -> Out {
+    match out {
+        Out::Next(s) => Out::Taken(s),
+        left => left,
+    }
+}
+
+/// The row that leaves through EXIT0 with every register as it came, writing nothing: the operation only the
+/// interpreter runs, which the helper step laid out after the row then runs.
+#[inline(always)]
+pub(crate) fn exit_here(s: S) -> Out {
+    Out::Exit(s)
 }

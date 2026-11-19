@@ -75,10 +75,8 @@ impl Lowering<'_, '_> {
         emit_js_guard(&mut self.builder, within, exit);
     }
 
-    /// Whether the word lies within `IntRange::EXACT`: it is biased by the span's minimum, which makes
-    /// the span an unsigned prefix.
+    /// Whether the word lies within `IntRange::EXACT` (`number_machine::within_word`).
     pub(super) fn within_exact(&mut self, word: ir::Value) -> ir::Value {
-        let biased = self.raw_binary_imm(Binary::Add, word, -IntRange::EXACT.min);
-        self.raw_compare_imm(Relation::UnsignedLessEqual, biased, IntRange::EXACT.max - IntRange::EXACT.min)
+        number_machine::within_word(&mut emit(&mut self.builder), word, IntRange::EXACT.min, IntRange::EXACT.max)
     }
 }

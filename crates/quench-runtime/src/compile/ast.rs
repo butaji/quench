@@ -9,6 +9,7 @@ mod completion;
 pub(in crate::compile) use completion::StatementCompletion;
 mod environment_clones;
 mod expression;
+pub(crate) use expression::fuses_with_jump_operator;
 mod iteration;
 mod literal_template;
 mod object;
@@ -80,13 +81,21 @@ struct SharedUndefined {
     used: bool,
 }
 
+/// A for-in loop whose body is being compiled (`FunctionCompiler::enumerations`).
+pub(super) struct Enumeration {
+    pub(super) object: String,
+    pub(super) key: String,
+    pub(super) state: Atom,
+}
+
 pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) owner: &'a mut Compiler<'b>,
     pub(super) locals: Vec<Atom>,
     pub(super) code: Vec<Instr>,
     pub(super) wide: Vec<WideInstruction>,
-    pub(super) source_positions: crate::bytecode::SourcePositions,
-    current_source_position: Option<(u32, u32)>,
+    pub(super) source_positions: crate::bytecode::SourcePositionsBuilder,
+    /// The source offset the instructions being emitted come from.
+    current_source_position: Option<u32>,
     pub(super) next_reg: Register,
     pub(super) max_reg: Register,
     pub(super) local_slots: Rc<FxHashMap<Atom, u16>>,
@@ -95,6 +104,11 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     /// enclosing operation holds while evaluating later operands takes a copy, since those
     /// operands may write the register first.
     clobbered_locals: Vec<bool>,
+    /// The for-in loops whose bodies are being compiled, innermost last: the identifier each
+    /// lists (`for (k in o)`), its key binding's and its state's hidden local, so a read `o[k]` in
+    /// the body is the enumerated read (`Op::GetEnumerated`), whose row guards that `o` and `k` are
+    /// still the loop's.
+    pub(super) enumerations: Vec<Enumeration>,
     /// The expression being compiled is the last operand its consumer evaluates, which
     /// then executes at once; a clobbered local read there may alias its register.
     pub(super) last_operand: bool,
@@ -157,6 +171,13 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     /// The literal singletons initialized so far: closures created from here on read each
     /// as its constant (`CaptureScope::folds`).
     capture_folds: super::capture_scope::CaptureFolds,
+    /// The key this function's TypeScript declarations are recorded under
+    /// (`DeclaredTypes::declared_local`): `u32::MAX` at the top level, a nested function's source
+    /// span start; `None` for a function without a source span, whose locals have none.
+    pub(super) declared_key: Option<u32>,
+    /// The leading constant fields `emit_instance_fields` defined first thing
+    /// (`bytecode::ConstantField`), which a base class constructor's record keeps.
+    pub(super) constant_fields: Vec<crate::bytecode::ConstantField>,
 }
 
 #[derive(Default)]
@@ -220,6 +241,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             local_slots,
             local_registers,
             clobbered_locals,
+            enumerations: Vec::new(),
             last_operand: false,
             temporary_floor: local_register_count,
             shared_undefined: SharedUndefined { register: shared_undefined, used: false },
@@ -264,6 +286,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             hidden_local_suffixes: FxHashMap::default(),
             literal_singletons: Vec::new(),
             capture_folds: std::rc::Rc::new([]),
+            declared_key: None,
+            constant_fields: Vec::new(),
         }
     }
 
@@ -366,6 +390,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.statement_completion = previous;
     }
 
+    #[inline]
     pub(super) fn emit(
         &mut self,
         op: Op,
@@ -375,31 +400,48 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         imm: u32,
     ) -> usize {
         let c = self.owner.emitted_cache_site(op, b, c, imm);
-        let instruction = Instr::try_new(op, a, b, c, imm).unwrap_or_else(|| {
-            self.store_wide_instruction(WideInstruction::new(op, a, b, c, imm))
-                .unwrap_or_else(|| {
-                    self.reject_packed_domain("wide instruction index exceeds its encoded domain");
-                    Instr::new(Op::Nop, 0, 0, 0, 0)
-                })
-        });
+        let instruction = Instr::try_new(op, a, b, c, imm)
+            .unwrap_or_else(|| self.wide_instruction(op, a, b, c, imm));
         self.code.push(instruction);
-        if let Some((line, column)) = self.current_source_position
-            && (self
-                .source_positions
-                .last()
-                .is_none_or(|position| position.line != line || position.column != column)
-                // Calls expose their own source position. An argument Move carrying
-                // the same compressed position may disappear during rewriting.
-                || op.control_flow_layout() == crate::bytecode::ControlFlowLayout::Call)
-            {
-                self.source_positions.push(crate::bytecode::SourcePosition {
-                    pc: u32::try_from(self.code.len() - 1).unwrap_or(u32::MAX),
-                    line,
-                    column,
-                });
-            }
+        let at = self.code.len() - 1;
+        self.record_source_position(op, at);
+        self.record_emitted_sites(op, at, imm);
+        at
+    }
+
+    /// The instruction for a field too wide to pack: a wide entry, or a `Nop` once the wide
+    /// index is exhausted too.
+    #[cold]
+    fn wide_instruction(&mut self, op: Op, a: Register, b: Register, c: Register, imm: u32) -> Instr {
+        self.store_wide_instruction(WideInstruction::new(op, a, b, c, imm))
+            .unwrap_or_else(|| {
+                self.reject_packed_domain("wide instruction index exceeds its encoded domain");
+                Instr::new(Op::Nop, 0, 0, 0, 0)
+            })
+    }
+
+    /// Records the current source offset at `at`, unless the last entry already holds it.
+    #[inline]
+    fn record_source_position(&mut self, op: Op, at: usize) {
+        let Some(offset) = self.current_source_position else { return };
+        let repeats = self.source_positions.last().is_some_and(|entry| entry.offset == offset);
+        // Calls expose their own source position. An argument Move carrying
+        // the same compressed position may disappear during rewriting.
+        if repeats && op.control_flow_layout() != crate::bytecode::ControlFlowLayout::Call {
+            return;
+        }
+        self.source_positions.push(crate::bytecode::SourceOffset {
+            pc: u32::try_from(at).unwrap_or(u32::MAX),
+            offset,
+        });
+    }
+
+    /// Records the binding sites of the instruction `op` just emitted at `at`, which resolve
+    /// names by the scope they run in.
+    #[inline]
+    fn record_emitted_sites(&mut self, op: Op, at: usize, imm: u32) {
         if op == Op::MakeClosure && self.with_depth != self.inherited_with_depth {
-            self.record_lexical_binding_site(self.code.len() - 1);
+            self.record_lexical_binding_site(at);
         }
         // Deletion always resolves a binding by name, including block slots
         // whose storage atom differs from their source name.
@@ -414,9 +456,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         | Op::StoreName
                 ))
         {
-            self.record_name_binding_site(self.code.len() - 1, imm);
+            self.record_name_binding_site(at, imm);
         }
-        self.code.len() - 1
     }
 
     pub(super) fn patch(&mut self, at: usize) {
@@ -612,38 +653,15 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     fn collect_binding_names(pattern: &BindingPattern<'_>, names: &mut Vec<String>) {
-        match pattern {
-            BindingPattern::BindingIdentifier(identifier) => {
-                names.push(identifier.name.to_string());
-            }
-            BindingPattern::AssignmentPattern(pattern) => {
-                Self::collect_binding_names(&pattern.left, names);
-            }
-            BindingPattern::ArrayPattern(pattern) => {
-                for element in pattern.elements.iter().flatten() {
-                    Self::collect_binding_names(element, names);
-                }
-                if let Some(rest) = &pattern.rest {
-                    Self::collect_binding_names(&rest.argument, names);
-                }
-            }
-            BindingPattern::ObjectPattern(pattern) => {
-                for property in &pattern.properties {
-                    Self::collect_binding_names(&property.value, names);
-                }
-                if let Some(rest) = &pattern.rest {
-                    Self::collect_binding_names(&rest.argument, names);
-                }
-            }
-        }
+        super::early::collect_pattern_names(pattern, names);
     }
 
     pub(super) fn anonymous_function_definition(expression: &Expression<'_>) -> bool {
-        match expression {
+        // TypeScript's type-only wrappers name as parentheses do: `const f = (() => {}) as T`.
+        match super::binding_time::evaluated(expression) {
             Expression::FunctionExpression(function) => function.id.is_none(),
             Expression::ArrowFunctionExpression(_) => true,
             Expression::ClassExpression(class) => class.id.is_none(),
-            Expression::ParenthesizedExpression(expression) => Self::anonymous_function_definition(&expression.expression),
             _ => false,
         }
     }
@@ -806,7 +824,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     /// Whether `atom` is a var of this function's frame. A script's root keeps none: its vars
     /// are the global object's, which a root whose names resolve statically reaches by name, as
-    /// its functions do (`lane_load_name_bound`).
+    /// its functions do (`name_row`).
     pub(super) fn frame_var(&self, atom: Atom) -> bool {
         self.function_scope.contains(&atom)
             && (self.function_id != 0 || self.owner.module_goal || self.owner.eval_context.is_some() || self.owner.dynamic_binding_scopes != 0)
@@ -922,14 +940,22 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
     }
 
-    pub(super) fn clone_lexical_environment(&mut self) {
+    /// The plan of the clone emitted; none when the scope has no environment slots.
+    pub(super) fn clone_lexical_environment(&mut self) -> Option<usize> {
         let slots = self.lexical_scope_slots();
-        self.clone_environment_slots(slots);
+        self.clone_environment_slots(slots)
+    }
+
+    /// The next-iteration clone of the innermost (loop head) scope, with the slots its body
+    /// block joined to the head plan (`iteration_body`).
+    pub(super) fn clone_lexical_iteration_environment(&mut self, body: &[u16]) {
+        let slots = self.lexical_scope_slots();
+        self.clone_iteration_environment(slots, body);
     }
 
     pub(super) fn initialize_lexical_scope(&mut self) {
         let slots = self.lexical_scope_slots();
-        self.clone_environment_slots(slots.clone());
+        self.clone_block_environment_slots(slots.clone());
         self.initialize_tdz_slots(slots);
     }
 

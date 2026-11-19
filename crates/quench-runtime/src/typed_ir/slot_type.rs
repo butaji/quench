@@ -1,6 +1,5 @@
 //! Compact types of slot contents, joined by every store before it lands (`ValueArena::owner_types`).
-use super::{Type, TypeKind};
-use crate::staged::object::Rep;
+use super::{Representation, Type, TypeKind};
 use crate::{Value, ValueType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,6 +15,8 @@ pub(crate) enum SlotType {
     DirectObjectOrNull,
     DirectObjectOrUndefined,
     DirectObjectOrNullish,
+    String,
+    Boolean,
     Tagged,
 }
 
@@ -23,7 +24,8 @@ impl SlotType {
     pub(crate) const ALL: &'static [Self] = &[
         Self::None, Self::Int32, Self::Number, Self::Null, Self::Undefined,
         Self::Nullish, Self::DirectObject, Self::DirectObjectOrNull,
-        Self::DirectObjectOrUndefined, Self::DirectObjectOrNullish, Self::Tagged,
+        Self::DirectObjectOrUndefined, Self::DirectObjectOrNullish, Self::String,
+        Self::Boolean, Self::Tagged,
     ];
 
     /// `from_type(Type::immediate(value))`, read straight off the value: writes call it.
@@ -34,6 +36,8 @@ impl SlotType {
         else if value.is_null() { Self::Null }
         else if value.is_undefined() { Self::Undefined }
         else if value.direct_object_index().is_some() { Self::DirectObject }
+        else if value.as_bool().is_some() { Self::Boolean }
+        else if value.direct_string_index().is_some() { Self::String }
         else { Self::Tagged }
     }
 
@@ -52,6 +56,8 @@ impl SlotType {
             _ if ty == Type::language(ValueType::Null) => Self::Null,
             _ if ty == Type::language(ValueType::Undefined) => Self::Undefined,
             _ if ty == Type::NULLISH => Self::Nullish,
+            _ if ty == Type::language(ValueType::String) => Self::String,
+            _ if ty == Type::language(ValueType::Boolean) => Self::Boolean,
             _ => Self::Tagged,
         }
     }
@@ -68,32 +74,61 @@ impl SlotType {
             Self::DirectObjectOrNull => Type::DIRECT_OBJECT_FAMILY.join(Type::language(ValueType::Null)),
             Self::DirectObjectOrUndefined => Type::DIRECT_OBJECT_FAMILY.join(Type::language(ValueType::Undefined)),
             Self::DirectObjectOrNullish => Type::DIRECT_OBJECT_FAMILY.join(Type::NULLISH),
+            Self::String => Type::language(ValueType::String),
+            Self::Boolean => Type::language(ValueType::Boolean),
             Self::Tagged => Type::ANY,
         }
     }
 
-    /// The join of `ty()`s, as a union of value classes (`CLASSES`): numbers mix with
-    /// nothing else.
+    /// Whether this representation already holds `value`'s class: `join(of(value)) == self`
+    /// with no class computed or joined, so a store into a slot that holds its class pays one
+    /// test, and only a widening store joins (`ValueArena::note_exact_slot_word`).
+    #[inline(always)]
+    pub(crate) fn admits(self, value: Value) -> bool {
+        match self {
+            Self::Tagged => true,
+            Self::None => false,
+            Self::Int32 => value.as_int().is_some(),
+            Self::Number => value.as_number().is_some(),
+            Self::Null => value.is_null(),
+            Self::Undefined => value.is_undefined(),
+            Self::Nullish => value.is_null() || value.is_undefined(),
+            Self::DirectObject => value.direct_object_index().is_some(),
+            Self::DirectObjectOrNull => value.is_null() || value.direct_object_index().is_some(),
+            Self::DirectObjectOrUndefined => value.is_undefined() || value.direct_object_index().is_some(),
+            Self::DirectObjectOrNullish => value.is_null() || value.is_undefined() || value.direct_object_index().is_some(),
+            Self::String => value.direct_string_index().is_some(),
+            Self::Boolean => value.as_bool().is_some(),
+        }
+    }
+
+    /// The join of `ty()`s, as a union of value classes (`CLASSES`). Strings, booleans and numbers
+    /// each mix with nothing else; null, undefined and direct objects mix with one another.
     #[inline(always)]
     pub(crate) fn join(self, other: Self) -> Self {
         if self == other { return self; }
         let classes = CLASSES[self as usize] | CLASSES[other as usize];
-        match (classes & NUMBERS, classes >> 2) {
-            (0, rest @ 0..=7) => NON_NUMBERS[usize::from(rest)],
-            (INT32, 0) => Self::Int32,
-            (_, 0) => Self::Number,
-            _ => Self::Tagged,
+        match classes {
+            STRING => Self::String,
+            BOOLEAN => Self::Boolean,
+            _ if classes & (STRING | BOOLEAN | OTHER) != 0 => Self::Tagged,
+            _ => match (classes & NUMBERS, classes >> 2) {
+                (0, rest @ 0..=7) => NON_NUMBERS[usize::from(rest)],
+                (INT32, 0) => Self::Int32,
+                (_, 0) => Self::Number,
+                _ => Self::Tagged,
+            },
         }
     }
 
     /// How an arena word holds a value of this type: an int32 as the tagged word, a Number as the
     /// IEEE double (`encode_slot`), anything else as the `Value`. A projection, not a stored fact.
     #[inline(always)]
-    pub(crate) const fn rep(self) -> Rep {
+    pub(crate) const fn rep(self) -> Representation {
         match self {
-            Self::Int32 => Rep::Int32,
-            Self::Number => Rep::Float64,
-            _ => Rep::Tagged,
+            Self::Int32 => Representation::Int32,
+            Self::Number => Representation::Float64,
+            _ => Representation::Tagged,
         }
     }
 
@@ -103,16 +138,27 @@ impl SlotType {
             Self::Null => "null", Self::Undefined => "undefined", Self::Nullish => "nullish",
             Self::DirectObject => "direct_object", Self::DirectObjectOrNull => "direct_object_or_null",
             Self::DirectObjectOrUndefined => "direct_object_or_undefined",
-            Self::DirectObjectOrNullish => "direct_object_or_nullish", Self::Tagged => "tagged",
+            Self::DirectObjectOrNullish => "direct_object_or_nullish", Self::String => "string",
+            Self::Boolean => "boolean", Self::Tagged => "tagged",
         }
     }
 }
 
-/// Each type's value classes, by discriminant: int32 and other numbers (the low two bits),
-/// then null, undefined, direct objects and any other value.
+/// Each type's value classes, by discriminant: int32 and other numbers (the low two bits), then
+/// null, undefined and direct objects (the bits `NON_NUMBERS` indexes), then the classes that mix
+/// with nothing: strings, booleans and any other value.
 const INT32: u8 = 1;
 const NUMBERS: u8 = 3;
-const CLASSES: [u8; 11] = [0, INT32, NUMBERS, 4, 8, 4 | 8, 16, 16 | 4, 16 | 8, 16 | 4 | 8, 32];
+const NULL: u8 = 4;
+const UNDEFINED: u8 = 8;
+const DIRECT_OBJECT: u8 = 16;
+const STRING: u8 = 32;
+const BOOLEAN: u8 = 64;
+const OTHER: u8 = 128;
+const CLASSES: [u8; 13] = [
+    0, INT32, NUMBERS, NULL, UNDEFINED, NULL | UNDEFINED, DIRECT_OBJECT, DIRECT_OBJECT | NULL,
+    DIRECT_OBJECT | UNDEFINED, DIRECT_OBJECT | NULL | UNDEFINED, STRING, BOOLEAN, OTHER,
+];
 /// The type of a union of null (1), undefined (2) and direct objects (4), indexed by it.
 const NON_NUMBERS: [SlotType; 8] = [
     SlotType::None, SlotType::Null, SlotType::Undefined, SlotType::Nullish, SlotType::DirectObject,
@@ -120,6 +166,7 @@ const NON_NUMBERS: [SlotType; 8] = [
 ];
 
 const _: () = assert!(std::mem::size_of::<SlotType>() == std::mem::size_of::<u8>());
+const _: () = assert!(CLASSES.len() == SlotType::ALL.len());
 
 #[cfg(test)]
 mod tests {
@@ -143,11 +190,16 @@ mod tests {
         assert_eq!(SlotType::DirectObject.join(SlotType::Null), SlotType::DirectObjectOrNull);
         assert_eq!(SlotType::DirectObjectOrNull.join(SlotType::Undefined), SlotType::DirectObjectOrNullish);
         assert_eq!(SlotType::Int32.join(SlotType::DirectObject), SlotType::Tagged);
+        assert_eq!(SlotType::String.join(SlotType::String), SlotType::String);
+        assert_eq!(SlotType::String.join(SlotType::Null), SlotType::Tagged);
+        assert_eq!(SlotType::Boolean.join(SlotType::Number), SlotType::Tagged);
         for value in [Value::direct_array(1), Value::direct_function(1), Value::heap(1), Value::DELETED] {
             assert_eq!(SlotType::of(value), SlotType::Tagged);
         }
+        assert_eq!(SlotType::of(Value::TRUE), SlotType::Boolean);
+        assert_eq!(SlotType::of(Value::direct_string(1)), SlotType::String);
         for value in [Value::integer(3), Value::number(0.5), Value::NULL, Value::UNDEFINED, Value::TRUE,
-            Value::direct_array(1), Value::heap(1), Value::DELETED] {
+            Value::FALSE, Value::direct_array(1), Value::direct_string(1), Value::heap(1), Value::DELETED] {
             assert_eq!(SlotType::of(value), SlotType::from_type(Type::immediate(value)));
         }
     }

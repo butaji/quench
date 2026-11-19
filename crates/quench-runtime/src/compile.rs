@@ -1,8 +1,8 @@
 use crate::bytecode::{
     Atom, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, FunctionSlot, Instr,
-    LexicalBindingKind, MethodSite, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
-    ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, Register, ResidualProgram,
-    SET_THIS_REGISTER, SourcePosition, Superinstruction, WideInstruction,
+    LexicalBindingKind, MethodSite, ReceiverPath, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
+    ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, REGISTER_MOVE, RETURN_OP, Register,
+    ResidualProgram, SET_THIS_REGISTER, Superinstruction, Traits, WideInstruction, the_op,
 };
 use oxc_allocator::Allocator;
 use replay::SiteTable;
@@ -11,23 +11,52 @@ use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType, Span};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
-use std::ops::Range;
-pub use crate::bytecode::HostScriptOptions;
-pub use crate::bytecode::DynamicFunctionKind;
-pub(crate) use crate::bytecode::DYNAMIC_FUNCTION_PUBLIC_NAME;
-pub(crate) use crate::compile_phase::{CompilePhase, compile_phase_boundary};
+use std::{fmt, ops::Range};
 /// Source-shaping inputs shared by host Script preparation and native compilation.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HostScriptOptions {
+    pub origin: Option<(u32, u32)>,
+    pub keep_records: bool,
+    pub typescript: bool,
+}
+
+impl HostScriptOptions {
+    /// Middle component of the host compile-cache/native-image key; source text
+    /// and the specialization mode remain separate components.
+    pub fn cache_goal(self) -> String {
+        let (line, column) = self.origin.unwrap_or_default();
+        format!("specialized-script:{line}:{column}:{}{}", self.keep_records,
+            if self.typescript { ":typescript" } else { "" })
+    }
+}
 
 /// The most registers a function's promoted locals may take: half of the register domain,
 /// leaving the other half for the temporaries of any one statement.
 const PROMOTED_LOCAL_REGISTER_BUDGET: Register = crate::bytecode::SET_THIS_REGISTER / 2;
-mod atoms;
+/// The frame-local binding ops and their environment and plain forms, by role.
+const LOCAL_LOAD_OP: Op = the_op(Traits::LOCAL_BINDING_LOAD);
+const LOCAL_STORE_OP: Op = the_op(Traits::LOCAL_BINDING_STORE);
+const ENV_LOAD_OP: Op = the_op(Traits::ENV_LOCAL_LOAD);
+const ENV_STORE_OP: Op = the_op(Traits::ENV_LOCAL_STORE);
+const PLAIN_LOAD_OP: Op = the_op(Traits::PLAIN_LOCAL_LOAD);
+const PLAIN_STORE_OP: Op = the_op(Traits::PLAIN_LOCAL_STORE);
+
+/// The plain form of a frame local's binding load or store, which is the op a plain slot's accesses take.
+fn plain_local_form(op: Op) -> Option<Op> {
+    if op == LOCAL_LOAD_OP {
+        Some(PLAIN_LOAD_OP)
+    } else if op == LOCAL_STORE_OP {
+        Some(PLAIN_STORE_OP)
+    } else {
+        None
+    }
+}
+pub(crate) mod aot_facts;
 mod annex_b_targets;
 mod arrow;
 mod ast;
-#[cfg(feature = "aot")]
+mod atoms;
 mod native_sources;
-#[cfg(feature = "aot")]
 pub use native_sources::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, SourceDemands};
 /// The parse goal shared by module compile-cache and linked native source keys.
 pub const STATIC_MODULE_GOAL: &str = "static-module";
@@ -46,7 +75,6 @@ mod class; mod class_private;
 mod early;
 mod frame_registers;
 pub(crate) mod lazy_bodies;
-mod eval_reach;
 mod literal_singletons;
 mod semantic_stats;
 pub(crate) use lazy_bodies::{expire_warm_arena, release_warm_arena};
@@ -54,29 +82,36 @@ pub(crate) use lazy_bodies::{expire_warm_arena, release_warm_arena};
 mod free_names;
 mod syntax_message;
 pub(crate) mod source_syntax;
+pub(crate) mod liveness;
 mod locals;
 mod numeric;
 pub(crate) mod first_call;
 mod program_shape;
-pub(crate) use crate::bytecode::EvalContext;
+pub(crate) use program_shape::EvalContext;
 use program_shape::ParsedProgramShape;
 mod object_registers;
-pub(crate) mod regexp_memo;
+mod rest_reads;
+pub(crate) mod regexp; mod regexp_memo; mod source_text;
 pub(crate) mod program_profile;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
 pub(crate) mod replay;
+mod settled;
 mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIELD_SITE_WINDOW, SUPERINSTRUCTION_WINDOW, settle_deferred_rewrite};
-mod rewrite;
+mod rewrite; mod rest_alias;
+mod scratch;
+pub(crate) use scratch::{CompileScratch, code_capacity_hint, trim_slack};
 mod sequence;
 pub(crate) mod stack;
+mod checks;
 pub(crate) mod statement_stream;
 mod string;
 mod template;
 mod typescript;
+pub use typescript::{CheckedParameters, ParameterSite};
 use ast::{FunctionCompiler, StatementCompletion};
 use atoms::CompilerAtoms;
-pub(crate) use crate::atom_prefix::{AtomPrefix, NoAtomPrefix};
+pub(crate) use atoms::{AtomPrefix, NoAtomPrefix};
 
 /// The synthetic method supplies parsing context only; execution uses its body.
 fn eval_method_body<'a, 'b>(
@@ -133,16 +168,125 @@ pub(crate) fn eval_context_source(
     format!("(class{heritage} {{\n{declarations}\n{method}() {{\n{source}\n}}\n}})")
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiagnosticKind {
+    Syntax,
+    Compilation,
+    StackExhausted,
+}
+#[derive(Clone)]
+pub struct Diagnostic {
+    kind: DiagnosticKind,
+    source: String,
+    message: String,
+    span: Span,
+}
+impl Diagnostic {
+    fn message(&self) -> &str {
+        match self.kind {
+            DiagnosticKind::Syntax | DiagnosticKind::Compilation => &self.message,
+            DiagnosticKind::StackExhausted => crate::stack::STACK_EXHAUSTED_MESSAGE,
+        }
+    }
+
+    /// Whether parsing or ECMAScript early-error validation rejected the source.
+    /// Backend limits and unsupported syntax are separate compilation failures.
+    pub fn is_syntax_error(&self) -> bool {
+        self.kind == DiagnosticKind::Syntax
+    }
+
+    /// The UTF-8 offset in the source the diagnostic points at.
+    pub fn offset(&self) -> u32 {
+        self.span.start
+    }
+
+    /// The diagnostic message without a leading SyntaxError class name.
+    pub fn syntax_message(&self) -> &str {
+        let message = self.message();
+        message.strip_prefix(SYNTAX_ERROR_PREFIX).unwrap_or(message)
+    }
+
+    /// A parse failure, reported with V8's message at OXC's position.
+    fn parse_failure(source_name: &str, source: &str, error: &oxc_diagnostics::OxcDiagnostic) -> Self {
+        let offset = error.labels.first().map_or(0, |label| label.offset());
+        Self {
+            kind: DiagnosticKind::Syntax,
+            source: source_name.into(),
+            message: syntax_message::parse_failure(source, error),
+            span: Span::new(offset, offset),
+        }
+    }
+
+    pub(crate) fn is_stack_exhausted(&self) -> bool {
+        self.kind == DiagnosticKind::StackExhausted
+    }
+
+    fn stack_exhausted(source: &str) -> Self {
+        Self {
+            kind: DiagnosticKind::StackExhausted,
+            source: source.into(),
+            message: String::new(),
+            span: Span::default(),
+        }
+    }
+
+    pub(crate) fn unsupported(source: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            kind: DiagnosticKind::Compilation,
+            source: source.into(),
+            message: message.into(),
+            span: Span::default(),
+        }
+    }
+}
+impl fmt::Debug for Diagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Diagnostic")
+            .field("source", &self.source)
+            .field("message", &self.message())
+            .field("span", &self.span)
+            .finish()
+    }
+}
+impl fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}:{}..{}: {}",
+            self.source,
+            self.span.start,
+            self.span.end,
+            self.message()
+        )
+    }
+}
 pub struct Engine;
 
+/// The class name some compiler messages lead with.
+const SYNTAX_ERROR_PREFIX: &str = "SyntaxError: ";
+
+/// V8's report for a `return` at the top level of an eval.
+const RETURN_OUTSIDE_FUNCTION_IN_EVAL: &str = "SyntaxError: return outside function in eval";
+/// The rejection for a lazily parsed function body that fails when compiled alone.
+const LAZY_FUNCTION_BODY_NOT_ALONE: &str = "SyntaxError: a lazily parsed function body does not compile alone";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DynamicFunctionKind {
+    Ordinary,
+    Async,
+    Generator,
+    AsyncGenerator,
+}
 
 #[cfg(feature = "native-execution")]
 pub(crate) const DYNAMIC_FUNCTION_GOAL: &str = "dynamic-function";
 
+pub(crate) const DYNAMIC_FUNCTION_PUBLIC_NAME: &str = "anonymous";
 
 /// The name of every Function-constructor program. Its frames report their origin, not this
 /// name (`CompilationOrigin::FunctionConstructor`), so one name serves all of them and keys
 /// their compiled form by text alone.
+pub(crate) const DYNAMIC_FUNCTION_SOURCE_NAME: &str = "<Function>";
 
 /// A Function-constructor program's source: the coerced parameter and body strings,
 /// normalized, in the expression the compiler parses (`(function anonymous(…\n) {\n…\n})`),
@@ -171,10 +315,8 @@ impl DynamicFunctionSource {
 }
 
 impl DynamicFunctionKind {
-    #[cfg(feature = "aot")]
     const ALL: [Self; 4] = [Self::Ordinary, Self::Async, Self::Generator, Self::AsyncGenerator];
 
-    #[cfg(feature = "aot")]
     pub(crate) fn from_source_prefix(prefix: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| kind.source_prefix() == prefix)
     }
@@ -231,6 +373,34 @@ fn may_begin_single_regexp_literal(source: &str) -> bool {
         }
     }
 }
+pub(crate) enum StaticModuleThrow {
+    Value(Constant),
+    Error {
+        name: String,
+        message: Option<Constant>,
+    },
+}
+
+/// What a static module's text evaluates to without running it (`Engine::static_module_outcome`).
+pub(crate) enum StaticModuleOutcome {
+    Exports(Vec<(String, Constant)>),
+    Throw(StaticModuleThrow),
+}
+#[derive(Clone, Debug, Default)]
+pub(crate) struct StaticModulePlan {
+    pub(crate) link_plan: Option<ModuleLinkPlan>,
+    pub(crate) requests: Vec<ModuleRequest>,
+    pub(crate) has_top_level_await: bool,
+}
+pub(crate) use crate::bytecode::ModuleReexport as StaticModuleReexport;
+
+/// `Engine::static_module_analysis`: a static module text's early error, or else its plan
+/// (none when the stack does not bound its syntax).
+pub(crate) struct StaticModuleAnalysis {
+    pub(crate) early_error: Option<String>,
+    pub(crate) plan: Option<StaticModulePlan>,
+}
+
 /// The key `static_module_analysis` memoizes a text under: the module's name, the text's
 /// length and its hash. Texts are the process's own module files, not adversarial input, and
 /// a module is looked up about fifteen times, so one fast hash of its text serves.
@@ -250,22 +420,6 @@ impl StaticModuleTextKey {
         Self { length: source.len(), hash: hasher.finish(), name: module_name.into(), typescript }
     }
 }
-pub(crate) use crate::bytecode::{ModuleReexport as StaticModuleReexport, StaticModuleAnalysis, StaticModulePlan, StaticModuleThrow};
-pub(crate) use crate::bytecode::{Diagnostic, DiagnosticKind, ReleasedRecords};
-impl Diagnostic {
-    /// A parse failure, reported with V8's message at OXC's position.
-    fn parse_failure(source_name: &str, source: &str, error: &oxc_diagnostics::OxcDiagnostic) -> Self {
-        let offset = error.labels.first().map_or(0, |label| label.offset());
-        Self {
-            kind: crate::bytecode::DiagnosticKind::Syntax,
-            source: source_name.into(),
-            message: syntax_message::parse_failure(source, error),
-            span: (offset, offset),
-        }
-    }
-}
-
-
 impl Engine {
     /// V8 excludes tagged templates from eval's compilation cache because each
     /// evaluation owns distinct template objects, including nested function sites.
@@ -392,8 +546,10 @@ impl Engine {
         if let Some(error) = semantic.diagnostics.first() {
             return StaticModuleAnalysis { early_error: Some(error.message.to_string()), plan: None };
         }
+        let type_only_imports = typescript::type_only_imports(&parsed.program, semantic.semantic.scoping());
         drop(semantic);
-        Self::erase_type_only_module_syntax(&mut parsed.program);
+        Self::admit_typescript(&allocator, &mut parsed.program);
+        typescript::elide_type_only_imports(&mut parsed.program, &type_only_imports, &mut crate::bytecode::DeclaredTypes::default());
         StaticModuleAnalysis {
             early_error: None,
             plan: Some(StaticModulePlan {
@@ -404,46 +560,43 @@ impl Engine {
         }
     }
 
-    /// Project typed module syntax onto runtime edges and bindings while
-    /// retaining the source positions used by the compiler and replay.
-    pub fn erase_type_only_module_syntax(program: &mut Program<'_>) {
-        if program.source_type.is_typescript() { typescript::erase_module_types(program); }
+    /// Admit a typed tree (`typescript::admit`): its declared environment kept apart from
+    /// code generation, its run-time forms (enums, namespaces, parameter properties) in
+    /// place. Every compile parse admits through `lazy_bodies::parse`; a host that reads
+    /// module structure from its own parse admits here.
+    pub fn admit_typescript<'a>(allocator: &'a Allocator, program: &mut Program<'a>) {
+        if program.source_type.is_typescript() { typescript::admit(allocator, program, &mut crate::bytecode::DeclaredTypes::default()); }
     }
 
-    /// A host that wraps a typed body must erase type-only module declarations
-    /// before placing it in function grammar. Keep byte positions and line breaks;
-    /// the module-declaration verdict comes from the same AST projection as linking.
-    pub fn project_typescript_module_syntax(source: &str) -> Option<(std::borrow::Cow<'_, str>, bool)> {
+    /// Whether typed text keeps module syntax once admitted (type-only imports and exports
+    /// are declarations, not module syntax): a `.ts` file's goal when no package scope
+    /// declares one. None when it does not parse.
+    pub fn typescript_has_module_syntax(source: &str) -> Option<bool> {
         if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
-        let allocator = Allocator::default();
+        let allocator = Allocator::with_capacity(source.len().saturating_mul(4));
         let mut parsed = Parser::new(&allocator, source, SourceType::unambiguous().with_typescript(true))
             .with_options(oxc_parser::ParseOptions { allow_return_outside_function: true, ..Default::default() }).parse();
         if !parsed.diagnostics.is_empty() || stack::validate_parsed(&parsed).is_err() { return None; }
-        let spans: Vec<_> = parsed.program.body.iter().map(GetSpan::span).collect();
-        Self::erase_type_only_module_syntax(&mut parsed.program);
-        let runtime_spans: FxHashSet<_> = parsed.program.body.iter().map(|statement| {
-            let span = statement.span(); (span.start, span.end)
-        }).collect();
-        let has_module_declarations = parsed.program.body.iter().any(Statement::is_module_declaration);
-        let mut erased = spans.into_iter().filter(|span| !runtime_spans.contains(&(span.start, span.end))).peekable();
-        if erased.peek().is_none() { return Some((source.into(), has_module_declarations)); }
-        let mut projected = String::with_capacity(source.len());
-        let mut cursor = 0;
-        for span in erased {
-            let start = span.start as usize;
-            let end = span.end as usize;
-            projected.push_str(&source[cursor..start]);
-            for character in source[start..end].chars() {
-                if oxc_syntax::line_terminator::is_line_terminator(character) { projected.push(character); }
-                else { for _ in 0..character.len_utf8() { projected.push(' '); } }
-            }
-            cursor = end;
-        }
-        projected.push_str(&source[cursor..]);
-        Some((projected.into(), has_module_declarations))
+        Self::admit_typescript(&allocator, &mut parsed.program);
+        Some(parsed.program.body.iter().any(Statement::is_module_declaration))
     }
 
-    /// Runtime requests after type-only module syntax has been erased.
+    /// The functions of TypeScript `source` a checker can give parameter types for, as UTF-8
+    /// offsets into `source`; `None` when it does not parse.
+    pub fn typescript_parameter_sites(source: &str) -> Option<Vec<typescript::ParameterSite>> {
+        let allocator = Allocator::with_capacity(source.len().saturating_mul(4));
+        let parsed = Parser::new(&allocator, source, SourceType::unambiguous().with_typescript(true))
+            .with_options(oxc_parser::ParseOptions { allow_return_outside_function: true, ..Default::default() }).parse();
+        parsed.diagnostics.is_empty().then(|| typescript::parameter_sites(&parsed.program))
+    }
+
+    /// Install a checker's parameter types for `text`, the exact source a later compile
+    /// receives; they narrow its declared parameter facts (`typescript::checked`).
+    pub fn register_checked_typescript_parameters(text: &str, checked: typescript::CheckedParameters) {
+        typescript::register_checked_parameters(text, checked);
+    }
+
+    /// Runtime requests of an admitted tree (type-only module syntax is declarations).
     pub fn module_requests(program: &Program<'_>) -> Vec<ModuleRequest> {
         module_requests(&program.body)
     }
@@ -493,7 +646,10 @@ impl Engine {
         Some(plan)
     }
 
-    pub(crate) fn static_module_throw(source: &str) -> Option<StaticModuleThrow> {
+    /// `read` of the program of a static module's text, parsed and checked as a module, or None
+    /// where it does not parse or check. One parse serves every reading of the text
+    /// (`static_module_outcome`).
+    fn with_static_module<R>(source: &str, read: impl FnOnce(&Program<'_>) -> Option<R>) -> Option<R> {
         if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
@@ -510,8 +666,24 @@ impl Engine {
         if !semantic.diagnostics.is_empty() {
             return None;
         }
+        read(&parsed.program)
+    }
+
+    /// What a static module's text evaluates to without running it: its exports, else the value
+    /// its program throws.
+    pub(crate) fn static_module_outcome(source: &str, module_name: &str) -> Option<StaticModuleOutcome> {
+        Self::with_static_module(source, |program| {
+            Self::static_module_exports_of(program, module_name)
+                .map(StaticModuleOutcome::Exports)
+                .or_else(|| Self::static_module_throw_of(program).map(StaticModuleOutcome::Throw))
+        })
+    }
+
+    /// The value a static module's program throws, when its only statement besides empty ones is
+    /// a throw (`static_module_outcome`).
+    fn static_module_throw_of(program: &Program<'_>) -> Option<StaticModuleThrow> {
         let mut thrown = None;
-        for statement in &parsed.program.body {
+        for statement in &program.body {
             match statement {
                 Statement::EmptyStatement(_) => {}
                 Statement::ThrowStatement(statement) if thrown.is_none() => {
@@ -549,25 +721,15 @@ impl Engine {
         source: &str,
         module_name: &str,
     ) -> Option<Vec<(String, Constant)>> {
-        if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
-        let normalized = early::normalize_hashbang(source);
-        let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
-        let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return None;
-        }
-        if !parsed.diagnostics.is_empty() {
-            return None;
-        }
-        let semantic = oxc_semantic::SemanticBuilder::new()
-            .with_check_syntax_error(true)
-            .build(&parsed.program);
-        if !semantic.diagnostics.is_empty() {
-            return None;
-        }
+        Self::with_static_module(source, |program| Self::static_module_exports_of(program, module_name))
+    }
+
+    /// The exports of a static module's program, when it only declares them
+    /// (`static_module_outcome`).
+    fn static_module_exports_of(program: &Program<'_>, module_name: &str) -> Option<Vec<(String, Constant)>> {
         let mut bindings = FxHashMap::default();
         let mut exports = Vec::new();
-        for statement in &parsed.program.body {
+        for statement in &program.body {
             match statement {
                 Statement::EmptyStatement(_) => {}
                 Statement::VariableDeclaration(declaration) => {
@@ -644,28 +806,36 @@ impl Engine {
         )
     }
 
+    /// A host script's program. Where `first_call`, the host runs it from its kept form,
+    /// which records the room its first-call chunks append in, so a classic script's
+    /// functions may compile on first call (`ParsedProgramShape::FirstCallScript`).
     pub(crate) fn specialize_host_script(
         source: &str, name: &str, prefix: &dyn AtomPrefix,
-        options: HostScriptOptions, released: ReleasedRecords,
+        options: HostScriptOptions, released: ReleasedRecords, first_call: bool,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        if options.typescript {
-            Self::specialize_typescript_script_with_atom_prefix(source, name, prefix, options.keep_records, released)
-        } else if options.keep_records {
-            Self::specialize_kept_script_with_atom_prefix(source, name, prefix)
-        } else {
-            Self::specialize_script_with_atom_prefix(source, name, prefix, released)
-        }
+        Self::specialize_host_script_provided(source, name, prefix, options, released, first_call, None)
     }
 
-    pub(crate) fn specialize_typescript_script_with_atom_prefix(
-        source: &str, name: &str, atom_prefix: &dyn AtomPrefix,
-        keep_records: bool, released: ReleasedRecords,
+    /// `specialize_host_script` for a host text the caller holds in shared storage: `provided`
+    /// is that storage, which the program keeps in place of a copy of `source` (`kept_or_provided`).
+    pub(crate) fn specialize_host_script_provided(
+        source: &str, name: &str, prefix: &dyn AtomPrefix,
+        options: HostScriptOptions, released: ReleasedRecords, first_call: bool,
+        provided: Option<crate::bytecode::SourceText>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(
-            source, name, atom_prefix,
-            if keep_records { ParsedProgramShape::KeptRecords } else { ParsedProgramShape::Any },
-            released, SourceType::script().with_typescript(true),
-        )
+        // The routes of the Script, typescript and first-call forms; each one's shape and
+        // released records are those its own helper gave.
+        let (shape, released, source_type) = if options.typescript {
+            let shape = if options.keep_records { ParsedProgramShape::KeptRecords } else { ParsedProgramShape::Any };
+            (shape, released, SourceType::script().with_typescript(true))
+        } else if options.keep_records {
+            (ParsedProgramShape::KeptRecords, ReleasedRecords::Dropped, SourceType::script())
+        } else if first_call {
+            (ParsedProgramShape::FirstCallScript, released, SourceType::script())
+        } else {
+            (ParsedProgramShape::Any, released, SourceType::script())
+        };
+        Self::specialize_script_shaped(source, name, prefix, shape, released, source_type, provided)
     }
 
     pub fn specialize(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
@@ -687,17 +857,7 @@ impl Engine {
         atom_prefix: &dyn AtomPrefix,
         released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::Any, released, SourceType::script())
-    }
-
-    /// `specialize_script_with_atom_prefix` for a program whose functions keep their records:
-    /// a host script whose program will keep only a static body of `source`, or an entry.
-    pub(crate) fn specialize_kept_script_with_atom_prefix(
-        source: &str,
-        name: &str,
-        atom_prefix: &dyn AtomPrefix,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::KeptRecords, ReleasedRecords::Dropped, SourceType::script())
+        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::Any, released, SourceType::script(), None)
     }
 
     fn specialize_script_shaped(
@@ -707,6 +867,7 @@ impl Engine {
         shape: ParsedProgramShape<'_>,
         released: ReleasedRecords,
         source_type: SourceType,
+        provided_text: Option<crate::bytecode::SourceText>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode_and_private_names(
             source,
@@ -721,6 +882,7 @@ impl Engine {
             &[],
             shape,
             released,
+            provided_text,
         )
     }
     pub fn specialize_unspecialized(
@@ -746,6 +908,7 @@ impl Engine {
         context: EvalContext,
         private_names: &[(String, String)],
         annex_b_forbidden_names: &[String],
+        provided_text: Option<crate::bytecode::SourceText>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
         let source = normalized.as_ref();
@@ -800,6 +963,7 @@ impl Engine {
             annex_b_forbidden_names,
             ParsedProgramShape::Eval(context, body_span),
             ReleasedRecords::Dropped,
+            provided_text,
         )
     }
 
@@ -831,7 +995,12 @@ impl Engine {
             &[],
             ParsedProgramShape::Any,
             released,
+            None,
         )
+    }
+    /// Compile a TypeScript module: the typed tree is the program, as for `.ts`/`.mts` files.
+    pub fn specialize_typescript_module(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_module_with_atom_prefix(source, name, true, &NoAtomPrefix, ReleasedRecords::Dropped)
     }
     pub fn specialize_module(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_module_with_mode(source, name, SpecializationMode::Enabled)
@@ -920,6 +1089,7 @@ impl Engine {
             &[],
             expected_shape,
             ReleasedRecords::Dropped,
+            None,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -936,6 +1106,7 @@ impl Engine {
         annex_b_forbidden_names: &[String],
         expected_shape: ParsedProgramShape<'_>,
         released: ReleasedRecords,
+        provided_text: Option<crate::bytecode::SourceText>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let compile = |lazy| {
             Self::specialize_parsing(
@@ -953,6 +1124,7 @@ impl Engine {
                 lazy,
                 released,
                 DataLiterals::Admitted,
+                provided_text.clone(),
             )
         };
         // Lazy function bodies apply to source a replay can parse again; a program that does
@@ -988,6 +1160,7 @@ impl Engine {
         lazy: bool,
         released: ReleasedRecords,
         data_literals: DataLiterals,
+        provided_text: Option<crate::bytecode::SourceText>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
         // A data script's literal is parsed as an empty one (`data_literal`). Replay
@@ -999,14 +1172,14 @@ impl Engine {
         .flatten();
         let parsed_text = located.as_ref().map_or(&*normalized, |literal| literal.substituted.as_str());
         let allocator = lazy_bodies::sized_arena(parsed_text);
-        let stubbing = expected_shape.stubbing(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len());
+        let stubbing = expected_shape.stubbing(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len(), source_type.is_module());
         // A recognized body's check needs its call-only facts deferred, or none to find
         // (`BodyFacts::check`): only bodies with no function inside are recognized then.
         let recognize = if stubbing.functions { annex_b_targets::Recognize::All } else { annex_b_targets::Recognize::Flat };
-        let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(stubbing.functions, stubbing.arrows));
-        #[cfg(feature = "aot")]
+        let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(stubbing));
         { facts.borrow_mut().native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
-        let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, lazy.then(|| expected_shape.lazy_from()), &facts, inherited_strict, recognize, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
+        let mut declared_types = crate::bytecode::DeclaredTypes::default();
+        let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, &mut declared_types, lazy.then(|| expected_shape.lazy_from()), &facts, inherited_strict, recognize, atom_prefix.native_global_script_calls());
         lazy_bodies::release_parsed_free_pages(&allocator);
         let mut facts = facts.into_inner();
         let data_literal = match &located {
@@ -1029,6 +1202,7 @@ impl Engine {
                     lazy,
                     released,
                     DataLiterals::Parsed,
+                    provided_text,
                 );
             }
             None => None,
@@ -1045,12 +1219,17 @@ impl Engine {
                 .map(|error| Diagnostic::parse_failure(name, &normalized, error))
                 .collect());
         }
-        stack::validate(&parsed.program).map_err(|crate::stack::StackExhausted| vec![Diagnostic::stack_exhausted(name)])?;
-        if source_type.is_typescript()
-            && let Some((span, message)) = typescript::unsupported_runtime_syntax(&parsed.program)
-        {
+        // One walk serves the checks below; each is read in the order the compiler reports them.
+        let findings = checks::walk(&parsed.program, checks::Passes {
+            depth: true,
+            decorators: source_type.is_typescript(),
+            eval_return: capture_script_completion && source_type.is_commonjs(),
+            targets: parsed.has_call_assignment_targets,
+        });
+        if findings.stack_exhausted { return Err(vec![Diagnostic::stack_exhausted(name)]); }
+        if let Some((span, message)) = findings.decorator {
             let mut diagnostic = Diagnostic::unsupported(name, message);
-            diagnostic.span = (span.start, span.end);
+            diagnostic.span = span;
             return Err(vec![diagnostic]);
         }
         if let Some(error) = early::regexp_early_error(&parsed) {
@@ -1060,19 +1239,16 @@ impl Engine {
                     kind: DiagnosticKind::Syntax,
                     source: name.into(),
                     message,
-                    span: (0, 0),
+                    span: Span::default(),
                 },
             }]);
         }
-        if capture_script_completion
-            && source_type.is_commonjs()
-            && let Some(span) = early::eval_return_outside_function(&parsed.program)
-        {
+        if let Some(span) = findings.eval_return {
             return Err(vec![Diagnostic {
                 kind: DiagnosticKind::Syntax,
                 source: name.into(),
-                message: "SyntaxError: return outside function in eval".into(),
-                span: (span.start, span.end),
+                message: RETURN_OUTSIDE_FUNCTION_IN_EVAL.into(),
+                span,
             }]);
         }
         if capture_script_completion {
@@ -1080,12 +1256,12 @@ impl Engine {
             // eval still has Script semantics for declarations and scopes.
             parsed.program.source_type = SourceType::script().with_typescript(source_type.is_typescript());
         }
-        if let Some(span) = annex_b_targets::invalid_parsed_target(&parsed) {
+        if let Some(span) = findings.invalid_target {
             return Err(vec![Diagnostic {
                 kind: DiagnosticKind::Syntax,
                 source: name.into(),
                 message: "SyntaxError: invalid assignment target".into(),
-                span: (span.start, span.end),
+                span,
             }]);
         }
         let ordinary_private_context = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
@@ -1093,7 +1269,7 @@ impl Engine {
         let wrapped_eval = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
             if context.home_atom.is_some()) || ordinary_private_context;
         let dynamic_function_shape = match expected_shape {
-            ParsedProgramShape::Any | ParsedProgramShape::KeptRecords | ParsedProgramShape::FirstCallChunk(_) => true,
+            ParsedProgramShape::Any | ParsedProgramShape::FirstCallScript | ParsedProgramShape::KeptRecords | ParsedProgramShape::FirstCallChunk(_) => true,
             ParsedProgramShape::Eval(_, expected_span) => {
                 !wrapped_eval || eval_method_body(&mut parsed.program, ordinary_private_context)
                     .is_some_and(|body| Some(body.span) == expected_span)
@@ -1126,13 +1302,13 @@ impl Engine {
                 kind: DiagnosticKind::Syntax,
                 source: name.into(),
                 message: "SyntaxError: invalid dynamic Function source shape".into(),
-                span: (0, 0),
+                span: Span::default(),
             }]);
         }
         // Parsing is done; the semantic analysis starts here.
         compile_phase_boundary(CompilePhase::Analysis);
         let inherited_directive = add_use_strict(&mut parsed.program, &allocator, inherited_strict);
-        let semantic = semantic_stats::checked_semantic(&parsed.program, name)?;
+        let semantic = semantic_stats::checked_semantic(&parsed.program, name, expected_shape.checked_at_load())?;
         let mut private_name_ids = private_name_ids(&semantic.semantic);
         let mut private_name_labels = private_name_labels(&semantic.semantic);
         let mut prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program, &Default::default());
@@ -1176,14 +1352,13 @@ impl Engine {
             .collect();
         // Validate in method grammar, then remove the context wrapper. Original
         // spans still address `normalized`, retaining exact nested function source.
-        #[cfg(feature = "aot")]
         let native_requests = atom_prefix.native_source_requests().map(|pending| {
             (pending, Self::native_source_requests(&parsed.program, semantic.semantic.scoping(), atom_prefix.specialized(), atom_prefix.native_global_script_calls()))
         });
+        let type_only_imports = if module_goal { typescript::type_only_imports(&parsed.program, semantic.semantic.scoping()) } else { Vec::new() };
         drop(semantic);
         parsed.program.directives.drain(..usize::from(inherited_directive));
-        Self::erase_type_only_module_syntax(&mut parsed.program);
-        #[cfg(feature = "aot")]
+        typescript::elide_type_only_imports(&mut parsed.program, &type_only_imports, &mut declared_types);
         let mut native_requests = native_requests;
         if lazy {
             // The lazily parsed bodies, checked and analyzed one at a time as the parser
@@ -1192,7 +1367,6 @@ impl Engine {
                 return Err(vec![Diagnostic::unsupported(name, "SyntaxError: a lazily parsed function body does not check alone")]);
             }
             let first_private_id = private_name_ids.values().max().map_or(0, |id| id + 1);
-            #[cfg(feature = "aot")]
             if let Some((_, requests)) = facts.native_source_requests
                 && let Some((_, pending)) = &mut native_requests { pending.extend(requests); }
             private_name_ids.extend(facts.private_name_ids.into_iter().map(|(span, id)| (span, first_private_id + id)));
@@ -1215,12 +1389,12 @@ impl Engine {
                 );
                 parsed.program.body = statements;
                 parsed.program.directives = directives;
-                if let Some(span) = early::eval_return_outside_function(&parsed.program) {
+                if let Some(span) = checks::walk(&parsed.program, checks::Passes { eval_return: true, ..Default::default() }).eval_return {
                     return Err(vec![Diagnostic {
                         kind: DiagnosticKind::Syntax,
                         source: name.into(),
-                        message: "SyntaxError: return outside function in eval".into(),
-                        span: (span.start, span.end),
+                        message: RETURN_OUTSIDE_FUNCTION_IN_EVAL.into(),
+                        span,
                     }]);
                 }
             }
@@ -1233,6 +1407,8 @@ impl Engine {
             _ => Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids),
         };
         compiler.data_literal = data_literal;
+        compiler.provided_text = provided_text;
+        compiler.declared_types = declared_types;
         compiler.prototype_unobservable = prototype_unobservable;
         #[cfg(feature = "verify-replay")]
         {
@@ -1246,6 +1422,7 @@ impl Engine {
         compiler.first_call.plan(expected_shape, compiler.replayable_source, &parsed.program, inherited_strict, (std::mem::take(&mut facts.free_names), std::mem::take(&mut facts.call_only_found)));
         compiler.streamed = std::mem::take(&mut facts.streamed);
         compiler.stream_candidates = std::mem::take(&mut facts.stream_candidates);
+        compiler.checked_bodies = std::mem::take(&mut facts.checked);
         if let ParsedProgramShape::FirstCallChunk(window) = expected_shape {
             // The chunk's text parsed alone; its functions now lie at their place.
             let delta = window.start();
@@ -1284,7 +1461,6 @@ impl Engine {
         if !crate::DYNAMIC_EXECUTION_ENABLED {
             crate::vm::freeze_call_sites(&program);
         }
-        #[cfg(feature = "aot")]
         if let Some((pending, requests)) = native_requests { pending.borrow_mut().extend(requests); }
         #[cfg(feature = "verify-replay")]
         replay::verify(&program);
@@ -1307,6 +1483,30 @@ fn add_use_strict<'a>(program: &mut Program<'a>, allocator: &'a Allocator, inher
 /// A point in compilation where the code about to run differs from the code that ran, which
 /// an embedding may act on (`set_compile_phase_boundary`), as a host returns read-only pages
 /// the next phase does not touch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompilePhase {
+    /// A compilation has parsed its source; its semantic analysis starts.
+    Analysis,
+    /// A compilation has parsed and analysed its source; its code generation starts.
+    CodeGeneration,
+    /// A compiled program is complete and its encoding for the host's compile cache starts:
+    /// the parser's and code generator's work is over, and the encoder's begins.
+    Encoding,
+}
+
+/// What a compilation does at each `CompilePhase`, set once by the embedding.
+static COMPILE_PHASE_BOUNDARY: std::sync::OnceLock<fn(CompilePhase)> = std::sync::OnceLock::new();
+
+/// Sets the action a compilation takes at each `CompilePhase`; the first call wins.
+pub fn set_compile_phase_boundary(action: fn(CompilePhase)) {
+    let _ = COMPILE_PHASE_BOUNDARY.set(action);
+}
+
+pub(crate) fn compile_phase_boundary(phase: CompilePhase) {
+    if let Some(action) = COMPILE_PHASE_BOUNDARY.get() {
+        action(phase);
+    }
+}
 
 pub(crate) fn module_default_binding(module_name: &str) -> String {
     format!("\0quench:module-default:{module_name}")
@@ -1698,23 +1898,23 @@ type NameSharedSiteMap = FxHashMap<(NamedAccess, u32), u16>;
 struct Compiler<'a> {
     source: &'a str,
     text: &'a str,
-    source_line_starts: std::borrow::Cow<'a, [usize]>,
-    /// The line start partition `source_position` found last, which the next position,
-    /// emitted from the same or a nearby node, most often falls on.
-    last_source_line: std::cell::Cell<usize>,
-    /// The UTF-16 excess partitions `source_position` found last, at a position and at its
-    /// line's start.
-    last_utf16_excess: [std::cell::Cell<usize>; 2],
     source_comments: Vec<Span>,
-    /// Byte offset of each non-ASCII character with the running excess of
-    /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
-    source_utf16_excess: std::borrow::Cow<'a, [(usize, usize)]>,
+    /// The TypeScript declared environment its parse admitted (`typescript::admit`).
+    declared_types: crate::bytecode::DeclaredTypes,
+    /// A TypeScript checker's parameter types for this text (`typescript::checked`).
+    checked_parameters: Option<std::sync::Arc<typescript::CheckedParameters>>,
     mode: SpecializationMode,
     root_strict: bool,
     module_goal: bool,
     capture_script_completion: bool,
     eval_context: Option<EvalContext>,
+    /// The text the caller already holds in shared storage, which the program keeps in place
+    /// of a copy of `text` (`source_text::kept_or_provided`).
+    provided_text: Option<crate::bytecode::SourceText>,
     eval_annex_b_collisions: early::AnnexBCollisions,
+    /// The script's own global lexical names, in declaration order: a nested function's read or write
+    /// of one names it by that index (`LoadGlobalLexical`). Empty for a module or an eval.
+    root_lexical_atoms: Vec<Atom>,
     atoms: CompilerAtoms<'a>,
     /// The capture markers made so far by binding kind (`None` for a catch parameter's) and
     /// source atom (`capture_marker`).
@@ -1732,6 +1932,9 @@ struct Compiler<'a> {
     /// The starts of the function bodies compiled from their source parsed again, which a
     /// replay stands in the same way (`ProgramReplay::lazy_bodies`).
     lazy_compiled: Vec<u32>,
+    /// The starts of the function bodies the load's check found free of early errors
+    /// (`BodyFacts::checked`), which its replay keeps (`ProgramReplay::checked_bodies`).
+    checked_bodies: Vec<u32>,
     /// The arenas lazily parsed functions are parsed again in, one per nesting of such
     /// functions, each reset and reused: an arena per function interleaved its blocks with
     /// the program's long-lived records, and the heap kept the holes between them.
@@ -1783,7 +1986,7 @@ struct Compiler<'a> {
     /// What the program-wide layout analyses read of each compiled function.
     function_facts: replay::FunctionRecords<capture_layout::FunctionFacts>,
     /// Functions being compiled whose bodies may give nested functions binding sites
-    /// (`early::body_may_bind_dynamically`). While any is open, a function finished inside
+    /// (`early::DirectEvalFacts::binds_dynamically`). While any is open, a function finished inside
     /// it may still resolve names dynamically, so none is released early.
     dynamic_binding_scopes: u32,
     /// The replays of functions finished and released during the load.
@@ -1791,6 +1994,8 @@ struct Compiler<'a> {
     /// The source starts of function expressions called where they are made or marked as
     /// about to run, which keep their records (`note_invoked_callee`).
     invoked_functions: FxHashSet<u32>,
+    /// The buffers every function's lowering passes share (`CompileScratch`).
+    scratch: CompileScratch,
     /// How each replayable function was compiled, with the cursors it started from.
     replay_calls: FxHashMap<u32, (replay::TableCursors, replay::ReplayCall)>,
     /// In a replay, the function it recompiles and where the load left each function.
@@ -1808,8 +2013,9 @@ struct Compiler<'a> {
     /// The instructions of the functions whose rewrites the load left to their first compile
     /// (`Compiler::defers_rewrites`), which bound the sites those add.
     deferred_rewrite_code: usize,
-    /// Some kept record's rewrites wait for its first read.
-    kept_rewrites_pending: bool,
+    /// The kept functions whose rewrites wait for their first read, in id order
+    /// (`Compiler::defers_kept_rewrites`); the program's `RewriteRanges::deferred`.
+    kept_rewrites: Vec<u32>,
 }
 
 /// Whether a compilation may parse a data script's literal as an empty one
@@ -1822,6 +2028,17 @@ enum DataLiterals {
 }
 
 /// What a compilation keeps of each record it releases during its load
+/// (`Compiler::finish_early`) beside the function's header and replay.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReleasedRecords {
+    /// Nothing: the function compiles again from its source on its first read.
+    Dropped,
+    /// Its compile-cache encoding, for a program its host encodes once compiled: the
+    /// encoding copies it instead of compiling every released function again (npm scenario,
+    /// cold, empty cache, x86_64 callgrind: prettier 4.32 -> 2.98 G instructions, cold
+    /// `import typescript` 19.7 -> 11.3 G).
+    Encoded,
+}
 
 /// The compiler's tables as the derived facts of a function it finished read them
 /// (`FactTables`): every function nested in it is finished too, so each it makes has its
@@ -1847,39 +2064,6 @@ impl crate::bytecode::FactTables for LoadTables<'_, '_> {
 }
 
 type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
-
-/// Byte offset of each non-ASCII character of `text` with the running excess of UTF-8 bytes
-/// over UTF-16 units through it.
-fn source_utf16_excess(text: &str) -> Vec<(usize, usize)> {
-    let bytes = text.as_bytes();
-    let mut table = Vec::new();
-    let mut excess = 0;
-    let mut offset = 0;
-    while let Some(skipped) = ascii_prefix_len(&bytes[offset..]) {
-        offset += skipped;
-        let character = text[offset..].chars().next().expect("a non-ASCII byte starts a character");
-        excess += character.len_utf8() - character.len_utf16();
-        table.push((offset, excess));
-        offset += character.len_utf8();
-    }
-    table
-}
-
-/// The bytes of `bytes` before its first non-ASCII byte, `None` when every one is ASCII:
-/// a word of bytes at a time, as source text is nearly all ASCII.
-fn ascii_prefix_len(bytes: &[u8]) -> Option<usize> {
-    const WORD: usize = size_of::<u64>();
-    const HIGH_BITS: u64 = u64::from_ne_bytes([0x80; WORD]);
-    let (words, _) = bytes.as_chunks::<WORD>();
-    let mut offset = 0;
-    for word in words {
-        if u64::from_ne_bytes(*word) & HIGH_BITS != 0 {
-            break;
-        }
-        offset += WORD;
-    }
-    bytes[offset..].iter().position(|byte| !byte.is_ascii()).map(|position| offset + position)
-}
 
 /// The name prefix of a catch parameter's capture marker (`Compiler::capture_marker`).
 const CATCH_CAPTURE_PREFIX: &str = "\0quench:catch-capture:";
@@ -2043,80 +2227,81 @@ thread_local! {
     pub(crate) static LOWER_AT_LOAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// The index of the line of `starts` holding `offset`: the last line start at or before it, or
-/// the first line when none is. `last`, the line found before, is tried first and updated.
-fn source_line_index(starts: &[usize], last: &std::cell::Cell<usize>, offset: usize) -> usize {
-    partition_point_from(starts, last, |start| *start <= offset).saturating_sub(1)
-}
-
-/// `slice.partition_point(holds)`, trying `last`, the point found before, first and updating
-/// it: positions are asked for in nearly source order, so most fall where the last did.
-fn partition_point_from<T>(slice: &[T], last: &std::cell::Cell<usize>, holds: impl Fn(&T) -> bool) -> usize {
-    let point = last.get();
-    let before = point.checked_sub(1).is_none_or(|index| slice.get(index).is_some_and(&holds));
-    if point <= slice.len() && before && slice.get(point).is_none_or(|item| !holds(item)) {
-        return point;
-    }
-    let point = slice.partition_point(holds);
-    last.set(point);
-    point
-}
-
 /// The program tables a function's lowering reads, final once every function's rewrites
 /// have added their sites: at load the compiler's, after it the finished program's.
 pub(crate) struct LoweringTables<'t> {
     pub(crate) object_sites: &'t [ObjectSite],
-    pub(crate) methods: &'t dyn crate::liveness::MethodArguments,
+    pub(crate) methods: &'t dyn liveness::MethodArguments,
     pub(crate) field_sites: &'t [FieldSite],
     pub(crate) superinstructions: &'t [crate::bytecode::Superinstruction],
     pub(crate) specialized: bool,
     pub(crate) undefined_constant: u32,
 }
 
-/// The largest body whose copies are coalesced though it has no loop: a leaf small enough for
-/// a call entry to recognise by its shape (`capture_append::recognizes`).
-const RECOGNISED_LEAF_INSTRUCTIONS: usize = 16;
+/// The largest loop-free body whose copies are coalesced. This bound is unmeasured: the copy
+/// scans visit at most `copies::SCAN_LIMIT` instructions per `Move`, and the liveness and copy
+/// buffers are reused from `CompileScratch`, so a loop-free body's coalescing grows with its
+/// size rather than with its block lengths. The bound was picked without a measurement and
+/// must be checked on octane-code-load, where a coalescing pass once cost 4.7% of the run.
+/// It covers a leaf small enough for a call entry to recognise by its shape
+/// (`capture_append::recognizes`), which is 16 instructions or fewer.
+const LOOP_FREE_COALESCE_INSTRUCTIONS: usize = 128;
 
 /// Whether coalescing the copies frame-register promotion left repays its cost: a body that
 /// loops runs its instructions many times and its loops' tiers read the coalesced shape, and a
-/// small leaf's call entry recognises it. Any other body mostly runs once (octane-code-load:
-/// coalescing cost 4.7% of the run and saved no instruction on any V8-v7 or JetStream row).
+/// loop-free body up to `LOOP_FREE_COALESCE_INSTRUCTIONS` is coalesced too, since its scans are
+/// bounded (see that constant).
 fn coalescing_repays(function: &BcFunction) -> bool {
-    function.code.len() <= RECOGNISED_LEAF_INSTRUCTIONS || function.loops()
+    rewrite::live_count(&function.code) <= LOOP_FREE_COALESCE_INSTRUCTIONS || function.loops()
 }
 
 /// The lowering passes after a function's dispatch class is settled (`settle_dispatch`):
 /// numeric and plain-local specialization and frame registers. They add no table entries,
 /// so they run equally at load and on a function's first read from its finished program.
+/// Returns the live sets of the function as it stands when the last pass solved them and
+/// rewrote nothing after (`liveness::register_roots_from` reuses them), else `None`.
 pub(crate) fn lower_settled<'a>(
     function: &mut BcFunction,
     tables: &LoweringTables<'_>,
     atom_name: impl Fn(usize) -> Option<&'a str>,
-) {
+    scratch: &mut CompileScratch,
+) -> Option<Vec<liveness::RegisterSet>> {
     let LoweringTables { methods, field_sites, superinstructions, specialized, undefined_constant, object_sites } = *tables;
     if function.dispatch == DispatchClass::Numeric {
-        let live = crate::liveness::analyze(function, methods, field_sites, superinstructions);
+        let live = liveness::buffers::analyze_with(function, methods, field_sites, superinstructions, scratch);
         numeric::apply(function, live.as_deref());
     }
     // Renaming a plain slot's operations keeps it plain (validation re-derives the same
     // proof from the specialized code), so frame registers start from the same slots.
     frame_registers::drop_unread_self_binding(function, superinstructions, &atom_name);
-    let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions);
-    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, atom_name);
+    // Specialization renames operations without moving control, so the TDZ analyses of both
+    // passes read one set of blocks.
+    let flow = crate::bytecode::initialization::FlowCell::new();
+    let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions, &flow);
+    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, &atom_name, &flow, scratch);
     if specialized {
         if coalescing_repays(function) {
-            rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
+            rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions, scratch);
         }
-        object_registers::promote(function, methods, field_sites, superinstructions, object_sites);
+        object_registers::promote(function, methods, field_sites, superinstructions, object_sites, scratch);
+        rewrite::hoist_loop_constants(function, methods, field_sites, superinstructions, scratch);
     }
+    rest_reads::rewrite(function, methods, field_sites, superinstructions, &|atom| atom_name(atom as usize) == Some("length"));
+    let mut solved = None;
     if function
         .code
         .iter()
-        .any(|instruction| instruction.op() == Op::StoreLocalPlain)
+        .any(|instruction| instruction.op().traits().has(Traits::PLAIN_LOCAL_STORE))
     {
-        let live = crate::liveness::analyze(function, methods, field_sites, superinstructions);
-        numeric::apply_plain_local_stores(function, live.as_deref());
+        let live = liveness::buffers::analyze_with(function, methods, field_sites, superinstructions, scratch);
+        if !numeric::apply_plain_local_stores(function, live.as_deref()) {
+            solved = live;
+        }
     }
+    // The one compaction of the lowering: the passes above leave the `Nop`s their in-place
+    // rewrites made, and the live sets this returns are compacted with the same map.
+    rewrite::remove_nops(function, &mut solved, scratch);
+    solved
 }
 
 impl<'a> Compiler<'a> {
@@ -2202,14 +2387,15 @@ impl<'a> Compiler<'a> {
         let mut visible = FxHashSet::default();
         let mut bindings = Vec::new();
         for (marker, slot) in scope.iter() {
-            let text = self.atoms[marker as usize].to_owned();
+            // Only a capture-prefixed name is copied: most scope entries are not captures.
             let Some((kind, name)) = LexicalBindingKind::ALL.into_iter().find_map(|kind| {
-                text.strip_prefix(kind.capture_prefix())
-                    .map(|name| (kind, name))
+                self.atoms[marker as usize]
+                    .strip_prefix(kind.capture_prefix())
+                    .map(|name| (kind, name.to_owned()))
             }) else {
                 continue;
             };
-            let atom = self.atom(name);
+            let atom = self.atom(&name);
             if !visible.insert(atom) {
                 continue;
             }
@@ -2257,42 +2443,21 @@ impl<'a> Compiler<'a> {
         atom_prefix: &'a dyn AtomPrefix,
         private_name_ids: FxHashMap<(u32, u32), u32>,
     ) -> Self {
-        Self::with_layout(
-            source,
-            text,
-            mode,
-            atom_prefix,
-            private_name_ids,
-            std::borrow::Cow::Owned(crate::bytecode::source_line_starts(text).collect()),
-            std::borrow::Cow::Owned(source_utf16_excess(text)),
-        )
-    }
-
-    /// `new`, with `text`'s line starts and UTF-16 excess table already derived.
-    fn with_layout(
-        source: &'a str,
-        text: &'a str,
-        mode: SpecializationMode,
-        atom_prefix: &'a dyn AtomPrefix,
-        private_name_ids: FxHashMap<(u32, u32), u32>,
-        source_line_starts: std::borrow::Cow<'a, [usize]>,
-        source_utf16_excess: std::borrow::Cow<'a, [(usize, usize)]>,
-    ) -> Self {
-        let atoms = CompilerAtoms::new(atom_prefix);
+        let atoms = CompilerAtoms::new(atom_prefix, source.len() / 32);
         Self {
             source,
             text,
-            source_line_starts,
-            last_source_line: std::cell::Cell::new(0),
-            last_utf16_excess: Default::default(),
             source_comments: Vec::new(),
-            source_utf16_excess,
+            declared_types: crate::bytecode::DeclaredTypes::default(),
+            checked_parameters: typescript::checked_parameters(text),
             mode,
             root_strict: false,
             module_goal: false,
             capture_script_completion: false,
             eval_context: None,
+            provided_text: None,
             eval_annex_b_collisions: early::AnnexBCollisions::default(),
+            root_lexical_atoms: Vec::new(),
             atoms,
             capture_markers: FxHashMap::default(),
             private_name_references: 0,
@@ -2300,6 +2465,7 @@ impl<'a> Compiler<'a> {
             prototype_unobservable: FxHashSet::default(),
             lazy_bodies: FxHashSet::default(),
             lazy_compiled: Vec::new(),
+            checked_bodies: Vec::new(),
             lazy_arenas: Vec::new(),
             streamed: FxHashSet::default(),
             stream_candidates: FxHashSet::default(),
@@ -2311,7 +2477,7 @@ impl<'a> Compiler<'a> {
             private_name_overrides: FxHashMap::default(),
             constants: SiteTable::default(),
             constant_index: replay::ConstantIndex::default(),
-            functions: replay::FunctionTable::default(), deferred_rewrite_code: 0, kept_rewrites_pending: false,
+            functions: replay::FunctionTable::default(), deferred_rewrite_code: 0, kept_rewrites: Vec::new(),
             errors: vec![],
             cache_sites: 0,
             name_shared_sites: NameSharedSites::default(),
@@ -2330,6 +2496,7 @@ impl<'a> Compiler<'a> {
             dynamic_binding_scopes: 0,
             early_replays: FxHashMap::default(),
             invoked_functions: FxHashSet::default(),
+            scratch: CompileScratch::default(),
             replay_calls: FxHashMap::default(),
             replay_target: None,
             source_type: oxc_span::SourceType::default(),
@@ -2450,7 +2617,7 @@ impl<'a> Compiler<'a> {
     /// give it binding sites: its layout then depends on nothing compiled after it.
     fn finish_early(&mut self, id: u32) {
         #[cfg(feature = "profile-aggregate")]
-        if std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some() {
+        if crate::vm::switches::profile_retain_bytecode() {
             // A function-level profile needs each replayable function's instruction records.
             return;
         }
@@ -2482,7 +2649,8 @@ impl<'a> Compiler<'a> {
                 capture_layout::mapped_arguments(&function),
             ),
             dynamic_descendant: false,
-            module_root: false,
+            split_root: false,
+            declared_captures: Vec::new(),
         };
         let arguments_slot = function.arguments_slot;
         capture_layout::apply_function(&mut function, id as usize, &layout, &self.atoms);
@@ -2701,7 +2869,7 @@ impl<'a> Compiler<'a> {
             Err(lazy_bodies::ReparseFailure::Diagnostics) => None,
         };
         let Some(reparsed) = reparsed.filter(|reparsed| reparsed.function().is_some_and(|again| again.span == function.span)) else {
-            self.reject(function.span, "SyntaxError: a lazily parsed function body does not compile alone");
+            self.reject(function.span, LAZY_FUNCTION_BODY_NOT_ALONE);
             return self.compile_plain_function(function, context);
         };
         let again = reparsed.function().expect("checked above");
@@ -2802,7 +2970,7 @@ impl<'a> Compiler<'a> {
         mut context: replay::ObjectMethodContext,
     ) -> u32 {
         // A class method's chunk compiles it as an object literal's (`ChunkText::of`).
-        self.take_outer(context.property_span.start, |scopes, strict| (context.scopes, context.inherited_strict, context.with_depth) = (scopes, strict, 0));
+        self.adopt_outer_method(&mut context);
         if self.replayable_source {
             context.scopes = context.scopes.recording();
         }
@@ -2903,28 +3071,10 @@ impl<'a> Compiler<'a> {
         source_syntax::delimiter(self.text, &self.source_comments, start, end, delimiter)
     }
 
-    fn source_position(&self, offset: u32) -> SourcePosition {
-        let offset = (offset as usize).min(self.text.len());
-        let line_index = self.source_line_index(offset);
-        let line_start = self.source_line_starts[line_index];
-        let excess_before = |offset: usize, last: &std::cell::Cell<usize>| {
-            let index = partition_point_from(&self.source_utf16_excess, last, |(character, _)| *character < offset);
-            index
-                .checked_sub(1)
-                .map_or(0, |index| self.source_utf16_excess[index].1)
-        };
-        let [at_offset, at_line] = &self.last_utf16_excess;
-        let column = offset - line_start - (excess_before(offset, at_offset) - excess_before(line_start, at_line));
-        SourcePosition {
-            pc: 0,
-            line: u32::try_from(line_index.saturating_add(1)).unwrap_or(u32::MAX),
-            column: u32::try_from(column.saturating_add(1)).unwrap_or(u32::MAX),
-        }
-    }
-
-    /// The index of the line holding `offset` (`source_line_index`).
-    fn source_line_index(&self, offset: usize) -> usize {
-        source_line_index(&self.source_line_starts, &self.last_source_line, offset)
+    /// The source offset a position records: a byte of the text, clamped to its end. Its line
+    /// and column are derived from it only when something asks (`ProgramSource::position`).
+    fn source_offset(&self, offset: u32) -> u32 {
+        offset.min(u32::try_from(self.text.len()).unwrap_or(u32::MAX))
     }
 
     /// Emits every function of `program`: all the compiler reads of its tree. `finish` makes
@@ -2964,39 +3114,6 @@ impl<'a> Compiler<'a> {
         for error in errors {
             self.reject(Span::default(), error);
         }
-        self.compile_function(
-            None,
-            &[],
-            FunctionBody::Statements(&program.body),
-            &capture_scope::ScopeChain::new(Vec::new()),
-            None,
-            FunctionOptions {
-                defaults: None,
-                directive_completion: program.directives.last().map(|directive| &directive.expression),
-                source_span: None,
-                name_binding: None,
-                async_function: async_module,
-                generator: false,
-                class_constructor: false,
-                derived_constructor: false,
-                non_constructible: false,
-                prototype_unobservable: false,
-                class_initializer: self
-                    .eval_context
-                    .is_some_and(|context| context.class_initializer),
-                instance_fields: None,
-                instance_private_methods: None,
-                super_static: false,
-                super_home: self
-                    .eval_context
-                    .is_some_and(|context| context.home_atom.is_some()),
-                super_home_atom: self.eval_context.and_then(|context| context.home_atom),
-                rest_override: false,
-                implicit_body: None,
-                strict: self.root_strict,
-                with_depth: 0,
-            },
-        );
         let mut global_lexical_names = Vec::new();
         let mut global_immutable_names = Vec::new();
         for statement in &program.body {
@@ -3065,6 +3182,46 @@ impl<'a> Compiler<'a> {
             .iter()
             .map(|name| self.atom(name))
             .collect();
+        // The root's lexicals are known before its nested functions compile, which read them by
+        // declaration index (`LoadGlobalLexical`). Only a script's own are global.
+        self.root_lexical_atoms = if module_goal || self.eval_context.is_some() {
+            Vec::new()
+        } else {
+            global_lexical_atoms.clone()
+        };
+        self.compile_function(
+            None,
+            &[],
+            FunctionBody::Statements(&program.body),
+            &capture_scope::ScopeChain::new(Vec::new()),
+            None,
+            FunctionOptions {
+                defaults: None,
+                directive_completion: program.directives.last().map(|directive| &directive.expression),
+                source_span: None,
+                name_binding: None,
+                async_function: async_module,
+                generator: false,
+                class_constructor: false,
+                derived_constructor: false,
+                non_constructible: false,
+                prototype_unobservable: false,
+                class_initializer: self
+                    .eval_context
+                    .is_some_and(|context| context.class_initializer),
+                instance_fields: None,
+                instance_private_methods: None,
+                super_static: false,
+                super_home: self
+                    .eval_context
+                    .is_some_and(|context| context.home_atom.is_some()),
+                super_home_atom: self.eval_context.and_then(|context| context.home_atom),
+                rest_override: false,
+                implicit_body: None,
+                strict: self.root_strict,
+                with_depth: 0,
+            },
+        );
         let global_function_names: Vec<_> = program
             .body
             .iter()
@@ -3122,25 +3279,30 @@ impl<'a> Compiler<'a> {
             .map(|name| self.atom(name))
             .collect();
         if let Some(root) = self.functions.first_mut() {
-            root.global_declarations = crate::bytecode::GlobalDeclarations {
-                lexical: global_lexical_atoms,
-                var: global_var_atoms,
-                function: global_function_atoms,
-                annex_b_var: global_annex_b_var_atoms,
-                immutable: global_immutable_atoms,
-            }
-            .boxed();
-            if !self.module_goal {
+            root.set_global_declarations(
+                crate::bytecode::GlobalDeclarations::new(
+                    global_lexical_atoms,
+                    global_var_atoms,
+                    global_function_atoms,
+                    global_annex_b_var_atoms,
+                    global_immutable_atoms,
+                )
+                .boxed(),
+            );
+            // A strict eval's vars are its own bindings, not the global object's.
+            if !self.module_goal && !(self.eval_context.is_some() && strict_script) {
                 fn lower_global_var(
                     op: Op,
                     slot: impl FnOnce() -> usize,
                     local_atoms: &[Atom],
                     global_var_atoms: &[Atom],
                 ) -> Option<Op> {
-                    let replacement = match op {
-                        Op::LoadLocal => Op::LoadEnvLocal,
-                        Op::StoreLocal => Op::StoreEnvLocal,
-                        _ => return None,
+                    let replacement = if op == LOCAL_LOAD_OP {
+                        ENV_LOAD_OP
+                    } else if op == LOCAL_STORE_OP {
+                        ENV_STORE_OP
+                    } else {
+                        return None;
                     };
                     local_atoms
                         .get(slot())
@@ -3228,19 +3390,24 @@ impl<'a> Compiler<'a> {
         // A replay compiles one function and records no facts; it keeps no program. A class
         // constructor runs its instance initializer on its own environment
         // (`Vm::initialize_this_binding`); a released constructor's link is not at hand.
+        // A private name is found by walking the environment chain from the activation that
+        // uses it (`Vm::private_home`), and no capture records that walk, so a program that names
+        // any private member reads each closure's whole chain.
+        let names_private_members = self.private_name_references != 0;
         let closure_reads = (facts.len() == functions.len()).then(|| {
             let initializers: Vec<capture_layout::InstanceInitializer> = functions
                 .iter()
                 .enumerate()
                 .map(|(id, function)| match function {
-                    Some(function) => capture_layout::InstanceInitializer::Known(function.instance_initializer),
+                    Some(function) => capture_layout::InstanceInitializer::Known(function.instance_initializer()),
                     None if released.get(&id).is_some_and(|released| released.header.is_class_constructor) => {
                         capture_layout::InstanceInitializer::Unknown
                     }
                     None => capture_layout::InstanceInitializer::Known(None),
                 })
                 .collect();
-            std::rc::Rc::new(capture_layout::closure_reads(&facts, &reachable, &initializers))
+            let dynamic_scopes = if names_private_members { vec![true; facts.len()] } else { reachable.clone() };
+            std::rc::Rc::new(capture_layout::closure_reads(&facts, &dynamic_scopes, &initializers))
         });
         self.resolve_name_bindings(&mut functions, &reachable);
         let mut layout_inputs = capture_layout::inputs(&facts, &dynamic, |id| {
@@ -3252,10 +3419,22 @@ impl<'a> Compiler<'a> {
             && let (Some(plan), Some(inputs), Some(Some(root))) =
                 (&module_link_plan, layout_inputs.first_mut(), functions.first())
         {
-            inputs.module_root = true;
+            inputs.split_root = true;
             inputs.captured.extend(
                 root.module_environment_slots(plan, &module_imports, |atom| self.atoms.get(atom as usize)),
             );
+            inputs.captured.sort_unstable();
+            inputs.captured.dedup();
+        } else if !self.module_goal
+            && let (Some(inputs), Some(Some(root))) = (layout_inputs.first_mut(), functions.first())
+            && !inputs.dynamic_descendant
+            && !root.has_dynamic_scope_access()
+            && root.binding_sites.is_empty()
+        {
+            // A Script's or eval's root splits around its global declarations; without
+            // dynamic name resolution nothing else names its block bindings.
+            inputs.split_root = true;
+            inputs.captured.extend(root.global_declaration_slots(self.eval_context.is_some()));
             inputs.captured.sort_unstable();
             inputs.captured.dedup();
         }
@@ -3303,21 +3482,23 @@ impl<'a> Compiler<'a> {
         // header's dispatch class is settled here. The root, which runs as soon as the program
         // does, lowers here, and every record does under `verify-replay`, as each replay it
         // compares with is lowered.
+        self.declared_types.apply_parameters(&mut functions);
         let undefined_constant = self.constant(Constant::Undefined);
         let lower_at_load = lowers_at_load();
         let lowered_here = |id: usize| lower_at_load || id == crate::vm::ROOT_FUNCTION_ID as usize;
         for (id, function) in functions.iter_mut().enumerate() {
             let Some(function) = function else { continue };
             if lowered_here(id) {
-                self.lower_function(function, undefined_constant);
-                function.register_roots = crate::liveness::register_roots(
+                let solved = self.lower_function(function, undefined_constant);
+                function.register_roots = liveness::register_roots_from(
                     function,
                     self.method_sites.as_slice(),
                     self.field_sites.as_slice(),
                     self.superinstructions.as_slice(),
+                    solved,
                 );
             } else {
-                self.settle_dispatch(function);
+                self.settle_dispatch_only(function);
             }
             function.shrink_to_fit();
         }
@@ -3340,6 +3521,7 @@ impl<'a> Compiler<'a> {
                                 undefined_constant,
                             },
                             |atom| self.atoms.get(atom),
+                            &mut CompileScratch::default(),
                         );
                     }
                     function
@@ -3356,16 +3538,21 @@ impl<'a> Compiler<'a> {
         let rewrites_pend = self.rewrites_pend(&room);
         let code = self.deferred_rewrite_code + room.code();
         let cache_capacity = room.cache_capacity(self.cache_sites);
-        let (mut method_sites, mut method_arguments) =
-            Self::flatten_method_sites(self.method_sites.into_vec());
+        // `AppendVec::with_headroom` takes each table's exact length, so these need no shrinking first.
+        let (method_sites, method_arguments) = Self::flatten_method_sites(self.method_sites.into_vec());
         let atoms = self.atoms.table();
         let replay_atoms = self.first_call.keep_replay(replays.is_empty())
             .then(|| replay::ProgramAtomIndex::new(self.atoms.interned(), &atoms));
-        let mut constants = self.constants.into_vec();
-        constants.shrink_to_fit();
-        method_sites.shrink_to_fit();
-        method_arguments.shrink_to_fit();
+        let constants = self.constants.into_vec();
         let field_sites = self.field_sites.into_vec();
+        // Built by pushes, so each may hold doubling slack the program would keep for good.
+        let mut module_requests = module_requests;
+        module_requests.shrink_to_fit();
+        let mut module_imports = module_imports;
+        module_imports.shrink_to_fit();
+        let mut declared_types = std::mem::take(&mut self.declared_types);
+        declared_types.declared.shrink_to_fit();
+        declared_types.enum_constants.shrink_to_fit();
         let program = ResidualProgram {
             specialized: self.mode == SpecializationMode::Enabled,
             // Eval code is code compiled for an eval; a host script that only captures its
@@ -3380,15 +3567,16 @@ impl<'a> Compiler<'a> {
             module_requests,
             module_imports,
             module_link_plan,
+            declared_types: (!declared_types.is_empty()).then(|| Box::new(declared_types)),
             source_name: self.source.to_owned(),
             source: Some(self.first_call.kept_source.cloned().unwrap_or_else(|| crate::bytecode::ProgramSource {
-                text: crate::bytecode::SourceText::Shared(std::sync::Arc::from(self.text)),
+                text: source_text::kept_or_provided(self.text, self.eval_context.is_some(), self.provided_text.take()),
                 typescript: self.source_type.is_typescript(),
                 base: 0,
                 line_offset: 0,
                 column_offset: 0,
-                line_starts: Default::default(),
                 call_sites: Default::default(),
+                layout: Default::default(),
             })),
             atoms,
             constants: crate::bytecode::append_vec::AppendVec::with_headroom(constants, room.constants()),
@@ -3413,13 +3601,14 @@ impl<'a> Compiler<'a> {
             regexp_literal_sites: crate::bytecode::append_vec::AppendVec::with_headroom(self.regexp_literal_sites.into_vec(), room.regexp_literal_sites()),
             literal_templates: crate::bytecode::append_vec::AppendVec::with_headroom(self.literal_templates.into_vec(), room.literal_templates()),
             superinstructions: crate::bytecode::append_vec::AppendVec::with_headroom(self.superinstructions.into_vec(), code / SUPERINSTRUCTION_WINDOW + 1),
-            rewrite_ranges: replay::RewriteRanges { kept_pending: rewrites_pend, ..Default::default() },
+            rewrite_ranges: replay::RewriteRanges::new(rewrites_pend, std::mem::take(&mut self.kept_rewrites)),
             replay: replay_atoms.map(|atoms| {
                 std::rc::Rc::new(replay::ProgramReplay {
                     source_type: self.source_type,
                     root_strict: self.root_strict,
                     module_goal: self.module_goal,
                     lazy_bodies: lazy_bodies::sorted(std::mem::take(&mut self.lazy_compiled)),
+                    checked_bodies: lazy_bodies::sorted(std::mem::take(&mut self.checked_bodies)),
                     specialized: self.mode == SpecializationMode::Enabled,
                     template_sites: self.template_sites,
                     atoms,
@@ -3568,12 +3757,13 @@ impl<'a> Compiler<'a> {
         index
     }
 
-    fn regexp_literal_site(&mut self, pattern_constant: u32, flags_constant: u32) -> u32 {
+    fn regexp_literal_site(&mut self, pattern_constant: u32, flags_constant: u32, receiver: bool) -> u32 {
         let index = self.regexp_literal_sites.len() as u32;
         self.regexp_literal_sites
             .push(crate::bytecode::RegExpLiteralSite {
                 pattern_constant,
                 flags_constant,
+                receiver,
             });
         index
     }
@@ -3632,10 +3822,12 @@ impl<'a> Compiler<'a> {
         if site != crate::bytecode::SHARED_UNCACHED_SITE {
             return site;
         }
-        let access = match op {
-            Op::GetField if base != crate::bytecode::FieldBase::NESTED => NamedAccess::Load,
-            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => NamedAccess::Store,
-            _ => return site,
+        let access = if op.traits().has(Traits::FIELD_LEAF) && base != crate::bytecode::FieldBase::NESTED {
+            NamedAccess::Load
+        } else if op.traits().has(Traits::SLOPPY_STORE.union(Traits::STRICT_STORE)) {
+            NamedAccess::Store
+        } else {
+            return site;
         };
         self.name_shared_cache_site(access, imm)
     }
@@ -3662,7 +3854,7 @@ impl<'a> Compiler<'a> {
                     cache,
                     argument_start,
                     argument_count,
-                    receiver_path,
+                    receiver_path: receiver_path.into(),
                 }
             })
             .collect();
@@ -3673,7 +3865,7 @@ impl<'a> Compiler<'a> {
             kind: DiagnosticKind::Compilation,
             source: self.source.into(),
             message: message.into(),
-            span: (span.start, span.end),
+            span,
         });
     }
     fn reject_syntax(&mut self, span: Span, message: impl Into<String>) {
@@ -3681,7 +3873,7 @@ impl<'a> Compiler<'a> {
             kind: DiagnosticKind::Syntax,
             source: self.source.into(),
             message: message.into(),
-            span: (span.start, span.end),
+            span,
         });
     }
     pub(super) fn collect_body_lexical_bindings(
@@ -3783,12 +3975,21 @@ impl<'a> Compiler<'a> {
             (_, None) => false,
             (_, Some((strict, _))) => strict || unaliased_arguments,
         };
-        // An async body that may suspend keeps its locals in frame slots; one that never
-        // awaits runs to completion as an ordinary body does (`CallPlan::settles_in_loop`).
-        let suspends = async_body && register_local_facts.suspends;
-        if !eligible || suspends || !register_local_facts.safe || !arguments_allow_promotion {
+        // A suspension saves the frame's registers with its locals, so an async or generator
+        // body's locals promote as any other body's do.
+        // A body that makes functions keeps its locals for the capture layout to split
+        // (`capture_layout`, `frame_registers`), but a parameter none of them names is the
+        // body's alone: it arrives in a register as in a body that makes none, where the
+        // later passes, which leave parameters in their slots, would keep it in the frame.
+        // An async or generator body keeps its whole frame for its closures (`capture_layout`
+        // splits none).
+        let parameters_only = !async_body && register_local_facts.makes_closures_only()
+            && own_arguments.is_some_and(|(_, parameters)| register_local_facts.closures_spare(
+                parameters.iter().map(|atom| &self.atoms[*atom as usize])));
+        if !eligible || !(register_local_facts.safe || parameters_only) || !arguments_allow_promotion {
             return PromotedLocalPlan { unaliased_arguments, ..Default::default() };
         }
+        let parameter_count = own_arguments.map_or(0, |(_, parameters)| parameters.len());
         let arguments_atom = self.atom("arguments");
         let mut latest_local_slot = FxHashMap::default();
         for (slot, atom) in locals.iter().copied().enumerate() {
@@ -3802,6 +4003,11 @@ impl<'a> Compiler<'a> {
                 let promotable = if let Some(arguments) = arguments_only {
                     // The hidden argument slots lead the locals, one per parameter.
                     usize::from(slot) < arguments
+                } else if parameters_only {
+                    usize::from(slot) < parameter_count
+                        && own_arguments.is_some_and(|(_, parameters)| parameters.contains(&atom))
+                        && atom != arguments_atom
+                        && self_binding_slot != Some(slot)
                 } else {
                     function_scope.contains(&atom)
                         && !lexical_atoms.contains(&atom)
@@ -3850,7 +4056,8 @@ impl<'a> Compiler<'a> {
         let id = self.functions.reserve();
         let body_lexicals = self.collect_body_lexical_bindings(body);
         let lexical_atoms: Vec<_> = body_lexicals.iter().map(|(atom, _)| *atom).collect();
-        let params: Vec<Atom> = params.iter().map(|name| self.atom(name)).collect();
+        let rest_alias = rest_alias::rest_alias(&options, (parent.is_none(), streamed.is_some(), expression_body.is_some()), body);
+        let params: Vec<Atom> = params[..params.len().saturating_sub(usize::from(rest_alias.is_some()))].iter().map(|name| self.atom(name)).collect();
         let mut locals = params.clone();
         if let Some(formal) = options.defaults {
             for name in FunctionCompiler::parameter_bound_names(formal) {
@@ -3865,6 +4072,14 @@ impl<'a> Compiler<'a> {
         let annex_b_collisions = self.annex_b_collisions(body);
         let mut function_scope =
             self.collect_locals(body, &mut locals, root_strict, parent.is_some(), &annex_b_collisions);
+        // A script's own top-level lexicals are the realm's global lexical bindings, which the root
+        // and its nested functions reach by declaration index (`LoadGlobalLexical`,
+        // `StoreGlobalLexical`). The root keeps no local slot or environment slot for them, so no
+        // closure captures them. `root_lexical_atoms` is empty for a module and for an eval.
+        if parent.is_none() && !self.root_lexical_atoms.is_empty() {
+            locals.retain(|atom| !self.root_lexical_atoms.contains(atom));
+            function_scope.retain(|atom| !self.root_lexical_atoms.contains(atom));
+        }
         // Only a function-scope binding (a parameter, `var`, top-level declaration) shadows
         // the expression's own name; a block's or a catch clause's binding does not.
         let name_binding = options.name_binding.and_then(|source_name| {
@@ -3886,6 +4101,7 @@ impl<'a> Compiler<'a> {
                 .position(|atom| atom == binding)
                 .and_then(|slot| u16::try_from(slot).ok())
         });
+        let declared_functions = if parent.is_some() { self.declared_function_slots(body, &locals, params.len()) } else { Vec::new() };
         let arguments = self.atom("arguments");
         let parameter_shadows_arguments = locals[..parameter_local_count].contains(&arguments);
         let has_arguments_binding = locals.contains(&arguments);
@@ -3930,7 +4146,8 @@ impl<'a> Compiler<'a> {
             .copied()
             .filter(|atom| function_scope.contains(atom))
             .collect();
-        let dynamic_eval = eval_reach::function_contains_direct_eval(options.defaults, body, expression_body);
+        let direct_eval = early::direct_eval_facts(options.defaults, body, expression_body);
+        let dynamic_eval = direct_eval.eval;
         let simple_parameters = !options.rest_override
             && options
                 .defaults
@@ -3945,7 +4162,6 @@ impl<'a> Compiler<'a> {
             && options.defaults.is_some_and(FunctionCompiler::arguments_promotable_apart);
         let promote_plain_locals = parent.is_some()
             && (direct_parameters || hidden_parameters)
-            && !options.generator
             && !options.derived_constructor
             && !options.class_initializer
             && options.implicit_body.is_none()
@@ -3962,7 +4178,7 @@ impl<'a> Compiler<'a> {
             && !dynamic_eval;
         let PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments } = self.promoted_local_plan(
             promote_plain_locals,
-            options.async_function,
+            options.async_function || options.generator,
             hidden_parameters.then_some(params.len()),
             Some((root_strict, &params)),
             body,
@@ -3972,9 +4188,10 @@ impl<'a> Compiler<'a> {
             &lexical_atoms,
             self_binding_slot,
         );
-        let binds_dynamically =
-            dynamic_eval || early::body_may_bind_dynamically(body, expression_body);
+        let binds_dynamically = direct_eval.binds_dynamically();
         self.dynamic_binding_scopes += u32::from(binds_dynamically);
+        let declared_parameters = options.defaults
+            .map_or_else(Vec::new, |formals| typescript::declared_parameters(formals, self.checked_parameters.as_deref()));
         let mut function = FunctionCompiler::new(
             self,
             locals,
@@ -3991,10 +4208,12 @@ impl<'a> Compiler<'a> {
             &promoted_local_slots,
             &clobbered_local_slots,
         );
+        function.code.reserve(code_capacity_hint(options.source_span));
         if let Some((name, binding)) = name_binding {
             function.push_function_name_binding(name, binding);
         }
         function.super_home_atom = options.super_home_atom;
+        function.declared_key = if parent.is_none() { Some(u32::MAX) } else { options.source_span.map(|span| span.start) };
         function.super_call_binds_this = options.derived_constructor
             || (parent.is_none()
                 && function
@@ -4009,13 +4228,13 @@ impl<'a> Compiler<'a> {
             let initial = if let Some(directive) = options.directive_completion {
                 function.string_literal(directive)
             } else { function.literal(Constant::Undefined) };
-            function.emit(Op::Move, completion, initial, 0, 0);
+            function.emit(REGISTER_MOVE, completion, initial, 0, 0);
             function.statement_completion = StatementCompletion::Track(completion);
         }
         function.dynamic_eval = dynamic_eval;
         function.literal_singletons = literal_singletons::Owner { parent, binds_dynamically, options: &options }.declarations(&function.owner.atoms, &params, body);
         if arguments_slot.is_some() && parameter_arguments_slot.is_none() {
-            function.arguments_alias = early::arguments_alias(options.defaults, body);
+            function.arguments_alias = rest_alias.clone().or_else(|| early::arguments_alias(options.defaults, body));
         }
         let mut lexical_slots: Vec<_> = lexical_atoms
             .iter()
@@ -4037,8 +4256,13 @@ impl<'a> Compiler<'a> {
             .instance_fields
             .filter(|_| !options.derived_constructor)
         {
-            function
-                .emit_instance_fields(fields, options.instance_private_methods.unwrap_or_default());
+            // A base class constructor's receiver is its own [[Construct]]'s, fresh; a derived
+            // class's fields run in their initializer on the receiver `super()` returned.
+            function.emit_instance_fields(
+                fields,
+                options.instance_private_methods.unwrap_or_default(),
+                options.class_constructor,
+            );
         }
         if let Some(defaults) = options.defaults {
             function.emit_parameter_bindings(defaults);
@@ -4047,7 +4271,7 @@ impl<'a> Compiler<'a> {
             && !lexical_atoms.contains(&arguments)
         {
             let value = function.reg();
-            function.emit(Op::LoadLocal, value, 0, 0, u32::from(slot));
+            function.emit(LOCAL_LOAD_OP, value, 0, 0, u32::from(slot));
             function.store_atom(arguments, value);
         }
         let parameter_end_pc = function.code.len() as u32;
@@ -4072,17 +4296,21 @@ impl<'a> Compiler<'a> {
                 .register()
                 .unwrap_or_else(|| function.literal(Constant::Undefined))
         };
-        function.emit(Op::Return, result, 0, 0, 0);
+        function.emit(RETURN_OP, result, 0, 0, 0);
+        // Block scopes add locals after the function's own were counted (`FunctionCompiler::new`):
+        // a frame's local count is 16-bit, so one more would wrap it to an empty frame.
+        if function.locals.len() > usize::from(u16::MAX) {
+            function.owner.reject(Span::default(), "function exceeds the local-slot limit");
+        }
         let captures_locals = function
             .code
             .iter()
-            .any(|instruction| instruction.op() == Op::MakeClosure)
+            .any(|instruction| instruction.op().traits().has(Traits::MAKES_CLOSURE))
             || function
                 .wide
                 .iter()
-                .any(|instruction| instruction.op() == Op::MakeClosure);
-        let reads_binding =
-            |op: Op| matches!(op, Op::LoadLocal | Op::ArgumentsLength | Op::ArgumentGet);
+                .any(|instruction| instruction.op().traits().has(Traits::MAKES_CLOSURE));
+        let reads_binding = |op: Op| op.traits().has(Traits::FRAME_SLOT_READ);
         let arguments_slot = arguments_slot.filter(|slot| {
             (captures_locals && function.owner.arrows_reach_arguments(id, *slot))
                 || function.dynamic_eval
@@ -4101,8 +4329,7 @@ impl<'a> Compiler<'a> {
         });
         // Grown by doubling, these would keep their slack beside the syntax tree until the
         // whole program has compiled.
-        function.code.shrink_to_fit();
-        function.source_positions.shrink_to_fit();
+        trim_slack(&mut function.code);
         let name_bindings = function.name_bindings();
         let undefined_register = function.used_undefined_register();
         let environment_clones = function.per_site_environment_clones();
@@ -4124,13 +4351,25 @@ impl<'a> Compiler<'a> {
                 0
             },
             parameter_atoms: parameter_atoms.into(),
+            rare: crate::bytecode::FunctionRare {
+                declared_parameters: declared_parameters.into(),
+                ..Default::default()
+            }
+            .boxed(),
+            // A rest alias's list is no rest list of the function's own (`rest_alias`).
             rest: options.rest_override
-                || options.defaults.is_some_and(|value| value.rest.is_some()),
+                || options.defaults.is_some_and(|value| value.rest.is_some()) != rest_alias.is_some(),
             is_async: options.async_function,
             is_generator: options.generator,
             is_class_constructor: options.class_constructor,
             derived_constructor: options.derived_constructor,
             instance_initializer: None,
+            // Only a base class constructor's receiver is made by its own [[Construct]].
+            constant_fields: if options.class_constructor && !options.derived_constructor {
+                std::mem::take(&mut function.constant_fields).into()
+            } else {
+                Default::default()
+            },
             super_home_atom: options.super_home_atom,
             constructible: !options.non_constructible
                 && !options.async_function
@@ -4138,7 +4377,7 @@ impl<'a> Compiler<'a> {
             prototype_unobservable: options.prototype_unobservable,
             class_initializer: options.class_initializer,
             parameter_eval_arguments_error: function.parameter_eval_arguments_error,
-            unaliased_arguments,
+            unaliased_arguments, rest_alias: rest_alias.as_ref().and(arguments_slot).is_some(),
             arguments_slot,
             simple_parameters,
             strict: root_strict,
@@ -4146,28 +4385,23 @@ impl<'a> Compiler<'a> {
             local_atoms: function.locals.clone().into(),
             environment_atoms,
             selective_capture_slots: None,
+            declared_functions: crate::heap::ThinBoxSlice::from_slice(&declared_functions),
+            declared_captures: Default::default(),
             local_registers: function.promoted_local_layout().into(),
             inherited_with_scope: options.with_depth != 0,
             lexical_atoms: lexical_atoms.into(),
-            global_declarations: None,
             name_bindings,
             binding_sites: function.binding_sites.into(),
-            source_positions: function.source_positions,
+            source_positions: function.source_positions.freeze(),
             environment_clones,
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(),
-            live_parameter_reflection: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            js_tier_candidate: Default::default(),
+            plain_locals: Default::default(), caches: Default::default(),
+            lazy_flags: Default::default(),
             call_plan: Default::default(),
-            initializer: Default::default(),
             handlers: function.handlers.into(),
             register_roots: Default::default(),
             undefined_register,
@@ -4259,7 +4493,7 @@ impl<'a> Compiler<'a> {
 
     /// The argument registers of each method site: at load the compiler's own sites; in a
     /// replay, which adds none, the finished program's.
-    fn method_arguments(&self) -> &dyn crate::liveness::MethodArguments {
+    fn method_arguments(&self) -> &dyn liveness::MethodArguments {
         match self.replay_program {
             Some(program) => program,
             None => &self.method_sites,
@@ -4270,7 +4504,7 @@ impl<'a> Compiler<'a> {
     /// The specializing rewrites of one function, the only finishing pass that adds sites.
     fn rewrite_function(&mut self, function: &mut BcFunction) {
         if self.mode == SpecializationMode::Enabled {
-            let methods: &dyn crate::liveness::MethodArguments = match self.replay_program {
+            let methods: &dyn liveness::MethodArguments = match self.replay_program {
                 Some(program) => program,
                 None => &self.method_sites,
             };
@@ -4279,26 +4513,33 @@ impl<'a> Compiler<'a> {
                 methods,
                 &mut self.field_sites,
                 &mut self.superinstructions,
+                &mut self.scratch,
             );
         }
     }
 
     /// The finishing passes of one function after every function's rewrites: its dispatch
     /// class (`settle_dispatch`), then the passes the class leaves (`lower_settled`).
-    fn lower_function(&self, function: &mut BcFunction, undefined_constant: u32) {
+    fn lower_function(&mut self, function: &mut BcFunction, undefined_constant: u32) -> Option<Vec<liveness::RegisterSet>> {
         self.settle_dispatch(function);
+        // Field borrows, not `method_arguments()`, so the scratch borrows alongside the tables.
+        let methods: &dyn liveness::MethodArguments = match self.replay_program {
+            Some(program) => program,
+            None => &self.method_sites,
+        };
         lower_settled(
             function,
             &LoweringTables {
                 object_sites: self.object_sites.as_slice(),
-                methods: self.method_arguments(),
+                methods,
                 field_sites: self.field_sites.as_slice(),
                 superinstructions: self.superinstructions.as_slice(),
                 specialized: self.mode == SpecializationMode::Enabled,
                 undefined_constant,
             },
             |atom| self.atoms.get(atom),
-        );
+            &mut self.scratch,
+        )
     }
 
     /// The lowering passes the dispatch class reads (shared returns and strict sets), then
@@ -4313,15 +4554,23 @@ impl<'a> Compiler<'a> {
         };
     }
 
+    /// `settle_dispatch` for a function whose lowering ends there, which therefore drops the
+    /// `Nop`s its rewrites left (`lower_settled` does so for the functions it lowers).
+    fn settle_dispatch_only(&mut self, function: &mut BcFunction) {
+        self.settle_dispatch(function);
+        rewrite::remove_nops(function, &mut None, &mut self.scratch);
+    }
+
     fn dispatch_class(code: &[Instr], wide: &[WideInstruction]) -> DispatchClass {
         if !wide.is_empty() {
             return DispatchClass::General;
         }
+        let live = rewrite::live_count(code);
         let binaries = code
             .iter()
-            .filter(|instruction| instruction.op() == Op::Binary)
+            .filter(|instruction| instruction.op().traits().has(Traits::BINARY_RESULT))
             .count();
-        if code.len() >= 32 && binaries * 3 >= code.len() {
+        if live >= 32 && binaries * 3 >= live {
             DispatchClass::Numeric
         } else {
             DispatchClass::General
@@ -4332,34 +4581,21 @@ impl<'a> Compiler<'a> {
     fn specialize_plain_local_operations(
         function: &mut BcFunction,
         superinstructions: &[crate::bytecode::Superinstruction],
+        flow: &crate::bytecode::initialization::FlowCell,
     ) -> crate::bitset::BitSet {
-        let plain_slots = function.plain_local_slots(superinstructions);
+        let plain_slots = function.plain_local_slots_in(superinstructions, flow);
         for instruction in &mut function.code {
-            match instruction.op() {
-                Op::LoadLocal | Op::StoreLocal
-                    if plain_slots.contains(instruction.local_slot()) =>
-                {
-                    instruction.set_op(if instruction.op() == Op::LoadLocal {
-                        Op::LoadLocalPlain
-                    } else {
-                        Op::StoreLocalPlain
-                    });
-                }
-                _ => {}
+            if let Some(plain) = plain_local_form(instruction.op())
+                && plain_slots.contains(instruction.local_slot())
+            {
+                instruction.set_op(plain);
             }
         }
         for instruction in &mut function.wide {
-            match instruction.op() {
-                Op::LoadLocal | Op::StoreLocal
-                    if plain_slots.contains(instruction.local_slot()) =>
-                {
-                    instruction.set_op(if instruction.op() == Op::LoadLocal {
-                        Op::LoadLocalPlain
-                    } else {
-                        Op::StoreLocalPlain
-                    });
-                }
-                _ => {}
+            if let Some(plain) = plain_local_form(instruction.op())
+                && plain_slots.contains(instruction.local_slot())
+            {
+                instruction.set_op(plain);
             }
         }
         plain_slots

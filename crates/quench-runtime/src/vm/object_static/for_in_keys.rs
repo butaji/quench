@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::heap::ArrayElements;
-use crate::staged::iteration::{FOR_IN_CURSOR, FOR_IN_EPOCH, FOR_IN_KEYS, FOR_IN_NO_MEMO, FOR_IN_OBJECT, FOR_IN_SHAPE, FOR_IN_STATE_LEN, concrete_for_in_next};
+use crate::staged::iteration::{FOR_IN_CURSOR, FOR_IN_EPOCH, FOR_IN_KEYS, FOR_IN_NO_MEMO, FOR_IN_OBJECT, FOR_IN_SHAPE, FOR_IN_SLOTS, FOR_IN_STATE_LEN, concrete_for_in_next};
 use crate::vm::enumerable_key_memo::EnumerableSlots;
 
 /// What for-in keeps between loops: the last key snapshot (`ForInOwnKeys`), and the state of
@@ -47,6 +47,9 @@ struct ForInOwnKeys {
     shape: u32,
     epoch: u64,
     keys: Value,
+    /// The array of each snapshot key's slot in `shape` (`staged::iteration::FOR_IN_SLOTS`): an int,
+    /// or `undefined` where no slot read answers the key (an index key, a shape with accessors).
+    slot_words: Value,
     /// Each key's atom and slot in `shape`, in snapshot order.
     slots: EnumerableSlots,
     /// The receiver's prototypes when listed, each with its shape: none had an enumerable key.
@@ -84,7 +87,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `for_in_state` for the lane's `ForInStart` over an object the memo lists.
-    pub(in crate::vm) fn lane_for_in_state(&mut self, object: Value, keys: Value) -> Value {
+    pub(in crate::vm) fn for_in_state_in_lane(&mut self, object: Value, keys: Value) -> Value {
         self.for_in_state(object, keys)
     }
 
@@ -105,13 +108,15 @@ impl<H: Host> Vm<H> {
     /// the snapshot's validity where `keys` is the one last listed (`staged::iteration`: its
     /// shape and epoch as raw words, else `FOR_IN_NO_MEMO`).
     fn for_in_state_record(&mut self, object: Value, keys: Value) -> Value {
-        let (shape, listed_epoch) = self.for_in.own_keys.as_ref().filter(|listed| listed.keys == keys)
-            .map_or((FOR_IN_NO_MEMO, FOR_IN_NO_MEMO), |listed| (u64::from(listed.shape), listed.epoch));
+        let (shape, listed_epoch, slot_words) = self.for_in.own_keys.as_ref().filter(|listed| listed.keys == keys)
+            .map_or((FOR_IN_NO_MEMO, FOR_IN_NO_MEMO, Value::UNDEFINED),
+                |listed| (u64::from(listed.shape), listed.epoch, listed.slot_words));
         let mut elements = [Value::integer(0); FOR_IN_STATE_LEN];
         elements[FOR_IN_OBJECT] = object;
         elements[FOR_IN_KEYS] = keys;
         elements[FOR_IN_SHAPE] = Value::from_bits(shape);
         elements[FOR_IN_EPOCH] = Value::from_bits(listed_epoch);
+        elements[FOR_IN_SLOTS] = slot_words;
         let epoch = self.heap.collection_epoch();
         if let Some((state, _)) = self.for_in.spare_state.take().filter(|&(_, spared)| spared == epoch) {
             if self.for_in.active.is_some_and(|active| active.state == state) {
@@ -123,7 +128,7 @@ impl<H: Host> Vm<H> {
         }
         // Its own backing, not a young run, which the cursor's first write would copy.
         let object = crate::heap::ArrayObject::fresh(self.array_proto, ArrayElements::from_slice(&elements));
-        self.heap.alloc(Cell::Array { object })
+        self.heap.alloc_array(object)
     }
 
     /// The next key of the for-in `state` that is still an enumerable property of its
@@ -293,7 +298,14 @@ impl<H: Host> Vm<H> {
         let (shape, epoch) = (self.object_data(receiver)?.shape(), self.heap.collection_epoch());
         let keys: Vec<Value> = slots.iter().map(|&(atom, _)| self.atom_string(atom)).collect();
         let keys = self.array_of(&keys);
-        self.for_in.own_keys = Some(ForInOwnKeys { shape, epoch, keys, slots, chain: chain.into(), stepped: None });
+        // A slot read answers a plain named key of a shape without accessors (`enumerated_key_get`).
+        let accessors = self.shape_may_have_accessors(shape);
+        let words: Vec<Value> = slots.iter().map(|&(atom, slot)| match u16::try_from(slot) {
+            Ok(slot) if !accessors && self.plain_named_key(atom) => Value::integer(i32::from(slot)),
+            _ => Value::UNDEFINED,
+        }).collect();
+        let slot_words = self.array_of(&words);
+        self.for_in.own_keys = Some(ForInOwnKeys { shape, epoch, keys, slot_words, slots, chain: chain.into(), stepped: None });
         Some(keys)
     }
 
@@ -332,8 +344,6 @@ impl<H: Host> Vm<H> {
 impl<H: Host> Vm<H> {
     /// The array of for-in `keys` with `prototype`.
     pub(super) fn alloc_for_in_key_array(&mut self, keys: crate::heap::ArrayElements, prototype: Value) -> Value {
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), keys),
-        })
+        self.heap.alloc_array(crate::heap::ArrayObject::new(Self::empty_object(prototype), keys))
     }
 }

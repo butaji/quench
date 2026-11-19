@@ -1,8 +1,51 @@
-//! The compiler's atom interner (`CompilerAtoms`): ids and names a compilation extends.
-use super::*;
-pub(crate) use crate::atom_prefix::AtomPrefix;
-use std::ops::Index;
 use crate::bytecode::{Atom, AtomTable};
+use rustc_hash::FxBuildHasher;
+use std::hash::BuildHasher;
+use std::ops::Index;
+use std::rc::Rc;
+
+/// The atom names a compilation extends. Atom ids below `len` are the host's, so the
+/// compiled program's names, values and property sites compare identically with it.
+pub(crate) trait AtomPrefix {
+    fn len(&self) -> usize;
+    fn name(&self, atom: Atom) -> &str;
+    /// The prefix atom whose text is exactly `name`. An atom whose UTF-16 has no lossless
+    /// host spelling keeps its id but is found by no name.
+    fn find(&self, name: &str) -> Option<Atom>;
+    /// The prefix's names, which the compiled program reads until its host adopts it.
+    fn table(&self) -> AtomTable;
+    /// Whether the host runs specialized programs, which a program extending it follows.
+    fn specialized(&self) -> bool;
+    /// Optional producer-owned obligations; ordinary execution prefixes retain none.
+    fn native_source_requests(&self) -> Option<&std::cell::RefCell<std::collections::BTreeSet<super::NativeSourceKey>>> { None }
+    fn native_global_script_calls(&self) -> &[(String, String)] { &[] }
+
+}
+
+/// A standalone program numbers its atoms from zero.
+pub(crate) struct NoAtomPrefix;
+
+impl AtomPrefix for NoAtomPrefix {
+    fn len(&self) -> usize {
+        0
+    }
+
+    fn name(&self, atom: Atom) -> &str {
+        unreachable!("atom {atom} lies outside the empty prefix")
+    }
+
+    fn find(&self, _name: &str) -> Option<Atom> {
+        None
+    }
+
+    fn table(&self) -> AtomTable {
+        AtomTable::default()
+    }
+
+    fn specialized(&self) -> bool {
+        false
+    }
+}
 
 /// A compilation's atoms: the borrowed prefix, then the names this source adds.
 pub(super) struct CompilerAtoms<'a> {
@@ -11,17 +54,24 @@ pub(super) struct CompilerAtoms<'a> {
     prefix_len: usize,
     added: Vec<Rc<str>>,
     /// Every name this compilation interned, added or found in the prefix: a source repeats
-    /// its names, and the prefix answers each one only once.
-    index: FxHashMap<Rc<str>, Atom>,
+    /// its names, and the prefix answers each one only once. Each entry keeps the name's hash
+    /// and atom; the text itself lives in `added` or the prefix, so an entry costs no copy.
+    index: hashbrown::HashTable<(u64, Atom)>,
+}
+
+/// The hash of an atom name, shared by the index's lookups and inserts.
+fn name_hash(name: &str) -> u64 {
+    FxBuildHasher.hash_one(name)
 }
 
 impl<'a> CompilerAtoms<'a> {
-    pub(super) fn new(prefix: &'a dyn AtomPrefix) -> Self {
+    /// `capacity` sizes the name index up front; the caller passes a source-length estimate.
+    pub(super) fn new(prefix: &'a dyn AtomPrefix, capacity: usize) -> Self {
         Self {
             prefix,
             prefix_len: prefix.len(),
             added: Vec::new(),
-            index: FxHashMap::default(),
+            index: hashbrown::HashTable::with_capacity(capacity),
         }
     }
 
@@ -51,29 +101,40 @@ impl<'a> CompilerAtoms<'a> {
         (atom < self.len()).then(|| &self[atom])
     }
 
-    pub(super) fn find(&self, name: &str) -> Option<Atom> {
+    /// The atom already interned under `name`, whose hash is `hash`.
+    fn indexed(&self, hash: u64, name: &str) -> Option<Atom> {
         self.index
-            .get(name)
-            .copied()
+            .find(hash, |&(h, atom)| h == hash && &self[atom as usize] == name)
+            .map(|&(_, atom)| atom)
+    }
+
+    pub(super) fn find(&self, name: &str) -> Option<Atom> {
+        self.indexed(name_hash(name), name)
             .or_else(|| self.prefix.find(name))
     }
 
+    /// Hashes `name` once: a hit returns before any allocation, and a miss inserts under
+    /// that same hash, so only a name new to the compilation copies its text.
     pub(super) fn intern(&mut self, name: &str) -> Atom {
-        if let Some(atom) = self.index.get(name) {
-            return *atom;
+        let hash = name_hash(name);
+        if let Some(atom) = self.indexed(hash, name) {
+            return atom;
         }
-        let name: Rc<str> = Rc::from(name);
-        let atom = self.prefix.find(&name).unwrap_or_else(|| {
-            self.added.push(Rc::clone(&name));
-            (self.len() - 1) as Atom
-        });
-        self.index.insert(name, atom);
+        let atom = match self.prefix.find(name) {
+            Some(atom) => atom,
+            None => {
+                let atom = self.len() as Atom;
+                self.added.push(Rc::from(name));
+                atom
+            }
+        };
+        self.index.insert_unique(hash, (hash, atom), |&(h, _)| h);
         atom
     }
 
     /// Every atom this compilation interned.
     pub(super) fn interned(&self) -> impl Iterator<Item = Atom> + '_ {
-        self.index.values().copied()
+        self.index.iter().map(|&(_, atom)| atom)
     }
 
     pub(super) fn table(&self) -> AtomTable {

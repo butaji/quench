@@ -20,10 +20,7 @@ pub mod units {
     pub const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
     pub use crate::integer_conversion::{relative_index, to_index, to_integer_or_infinity, to_length};
     pub use crate::value::number_to_u32 as to_uint32;
-    /// ToInt32: ToUint32's bits reinterpreted as `i32`.
-    pub fn to_int32(value: f64) -> i32 {
-        to_uint32(value) as i32
-    }
+    pub use crate::value::number_to_i32 as to_int32;
     pub const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
     pub const BINARY_RADIX: u32 = 2;
     pub const OCTAL_RADIX: u32 = 8;
@@ -47,22 +44,11 @@ pub use execution_interrupt::ExecutionInterrupt;
 pub use vm::NativeFaultHandler;
 mod bigint;
 mod bitset;
+mod dataflow;
+mod webs;
 mod dense_map;
 mod bytecode;
-#[cfg(any(feature = "jit", feature = "aot"))]
 mod compile;
-/// RegExp pattern validation (`new RegExp` semantics): text a program supplies at run time, so
-/// an image with no compiler still validates it.
-mod regexp_syntax;
-/// The host's atom namespace a compilation extends: ids below `len` are the host's, so a
-/// compiled program and its host compare names identically.
-mod atom_prefix;
-/// The phases a compilation passes and the hook a profiler sets: named by the runtime, which
-/// reports them without naming the compiler.
-mod compile_phase;
-/// Register liveness and the root masks a collection reads: bytecode facts the tiers and the
-/// runtime share, so they do not live in the compiler (`compile`), which a static image omits.
-mod liveness;
 mod code_dependencies;
 mod folded_roots;
 mod float_layout;
@@ -108,9 +94,8 @@ pub use vm::AheadImages;
 pub use vm::tier_events::{Event as TierEvent, TierEvents};
 pub use bytecode::{set_record_built, set_record_read, KeptBytes, ResidualProgram, ModuleRequest, ModuleRequestPhase, FlowFunction, FlowInstruction};
 pub use module_identity::normalized_text as normalized_module_name;
-pub use bytecode::Diagnostic;
-pub use compile::Engine;
-pub use compile_phase::{CompilePhase, set_compile_phase_boundary};
+pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
+pub use compile::{CheckedParameters, ParameterSite};
 pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId};
 pub use snapshot::{SnapshotReader, SnapshotWriter};
 pub use host::{
@@ -123,7 +108,7 @@ pub use memory_edge::report_allocator_memory;
 pub use stack::{STACK_BUDGET_BYTES, STACK_HEADROOM_BYTES, WORKER_STACK_SIZE};
 pub use value::Value;
 pub use vm::{
-    local_timezone_changed, write_double, write_raw_bytes, write_uint32, write_uint64, ExecutionMode, HostObjectRead, JsError, SerializedValue, SharedWireInput,
+    local_timezone_changed, write_double, write_raw_bytes, write_uint32, write_uint64, ExecutionMode, CompileFailureKind, HostObjectRead, JsError, SerializedValue, SharedWireInput,
     ValueDeserializer, ValueSerializer, WireInput, WireOutput, WIRE_FORMAT_VERSION,
 };
 
@@ -136,7 +121,7 @@ const _: fn() = || {
 mod api;
 pub use api::{
     CollectionContext,
-    BufferStorage, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostCallback, HostFunction, HostFunctionDescriptor, HostFunctionId, HostWeakRoot, IntactBuiltin,
+    BufferStorage, Detach, BuiltinBrand, DescriptorFields, ValueType, BuiltinData, CollectionPreview, PromiseSnapshot, ExecutionRequest, HostCallback, HostFunction, HostFunctionDescriptor, HostFunctionId, HostWeakRoot, IntactBuiltin,
     PreparedScript, NativeArithmetic, NativeContext, PromiseRejectionEvent, RootScopeMark, RootedError, RootedIterator, Runtime,
     CompiledScript, RuntimeError, SourceKind, ErrorSourcePosition, SourceStackFrame, SynchronousModule, ModuleAcceptArguments, ModuleAcceptCallback,
     DeserializerDelegate, SerializerDelegate,
@@ -169,24 +154,21 @@ pub use vm::{
     NativeJsOperands, NativeJsOperationEntry, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for,
     native_program::{NativeJsFunctionEntry, NativeJsProgram, NativeJsPublicationCounts, NativeProgramResolver},
 };
-#[cfg(feature = "aot")]
 pub use vm::{
-    native_graph::{NativeJsModule, NativeJsBackend, NativeJsCodegenOptions, lower_native_js_module, lower_native_js_module_with_options},
+    IsaBaseline, NativeTarget,
     native_object::{
-        NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeData, NativeFunction, NativeFunctionAddress,
-        emit_native_module, emit_native_object,
+        NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeCode, NativeData, NativeFunction, NativeFunctionAddress,
+        NativeJsModule, NativeReloc, emit_native_module, emit_native_module_for, emit_native_object, lower_native_js_module,
+        lower_native_js_module_for,
     },
 };
 
-#[cfg(feature = "aot")]
 pub use compile::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, SourceDemands};
 pub use compile::{DynamicFunctionKind, HostScriptOptions, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL, GLOBAL_SCRIPT_GOAL, GLOBAL_SCRIPT_SOURCE_NAME};
 
 /// Ordinary builds and producers support dynamic compilation and execution.
 /// Execution-only native support requires linked code and archived records.
-pub(crate) const DYNAMIC_EXECUTION_ENABLED: bool = cfg!(any(
-    not(feature = "native-execution"), feature = "jit", feature = "aot"
-));
+pub(crate) const DYNAMIC_EXECUTION_ENABLED: bool = true;
 
 /// Whether this build requires linked native code and archived program facts.
 pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = !DYNAMIC_EXECUTION_ENABLED;
@@ -198,5 +180,4 @@ mod native_image;
 #[cfg(feature = "native-execution")]
 pub use native_image::NativeImageSupport;
 
-#[cfg(feature = "aot")]
 pub mod native_link;

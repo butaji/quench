@@ -1,17 +1,30 @@
 //! Float width projections share declarations while preserving IEEE bits.
 
+#[macro_use]
+#[path = "../staged/wasm_lists.rs"]
+mod wasm_lists;
+
+#[cfg(not(stencil_build))]
 use super::WasmValue;
-use super::numeric::{NumericResult, selectors};
+#[cfg(test)]
+use super::numeric::NumericResult;
+use super::numeric::selectors;
+#[cfg(not(stencil_build))]
 use crate::staged::ConcreteWasm;
+#[cfg(not(stencil_build))]
 use crate::staged::machine::MachineStage;
+#[cfg(not(stencil_build))]
 use crate::staged::wasm_float::{Float, float_binary, is_float_comparison};
 
 macro_rules! binary_family {
     ($enum:ident, $float:ty, $bits:ty, $variant:ident,
      ($float_alias:ident, $bits_alias:ident, $sign:ident, $nan:ident), ($left:ident, $right:ident);
      $($name:ident, $wasm:ident => $body:expr;)+) => {
-        selectors!($enum; $($name, $wasm;)+);
+        selectors!(@decoded $enum; $($name, $wasm;)+);
         impl $enum {
+            /// The operator written out on its own: the oracle the staged rules are tested
+            /// against (`staged::wasm_float_tests`); execution goes through `evaluate`.
+            #[cfg(test)]
             #[inline(always)]
             pub(crate) fn apply(self, $left: $float, $right: $float) -> WasmValue {
                 type $float_alias = $float;
@@ -43,8 +56,11 @@ macro_rules! unary_family {
     ($enum:ident, $float:ty, $bits:ty, $variant:ident,
      ($float_alias:ident, $bits_alias:ident, $sign:ident), $value:ident;
      $($name:ident, $wasm:ident => $body:expr;)+) => {
-        selectors!($enum; $($name, $wasm;)+);
+        selectors!(@decoded $enum; $($name, $wasm;)+);
         impl $enum {
+            /// The operator written out on its own: the oracle the staged rules are tested
+            /// against (`staged::wasm_float_tests`); execution goes through `evaluate`.
+            #[cfg(test)]
             #[inline(always)]
             pub(crate) fn apply(self, $value: $float) -> WasmValue {
                 type $float_alias = $float;
@@ -94,44 +110,23 @@ macro_rules! float_unary_operators {
     };
 }
 
-float_binary_operators! { (Float, Bits, SIGN_MASK, CANONICAL_NAN), (left, right);
-    Add, F32Add, F64Add => NumericResult::Value(left + right);
-    Subtract, F32Sub, F64Sub => NumericResult::Value(left - right);
-    Multiply, F32Mul, F64Mul => NumericResult::Value(left * right);
-    Divide, F32Div, F64Div => NumericResult::Value(left / right);
-    Minimum, F32Min, F64Min => NumericResult::Value({
-        if left.is_nan() || right.is_nan() { CANONICAL_NAN }
-        else if left == right { Float::from_bits(left.to_bits() | right.to_bits()) }
-        else { left.min(right) }
-    });
-    Maximum, F32Max, F64Max => NumericResult::Value({
-        if left.is_nan() || right.is_nan() { CANONICAL_NAN }
-        else if left == right { Float::from_bits(left.to_bits() & right.to_bits()) }
-        else { left.max(right) }
-    });
-    CopySign, F32Copysign, F64Copysign => NumericResult::Value(Float::from_bits(
-        (left.to_bits() & !SIGN_MASK) | (right.to_bits() & SIGN_MASK)));
-    Equal, F32Eq, F64Eq => NumericResult::Comparison(left == right);
-    NotEqual, F32Ne, F64Ne => NumericResult::Comparison(left != right);
-    Less, F32Lt, F64Lt => NumericResult::Comparison(left < right);
-    Greater, F32Gt, F64Gt => NumericResult::Comparison(left > right);
-    LessEqual, F32Le, F64Le => NumericResult::Comparison(left <= right);
-    GreaterEqual, F32Ge, F64Ge => NumericResult::Comparison(left >= right);
-}
+float_binary_list!(float_binary_operators);
 
-float_unary_operators! { (Float, Bits, SIGN_MASK), value;
-    Absolute, F32Abs, F64Abs => Float::from_bits(value.to_bits() & !SIGN_MASK);
-    Negate, F32Neg, F64Neg => Float::from_bits(value.to_bits() ^ SIGN_MASK);
-    Ceiling, F32Ceil, F64Ceil => value.ceil();
-    Floor, F32Floor, F64Floor => value.floor();
-    Truncate, F32Trunc, F64Trunc => value.trunc();
-    Nearest, F32Nearest, F64Nearest => value.round_ties_even();
-    SquareRoot, F32Sqrt, F64Sqrt => value.sqrt();
-}
+float_unary_list!(float_unary_operators);
 
 impl F64BinaryOperator {
     pub(crate) const fn widen(self) -> Self {
         self
+    }
+
+    /// Whether a NaN operand matters to the result only as a NaN (Wasm leaves the payload
+    /// of such a result open): any word of an f64 register reads as its operand.
+    pub(crate) const fn nan_agnostic(self) -> bool {
+        matches!(
+            self,
+            Self::Add | Self::Subtract | Self::Multiply | Self::Divide | Self::Equal | Self::NotEqual
+                | Self::Less | Self::Greater | Self::LessEqual | Self::GreaterEqual
+        )
     }
 }
 
@@ -139,10 +134,16 @@ impl F64UnaryOperator {
     pub(crate) const fn widen(self) -> Self {
         self
     }
+
+    /// `F64BinaryOperator::nan_agnostic` of a unary operator.
+    pub(crate) const fn nan_agnostic(self) -> bool {
+        matches!(self, Self::SquareRoot | Self::Ceiling | Self::Floor | Self::Truncate | Self::Nearest)
+    }
 }
 
 /// The interpreter's execution of the operators of one float width, through the staged rules
 /// (`staged::wasm_float`); `apply` stays the declaration the tests compare them to.
+#[cfg(not(stencil_build))]
 macro_rules! float_evaluation {
     ($binary:ident, $unary:ident, $float:ty, $bits:ty, $variant:ident, $width:ident) => {
         impl $binary {
@@ -178,5 +179,7 @@ macro_rules! float_evaluation {
     };
 }
 
+#[cfg(not(stencil_build))]
 float_evaluation!(F32BinaryOperator, F32UnaryOperator, f32, u32, F32, F32);
+#[cfg(not(stencil_build))]
 float_evaluation!(F64BinaryOperator, F64UnaryOperator, f64, u64, F64, F64);

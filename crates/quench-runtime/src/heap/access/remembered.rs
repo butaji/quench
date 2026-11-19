@@ -7,19 +7,12 @@ impl Heap {
     /// `remember` of `value`'s cell, for a write made through a pointer to its storage.
     #[inline(always)]
     pub(crate) fn remember_cell(&mut self, value: Value) {
-        if let Some(HeapReference::LegacySlot(index)) = value.heap_reference() {
-            self.remember(index as usize);
+        match value.heap_reference() {
+            Some(HeapReference::LegacySlot(index)) => self.remember(index as usize),
+            // An environment record passes the record barrier: unmarked and logged once.
+            Some(HeapReference::EnvironmentRecord(record_id)) => self.environment_records.remember(record_id),
+            _ => {}
         }
-    }
-
-    /// Whether `value`'s cell is in the remembered set: its writes need no barrier until the
-    /// next collection.
-    pub(crate) fn is_remembered_cell(&self, value: Value) -> bool {
-        let Some(HeapReference::LegacySlot(index)) = value.heap_reference() else {
-            return false;
-        };
-        let (word, bit) = crate::heap::slot_bit(index as usize);
-        self.remembered_marks.get(word).is_some_and(|marks| marks & bit != 0)
     }
 
     /// The write barrier: an old (marked) cell written to joins the remembered set once.

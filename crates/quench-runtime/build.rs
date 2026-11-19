@@ -38,16 +38,15 @@ fn mix_tree(mut hash: u64, directory: &Path) -> u64 {
     hash
 }
 
-/// Names this build: the runtime's source tree, the compiler that built it and the target it
-/// built for. Ahead images are machine code whose helper addresses and layouts a loader
-/// resolves, so an image from another build is rejected (`AheadImages::from_bytes`); the
-/// optimization level and profile are deliberately not part of it, since they change no
-/// layout or ABI a loader depends on, and the compiler that writes an image is built apart
-/// from the support library that loads it.
+/// Names this build: the runtime's source tree, the compiler that built it and what it built
+/// for. Ahead images are machine code for one build's layouts and helper addresses, so an image
+/// from another build is rejected (`AheadImages::from_bytes`).
 fn build_id() -> u64 {
     let rustc = Command::new(env::var_os("RUSTC").unwrap_or_default()).arg("-vV").output().map(|output| output.stdout).unwrap_or_default();
     let mut hash = mix_tree(FNV_OFFSET, Path::new("src"));
-    hash = mix(hash, env::var("TARGET").unwrap_or_default().as_bytes());
+    for variable in ["TARGET", "OPT_LEVEL", "PROFILE"] {
+        hash = mix(hash, env::var(variable).unwrap_or_default().as_bytes());
+    }
     mix(hash, &rustc)
 }
 

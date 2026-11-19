@@ -118,3 +118,67 @@ fn a_chunk_without_room_compiles_as_its_own_program() {
     let source = format!("(0, eval)('function big() {{ return [{}].length; }} globalThis.result = big();')", table.join(","));
     assert_eq!(result_and_programs(&source), ("400".to_string(), 3));
 }
+
+/// A large classic script stubs its functions as an indirect eval does, and their chunks
+/// append to the program it runs from (its kept form records their room): calls into them
+/// stay in one program. A recursive function from a chunk lowers on its first read, as the
+/// program's decoded records do.
+#[test]
+fn a_large_host_scripts_chunks_append_to_the_program_it_runs() {
+    let padding = "/* padding */\n".repeat(160 << 10);
+    let source = format!("{padding}function a(x) {{ return b(x) + 1; }} function b(y) {{ return y * 2 + k; }} var k = 4; \
+                          function walk(n) {{ return n === 0 ? 0 : 1 + walk(n - 1); }} \
+                          globalThis.result = a(3) + ',' + a(5) + ',' + walk(50);");
+    assert!(source.len() >= 2 << 20);
+    let entry = Engine::specialize("", "entry.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&entry).unwrap();
+    let programs = vm.programs.len();
+    vm.evaluate_embedding_specialized_script(&source, "large-script.js").unwrap();
+    let name = vm.intern_atom("result");
+    let value = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(vm.to_string(&entry, value).unwrap(), "11,15,50");
+    assert_eq!(vm.programs.len(), programs + 1, "every chunk appended to the script's program");
+}
+
+/// A large Function-constructor body (a bundler's `new Function(bundle)`) stubs the functions it
+/// declares as a script's do. Their chunks read the body's own bindings (`k`, a var of the body)
+/// when first called, and a function nothing called at construction still works when called later
+/// from outside; the chunks append to the program the constructor compiled, which is the one new program.
+#[test]
+fn a_large_dynamic_functions_nested_declarations_compile_on_first_call() {
+    let padding = "/* padding */".repeat((5 << 20) / "/* padding */".len());
+    let body = format!(
+        "{padding}function a(x) {{ return b(x) + 1; }} function b(y) {{ return y * 2 + k; }} var k = 4; \
+         function walk(n) {{ return n === 0 ? 0 : 1 + walk(n - 1); }} \
+         function unused(p) {{ return p + k; }} globalThis.later = unused; \
+         return [a(3), a(5), walk(50)].join();"
+    );
+    assert!(body.len() >= 5 << 20);
+    let source = format!("globalThis.result = Function({body:?})() + ';' + later(2);");
+    let entry = Engine::specialize("", "entry.js").unwrap();
+    let program = Engine::specialize(&source, "large-dynamic-function.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&entry).unwrap();
+    let programs = vm.programs.len();
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("result");
+    let value = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(vm.to_string(&program, value).unwrap(), "11,15,50;6");
+    assert_eq!(vm.programs.len(), programs + 1, "every chunk appended to the constructed body's program");
+}
+
+/// Block scopes add locals past a function's own: one past the 16-bit local count is a
+/// syntax error, not a frame whose count wrapped to none.
+#[test]
+fn a_function_past_the_local_slot_limit_is_rejected() {
+    let classes: String = (0..16_384).map(|index| format!("class C{index} {{}} ")).collect();
+    assert!(Engine::specialize(&classes, "many-classes.js").is_err());
+    let fewer: String = (0..16_000).map(|index| format!("class C{index} {{}} ")).collect();
+    let program = Engine::specialize(&format!("{fewer} globalThis.result = typeof C15999;"), "fewer-classes.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("result");
+    let value = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(vm.to_string(&program, value).unwrap(), "function");
+}

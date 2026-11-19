@@ -19,15 +19,21 @@ impl<H: Host> Vm<H> {
     /// `new Array(length)` of a Number `length` with `prototype` (ECMA-262 23.1.1.1 step 5):
     /// an array of that length whose elements are all absent; `None` for a length that is no
     /// array length, which throws a RangeError. Out of line: the lane makes it too
-    /// (`lane_native_construct`), whose frame then holds none of its temporaries.
+    /// (`native_construct_miss`), whose frame then holds none of its temporaries.
     #[inline(never)]
     pub(in crate::vm) fn array_of_length(&mut self, prototype: Value, length: f64) -> Option<Value> {
         if !length.is_finite() || length < 0.0 || length.fract() != 0.0 || length > f64::from(u32::MAX) {
             return None;
         }
-        let array = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()),
-        });
+        // A length dense storage holds anyway (`sparse_set_length` materializes it with holes)
+        // is one allocation of holes, with no sparse record made and then materialized.
+        let length_units = length as usize;
+        if length_units <= crate::heap::MAX_DENSE_ARRAY_HOLE_LENGTH {
+            return Some(self.heap.alloc_literal_array(prototype, length_units, |_| Value::DELETED));
+        }
+        let array = self
+            .heap
+            .alloc_array(crate::heap::ArrayObject::new(Self::empty_object(prototype), Vec::new()));
         self.heap.sparse_set_length(array, length as usize);
         Some(array)
     }
@@ -75,12 +81,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// The array of `values` with `prototype`. Out of line: the cell it builds lives in its
-    /// own frame, not its caller's.
+    /// The array of `values` with `prototype`, copied once from the argument slice into its
+    /// elements (`alloc_literal_array_from_parts`), with no intermediate `Vec`. Out of line: the
+    /// cell it builds lives in its own frame, not its caller's.
     #[inline(never)]
     fn array_of_values(&mut self, prototype: Value, values: &[Value]) -> Value {
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), values.to_vec()),
-        })
+        self.heap.alloc_literal_array_from_parts(prototype, &[values])
     }
 }

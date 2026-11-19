@@ -2,6 +2,7 @@
 //! lowering state, not an executable Wasm IR or a second interpreter stack.
 
 use super::*;
+use crate::staged::wasm_emit;
 use wasmparser::{BlockType, Catch, TryTable};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -127,7 +128,7 @@ impl Lowering<'_> {
             Operator::ThrowRef => {
                 if self.path == Reachability::Live {
                     let exception = self.pop()?;
-                    self.emit(Op::WasmThrowRef, exception, 0, 0, 0)?;
+                    self.emit_emission(wasm_emit::throw_ref(exception))?;
                     self.make_dead();
                 }
             }
@@ -174,16 +175,14 @@ impl Lowering<'_> {
                     self.push()?;
                     let condition = self.push()?;
                     self.depth = without_reference;
-                    self.emit(Op::WasmRefIsNull, condition, reference, 0, 0)?;
+                    self.emit_emission(wasm_emit::ref_is_null(condition, reference))?;
                     let carry_reference = matches!(operator, Operator::BrOnNonNull { .. });
                     if carry_reference {
-                        self.emit(
-                            Op::WasmI32Unary,
+                        self.emit_emission(wasm_emit::i32_unary(
                             condition,
                             condition,
-                            0,
-                            I32UnaryOperator::EqualZero as u32,
-                        )?;
+                            I32UnaryOperator::EqualZero,
+                        ))?;
                         self.push()?;
                     }
                     self.branch_if(*relative_depth, Condition::Value(condition))?;
@@ -209,7 +208,7 @@ impl Lowering<'_> {
             }
             Operator::Unreachable => {
                 if self.path == Reachability::Live {
-                    self.emit(Op::WasmUnreachable, 0, 0, 0, 0)?;
+                    self.emit_emission(wasm_emit::unreachable())?;
                     self.make_dead();
                 }
             }
@@ -219,15 +218,7 @@ impl Lowering<'_> {
                     let right = self.pop()?;
                     let left = self.pop()?;
                     let result = self.push()?;
-                    self.emit(
-                        Op::WasmSelect,
-                        result,
-                        left,
-                        right,
-                        crate::bytecode::ImmediateLayout::register_pair_immediate(
-                            condition, condition,
-                        ),
-                    )?;
+                    self.emit_emission(wasm_emit::select(result, left, right, condition))?;
                     self.produced(result);
                 }
             }
@@ -236,17 +227,34 @@ impl Lowering<'_> {
         Ok(true)
     }
 
+    /// Tag indices are validated by the decode-time validator.
     fn tag_params(&self, index: u32) -> Result<u16, Diagnostic> {
-        let tag = self
-            .tags
-            .get(index as usize)
-            .ok_or_else(|| self.control_error("Wasm tag index out of bounds"))?;
+        let tag = &self.tags[index as usize];
         let ty = self
             .signatures
             .declarations
             .function(self.name, tag.ty as usize)?;
         u16::try_from(ty.params().len())
             .map_err(|_| self.control_error("too many Wasm exception values"))
+    }
+
+    /// The payload type of each of tag `index`'s params, in order; a vector param is unsupported.
+    fn tag_payload_types(
+        &self,
+        index: u32,
+    ) -> Result<Vec<crate::staged::wasm_exception::PayloadType>, Diagnostic> {
+        let tag = &self.tags[index as usize];
+        let ty = self.signatures.declarations.function(self.name, tag.ty as usize)?;
+        ty.params()
+            .iter()
+            .map(|param| {
+                self.signatures
+                    .declarations
+                    .callable_value_type(*param)
+                    .and_then(crate::staged::wasm_exception::PayloadType::of)
+                    .ok_or_else(|| self.control_error("unsupported Wasm exception value type"))
+            })
+            .collect()
     }
 
     fn tag_binding(&mut self, index: u32) -> Result<Register, Diagnostic> {
@@ -261,29 +269,18 @@ impl Lowering<'_> {
         )
     }
 
+    /// Catch labels and their arities are validated by the decode-time validator; only the
+    /// representable exception value counts are checked here.
     fn begin_try(&mut self, table: &TryTable) -> Result<(), Diagnostic> {
         for &catch in &table.catches {
-            let (tag, label, reference) = catch_parts(catch);
+            let (tag, _, reference) = catch_parts(catch);
             let params = tag
                 .map(|tag| self.tag_params(tag))
                 .transpose()?
                 .unwrap_or(0);
-            let arity = params
+            params
                 .checked_add(u16::from(reference))
                 .ok_or_else(|| self.control_error("too many Wasm catch values"))?;
-            let target = self
-                .controls
-                .len()
-                .checked_sub(label as usize + 1)
-                .and_then(|index| self.controls.get(index))
-                .ok_or_else(|| self.control_error("Wasm catch label out of bounds"))?;
-            let expected = match target.kind {
-                Kind::Loop { .. } => target.params,
-                _ => target.results,
-            };
-            if expected != arity {
-                return Err(self.control_error("Wasm catch label arity mismatch"));
-            }
         }
         if table.catches.is_empty() || self.path == Reachability::Dead {
             return self.begin(Kind::Block, table.ty);
@@ -312,27 +309,22 @@ impl Lowering<'_> {
         Ok(slot)
     }
 
+    /// The decode-time validator rejects a `catch` outside a legacy try body or catch arm.
     fn legacy_catch(&mut self, tag: Option<u32>) -> Result<(), Diagnostic> {
-        let control = self
-            .controls
-            .last()
-            .ok_or_else(|| self.control_error("catch outside Wasm try"))?;
+        let control = self.controls.last().expect("validated: catch inside a try");
         let Kind::LegacyTry(region) = &control.kind else {
-            return Err(self.control_error("catch outside Wasm try"));
+            unreachable!("validated: catch inside a legacy try")
         };
-        self.check_result(control)?;
         let (base, slot, entered) = (control.base, region.slot, control.entered);
         let (body, next) = match region.arm {
             LegacyArm::Body { start } => (Some(start), None),
             LegacyArm::Catch { next: Some(next) } => (None, Some(next)),
-            LegacyArm::Catch { next: None } => {
-                return Err(self.control_error("Wasm catch after catch_all"));
-            }
+            LegacyArm::Catch { next: None } => unreachable!("validated: no catch after catch_all"),
         };
         self.finish_delegation(self.controls.len() - 1)?;
         let end = self.code.len();
         if self.path == Reachability::Live {
-            let exit = self.jump(Op::Jump, 0)?;
+            let exit = self.jump()?;
             self.controls.last_mut().unwrap().exits.push(exit);
         }
         let target = self.code.len();
@@ -351,46 +343,42 @@ impl Lowering<'_> {
         Ok(())
     }
 
+    /// The decode-time validator checks that the rethrow label names a catch.
     fn legacy_rethrow(&mut self, depth: u32) -> Result<(), Diagnostic> {
-        let control = self
+        let index = self
             .controls
             .len()
             .checked_sub(depth as usize + 1)
-            .and_then(|index| self.controls.get(index))
-            .ok_or_else(|| self.control_error("Wasm rethrow label out of bounds"))?;
+            .expect("validated: rethrow label");
         let Kind::LegacyTry(LegacyTry {
             slot,
             arm: LegacyArm::Catch { .. },
-        }) = control.kind
+        }) = self.controls[index].kind
         else {
-            return Err(self.control_error("Wasm rethrow label is not a catch"));
+            unreachable!("validated: rethrow label is a catch")
         };
         if self.path == Reachability::Live {
             let exception = self.push()?;
-            self.emit(Op::LoadLocal, exception, 0, 0, u32::from(slot))?;
-            self.emit(Op::WasmThrowRef, exception, 0, 0, 0)?;
+            self.emit_emission(wasm_emit::load_local(exception, slot))?;
+            self.emit_emission(wasm_emit::throw_ref(exception))?;
             self.make_dead();
         }
         Ok(())
     }
 
+    /// The decode-time validator checks that `delegate` closes a try body and its label.
     fn legacy_delegate(&mut self, depth: u32) -> Result<(), Diagnostic> {
-        let current = self
-            .controls
-            .len()
-            .checked_sub(1)
-            .ok_or_else(|| self.control_error("delegate outside Wasm try"))?;
+        let current = self.controls.len().checked_sub(1).expect("validated: delegate in a try");
         let destination = current
             .checked_sub(depth as usize + 1)
-            .ok_or_else(|| self.control_error("Wasm delegate label out of bounds"))?;
+            .expect("validated: delegate label");
         let Kind::LegacyTry(LegacyTry {
             arm: LegacyArm::Body { start },
             ..
         }) = self.controls[current].kind
         else {
-            return Err(self.control_error("delegate outside Wasm try body"));
+            unreachable!("validated: delegate closes a try body")
         };
-        self.check_result(&self.controls[current])?;
         // Delegations targeting this try must remain inside its outgoing region.
         self.finish_delegation(current)?;
         let end = self.code.len();
@@ -407,11 +395,11 @@ impl Lowering<'_> {
                 }
             };
             if self.path == Reachability::Live {
-                let exit = self.jump(Op::Jump, 0)?;
+                let exit = self.jump()?;
                 self.controls[current].exits.push(exit);
             }
             let target = self.code.len();
-            let jump = self.jump(Op::Jump, 0)?;
+            let jump = self.jump()?;
             self.controls[destination]
                 .delegation
                 .as_mut()
@@ -434,7 +422,7 @@ impl Lowering<'_> {
         // the destination boundary skips closed inner handlers, while preserving
         // its own enclosing handler (or propagating outside a catch/function).
         if self.path == Reachability::Live {
-            let exit = self.jump(Op::Jump, 0)?;
+            let exit = self.jump()?;
             self.controls[destination].exits.push(exit);
         }
         let target = self.code.len();
@@ -443,8 +431,8 @@ impl Lowering<'_> {
         }
         let depth = self.depth;
         let exception = self.push()?;
-        self.emit(Op::LoadLocal, exception, 0, 0, u32::from(slot))?;
-        self.emit(Op::WasmThrowRef, exception, 0, 0, 0)?;
+        self.emit_emission(wasm_emit::load_local(exception, slot))?;
+        self.emit_emission(wasm_emit::throw_ref(exception))?;
         self.depth = depth;
         Ok(())
     }
@@ -454,15 +442,15 @@ impl Lowering<'_> {
             return Ok(());
         };
         let normal = if self.path == Reachability::Live {
-            Some(self.jump(Op::Jump, 0)?)
+            Some(self.jump()?)
         } else {
             None
         };
         self.patch_jump(next, self.code.len())?;
         self.depth = base;
         let exception = self.push()?;
-        self.emit(Op::LoadLocal, exception, 0, 0, u32::from(region.slot))?;
-        self.emit(Op::WasmThrowRef, exception, 0, 0, 0)?;
+        self.emit_emission(wasm_emit::load_local(exception, region.slot))?;
+        self.emit_emission(wasm_emit::throw_ref(exception))?;
         if let Some(normal) = normal {
             self.patch_jump(normal, self.code.len())?;
         }
@@ -485,24 +473,18 @@ impl Lowering<'_> {
         self.push()?;
         // Shift upward in reverse before inserting the tag at the window's head.
         for offset in (0..params).rev() {
-            self.emit(
-                Op::Move,
+            self.emit_emission(wasm_emit::move_register(
                 base + offset + super::tag::ExceptionInput::Payload as u16,
                 base + offset,
-                0,
-                0,
-            )?;
+            ))?;
         }
         let tag = self.tag_binding(index)?;
-        self.emit(
-            Op::Move,
+        self.emit_emission(wasm_emit::move_register(
             base + super::tag::ExceptionInput::Tag as u16,
             tag,
-            0,
-            0,
-        )?;
-        self.emit(Op::WasmExceptionNew, base, base, count, 0)?;
-        self.emit(Op::WasmThrowRef, base, 0, 0, 0)?;
+        ))?;
+        self.emit_emission(wasm_emit::exception_new(base, count))?;
+        self.emit_emission(wasm_emit::throw_ref(base))?;
         self.make_dead();
         Ok(())
     }
@@ -513,7 +495,7 @@ impl Lowering<'_> {
             return Ok(());
         }
         let normal = if self.path == Reachability::Live {
-            Some(self.jump(Op::Jump, 0)?)
+            Some(self.jump()?)
         } else {
             None
         };
@@ -528,8 +510,8 @@ impl Lowering<'_> {
         }
         self.depth = base;
         let exception = self.push()?;
-        self.emit(Op::LoadLocal, exception, 0, 0, u32::from(region.slot))?;
-        self.emit(Op::WasmThrowRef, exception, 0, 0, 0)?;
+        self.emit_emission(wasm_emit::load_local(exception, region.slot))?;
+        self.emit_emission(wasm_emit::throw_ref(exception))?;
         if let Some(normal) = normal {
             self.patch_jump(normal, self.code.len())?;
         }
@@ -554,26 +536,21 @@ impl Lowering<'_> {
             .checked_add(count)
             .ok_or_else(|| self.control_error("too many Wasm catch registers"))?;
         let exception = self.push()?;
-        self.emit(Op::LoadLocal, exception, 0, 0, u32::from(slot))?;
+        self.emit_emission(wasm_emit::load_local(exception, slot))?;
         let next = if let Some(tag) = tag {
             let tag = self.tag_binding(tag)?;
             let condition = self.push()?;
-            self.emit(Op::WasmExceptionMatch, condition, exception, tag, 0)?;
+            self.emit_emission(wasm_emit::exception_match(condition, exception, tag))?;
             Some(self.jump_on(Condition::Value(condition), false)?)
         } else {
             None
         };
-        for offset in 0..params {
-            self.emit(
-                Op::WasmExceptionPayload,
-                base + offset,
-                exception,
-                0,
-                u32::from(offset),
-            )?;
+        let types = tag.map(|tag| self.tag_payload_types(tag)).transpose()?.unwrap_or_default();
+        for (offset, ty) in (0..params).zip(types) {
+            self.emit_emission(wasm_emit::exception_payload(base + offset, exception, offset, ty))?;
         }
         if reference {
-            self.emit(Op::Move, base + params, exception, 0, 0)?;
+            self.emit_emission(wasm_emit::move_register(base + params, exception))?;
         }
         self.depth = base + count;
         Ok(next)
@@ -654,13 +631,7 @@ impl Lowering<'_> {
                     .ok_or_else(|| self.control_error("too many Wasm locals"))?;
                 self.temporary_locals += params;
                 for offset in 0..params {
-                    self.emit(
-                        Op::StoreLocal,
-                        base + offset,
-                        0,
-                        0,
-                        u32::from(first + offset),
-                    )?;
+                    self.emit_emission(wasm_emit::store_local(base + offset, first + offset))?;
                 }
                 Some(first)
             } else {
@@ -682,16 +653,13 @@ impl Lowering<'_> {
     }
 
     fn else_arm(&mut self) -> Result<(), Diagnostic> {
-        let control = self
-            .controls
-            .last()
-            .ok_or_else(|| self.control_error("else outside Wasm if"))?;
+        // The wasmparser reader checks that `else` closes an `if` arm.
+        let control = self.controls.last().expect("validated: else inside an if");
         let Kind::If(IfArm::Then { false_jump }) = control.kind else {
-            return Err(self.control_error("else outside Wasm if"));
+            unreachable!("validated: else closes an if arm")
         };
-        self.check_result(control)?;
         if self.path == Reachability::Live {
-            let end = self.jump(Op::Jump, 0)?;
+            let end = self.jump()?;
             self.controls.last_mut().unwrap().exits.push(end);
         }
         if let Some(false_jump) = false_jump {
@@ -704,21 +672,8 @@ impl Lowering<'_> {
         let (base, params, saved_inputs) = (control.base, control.params, control.saved_inputs);
         if let Some(first) = saved_inputs {
             for offset in 0..params {
-                self.emit(
-                    Op::LoadLocal,
-                    base + offset,
-                    0,
-                    0,
-                    u32::from(first + offset),
-                )?;
+                self.emit_emission(wasm_emit::load_local(base + offset, first + offset))?;
             }
-        }
-        Ok(())
-    }
-
-    fn check_result(&self, control: &Control) -> Result<(), Diagnostic> {
-        if self.path == Reachability::Live && self.depth != control.base + control.results {
-            return Err(self.control_error("invalid Wasm result stack"));
         }
         Ok(())
     }
@@ -729,7 +684,6 @@ impl Lowering<'_> {
             .len()
             .checked_sub(1)
             .ok_or_else(|| self.control_error("extra Wasm end"))?;
-        self.check_result(&self.controls[current])?;
         self.finish_delegation(current)?;
         let control = self
             .controls
@@ -737,9 +691,6 @@ impl Lowering<'_> {
             .ok_or_else(|| self.control_error("extra Wasm end"))?;
         let mut live = self.path == Reachability::Live || !control.exits.is_empty();
         if let Kind::If(IfArm::Then { false_jump }) = control.kind {
-            if control.params != control.results {
-                return Err(self.control_error("Wasm if without else requires matching arities"));
-            }
             if let Some(false_jump) = false_jump {
                 self.patch_jump(false_jump, self.code.len())?;
                 live = true;
@@ -763,25 +714,23 @@ impl Lowering<'_> {
         };
         if matches!(control.kind, Kind::Function) {
             if control.results == 0 {
-                self.emit(Op::LoadConst, control.base, 0, 0, VOID_RESULT_CONSTANT)?;
+                self.emit_emission(wasm_emit::load_constant(control.base, VOID_RESULT_CONSTANT))?;
             }
             let result = if usize::from(control.results) > SCALAR_RETURN_ARITY {
                 let bundle = self.push()?;
-                self.emit(Op::MakeArray, bundle, 0, 0, u32::from(control.results))?;
+                self.emit_emission(wasm_emit::make_array(bundle, control.results))?;
                 for offset in 0..control.results {
-                    self.emit(
-                        Op::DefineArrayElement,
+                    self.emit_emission(wasm_emit::define_array_element(
                         control.base + offset,
                         bundle,
-                        0,
-                        u32::from(offset),
-                    )?;
+                        offset,
+                    ))?;
                 }
                 bundle
             } else {
                 control.base
             };
-            self.emit(Op::Return, result, 0, 0, 0)?;
+            self.emit_emission(wasm_emit::return_value(result))?;
         }
         Ok(())
     }
@@ -811,8 +760,8 @@ impl Lowering<'_> {
             return Ok(Condition::Value(condition));
         };
         let instruction = self.instruction(pc);
-        if let Some(comparison) = I32BinaryOperator::from_register_op(instruction.op())
-            && comparison.jump_op().is_some()
+        if let Some(comparison) = wasm_emit::register_operator(instruction)
+            && wasm_emit::has_jump(comparison)
         {
             self.code.pop();
             return Ok(Condition::Comparison(
@@ -821,8 +770,8 @@ impl Lowering<'_> {
                 instruction.c(),
             ));
         }
-        if let Some(comparison) = I32BinaryOperator::from_immediate_op(instruction.op())
-            && comparison.immediate_jump_op().is_some()
+        if let Some(comparison) = wasm_emit::immediate_operator(instruction)
+            && wasm_emit::has_immediate_jump(comparison)
             && let Ok(constant) = i16::try_from(instruction.imm() as i32)
         {
             self.code.pop();
@@ -835,7 +784,7 @@ impl Lowering<'_> {
         // `x ^ y` and `x - y` are nonzero exactly when `x != y`: a test of either is the
         // comparison.
         if matches!(
-            I32BinaryOperator::from_register_op(instruction.op()),
+            wasm_emit::register_operator(instruction),
             Some(I32BinaryOperator::Xor | I32BinaryOperator::Subtract)
         ) {
             self.code.pop();
@@ -846,7 +795,7 @@ impl Lowering<'_> {
             ));
         }
         if matches!(
-            I32BinaryOperator::from_immediate_op(instruction.op()),
+            wasm_emit::immediate_operator(instruction),
             Some(I32BinaryOperator::Xor | I32BinaryOperator::Subtract)
         ) && let Ok(constant) = i16::try_from(instruction.imm() as i32)
         {
@@ -857,9 +806,7 @@ impl Lowering<'_> {
                 constant,
             ));
         }
-        if instruction.op() == Op::WasmI32Unary
-            && I32UnaryOperator::from_tag(instruction.imm()) == Some(I32UnaryOperator::EqualZero)
-        {
+        if wasm_emit::is_i32_equal_zero(instruction) {
             self.code.pop();
             // `x ^ y` or `x - y` tested for zero, computed only for the test: `x == y`.
             if let Some((_, difference)) = self.fusable_last()
@@ -867,7 +814,7 @@ impl Lowering<'_> {
                 && !self.is_local_register(difference.a())
             {
                 if matches!(
-                    I32BinaryOperator::from_register_op(difference.op()),
+                    wasm_emit::register_operator(difference),
                     Some(I32BinaryOperator::Xor | I32BinaryOperator::Subtract)
                 ) {
                     self.code.pop();
@@ -878,7 +825,7 @@ impl Lowering<'_> {
                     ));
                 }
                 if matches!(
-                    I32BinaryOperator::from_immediate_op(difference.op()),
+                    wasm_emit::immediate_operator(difference),
                     Some(I32BinaryOperator::Xor | I32BinaryOperator::Subtract)
                 ) && let Ok(constant) = i16::try_from(difference.imm() as i32)
                 {
@@ -911,8 +858,7 @@ impl Lowering<'_> {
                         .negated_comparison()
                         .expect("fusable comparison has a negation")
                 };
-                let op = comparison.jump_op().expect("fusable comparison has a jump");
-                self.emit(op, left, right, 0, 0)?;
+                self.emit_emission(wasm_emit::compare_and_jump(comparison, left, right))?;
             }
             Condition::ConstantComparison(comparison, left, constant) => {
                 let comparison = if when {
@@ -922,30 +868,33 @@ impl Lowering<'_> {
                         .negated_comparison()
                         .expect("fusable comparison has a negation")
                 };
-                let op = comparison
-                    .immediate_jump_op()
-                    .expect("fusable comparison has a constant jump");
-                self.emit(op, left, constant as u16, 0, 0)?;
+                self.emit_emission(wasm_emit::compare_immediate_and_jump(
+                    comparison,
+                    left,
+                    constant as u16,
+                ))?;
             }
             Condition::Zero(value) => {
-                let op = if when {
-                    Op::WasmJumpI32Zero
+                if when {
+                    self.emit_emission(wasm_emit::jump_if_zero_i32(value))?;
                 } else {
-                    Op::WasmJumpI32NonZero
-                };
-                self.emit(op, value, 0, 0, 0)?;
+                    self.emit_emission(wasm_emit::jump_if_nonzero_i32(value))?;
+                }
             }
             Condition::Value(value) => {
                 if when && let Some((step, source, addend)) = self.take_counter_step(value) {
-                    self.emit(Op::WasmI32AddImmediateJumpNonZero, value, source, addend, 0)?;
+                    self.emit_emission(wasm_emit::add_immediate_jump_if_nonzero(
+                        value,
+                        source,
+                        addend,
+                    ))?;
                     return Ok(step);
                 }
-                let op = if when {
-                    Op::WasmJumpI32NonZero
+                if when {
+                    self.emit_emission(wasm_emit::jump_if_nonzero_i32(value))?;
                 } else {
-                    Op::WasmJumpI32Zero
-                };
-                self.emit(op, value, 0, 0, 0)?;
+                    self.emit_emission(wasm_emit::jump_if_zero_i32(value))?;
+                }
             }
         }
         Ok(pc)
@@ -958,9 +907,9 @@ impl Lowering<'_> {
         if step.a() != value {
             return None;
         }
-        let addend = if step.op() == I32BinaryOperator::Add.immediate_op() {
+        let addend = if wasm_emit::is_immediate_of(step, I32BinaryOperator::Add) {
             step.imm() as i32
-        } else if step.op() == I32BinaryOperator::Subtract.immediate_op() {
+        } else if wasm_emit::is_immediate_of(step, I32BinaryOperator::Subtract) {
             (step.imm() as i32).checked_neg()?
         } else {
             return None;
@@ -971,15 +920,13 @@ impl Lowering<'_> {
     }
 
     fn branch_target(&self, relative_depth: u32) -> Result<BranchTarget, Diagnostic> {
-        let distance = usize::try_from(relative_depth)
-            .ok()
-            .and_then(|depth| depth.checked_add(1))
-            .ok_or_else(|| self.control_error("Wasm branch label out of bounds"))?;
+        // The decode-time validator checks that the label exists.
+        let distance = usize::try_from(relative_depth).expect("validated: branch label") + 1;
         let index = self
             .controls
             .len()
             .checked_sub(distance)
-            .ok_or_else(|| self.control_error("Wasm branch label out of bounds"))?;
+            .expect("validated: branch label");
         let control = &self.controls[index];
         let (base, arity, head) = match control.kind {
             Kind::Loop { head } => (control.base, control.params, Some(head)),
@@ -1024,10 +971,10 @@ impl Lowering<'_> {
             .map_err(|e| Diagnostic::unsupported(self.name, e.to_string()))?;
         let cases = u32::try_from(labels.len() - 1)
             .map_err(|_| self.control_error("Wasm branch table too large"))?;
-        self.emit(Op::WasmBranchTable, index, 0, 0, cases)?;
+        self.emit_emission(wasm_emit::branch_table(index, cases))?;
         let entries = labels
             .iter()
-            .map(|_| self.jump(Op::Jump, 0))
+            .map(|_| self.jump())
             .collect::<Result<Vec<usize>, _>>()?;
         for (entry, label) in entries.into_iter().zip(labels) {
             let target = self.branch_target(label)?;
@@ -1046,10 +993,13 @@ impl Lowering<'_> {
         // Destinations are below sources, so ascending moves preserve overlap.
         for offset in 0..target.arity {
             if target.base != target.values {
-                self.emit(Op::Move, target.base + offset, target.values + offset, 0, 0)?;
+                self.emit_emission(wasm_emit::move_register(
+                    target.base + offset,
+                    target.values + offset,
+                ))?;
             }
         }
-        let jump = self.jump(Op::Jump, 0)?;
+        let jump = self.jump()?;
         self.bind_branch(target, jump)
     }
 
@@ -1062,9 +1012,9 @@ impl Lowering<'_> {
         self.depth = self.control_base();
     }
 
-    fn jump(&mut self, op: Op, condition: Register) -> Result<usize, Diagnostic> {
+    fn jump(&mut self) -> Result<usize, Diagnostic> {
         let pc = self.code.len();
-        self.emit(op, condition, 0, 0, 0)?;
+        self.emit_emission(wasm_emit::jump())?;
         Ok(pc)
     }
 

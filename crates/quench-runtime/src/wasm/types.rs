@@ -2,12 +2,15 @@
 //! Executable signatures are projections, not replacements for declarations.
 
 mod ancestry;
+mod equivalence;
+use equivalence::Equivalence;
 mod fingerprint;
 
+use super::gc::ObjectLayout;
 use rustc_hash::FxHashSet;
 use std::rc::Rc;
 use wasmparser::{
-    CompositeInnerType, FieldType, FuncType, HeapType, PackedIndex, RecGroup, StorageType, SubType,
+    CompositeInnerType, FieldType, FuncType, HeapType, RecGroup, SubType,
     UnpackedIndex, ValType,
 };
 
@@ -31,6 +34,26 @@ struct Declarations {
     /// The displays' runs, each the canonical indices of a declaration's ancestors from its
     /// root down to itself, so a subtype check reads one entry at the target's depth.
     ancestors: Box<[u32]>,
+    /// Each declaration's object layout, built for the module on first use (`layout`).
+    layouts: Layouts,
+}
+
+/// The module's object layouts, derived from the groups, so they never differ between equal modules.
+#[derive(Debug, Default)]
+struct Layouts(std::cell::OnceCell<Box<[Option<ObjectLayout>]>>);
+
+impl PartialEq for Layouts {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+#[cfg(test)]
+impl WasmTypes {
+    /// A module whose declarations are `types`, each a singleton group, for layout tests.
+    pub(crate) fn singletons_for_test(types: Vec<SubType>) -> Self {
+        Self::of(types.into_iter().map(|ty| vec![ty]).collect())
+    }
 }
 
 impl PartialEq for WasmTypes {
@@ -54,6 +77,12 @@ impl WasmTypes {
     /// final, unshared function groups, just like ordinary function types.
     pub fn from_functions(functions: impl IntoIterator<Item = FuncType>) -> Self {
         Self::of(functions.into_iter().map(|function| vec![SubType::func(function, false)]).collect())
+    }
+
+    /// The payload layout of the struct or array declared at `index`, built once for the module.
+    pub(crate) fn layout(&self, index: u32) -> Option<&ObjectLayout> {
+        let layouts = self.0.layouts.0.get_or_init(|| ObjectLayout::of_module(self));
+        layouts.get(index as usize)?.as_ref()
     }
 
     pub(crate) fn struct_fields(&self, index: u32) -> Option<&[FieldType]> {
@@ -298,6 +327,33 @@ impl WasmTypes {
     /// Whether a declaration is equivalent to an embedding's implicit final
     /// singleton function type, including its exact value types. Machine ABI
     /// projections cannot replace concrete reference identities here.
+    /// The parameter and result types of declaration `index` where it is the type an embedder's
+    /// implicit function has (`matches_implicit_function`): a final function type alone in its
+    /// group, with no supertype; none for any other declaration.
+    pub(crate) fn implicit_function(&self, index: usize) -> Option<(&[ValType], &[ValType])> {
+        let (group, member) = self.locate(index)?;
+        let ty = &group[member];
+        let plain = group.len() == 1
+            && ty.is_final
+            && ty.supertype_idx.is_none()
+            && !ty.composite_type.shared
+            && ty.composite_type.descriptor_idx.is_none()
+            && ty.composite_type.describes_idx.is_none();
+        match &ty.composite_type.inner {
+            // A concrete reference names a type of this table, which no embedder's signature
+            // can: such a type compares by its declaration.
+            CompositeInnerType::Func(function)
+                if plain
+                    && function.params().iter().chain(function.results()).all(|value| {
+                        !matches!(value, ValType::Ref(reference) if !matches!(reference.heap_type(), HeapType::Abstract { .. }))
+                    }) =>
+            {
+                Some((function.params(), function.results()))
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn matches_implicit_function(
         &self,
         index: usize,
@@ -367,130 +423,3 @@ enum Edge {
     External { origin: usize, member: usize },
 }
 
-/// Each reachable pair of preceding groups is visited once. Recursive edges
-/// stay local, so deep declaration chains never consume the native call stack.
-struct Equivalence<'a> {
-    tables: [&'a WasmTypes; 2],
-    pending: Vec<[usize; 2]>,
-    seen: FxHashSet<[usize; 2]>,
-}
-
-impl Equivalence<'_> {
-    fn enqueue(&mut self, origins: [usize; 2]) {
-        if self.seen.insert(origins) {
-            self.pending.push(origins);
-        }
-    }
-
-    fn indices(&mut self, indices: [UnpackedIndex; 2], origins: [usize; 2]) -> bool {
-        match (
-            self.tables[0].edge(indices[0], origins[0]),
-            self.tables[1].edge(indices[1], origins[1]),
-        ) {
-            (Some(Edge::Local(left)), Some(Edge::Local(right))) => left == right,
-            (
-                Some(Edge::External {
-                    origin: left,
-                    member: left_member,
-                }),
-                Some(Edge::External {
-                    origin: right,
-                    member: right_member,
-                }),
-            ) if left_member == right_member => {
-                self.enqueue([left, right]);
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn optional_indices(
-        &mut self,
-        left: Option<PackedIndex>,
-        right: Option<PackedIndex>,
-        origins: [usize; 2],
-    ) -> bool {
-        match (left, right) {
-            (None, None) => true,
-            (Some(left), Some(right)) => self.indices([left.unpack(), right.unpack()], origins),
-            _ => false,
-        }
-    }
-
-    fn value(&mut self, left: ValType, right: ValType, origins: [usize; 2]) -> bool {
-        match (left, right) {
-            (ValType::Ref(left), ValType::Ref(right)) => {
-                left.is_nullable() == right.is_nullable()
-                    && match (left.heap_type(), right.heap_type()) {
-                        (HeapType::Concrete(left), HeapType::Concrete(right))
-                        | (HeapType::Exact(left), HeapType::Exact(right)) => {
-                            self.indices([left, right], origins)
-                        }
-                        (HeapType::Abstract { .. }, HeapType::Abstract { .. }) => {
-                            left.heap_type() == right.heap_type()
-                        }
-                        _ => false,
-                    }
-            }
-            _ => left == right,
-        }
-    }
-
-    fn values(&mut self, left: &[ValType], right: &[ValType], origins: [usize; 2]) -> bool {
-        left.len() == right.len()
-            && left
-                .iter()
-                .zip(right)
-                .all(|(&left, &right)| self.value(left, right, origins))
-    }
-
-    fn field(&mut self, left: &FieldType, right: &FieldType, origins: [usize; 2]) -> bool {
-        left.mutable == right.mutable
-            && match (left.element_type, right.element_type) {
-                (StorageType::Val(left), StorageType::Val(right)) => {
-                    self.value(left, right, origins)
-                }
-                (left, right) => left == right,
-            }
-    }
-
-    fn subtype(&mut self, left: &SubType, right: &SubType, origins: [usize; 2]) -> bool {
-        let left_composite = &left.composite_type;
-        let right_composite = &right.composite_type;
-        left.is_final == right.is_final
-            && left_composite.shared == right_composite.shared
-            && self.optional_indices(left.supertype_idx, right.supertype_idx, origins)
-            && self.optional_indices(
-                left_composite.descriptor_idx,
-                right_composite.descriptor_idx,
-                origins,
-            )
-            && self.optional_indices(
-                left_composite.describes_idx,
-                right_composite.describes_idx,
-                origins,
-            )
-            && match (&left_composite.inner, &right_composite.inner) {
-                (CompositeInnerType::Func(left), CompositeInnerType::Func(right)) => {
-                    self.values(left.params(), right.params(), origins)
-                        && self.values(left.results(), right.results(), origins)
-                }
-                (CompositeInnerType::Struct(left), CompositeInnerType::Struct(right)) => {
-                    left.fields.len() == right.fields.len()
-                        && left
-                            .fields
-                            .iter()
-                            .zip(&right.fields)
-                            .all(|(left, right)| self.field(left, right, origins))
-                }
-                (CompositeInnerType::Array(left), CompositeInnerType::Array(right)) => {
-                    self.field(&left.0, &right.0, origins)
-                }
-                (CompositeInnerType::Cont(left), CompositeInnerType::Cont(right)) => {
-                    self.indices([left.0.unpack(), right.0.unpack()], origins)
-                }
-                _ => false,
-            }
-    }
-}

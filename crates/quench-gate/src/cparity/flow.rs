@@ -46,7 +46,8 @@ fn successors(code: &[Instruction], at: usize) -> impl Iterator<Item = usize> {
     next.into_iter().chain(target_index(code, at))
 }
 
-fn reaches(code: &[Instruction], from: usize, to: usize) -> bool {
+/// Whether `from` reaches `to` without leaving the instructions between them.
+fn reaches_within(code: &[Instruction], from: usize, to: usize) -> bool {
     let mut visited = Visited::new(code.len());
     visited.insert(from);
     let mut pending = vec![from];
@@ -54,18 +55,20 @@ fn reaches(code: &[Instruction], from: usize, to: usize) -> bool {
         if at == to {
             return true;
         }
-        pending.extend(successors(code, at).filter(|next| visited.insert(*next)));
+        pending.extend(successors(code, at).filter(|next| (from..=to).contains(next) && visited.insert(*next)));
     }
     false
 }
 
-/// Every loop of `code`, by the position of the jump that closes it. A branch to its own
-/// instruction is a trap or a spin (`b .`), not a loop body: it has no instruction to iterate.
+/// Every loop of `code`, by the position of the jump that closes it: a backward jump whose
+/// target reaches it inside the code between them. A backward jump that only rejoins the
+/// straight line after a cold arm laid out past it (an `if` whose rare side sits at the end
+/// of the code) reaches its target only around an enclosing loop's back edge: it is no loop.
 pub fn loops(code: &[Instruction]) -> Vec<Loop> {
     (0..code.len())
         .filter_map(|branch| {
             let header = target_index(code, branch)?;
-            (header < branch && reaches(code, header, branch)).then_some(Loop { header, branch })
+            (header <= branch && reaches_within(code, header, branch)).then_some(Loop { header, branch })
         })
         .collect()
 }
@@ -75,82 +78,14 @@ fn innermost(loops: &[Loop]) -> impl Iterator<Item = &Loop> {
     loops.iter().filter(|inner| !loops.iter().any(|other| other != *inner && inner.header <= other.header && other.branch <= inner.branch))
 }
 
-/// One instruction's address path through a loop: from its header to the back edge along the
-/// hot path — the fall-through of every conditional branch (the path its checks expect) and the
-/// target of every unconditional jump — so the cold blocks a region keeps between the header and
-/// the back edge (each guard's miss stub) are not counted as per-iteration work. Each instruction
-/// is counted once; the walk stops at the back edge or where the path leaves the loop.
-/// The fewest instructions from `from` to `to` inside a loop: a guard's miss stub and a call's
-/// cold path cost more than the check they guard, which is what tells the two apart without
-/// weights.
-fn distance(code: &[Instruction], found: &Loop, from: usize, to: usize) -> usize {
-    let mut visited = Visited::new(code.len());
-    let mut pending = std::collections::VecDeque::from([(from, 0usize)]);
-    while let Some((at, steps)) = pending.pop_front() {
-        if at == to {
-            return steps;
-        }
-        if !visited.insert(at) {
-            continue;
-        }
-        for next in successors(code, at) {
-            if (found.header..=found.branch).contains(&next) {
-                pending.push_back((next, steps + 1));
-            }
-        }
-    }
-    usize::MAX
-}
-
-fn iteration(code: &[Instruction], found: &Loop) -> Vec<(usize, Instruction)> {
-    let mut visited = Visited::new(code.len());
-    let mut path = Vec::new();
-    let mut at = found.header;
-    while visited.insert(at) {
-        path.push((at, code[at].clone()));
-        if at == found.branch {
-            break;
-        }
-        let fall_through = code[at].falls_through().then_some(at + 1).filter(|next| *next <= found.branch);
-        let target = target_index(code, at).filter(|next| (found.header..=found.branch).contains(next));
-        let next = if code[at].is_conditional_jump() {
-            // Two ways on: the loop keeps the one that reaches the back edge sooner, where the
-            // other is a guard's miss stub, a callout or another cold path.
-            match (fall_through, target) {
-                (Some(left), Some(right)) => Some(if distance(code, found, left, found.branch) <= distance(code, found, right, found.branch) { left } else { right }),
-                (left, right) => left.or(right),
-            }
-        } else if code[at].falls_through() {
-            fall_through
-        } else {
-            target
-        };
-        match next {
-            Some(next) => at = next,
-            None => break,
-        }
-    }
-    path
-}
-
-
-
 /// The instructions of an iteration of the hottest loop of `code`: the smallest innermost loop
 /// (alignment padding not counted), which is the specialized version a region runs once its
 /// entry checks pass, where the larger ones are the general versions it falls back to.
-pub fn hottest(code: &[Instruction]) -> Option<Vec<Instruction>> {
+pub fn hottest(code: &[Instruction]) -> Option<&[Instruction]> {
     let all = loops(code);
-    let found = innermost(&all).min_by_key(|found| found.branch - found.header)?;
-    let path: Vec<Instruction> = iteration(code, found).into_iter().map(|(_, instruction)| instruction).collect();
-    Some(path)
-}
-
-/// The instructions of the largest innermost loop of `code`: a C twin's work loop, where the
-/// smallest can be a generator's.
-pub fn largest_innermost(code: &[Instruction]) -> Option<Vec<Instruction>> {
-    let all = loops(code);
-    let found = innermost(&all).max_by_key(|found| found.branch - found.header)?;
-    Some(iteration(code, found).into_iter().map(|(_, instruction)| instruction).collect())
+    innermost(&all)
+        .map(|found| &code[found.header..=found.branch])
+        .min_by_key(|body| body.iter().filter(|instruction| !instruction.is_nop()).count())
 }
 
 /// The instructions one call runs through a scalar entry at `entry` (a byte offset): from the
@@ -195,11 +130,12 @@ mod tests {
     }
 
     #[test]
-    fn a_branch_to_its_own_instruction_is_not_a_loop() {
-        // `b .` (and x86's `jmp .`) spin in place: no instruction iterates.
-        let code = parse("  0:\tb      0x0\n  4:\tret\n");
-        assert!(loops(&code).is_empty());
-        assert!(hottest(&code).is_none());
+    fn a_cold_arm_that_rejoins_inside_a_loop_is_no_loop() {
+        // A loop at 0x3..0xf whose `if` at 0x7 jumps to a cold arm at 0x20 that rejoins at 0xb.
+        let code = parse(
+            "  0:\tmov    %rax,%rbx\n  3:\tadd    $0x1,%rax\n  7:\tje     0x20\n  9:\tnop\n  b:\tsub    $0x1,%rcx\n  f:\tjne    0x3\n 11:\tret\n 20:\tcvttsd2si %xmm0,%ecx\n 24:\tjmp    0xb\n",
+        );
+        assert_eq!(loops(&code), [Loop { header: 1, branch: 5 }]);
     }
 
     #[test]

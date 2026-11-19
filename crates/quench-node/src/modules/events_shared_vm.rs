@@ -43,9 +43,7 @@ fn set(context: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> 
     }
 }
 
-fn get(context: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    context.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 
 pub(crate) fn initialize_targets(context: &mut Context<'_>) -> Result<(), RootedError> {
     let global = context.global_root()?;

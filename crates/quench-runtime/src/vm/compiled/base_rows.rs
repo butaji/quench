@@ -15,6 +15,55 @@ use quench_bjit::Stencil;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use quench_bjit::numeric::library::TYPED_KINDS;
+
+/// The heap catalog's macro (`quench-bjit/stencils/row_catalog.rs`, exported by the lib) and its heap row names
+/// (`row_names.rs`, the lib's copy); `heap_code_of!` reads each row's catalog line.
+use quench_bjit::catalog;
+use quench_bjit::numeric::row_names;
+
+/// The heap rows' codes as one expression over `$heap` (a `Heap`): each chunk is a `match` whose arms are the catalog's
+/// patterns (`Heap::X => row`, a family's offset after `=>`) and whose catch-all is `None`; the chunks are tried in turn.
+macro_rules! heap_code_match {
+    (@chunks $heap:tt, $acc:expr;) => {
+        $acc
+    };
+    (@chunks $heap:tt, $acc:expr; [$end:ident $table:ident: $($body:tt)*] $($rest:tt)*) => {
+        heap_code_match!(@chunks $heap, $acc.or_else(|| heap_code_match!(@go $heap, []; $($body)*)); $($rest)*)
+    };
+    (@go $heap:tt, [$($arms:tt)*];) => {
+        match $heap {
+            $($arms)*
+            _ => None,
+        }
+    };
+    (@go $heap:tt, [$($arms:tt)*]; reserve $n:expr $(, $($rest:tt)*)?) => {
+        heap_code_match!(@go $heap, [$($arms)*]; $($($rest)*)?)
+    };
+    (@go $heap:tt, [$($arms:tt)*]; $(#[$m:meta])* $name:ident : uses($($u:tt)*) $(x $n:ident)? = $pat:pat $(=> $off:expr)? $(, $($rest:tt)*)?) => {
+        heap_code_match!(@go $heap, [$($arms)* $pat => Some(row_names::$name $(+ $off)?),]; $($($rest)*)?)
+    };
+    (@go $heap:tt, [$($arms:tt)*]; $(#[$m:meta])* $name:ident : uses($($u:tt)*) $(x $n:ident)? $(, $($rest:tt)*)?) => {
+        heap_code_match!(@go $heap, [$($arms)*]; $($($rest)*)?)
+    };
+    ($heap:tt heap { $($chunk:tt)* } number { $($kinds:tt)* }) => {
+        heap_code_match!(@chunks $heap, None; $($chunk)*).unwrap_or_else(|| unreachable!("a heap variant without a catalog row"))
+    };
+}
+
+/// `$heap`'s code: the catalog's heap rows as one expression (`heap_code_match!`).
+macro_rules! heap_code_of {
+    ($heap:tt) => {
+        catalog!(heap_code_match($heap))
+    };
+}
+
+/// The stencil layout numbers (`staged/layout_offsets.rs`, shared with the stencils by `#[path]`) are the
+/// runtime's own: each is a `const` check against the runtime's `offset_of!`, `size_of` or layout const.
+/// The stencils are x86-64 only, so the checks are too.
+#[cfg(target_arch = "x86_64")]
+mod layout_checks;
+
 /// What a heap row does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Heap {
@@ -35,8 +84,6 @@ pub(super) enum Heap {
     TypedLength,
     /// The field value the loop entry recorded: its byte offset in the record at hole 1.
     Field,
-    /// The array word at hole 1 is a direct array (what `RequireObjectCoercible` of one proves).
-    Array,
     /// The data field the site's field cache entry names, own or held by the receiver's prototype
     /// (`entry::site_read`), read from the object register whose frame offset sits above the
     /// destination's in hole 0 (hole 2: the entry's byte offset).
@@ -50,11 +97,45 @@ pub(super) enum Heap {
     ThisChain,
     /// The `length` of the direct array at hole 1, an int32 (what the array's record counts).
     Length,
+    /// `String.prototype.charCodeAt` of the flat string at hole 1, at the int32 index at hole 2 (`CHAR_CODE_AT_ROW`): the call
+    /// the method read's native folds into (`base_region::function::native_call`).
+    CharCodeAt,
+    /// `parseInt` of the flat string at hole 1 in radix 10 (`PARSE_INT_ROW`).
+    ParseInt,
+    /// An empty ordinary object (`Allocation::Empty`), or a zero-length array, made inline from the object or array
+    /// space's cursor and the captured template (`JsStepDispatch::empty_*`): the destination (hole 0) takes the
+    /// direct reference of the new record. Planned as the fast arm of the instruction's helper step
+    /// (`base_region::steps::allocation_arm`); its exit 0 is that helper step.
+    EmptyObject,
+    EmptyArray,
     /// Stores the value operand (hole 1) into the own data field the site's cache entry (hole 2) names
     /// of the object register whose frame offset is hole 0, where the store gate admits it.
     SiteStore,
     /// `SiteStore` into the activation's receiver: hole 0 is unused.
     ThisStore,
+    /// The inline-cache read (`ic_rows`) of the own slot of the object register (hole 1), whose
+    /// exact shape (hole 2) and slot byte offset (hole 3) the code holds from the site's one entry,
+    /// into the destination (hole 0): a shape compare and a load, no cache table read (`staged::ic::own_field`).
+    IcGet,
+    /// The inline-cache store of a Number (hole 1) into that slot of the object register (hole 0),
+    /// the atom, shape and slot byte offset in holes 2 to 4, where the slot's observed type holds
+    /// Number (`int`: only int32, which takes only int32 words), so no observation widens.
+    IcSet { int: bool },
+    /// `IcGet` and `IcSet` of a receiver every path proved a direct object (`base_region::proofs`): one compare
+    /// of its auxiliary word with the entry's shape proves the shape and flat plain values (holes as theirs).
+    IcKnownGet,
+    /// `admitted`: the store's run-level test is the region's entry (`Heap::Stores`), which holds with no call since
+    /// (`base_region::proofs`), so the row tests nothing of its own.
+    IcKnownSet { int: bool, admitted: bool },
+    /// `IcKnownGet` of a receiver whose entry proved its shape and flat form (`ShapeFlat`, `base_region::proofs`): the
+    /// arena slot at hole 3 (its byte offset), no compare; hole 2 is zero and unread.
+    IcKnownGetFlat,
+    /// `IcKnownSet` of a receiver whose entry proved its shape and flat form: the flat slot's byte offset follows the
+    /// atom (hole 3) where not `admitted`, else is hole 2; no shape is compared (holes as the stencil reads them).
+    IcKnownSetFlat { int: bool, admitted: bool },
+    /// Leaves through exit 0 unless the object register at hole 0 is a direct object: what an access's miss
+    /// runs after its site row, so the receiver is proved one on every edge out of the access.
+    IcProof,
     /// Stores the value operand (hole 0) into depth-0 capture `slot` of an activation whose slots
     /// admit every direct store; the slot is hole 1 and its byte offset hole 2. It continues at TAKEN, as `Capture` does.
     CaptureSet(u16),
@@ -86,10 +167,28 @@ pub(super) enum Heap {
     StoreChecked(u16),
     /// The register at the frame offset of hole 1 holds exactly the word of hole 2.
     Identity,
+    /// The entry test of a declared parameter (`base_region::declared`): the register at hole 0 holds a word whose
+    /// tag-decided languages meet the declared mask at hole 1, else the entry leaves with nothing written.
+    Declared,
+    /// The entry test of a captured declaration a body calls by its identity (`base_region::link::entry_rows`): the
+    /// depth-0 capture at the slot of hole 0 holds the word of hole 1, else the entry leaves with nothing written.
+    CaptureIdentity,
+    /// The entry test of a class-typed parameter (`base_region::link::entry_rows`): the register at hole 0 holds a direct
+    /// object whose exact shape and prototype link are the pair in hole 1 (`entry::shape_link_matches`), else the entry
+    /// leaves with nothing written.
+    Prototype,
+    /// The entry test of a loop-invariant receiver (`base_region::link::entry_rows`): the register at hole 0 holds a direct
+    /// object of the exact shape in hole 1 (`guard::shape`), else the entry leaves with nothing written.
+    Shape,
+    /// `Shape` whose object is also in the flat form (`guard::shape` at `Form::Arena`): its values are the arena run's.
+    ShapeFlat,
+    /// The entry test that the run stores specialized (`base_region::link::entry_rows`, `guard::stores`): else the entry
+    /// leaves with nothing written.
+    Stores,
     /// A prototype-held field folded to the value its holder held when the code was compiled (hole 2):
     /// the object register whose frame offset sits above the destination's in hole 0 is a direct object
     /// of the exact shape in hole 1's low half and the prototype link in its high half, else the row
-    /// leaves. A Stable fact holds the value (`entry::held_receiver`).
+    /// leaves. A Stable fact holds the value (`PrototypeProof::Linked`, `entry::held_constant`).
     Held,
     /// `Held` of the activation's receiver, which the payload holds: hole 0 is the destination alone.
     ThisHeld,
@@ -137,13 +236,16 @@ pub(super) enum Heap {
     /// The tagged word of hole 1 into the destination: an immutable global, a folded `typeof` name, and
     /// the `undefined` receiver of a name call.
     Word,
+    /// An inlined callee's depth-0 capture: the ordinary value of the slot at the address in hole 1 (the
+    /// guarded closure's environment is fixed) into the destination, else the row leaves inside the callee.
+    CalleeCapture,
     /// The fast arm of `AppendArray` (`elements::append_in_room`): the Number operand at hole 1 is appended to
     /// the unique writable dense array in the frame slot of hole 0 where the backing's capacity word proves
     /// room, else the row leaves into the helper step after it, which grows the backing.
     Append,
     /// The property add of a `DefineField` or an adding `SetField` (`staged::add::site_add`): the value
     /// operand (hole 1) joins the object register (its frame offset in hole 2) or, with `this`, the
-    /// activation's receiver, by the transition holes 0 and 2 carry (`library::ADD_AFTER_AT`,
+    /// activation's receiver, by the transition holes 0 and 2 carry (`numeric::site_bits::ADD_AFTER_AT`,
     /// `ADD_OBJECT_AT`), where the receiver holds the before-shape in `form`'s storage and, for the
     /// row's `entry` variant, the prototype link hole 2 names. A hit continues at TAKEN; a miss leaves
     /// into the helper step after the row, or the leave a guarded row makes.
@@ -153,13 +255,17 @@ pub(super) enum Heap {
     /// leaves into the helper step after it, which takes any other step and the exhausted one's jump.
     ForIn,
     /// The fast arm of `SetFunctionName` (`staged::naming::site_name`): the function in the frame slot
-    /// whose offset hole 2 carries (`library::NAME_FUNCTION_AT`) takes the name word of hole 1 in the slot
-    /// hole 2 names, moving between the shapes of hole 0 (`library::ADD_AFTER_AT`), where it holds the empty
+    /// whose offset hole 2 carries (`numeric::site_bits::NAME_FUNCTION_AT`) takes the name word of hole 1 in the slot
+    /// hole 2 names, moving between the shapes of hole 0 (`numeric::site_bits::ADD_AFTER_AT`), where it holds the empty
     /// name in `form`'s storage. A hit continues at TAKEN; a miss leaves into the helper step after the row.
     Name { form: Form },
+    /// A staged row of the `library::STAGED_FIRST..=STAGED_LAST` run (`staged_rows.rs`), by its code: a fast arm over the
+    /// register operands the planner names (`steps::fast_arm`), its destination a frame slot, which a miss leaves for the
+    /// helper step after the row. A hit continues at TAKEN.
+    Staged(u8),
 }
 
-/// The storage forms an add row exists for, in the order of `library::ADD_ROWS` (packed, arena, either).
+/// The storage forms an add row exists for, in the order of the catalog's add rows (packed, arena, either).
 pub(super) const FORMS: [Form; 3] = [Form::Packed, Form::Arena, Form::Either];
 
 /// A heap row: its operation and where its operands and destination live.
@@ -175,92 +281,11 @@ pub(super) struct HeapRow {
 }
 
 impl Heap {
-    /// The row's code in `quench_bjit::numeric::library`.
+    /// The row's code in `quench_bjit::numeric::library`: the catalog line of the row names its variant (`row_catalog.rs`).
     pub(super) fn code(self) -> u8 {
-        self.slot_code().or_else(|| self.element_code()).or_else(|| self.object_code()).or_else(|| self.test_code()).or_else(|| self.global_code()).unwrap_or_else(|| self.other_code())
-    }
-
-    /// The code of a row addressed by a frame, capture or environment slot.
-    fn slot_code(self) -> Option<u8> {
-        Some(match self {
-            Heap::Capture(_) => library::CAPTURE_ROW,
-            Heap::CaptureSet(_) => library::CAPTURE_SET_ROW,
-            Heap::EnvLocal(_) => library::ENV_ROW,
-            Heap::EnvStore(_) => library::ENV_SET_ROW,
-            Heap::EnvDefine(_) => library::ENV_DEFINE_ROW,
-            Heap::LoadLocal(_) => library::LOAD_LOCAL_ROW,
-            Heap::StoreLocal(_) => library::STORE_LOCAL_ROW,
-            Heap::LoadChecked(_) => library::LOAD_CHECKED_ROW,
-            Heap::StoreChecked(_) => library::STORE_CHECKED_ROW,
-            _ => return None,
-        })
-    }
-
-    /// The code of a row that reads or writes an array's or typed array's elements.
-    fn element_code(self) -> Option<u8> {
-        Some(match self {
-            Heap::Index => library::INDEX_ROW,
-            Heap::Store => library::STORE_ROW,
-            Heap::TypedIndex(kind) => library::TYPED_INDEX_ROW + kind,
-            Heap::TypedStore(kind) => library::TYPED_STORE_ROW + kind,
-            Heap::TypedLength => library::TYPED_LENGTH_ROW,
-            _ => return None,
-        })
-    }
-
-    /// The code of a row that reads or writes an object's fields or sites.
-    fn object_code(self) -> Option<u8> {
-        Some(match self {
-            Heap::Field => library::FIELD_ROW,
-            Heap::Site | Heap::SiteChain => library::SITE_ROW,
-            Heap::ThisSite | Heap::ThisChain => library::THIS_SITE_ROW,
-            Heap::SiteStore => library::SITE_STORE_ROW,
-            Heap::ThisStore => library::THIS_STORE_ROW,
-            Heap::This => library::THIS_ROW,
-            Heap::Held | Heap::ThisHeld => library::HELD_ROW,
-            _ => return None,
-        })
-    }
-
-    /// The code of a row that tests a value: its identity, type or prototype chain.
-    fn test_code(self) -> Option<u8> {
-        Some(match self {
-            Heap::Identity => library::IDENTITY_ROW,
-            Heap::TypeofIndex => library::TYPEOF_INDEX_ROW,
-            Heap::TypeofString => library::TYPEOF_STRING_ROW,
-            Heap::Instanceof => library::INSTANCEOF_ROW,
-            Heap::TypeofIs { negated: false, .. } => library::TYPEOF_IS_ROW,
-            Heap::TypeofIs { negated: true, .. } => library::TYPEOF_ISNOT_ROW,
-            Heap::Live => library::LIVE_ROW,
-            Heap::Object => library::OBJECT_ROW,
-            Heap::Key => library::KEY_ROW,
-            _ => return None,
-        })
-    }
-
-    /// The code of a row that reads or writes the realm's globals.
-    fn global_code(self) -> Option<u8> {
-        Some(match self {
-            Heap::Realm => library::REALM_ROW,
-            Heap::GlobalRead => library::GLOBAL_READ_ROW,
-            Heap::GlobalStore => library::GLOBAL_STORE_ROW,
-            Heap::LexicalRead => library::LEXICAL_READ_ROW,
-            Heap::LexicalWrite => library::LEXICAL_WRITE_ROW,
-            _ => return None,
-        })
-    }
-
-    /// The code of the remaining rows: arrays, constants, names and adds.
-    fn other_code(self) -> u8 {
         match self {
-            Heap::Array => library::ARRAY_ROW,
-            Heap::Length => library::LENGTH_ROW,
-            Heap::Word => library::CONSTANT_ROW,
-            Heap::Append => library::APPEND_ROW,
-            Heap::ForIn => library::FOR_IN_ROW,
-            Heap::Name { form } => library::NAME_ROWS[usize::from(form == Form::Arena)],
-            Heap::Add { form, this } => library::ADD_ROWS[usize::from(this) * FORMS.len() + FORMS.iter().position(|known| *known == form).unwrap_or_default()],
-            _ => unreachable!("every other row has a code of an earlier group"),
+            Heap::Staged(code) => code,
+            _ => heap_code_of!(self),
         }
     }
 
@@ -274,13 +299,13 @@ impl Heap {
     /// fields and array views) or tables a helper may move: not the activation's `this` and local
     /// slots, which every run reads live, and the rows that read no heap.
     pub(super) fn reads_snapshot(self) -> bool {
-        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::EnvDefine(_) | Heap::Identity | Heap::Live | Heap::Realm | Heap::Word | Heap::Object | Heap::Key | Heap::Append | Heap::Add { .. } | Heap::ForIn | Heap::Name { .. } | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
+        !matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::StoreLocal(_) | Heap::LoadChecked(_) | Heap::StoreChecked(_) | Heap::EnvLocal(_) | Heap::EnvStore(_) | Heap::EnvDefine(_) | Heap::Identity | Heap::Live | Heap::Realm | Heap::Word | Heap::EmptyObject | Heap::EmptyArray | Heap::Object | Heap::Key | Heap::Append | Heap::Add { .. } | Heap::ForIn | Heap::Name { .. } | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
     /// which a register held in a pinned register as a Number does not have there.
     pub(super) fn reads_frame_word(self) -> bool {
-        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
+        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::Declared | Heap::Prototype | Heap::Shape | Heap::ShapeFlat | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value
@@ -291,7 +316,7 @@ impl Heap {
     }
 
     pub(super) fn yields_tagged(self) -> bool {
-        matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::Word)
+        matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::Word | Heap::EmptyObject | Heap::EmptyArray | Heap::CharCodeAt | Heap::ParseInt)
     }
 }
 
@@ -317,161 +342,52 @@ pub(super) fn stencil(row: HeapRow) -> Result<&'static Stencil, String> {
     Ok(stencil)
 }
 
-#[cfg(all(test, target_arch = "x86_64"))]
-mod tests {
+/// The runtime's heap codes are the catalog's rows (`quench-bjit/stencils/row_catalog.rs`): a `Heap` variant
+/// whose code the catalog did not list would plan a row no stencil is built for. `every_variant` names each
+/// variant over every payload its arms tell apart, so a variant whose code is not a catalog row fails here.
+#[cfg(test)]
+mod catalog_tests {
+    use super::{FORMS, Heap, library};
 
-    /// The numbers the stencil rows are compiled with (`quench-bjit/stencils/layout.rs`) are
-    /// the runtime's own.
-    use super::super::{CallContext, JsStepDispatch};
-    use crate::vm::wtf16::native_string as form;
-    #[allow(dead_code)]
-    mod stencil_layout {
-        include!("../../../../quench-bjit/stencils/layout.rs");
-    }
-    mod stencil_units {
-        include!("../../../../quench-bjit/stencils/units.rs");
-    }
-
-
-    /// The dispatch record's fields a stencil row reads, as (name, the runtime's offset, the stencil layout's).
-    fn dispatch_offsets() -> Vec<(&'static str, usize, usize)> {
-        use stencil_layout as m;
-        use std::mem::offset_of as at;
-        vec![
-            ("loop_entry", at!(JsStepDispatch, loop_entry), m::JS_STEP_LOOP_ENTRY),
-            ("capture_values", at!(JsStepDispatch, capture_values), m::JS_STEP_CAPTURE_VALUES),
-            ("capture_len", at!(JsStepDispatch, capture_len), m::JS_STEP_CAPTURE_LEN),
-            ("capture_stores", at!(JsStepDispatch, capture_stores), m::JS_STEP_CAPTURE_STORES),
-            ("array_record_base", at!(JsStepDispatch, array_record_base), m::JS_STEP_ARRAY_RECORD_BASE),
-            ("object_record_base", at!(JsStepDispatch, object_record_base), m::JS_STEP_OBJECT_RECORD_BASE),
-            ("function_record_base", at!(JsStepDispatch, function_record_base), m::JS_STEP_FUNCTION_RECORD_BASE),
-            ("object_mark_blocks", at!(JsStepDispatch, object_mark_blocks), m::JS_STEP_OBJECT_MARK_BLOCKS),
-            ("object_mark_block_count", at!(JsStepDispatch, object_mark_block_count), m::JS_STEP_OBJECT_MARK_BLOCK_COUNT),
-            ("property_buffer", at!(JsStepDispatch, property_buffer), m::JS_STEP_PROPERTY_BUFFER),
-            ("field_entries", at!(JsStepDispatch, field_entries), m::JS_STEP_FIELD_ENTRIES),
-            ("method_cache_atoms", at!(JsStepDispatch, method_cache_atoms), m::JS_STEP_METHOD_CACHE_ATOMS),
-            ("method_cache_atom_words", at!(JsStepDispatch, method_cache_atom_words), m::JS_STEP_METHOD_CACHE_ATOM_WORDS),
-            ("stores_specialized", at!(JsStepDispatch, stores_specialized), m::JS_STEP_STORES_SPECIALIZED),
-            ("slots_tracked", at!(JsStepDispatch, slots_tracked), m::JS_STEP_SLOTS_TRACKED),
-            ("receiver", at!(JsStepDispatch, receiver), m::JS_STEP_RECEIVER),
-            ("vm", at!(JsStepDispatch, vm), m::JS_STEP_VM),
-            ("residual", at!(JsStepDispatch, residual), m::JS_STEP_RESIDUAL),
-            ("lane_context", at!(JsStepDispatch, lane_context), m::JS_STEP_LANE_CONTEXT),
-            ("returned_pc", at!(JsStepDispatch, returned_pc), m::JS_STEP_RETURNED_PC),
-            ("lane_values_top", at!(JsStepDispatch, lane_values_top), m::JS_STEP_LANE_VALUES_TOP),
-            ("lane_values_end", at!(JsStepDispatch, lane_values_end), m::JS_STEP_LANE_VALUES_END),
-            ("lane_activations_top", at!(JsStepDispatch, lane_activations_top), m::JS_STEP_LANE_ACTIVATIONS_TOP),
-            ("lane_frames_end", at!(JsStepDispatch, lane_frames_end), m::JS_STEP_LANE_FRAMES_END),
-            ("native_locals", at!(JsStepDispatch, native_locals), m::JS_STEP_NATIVE_LOCALS),
-            ("local_count", at!(JsStepDispatch, local_count), m::JS_STEP_LOCAL_COUNT),
-            ("epoch", at!(JsStepDispatch, epoch), m::JS_STEP_EPOCH),
-            ("string_record_base", at!(JsStepDispatch, string_record_base), m::JS_STEP_STRING_RECORD_BASE),
-            ("function_mark_blocks", at!(JsStepDispatch, function_mark_blocks), m::JS_STEP_FUNCTION_MARK_BLOCKS),
-            ("function_mark_block_count", at!(JsStepDispatch, function_mark_block_count), m::JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
-            ("empty_string", at!(JsStepDispatch, empty_string), m::JS_STEP_EMPTY_STRING),
-            ("environment_storage", at!(JsStepDispatch, environment_storage), m::JS_STEP_ENV_STORAGE),
-        ]
-    }
-
-    /// Every payload field a stencil row reads, as (name, the runtime's offset, the stencil layout's).
-    fn payload_offsets() -> Vec<(&'static str, usize, usize)> {
-        use stencil_layout as m;
-        use std::mem::offset_of as at;
-        let own = vec![
-            ("adapter_payload", at!(CallContext, adapter_payload), m::CALL_CONTEXT_ADAPTER_PAYLOAD),
-            ("property_buffer_base", crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, m::PROPERTY_BUFFER_BASE),
-            ("capture_stores_bit", super::super::super::dispatch_fast::CAPTURE_STORES, m::CAPTURE_STORES_BIT as usize),
-            ("activation_kind", crate::vm::dispatch_fast::KIND_OFFSET, m::ACTIVATION_KIND_OFFSET),
-            ("cell_entry", at!(super::super::entry_cell::EntryCell, entry), m::CELL_ENTRY_AT),
-            ("cell_recovery", at!(super::super::entry_cell::EntryCell, recovery), m::CELL_RECOVERY_AT),
-            ("cell_body", at!(super::super::entry_cell::EntryCell, body), m::CELL_BODY_AT),
-            ("cell_counters", at!(super::super::entry_cell::EntryCell, counters), m::CELL_COUNTERS_AT),
-            ("raised_run", super::super::entry_cell::RAISED_RUN as usize, m::RAISED_RUN as usize),
-            ("frame_bytes", super::super::FRAME_BYTES, m::ACTIVATION_BYTES),
-            ("layout_table_base", crate::heap::layouts::table_base().addr(), m::LAYOUT_TABLE_BASE as usize),
-            ("short_units", form::SHORT_UNITS_OFFSET as usize, m::string_form::SHORT_UNITS_OFFSET as usize),
-            ("shared_pointer", form::SHARED_POINTER_OFFSET as usize, m::string_form::SHARED_POINTER_OFFSET as usize),
-            ("shared_units", form::shared_units_offset() as usize, m::string_form::shared_units_offset() as usize),
+    /// Every variant, with each payload value its arms distinguish: every typed kind, every staged code, every flag and form.
+    fn every_variant() -> Vec<Heap> {
+        let mut all = vec![
+            Heap::Capture(0), Heap::Index, Heap::Store, Heap::TypedLength, Heap::Field, Heap::Site, Heap::SiteChain,
+            Heap::ThisSite, Heap::ThisChain, Heap::Length, Heap::CharCodeAt, Heap::ParseInt, Heap::SiteStore, Heap::ThisStore,
+            Heap::IcGet, Heap::IcKnownGet, Heap::IcKnownGetFlat, Heap::IcProof, Heap::CaptureSet(0), Heap::This, Heap::LoadLocal(0), Heap::EnvLocal(0),
+            Heap::EnvStore(0), Heap::EnvDefine(0), Heap::StoreLocal(0), Heap::LoadChecked(0), Heap::StoreChecked(0), Heap::Identity,
+            Heap::Declared, Heap::CaptureIdentity, Heap::Prototype, Heap::Shape, Heap::ShapeFlat, Heap::Stores, Heap::Held, Heap::ThisHeld, Heap::Realm,
+            Heap::Live, Heap::Object, Heap::Key, Heap::TypeofIndex, Heap::TypeofString, Heap::Instanceof, Heap::GlobalRead,
+            Heap::GlobalStore, Heap::LexicalRead, Heap::LexicalWrite, Heap::Word, Heap::CalleeCapture, Heap::Append, Heap::ForIn,
         ];
-        [own, dispatch_offsets()].concat()
-    }
-
-    /// The value and narrow-value words the stencils are compiled with are the runtime's own.
-    fn value_words_match() {
-        use crate::value::{NarrowLayout, ValueLayout};
-        use stencil_layout as mirror;
-        use mirror::words as w;
-        assert_eq!(
-            [ValueLayout::TAG_MASK, ValueLayout::INT_TAG, ValueLayout::INTERNAL_TAG, ValueLayout::HEAP_TAG, ValueLayout::DIRECT_ARRAY_TAG, ValueLayout::DIRECT_OBJECT_TAG, ValueLayout::DIRECT_FUNCTION_TAG, ValueLayout::HEAP_FAMILY_MASK, ValueLayout::DIRECT_STRING_TAG, u64::from(ValueLayout::TAG_SHIFT), ValueLayout::FIRST_TAG_FIELD, ValueLayout::TAG_FIELD_SPAN, ValueLayout::CANONICAL_NAN, crate::Value::NULL.to_bits(), crate::Value::UNDEFINED.to_bits(), crate::Value::DELETED.to_bits(), crate::Value::FALSE.to_bits(), crate::Value::TRUE.to_bits()],
-            [w::TAG_MASK, w::INT_TAG, w::INTERNAL_TAG, w::HEAP_TAG, w::DIRECT_ARRAY_TAG, w::DIRECT_OBJECT_TAG, w::DIRECT_FUNCTION_TAG, w::HEAP_FAMILY_MASK, w::DIRECT_STRING_TAG, u64::from(w::TAG_SHIFT), w::FIRST_TAG_FIELD, w::TAG_FIELD_SPAN, w::CANONICAL_NAN, w::NULL, w::UNDEFINED, w::DELETED, w::FALSE, w::TRUE]
-        );
-        assert_eq!(
-            [crate::value::LOWER_WORD, crate::value::HEAP_FAMILY_BITS, u64::from(crate::value::HEAP_FAMILY_SHIFT), crate::value::NARROW_HEAP_FAMILIES as u64, crate::value::TAG_UNDEFINED, crate::value::TAG_NULL, crate::value::TAG_BOOL, crate::value::TAG_DELETED],
-            [w::LOWER_WORD, w::HEAP_FAMILY_BITS, u64::from(w::HEAP_FAMILY_SHIFT), w::NARROW_HEAP_FAMILIES as u64, w::UNDEFINED, w::NULL, w::FALSE, w::DELETED]
-        );
-        assert_eq!(
-            [u64::from(NarrowLayout::INTEGER_FLAG), u64::from(NarrowLayout::INTEGER_BITS), u64::from(NarrowLayout::CODE_SHIFT), u64::from(NarrowLayout::CODE_MASK), u64::from(NarrowLayout::INDEX_SHIFT), u64::from(NarrowLayout::INDEX_BITS), NarrowLayout::DIRECT_OBJECT_UPPER, u64::from(NarrowLayout::DIRECT_OBJECT_CODE)],
-            [u64::from(w::NARROW_INT_FLAG), u64::from(w::NARROW_INTEGER_BITS), u64::from(w::NARROW_CODE_SHIFT), u64::from(w::NARROW_CODE_MASK), u64::from(w::NARROW_INDEX_SHIFT), u64::from(w::NARROW_INDEX_BITS), w::DIRECT_OBJECT_UPPER, u64::from(w::DIRECT_OBJECT_NARROW_CODE)]
-        );
-    }
-
-    /// The typed-array kinds the stencils name are the runtime's, in its order, with its widths.
-    fn typed_kinds_match() {
-        use stencil_layout::TypedArrayKind as Mirror;
-        let mirrored = Mirror::ALL;
-        assert_eq!(usize::from(stencil_layout::LOOP_ENTRY_ARRAY_COUNT_AT as u8), std::mem::size_of::<u64>(), "the count follows the elements' address");
-        let native_kinds: Vec<u8> = (0..quench_bjit::numeric::library::TYPED_KINDS).filter(|kind| !quench_bjit::numeric::library::NON_NATIVE_KINDS.contains(kind)).collect();
-        let runtime_native: Vec<u8> = crate::heap::TYPED_ARRAYS.iter().filter(|row| crate::staged::typed_elements::NativeKind::new(row.kind).is_some()).map(|row| row.kind as u8).collect();
-        assert_eq!(native_kinds, runtime_native);
-        assert_eq!(crate::heap::TYPED_ARRAYS.len(), mirrored.len());
-        for (row, mirror) in crate::heap::TYPED_ARRAYS.iter().zip(mirrored) {
-            assert_eq!((row.kind as usize, row.width), (mirror as usize, mirror.width()), "{}", row.name);
+        all.extend((0..library::TYPED_KINDS).flat_map(|kind| [Heap::TypedIndex(kind), Heap::TypedStore(kind)]));
+        all.extend((row_names::STAGED_FIRST..=row_names::STAGED_LAST).map(Heap::Staged));
+        for flag in [false, true] {
+            all.push(Heap::IcSet { int: flag });
+            all.push(Heap::TypeofIs { index: 0, negated: flag });
+            for admitted in [false, true] {
+                all.push(Heap::IcKnownSet { int: flag, admitted });
+                all.push(Heap::IcKnownSetFlat { int: flag, admitted });
+            }
         }
-    }
-
-    /// The conversions the stencils make of a binary64's bits are the runtime's own of its value.
-    #[test]
-    fn stencil_units_match() {
-        let samples = [
-            0.0, -0.0, 0.5, -0.5, 1.0, 1.5, -1.5, 2.5, 254.5, 255.0, 255.5, 256.0, 0.499_999_999_999_999_94, 0.500_000_000_000_000_1,
-            2_147_483_648.0, -2_147_483_649.0, 4_294_967_295.0, 4_294_967_296.5, 1e10, -1e10, 9_007_199_254_740_993.0, 1e19, 1e300,
-            f64::MAX, f64::MIN, f64::MIN_POSITIVE, f64::INFINITY, f64::NEG_INFINITY, f64::NAN,
-        ];
-        for value in samples {
-            assert_eq!(stencil_units::to_int32(value), crate::units::to_int32(value), "ToInt32 of {value}");
-            let clamped = if value.is_nan() { 0 } else { value.clamp(f64::from(u8::MIN), f64::from(u8::MAX)).round_ties_even() as u64 };
-            assert_eq!(stencil_units::clamp_u8(value.to_bits()), clamped, "clamp of {value}");
+        for form in FORMS {
+            all.push(Heap::Name { form });
+            for this in [false, true] {
+                all.push(Heap::Add { form, this });
+            }
         }
+        all
     }
 
     #[test]
-    fn stencil_layout_matches() {
-        use stencil_layout as mirror;
-        eprintln!("OFFSETS {:?}", payload_offsets());
-        assert_eq!(format!("{:?}", crate::heap::NATIVE_OBJECT_LAYOUT), format!("{:?}", mirror::NATIVE_OBJECT_LAYOUT));
-        assert_eq!(format!("{:?}", crate::heap::NATIVE_FUNCTION_LAYOUT), format!("{:?}", mirror::NATIVE_FUNCTION_LAYOUT));
-        assert_eq!(format!("{:?}", crate::heap::NATIVE_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_ARRAY_LAYOUT));
-        assert_eq!(format!("{:?}", crate::heap::NATIVE_TYPED_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_TYPED_ARRAY_LAYOUT));
-        assert_eq!(format!("{:?}", crate::heap::NATIVE_ENVIRONMENT_LAYOUT), format!("{:?}", mirror::NATIVE_ENVIRONMENT_LAYOUT));
-        let (cache, copy) = (crate::vm::NATIVE_FIELD_CACHE_LAYOUT, mirror::NATIVE_FIELD_CACHE_LAYOUT);
-        assert_eq!([cache.entry_size, cache.receiver_offset, cache.holder_offset, cache.slot_offset], [copy.entry_size, copy.receiver_offset, copy.holder_offset, copy.slot_offset]);
-        assert_eq!(
-            [cache.receiver_complement, cache.holder_complement, cache.slot_complement, cache.own_holder],
-            [copy.receiver_complement, copy.holder_complement, copy.slot_complement, copy.own_holder]
-        );
-        assert_eq!(
-            [crate::heap::NARROW_LEN as u64, crate::heap::DOUBLE_LEN as u64, crate::heap::ENCODED_LEN as u64, crate::heap::OTHERS_UNKNOWN as u64, crate::heap::LENGTH_FROM_VALUES as i64 as u64, crate::heap::OTHERS_FROM_VALUES as i64 as u64, crate::value_vec::INLINE_PROPERTY_COUNT as u64, u64::from(crate::heap::SMALL_STRING_ID_MASK), u64::from(crate::heap::SMALL_STRING_ID_BASE)],
-            [mirror::NARROW_LEN as u64, mirror::DOUBLE_LEN as u64, mirror::ENCODED_LEN as u64, mirror::OTHERS_UNKNOWN as u64, mirror::LENGTH_FROM_VALUES as i64 as u64, mirror::OTHERS_FROM_VALUES as i64 as u64, mirror::INLINE_PROPERTIES as u64, u64::from(mirror::SMALL_STRING_ID_MASK), u64::from(mirror::SMALL_STRING_ID_BASE)]
-        );
-        value_words_match();
-        typed_kinds_match();
-        assert_eq!(super::super::NATIVE_JS_STOPPED, mirror::call_record::NATIVE_JS_STOPPED);
-        for (name, runtime, copy) in payload_offsets() {
-            assert_eq!(runtime, copy, "{name}: the runtime's offset is the stencil layout's");
+    fn heap_codes_are_catalog_rows() {
+        let catalog = library::heap_row_codes();
+        for heap in every_variant() {
+            let code = heap.code();
+            assert!(catalog.contains(&code), "{heap:?} has code {code}, which the catalog does not list");
         }
-        assert_eq!(
-            [form::RECORD_SIZE as i32, form::SHORT_LENGTH_OFFSET, form::SHARED_LENGTH_OFFSET],
-            [mirror::string_form::RECORD_SIZE as i32, mirror::string_form::SHORT_LENGTH_OFFSET, mirror::string_form::SHARED_LENGTH_OFFSET]
-        );
     }
 }
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod tests;

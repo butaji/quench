@@ -1,6 +1,7 @@
 use super::*;
-use super::site_table::SiteTable;
+use super::site_table::CacheSiteTable;
 use crate::Engine;
+use crate::bytecode::ReceiverPath;
 use crate::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
 
@@ -78,7 +79,7 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
         cache,
         argument_start: 0,
         argument_count: 0,
-        receiver_path: None,
+        receiver_path: ReceiverPath::NONE,
     });
     let function = program
         .functions
@@ -102,9 +103,9 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
     let methods = program
         .method_sites
         .iter()
-        .map(|site| (site.atom, site.cache, Vec::new(), site.receiver_path))
+        .map(|site| (site.atom, site.cache, Vec::new(), site.receiver_path.get()))
         .collect::<Vec<_>>();
-    crate::liveness::mark_register_roots(
+    crate::compile::liveness::mark_register_roots(
         program.functions.iter_mut().map(|function| &mut **function),
         methods.as_slice(),
         &program.field_sites,
@@ -127,6 +128,7 @@ fn third_receiver_promotes_field_site_to_megamorphic() {
                 receiver,
                 holder: NO_FIELD_HOLDER,
                 slot: 0,
+                holder_id: NO_FIELD_HOLDER_LAYOUT,
             },
         );
     }
@@ -180,6 +182,7 @@ fn field_primitive_census_counts_successes_and_preserves_shape_rejections() {
         receiver: vm.heap.object(child).unwrap().exact_shape(),
         holder: hint.receiver,
         slot: hint.slot,
+        holder_id: NO_FIELD_HOLDER_LAYOUT,
     };
     assert_eq!(vm.record_field_entry_hit(holder_hint, child), Some(Value::integer(0)));
     assert_eq!(vm.record_field_entry_hit(holder_hint, other), None);
@@ -282,7 +285,7 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     let shape = vm.heap.object(receiver).unwrap().shape();
     let slot = vm.shape_slot(shape, atom).unwrap();
     vm.record_field_cache(vm.field_cache_index(site), FieldCache {
-        receiver: shape, holder: NO_FIELD_HOLDER, slot: slot as u16,
+        receiver: shape, holder: NO_FIELD_HOLDER, slot: slot as u16, holder_id: NO_FIELD_HOLDER_LAYOUT,
     });
     vm.heap.track_slot_representations(&vm.shape_layouts());
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::INT32);
@@ -309,7 +312,6 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
         "a Number pointer store must not consume the owner's reference barrier");
     // A real reference store still logs its owner, and the collector follows it.
     assert!(unsafe { vm.heap.record_property_set_flat::<true>(record, slot, child, crate::heap::PropertyStoreLayout::MayWiden) });
-    assert!(!vm.heap.collection_is_full(false));
     vm.collect_slow(&program, false);
     assert!(vm.heap.is_live(child));
     assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(child));
@@ -346,6 +348,30 @@ fn cached_field_reads_follow_in_place_writes() {
             );
         }
     }
+}
+
+#[test]
+fn object_spread_of_a_plain_source_adopts_its_shape_in_key_order() {
+    // `{...src}` into an empty literal takes the source's shape and slot values in one copy:
+    // keys keep their order, values are the source's, and the two objects share a shape id.
+    // A rest pattern keeps the per-key path, and its result is a distinct object.
+    let source = "var src = { b: 1, a: 'x', c: true }; var out = { ...src };\n\
+         var rest = (({ a, ...others }) => others)(src);\n\
+         var result = [Object.keys(out).join(), [out.b, out.a, out.c].join(), Object.keys(src).join(), Object.keys(rest).join()].join('|');";
+    let program = Engine::specialize(source, "spread-shape.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let globals = vm.realm.globals;
+    let src_name = vm.intern_atom("src");
+    let out_name = vm.intern_atom("out");
+    let result_name = vm.intern_atom("result");
+    let src = vm.own_property(globals, src_name).unwrap();
+    let out = vm.own_property(globals, out_name).unwrap();
+    let result = vm.own_property(globals, result_name).unwrap();
+    let src_shape = vm.object_data(src).unwrap().shape();
+    let out_shape = vm.object_data(out).unwrap().shape();
+    assert_eq!(out_shape, src_shape, "the copy adopts the source's shape");
+    assert_eq!(vm.to_string(&program, result).unwrap(), "b,a,c|1,x,true|b,a,c|b,c");
 }
 
 #[test]
@@ -390,7 +416,7 @@ fn spread_sources_stay_rooted_through_the_loop_that_reuses_them() {
         .unwrap();
     for pc in head..=back_edge {
         let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
-        assert_ne!(root_map & crate::liveness::register_bit(register), 0, "pc {pc} drops register {register}");
+        assert_ne!(root_map & crate::compile::liveness::register_bit(register), 0, "pc {pc} drops register {register}");
     }
 }
 
@@ -419,7 +445,7 @@ fn call_spread_sources_stay_rooted_through_the_loop() {
         .expect("the call window's copy of the source");
     let source_register = copy.register_b();
     let call_roots = program.register_root_mask(function_id as u32, call_pc).unwrap();
-    assert!(crate::liveness::register_in(call_roots, window as usize), "the call drops its window register {window}");
+    assert!(crate::compile::liveness::register_in(call_roots, window as usize), "the call drops its window register {window}");
     let (back_edge, head) = function
         .code
         .iter()
@@ -431,7 +457,7 @@ fn call_spread_sources_stay_rooted_through_the_loop() {
         .unwrap();
     for pc in head..=back_edge {
         let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
-        assert!(crate::liveness::register_in(root_map, source_register as usize), "pc {pc} drops register {source_register}");
+        assert!(crate::compile::liveness::register_in(root_map, source_register as usize), "pc {pc} drops register {source_register}");
     }
 }
 
@@ -476,7 +502,7 @@ fn static_three_field_object_literals_share_the_shape_site() {
         let root_map = program.register_root_mask(function_id as u32, pc).unwrap();
         for register in window.base..window.base + window.count {
             assert_ne!(
-                root_map & crate::liveness::register_bit(register),
+                root_map & crate::compile::liveness::register_bit(register),
                 0,
                 "{mode}: register {register}"
             );
@@ -1345,7 +1371,7 @@ fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
         let Some(crate::heap::FunctionRecord { env, .. }) = vm.heap.function(closure) else {
             panic!("{name} is a closure");
         };
-        let Some(Cell::Environment { scope, .. }) = vm.heap.get(*env) else {
+        let Some(crate::heap::EnvironmentRecord { scope, .. }) = vm.heap.environment(*env) else {
             panic!("{name} captured its creator's environment");
         };
         match scope.dynamic_bindings() {
@@ -1363,16 +1389,16 @@ fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
 fn field_cache_invalidation_resets_every_written_site() {
     const SITES: usize = 64;
     let mut vm = Vm::new(TestHost::default());
-    vm.field_caches = SiteTable::with_empty(SITES);
+    vm.field_caches = CacheSiteTable::with_empty(SITES);
     vm.refresh_active_field_entries();
-    vm.megamorphic_field_indices = SiteTable::with_empty(SITES);
-    vm.field_add_indices = SiteTable::with_empty(SITES);
-    vm.inherited_field_indices = SiteTable::with_empty(SITES);
-    vm.accessor_field_indices = SiteTable::with_empty(SITES);
+    vm.megamorphic_field_indices = CacheSiteTable::with_empty(SITES);
+    vm.field_add_indices = CacheSiteTable::with_empty(SITES);
+    vm.inherited_field_indices = CacheSiteTable::with_empty(SITES);
+    vm.accessor_field_indices = CacheSiteTable::with_empty(SITES);
     vm.field_cache_writes = Some(Vec::new());
     let record = |vm: &mut Vm<TestHost>, site: usize| {
         for receiver in 1..=3 {
-            vm.record_field_cache(site, FieldCache { receiver, holder: NO_FIELD_HOLDER, slot: 0 });
+            vm.record_field_cache(site, FieldCache { receiver, holder: NO_FIELD_HOLDER, slot: 0, holder_id: NO_FIELD_HOLDER_LAYOUT });
         }
     };
     let all_empty = |vm: &Vm<TestHost>| {
@@ -1395,8 +1421,41 @@ fn field_cache_invalidation_resets_every_written_site() {
 #[test]
 fn an_empty_field_cache_stores_as_zero_words() {
     use super::site_table::SiteEntry;
-    assert_eq!(EMPTY_CACHE.store(), [0; 3]);
+    assert_eq!(
+        EMPTY_CACHE.store(),
+        crate::staged::field_cache_layout::FieldCacheWords { receiver: 0, holder: 0, slot: 0, holder_id: 0 }
+    );
     assert_eq!(NO_MEGAMORPHIC_FIELD.store(), 0);
     assert_eq!(NO_FIELD_ADD_SET.store(), 0);
     assert_eq!(NO_INHERITED_FIELD.store(), 0);
+}
+
+#[test]
+fn assign_shape_adoption_yields_to_prototype_setters_read_only_keys_and_proto() {
+    // `Object.assign` copies with [[Set]]: the target adopts a source's shape only when no
+    // prototype of the target has a source key as an accessor or a read-only data property.
+    let cases = [
+        ("", "{ a: 1, b: 2 }", true),
+        ("Object.defineProperty(Object.prototype, 'a', { set(v) {}, configurable: true });", "{ a: 1, b: 2 }", false),
+        ("Object.defineProperty(Object.prototype, 'b', { value: 0, writable: false, configurable: true });", "{ a: 1, b: 2 }", false),
+        ("", "Object.defineProperty({}, '__proto__', { value: 1, writable: true, enumerable: true, configurable: true })", false),
+    ];
+    for (setup, source_expr, expected) in cases {
+        let program_source = format!("{setup}\nvar src = {source_expr}; var target = {{}};");
+        let program = Engine::specialize(&program_source, "assign-shape-set.js").unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        let globals = vm.realm.globals;
+        let src_name = vm.intern_atom("src");
+        let target_name = vm.intern_atom("target");
+        let src = vm.own_property(globals, src_name).unwrap();
+        let target = vm.own_property(globals, target_name).unwrap();
+        assert_eq!(vm.adopt_source_shape_for_set(target, src), expected, "{source_expr} after {setup:?}");
+        if expected {
+            let src_shape = vm.object_data(src).unwrap().shape();
+            assert_eq!(vm.object_data(target).unwrap().shape(), src_shape);
+        } else {
+            assert!(vm.own_named_keys(target).is_empty(), "a refused adoption has no effect");
+        }
+    }
 }

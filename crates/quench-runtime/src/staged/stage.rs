@@ -2,7 +2,6 @@
 //! stencil build (`quench-bjit/build.rs`) compiles the same trait the interpreter and the
 //! specializers use.
 
-use crate::typed_ir::Type;
 use super::region::{Access, Region};
 
 /// Bytes in one word of memory a stage addresses (a register of a window is one).
@@ -68,7 +67,7 @@ pub(crate) fn fill_by_rows<S: Stage + ?Sized>(stage: &mut S, top: S::Word, undef
 /// The two spaces share one block layout, so the gate's reading is one implementation that differs
 /// only in the mark block list it starts from.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) enum RecordSpace {
+pub(crate) enum StagedRecordSpace {
     Object,
     Function,
 }
@@ -106,17 +105,13 @@ pub(crate) trait Stage {
     fn load_table(&mut self, at: Access, address: Self::Word) -> Self::Word;
     fn add(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     fn or(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
-    /// Bitwise and of two words: the b-jit stencil rows' `Stage` impl uses it, not this crate's.
-    #[allow(dead_code)]
+    /// Bitwise and of two words.
     fn and(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     fn add_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
     fn mul_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
     fn and_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
     fn or_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
     fn shr_imm(&mut self, a: Self::Word, shift: impl Into<Self::Imm>) -> Self::Word;
-    /// `a` shifted left by `b` (a word, not a site constant: a mask's bit index). As `and`.
-    #[allow(dead_code)]
-    fn shl(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     /// The low 32 bits shifted right arithmetically, zero-extended to the word.
     fn sar32_imm(&mut self, a: Self::Word, shift: u32) -> Self::Word;
     fn eq_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Cond;
@@ -142,6 +137,9 @@ pub(crate) trait Stage {
     fn load_f32(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
     /// A binary64 element: an `f64` word (the IEEE bits in an interpreter's word).
     fn load_f64(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
+    /// The `Value` bits of an `f64` word, as `Value::number` makes them: an integral double in
+    /// int32 range is an int32, NaN is the canonical NaN, any other double its own bits.
+    fn box_number(&mut self, number: Self::Word) -> Self::Word;
     /// Stores the low 8 (`store_u8`) or 16 (`store_u16`) bits of `value`.
     fn store_u8(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
     fn store_u16(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
@@ -167,7 +165,7 @@ pub(crate) trait Stage {
     /// without a barrier log: no slot representation observes the write, and the record is not
     /// one the barrier logs for this value. The one place the store barrier's layout is read;
     /// a stage without that layout answers no, and the store leaves at its miss.
-    fn store_gate(&mut self, space: RecordSpace, record_id: Self::Word, value: Self::Word) -> Self::Cond;
+    fn store_gate(&mut self, space: StagedRecordSpace, record_id: Self::Word, value: Self::Word) -> Self::Cond;
     /// Whether the dependency named by `watch` (a per-site operand) still holds: the interpreter
     /// tests it, a specializer proves it once at publication and its code pays no check (the
     /// assumption registry retires the code when it breaks); a stage without a registry answers
@@ -189,7 +187,7 @@ pub(crate) trait Stage {
         let either = self.any(neither_a, neither_b);
         self.not(either)
     }
-    /// ToBoolean of the Number whose IEEE double bits are `bits` (`number_is_truthy`).
+    /// ToBoolean of the Number whose IEEE double bits are `bits` (`number_truthiness` at f64).
     fn number_truthy(&mut self, bits: Self::Word) -> Self::Cond;
     /// Whether the shape word `shape` is one of `shapes`, sorted.
     fn shape_in(&mut self, shape: Self::Word, shapes: &[u32]) -> Self::Cond;
@@ -241,33 +239,6 @@ pub(crate) trait Stage {
     fn walk_prototypes(&mut self, records: Self::Word, object: Self::Word, target: Self::Word, max_depth: u32)
         -> (Self::Cond, Self::Cond) where Self: Sized {
         super::object::walk_prototypes(self, records, object, target, max_depth)
-    }
-
-    // Stage v2: additions with defaults, so a stage written before them is unchanged.
-
-    /// The fact this stage keeps of `word`; the interpreter keeps none.
-    #[inline(always)]
-    #[allow(dead_code)]
-    fn ty(&self, _word: Self::Word) -> Type {
-        Type::ANY
-    }
-
-    /// `word` with `ty` proved of it, after a guard that tested it: a later operation on the
-    /// word sees the fact. A stage without facts returns the word unchanged.
-    #[inline(always)]
-    #[allow(dead_code)]
-    fn refine(&mut self, word: Self::Word, _ty: Type) -> Self::Word {
-        word
-    }
-
-    /// Runs `cold` on the path where `cond` holds and nothing is produced (a counter bump, a
-    /// poll): out of line for a specializer, run only when the interpreter's `cond` holds.
-    #[inline(always)]
-    #[allow(dead_code)]
-    fn cold_when(&mut self, cond: Self::Cond, cold: impl FnOnce(&mut Self)) {
-        if self.known(cond) == Some(true) {
-            cold(self);
-        }
     }
 }
 

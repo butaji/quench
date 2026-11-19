@@ -15,11 +15,13 @@ impl<H: Host> Vm<H> {
             self.materialize_deferred_lane();
             return None;
         }
-        let Some(FunctionRecord { kind: FunctionKind::Native(native), realm, .. }) = self.heap.function(callee) else {
+        let Some(record) = self.heap.function(callee) else {
             return None;
         };
-        let native = *native;
-        if callee != new_target || *realm != self.realm.globals || !constructs_purely(native)
+        let FunctionKind::Native(native) = record.kind else {
+            return None;
+        };
+        if callee != new_target || self.record_realm(record) != self.realm.globals || !constructs_purely(native)
             || args.iter().any(|argument| self.is_object_like(*argument))
         {
             return None;

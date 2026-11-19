@@ -10,7 +10,7 @@
 
 use super::decode::DecodeContext;
 use super::{Allocation, Operation};
-use crate::bytecode::{GenericStep, JsDenotation, Op, Register, WideInstruction};
+use crate::bytecode::{GenericStep, JsDenotation, Register, WideInstruction};
 
 /// A plan operation's word and proof are its registers and a proof slot to come (K-PROOF):
 /// the plan names what an instruction reads, never a copy of a fact.
@@ -40,17 +40,16 @@ pub(crate) struct FunctionPlan {
     ops: Box<[PlanOp]>,
 }
 
-/// Whether `op` suspends its activation.
-fn suspends(op: Op) -> bool {
-    op.is_await() || op.is_yield() || matches!(op, Op::YieldStar)
-}
-
 /// The plan operation of the instruction at `pc` of `instructions`.
 fn plan_op(instructions: &[WideInstruction], pc: usize, context: DecodeContext<'_>) -> PlanOp {
     let instruction = instructions[pc];
     let op = instruction.op();
     if op.js_denotation() == JsDenotation::Noop {
         return PlanOp::Continue;
+    }
+    // A suspension resumes only in a frame that continues it, whatever row it has.
+    if op.suspends() {
+        return PlanOp::Exit(Exit::Suspend);
     }
     let staged = Operation::decode(instruction, context).or_else(|| {
         let (destination, allocation) = Allocation::decode(instruction, &instructions[pc + 1..])?;
@@ -59,7 +58,6 @@ fn plan_op(instructions: &[WideInstruction], pc: usize, context: DecodeContext<'
     match (staged, op.generic_step()) {
         (Some(operation), _) => PlanOp::Staged(operation),
         (None, Some(step)) => PlanOp::Generic(step),
-        (None, None) if suspends(op) => PlanOp::Exit(Exit::Suspend),
         (None, None) => PlanOp::Exit(Exit::Miss),
     }
 }

@@ -1,6 +1,6 @@
 use super::{
     Effect, FieldBase, FieldLayout, FieldLookup, ImmediateLayout, ImmediateRole, InstructionField,
-    Op, Operand, REGISTER_MASK, RETURN_REGISTER, Register, ResultLayout, SET_THIS_REGISTER,
+    ConstructArguments, Op, Operand, REGISTER_MASK, RETURN_REGISTER, Register, RegisterWindow, ResultLayout, SET_THIS_REGISTER,
 };
 
 const PACKED_PAIR_LOW_BITS: u32 = 8;
@@ -10,24 +10,10 @@ const PACKED_PAIR_SOURCE_MASK: u32 = u16::MAX as u32;
 const PACKED_PAIR_LOW_MASK: u32 = (1 << PACKED_PAIR_LOW_BITS) - 1;
 const PACKED_PAIR_HIGH_MASK: u32 = (1 << PACKED_PAIR_HIGH_BITS) - 1;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RegisterWindow {
-    pub(crate) base: Register,
-    pub(crate) count: u16,
-}
-
-impl RegisterWindow {
-    /// The window's last register, when it has one.
-    pub(crate) fn last(self) -> Option<Register> {
-        self.count.checked_sub(1).map(|offset| self.base + offset)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ConstructArguments {
-    Registers(RegisterWindow),
-    Array(Register),
-}
+/// The width of an operand field in the two-word form of a `WideInstruction` (`words`): the opcode and
+/// the three operands each take one field of the first word.
+const WORD_FIELD_BITS: u32 = u16::BITS;
+const WORD_FIELD_MASK: u64 = u16::MAX as u64;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct WideInstruction {
@@ -95,6 +81,19 @@ impl WideInstruction {
         Self { op, a, b, c, imm }
     }
 
+    /// Every field of the instruction as two words, equal exactly where the instructions are
+    /// (`lane_facts::plan_key`).
+    #[inline] pub(crate) const fn words(self) -> (u64, u32) {
+        ((self.op as u16 as u64) | (self.a as u64) << WORD_FIELD_BITS | (self.b as u64) << 2 * WORD_FIELD_BITS | (self.c as u64) << 3 * WORD_FIELD_BITS, self.imm)
+    }
+
+    /// The inverse of `words`: the instruction the two words name, `None` where the first holds no opcode.
+    #[inline] pub(crate) fn from_words(first: u64, imm: u32) -> Option<Self> {
+        let op = Op::from_index((first & WORD_FIELD_MASK) as usize)?;
+        let field = |index: u32| (first >> (index * WORD_FIELD_BITS)) as u16;
+        Some(Self::new(op, field(1), field(2), field(3), imm))
+    }
+
     #[inline] pub(crate) const fn op(self) -> Op {
         self.op
     }
@@ -117,6 +116,12 @@ impl WideInstruction {
 
     pub(crate) fn set_op(&mut self, op: Op) {
         self.op = op;
+    }
+
+    /// Retargets the A field, which a result-register op writes.
+    #[inline]
+    pub(crate) fn set_a(&mut self, value: u16) {
+        self.a = value;
     }
 
     #[allow(dead_code)] #[inline]
@@ -214,8 +219,16 @@ macro_rules! layout_accessors {
                 })
             }
 
+            #[inline(always)]
             pub(crate) fn result_flags(self) -> Register {
                 self.a() & !REGISTER_MASK
+            }
+
+            /// This record with its result flags cleared: the operation it makes, apart from how
+            /// its result completes the frame (`Operation::decode_completed`).
+            #[allow(dead_code)] #[inline(always)]
+            pub(crate) fn without_result_flags(self) -> Self {
+                Self::new(self.op(), self.a() & REGISTER_MASK, self.b(), self.c(), self.imm())
             }
 
             #[allow(dead_code)] #[inline]
@@ -243,12 +256,13 @@ macro_rules! layout_accessors {
                     && self.op().result_layout().allows_this_write()
             }
 
+            #[inline(always)]
             pub(crate) fn writes_numeric_local(self) -> bool {
                 self.result_flags() & super::NUMERIC_LOCAL_TARGET != 0
                     && self.op().result_layout().allows_numeric_local()
             }
 
-            #[allow(dead_code)] #[inline]
+            #[allow(dead_code)] #[inline(always)]
             pub(crate) fn numeric_local_target(self) -> Option<Register> {
                 self.writes_numeric_local().then(|| self.result_register())
             }

@@ -9,8 +9,11 @@
 //! read that finds the view unavailable boxes it there from the unboxed view
 //! (`frame::register_tagged`), which costs a box and never reads garbage.
 
+use crate::bytecode::JsDenotation;
+use crate::bytecode::Class;
 use super::*;
-use crate::liveness::transfer;
+use crate::compile::liveness::transfer;
+use crate::dataflow::{solve, Dataflow};
 use std::num::NonZeroUsize;
 
 /// The views the next uses of a register read; empty when none does before a redefinition.
@@ -49,11 +52,13 @@ fn read_demand(instruction: WideInstruction, register: usize, after: &dyn Fn() -
     use super::super::operations::{equality_operator, NumberRelation};
     let op = instruction.op();
     match op.class() {
-        Class::JumpBinaryFalse if NumberRelation::from_operator(instruction.binary_operator_field()).is_some()
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. }))
+            && NumberRelation::from_operator(instruction.binary_operator_field()).is_some()
             && equality_operator(instruction.binary_operator_field()).is_none() => Demand::NUMBER,
         // A strict (in)equality reads a Number operand's double (`Lowering::number_strict_equality`).
-        Class::JumpBinaryFalse if equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict) => Demand::NUMBER,
-        _ if op.is_get_index() => element_read_demand(instruction, register),
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. }))
+            && equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict) => Demand::NUMBER,
+        _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) => element_read_demand(instruction, register),
         _ if op.js_denotation() == JsDenotation::NumericBinary && !instruction.returns_from_frame() => binary_read_demand(instruction, after),
         _ => Demand::TAGGED,
     }
@@ -82,7 +87,7 @@ fn element_read_demand(instruction: WideInstruction, register: usize) -> Demand 
 /// the helper of a call, a construction or a value step to read.
 fn homes_registers(instruction: WideInstruction) -> bool {
     instruction.op().steps_with_result()
-        || matches!(instruction.op().class(), Class::Call | Class::Construct)
+        || crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Call) || crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Construct)
 }
 
 /// The one table of reads: the views the instruction at `pc` reads of `register`.
@@ -126,49 +131,147 @@ impl Demands {
         changed
     }
 
-    /// The row on entry to the block `start..end`: its successors' rows, past each instruction
-    /// from the last, a definition retiring the register's demand and a use adding its own.
+    /// The row on entry to the block `start..end`, from `row`, the join of its successors' rows:
+    /// past each instruction from the last, a definition retiring the register's demand and a use
+    /// adding its own.
+    /// The live registers a leave recovers add tagged demand a mask word at a time: an
+    /// instruction touches its operands and the registers its live set newly tags, not every
+    /// register of the unit (`block_entry_dense` for a unit past one set's width).
     fn block_entry(&self, program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
-        start: usize, end: usize, live: &impl Fn(usize, Register) -> bool) -> Vec<Demand> {
-        let mut row = vec![Demand::default(); self.registers];
-        let last = unit.instructions[end - 1];
-        for successor in successors(end - 1, last).into_iter().flatten().filter_map(|pc| self.row(pc)) {
-            for (demand, successor) in row.iter_mut().zip(successor) { *demand = demand.union(*successor); }
+        start: usize, end: usize, masks: Option<&crate::compile::liveness::RegisterMasks>, mut row: Vec<Demand>) -> Vec<Demand> {
+        use crate::compile::liveness::RegisterSet;
+        if self.registers > RegisterSet::BITS as usize {
+            let live = |pc: usize, register: Register| masks.is_none_or(|masks| masks.is_live(pc, register));
+            return self.block_entry_dense(program, unit, start, end, &live, row);
         }
+        let all = below(self.registers);
+        let recovered = all & !below(usize::from(unit.caller_registers).min(self.registers));
+        let mut tagged = RegisterSet::default();
+        for (register, demand) in row.iter().enumerate() { if demand.tagged() { tagged.insert(register); } }
         for pc in (start..end).rev() {
             let instruction = unit.instructions[pc];
             let (uses, defs) = transfer(instruction, program, &program.field_sites, &program.superinstructions);
             let after = instruction.defined_register().and_then(|result| row.get(usize::from(result))).copied().unwrap_or_default();
+            each(defs & all, |register| row[register] = Demand::default());
+            tagged = tagged & !defs;
+            each(uses & all, |register| {
+                row[register] = row[register].union(read_demand(instruction, register, &|| after));
+                if row[register].tagged() { tagged.insert(register); }
+            });
+            // A missing mask keeps every register live.
+            let live = masks.map_or(Some(RegisterSet::MAX), |masks| masks.get(pc)).unwrap_or(RegisterSet::MAX);
+            let eligible = if homes_registers(instruction) { all } else { recovered };
+            let fresh = live & eligible & !tagged;
+            each(fresh, |register| row[register] = row[register].union(Demand::TAGGED));
+            tagged |= fresh;
+        }
+        row
+    }
+
+    /// `block_entry` one register at a time, for a unit wider than a register set.
+    fn block_entry_dense(&self, program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
+        start: usize, end: usize, live: &impl Fn(usize, Register) -> bool, mut row: Vec<Demand>) -> Vec<Demand> {
+        for pc in (start..end).rev() {
+            let instruction = unit.instructions[pc];
+            let (uses, defs) = transfer(instruction, program, &program.field_sites, &program.superinstructions);
+            let after = instruction.defined_register().and_then(|result| row.get(usize::from(result))).copied().unwrap_or_default();
+            // `reads` per register, its liveness probe skipped where the demand is already tagged.
+            let homes = homes_registers(instruction);
             for (register, demand) in row.iter_mut().enumerate() {
                 if defs.contains(register) { *demand = Demand::default(); }
-                *demand = demand.union(reads(unit, pc, instruction, uses.contains(register), register, (live, &|| after)));
+                if uses.contains(register) { *demand = demand.union(read_demand(instruction, register, &|| after)); }
+                if !demand.tagged() && (register >= usize::from(unit.caller_registers) || homes) && live(pc, register as Register) {
+                    *demand = demand.union(Demand::TAGGED);
+                }
             }
         }
         row
     }
 }
 
-/// Each block leader's use demand, solved backward to a fixed point over the unit's CFG.
+/// The registers below `count`.
+fn below(count: usize) -> crate::compile::liveness::RegisterSet {
+    let mut set = crate::compile::liveness::RegisterSet::default();
+    for register in 0..count { set.insert(register); }
+    set
+}
+
+/// Calls `visit` with each register of `set`, a word at a time.
+fn each(set: crate::compile::liveness::RegisterSet, mut visit: impl FnMut(usize)) {
+    for index in 0..(crate::compile::liveness::RegisterSet::BITS / u64::BITS) as usize {
+        let mut word = set.word(index);
+        while word != 0 {
+            visit(index * u64::BITS as usize + word.trailing_zeros() as usize);
+            word &= word - 1;
+        }
+    }
+}
+
+/// The backward solve of the demands over the unit's blocks, as a `Dataflow`: a block's output is
+/// its row, and its input is the join of the rows of the blocks it falls or jumps to, so the
+/// join flows from a block to its predecessors. Every row is recorded as it is computed.
+struct DemandSolve<'a> {
+    program: &'a ResidualProgram,
+    unit: &'a super::super::lane_unit::Unit,
+    masks: Option<&'a crate::compile::liveness::RegisterMasks>,
+    /// Each block's `(start, end)`.
+    blocks: Vec<(usize, usize)>,
+    /// The blocks whose rows flow into each block: its predecessors.
+    predecessors: Vec<Vec<usize>>,
+    demands: Demands,
+}
+
+impl Dataflow for DemandSolve<'_> {
+    type State = Vec<Demand>;
+    fn blocks(&self) -> usize { self.blocks.len() }
+    fn edges(&self, block: usize) -> &[usize] { &self.predecessors[block] }
+    fn entry_state(&self, _: usize) -> Option<Vec<Demand>> { Some(vec![Demand::default(); self.demands.registers]) }
+    fn join(&self, into: &mut Vec<Demand>, incoming: &Vec<Demand>) -> bool {
+        let mut changed = false;
+        for (demand, successor) in into.iter_mut().zip(incoming) {
+            let joined = demand.union(*successor);
+            changed |= joined != *demand;
+            *demand = joined;
+        }
+        changed
+    }
+    fn transfer(&mut self, block: usize, state: &Vec<Demand>) -> Vec<Demand> {
+        let (start, end) = self.blocks[block];
+        let row = self.demands.block_entry(self.program, self.unit, start, end, self.masks, state.clone());
+        self.demands.set(start, &row);
+        row
+    }
+}
+
+/// Each block leader's use demand, solved backward to a fixed point over the unit's CFG. A
+/// block runs again only when a successor's row grew, so each change queues its predecessors
+/// alone instead of sweeping every block once more.
 pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
     leaders: &CompoundBitSet, liveness: &Liveness) -> Demands {
     let Liveness::Unit(masks) = liveness else { return Demands::default() };
-    let live = |pc: usize, register: Register| masks.as_deref().is_none_or(|masks| masks.is_live(pc, register));
-    let mut demands = Demands { offsets: vec![None; unit.instructions.len()], rows: Vec::new(),
+    let masks = masks.as_deref();
+    let length = unit.instructions.len();
+    let mut demands = Demands { offsets: vec![None; length], rows: Vec::new(),
         registers: usize::from(unit.registers) };
-    let mut blocks: Vec<(usize, usize)> = leaders.iter().filter(|pc| *pc < unit.instructions.len())
-        .map(|start| (start, (start + 1..unit.instructions.len()).find(|pc| leaders.contains(*pc))
-            .unwrap_or(unit.instructions.len()))).collect();
+    let starts: Vec<usize> = leaders.iter().filter(|pc| *pc < length).collect();
+    let mut blocks: Vec<(usize, usize)> = starts.iter().zip(starts.iter().skip(1).copied().chain([length]))
+        .map(|(start, end)| (*start, end)).collect();
     blocks.reverse();
-    for (start, _) in &blocks { demands.set(*start, &vec![Demand::default(); demands.registers]); }
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for (start, end) in &blocks {
-            let entry = demands.block_entry(program, unit, *start, *end, &live);
-            changed |= demands.set(*start, &entry);
+    let mut block_of = vec![usize::MAX; length];
+    for (index, (start, _)) in blocks.iter().enumerate() {
+        block_of[*start] = index;
+        demands.set(*start, &vec![Demand::default(); demands.registers]);
+    }
+    let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); blocks.len()];
+    for (index, (_, end)) in blocks.iter().enumerate() {
+        let last = unit.instructions[end - 1];
+        for successor in successors(end - 1, last).into_iter() {
+            if let Some(&target) = block_of.get(successor) && target != usize::MAX { predecessors[target].push(index); }
         }
     }
-    demands
+    let mut solver = DemandSolve { program, unit, masks, blocks, predecessors, demands };
+    solve(&mut solver);
+    solver.demands
 }
 
 impl Lowering<'_, '_> {
@@ -185,7 +288,7 @@ impl Lowering<'_, '_> {
                 (&|pc, register| self.is_live(pc, register), &after)));
             if defs.contains(register) { return demand; }
             if !instruction.op().control_flow_layout().falls_through() || instruction.op().control_flow_layout().jumps() {
-                return successors(at, instruction).into_iter().flatten().filter_map(|target| self.demands.row(target))
+                return successors(at, instruction).into_iter().filter_map(|target| self.demands.row(target))
                     .fold(demand, |demand, row| demand.union(row[register]));
             }
         }

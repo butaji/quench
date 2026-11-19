@@ -53,7 +53,7 @@ fn the_i64_rules_of_the_stage_are_the_declared_rules() {
 
 #[test]
 fn the_i32_rules_of_the_stage_are_the_declared_rules() {
-    for operator in (0..).map_while(I32BinaryOperator::from_tag) {
+    for operator in I32BinaryOperator::ALL.iter().copied() {
         for (left, right) in OPERANDS
             .iter()
             .flat_map(|l| OPERANDS.iter().map(move |r| (*l as i32, *r as i32)))
@@ -82,7 +82,7 @@ fn the_unary_rules_of_the_stage_are_the_declared_rules() {
 
 #[test]
 fn a_narrow_operator_is_its_wide_namesake() {
-    for operator in (0..).map_while(I32BinaryOperator::from_tag) {
+    for operator in I32BinaryOperator::ALL.iter().copied() {
         assert_eq!(format!("{operator:?}"), format!("{:?}", operator.widen()));
         assert_eq!(operator as u32, operator.widen() as u32);
     }
@@ -254,7 +254,7 @@ fn the_stage_traps_where_the_declaration_does() {
 
 #[test]
 fn the_table_names_every_i32_form_of_an_operator() {
-    for operator in (0..).map_while(I32BinaryOperator::from_tag) {
+    for operator in I32BinaryOperator::ALL.iter().copied() {
         let binary = |form| {
             Some(WasmOperation::Binary {
                 operator: operator.widen(),
@@ -305,7 +305,7 @@ fn a_selector_opcode_is_the_operator_it_selects() {
 
 #[test]
 fn a_comparison_is_the_only_operation_that_branches_without_writing() {
-    for operator in (0..).map_while(I32BinaryOperator::from_tag) {
+    for operator in I32BinaryOperator::ALL.iter().copied() {
         let operation = WasmOperation::of(operator.register_op(), 0).expect("a register form");
         assert!(operation.writes() && !operation.jumps());
     }
@@ -320,4 +320,25 @@ fn the_concrete_words_of_a_narrow_width_stay_zero_extended() {
     let word = integer_binary(&mut ConcreteWasm, Binary::Subtract, Width::I32, 0, 1)
         .expect("subtraction does not trap");
     assert_eq!(word, u64::from(u32::MAX));
+}
+
+/// The b-jit's Wasm row codes (`quench-bjit/stencils/wasm_kinds.rs`) name operators by these
+/// selector tags: the i32 operators first, the comparisons in one range.
+#[test]
+fn the_wasm_row_codes_match_the_selectors() {
+    use quench_bjit::wasm as codes;
+    assert_eq!(I32BinaryOperator::ALL.len(), codes::SHARED_BINARY as usize);
+    assert_eq!(Binary::ALL.len(), codes::BINARY_COUNT as usize);
+    assert_eq!(I32UnaryOperator::ALL.len(), codes::SHARED_UNARY as usize);
+    assert_eq!(Unary::ALL.len(), codes::UNARY_COUNT as usize);
+    for tag in 0..codes::SHARED_BINARY {
+        assert_eq!(I32BinaryOperator::ALL[tag as usize].widen() as u32, tag);
+    }
+    for tag in 0..codes::SHARED_UNARY {
+        assert_eq!(I32UnaryOperator::from_tag(tag).unwrap().widen() as u32, tag);
+    }
+    for tag in 0..codes::BINARY_COUNT {
+        let comparison = (codes::FIRST_COMPARISON..=codes::LAST_COMPARISON).contains(&tag);
+        assert_eq!(is_comparison(Binary::from_tag(tag).unwrap()), comparison, "{tag}");
+    }
 }

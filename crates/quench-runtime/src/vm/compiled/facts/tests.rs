@@ -1,4 +1,5 @@
 use super::*;
+use crate::bytecode::Class;
 use crate::typed_ir::IntRange;
 
 #[test]
@@ -12,7 +13,7 @@ fn native_call_retires_conditional_shapes_in_cfg_facts() {
         Type::direct_object(7).join(Type::NULLISH), Type::INT32, Type::ANY] {
         let mut types = vec![ty; usize::from(function.registers)];
         assert!(matches!(transfer(&mut types, call, &program.constants,
-            &super::super::lane_region::writes, true, &[]), Flow::Next));
+            &super::super::lane_region::writes, true), Flow::Next));
         for (register, actual) in types.into_iter().enumerate() {
             let expected = if register == usize::from(call.result_register()) { Type::ANY }
                 else { ty.without_object_shape() };
@@ -32,11 +33,11 @@ fn native_construction_continues_like_a_call() {
     let construct = function.instructions().find(|instruction| instruction.op().is_construct()).unwrap();
     let mut types = vec![Type::direct_object(7); usize::from(function.registers)];
     assert!(matches!(transfer(&mut types, construct, &program.constants,
-        &super::super::lane_region::writes, true, &[]), Flow::Next));
+        &super::super::lane_region::writes, true), Flow::Next));
     assert_eq!(types[usize::from(construct.result_register())], Type::ANY);
     assert!(types.iter().all(|ty| *ty == Type::ANY || *ty == Type::direct_object(7).without_object_shape()));
     assert!(matches!(transfer(&mut types, construct, &program.constants,
-        &super::super::lane_region::writes, false, &[]), Flow::Leaves));
+        &super::super::lane_region::writes, false), Flow::Leaves));
 }
 
 fn infer_inductive(body: &str, names: &[&str]) -> (Vec<Type>, Vec<Register>) {
@@ -59,7 +60,7 @@ fn infer_inductive(body: &str, names: &[&str]) -> (Vec<Type>, Vec<Register>) {
     let mut candidates: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
     for register in &homes { candidates.insert(usize::from(*register)); }
     inductive_int32(&mut initial, candidates, header..=back, &instructions, &leaders, &program.constants,
-        &super::super::lane_region::writes, &|_| None, false, Observed::NONE);
+        &super::super::lane_region::writes, &|_| None, false, &[], Observed::NONE);
     (initial, homes)
 }
 
@@ -131,9 +132,8 @@ fn overflow_proofs_entered(source: &str, input: Type, entering: &[(Register, Int
     let leaders = super::super::lane_region::leaders(&instructions);
     let mut initial = vec![Type::ANY; usize::from(function.registers)];
     initial[0] = input;
-    let locals = Vec::new();
-    let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants, locals: &locals,
-        written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: false };
+    let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants,
+        written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: false, raises: &[] };
     let seeds = Seeds { entering, ..Seeds::observing(Observed::NONE) };
     let mut free = Vec::new();
     analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
@@ -192,9 +192,8 @@ fn a_seeded_typed_array_load_types_its_register_with_the_kinds_range() {
         .map(|(pc, _)| ObservedRead { pc, ty: byte }).collect();
     assert!(!reads.is_empty());
     let initial = vec![Type::ANY; usize::from(function.registers)];
-    let locals = Vec::new();
-    let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants, locals: &locals,
-        written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: false };
+    let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants,
+        written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: false, raises: &[] };
     let seeds = Seeds { observed: Observed(&reads), ..Seeds::observing(Observed::NONE) };
     let mut loaded = Vec::new();
     analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
@@ -204,6 +203,31 @@ fn a_seeded_typed_array_load_types_its_register_with_the_kinds_range() {
     });
     assert!(!loaded.is_empty() && loaded.iter().all(|ty| *ty == byte), "{loaded:?}");
     assert_eq!(byte.machine(), Type::INT32, "an int32 representation, not a Float64 one");
+}
+
+#[test]
+fn a_midpoint_of_a_bounded_sum_is_below_the_bound_and_at_most_the_length_the_bound_is() {
+    use super::lengths::Relations;
+    use super::super::super::operations::NumberRelation;
+    let (lo, hi, sum, mid, array) = (0, 1, 2, 3, 4);
+    let mut at_length = vec![None; 5];
+    at_length[usize::from(hi)] = Some(array);
+    let fresh = || Relations::of_rows(at_length.clone(), vec![None; 5], vec![None; 5], at_length.clone(), vec![None; 5]);
+    let mut relations = fresh();
+    relations.bound(NumberRelation::LessThan, [Operand::register(lo), Operand::register(hi)]);
+    assert_eq!(relations.atmost[usize::from(hi)], Some(array));
+    let non_negative = |_: Operand| Some(crate::typed_ir::IntRange::NON_NEGATIVE);
+    relations.relate_sum_of(sum, lo, hi, &non_negative);
+    assert_eq!(relations.twice[usize::from(sum)], Some(hi), "lo + hi is below twice hi");
+    relations.relate_shift_of(mid, sum);
+    assert_eq!(relations.under[usize::from(mid)], Some(hi), "half of a sum below twice hi is below hi");
+    assert_eq!(relations.atmost[usize::from(mid)], Some(array), "and at most the length hi is at most");
+    relations.kill(hi);
+    assert_eq!(relations.twice[usize::from(sum)], None, "a write of the bound retires the sum");
+    let mut signed = fresh();
+    signed.bound(NumberRelation::LessThan, [Operand::register(lo), Operand::register(hi)]);
+    signed.relate_sum_of(sum, lo, hi, &|_| Some(crate::typed_ir::IntRange::FULL));
+    assert_eq!(signed.twice[usize::from(sum)], None, "a sum of a negative operand is no half of a bound");
 }
 
 #[test]

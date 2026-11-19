@@ -1,21 +1,20 @@
 use super::*;
 
 impl FunctionCompiler<'_, '_> {
-    pub(super) fn coalesce(
+    /// `left ?? right` computed into `result`, which the caller allocated: the left operand lands
+    /// there and is tested in place, and the right operand, when it runs, replaces it.
+    pub(super) fn coalesce_into(
         &mut self,
         value: &oxc_ast::ast::LogicalExpression<'_>,
         debug_name: Option<Atom>,
-    ) -> Register {
-        let left = self.expression_with_debug_name(&value.left, debug_name);
-        let result = self.literal(Constant::Undefined);
-        self.emit(Op::Move, result, left, 0, 0);
-        let use_right_from_null = self.jump_strictly(left, Constant::Null, true);
-        let use_left = self.jump_strictly(left, Constant::Undefined, false);
+        result: Register,
+    ) {
+        self.expression_into_named(&value.left, debug_name, result);
+        let use_right_from_null = self.jump_strictly(result, Constant::Null, true);
+        let use_left = self.jump_strictly(result, Constant::Undefined, false);
         self.patch(use_right_from_null);
-        let right = self.expression_with_debug_name(&value.right, debug_name);
-        self.emit(Op::Move, result, right, 0, 0);
+        self.expression_into_named(&value.right, debug_name, result);
         self.patch_instruction(use_left, self.code.len() as u32);
-        result
     }
 
     pub(super) fn sequence_expression(

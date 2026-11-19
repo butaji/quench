@@ -71,9 +71,7 @@ fn update_read<const PROVED: bool, const CHAIN: bool, const ADD: bool>(b: &mut B
         Value::integer(((index + 1) % BATCH_VALUES) as i32 - 1)
     });
     let mut heap = Heap::new();
-    let array = heap.alloc(Cell::Array {
-        object: ArrayObject::new(Object::new(Value::NULL), values),
-    });
+    let array = heap.alloc_array(ArrayObject::new(Object::new(Value::NULL), values));
     let mut proofs = Box::new(ArrayStorageProofs::new());
     let _scope = LaneProofScope::enter();
     assert!(heap.prove_array_storage(&mut proofs, 0, array));

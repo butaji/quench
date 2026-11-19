@@ -48,11 +48,11 @@ impl Lowering<'_, '_> {
     fn access_shape(&self, instruction: WideInstruction) -> Option<u32> {
         // A get names its site in its field lookup, a store in its cache site operand.
         let site = match instruction.op() {
-            op if op.is_get_field() => match instruction.field_lookup() {
+            _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) => match instruction.field_lookup() {
                 Some(FieldLookup::Atom { cache_site, .. }) => cache_site,
                 _ => return None,
             },
-            op if op.is_field_store() => instruction.cache_site_index(),
+            _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. })) => instruction.cache_site_index(),
             _ => return None,
         };
         let [load] = site_loads(self.fields, site)?.as_slice() else { return None };

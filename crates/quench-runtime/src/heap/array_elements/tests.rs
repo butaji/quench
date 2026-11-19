@@ -59,7 +59,7 @@ fn native_layout_matches_header_and_dense_backing() {
     );
     assert_eq!(
         NATIVE_HEADER_LENGTH_OFFSET,
-        std::mem::offset_of!(Header, len)
+        std::mem::offset_of!(Header, head) + std::mem::offset_of!(ArrayHeaderHead, len)
     );
     assert_eq!(NATIVE_HEADER_VALUES_OFFSET, std::mem::size_of::<Header>());
     assert_eq!(
@@ -262,35 +262,6 @@ fn shared_backings_copy_on_write_and_empty_arrays_allocate_nothing() {
     unique.resize(6, Value::NULL);
     assert_eq!(&grown[3..], &[Value::NULL; 3]);
     drop(empty);
-}
-
-#[test]
-fn quarantine_keeps_freed_backings_readable_until_it_ends() {
-    let mut elements = ArrayElements::from((0..32).map(Value::integer).collect::<Vec<_>>());
-    begin_quarantine();
-    let before = quarantined_bytes();
-    let old_header = elements.header;
-    // Growth copies instead of reallocating, so the old header still reads its values.
-    let unique = elements.make_mut();
-    for value in 32..200 {
-        unique.push(Value::integer(value));
-    }
-    assert_ne!({ elements.header }, old_header);
-    // SAFETY: the quarantine holds the old allocation.
-    let old_len = unsafe { (*old_header.as_ptr()).len };
-    assert_eq!(old_len, 32);
-    // Front removals then an unshift rebuild the backing rather than move a header back.
-    for _ in 0..20 {
-        elements.make_mut().remove(0);
-    }
-    elements.make_mut().splice(0..0, &[Value::integer(-1)]);
-    assert_eq!(elements[0], Value::integer(-1));
-    assert_eq!(elements[1], Value::integer(20));
-    assert_eq!(elements.len(), 181);
-    drop(elements);
-    assert!(quarantined_bytes() > before);
-    end_quarantine();
-    assert_eq!(quarantined_bytes(), 0);
 }
 
 fn with_doubles(test: impl FnOnce()) {

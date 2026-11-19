@@ -69,9 +69,20 @@ impl JsStringBuilder {
         if self.parts.iter().all(|part| part.units.is_ascii()) {
             let bytes = self.parts.iter().map(|part| match part.units.view().slice(part.range.clone()) {
                 Units::Ascii(bytes) => bytes,
-                Units::Wide(_) => unreachable!("every part is ASCII"),
+                Units::Latin1(_) | Units::Wide(_) => unreachable!("every part is ASCII"),
             });
             return Ok(JsString::from_ascii_parts(length, bytes));
+        }
+        // Parts of narrow (ASCII or Latin-1) text join as one byte per unit.
+        if self.parts.iter().all(|part| part.units.is_narrow()) {
+            let mut bytes = Vec::with_capacity(length);
+            for part in &self.parts {
+                match part.units.view().slice(part.range.clone()) {
+                    Units::Ascii(run) | Units::Latin1(run) => bytes.extend_from_slice(run),
+                    Units::Wide(_) => unreachable!("every part is narrow"),
+                }
+            }
+            return Ok(JsString::from_flat(latin1_units(&bytes)));
         }
         let mut storage = Rc::<[u16]>::new_uninit_slice(length);
         let output = Rc::get_mut(&mut storage).expect("a new allocation is unshared");
@@ -80,7 +91,7 @@ impl JsStringBuilder {
             let units = part.units.view().slice(part.range.clone());
             let target = &mut output[written..written + units.len()];
             match units {
-                Units::Ascii(bytes) => {
+                Units::Ascii(bytes) | Units::Latin1(bytes) => {
                     for (unit, byte) in target.iter_mut().zip(bytes) {
                         unit.write(u16::from(*byte));
                     }
@@ -94,9 +105,9 @@ impl JsStringBuilder {
         assert_eq!(written, length, "the parts fill the string's length");
         // SAFETY: the parts wrote every unit.
         let storage = unsafe { storage.assume_init() };
-        // Wide parts can contribute only ASCII units; such text is stored narrow.
-        if storage.iter().all(|unit| is_ascii_unit(*unit)) {
-            return Ok(JsString::from_units(&storage));
+        // Wide parts can contribute only narrow units; such text is stored narrow.
+        if storage.iter().all(|unit| *unit <= LATIN1_MAX_UNIT) {
+            return Ok(JsString::from_flat(flat_units(&storage)));
         }
         Ok(JsString::from_flat(FlatUnits::Wide(storage)))
     }
@@ -140,6 +151,17 @@ impl JsString {
     /// `fill` must write every byte it is given.
     pub(in crate::vm) fn from_ascii_filled(length: usize, fill: impl FnOnce(&mut [MaybeUninit<u8>])) -> Self {
         Self::from_flat(FlatUnits::ascii_with(length, fill))
+    }
+
+    /// `from_ascii_filled` for a `fill` that takes initialized bytes: the storage is zeroed
+    /// before `fill` sees it, so `fill` overwrites bytes it can read, and no uninitialized
+    /// byte is ever viewed as `u8`.
+    pub(crate) fn from_ascii_zeroed_with(length: usize, fill: impl FnOnce(&mut [u8])) -> Self {
+        Self::from_ascii_filled(length, |output| {
+            output.fill(MaybeUninit::new(0));
+            // SAFETY: every byte was just initialized, and `MaybeUninit<u8>` has `u8`'s layout.
+            fill(unsafe { &mut *(output as *mut [MaybeUninit<u8>] as *mut [u8]) });
+        })
     }
 
     /// Whether `length` units are copied whole into a joined string (`concat_all`).

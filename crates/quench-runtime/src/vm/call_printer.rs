@@ -12,11 +12,10 @@ use oxc_parser::{ParseOptions, Parser, Token, Kind, config::TokensParserConfig};
 use oxc_span::SourceType;
 
 use super::{Host, Vm};
-use crate::bytecode::{Class, ResidualProgram, WideInstruction};
+use crate::bytecode::{ResidualProgram, WideInstruction};
 use crate::heap::Cell;
 use crate::value::Value;
 use std::collections::BTreeMap;
-#[cfg(any(feature = "jit", feature = "aot"))]
 mod function_sites;
 
 /// What `CallPrinter` prints for an operand it does not render.
@@ -79,10 +78,9 @@ impl<H: Host> Vm<H> {
         }
         let template = if construct { NOT_A_CONSTRUCTOR } else { NOT_A_FUNCTION };
         let rendered = program
-            .source_position(function as u32, pc)
-            .and_then(|position| {
+            .source_offset(function as u32, pc)
+            .and_then(|offset| {
                 let source = program.source.as_ref()?;
-                let offset = source.byte_offset(position)?;
                 let span = program.functions[function].header().source_span;
                 function_sites::call_site_callee(source, span, (offset, construct))
             })
@@ -93,12 +91,13 @@ impl<H: Host> Vm<H> {
     fn call_instruction_callee(&self, program: &ResidualProgram, frame: usize, instruction: WideInstruction, construct: bool) -> Option<Callee> {
         let register = |index: u16| self.frames.get(frame)?.registers.get(usize::from(index)).copied();
         if call_kind(instruction)? != construct { return None; }
-        Some(match instruction.op().class() {
-            Class::CallMethod => Callee::Method {
+        Some(if crate::staged::calls_method_site(instruction.op()) {
+            Callee::Method {
                 receiver: register(instruction.register_b())?,
                 atom: program.method_sites.get(instruction.method_site_index())?.atom,
-            },
-            _ => Callee::Value(register(instruction.register_b())?),
+            }
+        } else {
+            Callee::Value(register(instruction.register_b())?)
         })
     }
 
@@ -143,12 +142,16 @@ impl<H: Host> Vm<H> {
     }
 }
 
-#[cfg(any(feature = "jit", feature = "aot"))]
 fn call_kind(instruction: WideInstruction) -> Option<bool> {
-    match instruction.op().class() {
-        Class::Construct if !instruction.is_super_construct() => Some(true),
-        Class::Call | Class::CallArray | Class::CallSpread | Class::CallForwardingArguments | Class::CallMethod => Some(false),
-        _ => None,
+    // merge: HEAD's named_callee_is_construction is replaced by the derivation's construction and makes_call tests.
+    if crate::staged::Operation::<u64, ()>::is_construction(instruction)
+        && !matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::SuperCall { .. }))
+    {
+        Some(true)
+    } else if crate::staged::makes_call(instruction.op()) {
+        Some(false)
+    } else {
+        None
     }
 }
 
@@ -156,7 +159,6 @@ fn call_kind(instruction: WideInstruction) -> Option<bool> {
 /// A native-only build freezes them as it compiles; a dynamic one on their first read
 /// (`frozen_call_sites`) or before writing the program, so a load that raises no error
 /// parses its source once.
-#[cfg(any(feature = "jit", feature = "aot"))]
 pub(crate) fn freeze_call_sites(program: &ResidualProgram) {
     if let Some(source) = &program.source {
         freeze_source_call_sites(source);
@@ -165,7 +167,6 @@ pub(crate) fn freeze_call_sites(program: &ResidualProgram) {
 
 /// The call-site descriptions of `source`: frozen ones, or, in a dynamic build, those its
 /// text gives now. Native-only execution never reconstructs syntax on a diagnostic path.
-#[cfg(any(feature = "jit", feature = "aot"))]
 fn frozen_call_sites(source: &crate::bytecode::ProgramSource) -> Option<&[crate::bytecode::CallSiteDescription]> {
     if crate::DYNAMIC_EXECUTION_ENABLED {
         freeze_source_call_sites(source);
@@ -173,7 +174,6 @@ fn frozen_call_sites(source: &crate::bytecode::ProgramSource) -> Option<&[crate:
     source.call_sites.get().map(|sites| &sites[..])
 }
 
-#[cfg(any(feature = "jit", feature = "aot"))]
 pub(crate) fn freeze_source_call_sites(source: &crate::bytecode::ProgramSource) {
     source.call_sites.get_or_init(|| {
         let mut found = CallSites::new();
@@ -189,10 +189,9 @@ pub(crate) fn freeze_source_call_sites(source: &crate::bytecode::ProgramSource) 
 
 /// The admitted source expression at an exact call position. Native-only execution
 /// consumes frozen facts; it never reconstructs syntax on a diagnostic path.
-#[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) fn source_expression(program: &ResidualProgram, line: u32, column: u32) -> Option<String> {
     let source = program.source.as_ref()?;
-    let offset = source.byte_offset(crate::bytecode::SourcePosition { pc: 0, line, column })?;
+    let offset = source.byte_offset(crate::bytecode::SourcePosition { line, column })?;
     let sites = frozen_call_sites(source)?;
     let index = sites.binary_search_by_key(&offset, |site| site.offset).ok()?;
     let span = sites[index].expression?;
@@ -204,7 +203,6 @@ pub(super) fn source_expression(program: &ResidualProgram, line: u32, column: u3
 /// other call at its argument list's `(`.
 type CallSites = BTreeMap<(u32, bool), crate::bytecode::CallSiteDescription>;
 
-#[cfg(any(feature = "jit", feature = "aot"))]
 fn parse_call_sites(source: &str, goal: SourceType, found: CallSites) -> Result<(CallSites, bool), CallSites> {
     // A data script's literal holds no call, and its tree takes several times its text: it
     // is parsed blank, as its compilation parses it (`data_literal`).
@@ -217,7 +215,6 @@ fn parse_call_sites(source: &str, goal: SourceType, found: CallSites) -> Result<
 
 /// `parse_call_sites` of `source` parsed as `text`, which blanks the data literal at `blank`;
 /// a literal that is not a top-level value is parsed as it is.
-#[cfg(any(feature = "jit", feature = "aot"))]
 fn parse_call_sites_in(source: &str, text: &str, blank: Option<u32>, goal: SourceType, found: CallSites) -> Result<(CallSites, bool), CallSites> {
     // The parse arena compiles share: its pages go back when it is handed back, and a
     // diagnostic's parse leaves none of the malloc heap behind.
@@ -237,12 +234,10 @@ fn parse_call_sites_in(source: &str, text: &str, blank: Option<u32>, goal: Sourc
 }
 
 /// Acorn's `name` label includes contextual keywords, `await`, `yield` and `enum`.
-#[cfg(any(feature = "jit", feature = "aot"))]
 fn expression_name(kind: Kind) -> bool {
     kind.is_identifier() || matches!(kind, Kind::Await | Kind::Yield | Kind::Enum)
 }
 
-#[cfg(any(feature = "jit", feature = "aot"))]
 fn member_access(kind: Kind) -> bool {
     matches!(kind, Kind::Dot | Kind::QuestionDot | Kind::LBrack | Kind::RBrack)
 }
@@ -251,7 +246,6 @@ fn member_access(kind: Kind) -> bool {
 /// call position, then stop at the first balanced argument list on that line.
 /// OXC owns tokenization; line prefixes and closing pairs are processed once,
 /// even when thousands of calls share a minified line.
-#[cfg(any(feature = "jit", feature = "aot"))]
 fn freeze_expressions(source: &str, tokens: &[Token], sites: &mut CallSites) {
     let starts: Vec<_> = crate::bytecode::source_line_starts(source).collect();
     let mut sites = sites.values_mut().peekable();
@@ -315,14 +309,12 @@ fn freeze_expressions(source: &str, tokens: &[Token], sites: &mut CallSites) {
     }
 }
 
-#[cfg(any(feature = "jit", feature = "aot"))]
 struct CallFinder<'s> {
     source: &'s str,
     comments: &'s [Comment],
     found: CallSites,
 }
 
-#[cfg(any(feature = "jit", feature = "aot"))]
 impl CallFinder<'_> {
     fn call_position(&self, call: &CallExpression<'_>) -> u32 {
         crate::compile::source_syntax::call_offset(call, self.source, self.comments)
@@ -350,14 +342,12 @@ impl<'a> Visit<'a> for CallFinder<'_> {
 
 /// `CallPrinter::Find` once the call is found: `expression` printed, or the intermediate
 /// value when it prints nothing or is not printed.
-#[cfg(any(feature = "jit", feature = "aot"))]
 fn find(expression: &Expression<'_>, print: bool) -> String {
     let printed = if print { render(expression) } else { String::new() };
     if printed.is_empty() { INTERMEDIATE_VALUE.to_owned() } else { printed }
 }
 
 /// `CallPrinter`'s rendering of `expression`; empty when it prints nothing.
-#[cfg(any(feature = "jit", feature = "aot"))]
 fn render(expression: &Expression<'_>) -> String {
     let expression = expression.get_inner_expression();
     if let Some(member) = expression.as_member_expression() {
@@ -437,7 +427,6 @@ fn render(expression: &Expression<'_>) -> String {
 }
 
 /// A member: `object.name` for a name or string key, `object[key]` for any other key.
-#[cfg(any(feature = "jit", feature = "aot"))]
 fn render_member(member: &MemberExpression<'_>) -> String {
     let dot = |optional: bool| if optional { "?." } else { "." };
     match member {
@@ -463,7 +452,6 @@ fn render_member(member: &MemberExpression<'_>) -> String {
 }
 
 /// An update's target, printed as a member or name.
-#[cfg(any(feature = "jit", feature = "aot"))]
 fn render_simple_target(target: &SimpleAssignmentTarget<'_>) -> String {
     match target {
         SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => identifier.name.to_string(),
@@ -471,7 +459,7 @@ fn render_simple_target(target: &SimpleAssignmentTarget<'_>) -> String {
     }
 }
 
-#[cfg(all(test, feature = "aot"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -573,7 +561,7 @@ mod tests {
         ] {
             let origin = retained.map(|(prefix, _)| crate::wrapper_origin(prefix).unwrap());
             let mut program = crate::Engine::specialize_host_script(&text, "calls.js", &crate::compile::NoAtomPrefix,
-                crate::HostScriptOptions { origin, typescript, keep_records: true }, crate::bytecode::ReleasedRecords::Encoded).unwrap();
+                crate::HostScriptOptions { origin, typescript, keep_records: true }, crate::compile::ReleasedRecords::Encoded, false).unwrap();
             if let Some((prefix, body)) = retained {
                 let source = program.source.as_mut().unwrap();
                 source.retain_body(crate::bytecode::SourceText::Shared(body.into()), prefix.len() as u32);
@@ -584,7 +572,7 @@ mod tests {
             for function in 0..program.function_count() {
                 for (pc, instruction) in program.function(function).instructions().enumerate() {
                     if let Some(construct) = call_kind(instruction)
-                        && let Some(offset) = program.source_position(function as u32, pc as u32).and_then(|position| source.byte_offset(position))
+                        && let Some(offset) = program.source_offset(function as u32, pc as u32)
                     { calls.insert((offset, construct)); }
                 }
             }
@@ -639,20 +627,4 @@ mod tests {
         assert_eq!(sites.len(), 4);
         assert!(sites.iter().all(|site| site.callee == "f"), "{sites:?}");
     }
-}
-
-/// A build with no compiler parses no source: the call sites it would describe are not
-/// described, and the printer's messages stay as they are.
-#[cfg(not(any(feature = "jit", feature = "aot")))]
-pub(crate) fn freeze_call_sites(_program: &ResidualProgram) {}
-
-/// `freeze_call_sites` for a program source.
-#[cfg(not(any(feature = "jit", feature = "aot")))]
-pub(crate) fn freeze_source_call_sites(_source: &crate::bytecode::ProgramSource) {}
-
-/// A build with no compiler does not print a source expression: `caller_source_expression`
-/// answers nothing, and the call error keeps its message.
-#[cfg(not(any(feature = "jit", feature = "aot")))]
-pub(super) fn source_expression(_program: &ResidualProgram, _line: u32, _column: u32) -> Option<String> {
-    None
 }

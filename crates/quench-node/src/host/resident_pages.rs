@@ -23,7 +23,6 @@ pub extern "C" fn quench_entry_compiled() {
 }
 
 /// Preserve the profiling boundary in the native image's exported interface.
-#[cfg(feature = "aot")]
 pub(crate) const COMPILED_ENTRY_SYMBOL: &str = stringify!(quench_entry_compiled);
 
 /// The kernel's per-process status, for `phase_peak`.
@@ -481,9 +480,7 @@ pub fn release_tracked_bytes(bytes: &[u8]) {
 /// A decoded deferred record's pages (`quench_runtime::set_record_read`), including the pages
 /// it shares with its neighbours: records are mostly smaller than a page and decode in
 /// call order, so whole pages would rarely clear; a neighbour still to decode refaults its
-/// page from the file. Deferred releases are the file-mapping host's (Linux x86-64); every
-/// other target has the no-op below.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+/// page from the file.
 pub fn release_read_record(bytes: &[u8]) {
     let page = page_size();
     let start = bytes.as_ptr() as usize / page * page;
@@ -491,7 +488,6 @@ pub fn release_read_record(bytes: &[u8]) {
 }
 
 /// Defers releasing the tracked file pages `start..end` (page-aligned) with the others.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn release_tracked_range(start: usize, end: usize) {
     if start >= end {
         return;
@@ -804,7 +800,6 @@ impl EntryCompile {
 static ENTRY_COMPILE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(EntryCompile::Done as u8);
 
 /// The work clock (`quench_runtime::clock::now_work`) at the last release of the read-only pages.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 static LAST_RELEASE_WORK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Whether the read-only pages left, by any release, less than `RUN_CODE_RELEASE_WORK` of

@@ -9,15 +9,17 @@
 //! - the arguments are a window of consecutive registers, or a list of registers the call
 //!   records keep.
 
+#[cfg(not(stencil_build))]
 use super::DecodeContext;
-use crate::bytecode::{ConstructArguments, ImmediateLayout, Op, Register, WideInstruction, RETURN_REGISTER};
+use crate::bytecode::Register;
+#[cfg(not(stencil_build))]
+use crate::bytecode::{ConstructArguments, ImmediateLayout, Op, WideInstruction, RETURN_REGISTER};
 
 /// A function of the running program, by its index (`CallKnown`).
 pub(crate) type FunctionId = u16;
 
-/// The registers a method call passes: `count` entries of the call records from `start`
-/// (`DecodeContext::call_records`), in the order the arguments are passed, not necessarily
-/// consecutive.
+/// The registers a method call passes: `count` entries of the program's method arguments from
+/// `start`, in the order the arguments are passed, not necessarily consecutive.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct RegisterList {
     pub(crate) start: u32,
@@ -43,6 +45,7 @@ pub(crate) enum Arguments {
 
 impl Arguments {
     /// How many arguments the call passes.
+    #[inline]
     pub(crate) const fn count(self) -> u16 {
         match self {
             Self::Window { count, .. } | Self::List(RegisterList { count, .. }) => count,
@@ -125,8 +128,10 @@ impl CallFacts {
 }
 
 impl Invocation {
+    #[cfg(not(stencil_build))]
     /// The operands of `instruction`, read with the tables of `context`; `None` for any form no
     /// row runs: an eval, which the host decides, a super construction, and an array of arguments.
+    #[inline(always)]
     pub(crate) fn of(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         let (callee, receiver, arguments) = Self::operands(instruction, context)?;
         matches!(instruction.result_flags(), 0 | RETURN_REGISTER).then(|| Self { callee, receiver, arguments,
@@ -134,6 +139,8 @@ impl Invocation {
             forwards: instruction.op() == Op::CallForwardingArguments })
     }
 
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
     fn operands(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Callee, Receiver, Arguments)> {
         match instruction.op() {
             Op::Call | Op::CallForwardingArguments => Self::call(instruction),
@@ -144,8 +151,10 @@ impl Invocation {
         }
     }
 
+    #[cfg(not(stencil_build))]
     /// A call through registers: the callee, receiver and a window of arguments; `None` for an
     /// eval, which the host decides.
+    #[inline(always)]
     fn call(instruction: WideInstruction) -> Option<(Callee, Receiver, Arguments)> {
         let imm = instruction.imm();
         (!instruction.direct_eval() && !instruction.parameter_eval()).then(|| (Callee::Register(instruction.register_b()),
@@ -153,12 +162,14 @@ impl Invocation {
             Arguments::Window { first: ImmediateLayout::call_window_base(imm), count: ImmediateLayout::argument_count(imm) }))
     }
 
+    #[cfg(not(stencil_build))]
     /// A call of a function the record names: no receiver, the window the record names.
     fn known(instruction: WideInstruction) -> (Callee, Receiver, Arguments) {
         let window = instruction.call_window();
         (Callee::Known(instruction.known_function_index()), Receiver::Undefined, Arguments::Window { first: window.base, count: window.count })
     }
 
+    #[cfg(not(stencil_build))]
     /// A construction with its arguments in registers; `None` for `super(...)` and an array of arguments.
     fn construction(instruction: WideInstruction) -> Option<(Callee, Receiver, Arguments)> {
         match instruction.construct_arguments() {
@@ -168,6 +179,7 @@ impl Invocation {
         }
     }
 
+    #[cfg(not(stencil_build))]
     /// A method call: the receiver and the method atom come from the method site, the arguments
     /// from its call record.
     fn method(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Callee, Receiver, Arguments)> {
@@ -175,7 +187,7 @@ impl Invocation {
         let site = context.method_site(index)?;
         let receiver = match instruction.op() {
             Op::CallMethod => Receiver::Register(instruction.register_b()),
-            _ => Receiver::This { path: site.receiver_path },
+            _ => Receiver::This { path: site.receiver_path.get() },
         };
         Some((Callee::Method { atom: site.atom, site: u32::try_from(index).ok()? }, receiver,
             Arguments::List(RegisterList { start: site.argument_start, count: site.argument_count })))
@@ -183,6 +195,7 @@ impl Invocation {
 
     /// Whether the call allocates its callee's receiver (a construction) instead of binding the
     /// `this` of a receiver.
+    #[inline(always)]
     pub(crate) fn constructs(&self) -> bool {
         self.receiver == Receiver::Allocated
     }
@@ -218,7 +231,7 @@ impl Invocation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytecode::{MethodSite, SET_THIS_REGISTER};
+    use crate::bytecode::{MethodSite, ReceiverPath, SET_THIS_REGISTER};
     use crate::staged::test_words::FACTS;
 
     fn call_instruction(op: Op, constructs: bool) -> WideInstruction {
@@ -234,13 +247,13 @@ mod tests {
     }
 
     const SITES: [MethodSite; 2] = [
-        MethodSite { atom: 8, cache: 3, argument_start: 0, argument_count: 2, receiver_path: None },
-        MethodSite { atom: 9, cache: 4, argument_start: 2, argument_count: 1, receiver_path: Some((11, 6)) },
+        MethodSite { atom: 8, cache: 3, argument_start: 0, argument_count: 2, receiver_path: ReceiverPath::NONE },
+        MethodSite { atom: 9, cache: 4, argument_start: 2, argument_count: 1, receiver_path: ReceiverPath::at(11, 6) },
     ];
     const RECORDS: [Register; 3] = [4, 2, 7];
 
     fn methods() -> DecodeContext<'static> {
-        DecodeContext { method_sites: &SITES, call_records: &RECORDS, ..DecodeContext::EMPTY }
+        DecodeContext { method_sites: &SITES, ..DecodeContext::EMPTY }
     }
 
     #[test]

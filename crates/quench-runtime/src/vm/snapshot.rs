@@ -48,12 +48,21 @@ impl<H: Host> Vm<H> {
         let Self {
             typed_views: _,
             native_microtask_running: _,
+            queue_resumed: _,
+            declined_fast: _,
+            shared_entry_pair: _,
+            share_entry_pair: _,
+            main_realm,
             unobserved_jobs_entered: _,
+            job_queue_programs: _,
+            queue_chains: _,
+            chainable_job: _,
             host,
             specialized,
             heap,
             realm,
             object_proto: _, function_proto: _, array_proto: _, string_proto: _, number_proto: _,
+            promise_proto: _, promise_constructor: _,
             array_buffer_proto: _, shared_array_buffer_proto: _, array_iterator_proto: _,
             typed_array_proto: _, uint8_array_proto: _, uint8_clamped_array_proto: _,
             uint16_array_proto: _, uint32_array_proto: _, int8_array_proto: _,
@@ -76,6 +85,7 @@ impl<H: Host> Vm<H> {
             frame_pool: _,
             lowered_tier0: _,
             pending_call_stacks: _,
+            realm_native_proofs: _,
             js_native_contexts: _,
             native_roots: _,
             lane_stack: _,
@@ -88,6 +98,9 @@ impl<H: Host> Vm<H> {
             native_program_resolver: _,
             execution_interrupt: _,
             active_call_roots: _,
+            active_roots: _,
+            prepared_roots: _,
+            step_native_proofs: _,
             with_stack: _,
             startup_intrinsics,
             with_scope_entered, scope_names: _,
@@ -97,13 +110,12 @@ impl<H: Host> Vm<H> {
             program_cache_layouts: _,
             free_cache_layouts: _,
             active_registers: _,
-            lane_raised: _,
+            pending_row: _,
+            row_stop: _,
+            lane_completion: _,
             lane_raise_site: _,
-            lane_returned: _,
             lane_native: _,
-            lane_native_returned: _,
-            lane_suspended: _,
-            active_context: _, program_contexts: _, idle_context: _, active_field_entries: _, field_entries_epoch: _,
+            active_context: _, program_contexts: _, idle_context: _, active_field_entries: _, cache_epochs: _,
             active_program: _,
             profile: _,
             shapes,
@@ -119,19 +131,24 @@ impl<H: Host> Vm<H> {
             symbol_write_proofs: _,
             symbol_load_proofs: _,
             private_site_homes: _,
+            private_classes,
             array_iteration_shape: _,
             collection_iteration_shape: _,
             array_species_proof: _,
+            concat_spreadable_proof: _,
             for_in: _,
             json_plain: _,
             species_slot_proof: _,
             iterator_absence_proof: _,
+            then_absence_proof: _,
             promise_species_proof: _,
             promise_then_memo: _,
             function_name_shapes: _,
             typeof_names: _,
             closure_templates: _,
             enumerable_keys: _,
+            enumerable_key_lists: _,
+            enumerable_key_value_lists: _,
             capture_walks: _,
             name_atom_memo: _,
             atom_text,
@@ -154,11 +171,12 @@ impl<H: Host> Vm<H> {
             accessor_field_indices: _,
             accessor_fields: _,
             field_add_indices: _,
-            field_add_sets: _, json_parse_cache: _,
+            field_add_sets: _, field_add_chains: _, json_parse_cache: _,
             keyed_adds: _,
             megamorphic_field_indices: _,
             field_cache_writes: _,
             megamorphic_fields: _,
+            field_stubs: _,
             holder_hints: _,
             rc_pinned_shapes: _,
             rc_pin_epoch: _,
@@ -173,9 +191,10 @@ impl<H: Host> Vm<H> {
             bound_function_shape: _,
             iterator_result_header: _,
             reused_iterator_result: _,
+            spare_await_state: _,
             descriptor_shapes: _,
             descriptor_layout: _,
-            regexp_object_shapes: _,
+            regexp_object_header: _,
             regexp_last_index_layouts: _,
             regexp_builtin_layouts: _,
             regexp_symbol_layouts: _,
@@ -187,6 +206,10 @@ impl<H: Host> Vm<H> {
             runtime_atoms,
             // A proof of the running heap's methods; a restored heap proves its own.
             constructed_shapes: _,
+            // Names constructors and shapes of the running heap; a restored heap derives its own.
+            preshaped_receivers: _,
+            // Names constructors and layouts of the running heap; a restored heap learns its own.
+            learned_receivers: _,
             // Templates name roots of the running heap; a restored heap starts without any,
             // and its hosts capture them again.
             object_templates: _,
@@ -199,6 +222,7 @@ impl<H: Host> Vm<H> {
             object_shapes: _,
             descriptors,
             function_values,
+            module_functions,
             wasm_exported_functions: _,
             private_homes,
             default_collation: _,
@@ -237,6 +261,7 @@ impl<H: Host> Vm<H> {
         }
         let mut writer = Writer::new();
         writer.bool(*specialized);
+        writer.value(*main_realm);
         // Atoms first: the programs decode against the restored sequence.
         writer.len(atom_text.len());
         atom_text.iter().for_each(|name| writer.str(name));
@@ -269,7 +294,7 @@ impl<H: Host> Vm<H> {
             writer.u32(shape.parent);
             shape.transition.snap(&mut writer)?;
             writer.u32(shape.storage_len);
-            shape.dictionary_trigger.snap(&mut writer)?;
+            shape.dictionary_trigger().snap(&mut writer)?;
         }
         shape_constructors.snap(&mut writer)?;
         shape_accessors.snap(&mut writer)?;
@@ -288,7 +313,20 @@ impl<H: Host> Vm<H> {
             let live = handles.iter().filter_map(|handle| heap.weak_value(*handle)).collect::<Vec<_>>();
             writer.values(&live);
         }
+        let live_module_functions = module_functions
+            .iter()
+            .filter_map(|(program, id, handle)| Some((program, id, heap.weak_value(handle)?)))
+            .collect::<Vec<_>>();
+        writer.len(live_module_functions.len());
+        for (program, id, function) in live_module_functions {
+            program.snap(&mut writer)?;
+            writer.u32(id);
+            writer.value(function);
+        }
         private_homes.snap(&mut writer)?;
+        // The heap keeps the closures and homes of the classes evaluated so far, so a restored
+        // VM must know them: a second evaluation of one shares its private names.
+        private_classes.snap(&mut writer)?;
         let wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag } = wasm_js;
         [*module, *instance, *memory, *table, *global, *tag, *js_tag].snap(&mut writer)?;
         writer.value(*instanceof_has_instance_holder);
@@ -307,7 +345,7 @@ impl<H: Host> Vm<H> {
             ("a running frame", self.frames.is_empty() && self.native_stack_frames.is_empty() && self.active_call_roots.is_empty()),
             ("a with statement", self.with_stack.is_empty()),
             ("a pending job", self.realm.jobs.is_empty() && self.kept_alive.is_empty() && !self.native_microtask_running),
-            ("a lane completion", self.lane_raised.is_none() && self.lane_returned.is_none() && self.lane_native_returned.is_none() && self.lane_suspended.is_none()),
+            ("a lane completion", self.lane_completion.is_none()),
             ("a lane native call", self.lane_native.is_none()),
         ];
         running.into_iter().find(|(_, quiescent)| !quiescent).map(|(what, _)| what)
@@ -360,6 +398,7 @@ impl<H: Host> Vm<H> {
         self.report_memory_if_enabled("snapshot_restore_begin");
         let mut reader = Reader::new((*bytes).as_ref(), Some(H::kept_bytes_read))?;
         self.specialized = reader.bool()?;
+        self.main_realm = reader.value()?;
         if native.is_some_and(|program| program.specialized != self.specialized) {
             return Err(SnapshotError("native script specialization does not match runtime".into()));
         }
@@ -367,10 +406,12 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_atoms");
         self.heap = Heap::read_snapshot(&mut reader, self.heap.memory_policy())?;
+        self.forget_learned_receivers();
         self.intern_typeof_names();
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_heap");
         self.realm.globals = reader.value()?;
+        self.realm_native_proofs.forget();
         self.realm.global_lexical_declarations = Snap::unsnap(&mut reader)?;
         self.realm.global_lexical_bindings = Snap::unsnap(&mut reader)?;
         self.realm.immutable_global_lexical_bindings = Snap::unsnap(&mut reader)?;
@@ -385,6 +426,11 @@ impl<H: Host> Vm<H> {
             ($($field:ident),*) => { $( self.$field = reader.value()?; )* };
         }
         builtin_prototypes!(read_prototypes);
+        // The promise fields follow the restored active realm from its intrinsics.
+        let intrinsics = &self.realm.intrinsics;
+        self.promise_proto =
+            intrinsics.builtin_prototypes.get(&(self.realm.globals, Native::Promise)).copied().unwrap_or(Value::NULL);
+        self.promise_constructor = intrinsics.promise_constructors.get(&self.realm.globals).copied().unwrap_or(Value::NULL);
         self.natives = Snap::unsnap(&mut reader)?;
         Vec::<(Atom, Value)>::unsnap(&mut reader)?.into_iter().for_each(|(atom, string)| self.heap.register_string_atom(string, atom, true));
         self.startup_intrinsics = startup_intrinsics::StartupIntrinsics::read_snapshot(&mut reader)?;
@@ -392,9 +438,7 @@ impl<H: Host> Vm<H> {
         self.refresh_call_refusal();
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_realm");
-        let programs = ProgramStore::read_snapshot(&mut reader, &bytes, &self.atom_sequence)?;
-        programs.keep_ahead_images(&self.programs);
-        self.programs = programs;
+        self.programs = ProgramStore::read_snapshot(&mut reader, &bytes, &self.atom_sequence)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_programs");
         self.read_shapes(&mut reader)?;
@@ -409,7 +453,9 @@ impl<H: Host> Vm<H> {
         self.runtime_atoms = Snap::unsnap(&mut reader)?;
         self.descriptors = Snap::unsnap(&mut reader)?;
         self.read_function_values(&mut reader)?;
+        self.read_module_functions(&mut reader)?;
         self.private_homes = Snap::unsnap(&mut reader)?;
+        self.private_classes = Snap::unsnap(&mut reader)?;
         let [module, instance, memory, table, global, tag, js_tag] = <[Value; 7]>::unsnap(&mut reader)?;
         self.wasm_js = wasm_js::WasmJsIntrinsics { module, instance, memory, table, global, tag, js_tag };
         let holder = reader.value()?;
@@ -436,6 +482,22 @@ impl<H: Host> Vm<H> {
                 })
                 .collect::<SnapshotResult<Vec<_>>>()?;
             self.function_values.record(key, handles);
+        }
+        Ok(())
+    }
+
+    /// Reads the module functions: each module instance's hoisted declarations, held weakly as the
+    /// running VM holds them.
+    fn read_module_functions(&mut self, reader: &mut Reader<'_>) -> SnapshotResult<()> {
+        let functions = read_list(reader, |reader| {
+            Ok((<ProgramId>::unsnap(reader)?, reader.u32()?, reader.value()?))
+        })?;
+        for (program, id, function) in functions {
+            let handle = self
+                .heap
+                .weak_handle(function)
+                .ok_or_else(|| SnapshotError("snapshot module function names a dead value".into()))?;
+            self.module_functions.set(program, id, handle);
         }
         Ok(())
     }
@@ -602,7 +664,6 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_loop_calls_return_their_integer_state_with_a_captured_constant() {
         let body = r#"
@@ -639,7 +700,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_bootstrap_preserves_static_namespace_and_retains_code_for_jobs() {
         let program = Engine::specialize(r#"
@@ -665,7 +725,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_bootstrap_rejects_namespace_or_specialization_mismatch_before_entry() {
         let program = Engine::specialize("function original() { print('effect'); } original();", "native-bootstrap.js").unwrap();
@@ -749,6 +808,8 @@ mod tests {
     }
 
     impl Host for SnapshotHost {
+        // Its tests exercise no lane behaviour (`Host::RUNS_LANE`).
+        const RUNS_LANE: bool = false;
         fn write_line(&mut self, line: &str) {
             self.output.borrow_mut().push(line.into());
         }

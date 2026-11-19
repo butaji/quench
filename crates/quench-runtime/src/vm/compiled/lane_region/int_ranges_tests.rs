@@ -20,14 +20,14 @@ fn lowered_entered(source: &str, name: &str, entering: Option<IntRange>) -> ir::
         None => (Coverage::Full, Vec::new()),
         Some(range) => {
             let (header, backedge) = unit.instructions.iter().enumerate().find_map(|(pc, instruction)|
-                successors(pc, *instruction).into_iter().flatten().find(|target| *target <= pc).map(|target| (target, pc)))
+                successors(pc, *instruction).into_iter().find(|target| *target <= pc).map(|target| (target, pc)))
                 .expect("the function has a loop");
             (Coverage::Loop { header, backedge, poll: false }, (0..unit.registers).map(|register| (register, range)).collect())
         }
     };
     let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
         &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS,
-        &[], &observed, &[], &[], coverage, Completion::Body, ElementViews::Dense, true, EntryInts::Observed).expect("loop region");
+        &[], &observed, &[], &[], coverage, Completion::Body, ElementViews::Dense).expect("loop region");
     cranelift_codegen::verify_function(&region.function, &*isa).unwrap();
     region.function
 }

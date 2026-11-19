@@ -12,6 +12,9 @@ use crate::staged::element_rows::ElementView;
 use crate::staged::elements::DenseView;
 use crate::staged::typed_elements::TypedView;
 use crate::staged::{ElementFrame, Region, Stage};
+use crate::staged::barrier::{unlogged_store, MarkList};
+use crate::vm::compiled::{emit_js_guard, regions};
+use cranelift_codegen::ir::MemFlagsData;
 
 /// The view of a loop's hoisted array an element row reads and writes through, which the loop's
 /// entering edge proved once: a dense array's backing, or a typed array's elements.
@@ -20,6 +23,25 @@ pub(super) enum Held {
     /// A dense array's view, and what its access proves (`DenseView::packed`, `DenseView::within`).
     Dense(super::super::DenseArrayView, (bool, bool)),
     Typed(TypedView<ir::Value>),
+}
+
+/// The barrier gate of a store of the reference `value` into the direct array `base`, read from the
+/// dispatch `payload`: continues where the array's record mark bit is clear
+/// (`staged::barrier::unlogged_store` over the array records' mark list, the test `Heap::store_logs`
+/// makes), and leaves at `miss` for a base that is no direct array or a marked record. An immediate
+/// `value` passes the test inline, as `unlogged_store` decides it.
+pub(super) fn store_gate(stage: &mut Emit<'_, '_>, payload: ir::Value, base: ir::Value, value: ir::Value,
+    miss: ir::Block) -> Option<()> {
+    let direct = crate::staged::value::is_direct_array(stage, base);
+    stage.guard(direct, miss)?;
+    let record = stage.and_imm(base, u64::from(u32::MAX));
+    let list = MarkList {
+        blocks: std::mem::offset_of!(JsStepDispatch, head.array_mark_blocks),
+        count: std::mem::offset_of!(JsStepDispatch, head.array_mark_block_count),
+    };
+    unlogged_store(stage, (regions::dispatch(), MemFlagsData::trusted()), payload, list, (record, value),
+        |stage, condition| emit_js_guard(stage.builder, condition, miss));
+    Some(())
 }
 
 /// The VM's element read of the tagged `base` and `key` (`JsStepDispatch::element_get`): the
@@ -48,9 +70,19 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         Some(())
     }
 
+    /// Continues where a store of the reference `value` into the direct array `base` passes the write
+    /// barrier unlogged: the array's record mark bit is clear (`staged::barrier::unlogged_store` over
+    /// the array records' mark list, the same test `Heap::store_logs` makes). A base that is no direct
+    /// array, or a marked one, leaves at `miss`: the general store logs it, which clears the mark, so
+    /// the next store of the loop passes here without a call.
+    fn array_store_gate(&mut self, stage: &mut Emit<'b, 'c>, base: ir::Value, value: ir::Value, miss: ir::Block)
+        -> Option<()> {
+        store_gate(stage, self.payload, base, value, miss)
+    }
+
     fn array_records(&mut self, stage: &mut Emit<'b, 'c>) -> Option<ir::Value> {
         let at = if self.arrays_fixed { Region::RecordBases.readonly() } else { Region::RecordBases.mutable() };
-        Some(stage.load_u64(at, self.payload, std::mem::offset_of!(JsStepDispatch, array_record_base) as i32))
+        Some(stage.load_u64(at, self.payload, std::mem::offset_of!(JsStepDispatch, head.array_record_base) as i32))
     }
 
     /// A register's tagged view, or an immediate constant's bits.
@@ -82,13 +114,14 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         };
         let (view, (packed, within)) = held.or_else(|| self.state.proofs.arrays.iter()
             .find(|(known, view)| *known == base && (view.writable || !writable)).map(|(_, view)| (*view, (false, false))))?;
-        Some(ElementView::Dense(DenseView { values: view.values, length: stage.uextend32(view.length), packed, within }))
+        Some(ElementView::Dense(DenseView { values: view.values, length: stage.uextend32(view.length), packed, within, double: view.double,
+            uncounted: view.uncounted }))
     }
 
     fn keep_view(&mut self, stage: &mut Emit<'b, 'c>, base: ir::Value, writable: bool, view: DenseView<ir::Value>) {
         let length = stage.raw_unary(Unary::Narrow(Lane::I32), view.length);
         self.state.proofs.arrays.retain(|(known, _)| *known != base);
-        self.state.proofs.arrays.push((base, super::super::DenseArrayView { values: view.values, length, writable, uncounted: false }));
+        self.state.proofs.arrays.push((base, super::super::DenseArrayView { values: view.values, length, writable, uncounted: false, double: view.double }));
     }
 
     /// The dense read, and where it leaves (a hole, an index past the backing) the VM's, which
@@ -104,6 +137,11 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             None => { stage.jump(absent, &[]); }
         }
         stage.builder.switch_to_block(absent);
+        if self.hole_leaves {
+            stage.jump(miss, &[]);
+            stage.builder.switch_to_block(join);
+            return Some(value);
+        }
         let mut dominating = self.state.clone();
         std::mem::swap(&mut *self.state, &mut dominating);
         let hosted = host(stage, self, miss);

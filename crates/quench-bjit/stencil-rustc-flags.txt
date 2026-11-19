@@ -1,0 +1,27 @@
+# The flags every stencil object is built with beyond the target, read by `build.rs` in this order: one
+# flag, or a flag and its value, per line; `#` starts a comment.
+#
+# Optimized, no panic or overflow machinery, no frame pointer or unwind tables (a row has no frame), one
+# codegen unit per shard so LLVM sees every row of it at once, and absolute relocations for the holes.
+--edition 2024
+--crate-type=lib
+--crate-name=quench_stencil_rows
+--emit=obj
+-C opt-level=3
+-C panic=abort
+-C relocation-model=static
+-C codegen-units=1
+-C debuginfo=0
+-C debug-assertions=off
+-C overflow-checks=off
+-C force-frame-pointers=no
+-C force-unwind-tables=no
+# A jump table is a relocation against read-only data, which no hole names: a row's dispatch stays compares.
+-C llvm-args=--min-jump-table-entries=65536
+# A vectorized comparison loads its constants from a pool, which a row has none of (a hole is the only relocation).
+-C no-vectorize-slp
+-C no-vectorize-loops
+# A loop over a row's static data (an IC's ops) may unroll only in the late unroll pass, which no load
+# forwarding follows: its ops would stay loads from the stack and every arm, with its unsupported
+# operations, would stay in the row. One more scalar cleanup folds them to the row's one path.
+-C passes=sroa,gvn,sccp,instcombine,simplifycfg,adce

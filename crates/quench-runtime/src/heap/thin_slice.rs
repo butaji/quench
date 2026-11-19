@@ -1,6 +1,6 @@
 //! A boxed slice behind a one-word pointer: the length lives at the front of the allocation,
 //! so a cell that holds one stays a word smaller than with `Box<[T]>`.
-use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
+use std::alloc::{Layout, alloc, alloc_zeroed, dealloc, handle_alloc_error};
 use std::ptr::NonNull;
 
 /// The header every empty slice shares, after the zero prefix words a prefixed slice reads
@@ -11,7 +11,7 @@ static EMPTY_HEADER: [usize; MAX_PREFIX_WORDS + 1] = [0; MAX_PREFIX_WORDS + 1];
 pub(crate) const MAX_PREFIX_WORDS: usize = 2;
 /// The header's top bit: a mark its owner may set on a non-empty slice (`ThinBoxSlice::mark`)
 /// to tell two layouts of its elements apart; the length is the rest of the header.
-pub(crate) const MARK_BIT: usize = 1 << (usize::BITS - 1);
+pub(crate) use crate::staged::encodings::MARK_BIT;
 /// The mark bit and where a word-sized element run starts, for code that reads a slice header
 /// natively (`heap::NATIVE_ENVIRONMENT_LAYOUT`); `lay_out_in_place` asserts the offset.
 pub(crate) const NATIVE_MARK_BIT: u64 = MARK_BIT as u64;
@@ -162,27 +162,6 @@ impl<T, const P: usize> ThinBoxSlice<T, P> {
     /// slice itself, then its header.
     pub(crate) const IN_PLACE_WORDS: usize = 2;
 
-    /// Lays out at `words` a slice of the `len` elements that follow its `IN_PLACE_WORDS`,
-    /// and returns it: a view that owns nothing, which its caller must never drop, valid
-    /// while the words stay put and hold their layout.
-    ///
-    /// # Safety
-    /// `words` is valid for writes of `IN_PLACE_WORDS` words and the `len` initialized
-    /// elements follow them.
-    #[inline(always)]
-    pub(crate) unsafe fn lay_out_in_place(words: *mut usize, len: usize) -> *const Self {
-        const { assert!(Self::ELEMENTS_OFFSET == size_of::<usize>()) };
-        debug_assert_eq!(len & MARK_BIT, 0);
-        // SAFETY: as the caller guarantees; the header word precedes the elements by
-        // `ELEMENTS_OFFSET`, as an allocated slice's does.
-        unsafe {
-            let header = words.add(1);
-            header.write(len);
-            words.write(header as usize);
-        }
-        words.cast::<Self>()
-    }
-
     /// A slice of `len` elements made in place by `element(index)`, or `None` when one is
     /// missing, which drops those made before it, or when no room is left for them.
     pub(crate) fn try_from_fn(len: usize, mut element: impl FnMut(usize) -> Option<T>) -> Option<Self> {
@@ -325,6 +304,22 @@ impl<T, const P: usize> From<Box<[T]>> for ThinBoxSlice<T, P> {
             drop(Box::from_raw(source as *mut [std::mem::ManuallyDrop<T>]));
             slice
         }
+    }
+}
+
+impl<const P: usize> ThinBoxSlice<u8, P> {
+    /// `len` zero bytes in one zeroed allocation; `None` where it fails.
+    pub(crate) fn try_zeroed(len: usize) -> Option<Self> {
+        if len == 0 {
+            return Some(Self::empty());
+        }
+        let (layout, _) = Self::try_layout(len)?;
+        // SAFETY: the layout is non-zero sized, as it always holds the header.
+        let raw = NonNull::new(unsafe { alloc_zeroed(layout) })?.as_ptr();
+        // SAFETY: a new zeroed allocation of this layout; the header slot follows the prefix.
+        let header = unsafe { Self::header_in(raw) };
+        unsafe { header.write(len) };
+        Some(Self { header: NonNull::new(header)?, marker: std::marker::PhantomData })
     }
 }
 

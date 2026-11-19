@@ -126,10 +126,23 @@ impl CodeHeap {
                 if live == 0 {
                     self.reclaim(block);
                 } else {
+                    self.release_interior(block, granted);
                     self.push_free(block, granted / CODE_GRANULE);
                 }
             }
             Chunk::Free | Chunk::Tail => unreachable!("a body's block starts in its own chunk"),
+        }
+    }
+
+    /// Returns the whole pages a freed block of a live chunk spans to the system, as `reclaim` does
+    /// for a chunk's pages: the block's bytes are no body's, so no code runs on them. The pages it
+    /// shares with its neighbours stay, since those may hold live code.
+    fn release_interior(&self, block: Block, bytes: usize) {
+        let page = views::page_bytes();
+        let start = (block.offset as usize).next_multiple_of(page);
+        let end = (block.offset as usize + bytes) / page * page;
+        if end > start {
+            self.regions[block.region as usize].views.release(start, end - start);
         }
     }
 

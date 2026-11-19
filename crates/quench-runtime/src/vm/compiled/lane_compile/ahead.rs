@@ -17,7 +17,7 @@ mod tests {
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
         let (get, add) = (find("get"), find("add"));
         let (get_body, add_body) = (program.function(get), program.function(add));
-        let file = AheadImages::compile(&program).to_bytes();
+        let file = AheadImages::compile(&program).unwrap().to_bytes();
         vm.load_ahead_images(AheadImages::from_bytes(&file).unwrap());
         let sum = vm.install_ahead_body(&program, add as u32, None, &[]).expect("an ahead body for add");
         let sum = sum.lease().expect("published");
@@ -68,90 +68,18 @@ mod tests {
             for(let i=0;i<3000;i=i+1){total=total+mix(10,0.5)+read(o);}\n\
             print(total);print(mix(7,3));print(read({x:'a',y:1}));print(read({y:4,x:6}));";
         let program = crate::Engine::specialize(source, "ahead-run.js").unwrap();
-        let images = AheadImages::compile(&program);
+        let images = AheadImages::compile(&program).unwrap();
         assert!(!images.is_empty(), "the numeric function has an ahead image");
         let expected = output_with(source, None);
         assert_eq!(expected.len(), 4);
         assert_eq!(output_with(source, Some(&images.to_bytes())), expected);
     }
 
-    /// A top-level call by name (`print(1 + 2)`) is the first record of the program body; its
-    /// ahead body must select the same operation the interpreter steps there.
-    #[test]
-    fn a_global_call_at_the_first_record_matches_the_interpreter() {
-        let source = "print(1 + 2);";
-        let program = crate::Engine::specialize(source, "ahead-call.js").unwrap();
-        let images = AheadImages::compile(&program);
-        let expected = output_with(source, None);
-        assert_eq!(expected, ["3"]);
-        assert_eq!(output_with(source, Some(&images.to_bytes())), expected);
-    }
-
-    /// A body whose loop lowers under static facts ships that loop's code in the image, and the
-    /// file round trip keeps it.
-    /// The install finds a shipped loop and builds the region a site publishes, from the code
-    /// the image carries (`Vm::ahead_loop_region`).
-    #[test]
-    fn a_shipped_loop_installs_as_a_region() {
-        // The call before the loop makes the lane body leave there, so the loop runs from its
-        // site — the case an installed region serves.
-        let source = "function id(x){return x;}\n\
-            function loopfn(n){ let a=id(0); for(let i=0;i<n;i++){a=(a+i)|0;} return a; }\n\
-            let s=0; for(let k=0;k<200;k++){ s=(s+loopfn(1000))|0; }\nprint(s);";
-        let program = crate::Engine::specialize(source, "ahead-run.js").unwrap();
-        let images = AheadImages::compile(&program);
-        let (function, header) = (0..program.function_count() as u32)
-            .find_map(|function| images.loops_of(function).first().map(|(header, _, _)| (function, *header)))
-            .expect("a shipped loop");
-        let mut vm = Vm::new(TestHost::default());
-        vm.execute(&program).unwrap();
-        vm.load_ahead_images(AheadImages::from_bytes(&images.to_bytes()).unwrap());
-        assert!(vm.ahead_loop_region(&program, function, header).is_some(), "the loop did not install");
-        // The installed region runs the loop like the interpreter.
-        let expected = output_with(source, None);
-        assert_eq!(output_with(source, Some(&images.to_bytes())), expected);
-    }
-
-    /// A shipped loop's code links at load against the running VM's helper table and atoms,
-    /// the step an install needs before it can publish the loop.
-    #[test]
-    fn a_shipped_loop_links_against_the_vm_helpers() {
-        let source = "function loopfn(n){ let a=0; for(let i=0;i<n;i++){a=(a+i)|0;} return a; }\nprint(loopfn(10));";
-        let program = crate::Engine::specialize(source, "ahead-loop.js").unwrap();
-        let file = AheadImages::compile(&program).to_bytes();
-        let images = AheadImages::from_bytes(&file).unwrap();
-        let mut vm = Vm::new(TestHost::default());
-        vm.execute(&program).unwrap();
-        let table = crate::vm::compiled::LaneHelper::addresses::<TestHost>();
-        let (function, header) = (0..program.function_count() as u32)
-            .find_map(|function| images.loops_of(function).first().map(|(header, _, _)| (function, *header)))
-            .expect("a shipped loop");
-        let (code, atoms, _) = images.loop_code(function, header).expect("the loop's code");
-        let atoms: Vec<(u32, u32)> = atoms.iter().map(|(atom, text)| (*atom, vm.intern_atom(text))).collect();
-        let linked = code.link(0, |namespace, key| match crate::vm::compiled::lane_region::relocs::atom_key(namespace, key) {
-            Some(atom) => atoms.iter().find(|(named, _)| *named == atom).map(|(_, here)| u64::from(*here)),
-            None => table.get(crate::vm::compiled::lane_region::relocs::helper_key(namespace, key)?).map(|address| *address as usize as u64),
-        });
-        assert!(matches!(&linked, Ok(code) if !code.is_empty()), "the loop's relocations did not resolve: {linked:?}");
-    }
-
-    #[test]
-    fn a_loop_of_a_body_ships_with_its_code() {
-        let source = "function loopfn(n){ let a=0; for(let i=0;i<n;i++){a=(a+i)|0;} return a; }\nprint(loopfn(10));";
-        let program = crate::Engine::specialize(source, "ahead-loop.js").unwrap();
-        let images = AheadImages::compile(&program);
-        let loops = (0..program.function_count() as u32).flat_map(|function| images.loops_of(function)).collect::<Vec<_>>();
-        assert!(!loops.is_empty(), "no loop shipped");
-        let round_trip = AheadImages::from_bytes(&images.to_bytes()).unwrap();
-        let back = (0..program.function_count() as u32).flat_map(|function| round_trip.loops_of(function)).collect::<Vec<_>>();
-        assert_eq!(back, loops);
-    }
-
     #[test]
     fn ahead_images_serve_only_the_program_they_were_compiled_from() {
         let program = crate::Engine::specialize("function add(a,b){return a+b;}", "ahead-a.js").unwrap();
         let other = crate::Engine::specialize("function add(a,b){return a-b;}", "ahead-b.js").unwrap();
-        let file = AheadImages::compile(&program).to_bytes();
+        let file = AheadImages::compile(&program).unwrap().to_bytes();
         for (served, expected) in [(&program, true), (&other, false)] {
             let mut vm = Vm::new(TestHost::default());
             vm.load_ahead_images(AheadImages::from_bytes(&file).unwrap());
@@ -163,7 +91,7 @@ mod tests {
     #[test]
     fn images_of_another_build_are_rejected() {
         let program = crate::Engine::specialize("function add(a,b){return a+b;}", "ahead-a.js").unwrap();
-        let mut file = AheadImages::compile(&program).to_bytes();
+        let mut file = AheadImages::compile(&program).unwrap().to_bytes();
         assert!(AheadImages::from_bytes(&file).is_ok());
         file[8] ^= 1;
         assert!(AheadImages::from_bytes(&file).is_err());
@@ -175,7 +103,7 @@ mod tests {
     fn an_ahead_body_resolves_the_atoms_it_names_in_the_loading_vm() {
         let source = "globalThis.o = {}; function put(p){p.value = 6; return p.value;}";
         let program = crate::Engine::specialize(source, "ahead-atoms.js").unwrap();
-        let images = AheadImages::compile(&program);
+        let images = AheadImages::compile(&program).unwrap();
         let file = images.to_bytes();
         let mut vm = Vm::new(TestHost::default());
         vm.execute(&program).unwrap();

@@ -10,11 +10,11 @@ fn unavailable_fault_page_declines_before_changing_canonical_registers() {
     let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let helpers = LaneHelpers::Process(LaneHelper::addresses::<crate::test_host::TestHost>());
-    let region = lower(&program, 1, &unit, helpers, &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense, true, EntryInts::Observed).unwrap();
+    let region = lower(&program, 1, &unit, helpers, &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
     assert!(region.fault_poll);
     let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
     let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
-    let mut frame = super::super::LaneFrame::new();
+    let mut frame = super::super::BodyRunContext::new();
     let mut vm = Vm::new(crate::test_host::TestHost::default());
     frame.dispatch.refresh_object_bases(&vm);
     frame.dispatch.bind_native_storage(&mut vm);
@@ -38,7 +38,7 @@ fn admitted_integer_stores_do_not_repeat_heap_barrier_checks() {
     let mut fields = flat_table(function.instructions().filter(|instruction| instruction.op().is_set_field())
         .map(|instruction| (usize::from(instruction.cache_site_index()), vec![NativeFieldLoad {
             shape: 0, holder: None, slot: 0, storage_len: 1, storage: None,
-            ty: Type::INT32, inherited: None, function_shape: false,
+            ty: Type::INT32, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None,
         }])));
     assert_eq!(fields.iter().flatten().count(), 1, "the test must exercise a profiled store");
     let isa = super::super::super::jit_backend::target_isa().unwrap();
@@ -46,14 +46,53 @@ fn admitted_integer_stores_do_not_repeat_heap_barrier_checks() {
     for ty in [Type::INT32, Type::ANY] {
         fields.iter_mut().flatten().next().unwrap()[0].ty = ty;
         let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-            &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense, true, EntryInts::Observed).unwrap();
+            &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
         let native = region.function;
         let barrier = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
             .any(|instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
-                if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, object_mark_blocks) as i32));
+                if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, head.object_mark_blocks) as i32));
         assert_eq!(barrier, ty == Type::ANY,
             "only the admitted integer excludes a heap edge:\n{native}");
     }
+}
+
+/// The constant `value` is in `native`, where an `iconst` defines it.
+fn constant_word(native: &ir::Function, value: ir::Value) -> Option<i64> {
+    let definition = native.dfg.value_def(value).inst()?;
+    match native.dfg.insts[definition] {
+        ir::InstructionData::UnaryImm { imm, .. } => Some(imm.bits()),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_loop_of_leaving_stores_reads_the_invalidation_word_once_on_its_entering_edge() {
+    // Two stores, one per branch: each branch's block reads the word unless the loop holds it.
+    let program = crate::Engine::specialize(
+        "function fill(o, n, f) { for (let i=0;i<n;i=(i+1)|0) { if (f) o.y=i; else o.y=0; } }", "store-hold.js").unwrap();
+    let function = program.function(1);
+    let fields = flat_table(function.instructions().filter(|instruction| instruction.op().is_set_field())
+        .map(|instruction| (usize::from(instruction.cache_site_index()), vec![NativeFieldLoad {
+            shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: Type::INT32, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None,
+        }])));
+    let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
+    let (backedge, header) = unit.instructions.iter().enumerate()
+        .filter_map(|(pc, instruction)| (matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump))
+            && instruction.jump_target() as usize <= pc).then_some((pc, instruction.jump_target() as usize)))
+        .last().expect("the loop closes with a backward jump");
+    let word = crate::code_dependencies::Invalidation::default();
+    let atoms = crate::bitset::BitSet::default();
+    let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &atoms, invalidation: word.address(), constants: &[],
+        instanceofs: &|_| None, shape_stable: &|_| false, names: None, own_constant: &|_| None, root_constant: &|_| None }), ..VmFacts::STATIC };
+    let isa = super::super::super::jit_backend::target_isa().unwrap();
+    let native = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
+        facts, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[],
+        Coverage::Loop { header, backedge, poll: true }, Completion::Body, ElementViews::Dense, true).unwrap().function;
+    let address = word.address() as i64;
+    let reads = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
+        .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { arg, .. }
+            if constant_word(&native, arg) == Some(address))).count();
+    assert_eq!(reads, 1, "the loop's stores hold the invalidation word from its entering edge alone:\n{native}");
 }
 
 #[test]
@@ -67,13 +106,13 @@ fn object_shape_proofs_survive_verified_control_flow_edges() {
         if instruction.op().class().eq(Class::GetField)
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
-            Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, inherited: None, function_shape: false }]))
+            Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None }]))
         } else { None }
     }));
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true, EntryInts::Observed).unwrap();
+        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true).unwrap();
     let native = region.function;
     let shapes = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
         .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::Load { offset, .. }
@@ -92,17 +131,21 @@ fn barrier_tests(source: &str, slot: Type) -> usize {
     let function = program.function(1);
     let fields = flat_table(function.instructions().filter(|instruction| instruction.op().is_set_field())
         .map(|instruction| (usize::from(instruction.cache_site_index()), vec![NativeFieldLoad {
-            shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: slot, inherited: None, function_shape: false,
+            shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: slot, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None,
         }])));
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-        &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[],
-        Coverage::Full, Completion::Body, ElementViews::Dense, true, EntryInts::Observed).unwrap();
+        &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[],
+        Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
     let native = region.function;
+    // The dispatch table is a loaded pointer; a mark word at the same offset inside a block
+    // (an address the barrier computed) is the same barrier, not a second one.
+    let loaded = |value| matches!(native.dfg.value_def(value), ir::ValueDef::Result(def, _)
+        if matches!(native.dfg.insts[def], ir::InstructionData::Load { .. }));
     native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
-        .filter(|instruction| matches!(native.dfg.insts[*instruction], ir::InstructionData::Load { offset, .. }
-            if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, object_mark_blocks) as i32)).count()
+        .filter(|instruction| matches!(native.dfg.insts[*instruction], ir::InstructionData::Load { offset, arg, .. }
+            if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, head.object_mark_blocks) as i32 && loaded(arg))).count()
 }
 
 #[test]
@@ -121,13 +164,13 @@ fn shape_tests(source: &str, names: &[&str]) -> usize {
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = names.iter().position(|name| *name == &program.atoms[atom as usize]) {
             Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: names.len(),
-                storage: None, ty: Type::ANY, inherited: None, function_shape: false }]))
+                storage: None, ty: Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None }]))
         } else { None }
     }));
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true, EntryInts::Observed).unwrap();
+        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true).unwrap();
     let native = region.function;
     native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
         .filter(|&instruction| matches!(native.dfg.insts[instruction], ir::InstructionData::IntCompare { cond: IntCC::Equal, args, .. }
@@ -155,13 +198,13 @@ fn own_field_reads_take_no_arena_bound() {
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
             Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None,
-                ty: Type::ANY, inherited: None, function_shape: false }]))
+                ty: Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None, holder_id: None }]))
         } else { None }
     }));
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
     let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]), &fields, &Default::default(),
-        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true, EntryInts::Observed).unwrap();
+        VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true).unwrap();
     let native = region.function;
     let bounds = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
         .filter(|&instruction| {
@@ -187,7 +230,7 @@ fn number_loops_keep_f64_values_and_proofs_across_the_backedge() {
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let unit = super::super::lane_unit::unit(&program, id as u32, program.function(id), &|_, _| Vec::new(), &|_| None).unwrap();
     let region = lower(&program, id as u32, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true, EntryInts::Observed).expect("typed Number residual");
+        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Prefix, Completion::Body, ElementViews::Dense, true).expect("typed Number residual");
     assert!(region.native > 0);
     let native = region.function;
     let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&native);
@@ -244,8 +287,8 @@ fn loop_coverage_lowers_only_the_loop() {
         helpers: LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
         fields: &[], global_reads: &Default::default(), facts: VmFacts::STATIC,
         generic: &[], direct: &BTreeMap::new(), frame_captures: &[], isa: &*isa,
-        entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
-        plan: RegionPlan { entry_bounds: true, entry_ints: super::EntryInts::Observed, coverage: Coverage::Loop { header, backedge, poll: true },
+        entry_fields: &NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], typed_captures: &[], int_captures: &[],
+        plan: RegionPlan { entry_bounds: true, coverage: Coverage::Loop { header, backedge, poll: true },
             completion: Completion::Body, views: ElementViews::Dense } }
         .specialize(&program).expect("the loop lowers");
     assert!(region.native > 0, "the loop runs natively");

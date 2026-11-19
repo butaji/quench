@@ -12,14 +12,10 @@
 //! per call, along the scalar entry of the body that has one (`flow::call_path`). Dumps are
 //! deterministic only when compiles run synchronously, so the runs set `QUENCH_DEV=sync-compile`.
 
-pub(crate) mod asm;
-/// Its fields name the ratchet's columns on every architecture; the classes themselves are read
-/// from x86-64 mnemonics, so other architectures record only the instruction count until their
-/// classes are written (`Measured::Instructions`).
-#[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
+mod asm;
 mod classes;
-pub(crate) mod flow;
-pub(crate) mod stats;
+mod flow;
+mod stats;
 mod table;
 
 use std::{
@@ -37,16 +33,12 @@ use crate::{
     tiers::{self, INTERPRETER},
 };
 use asm::Instruction;
+use classes::Fields;
 use stats::{Dump, Hot, Site};
 use table::{Measured, Table, Tally};
 
 pub const KERNELS: &str = "crates/quench-tier-corpus/cparity/js";
-/// The ratchet of the architecture whose classes and instruction shapes it records: the x86-64
-/// table is the one the classes were written for; AArch64 keeps its own counts beside it.
-#[cfg(target_arch = "x86_64")]
 const RATCHET: &str = "crates/quench-tier-corpus/cparity.txt";
-#[cfg(not(target_arch = "x86_64"))]
-const RATCHET: &str = "crates/quench-tier-corpus/cparity-aarch64.txt";
 const DUMPS: [&str; 2] = ["quench-gate", "cparity"];
 const JAVASCRIPT: &str = "js";
 const TRACE_VARIABLE: &str = "QUENCH_TRACE";
@@ -94,36 +86,22 @@ fn code(directory: &Path, dump: &Dump) -> Result<Vec<Instruction>, String> {
 }
 
 /// The hottest loop of the last dump compiled for `site`, if it has one.
-fn loop_of(directory: &Path, dumps: &[Dump], site: impl Fn(Site) -> bool) -> Result<Option<Measured>, String> {
+fn loop_of(directory: &Path, dumps: &[Dump], site: impl Fn(Site) -> bool) -> Result<Option<Fields>, String> {
     let Some(dump) = dumps.iter().rfind(|dump| site(dump.site)) else {
         return Ok(None);
     };
-    Ok(flow::hottest(&code(directory, dump)?).map(|body| measured(&body)))
-}
-
-/// What the machine code of `body` spends: every residual class where the architecture's
-/// classes are written, else the instruction count alone.
-fn measured(body: &[Instruction]) -> Measured {
-    #[cfg(target_arch = "x86_64")]
-    {
-        Measured::Code(classes::measure(body))
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        Measured::Instructions(u32::try_from(body.iter().filter(|instruction| !instruction.is_nop()).count()).unwrap_or(u32::MAX))
-    }
+    Ok(flow::hottest(&code(directory, dump)?).map(classes::measure))
 }
 
 /// The per-call path of the last body dumped with a scalar entry.
-fn scalar_call(directory: &Path, dumps: &[Dump]) -> Result<Option<Measured>, String> {
+fn scalar_call(directory: &Path, dumps: &[Dump]) -> Result<Option<Fields>, String> {
     let Some((dump, entry)) = dumps.iter().rev().find_map(|dump| match dump.site {
         Site::Body { scalar: Some(entry), .. } => Some((dump, entry)),
         _ => None,
     }) else {
         return Ok(None);
     };
-    let path = code(directory, dump)?;
-    Ok(flow::call_path(&path, entry).map(|path| measured(&path)))
+    Ok(flow::call_path(&code(directory, dump)?, entry).map(|path| classes::measure(&path)))
 }
 
 /// The measure of the program's hot code: the hot loop in its region or its function's body,
@@ -131,26 +109,21 @@ fn scalar_call(directory: &Path, dumps: &[Dump]) -> Result<Option<Measured>, Str
 fn hottest(directory: &Path, stderr: &str, hot: Option<Hot>) -> Result<Measured, String> {
     let dumps = stats::dumps(stderr);
     if let Some(hot) = hot {
-        if let Some(measured) = loop_of(directory, &dumps, |site| site == Site::Loop { header: hot.header })? {
-            return Ok(measured);
+        if let Some(fields) = loop_of(directory, &dumps, |site| site == Site::Loop { header: hot.header })? {
+            return Ok(Measured::Code(fields));
         }
-        if let Some(measured) = loop_of(directory, &dumps, |site| matches!(site, Site::Body { function, .. } if function == hot.function))? {
-            return Ok(measured);
+        if let Some(fields) = loop_of(directory, &dumps, |site| matches!(site, Site::Body { function, .. } if function == hot.function))? {
+            return Ok(Measured::Code(fields));
         }
         if stats::kernel_runs(stderr, hot.header) {
             return Ok(Measured::Kernel);
         }
     }
     // A tier that reports no loop statistics (b-jit) has its regions' dumps alone.
-    if let Some(measured) = loop_of(directory, &dumps, |site| matches!(site, Site::Loop { .. }))? {
-        return Ok(measured);
+    if let Some(fields) = loop_of(directory, &dumps, |site| matches!(site, Site::Loop { .. }))? {
+        return Ok(Measured::Code(fields));
     }
-    // A loop the tier compiled inside a whole-function body reports no site of its own: the
-    // body's hottest loop is what runs it.
-    if let Some(measured) = loop_of(directory, &dumps, |site| matches!(site, Site::Body { .. }))? {
-        return Ok(measured);
-    }
-    Ok(scalar_call(directory, &dumps)?.unwrap_or(Measured::Nothing))
+    Ok(scalar_call(directory, &dumps)?.map_or(Measured::Nothing, Measured::Code))
 }
 
 /// Runs one kernel on every tier and settles each measurement against the ratchet.

@@ -230,6 +230,7 @@ fn file_failure(file: &str, code: Option<i32>, signal: Option<String>, started: 
         location: Some(Location { file: file.to_owned(), line: 1, column: 1 }),
         failure: Some(Failure {
             failure_type: "testCodeFailure".to_owned(),
+            message: String::new(),
             fields,
             inspected: quoted(FILE_FAILURE),
             inspected_colored: Some(format!("\x1b[32m{}\x1b[39m", quoted(FILE_FAILURE))),

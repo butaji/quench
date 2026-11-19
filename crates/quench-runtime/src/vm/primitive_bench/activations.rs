@@ -17,19 +17,20 @@ fn activation(kinds: Kinds, index: usize) -> Activation {
         Kinds::Mixed => !index.is_multiple_of(2),
     };
     Activation {
-        native: crate::vm::compiled::ShadowFrame::EMPTY, function: index as u32,
+        callee: std::ptr::null(), this: 0, body: 0, window: 0, function: index as u32,
         call: std::ptr::null(),
         caller_base: std::ptr::null(),
         caller_registers: Registers(std::ptr::null_mut()),
         caller_program: ProgramId::MAIN,
         kind: if wasm {
-            ActivationKind::Wasm { memory: MemoryView::NONE, frame_storage_bytes: WASM_STORAGE_BYTES }
+            ActivationKind::Wasm { memory: MemoryView::NONE, frame_storage_bytes: WASM_STORAGE_BYTES, program: ProgramId::MAIN, pc: 0 }
         } else {
             ActivationKind::Script(ScriptActivation {
                 callee: Value::UNDEFINED,
                 argc: 0,
                 completion: Completion::Plain,
                 forwards: false,
+                kept: 0,
                 environment: false,
                 record: std::ptr::null_mut(),
             })
@@ -44,7 +45,7 @@ fn activation_storage_tracks_mixed_push_pop_and_empty_stack() {
         size_of::<ScriptActivation>(), size_of::<MemoryView>(), ACTIVATIONS * size_of::<Activation>());
     for kinds in [Kinds::Script, Kinds::Wasm, Kinds::Mixed] {
         let mut stack = LaneStack::default();
-        stack.activations.reserve(ACTIVATIONS);
+        stack.activations_mut().reserve(ACTIVATIONS);
         let mut expected = 0;
         for index in 0..ACTIVATIONS {
             let entry = activation(kinds, index);
@@ -57,10 +58,10 @@ fn activation_storage_tracks_mixed_push_pop_and_empty_stack() {
         }
         for index in (0..ACTIVATIONS).rev() {
             let entry = stack.pop_activation().unwrap();
-            assert_eq!(entry.function, index as u32);
+            assert_eq!(entry.function(), index as u32);
             assert_eq!(entry.window_ptr(), stack.values.as_mut_ptr().wrapping_add(index * WASM_REGISTERS));
-            assert_eq!(entry.caller_program, ProgramId::MAIN);
-            let bytes = if entry.script().is_some() { 0 } else { WASM_STORAGE_BYTES };
+            assert_eq!(entry.caller_program(), ProgramId::MAIN);
+            let bytes = if entry.completion().is_some() { 0 } else { WASM_STORAGE_BYTES };
             expected -= bytes;
             assert_eq!(stack.wasm_storage_bytes, expected);
         }
@@ -78,7 +79,7 @@ mod measurements {
 
     fn batch(b: &mut Bencher, kinds: Kinds) {
         let mut stack = LaneStack::default();
-        stack.activations.reserve(ACTIVATIONS);
+        stack.activations_mut().reserve(ACTIVATIONS);
         b.iter(|| {
             let stack = black_box(&mut stack);
             for index in 0..ACTIVATIONS {
@@ -86,13 +87,13 @@ mod measurements {
                 let at = stack.values.as_mut_ptr().wrapping_add(index * WASM_REGISTERS);
                 unsafe { stack.push_activation(activation(kinds, index), at) };
             }
-            black_box(&stack.activations[..]);
+            black_box(&stack.activations()[..]);
             black_box(stack.wasm_storage_bytes);
             for _ in 0..ACTIVATIONS {
                 black_box(stack.pop_activation().unwrap());
             }
         });
-        assert!(stack.activations.is_empty());
+        assert!(stack.activations().is_empty());
         assert_eq!(stack.wasm_storage_bytes, 0);
     }
 

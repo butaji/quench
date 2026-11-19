@@ -75,8 +75,10 @@ const _: () = assert!(
 );
 const _: () = assert!(CHUNK_BYTES.is_multiple_of(PAGE_BYTES));
 
-/// The size class serving `size` bytes, or `None` above `MAX_SMALL_BYTES`.
-pub fn class_of(size: usize) -> Option<usize> {
+/// The granule-scheme size class serving `size` bytes: one class per granule up to
+/// `GRANULE_CLASSES_MAX_BYTES`, then four classes per doubling (`CLASS_SIZES`). `None` above
+/// `MAX_SMALL_BYTES`. The scratch arena's power-of-two classes are `scratch::pow2_class_of`.
+pub fn granule_class_of(size: usize) -> Option<usize> {
     if size <= GRANULE_CLASSES_MAX_BYTES {
         return Some(size.max(1).div_ceil(GRANULE_BYTES) - 1);
     }
@@ -397,7 +399,7 @@ impl QuenchAlloc {
         if layout.align() > GRANULE_BYTES {
             return None;
         }
-        class_of(layout.size())
+        granule_class_of(layout.size())
     }
 
     /// Whether a block this allocator does not own stays the system allocator's when resized to
@@ -811,13 +813,13 @@ mod tests {
     fn classes_cover_every_small_size_exactly_once() {
         let mut previous = 0;
         for size in 1..=MAX_SMALL_BYTES {
-            let class = class_of(size).unwrap();
+            let class = granule_class_of(size).unwrap();
             assert!(CLASS_SIZES[class] >= size);
             assert!(class == 0 || CLASS_SIZES[class - 1] < size);
             assert!(class >= previous);
             previous = class;
         }
-        assert_eq!(class_of(MAX_SMALL_BYTES + 1), None);
+        assert_eq!(granule_class_of(MAX_SMALL_BYTES + 1), None);
         assert!(CLASS_SIZES.iter().all(|size| size % GRANULE_BYTES == 0));
     }
 

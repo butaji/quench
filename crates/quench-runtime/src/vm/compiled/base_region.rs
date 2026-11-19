@@ -17,6 +17,7 @@ use super::lane_unit::{Frame as InlinedCall, Origin};
 use super::osr_loop::LoopRegion;
 use crate::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
 use crate::code_dependencies::InstanceofFact;
+use crate::typed_ir::{Representation, Type};
 use crate::value::Value;
 use crate::vm::dispatch_fast::operand_feedback::OperandKinds;
 use crate::vm::in_presence::InPresence;
@@ -30,19 +31,25 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 mod adds;
+mod call_args;
 mod names;
 mod call_plan;
 mod sites;
 pub(in crate::vm::compiled) mod callees;
 mod decode;
+pub(in crate::vm::compiled) mod declared;
 mod entry_facts;
+mod exact;
+mod fold;
 pub(in crate::vm::compiled) mod function;
 pub(in crate::vm) use function::inlined_exit_key;
 mod globals;
 mod link;
 mod locals;
-pub(in crate::vm) use locals::env_owned;
+pub(in crate::vm::compiled) use locals::env_owned;
+mod numbers;
 mod plan;
+mod proofs;
 mod repr;
 mod residuals;
 mod resume;
@@ -60,6 +67,8 @@ use decode::*;
 use entry_facts::*;
 use globals::*;
 use link::*;
+pub(in crate::vm::compiled) use link::{row_entries, rows_entry_offset};
+pub(in crate::vm) use link::SymbolSite;
 use plan::*;
 use repr::*;
 pub(in crate::vm) use resume::ResumeTable;
@@ -83,8 +92,9 @@ pub(in crate::vm::compiled) struct Known<'a> {
     pub(in crate::vm::compiled) stores: Option<&'a crate::vm::method_cache::AtomBits>,
     /// The loads a cache site proves for a read (`Vm::native_field_read_descriptors`), where the VM and
     /// the program run specialized and the code may hold Stable facts: a read of a field its receiver's
-    /// prototype holds folds to the value the holder holds now (`folded_read`), which a change of the
-    /// holder's values retires the code over (`Body::holders`). `None` where no fact may be held.
+    /// prototype chain holds folds to the value the holder holds now (`folded_read`), which a change of the
+    /// holder's values or of a layout on the way retires the code over (`Body::holders`, `Body::chains`). `None`
+    /// where no fact may be held.
     pub(in crate::vm::compiled) reads: Option<&'a dyn Fn(u16) -> Vec<NativeFieldLoad>>,
     /// The add a cache site recorded for an atom, as a define's (`false`) or an adding store's (`true`,
     /// whose proved prototype chain is then a Stable fact) transition (`Vm::native_field_add`): a
@@ -111,12 +121,22 @@ pub(in crate::vm::compiled) struct Known<'a> {
     pub(in crate::vm::compiled) instanceofs: Option<&'a dyn Fn(usize) -> Option<(Value, InstanceofFact)>>,
     /// What `key in object` answered at the PC of an `in` whose key is a constant string (`Vm::membership_facts`), where
     /// the VM and the program run specialized and the code may hold Stable facts: the row answers the boolean while its
-    /// object has the receiver layout (exact shape and prototype link) that answered, which a layout change of any
-    /// prototype retires the code over (`Body::holders`). `None` where no fact may be held.
+    /// object has the receiver layout (exact shape and prototype link) that answered, which a layout change of a
+    /// prototype on its chain retires the code over (`Body::chains`). `None` where no fact may be held.
     pub(in crate::vm::compiled) presences: Option<&'a [Option<InPresence>]>,
+    /// Whether a field cache site's primary entry holds a receiver (`Vm::field_cache_filled`), where the VM runs
+    /// specialized: admits a field row's direct arm (`family_helpers::admits`). `None` where none may be held.
+    pub(in crate::vm::compiled) fields: Option<&'a dyn Fn(u16) -> bool>,
     /// What each by-name global access takes (`Vm::global_table`, the b-jit's), where the code may hold
     /// Stable facts: a global object's slot under its layout (`globals`). `None` where none may.
     pub(in crate::vm::compiled) globals: Option<&'a crate::vm::global_facts::GlobalReads>,
+    /// The prototypes the class-typed parameters entered with, as the compiling VM observed them (`VM::class_prototypes`):
+    /// a named read of such a parameter folds to its prototype's own value (`declared::class_member_read`), and the entry
+    /// checks each (`declared::class_prototypes`). Empty where none was observed.
+    pub(in crate::vm::compiled) classes: &'a [function::ClassProto],
+    /// The exact shapes the region's field accesses of each loop-invariant receiver saw at entry (`osr_compile::loop_shapes`):
+    /// the entry checks each (`Heap::Shape`). Empty for a body, whose parameters are `classes`.
+    pub(in crate::vm::compiled) shapes: &'a [function::ShapeProto],
 }
 
 /// The realm a body's inlined callees were found in: where the active realm's global object sits in
@@ -179,11 +199,29 @@ pub(in crate::vm) enum Event {
     Left,
     /// A run did not start code: the site is waiting for code, or the entry declined it.
     Declined,
-    /// A compilation of a loop region started (`lane_loop_compile`).
+    /// A compilation of a loop region started (`loop_compile_in_lane`).
     Compiled,
     /// A lane body compile started (a Cranelift function tier; none under `--b-jit`).
     BodyCompile,
+    /// Of those, the ones its recurrence started (`LaneView::recurrent`), not a warm-up count.
+    BodyRecurrent,
+    /// A body plan built its IR (`Lowered::of`), whatever the attempt came to.
+    BodyPlanned,
+    /// What an attempt came to (`LaneBodyOutcome`): published, still compiling, refused for
+    /// its cost (unpaid), for its length (short), declined, outrun by a lifecycle edge (stale),
+    /// deferred, or handed to a b-jit body (base).
+    BodyPublished,
+    BodyCompiling,
+    BodyUnpaid,
+    BodyShort,
+    BodyDeclined,
+    BodyStale,
+    BodyDeferred,
+    BodyBase,
 }
+
+/// How many `Event`s there are.
+const EVENT_COUNT: usize = Event::BodyBase as usize + 1;
 
 #[cfg(test)]
 thread_local! {
@@ -201,8 +239,8 @@ pub(in crate::vm) fn fast_rows(op: crate::bytecode::Op) -> u64 {
 }
 
 #[cfg(test)]
-fn note_fast(op: u16) {
-    FAST_ROWS.with(|rows| rows[usize::from(op)].update(|count| count + 1));
+fn note_fast(op: crate::bytecode::Op) {
+    FAST_ROWS.with(|rows| rows[op as usize].update(|count| count + 1));
 }
 
 /// The direct-cell call sites the stitcher inlined (`call_plan::plan_call`), counted whether or not
@@ -217,7 +255,7 @@ pub(in crate::vm::compiled) fn inlined_sites() -> u64 {
     INLINED_SITES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-static EVENTS: [std::sync::atomic::AtomicU64; 5] = [const { std::sync::atomic::AtomicU64::new(0) }; 5];
+static EVENTS: [std::sync::atomic::AtomicU64; EVENT_COUNT] = [const { std::sync::atomic::AtomicU64::new(0) }; EVENT_COUNT];
 
 /// The most frequent leave sites a run reports.
 const TOP_LEAVES: usize = 40;
@@ -275,8 +313,10 @@ extern "C" fn report() {
     );
     let rows = (totals.covered + totals.exits).max(1);
     eprintln!("bjit-bodies bodies={} covered={} exits={} covered_share={:.1}% direct_calls={} helper_calls={}", totals.bodies, totals.covered, totals.exits, 100.0 * totals.covered as f64 / rows as f64, totals.direct_calls, totals.helper_calls);
-    let [entered, left, declined, compiled, bodies] = std::array::from_fn(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
+    let [entered, left, declined, compiled, bodies, recurrent, planned, published, compiling, unpaid, short, body_declined, stale, deferred, base] =
+        std::array::from_fn::<u64, EVENT_COUNT, _>(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
     eprintln!("bjit-loops entered={entered} left={left} declined={declined} compiles={compiled} lane_body_compiles={bodies} inlined_sites={}", inlined_sites());
+    eprintln!("lane-body-attempts started={bodies} recurrent={recurrent} planned={planned} published={published} compiling={compiling} unpaid={unpaid} short={short} declined={body_declined} stale={stale} deferred={deferred} base={base}");
     if let Ok(leaves) = LEAVES.lock() {
         let mut ranked: Vec<_> = leaves.iter().collect();
         ranked.sort_by(|a, b| (b.1).1.cmp(&(a.1).1).then(a.0.cmp(b.0)));
@@ -305,14 +345,14 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
 }
 
 /// The webs of `decoded`, their representations and homes, and the rows renamed to webs.
-fn analyze(span: &Span, decoded: &[Decoded], widened: (&[usize], &[Option<OperandKinds>]), seen: [&[Register]; SEEN]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
+fn analyze(span: &Span, decoded: &[Decoded], widened: (&[usize], &[Option<OperandKinds>]), seen: &[Type]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
     // A register with several webs may not have a web in an int slot, whose writes keep a
     // tagged word's high half; such a register is left whole.
     let mut merged = Bits::default();
     loop {
         let (webs, renamed) = Webs::split(span, decoded, &merged);
         let reprs = representations(span, &renamed, widened, seen, &webs);
-        let homes = Homes::of(&ranked(&renamed, &reprs, Repr::Int), &ranked(&renamed, &reprs, Repr::Double), webs.orig.clone(), &webs.clashes(span, &renamed));
+        let homes = Homes::of(&ranked(&renamed, &reprs, Some(Representation::Int32)), &ranked(&renamed, &reprs, Some(Representation::Float64)), webs.orig.clone(), &webs.clashes(span, &renamed));
         let split: Vec<Register> = homes.slots.iter().map(|web| webs.orig[usize::from(*web)]).filter(|register| webs.count(*register) > 1).collect();
         if split.is_empty() {
             return (reprs, homes, webs, renamed);

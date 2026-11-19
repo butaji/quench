@@ -21,8 +21,8 @@ impl SubjectCache {
         self.runs.clear();
     }
 
-    /// The subject of `run`, a wide slice or an append buffer's prefix: its copy into whole
-    /// storage, made once per run and found again by the run's storage. A scanner searches its
+    /// The subject of `run`, a wide or Latin-1 slice or an append buffer's prefix: its copy into
+    /// whole storage, made once per run and found again by the run's storage. A scanner searches its
     /// input from each token's end, and a copy per search is the input's length per token
     /// (postcss-wtb, 2026-11-10: 475K searches copied 190 KB each, 18.5% of the run).
     pub(super) fn run(&mut self, run: &FlatUnits) -> PreparedSubject {
@@ -31,6 +31,9 @@ impl SubjectCache {
             return PreparedSubject::Shared(Rc::clone(&self.runs[0].1));
         }
         let subject = Rc::new(match run.view() {
+            crate::vm::wtf16::Units::Latin1(bytes) => {
+                quench_regexp::Subject::new(bytes.iter().map(|byte| u16::from(*byte)).collect())
+            }
             crate::vm::wtf16::Units::Wide(units) => quench_regexp::Subject::new(Rc::from(units)),
             crate::vm::wtf16::Units::Ascii(bytes) => {
                 // SAFETY: ASCII bytes are UTF-8.

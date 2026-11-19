@@ -1,0 +1,92 @@
+// The object, array and record words generated code reads: the storage forms and integrity bits of an
+// object's auxiliary word, the extras and narrow-run tags of its payload word, the prototype index ranges,
+// the array header's capacity bits and the record block's mark words. Bit encodings and sizes only, so the
+// file compiles with `core` alone. ONE source: `value_vec`, `heap::cell`, `heap::records` and
+// `heap::array_elements` re-export these, and `staged/layout_offsets.rs` derives the stencil's layouts from them.
+#![allow(dead_code)]
+
+/// The auxiliary word's storage position (`value_vec::START_MASK`): the bits below the flags.
+pub(crate) const START_MASK: u32 = 0x3fff_ffff;
+/// Meta bit of an object that is not extensible (`value_vec::NON_EXTENSIBLE`).
+pub(crate) const NON_EXTENSIBLE: u32 = 1 << 30;
+/// Meta bit of a frozen object (`value_vec::FROZEN`).
+pub(crate) const FROZEN: u32 = 1 << 31;
+/// The auxiliary bit of dictionary storage (`value_vec::DICTIONARY_STORAGE`).
+pub(crate) const DICTIONARY_STORAGE: u32 = 1 << 31;
+/// An object whose property access is not the ordinary one its shape describes: set once, never cleared
+/// (`value_vec::EXOTIC_ACCESS`).
+pub(crate) const EXOTIC_ACCESS: u32 = 1 << 30;
+/// An object record's storage form, kept in its auxiliary word beside the shape: its values are inline
+/// (`value_vec::INLINE_FORM`), behind extras (`EXTRAS_FORM`), or in a narrow run (`NARROW_FORM`).
+pub(crate) const INLINE_FORM: u32 = 1 << 29;
+pub(crate) const EXTRAS_FORM: u32 = 1 << 28;
+pub(crate) const NARROW_FORM: u32 = 1 << 27;
+/// The auxiliary word's meta bits of an object that is not extensible or is frozen.
+pub(crate) const VALUE_VEC_INTEGRITY_BITS: u32 = NON_EXTENSIBLE | FROZEN;
+/// The meta bit of a frozen array's elements (`value_vec::VALUE_VEC_FROZEN`).
+pub(crate) const VALUE_VEC_FROZEN: u32 = FROZEN;
+/// Properties an object keeps in its record (`value_vec::INLINE_PROPERTY_COUNT`).
+pub(crate) const INLINE_PROPERTY_COUNT: usize = 2;
+
+/// The meta bit of an array record (`heap::cell::OBJECT_ARRAY`).
+pub(crate) const OBJECT_ARRAY: u32 = 1 << 28;
+/// The meta bit of an object whose values are inline (`heap::cell::OBJECT_INLINE_STORAGE`).
+pub(crate) const OBJECT_INLINE_STORAGE: u32 = 1 << 29;
+/// The payload word's tag of an object with extras (`heap::cell::EXTRAS_TAG`), and its mask.
+pub(crate) const EXTRAS_TAG: u64 = 0x7fff_0000_0000_0000;
+pub(crate) const EXTRAS_TAG_MASK: u64 = 0xffff_0000_0000_0000;
+/// The payload word's bit of a narrow run (`heap::cell::NARROW_RUN_TAG`): one unit past the start.
+pub(crate) const NARROW_RUN_TAG: u64 = 1 << u32::BITS;
+
+/// The prototype index bits of an object's meta word (`heap::cell::PROTO_INDEX_BITS`).
+pub(crate) const PROTO_INDEX_BITS: u32 = (1 << 28) - 1;
+/// The object records a heap holds, by legacy slot (`heap::cell::MAX_HEAP_CELLS`).
+pub(crate) const MAX_HEAP_CELLS: usize = 1 << 27;
+/// The prototype links one record family's window holds (`heap::cell::*_PROTO_WINDOW`). A record
+/// space grows past its window (the capacities below); a record past it that becomes a prototype
+/// takes an overflow link (`heap::prototypes`).
+pub(crate) const PROTO_RECORD_WINDOW: usize = 1 << 24;
+/// The prototype index of the first object record, and of each family's window after it.
+pub(crate) const PROTO_OBJECT_RECORD_BASE: u32 = MAX_HEAP_CELLS as u32;
+pub(crate) const PROTO_ARRAY_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + PROTO_RECORD_WINDOW as u32;
+/// The records each record space holds (`heap::records`), the one source the heap's spaces and the
+/// layouts generated code reads (`layout_offsets`) take. The spaces reserve address space only
+/// (`MAP_NORESERVE`), so a large capacity costs no memory until records are used. Every capacity is
+/// a power of two and a multiple of `RECORDS_PER_BLOCK`.
+pub(crate) const OBJECT_RECORD_CAPACITY: usize = 1 << 30;
+pub(crate) const ARRAY_RECORD_CAPACITY: usize = 1 << 30;
+pub(crate) const FUNCTION_RECORD_CAPACITY: usize = 1 << 30;
+pub(crate) const PROMISE_RECORD_CAPACITY: usize = 1 << 28;
+pub(crate) const ITERATOR_RECORD_CAPACITY: usize = 1 << 28;
+pub(crate) const COLLECTION_RECORD_CAPACITY: usize = 1 << 28;
+/// Await states and Wasm vectors are never prototypes.
+pub(crate) const AWAIT_RECORD_CAPACITY: usize = 1 << 28;
+pub(crate) const V128_RECORD_CAPACITY: usize = 1 << 28;
+
+/// Where an object record keeps its `meta` word: the layout's entry holds `auxiliary` low and `meta` high.
+pub(crate) const META_OFFSET: usize = size_of::<u32>();
+
+/// The dense backing's capacity word: its `BIASED` and `KEEP_WIDE` allocator flags; the rest counts values
+/// (`heap::array_elements`).
+pub(crate) const BIASED: u32 = 1 << 31;
+pub(crate) const KEEP_WIDE: u32 = 1 << 30;
+pub(crate) const HEADER_CAPACITY_MASK: u32 = !(BIASED | KEEP_WIDE);
+
+/// The records of one block (`heap::records::RECORDS_PER_BLOCK`), and the bits of one occupancy word.
+pub(crate) const RECORDS_PER_BLOCK: usize = 1_024;
+pub(crate) const OCCUPANCY_WORD_BITS: usize = u64::BITS as usize;
+/// The words of each of a block's bit sets.
+pub(crate) const BLOCK_WORDS: usize = RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS;
+
+/// A record block's four bit sets, in the order native code reads them (`marked` at `NATIVE_RECORD_MARK_OFFSET`).
+#[repr(C)]
+pub(crate) struct RecordBlock {
+    pub(crate) occupied: [u64; BLOCK_WORDS],
+    pub(crate) marked: [u64; BLOCK_WORDS],
+    /// Young records that survived one minor collection (`PromotionAge::Second`): unmarked,
+    /// swept by the next minor collection, which frees or promotes them.
+    pub(crate) aged: [u64; BLOCK_WORDS],
+    /// Freed ids no allocation takes until `RecordSpace::release_withheld`
+    /// (`RecordSpace::withhold`).
+    pub(crate) withheld: [u64; BLOCK_WORDS],
+}

@@ -1,0 +1,23 @@
+# The supernode list `build.rs` generates `stencils/supernodes.rs`'s SUPERNODES from (`build/supernodes.rs`);
+# the selection rule and the row semantics are in `stencils/supernode_rules.rs`.
+#
+# `opcode <name> <family>`: an opcode a label may name, with the row family it decodes to: `value` (a Number
+# operation under a non-compare operator), `branch` (a compare-and-branch under a compare operator) or `index`
+# (a dense element read). Each name must be an opcode of the runtime's table (`quench-runtime/src/bytecode.rs`).
+#
+# `pattern | feeds | first places | second places | evidence`: the miner's pattern text (`Pattern::render`), the
+# operands the first row's result may feed (`A`, `B`, or `A,B`), the place sets of the two rows (names of
+# `supernode_rules.rs`: VALUE_FIRST, INDEX_FIRST, VALUE_SECOND, BRANCH_SECOND), and the evidence of the entry.
+opcode Binary value
+opcode NumericAdd value
+opcode NumericMultiply value
+opcode JumpBinaryFalse branch
+opcode GetIndex index
+
+NumericMultiply(*) ; NumericAdd(+) [0>1] | B | VALUE_FIRST | VALUE_SECOND | a + b * c: miner row for this pattern
+NumericAdd(+) ; NumericAdd(+) [0>1] | B | VALUE_FIRST | VALUE_SECOND | a + b + c: miner row for this pattern
+NumericMultiply(*) ; Binary(-) [0>1] | B | VALUE_FIRST | VALUE_SECOND | a - b * c: miner row for this pattern
+Binary(>>) ; Binary(&) [0>1] | B | VALUE_FIRST | VALUE_SECOND | (a >> b) & c: miner row for this pattern
+NumericAdd(+) ; JumpBinaryFalse(<) [0>1] | A,B | VALUE_FIRST | BRANCH_SECOND | a + b < c branch: miner row for this pattern
+GetIndex ; NumericAdd(+) [0>1] | B | INDEX_FIRST | VALUE_SECOND | a + array[i]: miner row for this pattern
+GetIndex ; JumpBinaryFalse(<) [0>1] | A,B | INDEX_FIRST | BRANCH_SECOND | array[i] < c branch: miner row for this pattern

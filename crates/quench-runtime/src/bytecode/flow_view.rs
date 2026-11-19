@@ -39,7 +39,7 @@ pub struct FlowFunction {
     pub handler_targets: Vec<u32>,
 }
 
-fn used_registers(instruction: WideInstruction) -> Vec<u16> {
+pub(crate) fn used_registers(instruction: WideInstruction) -> Vec<u16> {
     InstructionField::ALL
         .iter()
         .copied()

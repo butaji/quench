@@ -135,7 +135,7 @@ impl Heap {
                 // SAFETY: as above; written out by the pass before.
                 Part::Text(part_id) => match unsafe { self.written_out_string(part_id) }.units() {
                     Units::Ascii(bytes) => bytes,
-                    Units::Wide(_) => unreachable!("a part is ASCII (`Vm::string_of_parts`)"),
+                    Units::Latin1(_) | Units::Wide(_) => unreachable!("a part is ASCII (`Vm::string_of_parts`)"),
                 },
                 Part::Number(_) => numbers.next().expect("a text per number").as_slice(),
             }),
@@ -182,5 +182,23 @@ impl Heap {
             // SAFETY: as above.
             unsafe { self.small_string_text(local) };
         }
+    }
+
+    /// Makes the string `value` hold `text`, its own text in other storage (an eval's program
+    /// text, `Vm::keep_eval_text`): its old storage goes once nothing else holds it. False,
+    /// and nothing changes, when `value` is no flat string record or `text` is not its text.
+    pub(crate) fn share_string_storage(&mut self, value: Value, text: JsString) -> bool {
+        let Some(record_id) = value.direct_string_index() else { return false };
+        if super::small_strings::small_string_local(record_id).is_some() {
+            return false;
+        }
+        // SAFETY: a string Value's record is live while the Value is reachable; a string
+        // holds no heap edge, so replacing it needs no barrier.
+        let string = unsafe { self.string_records.get_live_mut_unbarriered(record_id) };
+        if string.parts().is_some() || *string != text {
+            return false;
+        }
+        *string = text;
+        true
     }
 }

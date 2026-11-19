@@ -9,7 +9,6 @@ use crate::bytecode::{Function, WideInstruction};
 use crate::staged::machine::{MachineFlow, MachineStage};
 use crate::staged::wasm::Width;
 use crate::staged::wasm_flow::{Flow, Leave};
-use crate::vm::dispatch_fast::decoded_instruction;
 use cranelift_codegen::ir;
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -25,7 +24,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             self.select_register(pc, instruction);
         }
         let leave = flow.leave(pc, instruction, |entry| {
-            decoded_instruction(function, function.code[entry])
+            function.widened(function.code[entry])
         });
         match leave {
             Leave::Next => return true,
@@ -73,7 +72,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     /// Returns the function's result, read from `register`, with the success status.
-    fn return_register(&mut self, register: u16) {
+    pub(super) fn return_register(&mut self, register: u16) {
         let status = self.constant(Width::I64, 0);
         let mut values = vec![status];
         if let Some(ty) = self.plan.result {

@@ -3,18 +3,19 @@
 use super::*;
 use crate::vm::dispatch_fast::LaneRecoverySpace;
 
-/// The status of a call that entered no body: its callee's entry cell held the stub, so the
-/// caller takes its helper path at the call.
-pub(in crate::vm) const LANE_BODY_NOT_ENTERED: u32 = RETURN_STATUS_BASE - 2;
+/// The status of a call that entered no body (`LaneStatus::NotEntered`): its callee's entry cell held the
+/// stub, so the caller takes its helper path at the call.
+pub(in crate::vm) use quench_bjit::call_record::LANE_BODY_NOT_ENTERED;
 
 /// What a function's native callers read to enter its lane body: the entry (the stub where no
 /// body is published or it retired) and the body's own recovery space, which it is stored in
 /// once, per function, at a stable address (`LaneView::entry_cell`).
 ///
-/// One 64-byte line whose every offset is the designed cell's (`staged::call::ENTRY_CELL`, asserted
-/// below): `entry` 0, `body` 8, `facts` 16, `validity` 24, `recovery` 32, `counters` 40, `scalar` 48.
-/// Writers: `entry`, `scalar`, `recovery` and `body` by `publish`/`withdraw`; `facts` once per function
-/// (`set_facts`); `counters` only on cold paths (completion evidence).
+/// Two 64-byte lines whose every offset is the designed cell's (`staged::call::ENTRY_CELL`, asserted
+/// below): `entry` 0, `body` 8, `facts` 16, `validity` 24, `recovery` 32, `counters` 40, `scalar` 48, `rows` 56,
+/// `proven` 64, `numbers` 72, `uses_this` 80.
+/// Writers: `entry`, `scalar`, `recovery`, `body`, `rows`, `proven`, `numbers` and `uses_this` by `publish`/`withdraw`;
+/// `facts` once per function (`set_facts`); `counters` only on cold paths (completion evidence).
 #[repr(C, align(64))]
 pub(in crate::vm) struct EntryCell {
     pub(in crate::vm) entry: std::cell::Cell<usize>,
@@ -37,11 +38,31 @@ pub(in crate::vm) struct EntryCell {
     /// caller whose arguments are proved numbers calls instead of `entry`: it takes the numbers in
     /// registers and pushes no frame. The stub where the body has none or retired.
     pub(in crate::vm) scalar: std::cell::Cell<usize>,
+    /// The address of the published b-jit body's row entry (`LaneMethod::rows_address`), which a
+    /// b-jit direct call row calls instead of `entry`; 0 where the body has none or retired.
+    pub(in crate::vm) rows: std::cell::Cell<usize>,
+    /// The address of the published b-jit body's proven-arguments row entry (`RowEntries::proven`): `entry_rows` past
+    /// its Number guards. A direct row calls it only where `numbers` is covered by the call's proven arguments.
+    pub(in crate::vm) proven: std::cell::Cell<usize>,
+    /// The parameter registers whose Number guards `proven` skips (`RowEntries::numbers`).
+    pub(in crate::vm) numbers: std::cell::Cell<u64>,
+    /// Whether the body reads its `this` from the context header (`RowEntries::uses_this`).
+    pub(in crate::vm) uses_this: std::cell::Cell<u64>,
+}
+
+/// A b-jit body's row entries in its code, as the cell publishes them: its row entry (`rows`), its proven-arguments
+/// row entry (`proven`, past the Number guards `numbers` names) and whether it reads `this` from its context header.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::vm) struct RowEntries {
+    pub(in crate::vm) rows: usize,
+    pub(in crate::vm) proven: usize,
+    pub(in crate::vm) numbers: u64,
+    pub(in crate::vm) uses_this: bool,
 }
 
 const _: () = {
     use crate::staged::call::ENTRY_CELL;
-    assert!(std::mem::size_of::<EntryCell>() == 64);
+    assert!(std::mem::size_of::<EntryCell>() == 128);
     assert!(std::mem::offset_of!(EntryCell, entry) as i32 == ENTRY_CELL.entry_offset);
     assert!(std::mem::offset_of!(EntryCell, body) as i32 == ENTRY_CELL.body_offset);
     assert!(std::mem::offset_of!(EntryCell, facts) as i32 == ENTRY_CELL.facts_offset);
@@ -49,6 +70,10 @@ const _: () = {
     assert!(std::mem::offset_of!(EntryCell, recovery) as i32 == ENTRY_CELL.recovery_offset);
     assert!(std::mem::offset_of!(EntryCell, counters) as i32 == ENTRY_CELL.counters_offset);
     assert!(std::mem::offset_of!(EntryCell, scalar) as i32 == ENTRY_CELL.scalar_offset);
+    assert!(std::mem::offset_of!(EntryCell, rows) as i32 == ENTRY_CELL.rows_offset);
+    assert!(std::mem::offset_of!(EntryCell, proven) as i32 == ENTRY_CELL.proven_offset);
+    assert!(std::mem::offset_of!(EntryCell, numbers) as i32 == ENTRY_CELL.numbers_offset);
+    assert!(std::mem::offset_of!(EntryCell, uses_this) as i32 == ENTRY_CELL.uses_this_offset);
 };
 
 /// The halves of a cell's counters word.
@@ -60,6 +85,7 @@ pub(in crate::vm) struct Evidence {
 }
 
 impl Evidence {
+    #[inline]
     const fn half_mask(&self) -> u64 { (1 << self.half_bits) - 1 }
 }
 
@@ -67,7 +93,7 @@ impl Evidence {
 /// (`EntryCell::stub`), so it has exactly one instance: a tiny function is otherwise inlinable and
 /// each codegen unit may get its own copy at its own address.
 #[inline(never)]
-unsafe extern "C" fn lane_entry_stub(_: *mut CallContext, _: u64, _: u64, _: *const u64) -> BodyReturn {
+unsafe extern "C" fn entry_stub_in_lane(_: *mut CallContext, _: u64, _: u64, _: *const u64) -> BodyReturn {
     BodyReturn { status: LANE_BODY_NOT_ENTERED, value: 0 }
 }
 
@@ -75,7 +101,7 @@ unsafe extern "C" fn lane_entry_stub(_: *mut CallContext, _: u64, _: u64, _: *co
 pub(in crate::vm) type ScalarEntry = unsafe extern "C" fn(*mut CallContext) -> BodyReturn;
 
 /// The scalar entry no body backs: it enters nothing, so its caller restarts the call. One
-/// instance, as `lane_entry_stub`.
+/// instance, as `entry_stub_in_lane`.
 #[inline(never)]
 unsafe extern "C" fn scalar_entry_stub(_: *mut CallContext) -> BodyReturn {
     BodyReturn { status: LANE_BODY_NOT_ENTERED, value: 0 }
@@ -86,19 +112,19 @@ static NO_RECOVERY: LaneRecoverySpace = LaneRecoverySpace { values: 0, activatio
 
 /// One completion in `EntryCell::counters` (its high word): a run of the body that ended by
 /// an exception through a native caller (`Lowering::direct_finish`), which no Rust code sees.
-pub(in crate::vm) const RAISED_RUN: u64 = 1 << u32::BITS;
+pub(in crate::vm) use crate::staged::layout_offsets::RAISED_RUN;
 
 impl EntryCell {
     /// The runs of the body that ended by an exception through a native caller, for tests.
     #[cfg(test)]
     pub(in crate::vm) fn raised_runs(&self) -> u32 { (self.counters.get() >> u32::BITS) as u32 }
 
-    #[inline(always)] pub(in crate::vm) fn stub() -> usize { lane_entry_stub as BodyEntry as usize }
+    #[inline(always)] pub(in crate::vm) fn stub() -> usize { entry_stub_in_lane as BodyEntry as usize }
 
     pub(in crate::vm) fn scalar_stub() -> usize { scalar_entry_stub as ScalarEntry as usize }
 
     pub(in crate::vm) fn new() -> Self {
-        Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default(), scalar: std::cell::Cell::new(Self::scalar_stub()) }
+        Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default(), scalar: std::cell::Cell::new(Self::scalar_stub()), rows: Default::default(), proven: Default::default(), numbers: Default::default(), uses_this: Default::default() }
     }
 
     /// Publishes `method`'s entry and recovery space; it takes the cell back when it retires: the
@@ -110,6 +136,18 @@ impl EntryCell {
         method.on_retire(&self.body, Rc::as_ptr(&body).addr(), 0);
         self.entry.set(body.entry_address());
         method.on_retire(&self.entry, body.entry_address(), Self::stub());
+        self.rows.set(0);
+        self.proven.set(0);
+        self.numbers.set(0);
+        self.uses_this.set(0);
+        if let Some(entries) = body.row_entries() {
+            self.rows.set(entries.rows);
+            method.on_retire(&self.rows, entries.rows, 0);
+            self.proven.set(entries.proven);
+            method.on_retire(&self.proven, entries.proven, 0);
+            self.numbers.set(entries.numbers);
+            self.uses_this.set(u64::from(entries.uses_this));
+        }
         self.scalar.set(Self::scalar_stub());
         if let Some(scalar) = body.scalar_address() {
             self.scalar.set(scalar);
@@ -124,6 +162,7 @@ impl EntryCell {
     pub(in crate::vm) fn reset_evidence(&self) { self.counters.set(0) }
 
     /// Adds `runs` to one half (`shift` 0: leaves, `half_bits`: completions), saturating.
+    #[inline]
     fn add_half(&self, shift: u32, runs: u64) -> u64 {
         let word = self.counters.get();
         let half = ((word >> shift) & EVIDENCE.half_mask()).saturating_add(runs).min(EVIDENCE.half_mask());
@@ -136,6 +175,7 @@ impl EntryCell {
 
     /// Counts `runs` completions (a handler's run end counts one, a native caller's credit many);
     /// returns the completions so far.
+    #[inline]
     pub(in crate::vm) fn note_completions(&self, runs: u64) -> u64 { self.add_half(EVIDENCE.half_bits, runs) }
 
     /// The body's completions and leaves since it specialized: the tier model's one reader.
@@ -146,6 +186,8 @@ impl EntryCell {
 
     pub(in crate::vm) fn withdraw(&self) {
         self.entry.set(Self::stub());
+        self.rows.set(0);
+        self.proven.set(0);
         self.scalar.set(Self::scalar_stub());
         self.recovery.set(std::ptr::addr_of!(NO_RECOVERY).addr());
         self.body.set(0);
@@ -160,6 +202,7 @@ pub(super) const CAPTURE_ADDRESS_MASK: i64 = ((1 << CAPTURE_ADDRESS_BITS) - 1) &
 
 /// The one word a body's entry takes its captures in: the dense slots' address and count, and
 /// whether they admit every direct store (`dispatch_fast::capture_stores`).
+#[inline]
 pub(in crate::vm) fn capture_word(values: *const Value, len: usize, stores: bool) -> u64 {
     debug_assert!(values.addr() >> CAPTURE_ADDRESS_BITS == 0 && len >> (u64::BITS - CAPTURE_ADDRESS_BITS) == 0);
     values.addr() as u64 | u64::from(stores) * CAPTURE_STORES_BIT | (len as u64) << CAPTURE_ADDRESS_BITS
@@ -168,7 +211,7 @@ pub(in crate::vm) fn capture_word(values: *const Value, len: usize, stores: bool
 /// Grows the scratch window to `width` registers for a body a run may enter: an inlined leave
 /// inside it fills its window. A run finds the window sized by its body's publication.
 pub(super) fn reserve_lane_scratch(width: usize) {
-    let frame = super::lane_frame();
+    let frame = super::frame_in_lane();
     // SAFETY: as `lane_frame`; native code reads the window's address from the dispatch
     // record at each use, so the record follows a resize.
     unsafe {

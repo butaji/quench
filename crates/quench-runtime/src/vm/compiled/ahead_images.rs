@@ -1,58 +1,20 @@
-//! Lane bodies compiled ahead of time (`LaneHelpers::Ahead`): the program alone, no fact a run
-//! observed, lowered once to position-independent code whose run-time addresses are symbols.
-//! The images are a file (`AheadImages::to_bytes`); a VM that loads it links each image to its
-//! own helper table and publishes it where a compile of that function would (`install`).
+//! The ahead-of-time image of a program as a loadable file. `AheadImages` holds the program's
+//! lowered `AotImage` (`aot_image::lower`), links it into the VM that loads it
+//! (`aot_image::live::install`), and reads and writes the file (`aot_image::file`). A recording
+//! bundles the images of one run into one file.
 use super::*;
-use crate::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
-use std::collections::BTreeMap;
-
-/// The lane body of one function: its code, and what its lowering proved about the entry ABI.
-#[derive(Debug)]
-struct Image {
-    fault_poll: bool,
-    code: RelocatableCode,
-    /// The text of each atom the code names, by the number it names it with.
-    atoms: Vec<(u32, String)>,
-    /// The loops of this function whose lowering proved no fact a load would have to subscribe:
-    /// code alone, entered at the loop's header and left at its edges.
-    loops: Vec<Loop>,
-}
-
-/// One loop of a function: its header and back edge, the fault poll it needs, and its code.
-#[derive(Debug)]
-struct Loop {
-    header: u32,
-    backedge: u32,
-    fault_poll: bool,
-    code: RelocatableCode,
-    atoms: Vec<(u32, String)>,
-}
-
-/// The atom texts a relocatable code names, by the number it names them with.
-fn code_atoms(code: &RelocatableCode, program: &ResidualProgram) -> Vec<(u32, String)> {
-    code.relocations.iter().filter_map(|relocation| lane_region::relocs::atom_key(relocation.namespace, relocation.key))
-        .collect::<std::collections::BTreeSet<_>>().into_iter().map(|atom| (atom, program.atoms[atom as usize].to_string())).collect()
-}
-
-/// A program's ahead-of-time lane bodies by function.
-#[derive(Debug, Default)]
-pub struct AheadImages {
-    /// The program they are of (`fingerprint`).
-    program: u64,
-    /// The programs (by number) checked against it, and whether each is it.
-    known: std::cell::RefCell<Vec<(u32, bool)>>,
-    /// By function, ascending.
-    images: Vec<(u32, Image)>,
-}
-
-const MAGIC: &[u8; 8] = b"QAHEAD\0\x03";
+use crate::vm::jit_backend::relocatable_code::RelocatableCode;
+use crate::vm::aot_image::{LaneImage, base::{BaseImage, NO_ENTRY}, symbols::{Symbol, SymbolTable}};
+use crate::compile::aot_facts::AotFacts;
+use super::lane_unit::Origin;
+use crate::vm::aot_image::{self, AotImage, ImageTarget, file::Words, live::{self, LiveImage}};
 
 /// Names the build whose machine code and layouts the images are (`build.rs`); a file from another build is rejected.
-const BUILD_ID: u64 = match u64::from_str_radix(env!("QUENCH_BUILD_ID"), 16) { Ok(id) => id, Err(_) => 0 };
+pub(crate) const AHEAD_BUILD_ID: u64 = match u64::from_str_radix(env!("QUENCH_BUILD_ID"), 16) { Ok(id) => id, Err(_) => 0 };
 
 /// What names a program: a hash of its source text and every function's registers and opcodes
 /// (atom numbers are per VM, so no operand), which an image is valid for and no other (plus the helper count the code was linked against; it is a validity key, never a reason to treat a program specially).
-fn fingerprint(program: &ResidualProgram) -> u64 {
+pub(crate) fn ahead_program_fingerprint(program: &ResidualProgram) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
     let mix = |hash: u64, bytes: &[u8]| bytes.iter().fold(hash, |hash, byte| (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME));
@@ -66,198 +28,59 @@ fn fingerprint(program: &ResidualProgram) -> u64 {
     hash
 }
 
-/// `function`'s machine code with the relocations a load links.
-fn compile_relocatable(function: ir::Function, isa: &dyn cranelift_codegen::isa::TargetIsa) -> Option<RelocatableCode> {
-    crate::vm::jit_backend::compile_function(function, isa, Some(lane_region::LANE_BODY_MAX_CODE_BYTES), |compiled, function| {
-        RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
-    }).ok()
-}
-
-/// The directory `ahead-dump` names: each ahead loop this build lowers writes its code there,
-/// named `loop-<function>-<header>-<backedge>.bin`, for measuring what an image's loops run.
-#[cfg(feature = "aot")]
-fn ahead_dump_directory() -> Option<&'static std::path::Path> {
-    crate::trace::Channel::AheadDump.value().map(std::path::Path::new)
-}
-
-/// The image of `function`, or `None` where it lowers to nothing a lane body may run.
-fn image(program: &ResidualProgram, function: u32) -> Option<Image> {
+/// The unit of `function`'s lane body (`lane_unit::with_budget`, with no extra call budget).
+fn unit_of(program: &ResidualProgram, function: u32) -> Option<lane_unit::Unit> {
     let body = program.function_get(function as usize)?;
-    let unit = lane_unit::with_budget(program, function, body, 0, &|_, _| Vec::new(), &|callee| program.function_get(callee as usize))?;
-    let mut lowered = lane_region::lower_body(program, function, &unit, LaneHelpers::Ahead, &[],
-        &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], None, &[])?;
+    lane_unit::with_budget(program, function, body, 0, &|_, _| Vec::new(), &|callee| program.function_get(callee as usize))
+}
+
+/// The code of the lane body `unit` lowers to under `facts` (`LaneHelpers::Ahead`), and whether
+/// it polls for faults; `None` where it gives no native record.
+fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, facts: VmFacts<'_>) -> Option<(RelocatableCode, bool)> {
+    let mut lowered = lane_region::lower_body(program, function, unit, LaneHelpers::Ahead, &[],
+        &Default::default(), facts, &[], &BTreeMap::new(), &[], None, &[])?;
     if lowered.region.native == 0 { return None; }
     let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
     let isa = crate::vm::jit_backend::target_isa()?;
-    let code = compile_relocatable(native, &*isa)?;
-    // The body ships too, and it is where a loop runs when it is not a region of its own (a
-    // loop holding a call is not): `aot-primitives` measures this dump for such an op.
-    #[cfg(feature = "aot")]
-    if let Some(directory) = ahead_dump_directory() {
-        let _ = std::fs::write(directory.join(format!("body-{function}.bin")), &*code.code);
-    }
-    let atoms = code_atoms(&code, program);
-    // A loop ships as code alone only where its lowering proved no fact (`StableFacts::is_empty`)
-    // and needs no Number result: a load cannot subscribe build-time shapes or cells. Only a
-    // compiler build lowers loops.
-    #[cfg(feature = "aot")]
-    let loops = super::ahead_loops(program, function, &*isa).into_iter().filter_map(|(header, backedge, region)| {
-        if !region.stable.is_empty() || region.number_result.is_some() { return None; }
-        let code = compile_relocatable(region.function, &*isa)?;
-        if let Some(directory) = ahead_dump_directory() {
-            let _ = std::fs::write(directory.join(format!("loop-{function}-{header}-{backedge}.bin")), &*code.code);
-        }
-        let atoms = code_atoms(&code, program);
-        Some(Loop { header, backedge, fault_poll: region.fault_poll, code, atoms })
-    }).collect();
-    #[cfg(not(feature = "aot"))]
-    let loops = Vec::new();
-    Some(Image { fault_poll: lowered.region.fault_poll, code, atoms, loops })
+    let code = crate::vm::jit_backend::compile_function(native, &*isa, Some(crate::vm::compiled::tier_policy::LANE_BODY_MAX_CODE_BYTES), |compiled, function| {
+        RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
+    }).ok()?;
+    Some((code, lowered.region.fault_poll))
 }
 
-impl AheadImages {
-    /// The images of every function of `program` that has one.
-    pub fn compile(program: &ResidualProgram) -> Self {
-        let images: Vec<(u32, Image)> = (1..program.function_count()).filter_map(|function| Some((function as u32, image(program, function as u32)?))).collect();
-        let program_fingerprint = fingerprint(program);
-        Self { program: program_fingerprint, known: Default::default(), images }
-    }
-
-    /// The image of `function`.
-    fn get(&self, function: u32) -> Option<&Image> {
-        self.images.binary_search_by_key(&function, |(of, _)| *of).ok().map(|at| &self.images[at].1)
-    }
-
-    /// Whether these are the images of `program`, the program numbered `id`; each program is
-    /// fingerprinted once.
-    pub(in crate::vm) fn is_of(&self, id: u32, program: &ResidualProgram) -> bool {
-        let mut known = self.known.borrow_mut();
-        if let Some((_, of)) = known.iter().find(|(known, _)| *known == id) { return *of; }
-        let of = fingerprint(program) == self.program;
-        known.push((id, of));
-        of
-    }
-
-    /// How many functions have an image.
-    pub fn len(&self) -> usize { self.images.len() }
-
-    /// The loops `function`'s image carries, as `(header, backedge, fault_poll)`.
-    pub fn loops_of(&self, function: u32) -> Vec<(u32, u32, bool)> {
-        self.get(function).map(|image| image.loops.iter().map(|loop_| (loop_.header, loop_.backedge, loop_.fault_poll)).collect()).unwrap_or_default()
-    }
-
-    /// The code of `function`'s loop at `header`, its relocations and the atom texts it names,
-    /// for a load that links them.
-    #[cfg(feature = "native-execution")]
-    pub(in crate::vm) fn loop_code(&self, function: u32, header: u32) -> Option<(&RelocatableCode, &[(u32, String)], bool)> {
-        let loop_ = self.get(function)?.loops.iter().find(|loop_| loop_.header == header)?;
-        Some((&loop_.code, &loop_.atoms, loop_.fault_poll))
-    }
-
-    /// Whether no function has an image.
-    pub fn is_empty(&self) -> bool { self.images.is_empty() }
-
-    /// The file of these images: a magic, the build id, then per image its function, entry facts, code and
-    /// relocations (offset, namespace, key, addend), every number little-endian.
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = MAGIC.to_vec();
-        out.extend(BUILD_ID.to_le_bytes());
-        out.extend(self.program.to_le_bytes());
-        out.extend((self.images.len() as u32).to_le_bytes());
-        for (function, image) in &self.images {
-            out.extend(function.to_le_bytes());
-            write_code(&mut out, image.fault_poll, &image.code, &image.atoms);
-            out.extend((image.loops.len() as u32).to_le_bytes());
-            for loop_ in &image.loops {
-                out.extend(loop_.header.to_le_bytes());
-                out.extend(loop_.backedge.to_le_bytes());
-                write_code(&mut out, loop_.fault_poll, &loop_.code, &loop_.atoms);
-            }
-        }
-        out
-    }
-
-    /// The images `to_bytes` wrote; an error names what the file lacks.
-    pub fn from_bytes(file: &[u8]) -> Result<Self, String> {
-        let mut words = Words(file.strip_prefix(MAGIC.as_slice()).ok_or("not an ahead image file")?);
-        if words.quad()? != BUILD_ID { return Err("images from another quench-node build".into()); }
-        let program = words.quad()?;
-        let mut images = Vec::new();
-        for _ in 0..words.half()? {
-            let function = words.half()?;
-            let (fault_poll, code, atoms) = read_code(&mut words)?;
-            let loops = (0..words.half()?).map(|_| {
-                let (header, backedge) = (words.half()?, words.half()?);
-                let (fault_poll, code, atoms) = read_code(&mut words)?;
-                Ok(Loop { header, backedge, fault_poll, code, atoms })
-            }).collect::<Result<Vec<_>, String>>()?;
-            images.push((function, Image { fault_poll, code, atoms, loops }));
-        }
-        images.sort_by_key(|(function, _)| *function);
-        Ok(Self { program, known: Default::default(), images })
-    }
+/// The image of `function`, or `None` where it lowers to nothing a lane body may run.
+/// The lane body of `function` for an AOT image under the closed-world `facts`, its leaves
+/// continuing at `base`'s entries (`join`): every leave's target is interned in `symbols`.
+/// `None` where it gives no native record, or polls for faults: the lowering does not report
+/// the poll's offset, so the base body runs such a function.
+pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32, facts: &AotFacts, base: &BaseImage,
+    symbols: &mut SymbolTable,
+) -> Option<LaneImage> {
+    let unit = unit_of(program, function)?;
+    let targets = leave_targets(&unit, function, base, symbols);
+    let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { targets: &targets }), closed: Some(facts), ..VmFacts::STATIC };
+    let (code, fault_poll) = lowered_code(program, &unit, function, facts)?;
+    (!fault_poll).then_some(LaneImage { code, fault_poll: None })
 }
 
-/// One image's or loop's payload: the fault poll, the code with its relocations, and the atom
-/// texts it names.
-fn write_code(out: &mut Vec<u8>, fault_poll: bool, code: &RelocatableCode, atoms: &[(u32, String)]) {
-    out.push(u8::from(fault_poll));
-    out.extend((code.code.len() as u32).to_le_bytes());
-    out.extend(&*code.code);
-    out.extend((code.relocations.len() as u32).to_le_bytes());
-    for relocation in &*code.relocations {
-        out.extend((relocation.offset as u32).to_le_bytes());
-        out.extend(relocation.namespace.to_le_bytes());
-        out.extend(relocation.key.to_le_bytes());
-        out.extend(relocation.addend.to_le_bytes());
-    }
-    out.extend((atoms.len() as u32).to_le_bytes());
-    for (atom, text) in atoms {
-        out.extend(atom.to_le_bytes());
-        out.extend((text.len() as u32).to_le_bytes());
-        out.extend(text.as_bytes());
-    }
+/// Each unit PC's leave target as the base body's `Symbol::BasePc`: a caller record the base body
+/// enters, or an inlined callee's record. The callee's own base entries are not checked here yet.
+// TODO: check the inlined callee's record against that function's base body.
+fn leave_targets(unit: &lane_unit::Unit, function: u32, base: &BaseImage, symbols: &mut SymbolTable) -> Box<[Option<(u32, u32)>]> {
+    unit.origins.iter().map(|origin| match *origin {
+        Origin::Caller(record) => base.pc_offsets.get(record as usize).is_some_and(|at| *at != NO_ENTRY)
+            .then(|| symbols.intern(Symbol::BasePc { function, pc: record })),
+        Origin::Inlined { frame, pc } => Some(symbols.intern(Symbol::BasePc { function: unit.frames[frame].target.function, pc })),
+    }).collect()
 }
 
-fn read_code(words: &mut Words<'_>) -> Result<(bool, RelocatableCode, Vec<(u32, String)>), String> {
-    let fault_poll = words.byte()? != 0;
-    let length = words.half()? as usize;
-    let code: Box<[u8]> = words.bytes(length)?.into();
-    let relocations = (0..words.half()?).map(|_| Ok(Relocation {
-        offset: words.half()? as usize, kind: cranelift_codegen::binemit::Reloc::Abs8,
-        namespace: words.half()?, key: words.half()?, addend: words.quad()? as i64 })).collect::<Result<_, String>>()?;
-    let atoms = (0..words.half()?).map(|_| {
-        let atom = words.half()?;
-        let length = words.half()? as usize;
-        Ok((atom, String::from_utf8(words.bytes(length)?.to_vec()).map_err(|_| "an atom is not text")?))
-    }).collect::<Result<_, String>>()?;
-    Ok((fault_poll, RelocatableCode { code, relocations }, atoms))
-}
-
-impl<H: Host> Vm<H> {
-    /// The region the image holds for `function`'s loop at `header`, linked to this VM's helper
-    /// table and atoms and ready to publish (`LoopTier::adopt`); `None` where the image carries
-    /// no loop starting there.
-    #[cfg(feature = "native-execution")]
-    pub(in crate::vm) fn ahead_loop_region(&mut self, program: &ResidualProgram, function: u32, header: u32)
-        -> Option<super::CompiledOsrRegion> {
-        let images = self.programs.ahead_images(self.active_program, program)?;
-        let (code, atoms, _fault_poll) = images.loop_code(function, header)?;
-        let table = crate::vm::compiled::LaneHelper::addresses::<H>();
-        let atoms: Vec<(u32, u32)> = atoms.iter().map(|(atom, text)| (*atom, self.intern_atom(text))).collect();
-        // The loop's symbols resolve as a body's do (`install_ahead_body`): helpers from the
-        // process's table, atoms from this VM's interning.
-        let linked = code.link(0, |namespace, key| match lane_region::relocs::atom_key(namespace, key) {
-            Some(atom) => atoms.iter().find(|(named, _)| *named == atom).map(|(_, here)| u64::from(*here)),
-            None => table.get(lane_region::relocs::helper_key(namespace, key)?).map(|address| *address as usize as u64),
-        }).ok()?;
-        let memory = super::CodeMemory::new(&linked)?;
-        // SAFETY: the image's loop lowers under `lane_body_signature`, as a region does.
-        let entry = unsafe { std::mem::transmute::<*mut u8, super::BodyEntry>(memory.pointer()) };
-        Some(super::CompiledOsrRegion { code: memory, entry, facts: super::OsrFacts::none(),
-            crossing: super::Crossing::Lean, resumes: super::base_region::ResumeTable::empty(),
-            calls: super::CallCode::default() })
-    }
+/// A program's ahead-of-time image, and its link into this process once a VM loads it.
+pub struct AheadImages {
+    image: AotImage,
+    /// The programs (by number) checked against it, and whether each is it.
+    known: std::cell::RefCell<Vec<(u32, bool)>>,
+    /// The image placed in the loading VM's executable memory; `None` where it did not link.
+    linked: Option<LiveImage>,
 }
 
 /// The images of each program stored while recording (`start_recording`); the entry may run
@@ -267,13 +90,45 @@ static RECORDED: std::sync::Mutex<Option<Vec<AheadImages>>> = std::sync::Mutex::
 fn recorded() -> std::sync::MutexGuard<'static, Option<Vec<AheadImages>>> { RECORDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
 
 impl AheadImages {
+    /// The image of `program`, lowered under its closed-world facts for the baseline ISA.
+    pub fn compile(program: &ResidualProgram) -> Result<Self, String> {
+        let facts = crate::compile::aot_facts::analyze(program);
+        Ok(Self::of(aot_image::lower(program, &facts, &ImageTarget::default())?))
+    }
+
+    fn of(image: AotImage) -> Self {
+        Self { image, known: Default::default(), linked: None }
+    }
+
+    /// Whether this is the image of `program`, the program numbered `id`; each program is
+    /// fingerprinted once.
+    pub(in crate::vm) fn is_of(&self, id: u32, program: &ResidualProgram) -> bool {
+        let mut known = self.known.borrow_mut();
+        if let Some((_, of)) = known.iter().find(|(known, _)| *known == id) { return *of; }
+        let of = ahead_program_fingerprint(program) == self.image.fingerprint;
+        known.push((id, of));
+        of
+    }
+
+    /// How many functions the image has.
+    pub fn len(&self) -> usize { self.image.functions.len() }
+
+    /// Whether the image has no functions.
+    pub fn is_empty(&self) -> bool { self.image.functions.is_empty() }
+
+    /// The file of this image (`from_bytes` reads it back).
+    pub fn to_bytes(&self) -> Vec<u8> { aot_image::file::to_bytes(&self.image) }
+
+    /// The image `to_bytes` wrote; an error names what the file lacks.
+    pub fn from_bytes(file: &[u8]) -> Result<Self, String> { Ok(Self::of(aot_image::file::from_bytes(file)?)) }
+
     /// Starts collecting the images of every program this thread stores (`finish_recording`).
     pub fn start_recording() { *recorded() = Some(Vec::new()); }
 
-    /// Adds `program`'s images while recording; a program with none adds none.
+    /// Adds `program`'s image while recording; a program that does not lower adds none.
     pub(in crate::vm) fn record(program: &ResidualProgram) {
         if recorded().is_none() { return; }
-        let images = Self::compile(program);
+        let Ok(images) = Self::compile(program) else { return };
         if !images.is_empty() { if let Some(all) = recorded().as_mut() { all.push(images); } }
     }
 
@@ -298,46 +153,29 @@ impl AheadImages {
     }
 }
 
-/// A reader of the file's numbers.
-struct Words<'a>(&'a [u8]);
-
-impl<'a> Words<'a> {
-    fn bytes(&mut self, count: usize) -> Result<&'a [u8], String> {
-        let (head, rest) = self.0.split_at_checked(count).ok_or("an ahead image file ends early")?;
-        self.0 = rest;
-        Ok(head)
-    }
-    fn take<const N: usize>(&mut self) -> Result<[u8; N], String> { Ok(self.bytes(N)?.try_into().expect("N bytes")) }
-    fn byte(&mut self) -> Result<u8, String> { Ok(u8::from_le_bytes(self.take()?)) }
-    fn half(&mut self) -> Result<u32, String> { Ok(u32::from_le_bytes(self.take()?)) }
-    fn quad(&mut self) -> Result<u64, String> { Ok(u64::from_le_bytes(self.take()?)) }
-}
-
 impl<H: Host> Vm<H> {
-    /// `function`'s image linked to this VM's helpers and published as its lane body, if the
-    /// loaded images hold one for this program.
+    /// `function`'s lane body linked to this VM and published as its lane body, if the loaded
+    /// images hold one for this program.
     pub(in crate::vm) fn install_ahead_body(&mut self, program: &ResidualProgram, function: u32, entry: Option<u32>, generic: &[LaneExit]) -> Option<Rc<PublishedLaneMethod>> {
         if entry.is_some() || !generic.is_empty() { return None; }
         let images = self.programs.ahead_images(self.active_program, program)?;
-        let image = images.get(function)?;
+        let linked_live: &LiveImage = images.linked.as_ref()?;
+        let fault_poll = images.image.functions.get(function as usize)?.lane.as_ref()?.fault_poll.is_some();
+        let linked = live::link_lane(&images.image, self, linked_live, function)?;
         let body = program.function_get(function as usize)?;
         let unit = lane_unit::with_budget(program, function, body, 0, &|_, _| Vec::new(), &|callee| program.function_get(callee as usize))?;
-        let table = LaneHelper::addresses::<H>();
-        let atoms: Vec<(u32, u32)> = image.atoms.iter().map(|(atom, text)| (*atom, self.intern_atom(text))).collect();
-        let linked = image.code.link(0, |namespace, key| match lane_region::relocs::atom_key(namespace, key) {
-            Some(atom) => atoms.iter().find(|(named, _)| *named == atom).map(|(_, here)| u64::from(*here)),
-            None => table.get(lane_region::relocs::helper_key(namespace, key)?).map(|address| *address as usize as u64),
-        }).ok()?;
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
-            fault_poll: image.fault_poll, hoists_arrays: false, stable: Default::default() };
+            fault_poll, hoists_arrays: false, stable: Default::default() };
         let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None }, fields: Vec::new(),
             direct: Box::new([]), closed: false, function, invalidation: crate::code_dependencies::Invalidation::default(), budget: 0, tiers: self.programs.tiers() };
         let method = plan.finish(&linked, None)?;
         self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers())
     }
 
-    /// Takes `images`; they serve the program they were compiled from, whenever it runs.
-    pub fn load_ahead_images(&mut self, images: AheadImages) {
+    /// Takes `images`, links them into this VM, and keeps them for the program they were
+    /// compiled from, whenever it runs.
+    pub fn load_ahead_images(&mut self, mut images: AheadImages) {
+        images.linked = live::install(&images.image, self).ok();
         self.programs.add_ahead_images(images);
     }
 }

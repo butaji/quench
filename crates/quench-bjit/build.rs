@@ -13,6 +13,10 @@
 //! get an empty table.
 #[path = "build/bytes.rs"]
 mod bytes;
+#[path = "build/cache.rs"]
+mod cache;
+#[path = "build/call_rows.rs"]
+mod call_rows;
 #[path = "build/checks.rs"]
 mod checks;
 #[path = "src/class.rs"]
@@ -21,16 +25,39 @@ mod class;
 mod elf;
 #[path = "build/layout.rs"]
 mod layout;
+#[macro_use]
+#[path = "stencils/row_catalog.rs"]
+mod row_catalog;
+// Shared definitions (library, row names, supernode rules): the build script reads a subset of each; the
+// lib and the stencil crate mount the same files and keep the dead-code check on every item.
+#[allow(dead_code)]
 #[path = "stencils/library.rs"]
 mod library;
+// Shared definitions (library, row names, supernode rules): the build script reads a subset of each; the
+// lib and the stencil crate mount the same files and keep the dead-code check on every item.
+#[allow(dead_code)]
+#[path = "stencils/row_names.rs"]
+mod row_names;
+use library::TYPED_KINDS;
 #[path = "build/macho.rs"]
 mod macho;
 #[path = "build/sources.rs"]
 mod sources;
 #[path = "stencils/shards.rs"]
 mod shards;
-#[path = "stencils/supernodes.rs"]
+#[path = "build/supernodes.rs"]
 mod supernodes;
+// Shared definitions (library, row names, supernode rules): the build script reads a subset of each; the
+// lib and the stencil crate mount the same files and keep the dead-code check on every item.
+#[allow(dead_code)]
+#[path = "stencils/supernode_rules.rs"]
+mod supernode_rules;
+#[path = "stencils/wasm_families.rs"]
+mod wasm_families;
+#[path = "stencils/wasm_kinds.rs"]
+mod wasm_kinds;
+#[path = "stencils/wasm_library.rs"]
+mod wasm_library;
 #[path = "build/transfer.rs"]
 mod transfer;
 
@@ -50,32 +77,36 @@ const SOURCE: &str = "stencils/rows.rs";
 /// Environment variable of each rustc process naming its shard's instance file (`rows.rs` reads
 /// it with `env!`).
 const INSTANCES_VAR: &str = "QUENCH_STENCIL_INSTANCES";
+/// Environment variable of each rustc process naming the file of `call_rows`' invocations (`build/call_rows.rs`),
+/// which `stencils/call_rows.rs` includes; only the fixed-rows shard compiles that module.
+const CALL_ROWS_VAR: &str = "QUENCH_STENCIL_CALL_ROWS";
 /// The shard that also defines the fixed rows of the target's `stencils/entry*.rs` (cfg
 /// `fixed_rows`), so no name is defined twice.
 const FIXED_ROWS_SHARD: usize = 0;
-const EXIT_PREFIX: usize = 4;
+/// Environment variable of the library (`stencils/supernodes.rs`) naming the generated list: `build/supernodes.rs`
+/// writes `FAMILIES` and `SUPERNODES` from `supernodes.txt` to `OUT_DIR/supernodes.rs`.
+const SUPERNODES_VAR: &str = "QUENCH_SUPERNODES";
+/// The prefix of an exit hole (`HOLE_EXIT<k>`) that precedes its index.
+const EXIT_PREFIX: usize = "EXIT".len();
 /// The stencil libraries of an x86-64 build: the table's name and the `-C target-cpu` it is built for. Another
 /// target has the baseline table alone, which also names the second.
 const VARIANTS: [(&str, Option<&str>); 2] = [("BASELINE", Some("x86-64-v2")), ("V3", Some("x86-64-v3"))];
-/// The flags every stencil object is built with beyond the target: optimized, no panic or overflow machinery, no
-/// frame pointer or unwind tables (a row has no frame), one codegen unit per shard so LLVM sees every row of it
-/// at once, and absolute relocations for the holes.
-const RUSTC_FLAGS: &[&str] = &[
-    "--edition", "2024", "--crate-type=lib", "--crate-name=quench_stencil_rows", "--emit=obj", "-C", "opt-level=3", "-C", "panic=abort", "-C", "relocation-model=static",
-    "-C", "codegen-units=1", "-C", "debuginfo=0", "-C", "debug-assertions=off", "-C", "overflow-checks=off", "-C", "force-frame-pointers=no", "-C", "force-unwind-tables=no",
-    // A jump table is a relocation against read-only data, which no hole names: a row's dispatch stays compares.
-    "-C", "llvm-args=--min-jump-table-entries=65536",
-    // A vectorized comparison loads its constants from a pool, which a row has none of (a hole is the only relocation).
-    "-C", "no-vectorize-slp", "-C", "no-vectorize-loops",
-];
+/// The flags every stencil object is built with beyond the target (`stencil-rustc-flags.txt`, next to `Cargo.toml`).
+const RUSTC_FLAGS_FILE: &str = "stencil-rustc-flags.txt";
+/// The files beyond the `#[path]` graph (`sources::watched`) whose change reruns the build script, relative to the crate.
+const EXTRA_WATCHED: [&str; 3] = ["supernodes.txt", RUSTC_FLAGS_FILE, "../quench-runtime/src/bytecode.rs"];
+
+/// The flags of `RUSTC_FLAGS_FILE` in file order: one flag or flag-and-value pair per line, `#` starts a comment.
+fn rustc_flags() -> Vec<String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(RUSTC_FLAGS_FILE);
+    let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    text.lines().flat_map(|line| line.split('#').next().unwrap_or("").split_whitespace()).map(String::from).collect()
+}
 
 /// The architecture and object reader of a build target, if its stencils are supported.
 fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
     let var = |name| env::var(name).unwrap_or_default();
-    // The AArch64 rows cover the call and resume shapes only; the rest of the base tier's rows
-    // are x86-64's. A target whose rows are not all there builds no stencils, and its tiers
-    // fall back as a `--b-jit` without a base tier does.
-    if var("CARGO_CFG_TARGET_ARCH") == "aarch64" { return None }
+    if !var("QUENCH_NO_STENCILS").is_empty() { return None; }
     match (var("CARGO_CFG_TARGET_ARCH").as_str(), var("CARGO_CFG_TARGET_OS").as_str()) {
         ("x86_64", "linux") => Some((Arch::X86_64, elf::rows)),
         ("aarch64", "linux") => Some((Arch::Aarch64, elf::rows)),
@@ -85,25 +116,45 @@ fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
 }
 
 fn main() {
-    for source in sources::watched(Path::new(env!("CARGO_MANIFEST_DIR"))) {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for source in sources::watched(manifest) {
         println!("cargo::rerun-if-changed={}", source.display());
     }
+    println!("cargo::rustc-check-cfg=cfg(stencil_build)");
+    for extra in EXTRA_WATCHED {
+        println!("cargo::rerun-if-changed={extra}");
+    }
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let listed = supernodes::load(manifest);
+    let generated = out.join("supernodes.rs");
+    fs::write(&generated, &listed.text).unwrap();
+    println!("cargo::rustc-env={SUPERNODES_VAR}={}", generated.display());
     let table = out.join("rustc_stencils.rs");
     let Some((arch, read)) = target() else {
-        // A target with no rows builds no stencils: its tiers fall back as a `--b-jit` without
-        // a base tier does (`BASE_STENCILS`), which tests and modes read as the capability.
-        println!("cargo::rustc-cfg=base_stencils_absent");
         fs::write(&table, VARIANTS.map(|(name, _)| library_source(name, Counts::default(), &[])).concat()).unwrap();
         return;
     };
-    let instances = instances();
-    let parts = shards::split(&instances);
+    let instances = instances(&listed, arch);
+    let parts = shards::split(&instances, |(_, weight)| *weight);
     for (shard, part) in parts.iter().enumerate() {
-        fs::write(instance_file(&out, shard), part.concat()).unwrap();
+        fs::write(instance_file(&out, shard), part.iter().map(|(row, _)| row.as_str()).collect::<String>()).unwrap();
     }
+    fs::write(call_rows_file(&out), call_rows::invocations()).unwrap();
     let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 { &VARIANTS } else { &VARIANTS[..1] };
-    let built: Vec<_> = variants.iter().map(|(name, cpu)| (*name, compile_shards(&out, parts.len(), (arch, read), *cpu))).collect();
+    let sources = cache::sources_key(&rustc(), manifest, &sources::watched(manifest), &EXTRA_WATCHED);
+    let jobs: Vec<Shard> = variants.iter().flat_map(|(_, cpu)| (0..parts.len()).map(|shard| shard_job(&out, shard, *cpu, sources))).collect();
+    if jobs.iter().any(|job| !job.cached()) {
+        type_check(&out);
+    }
+    let built: Vec<_> = variants.iter().map(|(name, cpu)| (*name, compile_shards(&jobs, (arch, read), *cpu))).collect();
+    // `rows.rs` builds the Wasm entry and leave routines on every target but Apple AArch64, so each listed routine is a row there.
+    if env::var("CARGO_CFG_TARGET_VENDOR").unwrap_or_default() != "apple" {
+        for (name, (rows, _)) in &built {
+            for routine in wasm_library::ROUTINES {
+                assert!(rows.iter().any(|(row, _)| row.as_str() == routine), "variant {name} lacks the Wasm routine {routine}");
+            }
+        }
+    }
     let mut tables = String::new();
     for (name, _) in VARIANTS {
         let (_, (rows, counts)) = built.iter().find(|(built_name, _)| *built_name == name).unwrap_or(&built[0]);
@@ -112,16 +163,39 @@ fn main() {
     fs::write(&table, tables).unwrap();
 }
 
-/// One macro invocation per generated row, the unit `shards::split` distributes.
-fn instances() -> Vec<String> {
-    let numbers = library::library().into_iter().map(|c| format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4));
-    let heaps = library::heap_library().into_iter().map(|c| format!("heap_row!({}, {}, {}, {}, {}, {});\n", library::heap_name(c), c.0, c.1, c.2, c.3, c.4));
-    let supers = supernodes::instances().into_iter().map(|nodes| format!("supernode_row!({}, {});\n", supernodes::name(&nodes), supernodes::macro_args(&nodes)));
-    numbers.chain(heaps).chain(supers).collect()
+/// One macro invocation per generated row, the unit `shards::split` distributes, with its
+/// compile weight (`shards::NUMBER_WEIGHT` and the weights beside it).
+/// The base tier's numeric, heap and supernode rows are x86-64's only; every other target builds the Wasm rows alone,
+/// and its base tier falls back as a `--b-jit` without one does.
+fn instances(listed: &supernodes::Listed, arch: Arch) -> Vec<(String, usize)> {
+    let base: Vec<(String, usize)> = if arch == Arch::X86_64 {
+        let numbers = library::library().into_iter().map(|c| (format!("number_row!({}, {}, {}, {}, {}, {});\n", library::name(c), c.0, c.1, c.2, c.3, c.4), shards::NUMBER_WEIGHT));
+        let heap_weight = |kind: u8| match kind {
+            library::INDEX_ROW | library::STORE_ROW | library::TYPED_INDEX_ROW..=library::TYPED_INDEX_LAST
+            | library::TYPED_STORE_ROW..=library::TYPED_STORE_LAST => shards::ELEMENT_WEIGHT,
+            _ => shards::HEAP_WEIGHT,
+        };
+        let heaps = library::heap_library().into_iter().map(|c| (format!("heap_row!({}, {}, {}, {}, {}, {});\n", library::heap_name(c), c.0, c.1, c.2, c.3, c.4), heap_weight(c.0)));
+        // A supernode inlines each of its rows, so it weighs what they weigh together.
+        let node_weight = |node: &supernode_rules::Node| match node {
+            supernode_rules::Node::Number(_) => shards::NUMBER_WEIGHT,
+            supernode_rules::Node::Heap(code) => heap_weight(code.0),
+        };
+        let supers = supernodes::instances(listed).into_iter().map(|nodes| (format!("supernode_row!({}, {});\n", supernode_rules::name(&nodes), supernode_rules::macro_args(&nodes)), nodes.iter().map(node_weight).sum()));
+        numbers.chain(heaps).chain(supers).collect()
+    } else {
+        Vec::new()
+    };
+    let wasm = wasm_library::wasm_library().into_iter().map(|c| (format!("wasm_row!({}, {}, {}, {}, {});\n", wasm_library::wasm_name(c), c.0, c.1, c.2, c.3), shards::NUMBER_WEIGHT));
+    base.into_iter().chain(wasm).collect()
 }
 
 fn instance_file(out: &Path, shard: usize) -> PathBuf {
     out.join(format!("instances_{shard}.rs"))
+}
+
+fn call_rows_file(out: &Path) -> PathBuf {
+    out.join("call_rows.rs")
 }
 
 /// What `checks` counted over a library's rows: the rows that keep a stack frame, and those whose hot path
@@ -134,22 +208,85 @@ struct Counts {
 
 type Rows = Vec<(String, String)>;
 
-/// Compiles every shard for `cpu` (at most `shards::workers` rustc processes at once), reads each
-/// object's rows, and merges them into the sorted library with its counts.
-fn compile_shards(out: &Path, count: usize, (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRow>), cpu: Option<&str>) -> (Rows, Counts) {
+/// The rustc that builds the stencil objects: cargo's, else the one on the path.
+fn rustc() -> PathBuf {
+    env::var_os("RUSTC").map_or_else(|| "rustc".into(), PathBuf::from)
+}
+
+/// One shard compile for one cpu: its rustc command, its object, and the key of everything the object is made from
+/// (`cache`), kept beside the object so a rerun whose inputs are unchanged skips rustc.
+struct Shard {
+    cpu: Option<&'static str>,
+    args: Vec<std::ffi::OsString>,
+    envs: [(&'static str, PathBuf); 2],
+    object: PathBuf,
+    key_file: PathBuf,
+    key: String,
+}
+
+impl Shard {
+    /// Whether the object on disk was built from exactly these inputs.
+    fn cached(&self) -> bool {
+        self.object.is_file() && fs::read_to_string(&self.key_file).is_ok_and(|key| key == self.key)
+    }
+}
+
+/// The arguments of every shard compile beyond its instances and output: the target, the flags file's flags, and
+/// the stencil cfgs.
+fn base_args() -> Vec<String> {
+    let mut args = vec!["--target".to_string(), env::var("TARGET").expect("cargo sets TARGET")];
+    args.extend(rustc_flags());
+    args.extend(["--check-cfg", "cfg(fixed_rows)", "--check-cfg", "cfg(stencil_build)", "--cfg", "stencil_build"].map(String::from));
+    args
+}
+
+fn shard_job(out: &Path, shard: usize, cpu: Option<&'static str>, sources: u128) -> Shard {
+    let name = cpu.unwrap_or("native");
+    let object = out.join(format!("rows_{name}_{shard}.o"));
+    let mut args = base_args();
+    if let Some(cpu) = cpu {
+        args.extend(["-C".to_string(), format!("target-cpu={cpu}")]);
+    }
+    if shard == FIXED_ROWS_SHARD {
+        args.extend(["--cfg", "fixed_rows"].map(String::from));
+    }
+    let instances = instance_file(out, shard);
+    let key = cache::shard_key(sources, &args, &[&instances, &call_rows_file(out)]);
+    // Not `-C incremental`: rustc's incremental mode partitions and inlines differently (with one codegen unit
+    // or 16, and with `-Z inline-mir=yes`), so 116 of 303 sampled rows came out changed and 61 kept relocations
+    // that are not holes. A shard is reused whole, by its key, or compiled whole.
+    let mut args: Vec<std::ffi::OsString> = args.into_iter().map(Into::into).collect();
+    args.extend(["-o".into(), object.clone().into(), SOURCE.into()]);
+    let envs = [(INSTANCES_VAR, instances), (CALL_ROWS_VAR, call_rows_file(out))];
+    Shard { cpu, args, envs, key_file: object.with_extension("key"), object, key }
+}
+
+/// Type-checks the stencil source once (`--emit=metadata`, the fixed-rows shard's instances) before any shard's
+/// codegen, so a source error fails the build in about a minute rather than after the first shard objects.
+fn type_check(out: &Path) {
+    let mut command = Command::new(rustc());
+    command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit")));
+    command.args(["--cfg", "fixed_rows", "--emit=metadata", "-o"]).arg(out.join("rows_check.rmeta"));
+    let status = command.env(INSTANCES_VAR, instance_file(out, FIXED_ROWS_SHARD)).env(CALL_ROWS_VAR, call_rows_file(out)).arg(SOURCE).status().expect("run rustc");
+    assert!(status.success(), "rustc failed to type-check {SOURCE}");
+}
+
+/// Compiles every shard of `jobs` for `cpu` whose object is not cached (at most `shards::workers` rustc processes at
+/// once), reads each object's rows, and merges them into the sorted library with its counts.
+fn compile_shards(jobs: &[Shard], (arch, read): (Arch, fn(&[u8]) -> Vec<ObjectRow>), cpu: Option<&str>) -> (Rows, Counts) {
+    let jobs: Vec<&Shard> = jobs.iter().filter(|job| job.cpu == cpu).collect();
     let parallelism = thread::available_parallelism().map_or(1, std::num::NonZero::get);
     let next = AtomicUsize::new(0);
     let built: Vec<(Rows, Counts)> = thread::scope(|scope| {
-        let workers: Vec<_> = (0..shards::workers(count, parallelism))
+        let workers: Vec<_> = (0..shards::workers(jobs.len(), parallelism))
             .map(|_| {
                 scope.spawn(|| {
                     let mut done = Vec::new();
                     loop {
                         let shard = next.fetch_add(1, Ordering::Relaxed);
-                        if shard >= count {
-                            return done;
-                        }
-                        done.push(stencil_rows(arch, read(&fs::read(compile(out, shard, cpu)).unwrap())));
+                        let Some(job) = jobs.get(shard) else { return done };
+                        compile(job, shard);
+                        done.push(stencil_rows(arch, read(&fs::read(&job.object).unwrap())));
                     }
                 })
             })
@@ -160,20 +297,16 @@ fn compile_shards(out: &Path, count: usize, (arch, read): (Arch, fn(&[u8]) -> Ve
     (shards::merge(built.into_iter().map(|(rows, _)| rows)), counts)
 }
 
-fn compile(out: &Path, shard: usize, cpu: Option<&str>) -> PathBuf {
-    let object = out.join(format!("rows_{}_{shard}.o", cpu.unwrap_or("native")));
-    let mut command = Command::new(env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()));
-    command.args(["--target", &env::var("TARGET").expect("cargo sets TARGET")]).args(RUSTC_FLAGS);
-    if let Some(cpu) = cpu {
-        command.arg("-C").arg(format!("target-cpu={cpu}"));
+/// Builds one shard's object unless its key says the object on disk is already this one. The key is written only
+/// after rustc succeeds; the rows' checks run on every read, cached or not.
+fn compile(job: &Shard, shard: usize) {
+    if job.cached() {
+        return;
     }
-    command.args(["--check-cfg", "cfg(fixed_rows)", "--check-cfg", "cfg(stencil_build)", "--cfg", "stencil_build"]);
-    if shard == FIXED_ROWS_SHARD {
-        command.args(["--cfg", "fixed_rows"]);
-    }
-    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).arg("-o").arg(&object).arg(SOURCE).status().expect("run rustc");
+    let _ = fs::remove_file(&job.key_file);
+    let status = Command::new(rustc()).args(&job.args).envs(job.envs.iter().map(|(name, path)| (*name, path))).status().expect("run rustc");
     assert!(status.success(), "rustc failed on {SOURCE} (shard {shard})");
-    object
+    fs::write(&job.key_file, &job.key).unwrap();
 }
 
 /// The rows of one shard's object as (name, table entry), each checked, laid out hot part first where the

@@ -1,4 +1,5 @@
 //! Immediate i31 references use the shared integer Value and retain 31 payload bits.
+use super::numeric::selectors;
 use super::{WasmReferenceKind, WasmTrap, WasmType, WasmValue};
 use crate::Value;
 
@@ -22,7 +23,7 @@ pub(crate) const REFERENCE_TYPE: WasmType = WasmType::Reference {
     nullable: false,
 };
 
-super::numeric::selectors! { I31Operator;
+selectors! { @decoded I31Operator;
     New, RefI31;
     GetSigned, I31GetS;
     GetUnsigned, I31GetU;

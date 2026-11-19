@@ -1,7 +1,6 @@
 //! The lane stack's activations: one allocation whose top is an address, as the values' top
 //! is (`LaneValues`), so a push or a pop moves one word and no length becomes a division.
 
-use super::compiled::ShadowFrame;
 use super::dispatch_fast::{Activation, KIND_NATIVE, KIND_OFFSET};
 
 /// The activations of a lane stack, `base..top`, in an allocation of room up to `end`. An
@@ -42,8 +41,6 @@ impl LaneActivations {
     pub(super) fn top_ptr(&self) -> *mut Activation { self.top }
     #[inline(always)]
     pub(super) fn is_empty(&self) -> bool { self.top == self.base }
-    #[inline(always)]
-    pub(super) fn is_full(&self) -> bool { self.top == self.end }
 
     /// The address of the top word, which emitted code bumps through a pointer as the lane does.
     #[inline(always)]
@@ -75,19 +72,12 @@ impl LaneActivations {
 
     /// How many frames on top belong to a running native body, linked or not: those whose
     /// prefix names a callee, which the lane clears when it continues in them.
+    #[inline]
     pub(super) fn native_depth(&self) -> usize {
         let mut slot = self.top;
         // SAFETY: each slot below `top` holds at least its prefix.
-        while slot != self.base && !unsafe { (*slot.sub(1)).native.callee.is_null() } { slot = unsafe { slot.sub(1) }; }
+        while slot != self.base && !unsafe { (*slot.sub(1)).callee.is_null() } { slot = unsafe { slot.sub(1) }; }
         Self::distance(slot, self.top)
-    }
-
-    /// The prefix of the innermost frame while a native body runs in it, linked or not: a
-    /// frame the lane continued in (`retire_body`) names no body.
-    #[inline(always)]
-    pub(super) fn top_native(&self) -> Option<ShadowFrame> {
-        // SAFETY: a non-empty region's slot below `top` holds at least its prefix.
-        (!self.is_empty()).then(|| unsafe { (*self.top.sub(1)).native }).filter(|frame| !frame.callee.is_null() && frame.body != 0)
     }
 
     /// Ends the native body of the frames below depth `above` that still name one, from the
@@ -97,7 +87,7 @@ impl LaneActivations {
         for depth in (0..above).rev() {
             let slot = self.slot(depth);
             // SAFETY: each slot below `top` holds at least its prefix.
-            let native = unsafe { &mut (*slot).native };
+            let native = unsafe { &mut *slot };
             if native.callee.is_null() || native.body == 0 { break; }
             native.body = 0;
         }
@@ -119,21 +109,6 @@ impl LaneActivations {
     pub(super) fn last_mut(&mut self) -> Option<&mut Activation> {
         // SAFETY: as `last`, and `&mut self` is the only access.
         (!self.is_empty()).then(|| unsafe { &mut *self.top.sub(1) })
-    }
-
-    /// The activation `depth` above the base, if it is below the top.
-    #[inline(always)]
-    pub(super) fn get(&self, depth: usize) -> Option<&Activation> {
-        let at = self.base.wrapping_add(depth);
-        // SAFETY: `at` is below `top`, so it is an initialized activation.
-        (at < self.top).then(|| unsafe { &*at })
-    }
-
-    #[inline(always)]
-    pub(super) fn get_mut(&mut self, depth: usize) -> Option<&mut Activation> {
-        let at = self.base.wrapping_add(depth);
-        // SAFETY: `at` is below `top`, so it is an initialized activation.
-        (at < self.top).then(|| unsafe { &mut *at })
     }
 
     /// Drops the innermost activation, which holds no drop glue; its slot stays as it is,
@@ -169,15 +144,6 @@ impl LaneActivations {
 
     pub(super) fn truncate(&mut self, len: usize) {
         if len < self.len() { self.top = self.base.wrapping_add(len); }
-    }
-
-    /// Empties the activations, yielding them outermost first. The slots stay in the
-    /// allocation, which nothing pushes into while the caller holds the region.
-    pub(super) fn drain(&mut self) -> impl Iterator<Item = Activation> + use<> {
-        let (base, len) = (self.base, self.len());
-        self.top = base;
-        // SAFETY: the `len` slots were initialized and are read once each.
-        (0..len).map(move |depth| unsafe { base.add(depth).read() })
     }
 
     /// Makes room for `additional` more activations; whether they moved.

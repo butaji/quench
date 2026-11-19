@@ -38,7 +38,7 @@ pub struct NativeJsPublicationCounts {
     /// Functions in the program.
     pub functions: usize,
     /// Functions whose entry runs a lane body, leaving to per-PC semantic entries.
-    pub lane_bodies: usize,
+    pub bodies_in_lane: usize,
     /// Functions left on the call-threaded body (per-PC semantic entries).
     pub call_threaded: usize,
     /// Instruction sites whose continuation is a folded static transfer.
@@ -91,18 +91,9 @@ impl<H: Host> Clone for NativeJsProgram<H> {
 }
 
 impl<H: Host> NativeJsProgram<H> {
-    /// Compile every function before execution using the object backend's graph
-    /// and the JIT's executable-memory publisher. No hotness or fallback tier.
-    #[cfg(feature = "aot")]
+    /// Compile every function before execution as one AOT image. No hotness or fallback tier.
     pub fn compile_eager(program: ResidualProgram) -> Result<Self, String> {
-        Self::compile_eager_with_options(program, crate::NativeJsCodegenOptions::default())
-    }
-
-    #[cfg(feature = "aot")]
-    pub fn compile_eager_with_options(
-        program: ResidualProgram, options: crate::NativeJsCodegenOptions,
-    ) -> Result<Self, String> {
-        super::compiled::compile_eager_native(program, options)
+        super::compiled::compile_eager_native(program)
     }
 
     /// Adopt a statically linked image table emitted by `lower_native_js_module`.
@@ -266,10 +257,9 @@ impl<H: Host> Vm<H> {
             return Err(JsError::validation("native module has the wrong parse goal".into()));
         }
         let prepared = self.prepare_native_script(native)?;
-        let program = prepared.program.clone();
         let id = self.store_module_program_shared(prepared.program)
             .ok_or_else(|| JsError::validation("native module program store is full".into()))?;
-        self.programs.attach_native_js(id, prepared.native.expect("native module code admitted"), &program)
+        self.programs.attach_native_js(id, prepared.native.expect("native module code admitted"))
             .map_err(JsError::validation)?;
         Ok(id)
     }
@@ -313,7 +303,7 @@ impl<H: Host> Vm<H> {
         self.check_execution_interrupt()?;
         self.restore_snapshot_state(bytes, Some(&native.program), read_host).map_err(|error| JsError::validation(error.0))?;
         self.install_restored_main(native.program.clone());
-        self.programs.attach_native_js(ProgramId::MAIN, native.code.clone(), &native.program).map_err(JsError::validation)
+        self.programs.attach_native_js(ProgramId::MAIN, native.code.clone()).map_err(JsError::validation)
     }
 
     pub(crate) fn execute_native_program(
@@ -378,7 +368,7 @@ impl<H: Host> Vm<H> {
         self.replay_frozen_assumptions(native);
         self.initialize_shared(&native.program, super::builtins::RealmScope::Complete)?;
         self.materialize_frozen_constants(native);
-        self.programs.attach_native_js(ProgramId::MAIN, native.code.clone(), &native.program).map_err(JsError::validation)?;
+        self.programs.attach_native_js(ProgramId::MAIN, native.code.clone()).map_err(JsError::validation)?;
         for module in modules {
             if native.program.kind == crate::bytecode::ProgramKind::Module
                 && crate::module_identity::same_name(&module.program.source_name, &native.program.source_name) {

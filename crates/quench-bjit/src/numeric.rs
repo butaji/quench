@@ -14,9 +14,11 @@ use crate::Stencil;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-/// The holes of an operand: the first and the second operand's frame offset or value.
-pub const FIRST: u32 = 1;
-pub const SECOND: u32 = 2;
+/// The holes of the destination and of the operands: the destination's frame offset is hole 0, then the first and
+/// the second operand's frame offset or value.
+const DESTINATION: u32 = 0;
+pub const FIRST: u32 = DESTINATION + 1;
+pub const SECOND: u32 = FIRST + 1;
 
 /// Where a row's operand lives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -41,49 +43,82 @@ pub enum Place {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum Kind {
-    Move,
-    Const,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    And,
-    Or,
-    Xor,
-    Shl,
-    Shr,
-    UShr,
+    Move = library::MOVE,
+    Const = library::COPY,
+    Add = library::ADD,
+    Sub = library::SUB,
+    Mul = library::MUL,
+    Div = library::DIV,
+    And = library::AND,
+    Or = library::OR,
+    Xor = library::XOR,
+    Shl = library::SHL,
+    Shr = library::SHR,
+    UShr = library::USHR,
     /// Compare-and-jump: go to `taken` unless the relation holds.
-    Lt,
-    Le,
-    Gt,
-    Ge,
-    Eq,
-    Ne,
+    Lt = library::LT,
+    Le = library::LE,
+    Gt = library::GT,
+    Ge = library::GE,
+    Eq = library::EQ,
+    Ne = library::NE,
     /// Go to `taken` (and poll the interrupt flag first, for `JumpPoll`, which also counts the
     /// edge in the loop entry record; for `JumpWatch`, which counts nothing, a function body
     /// having no such record).
-    Jump,
-    JumpPoll,
+    Jump = library::JUMP,
+    JumpPoll = library::JUMP_POLL,
     /// Go to `taken` unless the operand is a Number; into a pinned destination an int word, which
     /// it loads; for an int slot destination, an int word.
-    Guard,
+    Guard = library::GUARD,
+    /// `Guard` into a pinned destination with its tag test left out (`stencils/numeric.rs`'s `unbox_row`).
+    Unbox = library::UNBOX,
+    UnboxInt = library::UNBOX_INT,
     /// Set the high half of the int slot named by hole 0 to the int tag.
-    TagInit,
+    TagInit = library::TAG_INIT,
     /// Write a pinned double (operand `a`) to the frame slot at hole 0 as a canonical Number word.
-    Spill,
-    JumpWatch,
+    Spill = library::SPILL,
+    JumpWatch = library::JUMP_WATCH,
     /// Poll the interrupt flag, then continue at the next row: a conditional branch back is
     /// preceded by it, as an unconditional one is by its own poll.
-    Poll,
+    Poll = library::POLL,
     /// Go to `taken` when the operand is truthy (`JumpTrue`) or falsy (`JumpFalse`); a heap value
     /// whose cell decides its truthiness leaves.
-    JumpTrue,
-    JumpFalse,
+    JumpTrue = library::JUMP_TRUE,
+    JumpFalse = library::JUMP_FALSE,
     /// The destination takes the logical negation of the operand's truthiness (`Not`), or the
     /// Number negation of a Number operand (`Neg`).
-    Not,
-    Neg,
+    Not = library::NOT,
+    Neg = library::NEG,
+    /// `%`, the staged Number remainder.
+    Rem = library::REM,
+    /// `Math.sqrt`, `Math.floor`, `Math.ceil`, `Math.trunc`, `Math.abs` and `Math.round` of a Number
+    /// (`codes::SQRT..=codes::ROUND`).
+    Sqrt = library::SQRT,
+    Floor = library::FLOOR,
+    Ceil = library::CEIL,
+    Trunc = library::TRUNC,
+    Abs = library::ABS,
+    Round = library::ROUND,
+    /// `Math.fround` and `Math.sign` of one Number (`codes::FROUND`, `codes::SIGN`).
+    Fround = library::FROUND,
+    Sign = library::SIGN,
+    /// `Math.min`, `Math.max` of two Numbers and `Math.imul` of two int32s (`codes::MIN..=codes::IMUL`).
+    Min = library::MIN,
+    Max = library::MAX,
+    Imul = library::IMUL,
+    /// `Math.clz32` of one Number (`codes::CLZ32`).
+    Clz32 = library::CLZ32,
+    /// int32 `+` and `-` a tier proved exact (`staged::Overflow::Impossible`): no overflow test, int operands only.
+    AddNoOverflow = library::ADD_NO_OVERFLOW,
+    /// `switch`'s case slot over dense int labels (`stencils/numeric.rs` `int_case_row`).
+    IntCase = library::INT_CASE,
+    SubNoOverflow = library::SUB_NO_OVERFLOW,
+    /// The jumps of the tests a staged compare names with no Number relation (`library::BIT_TEST` and the rest).
+    BitTest = library::BIT_TEST,
+    NullishEq = library::NULLISH_EQ,
+    NullishNe = library::NULLISH_NE,
+    BoolTrue = library::BOOL_TRUE,
+    BoolFalse = library::BOOL_FALSE,
 }
 
 impl Kind {
@@ -92,9 +127,27 @@ impl Kind {
         (Kind::And..=Kind::UShr).contains(&self)
     }
 
+    /// Whether the int32 operation gives the same result with its operands swapped, so the planner
+    /// may put an immediate second, where a row encodes it into the instruction.
+    pub fn commutes(self) -> bool {
+        matches!(self, Kind::Add | Kind::AddNoOverflow | Kind::Mul | Kind::And | Kind::Or | Kind::Xor)
+    }
+
+    /// The int32 second operand that makes the operation its first operand unchanged (`x | 0`,
+    /// `x + 0`, `x * 1`, `x & -1`, `x << 0`): partial evaluation on a known immediate folds such a row
+    /// to a move. `>>>` has none: `x >>> 0` is a uint32, which an int32 register cannot hold.
+    pub fn neutral(self) -> Option<i32> {
+        match self {
+            Kind::Add | Kind::Sub | Kind::AddNoOverflow | Kind::SubNoOverflow | Kind::Or | Kind::Xor | Kind::Shl | Kind::Shr => Some(0),
+            Kind::Mul => Some(1),
+            Kind::And => Some(-1),
+            _ => None,
+        }
+    }
+
     /// Whether a row of this kind with a double operand computes in f64.
     pub fn has_float_form(self) -> bool {
-        self <= Kind::Ne && !self.is_bitwise()
+        (self <= Kind::Ne && !self.is_bitwise()) || self == Kind::Rem
     }
 }
 
@@ -109,8 +162,16 @@ pub struct Row {
     pub speculate: bool,
 }
 
+// The lib reads a subset of the shared codes: the generated `PLACE_CODE_COUNT` and the runtime's
+// `TypedArrayKind::width` serve the stencil crate and the runtime only.
+#[allow(dead_code)]
 #[path = "../stencils/library.rs"]
 pub mod library;
+#[path = "../stencils/site_bits.rs"]
+pub mod site_bits;
+use library::TYPED_KINDS;
+#[path = "../stencils/row_names.rs"]
+pub mod row_names;
 #[path = "../stencils/supernodes.rs"]
 pub mod supernodes;
 
@@ -168,7 +229,7 @@ mod supernode_tests {
     /// Every supernode the library names was built, and has the successors a row chains by.
     #[test]
     fn the_supernodes_are_built() {
-        for nodes in supernodes::instances() {
+        for nodes in supernodes::instances(supernodes::SUPERNODES, supernodes::FAMILIES) {
             let stencil = supernode_stencil(nodes).unwrap_or_else(|| panic!("{nodes:?}"));
             assert!(stencil.relocs.iter().any(|reloc| crate::class::is_successor(reloc.class)), "{nodes:?}");
         }

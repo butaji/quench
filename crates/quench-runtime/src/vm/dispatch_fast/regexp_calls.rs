@@ -3,37 +3,36 @@ use super::*;
 
 script_handler! {
     /// A `Call` site whose callee was `String.prototype.replace` and whose result only the
-    /// `GetField "length"` right after it reads, dead after that read
-    /// (`native_call_handler`'s `length_only`): the length of the replacement without
-    /// building it (`Vm::steady_string_replace_length`), in the read's result register, the
-    /// read skipped. Any other callee, or a call whose proof does not hold, takes
-    /// `lane_native_call`, whose result the following `GetField` then reads as itself.
+    /// `GetField "length"` right after it reads, dead after that read (`native_call_handler`'s
+    /// `length_only`): the length of the replacement without building it
+    /// (`Vm::steady_string_replace_length`), in the read's result register, the read skipped.
+    /// Any other callee, or a call whose proof does not hold, takes `native_call_miss`, whose
+    /// result the following `GetField` then reads as itself.
     #[inline(never)]
-    fn lane_call_string_replace_length<>(cx, r, ip, i, view) {
+    fn string_replace_length_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let native = match vm.heap.function(r.get(i.b)) {
-            Some(FunctionRecord { kind: FunctionKind::Native(Native::StringReplace), .. }) => Native::StringReplace,
-            _ => sibling!(lane_native_call::<H>, r, ip, Carried::script(cx)),
-        };
+        if !matches!(vm.heap.function(r.get(i.b)), Some(FunctionRecord { kind: FunctionKind::Native(Native::StringReplace), .. })) {
+            sibling!(native_call_miss::<H>, r, ip, Carried::script_in(cx, view))
+        }
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        // SAFETY: the site's next record is the `GetField` that reads this result.
-        let read = unsafe { &*ip.add(1) };
         // SAFETY: the call's window is registers of the running function, which the native
         // call copies before anything can move them.
-        let args = unsafe { lane_call_window(r, i) };
-        let Some(result) = vm.steady_string_replace_length(code, native, r.get(i.c), args) else {
-            sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))
+        let args = unsafe { call_window_in_lane(r, i) };
+        let Some(outcome) = vm.steady_string_replace_length(code, Native::StringReplace, r.get(i.c), args) else {
+            sibling!(native_call_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
         // The call's allocations may make a collection due, which the lane's safepoints take.
         note_allocation(vm);
-        match result {
+        match outcome {
             Ok(length) => {
+                // SAFETY: the site's next record is the `GetField` that reads this result.
+                let read = unsafe { &*following(ip) };
                 r.set(read.a, length);
-                next!(cx, r, unsafe { ip.add(2) }, Carried::script(cx))
+                next!(cx, r, following(following(ip)), Carried::script_in(cx, view))
             }
             Err(error) => {
-                vm.lane_raised = Some(error);
+                vm.lane_completion.raise(error);
                 exit(ip)
             }
         }
@@ -41,9 +40,9 @@ script_handler! {
 }
 
 /// The handler of a `String.prototype.replace` site whose result only `.length` reads
-/// (`native_call_handler`): `lane_call_string_replace_length`.
+/// (`native_call_handler`): `string_replace_length_miss`.
 pub(super) fn replace_length_handler<H: Host>() -> Handler {
-    lane_call_string_replace_length::<H> as Handler
+    string_replace_length_miss::<H> as Handler
 }
 
 /// The record after a `Call`'s that reads its result (`length_read`).
@@ -53,26 +52,29 @@ const AFTER_CALL_READ: usize = CALL_READ_RECORD + 1;
 
 /// Whether the `Call` record `i` at `ip` returns into the base of the `GetField "length"`
 /// right after it, which nothing reads the string again after (`native_call_handler`'s
-/// `length_only`): the site may answer the call with that length alone.
+/// `length_only`): the site may answer the call with that length alone. Proved once, when the
+/// site resolves its native.
 pub(super) fn length_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction) -> bool {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let function = lane_running_function(cx);
-    let Some(body) = code.function_get(function as usize) else {
-        return false;
-    };
+    let function = running_function_in_lane(cx);
+    let body = code.function(function as usize);
     // SAFETY: `ip` is a record of the running view, which starts at the context's base.
     let pc = unsafe { ip.offset_from((*cx).base) } as usize;
     let read = pc + CALL_READ_RECORD;
-    let Some(field) = body.code.get(read).map(|packed| decoded_instruction(body, *packed)) else {
+    let Some(packed) = body.code.get(read) else {
         return false;
     };
+    let field = decoded_instruction(body, *packed);
     let result = i.a & crate::bytecode::REGISTER_MASK;
-    if !field.op().is_get_field()
+    let reads_length = match field.field_lookup() {
+        Some(crate::bytecode::FieldLookup::Atom { atom, base, .. }) => atom == vm.length_atom && base.register_index() == Some(result),
+        _ => false,
+    };
+    if !crate::staged::reads_named_field(field.op())
         || field.result_flags() != 0
-        || field.register_b() != result
-        || field.atom_index() != vm.length_atom as u32
+        || !reads_length
         || !crate::bytecode::entered_only_by_fallthrough(body, read)
     {
         return false;
@@ -83,5 +85,5 @@ pub(super) fn length_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInst
         || code
             .register_root_masks(function)
             .and_then(|masks| masks.get(pc + AFTER_CALL_READ))
-            .is_some_and(|after| crate::liveness::register_dead(after, usize::from(result)))
+            .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(result)))
 }

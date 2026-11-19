@@ -18,17 +18,21 @@ pub(super) enum ArrayLikeElementKind {
     PropertyKey,
 }
 
-const EXPONENTIATION_ZERO: f64 = 0.0;
-const EXPONENTIATION_ONE: f64 = 1.0;
-const EXPONENTIATION_TWO: f64 = 2.0;
-const ODD_INTEGER_PARITY: f64 = 1.0;
 /// The comparison operators occupy the binary operator discriminants up to this one.
 pub(super) const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualThan as u32;
 
 /// `number_relations` rows' operators: which binary operator denotes each relation.
 macro_rules! number_relation_operators {
-    ($($relation:ident => [$($operator:ident),+ $(,)?], $stage_method:ident;)+) => {
+    ($($relation:ident => [$($operator:ident $symbol:literal),+ $(,)?], $stage_method:ident;)+) => {
         impl NumberRelation {
+            /// The binary operator a relation denotes, the first of its group. `Equal` and `NotEqual` name
+            /// two operators each (`==` and `===`), so a caller that needs one of them must not ask.
+            pub(crate) fn binary_operator(self) -> u32 {
+                match self {
+                    $(Self::$relation => [$(BinaryOperator::$operator as u32),+][0],)+
+                }
+            }
+
             #[inline(always)]
             pub(crate) fn from_operator(op: u32) -> Option<Self> {
                 $(
@@ -46,8 +50,15 @@ number_relation_rows!(number_relation_operators);
 macro_rules! number_arithmetic_operators {
     ($($operation:ident => $operator:ident, $stage_method:ident, $specialized_instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
         impl NumberArithmetic {
+            /// The binary operator this arithmetic operation denotes (`from_operator`'s inverse).
+            pub(crate) fn binary_operator(self) -> u32 {
+                match self {
+                    $(Self::$operation => BinaryOperator::$operator as u32,)+
+                }
+            }
+
             #[inline(always)]
-            pub(super) fn from_operator(operator: u32) -> Option<Self> {
+            pub(crate) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == BinaryOperator::$operator as u32 {
                         return Some(Self::$operation);
@@ -56,39 +67,21 @@ macro_rules! number_arithmetic_operators {
                 None
             }
 
-            /// The Number arithmetic operation denoted by a JavaScript bytecode
-            /// and its operator. General `Binary` accepts every arithmetic row;
-            /// specialized bytecodes are accepted only for their corresponding
-            /// operator, as recorded in this table.
-            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                if instruction.is_binary() {
-                    return Self::from_operator(operator);
+            /// The Number arithmetic operation the decoded instruction denotes: the `Arithmetic`
+            /// of `Operation::Number`, which `Binary` decodes its arithmetic operators to
+            /// (`staged::numeric::binary_operation`). No record of another opcode denotes one.
+            pub(crate) fn from_instruction(instruction: crate::bytecode::WideInstruction) -> Option<Self> {
+                match crate::staged::Operation::<u64, ()>::of(instruction)? {
+                    crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic { operation, .. }) => Some(operation),
+                    _ => None,
                 }
-                $(number_arithmetic_operators!(
-                    @specialized_instruction
-                    instruction,
-                    operator,
-                    Self::$operation,
-                    $operator,
-                    $specialized_instruction
-                );)+
-                None
             }
-        }
-    };
-    (
-        @specialized_instruction
-        $instruction:ident,
-        $operator:ident,
-        $operation:expr,
-        $operator_name:ident,
-        None
-    ) => {};
-    (@specialized_instruction $instruction:ident, $operator:ident, $operation:expr, $operator_name:ident, $specialized_instruction:ident) => {
-        if $instruction.class().eq(crate::bytecode::Class::$specialized_instruction)
-            && $operator == BinaryOperator::$operator_name as u32
-        {
-            return Some($operation);
+
+            /// `from_instruction` of an opcode and its operator field, for a caller that holds
+            /// the opcode but no record: the record is built with the operator in its immediate.
+            pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
+                Self::from_instruction(crate::bytecode::WideInstruction::new(instruction, 0, 0, 0, operator))
+            }
         }
     };
 }
@@ -102,12 +95,9 @@ impl NumberArithmetic {
         matches!(self, Self::Add | Self::Subtract)
     }
 
-    /// Whether the result of two integers is an integer: all but a division.
-    pub(super) const fn integral(self) -> bool {
-        !matches!(self, Self::Divide)
-    }
 }
 
+#[cfg(test)]
 /// Whether swapping two already-evaluated operands preserves the canonical Number
 /// result. This is not a law for evaluating/coercing guest operands or string addition.
 #[inline(always)]
@@ -141,7 +131,7 @@ macro_rules! number_unary_operators {
             /// The side-effect-free Number unary operation denoted by JavaScript bytecode.
             /// Other unary operators still require their normal coercion and effect paths.
             pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                (instruction.is_unary())
+                (instruction as u16 == crate::staged::UNARY_ROW)
                     .then(|| Self::from_operator(operator))
                     .flatten()
             }
@@ -152,8 +142,15 @@ number_unary_rows!(number_unary_operators);
 
 /// `number_bitwise_rows` rows' operators: which binary operator denotes each operation.
 macro_rules! number_bitwise_operators {
-    ($($operation:ident => $operator:ident, $stage_method:ident;)+) => {
+    ($($operation:ident => $operator:ident, $stage_method:ident, $symbol:literal;)+) => {
         impl NumberBitwise {
+            /// The binary operator this bitwise operation denotes (`from_operator`'s inverse).
+            pub(crate) fn binary_operator(self) -> u32 {
+                match self {
+                    $(Self::$operation => BinaryOperator::$operator as u32,)+
+                }
+            }
+
             /// `from_operator` of a decoded operator, as one match.
             #[inline(always)]
             pub(crate) fn from_binary_operator(operator: BinaryOperator) -> Option<Self> {
@@ -173,14 +170,19 @@ macro_rules! number_bitwise_operators {
                 None
             }
 
-            /// The signed int32 operation denoted by an eligible JavaScript
-            /// bytecode and operator. Bitwise operands may be narrowed only
-            /// for the general `Binary` instruction; entry guards are checked
-            /// separately by the caller.
+            /// The signed int32 operation the decoded instruction denotes: the `Bitwise` of
+            /// `Operation::Number`, which `Binary` decodes its bitwise operators to.
+            pub(crate) fn from_instruction(instruction: crate::bytecode::WideInstruction) -> Option<Self> {
+                match crate::staged::Operation::<u64, ()>::of(instruction)? {
+                    crate::staged::Operation::Number(crate::staged::NumberOperation::Bitwise { operation, .. }) => Some(operation),
+                    _ => None,
+                }
+            }
+
+            /// `from_instruction` of an opcode and its operator field, for a caller that holds
+            /// the opcode but no record.
             pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                (instruction.is_binary())
-                    .then(|| Self::from_operator(operator))
-                    .flatten()
+                Self::from_instruction(crate::bytecode::WideInstruction::new(instruction, 0, 0, 0, operator))
             }
         }
     };
@@ -193,6 +195,28 @@ impl NumberBitwise {
     pub(super) fn result_is_int32(self, right: Option<f64>) -> bool {
         self != Self::ShiftRightUnsigned || right.is_some_and(|right|
             crate::value::number_to_u32(right) & crate::value::WORD32_SHIFT_MASK != 0)
+    }
+}
+
+#[cfg(test)]
+/// `OP` on two int32 operands when its Number result is again an int32 (no overflow, no
+/// -0, no `>>>` past 2^31): the raw i32, so a fused second operator reads it without a tag
+/// test. `None` leaves the case to `integer_operator`.
+#[inline(always)]
+pub(super) fn int32_operator<const OP: u32>(left: i32, right: i32) -> Option<i32> {
+    match numeric_binary_operator(OP)? {
+        BinaryOperator::Addition => left.checked_add(right),
+        BinaryOperator::Subtraction => left.checked_sub(right),
+        BinaryOperator::Multiplication => {
+            let product = left.checked_mul(right)?;
+            // 0 from a negative factor is -0, not an int32.
+            (product != 0 || (left | right) >= 0).then_some(product)
+        }
+        operator => {
+            let operation = NumberBitwise::from_binary_operator(operator)?;
+            let bits = operation.apply(&mut I32BitwiseStage, left, right);
+            (operation != NumberBitwise::ShiftRightUnsigned || bits >= 0).then_some(bits)
+        }
     }
 }
 
@@ -234,43 +258,6 @@ pub(super) fn integer_binary(op: u32, left: i32, right: i32) -> Option<Value> {
     numeric_integer_result(numeric_binary_operator(op)?, left, right)
 }
 
-/// `number_relation` of two integers alone: `None` for any other pair. Few values stay live,
-/// so a lane handler inlining it saves no registers.
-#[inline(always)]
-pub(super) fn integer_relation_i32(op: u32, left: i32, right: i32) -> Option<bool> {
-    if op > LAST_COMPARISON_OPERATOR {
-        return None;
-    }
-    Some(number_comparison(op, left, right))
-}
-
-/// The truth a jump test of two int32 operands takes: a comparison's result, or whether a
-/// bitwise operator's int32 result is nonzero (`if (flags & MASK)`, the Number it would make
-/// is never made: its ToBoolean is its bits' test). `None` for any other operator.
-#[inline(always)]
-pub(super) fn integer_test_i32(op: u32, left: i32, right: i32) -> Option<bool> {
-    let bits = match op {
-        BITWISE_AND => left & right,
-        BITWISE_OR => left | right,
-        BITWISE_XOR => left ^ right,
-        SHIFT_LEFT => left.wrapping_shl(right as u32),
-        SHIFT_RIGHT => left.wrapping_shr(right as u32),
-        SHIFT_RIGHT_ZERO_FILL => ((left as u32).wrapping_shr(right as u32)) as i32,
-        _ => return integer_relation_i32(op, left, right),
-    };
-    Some(bits != 0)
-}
-
-/// A comparison operator on two int32 Values; `None` for any other operator or value.
-#[inline(always)]
-pub(super) fn integer_relation(op: u32, left: Value, right: Value) -> Option<bool> {
-    if op > LAST_COMPARISON_OPERATOR {
-        return None;
-    }
-    let (a, b) = Value::int_pair(left, right)?;
-    Some(number_comparison(op, a, b))
-}
-
 /// A comparison operator on two Numbers, comparing integers as integers; `None` for any
 /// other operator or value.
 #[inline(always)]
@@ -286,18 +273,9 @@ pub(super) fn number_relation(op: u32, left: Value, right: Value) -> Option<bool
     Some(number_comparison(op, left.as_number()?, right.as_number()?))
 }
 
-/// Comparison `op` (at most `LAST_COMPARISON_OPERATOR`) of two Numbers' doubles, as
-/// `number_relation` decides it past its int32 pair: an int32 converts exactly, so any two
-/// Numbers compare this way.
-#[inline(always)]
-pub(super) fn double_relation(op: u32, left: f64, right: f64) -> bool {
-    debug_assert!(op <= LAST_COMPARISON_OPERATOR);
-    number_comparison(op, left, right)
-}
-
 #[cfg(test)]
 mod numeric_instruction_tests {
-    use super::{NumberArithmetic, NumberBitwise, NumberUnary, Op, number_is_truthy};
+    use super::{NumberArithmetic, NumberBitwise, NumberF64Stage, NumberUnary, Op, number_truthiness};
     use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
     #[test]
@@ -306,6 +284,8 @@ mod numeric_instruction_tests {
             NumberArithmetic::from_js_instruction(Op::Binary, BinaryOperator::Addition as u32),
             Some(NumberArithmetic::Add)
         );
+        // The specialized opcodes decode to the Number operation of their own operator (`NumericAdd`
+        // is `+`, `NumericMultiply` is `*`); any other operator is none.
         assert_eq!(
             NumberArithmetic::from_js_instruction(Op::NumericAdd, BinaryOperator::Addition as u32),
             Some(NumberArithmetic::Add)
@@ -353,7 +333,7 @@ mod numeric_instruction_tests {
             (f64::NEG_INFINITY, false)] {
             let operation = NumberBitwise::ShiftRightUnsigned;
             assert_eq!(operation.result_is_int32(Some(right)), fits, "{right}");
-            let result = super::number_bitwise_f64_result(operation, -1, crate::value::number_to_u32(right) as i32);
+            let result = super::number_bitwise_f64_result(operation, -1, crate::value::number_to_i32(right));
             assert_eq!(result <= f64::from(i32::MAX), fits, "{right}");
         }
         assert!(!NumberBitwise::ShiftRightUnsigned.result_is_int32(None));
@@ -414,7 +394,7 @@ mod numeric_instruction_tests {
             (f64::MIN_POSITIVE, true),
             (-1.0, true),
         ] {
-            assert_eq!(number_is_truthy(value), expected);
+            assert_eq!(number_truthiness(&mut NumberF64Stage, value), expected);
         }
     }
 }
@@ -528,7 +508,7 @@ fn bitwise_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Va
 }
 
 /// ToInt32 of a Number from its own representation: an integer as it is, a double by
-/// `number_to_u32`. Branches, not `Option::or_else`: the closure's `Some` stayed a flag
+/// `number_to_i32`. Branches, not `Option::or_else`: the closure's `Some` stayed a flag
 /// register tested after the conversion (V8-v7 NavierStokes `x | 0`).
 #[inline(always)]
 fn value_to_int32(value: Value) -> Option<i32> {
@@ -536,7 +516,7 @@ fn value_to_int32(value: Value) -> Option<i32> {
         return Some(integer);
     }
     match value.as_number() {
-        Some(number) => Some(number_to_u32(number) as i32),
+        Some(number) => Some(crate::value::number_to_i32(number)),
         None => None,
     }
 }
@@ -548,33 +528,6 @@ pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Opti
     // One operand at a time: each tag test needs a single scratch register, which keeps the
     // lane's integer handlers free of saved registers.
     let (left, right) = (left.as_int()?, right.as_int()?);
-    numeric_integer_result(numeric_binary_operator(OP)?, left, right)
-}
-
-/// `OP` on two int32 operands when its Number result is again an int32 (no overflow, no
-/// -0, no `>>>` past 2^31): the raw i32, so a fused second operator reads it without a tag
-/// test. `None` leaves the case to `integer_operator`.
-#[inline(always)]
-pub(super) fn int32_operator<const OP: u32>(left: i32, right: i32) -> Option<i32> {
-    match numeric_binary_operator(OP)? {
-        BinaryOperator::Addition => left.checked_add(right),
-        BinaryOperator::Subtraction => left.checked_sub(right),
-        BinaryOperator::Multiplication => {
-            let product = left.checked_mul(right)?;
-            // 0 from a negative factor is -0, not an int32.
-            (product != 0 || (left | right) >= 0).then_some(product)
-        }
-        operator => {
-            let operation = NumberBitwise::from_binary_operator(operator)?;
-            let bits = operation.apply(&mut I32BitwiseStage, left, right);
-            (operation != NumberBitwise::ShiftRightUnsigned || bits >= 0).then_some(bits)
-        }
-    }
-}
-
-/// `integer_operator` of two operands the caller already read as int32s.
-#[inline(always)]
-pub(super) fn integer_pair_operator<const OP: u32>(left: i32, right: i32) -> Option<Value> {
     numeric_integer_result(numeric_binary_operator(OP)?, left, right)
 }
 
@@ -603,27 +556,10 @@ fn numeric_integer_result(operator: BinaryOperator, left: i32, right: i32) -> Op
         BinaryOperator::Addition => numeric_integer_arithmetic_result(NumberArithmetic::Add, left, right),
         BinaryOperator::Subtraction => numeric_integer_arithmetic_result(NumberArithmetic::Subtract, left, right),
         BinaryOperator::Multiplication => numeric_integer_arithmetic_result(NumberArithmetic::Multiply, left, right),
-        BinaryOperator::Division => {
-            if right == 0 || (left == 0 && right < 0) {
-                return None;
-            }
-            let remainder = left.checked_rem(right)?;
-            if remainder != 0 {
-                return None;
-            }
-            Value::integer(left.checked_div(right)?)
-        }
-        BinaryOperator::Remainder => {
-            if right == 0 {
-                return None;
-            }
-            let remainder = left.checked_rem(right)?;
-            if remainder == 0 && left < 0 {
-                Value::number(-0.0)
-            } else {
-                Value::integer(remainder)
-            }
-        }
+        // The Number operations' own values: `Value::number` makes an integral quotient or remainder the
+        // integer it is, and -0 the double it is.
+        BinaryOperator::Division => Value::number(number_arithmetic_result(NumberArithmetic::Divide, f64::from(left), f64::from(right))),
+        BinaryOperator::Remainder => Value::number(number_remainder(f64::from(left), f64::from(right))),
         BinaryOperator::Exponential => return None,
         operator => number_bitwise_result(
             NumberBitwise::from_binary_operator(operator)
@@ -715,7 +651,39 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `native` called with `this` and `args`, rooting both for the native's run: the entry
+    /// for callers whose arguments nothing else holds (the embedding API, host callbacks,
+    /// natives calling natives, tests).
+    #[inline(always)]
     pub(super) fn call_native(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        self.call_native_rooting::<true>(p, native, this, args)
+    }
+
+    /// `call_native` whose caller keeps every value of `args` reachable for the native's whole
+    /// run, so only the receiver is rooted here: a frame parked at the call (`pc_is_resume`),
+    /// which the collector scans at the call's own liveness (`Frame::source_instruction_pc`),
+    /// holding them in its argument registers, or a caller that roots them itself
+    /// (`call_value`, `spread_call`, a job's roots). The receiver stays rooted: a method
+    /// site's receiver may be a value its path loaded (`CallThisMethod`), held by no register.
+    #[inline(always)]
+    pub(super) fn call_native_arguments_held(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        self.call_native_rooting::<false>(p, native, this, args)
+    }
+
+    #[inline(always)]
+    fn call_native_rooting<const ROOT_ARGUMENTS: bool>(
         &mut self,
         p: &ResidualProgram,
         native: Native,
@@ -731,18 +699,33 @@ impl<H: Host> Vm<H> {
         {
             Ok(value)
         } else {
-            self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
-                let receiver = vm.string_method_receiver(p, native, this)?;
-                if receiver == this {
-                    return vm.call_native_dispatch(p, native, receiver, args);
+            // The receiver, and the arguments unless the caller holds them
+            // (`call_native_arguments_held`), are rooted for the native's run: the values may
+            // be a copy only this call holds. Pushed as a slice: the chained iterator's extend
+            // cost each call a callback per value (`call_value_with_target`).
+            let start = self.active_call_roots.len();
+            if ROOT_ARGUMENTS {
+                self.active_call_roots.reserve(args.len() + 2);
+                self.active_call_roots.push(this);
+                self.active_call_roots.extend_from_slice(args);
+            } else {
+                self.active_call_roots.push(this);
+            }
+            let result = self.string_method_receiver(p, native, this).and_then(|receiver| {
+                if receiver != this {
+                    // A boxed receiver only this call holds.
+                    self.active_call_roots.push(receiver);
                 }
-                vm.with_call_roots([receiver], |vm| {
-                    vm.call_native_dispatch(p, native, receiver, args)
-                })
-            })
+                self.call_native_dispatch(p, native, receiver, args)
+            });
+            self.active_call_roots.truncate(start);
+            result
         };
         // String natives make text on demand; charge it before the caller's next safepoint.
         self.heap.charge_materialized_text();
+        if native.searches_regexps() {
+            return self.regexp_search_outcome(result);
+        }
         result
     }
 
@@ -771,6 +754,7 @@ impl<H: Host> Vm<H> {
         family
     }
 
+    #[inline(always)]
     fn call_native_dispatch(
         &mut self,
         p: &ResidualProgram,
@@ -811,13 +795,7 @@ impl<H: Host> Vm<H> {
             NativeFamily::Test262Agent => self.call_test262_agent(p, args),
             NativeFamily::BigInt => self.bigint_native(p, native, this, args),
             NativeFamily::Promise => self.call_promise_native(p, native, this, args),
-            NativeFamily::AsyncFromSyncValue => self.async_from_sync_value(args),
-            NativeFamily::AsyncFromSyncValueRejected => self.async_from_sync_value_rejected(p, args),
-            NativeFamily::AsyncGeneratorReturnFulfilled => self.async_generator_return_fulfilled(p, args),
-            NativeFamily::AsyncGeneratorReturnRejected => self.async_generator_return_rejected(p, args),
-            NativeFamily::AsyncGeneratorDelegateReturnStart => {
-                self.async_generator_delegate_return_start(p, args)
-            }
+            NativeFamily::AsyncReaction => self.call_async_reaction_native(p, native, args),
             NativeFamily::ObjectStatic => self.call_object_native(p, native, args),
             NativeFamily::LazyDataProperty => self.lazy_data_property_access(p, this, args),
             NativeFamily::ProxyRevoke => {
@@ -831,6 +809,17 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The reaction natives of async iteration (`NativeFamily::AsyncReaction`), by kind.
+    fn call_async_reaction_native(&mut self, p: &ResidualProgram, native: Native, args: &[Value]) -> Result<Value, JsError> {
+        match native {
+            Native::AsyncFromSyncValue => self.async_from_sync_value(args),
+            Native::AsyncFromSyncValueRejected => self.async_from_sync_value_rejected(p, args),
+            Native::AsyncGeneratorReturnFulfilled => self.async_generator_return_fulfilled(p, args),
+            Native::AsyncGeneratorReturnRejected => self.async_generator_return_rejected(p, args),
+            _ => self.async_generator_delegate_return_start(p, args),
+        }
+    }
+
     /// The natives no family above claims, by kind.
     fn call_native_table(
         &mut self,
@@ -841,6 +830,18 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match native {
             Native::MathInitialize => self.install_math(p).map(|()| Value::UNDEFINED),
+            Native::AtomicsInitialize => self.install_atomics(p).map(|()| Value::UNDEFINED),
+            Native::WebAssemblyInitialize => self.install_webassembly(p).map(|()| Value::UNDEFINED),
+            Native::IntlInitialize => self
+                .install_intl_for_realm(p, self.realm.globals, self.object_proto)
+                .map(|()| Value::UNDEFINED),
+            Native::ReflectInitialize => self.install_reflect(p).map(|()| Value::UNDEFINED),
+            Native::ProxyInitialize => self.install_proxy(p).map(|()| Value::UNDEFINED),
+            Native::WeakRefInitialize => self.install_weak_ref(p).map(|()| Value::UNDEFINED),
+            Native::FinalizationRegistryInitialize => {
+                self.install_finalization_registry(p).map(|()| Value::UNDEFINED)
+            }
+            Native::DataViewInitialize => self.install_data_view(p).map(|()| Value::UNDEFINED),
             Native::TemporalInitialize => self.install_temporal(p).map(|()| Value::UNDEFINED),
             Native::IsHTMLDDA => Ok(Value::NULL),
             Native::Proxy => Err(self.type_error(p, "Proxy must be called with new".into())),
@@ -855,8 +856,7 @@ impl<H: Host> Vm<H> {
                 }
                 let object = self.box_object(value)?;
                 self.with_stack.push(object);
-                self.with_scope_entered = true;
-                self.refresh_call_refusal();
+                self.enter_with_scope();
                 Ok(Value::UNDEFINED)
             }
             Native::WithExit => {
@@ -873,7 +873,6 @@ impl<H: Host> Vm<H> {
             Native::ArrayBuffer | Native::SharedArrayBuffer => {
                 Err(self.type_error(p, "constructor requires new".into()))
             }
-            native if native.is_host_control_native() => self.call_host(p, native, args),
             Native::WasmHost => self.call_wasm_host(args),
             Native::HostFunction => self.call_host_function(this, args),
             Native::Print => {
@@ -996,11 +995,7 @@ impl<H: Host> Vm<H> {
             | Native::IntlDateTimeFormatResolvedOptions => {
                 self.intl_date_time_format_native(p, native, this, args)
             }
-            Native::DateNow => Ok(Value::number(
-                HostContext::new(&mut self.host)
-                    .invoke(CapabilityId::ClockMillis, None)
-                    .trunc(),
-            )),
+            Native::DateNow => Ok(self.date_now()),
             Native::DateGetTime
             | Native::DateValueOf
             | Native::DateGetTimezoneOffset
@@ -1179,17 +1174,17 @@ impl<H: Host> Vm<H> {
                 let number = self.to_number(p, value)?;
                 Ok(Value::boolean(super::number::global_number_predicate(native, number).unwrap_or_default()))
             }
-            Native::MathLog => {
-                let v = args.first().copied().unwrap_or(Value::UNDEFINED);
-                Ok(Value::number(self.to_number(p, v)?.ln()))
-            }
-            Native::MathPow => {
+            // Each argument converted in order, then the one numeric body (`number::math_numbers`).
+            Native::MathLog | Native::MathPow => {
                 let a = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let b = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                Ok(Value::number(exponentiate(
-                    self.to_number(p, a)?,
-                    self.to_number(p, b)?,
-                )))
+                let x = self.to_number(p, a)?;
+                let y = if native == Native::MathPow {
+                    self.to_number(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?
+                } else {
+                    f64::NAN
+                };
+                let result = super::number::math_numbers(native, &[x, y]).or_else(|| super::number::math_unary(native, x));
+                Ok(Value::number(result.unwrap_or(f64::NAN)))
             }
             Native::ArrayPush => self.array_push_native(p, this, args),
             Native::ArrayIsArray => {
@@ -1322,7 +1317,7 @@ impl<H: Host> Vm<H> {
             Native::NumberPrecision => self.number_format(p, this, args, native),
             Native::String => {
                 let argument = self.string_constructor_argument(args);
-                let text = if let Some(Cell::Symbol(description)) = self.heap.get(argument) {
+                let text = if let Some(description) = self.heap.symbol_data(argument) {
                     JsString::from(format!("Symbol({})", description.as_deref().unwrap_or("")))
                 } else {
                     self.coerce_js_string(p, argument)?
@@ -1649,6 +1644,8 @@ impl<H: Host> Vm<H> {
                     .unwrap_or_else(|| self.native_value(native));
                 self.construct_value_with_new_target(p, callee, callee, args)
             }
+            // Last among the guarded arms, so the named natives above dispatch by one jump.
+            native if native.is_host_control_native() => self.call_host(p, native, args),
             _ => self.call_primitive_native(p, native, this, args),
         }
     }
@@ -1937,12 +1934,22 @@ impl<H: Host> Vm<H> {
         Some(self.heap.alloc_bigint(value))
     }
 
+    /// `Date.now()`: the host clock's milliseconds, truncated. It runs no guest code, so the
+    /// lane answers it in place (`steady_native_value`) as the native call does.
+    pub(super) fn date_now(&mut self) -> Value {
+        Value::number(HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None).trunc())
+    }
+
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two strings: IsLessThan orders them by
-    /// code units, which runs no guest code.
+    /// code units, which runs no guest code. Identical Values name the same string, so they
+    /// are equal without reading either; otherwise `order` compares them (in place when flat).
     pub(super) fn string_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
-        let (left, right) = (self.heap.string(left)?, self.heap.string(right)?);
-        let ordering = left.units().cmp(&right.units());
-        NumberRelation::from_operator(op)?.of_ordering(ordering)
+        let relation = NumberRelation::from_operator(op)?;
+        let (left_string, right_string) = (self.heap.string(left)?, self.heap.string(right)?);
+        if left == right {
+            return relation.of_ordering(std::cmp::Ordering::Equal);
+        }
+        relation.of_ordering(left_string.order(right_string))
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two BigInt values.
@@ -2164,8 +2171,8 @@ impl<H: Host> Vm<H> {
                     // Operands of one type compare as `===` does.
                     _ if let (Some(l), Some(r)) = (self.heap.string(left), self.heap.string(right)) => l == r,
                     (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) => left == right,
+                    _ if self.heap.is_symbol(left) && self.heap.is_symbol(right) => false,
                     // Two distinct Symbols, as a kind tag (`x.kind == Kind.A`) compares.
-                    (Some(Cell::Symbol(_)), Some(Cell::Symbol(_))) => false,
                     _ if self.is_object_like(left) && self.is_object_like(right) => false,
                     _ => return None,
                 },
@@ -2214,7 +2221,7 @@ impl<H: Host> Vm<H> {
         if let Some(values) = self.dense_apply_arguments(list)
             && (matches!(element_kind, ArrayLikeElementKind::Any)
                 || values.iter().all(|value| {
-                    self.heap.is_string(*value) || matches!(self.heap.get(*value), Some(Cell::Symbol(_)))
+                    self.heap.is_string(*value) || self.heap.is_symbol(*value)
                 }))
         {
             return Ok(values);
@@ -2234,11 +2241,11 @@ impl<H: Host> Vm<H> {
                 .try_reserve(length)
                 .map_err(|_| self.type_error(p, "array-like list is too large".into()))?;
             for index in 0..length {
-                let atom = self.intern_atom(&index.to_string());
+                let atom = self.index_key_atom(index);
                 let element = self.get_property(p, self.heap.root_value(object).unwrap(), atom)?;
                 if matches!(element_kind, ArrayLikeElementKind::PropertyKey)
                     && !self.heap.is_string(element)
-                    && !matches!(self.heap.get(element), Some(Cell::Symbol(_)))
+                    && !self.heap.is_symbol(element)
                 {
                     return Err(self
                         .type_error(p, "array-like list contains an invalid property key".into()));
@@ -2258,88 +2265,20 @@ impl<H: Host> Vm<H> {
     }
 }
 
+/// `Number ** Number` (`Math.pow`), the value `staged::math::power` computes.
 pub(super) fn exponentiate(base: f64, exponent: f64) -> f64 {
-    if exponent.is_nan() {
-        return f64::NAN;
-    }
-    if exponent == EXPONENTIATION_ZERO {
-        return EXPONENTIATION_ONE;
-    }
-    if base.is_nan() || base.abs() == EXPONENTIATION_ONE && exponent.is_infinite() {
-        return f64::NAN;
-    }
-    if base.is_infinite() {
-        return infinite_power(base, exponent);
-    }
-    if base == EXPONENTIATION_ZERO {
-        return zero_power(base, exponent);
-    }
-    base.powf(exponent)
+    crate::staged::math::power(base, exponent)
 }
 
-fn infinite_power(base: f64, exponent: f64) -> f64 {
-    let magnitude = if exponent.is_sign_positive() {
-        f64::INFINITY
-    } else {
-        EXPONENTIATION_ZERO
-    };
-    signed_power_magnitude(base, exponent, magnitude)
-}
-
-fn zero_power(base: f64, exponent: f64) -> f64 {
-    let magnitude = if exponent.is_sign_positive() {
-        EXPONENTIATION_ZERO
-    } else {
-        f64::INFINITY
-    };
-    signed_power_magnitude(base, exponent, magnitude)
-}
-
-fn signed_power_magnitude(base: f64, exponent: f64, magnitude: f64) -> f64 {
-    if base.is_sign_negative() && is_odd_integer(exponent) {
-        -magnitude
-    } else {
-        magnitude
-    }
-}
-
-fn is_odd_integer(value: f64) -> bool {
-    value.is_finite()
-        && value.fract() == EXPONENTIATION_ZERO
-        && value.abs() % EXPONENTIATION_TWO == ODD_INTEGER_PARITY
-}
-
-/// Whether an equality operator is strict and whether it is negated; `None` for any other.
-#[inline(always)]
-pub(crate) fn equality_operator(op: u32) -> Option<(bool, bool)> {
-    const EQUALITY: u32 = BinaryOperator::Equality as u32;
-    const INEQUALITY: u32 = BinaryOperator::Inequality as u32;
-    const STRICT_EQUALITY: u32 = BinaryOperator::StrictEquality as u32;
-    const STRICT_INEQUALITY: u32 = BinaryOperator::StrictInequality as u32;
-    // The four operators are consecutive from an aligned first, each negation right after
-    // its test and the strict pair after the loose one, so two bits of the offset decide
-    // them, with no table of branches.
-    const NEGATED: u32 = INEQUALITY - EQUALITY;
-    const STRICT: u32 = STRICT_EQUALITY - EQUALITY;
-    const _: () = assert!(
-        NEGATED == 1
-            && STRICT == 2
-            && STRICT_INEQUALITY - EQUALITY == STRICT | NEGATED
-            && EQUALITY.is_multiple_of(STRICT << 1)
-    );
-    let offset = op.wrapping_sub(EQUALITY);
-    (offset <= STRICT | NEGATED).then_some((offset & STRICT != 0, offset & NEGATED != 0))
-}
-
-/// The equality operator that is `strict` and `negated`: the inverse of `equality_operator`.
-pub(crate) fn equality_binary_operator(strict: bool, negated: bool) -> u32 {
-    match (strict, negated) {
-        (false, false) => BinaryOperator::Equality as u32,
-        (false, true) => BinaryOperator::Inequality as u32,
-        (true, false) => BinaryOperator::StrictEquality as u32,
-        (true, true) => BinaryOperator::StrictInequality as u32,
-    }
-}
+// The binary operator codes the shared rows name (`number_rows.rs`) are the parser's.
+const _: () = assert!(
+    EQUALITY_OPERATOR == BinaryOperator::Equality as u32
+        && INEQUALITY_OPERATOR == BinaryOperator::Inequality as u32
+        && STRICT_EQUALITY_OPERATOR == BinaryOperator::StrictEquality as u32
+        && STRICT_INEQUALITY_OPERATOR == BinaryOperator::StrictInequality as u32
+        && IN_OPERATOR == BinaryOperator::In as u32
+        && INSTANCEOF_OPERATOR == BinaryOperator::Instanceof as u32
+);
 
 /// The entry that runs a native's call (`Vm::call_native_dispatch`), one per family of
 /// natives that share an implementation; `Table` for the natives no family claims.
@@ -2365,11 +2304,8 @@ pub(super) enum NativeFamily {
     Test262Agent,
     BigInt,
     Promise,
-    AsyncFromSyncValue,
-    AsyncFromSyncValueRejected,
-    AsyncGeneratorReturnFulfilled,
-    AsyncGeneratorReturnRejected,
-    AsyncGeneratorDelegateReturnStart,
+    /// The reaction natives of async-from-sync iteration and async generators' `return`.
+    AsyncReaction,
     ObjectStatic,
     LazyDataProperty,
     ProxyRevoke,
@@ -2430,11 +2366,11 @@ fn native_family(native: Native) -> NativeFamily {
         Native::Test262Agent => return F::Test262Agent,
         _ if native.is_bigint_native() => return F::BigInt,
         _ if native.is_promise_native() => return F::Promise,
-        Native::AsyncFromSyncValue => return F::AsyncFromSyncValue,
-        Native::AsyncFromSyncValueRejected => return F::AsyncFromSyncValueRejected,
-        Native::AsyncGeneratorReturnFulfilled => return F::AsyncGeneratorReturnFulfilled,
-        Native::AsyncGeneratorReturnRejected => return F::AsyncGeneratorReturnRejected,
-        Native::AsyncGeneratorDelegateReturnStart => return F::AsyncGeneratorDelegateReturnStart,
+        Native::AsyncFromSyncValue
+        | Native::AsyncFromSyncValueRejected
+        | Native::AsyncGeneratorReturnFulfilled
+        | Native::AsyncGeneratorReturnRejected
+        | Native::AsyncGeneratorDelegateReturnStart => return F::AsyncReaction,
         _ if native.is_object_static() => return F::ObjectStatic,
         Native::LazyDataProperty => return F::LazyDataProperty,
         Native::ProxyRevoke => return F::ProxyRevoke,

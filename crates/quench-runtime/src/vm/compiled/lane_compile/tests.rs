@@ -55,6 +55,49 @@ fn lane_dependencies_retire_at_holder_departures_only() {
     }
 }
 
+/// Code that folded a fact read through a prototype chain (`StableFacts::chains`) holds the
+/// layouts of that chain's prototypes, not of every prototype: a layout change off the chain
+/// leaves it standing; a change of a link's prototype on it, a link's death or an event no
+/// prototype names (a shape compaction, a collection that may reuse a record) retires it.
+#[test]
+fn chain_dependencies_retire_at_their_own_prototypes_only() {
+    use crate::code_dependencies::PrototypeChain;
+    let mut heap = Heap::new();
+    heap.track_slot_representations(&[(0, None), (1, None), (1, None)]);
+    let object = |heap: &mut Heap, proto: Value| {
+        let (storage, values) = heap.initial_object_storage(1, &[Value::integer(1)], false);
+        heap.alloc_object(Object::with_property_storage(proto, storage, values))
+    };
+    let holder = object(&mut heap, Value::NULL);
+    let middle = object(&mut heap, holder);
+    let other = object(&mut heap, Value::NULL);
+    heap.mark_prototype(other);
+    let subscribed = |heap: &mut Heap, chain: PrototypeChain| {
+        let code = Rc::new(PublishedCode::new(()));
+        let reader: Rc<dyn DependentCode> = code.clone();
+        let stable = super::super::lane_region::StableFacts { chains: Box::new([chain]), ..Default::default() };
+        assert!(LaneDependencies::default().subscribe(&stable, &reader, heap, &mut CodeReaders::default()));
+        code
+    };
+    let through_middle = PrototypeChain { link: crate::heap::ProtoLink::of(middle).bits(), depth: 2 };
+    let code = subscribed(&mut heap, through_middle);
+    heap.set_object_shape(other, 2);
+    assert!(heap.object(other).unwrap().was_used_as_prototype());
+    assert!(code.is_published(), "another prototype's layout change leaves the code");
+    heap.object_mut(middle).unwrap().set_proto(Value::NULL);
+    assert!(!code.is_published(), "a link's new prototype retires the code");
+    let at_holder = PrototypeChain { link: crate::heap::ProtoLink::of(holder).bits(), depth: 1 };
+    let code = subscribed(&mut heap, at_holder);
+    heap.set_object_shape(middle, 2);
+    assert!(code.is_published(), "a prototype no longer above the holder changes nothing it read");
+    let subject = heap.object(holder).unwrap().watched_subject().unwrap();
+    heap.dependencies_mut().release(subject);
+    assert!(!code.is_published(), "a link's death retires the code");
+    let code = subscribed(&mut heap, PrototypeChain { link: crate::heap::ProtoLink::of(middle).bits(), depth: 1 });
+    heap.dependencies_mut().retire_cells();
+    assert!(!code.is_published(), "an event no prototype names retires the code");
+}
+
 /// A recursive numeric function has a scalar entry, lowered with its self calls: its numbers in
 /// registers, a status and a result word back, and neither a frame nor a register file to store to.
 #[test]
@@ -74,11 +117,11 @@ fn a_recursive_numeric_function_lowers_a_frameless_scalar_entry() {
     let view = unsafe { &*target.view };
     let mut direct = vec![DirectCandidates::new(); program.function(function as usize).code.len()];
     for pc in program.function(function as usize).instructions().enumerate().filter(|(_, instruction)| instruction.op().is_call()).map(|(pc, _)| pc) {
-        let site = crate::vm::dispatch_fast::lane_direct_callee(&vm, view, function, pc, 1, target).expect("fib calls itself directly");
+        let site = crate::vm::dispatch_fast::direct_callee_in_lane(&vm, view, function, pc, 1, target).expect("fib calls itself directly");
         direct[pc].push(site);
     }
     let (plan, _) = vm.plan_lane_method(&program, function, &|_, _| Vec::new(), &|_, _| None, &|_| (0, 0), &direct, &[],
-        lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, None, &[]).expect("fib plans");
+        lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, None, &[], &|_, _, _, _| true).expect("fib plans");
     let scalar = plan.lowered.scalar.as_ref().expect("fib has a scalar entry");
     let clif = scalar.to_string();
     assert!(clif.contains("(i64, i64, i32) -> i32, i64"), "the entry takes the context, the captures' word and an int32: {clif}");

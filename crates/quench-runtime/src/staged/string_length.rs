@@ -12,21 +12,21 @@ use crate::vm::wtf16::native_string as form;
 
 /// The record of the flat string `value` names among the string records at `record_base`, with
 /// whether its form is the short one and whether it is the wide one: `None` (leaving at `miss`)
-/// for any other value, before the first string record exists (`record_base` zero), for a small
-/// string, which has no record (`Heap::small_string_text`), or for a record in a form a row does
-/// not read. The record's address is its index, `value`'s low half, times the record size past
-/// `record_base`.
+/// for any other value, for a small string, which has no record (`Heap::small_string_text`), or
+/// for a record in a form a row does not read. The record's address is its index, `value`'s low
+/// half, times the record size past `record_base`. No zero test on `record_base`: a direct string
+/// names a record only after its space is reserved (`records.rs`, `ensure_reserved` on every
+/// allocation), so a zero base comes only with a small string, which the small-id test leaves.
 #[inline(always)]
 pub(crate) fn flat_record<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
     -> Option<(S::Word, S::Cond, S::Cond)> {
     let is_string = is_direct_string(stage, value);
     stage.guard(is_string, miss)?;
-    let present = stage.ne_imm(record_base, 0u32);
-    stage.guard(present, miss)?;
-    let index = stage.and_imm(value, u64::from(u32::MAX));
-    let small_bits = stage.and_imm(index, u64::from(crate::heap::SMALL_STRING_ID_MASK));
+    // The small-id mask lies in the low word, so it reads `value` as it is.
+    let small_bits = stage.and_imm(value, u64::from(crate::heap::SMALL_STRING_ID_MASK));
     let has_record = stage.ne_imm(small_bits, u64::from(crate::heap::SMALL_STRING_ID_BASE));
     stage.guard(has_record, miss)?;
+    let index = stage.and_imm(value, u64::from(u32::MAX));
     let offset = stage.mul_imm(index, form::RECORD_SIZE as u64);
     let record = stage.add(record_base, offset);
     let tag = stage.load_u8(Region::HeapMeta.mutable(), record, form::TAG_OFFSET);
@@ -37,6 +37,35 @@ pub(crate) fn flat_record<S: Stage>(stage: &mut S, record_base: S::Word, value: 
     let flat = stage.any(short, shared);
     stage.guard(flat, miss)?;
     Some((record, short, wide))
+}
+
+/// A flat string's units as the words a row reads: the address of the first, how many there
+/// are, and whether each is two bytes (one) or one (zero).
+#[derive(Clone, Copy)]
+pub(crate) struct FlatString<W> {
+    pub(crate) units: W,
+    pub(crate) length: W,
+    pub(crate) wide: W,
+}
+
+/// The flat string `value` names among the string records at `record_base`: its units, length
+/// and width, read from its record (`flat_record`), or `None` (leaving at `miss`) where that leaves.
+#[inline(always)]
+pub(crate) fn flat_string<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word, miss: S::Miss)
+    -> Option<FlatString<S::Word>> {
+    let (record, short, wide) = flat_record(stage, record_base, value, miss)?;
+    // Every form keeps the words of both layouts inside the record, so each is read and the
+    // form selects.
+    let pointer = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_POINTER_OFFSET);
+    let shared_units = stage.add_imm(pointer, form::shared_units_offset());
+    let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
+    let short_units = stage.add_imm(record, form::SHORT_UNITS_OFFSET);
+    let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
+    let units = stage.select(short, short_units, shared_units);
+    let length = stage.select(short, short_length, shared_length);
+    let (one, zero) = (stage.constant(1), stage.constant(0));
+    let wide = stage.select(wide, one, zero);
+    Some(FlatString { units, length, wide })
 }
 
 /// The unit count of the flat string `value` names among the string records at `record_base`
@@ -51,6 +80,40 @@ pub(crate) fn string_length<S: Stage>(stage: &mut S, record_base: S::Word, value
     let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
     let length = stage.select(short, short_length, shared_length);
     length_value(stage, length, miss)
+}
+
+/// ToBoolean of the string `value` among the string records at `record_base`, read from its
+/// record without leaving: 1 where the flat string's length is nonzero, 0 where it is empty, and
+/// 2 where no flat record reads (a value that is no string, a small string, a rope or a parts
+/// string, or no record base yet), which the caller decides. The record is read only on the path
+/// where `flat_record` would continue, so nothing is loaded from an address it would not read.
+#[inline(always)]
+pub(crate) fn flat_truth<S: Stage>(stage: &mut S, record_base: S::Word, value: S::Word) -> S::Word {
+    let is_string = is_direct_string(stage, value);
+    let present = stage.ne_imm(record_base, 0u32);
+    let index = stage.and_imm(value, u64::from(u32::MAX));
+    let small_bits = stage.and_imm(index, u64::from(crate::heap::SMALL_STRING_ID_MASK));
+    let has_record = stage.ne_imm(small_bits, u64::from(crate::heap::SMALL_STRING_ID_BASE));
+    let string = stage.all(is_string, present);
+    let candidate = stage.all(string, has_record);
+    stage.choose(candidate, |stage| {
+        let offset = stage.mul_imm(index, form::RECORD_SIZE as u64);
+        let record = stage.add(record_base, offset);
+        let tag = stage.load_u8(Region::HeapMeta.mutable(), record, form::TAG_OFFSET);
+        let short = stage.eq_imm(tag, u64::from(form::TAG_SHORT));
+        let ascii = stage.eq_imm(tag, u64::from(form::TAG_ASCII));
+        let wide = stage.eq_imm(tag, u64::from(form::TAG_WIDE));
+        let shared = stage.any(ascii, wide);
+        let flat = stage.any(short, shared);
+        stage.choose(flat, |stage| {
+            let short_length = stage.load_u8(Region::HeapMeta.mutable(), record, form::SHORT_LENGTH_OFFSET);
+            let shared_length = stage.load_u64(Region::HeapMeta.mutable(), record, form::SHARED_LENGTH_OFFSET);
+            let length = stage.select(short, short_length, shared_length);
+            let nonempty = stage.ne_imm(length, 0u32);
+            let (one, zero) = (stage.constant(1), stage.constant(0));
+            stage.select(nonempty, one, zero)
+        }, |stage| stage.constant(2))
+    }, |stage| stage.constant(2))
 }
 
 /// The `length` of `value`, a direct array (among the array records at `arrays`) or a direct
@@ -97,11 +160,14 @@ mod tests {
             (heap.alloc_string(JsString::from_str("")), 0),
             (heap.alloc_string(JsString::from_str("hello")), 5),
             (heap.alloc_string(JsString::from_str(&long)), long.len()),
-            (heap.alloc_string(JsString::from_units(&[0x61, 0x20ac])), 2),
         ];
         for (value, units) in forms {
-            assert_eq!(length(&heap, value), Some(Value::length(units)));
+            assert_eq!(length(&heap, value), Some(Value::length(units)), "the length of a {units}-unit string");
         }
+        // A UTF-16 string is held shared (`Repr::Shared`, so a rope can flatten in place), never
+        // as a flat `Wide` record, so the row leaves for it and the caller reads its units.
+        let wide = heap.alloc_string(JsString::from_units(&[0x61, 0x20ac]));
+        assert_eq!(length(&heap, wide), None, "a UTF-16 string has no flat record");
         assert_eq!(length(&heap, Value::integer(3)), None, "no string");
     }
 

@@ -49,84 +49,98 @@ impl Lowering<'_, '_> {
     /// the wrapping int32 result: no overflow exit.
     fn int32_arithmetic(&mut self, state: &mut State, pc: usize, operands: Operands,
         (operation, exit): (NumberArithmetic, ir::Block)) {
-        let wrapping = self.ranges.overflow_free(pc)
-            || (operation.int32_projection_is_wrapping() && self.truncated(pc, operands.0))
-            // A product the unit's ranges do not bound is still exact modulo 2^32 when the sum
-            // it feeds is truncated: `(a * 3 + i) | 0` never observes the product untruncated.
-            || (operation == NumberArithmetic::Multiply && self.truncated_through_int32_sum(state, pc, operands.0));
+        let truncated = match operation {
+            NumberArithmetic::Add | NumberArithmetic::Subtract => self.truncated_through_sums(pc, operands.0),
+            NumberArithmetic::Multiply if self.truncated_through_sums(pc, operands.0) || self.truncated_through_int32_sum(state, pc, operands.0) => {
+                if !self.small_int32_factor(operands.1) && !self.ranges.overflow_free(pc) {
+                    self.truncated_product(state, operands, exit);
+                    return;
+                }
+                true
+            }
+            _ => false,
+        };
+        let wrapping = self.ranges.overflow_free(pc) || truncated;
         let overflow = if wrapping { Overflow::Wrap } else { Overflow::Exit };
-        let zero = if self.ranges.ignores_negative_zero(pc) { NegativeZero::Ignore } else { NegativeZero::Exit };
+        // ToInt32 reads -0 as 0, the wrapping product's own zero.
+        let zero = if truncated || self.ranges.ignores_negative_zero(pc) { NegativeZero::Ignore } else { NegativeZero::Exit };
         self.arithmetic_step(state, (operands, operation), (Domain::Int32, overflow, zero), exit);
     }
 
-    /// The staged Number arithmetic of `operation` over `operands`, in a domain with its overflow
-    /// and negative-zero policies.
-    fn arithmetic_step(&mut self, state: &mut State, ((destination, [left, right]), operation): (Operands, NumberArithmetic),
-        (domain, overflow, zero): (Domain, Overflow, NegativeZero), exit: ir::Block) {
-        let operation = Operation::Number(NumberOperation::Arithmetic { destination, left, right, operation, domain, overflow, zero });
-        self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
+    /// A product of int32 operands only whose ToInt32 is read (`truncated_through_sums`), neither
+    /// factor known small: the exact 64-bit product, whose low 32 bits are that ToInt32 while the
+    /// product's magnitude is under 2^52 (its double is then exact, and so are the chain's sums
+    /// of int32 constants). A larger product rounds as a double, and leaves.
+    fn truncated_product(&mut self, state: &mut State, (destination, [left, right]): Operands, exit: ir::Block) {
+        let left = self.operand_int(state, left, exit).expect("proved int32 operand");
+        let right = self.operand_int(state, right, exit).expect("proved int32 operand");
+        let (low, exact) = number_machine::truncated_int32_product(&mut emit(&mut self.builder), left, right);
+        emit_js_guard(&mut self.builder, exact, exit);
+        self.set_int(state, destination, low);
     }
 
-    /// A sum or difference only its ToInt32 is read of: int32 operands wrap, any other numbers
-    /// take ToInt32 of their double result, and both join as an int32.
-    fn truncated_sum(&mut self, state: &mut State, pc: usize, (destination, [left, right]): Operands,
+    /// Whether a product of int32 `operands` is exact in binary64: one is an int32 constant of
+    /// magnitude at most 2^21, so the product's magnitude is under 2^52 (`truncated_through_sums`).
+    fn small_int32_factor(&self, operands: [Operand; 2]) -> bool {
+        operands.iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
+            && self.program.constants.get(usize::from(operand.payload())).and_then(super::super::facts::immediate)
+                .and_then(|value| value.as_int()).is_some_and(|factor| factor.unsigned_abs() <= 1 << 21))
+    }
+
+    /// The staged Number arithmetic of `operation` over `operands`, in a domain with its overflow
+    /// and negative-zero policies; the operands' guards and the step's leave at `miss`. The step's
+    /// word, where it produced one.
+    fn arithmetic_step(&mut self, state: &mut State, ((destination, [left, right]), operation): (Operands, NumberArithmetic),
+        (domain, overflow, zero): (Domain, Overflow, NegativeZero), miss: ir::Block) -> Option<ir::Value> {
+        let operation = Operation::Number(NumberOperation::Arithmetic { destination, left, right, operation, domain, overflow, zero });
+        match self.step(state, frame::Edges::ValueGuarded { miss }, operation) {
+            crate::staged::Step::Value(word) => Some(word),
+            _ => None,
+        }
+    }
+
+    /// A sum or difference only its ToInt32 is read of: int32 operands wrap (the staged row), any
+    /// other numbers take ToInt32 of their binary64 result. Each arm defines the destination as an
+    /// int32, so the join keeps it.
+    fn truncated_sum(&mut self, state: &mut State, pc: usize, operands: Operands,
         (operation, exit): (NumberArithmetic, ir::Block)) -> Option<()> {
-        let float = self.builder.create_block();
-        self.builder.set_cold_block(float);
+        let (destination, [left, right]) = operands;
+        let float = super::cold_block(&mut self.builder);
         let mut float_state = state.clone();
-        let left_int = self.operand_int(state, left, float).expect("supported operand");
-        let right_int = self.operand_int(state, right, float).expect("supported operand");
-        let wrapped = number_machine::wrapping_int32_arithmetic(&mut emit(&mut self.builder), operation, left_int, right_int);
         let join = self.builder.create_block();
-        let int = self.builder.append_block_param(join, types::I32);
-        self.goto(join, &[wrapped]);
+        self.arithmetic_step(state, (operands, operation), (Domain::Int32, Overflow::Wrap, NegativeZero::Ignore), float)?;
+        self.goto(join, &[]);
         self.builder.switch_to_block(float);
         let left_number = self.operand_number(&mut float_state, left, exit)?;
         let right_number = self.operand_number(&mut float_state, right, exit)?;
         let number = number_machine::float_arithmetic(&mut emit(&mut self.builder), operation, left_number, right_number);
         let truncated = self.number_to_int32(number, exit);
-        self.goto(join, &[truncated]);
+        self.set_int(&mut float_state, destination, truncated);
+        self.goto(join, &[]);
         self.builder.switch_to_block(join);
         self.join_states(state, &float_state, pc);
-        self.set_int(state, destination, int);
         Some(())
     }
 
-    /// Operands a tag only types: the int32 arithmetic where both are int32 and its result is
-    /// one (an overflow, or a product's negative zero, takes the binary64 arm), else binary64.
-    fn checked_arithmetic(&mut self, state: &mut State, pc: usize, (destination, [left, right]): Operands,
+    /// Operands a tag only types: the staged int32 row where both are int32, which widens an
+    /// overflow or a product's negative zero to binary64 itself; else the binary64 arm. Each arm
+    /// defines the destination as a Number, so the join keeps it.
+    fn checked_arithmetic(&mut self, state: &mut State, pc: usize, operands: Operands,
         (operation, exit): (NumberArithmetic, ir::Block)) -> Option<()> {
-        let float = self.builder.create_block();
-        self.builder.set_cold_block(float);
+        let (destination, [left, right]) = operands;
+        let float = super::cold_block(&mut self.builder);
         let mut float_state = state.clone();
-        let left_int = self.operand_int(state, left, float).expect("supported operand");
-        let right_int = self.operand_int(state, right, float).expect("supported operand");
-        let (result, overflow) = number_machine::checked_int32_arithmetic(&mut emit(&mut self.builder), operation, left_int, right_int);
-        let int_done = self.builder.create_block();
-        self.branch_if(overflow, (float, &[]), (int_done, &[]));
-        self.builder.switch_to_block(int_done);
-        if operation == NumberArithmetic::Multiply { self.guard_not_negative_zero(result, [left_int, right_int], float); }
         let join = self.builder.create_block();
-        let number = self.builder.append_block_param(join, types::F64);
-        let result = self.raw_unary(Unary::FromSigned(Lane::F64), result);
-        self.goto(join, &[result]);
+        self.arithmetic_step(state, (operands, operation), (Domain::Int32, Overflow::Widen, NegativeZero::Exit), float)?;
+        self.goto(join, &[]);
         self.builder.switch_to_block(float);
         let left_number = self.operand_number(&mut float_state, left, exit)?;
         let right_number = self.operand_number(&mut float_state, right, exit)?;
         let result = number_machine::float_arithmetic(&mut emit(&mut self.builder), operation, left_number, right_number);
-        self.goto(join, &[result]);
+        self.set_number(&mut float_state, destination, result);
+        self.goto(join, &[]);
         self.builder.switch_to_block(join);
         self.join_states(state, &float_state, pc);
-        self.set_number(state, destination, number);
         Some(())
-    }
-
-    /// Continues where the int32 `product` of `operands` is no negative zero, else at `float`.
-    fn guard_not_negative_zero(&mut self, product: ir::Value, operands: [ir::Value; 2], float: ir::Block) {
-        let zero = self.raw_compare_imm(Relation::Equal, product, 0);
-        let signs = self.raw_binary(Binary::Or, operands[0], operands[1]);
-        let negative = self.raw_compare_imm(Relation::SignedLess, signs, 0);
-        let negative_zero = self.raw_binary(Binary::And, zero, negative);
-        emit_js_guard_not(&mut self.builder, negative_zero, float);
     }
 }

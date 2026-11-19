@@ -6,9 +6,8 @@ use crate::shared_wast::Store;
 use crate::wast_protocol;
 use wast::lexer::Lexer;
 use wast::parser::{self, ParseBuffer};
-use wasmparser::{Parser, Payload, WasmFeatures};
-use wast::core::{FuncKind, Instruction, ModuleField, ModuleKind};
-use wast::{QuoteWat, Wast, WastDirective, Wat};
+use wasmparser::WasmFeatures;
+use wast::{QuoteWat, Wast, WastDirective};
 
 /// One scored wast directive.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,15 +184,6 @@ fn score_invalid(
 ) -> DirectiveResult {
     let kind = "assert_invalid".to_string();
     let expected = format!("invalid ({expected_message})");
-    if let Some(got) = invalid_branch_hint_target(module) {
-        return DirectiveResult {
-            line,
-            kind,
-            passed: true,
-            expected,
-            got,
-        };
-    }
     match inspect_quote_with(module, features) {
         ModuleStatus::ValidateError(got) => DirectiveResult {
             line,
@@ -315,79 +305,12 @@ fn directive_kind(directive: &WastDirective<'_>) -> &'static str {
     }
 }
 
-/// Encode a wast module then inspect with `features`.
+/// Encode a wast module then inspect with `features` (quench-wasm's one validation).
 fn inspect_quote_with(module: &mut QuoteWat<'_>, features: WasmFeatures) -> ModuleStatus {
     match module.encode() {
         Err(error) => ModuleStatus::ParseError(error.to_string()),
-        Ok(bytes) => {
-            let status = inspect_binary_with(&bytes, features);
-            if matches!(status, ModuleStatus::Valid)
-                && features.contains(WasmFeatures::CUSTOM_DESCRIPTORS)
-            {
-                if let Some(message) = invalid_descriptor_subtype(&bytes) {
-                    return ModuleStatus::ValidateError(message);
-                }
-            }
-            status
-        }
+        Ok(bytes) => inspect_binary_with(&bytes, features),
     }
-}
-
-fn invalid_branch_hint_target(module: &QuoteWat<'_>) -> Option<String> {
-    let QuoteWat::Wat(Wat::Module(module)) = module else {
-        return None;
-    };
-    let ModuleKind::Text(fields) = &module.kind else {
-        return None;
-    };
-    for field in fields {
-        let ModuleField::Func(func) = field else {
-            continue;
-        };
-        let FuncKind::Inline { expression, .. } = &func.kind else {
-            continue;
-        };
-        for hint in expression.branch_hints.iter() {
-            let instr = expression.instrs.get(hint.instr_index)?;
-            if !matches!(instr, Instruction::If(_) | Instruction::BrIf(_)) {
-                return Some("@metadata.code.branch_hint annotation: invalid target".to_string());
-            }
-        }
-    }
-    None
-}
-
-fn invalid_descriptor_subtype(bytes: &[u8]) -> Option<String> {
-    let mut parser = Parser::new(0);
-    parser.set_features(WasmFeatures::all());
-    let mut types: Vec<(Option<u32>, bool)> = Vec::new();
-    for payload in parser.parse_all(bytes) {
-        let Ok(Payload::TypeSection(section)) = payload else {
-            continue;
-        };
-        for rec in section {
-            let rec = rec.ok()?;
-            for ty in rec.types() {
-                let has_desc = ty.composite_type.descriptor_idx.is_some();
-                let sup = ty.supertype_idx.and_then(|i| i.as_module_index());
-                types.push((sup, has_desc));
-            }
-        }
-    }
-    for (sup, has_desc) in &types {
-        if *has_desc {
-            if let Some(idx) = *sup {
-                let parent = types.get(idx as usize)?;
-                if !parent.1 {
-                    return Some(
-                        "sub type with descriptor does not match super type without descriptor"
-                            .to_string(),
-                    );
-                }
-            }
-        }
-    }
-    None
 }
 
 #[cfg(test)]

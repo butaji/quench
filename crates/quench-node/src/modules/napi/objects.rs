@@ -29,7 +29,8 @@ pub(super) fn intrinsic(env: &Env, c: &mut Context<'_>, path: &[&str]) -> Result
     let mut value = c.global_root().napi(env, c)?;
     for name in path {
         value = c
-            .startup_data_property_rooted(value, name)
+            .materialized_startup_data_property_rooted(value, name)
+            .napi(env, c)?
             .ok_or(Status::GenericFailure)?;
     }
     Ok(value)

@@ -8,6 +8,7 @@ use super::{
     is_nullish, is_string, is_undefined, listener_count, next_tick, number, on, once, put, put_bool, put_number,
     remove_listener, tick, Class, Context, Key, Outcome, Slot, Tick,
 };
+use crate::modules::buffer_shared_vm::view_bytes;
 use quench_runtime::{BuiltinBrand, RootId, RootedError};
 
 /// The largest `read(n)` a stream raises its high water mark to (1 GiB).
@@ -524,10 +525,6 @@ fn buffer_entry(c: &mut Context<'_>, buffer: RootId, index: f64) -> Outcome {
 
 fn set_buffer_entry(c: &mut Context<'_>, buffer: RootId, index: f64, value: RootId) -> Result<(), RootedError> {
     put(c, buffer, &(index as u64).to_string(), value)
-}
-
-fn view_bytes(c: &mut Context<'_>, view: RootId) -> Vec<u8> {
-    c.view_bytes_rooted(view).unwrap_or_default()
 }
 
 /// `fromList(n, state)`: take `n` bytes or characters (one object in object mode) from

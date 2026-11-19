@@ -17,7 +17,13 @@ impl Lowering<'_, '_> {
             self.native += 1;
             return;
         }
-        if representation == Representation::Int32 && instruction.op().is_load_capture() {
+        if representation == Representation::Float64 {
+            // A field carried as a raw double (`carries_number`): the register takes the word.
+            self.set_number(state, instruction.result_register(), raw);
+            self.native += 1;
+            return;
+        }
+        if representation == Representation::Int32 && matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::LoadCapture { .. })) {
             // Captures have no tagged field-cache consumer. Preserve the
             // admitted view; recovery or a tagged use boxes it on demand.
             self.set_int(state, instruction.result_register(), raw);
@@ -26,7 +32,7 @@ impl Lowering<'_, '_> {
         }
         let destination = instruction.result_register();
         let value = match field_lookup(instruction) {
-            Some(lookup @ FieldLookup::Atom { .. }) if instruction.op().is_get_field() => self.hoisted_field(state, pc, lookup, read),
+            Some(lookup @ FieldLookup::Atom { .. }) if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) => self.hoisted_field(state, pc, lookup, read),
             _ if representation == Representation::Int32 => int_tagged(&mut self.builder, raw),
             _ => raw,
         };

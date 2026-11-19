@@ -49,7 +49,7 @@ impl<H: Host> Vm<H> {
         use crate::BuiltinBrand as B;
         let brand = match self.heap.get(payload) {
             _ if self.heap.is_string(payload) => B::StringObject,
-            Some(Cell::Symbol(_)) => B::SymbolObject,
+            _ if self.heap.is_symbol(payload) => B::SymbolObject,
             Some(Cell::BigInt(_)) => B::BigIntObject,
             _ if payload.as_bool().is_some() => B::BooleanObject,
             _ if payload.as_number().is_some() => B::NumberObject,
@@ -293,7 +293,7 @@ impl<H: Host> Vm<H> {
                         && super::object_static::array_index(text.host_string()).is_some() {
                             continue;
                         }
-                if !include_symbols && matches!(self.heap.get(property), Some(Cell::Symbol(_))) {
+                if !include_symbols && self.heap.is_symbol(property) {
                     continue;
                 }
                 // As `Object.keys` asks: a pending lazy data property answers from its
@@ -332,8 +332,8 @@ impl<H: Host> Vm<H> {
             B::RegExp => matches!(cell, Some(Cell::RegExp { .. })),
             B::NativeError => self.error_is_error(value) || matches!(cell, Some(Cell::Error(_))),
             B::Promise => self.is_promise(value),
-            B::Map => matches!(cell, Some(Cell::Map { .. })),
-            B::Set => matches!(cell, Some(Cell::Set { .. })),
+            B::Map => self.heap.is_map(value),
+            B::Set => self.heap.is_set(value),
             B::WeakMap => matches!(cell, Some(Cell::WeakMap { .. })),
             B::WeakSet => matches!(cell, Some(Cell::WeakSet { .. })),
             B::Proxy => matches!(cell, Some(Cell::Proxy { .. })),
@@ -393,12 +393,11 @@ impl<H: Host> Vm<H> {
                 })
             ),
             B::ModuleNamespaceObject => {
-                (value.direct_object_index().is_some()
+                value.direct_object_index().is_some()
                     && self
                         .heap
                         .object(value)
-                        .is_some_and(Object::is_module_namespace))
-                    || matches!(cell, Some(Cell::Object(object)) if object.is_module_namespace())
+                        .is_some_and(Object::is_module_namespace)
             }
             B::BooleanObject
             | B::NumberObject
@@ -568,11 +567,15 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<crate::CollectionPreview<Value>>, JsError> {
         use crate::CollectionPreview;
         let value = self.embedding_value(root)?;
+        if let Some(record) = self.heap.collection(value) {
+            return Ok(Some(match &record.entries {
+                CollectionStorage::Map(entries) => CollectionPreview {
+                    entries: entries.iter().flat_map(|(key, value)| [key, value]).collect(), is_key_value: true,
+                },
+                CollectionStorage::Set(entries) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
+            }));
+        }
         let preview = match (self.heap.iterator(value), self.heap.get(value)) {
-            (_, Some(Cell::Map { entries, .. })) => CollectionPreview {
-                entries: entries.iter().flat_map(|(key, value)| [key, value]).collect(), is_key_value: true,
-            },
-            (_, Some(Cell::Set { entries, .. })) => CollectionPreview { entries: entries.to_vec(), is_key_value: false },
             (_, Some(Cell::WeakMap { entries, .. })) => CollectionPreview {
                 entries: entries.iter().flat_map(|&(key, value)| [key, value]).collect(), is_key_value: true,
             },
@@ -588,28 +591,24 @@ impl<H: Host> Vm<H> {
                 let mut output = Vec::new();
                 let mut position = ext.position(*index);
                 if !*done {
-                    match self.heap.get(*source) {
-                        Some(Cell::Map { entries, .. }) => {
-                            while let Some((slot, (key, value))) = entries.next_live(position) {
-                                match kind {
-                                    IteratorKind::MapKeys => output.push(key),
-                                    IteratorKind::MapValues => output.push(value),
-                                    IteratorKind::MapEntries => output.extend([key, value]),
-                                    _ => unreachable!("map iterator source"),
-                                }
-                                position = slot + 1;
+                    if let Some(entries) = self.heap.map_entries(*source) {
+                        while let Some((slot, (key, value))) = entries.next_live(position) {
+                            match kind {
+                                IteratorKind::MapKeys => output.push(key),
+                                IteratorKind::MapValues => output.push(value),
+                                IteratorKind::MapEntries => output.extend([key, value]),
+                                _ => unreachable!("map iterator source"),
                             }
+                            position = slot + 1;
                         }
-                        Some(Cell::Set { entries, .. }) => {
-                            while let Some((slot, value)) = entries.next_live(position) {
+                    } else if let Some(entries) = self.heap.set_entries(*source) {
+                        while let Some((slot, value)) = entries.next_live(position) {
+                            output.push(value);
+                            if is_key_value {
                                 output.push(value);
-                                if is_key_value {
-                                    output.push(value);
-                                }
-                                position = slot + 1;
                             }
+                            position = slot + 1;
                         }
-                        _ => {}
                     }
                 }
                 CollectionPreview {
@@ -639,6 +638,12 @@ impl<H: Host> Vm<H> {
             return Ok(self
                 .boxed_primitive_data(value)
                 .map(|(brand, value)| D::Primitive { brand, value }));
+        }
+        if let Some(entries) = self.heap.map_entries(value) {
+            return Ok(Some(D::Map(entries.to_vec())));
+        }
+        if let Some(entries) = self.heap.set_entries(value) {
+            return Ok(Some(D::Set(entries.to_vec())));
         }
         let data = match self.heap.get(value) {
             Some(Cell::Date { milliseconds, .. }) => D::Primitive {
@@ -670,16 +675,9 @@ impl<H: Host> Vm<H> {
                 brand: B::DataView,
                 bytes: self.embedding_view_bytes(value).unwrap_or_default(),
             },
-            Some(Cell::Map { entries, .. }) => D::Map(entries.to_vec()),
-            Some(Cell::Set { entries, .. }) => D::Set(entries.to_vec()),
             Some(Cell::RegExp { .. }) => D::RegExp,
             Some(Cell::WeakMap { .. } | Cell::WeakSet { .. }) => D::Opaque,
             Some(Cell::Error(_)) => D::Error,
-            Some(Cell::Object(_)) => {
-                return Ok(self
-                    .boxed_primitive_data(value)
-                    .map(|(brand, value)| D::Primitive { brand, value }));
-            }
             _ => return Ok(None),
         };
         Ok(Some(data))
@@ -845,6 +843,9 @@ impl<H: Host> Vm<H> {
         if let Some(text) = self.heap.string(value) {
             return text.host_string().to_owned();
         }
+        if let Some(description) = self.heap.symbol_data(value) {
+            return Self::detail_symbol(description.as_deref());
+        }
         match self.heap.get(value) {
             Some(Cell::BigInt(integer)) => {
                 if Self::detail_bigint_is_too_large(&integer.to_num()) {
@@ -853,10 +854,10 @@ impl<H: Host> Vm<H> {
                     integer.to_string()
                 }
             }
-            Some(Cell::Symbol(description)) => Self::detail_symbol(description.as_deref()),
             Some(Cell::Error(message)) => format!("Error: {message}"),
-            Some(Cell::Map { .. }) => "#<Map>".into(),
-            Some(Cell::Set { .. }) => "#<Set>".into(),
+            _ if self.heap.is_map(value) => "#<Map>".into(),
+            _ if self.heap.is_set(value) => "#<Set>".into(),
+            _ if self.heap.array(value).is_some() => "[object Array]".into(),
             Some(cell) => format!("[object {}]", Self::diagnostic_class_name(cell)),
             None if self.heap.is_function_value(value) => "[object Function]".into(),
             None => "[object Unknown]".into(),
@@ -900,16 +901,12 @@ impl<H: Host> Vm<H> {
 
     fn diagnostic_class_name(cell: &Cell) -> &'static str {
         match cell {
-            Cell::Array { .. } => "Array",
             Cell::ArrayBuffer { shared: true, .. } => "SharedArrayBuffer",
             Cell::ArrayBuffer { .. } => "ArrayBuffer",
             Cell::TypedArray { object, .. } => object.native.kind().name(),
             Cell::DataView { .. } => "DataView",
-            Cell::Map { .. } => "Map",
-            Cell::Set { .. } => "Set",
             Cell::Date { .. } => "Date",
             Cell::RegExp { .. } => "RegExp",
-            Cell::Function(_) => "Function",
             Cell::Error(_) => "Error",
             _ => "Object",
         }
@@ -917,7 +914,7 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn embedding_is_symbol(&self, root: RootId) -> Result<bool, JsError> {
         let value = self.embedding_value(root)?;
-        Ok(matches!(self.heap.get(value), Some(Cell::Symbol(_))))
+        Ok(self.heap.is_symbol(value))
     }
 
     pub(crate) fn embedding_is_promise(&self, root: RootId) -> Result<bool, JsError> {
@@ -1052,15 +1049,7 @@ impl<H: Host> Vm<H> {
         left: RootId,
         right: RootId,
     ) -> Result<Value, JsError> {
-        let left = self.embedding_value(left)?;
-        let right = self.embedding_value(right)?;
-        let program = self.embedding_program()?;
-        self.binary(
-            &program,
-            oxc_ast::ast::BinaryOperator::Subtraction as u32,
-            left,
-            right,
-        )
+        self.embedding_binary(oxc_ast::ast::BinaryOperator::Subtraction as u32, left, right)
     }
 
     pub(crate) fn embedding_greater_than(
@@ -1093,10 +1082,7 @@ impl<H: Host> Vm<H> {
         left: RootId,
         right: RootId,
     ) -> Result<bool, JsError> {
-        let left = self.embedding_value(left)?;
-        let right = self.embedding_value(right)?;
-        let program = self.embedding_program()?;
-        let result = self.binary(&program, operator as u32, left, right)?;
+        let result = self.embedding_binary(operator as u32, left, right)?;
         Ok(self.truthy(result))
     }
 
@@ -1105,15 +1091,15 @@ impl<H: Host> Vm<H> {
         left: RootId,
         right: RootId,
     ) -> Result<Value, JsError> {
+        self.embedding_binary(oxc_ast::ast::BinaryOperator::BitwiseOR as u32, left, right)
+    }
+
+    /// The binary operator `operator` of two rooted values.
+    fn embedding_binary(&mut self, operator: u32, left: RootId, right: RootId) -> Result<Value, JsError> {
         let left = self.embedding_value(left)?;
         let right = self.embedding_value(right)?;
         let program = self.embedding_program()?;
-        self.binary(
-            &program,
-            oxc_ast::ast::BinaryOperator::BitwiseOR as u32,
-            left,
-            right,
-        )
+        self.binary(&program, operator, left, right)
     }
 
     pub(crate) fn embedding_iterator_record(
@@ -1217,12 +1203,10 @@ impl<H: Host> Vm<H> {
     pub(crate) fn create_embedding_array(&mut self, values: &[RootId]) -> Result<Value, JsError> {
         self.embedding_program()?;
         let elements = self.embedding_arguments(values)?;
-        Ok(self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        Ok(self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 elements,
-            ),
-        }))
+            )))
     }
 
     pub(crate) fn create_embedding_exception(
@@ -1289,14 +1273,14 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn embedding_symbol(&mut self, description: Option<String>) -> Value {
         self.heap
-            .alloc(Cell::Symbol(crate::heap::SymbolData::public(description)))
+            .alloc_symbol(crate::heap::SymbolData::public(description))
     }
 
     pub(crate) fn embedding_private_symbol(&mut self, description: Option<String>) -> Value {
         self.heap
-            .alloc(Cell::Symbol(crate::heap::SymbolData::host_private(
+            .alloc_symbol(crate::heap::SymbolData::host_private(
                 description,
-            )))
+            ))
     }
 
     /// The ordinary object `{ [names[0]]: values[0], ... }` of the realm's `Object.prototype`
@@ -1465,6 +1449,19 @@ impl<H: Host> Vm<H> {
     ) -> Result<crate::CompiledScript, JsError> {
         self.with_embedding_realm(global, |vm| {
             vm.compile_embedding_host_script(source, name, origin)
+        })
+    }
+
+    /// `compile_embedding_script_in_realm` for host source the caller owns.
+    pub(crate) fn compile_embedding_owned_script_in_realm(
+        &mut self,
+        global: RootId,
+        source: std::rc::Rc<String>,
+        name: &str,
+        origin: (u32, u32),
+    ) -> Result<crate::CompiledScript, JsError> {
+        self.with_embedding_realm(global, |vm| {
+            vm.compile_embedding_owned_host_script(source, name, origin)
         })
     }
 
@@ -1783,6 +1780,24 @@ impl<H: Host> Vm<H> {
         let program = self.embedding_program()?;
         let key = PropertyKey::string(self.intern_atom(name));
         self.materialize_lazy_data_property(&program, holder, key)
+    }
+
+    /// `startup_data_property_rooted`, after materializing `holder`'s member `name` when it is
+    /// still a lazy data property, so a host reads a lazily installed intrinsic as built.
+    pub(crate) fn materialized_startup_data_property_rooted(
+        &mut self,
+        holder: RootId,
+        name: &str,
+    ) -> Result<Option<Value>, JsError> {
+        let Some(holder) = self.root_value(holder) else {
+            return Ok(None);
+        };
+        let Some(atom) = self.lookup_atom(name) else {
+            return Ok(None);
+        };
+        let program = self.embedding_program()?;
+        self.materialize_lazy_data_property(&program, holder, PropertyKey::string(atom))?;
+        Ok(self.startup_data_property(holder, name))
     }
 
     pub(crate) fn is_pending_lazy_data_property_rooted(

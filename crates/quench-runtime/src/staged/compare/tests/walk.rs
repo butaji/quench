@@ -11,12 +11,12 @@ struct World {
 
 impl World {
     fn new() -> Self {
-        use crate::heap::{Cell, Heap, Object};
+        use crate::heap::{Heap, Object};
         let mut heap = Heap::new();
-        let root = heap.alloc(Cell::Object(Object::new(Value::NULL)));
-        let middle = heap.alloc(Cell::Object(Object::new(root)));
-        let leaf = heap.alloc(Cell::Object(Object::new(middle)));
-        let other = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let root = heap.alloc_object(Object::new(Value::NULL));
+        let middle = heap.alloc_object(Object::new(root));
+        let leaf = heap.alloc_object(Object::new(middle));
+        let other = heap.alloc_object(Object::new(Value::NULL));
         Self { heap, objects: [leaf, middle, root, other] }
     }
 

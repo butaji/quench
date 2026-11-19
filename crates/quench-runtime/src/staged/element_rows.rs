@@ -16,7 +16,9 @@ use super::elements::{prove_view, read_element, replace_present, DenseView};
 use super::property::Owner;
 use super::typed_elements::{typed_read, typed_write, TypedView};
 use super::{Concrete, ElementFrame, NumericFrame, NumericStage, Operation, Stage, Step};
-use crate::bytecode::{Op, Operand, Register, WideInstruction};
+use crate::bytecode::{Operand, Register};
+#[cfg(not(stencil_build))]
+use crate::bytecode::{Op, WideInstruction};
 use crate::typed_ir::Type;
 
 /// An array's elements as an access reads them, once proved: a dense array's backing or a
@@ -27,16 +29,22 @@ pub(crate) enum ElementView<W> {
     Typed(TypedView<W>),
 }
 
+#[cfg(not(stencil_build))]
 impl<W, P> Operation<W, P> {
     /// The element rows of `decode`: `GetIndex` of a register base and a register or immediate
     /// key (the tier defines the result register), and `SetIndex`; `None` where the instruction
     /// completes a frame or an operand names a local or a field.
-    pub(super) fn decode_element(instruction: WideInstruction) -> Option<Self> {
+    #[inline(always)]
+    pub(crate) fn decode_element(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0 { return None; }
         Some(match instruction.op() {
-            Op::GetIndex => Self::ElementRead { base: instruction.operand_b().register_index()?, key: instruction.operand_c() },
+            Op::GetIndex => match instruction.operand_b().register_index() {
+                Some(base) => Self::ElementRead { base, key: instruction.operand_c(), destination: instruction.result_register() },
+                None => Self::ElementReadOperand { destination: instruction.result_register(),
+                    base: instruction.operand_b(), key: instruction.operand_c() },
+            },
             Op::SetIndex => Self::ElementWrite { value: instruction.register_a(), base: instruction.register_b(),
-                key: instruction.register_c() },
+                key: instruction.register_c(), strict: instruction.boolean_flag().unwrap_or(false) },
             _ => return None,
         })
     }
@@ -71,15 +79,34 @@ fn read<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, base:
     let object = frame.tagged(stage, base);
     let view = match frame.kept_view(stage, object, false) {
         Some(view) => view,
-        None => ElementView::Dense(prove_and_keep(stage, frame, object, false, miss)?),
+        None => match frame.proved_view(stage, base, false) {
+            Some(view) => ElementView::Dense(view),
+            // A frame that keeps no views reads the element of any backing in place.
+            None if frame.reads_any_backing() => {
+                let records = frame.array_records(stage)?;
+                // merge: HEAD's let-else keeps a key that is no offset into the backing on the host read path
+                // (theirs' `?` leaves the row instead); HEAD's proved-view probe arm is dropped for theirs' view order.
+                let Some(index) = frame.index_offset(stage, key, miss) else {
+                    let key = frame.key_word(stage, key)?;
+                    return frame.index_get_host(stage, object, key, miss);
+                };
+                return frame.element_probed(stage, miss,
+                    #[inline(always)] |stage, _, absent| super::elements::any_backing_element(stage, records, object, index, absent),
+                    #[inline(always)] |stage, frame, miss| {
+                        let key = frame.key_word(stage, key)?;
+                        frame.index_get_host(stage, object, key, miss)
+                    });
+            }
+            None => ElementView::Dense(prove_and_keep(stage, frame, object, false, miss)?),
+        },
     };
     let index = frame.index_key(stage, key, miss)?;
     let index = stage.uextend32(index);
     match view {
         ElementView::Typed(view) => typed_read(stage, view, index, miss),
         ElementView::Dense(view) => frame.element_probed(stage, miss,
-            |stage, _, absent| read_element(stage, view, index, absent),
-            |stage, frame, miss| {
+            #[inline(always)] |stage, _, absent| read_element(stage, view, index, absent),
+            #[inline(always)] |stage, frame, miss| {
                 let key = frame.key_word(stage, key)?;
                 frame.index_get_host(stage, object, key, miss)
             }),
@@ -117,14 +144,17 @@ fn write<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, (val
     // both paths dominate.
     let tagged_key = frame.key_word(stage, key)?;
     frame.stored(stage, Owner::Register(base), miss,
-        |stage, frame, general| {
+        #[inline(always)] |stage, frame, general| {
             if !fact.is_subtype(Type::IMMEDIATE) { frame.array_store_gate(stage, object, word, general)?; }
-            let view = dense_view(stage, frame, object, true, general)?;
+            let view = match frame.proved_view(stage, base, true) {
+                Some(view) => view,
+                None => dense_view(stage, frame, object, true, general)?,
+            };
             let index = frame.index_key(stage, key, general)?;
             let index = stage.uextend32(index);
             replace_present(stage, view, index, word, general)
         },
-        |stage, frame, miss| frame.index_set_host(stage, object, tagged_key, word, miss))?;
+        #[inline(always)] |stage, frame, miss| frame.index_set_host(stage, object, tagged_key, word, miss))?;
     Some(word)
 }
 
@@ -133,12 +163,22 @@ fn write<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, (val
 #[inline(always)]
 pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    let word = match operation {
-        Operation::ElementRead { base, key } => read(stage, frame, base, key),
-        Operation::ElementWrite { value, base, key } => write(stage, frame, (value, base, key)),
-        _ => None,
-    };
-    word.map_or(Step::Unresolved, Step::Value)
+    match operation {
+        Operation::ElementRead { base, key, destination } => match read(stage, frame, base, key) {
+            Some(word) => Step::Value(word),
+            // A read the dense arm leaves is the VM's indexed read, where the frame takes it (`CallOut::LoadElement`).
+            None => super::callout::loading(stage, frame, super::CallOut::LoadElement { base: Operand::register(base), key }, destination),
+        },
+        Operation::ElementReadOperand { destination, base, key } =>
+            super::callout::loading(stage, frame, super::CallOut::LoadElement { base, key }, destination),
+        // A store the dense arm leaves is the VM's keyed store, where the frame takes it (`CallOut::StoreElement`).
+        Operation::ElementWrite { value, base, key, strict } => match write(stage, frame, (value, base, key)) {
+            Some(word) => Step::Value(word),
+            None => super::callout::storing(stage, frame, super::CallOut::StoreElement { object: base, index: key, value, strict })
+                .map_or(Step::Unresolved, Step::Value),
+        },
+        _ => Step::Unresolved,
+    }
 }
 
 /// The interpreter's replacement of the present element `index` of a direct array among the array
@@ -148,7 +188,7 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
 #[inline(always)]
 pub(crate) fn concrete_record_replace(records: *const crate::heap::ArrayObject, base: crate::Value, index: usize,
     value: crate::Value) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::new(core::ptr::null());
     prove_view(&mut stage, records as u64, base.to_bits(), true, ())
         .and_then(|view| replace_present(&mut stage, view, index as u64, value.to_bits(), ()))
         .is_some()

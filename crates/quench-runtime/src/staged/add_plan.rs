@@ -23,13 +23,15 @@ pub(crate) struct Transition {
 
 /// An add site as compiled code holds it: the transition the site recorded and, for an add the
 /// prototype chain could intercept (a `SetField`, which finds setters and read-only inherited names),
-/// the prototype link its chain proof holds for. The proof is a Stable fact: the code needs only the
-/// receiver's link, and retires when any prototype's layout changes
-/// (`heap::subscribe_prototype_values`). A define consults no chain, so it holds no link.
+/// the prototype link its chain proof holds for and the `depth` prototypes from it the proof read.
+/// The proof is a Stable fact: the code needs only the receiver's link, and retires when a prototype
+/// of that chain changes its layout (`Heap::subscribe_prototype_chain`). A define consults no chain,
+/// so it holds no link.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct AddSite {
     pub(crate) transition: Transition,
     pub(crate) link: Option<u32>,
+    pub(crate) depth: u8,
 }
 
 impl Transition {
@@ -96,7 +98,7 @@ pub(crate) unsafe fn concrete_set_function_name(heap: &mut Heap, record_id: u32,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::heap::{Cell, Object};
+    use crate::heap::Object;
     use crate::Value;
 
     /// A heap that knows the shapes 1 to `shapes`, each of as many slots as its number, and an
@@ -106,7 +108,7 @@ mod tests {
         for shape in 1..=shapes {
             heap.register_property_shape(shape, shape as usize, None);
         }
-        let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let object = heap.alloc_object(Object::new(Value::NULL));
         (heap, object)
     }
 

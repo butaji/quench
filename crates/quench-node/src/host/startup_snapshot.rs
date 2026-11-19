@@ -212,7 +212,6 @@ pub(crate) use host_snap_state;
 /// process that sets any boots without a snapshot.
 const REFUSED_VARIABLES: &[&str] = &["NODE_CHANNEL_FD", "NODE_CHANNEL_SERIALIZATION_MODE"];
 /// Process inputs rebound by `Host::resume`, rather than captured in the image.
-#[cfg(feature = "aot")]
 const REBOUND_VARIABLES: &[&str] = &["HOME"];
 /// Environment variables the bootstrap reads before the snapshot point: they key the
 /// snapshot, which a builder started with this process's environment bootstraps under.
@@ -225,7 +224,6 @@ const KEYED_VARIABLES: &[&str] = &[
 
 /// The compiler's canonical bootstrap has no process-specific configuration. The same
 /// dependency lists select that input; restoration permits inputs rebound on resume.
-#[cfg(feature = "aot")]
 pub(crate) fn native_bootstrap_environment_is_neutral() -> bool {
     REBOUND_VARIABLES.iter().all(|name| std::env::var_os(name).is_none())
         && native_bootstrap_environment_is_compatible()
@@ -237,7 +235,6 @@ pub(crate) fn native_bootstrap_environment_is_compatible() -> bool {
     KEYED_VARIABLES.iter().chain(REFUSED_VARIABLES).all(|name| std::env::var_os(name).is_none())
 }
 
-#[cfg(feature = "aot")]
 pub(crate) fn neutralize_native_bootstrap_environment(command: &mut std::process::Command) {
     for name in KEYED_VARIABLES.iter().chain(REFUSED_VARIABLES).chain(REBOUND_VARIABLES) { command.env_remove(name); }
 }
@@ -527,6 +524,13 @@ fn remove_unfinished_writes(path: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preloaded_builtins_are_public_builtins() {
+        for name in PRELOADED_BUILTINS {
+            assert!(crate::modules::module_shared_vm::BUILTIN_MODULES.contains(name), "{name}");
+        }
+    }
 
     #[test]
     fn automatic_restores_follow_entry_loading_and_platform_policy() {

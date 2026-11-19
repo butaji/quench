@@ -55,12 +55,11 @@ pub(super) unsafe fn store<H: Host>(
             }
         }};
     }
-    let bits = crate::value::number_to_u32;
     match kind {
-        TypedArrayKind::Uint8 | TypedArrayKind::Int8 => store!(u8, |n| bits(n) as u8),
-        TypedArrayKind::Uint8Clamped => store!(u8, Vm::<H>::uint8_clamped_from_value),
-        TypedArrayKind::Uint16 | TypedArrayKind::Int16 => store!(u16, |n| bits(n) as u16),
-        TypedArrayKind::Uint32 | TypedArrayKind::Int32 => store!(u32, bits),
+        TypedArrayKind::Uint8 | TypedArrayKind::Int8 => store!(u8, Vm::<H>::uint8_from_value),
+        TypedArrayKind::Uint8Clamped => store!(u8, crate::value::number_to_uint8_clamp),
+        TypedArrayKind::Uint16 | TypedArrayKind::Int16 => store!(u16, Vm::<H>::uint16_from_value),
+        TypedArrayKind::Uint32 | TypedArrayKind::Int32 => store!(u32, Vm::<H>::uint32_from_value),
         TypedArrayKind::Float32 => store!(f32, |n| n as f32),
         TypedArrayKind::Float64 => store!(f64, |n| n),
         TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 | TypedArrayKind::Float16 => {

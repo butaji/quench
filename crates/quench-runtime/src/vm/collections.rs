@@ -1,4 +1,5 @@
 use super::*;
+use super::native_rows::Holder;
 
 pub(super) const MAP_ENTRY_KEY_INDEX: usize = 0;
 pub(super) const MAP_ENTRY_VALUE_INDEX: usize = 1;
@@ -54,26 +55,25 @@ impl<H: Host> Vm<H> {
     /// The object data of a collection or buffer view, whose intrinsic accessors answer the
     /// virtual field names (`AtomClass::VIRTUAL_FIELD`); `None` for any other value.
     pub(super) fn virtual_field_view(&self, object: Value) -> Option<&Object> {
+        if self.heap.is_map(object) || self.heap.is_set(object) {
+            return self.heap.object(object);
+        }
         let cell = self.heap.get(object)?;
-        if !matches!(cell, Cell::Map { .. } | Cell::Set { .. } | Cell::TypedArray { .. } | Cell::DataView { .. }) {
+        if !matches!(cell, Cell::TypedArray { .. } | Cell::DataView { .. }) {
             return None;
         }
         cell.object()
     }
 
     fn keep_alive(&mut self, value: Value) {
-        if !self
-            .kept_alive
-            .iter()
-            .any(|root| self.heap.root_value(*root) == Some(value))
-        {
+        if !self.kept_alive.contains_key(&value.to_bits()) {
             let root = self.heap.root(value);
-            self.kept_alive.push(root);
+            self.kept_alive.insert(value.to_bits(), root);
         }
     }
 
     pub(crate) fn clear_kept_objects(&mut self) {
-        for root in self.kept_alive.drain(..) {
+        for (_, root) in self.kept_alive.drain() {
             self.heap.release_root(root);
         }
     }
@@ -350,24 +350,27 @@ impl<H: Host> Vm<H> {
         self.global(program, "WeakMap", weak_map)?;
         let weak_set = self.native_value(Native::WeakSet);
         self.weak_set_proto = self.object();
-        for (name, native) in [
-            ("add", Native::WeakSetAdd),
-            ("has", Native::WeakSetHas),
-            ("delete", Native::WeakSetDelete),
-        ] {
-            self.set_builtin_named(program, self.weak_set_proto, name, native)?;
-        }
+        self.install_native_rows(program, self.weak_set_proto, Holder::WeakSetPrototype)?;
         self.set_builtin_value_named(self.weak_set_proto, "constructor", weak_set)?;
         self.set_named(program, weak_set, "prototype", self.weak_set_proto)?;
         self.set_constructor_prototype_attributes(weak_set);
         self.set_builtin_function_name(weak_set, "WeakSet")?;
         self.global(program, "WeakSet", weak_set)?;
+        self.install_lazy_builtin_namespace(program, "WeakRef", Native::WeakRefInitialize)
+    }
+
+    /// The `WeakRef` constructor and its prototype, built when script first observes the global
+    /// `WeakRef`.
+    pub(super) fn install_weak_ref(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let weak_ref = self.native_value(Native::WeakRef);
         self.weak_ref_proto = self.object();
         self.install_weak_ref_prototype(program, weak_ref, self.weak_ref_proto)?;
+        self.install_builtin_to_string_tag(self.weak_ref_proto, "WeakRef")?;
         self.set_named(program, weak_ref, "prototype", self.weak_ref_proto)?;
         self.set_constructor_prototype_attributes(weak_ref);
         self.set_builtin_function_name(weak_ref, "WeakRef")?;
+        self.seal_initialized_intrinsic(weak_ref);
+        self.seal_initialized_intrinsic(self.weak_ref_proto);
         self.global(program, "WeakRef", weak_ref)
     }
 
@@ -388,16 +391,7 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         prototype: Value,
     ) -> Result<(), JsError> {
-        for (name, native) in [
-            ("get", Native::WeakMapGet),
-            ("set", Native::WeakMapSet),
-            ("has", Native::WeakMapHas),
-            ("delete", Native::WeakMapDelete),
-            ("getOrInsert", Native::WeakMapGetOrInsert),
-            ("getOrInsertComputed", Native::WeakMapGetOrInsertComputed),
-        ] {
-            self.set_builtin_named(program, prototype, name, native)?;
-        }
+        self.install_native_rows(program, prototype, Holder::WeakMapPrototype)?;
         self.set_builtin_value_named(prototype, "constructor", constructor)
     }
 
@@ -427,7 +421,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(weak_map, "WeakMap")?;
         let weak_map_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_weak_map_prototype(program, weak_map, weak_map_prototype)?;
         self.set_builtin_value_named(weak_map, "prototype", weak_map_prototype)?;
         self.set_constructor_prototype_attributes(weak_map);
@@ -437,16 +431,10 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(weak_set, "WeakSet")?;
         let weak_set_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.set_builtin_value_named(weak_set, "prototype", weak_set_prototype)?;
         self.set_builtin_value_named(weak_set_prototype, "constructor", weak_set)?;
-        for (name, native) in [
-            ("add", Native::WeakSetAdd),
-            ("has", Native::WeakSetHas),
-            ("delete", Native::WeakSetDelete),
-        ] {
-            self.set_builtin_named(program, weak_set_prototype, name, native)?;
-        }
+        self.install_native_rows(program, weak_set_prototype, Holder::WeakSetPrototype)?;
         self.set_constructor_prototype_attributes(weak_set);
         self.set_builtin_value_named(global, "WeakSet", weak_set)?;
 
@@ -454,7 +442,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(weak_ref, "WeakRef")?;
         let weak_ref_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.install_weak_ref_prototype(program, weak_ref, weak_ref_prototype)?;
         self.install_builtin_to_string_tag(weak_ref_prototype, "WeakRef")?;
         self.set_builtin_value_named(weak_ref, "prototype", weak_ref_prototype)?;
@@ -483,21 +471,7 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .builtin_prototypes
             .insert((global, Native::Map), map_proto);
-        for (name, native) in [
-            ("get", Native::MapGet),
-            ("set", Native::MapSet),
-            ("has", Native::MapHas),
-            ("delete", Native::MapDelete),
-            ("clear", Native::MapClear),
-            ("keys", Native::MapKeys),
-            ("values", Native::MapValues),
-            ("entries", Native::MapEntries),
-            ("forEach", Native::MapForEach),
-            ("getOrInsert", Native::MapGetOrInsert),
-            ("getOrInsertComputed", Native::MapGetOrInsertComputed),
-        ] {
-            self.set_builtin_named(program, map_proto, name, native)?;
-        }
+        self.install_native_rows(program, map_proto, Holder::MapPrototype)?;
         self.set_builtin_value_named(map_proto, "constructor", map)?;
         let size_getter = self.native_value(Native::MapSizeGetter);
         self.set_builtin_function_name(size_getter, "get size")?;
@@ -541,7 +515,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let set_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(prototype_parent)));
+            .alloc_object(Self::empty_object(prototype_parent));
         let global = self.function_realm(program, set)?;
         self.realm
             .intrinsics
@@ -563,24 +537,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        for (name, native) in [
-            ("add", Native::SetAdd),
-            ("has", Native::SetHas),
-            ("delete", Native::SetDelete),
-            ("clear", Native::SetClear),
-            ("values", Native::SetValues),
-            ("entries", Native::SetEntries),
-            ("forEach", Native::SetForEach),
-            ("difference", Native::SetDifference),
-            ("intersection", Native::SetIntersection),
-            ("symmetricDifference", Native::SetSymmetricDifference),
-            ("union", Native::SetUnion),
-            ("isDisjointFrom", Native::SetIsDisjointFrom),
-            ("isSubsetOf", Native::SetIsSubsetOf),
-            ("isSupersetOf", Native::SetIsSupersetOf),
-        ] {
-            self.set_builtin_named(program, set_proto, name, native)?;
-        }
+        self.install_native_rows(program, set_proto, Holder::SetPrototype)?;
         let values = self.native_value(Native::SetValues);
         self.set_builtin_value_named(set_proto, "keys", values)?;
         self.set_builtin_value_named(set_proto, "constructor", set)?;
@@ -641,60 +598,17 @@ impl<H: Host> Vm<H> {
         ] {
             self.install_builtin_to_string_tag(prototype, tag)?;
         }
-        self.install_map_species(map)?;
-        self.install_set_species(set)
+        self.install_species(map, |vm| vm.native_value(Native::ArraySpecies))?;
+        self.install_species(set, |vm| vm.native_value(Native::SetSpeciesGetter))
     }
 
-    fn install_map_species(&mut self, map: Value) -> Result<(), JsError> {
-        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
-            return Ok(());
-        };
-        let getter = self.native_value(Native::ArraySpecies);
-        self.set_builtin_function_name(getter, "get [Symbol.species]")?;
-        self.set_symbol_property(map, species, Value::UNDEFINED)?;
-        self.set_property_attributes(
-            map,
-            PropertyKey::symbol(species),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(getter),
-                setter: None,
-            },
-        );
-        Ok(())
-    }
-
-    fn install_set_species(&mut self, set: Value) -> Result<(), JsError> {
-        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
-            return Ok(());
-        };
-        let getter = self.native_value(Native::SetSpeciesGetter);
-        self.set_builtin_function_name(getter, "get [Symbol.species]")?;
-        self.set_symbol_property(set, species, Value::UNDEFINED)?;
-        self.set_property_attributes(
-            set,
-            PropertyKey::symbol(species),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(getter),
-                setter: None,
-            },
-        );
-        Ok(())
-    }
     pub(super) fn install_collection_iterators(
         &mut self,
         program: &ResidualProgram,
     ) -> Result<(), JsError> {
         self.map_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc_object(Self::empty_object(self.iterator_proto));
         self.set_builtin_named(
             program,
             self.map_iterator_proto,
@@ -705,7 +619,7 @@ impl<H: Host> Vm<H> {
 
         self.set_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc_object(Self::empty_object(self.iterator_proto));
         self.set_builtin_named(
             program,
             self.set_iterator_proto,
@@ -741,18 +655,11 @@ impl<H: Host> Vm<H> {
                 self.set_proto
             }
         };
-        let cell = match native {
-            Native::Map => Cell::Map {
-                object: Self::empty_object(prototype),
-                entries: Default::default(),
-            },
-            Native::Set => Cell::Set {
-                object: Self::empty_object(prototype),
-                entries: Default::default(),
-            },
+        let collection = match native {
+            Native::Map => self.heap.alloc_map(Self::empty_object(prototype), Default::default()),
+            Native::Set => self.heap.alloc_set(Self::empty_object(prototype), Default::default()),
             _ => return Err(JsError("invalid collection constructor".into())),
         };
-        let collection = self.heap.alloc(cell);
         self.initialize_collection_iterable(p, native, collection, args)
     }
     pub(super) fn call_collection_native(
@@ -763,15 +670,15 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
-            Native::MapSizeGetter => match self.heap.get(this) {
-                Some(Cell::Map { entries, .. }) => Ok(Value::number(entries.len() as f64)),
+            Native::MapSizeGetter => match self.heap.map_entries(this) {
+                Some(entries) => Ok(Value::number(entries.len() as f64)),
                 _ => Err(self.type_error(
                     p,
                     "Map.prototype.size called on incompatible receiver".into(),
                 )),
             },
-            Native::SetSizeGetter => match self.heap.get(this) {
-                Some(Cell::Set { entries, .. }) => Ok(Value::number(entries.len() as f64)),
+            Native::SetSizeGetter => match self.heap.set_entries(this) {
+                Some(entries) => Ok(Value::number(entries.len() as f64)),
                 _ => Err(self.type_error(
                     p,
                     "Set.prototype.size called on incompatible receiver".into(),
@@ -782,9 +689,17 @@ impl<H: Host> Vm<H> {
             Native::Iterator => {
                 Err(self.type_error(p, "Iterator constructor cannot be called".into()))
             }
-            Native::MapGet
-            | Native::MapSet
-            | Native::MapHas
+            Native::MapGet | Native::MapHas => {
+                let key = args.first().copied().unwrap_or(Value::UNDEFINED);
+                if self.declined_fast.take() != Some(native)
+                    && let Some(found) = self.pure_collection_lookup(native, this, key)
+                {
+                    return Ok(found);
+                }
+                self.require_brand(p, this, Brand::Map, "Map method")?;
+                unreachable!("a Map receiver answers its lookup")
+            }
+            Native::MapSet
             | Native::MapDelete
             | Native::MapClear
             | Native::MapKeys
@@ -793,39 +708,16 @@ impl<H: Host> Vm<H> {
             | Native::MapForEach => {
                 self.require_brand(p, this, Brand::Map, "Map method")?;
                 match native {
-                    Native::MapGet => {
-                        let key = args.first().copied().unwrap_or(Value::UNDEFINED);
-                        let Some(index) = self.map_entry_index(this, key) else {
-                            return Ok(Value::UNDEFINED);
-                        };
-                        let Some(Cell::Map { entries, .. }) = self.heap.get(this) else {
-                            unreachable!("receiver validated above")
-                        };
-                        Ok(entries.value_at(index))
-                    }
                     Native::MapSet => {
                         self.map_set(this, args);
                         Ok(this)
                     }
-                    Native::MapHas => Ok(
-                        if self
-                            .map_entry_index(
-                                this,
-                                args.first().copied().unwrap_or(Value::UNDEFINED),
-                            )
-                            .is_some()
-                        {
-                            Value::TRUE
-                        } else {
-                            Value::FALSE
-                        },
-                    ),
                     Native::MapDelete => {
                         let key = args.first().copied().unwrap_or(Value::UNDEFINED);
                         let Some(index) = self.map_entry_index(this, key) else {
                             return Ok(Value::FALSE);
                         };
-                        let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) else {
+                        let Some(entries) = self.heap.map_entries_mut(this) else {
                             unreachable!("receiver validated above")
                         };
                         if let Some(compaction) = entries.remove(index) {
@@ -835,7 +727,7 @@ impl<H: Host> Vm<H> {
                         Ok(Value::TRUE)
                     }
                     Native::MapClear => {
-                        let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) else {
+                        let Some(entries) = self.heap.map_entries_mut(this) else {
                             unreachable!("receiver validated above")
                         };
                         entries.clear();
@@ -882,7 +774,7 @@ impl<H: Host> Vm<H> {
                     None
                 };
                 if let Some(index) = self.map_entry_index(this, key)
-                    && let Some(Cell::Map { entries, .. }) = self.heap.get(this) {
+                    && let Some(entries) = self.heap.map_entries(this) {
                         return Ok(entries.value_at(index));
                     }
                 let value = match native {
@@ -893,7 +785,7 @@ impl<H: Host> Vm<H> {
                         let computed =
                             self.call_value(p, callback, Value::UNDEFINED, &[canonical_key])?;
                         if let Some(index) = self.map_entry_index(this, key)
-                            && let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) {
+                            && let Some(entries) = self.heap.map_entries_mut(this) {
                                 entries.set_value(index, computed);
                             }
                         computed
@@ -902,12 +794,12 @@ impl<H: Host> Vm<H> {
                 };
                 let key_hash = self.same_value_zero_hash(key);
                 if let Some(index) = self.map_entry_index(this, key) {
-                    if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) {
+                    if let Some(entries) = self.heap.map_entries_mut(this) {
                         entries.set_value(index, value);
                     }
                 } else {
-                    self.heap.grow_cell_payload(this, |cell| {
-                        if let Cell::Map { entries, .. } = cell {
+                    self.heap.grow_collection_payload(this, |storage| {
+                        if let CollectionStorage::Map(entries) = storage {
                             entries.push((key, value), key_hash);
                         }
                     });
@@ -943,7 +835,7 @@ impl<H: Host> Vm<H> {
                 let Some(index) = self.set_entry_index(this, value) else {
                     return Ok(Value::FALSE);
                 };
-                let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
+                let Some(entries) = self.heap.set_entries_mut(this) else {
                     return Err(self.type_error(
                         p,
                         "Set.prototype.delete called on incompatible receiver".into(),
@@ -957,7 +849,7 @@ impl<H: Host> Vm<H> {
             }
             Native::SetClear => {
                 self.require_brand(p, this, Brand::Set, "Set.prototype.clear")?;
-                let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
+                let Some(entries) = self.heap.set_entries_mut(this) else {
                     return Err(self.type_error(
                         p,
                         "Set.prototype.clear called on incompatible receiver".into(),
@@ -1171,14 +1063,14 @@ impl<H: Host> Vm<H> {
         self.set_collection_walk(collection, true);
         let mut slot = 0;
         let result = loop {
-            let next = match self.heap.get(collection) {
-                Some(Cell::Map { entries, .. }) => entries
+            let next = match self.heap.collection(collection).map(|record| &record.entries) {
+                Some(CollectionStorage::Map(entries)) => entries
                     .next_live(slot)
                     .map(|(found, (key, value))| (found, key, Some(value))),
-                Some(Cell::Set { entries, .. }) => entries
+                Some(CollectionStorage::Set(entries)) => entries
                     .next_live(slot)
                     .map(|(found, value)| (found, value, None)),
-                _ => None,
+                None => None,
             };
             let Some((found, key, value)) = next else {
                 break Ok(());
@@ -1194,12 +1086,12 @@ impl<H: Host> Vm<H> {
     }
 
     fn set_collection_walk(&mut self, collection: Value, active: bool) {
-        match self.heap.get_mut(collection) {
-            Some(Cell::Map { entries, .. }) if active => entries.begin_walk(),
-            Some(Cell::Map { entries, .. }) => entries.end_walk(),
-            Some(Cell::Set { entries, .. }) if active => entries.begin_walk(),
-            Some(Cell::Set { entries, .. }) => entries.end_walk(),
-            _ => {}
+        match self.heap.collection_storage_mut(collection) {
+            Some(CollectionStorage::Map(entries)) if active => entries.begin_walk(),
+            Some(CollectionStorage::Map(entries)) => entries.end_walk(),
+            Some(CollectionStorage::Set(entries)) if active => entries.begin_walk(),
+            Some(CollectionStorage::Set(entries)) => entries.end_walk(),
+            None => {}
         }
     }
 
@@ -1216,15 +1108,17 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Option<Value> {
-        let owns = matches!(
-            (native, self.heap.get(receiver)?),
-            (Native::MapSet | Native::MapDelete | Native::MapClear, Cell::Map { .. })
-                | (Native::SetAdd | Native::SetDelete | Native::SetClear, Cell::Set { .. })
-        );
+        let owns = match native {
+            Native::MapSet | Native::MapDelete | Native::MapClear => self.heap.is_map(receiver),
+            Native::SetAdd | Native::SetDelete | Native::SetClear => self.heap.is_set(receiver),
+            _ => false,
+        };
         owns.then(|| self.call_collection_native(p, native, receiver, args).ok())
             .flatten()
     }
 
+    /// The value of a Map `get` (`undefined` when absent), or the presence of `key` for a
+    /// `has`; one hash of the key and one probe, whatever the lookup.
     #[inline(always)]
     pub(super) fn pure_collection_lookup(
         &self,
@@ -1232,17 +1126,19 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         key: Value,
     ) -> Option<Value> {
+        match native {
+            Native::MapGet => {
+                let entries = self.heap.map_entries(receiver)?;
+                return Some(
+                    self.collection_entry_index(entries, key, self.same_value_zero_hash(key))
+                        .map_or(Value::UNDEFINED, |index| entries.value_at(index)),
+                );
+            }
+            Native::MapHas => return Some(self.has_key(self.heap.map_entries(receiver)?, key)),
+            Native::SetHas => return Some(self.has_key(self.heap.set_entries(receiver)?, key)),
+            _ => {}
+        }
         match (native, self.heap.get(receiver)?) {
-            (Native::MapGet, Cell::Map { entries, .. }) => Some(
-                self.collection_entry_index(entries, key, self.same_value_zero_hash(key))
-                    .map_or(Value::UNDEFINED, |index| entries.value_at(index)),
-            ),
-            (Native::MapHas, Cell::Map { entries, .. }) => {
-                Some(Value::boolean(self.collection_entry_index(entries, key, self.same_value_zero_hash(key)).is_some()))
-            }
-            (Native::SetHas, Cell::Set { entries, .. }) => {
-                Some(Value::boolean(self.collection_entry_index(entries, key, self.same_value_zero_hash(key)).is_some()))
-            }
             // A value that cannot be held weakly is never a key.
             (Native::WeakMapGet, Cell::WeakMap { entries, .. }) => Some(entries.get(key).unwrap_or(Value::UNDEFINED)),
             (Native::WeakMapHas, Cell::WeakMap { entries, .. }) => Some(Value::boolean(entries.contains(key))),
@@ -1251,19 +1147,25 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// `Map.prototype.set` of `map` with its `args`, which runs no guest code: the key's
-    /// entry takes the value, or a new entry is appended. `false`, with nothing written,
-    /// when `map` is no Map.
-    /// Set.prototype.add's effect on a Set; `false` for any other receiver.
+    /// Whether `key` is an entry of the collection `entries` (`Map.prototype.has`,
+    /// `Set.prototype.has`), by one hash and one probe.
+    #[inline(always)]
+    fn has_key<T: crate::heap::CollectionEntry>(&self, entries: &crate::heap::CollectionEntries<T>, key: Value) -> Value {
+        Value::boolean(self.collection_entry_index(entries, key, self.same_value_zero_hash(key)).is_some())
+    }
+
+    /// Set.prototype.add's effect on a Set; `false` for any other receiver. The value is
+    /// canonicalized, then hashed once; a probe that finds it adds nothing, and a miss
+    /// appends the entry.
     pub(super) fn set_add(&mut self, set: Value, value: Value) -> bool {
-        if !matches!(self.heap.get(set), Some(Cell::Set { .. })) {
+        if !self.heap.is_set(set) {
             return false;
         }
         let value = canonical_collection_key(value);
         let value_hash = self.same_value_zero_hash(value);
         if self.set_entry_index_hashed(set, value, value_hash).is_none() {
-            self.heap.grow_cell_payload(set, |cell| {
-                if let Cell::Set { entries, .. } = cell {
+            self.heap.grow_collection_payload(set, |storage| {
+                if let CollectionStorage::Set(entries) = storage {
                     entries.push(value, value_hash);
                 }
             });
@@ -1271,19 +1173,22 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// `Map.prototype.set` of `map` with its `args`, which runs no guest code: the key's
+    /// entry takes the value, or a new entry is appended. `false`, with nothing written,
+    /// when `map` is no Map.
     pub(super) fn map_set(&mut self, map: Value, args: &[Value]) -> bool {
-        let Some(Cell::Map { entries, .. }) = self.heap.get(map) else { return false };
+        let Some(entries) = self.heap.map_entries(map) else { return false };
         // Map.prototype.set stores -0 as +0 (`canonical_collection_key`).
         let key = canonical_collection_key(args.first().copied().unwrap_or(Value::UNDEFINED));
         let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let key_hash = self.same_value_zero_hash(key);
         if let Some(index) = self.collection_entry_index(entries, key, key_hash) {
             // An existing entry takes the value: the payload does not grow.
-            if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(map) { entries.set_value(index, value); }
+            if let Some(entries) = self.heap.map_entries_mut(map) { entries.set_value(index, value); }
             return true;
         }
-        self.heap.grow_cell_payload(map, |cell| {
-            if let Cell::Map { entries, .. } = cell {
+        self.heap.grow_collection_payload(map, |storage| {
+            if let CollectionStorage::Map(entries) = storage {
                 entries.push((key, value), key_hash);
             }
         });
@@ -1299,20 +1204,22 @@ impl<H: Host> Vm<H> {
     }
 
     fn map_entry_index_hashed(&self, map: Value, key: Value, key_hash: u64) -> Option<usize> {
-        let Some(Cell::Map { entries, .. }) = self.heap.get(map) else {
+        let Some(entries) = self.heap.map_entries(map) else {
             return None;
         };
         self.collection_entry_index(entries, key, key_hash)
     }
 
     fn set_entry_index_hashed(&self, set: Value, value: Value, key_hash: u64) -> Option<usize> {
-        let Some(Cell::Set { entries, .. }) = self.heap.get(set) else {
+        let Some(entries) = self.heap.set_entries(set) else {
             return None;
         };
         self.collection_entry_index(entries, value, key_hash)
     }
 
     /// The slot of the entry whose key is SameValueZero to `key`, whose hash is `key_hash`.
+    /// Inlined into every lookup, so a Map or Set read is one probe with no call.
+    #[inline(always)]
     fn collection_entry_index<T: crate::heap::CollectionEntry>(
         &self,
         entries: &crate::heap::CollectionEntries<T>,
@@ -1332,6 +1239,8 @@ impl<H: Host> Vm<H> {
     }
     /// A hash under which SameValueZero-equal keys agree: numbers by value with both zeros
     /// and every NaN as one, strings and BigInts by content, everything else by identity.
+    /// Numbers are hashed inline; the rest goes to the out-of-line `non_number_key_hash`.
+    #[inline(always)]
     pub(super) fn same_value_zero_hash(&self, key: Value) -> u64 {
         match key.as_number() {
             Some(number) => crate::heap::number_key_hash(number),
@@ -1348,11 +1257,11 @@ impl<H: Host> Vm<H> {
         subject: &str,
     ) -> Result<(), JsError> {
         let held = match self.heap.get(receiver) {
-            Some(Cell::Map { .. }) => Brand::Map,
-            Some(Cell::Set { .. }) => Brand::Set,
             Some(Cell::WeakMap { .. }) => Brand::WeakMap,
             Some(Cell::WeakSet { .. }) => Brand::WeakSet,
             Some(Cell::Date { .. }) => Brand::Date,
+            _ if self.heap.is_map(receiver) => Brand::Map,
+            _ if self.heap.is_set(receiver) => Brand::Set,
             _ => return Err(self.incompatible_receiver(p, subject)),
         };
         if held == brand {
@@ -1368,7 +1277,7 @@ impl<H: Host> Vm<H> {
 
     fn is_weak_key_value(&self, value: Value) -> bool {
         let is_object = self.is_object_like(value);
-        let is_unique_symbol = matches!(self.heap.get(value), Some(Cell::Symbol(_)))
+        let is_unique_symbol = self.heap.is_symbol(value)
             && !self.symbol_registry.values().any(|symbol| *symbol == value);
         is_object || is_unique_symbol
     }

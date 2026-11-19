@@ -24,7 +24,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
-use super::MAX_SMALL_BYTES;
+use super::{FreeBlock, MAX_SMALL_BYTES};
 
 /// log2 of the smallest scratch class: the first power of two above `MAX_SMALL_BYTES`.
 const MIN_SHIFT: u32 = MAX_SMALL_BYTES.trailing_zeros() + 1;
@@ -48,10 +48,6 @@ const _: () = assert!(MAX_SMALL_BYTES.is_power_of_two() && MIN_SHIFT > MAX_SMALL
 const _: () = assert!(PAGE_BYTES == 2 << MIN_SHIFT);
 const _: () = assert!(ARENA_BYTES.is_multiple_of(1 << MAX_SHIFT));
 
-struct FreeBlock {
-    next: *mut FreeBlock,
-}
-
 /// The arena's state, behind one lock: the adopting thread allocates and any thread frees.
 struct Arena {
     /// Start of the used span's unused remainder, as an offset from `BASE`.
@@ -70,7 +66,9 @@ thread_local! {
     static ADOPTED: Cell<bool> = const { Cell::new(false) };
 }
 
-fn class_of(size: usize) -> usize {
+/// The power-of-two scratch class of `size` bytes: the index of the smallest power of two that
+/// holds it, counted from `MIN_SHIFT`. A request below the smallest class takes class zero.
+fn pow2_class_of(size: usize) -> usize {
     (size.next_power_of_two().trailing_zeros().max(MIN_SHIFT) - MIN_SHIFT) as usize
 }
 
@@ -131,7 +129,7 @@ pub(crate) fn alloc_for(layout: Layout) -> *mut u8 {
 
 /// A block for `layout` (one `applies` accepted), or null when the arena is full.
 fn alloc(layout: Layout) -> *mut u8 {
-    let class = class_of(layout.size());
+    let class = pow2_class_of(layout.size());
     let mut arena = lock();
     let head = arena.free[class];
     let block = if head != 0 {
@@ -163,7 +161,7 @@ fn alloc(layout: Layout) -> *mut u8 {
 /// Returns `block` (the arena's, per `owns`) to its class. The size is the request's, which
 /// rounds to the class the block came from.
 pub(crate) fn free(block: *mut u8, layout: Layout) {
-    let class = class_of(layout.size());
+    let class = pow2_class_of(layout.size());
     let mut arena = lock();
     // SAFETY: a block of at least the class size, no longer in use.
     unsafe { (*block.cast::<FreeBlock>()).next = arena.free[class] as *mut FreeBlock };
@@ -229,10 +227,10 @@ mod tests {
 
     #[test]
     fn classes_round_up_to_powers_of_two() {
-        assert_eq!(class_of(MAX_SMALL_BYTES + 1), 0);
-        assert_eq!(class_of(1 << MIN_SHIFT), 0);
-        assert_eq!(class_of((1 << MIN_SHIFT) + 1), 1);
-        assert_eq!(class_of(1 << MAX_SHIFT), CLASSES - 1);
+        assert_eq!(pow2_class_of(MAX_SMALL_BYTES + 1), 0);
+        assert_eq!(pow2_class_of(1 << MIN_SHIFT), 0);
+        assert_eq!(pow2_class_of((1 << MIN_SHIFT) + 1), 1);
+        assert_eq!(pow2_class_of(1 << MAX_SHIFT), CLASSES - 1);
     }
 
     #[test]

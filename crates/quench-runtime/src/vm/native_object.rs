@@ -1,4 +1,9 @@
-//! Object publication for the same native IR consumed by the JIT.
+//! Object publication: native functions (Cranelift IR, or code an AOT image already relocated)
+//! and data, with the entry table `NativeJsProgram::from_linked_image` adopts.
+
+mod module;
+pub use module::{NativeCode, NativeJsModule, NativeReloc, lower_native_js_module, lower_native_js_module_for};
+use module::define_code;
 
 use cranelift_codegen::ir;
 use cranelift_module::{DataDescription, Linkage, Module, ModuleReloc};
@@ -36,6 +41,7 @@ pub enum NativeFunction {
         name: String,
         function: ir::Function,
     },
+    Code(NativeCode),
     Import {
         name: String,
         signature: ir::Signature,
@@ -59,11 +65,18 @@ pub fn emit_native_module(
     functions: Vec<NativeFunction>,
     data: Vec<NativeData>,
 ) -> Result<Vec<u8>, String> {
-    let isa = super::jit_backend::target_isa_for(
-        "speed",
-        super::jit_backend::CodePublication::RelocatableObject,
-    )
-    .ok_or_else(|| "native target unavailable".to_owned())?;
+    emit_native_module_for(module_name, functions, data, &super::jit_backend::NativeTarget::default())
+}
+
+/// Publish a module as an object for `target`. The triple picks the object format (ELF,
+/// Mach-O, COFF); the baseline picks the instructions.
+pub fn emit_native_module_for(
+    module_name: &str,
+    functions: Vec<NativeFunction>,
+    data: Vec<NativeData>,
+    target: &super::jit_backend::NativeTarget,
+) -> Result<Vec<u8>, String> {
+    let isa = super::jit_backend::relocatable_isa(target)?;
     let builder = ObjectBuilder::new(
         isa.clone(),
         module_name,
@@ -77,6 +90,7 @@ pub fn emit_native_module(
             NativeFunction::Definition { name, function } => {
                 (name, &function.signature, Linkage::Export)
             }
+            NativeFunction::Code(code) => (&code.name, &code.signature, Linkage::Export),
             NativeFunction::Import { name, signature } => (name, signature, Linkage::Import),
         };
         // Duplicate declarations would make declaration indices cease to name
@@ -108,6 +122,13 @@ pub fn emit_native_module(
         );
     }
     for (index, definition) in functions.into_iter().enumerate() {
+        let definition = match definition {
+            NativeFunction::Code(code) => {
+                define_code(&mut module, symbols[index], code)?;
+                continue;
+            }
+            other => other,
+        };
         let NativeFunction::Definition { name, function } = definition else {
             continue;
         };

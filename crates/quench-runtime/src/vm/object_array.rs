@@ -324,11 +324,24 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The property-key atom of array index `index`: the canonical index atom when one exists,
+    /// otherwise interned from a stack-formatted decimal (no heap `String`).
+    pub(super) fn index_key_atom(&mut self, index: usize) -> Atom {
+        if let Ok(small) = u32::try_from(index)
+            && small < u32::MAX
+            && let Some(atom) = self.array_index_atoms.get(&small).copied()
+        {
+            return atom;
+        }
+        let mut buffer = itoa::Buffer::new();
+        self.intern_atom(buffer.format(index))
+    }
+
     pub(super) fn array_integrity_atoms(&mut self, target: Value) -> Vec<Atom> {
         let mut atoms = self
             .array_present_indices(target)
             .into_iter()
-            .map(|index| self.intern_atom(&index.to_string()))
+            .map(|index| self.index_key_atom(index))
             .collect::<Vec<_>>();
         if self.heap.array(target).is_some()
             && !self
@@ -374,7 +387,7 @@ impl<H: Host> Vm<H> {
         index: usize,
         descriptor: PropertyDescriptorRecord,
     ) -> Result<bool, JsError> {
-        let atom = self.intern_atom(&index.to_string());
+        let atom = self.index_key_atom(index);
         let existing = self
             .heap
             .array_elements(target)

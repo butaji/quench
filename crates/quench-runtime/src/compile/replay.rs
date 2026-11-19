@@ -8,6 +8,7 @@
 //! the replay reaches, and each function nested in it already has its id and its range.
 
 use crate::bytecode::Atom;
+pub(crate) use super::settled::Settled;
 use rustc_hash::FxHashMap;
 use std::ops::{Index, IndexMut};
 
@@ -157,14 +158,6 @@ impl<T: Clone> IndexMut<usize> for SiteTable<'_, T> {
                 .entry(index)
                 .or_insert_with(|| entries[index].clone()),
         }
-    }
-}
-
-/// The argument registers of each method site, by site index (`crate::liveness`): the compiler's
-/// site table answers the liveness analysis as a finished program's table does.
-impl crate::liveness::MethodArguments for SiteTable<'_, crate::liveness::MethodSite> {
-    fn arguments(&self, site: usize) -> crate::liveness::RegisterSet {
-        self.as_slice().arguments(site)
     }
 }
 
@@ -433,20 +426,36 @@ pub(crate) enum Rewrite {
 /// The rewrites a program's load left to its functions' first reads.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RewriteRanges {
-    /// Every record the load kept unlowered still awaits its rewrites, which its first read runs
-    /// (`compile::settle_deferred_rewrite`): a program that keeps its records but compiled few.
+    /// Some kept record still awaits its rewrites, which its first read runs
+    /// (`compile::settle_deferred_rewrite`). A program's chunks append only to such a program
+    /// (`ResidualProgram::has_room_for`).
     pub(crate) kept_pending: bool,
-    /// Per function id: where a replay or first read put its rewrites' sites (`Some(Some)`), or
-    /// that they stayed unrun (`Some(None)`); `None` before either.
-    pub(crate) settled: std::cell::RefCell<Vec<Option<Option<crate::compile::replay::RewriteStart>>>>,
+    /// The functions whose rewrites wait for their first read, ascending. Each is kept
+    /// unlowered and unrewritten, so its encoding says so (`binary::encode_program`) and its
+    /// first read settles it; every other kept record was rewritten at load.
+    pub(crate) deferred: Box<[u32]>,
+    /// Per function id: where a replay or first read put its rewrites' sites, or that they
+    /// stayed unrun; `Settled::UNSETTLED` before either.
+    pub(crate) settled: std::cell::RefCell<Vec<Settled>>,
+}
+
+impl RewriteRanges {
+    /// The ranges of a program whose functions `deferred` lists in any order.
+    pub(crate) fn new(kept_pending: bool, mut deferred: Vec<u32>) -> Self {
+        deferred.sort_unstable();
+        Self { kept_pending, deferred: deferred.into_boxed_slice(), settled: Default::default() }
+    }
+
+    /// Whether function `id`'s rewrites wait for its first read.
+    pub(crate) fn defers(&self, id: usize) -> bool {
+        self.deferred.binary_search(&(id as u32)).is_ok()
+    }
 }
 
 /// Lazily derived views of a finished program that its replays share.
 #[derive(Default)]
 pub(super) struct ReplayViews {
     pub(super) constants: std::cell::OnceCell<Vec<(u64, u32)>>,
-    pub(super) line_starts: std::cell::OnceCell<Vec<usize>>,
-    pub(super) utf16_excess: std::cell::OnceCell<Vec<(usize, usize)>>,
 }
 
 /// How a program's functions can be compiled again, one at a time.
@@ -457,6 +466,11 @@ pub(crate) struct ProgramReplay {
     /// The starts of the bodies the load compiled from their source parsed again (`lazy_bodies`),
     /// in order: a replay stands each in, so the code around it compiles as the load did.
     pub(super) lazy_bodies: Box<[u32]>,
+    /// The starts of the functions whose bodies the load's check found free of early errors
+    /// (`BodyFacts::checked`), sorted. A first-call chunk of one skips its own semantic syntax
+    /// check, which repeats the load's. Empty where the load kept no check (a kept form's chunks),
+    /// so the chunk checks itself.
+    pub(super) checked_bodies: Box<[u32]>,
     pub(super) specialized: bool,
     /// Tagged template sites: a global eval of a program with any (own template objects) is never cached.
     pub(crate) template_sites: u32,
@@ -508,9 +522,57 @@ impl ChunkNameSites {
 }
 
 impl ProgramReplay {
+    /// What a program's first-call chunks read of its replay, which its kept form records
+    /// (`bytecode::binary`): whether its stubs include arrows, and the next name-shared site.
+    pub(crate) fn chunk_state(&self) -> (bool, u16) {
+        (self.direct_stubs, self.chunk_name_sites.next.get())
+    }
+
+    /// The name-shared sites the load gave out (`Compiler::name_shared_cache_site`), as
+    /// (store, atom, site), which a chunk's accesses of the same name take too.
+    pub(crate) fn name_shared_entries(&self) -> Vec<(bool, u32, u16)> {
+        let mut entries: Vec<_> = self.name_shared_sites.iter()
+            .map(|(&(access, atom), &site)| (access == super::NamedAccess::Store, atom, site)).collect();
+        entries.sort_unstable();
+        entries
+    }
+
+    /// The replay of a program decoded from its kept form, for its first-call chunks alone:
+    /// it replays no function (its records are encoded); its chunks share the load's
+    /// name-shared sites, `name_shared` as (store, atom, site), and give out new ones from
+    /// `next_site` on.
+    pub(crate) fn for_chunks(specialized: bool, direct_stubs: bool, next_site: u16, name_shared: &[(bool, u32, u16)]) -> Self {
+        Self {
+            source_type: oxc_span::SourceType::script(),
+            root_strict: false,
+            module_goal: false,
+            lazy_bodies: Box::default(),
+            checked_bodies: Box::default(),
+            specialized,
+            template_sites: 0,
+            atoms: ProgramAtomIndex { atoms: hashbrown::HashTable::new() },
+            exits: Box::default(),
+            functions: FxHashMap::default(),
+            name_shared_sites: name_shared.iter()
+                .map(|&(store, atom, site)| ((if store { super::NamedAccess::Store } else { super::NamedAccess::Load }, atom), site))
+                .collect(),
+            direct_stubs,
+            chunk_name_sites: ChunkNameSites::new(next_site),
+            #[cfg(feature = "verify-replay")]
+            released: FxHashMap::default(),
+            views: ReplayViews::default(),
+        }
+    }
+
     /// The ids of the functions a replay can compile.
     pub(crate) fn replayable(&self) -> impl Iterator<Item = &u32> {
         self.functions.keys()
+    }
+
+    /// Whether the load checked the body of the function at `start` alone, with its early errors
+    /// found by the semantic analysis (`checked_bodies`).
+    pub(super) fn checked_at_load(&self, start: u32) -> bool {
+        self.checked_bodies.binary_search(&start).is_ok()
     }
 }
 
@@ -724,7 +786,7 @@ pub(crate) fn recompile(
     program: &crate::bytecode::ResidualProgram,
     id: u32,
 ) -> Result<Recompiled, String> {
-    use super::{Compiler, Constant, SpecializationMode, capture_layout};
+    use super::{Compiler, Constant, SpecializationMode, capture_layout, liveness};
     let replay = program.replay.as_deref().ok_or("the program keeps no replay")?;
     let function_replay = replay
         .functions
@@ -756,7 +818,9 @@ pub(crate) fn recompile(
         };
     let (prefix, suffix) = replay_wrapper(&function_replay.call, strict);
     let wrapped = format!("{prefix}{snippet}{suffix}");
-    let allocator = oxc_allocator::Allocator::with_capacity(wrapped.len().saturating_mul(6));
+    // Sized as a program's parse is (`lazy_bodies::arena`, 32 bytes per source byte), so a large
+    // function's tree fits its first chunk instead of adding chunks past the 6 bytes per byte here.
+    let allocator = super::lazy_bodies::arena(&wrapped);
     let mut parsed = super::annex_b_targets::parse_program(&allocator, &wrapped, replay.source_type);
     if parsed.stack_exhausted || !parsed.diagnostics.is_empty() {
         return Err(format!(
@@ -788,16 +852,7 @@ pub(crate) fn recompile(
     } else {
         SpecializationMode::Disabled
     };
-    let (line_starts, utf16_excess) = views.layout(text);
-    let mut compiler = Compiler::with_layout(
-        &program.source_name,
-        text,
-        mode,
-        &atoms,
-        FxHashMap::default(),
-        std::borrow::Cow::Borrowed(line_starts),
-        std::borrow::Cow::Borrowed(utf16_excess),
-    );
+    let mut compiler = Compiler::new(&program.source_name, text, mode, &atoms, FxHashMap::default());
     compiler.source_comments = parsed
         .program
         .comments
@@ -868,12 +923,13 @@ pub(crate) fn recompile(
     capture_layout::apply_function(&mut function, id as usize, &function_replay.layout, &compiler.atoms);
     compiler.rewrite_replayed(program, id, function_replay.rewrite, &mut function);
     let undefined_constant = compiler.constant(Constant::Undefined);
-    compiler.lower_function(&mut function, undefined_constant);
-    crate::liveness::mark_register_roots(
-        std::iter::once(&mut function),
+    let solved = compiler.lower_function(&mut function, undefined_constant);
+    function.register_roots = liveness::register_roots_from(
+        &function,
         compiler.method_arguments(),
         compiler.field_sites.as_slice(),
         compiler.superinstructions.as_slice(),
+        solved,
     );
     function.shrink_to_fit();
     // The function making this one named it after compiling it.
@@ -904,7 +960,7 @@ pub(crate) fn recompile(
                 let start = site.argument_start as usize;
                 let arguments =
                     program.method_arguments[start..start + usize::from(site.argument_count)].to_vec();
-                format!("{:?}", (site.atom, site.cache, arguments, site.receiver_path))
+                format!("{:?}", (site.atom, site.cache, arguments, site.receiver_path.get()))
             },
         );
         entries.push(("method_sites", index, format!("{value:?}"), loaded));

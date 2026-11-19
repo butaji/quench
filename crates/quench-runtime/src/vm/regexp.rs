@@ -3,11 +3,18 @@ use super::*;
 use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-mod literal;
 mod steady;
+mod steady_ascii;
+mod steady_strings;
 mod ascii;
 mod subject_cache; pub(super) use subject_cache::SubjectCache;
 mod literal_matches;
+mod literal;
+mod replacement;
+use replacement::{ReplaceResult, has_substitution, result_length};
+mod legacy;
+pub(super) use legacy::LegacyRegExpSnapshot;
+use legacy::{LegacyRegExpMatch, LegacyStatics};
 
 /// Recently matched strings whose prepared subjects are kept (`Vm::regexp_subject`): a
 /// scanner's input plus the few strings it tests between matches.
@@ -64,7 +71,7 @@ pub(super) struct RegExpIntrinsics {
     pub(super) result_template: Option<RegExpResultTemplate>,
     /// Where `regexp_builtin_exec_matcher` last proved the builtin exec (`RegExpExecProof`);
     /// a memo, never snapshotted.
-    exec_proof: std::cell::Cell<Option<RegExpExecProof>>,
+    pub(super) exec_proof: std::cell::Cell<Option<RegExpExecProof>>,
     /// A function value found to be this realm's builtin `exec`: a function's kind never
     /// changes, so the prototype's `exec` slot holding this value needs no further look.
     /// Rooted (`gc.rs`), so the handle names it for as long as the memo does.
@@ -72,14 +79,15 @@ pub(super) struct RegExpIntrinsics {
 }
 
 /// Where RegExps of one shape, whose prototype is the realm's `%RegExp.prototype%`, find
-/// their `exec` under one `prototype_layout_epoch`: no own `exec`, and the prototype's in a
-/// data slot. The prototype was marked when the proof was made, so a change to its layout
-/// advances the epoch; shape compaction advances it too, so a proof never names a renumbered
-/// shape. The slot's value may change in place, so each use reads it.
+/// their `exec` while `cell` holds: no own `exec`, and the prototype's in a data slot. The
+/// prototype was marked when the proof was made and the cell is its own (`Vm::chain_cell`),
+/// so a change to its layout retires the proof, and another prototype's leaves it; shape
+/// compaction retires every cell, so a proof never names a renumbered shape. The slot's value
+/// may change in place, so each use reads it.
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct RegExpExecProof {
-    shape: u32,
-    epoch: u64,
+pub(super) struct RegExpExecProof {
+    pub(super) shape: u32,
+    pub(super) cell: crate::heap::ChainCell,
     exec_slot: usize,
 }
 
@@ -114,45 +122,6 @@ impl RegExpResultSlots {
 /// `index`, `input` and `groups`.
 const REGEXP_RESULT_PROPERTY_COUNT: usize = 3;
 
-/// The legacy `RegExp` statics: the last match, which holds the subject it was found in, and
-/// the `RegExp.input` a script set since, which reads in place of that subject.
-#[derive(Clone)]
-struct LegacyStatics {
-    last: LegacyRegExpMatch,
-    input_override: Option<JsString>,
-}
-
-impl LegacyStatics {
-    const EMPTY: Self = Self { last: LegacyRegExpMatch::Empty, input_override: None };
-
-    /// What `RegExp.input` reads, or `None` after a match of a subclass or other non-builtin
-    /// that poisoned the statics and no script has set it since.
-    fn input(&self) -> Option<JsString> {
-        self.input_override.clone().or_else(|| match &self.last {
-            LegacyRegExpMatch::Empty => Some(JsString::from_units(&[])),
-            LegacyRegExpMatch::Matched { input, .. } | LegacyRegExpMatch::Pending { input, .. } => Some(input.clone()),
-            LegacyRegExpMatch::Invalid => None,
-        })
-    }
-}
-
-#[derive(Clone)]
-enum LegacyRegExpMatch {
-    Empty,
-    Matched {
-        input: JsString,
-        matched: quench_regexp::Match,
-    },
-    /// The match `matcher` finds in `input` from `start`, where a match is known to begin:
-    /// found again only when a static is read (`resolve_regexp_legacy_match`), as most
-    /// matches' statics are never read.
-    Pending {
-        input: JsString,
-        matcher: Rc<quench_regexp::Regex>,
-        start: usize,
-    },
-    Invalid,
-}
 
 impl RegExpIntrinsics {
     pub(super) fn new(constructor: Value, prototype: Value) -> Self {
@@ -167,34 +136,6 @@ impl RegExpIntrinsics {
     }
 }
 
-/// Legacy match data belongs to the embedding caller, not host builtin setup.
-/// These owned strings/match ranges contain no heap references and survive GC.
-pub(super) struct LegacyRegExpSnapshot(LegacyStatics);
-
-impl<H: Host> Vm<H> {
-    pub(super) fn snapshot_regexp_legacy(&self) -> LegacyRegExpSnapshot {
-        match self
-            .realm
-            .intrinsics
-            .regexp_intrinsics
-            .get(&self.realm.globals)
-        {
-            Some(state) => LegacyRegExpSnapshot(state.legacy.clone()),
-            None => LegacyRegExpSnapshot(LegacyStatics::EMPTY),
-        }
-    }
-
-    pub(super) fn restore_regexp_legacy(&mut self, snapshot: LegacyRegExpSnapshot) {
-        if let Some(state) = self
-            .realm
-            .intrinsics
-            .regexp_intrinsics
-            .get_mut(&self.realm.globals)
-        {
-            state.legacy = snapshot.0;
-        }
-    }
-}
 
 enum RegExpConstructorInput {
     Internal {
@@ -329,62 +270,6 @@ impl<H: Host> Vm<H> {
         self.global(program, "RegExp", constructor)
     }
 
-    pub(super) fn install_regexp_legacy_accessors(
-        &mut self,
-        program: &ResidualProgram,
-        constructor: Value,
-        realm: Value,
-    ) -> Result<(), JsError> {
-        for capture in 1..=REGEXP_LEGACY_CAPTURE_COUNT {
-            let name = format!("${capture}");
-            self.install_regexp_legacy_accessor(program, constructor, realm, &name, false)?;
-        }
-        for (names, has_setter) in REGEXP_LEGACY_ACCESSOR_GROUPS {
-            for name in *names {
-                self.install_regexp_legacy_accessor(
-                    program,
-                    constructor,
-                    realm,
-                    name,
-                    *has_setter,
-                )?;
-            }
-        }
-        Ok(())
-    }
-
-    fn install_regexp_legacy_accessor(
-        &mut self,
-        program: &ResidualProgram,
-        constructor: Value,
-        realm: Value,
-        name: &str,
-        has_setter: bool,
-    ) -> Result<(), JsError> {
-        let atom = self.intern_atom(name);
-        let selector = Value::number(atom as f64);
-        let getter = self.native_with_realm(Native::RegExpLegacyGetter, selector, realm);
-        self.set_builtin_function_name(getter, &format!("get RegExp.{name}"))?;
-        let setter =
-            has_setter.then(|| self.native_with_realm(Native::RegExpLegacySetter, selector, realm));
-        if let Some(setter) = setter {
-            self.set_builtin_function_name(setter, &format!("set RegExp.{name}"))?;
-        }
-        self.set_named(program, constructor, name, getter)?;
-        self.set_property_attributes(
-            constructor,
-            PropertyKey::string(atom),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(getter),
-                setter,
-            },
-        );
-        Ok(())
-    }
 
     pub(super) fn install_regexp_accessors(
         &mut self,
@@ -530,24 +415,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Species) {
-            let getter = self.native_with_realm(Native::RegExpSpecies, realm, realm);
-            self.set_builtin_function_name(getter, "get [Symbol.species]")?;
-            self.set_symbol_property(constructor, symbol, Value::UNDEFINED)?;
-            self.set_property_attributes(
-                constructor,
-                PropertyKey::symbol(symbol),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: true,
-                    getter: Some(getter),
-                    setter: None,
-                },
-            );
-        }
-        Ok(())
+        self.install_species(constructor, |vm| vm.native_with_realm(Native::RegExpSpecies, realm, realm))
     }
 
     pub(super) fn regexp_symbol_replace(
@@ -594,7 +462,7 @@ impl<H: Host> Vm<H> {
                             replacement,
                             &matcher,
                             flags,
-                            true,
+                            ReplaceResult::Value,
                         );
                     }
                     let flags = vm.regexp_flags_text(p, receiver)?;
@@ -644,7 +512,7 @@ impl<H: Host> Vm<H> {
                     let mut next_source = 0;
                     for result in results {
                         vm.with_call_roots([result], |vm| {
-                            let atom = vm.intern_atom("length");
+                            let atom = vm.length_atom;
                             let length = vm.get_property(p, result, atom)?;
                             let length = vm.regexp_to_length_value(p, length)?;
                             let atom = vm.intern_atom("0");
@@ -659,7 +527,7 @@ impl<H: Host> Vm<H> {
                                 position.max(0.0).min(input.units().len() as f64) as usize;
                             let mut captures = Vec::new();
                             for index in 1..length {
-                                let atom = vm.intern_atom(&index.to_string());
+                                let atom = vm.index_key_atom(index);
                                 let capture = vm.get_property(p, result, atom)?;
                                 let capture = if capture.is_undefined() {
                                     capture
@@ -1080,8 +948,10 @@ impl<H: Host> Vm<H> {
             }
             FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_) | FlatUnits::Wide(_) => &*flat,
             // A matcher subject owns whole storage, so a run of shared storage is copied into
-            // one, once per run (`SubjectCache::run`).
-            FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..) | FlatUnits::AsciiPrefix(..) => {
+            // one, once per run (`SubjectCache::run`). Latin-1 text is widened there too: the
+            // engine reads UTF-16 or ASCII subjects only.
+            FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..) | FlatUnits::AsciiPrefix(..)
+            | FlatUnits::Latin1(_) | FlatUnits::Latin1Prefix(..) => {
                 return self.regexp_subjects.run(&flat);
             }
             FlatUnits::Parts(_) => unreachable!("a string of parts is written out before it is read"),
@@ -1137,7 +1007,7 @@ impl<H: Host> Vm<H> {
         replacement: FastReplacement<'_>,
         matcher: &Rc<quench_regexp::Regex>,
         flags: RegExpFlags,
-        result_used: bool,
+        build: ReplaceResult,
     ) -> Result<Value, JsError> {
         // Matching, slicing and substitution all read the input; a rope the program keeps
         // (V8-v7 RegExp's input variants) would otherwise keep a flat copy of its text for its
@@ -1145,9 +1015,10 @@ impl<H: Host> Vm<H> {
         let input = &input.unkept_flat();
         let subject = self.regexp_subject(input, matcher);
         if let FastReplacement::Template(template) = replacement
-            && !literal::has_substitution(template) {
-                return self.regexp_replace_with_literal(p, receiver, input, input_value, &subject,
-                    template, matcher, flags, if result_used { literal::ReplaceResult::Value } else { literal::ReplaceResult::Unused });
+            && !has_substitution(template) {
+                return self.regexp_replace_with_literal(
+                    p, receiver, input, input_value, &subject, template, matcher, flags, build,
+                );
             }
         let matches = if flags.contains(RegExpFlags::GLOBAL) {
             self.regexp_global_matches(
@@ -1166,52 +1037,60 @@ impl<H: Host> Vm<H> {
                 .collect()
         };
         if let Some(last) = matches.last() {
-            self.record_regexp_legacy_match(receiver, input.clone(), last.clone())?;
+            let owner = self.regexp_legacy_owner(receiver)?;
+            self.record_regexp_legacy_match(owner, input.clone(), last.clone());
         }
 
         let mut output = super::wtf16::JsStringBuilder::default();
-        let mut next_source = 0;
-        for found in &matches {
-            let position = found.range.start;
-            let matched = JsString::from_unit_run(input.units().slice(found.range.clone()));
-            let captures = found
-                .captures
-                .iter()
-                .map(|range| {
-                    range.clone().map_or(Value::UNDEFINED, |range| {
-                        self.heap.alloc_string(JsString::from_unit_run(
-                            input.units().slice(range),
-                        ))
+        let callee = match replacement {
+            FastReplacement::Template(_) => Value::UNDEFINED,
+            FastReplacement::Function(function) => function,
+        };
+        self.with_prepared_callback(callee, Value::UNDEFINED, |vm, prepared| -> Result<(), JsError> {
+            let mut next_source = 0;
+            for found in &matches {
+                let position = found.range.start;
+                let matched = JsString::from_unit_run(input.units().slice(found.range.clone()));
+                let captures = found
+                    .captures
+                    .iter()
+                    .map(|range| {
+                        range.clone().map_or(Value::UNDEFINED, |range| {
+                            vm.heap.alloc_string(JsString::from_unit_run(
+                                input.units().slice(range),
+                            ))
+                        })
                     })
-                })
-                .collect::<Vec<_>>();
-            let named = regexp_named_capture_ranges(found);
-            let groups = self.regexp_groups_object(&named, input.units())?;
-            let text = self.with_call_roots(captures.iter().copied().chain([groups]), |vm| {
-                match replacement {
-                    FastReplacement::Template(template) => vm.replacement_substitution(
-                        p, template, input, position, &matched, &captures, groups,
-                    ),
-                    FastReplacement::Function(function) => {
-                        let matched = vm.heap.alloc_string(matched.clone());
-                        let mut args = Vec::with_capacity(captures.len() + 4);
-                        args.push(matched);
-                        args.extend(captures.iter().copied());
-                        args.push(Value::number(position as f64));
-                        args.push(input_value);
-                        if !groups.is_undefined() {
-                            args.push(groups);
+                    .collect::<Vec<_>>();
+                let named = regexp_named_capture_ranges(found);
+                let groups = vm.regexp_groups_object(&named, input.units())?;
+                let text = vm.with_call_roots(captures.iter().copied().chain([groups]), |vm| {
+                    match replacement {
+                        FastReplacement::Template(template) => vm.replacement_substitution(
+                            p, template, input, position, &matched, &captures, groups,
+                        ),
+                        FastReplacement::Function(_) => {
+                            let matched = vm.heap.alloc_string(matched.clone());
+                            let mut args = Vec::with_capacity(captures.len() + 4);
+                            args.push(matched);
+                            args.extend(captures.iter().copied());
+                            args.push(Value::number(position as f64));
+                            args.push(input_value);
+                            if !groups.is_undefined() {
+                                args.push(groups);
+                            }
+                            let value = vm.call_prepared(p, prepared, &args)?;
+                            vm.coerce_js_string(p, value)
                         }
-                        let value = vm.call_value(p, function, Value::UNDEFINED, &args)?;
-                        vm.coerce_js_string(p, value)
                     }
-                }
-            })?;
-            output.append_slice(input, next_source..position);
-            output.append(&text);
-            next_source = found.range.end;
-        }
-        output.append_slice(input, next_source..input.units().len());
+                })?;
+                output.append_slice(input, next_source..position);
+                output.append(&text);
+                next_source = found.range.end;
+            }
+            output.append_slice(input, next_source..input.units().len());
+            Ok(())
+        })?;
         let output = self.string_build_result(p, output.finish())?;
         Ok(self.heap.alloc_string(output))
     }
@@ -1265,7 +1144,7 @@ impl<H: Host> Vm<H> {
         template: &JsString,
         matcher: &Rc<quench_regexp::Regex>,
         flags: RegExpFlags,
-        build: literal::ReplaceResult,
+        build: ReplaceResult,
     ) -> Result<Value, JsError> {
         let (ranges, last) = if flags.contains(RegExpFlags::GLOBAL) {
             let searcher = matcher.range_searcher(subject);
@@ -1287,17 +1166,20 @@ impl<H: Host> Vm<H> {
             let found = matcher.range_searcher(subject).find(0);
             (found.iter().cloned().collect(), found.map(|found| Err(found.start)))
         };
+        // No match leaves the subject as it is: the same string value answers.
         let Some(last) = last else {
-            // No match leaves the subject as it is: its own value, or that value's length.
-            return Ok(if build == literal::ReplaceResult::Value { input_value } else { build.value(input.units().len()) });
+            return Ok(build.unchanged(input_value, input.units().len()));
         };
+        let owner = self.regexp_legacy_owner(receiver)?;
         match last {
-            Ok(found) => self.record_regexp_legacy_match(receiver, input.clone(), found)?,
-            Err(start) => self.record_regexp_legacy_pending(receiver, input.clone(), Rc::clone(matcher), start)?,
+            Ok(found) => self.record_regexp_legacy_match(owner, input.clone(), found),
+            Err(start) => self.record_regexp_legacy_pending(owner, input.clone(), Rc::clone(matcher), start),
         }
-        // Only a length is observable: a replacement nothing reads, or its `.length`.
-        if build != literal::ReplaceResult::Value
-            && let Some(length) = literal::literal_result_length(input, &ranges, template)
+        // Only a length is observable when nothing reads the string, or only its `.length`
+        // does: building it runs no guest code, so its length past the limit raising is the
+        // one outcome left to decide.
+        if build != ReplaceResult::Value
+            && let Some(length) = result_length(input.units().len(), &ranges, template.units().len())
         {
             return Ok(build.value(length));
         }
@@ -1526,7 +1408,7 @@ impl<H: Host> Vm<H> {
                         );
                     }
                     let last_index_atom = vm.intern_atom("lastIndex");
-                    let length_atom = vm.intern_atom("length");
+                    let length_atom = vm.length_atom;
                     let mut p_index = 0usize;
                     let mut q = 0usize;
                     while q < size {
@@ -1561,7 +1443,7 @@ impl<H: Host> Vm<H> {
                             let length = vm.get_property(p, result, length_atom)?;
                             let captures = vm.regexp_to_length_value(p, length)?.saturating_sub(1);
                             for index in 1..=captures {
-                                let atom = vm.intern_atom(&index.to_string());
+                                let atom = vm.index_key_atom(index);
                                 let capture = vm.get_property(p, result, atom)?;
                                 if vm.append_fresh_array_element(array, capture) >= limit {
                                     return Ok((end, true));
@@ -1587,8 +1469,8 @@ impl<H: Host> Vm<H> {
     /// The matcher of `regexp` when `RegExpExec(regexp, …)` resolves to the builtin exec:
     /// a RegExp of this realm with the intrinsic prototype, no own `exec`, and the native
     /// `exec` data property on that prototype. While no guest code runs, that resolution
-    /// cannot change. A proof for the RegExp's shape under the current
-    /// `prototype_layout_epoch` names the slot to read (`RegExpExecProof`).
+    /// cannot change. A proof for the RegExp's shape while the prototype's cell holds names the
+    /// slot to read (`RegExpExecProof`).
     fn regexp_builtin_exec_matcher(&self, regexp: Value) -> Option<Rc<quench_regexp::Regex>> {
         let Some(Cell::RegExp { meta, .. }) = self.heap.get(regexp) else {
             return None;
@@ -1598,11 +1480,11 @@ impl<H: Host> Vm<H> {
     }
 
     /// `regexp_builtin_exec_matcher`'s lookups past its proof, recording where they found
-    /// `exec` while the prototype they read is a marked prototype, so a later change to its
-    /// layout advances the epoch and retires the proof.
+    /// `exec` while the prototype they read is a watched prototype, under its cell, so a later
+    /// change to its layout retires the proof.
     #[cold]
     #[inline(never)]
-    fn prove_regexp_exec(&self, intrinsics: &RegExpIntrinsics, shape: u32, epoch: u64) -> Option<RegExpExecProof> {
+    fn prove_regexp_exec(&self, intrinsics: &RegExpIntrinsics, shape: u32) -> Option<usize> {
         let exec = PropertyKey::string(self.runtime_atoms.regexp_exec);
         if self.property_shape_slot(shape, exec).is_some() {
             return None;
@@ -1612,12 +1494,12 @@ impl<H: Host> Vm<H> {
         if self.slot_attributes(prototype, exec_slot)?.accessor {
             return None;
         }
-        let proof = RegExpExecProof { shape, epoch, exec_slot };
-        // Allocating a RegExp marks its prototype, so the proof is recorded from the first.
-        if prototype.was_used_as_prototype() {
-            intrinsics.exec_proof.set(Some(proof));
+        // Allocating a RegExp marks its prototype, so the proof is recorded from the first; an
+        // unwatched prototype's slot answers this call alone.
+        if let Some(cell) = self.watched_chain_cell(intrinsics.prototype, 1) {
+            intrinsics.exec_proof.set(Some(RegExpExecProof { shape, cell, exec_slot }));
         }
-        Some(proof)
+        Some(exec_slot)
     }
 
     /// `RegExp.prototype[@@split]` steps 19–25 for a sticky `splitter` this call created,
@@ -1691,7 +1573,8 @@ impl<H: Host> Vm<H> {
         array: Value,
     ) -> Result<Value, JsError> {
         if let Some(matched) = last_match {
-            self.record_regexp_legacy_match(splitter, input.clone(), matched)?;
+            let owner = self.regexp_legacy_owner(splitter)?;
+            self.record_regexp_legacy_match(owner, input.clone(), matched);
         }
         Ok(array)
     }
@@ -1989,7 +1872,8 @@ impl<H: Host> Vm<H> {
         let Some(last) = ranges.last() else {
             return Ok(Value::NULL);
         };
-        self.record_regexp_legacy_pending(receiver, input.clone(), Rc::clone(matcher), last.start)?;
+        let owner = self.regexp_legacy_owner(receiver)?;
+        self.record_regexp_legacy_pending(owner, input.clone(), Rc::clone(matcher), last.start);
         let units = input.units();
         let matched = ranges.into_iter().map(|range| self.heap.alloc_unit_run(units.slice(range))).collect();
         Ok(self.new_array(matched))
@@ -2095,95 +1979,6 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    pub(super) fn regexp_legacy_getter_native(
-        &mut self,
-        p: &ResidualProgram,
-        receiver: Value,
-    ) -> Result<Value, JsError> {
-        self.require_regexp_constructor_receiver(p, receiver)?;
-        let selector = self
-            .active_native_env()
-            .and_then(Value::as_number)
-            .ok_or_else(|| JsError("missing RegExp legacy property selector".into()))?
-            as Atom;
-        match self.regexp_legacy_text(selector) {
-            Some(value) => Ok(self.heap.alloc_string(value)),
-            None => Err(self.type_error(p, "RegExp legacy match state is unavailable".into())),
-        }
-    }
-
-    /// A legacy static getter of the intrinsic `RegExp` (`RegExp.$1`, `lastMatch`) called as
-    /// `callee` with `receiver`, which runs no guest code: its text, where the receiver is the
-    /// realm's constructor and the match state is available; `None` leaves any throw to the
-    /// native.
-    pub(in crate::vm) fn regexp_legacy_getter_in_place(&mut self, callee: Value, receiver: Value) -> Option<Value> {
-        let FunctionRecord { env, realm, .. } = self.heap.function(callee)?;
-        if *realm != self.realm.globals || !self.same_value(receiver, self.regexp_intrinsic_constructor()) {
-            return None;
-        }
-        let selector = env.as_number()? as Atom;
-        let text = self.regexp_legacy_text(selector)?;
-        Some(self.heap.alloc_string(text))
-    }
-
-    /// The text the legacy static `selector` names, from the last match the realm made;
-    /// `None` where the state is unavailable.
-    fn regexp_legacy_text(&mut self, selector: Atom) -> Option<JsString> {
-        self.resolve_regexp_legacy_match();
-        let name = self.atom_name(selector);
-        let state = self
-            .realm
-            .intrinsics
-            .regexp_intrinsics
-            .get(&self.realm.globals)
-            .expect("active realm has RegExp intrinsics");
-        if matches!(name, "input" | "$_") {
-            state.legacy.input()
-        } else {
-            match &state.legacy.last {
-                LegacyRegExpMatch::Invalid => None,
-                LegacyRegExpMatch::Empty => Some(JsString::from_units(&[])),
-                LegacyRegExpMatch::Pending { .. } => unreachable!("resolved above"),
-                LegacyRegExpMatch::Matched { input, matched } => {
-                    let range = match name {
-                        "lastMatch" | "$&" => Some(matched.range.clone()),
-                        "leftContext" | "$`" => Some(0..matched.range.start),
-                        "rightContext" | "$'" => Some(matched.range.end..input.units().len()),
-                        "lastParen" | "$+" => matched.captures.last().cloned().flatten(),
-                        _ => name
-                            .strip_prefix('$')
-                            .and_then(|index| index.parse::<usize>().ok())
-                            .and_then(|index| index.checked_sub(1))
-                            .and_then(|index| matched.captures.get(index))
-                            .cloned()
-                            .flatten(),
-                    };
-                    Some(range.map_or_else(
-                        || JsString::from_units(&[]),
-                        |range| JsString::from_unit_run(input.units().slice(range)),
-                    ))
-                }
-            }
-        }
-    }
-
-    pub(super) fn regexp_legacy_setter_native(
-        &mut self,
-        p: &ResidualProgram,
-        receiver: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        self.require_regexp_constructor_receiver(p, receiver)?;
-        let value = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        self.realm
-            .intrinsics
-            .regexp_intrinsics
-            .get_mut(&self.realm.globals)
-            .expect("active realm has RegExp intrinsics")
-            .legacy
-            .input_override = Some(value);
-        Ok(Value::UNDEFINED)
-    }
 
     fn require_regexp_constructor_receiver(
         &mut self,
@@ -2334,72 +2129,14 @@ impl<H: Host> Vm<H> {
         self.regexp_from_matcher(prototype, source, flags, matcher, legacy_constructor)
     }
 
-    pub(super) fn regexp_literal(
-        &mut self,
-        p: &ResidualProgram,
-        frame: usize,
-        site_index: usize,
-    ) -> Result<Value, JsError> {
-        self.regexp_literal_of(p, self.frames[frame].program, site_index)
-    }
-
-    /// The new RegExp object regular expression literal site `site_index` of `p`, the
-    /// residual of `program`, evaluates to.
-    pub(super) fn regexp_literal_of(
-        &mut self,
-        p: &ResidualProgram,
-        program: ProgramId,
-        site_index: usize,
-    ) -> Result<Value, JsError> {
-        if let Some(object) = self.regexp_from_cached_site(program, site_index) {
-            return Ok(object);
+    /// `result` of a call whose searches ran a matcher, or the stack RangeError V8 raises where
+    /// one of them ran out of backtracking stack (`take_backtrack_exhausted`).
+    #[inline(always)]
+    pub(in crate::vm) fn regexp_search_outcome(&mut self, result: Result<Value, JsError>) -> Result<Value, JsError> {
+        if quench_regexp::backtrack::take_backtrack_exhausted() {
+            return Err(self.stack_exhaustion_error());
         }
-        let site = p.regexp_literal_sites.get(site_index)
-            .ok_or_else(|| JsError::validation("RegExp literal site is outside program".into()))?;
-        let source = self.programs.constant(program, site.pattern_constant as usize)
-            .and_then(|value| self.heap.string(value).cloned())
-            .ok_or_else(|| JsError::validation("RegExp literal pattern is not a string".into()))?;
-        let flags_text = self.programs.constant(program, site.flags_constant as usize)
-            .filter(|value| self.heap.string(*value).is_some())
-            .ok_or_else(|| JsError::validation("RegExp literal flags are not a string".into()))?;
-        let (prototype, constructor) = self
-            .realm
-            .intrinsics
-            .regexp_intrinsics
-            .get(&self.realm.globals)
-            .map(|intrinsics| (intrinsics.prototype, intrinsics.constructor))
-            .expect("RegExp intrinsics are installed for the active realm");
-        let owner = crate::heap::RegExpLegacyOwner::Enabled(constructor);
-        let meta = match self.programs.regexp_literal_meta(program, site_index) {
-            Some(meta) => meta,
-            None => {
-                let flags = self.heap.string(flags_text).expect("checked above").host_string();
-                // The compiler checked the literal's pattern and flags (early errors), so its
-                // matcher compiles on the first match (`Vm::regexp_matcher`), as a snapshot's
-                // patterns do: a module evaluates every literal it holds, and most never run
-                // (tr46's 34 Unicode classes were 3.3% of the whatwg-url npm scenario).
-                let meta = Rc::new(crate::heap::RegExpMeta {
-                    source,
-                    flags: RegExpFlags::validated(flags),
-                    legacy_constructor: owner,
-                    matcher: crate::heap::RegExpMatcher::default(),
-                });
-                if !self.programs.cache_regexp_literal_meta(program, site_index, Rc::clone(&meta)) {
-                    return Err(JsError::validation(
-                        "RegExp literal cache site is invalid".into(),
-                    ));
-                }
-                meta
-            }
-        };
-        // A site's record names the realm it was first evaluated in; another realm's
-        // evaluation owns a record of its own.
-        let meta = if meta.legacy_constructor.constructor() == constructor {
-            meta
-        } else {
-            Rc::new(crate::heap::RegExpMeta { legacy_constructor: owner, ..(*meta).clone() })
-        };
-        self.regexp_from_meta(prototype, meta)
+        result
     }
 
     pub(super) fn regexp_from_matcher(
@@ -2415,45 +2152,45 @@ impl<H: Host> Vm<H> {
         self.regexp_from_meta(prototype, meta)
     }
 
+    /// The header of a new RegExp object of `prototype` once one was recorded: another
+    /// prototype's (another realm's) shares its shape.
+    #[inline(always)]
+    fn regexp_object_header(&mut self, prototype: Value) -> Option<crate::heap::InlineObjectHeader> {
+        let (derived_for, header) = self.regexp_object_header?;
+        if derived_for == prototype {
+            return Some(header);
+        }
+        let header = crate::heap::InlineObjectHeader::of(prototype, header.shape());
+        self.regexp_object_header = Some((prototype, header));
+        Some(header)
+    }
+
     /// A new RegExp object of `prototype` with the record `meta`.
     pub(super) fn regexp_from_meta(
         &mut self,
         prototype: Value,
         meta: Rc<crate::heap::RegExpMeta>,
     ) -> Result<Value, JsError> {
-        let object = self.heap.alloc(Cell::RegExp {
-            object: Self::empty_object(prototype),
-            meta,
-        });
-        // Every new RegExp object starts in the same shape, so the `lastIndex` definition the
-        // first one recorded applies again.
-        let start = self.object_data(object).map(Object::shape);
-        if let Some((source, target)) = self.regexp_object_shapes
-            && start == Some(source)
+        // Every new RegExp object has the same header (`regexp_object_header`), so it is built
+        // whole in one allocation: the shape its own `lastIndex` gives it, holding 0.
+        const _: () = assert!(crate::value_vec::INLINE_PROPERTY_COUNT == 2);
+        let last_index = [Value::number(0.0), Value::UNDEFINED];
+        if let Some(header) = self.regexp_object_header(prototype)
+            && let Some(object) = Object::from_inline_header(header, last_index)
         {
-            self.heap.property_add(object, Value::number(0.0), target);
-            return Ok(object);
+            return Ok(self.heap.alloc_regexp(object, meta));
         }
+        let empty = Self::empty_object(prototype);
+        let source = empty.shape();
+        let object = self.heap.alloc_regexp(empty, meta);
         let last_index_atom = self.intern_atom("lastIndex");
-        self.set_property_with_attributes(
-            object,
-            last_index_atom,
-            Value::number(0.0),
-            PropertyAttributes {
-                writable: true,
-                enumerable: false,
-                configurable: false,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        )?;
-        if let Some(source) = start
-            && let Some(target) = self.object_data(object).map(Object::shape)
+        let attributes = PropertyAttributes { writable: true, enumerable: false, configurable: false, accessor: false, getter: None, setter: None };
+        self.set_property_with_attributes(object, last_index_atom, Value::number(0.0), attributes)?;
+        if let Some(target) = self.object_data(object).map(Object::shape)
             && !self.shape_is_dictionary(source)
             && !self.shape_is_dictionary(target)
         {
-            self.regexp_object_shapes = Some((source, target));
+            self.regexp_object_header = Some((prototype, crate::heap::InlineObjectHeader::of(prototype, target)));
         }
         Ok(object)
     }
@@ -2570,14 +2307,9 @@ impl<H: Host> Vm<H> {
                 let input =
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 // With the builtin exec, only the match and its effects are observable: the
-                // result array it would build never escapes.
-                if vm.regexp_builtin_exec_matcher(receiver).is_some() {
-                    let matched = vm.regexp_builtin_match(p, receiver, &input)?;
-                    let found = matched.is_some();
-                    if let Some(matched) = matched {
-                        vm.record_regexp_legacy_match(receiver, input, matched)?;
-                    }
-                    return Ok(if found { Value::TRUE } else { Value::FALSE });
+                // result array it would build never escapes. The proof alone decides it.
+                if vm.regexp_exec_is_builtin(receiver) {
+                    return vm.regexp_builtin_test(p, receiver, input).map(Value::boolean);
                 }
                 let input =
                     vm.string_value_from(args.first().copied().unwrap_or(Value::UNDEFINED), &input);
@@ -2589,6 +2321,38 @@ impl<H: Host> Vm<H> {
                 })
             },
         )
+    }
+
+    /// `RegExp.prototype.test` through the builtin exec: `RegExpBuiltinExec`'s `lastIndex`
+    /// reads and writes and its match, with no captures collected, since nothing reads them
+    /// here. The legacy statics are left pending from the match's start, found again only if
+    /// a static is read (`record_regexp_legacy_pending`), as the steady path leaves them.
+    fn regexp_builtin_test(&mut self, p: &ResidualProgram, this: Value, input: JsString) -> Result<bool, JsError> {
+        let last_index = self.regexp_last_index(p, this)?;
+        let last_index = self.regexp_to_length_value(p, last_index)?;
+        let (regex, owner, stateful, sticky) = match self.heap.get(this) {
+            Some(Cell::RegExp { meta, .. }) => (
+                Self::regexp_matcher(meta)?,
+                meta.legacy_constructor,
+                meta.flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY)),
+                meta.flags.contains(RegExpFlags::STICKY),
+            ),
+            _ => return Err(self.type_error(p, "RegExp method called on incompatible receiver".into())),
+        };
+        let start = if stateful { last_index } else { 0 };
+        let steady = self
+            .regexp_last_index_slot(this)
+            .map(|slot| steady::SteadyMatch { slot, prefiltered: false, captures: false });
+        let matched = self.regexp_search(&regex, &input, start, (stateful, sticky), steady);
+        if stateful {
+            let last_index = Value::number(matched.as_ref().map_or(0, |matched| matched.range.end) as f64);
+            self.store_regexp_last_index(p, this, last_index)?;
+        }
+        let Some(matched) = matched else {
+            return Ok(false);
+        };
+        self.record_regexp_legacy_pending(owner, input, regex, matched.range.start);
+        Ok(true)
     }
 
     /// `RegExpBuiltinExec` steps 2–15 for the RegExp `this`: reads and updates `lastIndex`
@@ -2716,9 +2480,11 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         {
             let vm = self;
-            let has_indices = match vm.heap.get(this) {
-                Some(Cell::RegExp { meta, .. }) => meta.flags.contains(RegExpFlags::HAS_INDICES),
-                _ => false,
+            // The receiver's cell is read once: its flags say whether the result has indices,
+            // and its legacy owner records the match.
+            let (has_indices, owner) = match vm.heap.get(this) {
+                Some(Cell::RegExp { meta, .. }) => (meta.flags.contains(RegExpFlags::HAS_INDICES), meta.legacy_constructor),
+                _ => return Err(JsError("RegExp instance unavailable after match".into())),
             };
             let named = regexp_named_capture_ranges(&matched);
             // A match or capture of the whole input is the input itself, as a pattern that
@@ -2748,7 +2514,7 @@ impl<H: Host> Vm<H> {
                     &properties.values(index, input_value, groups),
                 ),
                 None => {
-                    let result = vm.heap.alloc(Cell::Array { object: array });
+                    let result = vm.heap.alloc_array(array);
                     vm.initialize_regexp_result(result, index, input_value, groups)?;
                     result
                 }
@@ -2758,7 +2524,7 @@ impl<H: Host> Vm<H> {
                 let indices_atom = vm.intern_atom("indices");
                 vm.set_property(result, indices_atom, indices)?;
             }
-            vm.record_regexp_legacy_match(this, input, matched)?;
+            vm.record_regexp_legacy_match(owner, input, matched);
             Ok(result)
         }
     }
@@ -2790,7 +2556,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     match units {
                         super::wtf16::Units::Ascii(bytes) => self.heap.alloc_ascii_run(&bytes[range]),
-                        super::wtf16::Units::Wide(_) => self.heap.alloc_string(JsString::from_unit_run(units.slice(range))),
+                        super::wtf16::Units::Latin1(_) | super::wtf16::Units::Wide(_) => self.heap.alloc_string(JsString::from_unit_run(units.slice(range))),
                     }
                 }
             })
@@ -2897,82 +2663,6 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    /// Finds a pending legacy match (`LegacyRegExpMatch::Pending`) again, so the statics
-    /// read its captures.
-    fn resolve_regexp_legacy_match(&mut self) {
-        let Some(LegacyRegExpMatch::Pending { input, matcher, start }) = self
-            .realm
-            .intrinsics
-            .regexp_intrinsics
-            .get(&self.realm.globals)
-            .map(|state| state.legacy.last.clone())
-        else {
-            return;
-        };
-        let subject = self.regexp_subject(&input, &matcher);
-        let matched = matcher
-            .find_in_subject(&subject, start)
-            .next()
-            .expect("a pending legacy match begins at its start");
-        if let Some(state) = self.realm.intrinsics.regexp_intrinsics.get_mut(&self.realm.globals) {
-            state.legacy.last = LegacyRegExpMatch::Matched { input, matched };
-        }
-    }
-
-    /// The legacy `RegExp` static state a successful builtin exec of `this` leaves behind.
-    fn record_regexp_legacy_match(
-        &mut self,
-        this: Value,
-        input: JsString,
-        matched: quench_regexp::Match,
-    ) -> Result<(), JsError> {
-        self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Matched { input, matched })
-    }
-
-    /// `record_regexp_legacy_match` for the match `matcher` finds from `start`, found again
-    /// only if a static is read.
-    fn record_regexp_legacy_pending(
-        &mut self,
-        this: Value,
-        input: JsString,
-        matcher: Rc<quench_regexp::Regex>,
-        start: usize,
-    ) -> Result<(), JsError> {
-        self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Pending { input, matcher, start })
-    }
-
-    fn record_regexp_legacy(
-        &mut self,
-        this: Value,
-        input: JsString,
-        matched: impl FnOnce(JsString) -> LegacyRegExpMatch,
-    ) -> Result<(), JsError> {
-        let owner = match self.heap.get(this) {
-            Some(Cell::RegExp { meta, .. }) => meta.legacy_constructor,
-            _ => return Err(JsError("RegExp instance unavailable after match".into())),
-        };
-        let state = self
-            .realm
-            .intrinsics
-            .regexp_intrinsics
-            .get_mut(&self.realm.globals)
-            .expect("active realm has RegExp intrinsics");
-        // Constructors are objects, whose SameValue is identity.
-        if owner.constructor() == state.constructor {
-            match owner {
-                crate::heap::RegExpLegacyOwner::Enabled(_) => {
-                    let previous = std::mem::replace(&mut state.legacy, LegacyStatics { last: matched(input), input_override: None });
-                    if let LegacyRegExpMatch::Matched { matched, .. } = previous.last {
-                        matched.recycle();
-                    }
-                }
-                crate::heap::RegExpLegacyOwner::Disabled(_) => {
-                    state.legacy = LegacyStatics { last: LegacyRegExpMatch::Invalid, input_override: None };
-                }
-            }
-        }
-        Ok(())
-    }
 
     pub(super) fn regexp_groups_object(
         &mut self,
@@ -2984,7 +2674,7 @@ impl<H: Host> Vm<H> {
         }
         let groups = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         for (name, range) in named {
             let atom = self.intern_atom(name);
             let value = range.as_ref().map_or(Value::UNDEFINED, |range| {
@@ -3007,16 +2697,14 @@ impl<H: Host> Vm<H> {
             .chain(matched.captures.iter().cloned())
             .map(|range| self.regexp_index_pair(range))
             .collect::<Vec<_>>();
-        let indices = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let indices = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 entries,
-            ),
-        });
+            ));
         let groups = if !named.is_empty() {
             let groups = self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+                .alloc_object(Self::empty_object(Value::NULL));
             for (name, range) in named {
                 let atom = self.intern_atom(name);
                 let pair = self.regexp_index_pair(range.clone());
@@ -3039,12 +2727,10 @@ impl<H: Host> Vm<H> {
             Value::number(range.start as f64),
             Value::number(range.end as f64),
         ];
-        self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 pair,
-            ),
-        })
+            ))
     }
 
     /// `meta`'s matcher, compiled now if it has none (`RegExpMatcher`): the pattern compiled
@@ -3076,7 +2762,7 @@ impl<H: Host> Vm<H> {
         // The matcher's compilation parses the pattern with the checks
         // `validate_property_escapes` would parse it for.
         if pattern == PatternValidity::Unchecked {
-            crate::regexp_syntax::validate_pattern_text(&parser_source, flags)
+            crate::compile::regexp::validate_pattern_text(&parser_source, flags)
                 .map_err(|error| JsError(format!("SyntaxError: {error}").into()))?;
         }
         let regex = catch_unwind(AssertUnwindSafe(|| {

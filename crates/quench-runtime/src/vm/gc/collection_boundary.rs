@@ -8,10 +8,8 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn collection_boundary(&mut self, full: bool) {
         let policy = self.memory_policy();
         if policy.returns_pages_at_collections() {
-            #[cfg(any(feature = "jit", feature = "aot"))]
             crate::compile::release_warm_arena();
         } else if full {
-            #[cfg(any(feature = "jit", feature = "aot"))]
             crate::compile::expire_warm_arena();
         }
         self.host.at_collection_boundary(policy);

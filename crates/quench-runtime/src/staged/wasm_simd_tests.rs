@@ -4,14 +4,15 @@
 
 use super::wasm_machine::ConcreteInstance;
 use super::wasm_memory::effective_address;
-use super::wasm_simd::{Lanes, NATIVE, Native, NativeOp, Simd, WasmSimd, native, simd};
+use super::wasm_simd::{Lanes, Native, NativeOp, Simd, WasmSimd};
+use super::wasm_simd_rules::{NATIVE, native, simd};
 use super::wasm_simd_concrete::{ConcreteSimd, execute};
 use super::wasm_step::Step;
 use super::wasm_tests::Probe;
 use crate::bytecode::{InstructionField, Op, WideInstruction};
 use crate::wasm::V128_BYTES;
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
-use crate::wasm::simd::{SimdKernel, SimdOperator, shuffle, value_of};
+use crate::wasm::simd::{SimdKernel, SimdOperator, bits_of, shuffle, value_of};
 
 const VECTORS: [u128; 7] = [
     0,
@@ -72,6 +73,11 @@ struct Route(Vec<String>);
 
 impl WasmSimd for Route {
     type Value = ();
+    type Scalar = ();
+
+    fn constant_vector(&mut self, _: u128) {
+        self.0.push("constant".into());
+    }
 
     fn vector_native(&mut self, native: Native, _: (), _: Option<()>) {
         self.0.push(format!("native {native:?}"));
@@ -79,6 +85,10 @@ impl WasmSimd for Route {
 
     fn vector_kernel(&mut self, selector: u32, _: (), _: Option<()>) {
         self.0.push(format!("kernel {selector}"));
+    }
+
+    fn scalar_kernel(&mut self, selector: u32, _: (), _: Option<()>) {
+        self.0.push(format!("scalar {selector}"));
     }
 
     fn vector_shuffle(&mut self, _: [u8; V128_BYTES], _: (), _: ()) {
@@ -197,7 +207,7 @@ fn an_executed_operator_is_its_kernel_typed_by_its_table_entry() {
             let right = kernel.right.map(|ty| value_of(ty, *right));
             assert_eq!(
                 execute(selector, left, right),
-                (kernel.apply)(left, right, lane),
+                value_of(kernel.result_type(lane), kernel.apply_bits(bits_of(left), right.map_or(0, bits_of), lane)),
                 "{operator:?} {left:?} {right:?}"
             );
         }

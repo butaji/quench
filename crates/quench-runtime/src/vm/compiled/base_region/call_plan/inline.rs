@@ -20,19 +20,25 @@
 //!   rows would read the caller's globals.
 //! * Each row names the registers of the callee that are live before it (`SiteRow::live`), renamed
 //!   into the window, so the stitch derives what is live at every row of the flat program.
+//! * The callee's receiver is the call's `this` register (`CallShape::this`), which the caller's
+//!   rows hold live across the site. A `this` read is that register (`LoadThis` a move, a field
+//!   read through `this` a `Heap::Site` on it), which holds only for a strict callee: an arrow's
+//!   `this` is lexical and a sloppy callee binds an `undefined` receiver to the global object, so
+//!   a callee of either kind that reads `this` is refused (`Refused::Receiver`).
 //!
 //! Jump targets of the rows are local to the site (`0 ..= rows.len()`, where `rows.len()` is the
 //! continuation); the stitcher adds the row index the first is placed at.
 
 use super::{choose, CallShape, Choice, DirectFacts};
-use crate::bytecode::{Class, Register, WideInstruction, REGISTER_MASK};
-use crate::liveness::RegisterMasks;
+use crate::bytecode::{Class, FieldBase, FieldLookup, Register, WideInstruction, REGISTER_MASK};
+use crate::compile::liveness::RegisterMasks;
 use crate::heap::GlobalFact;
 use crate::value::Value;
 use super::super::super::lane_unit::{CallRecovery, CallTarget, CalleeBinding, Frame};
 use super::super::super::osr_loop::{inlined_returning, renamed};
 use super::super::super::tier_policy::Stitch;
-use super::super::decode::{numeric_row, register_of, Decoded, Numbers, Source};
+use super::super::decode::{numeric_row, register_of, site_read_row, Decoded, Numbers, Source};
+use super::super::super::base_rows::Heap;
 use quench_bjit::numeric::Kind;
 
 /// A callee the stitcher may inline, as its function and the call site's records show it.
@@ -45,10 +51,13 @@ pub(in super::super) struct Callee<'f> {
     pub(in super::super) homes: &'f [(u16, Register)],
     /// The callee's constant table's Numbers.
     pub(in super::super) numbers: Numbers<'f>,
-    /// The callee's live registers before each instruction (`crate::liveness`).
+    /// The callee's live registers before each instruction (`compile::liveness`).
     pub(in super::super) live: &'f RegisterMasks,
     /// The Stable fact the callee register's by-name read took: the global cell holding `identity`.
     pub(in super::super) stable: Option<GlobalFact>,
+    /// The address and length of the closure's own capture slots (its environment's dense run), which
+    /// the site's proof fixes with `identity`: a depth-0 capture read is a read of one slot's address.
+    pub(in super::super) captures: (usize, usize),
 }
 
 /// The activations around a call being planned, and what is left of the stitch's budget.
@@ -97,6 +106,9 @@ pub(in super::super) enum Refused {
     /// A register that is no parameter is read before the callee writes it: the window holds
     /// no initial value for it.
     Uninitialized,
+    /// The callee reads `this` where the call does not bind it to the call's receiver: an arrow (its
+    /// lexical `this`), or a sloppy callee (an `undefined` receiver is the global object).
+    Receiver,
     /// An opcode class outside the stitch's set.
     Opcode(Class),
     /// The instruction at this callee pc takes no row.
@@ -135,7 +147,7 @@ pub(in super::super) struct InlineSite {
     /// interpreter's activation expects it in its own.
     pub(in super::super) copies: Vec<(Register, Register)>,
     /// The call as the method's inlined frame, which a leave inside the callee recovers
-    /// (`Vm::lane_body_inlined_activation`).
+    /// (`Vm::body_inlined_activation_in_lane`).
     pub(in super::super) frame: Frame,
 }
 
@@ -154,13 +166,25 @@ fn admit(shape: &CallShape, facts: &DirectFacts, callee: &Callee, context: &Cont
         (window > context.limit, Refused::Registers),
         (callee.homes.iter().any(|(argument, _)| *argument >= shape.argc), Refused::Arguments),
         ((0..callee.registers).any(|register| callee.live.is_live(0, register) && callee.homes.iter().all(|(_, home)| *home != register)), Refused::Uninitialized),
+        ((facts.lexical || facts.global_this.is_some()) && callee.code.iter().any(|instruction| reads_receiver(*instruction)), Refused::Receiver),
     ];
     if let Some((_, why)) = refusals.into_iter().find(|(refused, _)| *refused) {
         return Err(why);
     }
-    match callee.code.iter().map(|instruction| instruction.op().class()).find(|class| !policy.classes.contains(class)) {
-        Some(class) => Err(Refused::Opcode(class)),
+    // The opcode a callee body may hold: the numeric rows of the stencil library, its jumps (the
+    // site's own rows), and the `Return` that becomes a move and a jump to the continuation.
+    match callee.code.iter().find(|instruction| !crate::vm::compiled::meaning_compiled::stitchable(**instruction)) {
+        Some(instruction) => Err(Refused::Opcode(instruction.op().class())),
         None => Ok(()),
+    }
+}
+
+/// Whether `instruction` reads the callee's `this`: a `LoadThis`, or a field read whose base is `this`.
+fn reads_receiver(instruction: WideInstruction) -> bool {
+    match instruction.op().class() {
+        Class::LoadThis => true,
+        Class::GetField => instruction.b() == FieldBase::THIS.0,
+        _ => false,
     }
 }
 
@@ -179,6 +203,9 @@ struct Emitter<'a> {
     /// The local row index each callee pc starts at, and the end.
     starts: Vec<u32>,
     rows: Vec<SiteRow>,
+    /// The callee pcs control reaches from its entry: the rest (the implicit `return undefined`
+    /// after a last `return x`) emit no rows, as a compiler drops dead code.
+    reached: crate::bitset::BitSet,
 }
 
 impl Emitter<'_> {
@@ -211,25 +238,55 @@ impl Emitter<'_> {
     }
 
     /// The call completes with `value`: moved to the result, then past the site unless this is
-    /// the callee's last instruction.
+    /// the callee's last reached instruction.
     fn complete(&mut self, pc: u32, value: Register) {
         if value != self.shape.result {
             let decoded = Decoded::number(Kind::Move, Some(self.shape.result), Some(Source::Register(value)), None, None);
             self.push(pc, decoded, Some(value));
         }
-        if pc as usize + 1 < self.callee.code.len() {
+        if reached_after(&self.reached, pc as usize, self.callee.code.len()) {
             let end = self.continuation();
             self.push(pc, Decoded::number(Kind::Jump, None, None, None, Some(end)), None);
         }
     }
 
+    /// A depth-0 capture read of the closure's own environment: the slot's address, which the closure's
+    /// identity fixes (`Heap::CalleeCapture`). A slot past the run is the interpreter's.
+    fn capture_row(&self, instruction: WideInstruction) -> Option<Decoded> {
+        let (values, len) = self.callee.captures;
+        let slot = usize::from(instruction.capture_slot());
+        let capture = matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::LoadCapture { .. }));
+        (capture && instruction.capture_depth() == 0 && values != 0 && slot < len).then(|| Decoded {
+            hole: (values + slot * std::mem::size_of::<Value>()) as u64,
+            ..Decoded::heap(Heap::CalleeCapture, Some(instruction.result_register()), None, None)
+        })
+    }
+
     fn renamed(&self, pc: u32, instruction: WideInstruction) -> Result<WideInstruction, Refused> {
         let target = |target: u32| self.starts.get(target as usize).copied();
-        renamed(instruction, &|register| self.register(register), 0, &target).ok_or(Refused::Row(pc))
+        renamed(instruction, &|register| self.register(register), self.shape.this, &target).ok_or(Refused::Row(pc))
+    }
+
+    /// The row of a receiver read or of a plain field read: `LoadThis` is a move of the call's receiver
+    /// (`shape.this`, already in the caller's frame, so not renamed), and a `GetField` reads its object
+    /// (the renamed base, which a `this` base made the receiver) through its cache site with no facts.
+    /// A nested field lookup names the program's sites, which an inlined callee does not carry.
+    fn receiver_row(&self, plain: WideInstruction, renamed: WideInstruction) -> Option<Decoded> {
+        if plain.result_flags() != 0 {
+            return None;
+        }
+        match renamed.op().class() {
+            Class::LoadThis => Some(Decoded::number(Kind::Move, Some(renamed.result_register()), Some(Source::Register(self.shape.this)), None, None)),
+            Class::GetField => match renamed.field_lookup()? {
+                FieldLookup::Atom { base, cache_site, .. } => Some(site_read_row(base.register_index()?, cache_site, renamed.result_register())),
+                FieldLookup::Site(_) => None,
+            },
+            _ => None,
+        }
     }
 
     fn instruction(&mut self, pc: u32, instruction: WideInstruction) -> Result<(), Refused> {
-        if instruction.op().class() == Class::Return {
+        if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) {
             if instruction.result_flags() != 0 {
                 return Err(Refused::Row(pc));
             }
@@ -243,7 +300,7 @@ impl Emitter<'_> {
             instruction
         };
         let renamed = self.renamed(pc, plain)?;
-        let row = numeric_row(self.callee.numbers, renamed).flatten().ok_or(Refused::Row(pc))?;
+        let row = numeric_row(self.callee.numbers, renamed).flatten().or_else(|| self.capture_row(renamed)).or_else(|| self.receiver_row(plain, renamed)).ok_or(Refused::Row(pc))?;
         // A leave between the computation and the return resumes at the instruction, which a row
         // reading what it wrote would apply twice.
         if returning && rereads(&row) {
@@ -260,13 +317,15 @@ impl Emitter<'_> {
 /// The local row index each callee pc starts at, and the end: a `Return` is a `Move` unless it
 /// returns the result register already, and a jump unless last; a returning instruction adds the
 /// same.
-fn starts(shape: &CallShape, callee: &Callee, register: &dyn Fn(Register) -> Register, leading: u32) -> Vec<u32> {
+fn starts(shape: &CallShape, callee: &Callee, register: &dyn Fn(Register) -> Register, (leading, reached): (u32, &crate::bitset::BitSet)) -> Vec<u32> {
     let mut at = leading;
     let mut starts = Vec::with_capacity(callee.code.len() + 1);
     for (pc, instruction) in callee.code.iter().enumerate() {
         starts.push(at);
-        let completion = |value: Register| u32::from(value != shape.result) + u32::from(pc + 1 < callee.code.len());
-        at += if instruction.op().class() == Class::Return {
+        let completion = |value: Register| u32::from(value != shape.result) + u32::from(reached_after(reached, pc, callee.code.len()));
+        at += if !reached.contains(pc) {
+            0
+        } else if matches!(crate::vm::compiled::decoded(*instruction), Some(crate::staged::Operation::Return { .. })) {
             completion(register(instruction.register_a()))
         } else if inlined_returning(*instruction) {
             1 + completion(register(instruction.result_register()))
@@ -276,6 +335,11 @@ fn starts(shape: &CallShape, callee: &Callee, register: &dyn Fn(Register) -> Reg
     }
     starts.push(at);
     starts
+}
+
+/// Whether control reaches a callee instruction after `pc`, so that a completion at `pc` jumps past them.
+fn reached_after(reached: &crate::bitset::BitSet, pc: usize, len: usize) -> bool {
+    (pc + 1..len).any(|later| reached.contains(later))
 }
 
 /// The call of `callee` at `shape`, its window at `base`, as the inlined frame the interpreter
@@ -305,18 +369,22 @@ impl InlineSite {
     pub(in super::super) fn plan(shape: &CallShape, facts: &DirectFacts, callee: &Callee, context: &mut Context) -> Result<Self, Refused> {
         admit(shape, facts, callee, context)?;
         let base = Register::try_from(context.top).map_err(|_| Refused::Registers)?;
-        let written: Vec<Register> = callee.code.iter().flat_map(|instruction| instruction.written_registers()).collect();
+        let reached = crate::bytecode::reachable_from(callee.code, [0]);
+        let live_code = callee.code.iter().enumerate().filter(|(pc, _)| reached.contains(*pc)).map(|(_, instruction)| instruction);
+        let written: Vec<Register> = live_code.flat_map(|instruction| instruction.written_registers()).collect();
         let (copied, aliased): (Vec<_>, Vec<_>) = callee.homes.iter().partition(|(_, home)| written.contains(home));
         let aliases: Vec<(Register, Register)> = aliased.iter().map(|(argument, home)| (*home, shape.window + argument)).collect();
-        let mut emitter = Emitter { shape, callee, base, aliases, starts: Vec::new(), rows: Vec::new() };
-        emitter.starts = starts(shape, callee, &|register| emitter.register(register), copied.len() as u32);
+        let mut emitter = Emitter { shape, callee, base, aliases, starts: Vec::new(), rows: Vec::new(), reached };
+        emitter.starts = starts(shape, callee, &|register| emitter.register(register), (copied.len() as u32, &emitter.reached));
         let mut done = Vec::with_capacity(copied.len());
         for (argument, home) in copied {
             emitter.copy(&done, base + home, shape.window + argument);
             done.push((base + home, shape.window + argument));
         }
         for (pc, instruction) in callee.code.iter().enumerate() {
-            emitter.instruction(pc as u32, *instruction)?;
+            if emitter.reached.contains(pc) {
+                emitter.instruction(pc as u32, *instruction)?;
+            }
         }
         context.reserve(callee.code.len());
         let proof = callee.stable.map_or(Proof::Guard(shape.callee, callee.identity.to_bits()), Proof::Held);
@@ -336,7 +404,7 @@ mod tests {
     use oxc_ast::ast::BinaryOperator;
     use std::rc::Rc;
 
-    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: super::super::CallForm::Plain };
+    const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: super::super::CallForm::Plain, method: None };
     /// The caller's registers: the callee's window starts here.
     const BASE: Register = 8;
     const IDENTITY: u64 = 7;
@@ -344,8 +412,8 @@ mod tests {
     const CALLEE: u32 = 101;
 
     fn facts() -> DirectFacts {
-        let cell = CellFacts { registers: 4, room: 4, params: 2, entry: ENTRY_ACTIVATES as u8 };
-        DirectFacts { callee: IDENTITY, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, registers: 4, construction: false, frame_bytes: 32 }
+        let cell = CellFacts { registers: 4, room: 4, params: 2, fill: crate::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
+        DirectFacts { callee: IDENTITY, cell: 0x1000, validity: 5, facts: cell, call: 0x3000, caller_base: 0x4000, function: 0, captures: 0, global_this: None, lexical: false, registers: 4, construction: false, held: false }
     }
 
     fn operand(register: Register) -> u16 {
@@ -367,7 +435,7 @@ mod tests {
     }
 
     fn callee<'f>(code: &'f [WideInstruction], homes: &'f [(u16, Register)], live: &'f RegisterMasks) -> Callee<'f> {
-        Callee { function: CALLEE, identity: Value::from_bits(IDENTITY), code, registers: 4, homes, numbers: &no_numbers, live, stable: None }
+        Callee { function: CALLEE, identity: Value::from_bits(IDENTITY), code, registers: 4, homes, numbers: &no_numbers, live, stable: None, captures: (0, 0) }
     }
 
     const HOMES: [(u16, Register); 2] = [(0, 0), (1, 1)];
@@ -391,6 +459,7 @@ mod tests {
     #[test]
     fn a_written_parameter_is_copied_and_each_return_moves_and_jumps_past_the_rest() {
         let code = vec![
+            WideInstruction::new(Op::JumpTrue, 1, 0, 0, 2),
             WideInstruction::new(Op::Return, 0, 0, 0, 0),
             WideInstruction::new(Op::Move, 0, 1, 0, 0),
             WideInstruction::new(Op::Return, 0, 0, 0, 0),
@@ -398,7 +467,7 @@ mod tests {
         let (live, mut context) = (parameters_live(), Context::root(CALLER, BASE, &TierRows::Measured.table().stitch));
         let site = InlineSite::plan(&SHAPE, &facts(), &callee(&code, &HOMES, &live), &mut context).expect("inlined");
         let end = site.rows.len() as u32;
-        assert_eq!(rows(&site), [(Kind::Move, None), (Kind::Move, None), (Kind::Jump, Some(end)), (Kind::Move, None), (Kind::Move, None)]);
+        assert_eq!(rows(&site), [(Kind::Move, None), (Kind::JumpTrue, Some(4)), (Kind::Move, None), (Kind::Jump, Some(end)), (Kind::Move, None), (Kind::Move, None)]);
         assert_eq!(site.rows[0].pc, None, "the copy of the written parameter runs before the callee");
         assert_eq!(site.rows[0].decoded.dst, Some(BASE), "only the parameter the callee writes is copied");
         assert_eq!(site.rows[0].live, Vec::<Register>::new());
@@ -413,8 +482,20 @@ mod tests {
         ];
         let (live, mut context) = (parameters_live(), Context::root(CALLER, BASE, &TierRows::Measured.table().stitch));
         let site = InlineSite::plan(&SHAPE, &facts(), &callee(&code, &HOMES, &live), &mut context).expect("inlined");
-        assert_eq!(rows(&site), [(Kind::Jump, Some(3)), (Kind::Move, None), (Kind::Jump, Some(4)), (Kind::Move, None)]);
-        assert_eq!(site.rows.iter().map(|row| row.pc).collect::<Vec<_>>(), [Some(0), Some(1), Some(1), Some(2)]);
+        assert_eq!(rows(&site), [(Kind::Jump, Some(1)), (Kind::Move, None)], "the return the jump skips is dead and makes no rows");
+        assert_eq!(site.rows.iter().map(|row| row.pc).collect::<Vec<_>>(), [Some(0), Some(2)]);
+    }
+
+    /// `function (x) { return x + 1 }` compiles to the returning add and an implicit `return undefined`
+    /// no path reaches: the site is the add and the move, as for a callee without the tail.
+    #[test]
+    fn the_unreachable_implicit_return_after_a_returning_instruction_makes_no_rows() {
+        let mut code = sum();
+        code.push(WideInstruction::new(Op::LoadConst, 2, 0, 0, 0));
+        code.push(WideInstruction::new(Op::Return, 2, 0, 0, 0));
+        let (live, mut context) = (parameters_live(), Context::root(CALLER, BASE, &TierRows::Measured.table().stitch));
+        let site = InlineSite::plan(&SHAPE, &facts(), &callee(&code, &HOMES, &live), &mut context).expect("inlined despite the dead tail");
+        assert_eq!(rows(&site), [(Kind::Add, None), (Kind::Move, None)]);
     }
 
     #[test]

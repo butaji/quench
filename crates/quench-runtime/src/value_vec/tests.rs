@@ -45,6 +45,10 @@ fn size_classes_step_by_quarters_of_each_doubling() {
     // Each class has its own free list, in increasing order.
     let buckets: Vec<_> = [4, 6, 8, 10, 12, 14, 16, 20, 24, 28, 32, 40].into_iter().map(ValueArena::bucket).collect();
     assert_eq!(buckets, (0..12).collect::<Vec<_>>());
+    // A bucket's capacity inverts its class, for every class a range can have.
+    for capacity in (4..=1 << 12).filter(|&capacity| capacity_class(capacity) == capacity) {
+        assert_eq!(ValueArena::bucket_capacity(ValueArena::bucket(capacity)), capacity);
+    }
     // A range grows to the next class.
     assert_eq!(capacity_class(12 + 1), 14);
 }
@@ -293,14 +297,13 @@ const RAW_WORD_ACCESS: &[&str] = &[
 /// Raw arena word accesses per production file outside `staged` and `value_vec`. The counts only
 /// go down; a new access belongs in `staged` or `value_vec`, or goes through `decode_slot`.
 const RAW_WORD_ACCESS_ALLOWED: &[(&str, usize)] = &[
-    ("heap.rs", 6),
+    ("heap.rs", 5),
     ("heap/access.rs", 2),
     ("heap/store_gate.rs", 3),
     ("vm/dispatch_fast.rs", 1),
     ("vm/loop_tier.rs", 1),
     ("vm/object.rs", 4),
     ("vm/primitive_bench.rs", 1),
-    ("vm/private_slots.rs", 2),
 ];
 
 /// Whether `file` (relative to `src`) holds only tests: a `tests` or `*_tests` module file or directory.
@@ -352,7 +355,7 @@ fn a_slot_word_decodes_to_the_value_it_encodes() {
     let integers = [0, 1, -1, i32::MAX, i32::MIN, 1 << 30];
     for ty in SlotType::ALL.iter().copied() {
         let values = numbers.map(Value::number).into_iter().chain(integers.map(Value::integer))
-            .chain([Value::NULL, Value::UNDEFINED, Value::TRUE, Value::direct_object(3), Value::DELETED]);
+            .chain([Value::NULL, Value::UNDEFINED, Value::TRUE, Value::direct_object(3), Value::direct_string(3), Value::DELETED]);
         for value in values.filter(|value| crate::typed_ir::Type::immediate(*value).is_subtype(ty.ty()) || ty == SlotType::Tagged) {
             assert_eq!(decode_slot(ty, encode_slot(ty, value)), value, "{ty:?} {value:?}");
         }
@@ -374,4 +377,47 @@ fn a_number_slot_holds_raw_doubles_that_keep_their_identity_when_read() {
     assert_eq!(decode_slot(SlotType::Number, Value::number(2_147_483_648.0)).as_int(), None);
     assert_eq!(decode_slot(SlotType::Number, Value::number(3.0)).as_int(), Some(3));
     assert_eq!(decode_slot(SlotType::Number, Value::from_bits(3.0_f64.to_bits())).as_int(), Some(3));
+}
+
+#[test]
+fn reserved_young_runs_grow_in_place_until_their_reservation_or_cycle_ends() {
+    let mut arena = ValueArena::default();
+    for length in 1..=11 {
+        arena.register_shape(length, length as usize);
+    }
+    // No nursery yet: a reservation never grows the arena.
+    assert_eq!(arena.young_reserved_run(10), None);
+    let _first = arena.young_run_padded(&[Value::number(0.5), Value::UNDEFINED, Value::UNDEFINED, Value::UNDEFINED], 1, 1).unwrap();
+    let start = arena.young_reserved_run(10).unwrap();
+    let mut run = ValueVec { start, auxiliary: 0 };
+    // A run taken after it: growth cannot bump the nursery's top in place.
+    let _next = arena.young_run_padded(&[Value::number(1.5), Value::UNDEFINED, Value::UNDEFINED, Value::UNDEFINED], 1, 1).unwrap();
+    for slot in 0..10 {
+        assert!(arena.reserved_room(run, slot + 1));
+        arena.push(&mut run, Value::number(slot as f64), slot as u32 + 1);
+        run.set_auxiliary(slot as u32 + 1);
+        assert_eq!(run.start(), start as usize, "the run grows within its reservation");
+    }
+    assert!(!arena.reserved_room(run, 11));
+    // Every other reader takes the capacity of the length: 10 values fill their class.
+    assert_eq!(arena.vector_stats(run), (10, 10));
+    for slot in 0..10 {
+        assert_eq!(arena.get(run, slot).unwrap().as_number(), Some(slot as f64));
+    }
+    // Past the reservation the run moves, as any growth does.
+    arena.push(&mut run, Value::number(10.0), 11);
+    run.set_auxiliary(11);
+    assert_ne!(run.start(), start as usize);
+    assert_eq!(arena.get(run, 10).unwrap().as_number(), Some(10.0));
+    assert_eq!(arena.get(run, 3).unwrap().as_number(), Some(3.0));
+    // The end of a young cycle ends every reservation: once the next cycle's runs cover a
+    // reserved start again, it has no room past its class.
+    let again = arena.young_reserved_run(10).unwrap();
+    assert!(arena.reserved_room(ValueVec { start: again, auxiliary: 0 }, 10));
+    arena.finish_young_cycle();
+    while arena.young_runs().top <= again as usize {
+        arena.young_run_padded(&[Value::number(2.5), Value::UNDEFINED, Value::UNDEFINED, Value::UNDEFINED], 1, 1).unwrap();
+    }
+    assert!(arena.holds_young_run(ValueVec { start: again, auxiliary: 0 }));
+    assert!(!arena.reserved_room(ValueVec { start: again, auxiliary: 0 }, 5));
 }

@@ -100,6 +100,11 @@ impl ConstantPool {
         (constants, self)
     }
 
+    /// The constant at `index`, `settled` being the table `settle` handed out.
+    pub(super) fn get<'c>(&'c self, settled: &'c [Constant], index: usize) -> Option<&'c Constant> {
+        if index < settled.len() { settled.get(index) } else { self.constants.get(index - settled.len()) }
+    }
+
     pub(super) fn len(&self) -> usize {
         self.settled + self.constants.len()
     }

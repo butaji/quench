@@ -13,6 +13,7 @@ mod eval_cache;
 mod js_jit_report;
 mod loops;
 mod residual;
+mod root_constants;
 mod snapshot;
 mod tier_census;
 mod wasm_tier;
@@ -138,7 +139,7 @@ impl JsJitCallOutcome {
     }
 }
 
-const JS_JIT_MAX_FUNCTIONS: usize = 64;
+use crate::vm::compiled::tier_policy::{JS_JIT_MAX_FUNCTIONS, JS_JIT_MAX_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS, WASM_JIT_MODULE_CLOCK_INTERVAL, WASM_JIT_MAX_TIER_MAPPED_BYTES, WASM_JIT_MAX_BASELINE_MAPPED_BYTES, JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, WASM_MODULE_MIN_COVERAGE, WASM_MODULE_WEIGHED_FUNCTIONS, LANE_VIEW_DEFERRED_RUNS};
 // Tier observations include dynamically generated functions across all retained
 // programs. Web-SSR exposes more than 1,300 functions in one VM; keep a fixed
 // metadata bound large enough to observe that workload without changing the
@@ -147,11 +148,6 @@ const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 2048;
 const JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS: usize = 4096;
 const JS_JIT_MAX_REJECTED_FUNCTIONS: usize = 4096;
 const JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES: u64 = 32;
-// Executable mappings were once page-rounded. A 64 KiB cap then admitted only
-// sixteen tiny JS artifacts on 4 KiB systems, starving later high-frequency
-// helpers; the function-count cap still bounds artifact proliferation.
-const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
-const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
 /// When a Wasm module running under `--jit` compiles whole (`WasmModuleTier`). It starts in
 /// the interpreter with its hot roots promoted, so a module used briefly pays only for them;
 /// one that runs long gets the code eager compilation would have made at its first entry.
@@ -185,24 +181,8 @@ impl WasmModuleCompile {
     }
 }
 
-/// How often, in work, a selective module reads the clock for `WasmModuleCompile::after`:
-/// often enough that a 20 ms bound lands within a few interpreted calls, rarely enough that
-/// the clock stays off an interpreted call's path.
-const WASM_JIT_MODULE_CLOCK_INTERVAL: u32 = 16;
-const WASM_JIT_MAX_TIER_MAPPED_BYTES: usize = 4 * 1024 * 1024;
-/// The eager artifacts of Wasm modules together. A module's eager artifact is all of its code
-/// at once, compiled before its first call: held to the shared ceiling, a module larger than
-/// it compiled and was then discarded, leaving every function interpreted and promoting hot
-/// roots one by one into a tier budget that filled (sqlite3-wasm, a 5.2 MiB artifact: Score
-/// 0.61 against 12.29 kept, first iteration 17.3 s against 3.3 s; max RSS unchanged at 100
-/// MiB, JetStream 3 `--jit`, Linux x86_64, 2026-10-24). This bounds a VM's eager Wasm code
-/// to a few large modules.
-const WASM_JIT_MAX_BASELINE_MAPPED_BYTES: usize = 32 * 1024 * 1024;
 /// The least an artifact holds in the code zone.
 const JIT_MIN_ARTIFACT_BYTES: usize = super::compiled::CODE_GRANULE;
-/// One VM-local admission ceiling shared by JS and Wasm artifacts.
-const JIT_MAX_ARTIFACTS: usize = JS_JIT_MAX_FUNCTIONS + WASM_JIT_MAX_TIER_ROOTS;
-const JIT_MAX_MAPPED_BYTES: usize = WASM_JIT_MAX_TIER_MAPPED_BYTES;
 
 #[derive(Clone, Copy)]
 enum JitArtifactKind {
@@ -390,17 +370,6 @@ enum WasmModuleTier {
     /// lookups and its functions compile no roots (K-TIER T4a).
     Declined,
 }
-
-/// The share of a module's bytecodes, in per mille, its whole compile must hold code for to be
-/// kept. Below it most calls cross between native code and the interpreter, and each crossing
-/// (a general-path activation, a callout) costs more than the native function saves: the Wasm
-/// GC modules of JetStream 3 (j2cl-box2d, Dart-flute) compile a few tiny leaves and run 10-40%
-/// slower than with no JIT.
-const WASM_MODULE_MIN_COVERAGE: usize = 500;
-
-/// The fewest functions a module has for its whole compile's coverage to be weighed: a smaller
-/// module compiles in microseconds and makes few crossings, whatever it holds.
-const WASM_MODULE_WEIGHED_FUNCTIONS: usize = 64;
 
 impl Default for WasmModuleTier {
     fn default() -> Self {
@@ -660,6 +629,18 @@ impl JitTierManager {
     }
 }
 
+/// The one object a callee-argument RegExp literal site shares (`Vm::regexp_literal_argument_of`),
+/// and what keeps it unobservable: it is answered again only in `frame`, the frame (or the
+/// native activation's key, `lane_allocations::regexp_argument_key`) of the evaluation that made it, while the current realm is `realm`, `watch` (on the values of
+/// `RegExp.prototype`) is published and the `@@species` fuse of `constructor` holds.
+pub(crate) struct RegExpArgumentShare {
+    pub(crate) object: Value,
+    pub(crate) frame: usize,
+    pub(crate) realm: Value,
+    pub(crate) constructor: Value,
+    pub(crate) watch: crate::heap::PrototypeValueWatch,
+}
+
 struct ProgramEntry {
     residual: Residual,
     #[cfg(feature = "native-execution")]
@@ -677,18 +658,30 @@ struct ProgramEntry {
     function_sources: FxHashMap<u32, Value>,
     /// Each RegExp literal site's record, shared by every object it evaluates to.
     regexp_literals: Vec<Option<Rc<crate::heap::RegExpMeta>>>,
+    /// The one object each receiver-only literal site evaluates to while it cannot escape
+    /// (`RegExpLiteralSite::receiver`, `Vm::regexp_literal_receiver`).
+    regexp_receivers: FxHashMap<u32, Value>,
+    /// The one object each callee-argument literal site shares while it cannot escape
+    /// (`Vm::regexp_literal_argument_of`).
+    regexp_arguments: FxHashMap<u32, RegExpArgumentShare>,
     module_environment: Option<Value>,
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
     /// Each root slot's rule, derived from the residual and `module_imports` on first read.
     root_slots: std::cell::OnceCell<Box<[crate::bytecode::RootSlotRule]>>,
+    /// Its root slots written once, the read records that keep their values, and how many
+    /// runs its root has made.
+    root_constants: root_constants::RootConstants,
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
-    lane_views: LaneViews,
+    views_in_lane: LaneViews,
+    /// Per Wasm function a collection found on the stack: the live registers holding raw
+    /// words at each pc (`raw_webs::raw_live`), `None` for a function with no raw op.
+    raw_masks: std::cell::RefCell<FxHashMap<u32, Option<Rc<crate::compile::liveness::RegisterMasks>>>>,
     /// Per function: what the JavaScript tier found at its entries (`js_entry_facts`).
     js_entry_facts: JsEntryFactsTable,
     /// Per function: the runs it has made without its lane view (`entry_lane_view`,
-    /// `lane_call_may_derive`), up to `LANE_VIEW_DEFERRED_RUNS`.
+    /// `call_may_derive_in_lane`), up to `LANE_VIEW_DEFERRED_RUNS`.
     lane_deferred: Vec<std::cell::Cell<u8>>,
     /// The program's compiled functions, once the compiled mode first calls
     /// one; `Some(None)` records that none compile.
@@ -907,9 +900,7 @@ impl ProgramStore {
     pub(super) fn js_entry_facts(&self, id: ProgramId, function: u32) -> Option<Rc<super::js_compiled::JsEntryFacts>> {
         let entry = self.entry(id)?;
         let body = entry.residual.function_get(function as usize)?;
-        let cells = entry.js_entry_facts.0.get_or_init(|| {
-            (0..entry.residual.functions.capacity()).map(|_| std::cell::OnceCell::new()).collect()
-        });
+        let cells = entry.js_entry_facts.0.get_or_init(|| zeroed_entry_facts(entry.residual.functions.capacity()));
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
             let facts = super::js_compiled::JsEntryFacts::of(&entry.residual, body, !(self.tiers.stress || cfg!(test))); // tests pin tiny fixtures
             #[cfg(test)]
@@ -932,7 +923,7 @@ impl ProgramStore {
     }
 
     /// Linked functions have native entries instead of interpreter lane views.
-    fn lane_entry(&self, id: ProgramId) -> Option<&ProgramEntry> {
+    fn entry_in_lane(&self, id: ProgramId) -> Option<&ProgramEntry> {
         let entry = self.entry(id)?;
         #[cfg(feature = "native-execution")]
         if entry.native_js.is_some() { return None; }
@@ -1294,7 +1285,7 @@ impl ProgramStore {
         // A function compiles again on its first call; until then it keeps only its header.
         // A program other owners share keeps its records.
         #[cfg(feature = "profile-aggregate")]
-        let retain_profile_records = std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some();
+        let retain_profile_records = crate::vm::switches::profile_retain_bytecode();
         #[cfg(not(feature = "profile-aggregate"))]
         let retain_profile_records = false;
         if !retain_profile_records && let Some(program) = Rc::get_mut(&mut program) {
@@ -1303,7 +1294,7 @@ impl ProgramStore {
         // Sized by the sites the program has: a chunk's sites, appended later, grow it.
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
         let function_sources = FxHashMap::default();
-        let lane_views = LaneViews::default();
+        let views_in_lane = LaneViews::default();
         let lane_deferred = zeroed_counts(program.functions.capacity());
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.context_epoch += 1;
@@ -1316,12 +1307,16 @@ impl ProgramStore {
             const_arrays: FxHashMap::default(),
             function_sources,
             regexp_literals,
+            regexp_receivers: FxHashMap::default(),
+            regexp_arguments: FxHashMap::default(),
             module_environment: None,
             import_meta: None,
             module_imports: Vec::new(),
             root_slots: std::cell::OnceCell::new(),
+            root_constants: root_constants::RootConstants::default(),
             module: false,
-            lane_views,
+            views_in_lane,
+            raw_masks: Default::default(),
             js_entry_facts: JsEntryFactsTable::default(),
             lane_deferred,
             compiled: None,
@@ -1362,20 +1357,27 @@ impl ProgramStore {
                 } else {
                     instruction.as_wide()
                 };
-                let valid = match instruction.op().class() {
-                    crate::bytecode::Class::WasmRefFunc => {
+                let valid = match crate::staged::wasm_record_check(instruction.op()) {
+                    crate::staged::WasmRecordCheck::RefFunc => {
                         signatures.get(instruction.imm() as usize).is_some()
                     }
-                    crate::bytecode::Class::WasmIndirectTarget => {
+                    crate::staged::WasmRecordCheck::IndirectTarget => {
                         signatures.type_signature(instruction.imm()).is_some()
                     }
-                    _ if crate::wasm::gc::StructConstruction::from_op(instruction.op()).is_some() => {
-                        let mode = crate::wasm::gc::StructConstruction::from_op(instruction.op()).unwrap();
+                    _ if matches!(
+                        crate::staged::wasm_gc::GcStep::of(instruction.op()),
+                        Some(crate::staged::wasm_gc::GcStep::StructNew { .. })
+                    ) => {
+                        let Some(crate::staged::wasm_gc::GcStep::StructNew { default, descriptor }) =
+                            crate::staged::wasm_gc::GcStep::of(instruction.op())
+                        else {
+                            unreachable!("guarded by the struct constructor test")
+                        };
                         signatures
                             .declarations
                             .struct_fields(instruction.imm())
                             .is_some_and(|fields| {
-                                mode.described()
+                                descriptor
                                     == signatures
                                         .declarations
                                         .descriptor_type(instruction.imm())
@@ -1388,34 +1390,34 @@ impl ProgramStore {
                                                 .declarations
                                                 .callable_value_type(ty)
                                                 .is_some()
-                                                && (!mode.defaulted() || ty.is_defaultable())
+                                                && (!default || ty.is_defaultable())
                                         }
                                     })
-                                    && (mode == crate::wasm::gc::StructConstruction::Default
+                                    && (default && !descriptor
                                         || usize::from(instruction.register_window().count)
-                                            == if mode.defaulted() {
+                                            == if default {
                                                 1
                                             } else {
-                                                fields.len() + usize::from(mode.described())
+                                                fields.len() + usize::from(descriptor)
                                             })
                             })
                     }
-                    crate::bytecode::Class::WasmRefGetDesc => signatures
+                    crate::staged::WasmRecordCheck::RefGetDesc => signatures
                         .declarations
                         .descriptor_type(instruction.imm())
                         .is_some(),
-                    crate::bytecode::Class::WasmArrayNewData
-                    | crate::bytecode::Class::WasmArrayNewElem => {
-                        use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind};
+                    crate::staged::WasmRecordCheck::ArraySegment => {
+                        use crate::wasm::gc::ArraySegmentInput;
                         instruction.register_window().count == ArraySegmentInput::COUNT
                             && signatures
                                 .declarations
                                 .array_field(instruction.imm())
                                 .is_some_and(|field| {
-                                    ArraySegmentKind::from_op(instruction.op())
-                                        .unwrap()
-                                        .accepts(field.element_type)
-                                        && match field.element_type {
+                                    matches!(
+                                        crate::staged::wasm_gc::GcStep::of(instruction.op()),
+                                        Some(crate::staged::wasm_gc::GcStep::ArraySegment { kind, .. })
+                                            if kind.accepts(field.element_type)
+                                    ) && match field.element_type {
                                             wasmparser::StorageType::Val(ty) => signatures
                                                 .declarations
                                                 .callable_value_type(ty)
@@ -1424,9 +1426,7 @@ impl ProgramStore {
                                         }
                                 })
                     }
-                    crate::bytecode::Class::WasmArrayNew
-                    | crate::bytecode::Class::WasmArrayNewDefault
-                    | crate::bytecode::Class::WasmArrayNewFixed => signatures
+                    crate::staged::WasmRecordCheck::ArrayNew => signatures
                         .declarations
                         .array_field(instruction.imm())
                         .is_some_and(|field| {
@@ -1434,25 +1434,24 @@ impl ProgramStore {
                                 wasmparser::StorageType::I8 | wasmparser::StorageType::I16 => true,
                                 wasmparser::StorageType::Val(ty) => {
                                     signatures.declarations.callable_value_type(ty).is_some()
-                                        && (!instruction.op().class().eq(crate::bytecode::Class::WasmArrayNewDefault)
+                                        && (!crate::staged::wasm_array_new_defaulted(instruction.op())
                                             || ty.is_defaultable())
                                 }
                             };
                             valid
-                                && (!instruction.op().class().eq(crate::bytecode::Class::WasmArrayNewFixed)
+                                && (!crate::staged::wasm_array_new_fixed(instruction.op())
                                     || usize::from(instruction.register_b())
                                         .checked_add(usize::from(
                                             instruction.register_window().count,
                                         ))
                                         .is_some_and(|end| end <= usize::from(function.registers)))
                         }),
-                    crate::bytecode::Class::WasmDescriptorTest
-                    | crate::bytecode::Class::WasmDescriptorCast => {
+                    crate::staged::WasmRecordCheck::DescriptorReference => {
                         crate::wasm::reference::ReferenceTarget::from_tag(instruction.imm())
                             .and_then(|target| target.descriptor_type(&signatures.declarations))
                             .is_some()
                     }
-                    crate::bytecode::Class::WasmRefTest | crate::bytecode::Class::WasmRefCast => {
+                    crate::staged::WasmRecordCheck::ReferenceTest => {
                         crate::wasm::reference::ReferenceTarget::from_tag(instruction.imm())
                             .and_then(|target| target.reference_type())
                             .and_then(|ty| {
@@ -1522,6 +1521,18 @@ impl ProgramStore {
             None if import(usize::from(slot)) => RootSlotRule::Import,
             None => RootSlotRule::Binding,
         }
+    }
+
+    /// Whether every slot of `id`'s root environment is the binding itself
+    /// (`RootSlotRule::Binding`), as a strict eval's or a function-wrapped script's is: its
+    /// dense slots then serve a closure's captures as any function environment's do
+    /// (`Vm::target_capture`). A module's imports read through their records, so none is.
+    pub(crate) fn root_slots_are_bindings(&self, id: ProgramId) -> bool {
+        let Some(entry) = self.entry(id) else { return false };
+        if entry.module || !entry.module_imports.is_empty() { return false; }
+        let locals = entry.residual.functions.first().map_or(0, |root| root.local_atoms.len());
+        // Past the named locals every slot is a temporary, the binding itself (`root_slot`).
+        (0..locals).all(|slot| self.root_slot(id, slot as u16) == crate::bytecode::RootSlotRule::Binding)
     }
 
     /// Whether `slot` of `id`'s root environment is the binding itself: no global var,
@@ -1610,6 +1621,26 @@ impl ProgramStore {
         self.programs.iter().flatten().filter_map(|entry| entry.residual.if_decoded().map(|program| &**program))
     }
 
+    /// The registers of `function` of program `id` live before each pc that hold raw words,
+    /// which a collection reads past (`RegisterMasks::extend_live_except`); `None` for a
+    /// function with no raw op. Derived once per function, when a collection first asks.
+    pub(crate) fn raw_register_masks(&self, id: ProgramId, function: u32) -> Option<Rc<crate::compile::liveness::RegisterMasks>> {
+        let entry = self.entry(id)?;
+        if entry.residual.kind != crate::bytecode::ProgramKind::Wasm {
+            return None;
+        }
+        if let Some(masks) = entry.raw_masks.borrow().get(&function) {
+            return masks.clone();
+        }
+        let masks = entry
+            .residual
+            .function_get(function as usize)
+            .and_then(|record| crate::compile::liveness::raw_webs::raw_live(record))
+            .map(|live| Rc::new(crate::compile::liveness::RegisterMasks::new(live)));
+        entry.raw_masks.borrow_mut().insert(function, masks.clone());
+        masks
+    }
+
     #[inline] pub(crate) fn residual(&self, id: ProgramId) -> Option<&ResidualProgram> {
         self.entry(id).map(|entry| &**entry.residual)
     }
@@ -1622,7 +1653,7 @@ impl ProgramStore {
     /// again. The caller ensures no lane run of `id` holds their records.
     pub(super) fn release_lane_views(&mut self, id: ProgramId) {
         if let Some(entry) = self.entry_mut(id) {
-            entry.lane_views = LaneViews::default();
+            entry.views_in_lane = LaneViews::default();
         }
     }
 
@@ -1632,7 +1663,7 @@ impl ProgramStore {
             entry.const_arrays.clear();
             entry.constants = crate::bytecode::append_vec::AppendVec::with_headroom(constants, headroom);
             // Lane views carry constants, so they derive from the new set.
-            entry.lane_views = LaneViews::default();
+            entry.views_in_lane = LaneViews::default();
         }
     }
 
@@ -1825,7 +1856,7 @@ impl ProgramStore {
             .residual
             .function_get(function as usize)
             .is_some_and(|function| {
-                function.code.len() <= super::compiled::MAX_JIT_TIER_BYTECODES_PER_FUNCTION
+                function.code.len() <= crate::vm::compiled::tier_policy::MAX_JIT_TIER_BYTECODES_PER_FUNCTION
             })
         {
             return false;
@@ -1964,10 +1995,12 @@ impl ProgramStore {
     #[cfg(test)]
     pub(super) fn hold_tiers(&mut self, tiers: &'static Tiers) { (self.tiers, self.js_jit_lane_methods_enabled) = (tiers, tiers.stress); }
 
+    #[inline]
     pub(super) fn tier_events(&self) -> &super::tier_events::TierEvents {
         &self.tier_events
     }
 
+    #[inline]
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {
         self.js_jit_diagnostics.is_some()
     }
@@ -2191,25 +2224,19 @@ impl ProgramStore {
                 if let Some(function) = function_code {
                     for instruction in &function.code {
                         let instruction = instruction.as_wide();
-                        match instruction.op().class() {
-                            crate::bytecode::Class::JumpFalse
-                            | crate::bytecode::Class::JumpTrue
-                            | crate::bytecode::Class::JumpBinaryFalse => {
-                                guard_census.0 = guard_census.0.saturating_add(1);
-                                if instruction.op().is_jump_binary_false() {
-                                    count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
-                                }
+                        let op = instruction.op();
+                        // merge: the guard census counts conditional jumps (JumpFalse, JumpTrue, JumpBinaryFalse) and their comparison operator, as HEAD's JumpIf/CompareJump arms did.
+                        if crate::staged::conditional_jump(op) {
+                            guard_census.0 = guard_census.0.saturating_add(1);
+                            if crate::staged::compare_jump(op) {
+                                count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
                             }
-                            crate::bytecode::Class::Unary
-                                if instruction.unary_operator()
-                                    == oxc_ast::ast::UnaryOperator::Typeof as u32 =>
-                            {
-                                guard_census.1 = guard_census.1.saturating_add(1);
-                            }
-                            crate::bytecode::Class::Binary => {
-                                count_comparison_guard(&mut guard_census, instruction.binary_operator())
-                            }
-                            _ => {}
+                        } else if crate::staged::computes_unary(op)
+                            && instruction.unary_operator() == oxc_ast::ast::UnaryOperator::Typeof as u32
+                        {
+                            guard_census.1 = guard_census.1.saturating_add(1);
+                        } else if crate::staged::binary(op) {
+                            count_comparison_guard(&mut guard_census, instruction.binary_operator())
                         }
                     }
                 }
@@ -2435,7 +2462,7 @@ impl ProgramStore {
         attempts % JS_JIT_CALL_DIAGNOSTIC_SAMPLE_INTERVAL == 0
     }
 
-    #[cfg(all(test, feature = "aot", not(quench_profiled)))]
+    #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn js_jit_call_site_counts(
         &self,
         id: ProgramId,
@@ -2559,27 +2586,27 @@ impl ProgramStore {
         self.context_epoch += 1;
     }
 
-    /// Program `id`'s lane view table if it was made (`lane_program` makes it).
+    /// Program `id`'s lane view table if it was made (`program_in_lane` makes it).
     pub(super) fn made_lane_views(&self, id: ProgramId) -> Option<&[LaneViewCell]> {
-        self.entry(id)?.lane_views.table.get().map(|table| &table[..])
+        self.entry(id)?.views_in_lane.table.get().map(|table| &table[..])
     }
 
     /// What a lane running program `id` reads of it, from one look at its entry: its
-    /// residual, lane views (`lane_views`) and constants (`constants`).
+    /// residual, lane views (`views_in_lane`) and constants (`constants`).
     #[inline(always)]
-    pub(super) fn lane_program(
+    pub(super) fn program_in_lane(
         &self,
         id: ProgramId,
     ) -> Option<(&ResidualProgram, &[LaneViewCell], &[Value])> {
         let entry = self.entry(id)?;
-        Some((&entry.residual, entry.lane_views.of(&entry.residual), &entry.constants[..]))
+        Some((&entry.residual, entry.views_in_lane.of(&entry.residual), &entry.constants[..]))
     }
 
     /// Invalidates every lane view's bindings to shape IDs: compaction renumbered
     /// the IDs held by field hints and native own-field descriptors.
     pub(super) fn invalidate_shape_bindings(&self) {
         for entry in self.programs.iter().flatten() {
-            entry.lane_views.invalidate_shape_bindings();
+            entry.views_in_lane.invalidate_shape_bindings();
         }
     }
 
@@ -2587,19 +2614,34 @@ impl ProgramStore {
     /// (`LaneView::clear_name_hints`): the global lexical names they read past changed.
     pub(super) fn clear_global_name_hints(&self) {
         for entry in self.programs.iter().flatten() {
-            for view in entry.lane_views.arena.borrow().iter().flatten() {
+            for view in entry.views_in_lane.arena.borrow().iter().flatten() {
                 view.clear_name_hints();
             }
         }
     }
 
     /// A program's lane views by function, derived on first use.
-    pub(super) fn lane_views(
+    pub(super) fn views_in_lane(
         &self,
         id: ProgramId,
     ) -> Option<&[LaneViewCell]> {
-        let entry = self.lane_entry(id)?;
-        Some(entry.lane_views.of(&entry.residual))
+        let entry = self.entry_in_lane(id)?;
+        Some(entry.views_in_lane.of(&entry.residual))
+    }
+
+    /// What a lane run's context reads of program `id` (`Vm::lane_context`), from one look at
+    /// its entry: its lane views (`lane_views`, none for a program linked to native entries or
+    /// one the store does not hold) and its constants (`constants`).
+    #[inline(always)]
+    pub(super) fn lane_tables(&self, id: ProgramId) -> (&[LaneViewCell], &[Value]) {
+        let Some(entry) = self.entry(id) else {
+            return (&[], &[]);
+        };
+        #[cfg(feature = "native-execution")]
+        if entry.native_js.is_some() {
+            return (&[], &entry.constants[..]);
+        }
+        (entry.views_in_lane.of(&entry.residual), &entry.constants[..])
     }
 
     /// The lane view a general-loop entry of `function` runs with. A function that may loop
@@ -2616,12 +2658,12 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            &dyn Fn() -> Option<&'s std::rc::Rc<crate::liveness::RegisterMasks>>,
+            &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
-        let entry = self.lane_entry(id)?;
-        let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
+        let entry = self.entry_in_lane(id)?;
+        let view = entry.views_in_lane.of(&entry.residual).get(function as usize)?;
         if let Some(view) = view.get() {
             return Some(view.as_ptr());
         }
@@ -2636,20 +2678,22 @@ impl ProgramStore {
     /// and lane calls completed its deferred runs (`LANE_VIEW_DEFERRED_RUNS`), as
     /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
     /// general path.
-    pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32) -> bool {
-        let Some(entry) = self.lane_entry(id) else {
+    /// An unlowered function derives only where `unlowered` (`Vm::call_may_derive_in_lane`); where
+    /// `now`, its deferred runs are skipped, uncounted.
+    pub(super) fn call_may_derive_in_lane(&self, id: ProgramId, function: u32, unlowered: bool, now: bool) -> bool {
+        let Some(entry) = self.entry_in_lane(id) else {
             return false;
         };
-        let derived = entry.lane_views.derived(function).is_some();
+        let derived = entry.views_in_lane.derived(function).is_some();
         derived
             || entry
                 .lane_deferred
                 .get(function as usize)
-                .is_some_and(deferred_run_completes)
-                && !entry.residual.runs_tier0(function as usize)
+                .is_some_and(|runs| now || deferred_run_completes(runs))
+                && (unlowered || !entry.residual.runs_tier0(function as usize))
     }
 
-    pub(super) fn lane_view<'s>(
+    pub(super) fn view_in_lane<'s>(
         &'s self,
         id: ProgramId,
         function: u32,
@@ -2657,14 +2701,36 @@ impl ProgramStore {
             &crate::bytecode::Function,
             &[Value],
             crate::bytecode::ProgramKind,
-            &dyn Fn() -> Option<&'s std::rc::Rc<crate::liveness::RegisterMasks>>,
+            &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
             &[crate::bytecode::FieldSite],
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
-        let entry = self.lane_entry(id)?;
+        let entry = self.entry_in_lane(id)?;
         let code = entry.residual.function_get(function as usize)?;
-        let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
+        let view = entry.views_in_lane.of(&entry.residual).get(function as usize)?;
         Some(derive_lane_view(entry, function, code, view, derive))
+    }
+
+    /// A view of `function` derived afresh from its bytecode and not stored, beside the view
+    /// its runs settled (requickened records) if one was derived: the lane plan
+    /// (`QUENCH_TRACE=bytecode=lanes`, `Vm::report_lane_plan`).
+    pub(super) fn plan_lane_view<'s>(
+        &'s self,
+        id: ProgramId,
+        function: u32,
+        derive: impl FnOnce(
+            &crate::bytecode::Function,
+            &[Value],
+            crate::bytecode::ProgramKind,
+            &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+            &[crate::bytecode::FieldSite],
+        ) -> super::dispatch_fast::LaneView,
+    ) -> Option<(super::dispatch_fast::LaneView, Option<&'s super::dispatch_fast::LaneView>)> {
+        let entry = self.entry_in_lane(id)?;
+        let code = entry.residual.function_get(function as usize)?;
+        let live = || entry.residual.shared_register_root_masks(function);
+        let fresh = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
+        Some((fresh, entry.views_in_lane.derived(function)))
     }
 
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {
@@ -2677,34 +2743,17 @@ impl ProgramStore {
     }
 
     #[cfg(feature = "native-execution")]
-    pub(super) fn attach_native_js(&mut self, id: ProgramId, code: Rc<super::native_program::NativeJsCode>, compiled_for: &crate::ResidualProgram) -> Result<(), String> {
+    pub(super) fn attach_native_js(&mut self, id: ProgramId, code: Rc<super::native_program::NativeJsCode>) -> Result<(), String> {
         let entry = self.entry_mut(id).ok_or("native JS program is missing")?;
-        // Code names its program's records by index: attached to another program, its first
-        // entry reads the wrong instruction (`native semantic opcode does not match`). The
-        // program that holds the id must be the one the code was compiled from, else the id
-        // keeps no native code and runs the shared bodies.
-        if !entry.residual.shares_records_with(compiled_for) { return Ok(()); }
         if entry.native_js.is_some() {
             return Err("native JS program already has code".into());
         }
         if code.entries().len() != entry.residual.function_count() {
             return Err("native entry count does not match program functions".into());
         }
-        entry.lane_views = LaneViews::default();
+        entry.views_in_lane = LaneViews::default();
         entry.native_js = Some(code);
         Ok(())
-    }
-
-    /// Drops the native code of `id`, which its records no longer answer: a program restored
-    /// or stored from bytes may decode records other than those the code was compiled from
-    /// (`js_semantic_callout` proves it at the first entry). The id runs the shared bodies from
-    /// then on; the code's published lane bodies go with it.
-    #[cfg(feature = "native-execution")]
-    pub(super) fn retire_native_js(&mut self, id: ProgramId) {
-        if let Some(entry) = self.entry_mut(id) {
-            entry.native_js = None;
-            entry.lane_views = LaneViews::default();
-        }
     }
 
     #[cfg(feature = "native-execution")]
@@ -2750,6 +2799,42 @@ impl ProgramStore {
         site: usize,
     ) -> Option<Rc<crate::heap::RegExpMeta>> {
         self.entry(id)?.regexp_literals.get(site)?.clone()
+    }
+
+    /// The object receiver-only literal `site` of program `id` shares, once one was made.
+    pub(crate) fn regexp_literal_receiver(&self, id: ProgramId, site: usize) -> Option<Value> {
+        self.entry(id)?.regexp_receivers.get(&u32::try_from(site).ok()?).copied()
+    }
+
+    /// Keeps `object` as the one object receiver-only literal `site` evaluates to.
+    pub(crate) fn cache_regexp_literal_receiver(&mut self, id: ProgramId, site: usize, object: Value) {
+        if let (Some(entry), Ok(site)) = (self.entry_mut(id), u32::try_from(site)) {
+            entry.regexp_receivers.insert(site, object);
+        }
+    }
+
+    /// The object callee-argument literal `site` of program `id` shares, with what its sharing
+    /// was proved under (`Vm::regexp_literal_argument_of`).
+    pub(crate) fn regexp_literal_argument(&self, id: ProgramId, site: usize) -> Option<&RegExpArgumentShare> {
+        self.entry(id)?.regexp_arguments.get(&u32::try_from(site).ok()?)
+    }
+
+    /// Keeps `share` as callee-argument literal `site`'s shared object, in place of any
+    /// object it shared before, which it never answers again.
+    pub(crate) fn cache_regexp_literal_argument(&mut self, id: ProgramId, site: usize, share: RegExpArgumentShare) {
+        if let (Some(entry), Ok(site)) = (self.entry_mut(id), u32::try_from(site)) {
+            entry.regexp_arguments.insert(site, share);
+        }
+    }
+
+    /// Drops callee-argument literal `site`'s shared object, which it never answers again.
+    pub(crate) fn forget_regexp_literal_argument(&mut self, id: ProgramId, site: usize) {
+        let Ok(site) = u32::try_from(site) else { return };
+        if self.entry(id).is_some_and(|entry| entry.regexp_arguments.contains_key(&site))
+            && let Some(entry) = self.entry_mut(id)
+        {
+            entry.regexp_arguments.remove(&site);
+        }
     }
 
     pub(crate) fn cache_regexp_literal_meta(
@@ -2799,7 +2884,10 @@ impl ProgramStore {
             }
             roots.extend_from_slice(&entry.constants);
             roots.extend(entry.function_sources.values().copied());
+            roots.extend(entry.regexp_receivers.values().copied());
+            roots.extend(entry.regexp_arguments.values().flat_map(|share| [share.object, share.realm, share.constructor]));
             roots.extend(entry.module_environment);
+            roots.extend(entry.root_constants.environment.get());
             roots.extend(entry.import_meta);
             roots.extend(entry.module_imports.iter().map(|(_, import)| match import {
                 ModuleImport::Value(value) => *value,
@@ -2876,13 +2964,6 @@ fn census_label(entry: &ProgramEntry, function: u32) -> String {
         body.and_then(|body| body.source_span).map(|span| span.start),
     )
 }
-
-/// The runs a function makes on the general path before it derives its lane view, which costs
-/// about a thousand instructions per bytecode instruction, so a function that runs fewer times
-/// costs no view. Measured in instructions against deriving at the second run: four takes 3.3%
-/// from the jiti npm scenario (Babel's many functions that run a few times) and 0.1-0.6% from
-/// semver, ajv, Babel, color-convert and typescript-eslint; eight adds at most 0.3%.
-const LANE_VIEW_DEFERRED_RUNS: u8 = 4;
 
 /// Count one view-less run of a function; true once its deferred runs are complete.
 fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
@@ -2990,7 +3071,7 @@ fn derive_lane_view<'s>(
         &crate::bytecode::Function,
         &[Value],
         crate::bytecode::ProgramKind,
-        &dyn Fn() -> Option<&'s std::rc::Rc<crate::liveness::RegisterMasks>>,
+        &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
         &[crate::bytecode::FieldSite],
     ) -> super::dispatch_fast::LaneView,
 ) -> *const super::dispatch_fast::LaneView {
@@ -3004,7 +3085,7 @@ fn derive_lane_view<'s>(
             let (start, end) = view.record_range();
             super::lane_exits::register_view(start, end, census_label(entry, function), code.instructions().map(|instruction| instruction.op()).collect());
         }
-        entry.lane_views.store(view)
+        entry.views_in_lane.store(view)
     })
     .as_ptr()
 }
@@ -3196,6 +3277,23 @@ mod jit_code_cache_tests {
 pub(super) struct JsEntryFactsTable(
     std::cell::OnceCell<Box<[std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>]>>,
 );
+
+// An empty cell is zero bits, which the zeroed table relies on.
+const _: () = assert!(
+    // SAFETY: a cell is one pointer-sized `Option<Rc<_>>`, whose `None` this reads.
+    unsafe { std::mem::transmute::<std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>, usize>(std::cell::OnceCell::new()) } == 0
+);
+
+/// `len` empty entry-fact cells on zero pages: a program's table takes a cell for each function
+/// it may append, and a filled table would touch every page of them at the first JavaScript
+/// tier entry of any function. Only the pages of functions that enter the tier become resident.
+fn zeroed_entry_facts(len: usize) -> Box<[std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>]> {
+    let zeros: Box<[usize]> = vec![0; len].into_boxed_slice();
+    let cells = Box::into_raw(zeros) as *mut [std::cell::OnceCell<Rc<super::js_compiled::JsEntryFacts>>];
+    // SAFETY: the allocation is `len` words, the layout of `len` cells of one pointer each
+    // (asserted above), zeroed, so every cell is empty; the box alone owns it.
+    unsafe { Box::from_raw(cells) }
+}
 
 /// Counts a comparison in the guard census: strict (in)equality in its third column, an
 /// order (`<`, `<=`, `>`, `>=`) in its fourth.

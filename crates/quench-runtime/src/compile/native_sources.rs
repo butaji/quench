@@ -1,7 +1,6 @@
 //! Compile source units into one stable atom namespace before host initialization.
 
-use crate::bytecode::DYNAMIC_FUNCTION_SOURCE_NAME;
-use super::{AtomPrefix, Diagnostic, HostScriptOptions, ReleasedRecords, DynamicFunctionKind, DynamicFunctionSource, DYNAMIC_FUNCTION_GOAL, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL};
+use super::{AtomPrefix, Diagnostic, HostScriptOptions, ReleasedRecords, DynamicFunctionKind, DynamicFunctionSource, DYNAMIC_FUNCTION_GOAL, DYNAMIC_FUNCTION_SOURCE_NAME, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL};
 use crate::bytecode::{Atom, AtomSequence, AtomTable, SourceText};
 use crate::{Engine, ResidualProgram};
 use rustc_hash::FxHashMap;
@@ -201,7 +200,7 @@ impl NativeJsCompiler {
         &mut self, source: &str, name: &str, options: HostScriptOptions,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let mut program = Engine::specialize_host_script(
-            source, name, self, options, ReleasedRecords::Dropped,
+            source, name, self, options, ReleasedRecords::Dropped, false,
         )?;
         if let (Some(source), Some((line, column))) = (&mut program.source, options.origin) {
             source.line_offset = line;
@@ -236,7 +235,7 @@ impl NativeJsCompiler {
         &mut self, source: &str, name: &str,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let mut program = Engine::specialize_eval_with_context(
-            source, name, self, false, Default::default(), &[], &[],
+            source, name, self, false, Default::default(), &[], &[], None,
         )?;
         self.adopt(&mut program);
         Ok(program)

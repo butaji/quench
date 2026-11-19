@@ -36,12 +36,20 @@ pub(in crate::vm) fn generic_operator(instruction: WideInstruction) -> bool {
     instruction.op().immediate_role() == crate::bytecode::ImmediateRole::BinaryOperator
 }
 
+/// Whether `instruction` may run by the interpreter's definition once a string or BigInt operand
+/// takes it (`heap_primitive_binary`): a generic operator, or the `+` row (`NumericAdd`), whose
+/// operands a string makes a concatenation of. Its Number form proves Number operands, which a
+/// string operand must not.
+pub(in crate::vm) fn heap_operator(instruction: WideInstruction) -> bool {
+    generic_operator(instruction) || instruction.op().immediate_role() == crate::bytecode::ImmediateRole::AdditionOperator
+}
+
 /// `transfer` of a numeric binary operator.
 pub(super) fn numeric_binary(types: &mut [Type], instruction: WideInstruction, constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Vec<Register>) -> Flow {
     let operand = |operand| operand_type(constants, operand, |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY));
     let heap = heap_primitive_binary(instruction.binary_operator(), operand(instruction.operand_b()), operand(instruction.operand_c()))
-        .filter(|_| generic_operator(instruction) && !instruction.returns_from_frame());
+        .filter(|_| heap_operator(instruction) && !instruction.returns_from_frame());
     let result = heap.or_else(|| number_result(types, instruction, constants, written));
     if instruction.returns_from_frame() { return Flow::Leaves; }
     if let Some(result) = result { set(types, instruction.result_register(), result); }
@@ -66,8 +74,12 @@ fn number_result(types: &mut [Type], instruction: WideInstruction, constants: &[
     }
     if NumberRelation::from_operator(operator).is_some() {
         // An equality decides operands of any type (`lane_region::relation`) and proves
-        // nothing of them; every other relation compares Numbers.
-        if super::super::super::operations::equality_operator(operator).is_none() { prove_number(types, operands); }
+        // nothing of them; so does a relation with an operand known to hold no Number (a
+        // string constant), which the lane decides by the interpreter's rule. Every other
+        // relation compares Numbers.
+        let numberless = operands.iter().filter_map(|operand| operand.register_index())
+            .any(|register| super::numberless(types.get(usize::from(register)).copied().unwrap_or(Type::ANY)));
+        if super::super::super::operations::equality_operator(operator).is_none() && !numberless { prove_number(types, operands); }
         return Some(Type::language(crate::ValueType::Boolean));
     }
     for register in written(instruction) { set(types, register, Type::ANY); }

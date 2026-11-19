@@ -1,5 +1,6 @@
 //! CommonJS host policy. Guest code, objects and calls belong to the shared VM.
 
+use super::typescript_files::TypeScriptFile;
 use crate::host::{EntryGoal, NodeHost};
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::path::{Path, PathBuf};
@@ -165,6 +166,12 @@ fn inline_directory(context: &mut Context<'_>) -> Result<PathBuf, RootedError> {
 }
 
 /// Node's explicit extension/package parse-goal policy, before guest execution.
+///
+/// Detection-first on purpose, for the callers that need the goal before any VM exists: the
+/// entry (`shared_run`) chooses between two different programs (an ES module main or the
+/// CommonJS entry), and the ESM graph (`module_source`) chooses between the module's own
+/// source and a CommonJS facade. Compile-first would change which program runs there. The
+/// CommonJS loader itself is compile-first (`execute_module`, `failed_wrapper_goal`).
 pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     let path = real_path_for_kind(path)?;
     source_kind_of_real(&path)
@@ -173,7 +180,9 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
 /// The path whose package scope decides `path`'s goal: `.js`, `.ts` or an extensionless file
 /// asks its package scope, which is its real path's.
 fn real_path_for_kind(path: &Path) -> Result<std::borrow::Cow<'_, Path>, String> {
-    if matches!(path.extension().and_then(|extension| extension.to_str()), Some("js" | "ts") | None) {
+    if matches!(path.extension().and_then(|extension| extension.to_str()), Some("js") | None)
+        || TypeScriptFile::of(path) == Some(TypeScriptFile::PackageScoped)
+    {
         return crate::host::real_path::real_path(path).map(std::borrow::Cow::Owned).map_err(|error| error.to_string());
     }
     Ok(std::borrow::Cow::Borrowed(path))
@@ -207,13 +216,13 @@ pub(crate) fn source_kind_of_real_bytes(path: &Path, bytes: &[u8]) -> Result<que
 }
 
 fn detect_source_kind_for_path(path: &Path, text: &str) -> quench_runtime::SourceKind {
-    if path.extension().is_some_and(|extension| extension == "ts") {
+    if TypeScriptFile::of(path) == Some(TypeScriptFile::PackageScoped) {
         let body = script_body(text);
-        let Some((projected, has_module_declarations)) = quench_runtime::Engine::project_typescript_module_syntax(body) else {
+        let Some(has_module_syntax) = quench_runtime::Engine::typescript_has_module_syntax(body) else {
             return quench_runtime::SourceKind::Script;
         };
-        if has_module_declarations { return quench_runtime::SourceKind::Module; }
-        let wrapper = [WRAPPER_PREFIX, projected.as_ref(), WRAPPER_SUFFIX].concat();
+        if has_module_syntax { return quench_runtime::SourceKind::Module; }
+        let wrapper = [WRAPPER_PREFIX, body, WRAPPER_SUFFIX].concat();
         if valid_source(&wrapper, oxc_span::SourceType::cjs().with_typescript(true)) {
             return quench_runtime::SourceKind::Script;
         }
@@ -229,6 +238,7 @@ fn declared_source_kind(path: &Path) -> Result<Option<quench_runtime::SourceKind
         // Node's `wasm` format is an ES module (`esm_wasm`).
         Some("mjs" | "mts" | "wasm") => return Ok(Some(quench_runtime::SourceKind::Module)),
         Some("cjs" | "cts" | "json" | "node") => return Ok(Some(quench_runtime::SourceKind::Script)),
+        // Node ignores the package type for an unknown extension: its text's syntax decides.
         Some(extension) if extension != "js" && extension != "ts" => return Ok(None),
         _ => {}
     }
@@ -370,11 +380,19 @@ fn detected_kind_of(bytes: &[u8]) -> Option<quench_runtime::SourceKind> {
 }
 
 /// Node's syntax detection of `text`: the CommonJS wrapper first, then ES module syntax.
+/// Parses the text up to twice (the wrapper, then `module_syntax_kind`); callers that
+/// already hold a failed wrapper compile use `goal_after_wrapper_syntax_error` instead.
 fn detect_text_kind(text: &str) -> quench_runtime::SourceKind {
     let wrapper = [WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat();
     if valid_source(&wrapper, oxc_span::SourceType::cjs()) {
         return quench_runtime::SourceKind::Script;
     }
+    module_syntax_kind(text)
+}
+
+/// The module-syntax step of Node's detection, once the CommonJS wrapper is ruled out:
+/// `text` is an ES module when it parses as one (unambiguous) or is valid as `.mjs`.
+fn module_syntax_kind(text: &str) -> quench_runtime::SourceKind {
     let allocator = oxc_allocator::Allocator::default();
     let parsed =
         oxc_parser::Parser::new(&allocator, text, oxc_span::SourceType::unambiguous()).parse();
@@ -382,6 +400,38 @@ fn detect_text_kind(text: &str) -> quench_runtime::SourceKind {
         quench_runtime::SourceKind::Module
     } else {
         quench_runtime::SourceKind::Script
+    }
+}
+
+/// The goal of `path` (text `text`, without the wrapper) after its CommonJS wrapper compile
+/// failed with a syntax error. That compile already parsed the wrapper, so the wrapper is not
+/// parsed again: only the module-syntax step decides. A `.ts` file's own module syntax decides
+/// it instead (`typescript_has_module_syntax`): none known is a Script, anything else a Module,
+/// since the wrapper just failed to compile.
+/// Single parse order for a rejected wrapper: compile (`execute_module`) -> this step.
+fn goal_after_wrapper_syntax_error(path: &Path, text: &str) -> quench_runtime::SourceKind {
+    if path.extension().is_some_and(|extension| extension == "ts") {
+        return match quench_runtime::Engine::typescript_has_module_syntax(text) {
+            None => quench_runtime::SourceKind::Script,
+            Some(_) => quench_runtime::SourceKind::Module,
+        };
+    }
+    let kind = module_syntax_kind(text);
+    if let Some(entry) = text_facts_cache().entry(DETECTED_KIND_NAME, &[text]) {
+        entry.store(&[detected_kind_byte(kind)]);
+    }
+    kind
+}
+
+/// The goal a failed CommonJS wrapper compile (`error`) leaves for `path` with body `text`:
+/// a syntax failure decides by module syntax alone (`goal_after_wrapper_syntax_error`); an
+/// unsupported compile keeps its error, so it is no ES module; a failure that is not a compile
+/// diagnostic (a stack exhaustion, a host failure) decides by full detection, as before.
+fn failed_wrapper_goal(error: &RootedError, path: &Path, text: &str) -> quench_runtime::SourceKind {
+    match error.compile_failure() {
+        Some(quench_runtime::CompileFailureKind::Syntax) => goal_after_wrapper_syntax_error(path, text),
+        Some(quench_runtime::CompileFailureKind::Unsupported) => quench_runtime::SourceKind::Script,
+        None => detect_source_kind_for_path(path, text),
     }
 }
 
@@ -1010,6 +1060,7 @@ fn require_for_module_inner(
             | BuiltinModule::InternalTimers
             | BuiltinModule::TimersPromises
             | BuiltinModule::NodeTest
+            | BuiltinModule::NodeTestReporters
             | BuiltinModule::StringDecoder
             | BuiltinModule::WorkerThreads
             | BuiltinModule::Util
@@ -1024,6 +1075,7 @@ fn require_for_module_inner(
             | BuiltinModule::Inspector
             | BuiltinModule::Repl
             | BuiltinModule::Sea
+            | BuiltinModule::Sqlite
             | BuiltinModule::Cluster
             | BuiltinModule::Wasi
             | BuiltinModule::TraceEvents),
@@ -1268,6 +1320,7 @@ enum BuiltinModule {
     Timers,
     TimersPromises,
     NodeTest,
+    NodeTestReporters,
     ChildProcess,
     InternalChildProcess,
     Url,
@@ -1300,6 +1353,7 @@ enum BuiltinModule {
     Inspector,
     Repl,
     Sea,
+    Sqlite,
     Cluster,
     Wasi,
     TraceEvents,
@@ -1308,10 +1362,18 @@ enum BuiltinModule {
 }
 
 impl BuiltinModule {
+    /// The module a specifier names: a listed name, or `node:` plus a public builtin's name
+    /// (`module_shared_vm::BUILTIN_MODULES`), so no public module is listed twice.
     fn from_specifier(specifier: &str) -> Option<Self> {
-        BUILTIN_SPECIFIERS
-            .iter()
-            .find_map(|(name, module)| (*name == specifier).then_some(*module))
+        let listed = |name: &str| {
+            BUILTIN_SPECIFIERS
+                .iter()
+                .find_map(|(listed, module)| (*listed == name).then_some(*module))
+        };
+        listed(specifier).or_else(|| {
+            let name = specifier.strip_prefix("node:")?;
+            crate::modules::module_shared_vm::BUILTIN_MODULES.contains(&name).then(|| listed(name)).flatten()
+        })
     }
 
     fn cache_key(self) -> Option<&'static str> {
@@ -1335,6 +1397,7 @@ impl BuiltinModule {
             Self::InternalTimers => Some("internal/timers"),
             Self::TimersPromises => Some("timers/promises"),
             Self::NodeTest => Some("node:test"),
+            Self::NodeTestReporters => Some("node:test/reporters"),
             Self::ChildProcess => Some("child_process"),
             Self::InternalChildProcess => Some("internal/child_process"),
             Self::Url => Some("url"),
@@ -1360,21 +1423,15 @@ impl BuiltinModule {
             Self::Inspector => Some("inspector"),
             Self::Repl => Some("repl"),
             Self::Sea => Some("sea"),
+            Self::Sqlite => Some("sqlite"),
             Self::Cluster => Some("cluster"),
             Self::Wasi => Some("wasi"),
             Self::TraceEvents => Some("trace_events"),
             Self::PerfHooks => Some("perf_hooks"),
             Self::Zlib => Some("zlib"),
-            Self::AsyncHooks | Self::DiagnosticsChannel => None,
-            Self::Process
-            | Self::Assert
-            | Self::AssertStrict
-            | Self::Path
-            | Self::PathPosix
-            | Self::PathWin32 => None,
             Self::InternalUrl => Some("internal/url"),
-            Self::InternalDgram
-            | Self::InternalBlockList
+            Self::AsyncHooks | Self::DiagnosticsChannel | Self::Process | Self::Assert | Self::AssertStrict
+            | Self::Path | Self::PathPosix | Self::PathWin32 | Self::InternalDgram | Self::InternalBlockList
             | Self::InternalSocketAddress => None,
         }
     }
@@ -1403,7 +1460,16 @@ pub(crate) fn is_builtin_specifier(specifier: &str) -> bool {
     BuiltinModule::from_specifier(specifier).is_some()
 }
 
+/// Each loadable builtin under its bare name (internal modules included); a public builtin's
+/// `node:` form is derived (`from_specifier`), so only `node:`-only modules carry the prefix here.
 const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
+    // Node's legacy stream entry points export the class their internal module exports.
+    ("_stream_duplex", BuiltinModule::Internal("internal/streams/duplex")),
+    ("_stream_passthrough", BuiltinModule::Internal("internal/streams/passthrough")),
+    ("_stream_readable", BuiltinModule::Internal("internal/streams/readable")),
+    ("_stream_transform", BuiltinModule::Internal("internal/streams/transform")),
+    ("_stream_wrap", BuiltinModule::Internal("_stream_wrap")),
+    ("_stream_writable", BuiltinModule::Internal("internal/streams/writable")),
     ("internal/options", BuiltinModule::Internal("internal/options")),
     ("node:internal/options", BuiltinModule::Internal("internal/options")),
     (
@@ -1445,138 +1511,72 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("internal/streams/add-abort-signal", BuiltinModule::Internal("internal/streams/add-abort-signal")),
     ("internal/net", BuiltinModule::Internal("internal/net")),
     ("constants", BuiltinModule::Internal("constants")),
-    ("node:constants", BuiltinModule::Internal("constants")),
     ("dns/promises", BuiltinModule::DnsPromises),
-    ("node:dns/promises", BuiltinModule::DnsPromises),
     (
         "inspector/promises",
         BuiltinModule::Internal("inspector/promises"),
     ),
-    (
-        "node:inspector/promises",
-        BuiltinModule::Internal("inspector/promises"),
-    ),
     ("punycode", BuiltinModule::Internal("punycode")),
-    ("node:punycode", BuiltinModule::Internal("punycode")),
     (
         "readline/promises",
         BuiltinModule::Internal("readline/promises"),
     ),
-    (
-        "node:readline/promises",
-        BuiltinModule::Internal("readline/promises"),
-    ),
     ("_http_agent", BuiltinModule::Internal("_http_agent")),
-    ("node:_http_agent", BuiltinModule::Internal("_http_agent")),
     ("_http_client", BuiltinModule::Internal("_http_client")),
-    ("node:_http_client", BuiltinModule::Internal("_http_client")),
     ("_http_common", BuiltinModule::Internal("_http_common")),
-    ("node:_http_common", BuiltinModule::Internal("_http_common")),
     ("_http_incoming", BuiltinModule::Internal("_http_incoming")),
-    (
-        "node:_http_incoming",
-        BuiltinModule::Internal("_http_incoming"),
-    ),
     ("_http_outgoing", BuiltinModule::Internal("_http_outgoing")),
-    (
-        "node:_http_outgoing",
-        BuiltinModule::Internal("_http_outgoing"),
-    ),
     ("_http_server", BuiltinModule::Internal("_http_server")),
-    ("node:_http_server", BuiltinModule::Internal("_http_server")),
     ("_tls_common", BuiltinModule::Internal("_tls_common")),
-    ("node:_tls_common", BuiltinModule::Internal("_tls_common")),
     ("_tls_wrap", BuiltinModule::Internal("_tls_wrap")),
-    ("node:_tls_wrap", BuiltinModule::Internal("_tls_wrap")),
     ("process", BuiltinModule::Process),
-    ("node:process", BuiltinModule::Process),
     ("assert", BuiltinModule::Assert),
-    ("node:assert", BuiltinModule::Assert),
     ("assert/strict", BuiltinModule::AssertStrict),
-    ("node:assert/strict", BuiltinModule::AssertStrict),
     ("path", BuiltinModule::Path),
-    ("node:path", BuiltinModule::Path),
     ("path/posix", BuiltinModule::PathPosix),
-    ("node:path/posix", BuiltinModule::PathPosix),
     ("path/win32", BuiltinModule::PathWin32),
-    ("node:path/win32", BuiltinModule::PathWin32),
     ("fs", BuiltinModule::Fs),
-    ("node:fs", BuiltinModule::Fs),
     ("fs/promises", BuiltinModule::FsPromises),
-    ("node:fs/promises", BuiltinModule::FsPromises),
     ("net", BuiltinModule::Net),
-    ("node:net", BuiltinModule::Net),
     ("http", BuiltinModule::Http),
-    ("node:http", BuiltinModule::Http),
     ("os", BuiltinModule::Os),
-    ("node:os", BuiltinModule::Os),
     ("buffer", BuiltinModule::Buffer),
-    ("node:buffer", BuiltinModule::Buffer),
     ("stream", BuiltinModule::Stream),
-    ("node:stream", BuiltinModule::Stream),
     ("stream/promises", BuiltinModule::StreamPromises),
-    ("node:stream/promises", BuiltinModule::StreamPromises),
     ("stream/web", BuiltinModule::WebStreams),
-    ("node:stream/web", BuiltinModule::WebStreams),
     ("stream/consumers", BuiltinModule::StreamConsumers),
-    ("node:stream/consumers", BuiltinModule::StreamConsumers),
     ("timers", BuiltinModule::Timers),
     ("internal/timers", BuiltinModule::InternalTimers),
-    ("node:timers", BuiltinModule::Timers),
     ("timers/promises", BuiltinModule::TimersPromises),
-    ("node:timers/promises", BuiltinModule::TimersPromises),
     ("node:test", BuiltinModule::NodeTest),
+    ("node:test/reporters", BuiltinModule::NodeTestReporters),
     ("string_decoder", BuiltinModule::StringDecoder),
-    ("node:string_decoder", BuiltinModule::StringDecoder),
     ("worker_threads", BuiltinModule::WorkerThreads),
-    ("node:worker_threads", BuiltinModule::WorkerThreads),
     ("util", BuiltinModule::Util),
     // Node keeps the deprecated `sys` specifier as an alias of `util`.
     ("sys", BuiltinModule::Sys),
-    ("node:sys", BuiltinModule::Sys),
-    ("node:util", BuiltinModule::Util),
     ("util/types", BuiltinModule::UtilTypes),
-    ("node:util/types", BuiltinModule::UtilTypes),
     ("child_process", BuiltinModule::ChildProcess),
-    ("node:child_process", BuiltinModule::ChildProcess),
     ("url", BuiltinModule::Url),
-    ("node:url", BuiltinModule::Url),
     ("querystring", BuiltinModule::Querystring),
-    ("node:querystring", BuiltinModule::Querystring),
     ("readline", BuiltinModule::Readline),
-    ("node:readline", BuiltinModule::Readline),
     ("events", BuiltinModule::Events),
-    ("node:events", BuiltinModule::Events),
     ("console", BuiltinModule::Console),
-    ("node:console", BuiltinModule::Console),
     ("tty", BuiltinModule::Tty),
-    ("node:tty", BuiltinModule::Tty),
     ("crypto", BuiltinModule::Crypto),
-    ("node:crypto", BuiltinModule::Crypto),
     ("domain", BuiltinModule::Domain),
-    ("node:domain", BuiltinModule::Domain),
     ("tls", BuiltinModule::Tls),
-    ("node:tls", BuiltinModule::Tls),
     ("v8", BuiltinModule::V8),
-    ("node:v8", BuiltinModule::V8),
     ("module", BuiltinModule::Module),
-    ("node:module", BuiltinModule::Module),
     ("async_hooks", BuiltinModule::AsyncHooks),
-    ("node:async_hooks", BuiltinModule::AsyncHooks),
     ("internal/async_hooks", BuiltinModule::AsyncHooks),
     (
         "internal/child_process",
         BuiltinModule::InternalChildProcess,
     ),
     ("diagnostics_channel", BuiltinModule::DiagnosticsChannel),
-    (
-        "node:diagnostics_channel",
-        BuiltinModule::DiagnosticsChannel,
-    ),
     ("dns", BuiltinModule::Dns),
-    ("node:dns", BuiltinModule::Dns),
     ("dgram", BuiltinModule::Dgram),
-    ("node:dgram", BuiltinModule::Dgram),
     ("internal/dgram", BuiltinModule::InternalDgram),
     ("internal/url", BuiltinModule::InternalUrl),
     ("internal/blocklist", BuiltinModule::InternalBlockList),
@@ -1585,26 +1585,17 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
         BuiltinModule::InternalSocketAddress,
     ),
     ("https", BuiltinModule::Https),
-    ("node:https", BuiltinModule::Https),
     ("http2", BuiltinModule::Http2),
-    ("node:http2", BuiltinModule::Http2),
     ("vm", BuiltinModule::Vm),
-    ("node:vm", BuiltinModule::Vm),
     ("inspector", BuiltinModule::Inspector),
-    ("node:inspector", BuiltinModule::Inspector),
     ("repl", BuiltinModule::Repl),
-    ("node:repl", BuiltinModule::Repl),
     ("node:sea", BuiltinModule::Sea),
+    ("node:sqlite", BuiltinModule::Sqlite),
     ("cluster", BuiltinModule::Cluster),
-    ("node:cluster", BuiltinModule::Cluster),
     ("wasi", BuiltinModule::Wasi),
-    ("node:wasi", BuiltinModule::Wasi),
     ("trace_events", BuiltinModule::TraceEvents),
-    ("node:trace_events", BuiltinModule::TraceEvents),
     ("perf_hooks", BuiltinModule::PerfHooks),
-    ("node:perf_hooks", BuiltinModule::PerfHooks),
     ("zlib", BuiltinModule::Zlib),
-    ("node:zlib", BuiltinModule::Zlib),
 ];
 
 fn builtin_cache_key(builtin: BuiltinModule) -> Result<String, RootedError> {
@@ -2112,7 +2103,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Internal("readline/promises") => crate::modules::readline_shared_vm::promises_module(context),
         BuiltinModule::Internal("constants") => constants_module(context),
         // Quench has no inspector; its promise API is as empty as `inspector`.
-        BuiltinModule::Internal("inspector/promises") => context.object_rooted(),
+        BuiltinModule::Internal("inspector/promises") | BuiltinModule::Inspector | BuiltinModule::Wasi => context.object_rooted(),
+        builtin @ (BuiltinModule::Sqlite | BuiltinModule::NodeTestReporters | BuiltinModule::Internal("_stream_wrap")) => node_only_module(context, builtin),
         BuiltinModule::Internal(name) => Err(RootedError::host(format!("node:{name} has no builder"))),
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
         BuiltinModule::InternalUrl => crate::modules::url_shared_vm::internal_module(context),
@@ -2190,7 +2182,6 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Http2Binding => crate::modules::http2_shared_vm::binding(context),
         BuiltinModule::Cluster => crate::modules::cluster::module(context),
         BuiltinModule::Repl => crate::modules::repl::module(context),
-        BuiltinModule::Inspector | BuiltinModule::Wasi => context.object_rooted(),
         BuiltinModule::Sea => crate::modules::sea_shared_vm::module(context),
         BuiltinModule::Process
         | BuiltinModule::Assert
@@ -2203,6 +2194,16 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         | BuiltinModule::InternalSocketAddress => Err(RootedError::host(
             "special builtin passed to generic shared module builder",
         )),
+    }
+}
+
+/// The builders of the modules Quench adds beyond Node's public set, each in its own module.
+fn node_only_module(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
+    match builtin {
+        BuiltinModule::Sqlite => crate::modules::sqlite_shared_vm::module(context),
+        BuiltinModule::NodeTestReporters => crate::modules::test_runner::reporters::module(context),
+        BuiltinModule::Internal("_stream_wrap") => crate::modules::stream_wrap_shared_vm::module(context),
+        _ => unreachable!("not a node-only builtin"),
     }
 }
 
@@ -2278,7 +2279,6 @@ fn resolve_filename_in(
         }
     }
     let resolved = resolve_filename_from_host(context, specifier, parent, lookup, filename.as_deref());
-    #[cfg(feature = "aot")]
     if lookup.is_none() {
         if let (Some(parent), Ok(target)) = (filename.as_deref(), &resolved) {
             context.host_mut().record_module_resolution(Path::new(parent), specifier, target).map_err(RootedError::host)?;
@@ -2688,7 +2688,7 @@ fn require_es_module(context: &mut Context<'_>, filename: &Path, parent: Option<
         return Err(throw_module_load_error(context, error)?);
     }
     let url = url::Url::from_file_path(filename).map_err(|_| RootedError::host("invalid ES module filename"))?;
-    let module = match quench_runtime::Host::resolve_dynamic_import(context.host_mut(), &filename.to_string_lossy(), url.as_str()) {
+    let module = match context.host_mut().resolve_required_module(&filename.to_string_lossy(), url.as_str()) {
         Ok(module) => module,
         Err(error) => return Err(throw_module_load_error(context, error)?),
     }
@@ -3019,6 +3019,11 @@ pub(crate) fn execute_user_module(context: &mut Context<'_>, module: RootId, fil
 }
 
 /// Compile and run one module's file into `module` by its kind and extension.
+///
+/// Single parse order for an undeclared `.js`/`.ts` file: its CommonJS wrapper compiles once
+/// (`evaluate_wrapper`, which the program keeps); only a syntax failure of that compile asks
+/// the module-syntax step whether the file is an ES module (`failed_wrapper_goal`). Undeclared
+/// text whose goal the compile cache already knows as a module skips the wrapper compile.
 fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result<RootId, RootedError> {
     let ModuleSource { key, module, filename, parent, declared, is_main } = source;
     if declared == Some(quench_runtime::SourceKind::Module) {
@@ -3055,15 +3060,7 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
         Some(crate::aot::PreparedModuleSource::Projected(text)) => text.to_owned().into(),
         _ => file_text,
     };
-    let typed_commonjs = filename.extension().is_some_and(|extension| extension == "ts" || extension == "cts");
-    let file_text = if prepared.is_none() && typed_commonjs {
-        match quench_runtime::Engine::project_typescript_module_syntax(&file_text) {
-            Some((std::borrow::Cow::Owned(source), _)) => source.into(),
-            _ => file_text,
-        }
-    } else { file_text };
-    #[cfg(feature = "aot")]
-    if typed_commonjs {
+    if TypeScriptFile::of(filename).is_some_and(TypeScriptFile::loads_as_commonjs) {
         context.host_mut().record_prepared_module(filename, &file_text).map_err(RootedError::host)?;
     }
 
@@ -3118,18 +3115,25 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                     // briefly resident beside it. Its byte-order mark and `#!` line are
                     // what the prefix replaces.
                     let body_start = file_text.len() - text.len();
+                    let disk_offset_utf16 = file_text[..body_start].encode_utf16().count() as u32;
                     let mut wrapper_source = file_text.into_owned();
                     wrapper_source.reserve_exact(prefix.len() + suffix.len());
                     wrapper_source.replace_range(..body_start, prefix);
                     wrapper_source.push_str(suffix);
-                    let typescript = matches!(
-                        filename.extension().and_then(|extension| extension.to_str()),
-                        Some("cts" | "ts"),
-                    );
-                    let wrapper = match evaluate_wrapper(context, prefix, &wrapper_source, key, is_main, typescript) {
+                    let typescript = TypeScriptFile::of(filename).is_some_and(TypeScriptFile::loads_as_commonjs);
+                    if typescript {
+                        crate::host::ts_checker::prepare(
+                            filename, &wrapper_source, prefix.len()..wrapper_source.len() - suffix.len(), disk_offset_utf16,
+                        );
+                    }
+                    // The compiled program keeps the wrapper it compiled, shared with this call.
+                    let wrapper_source = std::rc::Rc::new(wrapper_source);
+                    // Single parse order: this compile is the wrapper's parse. A syntax failure of it
+                    // asks only the module-syntax step (`failed_wrapper_goal`), never the wrapper again.
+                    let wrapper = match evaluate_wrapper(context, prefix, std::rc::Rc::clone(&wrapper_source), key, is_main, typescript) {
                         Ok(wrapper) => wrapper,
-                        Err(_) if !quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY && declared.is_none()
-                            && detect_source_kind_for_path(filename, &wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()])
+                        Err(error) if !quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY && declared.is_none()
+                            && failed_wrapper_goal(&error, filename, &wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()])
                                 == quench_runtime::SourceKind::Module =>
                         {
                             drop(wrapper_source);
@@ -3142,8 +3146,7 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                         filename,
                         &wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()],
                     )?;
-                    // The compiled program keeps its own source; the module body runs
-                    // inside this call, so the wrapper is released before it.
+                    // The module body runs inside this call, so the wrapper is released before it.
                     drop(wrapper_source);
                     wrapper
                 }
@@ -3191,13 +3194,12 @@ pub(crate) fn script_body(text: &str) -> &str {
 }
 
 /// Native compilation uses the ordinary loader's wrapper and source admission.
-#[cfg(feature = "aot")]
 pub(crate) fn native_commonjs_source(
     filename: &Path, bytes: &[u8], entry: bool,
 ) -> Result<quench_runtime::NativeSourceKey, String> {
     let decoded = source_text(bytes);
     let body = script_body(&decoded);
-    let typescript = filename.extension().is_some_and(|extension| extension == "ts" || extension == "cts");
+    let typescript = TypeScriptFile::of(filename).is_some_and(TypeScriptFile::loads_as_commonjs);
     if typescript && super::esm_errors::node_modules_typescript(filename) {
         return Err(format!("TypeScript in node_modules is not supported: {}", filename.display()));
     }
@@ -3205,10 +3207,7 @@ pub(crate) fn native_commonjs_source(
         origin: Some(quench_runtime::wrapper_origin(WRAPPER_PREFIX).ok_or("CommonJS wrapper origin exceeds compiler positions")?),
         keep_records: entry, typescript,
     };
-    let body = if typescript {
-        quench_runtime::Engine::project_typescript_module_syntax(body).map(|(source, _)| source).unwrap_or_else(|| body.into())
-    } else { body.into() };
-    let source = [WRAPPER_PREFIX, body.as_ref(), WRAPPER_SUFFIX].concat();
+    let source = [WRAPPER_PREFIX, body, WRAPPER_SUFFIX].concat();
     quench_runtime::NativeSourceKey::new(&filename.to_string_lossy(), &["specialized", &options.cache_goal(), &source])
 }
 
@@ -3218,24 +3217,18 @@ pub(crate) fn native_commonjs_source(
 fn evaluate_wrapper(
     context: &mut Context<'_>,
     prefix: &str,
-    source: &str,
+    source: std::rc::Rc<String>,
     filename: &str,
     entry: bool,
     typescript: bool,
 ) -> Result<RootId, RootedError> {
     let (line_offset, column_offset) = quench_runtime::wrapper_origin(prefix)
         .ok_or_else(|| RootedError::host("CommonJS wrapper origin exceeds compiler positions"))?;
-    if typescript {
-        if super::esm_errors::node_modules_typescript(Path::new(filename)) {
-            let error = super::esm_errors::type_stripping_unsupported(filename);
-            return Err(throw_module_load_error(context, error)?);
-        }
-        context.evaluate_typescript_script_with_origin_rooted(source, filename, line_offset, column_offset, entry)
-    } else if entry {
-        context.evaluate_entry_script_with_origin_rooted(source, filename, line_offset, column_offset)
-    } else {
-        context.evaluate_specialized_script_with_origin_rooted(source, filename, line_offset, column_offset)
+    if typescript && super::esm_errors::node_modules_typescript(Path::new(filename)) {
+        let error = super::esm_errors::type_stripping_unsupported(filename);
+        return Err(throw_module_load_error(context, error)?);
     }
+    context.evaluate_owned_script_with_origin_rooted(source, filename, line_offset, column_offset, entry, typescript)
 }
 
 pub(crate) fn compile_public(
@@ -3248,8 +3241,8 @@ pub(crate) fn compile_public(
     let content = context.string_text(content)?.ok_or_else(|| RootedError::host("Module._compile content must be a string"))?;
     let name = context.string_text(filename)?.ok_or_else(|| RootedError::host("Module._compile filename must be a string"))?;
     let text = script_body(content.as_str());
-    let source = [WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat();
-    let wrapper = evaluate_wrapper(context, WRAPPER_PREFIX, &source, &name, false, false)?;
+    let source = std::rc::Rc::new([WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat());
+    let wrapper = evaluate_wrapper(context, WRAPPER_PREFIX, source, &name, false, false)?;
     let exports = get(context, module, "exports")?;
     let require = context.host_function_with_data(crate::host::shared_vm::operation!("require"), module)?;
     install_resolve(context, require, module)?;
@@ -3306,9 +3299,7 @@ fn transition_child(
     }
 }
 
-fn get(context: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    context.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 
 fn set(
     context: &mut Context<'_>,
@@ -3361,4 +3352,43 @@ pub(crate) fn initialize_cluster_worker(context: &mut Context<'_>) -> Result<(),
         crate::modules::process_shared_vm::delete_env(context, undefined, &[key])?;
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod builtin_table_tests {
+    use super::is_builtin_specifier;
+    use crate::modules::module_shared_vm::BUILTIN_MODULES;
+
+    /// Builtins of the targeted Node release the export table knows and Quench does not load,
+    /// so does not list either.
+    const NOT_LISTED: &[&str] =
+        &["bench", "bench/reporters", "stream/iter", "zlib/iter"];
+
+    #[test]
+    fn every_public_builtin_loads_bare_and_with_the_node_prefix() {
+        for name in BUILTIN_MODULES {
+            if !name.starts_with("node:") {
+                assert!(is_builtin_specifier(name), "{name}");
+            }
+            let prefixed = if name.starts_with("node:") { (*name).to_owned() } else { format!("node:{name}") };
+            assert!(is_builtin_specifier(&prefixed), "{prefixed}");
+        }
+    }
+
+    #[test]
+    fn node_only_builtins_need_the_prefix() {
+        for name in BUILTIN_MODULES.iter().filter_map(|name| name.strip_prefix("node:")) {
+            assert!(!is_builtin_specifier(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn the_export_table_names_only_public_builtins() {
+        let exports: std::collections::BTreeMap<String, Vec<String>> =
+            serde_json::from_str(include_str!("../builtin_esm_exports.json")).unwrap();
+        for name in exports.keys().map(String::as_str).filter(|name| !NOT_LISTED.contains(name)) {
+            let prefixed = format!("node:{name}");
+            assert!(BUILTIN_MODULES.contains(&name) || BUILTIN_MODULES.contains(&prefixed.as_str()), "{name}");
+        }
+    }
 }

@@ -8,6 +8,7 @@
 
 use super::*;
 use quench_bjit::HOLES;
+use super::link::Target;
 
 /// Where a region's code can be re-entered: the resume thunk and, sorted by PC, each stub.
 pub(in crate::vm) struct ResumeTable {
@@ -55,7 +56,7 @@ impl ResumeTable {
 /// The entry rows of one PC's resume stub.
 pub(super) struct Stub {
     pub(super) pc: u32,
-    rows: Vec<(&'static Stencil, [u64; HOLES])>,
+    rows: Vec<EntryRow>,
     /// The row the stub's jump lands on: the PC's first row.
     target: usize,
 }
@@ -63,7 +64,12 @@ pub(super) struct Stub {
 impl Stub {
     /// The hole values of the stub's rows, its jump last.
     pub(super) fn holes(&self) -> impl Iterator<Item = [u64; HOLES]> + '_ {
-        self.rows.iter().map(|(_, holes)| *holes).chain([[0; HOLES]])
+        self.rows.iter().map(|row| row.holes).chain([[0; HOLES]])
+    }
+
+    /// The exits of the stub's rows, then none for its jump, where a declared test's miss goes to `failed`.
+    pub(super) fn exits(&self, failed: usize) -> impl Iterator<Item = Vec<Target>> + '_ {
+        self.rows.iter().map(move |row| row.exits(failed)).chain([Vec::new()])
     }
 }
 
@@ -83,8 +89,11 @@ pub(super) fn resume_stubs(layout: &Layout, planned: &[Planned], (first, starts)
         .entries
         .iter()
         .filter(|&&(_, row)| !planned[row as usize].stencil.code.is_empty() || !planned[row as usize].pre.is_empty())
+        // A row a body-established receiver proof reaches stands on the access that proved it, which a resume skips.
+        // An entry-seeded proof is re-established by `entry_rows`, which runs every declared guard (`layout.guards`).
+        .filter(|&&(_, row)| !layout.relies.get(row as usize).copied().unwrap_or(false))
         .map(|&(pc, row)| {
-            let rows = entry_rows(layout, &layout.webs.live_at(&layout.span, row))?;
+            let rows = entry_rows(layout, &layout.webs.live_at(&layout.span, row), row as usize)?;
             Ok(Stub { pc, rows, target: first + starts[row as usize] })
         })
         .collect()
@@ -98,11 +107,11 @@ pub(super) fn place_stubs<'a>(rows: &mut Vec<Placed<'a>>, stubs: &'a [Stub], jum
     let mut jumps = Vec::with_capacity(stubs.len());
     for stub in stubs {
         let first = rows.len();
-        for (stencil, _) in &stub.rows {
-            rows.push(Placed { stencil, hole: &*holes[hole], taken: Some(failed) });
+        for row in &stub.rows {
+            rows.push(Placed { stencil: row.stencil, hole: &*holes[hole], taken: row.taken(failed), cold: false });
             hole += 1;
         }
-        rows.push(Placed { stencil: jump, hole: &*holes[hole], taken: None });
+        rows.push(Placed { stencil: jump, hole: &*holes[hole], taken: None, cold: false });
         hole += 1;
         jumps.push(Jump { first, row: rows.len() - 1, target: stub.target });
     }
@@ -132,7 +141,7 @@ mod tests {
             (instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.jump_target() as usize) <= pc)
                 .then(|| (instruction.jump_target(), pc as u32))
         }).expect("the function has a loop");
-        let region = super::super::super::osr_loop::region(function, &decoded, &[], &[], None, header, backedge, super::super::super::osr_loop::MethodCalls::Inliner).expect("the loop is admitted");
+        let region = super::super::super::osr_loop::region(function, &decoded, &[], &[], None, header, backedge, super::super::super::osr_loop::MethodCalls::Inliner, &|_| false).expect("the loop is admitted");
         (program, id, region)
     }
 
@@ -142,8 +151,8 @@ mod tests {
     #[test]
     fn a_built_region_has_a_stub_at_each_pc() {
         let (program, id, region) = loop_region("function f(n){let s=0;for(let i=0;i<n;i++){s=s+i;}return s;} f(4);", "f");
-        let known = Known { program: &program, stitch: &crate::vm::compiled::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None, invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: None };
-        let spec = function::BodySpec { function: id as u32, registers: program.function(id).registers, known, realm: RealmProof::default(), widened: &[], seen: [&[], &[]], kinds: &[] };
+        let known = Known { program: &program, stitch: &crate::vm::compiled::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None, invalidation: None, constants: &[], typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[] };
+        let spec = function::BodySpec { function: id as u32, registers: program.function(id).registers, known, realm: Some(RealmProof::default()), widened: &[], seen: &[], kinds: &[] };
         let helpers = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
         // SAFETY: the region has no callees, so no entry cell is read.
         let built = unsafe { function::build_region(&region, &spec, ElementViews::Dense, &callees::Callees::default(), helpers) }.expect("the loop has a row for each instruction");
@@ -160,7 +169,7 @@ mod tests {
 
     #[cfg(all(test, target_arch = "x86_64"))]
     fn thunk_len() -> usize {
-        thunk(Ending::Region, 0).unwrap().len()
+        thunk(Ending::Region, 0, 0).unwrap().len()
     }
 
     /// A loop whose operands change type mid-run leaves compiled code at a guard and resumes

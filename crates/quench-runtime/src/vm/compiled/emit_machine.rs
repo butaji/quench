@@ -76,7 +76,7 @@ fn machine_type(lane: Lane) -> ir::Type {
 
 /// The lane of a Cranelift type; a type that is none of the narrow, float or vector ones is the
 /// 64-bit word.
-pub(in crate::vm) fn lane_of(ty: ir::Type) -> Lane {
+pub(in crate::vm) fn of_in_lane(ty: ir::Type) -> Lane {
     match ty {
         types::I8 => Lane::I8,
         types::I16 => Lane::I16,

@@ -209,19 +209,35 @@ impl Plan {
     }
 }
 
-pub(crate) fn run(f: &mut Function) -> bool {
+/// Unswitches the function's loops on their polls. `analyses` are the context's CFG, dominator
+/// tree and loops of `f` as it is: the first round reads them, and only a round after a change
+/// computes its own (the context had just computed them, and most functions change nothing).
+pub(crate) fn run(f: &mut Function, analyses: (&ControlFlowGraph, &DominatorTree, &LoopAnalysis)) -> bool {
     let mut changed = false;
     loop {
-        let cfg = ControlFlowGraph::with_function(f);
-        let dom = DominatorTree::with_function(f, &cfg);
-        let mut loops = LoopAnalysis::new(); loops.compute(f, &cfg, &dom);
+        let owned;
+        let (cfg, dom, loops) = if changed {
+            let cfg = ControlFlowGraph::with_function(f);
+            let dom = DominatorTree::with_function(f, &cfg);
+            let mut loops = LoopAnalysis::new(); loops.compute(f, &cfg, &dom);
+            owned = (cfg, dom, loops);
+            (&owned.0, &owned.1, &owned.2)
+        } else {
+            analyses
+        };
+        // A function without loops has nothing to unswitch: no use set to gather.
+        if loops.loops().next().is_none() { break; }
         let mut used = CompoundBitSet::with_capacity(f.dfg.num_values());
         for block in f.layout.blocks() { for inst in f.layout.block_insts(block) {
             for value in f.dfg.inst_values(inst) { used.insert(f.dfg.resolve_aliases(value).index()); }
         }}
-        let Some(plan) = loops.loops().find_map(|lp| Plan::find(f, &cfg, &dom, &loops, lp, Choice::Poll(&used))) else { break; };
-        plan.apply(f, &cfg, &dom); changed = true;
+        let Some(plan) = loops.loops().find_map(|lp| Plan::find(f, cfg, dom, loops, lp, Choice::Poll(&used))) else { break; };
+        plan.apply(f, cfg, dom); changed = true;
     }
+    // Every gate takes its proved arm first; then each proof no remaining instruction reads goes,
+    // the uses gathered once per round rather than once per proof. A removed proof can leave
+    // another proof unread only through its own operands, which the next round finds.
+    let mut proofs = Vec::new();
     for specialization in core::mem::take(&mut f.effect_specializations) {
         for (inst, truth) in specialization.gates {
             if f.layout.inst_block(inst).is_none() { continue; }
@@ -232,28 +248,39 @@ pub(crate) fn run(f: &mut Function) -> bool {
                 f.replace(inst).jump(target, &args); changed = true;
             }
         }
-        let proof = specialization.proof;
-        if f.layout.inst_block(proof).is_some() && f.debug_tags.get(proof).is_empty() {
-            let results = f.dfg.inst_results(proof);
-            let used = f.layout.blocks().flat_map(|block| f.layout.block_insts(block))
-                .any(|inst| f.dfg.inst_values(inst).any(|value| results.contains(&f.dfg.resolve_aliases(value))));
-            if !used { f.layout.remove_inst(proof); changed = true; }
-        }
+        proofs.push(specialization.proof);
+    }
+    loop {
+        proofs.retain(|&proof| f.layout.inst_block(proof).is_some() && f.debug_tags.get(proof).is_empty());
+        if proofs.is_empty() { break; }
+        let mut read: CompoundBitSet = CompoundBitSet::with_capacity(f.dfg.num_values());
+        for block in f.layout.blocks() { for inst in f.layout.block_insts(block) {
+            for value in f.dfg.inst_values(inst) { read.insert(f.dfg.resolve_aliases(value).index()); }
+        }}
+        let unread: Vec<_> = proofs.iter().copied()
+            .filter(|&proof| !f.dfg.inst_results(proof).iter().any(|result| read.contains(result.index()))).collect();
+        if unread.is_empty() { break; }
+        for proof in unread { f.layout.remove_inst(proof); changed = true; }
     }
     // Visit only the input headers: recursively specializing copies would form
     // a Cartesian product of independent choices. One choice per input loop
     // bounds this stage's growth to one additional copy of each loop.
-    let cfg = ControlFlowGraph::with_function(f);
-    let dom = DominatorTree::with_function(f, &cfg);
+    // The analyses hold until a plan changes the function: only then are they computed again.
+    let mut cfg = ControlFlowGraph::with_function(f);
+    let mut dom = DominatorTree::with_function(f, &cfg);
     let mut loops = LoopAnalysis::new(); loops.compute(f, &cfg, &dom);
     let headers: Vec<_> = loops.loops().map(|lp| loops.loop_header(lp)).collect();
+    let mut stale = false;
     for header in headers {
-        let cfg = ControlFlowGraph::with_function(f);
-        let dom = DominatorTree::with_function(f, &cfg);
-        let mut loops = LoopAnalysis::new(); loops.compute(f, &cfg, &dom);
+        if stale {
+            cfg = ControlFlowGraph::with_function(f);
+            dom = DominatorTree::with_function(f, &cfg);
+            loops.compute(f, &cfg, &dom);
+            stale = false;
+        }
         let Some(lp) = loops.loops().find(|lp| loops.loop_header(*lp) == header) else { continue; };
         if let Some(plan) = Plan::find(f, &cfg, &dom, &loops, lp, Choice::Repeated) {
-            plan.apply(f, &cfg, &dom); changed = true;
+            plan.apply(f, &cfg, &dom); changed = true; stale = true;
         }
     }
     changed
@@ -262,11 +289,9 @@ pub(crate) fn run(f: &mut Function) -> bool {
 /// Commit loop-carried memory mirrors at the sole exit when the loop has no
 /// observer, trap, or poll. Polling versions deliberately remain write-through:
 /// their fault landing can bypass generated exit blocks.
-pub(crate) fn sink_stores(f: &mut Function) -> bool {
+/// Sinks private stores out of loops; `analyses` are the context's, current for `f`.
+pub(crate) fn sink_stores(f: &mut Function, (cfg, dom, loops): (&ControlFlowGraph, &DominatorTree, &LoopAnalysis)) -> bool {
     if f.private_stores.is_empty() || f.dfg.values_labels.as_ref().is_some_and(|labels| !labels.is_empty()) { return false; }
-    let cfg = ControlFlowGraph::with_function(f);
-    let dom = DominatorTree::with_function(f, &cfg);
-    let mut loops = LoopAnalysis::new(); loops.compute(f, &cfg, &dom);
     let mut changed = false;
     let mut private_stores = CompoundBitSet::<usize>::with_capacity(f.dfg.num_insts());
     for &inst in &f.private_stores { private_stores.insert(inst.index()); }

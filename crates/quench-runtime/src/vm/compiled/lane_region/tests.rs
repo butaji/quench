@@ -1,4 +1,3 @@
-use cranelift_codegen::ir::condcodes::FloatCC;
 #[test]
 fn call_effect_retires_nullable_shapes_without_losing_null_alternatives() {
     use super::*;
@@ -46,7 +45,6 @@ fn callback_edges_retire_only_reachable_interrupt_ownership_proofs() {
 }
 
 #[test]
-#[cfg(feature = "aot")]
 fn inlined_capture_reads_require_an_admitted_invariant_callee() {
     let source = "let held=4,suspended=2;let prototype={};prototype.test=function(){return (this.state&held)!==0||this.state===suspended;};function other(){return this.state===held;}function run(task,count){const owner=task;let n=count|0,result=0;while(n>0){n=(n-1)|0;owner.state=(owner.state+1)|0;if(owner.test())result=(result+1)|0;}return result;}";
     let program = crate::Engine::specialize(source, "capture-entry.js").unwrap();
@@ -71,8 +69,8 @@ fn inlined_capture_reads_require_an_admitted_invariant_callee() {
         let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)|
             instruction.op().control_flow_layout().jumps()
                 .then(|| instruction.jump_target() as usize).filter(|target| *target <= pc)).min().unwrap();
-        let loops = local_loops(&unit, &program.constants, header, &vec![None; unit.instructions.len()]);
-        let reads = invariant_reads(&program, &unit, &loops);
+        let loops = local_loops(&unit, &program.constants, header, &vec![None; unit.instructions.len()], &Default::default());
+        let reads = invariant_reads(&program, &unit, &loops, &vec![None; unit.instructions.len()], &|_| false);
         let captures: Vec<_> = reads.values().flatten().map(|read| read.pc).filter(|&pc|
             unit.instructions[pc].op().is_load_capture()
                 && matches!(unit.origins[pc], super::super::lane_unit::Origin::Inlined { .. })).collect();
@@ -81,7 +79,7 @@ fn inlined_capture_reads_require_an_admitted_invariant_callee() {
         let isa = super::super::super::jit_backend::target_isa().unwrap();
         let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
         let region = lower(&program, caller as u32, &unit, LaneHelpers::Process(addresses),
-            &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::PrefixFrom(header), Completion::Body, ElementViews::Dense, true, EntryInts::Observed).expect("capture loop region");
+            &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::PrefixFrom(header), Completion::Body, ElementViews::Dense, true).expect("capture loop region");
         let function = region.function;
         let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(&function);
         let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(&function, &cfg);
@@ -195,7 +193,6 @@ fn relation_capture_entry_preserves_noninteger_values_and_effects() {
 }
 
 #[test]
-#[cfg(feature = "aot")]
 fn capture_entry_does_not_follow_a_copy_across_a_diamond() {
     let source = r#"
         let held=4;const prototype={};prototype.test=function(){return held|0;};
@@ -216,9 +213,9 @@ fn capture_entry_does_not_follow_a_copy_across_a_diamond() {
                 .map(|function| super::super::lane_unit::CallTarget { function, callee: CalleeBinding::Function })
                 .into_iter().collect(), &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1, "exercise an actual inline marker: {name}");
-        let loops = local_loops(&unit, &program.constants, 0, &vec![None; unit.instructions.len()]);
+        let loops = local_loops(&unit, &program.constants, 0, &vec![None; unit.instructions.len()], &Default::default());
         assert!(!loops.is_empty(), "exercise an eligible loop: {name}");
-        let reads = invariant_reads(&program, &unit, &loops);
+        let reads = invariant_reads(&program, &unit, &loops, &vec![None; unit.instructions.len()], &|_| false);
         assert!(!reads.values().flatten().any(|read|
             unit.instructions[read.pc].op().is_load_capture()
                 && matches!(unit.origins[read.pc], super::super::lane_unit::Origin::Inlined { .. })),
@@ -256,7 +253,6 @@ fn capture_entry_preserves_distinct_environments_and_mutations() {
     for typescript in [false, true] {
         let program = if typescript { crate::Engine::specialize_typescript(&source, "capture-entry.cts") }
             else { crate::Engine::specialize(&source, "capture-entry.cjs") }.unwrap();
-        #[cfg(feature = "aot")]
         {
             // Exercise the linked unit/inliner path too: execution through
             // the dynamic VM alone need not select the same region entries.
@@ -288,30 +284,43 @@ fn comparison_boolean_proofs_survive_branch_joins() {
     let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense, true, EntryInts::Observed).unwrap();
+        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
     let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
     // SAFETY: the lowered function uses the shared lane-entry ABI and only live frame/register storage.
     let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
-    let mut frame = super::super::LaneFrame::new();
+    let mut frame = super::super::BodyRunContext::new();
     let mut vm = Vm::new(crate::test_host::TestHost::default());
     frame.dispatch.refresh_object_bases(&vm);
     frame.dispatch.bind_native_storage(&mut vm);
-    frame.dispatch.receiver = Value::UNDEFINED.to_bits();
+    const FRAME: usize = crate::vm::register_file::FRAME_CONTEXT;
+    // A window with its header (the receiver `UNDEFINED`, no captures) below register 0, as a body's entry reads it.
+    fn framed(registers: usize) -> Vec<Value> {
+        let mut words = vec![Value::UNDEFINED; FRAME + registers];
+        let window = unsafe { words.as_mut_ptr().add(FRAME) };
+        // SAFETY: the header words lie below the window's register 0, in `words`.
+        unsafe {
+            crate::vm::dispatch_fast::set_frame_word(window, crate::staged::frame::CONTEXT_THIS, Value::UNDEFINED.to_bits());
+            crate::vm::dispatch_fast::set_frame_word(window, crate::staged::frame::CONTEXT_BODY, 0);
+        }
+        words
+    }
     frame.context.adapter_payload = (&mut frame.dispatch as *mut JsStepDispatch).cast();
     for input in [-2.0, -1.0, 0.0, 1.0, 2.0] {
-        let mut registers = vec![Value::UNDEFINED; usize::from(unit.caller_registers)];
-        registers[0] = Value::number(input);
-        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast()) };
+        let mut registers = framed(usize::from(unit.caller_registers));
+        registers[FRAME] = Value::number(input);
+        let window = unsafe { registers.as_mut_ptr().add(FRAME) };
+        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, window.cast()) };
         assert_eq!(status, LANE_BODY_RETURNED, "comparison result must continue natively: {input}, stopped at {word}");
         assert_eq!(Value::from_bits(word), Value::number(if input == -1.0 || input == 1.0 { 7.0 } else { 9.0 }));
     }
     // This region selects an int32 entry view. Other Number representations
     // must recover before any guest operation, preserving their exact bits.
     for input in [-0.0, f64::NEG_INFINITY, f64::INFINITY, f64::NAN] {
-        let mut registers = vec![Value::UNDEFINED; usize::from(unit.caller_registers)];
-        registers[0] = Value::number(input);
+        let mut registers = framed(usize::from(unit.caller_registers));
+        registers[FRAME] = Value::number(input);
         let before = registers.clone();
-        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, registers.as_mut_ptr().cast()) };
+        let window = unsafe { registers.as_mut_ptr().add(FRAME) };
+        let BodyReturn { status, value: word } = unsafe { entry(&mut frame.context, 0, 0, window.cast()) };
         // The entry's proof failed: the leave names it (`LaneExit::Entry`, which resumes
         // at the first record), not a PC the code would continue at.
         assert_eq!((status, word), (NATIVE_JS_STOPPED, super::super::LaneExit::Entry.word()));
@@ -326,7 +335,7 @@ fn native_to_int32_keeps_number_inputs_unboxed_and_misses_exactly() {
     let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let region = lower(&program, 1, &unit, LaneHelpers::Process(&[std::ptr::null(); LaneHelper::COUNT]),
-        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &[], &[], &[], Coverage::Full, Completion::Number, ElementViews::Dense, true, EntryInts::Observed).unwrap();
+        &[], &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[], Coverage::Full, Completion::Number, ElementViews::Dense, true).unwrap();
     assert_eq!(region.number_result, Some(NativeNumberResult::Int32));
     for instruction in region.function.layout.blocks()
         .flat_map(|block| region.function.layout.block_insts(block)) {
@@ -367,3 +376,31 @@ fn native_to_int32_keeps_number_inputs_unboxed_and_misses_exactly() {
     }
 }
 
+
+#[test]
+fn a_masked_index_reads_the_element_it_names_whatever_the_array_length() {
+    // `i & 255` is at most 255: a 256-element array proves every access at the loop's entry, and a
+    // 16-element one fails that entry compare on every entry. Its loop runs interpreted, not wrong.
+    let source = r#"
+        function sum(arr, n) { let a = 0; for (let i = 0; i < n; i++) { a = (a + arr[i & 255].v) | 0; } return a; }
+        const big = []; for (let i = 0; i < 256; i++) big.push({ v: i });
+        const small = []; for (let i = 0; i < 16; i++) small.push({ v: i });
+        for (let warm = 0; warm < 96; warm++) { sum(big, 256); sum(small, 10); }
+        if (sum(big, 256) !== 32640) throw 'big';
+        if (sum(big, 300) !== 33586) throw 'wrapped';
+        if (sum(small, 10) !== 45) throw 'small';
+        if (sum(small, 0) !== 0) throw 'empty';
+        throw 42;
+    "#;
+    let source = format!("(function(exports,require,module,__filename,__dirname){{{source}}})(undefined,undefined,undefined,undefined,undefined);");
+    let program = crate::Engine::specialize(&source, "masked-index.cjs").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(crate::test_host::TestHost::default());
+        vm.set_execution_mode(mode);
+        #[cfg(not(quench_profiled))]
+        vm.programs.enable_js_jit_diagnostics();
+        vm.programs.enable_js_lane_methods();
+        let error = vm.execute(&program).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{mode:?}: {error}");
+    }
+}

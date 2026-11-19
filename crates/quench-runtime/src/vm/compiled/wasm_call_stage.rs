@@ -2,17 +2,35 @@
 //! a callout, an indirect call through the VM boundary) and the analysis of its callee and
 //! arguments. An indirect target's checks (`staged::wasm_call::indirect_target`) and its call
 //! are emitted over the table's mirror (`wasm_table_stage`).
+//!
+//! A tail call (`is_tail_call`: a call whose destination is flagged as a return) is a true tail
+//! call when its callee is compiled natively and returns the same result as this function: a
+//! `return_call` (here, `tail_known`) or a `return_call_indirect` (the native fast path of
+//! `wasm_table_stage`). Bodies use `BODY_CALL_CONV` (`Tail`) so the convention allows it. The
+//! other shapes (a callout, a VM call-out, a foreign instance, a result of another type) are a
+//! call that writes the result, followed by the return of that result (`return_if_tail`), as
+//! before. The b-jit's stitched tail calls still grow the native stack (`wasm_stitch_tail`).
 
+use cranelift_codegen::ir::InstBuilder;
 use super::wasm_instance_stage::value_kind;
 use super::{
-    Analysis, AnalysisState, Emitter, Host, Kind, Plan, Slot, function_name, internal_signature,
+    Analysis, AnalysisState, BODY_CALL_CONV, Emitter, Host, Kind, Plan, Slot, function_name,
+    internal_signature,
 };
 use crate::WasmSignature;
 use crate::bytecode::{Function, WideInstruction};
 use crate::staged::machine::{MachineAccess, MachineStage};
 use crate::staged::wasm::Width;
 use crate::staged::wasm_call::Call;
+use crate::staged::wasm_step::Step;
 use cranelift_codegen::ir;
+
+/// Whether `instruction` is a Wasm call whose destination is flagged as a return: a tail call,
+/// after which the function returns (nothing follows it on its path).
+pub(super) fn is_tail_call(instruction: WideInstruction) -> bool {
+    instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0
+        && matches!(Step::of(instruction.op(), instruction.imm()), Some(Step::Call(_)))
+}
 
 impl<H: Host> Emitter<'_, '_, H> {
     /// Lowers a call step.
@@ -23,10 +41,21 @@ impl<H: Host> Emitter<'_, '_, H> {
             // A function reference is known statically per call site (`Slot::Import`).
             Call::RefFunc => {}
             Call::Reference => match self.plan.operand(pc) {
-                Slot::Import(_) => self.callout(pc, instruction),
+                Slot::Import(_) => {
+                    self.callout(pc, instruction);
+                    self.return_if_tail(instruction);
+                }
                 Slot::IndirectReference { .. } => self.call_reference(pc, instruction),
                 _ => unreachable!("planned calls hold a supported callable"),
             },
+        }
+    }
+
+    /// Ends a tail call that wrote its result to its destination: the function returns it.
+    /// A tail call that was a true tail call already left (`tail_known`, `call_reference`).
+    pub(super) fn return_if_tail(&mut self, instruction: WideInstruction) {
+        if is_tail_call(instruction) {
+            self.return_register(instruction.result_register());
         }
     }
 
@@ -35,11 +64,18 @@ impl<H: Host> Emitter<'_, '_, H> {
         let callee = usize::from(instruction.known_function_index());
         let Some(plan) = self.plans[callee].as_ref() else {
             self.callout_known_fallback(callee as u32, instruction);
+            self.return_if_tail(instruction);
             return;
         };
+        if is_tail_call(instruction) && plan.result == self.plan.result {
+            self.tail_known(callee, plan, instruction);
+            return;
+        }
         let arguments = self.known_arguments(instruction, plan);
         let target = self.known_target(callee, plan);
+        let roots = self.root();
         let results = self.call_function(target, &arguments);
+        self.unroot(roots);
         self.propagate(results[0]);
         let destination = instruction.result_register();
         match plan.result {
@@ -49,6 +85,19 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.write(destination, Kind::I32, zero);
             }
         }
+        self.return_if_tail(instruction);
+    }
+
+    /// A tail call of compiled `callee`, which returns the same result: a `return_call` with the
+    /// arguments the ordinary call passes. The frame is replaced, so the callee's status and
+    /// result are this function's, and the call returns nothing here. No roots are pushed: a
+    /// root surrounds only a call that returns, and a tail call leaves the frame's references to
+    /// the callee, which roots its own before its calls.
+    fn tail_known(&mut self, callee: usize, plan: &Plan, instruction: WideInstruction) {
+        let arguments = self.known_arguments(instruction, plan);
+        let target = self.known_target(callee, plan);
+        self.interrupt_safepoint();
+        self.body.core.builder.ins().return_call(target, &arguments);
     }
 
     /// The context, the memory arguments, then the call window.
@@ -58,7 +107,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         if self.memory.base {
             arguments.push(self.base);
         }
-        arguments.extend(self.length);
+        arguments.extend(self.passed_length());
         for (offset, ty) in plan.params.iter().enumerate() {
             let kind = Kind::of(*ty).expect("planned");
             arguments.push(self.read(window.base + offset as u16, kind));
@@ -72,7 +121,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         if let Some(target) = self.callees[callee] {
             return target;
         }
-        let signature = internal_signature(self.memory, &plan.params, plan.result, self.call_conv);
+        let signature = internal_signature(self.memory, &plan.params, plan.result, BODY_CALL_CONV);
         let signature = self.body.core.builder.import_signature(signature);
         let name = self
             .body

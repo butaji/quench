@@ -13,7 +13,7 @@ fn atom_store_counts(program: &ResidualProgram, counted: impl Fn(WideInstruction
     for id in 0..program.function_count() {
         let function = program.function(id);
         for &packed in function.code.iter() {
-            let instruction = super::dispatch_fast::decoded_instruction(function, packed);
+            let instruction = function.widened(packed);
             if counted(instruction) && let Some(count) = counts.get_mut(instruction.atom_index() as usize) {
                 *count += 1;
             }
@@ -29,13 +29,13 @@ fn root_immediate_stores(program: &ResidualProgram, stored: impl Fn(WideInstruct
     let mut values = FrozenValues::default();
     let mut immediates: Vec<Option<Value>> = vec![None; usize::from(root.registers)];
     for &packed in root.code.iter() {
-        let instruction = super::dispatch_fast::decoded_instruction(root, packed);
+        let instruction = root.widened(packed);
         for register in instruction.written_registers() {
             if let Some(slot) = immediates.get_mut(usize::from(register)) { *slot = None; }
         }
-        if instruction.op().js_denotation() == crate::bytecode::JsDenotation::LoadConst {
-            let value = program.constants.get(instruction.constant_index()).and_then(facts::immediate);
-            if let Some(slot) = immediates.get_mut(usize::from(instruction.result_register())) { *slot = value; }
+        if let Some((destination, constant)) = crate::staged::Operation::<(), ()>::decode_constant_load(instruction) {
+            let value = program.constants.get(constant).and_then(facts::immediate);
+            if let Some(slot) = immediates.get_mut(usize::from(destination)) { *slot = value; }
         } else if let Some(atom) = stored(instruction)
             && let Some(Some(value)) = immediates.get(usize::from(instruction.register_a())) {
             values.insert(atom, *value);
@@ -66,7 +66,9 @@ pub(in crate::vm) fn frozen_globals(program: &ResidualProgram) -> FrozenValues {
 /// immediate (a constructor's `prototype.k = <immediate>`), folded at each read and
 /// guarded there. Accessor definitions are outside this analysis.
 pub(in crate::vm) fn frozen_fields(program: &ResidualProgram) -> FrozenValues {
-    let field_store = |instruction: WideInstruction| instruction.op().js_denotation() == crate::bytecode::JsDenotation::FieldStore;
+    // A store to a register receiver (`SetField`, `SetFieldStrict`); a store to `this` is not one.
+    let field_store = |instruction: WideInstruction| matches!(crate::vm::compiled::decoded(instruction),
+        Some(crate::staged::Operation::SetField { base: Some(_), .. }));
     let counts = atom_store_counts(program, field_store);
     root_immediate_stores(program, |instruction| {
         if !field_store(instruction) { return None }
@@ -86,10 +88,11 @@ pub(in crate::vm) fn frozen_global_reads(program: &ResidualProgram, function: &F
     let frozen = |atom: Atom| globals.get(&atom).map(|&value|
         crate::vm::global_facts::GlobalRead::Frozen { value, ty: crate::typed_ir::Type::immediate(value) });
     function.code.iter().enumerate().filter_map(|(pc, &packed)| {
-        let instruction = super::dispatch_fast::decoded_instruction(function, packed);
+        let instruction = function.widened(packed);
         let read = if instruction.op().loads_name() {
             frozen(instruction.atom_index())
-        } else if instruction.op().addresses_capture() {
+        } else if matches!(crate::vm::compiled::decoded_completed(instruction),
+            Some(crate::staged::Operation::LoadCapture { .. } | crate::staged::Operation::StoreCapture { .. })) {
             capture_binding_atom(program, function, instruction).and_then(frozen)
         } else {
             None

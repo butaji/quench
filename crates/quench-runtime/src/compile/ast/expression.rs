@@ -22,10 +22,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::PrivateFieldExpression(member) => member.field.span.start,
             _ => expression.span().start,
         };
-        let position = self.owner.source_position(start);
-        let previous = self
-            .current_source_position
-            .replace((position.line, position.column));
+        let previous = self.current_source_position.replace(self.owner.source_offset(start));
         let start = self.next_reg;
         let result = self.expression_at_current_position(expression, debug_name);
         self.current_source_position = previous;
@@ -33,6 +30,76 @@ impl FunctionCompiler<'_, '_> {
         // besides its result is dead once it completes, and the next one reuses them.
         self.next_reg = if result >= start { result + 1 } else { start };
         result
+    }
+
+    /// Compiles `expression` so that its value ends in `dst`, which the caller reads in place of
+    /// the register it would otherwise get. `dst` is a register the caller allocated before the
+    /// call, so the expression's temporaries sit above it.
+    pub(in crate::compile) fn expression_into(&mut self, expression: &Expression<'_>, dst: Register) {
+        self.expression_into_named(expression, None, dst);
+    }
+
+    /// `expression_into` for an expression that may name a function (`debug_name`).
+    pub(in crate::compile) fn expression_into_named(&mut self, expression: &Expression<'_>, debug_name: Option<Atom>, dst: Register) {
+        let first_pc = self.code.len();
+        let start = self.next_reg;
+        let value = self.expression_with_debug_name(expression, debug_name);
+        if value == dst {
+            return;
+        }
+        if value >= start && self.retarget_final_result(first_pc, value, dst) {
+            return;
+        }
+        self.emit(Op::Move, dst, value, 0, 0);
+    }
+
+    /// Makes the last instruction emitted since `first_pc` write `dst` instead of `value`, when
+    /// that instruction is the expression's own producer of `value`: a plain producer whose
+    /// result is `value` and not read by it (`plain_producer`). Nothing in between may jump, since
+    /// a jump that passes the producer would leave `value` unwritten on its path, and a jump
+    /// emitted but not yet patched is not visible here, so any jump keeps the copy. Returns
+    /// whether it retargeted.
+    fn retarget_final_result(&mut self, first_pc: usize, value: Register, dst: Register) -> bool {
+        let Some(last) = self.code.len().checked_sub(1).filter(|&pc| pc >= first_pc) else {
+            return false;
+        };
+        let jumps = |op: Op| {
+            matches!(
+                op.control_flow_layout(),
+                crate::bytecode::ControlFlowLayout::Jump
+                    | crate::bytecode::ControlFlowLayout::ConditionalJump
+                    | crate::bytecode::ControlFlowLayout::BranchTable
+            )
+        };
+        if self.code[first_pc..last].iter().any(|&instruction| {
+            let op = if instruction.is_wide() { self.wide[instruction.wide_index()].op() } else { instruction.op() };
+            jumps(op)
+        }) {
+            return false;
+        }
+        let instruction = self.code[last];
+        if dst > crate::bytecode::REGISTER_MASK {
+            return false;
+        }
+        if instruction.is_wide() {
+            let index = instruction.wide_index();
+            let wide = self.wide[index];
+            if !crate::compile::rewrite::plain_producer(wide.op()) || wide.a() != value {
+                return false;
+            }
+            self.wide[index].set_a(dst);
+        } else {
+            if !crate::compile::rewrite::plain_producer(instruction.op())
+                || instruction.result_register() != value
+                || instruction.result_flags() != 0
+            {
+                return false;
+            }
+            let mut retargeted = instruction;
+            retargeted.set_result_register(dst);
+            self.code[last] = retargeted;
+        }
+        true
     }
 
     fn expression_at_current_position(&mut self, expression: &Expression<'_>, debug_name: Option<Atom>) -> Register {
@@ -48,7 +115,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::NumericLiteral(value) => self.literal(Constant::Number(value.value)),
             Expression::StringLiteral(value) => self.string_literal(value),
             Expression::BigIntLiteral(value) => self.bigint_literal(value),
-            Expression::RegExpLiteral(value) => self.regexp_literal(value),
+            Expression::RegExpLiteral(value) => self.regexp_literal(value, false),
             Expression::TemplateLiteral(value) => self.template_literal(value),
             Expression::TaggedTemplateExpression(value) => self.tagged_template(value),
             Expression::BooleanLiteral(value) => self.literal(Constant::Boolean(value.value)),
@@ -210,7 +277,26 @@ impl FunctionCompiler<'_, '_> {
         self.load_atom(atom)
     }
 
-    fn regexp_literal(&mut self, value: &oxc_ast::ast::RegExpLiteral<'_>) -> Register {
+    /// A regexp literal; `receiver` when its only use is the receiver of a `test` or `exec`
+    /// call, which lets every evaluation share one object (`RegExpLiteralSite::receiver`).
+    pub(super) fn regexp_literal(&mut self, value: &oxc_ast::ast::RegExpLiteral<'_>, receiver: bool) -> Register {
+        self.regexp_literal_site_value(value, receiver, None)
+    }
+
+    /// A regexp literal that is the first argument of a `replace`/`match`/`search`/`split`
+    /// call whose callee register `callee` holds (`FunctionCompiler::regexp_argument_call`): the
+    /// instruction names it, so the site may share one object while that callee is the
+    /// realm's String method (`Vm::regexp_literal_argument_of`).
+    pub(super) fn regexp_argument_literal(&mut self, value: &oxc_ast::ast::RegExpLiteral<'_>, callee: Register) -> Register {
+        self.regexp_literal_site_value(value, false, Some(callee))
+    }
+
+    fn regexp_literal_site_value(
+        &mut self,
+        value: &oxc_ast::ast::RegExpLiteral<'_>,
+        receiver: bool,
+        callee: Option<Register>,
+    ) -> Register {
         let pattern = self
             .owner
             .constant(Constant::String(value.regex.pattern.text.as_str().into()));
@@ -230,9 +316,9 @@ impl FunctionCompiler<'_, '_> {
             }
         }
         let flags = self.owner.constant(Constant::String(flags.into()));
-        let site = self.owner.regexp_literal_site(pattern, flags);
+        let site = self.owner.regexp_literal_site(pattern, flags, receiver);
         let destination = self.reg();
-        self.emit(Op::CreateRegExpLiteral, destination, 0, 0, site);
+        self.emit(Op::CreateRegExpLiteral, destination, crate::bytecode::encode_optional_register(callee), 0, site);
         destination
     }
     pub(super) fn parameter_binding_atom(&self, atom: Atom) -> Atom {
@@ -250,6 +336,26 @@ impl FunctionCompiler<'_, '_> {
         self.load_atom_reference(atom, None)
     }
 
+    /// The declaration index of script-top-level lexical `atom` for a read or write of it that no
+    /// `with` or, from a nested function, sloppy direct eval can shadow. Such a name is the script's
+    /// own global binding, which `LoadGlobalLexical` and `StoreGlobalLexical` reach by index. The
+    /// root's own reads and its declarations' initializations take it too: a direct eval cannot
+    /// shadow the root's own top-level lexicals (a conflicting `var` is an early error).
+    fn root_lexical_declaration(&self, atom: Atom) -> Option<u32> {
+        if self.with_depth != self.inherited_with_depth
+            || (self.function_id != 0 && !self.outer_names_static())
+        {
+            return None;
+        }
+        self.owner
+            .root_lexical_atoms
+            .iter()
+            .position(|root| *root == atom)
+            .and_then(|index| u32::try_from(index).ok())
+    }
+
+    /// By-name fallback for a read the compiler cannot place in a slot. A nested function's read of
+    /// a script-top-level lexical takes `LoadGlobalLexical` by its declaration index instead.
     pub(super) fn load_atom_reference(
         &mut self,
         atom: Atom,
@@ -259,6 +365,14 @@ impl FunctionCompiler<'_, '_> {
             return register;
         }
         let atom = self.resolve_dynamic_reference_atom(atom);
+        if receiver.is_none()
+            && let Some(declaration) = self.root_lexical_declaration(atom)
+        {
+            let dst = self.reg();
+            let cache = self.owner.cache_site();
+            self.emit(Op::LoadGlobalLexical, dst, 0, cache, declaration);
+            return dst;
+        }
         let dst = self.reg();
         let cache = self.owner.cache_site();
         match receiver {
@@ -283,6 +397,14 @@ impl FunctionCompiler<'_, '_> {
             self.active_lexical_binding(atom)
         };
         lexical.unwrap_or(atom)
+    }
+
+    /// Whether names bound by enclosing functions resolve statically here: no direct eval in
+    /// this function can add a var that shadows them. A strict function's eval code is strict
+    /// and so keeps its vars to itself (ECMA-262 19.2.1.1), which leaves a strict direct eval
+    /// harmless; only a sloppy one forces by-name resolution.
+    pub(super) fn outer_names_static(&self) -> bool {
+        !self.dynamic_eval || self.strict
     }
 
     /// Loads a reference that resolves statically to a promoted register, a frame local or a
@@ -318,7 +440,7 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
             }
             Some(dst)
-        } else if (compiler_binding || (self.with_depth == 0 && !self.dynamic_eval))
+        } else if (compiler_binding || (self.with_depth == 0 && self.outer_names_static()))
             && let Some((depth, slot)) = self.scopes.find(atom)
         {
             Some(self.capture_read(atom, depth, slot))
@@ -338,12 +460,53 @@ impl FunctionCompiler<'_, '_> {
             && self.owner.atoms[atom as usize].contains(crate::bytecode::SELF_BINDING_MARKER)
     }
 
+    /// Whether `store_atom_with_initialization` of `atom` writes only this activation's
+    /// own local (a register or a local slot): no `with` object, dynamic scope, global mirror
+    /// or immutable binding can observe or refuse it, so it runs no guest code and never throws.
+    pub(super) fn stores_locally(&self, atom: Atom, initializing: bool) -> bool {
+        let source_atom = self.parameter_binding_atom(atom);
+        let binding_kind = self.lexical_binding_kind(source_atom);
+        if self.dynamic_eval || self.with_depth != 0 || self.with_depth != self.inherited_with_depth
+            || (!initializing && binding_kind != LexicalBindingKind::Mutable)
+            || self.owner.atoms[source_atom as usize].contains("\0quench:class-binding:")
+        {
+            return false;
+        }
+        let lexical = self.active_lexical_binding(source_atom);
+        let compiler_binding = self.is_compiler_binding(source_atom);
+        let atom = lexical.unwrap_or(source_atom);
+        if self.owner.atoms[atom as usize].contains("\0quench:class-binding:") {
+            return false;
+        }
+        let mirrored = lexical.is_none() && !compiler_binding && self.function_id == 0 && !self.owner.module_goal;
+        !mirrored && (self.frame_var(atom) || lexical.is_some() || compiler_binding) && self.local_slots.contains_key(&atom)
+    }
+
     pub(crate) fn store_atom(&mut self, atom: Atom, value: Register) {
         self.store_atom_with_initialization(atom, value, false);
     }
 
     pub(crate) fn initialize_atom(&mut self, atom: Atom, value: Register) {
         self.store_atom_with_initialization(atom, value, true);
+    }
+
+    /// The promoted register that `store_atom` writes an assignment to `atom` into with a plain
+    /// `Move`, after the value is computed: no check or environment lookup comes before it that
+    /// could throw. The value may then be computed straight into the register (`expression_into`).
+    /// `None` for any other binding, which keeps the value in its own register.
+    pub(super) fn plain_store_register(&self, atom: Atom) -> Option<Register> {
+        let source_atom = self.parameter_binding_atom(atom);
+        if self.dynamic_eval
+            || self.with_depth != self.inherited_with_depth
+            || self.active_lexical_binding(source_atom).is_some()
+            || self.is_compiler_binding(source_atom)
+            || self.lexical_binding_kind(source_atom) != LexicalBindingKind::Mutable
+            || !self.frame_var(source_atom)
+            || !self.local_slots.contains_key(&source_atom)
+        {
+            return None;
+        }
+        self.local_register(source_atom)
     }
 
     pub(super) fn store_atom_with_initialization(
@@ -408,7 +571,14 @@ impl FunctionCompiler<'_, '_> {
                     u32::from(slot),
                 );
             }
-            if lexical.is_none() && !compiler_binding && self.function_id == 0 && !self.owner.module_goal {
+            // A root `var` is the global object's property too, except in strict eval code,
+            // whose vars are the eval's own (`ResidualProgram::root_variables_are_local`).
+            if lexical.is_none()
+                && !compiler_binding
+                && self.function_id == 0
+                && !self.owner.module_goal
+                && !(self.strict && self.owner.eval_context.is_some())
+            {
                 let cache = self.owner.cache_site();
                 self.emit(
                     Op::StoreName,
@@ -419,7 +589,7 @@ impl FunctionCompiler<'_, '_> {
                 );
             }
         } else if (self.with_depth == 0 || initializing)
-            && (!self.dynamic_eval || compiler_binding)
+            && (self.outer_names_static() || compiler_binding)
             && let Some((depth, slot)) = self.scopes.find(atom)
         {
             self.emit(
@@ -429,6 +599,9 @@ impl FunctionCompiler<'_, '_> {
                 0,
                 crate::bytecode::ImmediateLayout::capture_immediate(depth, slot),
             );
+        } else if let Some(declaration) = self.root_lexical_declaration(atom) {
+            let cache = self.owner.cache_site();
+            self.emit(Op::StoreGlobalLexical, value, u16::from(initializing), cache, declaration);
         } else {
             let cache = self.owner.cache_site();
             self.emit(Op::StoreName, value, u16::from(initializing), cache, atom);
@@ -589,8 +762,8 @@ impl FunctionCompiler<'_, '_> {
             let site = self.owner.cache_site();
             let second_site = self.owner.cache_site();
             let access = self.field_site(FieldBase::THIS, (first, site), Some((second, second_site)));
-            let first_position = self.owner.source_position(inner.property.span.start);
-            self.owner.field_sites[access as usize].sources[0] = Some((first_position.line, first_position.column));
+            let first_offset = self.owner.source_offset(inner.property.span.start);
+            self.owner.field_sites[access as usize].sources[0] = FieldSite::source_word(Some(first_offset));
             self.emit(Op::GetField, dst, FieldBase::NESTED, 0, access);
             return dst;
         }
@@ -619,7 +792,11 @@ impl FunctionCompiler<'_, '_> {
             first,
             second,
             sink: None,
-            sources: [self.current_source_position, second.and(self.current_source_position), None],
+            sources: [
+                FieldSite::source_word(self.current_source_position),
+                FieldSite::source_word(second.and(self.current_source_position)),
+                FieldSite::NO_SOURCE,
+            ],
         });
         site
     }
@@ -652,6 +829,7 @@ impl FunctionCompiler<'_, '_> {
         object: &Expression<'_>,
         key: &Expression<'_>,
     ) -> Register {
+        let object_expression = object;
         if let Some(slot) = self.arguments_binding_slot(object) {
             let key = self.last_operand(key);
             let dst = self.reg();
@@ -692,10 +870,27 @@ impl FunctionCompiler<'_, '_> {
             }
             None => {}
         }
+        if let Some(state) = self.enumerated_state(object_expression, key) {
+            let key = self.expression(key);
+            let state = self.load_atom(state);
+            let dst = self.reg();
+            let pair = crate::bytecode::ImmediateLayout::register_pair_immediate(state, state);
+            self.emit(Op::GetEnumerated, dst, object, key, pair);
+            return dst;
+        }
         let key = self.last_operand(key);
         let dst = self.reg();
         self.emit(Op::GetIndex, dst, object, key, 0);
         dst
+    }
+
+    /// The state's hidden local of the innermost for-in whose body this read `o[k]` is in, where
+    /// `o` and `k` are the identifiers it lists and binds; the row guards they still are.
+    fn enumerated_state(&self, object: &Expression<'_>, key: &Expression<'_>) -> Option<Atom> {
+        let (Expression::Identifier(object), Expression::Identifier(key)) = (object, key) else { return None };
+        self.enumerations.iter().rev()
+            .find(|enumeration| enumeration.object == object.name.as_str() && enumeration.key == key.name.as_str())
+            .map(|enumeration| enumeration.state)
     }
 
     pub(super) fn emit_set_field(
@@ -881,6 +1076,15 @@ impl FunctionCompiler<'_, '_> {
             Expression::UnaryExpression(unary) if unary.operator == UnaryOperator::LogicalNot => {
                 self.false_exits(&unary.argument)
             }
+            // A comparison's true edge is its fused test's fall-through, then a jump: the
+            // comparison is never made into a boolean that a second test reads again, so every
+            // tier decides it as the one compare-and-jump `false_exit` emits.
+            Expression::BinaryExpression(binary) if fuses_with_jump(binary.operator) => {
+                let skip = self.false_exit(value);
+                let taken = self.emit(Op::Jump, 0, 0, 0, 0);
+                self.patch(skip);
+                smallvec::smallvec![taken]
+            }
             _ => {
                 let test = self.expression(value);
                 smallvec::smallvec![self.emit(Op::JumpTrue, test, 0, 0, 0)]
@@ -897,7 +1101,11 @@ impl FunctionCompiler<'_, '_> {
 
     /// The single jump a test that is no `&&`, `||` or `!` takes when `value` is falsy.
     fn false_exit(&mut self, value: &Expression<'_>) -> usize {
-        if let Expression::BinaryExpression(binary) = value {
+        // Only a comparison fuses with its jump: an arithmetic or bitwise result (`if (i & 3)`)
+        // is a Number every tier makes in its own row, whose truthiness `JumpFalse` tests.
+        if let Expression::BinaryExpression(binary) = value
+            && fuses_with_jump(binary.operator)
+        {
             if let Some(test) = self.typeof_test(binary) {
                 return self.emit(Op::JumpFalse, test, 0, 0, 0);
             }
@@ -930,6 +1138,21 @@ impl FunctionCompiler<'_, '_> {
         }
         dst
     }
+}
+
+/// Whether a test of `operator`'s result is one compare-and-jump (`JumpBinaryFalse`): the
+/// relations, the equalities, `in` and `instanceof`, whose result is a boolean.
+fn fuses_with_jump(operator: oxc_ast::ast::BinaryOperator) -> bool {
+    use oxc_ast::ast::BinaryOperator as B;
+    matches!(operator, B::LessThan | B::LessEqualThan | B::GreaterThan | B::GreaterEqualThan | B::Equality | B::Inequality
+        | B::StrictEquality | B::StrictInequality | B::In | B::Instanceof)
+}
+
+/// `fuses_with_jump` of an operator's bytecode number.
+pub(crate) fn fuses_with_jump_operator(operator: u32) -> bool {
+    use oxc_ast::ast::BinaryOperator as B;
+    [B::LessThan, B::LessEqualThan, B::GreaterThan, B::GreaterEqualThan, B::Equality, B::Inequality,
+        B::StrictEquality, B::StrictInequality, B::In, B::Instanceof].into_iter().any(|candidate| candidate as u32 == operator)
 }
 
 /// A comparison of a constant with a register, `C < r`, as the mirrored comparison of the

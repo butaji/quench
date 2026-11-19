@@ -15,7 +15,6 @@ members = [
     "crates/quench-runtime",
     "crates/quench-stack",
     "crates/quench-tier-corpus",
-    "crates/quench-stencil-mine",
     "crates/quench-bjit",
     "crates/quench-alloc",
     "crates/quench-regexp",
@@ -31,9 +30,8 @@ members = [
 # authoritative representation"): no second lookup, copy or eagerly built value where one
 # suffices. `quench-lint` enforces the same law for duplicated functions and constants.
 [workspace.lints.rust]
-# `quench-bjit`'s build states whether its target's stencil rows exist
-# (`BASE_STENCILS`): AArch64 builds none.
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(base_stencils_absent)"] }
+# `stencil_build` is set on the stencil crate's compile (`quench-bjit/build.rs`); the build script mounts the same files without it.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(stencil_build)"] }
 
 [workspace.lints.clippy]
 too_many_arguments = "allow"
@@ -56,6 +54,8 @@ oxc_regular_expression = "=0.153.0"
 oxc_semantic = "=0.153.0"
 oxc_span = "=0.153.0"
 oxc_syntax = "=0.153.0"
+turso_core = { version = "=0.9.0-pre.5", default-features = false }
+turso_parser = "=0.9.0-pre.5"
 
 [profile.dev]
 # Minimize compiler work for the default edit/compile cycle. Use `iteration`

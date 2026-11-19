@@ -1,7 +1,7 @@
 use quench_runtime::native_link::{NativeImageInputs, CATALOG_FILENAME, REQUIRED_EXPORTS_FILENAME};
 use super::{DependencyGraph, ModuleAssets, ModuleAssetState, PreparedModuleSource};
 use crate::NodeHost;
-use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, ResidualProgram, Runtime, emit_native_module, lower_native_js_module_with_options};
+use quench_runtime::{Engine, NativeJsCodegenOptions, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, NativeTarget, ResidualProgram, Runtime, emit_native_module_for, lower_native_js_module_for};
 use std::{cell::RefCell, collections::BTreeSet, fs, io::Write, path::{Path, PathBuf}, rc::Rc};
 
 mod source_pool;
@@ -16,9 +16,6 @@ pub(super) const NATIVE_ENTRY_UNIT: &str = "entry";
 pub struct SourceManifest {
     units: BTreeSet<NativeSourceKey>,
     pub(super) assets: ModuleAssets,
-    /// Whether a body's leave hands its record back to the VM (`NativeJsCodegenOptions`): a
-    /// dynamic-source image allows the shared loop; a static image requires linked code.
-    hand_back_on_leave: bool,
 }
 
 pub struct CompiledSource {
@@ -36,14 +33,12 @@ pub struct CompiledSources {
     pub units: Vec<CompiledSource>,
     pub syntax_errors: Vec<DeferredSourceSyntaxError>,
     pub assets: ModuleAssets,
-    /// Whether a body's leave hands its record back to the VM (`NativeJsCodegenOptions`).
-    hand_back_on_leave: bool,
 }
 
 /// Link inputs written to a fresh compiler-owned directory. Rust macros derive
 /// the loader from the same source keys that selected the native compilation.
 impl CompiledSources {
-    pub fn emit(self, directory: &Path) -> Result<NativeImageInputs, String> {
+    pub fn emit(self, directory: &Path, target: &NativeTarget) -> Result<NativeImageInputs, String> {
         fs::create_dir(directory).map_err(|error| error.to_string())?;
         let directory = directory.canonicalize().map_err(|error| error.to_string())?;
         let mut texts = Vec::new();
@@ -69,45 +64,21 @@ impl CompiledSources {
         let namespace = quench_runtime::NativeProgramNamespace::from_entry(&self.entry)?;
         let mut write = |program: &ResidualProgram, name: &str, namespace: Option<&quench_runtime::NativeProgramNamespace>| -> Result<(PathBuf, String), String> {
             program.freeze_native_diagnostics();
-            // The loader decodes the metadata's records with this same compiler
-            // (`NativeProgramNamespace::decode`), which compiles a deferred function's body
-            // again; lower the code from that program, not from the in-memory one, so the
-            // image's code names the records its loader will hold.
-            let records = match namespace {
-                Some(namespace) => {
-                    let decoded = std::rc::Rc::new(namespace.encode(program)?);
-                    namespace.decode(decoded)?
-                }
-                None => program.clone(),
-            };
-            records.freeze_native_diagnostics();
-            let options = quench_runtime::NativeJsCodegenOptions {
-                hand_back_on_leave: self.hand_back_on_leave,
-                ..Default::default()
-            };
-            let module = lower_native_js_module_with_options(&records, &format!("quench_{name}"), options)?;
-            // A linked unit must name every address as a symbol. Where a body embedded this
-            // process's pointer instead, the image faults there when another process runs it.
-            for (definition, address) in module.process_addresses() {
-                eprintln!(
-                    "warning: {definition} embeds the compiling process's address {address:#x}; \
-                     the image will fault there until the lowering names a symbol"
-                );
-            }
+            let module = lower_native_js_module_for(program, &format!("quench_{name}"), NativeJsCodegenOptions::default(), target)?;
             let symbol = module.entry_table_symbol().to_owned();
             for function in &module.functions {
                 if let quench_runtime::NativeFunction::Import { name, .. } = function {
                     required_exports.insert(name.clone());
                 }
             }
-            let object = emit_native_module(name, module.functions, module.data)?;
+            let object = emit_native_module_for(name, module.functions, module.data, target)?;
             let object_path = directory.join(format!("{name}.o"));
             fs::write(&object_path, object).map_err(|error| error.to_string())?;
             objects.push(object_path);
             let metadata = directory.join(format!("{name}.bin"));
             match namespace {
-                Some(namespace) => fs::write(&metadata, namespace.encode_with_external_source(&records)?).map_err(|error| error.to_string())?,
-                None => records.write_binary(&metadata)?,
+                Some(namespace) => fs::write(&metadata, namespace.encode_with_external_source(program)?).map_err(|error| error.to_string())?,
+                None => program.write_binary(&metadata)?,
             }
             Ok((metadata, symbol))
         };
@@ -214,10 +185,6 @@ impl SourceManifest {
 
     /// Node SDK policies are Rust; only startup inputs can contribute guest source.
     /// Keep this entry point for callers combining bootstrap and application manifests.
-    /// Whether the image's bodies hand a leave back to the VM, which only its support policy
-    /// may allow (`--dynamic-source`).
-    pub fn set_hand_back_on_leave(&mut self, hand_back: bool) { self.hand_back_on_leave = hand_back; }
-
     pub fn capture_for_graph(_graph: &DependencyGraph) -> Result<Self, String> {
         Self::capture_bootstrap()
     }
@@ -278,7 +245,7 @@ impl SourceManifest {
                 NativeSourceCompilation::SyntaxError(message) => syntax_errors.push(DeferredSourceSyntaxError { key, message }),
             }
         }
-        Ok(CompiledSources { entry: compiler.finish(entry)?, units, syntax_errors, assets: self.assets, hand_back_on_leave: self.hand_back_on_leave })
+        Ok(CompiledSources { entry: compiler.finish(entry)?, units, syntax_errors, assets: self.assets })
     }
 }
 

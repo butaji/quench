@@ -7,16 +7,23 @@
 //! the operators. The op rows are `machine/rows.rs`; `vm/compiled/emit_machine.rs` implements the
 //! traits as Cranelift instructions, the one place that builds them by hand.
 
+// The stencil build includes this file by path, where nested modules resolve from `staged/`.
+#[cfg_attr(stencil_build, path = "machine/rows.rs")]
 mod rows;
 
-pub(crate) use rows::{Binary, Extend, Lane, Relation, Unary};
+pub(crate) use rows::{Binary, Extend, Lane, MachineOperator, Order, Relation, Unary};
 
 use super::wasm::Width;
+#[cfg(not(stencil_build))]
 use super::wasm_memory::Access;
+#[cfg(not(stencil_build))]
 use super::wasm_simd::{Lanes, Native};
 use super::wasm_float::{Float, Truncation};
+#[cfg(not(stencil_build))]
 use crate::wasm::V128_BYTES;
-use crate::{WasmTrap, WasmType};
+use crate::WasmTrap;
+#[cfg(not(stencil_build))]
+use crate::WasmType;
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{I64BinaryOperator as IntegerBinary, I64UnaryOperator as IntegerUnary};
@@ -100,6 +107,8 @@ pub(crate) trait MachineScalar: Machine {
 
 /// A machine that addresses memory and calls code: loads and stores of a lane, or of an `Access`'s
 /// bytes, at an address with the flags the caller proved (`Flags`), and calls of code that takes
+// The stencil build runs the operator layer only; access, flow and vectors are the backends'.
+#[cfg(not(stencil_build))]
 /// and returns words. Open to extension: the rules over it name no layout.
 pub(crate) trait MachineAccess: MachineScalar {
     /// What an access carries beside its address: its alias region and whether it may trap.
@@ -163,6 +172,8 @@ pub(crate) trait MachineAccess: MachineScalar {
 }
 
 /// A machine with blocks: the transfers between them, each carrying words as the target's
+// The stencil build runs the operator layer only; access, flow and vectors are the backends'.
+#[cfg(not(stencil_build))]
 /// parameters.
 pub(crate) trait MachineFlow: MachineScalar {
     type Block: Copy;
@@ -197,7 +208,7 @@ pub(crate) trait MachineFlow: MachineScalar {
 
 /// A machine that continues in the code it calls, so the call is the end of the function: a tail
 /// call of `target`, or of the code at an address under a `signature`, on `arguments`.
-#[cfg(all(feature = "aot", feature = "jit"))]
+#[cfg(all(feature = "jit", not(stencil_build)))]
 pub(crate) trait MachineTail: MachineAccess + MachineFlow {
     fn tail_call(&mut self, target: Self::Function, arguments: &[Self::Word]);
     fn tail_call_indirect(&mut self, signature: Self::Signature, target: Self::Word, arguments: &[Self::Word]);
@@ -205,10 +216,12 @@ pub(crate) trait MachineTail: MachineAccess + MachineFlow {
 
 /// A machine with vector registers: lane-wise operations by a (lane shape, operator) row, views
 /// of a vector's bits in a lane shape, constants, shuffles, and moves through stack words. A
+// The stencil build runs the operator layer only; access, flow and vectors are the backends'.
+#[cfg(not(stencil_build))]
 /// vector is a `Word` of the machine, loaded and stored as the `Lane::V128`.
 pub(crate) trait MachineVector: MachineAccess {
     /// The row's operation on `left` (and `right`, a vector or a scalar shift count).
-    fn lane_operation(&mut self, native: Native, left: Self::Word, right: Option<Self::Word>) -> Self::Word;
+    fn operation_in_lane(&mut self, native: Native, left: Self::Word, right: Option<Self::Word>) -> Self::Word;
     /// `value`, a vector, with the lane shape `shape`: the same bits.
     fn vector_view(&mut self, shape: Lanes, value: Self::Word) -> Self::Word;
     /// The vector whose bits are `bits`.

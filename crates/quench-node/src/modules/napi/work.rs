@@ -559,14 +559,6 @@ node_api! {
     fn napi_async_destroy(env: *mut Env, _context: *mut c_void) -> Status {
         api(env, |_, _| Ok(()))
     }
-
-    fn napi_open_callback_scope(env: *mut Env, _resource: NapiValue, _context: *mut c_void, result: *mut *mut c_void) -> Status {
-        api(env, |env, _| out(result, (env as *const Env).cast_mut().cast()))
-    }
-
-    fn napi_close_callback_scope(env: *mut Env, scope: *mut c_void) -> Status {
-        api(env, |_, _| if scope.is_null() { Err(Status::InvalidArg) } else { Ok(()) })
-    }
 }
 
 /// Deliver one thread-safe function's queued calls; finalize it once closed and empty.

@@ -57,64 +57,6 @@ pub(crate) enum WasmInitializerEffect<'a> {
     },
 }
 
-enum InitializerType {
-    Value(WasmType),
-    Function(u32),
-}
-
-impl InitializerType {
-    fn matches(&self, expected: WasmType, signatures: Option<&super::WasmSignatures>) -> bool {
-        let actual = match (self, signatures) {
-            (Self::Function(function), Some(pool)) => {
-                let Some(ty) = pool.function_reference_type(*function as usize) else {
-                    return false;
-                };
-                // Embeddings have an implicit final function type, without a
-                // module declaration index. Declared functions use the ordinary
-                // reference subtype operation, including static import exactness.
-                if !ty.requires_declarations()
-                    && let WasmType::Reference {
-                        kind: super::WasmReferenceKind::DeclaredFunction { index, exact },
-                        ..
-                    } = expected
-                    {
-                        return pool.function_type_index(*function as usize).is_some_and(
-                            |actual| {
-                                pool.matches_declaration(actual, &pool.declarations, index, exact)
-                            },
-                        );
-                    }
-                ty
-            }
-            (Self::Function(_), None)
-                if matches!(
-                    expected,
-                    WasmType::Reference {
-                        kind: super::WasmReferenceKind::DeclaredFunction { .. },
-                        ..
-                    }
-                ) =>
-            {
-                return true;
-            }
-            (Self::Function(_), None) => WasmType::FUNC,
-            (Self::Value(ty), _) => *ty,
-        };
-        match signatures {
-            Some(pool) => pool
-                .declarations
-                .value_subtype(actual, &pool.declarations, expected),
-            None if actual.requires_declarations() || expected.requires_declarations() => {
-                match (actual.reference_type(), expected.reference_type()) {
-                    (Some(source), Some(target)) => !source.is_nullable() || target.is_nullable(),
-                    _ => false,
-                }
-            }
-            None => actual.is_subtype_of(expected),
-        }
-    }
-}
-
 /// The declaration's result contract and admitted initializer operations.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WasmConstantExpression {
@@ -144,233 +86,8 @@ impl From<u32> for WasmConstantExpression {
 }
 
 impl WasmConstantExpression {
-    pub(crate) fn produces_non_null_function(&self) -> bool {
-        matches!(&self.representation,
-            ConstantExpression::Dependent { operators, .. }
-                if matches!(operators.as_ref(), [ConstantOperator::Function(_)]))
-    }
-
     pub fn value_type(&self) -> WasmType {
         self.expected
-    }
-
-    pub(crate) fn validate(&self, name: &str, globals: &[WasmGlobal]) -> Result<(), Diagnostic> {
-        self.validate_in(name, globals, None)
-    }
-
-    fn validate_in(
-        &self,
-        name: &str,
-        globals: &[WasmGlobal],
-        signatures: Option<&super::WasmSignatures>,
-    ) -> Result<(), Diagnostic> {
-        let expected = self.expected;
-        let error = |message: &str| Diagnostic::unsupported(name, message);
-        let ConstantExpression::Dependent { operators } = &self.representation else {
-            return Ok(());
-        };
-        // Aggregate storage types require the completed declaration graph.
-        // Full module validation runs before any instance effects.
-        if signatures.is_none()
-            && operators.iter().any(|op| {
-                matches!(
-                    op,
-                    ConstantOperator::Struct { .. } | ConstantOperator::Array { .. }
-                )
-            })
-        {
-            return Ok(());
-        }
-        let mut stack = Vec::new();
-        for operator in operators.iter() {
-            let ty = match operator {
-                ConstantOperator::Value(value) => value.ty(),
-                ConstantOperator::Null(heap) => {
-                    let reference = wasmparser::RefType::new(true, *heap)
-                        .ok_or_else(|| error("invalid Wasm null type"))?;
-                    let ty = wasmparser::ValType::Ref(reference);
-                    match signatures {
-                        Some(pool) => pool.declarations.callable_value_type(ty),
-                        None => WasmType::from_wasm(ty)
-                            .or_else(|| expected.requires_declarations().then_some(expected)),
-                    }
-                    .ok_or_else(|| error("unsupported Wasm null type"))?
-                }
-                ConstantOperator::Function(index) => {
-                    if signatures
-                        .is_some_and(|pool| pool.function_type_index(*index as usize).is_none())
-                    {
-                        return Err(error("Wasm initializer function index out of bounds"));
-                    }
-                    stack.push(InitializerType::Function(*index));
-                    continue;
-                }
-                ConstantOperator::Array { index, mode } => {
-                    let pool = signatures
-                        .ok_or_else(|| error("Wasm array initializer requires declarations"))?;
-                    let field = pool
-                        .declarations
-                        .array_field(*index)
-                        .ok_or_else(|| error("invalid Wasm array initializer declaration"))?;
-                    let ty = match field.element_type {
-                        wasmparser::StorageType::I8 | wasmparser::StorageType::I16 => WasmType::I32,
-                        wasmparser::StorageType::Val(ty) => pool
-                            .declarations
-                            .callable_value_type(ty)
-                            .ok_or_else(|| error("unsupported Wasm array initializer element"))?,
-                    };
-                    let operands = match mode {
-                        ArrayConstructor::Repeated | ArrayConstructor::Default => {
-                            if !stack
-                                .pop()
-                                .is_some_and(|actual| actual.matches(WasmType::I32, signatures))
-                            {
-                                return Err(error("Wasm array initializer length type mismatch"));
-                            }
-                            if *mode == ArrayConstructor::Default {
-                                if ty.default_value().is_none() {
-                                    return Err(error(
-                                        "non-defaultable Wasm array initializer element",
-                                    ));
-                                }
-                                0
-                            } else {
-                                1
-                            }
-                        }
-                        ArrayConstructor::Fixed(count) => *count as usize,
-                    };
-                    if operands > stack.len() {
-                        return Err(error("Wasm array initializer operand underflow"));
-                    }
-                    for _ in 0..operands {
-                        if !stack
-                            .pop()
-                            .is_some_and(|actual| actual.matches(ty, signatures))
-                        {
-                            return Err(error("Wasm array initializer element type mismatch"));
-                        }
-                    }
-                    WasmType::Reference {
-                        kind: super::WasmReferenceKind::DeclaredGc {
-                            index: *index,
-                            exact: true,
-                        },
-                        nullable: false,
-                    }
-                }
-                ConstantOperator::Struct { index, mode } => {
-                    let pool = signatures
-                        .ok_or_else(|| error("Wasm struct initializer requires declarations"))?;
-                    let fields = pool
-                        .declarations
-                        .struct_fields(*index)
-                        .ok_or_else(|| error("invalid Wasm struct initializer declaration"))?;
-                    let descriptor = pool.declarations.descriptor_type(*index);
-                    if mode.described() != descriptor.is_some() {
-                        return Err(error("Wasm struct constructor descriptor mismatch"));
-                    }
-                    if let Some(ty) = descriptor {
-                        let actual = stack.pop().ok_or_else(|| {
-                            error("Wasm descriptor initializer operand underflow")
-                        })?;
-                        if !actual.matches(ty, signatures) {
-                            return Err(error("Wasm descriptor initializer type mismatch"));
-                        }
-                    }
-                    for field in fields.iter().rev() {
-                        let ty = match field.element_type {
-                            wasmparser::StorageType::I8 | wasmparser::StorageType::I16 => {
-                                WasmType::I32
-                            }
-                            wasmparser::StorageType::Val(ty) => {
-                                pool.declarations.callable_value_type(ty).ok_or_else(|| {
-                                    error("unsupported Wasm struct initializer field")
-                                })?
-                            }
-                        };
-                        if mode.defaulted() {
-                            if ty.default_value().is_none() {
-                                return Err(error("non-defaultable Wasm struct initializer field"));
-                            }
-                        } else {
-                            let actual = stack.pop().ok_or_else(|| {
-                                error("Wasm struct initializer operand underflow")
-                            })?;
-                            if !actual.matches(ty, signatures) {
-                                return Err(error("Wasm struct initializer field type mismatch"));
-                            }
-                        }
-                    }
-                    WasmType::Reference {
-                        kind: super::WasmReferenceKind::DeclaredGc {
-                            index: *index,
-                            exact: true,
-                        },
-                        nullable: false,
-                    }
-                }
-                ConstantOperator::Global(index) => {
-                    globals
-                        .get(*index as usize)
-                        .filter(|global| !global.mutable)
-                        .ok_or_else(|| error("invalid Wasm constant global dependency"))?;
-                    WasmGlobal::value_type(globals, *index as usize)
-                        .ok_or_else(|| error("invalid Wasm constant global type"))?
-                }
-                ConstantOperator::ExternalConversion(conversion) => {
-                    let input = stack
-                        .pop()
-                        .ok_or_else(|| error("Wasm conversion initializer operand underflow"))?;
-                    if !input.matches(conversion.input_type(), signatures) {
-                        return Err(error("Wasm conversion initializer operand type mismatch"));
-                    }
-                    let nullable = matches!(
-                        input,
-                        InitializerType::Value(WasmType::Reference { nullable: true, .. })
-                    );
-                    conversion.output_type(nullable)
-                }
-                ConstantOperator::I31 => {
-                    if !matches!(stack.pop(), Some(InitializerType::Value(WasmType::I32))) {
-                        return Err(error("Wasm i31 initializer operand type mismatch"));
-                    }
-                    super::i31::REFERENCE_TYPE
-                }
-                ConstantOperator::I32(_) | ConstantOperator::I64(_) => {
-                    let ty = if matches!(operator, ConstantOperator::I32(_)) {
-                        WasmType::I32
-                    } else {
-                        WasmType::I64
-                    };
-                    if !stack
-                        .pop()
-                        .is_some_and(|actual| actual.matches(ty, signatures))
-                        || !stack
-                            .pop()
-                            .is_some_and(|actual| actual.matches(ty, signatures))
-                    {
-                        return Err(error("Wasm constant operand type mismatch"));
-                    }
-                    ty
-                }
-            };
-            stack.push(InitializerType::Value(ty));
-        }
-        let valid = stack.len() == 1 && stack[0].matches(expected, signatures);
-        if !valid {
-            return Err(error("invalid Wasm constant expression result"));
-        }
-        Ok(())
-    }
-
-    pub(crate) fn validate_functions(
-        &self,
-        name: &str,
-        signatures: &super::WasmSignatures,
-        globals: &[WasmGlobal],
-    ) -> Result<(), Diagnostic> {
-        self.validate_in(name, globals, Some(signatures))
     }
 
     pub(crate) fn evaluate(
@@ -390,8 +107,9 @@ impl WasmConstantExpression {
             let value = match *operator {
                 ConstantOperator::Value(value) => value,
                 ConstantOperator::Null(heap) => {
+                    // The validator checks the null heap type.
                     let reference = wasmparser::RefType::new(true, heap)
-                        .ok_or_else(|| error("invalid Wasm null type"))?;
+                        .expect("validated: null heap type");
                     let ty = wasmparser::ValType::Ref(reference);
                     let ty = match declarations {
                         Some(owner) => owner.callable_value_type(ty),
@@ -414,19 +132,17 @@ impl WasmConstantExpression {
                             base = stack
                                 .len()
                                 .checked_sub(count as usize)
-                                .ok_or_else(|| error("Wasm array initializer operand underflow"))?;
+                                .expect("validated: array initializer operands");
                             WasmArrayInitializer::Fixed(&stack[base..])
                         }
                         ArrayConstructor::Default | ArrayConstructor::Repeated => {
                             let Some(WasmValue::I32(count)) = stack.pop() else {
-                                return Err(error("Wasm array initializer length type mismatch"));
+                                unreachable!("validated: array initializer length is i32")
                             };
                             let initialization = if mode == ArrayConstructor::Default {
                                 WasmArrayInitializer::Default(count as u32)
                             } else {
-                                let value = stack.pop().ok_or_else(|| {
-                                    error("Wasm array initializer operand underflow")
-                                })?;
+                                let value = stack.pop().expect("validated: repeated array value");
                                 WasmArrayInitializer::Repeated {
                                     count: count as u32,
                                     value,
@@ -451,16 +167,14 @@ impl WasmConstantExpression {
                         .struct_fields(index)
                         .ok_or_else(|| error("invalid Wasm struct initializer declaration"))?;
                     let descriptor = if mode.described() {
-                        Some(stack.pop().ok_or_else(|| {
-                            error("Wasm descriptor initializer operand underflow")
-                        })?)
+                        Some(stack.pop().expect("validated: descriptor initializer operand"))
                     } else {
                         None
                     };
                     let base = stack
                         .len()
                         .checked_sub(if mode.defaulted() { 0 } else { fields.len() })
-                        .ok_or_else(|| error("Wasm struct initializer operand underflow"))?;
+                        .expect("validated: struct initializer operands");
                     let result = dependency(WasmInitializerEffect::Struct {
                         index,
                         fields: if mode.defaulted() {
@@ -480,50 +194,39 @@ impl WasmConstantExpression {
                     dependency(WasmInitializerEffect::Function(index))?
                 }
                 ConstantOperator::ExternalConversion(conversion) => {
-                    let value = stack
-                        .pop()
-                        .ok_or_else(|| error("Wasm conversion initializer operand underflow"))?;
+                    let value = stack.pop().expect("validated: conversion initializer operand");
                     dependency(WasmInitializerEffect::ExternalConversion { conversion, value })?
                 }
                 ConstantOperator::I31 => {
-                    let value = stack
-                        .pop()
-                        .ok_or_else(|| error("Wasm constant operand underflow"))?;
+                    let value = stack.pop().expect("validated: i31 operand");
                     super::i31::I31Operator::New
                         .apply(value)
                         .map_err(|_| error("invalid Wasm i31 initializer"))?
                 }
                 ConstantOperator::I32(_) | ConstantOperator::I64(_) => {
-                    let right = stack
-                        .pop()
-                        .ok_or_else(|| error("Wasm constant operand underflow"))?;
-                    let left = stack
-                        .pop()
-                        .ok_or_else(|| error("Wasm constant operand underflow"))?;
+                    let right = stack.pop().expect("validated: binary constant operands");
+                    let left = stack.pop().expect("validated: binary constant operands");
                     let value = match (operator, left, right) {
                         (
                             ConstantOperator::I32(op),
                             WasmValue::I32(left),
                             WasmValue::I32(right),
-                        ) => op.apply(left, right),
+                        ) => op.evaluate(left, right).map(WasmValue::I32),
                         (
                             ConstantOperator::I64(op),
                             WasmValue::I64(left),
                             WasmValue::I64(right),
-                        ) => op.apply(left, right),
-                        _ => return Err(error("Wasm constant operand type mismatch")),
+                        ) => op.evaluate(left, right),
+                        _ => unreachable!("validated: constant operands match the operator"),
                     };
                     value.map_err(|trap| Diagnostic::unsupported(name, trap.to_string()))?
                 }
             };
             stack.push(value);
         }
-        let value = stack
-            .pop()
-            .ok_or_else(|| error("empty Wasm constant expression"))?;
-        if !stack.is_empty() || !value.fits_type(*expected) {
-            return Err(error("invalid Wasm constant expression result"));
-        }
+        // The validator checks that the expression leaves one value of the declared type.
+        let value = stack.pop().expect("validated: constant expression result");
+        debug_assert!(stack.is_empty() && value.fits_type(*expected));
         Ok(value)
     }
 }
@@ -617,7 +320,6 @@ impl Engine {
                             operators: admitted.into(),
                         },
                     };
-                    expression.validate(name, globals)?;
                     return if dependent {
                         Ok(expression)
                     } else {
@@ -670,11 +372,10 @@ impl Engine {
             ));
         }
         let mut values: Vec<Option<WasmValue>> = Vec::with_capacity(globals.len());
-        for (index, global) in globals.iter().enumerate() {
+        for global in globals.iter() {
             let value = match &global.initial {
                 WasmGlobalInitializer::Import { .. } => None,
                 WasmGlobalInitializer::Expression(expression) => {
-                    expression.validate(name, &globals[..index])?;
                     // Type-correct admitted arithmetic cannot trap; absence means an unresolved global or function dependency.
                     expression
                         .evaluate(name, None, |dependency| {
@@ -755,7 +456,11 @@ mod tests {
                 .map(Ok),
         )
         .unwrap();
-        assert!(function.produces_non_null_function());
+        assert!(matches!(
+            &function.representation,
+            ConstantExpression::Dependent { operators, .. }
+                if matches!(operators.as_ref(), [ConstantOperator::Function(_)])
+        ));
         let concrete = WasmType::Reference {
             kind: super::super::WasmReferenceKind::DeclaredFunction {
                 index: 0,
@@ -808,18 +513,6 @@ mod tests {
                 .is_err()
         );
 
-        let signatures = super::super::WasmSignatures::with_imports(
-            "function-facts",
-            &[],
-            [],
-            &crate::WasmTypes::default(),
-        )
-        .unwrap();
-        assert!(
-            allocated
-                .validate_functions("missing-struct-declaration", &signatures, &[])
-                .is_err()
-        );
         for constructor in [
             Operator::ArrayNewDefault {
                 array_type_index: 0,
@@ -854,17 +547,7 @@ mod tests {
                     ))
                     .is_err()
             );
-            assert!(
-                array
-                    .validate_functions("missing-array-declaration", &signatures, &[])
-                    .is_err()
-            );
         }
-        assert!(
-            function
-                .validate_functions("function-facts", &signatures, &[])
-                .is_err()
-        );
         assert!(
             Engine::evaluate_wasm_constant_expression(
                 "function-facts",

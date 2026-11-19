@@ -3,20 +3,18 @@
 //! runtime errors without rewriting guest source.
 
 use oxc_allocator::Allocator;
-use oxc_ast::ast::{
-    AssignmentExpression, AssignmentTargetMaybeDefault, AssignmentTargetRest, Expression,
-    SimpleAssignmentTarget,
-};
-use oxc_ast_visit::{Visit, walk};
+use oxc_ast::ast::{Expression, Program, SimpleAssignmentTarget};
 use oxc_parser::{CALL_ASSIGNMENT_TARGET_MARKER, ParseOptions, Parser, ParserReturn};
-use oxc_span::{GetSpan, SourceType, Span};
+use oxc_span::{SourceType, Span};
+
+use super::checks::{Passes, walk};
 
 pub(super) fn parse_program<'a>(
     allocator: &'a Allocator,
     source: &'a str,
     source_type: SourceType,
 ) -> ParserReturn<'a> {
-    parse_program_with(allocator, source, source_type, None, None, None, false, false, Recognize::No, None)
+    parse_program_with(allocator, source, source_type, None, None, None, false, false, Recognize::No, None, None)
 }
 
 /// Which lazily parsed bodies are recognized without their trees (`ParseOptions::lazy_recognize`).
@@ -43,16 +41,22 @@ pub(super) fn parse_program_with<'a>(
     nested: bool,
     recognize: Recognize,
     lazy_body_skip: Option<oxc_parser::LazyBodySkip>,
+    declared: Option<&mut crate::bytecode::DeclaredTypes>,
 ) -> ParserReturn<'a> {
     let flat = recognize == Recognize::Flat;
     let recognize = recognize != Recognize::No && lazy_body_check.is_some() && crate::trace::Dev::Recognize.value() != Some("off");
-    Parser::new(allocator, source, source_type)
+    // A parse that skims without checking (a direct eval's, `BodyFacts::parse_collecting`) also
+    // skims its arrows and class methods: their bodies compile on first call, and a body the
+    // skim declines is parsed whole. A parse that checks its bodies keeps both whole.
+    let skim_only = lazy_body_skim.is_some() && lazy_body_check.is_none();
+    let mut parsed = Parser::new(allocator, source, source_type)
         .with_options(ParseOptions {
             allow_call_assignment_targets: true,
             lazy_function_bodies: lazy_from,
             lazy_nested_bodies: nested && lazy_body_check.is_some(),
             lazy_body_check,
-            lazy_class_methods: lazy_body_skim.is_some(),
+            lazy_class_methods: skim_only,
+            lazy_skim_arrows: skim_only,
             lazy_body_skim,
             inherited_strict,
             lazy_recognize: recognize,
@@ -61,7 +65,14 @@ pub(super) fn parse_program_with<'a>(
             lazy_body_skip,
             ..ParseOptions::default()
         })
-        .parse()
+        .parse();
+    // Every compile parse of typed text admits it here, so a body compiled later (lazily,
+    // streamed, replayed) is the tree its load admitted.
+    if source_type.is_typescript() && parsed.diagnostics.is_empty() && !parsed.stack_exhausted {
+        let mut discarded = crate::bytecode::DeclaredTypes::default();
+        super::typescript::admit(allocator, &mut parsed.program, declared.unwrap_or(&mut discarded));
+    }
+    parsed
 }
 
 pub(super) fn call_target<'s, 'a>(
@@ -85,55 +96,7 @@ pub(super) fn invalid_parsed_target(parsed: &ParserReturn<'_>) -> Option<Span> {
     parsed.has_call_assignment_targets.then(|| invalid_target(&parsed.program)).flatten()
 }
 
-pub(super) fn invalid_target(program: &oxc_ast::ast::Program<'_>) -> Option<Span> {
-    struct Targets {
-        invalid: Option<Span>,
-    }
-    impl<'a> Visit<'a> for Targets {
-        fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
-            if assignment.operator.is_logical()
-                && assignment
-                    .left
-                    .as_simple_assignment_target()
-                    .and_then(call_target)
-                    .is_some()
-            {
-                self.invalid.get_or_insert_with(|| assignment.left.span());
-            }
-            walk::walk_assignment_expression(self, assignment);
-        }
-
-        fn visit_assignment_target_maybe_default(
-            &mut self,
-            target: &AssignmentTargetMaybeDefault<'a>,
-        ) {
-            let binding = match target {
-                AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(default) => {
-                    Some(&default.binding)
-                }
-                _ => target.as_assignment_target(),
-            };
-            if let Some(call) = binding
-                .and_then(|binding| binding.as_simple_assignment_target())
-                .and_then(call_target)
-            {
-                self.invalid.get_or_insert_with(|| call.span());
-            }
-            walk::walk_assignment_target_maybe_default(self, target);
-        }
-
-        fn visit_assignment_target_rest(&mut self, rest: &AssignmentTargetRest<'a>) {
-            if let Some(call) = rest
-                .target
-                .as_simple_assignment_target()
-                .and_then(call_target)
-            {
-                self.invalid.get_or_insert_with(|| call.span());
-            }
-            walk::walk_assignment_target_rest(self, rest);
-        }
-    }
-    let mut targets = Targets { invalid: None };
-    targets.visit_program(program);
-    targets.invalid
+/// The first call assignment target Annex B rejects in `program`.
+pub(super) fn invalid_target(program: &Program<'_>) -> Option<Span> {
+    walk(program, Passes { targets: true, ..Passes::default() }).invalid_target
 }

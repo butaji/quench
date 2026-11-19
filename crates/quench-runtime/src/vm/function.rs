@@ -107,17 +107,21 @@ impl<H: Host> Vm<H> {
         if caller.as_known_closure().is_some() {
             caller = self.known_closure_function(caller)?;
         }
-        let Some(&FunctionRecord { kind: FunctionKind::User(program, id), realm, .. }) = self.heap.function(caller) else {
+        let Some(record) = self.heap.function(caller) else {
             return Ok(caller);
         };
+        let FunctionKind::User(program, id) = record.kind else {
+            return Ok(caller);
+        };
+        let realm = self.record_realm(record);
         let deferred = self
             .programs
             .get(program)
-            .is_some_and(|code| code.functions.get(id as usize).is_some_and(|slot| slot.header().prototype_unobservable));
+            .is_some_and(|code| code.functions.get(id as usize).is_some_and(|slot| slot.header().prototype_unobservable && !slot.header().is_arrow));
         let atom = self.intern_atom("prototype");
         if deferred && self.own_property(caller, atom).is_none() {
             let parent = self.realm_object_prototype(realm);
-            let prototype = self.heap.alloc(Cell::Object(Self::empty_object(parent)));
+            let prototype = self.heap.alloc_object(Self::empty_object(parent));
             self.define_instance_prototype(caller, atom, prototype, false, false)?;
         }
         Ok(caller)
@@ -176,16 +180,13 @@ impl<H: Host> Vm<H> {
                         });
                         return if visible { caller } else { Value::NULL };
                     }
-                    let Some(FunctionRecord {
-                        kind:
-                            FunctionKind::User(program_id, id),
-                        realm,
-                        ..
-                    }) = self.heap.function(caller)
-                    else {
+                    let Some(record) = self.heap.function(caller) else {
                         return Value::NULL;
                     };
-                    let visible = *realm == self.realm.globals
+                    let FunctionKind::User(program_id, id) = &record.kind else {
+                        return Value::NULL;
+                    };
+                    let visible = self.record_realm(record) == self.realm.globals
                         && self.programs.get(*program_id).is_some_and(|program| {
                             program.function_get(*id as usize).is_some_and(|metadata| {
                                 !metadata.strict && !metadata.is_async && !metadata.is_generator
@@ -227,12 +228,10 @@ impl<H: Host> Vm<H> {
                 .chain(frame.original_arguments.iter().copied())
                 .collect::<Vec<_>>(),
         );
-        let arguments = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let arguments = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.realm_object_prototype(self.realm.globals)),
                 args.clone(),
-            ),
-        });
+            ));
         self.with_call_roots([arguments], |vm| {
             vm.initialize_arguments_object(arguments, Some(function), &args.values_cow(), expose_callee)?;
             Ok(arguments)
@@ -257,12 +256,10 @@ impl<H: Host> Vm<H> {
         self.heap.release_root(target_root);
         let (prototype, length, name) = metadata?;
         let this = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let bound_args = self.heap.alloc(Cell::Array {
-            object: crate::heap::ArrayObject::new(
+        let bound_args = self.heap.alloc_array(crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 args.get(1..).unwrap_or_default().to_vec(),
-            ),
-        });
+            ));
         // `name` is "bound " and the target's name, interned as a builtin's name is.
         let name_atom = self.intern_atom(&format!("bound {name}"));
         let name = self.heap.alloc_string(self.atom_value(name_atom));
@@ -274,7 +271,7 @@ impl<H: Host> Vm<H> {
             let env = self.heap.alloc_object(crate::heap::Object::with_property_storage(object_prototype, storage, inline));
             let realm = self.realm.globals;
             let object = self.finished_closure_object(prototype, shape, [Value::number(length), name], None);
-            let function = self.heap.alloc_function(FunctionRecord { object, realm, kind: FunctionKind::Native(Native::FunctionBoundCall), env });
+            let function = self.alloc_function_in(FunctionRecord { object, kind: FunctionKind::Native(Native::FunctionBoundCall), env }, realm);
             self.capture_function_name_for_atom(function, name_atom);
             return Ok(function);
         }
@@ -371,7 +368,10 @@ impl<H: Host> Vm<H> {
             }
             return self.call_value(p, target, receiver, args);
         }
-        let mut combined = bound_args.to_vec();
+        // Filled once on the native stack, bound arguments then the call's: no heap
+        // allocation per call. The values are rooted as `call_value` roots its arguments.
+        let mut combined = smallvec::SmallVec::<[Value; 8]>::with_capacity(bound_args.len() + args.len());
+        combined.extend_from_slice(&bound_args);
         combined.extend_from_slice(args);
         self.call_value(p, target, receiver, &combined)
     }
@@ -419,7 +419,7 @@ impl<H: Host> Vm<H> {
 
     /// A plain call forwarding without an observable step of its own (`forwarded_call`) to a
     /// user function the loop pushes in place, with the forwarded receiver and arguments
-    /// (`lane_function_call`): `f.call(thisArg, ...args)`, a bound function without bound arguments.
+    /// (`function_call_miss`): `f.call(thisArg, ...args)`, a bound function without bound arguments.
     #[inline(never)]
     pub(super) fn try_forwarded_user_call(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: usize,
         callee: Value) -> Option<Result<StepResult, JsError>> {
@@ -435,6 +435,19 @@ impl<H: Host> Vm<H> {
     /// A bound function's target, bound `this` and bound arguments, read from the
     /// environment object `Function.prototype.bind` made (`env`); `None` for any other.
     pub(super) fn bound_function_parts(&self, env: Value) -> Option<(Value, Value, std::borrow::Cow<'_, [Value]>)> {
+        let (target, receiver, list) = self.bound_function_words(env)?;
+        let arguments = Some(list)
+            .filter(|list| !list.is_undefined())
+            .and_then(|list| self.heap.array_elements(list))
+            .map_or(std::borrow::Cow::Borrowed(&[][..]), |elements| elements.as_slice());
+        Some((target, receiver, arguments))
+    }
+
+    /// `bound_function_parts` as the three words the environment holds: the target, the bound
+    /// `this` and the list of bound arguments (`undefined` for none), which `bind` made and no
+    /// script can reach, so its elements never change. A call site may keep the words for a
+    /// bound function it calls again (`LaneStack::bound_call`).
+    pub(super) fn bound_function_words(&self, env: Value) -> Option<(Value, Value, Value)> {
         let data = self.object_data(env)?;
         let shape = data.shape();
         // The environment's three slots, read through the layout its shape keeps for every
@@ -472,10 +485,7 @@ impl<H: Host> Vm<H> {
                 self.own_property(env, self.runtime_atoms.bound_args),
             ),
         };
-        let arguments = arguments
-            .and_then(|list| self.heap.array_elements(list))
-            .map_or(std::borrow::Cow::Borrowed(&[][..]), |elements| elements.as_slice());
-        Some((target, receiver, arguments))
+        Some((target, receiver, arguments.unwrap_or(Value::UNDEFINED)))
     }
 }
 
@@ -528,6 +538,48 @@ impl ForwardedArgs for &[Value] {
     }
     fn prepend(&mut self, bound: &[Value]) -> bool {
         bound.is_empty()
+    }
+}
+
+/// A forwarded call's arguments read where the caller's window holds them until a bound
+/// prefix must lead them, then filled once, prefix then window, into an owned list: no copy
+/// of the window before the walk, and none moved again by the prepend.
+pub(super) enum WindowArgs<'a, const N: usize> {
+    Window(&'a [Value]),
+    Owned(smallvec::SmallVec<[Value; N]>),
+}
+
+impl<const N: usize> WindowArgs<'_, N> {
+    /// The values as an owned list, copied out of the window where they still lie there.
+    pub(super) fn into_owned(self) -> smallvec::SmallVec<[Value; N]> {
+        match self {
+            Self::Window(window) => smallvec::SmallVec::from_slice(window),
+            Self::Owned(values) => values,
+        }
+    }
+}
+
+impl<const N: usize> ForwardedArgs for WindowArgs<'_, N> {
+    fn shift(&mut self) -> Value {
+        match self {
+            Self::Window(window) => window.shift(),
+            Self::Owned(values) => values.shift(),
+        }
+    }
+    fn prepend(&mut self, bound: &[Value]) -> bool {
+        if bound.is_empty() {
+            return true;
+        }
+        match self {
+            Self::Window(window) => {
+                let mut values = smallvec::SmallVec::with_capacity(bound.len() + window.len());
+                values.extend_from_slice(bound);
+                values.extend_from_slice(window);
+                *self = Self::Owned(values);
+                true
+            }
+            Self::Owned(values) => values.prepend(bound),
+        }
     }
 }
 

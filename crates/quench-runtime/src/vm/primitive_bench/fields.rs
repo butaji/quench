@@ -1,7 +1,7 @@
 //! Guarded own-property operations. Miss kernels stop at rejection, before fallback.
 
 use super::{BATCH_VALUES, Bencher, Value, black_box};
-use crate::{Engine, ExecutionMode, bytecode::Op, test_host::TestHost};
+use crate::{Engine, ExecutionMode, test_host::TestHost};
 
 const READ: u8 = 0;
 const CACHED_STORE: u8 = 1;
@@ -29,7 +29,7 @@ fn cached_own<const OP: u8, const ARENA: bool, const MISS: bool>(
         .functions
         .iter()
         .flat_map(|f| f.instructions())
-        .find(|i| i.op().is_set_field())
+        .find(|i| matches!(crate::vm::compiled::decoded(i), Some(crate::staged::Operation::SetField { .. })))
         .unwrap();
     let (atom, site) = (instruction.atom_index(), instruction.cache_site_index());
     let mut vm = super::super::Vm::new(TestHost::default());

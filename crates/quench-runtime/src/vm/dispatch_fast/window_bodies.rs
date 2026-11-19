@@ -1,5 +1,5 @@
 //! The locals a lane body's rows read, by where its function runs: the VM frame's, or the environment window
-//! of the lane activation (`lane_activate_environment`), whose locals follow its environment entries and whose
+//! of the lane activation (`activate_environment_in_lane`), whose locals follow its environment entries and whose
 //! environment-owned ones live in the storage its slots word names.
 use super::*;
 
@@ -11,13 +11,6 @@ pub(in crate::vm) struct BodyLocals {
     pub(in crate::vm) count: usize,
     /// The word of the storage the environment-owned ones live in (`JsStepDispatch::environment_storage`).
     pub(in crate::vm) environment: u64,
-}
-
-/// The storage the environment window at register `registers` of `r` keeps its environment-owned locals in.
-#[inline(always)]
-pub(super) fn window_storage(r: Registers, registers: u16) -> *mut crate::heap::EnvironmentSlots {
-    // SAFETY: a window's slots word holds its storage's address, held in a `Value`'s bits (`lane_activate_environment`).
-    unsafe { std::mem::transmute::<Value, u64>(r.get(registers + WINDOW_SLOTS)) as *mut crate::heap::EnvironmentSlots }
 }
 
 /// The locals the body entered on lane context `cx` reads: the window's where its function's activation runs one
@@ -46,10 +39,10 @@ unsafe fn activation_window<H: Host>(cx: *mut LaneContext<H>) -> Option<BodyLoca
     let cx = std::ptr::NonNull::new(cx)?.as_ptr();
     // SAFETY: the caller's contract; the program's views outlive the lane run.
     unsafe {
-        if vm(cx).lane_stack.activations.is_empty() || (*cx).registers.env().is_deleted() {
+        if !vm(cx).lane_stack.has_frames() || (*cx).registers.env().is_deleted() {
             return None;
         }
-        let function = lane_running_function(cx);
+        let function = running_function_in_lane(cx);
         let layout = (&*(*cx).views).get(function as usize).and_then(super::super::program_store::derived_lane_view)?.environment_window?;
         let registers = (*(*cx).code).function(function as usize).registers;
         let entries = (*cx).registers.0.add(usize::from(registers));

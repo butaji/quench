@@ -1,6 +1,6 @@
 use super::*;
 
-mod spelling_tests; mod short_room_tests;
+mod spelling_tests; mod short_room_tests; mod rest_alias_tests;
 
 #[test]
 fn regression_global_var_lowering_checks_instruction_roles_before_slots() {
@@ -293,10 +293,37 @@ fn completion_capturing_host_scripts_keep_script_declarations() {
         EvalContext::default(),
         &[],
         &[],
+        None,
     )
     .unwrap();
     assert_eq!(eval.kind, crate::bytecode::ProgramKind::Eval);
     assert!(eval.root_variables_are_local());
+}
+
+#[test]
+fn provided_eval_text_is_kept_without_a_copy() {
+    use crate::bytecode::SourceText;
+    let source: std::rc::Rc<str> = std::rc::Rc::from("var kept = 1; kept + 1;");
+    let text_of = |program: &crate::bytecode::ResidualProgram| match &program.source.as_ref().unwrap().text {
+        SourceText::Local(kept) => kept.clone(),
+        other => panic!("expected local eval text, got {other:?}"),
+    };
+    // The text the caller holds is the one the program keeps.
+    let shared = Engine::specialize_eval_with_context(
+        &source, "eval-provided.js", &NoAtomPrefix, false, EvalContext::default(), &[], &[],
+        Some(SourceText::Local(source.clone())),
+    )
+    .unwrap();
+    assert!(std::rc::Rc::ptr_eq(&text_of(&shared), &source));
+    // Other text is copied as it was without one.
+    let other: std::rc::Rc<str> = std::rc::Rc::from("var kept = 2;");
+    let copied = Engine::specialize_eval_with_context(
+        &source, "eval-provided.js", &NoAtomPrefix, false, EvalContext::default(), &[], &[],
+        Some(SourceText::Local(other)),
+    )
+    .unwrap();
+    assert!(!std::rc::Rc::ptr_eq(&text_of(&copied), &source));
+    assert_eq!(&*text_of(&copied), &*source);
 }
 
 #[test]
@@ -369,32 +396,6 @@ fn records_lowered_on_first_read_match_records_lowered_at_load() {
 }
 
 #[test]
-fn partition_points_found_from_the_last_match_a_search() {
-    let table = [1, 3, 3, 7, 12];
-    let last = std::cell::Cell::new(0);
-    for bound in (0..15).chain((0..15).rev()).chain([9, 2, 14, 0, 3, 3]) {
-        let expected = table.partition_point(|value| *value < bound);
-        assert_eq!(super::partition_point_from(&table, &last, |value| *value < bound), expected, "{bound}");
-    }
-    // A point left past a shorter table is searched again.
-    let last = std::cell::Cell::new(10);
-    assert_eq!(super::partition_point_from(&table, &last, |value| *value < 4), 3);
-}
-
-#[test]
-fn source_lines_found_from_the_last_line_match_a_search() {
-    for starts in [vec![], vec![0], vec![0, 4, 4, 9, 30], vec![3, 8]] {
-        let last = std::cell::Cell::new(0);
-        // Offsets forwards, backwards and jumping, as emission visits them.
-        let offsets = (0..40).chain((0..40).rev()).chain([35, 2, 9, 9, 4, 0, 31]);
-        for offset in offsets {
-            let expected = starts.partition_point(|start| *start <= offset).saturating_sub(1);
-            assert_eq!(super::source_line_index(&starts, &last, offset), expected, "{starts:?} {offset}");
-        }
-    }
-}
-
-#[test]
 fn utf16_excess_scans_match_each_character() {
     let per_character = |text: &str| {
         let mut excess = 0;
@@ -411,7 +412,7 @@ fn utf16_excess_scans_match_each_character() {
         for second in pieces {
             for third in pieces {
                 let text = format!("{first}{second}x{third}{first}");
-                assert_eq!(super::source_utf16_excess(&text), per_character(&text), "{text:?}");
+                assert_eq!(crate::bytecode::source_utf16_excess(&text), per_character(&text), "{text:?}");
             }
         }
     }
@@ -472,4 +473,71 @@ fn strict_for_in_of_head_rejects_eval_and_arguments() {
     for head in ["for (eval.x in {});", "for (x of [eval]);", "for (let x in { eval: 1 });"] {
         assert!(!rejects(&format!("'use strict'; var x; {head}")), "{head}");
     }
+}
+
+/// A Script's root splits like a function: a top-level loop's block bindings are registers and
+/// its per-iteration copy is gone when no closure captures them, while its global declarations
+/// stay in the root's environment.
+#[test]
+fn a_script_root_keeps_only_global_declarations_in_its_environment() {
+    let script = Engine::specialize_script_with_atom_prefix(
+        "\"use strict\"; let s = 0; const f = n => { s += n }; for (let i = 0; i < 9; i++) { f(i) }",
+        "host.js",
+        &NoAtomPrefix,
+        super::ReleasedRecords::Dropped,
+    )
+    .unwrap();
+    let listing = script.disassemble();
+    let root = listing.split("function 1").next().unwrap();
+    assert!(!root.contains("CloneEnv"), "{root}");
+    assert_eq!(root.matches("LoadEnvLocal").count() + root.matches("StoreEnvLocal").count(), 3, "{root}");
+    // A loop whose closures capture its binding keeps its copy.
+    let capturing = Engine::specialize_script_with_atom_prefix(
+        "const fs = []; for (let i = 0; i < 3; i++) { fs.push(() => i) }",
+        "host.js",
+        &NoAtomPrefix,
+        super::ReleasedRecords::Dropped,
+    )
+    .unwrap();
+    assert!(capturing.disassemble().split("function 1").next().unwrap().contains("CloneEnv"));
+}
+
+/// A strict eval's vars are its own bindings: plain registers, neither environment slots nor
+/// stores to the global object.
+#[test]
+fn a_strict_eval_var_is_a_register() {
+    let eval = Engine::specialize_eval_with_context(
+        "\"use strict\"; var s = 0; for (let i = 0; i < 3; i++) { s++; }",
+        "eval.js",
+        &NoAtomPrefix,
+        false,
+        EvalContext::default(),
+        &[],
+        &[],
+        None,
+    )
+    .unwrap();
+    let listing = eval.disassemble();
+    for op in ["StoreName", "LoadName", "EnvLocal", "CloneEnv"] {
+        assert!(!listing.contains(op), "{listing}");
+    }
+}
+
+#[test]
+fn loop_invariant_constants_load_before_their_loop() {
+    let source = "function f() { let s = 0; for (let i = 0; i < 10; i++) s = s + 1; return s; }\nf();";
+    let program = Engine::specialize(source, "loop-constants.js").unwrap();
+    let mut loops = 0;
+    for function in program.functions.iter() {
+        for (tail, head) in function.back_edges() {
+            loops += 1;
+            assert!(
+                function.code[head..=tail]
+                    .iter()
+                    .all(|instruction| instruction.op() != Op::LoadConst),
+                "a loop body reloads a constant it could load once before the loop"
+            );
+        }
+    }
+    assert!(loops > 0);
 }

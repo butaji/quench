@@ -5,19 +5,18 @@
 //! `ConcreteInstance` adds the globals over borrowed cells, which the interpreter's global steps
 //! and the tests of the tier's instance primitives run.
 
-use super::ConcreteWasm;
-use super::machine::{Machine, MachineStage};
-use super::wasm::Width;
+use super::wasm_concrete::scalar_stage;
 use super::wasm_call::WasmTable;
-use super::wasm_float::{Float, Truncation};
 use super::wasm_instance::{Storage, WasmInstance};
+#[cfg(not(stencil_build))]
+use super::wasm_memory::WasmMemoryPair;
 use super::wasm_memory::{Access, WasmMemory, WasmMemoryWrite};
 use crate::heap::TableTarget;
-use crate::wasm::conversion::ScalarConversionOperator;
-use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
-use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
+#[cfg(not(stencil_build))]
+use crate::wasm::memory::MemoryStorage;
 use crate::wasm::memory::checked_range;
-use crate::{Value, WasmTrap};
+use crate::wasm::V128_BYTES;
+use crate::Value;
 
 /// A stage over a linear memory's bytes, which it reads.
 pub(crate) struct ConcreteBytes<'a> {
@@ -27,6 +26,15 @@ pub(crate) struct ConcreteBytes<'a> {
 /// A stage over a linear memory's bytes, which it reads and writes.
 pub(crate) struct ConcreteMemory<'a> {
     pub(crate) memory: &'a mut [u8],
+}
+
+/// A stage over two linear memories, the source's storage it reads the length of and the
+/// destination's it writes. The transfer runs through `MemoryStorage::copy_from`, which takes
+/// the locks of shared memory, so no lock is held across the two memories.
+#[cfg(not(stencil_build))]
+pub(crate) struct ConcretePair<'a> {
+    pub(crate) destination: &'a MemoryStorage,
+    pub(crate) source: &'a MemoryStorage,
 }
 
 /// A stage over an instance: the native slots of its globals by environment slot and its
@@ -44,43 +52,6 @@ pub(crate) struct ConcreteTable<'a> {
     pub(crate) related: &'a mut dyn FnMut(Value) -> bool,
 }
 
-/// Methods that are `ConcreteWasm`'s: one definition, delegated.
-macro_rules! delegated {
-    ($($name:ident($($argument:ident: $ty:ty),*) -> $result:ty;)+) => {$(
-        #[inline(always)]
-        fn $name(&mut self, $($argument: $ty),*) -> $result {
-            ConcreteWasm.$name($($argument),*)
-        }
-    )+};
-}
-
-/// The scalar primitives of a stage over an instance.
-macro_rules! scalar_stage {
-    ($($stage:ty),+) => {$(
-        impl Machine for $stage {
-            type Word = u64;
-        }
-
-        impl MachineStage for $stage {
-            type Exit = WasmTrap;
-
-            delegated! {
-                constant(width: Width, value: i64) -> u64;
-                operate(operator: Binary, width: Width, left: u64, right: u64) -> u64;
-                operate_unary(operator: Unary, width: Width, value: u64) -> u64;
-                operate_float(operator: FloatBinary, float: Float, left: u64, right: u64) -> u64;
-                operate_float_unary(operator: FloatUnary, float: Float, value: u64) -> u64;
-                float_unordered(float: Float, left: u64, right: u64) -> u64;
-                float_constant(float: Float, bits: u64) -> u64;
-                select(flag: u64, taken: u64, other: u64) -> u64;
-                truncation_overflows(truncation: Truncation, value: u64) -> u64;
-                convert(operator: ScalarConversionOperator, value: u64) -> u64;
-                trap_when(flag: u64, trap: WasmTrap) -> Result<(), WasmTrap>;
-            }
-        }
-    )+};
-}
-
 scalar_stage!(
     ConcreteInstance<'_>,
     ConcreteTable<'_>,
@@ -89,21 +60,35 @@ scalar_stage!(
 );
 
 impl WasmTable for ConcreteTable<'_> {
+    #[inline(always)]
     fn table_range_exceeds(&mut self, index: u64, extent: u64) -> u64 {
         range_past(self.elements.len(), index, extent)
     }
 
+    #[inline(always)]
     fn element_signature(&mut self, index: u64) -> u64 {
         self.targets[index as usize].signature.word()
     }
 
+    #[inline(always)]
     fn table_element(&mut self, index: u64) -> u64 {
         self.elements[index as usize].to_bits()
     }
 
     /// Equal ids are equivalent types; the closure knows the expected type, which it closes over.
+    #[inline(always)]
     fn signature_accepts(&mut self, reference: u64, signature: u64, expected: u64) -> u64 {
         u64::from(signature == expected || (self.related)(Value::from_bits(reference)))
+    }
+
+    #[inline(always)]
+    fn unless_equal(
+        &mut self,
+        signature: u64,
+        expected: u64,
+        otherwise: impl FnOnce(&mut Self) -> Result<u64, Self::Exit>,
+    ) -> Result<u64, Self::Exit> {
+        if signature == expected { Ok(1) } else { otherwise(self) }
     }
 }
 
@@ -132,17 +117,7 @@ fn access_bytes(access: Access, index: u64, offset: u32) -> std::ops::Range<usiz
 fn load_word(memory: &[u8], access: Access, index: u64, offset: u32) -> u64 {
     let mut word = [0u8; size_of::<u64>()];
     word[..access.bytes].copy_from_slice(&memory[access_bytes(access, index, offset)]);
-    let raw = u64::from_le_bytes(word);
-    let unused = u64::BITS - access.bytes as u32 * u8::BITS;
-    let value = if access.signed {
-        ((raw << unused) as i64) >> unused
-    } else {
-        raw as i64
-    };
-    match Width::of(access.ty) {
-        Some(width) => ConcreteWasm.constant(width, value),
-        None => raw,
-    }
+    access.loaded(u64::from_le_bytes(word))
 }
 
 /// Writes the low bytes of `value` as the checked `access` at `index + offset`.
@@ -150,6 +125,20 @@ fn load_word(memory: &[u8], access: Access, index: u64, offset: u32) -> u64 {
 fn store_word(memory: &mut [u8], access: Access, index: u64, offset: u32, value: u64) {
     let bytes = &value.to_le_bytes()[..access.bytes];
     memory[access_bytes(access, index, offset)].copy_from_slice(bytes);
+}
+
+/// The v128 at the checked `index + offset`, little-endian.
+#[inline(always)]
+fn load_vector_word(memory: &[u8], index: u64, offset: u32) -> u128 {
+    let mut word = [0u8; V128_BYTES];
+    word.copy_from_slice(&memory[access_bytes(Access::VECTOR, index, offset)]);
+    u128::from_le_bytes(word)
+}
+
+/// Writes the v128 `value` at the checked `index + offset`, little-endian.
+#[inline(always)]
+fn store_vector_word(memory: &mut [u8], index: u64, offset: u32, value: u128) {
+    memory[access_bytes(Access::VECTOR, index, offset)].copy_from_slice(&value.to_le_bytes());
 }
 
 /// The flag that `extent` units from `index` pass the end of `length` units: the shared range
@@ -165,6 +154,8 @@ fn range_past(length: usize, index: u64, extent: u64) -> u64 {
 macro_rules! readable_memory {
     ($($stage:ty),+) => {$(
         impl WasmMemory for $stage {
+            type Vector = u128;
+
             fn guarded(&self) -> bool {
                 false
             }
@@ -186,6 +177,11 @@ macro_rules! readable_memory {
             }
 
             #[inline(always)]
+            fn memory_load_vector(&mut self, index: u64, offset: u32) -> u128 {
+                load_vector_word(self.memory, index, offset)
+            }
+
+            #[inline(always)]
             fn range_exceeds(&mut self, index: u64, extent: u64) -> u64 {
                 range_past(self.memory.len(), index, extent)
             }
@@ -200,6 +196,11 @@ macro_rules! writable_memory {
             #[inline(always)]
             fn memory_store(&mut self, access: Access, index: u64, offset: u32, value: u64) {
                 store_word(self.memory, access, index, offset, value);
+            }
+
+            #[inline(always)]
+            fn memory_store_vector(&mut self, index: u64, offset: u32, value: u128) {
+                store_vector_word(self.memory, index, offset, value);
             }
 
             fn memory_fill(&mut self, index: u64, byte: u64, length: u64) {
@@ -218,3 +219,29 @@ macro_rules! writable_memory {
 
 readable_memory!(ConcreteBytes<'_>, ConcreteMemory<'_>, ConcreteInstance<'_>);
 writable_memory!(ConcreteMemory<'_>, ConcreteInstance<'_>);
+
+#[cfg(not(stencil_build))]
+scalar_stage!(ConcretePair<'_>);
+
+#[cfg(not(stencil_build))]
+impl WasmMemoryPair for ConcretePair<'_> {
+    #[inline(always)]
+    fn source_range_exceeds(&mut self, index: u64, extent: u64) -> u64 {
+        range_past(self.source.len(), index, extent)
+    }
+
+    #[inline(always)]
+    fn destination_range_exceeds(&mut self, index: u64, extent: u64) -> u64 {
+        range_past(self.destination.len(), index, extent)
+    }
+
+    #[inline(always)]
+    fn memory_transfer(&mut self, destination: u64, source: u64, length: u64) {
+        if length == 0 {
+            return;
+        }
+        let input = source as usize..(source + length) as usize;
+        let output = destination as usize..(destination + length) as usize;
+        self.destination.copy_from(self.source, input, output);
+    }
+}

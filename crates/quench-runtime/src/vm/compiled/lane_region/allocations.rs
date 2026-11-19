@@ -33,10 +33,7 @@ impl Lowering<'_, '_> {
             Allocation::Array { .. } | Allocation::RegExp { .. } | Allocation::Empty | Allocation::ConstArray { .. } | Allocation::ObjectPair { .. } =>
                 self.literal_completes(instruction, pc),
             Allocation::ObjectLiteral { window, .. } | Allocation::Concat { window } => plain && inside(window),
-            // A closure of the body's own frame promotes that frame's environment in the lane
-            // (`lane_new_closure`'s lane path); a template still needs a caller's literals.
-            Allocation::Closure { .. } => plain,
-            Allocation::Template { .. } => plain && callers,
+            Allocation::Closure { .. } | Allocation::Template { .. } => plain && callers,
         }
     }
 

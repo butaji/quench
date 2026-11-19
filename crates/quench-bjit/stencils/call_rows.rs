@@ -14,36 +14,48 @@
 //! leaves does not spill (the frame is already canonical).
 //!
 //! Helper row `call_helper`: holes V0 = the call record's pc (the fourth helper argument), V1 =
-//! the helper's address (`lane_body_call`); vm, residual and lane context come from the
+//! the helper's address (`body_call_helper`); vm, residual and lane context come from the
 //! dispatch payload behind the context. Successors: COMPLETED continues at NEXT; MISSED
 //! (nothing ran) leaves at the call's pc through EXIT0 (a leave that does not spill); LEFT and
 //! TERMINATED leave through EXIT1 with the (status, word) in r14, r15 (`leave_status`); BRANCHED
 //! (a step that took its conditional jump) continues at TAKEN, the reloads of the registers live
 //! at the jump's target.
 //!
-//! Direct row `call_direct_a<N>_<strict|sloppy>`: hole V0 = the address of the site's
-//! `CallRecord`. It checks the callee word and (sloppy) the receiver, admits the call with the
-//! shared `admit_native` row (one validity compare, one room check) plus the shadow frame's
-//! room, writes `N` arguments and `undefined` for the rest into the callee's window at the lane
-//! stack's top, pushes the shadow frame, calls the cell's entry with the body ABI (context,
+//! Semantic row `call_semantic`: holes V0 = the record's pc, V1 = the opcode's semantic entry, V2 = the
+//! record's operands, V3 = the jump target of the record (`u64::MAX` where it has none). The entry
+//! (`native_js_operation_entry`) runs the record on the activation's frame and writes its next PC to
+//! a word of this row's frame. Status 0 continues at TAKEN where the next PC is the target, else NEXT;
+//! any other status is a stop, which leaves through EXIT0 with (status, word) in r14, r15.
+//!
+//! Direct row `call_direct_a<N>_<strict|sloppy|lexical>[_unchecked]`: hole V0 = the address of the site's
+//! `CallRecord`. A checked row compares the callee word (the `_unchecked` row, whose callee a Stable fact
+//! holds, does not read the callee register) and (sloppy) binds the receiver (an arrow, lexical, binds
+//! none: its body finds its `this` in its environment, as `body_call_helper` passes it), admits the call with the
+//! shared `admit_native` row (one validity compare, one room check) plus the plain depth bound,
+//! writes `N` arguments and `undefined` for the rest into the callee's window at the lane
+//! stack's top, pushes the body's plain header (depth bumped, its body in the body table), calls the cell's entry with the body ABI (context,
 //! this, captures, window) and handles the returned (status, word) as the u-jit's direct call
-//! does. Successors: refusal before any effect, or a callee that was not entered (the stub),
+//! does. The arguments come from the places the record names (`argument_places`): a leading
+//! argument may be a pinned register's value (read from the entry state, its spill elided by the
+//! planner when it is dead after the call), else the window slot. Successors: refusal before any effect, or a callee that was not entered (the stub),
 //! goes to NEXT, which the planner makes the helper row; a completion stores the word to the
 //! call's register and goes to TAKEN (the reloads); any other status leaves through EXIT0 with
-//! (status, word) in r14, r15, the callee's shadow frames kept for the lane to materialize.
+//! (status, word) in r14, r15, the callee's body frames kept for the lane to materialize.
 //!
 //! Exit row `exit_here`: leaves through EXIT0 with every register as it came, so the exit stub
 //! writes the live pinned registers back: the lowering of an instruction whose operation only
 //! the interpreter runs.
 
-use crate::layout::shared_words::KIND_NATIVE;
-use crate::layout::call_record::{CallRecord, CALLEE_EXIT, LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_BODY_THREW, LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_RAISED, NATIVE_JS_STOPPED, REGISTER_BYTES, TERMINATED_STATUS};
-use crate::codes::{LAST_INT_PIN, PIN, PINF};
-use crate::heap_rows::{payload, word_at};
-use crate::layout::{ACTIVATION_KIND_OFFSET, CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_ACTIVATIONS_TOP, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_FRAMES_END, JS_STEP_LANE_VALUES_END, JS_STEP_LANE_VALUES_TOP, JS_STEP_RESIDUAL, JS_STEP_RETURNED_PC, JS_STEP_VM, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
+use crate::layout::call_record::{helper_outcome, CallRecord, DirectHole, HelperHole, LaneStatus, Outcome, CALLEE_EXIT, PLACED_ARGUMENTS, REGISTER_BYTES};
+use crate::codes::{DOUBLE_PINS, LAST_INT_PIN, MEM, PIN, PINF};
+use crate::heap_rows::{payload, set_context_word, word_at};
+use crate::layout::{CELL_BODY_AT, CELL_COUNTERS_AT, CELL_NUMBERS_AT, CELL_PROVEN_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_USES_THIS_AT, CELL_RECOVERY_AT, JS_STEP_ACTIVATION_COUNT, JS_STEP_BODY_TABLE, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_VALUES_END, JS_STEP_RESIDUAL, JS_STEP_VM, PLAIN_DEPTH_LIMIT, CONTEXT_BODY, CONTEXT_THIS, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
+use crate::places::Places;
 use crate::stage::StencilStage;
-use crate::staged::{call::admit_native, frame, value};
-use crate::words::{S, hole64, is_int, slot};
+use crate::staged::frame::{PLAIN_DEPTH_AT, PLAIN_REGISTERS_AT};
+use crate::staged::region::Region;
+use crate::staged::{call::admit_native, protocol, value, word_offset, CallFrame, CallOperation, Passed, Stage, Step};
+use crate::words::{Out, S, dead, hole64};
 use crate::{Row, Value};
 use core::mem::{offset_of, transmute};
 
@@ -54,23 +66,33 @@ unsafe extern "C" {
     static HOLE_EXIT1: u8;
 }
 
-/// The values holes of the call rows: the helper row's call pc and helper address, the direct
-/// row's record address.
-const HOLE_CALL_PC: u8 = 0;
-const HOLE_HELPER: u8 = 1;
-const HOLE_RECORD: u8 = 0;
-/// A direct row's call record index in the caller, which a raise names to the lane (`raising`).
-const HOLE_DIRECT_PC: u8 = 1;
+/// The last double register (xmm7, d7) a value may name: the double pins follow `PINF`.
+const LAST_DOUBLE_PIN: u8 = PINF + DOUBLE_PINS - 1;
+/// The semantic row's holes: the record's pc, the opcode's semantic entry, its operand record and its jump target.
+const HOLE_SEMANTIC_PC: u8 = 0;
+const HOLE_SEMANTIC: u8 = 1;
+const HOLE_OPERANDS: u8 = 2;
+const HOLE_TARGET: u8 = 3;
 /// Shift from a word count to bytes.
 const WORD_SHIFT: u32 = REGISTER_BYTES.trailing_zeros();
 
 /// `leave_status`: the leave a (status, word) in r14, r15 ends in, as every leave routine ends
 /// (`entry.rs`): the word in rax and the status in rdx, which `entry_body` swaps into the lane
 /// body ABI's (eax, rdx) and `entry_thunk` reads the word of.
+#[cfg(target_arch = "x86_64")]
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn leave_status() {
     core::arch::naked_asm!("mov rax, r15", "mov edx, r14d", "ret")
+}
+
+/// AArch64 `leave_status`: the first two pinned ints (x22 status, x23 word, `entry_a64.rs`) into the
+/// leave routines' (x0 word, x1 status).
+#[cfg(target_arch = "aarch64")]
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn leave_status() {
+    core::arch::naked_asm!("mov x0, x23", "mov w1, w22", "ret")
 }
 
 /// A lane body's return: its status and result word in (eax, rdx), as `BodyReturn`.
@@ -82,15 +104,18 @@ struct BodyReturn {
 
 /// A lane body's entry (`BodyEntry`): (context, receiver, capture word, registers).
 type BodyEntry = unsafe extern "C" fn(usize, u64, u64, usize) -> BodyReturn;
-/// A semantic helper (`lane_body_call`): (vm, residual, lane context, call pc) -> status.
-type Helper = unsafe extern "C" fn(u64, u64, u64, u64) -> u64;
-
-/// The state a successor receives where nothing is live: the frame and context, pinned
-/// registers zero.
-#[inline(always)]
-fn dead(s: &S) -> S {
-    S { frame: s.frame, ctx: s.ctx, p: Default::default(), f: Default::default() }
+/// A b-jit body's row entry (`entry_rows`, `EntryCell::rows`): (window, context, receiver, captures)
+/// -> (word, status), in the row ABI, which saves no callee-saved register.
+type RowsEntry = unsafe extern "rust-preserve-none" fn(usize, usize, u64, u64) -> RowsReturn;
+#[repr(C)]
+struct RowsReturn {
+    value: u64,
+    status: u64,
 }
+/// A semantic helper (`body_call_helper`): (vm, residual, lane context, call pc) -> status.
+type Helper = unsafe extern "C" fn(u64, u64, u64, u64) -> u64;
+/// A semantic entry (`native_js_operation_entry`): (context, pc, operands, result word address) -> status.
+type SemanticEntry = unsafe extern "C" fn(usize, u64, usize, usize) -> i64;
 
 /// `dead` with a (status, word) for `leave_status` in the first two pinned ints.
 #[inline(always)]
@@ -102,9 +127,8 @@ fn leaving(s: &S, status: u32, word: u64) -> S {
 /// in the payload for the lane to unwind from (`LANE_BODY_THREW`).
 #[inline(always)]
 unsafe fn raising(s: &S, payload: usize, pc: u64) -> S {
-    // SAFETY: the payload is the live activation's.
-    unsafe { put(payload, JS_STEP_RETURNED_PC, pc) };
-    leaving(s, LANE_BODY_THREW, 0)
+    protocol::record_raised_pc(&mut StencilStage::from_hole(0), payload as u64, pc);
+    leaving(s, LaneStatus::Threw as u32, 0)
 }
 
 macro_rules! go {
@@ -115,56 +139,119 @@ macro_rules! go {
     }};
 }
 
+/// The register index the record names at `field`, read as the frame's accesses are (`Region::Frame`: a call
+/// record lives on the lane stack).
 #[inline(always)]
-unsafe fn put(base: usize, offset: usize, word: u64) {
-    // SAFETY: a layout offset of a live record, as every staged store.
-    unsafe { ((base + offset) as *mut u64).write(word) }
+fn register_index(record: usize, field: usize) -> u16 {
+    // The planner stored the index in the live record, so the load reads a register number.
+    StencilStage::from_hole(0).load_u16(Region::Frame.mutable(), record as u64, field as i32) as u16
 }
 
-/// The frame slot's address of the register the record names at `field`.
+/// The word of the register the record names at `field`, in the caller's register file at `file`
+/// (the call protocol's `CallFrame::call_registers`), read through the frame region.
 #[inline(always)]
-unsafe fn register_slot(s: &S, record: usize, field: usize) -> usize {
-    // SAFETY: a register index the planner stored in a live record.
-    let register = unsafe { ((record + field) as *const u16).read() };
-    s.frame + usize::from(register) * REGISTER_BYTES
+unsafe fn read_register(file: u64, record: usize, field: usize) -> u64 {
+    // SAFETY: as `register_index`, a register of the live frame.
+    StencilStage::from_hole(0).load_u64(Region::Frame.mutable(), file, word_offset(register_index(record, field)))
 }
 
-/// The word of the register the record names at `field`.
+/// Writes `word` to the register the record names at `field` of the file at `file`.
 #[inline(always)]
-unsafe fn read_register(s: &S, record: usize, field: usize) -> u64 {
-    // SAFETY: as `register_slot`, a register of the live frame.
-    unsafe { (register_slot(s, record, field) as *const u64).read() }
+unsafe fn write_register(file: u64, record: usize, field: usize, word: u64) {
+    // SAFETY: as `read_register`.
+    StencilStage::from_hole(0).store_u64(Region::Frame.mutable(), file, word_offset(register_index(record, field)), word)
+}
+
+/// The word a call-protocol step produced; `None` where it left at its miss edge.
+#[inline(always)]
+fn word_of(step: Step<u64, ()>) -> Option<u64> {
+    match step {
+        Step::Value(word) => Some(word),
+        _ => None,
+    }
+}
+
+/// A packed step helper (`lane_body_step_packed`): (vm, residual, lane context, call pc, first word, immediate) -> status.
+type HelperPacked = unsafe extern "C" fn(u64, u64, u64, u64, u64, u64) -> u64;
+
+/// One helper row body, expanded for each entry (`PACKED`): the semantic helper at hole V1 runs the step at the
+/// call pc (hole V0), which for `PACKED` also takes the instruction's words (holes V2, V3) so it runs without
+/// decoding the record. The status the helper answers picks the successor. `call_helper` and `call_helper_packed`
+/// are the two expansions, so the row's contract is written once.
+macro_rules! helper_row {
+    ($(#[$doc:meta])* $name:ident, $packed:expr) => {
+        $(#[$doc])*
+        #[unsafe(no_mangle)]
+        pub unsafe extern "rust-preserve-none" fn $name(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
+            const PACKED: bool = $packed;
+            unsafe {
+                let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
+                let payload = payload(&s);
+                let (vm, residual, context) = (word_at(payload, JS_STEP_VM), word_at(payload, JS_STEP_RESIDUAL), word_at(payload, JS_STEP_LANE_CONTEXT));
+                let status = if PACKED {
+                    let helper: HelperPacked = transmute(hole64::<{ HelperHole::Helper as u8 }>() as usize);
+                    helper(vm, residual, context, hole64::<{ HelperHole::CallPc as u8 }>(), hole64::<{ HelperHole::PackedFirst as u8 }>(), hole64::<{ HelperHole::PackedImm as u8 }>())
+                } else {
+                    let helper: Helper = transmute(hole64::<{ HelperHole::Helper as u8 }>() as usize);
+                    helper(vm, residual, context, hole64::<{ HelperHole::CallPc as u8 }>())
+                };
+                match helper_outcome(status) {
+                    Outcome::Next => go!(HOLE_NEXT, dead(&s)),
+                    Outcome::Taken => go!(HOLE_TAKEN, dead(&s)),
+                    Outcome::Missed => {
+                        core::hint::cold_path();
+                        go!(HOLE_EXIT0, dead(&s))
+                    }
+                    Outcome::Left => {
+                        core::hint::cold_path();
+                        go!(HOLE_EXIT1, leaving(&s, LaneStatus::NativeJsStopped as u32, CALLEE_EXIT))
+                    }
+                    Outcome::Raised => {
+                        core::hint::cold_path();
+                        go!(HOLE_EXIT1, raising(&s, payload, hole64::<{ HelperHole::CallPc as u8 }>()))
+                    }
+                    Outcome::Terminated => {
+                        core::hint::cold_path();
+                        go!(HOLE_EXIT1, leaving(&s, LaneStatus::Terminated as u32, 0))
+                    }
+                }
+            }
+        }
+    };
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "rust-preserve-none" fn call_helper(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
+pub unsafe extern "rust-preserve-none" fn call_semantic(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
     unsafe {
         let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
-        let payload = payload(&s);
-        let helper: Helper = transmute(hole64::<HOLE_HELPER>() as usize);
-        let status = helper(word_at(payload, JS_STEP_VM), word_at(payload, JS_STEP_RESIDUAL), word_at(payload, JS_STEP_LANE_CONTEXT), hole64::<HOLE_CALL_PC>());
-        match status {
-            LANE_CALL_COMPLETED => go!(HOLE_NEXT, dead(&s)),
-            LANE_CALL_BRANCHED => go!(HOLE_TAKEN, dead(&s)),
-            LANE_CALL_MISSED => {
-                core::hint::cold_path();
-                go!(HOLE_EXIT0, dead(&s))
-            }
-            LANE_CALL_LEFT => {
-                core::hint::cold_path();
-                go!(HOLE_EXIT1, leaving(&s, NATIVE_JS_STOPPED, CALLEE_EXIT))
-            }
-            LANE_CALL_RAISED => {
-                core::hint::cold_path();
-                go!(HOLE_EXIT1, raising(&s, payload, hole64::<HOLE_CALL_PC>()))
-            }
-            _ => {
-                core::hint::cold_path();
-                go!(HOLE_EXIT1, leaving(&s, TERMINATED_STATUS, 0))
-            }
+        let entry: SemanticEntry = transmute(hole64::<HOLE_SEMANTIC>() as usize);
+        let mut word: u64 = 0;
+        let status = entry(s.ctx, hole64::<HOLE_SEMANTIC_PC>(), hole64::<HOLE_OPERANDS>() as usize, &raw mut word as usize);
+        if status != 0 {
+            core::hint::cold_path();
+            go!(HOLE_EXIT0, leaving(&s, status as u32, word));
+        }
+        if word == hole64::<HOLE_TARGET>() {
+            go!(HOLE_TAKEN, dead(&s))
+        } else {
+            go!(HOLE_NEXT, dead(&s))
         }
     }
 }
+
+helper_row!(
+    /// Helper row `call_helper`: holes V0 = the call record's pc (the fourth helper argument), V1 =
+    /// the helper's address (`body_call_helper`); vm, residual and lane context come from the dispatch payload
+    /// behind the context. Successors: COMPLETED continues at NEXT; MISSED (nothing ran) leaves at the call's
+    /// pc through EXIT0 (a leave that does not spill); LEFT and TERMINATED leave through EXIT1 with the
+    /// (status, word) in r14, r15 (`leave_status`); BRANCHED (a step that took its conditional jump) continues
+    /// at TAKEN, the reloads of the registers live at the jump's target.
+    call_helper, false);
+
+helper_row!(
+    /// Helper row `call_helper_packed`: `call_helper` with the instruction its planner decoded passed as holes
+    /// V2 and V3, so the helper runs it without decoding the record again. Its successors and exits are `call_helper`'s.
+    call_helper_packed, true);
 
 /// How a direct call ended.
 enum Entered {
@@ -178,95 +265,119 @@ enum Entered {
     Left(u32, u64),
 }
 
-/// The receiver the callee binds: strict takes it as it is, sloppy binds an object to itself and
-/// `undefined` or `null` to the record's global object; any other receiver is refused.
+/// The tagged words of the `ARGC` arguments a direct call passes, each from the place the planner named
+/// for it (`CallRecord::argument_places`): a pinned int's or double's canonical word, else the caller's
+/// window slot. Only the leading `PLACED_ARGUMENTS` may be pinned; the rest are read from the window.
 #[inline(always)]
-fn bound_this<const SLOPPY: bool>(record: usize, this: u64) -> Option<u64> {
-    if !SLOPPY {
-        return Some(this);
-    }
-    let object = value::is_direct_object(&mut StencilStage::from_hole(0), this);
-    let nullish = this == Value::UNDEFINED.to_bits() || this == Value::NULL.to_bits();
-    match (object, nullish) {
-        (true, _) => Some(this),
-        (false, true) => Some(word_at(record, offset_of!(CallRecord, global_this))),
-        (false, false) => None,
-    }
-}
-
-/// The callee's window at `top`: `ARGC` arguments from the caller's register `args`, then
-/// `undefined`, `room` registers in all. Volatile stores keep LLVM from turning the loop into a
-/// `memcpy` or `memset` call, which a stencil may not make.
-#[inline(always)]
-unsafe fn fill_window<const ARGC: usize>(args: usize, top: usize, room: usize) {
-    // SAFETY: `ARGC` argument registers lie in the caller's window; `room` words lie at the lane
-    // stack's top, which the admission proved free.
+unsafe fn argument_words<const ARGC: usize>(s: &S, file: u64, record: usize) -> [u64; ARGC] {
+    // SAFETY: the record's window register and places are the planner's, for the live frame; the
+    // window's `ARGC` registers lie in the caller's frame.
     unsafe {
-        let passed: [u64; ARGC] = (args as *const [u64; ARGC]).read();
-        for k in 0..room {
-            let word = if k < ARGC { *passed.get_unchecked(k) } else { Value::UNDEFINED.to_bits() };
-            ((top + (k << WORD_SHIFT)) as *mut u64).write_volatile(word);
+        let mut stage = StencilStage::from_hole(0);
+        let window = register_index(record, offset_of!(CallRecord, args_register));
+        let places = (record + offset_of!(CallRecord, argument_places)) as *const u8;
+        let mut words = [0u64; ARGC];
+        for (k, word) in words.iter_mut().enumerate() {
+            let place = if k < PLACED_ARGUMENTS { places.add(k).read() } else { MEM };
+            *word = match place {
+                PIN..=LAST_INT_PIN => value::int_word(&mut stage, s.p[usize::from(place - PIN)] as u32 as u64),
+                PINF..=LAST_DOUBLE_PIN => stage.box_number(s.f[usize::from(place - PINF)].to_bits()),
+                _ => stage.load_u64(Region::Frame.mutable(), file, word_offset(window + k as u16)),
+            };
         }
+        words
     }
 }
 
 /// What admission found: the callee's cell, the lane stack's values' top where its window goes, the
-/// window's size and the activations' top where its native frame goes.
+/// window's size, and the plain depth and innermost window a pop restores.
 struct Admitted {
     cell: usize,
     top: usize,
     room: usize,
-    shadow: usize,
+    /// The registers past the arguments the push starts `undefined` (`window_fill`): the rest are
+    /// written before any read, as the interpreter's own call leaves them.
+    fill: usize,
+    /// The plain depth and innermost window before the push.
+    depth: u64,
+    registers: u64,
+    /// The body table entry for the frame's body, at the total frame count (records + plain depth).
+    table: usize,
+    frames: u64,
+    /// The addresses of the lane's state words, read once at admission: every move writes through them.
+    tops: protocol::LaneTops<u64>,
 }
 
-/// The word at the address the payload's word `at` holds: a lane stack top, owned by the VM.
+/// Pops the frame the call pushed: the plain depth, innermost window and body top it found, and the values' top.
 #[inline(always)]
-unsafe fn stack_top(payload: usize, at: usize) -> usize {
-    // SAFETY: the payload names the live lane stack's top words.
-    unsafe { word_at(word_at(payload, at) as usize, 0) as usize }
+fn pop(a: &Admitted) {
+    let mut stage = StencilStage::from_hole(0);
+    protocol::set_plain(&mut stage, a.tops, a.depth, a.registers);
+    protocol::set_body_top(&mut stage, a.tops, a.frames);
+    protocol::set_values(&mut stage, a.tops, a.top as u64);
 }
 
-/// Moves the lane stack's two tops: the values' and the activations'.
+/// The cell's validity and room (`admit_native`, less the callee's recovery space) and the plain depth bound.
 #[inline(always)]
-unsafe fn set_tops(payload: usize, values: usize, activations: usize) {
-    // SAFETY: as `stack_top`.
-    unsafe {
-        put(word_at(payload, JS_STEP_LANE_VALUES_TOP) as usize, 0, values as u64);
-        put(word_at(payload, JS_STEP_LANE_ACTIVATIONS_TOP) as usize, 0, activations as u64);
-    }
-}
-
-/// The cell's validity and both stacks' room: `admit_native` over the values' free words less the callee's
-/// recovery space, and the frames its recovery needs.
-#[inline(always)]
-unsafe fn admit(record: usize, payload: usize) -> Option<Admitted> {
+unsafe fn admit(stage: &mut StencilStage, record: usize, payload: usize) -> Option<Admitted> {
     // SAFETY: the record and cell are live for the code's life, the payload for the activation's.
     unsafe {
         let cell = word_at(record, offset_of!(CallRecord, cell)) as usize;
-        let (top, end) = (stack_top(payload, JS_STEP_LANE_VALUES_TOP), word_at(payload, JS_STEP_LANE_VALUES_END) as usize);
+        let tops = protocol::lane_tops(stage, payload as u64);
+        let (top, end) = (word_at(tops.values_at as usize, 0), word_at(payload, JS_STEP_LANE_VALUES_END));
         let recovery = word_at(cell, CELL_RECOVERY_AT) as usize;
-        let free = (((end - top) >> WORD_SHIFT) as u64).saturating_sub(word_at(recovery, RECOVERY_VALUES_AT) + FRAME_CONTEXT_WORDS as u64);
-        let room = admit_native(&mut StencilStage::from_hole(0), cell as u64, word_at(record, offset_of!(CallRecord, expected)), free, ())? as usize;
-        let shadow = stack_top(payload, JS_STEP_LANE_ACTIVATIONS_TOP);
-        let frames = word_at(recovery, RECOVERY_ACTIVATIONS_AT) as usize + 1;
-        let fits = shadow + frames * word_at(record, offset_of!(CallRecord, frame_bytes)) as usize <= word_at(payload, JS_STEP_LANE_FRAMES_END) as usize;
-        fits.then_some(Admitted { cell, top, room, shadow })
+        let reserved = word_at(recovery, RECOVERY_VALUES_AT) + FRAME_CONTEXT_WORDS as u64;
+        let (room, fill) = admit_native(stage, cell as u64, word_at(record, offset_of!(CallRecord, expected)), top, end, reserved, ())?;
+        let depth = word_at(tops.plain_at as usize, PLAIN_DEPTH_AT);
+        let frames = word_at(recovery, RECOVERY_ACTIVATIONS_AT) + 1;
+        if depth + frames > word_at(payload, PLAIN_DEPTH_LIMIT) {
+            return None;
+        }
+        let registers = word_at(tops.plain_at as usize, PLAIN_REGISTERS_AT);
+        let records = word_at(word_at(payload, JS_STEP_ACTIVATION_COUNT) as usize, 0);
+        let table = word_at(payload, JS_STEP_BODY_TABLE) as usize + ((records + depth) as usize) * REGISTER_BYTES;
+        Some(Admitted { cell, top: top as usize, room: room as usize, fill: fill as usize, depth, registers, table, tops, frames: records + depth })
     }
 }
 
-/// The callee's window, its native frame (`ActivationKind::Native`), and the lane stack's new tops.
+/// The callee's window, its plain header, its body in the body table, and the lane's new tops.
 #[inline(always)]
-unsafe fn push<const ARGC: usize>(s: &S, record: usize, payload: usize, a: &Admitted, this: u64) {
+unsafe fn push<const ARGC: usize>(s: &S, file: u64, record: usize, a: &Admitted, this: u64, captures: u64) {
     // SAFETY: as `admit`, which proved the room.
     unsafe {
-        fill_window::<ARGC>(register_slot(s, record, offset_of!(CallRecord, args_register)), a.top, a.room);
-        put(a.shadow, frame::CALLEE, word_at(record, offset_of!(CallRecord, descriptor)));
-        put(a.shadow, frame::THIS, this);
-        put(a.shadow, frame::BODY, word_at(a.cell, CELL_BODY_AT));
-        put(a.shadow, frame::WINDOW, a.top as u64);
-        put(a.shadow, ACTIVATION_KIND_OFFSET, u64::from(KIND_NATIVE));
-        set_tops(payload, a.top + ((a.room + FRAME_CONTEXT_WORDS) << WORD_SHIFT), a.shadow + word_at(record, offset_of!(CallRecord, frame_bytes)) as usize);
+        // The window's words past the arguments that are written: the cell's fill (at least the arguments).
+        let written = if a.fill < ARGC { ARGC } else { a.fill };
+        // The arguments are the call's words (a pinned place's value, else the caller's window), which the
+        // protocol's fill writes as its prefix, then `undefined` to `written` registers.
+        let passed = argument_words::<ARGC>(s, file, record);
+        protocol::fill_call(&mut StencilStage::from_hole(0), a.top as u64, &passed, Passed::List { file, registers: &[] }, written as u16);
+        // The callee's receiver (only where its activation reads `this`: the cell's word says so, read
+        // now, so a republish that changes it is seen by the next call) and captures word, in the gap its window leaves below register 0.
+        if word_at(a.cell, CELL_USES_THIS_AT) != 0 {
+            set_context_word(a.top, CONTEXT_THIS, this);
+        }
+        set_context_word(a.top, CONTEXT_BODY, captures);
+        let field = |at: usize| word_at(record, at);
+        let header = protocol::BodyHeader { call: field(offset_of!(CallRecord, call)), caller_registers: file, caller_base: field(offset_of!(CallRecord, caller_base)),
+            packed: field(offset_of!(CallRecord, packed)), callee: field(offset_of!(CallRecord, callee)) };
+        let mut stage = StencilStage::from_hole(0);
+        protocol::push_body_header(&mut stage, a.top as u64, header);
+        // The running body, at the frame's depth in the body table; the depth and window it bumps.
+        let body = word_at(a.cell, CELL_BODY_AT);
+        stage.store_u64(Region::Frame.mutable(), a.table as u64, 0, body);
+        protocol::set_plain(&mut stage, a.tops, a.depth + 1, a.top as u64);
+        protocol::set_body_top(&mut stage, a.tops, a.frames + 1);
+        protocol::set_values(&mut stage, a.tops, (a.top + ((a.room + FRAME_CONTEXT_WORDS) << WORD_SHIFT)) as u64);
     }
+}
+
+/// The row entry a direct call enters: the callee's proven-arguments entry where every Number guard it skips (the cell's
+/// `numbers`) is one the call's proven arguments (`CallRecord::proven_args`) cover, else its row entry; 0 where it has none.
+#[inline(always)]
+fn row_entry(cell: usize, record: usize) -> usize {
+    let proven = word_at(cell, CELL_PROVEN_AT) as usize;
+    let covered = word_at(cell, CELL_NUMBERS_AT) & !word_at(record, offset_of!(CallRecord, proven_args)) == 0;
+    if covered && proven != 0 { proven } else { word_at(cell, CELL_ROWS_AT) as usize }
 }
 
 /// Where each status of the callee goes: a completion pops its window and frame and stores its word
@@ -274,57 +385,92 @@ unsafe fn push<const ARGC: usize>(s: &S, record: usize, payload: usize, a: &Admi
 /// exception pops them, is counted in its cell and raises in the caller; any other status keeps the frames
 /// (the lane links them) and is the caller's leave.
 #[inline(always)]
-unsafe fn finish(s: &S, record: usize, payload: usize, a: &Admitted, returned: BodyReturn) -> Entered {
+unsafe fn finish(file: u64, record: usize, a: &Admitted, returned: BodyReturn) -> Entered {
     // SAFETY: as `push`.
     unsafe {
-        match returned.status {
-            LANE_BODY_RETURNED => {
-                set_tops(payload, a.top, a.shadow);
-                put(register_slot(s, record, offset_of!(CallRecord, result_register)), 0, returned.value);
-                Entered::Returned
-            }
-            LANE_BODY_NOT_ENTERED => {
-                set_tops(payload, a.top, a.shadow);
+        // The protocol's completion: a returned callee's value, stored to the call's register.
+        let completion = CallOperation::Complete { status: u64::from(returned.status), value: returned.value, receiver: None, returned: LaneStatus::Returned as u32 };
+        if let Some(value) = word_of(protocol::step(&mut StencilStage::from_hole(0), (), completion)) {
+            pop(a);
+            write_register(file, record, offset_of!(CallRecord, result_register), value);
+            return Entered::Returned;
+        }
+        match LaneStatus::of(returned.status) {
+            Some(LaneStatus::NotEntered) => {
+                pop(a);
                 Entered::Refused
             }
-            LANE_BODY_THREW => {
-                set_tops(payload, a.top, a.shadow);
+            Some(LaneStatus::Threw) => {
+                pop(a);
                 let counters = word_at(a.cell, CELL_COUNTERS_AT);
-                put(a.cell, CELL_COUNTERS_AT, counters.wrapping_add(RAISED_RUN));
+                StencilStage::from_hole(0).store_u64(Region::EntryCell.mutable(), a.cell as u64, CELL_COUNTERS_AT as i32, counters.wrapping_add(RAISED_RUN));
                 Entered::Raised
             }
-            status => Entered::Left(status, returned.value),
+            _ => Entered::Left(returned.status, returned.value),
         }
     }
 }
 
-/// The direct call: the callee and receiver, admission, the push, the call, the pop.
+/// How a direct row binds the receiver: as it is, sloppy (`protocol::bind_this`), or none (an arrow).
+const STRICT: u8 = 0;
+const SLOPPY: u8 = 1;
+const LEXICAL: u8 = 2;
+
+/// The direct call: the callee and receiver, admission, the push, the call, the pop. `CHECKED` compares the
+/// callee register with the record's callee; the unchecked row's callee is a Stable fact's (its change retires the body).
 #[inline(always)]
-unsafe fn enter<const ARGC: usize, const SLOPPY: bool>(s: &S) -> Entered {
+unsafe fn enter<const ARGC: usize, const MODE: u8, const CHECKED: bool>(s: &S) -> Entered {
     // SAFETY: as `admit`.
     unsafe {
-        let record = hole64::<HOLE_RECORD>() as usize;
-        if read_register(s, record, offset_of!(CallRecord, callee_register)) != word_at(record, offset_of!(CallRecord, callee)) {
-            return Entered::Refused;
+        let record = hole64::<{ DirectHole::Record as u8 }>() as usize;
+        let mut stage = StencilStage::from_hole(0);
+        // The caller's register file: the call protocol's frame hook (`Places::call_registers`).
+        let mut frame = Places::<0, 0, 0>::new(S { frame: s.frame, ctx: s.ctx, p: s.p, f: s.f });
+        let Some(file) = CallFrame::call_registers(&mut frame, &mut stage) else { return Entered::Refused };
+        // Identity (checked rows only), then the receiver the callee binds (strict as it is, sloppy by `protocol::bind_this`).
+        if CHECKED {
+            let callee = read_register(file, record, offset_of!(CallRecord, callee_register));
+            let expected = word_at(record, offset_of!(CallRecord, callee));
+            if word_of(protocol::step(&mut stage, (), CallOperation::Callee { held: callee, expected })).is_none() {
+                return Entered::Refused;
+            }
         }
-        let this = read_register(s, record, offset_of!(CallRecord, this_register));
-        let Some(this) = bound_this::<SLOPPY>(record, this) else { return Entered::Refused };
+        // An arrow (lexical) binds no receiver: the deleted marker, its body reads `this` from its scope.
+        let this = if MODE == LEXICAL {
+            Value::DELETED.to_bits()
+        } else {
+            let receiver = read_register(file, record, offset_of!(CallRecord, this_register));
+            let sloppy = (MODE == SLOPPY).then(|| word_at(record, offset_of!(CallRecord, global_this)));
+            let Some(this) = word_of(protocol::step(&mut stage, (), CallOperation::BindThis { receiver, sloppy })) else {
+                return Entered::Refused;
+            };
+            this
+        };
         let payload = payload(s);
-        let Some(admitted) = admit(record, payload) else { return Entered::Refused };
-        push::<ARGC>(s, record, payload, &admitted, this);
-        let entry: BodyEntry = transmute(word_at(admitted.cell, CELL_ENTRY_AT) as usize);
-        let returned = entry(s.ctx, this, word_at(record, offset_of!(CallRecord, captures)), admitted.top);
-        finish(s, record, payload, &admitted, returned)
+        let Some(admitted) = admit(&mut stage, record, payload) else { return Entered::Refused };
+        let captures = word_at(record, offset_of!(CallRecord, captures));
+        push::<ARGC>(s, file, record, &admitted, this, captures);
+        // A body with a row entry runs its rows (the row ABI); else its lane body entry.
+        let rows = row_entry(admitted.cell, record);
+        let returned = if rows != 0 {
+            let entry: RowsEntry = transmute(rows);
+            let RowsReturn { value, status } = entry(admitted.top, s.ctx, this, captures);
+            BodyReturn { status: status as u32, value }
+        } else {
+            let entry: BodyEntry = transmute(word_at(admitted.cell, CELL_ENTRY_AT) as usize);
+            entry(s.ctx, this, captures, admitted.top)
+        };
+        finish(file, record, &admitted, returned)
     }
 }
 
 macro_rules! direct_row {
-    ($name:ident, $argc:expr, $sloppy:expr) => {
+    ($name:ident, $argc:expr, $mode:expr, $checked:expr) => {
         #[unsafe(no_mangle)]
         pub unsafe extern "rust-preserve-none" fn $name(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
             unsafe {
                 let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
-                match enter::<{ $argc }, { $sloppy }>(&s) {
+                match enter::<{ $argc }, { $mode }, { $checked }>(&s) {
                     Entered::Returned => go!(HOLE_TAKEN, dead(&s)),
                     Entered::Refused => {
                         core::hint::cold_path();
@@ -332,7 +478,7 @@ macro_rules! direct_row {
                     }
                     Entered::Raised => {
                         core::hint::cold_path();
-                        go!(HOLE_EXIT0, raising(&s, payload(&s), hole64::<HOLE_DIRECT_PC>()))
+                        go!(HOLE_EXIT0, raising(&s, payload(&s), hole64::<{ DirectHole::CallPc as u8 }>()))
                     }
                     Entered::Left(status, word) => {
                         core::hint::cold_path();
@@ -344,31 +490,28 @@ macro_rules! direct_row {
     };
 }
 
-direct_row!(call_direct_a0_strict, 0, false);
-direct_row!(call_direct_a1_strict, 1, false);
-direct_row!(call_direct_a2_strict, 2, false);
-direct_row!(call_direct_a3_strict, 3, false);
-direct_row!(call_direct_a0_sloppy, 0, true);
-direct_row!(call_direct_a1_sloppy, 1, true);
-direct_row!(call_direct_a2_sloppy, 2, true);
-direct_row!(call_direct_a3_sloppy, 3, true);
-
 /// The unconditional leave: every register is passed to the exit as it came.
 #[unsafe(no_mangle)]
 pub unsafe extern "rust-preserve-none" fn exit_here(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
-    unsafe { go!(HOLE_EXIT0, S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] }) }
+    let s = match crate::words::exit_here(S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] }) {
+        Out::Exit(s) | Out::Next(s) | Out::Taken(s) => s,
+    };
+    unsafe { go!(HOLE_EXIT0, s) }
 }
 
 /// A pinned register back from the tagged word a `Spill` row wrote to the frame slot at hole 0:
-/// the proof (an int word, a Number) was made by the spill, so it is not made again.
+/// the proof (an int word, a Number) was made by the spill, so it is not made again. Backend glue:
+/// the planner's spill slots, which no protocol row names.
 #[inline(always)]
 unsafe fn reload<const P: u8>(s: S) -> S {
     let mut s = s;
-    // SAFETY: the slot holds the word the preceding spill wrote.
-    let word = unsafe { (slot::<0>(&s) as *const u64).read() };
+    let mut stage = StencilStage::from_hole(0);
+    let at = stage.site(0); // the spill's frame slot (first value hole), holding the word the spill wrote
+    let word = stage.load_site(Region::Frame.mutable(), s.frame as u64, at);
+    let int = value::is_int(&mut stage, word);
     match P {
         PIN..=LAST_INT_PIN => s.p[(P - PIN) as usize] = word as u32 as usize,
-        _ => s.f[(P - PINF) as usize] = if is_int(word) { f64::from(word as u32 as i32) } else { f64::from_bits(word) },
+        _ => s.f[(P - PINF) as usize] = if int { f64::from(word as u32 as i32) } else { f64::from_bits(word) },
     }
     s
 }
@@ -385,15 +528,6 @@ macro_rules! reload_row {
     };
 }
 
-reload_row!(reload_4, PIN);
-reload_row!(reload_5, PIN + 1);
-reload_row!(reload_6, PIN + 2);
-reload_row!(reload_7, PIN + 3);
-reload_row!(reload_8, PINF);
-reload_row!(reload_9, PINF + 1);
-reload_row!(reload_10, PINF + 2);
-reload_row!(reload_11, PINF + 3);
-reload_row!(reload_12, PINF + 4);
-reload_row!(reload_13, PINF + 5);
-reload_row!(reload_14, PINF + 6);
-reload_row!(reload_15, PINF + 7);
+// The direct-call and reload row instances, one per argc and pinned place (build/call_rows.rs).
+include!(env!("QUENCH_STENCIL_CALL_ROWS"));
+

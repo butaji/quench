@@ -1,4 +1,6 @@
 use crate::Value;
+use crate::staged::property_buffer::PropertyBufferHead;
+use crate::heap::growth::{GrowthPolicy, grown_capacity};
 use std::{
     mem::ManuallyDrop,
     ops::{Deref, DerefMut},
@@ -27,8 +29,8 @@ enum Allocation {
 /// allocation kind; only growth, compaction and destruction inspect it.
 #[repr(C)]
 pub(super) struct PropertyBuffer {
-    base: NonNull<Value>,
-    length: usize,
+    /// The base and the initialized length, the words native code reads first (`staged::property_buffer`).
+    head: PropertyBufferHead<NonNull<Value>>,
     capacity: usize,
     allocation: Allocation,
 }
@@ -41,8 +43,8 @@ pub(crate) struct NativePropertyBufferLayout {
 }
 
 pub(crate) const NATIVE_PROPERTY_BUFFER_LAYOUT: NativePropertyBufferLayout = NativePropertyBufferLayout {
-    base: std::mem::offset_of!(PropertyBuffer, base),
-    length: std::mem::offset_of!(PropertyBuffer, length),
+    base: std::mem::offset_of!(PropertyBuffer, head) + std::mem::offset_of!(PropertyBufferHead<NonNull<Value>>, base),
+    length: std::mem::offset_of!(PropertyBuffer, head) + std::mem::offset_of!(PropertyBufferHead<NonNull<Value>>, length),
 };
 
 // SAFETY: like Vec<Value>, the buffer owns its allocation, mutation requires
@@ -50,19 +52,13 @@ pub(crate) const NATIVE_PROPERTY_BUFFER_LAYOUT: NativePropertyBufferLayout = Nat
 unsafe impl Send for PropertyBuffer {}
 unsafe impl Sync for PropertyBuffer {}
 
-impl PropertyBuffer {
-    /// Whether the values never move to another allocation: none is made yet, or they live in
-    /// the fixed reservation, which growth extends in place and compaction rewrites in place.
-    pub(super) fn stays_in_place(&self) -> bool {
-        !matches!(self.allocation, Allocation::Heap)
-    }
-}
-
 impl Default for PropertyBuffer {
     fn default() -> Self {
         Self {
-            base: NonNull::dangling(),
-            length: 0,
+            head: PropertyBufferHead {
+                base: NonNull::dangling(),
+                length: 0,
+            },
             capacity: 0,
             allocation: Allocation::Unallocated,
         }
@@ -75,7 +71,7 @@ impl Deref for PropertyBuffer {
     fn deref(&self) -> &[Value] {
         // SAFETY: every slot below length is initialized and accessible, even
         // when a reservation has inaccessible pages beyond capacity.
-        unsafe { std::slice::from_raw_parts(self.base.as_ptr(), self.length) }
+        unsafe { std::slice::from_raw_parts(self.head.base.as_ptr(), self.head.length) }
     }
 }
 
@@ -83,7 +79,7 @@ impl DerefMut for PropertyBuffer {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut [Value] {
         // SAFETY: as above, with exclusive access inherited from the buffer.
-        unsafe { std::slice::from_raw_parts_mut(self.base.as_ptr(), self.length) }
+        unsafe { std::slice::from_raw_parts_mut(self.head.base.as_ptr(), self.head.length) }
     }
 }
 
@@ -110,18 +106,18 @@ impl PropertyBuffer {
         if length > self.capacity && !self.grow(length) {
             return false;
         }
-        if length > self.length {
+        if length > self.head.length {
             // SAFETY: grow exposed the entire tail, which is uniquely owned and
             // not yet included in the initialized slice.
             let tail = unsafe {
                 std::slice::from_raw_parts_mut(
-                    self.base.as_ptr().add(self.length),
-                    length - self.length,
+                    self.head.base.as_ptr().add(self.head.length),
+                    length - self.head.length,
                 )
             };
             tail.fill(Value::UNDEFINED);
         }
-        self.length = length;
+        self.head.length = length;
         true
     }
 
@@ -132,19 +128,19 @@ impl PropertyBuffer {
     /// heap allocation's tail is filled, as `resize` fills it.
     pub(super) fn extend_unfilled(&mut self, length: usize) -> bool {
         #[cfg(unix)]
-        if length > self.length && (length <= self.capacity || self.grow(length)) && matches!(self.allocation, Allocation::Reserved { .. }) {
-            self.length = length;
+        if length > self.head.length && (length <= self.capacity || self.grow(length)) && matches!(self.allocation, Allocation::Reserved { .. }) {
+            self.head.length = length;
             return true;
         }
         self.resize(length)
     }
 
     pub(super) fn truncate(&mut self, length: usize) {
-        self.length = self.length.min(length);
+        self.head.length = self.head.length.min(length);
     }
 
     pub(super) fn clear(&mut self) {
-        self.length = 0;
+        self.head.length = 0;
     }
 
     #[cold]
@@ -159,14 +155,15 @@ impl PropertyBuffer {
                 self.allocation = Allocation::Heap;
             }
         }
-        let extra = if self.capacity < DENSE_GROWTH_THRESHOLD {
-            self.capacity
-        } else {
-            self.capacity / DENSE_GROWTH_DIVISOR
-        };
-        let wanted = required
-            .max(self.capacity.saturating_add(extra))
-            .max(super::MIN_CAPACITY);
+        let wanted = grown_capacity(
+            self.capacity,
+            required,
+            GrowthPolicy::PropertyBuffer {
+                threshold: DENSE_GROWTH_THRESHOLD,
+                divisor: DENSE_GROWTH_DIVISOR,
+                minimum: super::MIN_CAPACITY,
+            },
+        );
         match self.allocation {
             #[cfg(unix)]
             Allocation::Reserved { bytes, page_values } => {
@@ -179,7 +176,7 @@ impl PropertyBuffer {
                 // lies after all accessible values. No old page is changed.
                 let status = unsafe {
                     libc::mprotect(
-                        self.base.as_ptr().add(self.capacity).cast(),
+                        self.head.base.as_ptr().add(self.capacity).cast(),
                         (capacity - self.capacity) * size_of::<Value>(),
                         libc::PROT_READ | libc::PROT_WRITE,
                     )
@@ -194,10 +191,10 @@ impl PropertyBuffer {
                 // SAFETY: Heap owns exactly the raw parts previously obtained
                 // from Vec. ManuallyDrop keeps ownership here on reserve failure.
                 let mut values = ManuallyDrop::new(unsafe {
-                    Vec::from_raw_parts(self.base.as_ptr(), self.length, self.capacity)
+                    Vec::from_raw_parts(self.head.base.as_ptr(), self.head.length, self.capacity)
                 });
-                let success = values.try_reserve_exact(wanted - self.length).is_ok();
-                self.base = NonNull::new(values.as_mut_ptr()).expect("Vec has a non-null base");
+                let success = values.try_reserve_exact(wanted - self.head.length).is_ok();
+                self.head.base = NonNull::new(values.as_mut_ptr()).expect("Vec has a non-null base");
                 self.capacity = values.capacity();
                 success
             }
@@ -241,7 +238,7 @@ impl PropertyBuffer {
         if base == libc::MAP_FAILED {
             return false;
         }
-        self.base = NonNull::new(base.cast()).expect("mmap returned a mapping");
+        self.head.base = NonNull::new(base.cast()).expect("mmap returned a mapping");
         self.allocation = Allocation::Reserved {
             bytes,
             page_values: page_bytes / size_of::<Value>(),
@@ -249,11 +246,44 @@ impl PropertyBuffer {
         true
     }
 
+    /// Gives back the whole pages inside `[start, end)` (in values) when the storage is a
+    /// reservation: they read back as zero and the next write faults them in again. Pages
+    /// that hold any value outside the range stay resident, as does storage a heap allocation
+    /// owns. The caller holds no live value in the range.
+    #[cfg(unix)]
+    pub(super) fn release_pages(&mut self, start: usize, end: usize) {
+        let Allocation::Reserved { page_values, .. } = self.allocation else {
+            return;
+        };
+        let first = start.next_multiple_of(page_values);
+        let last = end.min(self.capacity) / page_values * page_values;
+        if first >= last {
+            return;
+        }
+        #[cfg(target_vendor = "apple")]
+        let advice = libc::MADV_FREE;
+        #[cfg(not(target_vendor = "apple"))]
+        let advice = libc::MADV_DONTNEED;
+        // SAFETY: `first..last` is page aligned, lies inside the accessible capacity of this
+        // reservation, and holds no live value (the caller's contract). Nothing reads it until
+        // a write initializes it, whether or not the OS reclaimed it.
+        unsafe {
+            libc::madvise(
+                self.head.base.as_ptr().add(first).cast(),
+                (last - first) * size_of::<Value>(),
+                advice,
+            );
+        }
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn release_pages(&mut self, _start: usize, _end: usize) {}
+
     /// Discard unused suffix storage after compaction while retaining every
     /// reserved address. Discarded pages may remain readable; only length, never
     /// page permissions, determines which Values are initialized.
     pub(super) fn shrink_to(&mut self, minimum: usize) {
-        let wanted = self.length.max(minimum);
+        let wanted = self.head.length.max(minimum);
         if wanted >= self.capacity {
             return;
         }
@@ -273,7 +303,7 @@ impl PropertyBuffer {
                 // SAFETY: the page-aligned suffix belongs to this allocation and
                 // contains no initialized Values. Nothing reads it until resize
                 // initializes it again, whether or not the OS reclaimed it.
-                let address = unsafe { self.base.as_ptr().add(capacity) }.cast();
+                let address = unsafe { self.head.base.as_ptr().add(capacity) }.cast();
                 let status = unsafe {
                     libc::madvise(
                         address,
@@ -288,10 +318,10 @@ impl PropertyBuffer {
             Allocation::Heap => {
                 // SAFETY: the Heap allocation's raw parts have one owner.
                 let mut values = ManuallyDrop::new(unsafe {
-                    Vec::from_raw_parts(self.base.as_ptr(), self.length, self.capacity)
+                    Vec::from_raw_parts(self.head.base.as_ptr(), self.head.length, self.capacity)
                 });
                 values.shrink_to(wanted);
-                self.base = NonNull::new(values.as_mut_ptr()).expect("Vec has a non-null base");
+                self.head.base = NonNull::new(values.as_mut_ptr()).expect("Vec has a non-null base");
                 self.capacity = values.capacity();
             }
             Allocation::Unallocated => {}
@@ -314,19 +344,21 @@ impl From<Vec<Value>> for PropertyBuffer {
                 unsafe {
                     std::ptr::copy_nonoverlapping(
                         values.as_ptr(),
-                        buffer.base.as_ptr(),
+                        buffer.head.base.as_ptr(),
                         values.len(),
                     );
                 }
-                buffer.length = values.len();
+                buffer.head.length = values.len();
                 return buffer;
             }
             // Drop an unsuccessful reservation before adopting the snapshot's Vec.
         }
         let mut values = ManuallyDrop::new(values);
         Self {
-            base: NonNull::new(values.as_mut_ptr()).expect("Vec has a non-null base"),
-            length: values.len(),
+            head: PropertyBufferHead {
+                base: NonNull::new(values.as_mut_ptr()).expect("Vec has a non-null base"),
+                length: values.len(),
+            },
             capacity: values.capacity(),
             allocation: Allocation::Heap,
         }
@@ -341,14 +373,14 @@ impl Drop for PropertyBuffer {
                 // SAFETY: the entire reservation is owned here; Value is Copy
                 // and has no destructor, including values in discarded ranges.
                 unsafe {
-                    libc::munmap(self.base.as_ptr().cast(), bytes);
+                    libc::munmap(self.head.base.as_ptr().cast(), bytes);
                 }
             }
             Allocation::Heap => {
                 // SAFETY: exactly the Vec allocation adopted above, still owned
                 // by this buffer with its current initialized length/capacity.
                 drop(unsafe {
-                    Vec::from_raw_parts(self.base.as_ptr(), self.length, self.capacity)
+                    Vec::from_raw_parts(self.head.base.as_ptr(), self.head.length, self.capacity)
                 });
             }
             Allocation::Unallocated => {}

@@ -1,10 +1,7 @@
 //! Static element facts and the available/dropped instance transition.
 
 use super::{Lowering, Reachability, WasmReferenceInitializer};
-use crate::{
-    Diagnostic,
-    bytecode::{ImmediateLayout, Op},
-};
+use crate::{Diagnostic, staged::wasm_emit};
 use std::rc::Rc;
 
 #[derive(Clone)]
@@ -88,17 +85,7 @@ impl Lowering<'_> {
         if self.path == Reachability::Dead {
             return Ok(());
         }
-        let depth = self.depth;
-        let dropped = self.push()?;
-        self.emit(Op::LoadConst, dropped, 0, 0, super::VOID_RESULT_CONSTANT)?;
-        self.emit(
-            Op::StoreCapture,
-            dropped,
-            0,
-            0,
-            ImmediateLayout::capture_immediate(0, slot),
-        )?;
-        self.depth = depth;
+        self.emit_emission(wasm_emit::segment_drop(slot))?;
         Ok(())
     }
 
@@ -131,13 +118,13 @@ impl Lowering<'_> {
                     self.depth = length + 1;
                     let table = self.table_binding(table)?;
                     let elements = self.instance_binding(usize::from(slot))?;
-                    self.emit(
-                        Op::WasmTableInit,
+                    self.emit_emission(wasm_emit::table_init(
                         table,
                         elements,
                         length,
-                        ImmediateLayout::register_pair_immediate(output, input),
-                    )?;
+                        output,
+                        input,
+                    ))?;
                     self.depth = depth;
                 }
             }

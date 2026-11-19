@@ -1,5 +1,5 @@
 use {super::Runtime, crate::{Host, JsError, RootId, RootedError, Value, vm::Vm}};
-#[path = "api_collection.rs"] mod collection; pub use collection::CollectionContext;
+#[path = "api_collection.rs"] mod collection; pub use collection::CollectionContext; #[path = "api_native_values.rs"] mod values; pub use values::Detach;
 
 /// Immutable host Script code compiled for one runtime state. It retains no
 /// guest objects; each evaluation creates fresh runtime metadata and functions
@@ -1161,6 +1161,21 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// `compile_script_in_realm_with_origin` for host source the caller owns: the compiled
+    /// Script keeps the string as its text, without a copy.
+    pub fn compile_script_in_realm_with_origin_owned(
+        &mut self,
+        global: RootId,
+        source: std::rc::Rc<String>,
+        name: &str,
+        line_offset: u32,
+        column_offset: u32,
+    ) -> Result<CompiledScript, RootedError> {
+        self.vm
+            .compile_embedding_owned_script_in_realm(global, source, name, (line_offset, column_offset))
+            .map_err(|error| self.error(error))
+    }
+
     pub fn compiled_script_is_current(&self, script: &CompiledScript) -> bool {
         self.vm.compiled_script_is_current(script)
     }
@@ -1211,6 +1226,28 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<RootId, RootedError> {
         let result = self.vm.evaluate_embedding_typescript_script_with_origin(
             source, name, Some((line_offset, column_offset)), keep_records,
+        );
+        self.completion(result)
+    }
+
+    /// `evaluate_specialized_script_with_origin_rooted` for host source the caller owns, as the
+    /// classic form (`keep_records` false), the entry (`keep_records`) or TypeScript (`typescript`),
+    /// which keeps the string as the program's text instead of a copy of it.
+    pub fn evaluate_owned_script_with_origin_rooted(
+        &mut self,
+        source: std::rc::Rc<String>,
+        name: &str,
+        line_offset: u32,
+        column_offset: u32,
+        keep_records: bool,
+        typescript: bool,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_owned_script_with_origin(
+            source,
+            name,
+            (line_offset, column_offset),
+            keep_records,
+            typescript,
         );
         self.completion(result)
     }
@@ -1273,7 +1310,7 @@ impl<'a, H: Host> NativeContext<'a, H> {
         suffix: &str,
         name: &str,
     ) -> Result<RootId, RootedError> {
-        let body = crate::bytecode::SourceText::Shared(std::sync::Arc::from(body));
+        let body = crate::bytecode::SourceText::Owned(std::rc::Rc::new(body));
         self.evaluate_library_body(prefix, body, suffix, name)
     }
 
@@ -1628,6 +1665,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
         let holder = self.vm.root_value(holder)?;
         let value = self.vm.startup_data_property(holder, name)?;
         Some(self.scoped_value(value))
+    }
+
+    /// `startup_data_property_rooted` for a holder's member that may still be a lazy data
+    /// property: the member's group materializes first, so the captured value is the built one.
+    pub fn materialized_startup_data_property_rooted(&mut self, holder: RootId, name: &str) -> Result<Option<RootId>, RootedError> {
+        let value = self
+            .vm
+            .materialized_startup_data_property_rooted(holder, name)
+            .map_err(|error| self.error(error))?;
+        Ok(value.map(|value| self.scoped_value(value)))
     }
 
     /// Run `build` with every sealed intrinsic at its startup descriptor, then give the

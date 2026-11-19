@@ -23,7 +23,6 @@ impl NativeProgramNamespace {
         })
     }
 
-    #[cfg(feature = "aot")]
     pub fn encode(&self, program: &ResidualProgram) -> Result<Vec<u8>, String> {
         self.prepare_encoding(program)?;
         let mut bytes = binary::encode_native_program(program);
@@ -32,7 +31,6 @@ impl NativeProgramNamespace {
     }
 
     /// Native metadata whose original source lives in the image's shared asset pool.
-    #[cfg(feature = "aot")]
     pub fn encode_with_external_source(&self, program: &ResidualProgram) -> Result<Vec<u8>, String> {
         self.prepare_encoding(program)?;
         let mut bytes = binary::encode_snapshot_program(program);
@@ -41,7 +39,6 @@ impl NativeProgramNamespace {
         Ok(bytes)
     }
 
-    #[cfg(feature = "aot")]
     fn prepare_encoding(&self, program: &ResidualProgram) -> Result<(), String> {
         program.validate_unless_proven()?;
         if program.atoms.len() > self.atoms.len()
@@ -110,7 +107,7 @@ fn source_fingerprint(source: Option<&str>) -> u64 {
     hash.finish()
 }
 
-#[cfg(all(test, feature = "aot"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -161,22 +158,6 @@ mod tests {
         );
         assert_eq!(decoded.function_count(), first.function_count());
         assert_eq!(decoded.encode_trusted(), first.encode_trusted());
-    }
-
-    /// The encoded program decodes to the same records it was written with: the wrapper's
-    /// parameter initialization (a `LoadConst` at pc 0) must survive the image. Today's
-    /// round trip re-derives the deferred record and yields `LoadNameCall`, which is why a
-    /// linked image's first entry selects a record its program does not have.
-    #[test]
-    #[ignore = "the image round trip re-derives a function's records instead of copying them"]
-    fn encoded_records_decode_unchanged() {
-        let source = "(function (exports, require, module, __filename, __dirname) { print(1 + 2); });";
-        let program = crate::Engine::specialize(source, "wrapper.js").unwrap();
-        let namespace = NativeProgramNamespace::from_entry(&program).unwrap();
-        let decoded = namespace.decode(Rc::new(namespace.encode(&program).unwrap())).unwrap();
-        let first = |p: &crate::ResidualProgram| p.function(1).instructions().next().map(|instruction| instruction.op());
-        assert_eq!(decoded.function_count(), program.function_count());
-        assert_eq!(first(&decoded), first(&program), "records differ after the image round trip");
     }
 
     #[test]

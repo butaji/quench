@@ -48,6 +48,8 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_builtin_named(program, prototype, name, native)?;
         }
+        self.seal_initialized_intrinsic(registry);
+        self.seal_initialized_intrinsic(prototype);
         self.global(program, "FinalizationRegistry", registry)
     }
 
@@ -59,7 +61,7 @@ impl<H: Host> Vm<H> {
         let constructor = self.native_with_realm(Native::FinalizationRegistry, global, global);
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         self.set_builtin_function_name(constructor, "FinalizationRegistry")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
@@ -122,7 +124,7 @@ impl<H: Host> Vm<H> {
             let realm = self
                 .heap
                 .function(new_target)
-                .map_or(self.realm.globals, |function| function.realm);
+                .map_or(self.realm.globals, |function| self.record_realm(function));
             let constructor_atom = self.intern_atom("FinalizationRegistry");
             let realm_constructor = self.get_property(p, realm, constructor_atom)?;
             let realm_prototype = self.get_property(p, realm_constructor, prototype_atom)?;

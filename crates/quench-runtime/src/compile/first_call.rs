@@ -1,7 +1,7 @@
 //! First-call stubs: a top-level function declaration, or an anonymous function expression
 //! of a top-level statement, whose body was parsed lazily and that nothing at load calls
 //! compiles as a stub, which compiles the function's source as a
-//! program of its own on the function's first call (`Op::CallFirstChunk`). The load then
+//! program of its own on the function's first call (`CallFirstChunk`). The load then
 //! checks the body's syntax and nothing more, as V8's preparser does.
 //!
 //! The chunk compiles the function alone as a Script, so it resolves every free name in the
@@ -10,28 +10,21 @@
 //! text alone and compiles it at its place in the program's text, whose source it shares, so
 //! a chunk costs its function's text, not the program's.
 use super::*;
+use crate::bytecode::{RETURN_OP, Traits, the_op};
 use program_shape::ParsedProgramShape;
 use oxc_ast_visit::Visit;
-use replay::{ReplayViews, ShiftSpans};
+use replay::ShiftSpans;
 mod append;
 mod room;
 mod template;
 pub(in crate::compile) use template::StubOwn;
 pub(crate) mod nested;
-pub(crate) use nested::FirstCallScopes;
-pub(in crate::compile) use nested::{FreeNameCheck, FreeNames, alone_body_end, alone_start, free_names, skimmed_free_names};
+pub(crate) use nested::{FirstCallScopes, FirstCallStubs};
+pub(in crate::compile) use nested::{FreeNameCheck, FreeNames, alone_body_end, alone_start, free_names, reaches_scopes_by_name, skimmed_free_names};
 pub(in crate::compile) use room::ChunkRoom;
 
-impl ReplayViews {
-    /// The line starts and UTF-16 excess table of `text`, the program's source, which a
-    /// replay and a first-call chunk compile with.
-    pub(super) fn layout(&self, text: &str) -> (&[usize], &[(usize, usize)]) {
-        (
-            self.line_starts.get_or_init(|| crate::bytecode::source_line_starts(text).collect()),
-            self.utf16_excess.get_or_init(|| super::source_utf16_excess(text)),
-        )
-    }
-}
+/// The op that runs a first-call stub on its chunk.
+const FIRST_CALL_CHUNK: Op = the_op(Traits::FIRST_CALL_CHUNK);
 
 /// A body the compiler makes for a function whose source gives it none to run.
 #[derive(Clone, Copy)]
@@ -46,7 +39,7 @@ pub(super) enum ImplicitBody {
 }
 
 /// Where a first-call chunk's function lies (`ParsedProgramShape::FirstCallChunk`): at `start`
-/// in the text of `source`, whose layout tables a replay of its program shares.
+/// in the text of `source`.
 #[derive(Clone, Copy)]
 pub(super) struct ChunkWindow<'a> {
     source: &'a crate::bytecode::ProgramSource,
@@ -55,16 +48,22 @@ pub(super) struct ChunkWindow<'a> {
     function: u32,
     /// A nested stub's function start and the scopes it compiles against.
     outer: Option<(u32, &'a std::rc::Rc<FirstCallScopes>)>,
-    line_starts: &'a [usize],
-    utf16_excess: &'a [(usize, usize)],
     /// The run of a streamed body the chunk compiles.
-    run: Option<&'a crate::bytecode::StreamRun>,
+    run: Option<&'a super::statement_stream::StreamRun>,
+    /// The load checked the function's body alone (`ProgramReplay::checked_at_load`), so its early
+    /// errors are settled and the chunk's analysis skips their check.
+    checked: bool,
 }
 
 impl<'a> ChunkWindow<'a> {
     /// Whether the chunk compiles the first run of a streamed body.
     pub(super) fn first_run(&self) -> bool {
         self.run.is_some_and(|run| run.from.is_none())
+    }
+
+    /// Whether the load checked the function's body (`checked`).
+    pub(super) fn checked(&self) -> bool {
+        self.checked
     }
 
     pub(super) fn start(&self) -> u32 {
@@ -116,15 +115,7 @@ impl<'a> ChunkWindow<'a> {
         prototype_unobservable: &mut FxHashSet<u32>,
     ) -> Compiler<'a> {
         self.place(program, &mut private_name_ids, private_name_labels, prototype_unobservable);
-        let mut compiler = Compiler::with_layout(
-            name,
-            &self.source.text,
-            mode,
-            atom_prefix,
-            private_name_ids,
-            std::borrow::Cow::Borrowed(self.line_starts),
-            std::borrow::Cow::Borrowed(self.utf16_excess),
-        );
+        let mut compiler = Compiler::new(name, &self.source.text, mode, atom_prefix, private_name_ids);
         compiler.first_call.kept_source = Some(self.source);
         compiler.first_call.outer = self.outer.map(|(start, scopes)| (start, scopes.clone()));
         compiler.first_call.chunk_function = Some(self.function);
@@ -171,11 +162,11 @@ impl Engine {
         function: u32,
         span: crate::bytecode::SourceSpan,
         atom_prefix: &dyn AtomPrefix,
-        run: Option<&crate::bytecode::StreamRun>,
+        run: Option<&super::statement_stream::StreamRun>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let name = program.source_name.as_str();
         let source = program.source.as_ref().filter(|source| source.base == 0);
-        fn chunk_text<'s>(source: &'s crate::bytecode::ProgramSource, span: crate::bytecode::SourceSpan, run: Option<&crate::bytecode::StreamRun>, method: bool) -> Option<ChunkText<'s>> { match run.and_then(|run| run.from) {
+        fn chunk_text<'s>(source: &'s crate::bytecode::ProgramSource, span: crate::bytecode::SourceSpan, run: Option<&super::statement_stream::StreamRun>, method: bool) -> Option<ChunkText<'s>> { match run.and_then(|run| run.from) {
             // A later run's chunk holds the function's header alone, its body from the run on.
             Some((_, body)) => source
                 .text
@@ -187,12 +178,11 @@ impl Engine {
         let Some((source, chunk)) = source.and_then(|source| Some((source, chunk_text(source, span, run, method)?))) else {
             return Err(vec![Diagnostic::unsupported(name, "a first-call stub keeps no source")]);
         };
-        let views = ReplayViews::default();
-        let (line_starts, utf16_excess) = program.replay.as_deref().map_or(&views, |replay| &replay.views).layout(&source.text);
         let stubs = &program.first_call_scopes;
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
-        let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, line_starts, utf16_excess, run };
-        Self::specialize_script_shaped(&chunk.text, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script())
+        let checked = program.replay.as_deref().is_some_and(|replay| replay.checked_at_load(span.start));
+        let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, run, checked };
+        Self::specialize_script_shaped(&chunk.text, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script(), None)
     }
 }
 
@@ -211,7 +201,10 @@ type Starts = FxHashSet<u32>;
 impl ParsedProgramShape<'_> {
     /// The starts of the function declarations of `program`, of this shape, that may compile
     /// as first-call stubs: an eval's whose functions compile again from their text alone
-    /// (`replayable`), when its root is sloppy and declares no lexical binding.
+    /// (`replayable`), or a large classic script's (`stubbing`), when its root is sloppy and
+    /// declares no lexical binding. A Function-constructor body's declarations are not roots:
+    /// their free names are the body's own bindings, which a root's chunk, compiled as a script,
+    /// would resolve in the global environment. They stub as nested stubs (`nested_stub_captures`).
     pub(super) fn first_call_roots(self, replayable: bool, program: &Program<'_>, inherited_strict: bool) -> Starts {
         let strict = inherited_strict || program.directives.iter().any(|directive| directive.directive == "use strict");
         let lexical = program.body.iter().any(|statement| match statement {
@@ -219,7 +212,8 @@ impl ParsedProgramShape<'_> {
             Statement::ClassDeclaration(_) => true,
             _ => false,
         });
-        if !replayable || !matches!(self, Self::Eval(..)) || strict || lexical {
+        let script = matches!(self, Self::FirstCallScript) && self.stubbing(replayable, program.source_text.len(), program.source_type.is_module()).functions;
+        if !replayable || !(matches!(self, Self::Eval(..)) || script) || strict || lexical {
             return FxHashSet::default();
         }
         TopLevelFunctions::of(program)
@@ -238,7 +232,7 @@ impl ParsedProgramShape<'_> {
             _ => false,
         });
         let shaped = match self {
-            Self::Any => !program.source_type.is_module(),
+            Self::Any | Self::FirstCallScript => !program.source_type.is_module(),
             Self::Eval(..) => !lexical,
             _ => false,
         };
@@ -330,12 +324,13 @@ impl Stubs<'_> {
     /// the source is an indirect eval's, whose captures `free_names` predict.
     pub(super) fn plan(&mut self, shape: ParsedProgramShape<'_>, replayable: bool, program: &Program<'_>, inherited_strict: bool, (free_names, call_only_found): (FreeNames, Vec<(u32, u32)>)) {
         self.roots = shape.first_call_roots(replayable, program, inherited_strict);
-        let stubbing = shape.stubbing(replayable, program.source_text.len());
+        let stubbing = shape.stubbing(replayable, program.source_text.len(), program.source_type.is_module());
         self.streamed_roots = shape.streamed_roots(replayable, program, inherited_strict);
         self.nested_allowed = stubbing.functions;
         self.direct = stubbing.arrows;
         self.free_names = free_names;
         self.call_only_found = call_only_found;
+        super::call_only::deferred::normalize_spans(&mut self.call_only_found);
     }
 
     /// Whether a program keeps a replay: it has functions a replay compiles (unless
@@ -474,15 +469,15 @@ impl FunctionCompiler<'_, '_> {
             ImplicitBody::FirstCallArrowStub => {
                 let arguments = self.load_name(STUB_ARGUMENTS);
                 let result = self.reg();
-                self.emit(Op::CallFirstChunk, result, arguments, arguments, 0);
-                self.emit(Op::Return, result, 0, 0, 0);
+                self.emit(FIRST_CALL_CHUNK, result, arguments, arguments, 0);
+                self.emit(RETURN_OP, result, 0, 0, 0);
             }
             ImplicitBody::FirstCallStub => {
                 let arguments = self.load_name(STUB_ARGUMENTS);
                 let new_target = self.load_name(crate::bytecode::NEW_TARGET_BINDING);
                 let result = self.reg();
-                self.emit(Op::CallFirstChunk, result, arguments, new_target, 0);
-                self.emit(Op::Return, result, 0, 0, 0);
+                self.emit(FIRST_CALL_CHUNK, result, arguments, new_target, 0);
+                self.emit(RETURN_OP, result, 0, 0, 0);
             }
         }
     }

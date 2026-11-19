@@ -48,6 +48,30 @@ pub fn number_to_u32(value: f64) -> u32 {
     }
 }
 
+/// ToInt32: ToUint32's bits reinterpreted as `i32`.
+#[inline(always)]
+pub fn number_to_i32(value: f64) -> i32 {
+    number_to_u32(value) as i32
+}
+
+/// Adding 2^52 to a binary64 in [0, 2^52) leaves no fraction bits, so the addition itself
+/// rounds the value to an integer, ties to even.
+const ROUNDING_BIAS: f64 = 4_503_599_627_370_496.0;
+
+/// ToUint8Clamp: NaN and anything at or below 0 give 0, 255 and above give 255, and the rest
+/// round to the nearest integer, ties to even. The rounding is the bias's add and subtract,
+/// two instructions where `round_ties_even` is a libm call on the x86-64 baseline.
+#[inline(always)]
+pub fn number_to_uint8_clamp(number: f64) -> u8 {
+    if !(number > 0.0) {
+        return 0;
+    }
+    if number >= f64::from(u8::MAX) {
+        return u8::MAX;
+    }
+    ((number + ROUNDING_BIAS) - ROUNDING_BIAS) as u8
+}
+
 /// `number_to_u32` at or past 2^63 and of non-finite values, out of line.
 #[cold]
 #[inline(never)]

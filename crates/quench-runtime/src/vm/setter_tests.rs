@@ -1,4 +1,4 @@
-//! Stores that meet a setter, as the lane activates it (`setters::lane_store_setter`),
+//! Stores that meet a setter, as the lane activates it (`AccessorCall::store_setter`),
 //! against Node's output.
 use crate::test_host::printed;
 
@@ -72,8 +72,8 @@ print(run(8) + ":" + cnt);
     assert_eq!(printed(source, "setter_frame.js"), ["8:8"]);
 }
 
-/// A store's setter is cached at its site under the receiver's shape, prototype and the
-/// prototype layout epoch (`Vm::cached_field_accessor`): a receiver that gains a field, an own
+/// A store's setter is cached at its site under the receiver's shape, prototype and the cell
+/// of its chain to the holder (`Vm::cached_field_accessor`): a receiver that gains a field, an own
 /// property that shadows the setter, a prototype whose accessor is redefined or deleted or
 /// gains a getter-only form, an accessor defined after data stores, `Object.setPrototypeOf`
 /// moving the receiver or its prototype, a pair redefined in its slot, a proxy inserted up the
@@ -188,4 +188,45 @@ print(out.join("|"));
 #[test]
 fn cached_getter_reads_follow_invalidation_like_node() {
     assert_eq!(printed(CACHED_GETTERS, "getter_cache.js"), ["3000|10|15|20|25|NaN|18000|35|24000|45|30000|55|NaN|6000|100|100|NaN|36000|39,v,v,v|42000"]);
+}
+
+/// Trivial accessors forwarded at their site's accessor entries (getters-as-calls.md): a
+/// polymorphic site's `return this._x`, `return 7` and `return this` getters on three
+/// layouts, a forward setter's store on each, a private field's getter (forwarded) and
+/// setter (called), a field made an accessor under a forwarded getter (the call runs and
+/// throws), a getter redefined mid-loop, a heap constant (answered, not forwarded) and a
+/// sloppy getter's boxed primitive receiver. Expected values worked by hand from the
+/// language's semantics: not yet checked against Node (code-only change).
+#[test]
+fn trivial_accessors_forward_like_calls() {
+    let source = r#"
+const o = [];
+class P { constructor(x) { this._x = x; } get x() { return this._x; } set x(v) { this._x = v; } get k() { return 7; } get self() { return this; } }
+class Q extends P { constructor(x) { super(x); this.extra = 1; } }
+class R extends P { constructor(x) { super(x); this.other = 2; this.more = 3; } }
+class V { #x; constructor(x) { this.#x = x; } get x() { return this.#x; } set x(v) { this.#x = v; } }
+const objs = [new P(1), new Q(2), new R(3)];
+function poly(n) { let s = 0; for (let i = 0; i < n; i++) { const p = objs[i % 3]; s += p.x + p.k + (p.self === p ? 1 : 0); } return s; }
+o.push(poly(3000));
+function sets(n) { for (let i = 0; i < n; i++) objs[i % 3].x = i; return objs.map(p => p.x).join(); }
+o.push(sets(3000));
+const vs = [new V(1), new V(2)];
+function priv(n) { let s = 0; for (let i = 0; i < n; i++) s += vs[i & 1].x; return s; }
+o.push(priv(2000));
+function privSet(n) { for (let i = 0; i < n; i++) vs[i & 1].x = i; return vs[0].x + ":" + vs[1].x; }
+o.push(privSet(2000));
+Object.defineProperty(objs[1], "_x", { get() { throw new Error("inner"); } });
+function thr(n) { try { let s = 0; for (let i = 0; i < n; i++) s += objs[i % 3].x; return s; } catch (e) { return e.message; } }
+o.push(thr(30));
+function redefine(n) { let s = 0; for (let i = 0; i < n; i++) { if (i === n / 2) Object.defineProperty(P.prototype, "x", { get() { return -1; }, configurable: true }); s += objs[0].x; } return s; }
+o.push(redefine(1000));
+class N { get name() { return "nm"; } } const nn = new N();
+function nm(n) { let s = ""; for (let i = 0; i < n; i++) s = nn.name; return s + nn.name.length; }
+o.push(nm(3000));
+Object.defineProperty(Number.prototype, "me", { get() { return this; }, configurable: true });
+function pm(n) { let t; for (let i = 0; i < n; i++) t = typeof (5).me; return t; }
+o.push(pm(3000));
+print(o.join("|"));
+"#;
+    assert_eq!(printed(source, "trivial_accessors.js"), ["30000|2997,2998,2999|3000|1998:1999|inner|1498000|nm2|object"]);
 }

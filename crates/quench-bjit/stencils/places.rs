@@ -10,29 +10,22 @@
 
 use crate::bytecode::{Operand, Register};
 use crate::codes::*;
-use crate::heap_rows::{payload, word_at};
-use crate::layout::{JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_RECEIVER};
-use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, value};
+use crate::heap_rows::{context_word, payload, word_at};
+use crate::layout::{CONTEXT_THIS, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_EPOCH, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STRING_RECORD_BASE};
+use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, Step, string_length, value};
+use crate::typed_ir::Representation;
 use crate::words::*;
 
 pub(crate) const DEST: Register = 0;
 pub(crate) const LEFT: Register = HOLE_A as Register;
 pub(crate) const RIGHT: Register = HOLE_B as Register;
 
-/// How a place holds its value: a tagged word, the low 32 bits of an int32, or `f64` bits.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Rep {
-    Tagged,
-    Int32,
-    Float64,
-}
-
 /// The representation of a place.
-const fn rep_of(place: u8) -> Rep {
+const fn rep_of(place: u8) -> Representation {
     match place {
-        MEM | CONST => Rep::Tagged,
-        MEMINT | IMM | PIN..=LAST_INT_PIN => Rep::Int32,
-        _ => Rep::Float64,
+        MEM | CONST => Representation::Tagged,
+        MEMINT | IMM | PIN..=LAST_INT_PIN => Representation::Int32,
+        _ => Representation::Float64,
     }
 }
 
@@ -43,13 +36,13 @@ fn stage() -> Concrete {
 
 /// The binary64 bits of the int32 in the low half of `value`.
 #[inline(always)]
-fn widen(value: u64) -> u64 {
+pub(crate) fn widen(value: u64) -> u64 {
     stage().i32_to_f64(value)
 }
 
 /// The place's value in its own representation.
 #[inline(always)]
-fn read_place<const P: u8, const H: u8>(s: &S) -> u64 {
+pub(crate) fn read_place<const P: u8, const H: u8>(s: &S) -> u64 {
     match P {
         // SAFETY: the frame slot at hole `H` is a live register of the activation.
         MEM => unsafe { (slot::<H>(s) as *const u64).read() },
@@ -66,9 +59,9 @@ fn read_place<const P: u8, const H: u8>(s: &S) -> u64 {
 pub(crate) fn tagged_place<const P: u8, const H: u8>(s: &S) -> u64 {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
-        Rep::Tagged => word,
-        Rep::Int32 => int_word(word as u32 as i32),
-        Rep::Float64 => canonical(f64::from_bits(word)),
+        Representation::Tagged => word,
+        Representation::Int32 | Representation::Int64 => value::int_word(&mut stage(), word as u32 as u64),
+        Representation::Float64 => canonical(f64::from_bits(word)),
     }
 }
 
@@ -78,9 +71,9 @@ pub(crate) fn tagged_place<const P: u8, const H: u8>(s: &S) -> u64 {
 fn int_place<const P: u8, const H: u8>(s: &S, proved: bool) -> Option<u64> {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
-        Rep::Int32 => Some(word),
-        Rep::Tagged => (proved || has_int_high(word)).then_some(word as u32 as u64),
-        Rep::Float64 => {
+        Representation::Int32 | Representation::Int64 => Some(word),
+        Representation::Tagged => (proved || has_int_high(word)).then_some(word as u32 as u64),
+        Representation::Float64 => {
             let narrow = truncate32(f64::from_bits(word));
             (widen(narrow as u32 as u64) == word).then_some(narrow as u32 as u64)
         }
@@ -94,10 +87,10 @@ pub(crate) fn number_place<const P: u8, const H: u8>(s: &S) -> Option<u64> {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
         _ if P == CONST => Some(word),
-        Rep::Float64 => Some(word),
-        Rep::Int32 => Some(widen(word)),
-        Rep::Tagged if is_int(word) => Some(widen(word)),
-        Rep::Tagged => is_double(word).then_some(word),
+        Representation::Float64 => Some(word),
+        Representation::Int32 | Representation::Int64 => Some(widen(word)),
+        Representation::Tagged if value::is_int(&mut stage(), word) => Some(widen(word)),
+        Representation::Tagged => value::is_double(&mut stage(), word).then_some(word),
     }
 }
 
@@ -108,17 +101,17 @@ fn bitwise_place<const P: u8, const H: u8>(s: &S, numbers: bool) -> Option<u64> 
     let word = read_place::<P, H>(s);
     let truncated = |bits: u64| f64_to_i32(f64::from_bits(bits)).map(|int| int as u32 as u64);
     match rep_of(P) {
-        Rep::Int32 => Some(word),
-        Rep::Float64 => truncated(word),
-        Rep::Tagged if has_int_high(word) => Some(word as u32 as u64),
-        Rep::Tagged => (numbers && is_double(word)).then(|| truncated(word)).flatten(),
+        Representation::Int32 | Representation::Int64 => Some(word),
+        Representation::Float64 => truncated(word),
+        Representation::Tagged if has_int_high(word) => Some(word as u32 as u64),
+        Representation::Tagged => (numbers && is_double(word)).then(|| truncated(word)).flatten(),
     }
 }
 
 /// The int32 an array index operand holds: an int32, or a double equal to one.
 #[inline(always)]
 pub(crate) fn index_of<const P: u8, const H: u8>(s: &S) -> Option<i32> {
-    if rep_of(P) != Rep::Float64 {
+    if rep_of(P) != Representation::Float64 {
         return int_place::<P, H>(s, false).map(|word| word as u32 as i32);
     }
     let f = f64::from_bits(read_place::<P, H>(s));
@@ -130,7 +123,7 @@ pub(crate) fn index_of<const P: u8, const H: u8>(s: &S) -> Option<i32> {
 #[inline(always)]
 pub(crate) fn number_word<const P: u8, const H: u8>(s: &S) -> Option<u64> {
     let word = tagged_place::<P, H>(s);
-    if P == MEM && !(is_int(word) || is_double(word)) {
+    if P == MEM && !(value::is_int(&mut stage(), word) || value::is_double(&mut stage(), word)) {
         return None;
     }
     Some(word)
@@ -144,7 +137,7 @@ fn put_int<const D: u8>(s: &mut S, value: u64) {
         // SAFETY: the frame slot of hole 0 is writable; an int slot's tag stays in place.
         MEMINT => unsafe { (slot::<0>(s) as *mut u32).write(value as u32) },
         PINF.. => s.f[(D - PINF) as usize] = f64::from_bits(widen(value)),
-        _ => unsafe { (slot::<0>(s) as *mut u64).write(int_word(value as u32 as i32)) },
+        _ => unsafe { (slot::<0>(s) as *mut u64).write(value::int_word(&mut stage(), value as u32 as u64)) },
     }
 }
 
@@ -154,16 +147,16 @@ fn put_int<const D: u8>(s: &mut S, value: u64) {
 #[inline(always)]
 fn put_tagged<const D: u8>(s: &mut S, word: u64) -> bool {
     match D {
-        PINF.. if is_double(word) => s.f[(D - PINF) as usize] = f64::from_bits(word),
+        PINF.. if value::is_double(&mut stage(), word) => s.f[(D - PINF) as usize] = f64::from_bits(word),
         PINF.. => {
             core::hint::cold_path();
-            if !is_int(word) {
+            if !value::is_int(&mut stage(), word) {
                 return false;
             }
             put_int::<D>(s, word);
         }
         PIN..=LAST_INT_PIN | MEMINT => {
-            if !is_int(word) {
+            if !value::is_int(&mut stage(), word) {
                 return false;
             }
             put_int::<D>(s, word);
@@ -180,31 +173,102 @@ pub(crate) fn deliver<const D: u8>(mut s: S, word: u64) -> Out {
     if put_tagged::<D>(&mut s, word) { Out::Next(s) } else { Out::Exit(s) }
 }
 
+/// `deliver` of a `word` the fact store proved a Number (an int word or a double, `ic_rows::known_get`): a
+/// pinned double takes it with no tag test and no exit, an int word converted; any other place as `deliver`.
+#[inline(always)]
+pub(crate) fn deliver_number<const D: u8>(mut s: S, word: u64) -> Out {
+    match D {
+        PINF.. => {
+            let bits = if is_double(word) { word } else { widen(word) };
+            s.f[(D - PINF) as usize] = f64::from_bits(bits);
+            Out::Next(s)
+        }
+        _ => deliver::<D>(s, word),
+    }
+}
+
+/// The row's outcome for the staged step `step` over `frame`: `next` where the step produced its word
+/// and every result fit its place, else the row leaves with the state as it was.
+#[inline(always)]
+pub(crate) fn settle<const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>, step: Step<u64, ()>, next: fn(S) -> Out) -> Out {
+    match step {
+        Step::Value(_) if !frame.refused => next(frame.s),
+        _ => Out::Exit(frame.s),
+    }
+}
+
+/// The row's outcome: continue where the staged work was done and every result fit its place, else leave with
+/// the registers as they were.
+#[inline(always)]
+pub(crate) fn finish<const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>, done: bool) -> Out {
+    if frame.writes_fit(done) { Out::Next(frame.s) } else { Out::Exit(frame.s) }
+}
+
+/// `finish` for a fast arm: where it continues it hops past the helper step laid out after the row (`hop`).
+#[inline(always)]
+pub(crate) fn finish_fast<const D: u8, const A: u8>(frame: Places<D, A, MEM>, done: bool) -> Out {
+    hop(finish(frame, done))
+}
+
+/// The outcome of a chained row's staged step over its frame `s`: a value continues through `hit` (the row's delivery),
+/// and a chained row's hit skips the site's other entries (TAKEN); a leave continues at the site's next entry where the
+/// row is chained (NEXT), else leaves through EXIT0 with nothing written.
+#[inline(always)]
+pub(crate) fn finish_chained<const CHAINED: bool>(s: S, step: Step<u64, ()>, hit: impl FnOnce(S, u64) -> Out) -> Out {
+    match step {
+        Step::Value(word) => match hit(s, word) {
+            Out::Next(s) if CHAINED => Out::Taken(s),
+            other => other,
+        },
+        _ if CHAINED => Out::Next(s),
+        _ => Out::Exit(s),
+    }
+}
+
+/// The object register a site row names: the word at its frame offset, which sits above the destination's in hole 0
+/// (`SITE_OBJECT_AT`).
+#[inline(always)]
+pub(crate) fn site_object(s: &S) -> u64 {
+    word_at(s.frame, (hole64::<0>() >> SITE_OBJECT_AT) as usize)
+}
+
 /// Writes `value`, held in `rep`, to the destination; false where the place cannot hold it.
 #[inline(always)]
-fn put<const D: u8>(s: &mut S, value: u64, rep: Rep) -> bool {
+fn put<const D: u8>(s: &mut S, value: u64, rep: Representation) -> bool {
     match rep {
-        Rep::Int32 => put_int::<D>(s, value),
-        Rep::Float64 if D >= PINF => s.f[(D - PINF) as usize] = f64::from_bits(value),
-        Rep::Float64 => return put_tagged::<D>(s, canonical(f64::from_bits(value))),
-        Rep::Tagged => return put_tagged::<D>(s, value),
+        Representation::Int32 | Representation::Int64 => put_int::<D>(s, value),
+        Representation::Float64 if D >= PINF => s.f[(D - PINF) as usize] = f64::from_bits(value),
+        Representation::Float64 => return put_tagged::<D>(s, canonical(f64::from_bits(value))),
+        Representation::Tagged => return put_tagged::<D>(s, value),
     }
     true
 }
 
 /// ToBoolean of an operand: an int32 by its value, a double by its number, a tagged word by the
-/// staged rule (`value::tagged_truthiness`); `None` where a heap cell decides, which leaves.
+/// staged rule (`value::tagged_truthiness`, which also decides a record, a boolean and an int);
+/// `None` where a heap cell decides, which leaves.
 #[inline(always)]
 fn truthy<const P: u8, const H: u8>(s: &S) -> Option<bool> {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
-        Rep::Int32 => Some(word as u32 != 0),
-        Rep::Float64 => Some(stage().number_truthy(word)),
-        Rep::Tagged => {
+        Representation::Int32 | Representation::Int64 => Some(word as u32 != 0),
+        Representation::Float64 => Some(stage().number_truthy(word)),
+        Representation::Tagged => {
             let (undecided, truthy) = value::tagged_truthiness(&mut stage(), word);
-            (!undecided).then_some(truthy)
+            if undecided { string_truthy(s, word) } else { Some(truthy) }
         }
     }
+}
+
+/// ToBoolean of a flat string `word` names: its length is not zero, read from its record as the string rows read it
+/// (`string_length::flat_string`, the interpreter's `concrete_string_length`). `None` for any other heap value, or a
+/// string form the record does not hold flat (a rope, a slice), which leaves the row.
+#[inline(always)]
+fn string_truthy(s: &S, word: u64) -> Option<bool> {
+    let mut stage = stage();
+    let records = word_at(payload(s), JS_STEP_STRING_RECORD_BASE);
+    let string = string_length::flat_string(&mut stage, records, word, ())?;
+    Some(string.length != 0)
 }
 
 /// A row's three places over the machine state. `proved` records that a dispatch already
@@ -247,12 +311,6 @@ impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
         both_int(tagged_place::<A, HOLE_A>(&self.s), tagged_place::<B, HOLE_B>(&self.s))
     }
 
-    /// The int32 operand `register` of a bitwise row, proved here.
-    #[inline(always)]
-    pub(crate) fn bitwise_operand(&self, register: Register, numbers: bool) -> Option<u64> {
-        by_place!(register, bitwise_place(&self.s, numbers))
-    }
-
     /// Whether the row may continue: nothing the staged row did was refused by a place.
     #[inline(always)]
     pub(crate) fn writes_fit(&self, step_ok: bool) -> bool {
@@ -261,11 +319,11 @@ impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
 }
 
 impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> {
-    type Fact = Rep;
+    type Fact = Representation;
     type Control = ();
 
     #[inline(always)]
-    fn fact(&self, register: Register) -> Rep {
+    fn fact(&self, register: Register) -> Representation {
         match register {
             LEFT => rep_of(A),
             RIGHT => rep_of(B),
@@ -284,20 +342,23 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     }
 
     #[inline(always)]
-    fn write(&mut self, _stage: &mut Concrete, _register: Register, value: u64, fact: Rep) {
+    fn write(&mut self, _stage: &mut Concrete, _register: Register, value: u64, fact: Representation) {
         self.refused |= !put::<D>(&mut self.s, value, fact);
     }
 
     #[inline(always)]
     fn this(&mut self, _stage: &mut Concrete) -> u64 {
-        word_at(payload(&self.s), JS_STEP_RECEIVER)
+        context_word(self.s.frame, CONTEXT_THIS)
     }
     #[inline(always)]
     fn define_this(&mut self, _stage: &mut Concrete, _destination: Register, this: u64) {
-        self.refused |= !put::<D>(&mut self.s, this, Rep::Tagged);
+        self.refused |= !put::<D>(&mut self.s, this, Representation::Tagged);
     }
-    fn constant(&mut self, _stage: &mut Concrete, _constant: Constant) -> (u64, Rep) {
-        unreachable!("a Number row's constants are its places")
+    /// A program constant as its tagged word (`Constant::value`, the runtime's `Value` bits): the staged rows read
+    /// `void`'s `undefined` this way, where a Number row's constants are its places.
+    #[inline(always)]
+    fn constant(&mut self, _stage: &mut Concrete, constant: Constant) -> (u64, Representation) {
+        (constant.value.to_bits(), Representation::Tagged)
     }
     #[inline(always)]
     fn truthiness(&mut self, _stage: &mut Concrete, register: Register) -> Option<bool> {
@@ -307,17 +368,85 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     fn branch(&mut self, _stage: &mut Concrete, condition: bool) {
         self.taken = condition;
     }
-    fn jump(&mut self, _stage: &mut Concrete) { unreachable!("a row jumps by its kind") }
+    fn jump(&mut self, _stage: &mut Concrete) { self.taken = true; }
+
+    // The array operations' answers (`places_heap`).
     #[inline(always)]
-    fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, Rep) {
-        (if condition { crate::Value::TRUE } else { crate::Value::FALSE }.to_bits(), Rep::Tagged)
+    fn direct_array(&mut self, stage: &mut Concrete, source: Register) -> Option<()> { self.heap_direct_array(stage, source) }
+
+    #[inline(always)]
+    fn array_length(&mut self, stage: &mut Concrete, source: Register) -> Option<(u64, Representation)> { self.heap_array_length(stage, source) }
+
+    #[inline(always)]
+    fn typed_length(&mut self, stage: &mut Concrete, source: Register) -> Option<(u64, Representation)> { self.heap_typed_length(stage, source) }
+
+    #[inline(always)]
+    fn array_append(&mut self, stage: &mut Concrete, array: Register, value: u64) -> Option<()> { self.heap_array_append(stage, array, value) }
+
+    /// ForInNext's fast arm (`places_names`).
+    #[inline(always)]
+    fn vm_step(&mut self, stage: &mut Concrete, operation: crate::staged::CallOut, _result: Option<Register>) -> Option<(u64, Representation)> {
+        self.call_out_fast(stage, operation)
+    }
+
+    /// The typeof string table at hole 2 (`places_names`).
+    #[inline(always)]
+    fn typeof_string(&mut self, stage: &mut Concrete, name: u64) -> Option<(u64, Representation)> { self.typeof_entry(stage, name) }
+
+    #[inline(always)]
+    fn capture_slot(&mut self, stage: &mut Concrete, depth: u16, slot: u16, root: bool) -> Option<(u64, Representation)> {
+        self.capture_read(stage, depth, slot, root)
+    }
+
+    #[inline(always)]
+    fn store_capture(&mut self, stage: &mut Concrete, depth: u16, slot: u16, value: u64) -> Option<()> {
+        self.capture_store(stage, depth, slot, value)
+    }
+
+    #[inline(always)]
+    fn environment(&mut self, _stage: &mut Concrete) -> Option<(u64, Representation)> { self.environment_storage() }
+
+    #[inline(always)]
+    fn environment_write(&mut self, stage: &mut Concrete, slot: u16, value: u64, initialize: bool) -> Option<()> {
+        self.environment_store(stage, slot, value, initialize)
+    }
+
+    /// A pending interrupt or due collection leaves the row (`numeric::interrupted`).
+    #[inline(always)]
+    fn safepoint(&mut self, _stage: &mut Concrete, _proof: ()) -> Option<()> {
+        (!crate::numeric::interrupted(&self.s)).then_some(())
+    }
+    #[inline(always)]
+    fn invalidation(&mut self, _stage: &mut Concrete) -> Option<u64> {
+        Some(crate::places_guard::invalidation(&self.s))
+    }
+    #[inline(always)]
+    fn realm_globals(&mut self, _stage: &mut Concrete) -> Option<u64> {
+        Some(crate::places_guard::realm_globals(&self.s))
+    }
+    #[inline(always)]
+    fn count_edge(&mut self, _stage: &mut Concrete) -> Option<()> {
+        crate::places_guard::count_edge(&self.s).then_some(())
+    }
+    #[inline(always)]
+    fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, Representation) {
+        (if condition { crate::Value::TRUE } else { crate::Value::FALSE }.to_bits(), Representation::Tagged)
     }
 
     /// The activation's local slot `slot`, where it has locals and the slot is inside them.
     #[inline(always)]
-    fn load_local(&mut self, _stage: &mut Concrete, slot: u16, _miss: Option<()>) -> Option<(u64, Rep)> {
+    fn load_local(&mut self, _stage: &mut Concrete, slot: u16, _miss: Option<()>) -> Option<(u64, Representation)> {
         let locals = local_slot(&self.s, slot)?;
-        Some((word_at(locals, 0), Rep::Tagged))
+        Some((word_at(locals, 0), Representation::Tagged))
+    }
+
+    /// The array and object record tables and the collection epoch the dispatch payload holds, where
+    /// both tables are reserved (the lane frame's `heap_records`); `None` where one is absent.
+    #[inline(always)]
+    fn heap_records(&mut self, _stage: &mut Concrete) -> Option<(u64, u64, u64)> {
+        let payload = payload(&self.s);
+        let (arrays, objects) = (word_at(payload, JS_STEP_ARRAY_RECORD_BASE), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
+        (arrays != 0 && objects != 0).then(|| (arrays, objects, word_at(payload, JS_STEP_EPOCH)))
     }
 
     #[inline(always)]
@@ -338,12 +467,18 @@ fn local_slot(s: &S, slot: u16) -> Option<usize> {
     (locals != 0 && u64::from(slot) < count).then(|| locals + usize::from(slot) * core::mem::size_of::<u64>())
 }
 
-impl<const D: u8, const A: u8, const B: u8> GlobalFrame<Concrete> for Places<D, A, B> {}
-impl<const D: u8, const A: u8, const B: u8> crate::staged::PropertyFrame<Concrete> for Places<D, A, B> {}
-impl<const D: u8, const A: u8, const B: u8> crate::staged::ElementFrame<Concrete> for Places<D, A, B> {}
-impl<const D: u8, const A: u8, const B: u8> crate::staged::CallFrame<Concrete> for Places<D, A, B> {}
+impl<const D: u8, const A: u8, const B: u8> crate::staged::PropertyFrame<Concrete> for Places<D, A, B> {
+    type Plans = crate::staged::NoPlans;
+    fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
+}
 
 impl<const D: u8, const A: u8, const B: u8> NumericFrame<Concrete> for Places<D, A, B> {
+    /// ToInt32 of the operand: an int place as it is, a double truncated (`bitwise_place`).
+    #[inline(always)]
+    fn int32_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+        by_place!(operand.register_index()?, bitwise_place(&self.s, true))
+    }
+
     #[inline(always)]
     fn int_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let (register, proved) = (operand.register_index()?, self.proved);
@@ -363,7 +498,7 @@ impl<const D: u8, const A: u8, const B: u8> NumericFrame<Concrete> for Places<D,
     #[inline(always)]
     fn miss(&self) {}
     #[inline(always)]
-    fn int_fact(&self) -> Rep { Rep::Int32 }
+    fn int_fact(&self) -> Representation { Representation::Int32 }
     #[inline(always)]
-    fn number_fact(&self) -> Rep { Rep::Float64 }
+    fn number_fact(&self) -> Representation { Representation::Float64 }
 }

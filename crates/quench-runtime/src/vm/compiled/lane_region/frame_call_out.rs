@@ -2,24 +2,22 @@
 //! the lane's helper (`Frame::vm_step`).
 
 use super::{Edges, EmitFrame, FRAME};
-use super::super::{emit_js_guard, emit_js_payload_word, emit_js_property_values, emit_lane_helper_call, emit_unlogged_property_store_guard,
+use super::super::{emit_js_guard, emit_js_payload_word, emit_js_property_values, emit_lane_helper_call,
     register_offset, CheckedObject, Emit, JsStepDispatch, LaneHelper, ObjectRecord, LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_MISSED};
 use super::super::super::object_slots::inline_storage;
 use crate::vm::global_facts::GlobalSlot;
 use super::{RegisterFact, Representation, Type};
 use crate::bytecode::Register;
 use crate::staged::CallOut;
+use crate::staged::store::bound_full_store;
 use crate::Value;
 use cranelift_codegen::ir;
-use crate::staged::{flow::FlowStage, region::Region, Access, Stage};
-
-/// The property values a global store writes.
-const OBJECT_SLOTS: Access = Region::ObjectSlots.mutable();
+use crate::staged::{flow::FlowStage, Stage};
 
 /// Where a call-out's record is, and what its slow case needs of the lowering: the registers the
 /// helper reads, and where a status other than completion or a miss ends the body.
 pub(in super::super) struct CallOutSite {
-    /// The record the helper decodes (`dispatch_fast::lane_vm_step`).
+    /// The record the helper decodes (`dispatch_fast::vm_operation_step`).
     pub(in super::super) record: u32,
     /// The block a status of a leave in a callee, or a termination, reaches with the status.
     pub(in super::super) stop: ir::Block,
@@ -43,7 +41,19 @@ pub(in super::super) struct CallOutSite {
 pub(super) fn vm_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, operation: CallOut, result: Option<Register>)
     -> Option<(ir::Value, RegisterFact)> {
     let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = frame.edges else { return None };
+    if let Some((operands, operator)) = operation.word_decision() {
+        return Some(decide_words(frame, stage, operands, operator, miss));
+    }
     let site = match (frame.call_out, operation) {
+        // A decision the words may settle (a string relation, an ordinary `instanceof`) asks the
+        // pure helper first, and makes the step in place only where it answers `DELETED`.
+        (Some(site), CallOut::Decide { left, right, operator }) => {
+            let answer = decide_answer(frame, stage, [left, right], operator);
+            let decided = stage.ne_imm(answer, Value::DELETED.to_bits());
+            let value = stage.choose_leaving(decided, |_| Some(answer),
+                |stage| site_step(frame, stage, site, true, result).map(|(word, _)| word))?;
+            return Some((value, RegisterFact::definition(Type::language(crate::ValueType::Boolean), Representation::Tagged)));
+        }
         (Some(site), _) => site,
         (None, CallOut::Decide { left, right, operator }) => return Some(decide_words(frame, stage, [left, right], operator, miss)),
         (None, _) => return Some(leave(stage, miss)),
@@ -56,7 +66,7 @@ pub(super) fn vm_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, opera
 pub(super) fn site_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, site: &CallOutSite, decides: bool,
     result: Option<Register>) -> Option<(ir::Value, RegisterFact)> {
     let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = frame.edges else { return None };
-    let status = call_helper(frame, stage, site, miss);
+    let status = call_helper(frame, stage, site);
     let holds = decides.then(|| stage.eq_imm(status, LANE_CALL_HOLDS as u64));
     let completed = stage.builder.create_block();
     let plain = stage.eq_imm(status, LANE_CALL_COMPLETED as u64);
@@ -75,29 +85,35 @@ pub(super) fn site_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, sit
 /// A decision of two registers no record names (`CallOut::Decide` carries its operands): the
 /// lane's `Decide` helper takes their tagged words, made on a copy of the facts so only this slow
 /// path pays for boxing, and the operator, and answers by the interpreter's own rule
-/// (`lane_decision`) the boolean it decides or `DELETED`, which leaves at the miss edge. It runs
+/// (`comparison_decision`) the boolean it decides or `DELETED`, which leaves at the miss edge. It runs
 /// no guest code and allocates nothing, so no register is spilled and the arena stays.
 fn decide_words(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, operands: [Register; 2], operator: u32,
     miss: ir::Block) -> (ir::Value, RegisterFact) {
-    let mut scratch = frame.state.clone();
-    let [left, right] = operands.map(|register| super::register_tagged(stage.builder, frame.registers, &mut scratch, register));
-    let helper = frame.helpers.address(&mut stage.builder, LaneHelper::Decide);
-    let operator = stage.constant(u64::from(operator));
-    let answer = emit_lane_helper_call(stage.builder, frame.payload, helper, &[left, right, operator]);
+    let answer = decide_answer(frame, stage, operands, operator);
     let decided = stage.ne_imm(answer, Value::DELETED.to_bits());
     emit_js_guard(stage.builder, decided, miss);
     (answer, RegisterFact::definition(Type::language(crate::ValueType::Boolean), Representation::Tagged))
 }
 
+/// The `Decide` helper's answer for two registers: the canonical boolean, or `DELETED` where only
+/// the full step decides.
+fn decide_answer(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, operands: [Register; 2], operator: u32) -> ir::Value {
+    let mut scratch = frame.state.clone();
+    let [left, right] = operands.map(|register| super::register_tagged(stage.builder, frame.registers, &mut scratch, register));
+    let helper = frame.helpers.address(&mut stage.builder, LaneHelper::Decide);
+    let operator = stage.constant(u64::from(operator));
+    emit_lane_helper_call(stage.builder, frame.payload, helper, &[left, right, operator])
+}
+
 /// The helper's call: the registers the body wrote go to the lane's file first, each in its
 /// tagged form, made on a copy of the facts so only this slow path pays for it.
-fn call_helper(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, site: &CallOutSite, miss: ir::Block) -> ir::Value {
+fn call_helper(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, site: &CallOutSite) -> ir::Value {
     let mut scratch = frame.state.clone();
     for register in &site.spill {
         let bits = super::register_tagged(stage.builder, frame.registers, &mut scratch, *register);
         stage.store_u64(FRAME, site.registers, register_offset(*register), bits);
     }
-    let context = super::emit_lane_context(stage.builder, frame.payload, miss);
+    let context = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, head.lane_context));
     let record = stage.constant(u64::from(site.record));
     let helper = frame.helpers.address(&mut stage.builder, LaneHelper::VmStep);
     emit_lane_helper_call(stage.builder, frame.payload, helper, &[context, record])
@@ -109,8 +125,7 @@ fn completion(stage: &mut Emit<'_, '_>, site: &CallOutSite, result: Option<Regis
     -> (ir::Value, RegisterFact) {
     match (holds, result) {
         (Some(holds), _) => {
-            let (yes, no) = (stage.constant(Value::TRUE.to_bits()), stage.constant(Value::FALSE.to_bits()));
-            (stage.select(holds, yes, no), RegisterFact::definition(Type::language(crate::ValueType::Boolean), Representation::Tagged))
+            (super::boolean_word(stage.builder, holds), RegisterFact::definition(Type::language(crate::ValueType::Boolean), Representation::Tagged))
         }
         (None, Some(register)) => (stage.load_u64(FRAME, site.registers, register_offset(register)),
             RegisterFact::definition(Type::ANY, Representation::Tagged)),
@@ -131,10 +146,10 @@ fn leave(stage: &mut Emit<'_, '_>, miss: ir::Block) -> (ir::Value, RegisterFact)
 /// word: its record by id, the realm and the layout proved by dependencies the lowering took.
 fn global_layout(frame: &EmitFrame<'_>, stage: &mut Emit<'_, '_>, cell: GlobalSlot, miss: ir::Block)
     -> Option<(CheckedObject, ir::Value)> {
-    let records = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
+    let records = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base));
     let bits = stage.constant(cell.global.to_bits());
     let address = ObjectRecord::prove(stage.builder, bits, records, None, miss).address(stage.builder);
-    let inline = inline_storage(stage.builder, stage.layout_table, address);
+    let inline = inline_storage(stage.builder, address);
     let (arena, _) = emit_js_property_values(stage.builder, frame.payload);
     Some((CheckedObject::prove_arena_extras(stage.builder, address, inline, arena, cell.storage_len, miss)?, bits))
 }
@@ -153,29 +168,19 @@ pub(super) fn global_write(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, 
     let address = layout.arena_address(stage.builder, cell.slot, miss)?;
     #[cfg(test)]
     crate::vm::call_out::counts::bump(&crate::vm::call_out::counts::DIRECT_GLOBAL_STORES);
-    if ty.is_subtype(Type::NUMBER) {
-        stage.store_u64(OBJECT_SLOTS, address, 0, value);
-        return Some(());
-    }
-    let (general, done) = (stage.builder.create_block(), stage.builder.create_block());
-    stage.builder.set_cold_block(general);
     let record = stage.and_imm(bits, u64::from(u32::MAX));
-    emit_unlogged_property_store_guard(stage.builder, crate::staged::RecordSpace::Object, frame.payload, record, value, general);
-    stage.store_u64(OBJECT_SLOTS, address, 0, value);
+    // A Number is immediate, so the row stores it with no gate and cannot leave.
+    if ty.is_subtype(Type::NUMBER) {
+        return bound_full_store(stage, record, address, (value, ty), miss);
+    }
+    let general = super::cold_block(stage.builder);
+    let done = stage.builder.create_block();
+    // The store gate of the staged row; a gate that does not admit the write leaves to the VM's step.
+    bound_full_store(stage, record, address, (value, ty), general)?;
     stage.jump(done, &[]);
     stage.builder.switch_to_block(general);
     site_step(frame, stage, frame.call_out?, false, None)?;
     stage.jump(done, &[]);
     stage.builder.switch_to_block(done);
-    Some(())
-}
-
-/// A global-name `typeof` of the slot the row holds, whose observed type spells one name: that
-/// name, a constant of the string kind.
-pub(super) fn global_typeof(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register) -> Option<()> {
-    let name = frame.call_out?.cell?.typeof_name?;
-    let bits = stage.constant(name.to_bits());
-    let fact = RegisterFact::definition(Type::language(crate::ValueType::String), Representation::Tagged);
-    <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, bits, fact);
     Some(())
 }

@@ -10,7 +10,7 @@ pub(super) fn write_closure_tables(out: &mut BinaryWriter, program: &crate::byte
 
 /// The closure tables `write_closure_tables` wrote, for a program of `functions` functions.
 pub(super) fn read_closure_tables(input: &mut BinaryReader<'_>, functions: usize)
-    -> Result<(Option<std::rc::Rc<crate::bytecode::ClosureReads>>, crate::bytecode::FirstCallStubs), String> {
+    -> Result<(Option<std::rc::Rc<crate::bytecode::ClosureReads>>, crate::compile::first_call::FirstCallStubs), String> {
     Ok((read_closure_reads(input)?, read_first_call_scopes(input, functions)?))
 }
 
@@ -23,7 +23,7 @@ fn write_closure_reads(out: &mut BinaryWriter, reads: Option<&crate::bytecode::C
     };
     out.u32(reads.functions.len() as u32);
     for function in reads.functions.iter() {
-        out.option_u32(function.parent);
+        out.option_u32(function.enclosing());
         out.u8(u8::from(function.is_arrow));
         out.u8(u8::from(function.reads.is_some()));
         if let Some(pairs) = &function.reads {
@@ -42,7 +42,12 @@ fn read_closure_reads(input: &mut BinaryReader<'_>) -> Result<Option<std::rc::Rc
         return Ok(None);
     }
     let functions = input.list(|input| {
-        let parent = input.option_u32()?;
+        let parent = match input.option_u32()? {
+            Some(crate::bytecode::closure_reads::FunctionReads::NO_PARENT) => {
+                return Err("invalid residual closure reads parent".into());
+            }
+            parent => parent,
+        };
         let is_arrow = input.u8()? != 0;
         let reads = if input.u8()? != 0 {
             Some(input.list(|input| Ok((input.u32()?, input.u16()?)))?.into_boxed_slice())
@@ -50,21 +55,24 @@ fn read_closure_reads(input: &mut BinaryReader<'_>) -> Result<Option<std::rc::Rc
             None
         };
         let named_slots = input.u16s()?.into_boxed_slice();
-        Ok(crate::bytecode::closure_reads::FunctionReads { parent, is_arrow, reads, named_slots })
+        Ok(crate::bytecode::closure_reads::FunctionReads::new(parent, is_arrow, reads, named_slots))
     })?;
     if functions
         .iter()
-        .any(|function| function.parent.is_some_and(|parent| parent as usize >= functions.len()))
+        .any(|function| function.enclosing().is_some_and(|parent| parent as usize >= functions.len()))
     {
         return Err("invalid residual closure reads parent".into());
     }
-    Ok(Some(std::rc::Rc::new(crate::bytecode::ClosureReads { functions: functions.into_boxed_slice() })))
+    Ok(Some(std::rc::Rc::new(crate::bytecode::ClosureReads {
+        functions: functions.into_boxed_slice(),
+        environment_elision: Default::default(),
+    })))
 }
 
 /// The scopes of a program's nested first-call stubs (`ResidualProgram::first_call_scopes`):
 /// per stub its id, inherited strictness, scope level count, and the names it reads with each
 /// one's level and slot.
-fn write_first_call_scopes(out: &mut BinaryWriter, stubs: &crate::bytecode::FirstCallStubs) {
+fn write_first_call_scopes(out: &mut BinaryWriter, stubs: &crate::compile::first_call::FirstCallStubs) {
     out.u32(stubs.len() as u32);
     for (stub, scopes) in stubs.iter() {
         out.u32(*stub);
@@ -79,7 +87,7 @@ fn write_first_call_scopes(out: &mut BinaryWriter, stubs: &crate::bytecode::Firs
     }
 }
 
-fn read_first_call_scopes(input: &mut BinaryReader<'_>, functions: usize) -> Result<crate::bytecode::FirstCallStubs, String> {
+fn read_first_call_scopes(input: &mut BinaryReader<'_>, functions: usize) -> Result<crate::compile::first_call::FirstCallStubs, String> {
     let stubs = input.list(|input| {
         let stub = input.u32()?;
         let strict = input.bool()?;
@@ -89,7 +97,7 @@ fn read_first_call_scopes(input: &mut BinaryReader<'_>, functions: usize) -> Res
             return Err("invalid residual first-call scope level".into());
         }
         let names = names.iter().map(|(name, level, slot)| (name.as_str(), *level, *slot)).collect();
-        Ok((stub, std::rc::Rc::new(crate::bytecode::FirstCallScopes::new(levels, names, strict))))
+        Ok((stub, std::rc::Rc::new(crate::compile::first_call::FirstCallScopes::new(levels, names, strict))))
     })?;
     if stubs.iter().any(|(stub, _)| *stub as usize >= functions) || !stubs.is_sorted_by_key(|(stub, _)| *stub) {
         return Err("invalid residual first-call stub".into());

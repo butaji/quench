@@ -166,11 +166,7 @@ fn answer(c: &mut Context<'_>, answer: Answer) -> Result<RootId, RootedError> {
     Ok(array)
 }
 
-fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let key = c.string_rooted(name);
-    c.define_data_property_rooted(object, key, value, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 
 fn argument(args: &[RootId], index: usize, c: &mut Context<'_>) -> RootId {
     args.get(index).copied().unwrap_or_else(|| c.undefined())

@@ -48,6 +48,11 @@ pub(super) enum AssignmentReference {
     },
 }
 
+/// The rejection for a destructuring key the compiler does not lower.
+const DESTRUCTURING_KEY_UNSUPPORTED: &str = "destructuring key is unsupported";
+/// The rejection for an assignment target the compiler does not lower.
+const ASSIGNMENT_TARGET_UNSUPPORTED: &str = "assignment target unsupported";
+
 impl FunctionCompiler<'_, '_> {
     pub(super) fn assignment(&mut self, value: &AssignmentExpression<'_>) -> Register {
         if let Some(target) = value.left.as_simple_assignment_target() {
@@ -67,7 +72,19 @@ impl FunctionCompiler<'_, '_> {
             }
             let operator = value.operator as u8;
             if operator == 0 {
-                let right = self.expression(&value.right);
+                // A plain store to a promoted local is a `Move` after the value, so the value is
+                // computed straight into the local's register.
+                let local = match &reference {
+                    AssignmentReference::Name { atom, environment: None } => self.plain_store_register(*atom),
+                    _ => None,
+                };
+                let right = match local {
+                    Some(register) => {
+                        self.expression_into(&value.right, register);
+                        register
+                    }
+                    None => self.expression(&value.right),
+                };
                 if Self::anonymous_function_definition(&value.right)
                     && let Some(name) = self.assignment_identifier_name(&value.left)
                 {
@@ -288,6 +305,17 @@ impl FunctionCompiler<'_, '_> {
         }
         match target {
             AssignmentTarget::ArrayAssignmentTarget(array) => {
+                let targets = if array.rest.is_some() || array.elements.is_empty() || array.elements.len() > crate::bytecode::ARRAY_PATTERN_MAX_ELEMENTS as usize { None } else {
+                    array.elements.iter().map(|element| match element {
+                        None => Some(None),
+                        Some(AssignmentTargetMaybeDefault::AssignmentTargetIdentifier(identifier)) => {
+                            let atom = self.owner.atom(identifier.name.as_str());
+                            self.stores_locally(atom, false).then_some(Some(atom))
+                        }
+                        Some(_) => None,
+                    }).collect::<Option<Vec<_>>>()
+                };
+                let direct = targets.map(|targets| self.direct_array_pattern(value, &targets, false));
                 let iterator = self.binding_iterator(value);
                 let (protected_start, error_atom) =
                     self.begin_binding_iterator_protection(iterator);
@@ -310,6 +338,9 @@ impl FunctionCompiler<'_, '_> {
                     }
                 }
                 self.end_binding_iterator_protection(iterator, protected_start, error_atom);
+                if let Some(done) = direct {
+                    self.patch(done);
+                }
             }
             AssignmentTarget::ObjectAssignmentTarget(object) => {
                 self.require_object_coercible(value);
@@ -338,7 +369,7 @@ impl FunctionCompiler<'_, '_> {
                         }
                         AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
                             let Some((key, excluded_key)) = self.pattern_key(&property.name) else {
-                                self.owner.reject(property.span(), "destructuring key is unsupported");
+                                self.owner.reject(property.span(), DESTRUCTURING_KEY_UNSUPPORTED);
                                 continue;
                             };
                             let reference = self.prepare_maybe_default_reference(&property.binding);
@@ -445,7 +476,7 @@ impl FunctionCompiler<'_, '_> {
             }
             _ => {
                 self.owner
-                    .reject(target.span(), "assignment target unsupported");
+                    .reject(target.span(), ASSIGNMENT_TARGET_UNSUPPORTED);
                 AssignmentReference::Name {
                     atom: self.owner.atom("undefined"),
                     environment: None,
@@ -523,7 +554,7 @@ impl FunctionCompiler<'_, '_> {
             _ => {
                 let Some(target) = target.as_assignment_target() else {
                     self.owner
-                        .reject(target.span(), "assignment target unsupported");
+                        .reject(target.span(), ASSIGNMENT_TARGET_UNSUPPORTED);
                     return;
                 };
                 self.assign_pattern(target, value);
@@ -622,7 +653,7 @@ impl FunctionCompiler<'_, '_> {
                 for property in &object.properties {
                     let dst = self.reg();
                     let Some((key, excluded_key)) = self.pattern_key(&property.key) else {
-                        self.owner.reject(property.span, "destructuring key is unsupported");
+                        self.owner.reject(property.span, DESTRUCTURING_KEY_UNSUPPORTED);
                         continue;
                     };
                     excluded.push(excluded_key);
@@ -636,6 +667,18 @@ impl FunctionCompiler<'_, '_> {
                 }
             }
             BindingPattern::ArrayPattern(array) => {
+                let targets = if array.rest.is_some() || reference.is_some() || array.elements.is_empty()
+                    || array.elements.len() > crate::bytecode::ARRAY_PATTERN_MAX_ELEMENTS as usize { None } else {
+                    array.elements.iter().map(|element| match element {
+                        None => Some(None),
+                        Some(BindingPattern::BindingIdentifier(identifier)) => {
+                            let atom = self.owner.atom(identifier.name.as_str());
+                            self.stores_locally(atom, true).then_some(Some(atom))
+                        }
+                        Some(_) => None,
+                    }).collect::<Option<Vec<_>>>()
+                };
+                let direct = targets.map(|targets| self.direct_array_pattern(value, &targets, true));
                 let iterator = self.binding_iterator(value);
                 let (protected_start, error_atom) =
                     self.begin_binding_iterator_protection(iterator);
@@ -650,6 +693,9 @@ impl FunctionCompiler<'_, '_> {
                     self.bind_pattern(&rest.argument, rest_value);
                 }
                 self.end_binding_iterator_protection(iterator, protected_start, error_atom);
+                if let Some(done) = direct {
+                    self.patch(done);
+                }
             }
             BindingPattern::AssignmentPattern(assignment) => {
                 let selected = self.reg();
@@ -779,6 +825,33 @@ impl FunctionCompiler<'_, '_> {
         let error = self.reg();
         self.emit(Op::Construct, error, constructor, argument, 1);
         self.emit(Op::Throw, error, 0, 0, 0);
+    }
+
+    /// The direct reads of an array pattern whose `targets` (an atom, or `None` for an
+    /// elision) each store only a local (`stores_locally`): while its `UNARY_ARRAY_PATTERN` test holds,
+    /// the pattern's iteration runs no guest code and its close calls nothing, so it is the
+    /// reads of `value`'s elements `0..targets.len()` and the stores, in order; else it jumps
+    /// to the iterator protocol the caller emits next. Every element is read before the first
+    /// store, which may overwrite `value`'s register (`[a, b] = a`). Returns the jump past the
+    /// protocol, for the caller to patch after it.
+    fn direct_array_pattern(&mut self, value: Register, targets: &[Option<Atom>], initializing: bool) -> usize {
+        let fits = self.reg();
+        self.emit(Op::Unary, fits, value, 0, crate::bytecode::UNARY_ARRAY_PATTERN + targets.len() as u32 - 1);
+        let protocol = self.emit(Op::JumpFalse, fits, 0, 0, 0);
+        let mut elements = Vec::with_capacity(targets.len());
+        for (index, target) in targets.iter().enumerate() {
+            let Some(atom) = *target else { continue };
+            let element = self.reg();
+            let key = self.literal(Constant::Number(index as f64));
+            self.emit(Op::GetIndex, element, value, key, 0);
+            elements.push((atom, element));
+        }
+        for (atom, element) in elements {
+            self.store_atom_with_initialization(atom, element, initializing);
+        }
+        let done = self.emit(Op::Jump, 0, 0, 0, 0);
+        self.patch(protocol);
+        done
     }
 
     fn binding_iterator(&mut self, source: Register) -> BindingIterator {

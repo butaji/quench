@@ -34,82 +34,238 @@ fn staged_coverage_layout_decodes_outside_staged_only_shrink() {
     }
 }
 
-/// The interpreters: the one place an opcode's meaning is written by hand.
-const INTERPRETERS: &[&str] = &["vm/dispatch.rs", "vm/dispatch_wasm.rs", "vm/dispatch_wasm/gc.rs"];
+// ---------------------------------------------------------------------------------------------
+// One semantics, every tier derived (Futamura): the derivation debt.
+//
+// An opcode's meaning lives in exactly one place, its staged row (`staged::step` over `Stage`).
+// The interpreter's handlers are that row on `Concrete`, the b-jit stencils the row on
+// `StencilStage`, u-jit and AOT the row on `Emit`. Any other code that singles out an opcode or
+// an opcode family decides its meaning by hand, a second definition that can drift.
+//
+// The debt counts every spelling such a decision can take, so renaming does not pay it off:
+// `Op::X`, the opcode-index constants (`index::X` and any `use bytecode::index as ...` alias),
+// the catalog's opcode predicates (`.is_get_field()` ...), and the family tags `Class::X` and
+// `JsDenotation::X`; plus every hand-written lane handler (`fn lane_*` outside a macro), and every
+// opcode with no staged row. Only `staged/`, the catalog (`bytecode/`) and the compiler that
+// emits opcodes (`compile/`, apart from the peephole rewriter) may name an opcode. `staged/derivation_debt.txt` lists the debt per
+// file and token; it may only shrink. `QUENCH_DEBT_WRITE=1` rewrites it after a shrink.
+// ---------------------------------------------------------------------------------------------
 
-/// The directories of the tiers that execute, lower, profile or link opcodes: the interpreter,
-/// its fast paths and the JIT (`vm`), the per-opcode profile (`profile`), the typed analyses
-/// (`typed_ir`), the native link (`native_link`) and the memory edge (`memory_edge`).
-const TIER_DIRECTORIES: &[&str] = &["vm", "profile", "typed_ir", "native_link", "memory_edge"];
+/// Every directory whose code executes, lowers, profiles or links opcodes, the interpreters
+/// included: their handlers are to be generated from the rows too.
+const DEBT_DIRECTORIES: &[&str] = &["vm", "profile", "typed_ir", "native_link", "memory_edge", "../../quench-bjit/src",
+    "../../quench-bjit/stencils", "wasm"];
+
+/// Single files outside those directories that single out opcodes: the peephole rewriter, the
+/// validator and the Wasm front module. The catalog files that define the vocabulary
+/// (`bytecode.rs`, `bytecode/op_catalog.rs`, `bytecode/op_classes.rs`) are its source, not debt.
+const DEBT_FILES: &[&str] = &["compile/rewrite.rs", "compile/deferred_rewrite.rs", "bytecode/validate.rs", "wasm.rs"];
 
 /// Whether `file` (relative to `src`) holds only tests: a `tests` or `*_tests` module file or directory.
 fn is_test_file(file: &str) -> bool {
     file.split('/').map(|part| part.strip_suffix(".rs").unwrap_or(part)).any(|part| part == "tests" || part.ends_with("_tests"))
 }
 
-/// Opcode names per file and opcode (`Op::X` anywhere: a match arm, a comparison, a shape
-/// table) in the tier directories, outside the interpreters and tests. A tier that names an
-/// opcode decides something about its meaning by hand; one that reads the opcode table's
-/// facts (`control_flow_layout`, `input_binding_times`, `field_store`) derives it.
-fn opcode_arms() -> std::collections::BTreeMap<(String, String), usize> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut pending: Vec<std::path::PathBuf> = TIER_DIRECTORIES.iter().map(|directory| root.join(directory)).collect();
-    let mut arms = std::collections::BTreeMap::new();
+fn src_root() -> std::path::PathBuf { std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src") }
+
+/// The `is_*(self)` methods of every `impl Op` block in `source`: opcode predicates.
+fn op_predicate_methods(source: &str, into: &mut std::collections::BTreeSet<String>) {
+    for block in source.split("\nimpl Op {").skip(1) {
+        let body = block.split("\n}\n").next().unwrap_or(block);
+        for (at, _) in body.match_indices("fn is_") {
+            let name: String = body[at + 3..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+            if body[at + 3 + name.len()..].starts_with("(self)") { into.insert(name); }
+        }
+    }
+    // The catalog's generated predicates: `is_x => X,` lines of `op_predicates!`.
+    if let Some(list) = source.split("op_predicates! {").nth(1) {
+        for line in list.split("\n}").next().unwrap().lines() {
+            let line = line.trim();
+            if let Some((name, _)) = line.split_once(" =>") {
+                if name.starts_with("is_") { into.insert(name.to_owned()); }
+            }
+        }
+    }
+}
+
+/// The variants of `enum name` declared in `source`.
+fn enum_variants(source: &str, name: &str) -> Vec<String> {
+    let body = source.split(&format!("enum {name} {{")).nth(1).unwrap().split("\n}").next().unwrap();
+    body.lines().map(str::trim).filter(|line| line.starts_with(|c: char| c.is_ascii_uppercase()))
+        .map(|line| line.chars().take_while(char::is_ascii_alphanumeric).collect()).collect()
+}
+
+/// The vocabulary that names an opcode or an opcode family.
+struct Vocabulary {
+    opcodes: std::collections::BTreeSet<&'static str>,
+    predicates: std::collections::BTreeSet<String>,
+    classes: std::collections::BTreeSet<String>,
+    denotations: std::collections::BTreeSet<String>,
+}
+
+fn vocabulary() -> Vocabulary {
+    let root = src_root();
+    let read = |file: &str| std::fs::read_to_string(root.join(file)).unwrap();
+    let mut predicates = std::collections::BTreeSet::new();
+    for file in ["bytecode.rs", "bytecode/op_classes.rs", "bytecode/field_store.rs", "bytecode/op_catalog.rs"] {
+        op_predicate_methods(&read(file), &mut predicates);
+    }
+    Vocabulary {
+        opcodes: crate::bytecode::Op::NAMES.iter().copied().collect(),
+        predicates,
+        classes: enum_variants(&read("bytecode/op_catalog.rs"), "Class").into_iter().filter(|v| v != "Other").collect(),
+        denotations: enum_variants(&read("bytecode/denotation.rs"), "JsDenotation").into_iter().collect(),
+    }
+}
+
+fn ident_char(c: char) -> bool { c.is_ascii_alphanumeric() || c == '_' }
+
+/// The identifier that follows `at` in `code`.
+fn ident_at(code: &str, at: usize) -> &str {
+    let end = code[at..].find(|c: char| !ident_char(c)).map_or(code.len(), |n| at + n);
+    &code[at..end]
+}
+
+/// Adds each opcode decision in `code` to `debt` under `file`.
+fn count_decisions(code: &str, file: &str, words: &Vocabulary, debt: &mut std::collections::BTreeMap<(String, String), usize>) {
+    let mut add = |token: String| *debt.entry((file.to_owned(), token)).or_insert(0) += 1;
+    // Opcode identities: `Op::X`, `index::X` and the file's own aliases of the index module.
+    let mut paths = vec!["Op::".to_owned(), "index::".to_owned()];
+    for (at, _) in code.match_indices("index as ") {
+        paths.push(format!("{}::", ident_at(code, at + 9)));
+    }
+    for path in &paths {
+        for (at, _) in code.match_indices(path.as_str()) {
+            if code[..at].ends_with(ident_char) { continue; }
+            let name = ident_at(code, at + path.len());
+            if words.opcodes.contains(name) { add(format!("op:{name}")); }
+        }
+    }
+    // Opcode predicates (`.is_get_field()`), and family tags.
+    for (at, _) in code.match_indices(".is_") {
+        let name = ident_at(code, at + 1);
+        if words.predicates.contains(name) && code[at + 1 + name.len()..].starts_with('(') { add(format!("is:{name}")); }
+    }
+    for (tag, variants) in [("Class::", &words.classes), ("JsDenotation::", &words.denotations)] {
+        for (at, _) in code.match_indices(tag) {
+            if code[..at].ends_with(ident_char) { continue; }
+            let name = ident_at(code, at + tag.len());
+            if variants.contains(name) { add(format!("{}{name}", &tag[..tag.len() - 1])); }
+        }
+    }
+    // Hand-written lane handlers: a `fn lane_` a macro did not generate.
+    for (at, _) in code.match_indices("fn lane_") {
+        if !code[..at].ends_with(ident_char) { add("fn:lane_*".to_owned()); }
+    }
+    // Hand-written b-jit stencil rows: a function of a `stencils/*_rows.rs` file whose body runs
+    // no staged row. The stencils name rows by code numbers, not opcodes, so the terms above
+    // cannot see them.
+    if file.contains("quench-bjit/stencils/") && file.ends_with("_rows.rs") {
+        for body in function_bodies(code) {
+            if !body.contains("staged::") { add("fn:stencil_hand".to_owned()); }
+        }
+    }
+}
+
+/// The bodies (from the opening brace to its match) of the functions `code` defines.
+fn function_bodies(code: &str) -> Vec<&str> {
+    let mut bodies = Vec::new();
+    for (at, _) in code.match_indices("fn ") {
+        if code[..at].ends_with(ident_char) { continue; }
+        // The signature ends at the first `{` or `;` (a trait item with no body).
+        let Some(open) = code[at..].find(['{', ';']).map(|n| at + n) else { continue };
+        if code.as_bytes()[open] == b';' { continue; }
+        let mut depth = 0usize;
+        for (offset, c) in code[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 { bodies.push(&code[open..open + offset + 1]); break; }
+                }
+                _ => {}
+            }
+        }
+    }
+    bodies
+}
+
+/// The derivation debt of the tree, per (file, token).
+fn derivation_debt() -> std::collections::BTreeMap<(String, String), usize> {
+    let root = src_root();
+    let words = vocabulary();
+    let mut pending: Vec<std::path::PathBuf> = DEBT_DIRECTORIES.iter().map(|directory| root.join(directory)).collect();
+    let mut debt = std::collections::BTreeMap::new();
+    let mut files: Vec<std::path::PathBuf> = DEBT_FILES.iter().map(|file| root.join(file)).collect();
     while let Some(directory) = pending.pop() {
-        for entry in std::fs::read_dir(&directory).unwrap().map(Result::unwrap) {
+        let Ok(entries) = std::fs::read_dir(&directory) else { continue };
+        for entry in entries.map(Result::unwrap) {
             let path = entry.path();
             if path.is_dir() { pending.push(path); continue; }
+            files.push(path);
+        }
+    }
+    for path in files {
+        {
             let file = path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
-            if !file.ends_with(".rs") || is_test_file(&file) || INTERPRETERS.contains(&file.as_str()) { continue; }
-            count_opcode_names(&std::fs::read_to_string(&path).unwrap(), &file, &mut arms);
+            if !file.ends_with(".rs") || is_test_file(&file) { continue; }
+            let source = std::fs::read_to_string(&path).unwrap();
+            // Any inline test module closes the production code; its fixtures name opcodes freely.
+            let code = source.split("\n#[cfg(test)]\nmod ").next().unwrap();
+            let code = code.split("#[cfg(test)]\nmod ").next().unwrap();
+            count_decisions(code, &file, &words, &mut debt);
         }
     }
-    arms
-}
-
-/// Adds `source`'s opcode names, outside an inline test module, to `arms` under `file`.
-fn count_opcode_names(source: &str, file: &str, arms: &mut std::collections::BTreeMap<(String, String), usize>) {
-    // Any inline test module (whatever its name) closes the production code; its fixtures name
-    // opcodes freely.
-    let code = source.split("\n#[cfg(test)]\nmod ").next().unwrap();
-    let code = code.split("#[cfg(test)]\nmod ").next().unwrap();
-    for (at, _) in code.match_indices("Op::") {
-        let op: String = code[at + 4..].chars().take_while(char::is_ascii_alphanumeric).collect();
-        let qualified = code[..at].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_');
-        // `WideInstruction::new(Op::X, ...)` supplies an opcode value to the builder; it is
-        // not a second definition of the opcode's meaning.
-        if code[..at].trim_end().ends_with("WideInstruction::new(") { continue; }
-        // An opcode is a CamelCase variant, not an associated constant (`Op::COUNT`, `Op::NAMES`).
-        if !qualified && op.starts_with(|c: char| c.is_ascii_uppercase()) && op.contains(|c: char| c.is_ascii_lowercase()) {
-            *arms.entry((file.to_owned(), op)).or_insert(0) += 1;
-        }
+    // Opcodes with no staged row: a JS opcode the catalog gives no staged decoder, a Wasm opcode
+    // no `wasm_step::Step` describes.
+    for index in 0..crate::bytecode::Op::COUNT {
+        let op = crate::bytecode::Op::from_index(index).unwrap();
+        let staged = op.staged().is_some() || (0..1024).any(|tag| super::wasm_step::Step::of(op, tag).is_some());
+        if !staged { debt.insert(("<catalog>".to_owned(), format!("unstaged:{}", crate::bytecode::Op::NAMES[index])), 1); }
     }
+    debt
 }
 
-/// Futamura's first projection, enforced: a tier's meaning of an opcode is the interpreter's,
-/// specialized (`staged`, semantic entries), so an interpreter change reaches every tier. An
-/// opcode meaning a tier writes by hand is a second definition that can drift; the table of
-/// them only shrinks, and a new one fails here.
+const DEBT_FILE: &str = include_str!("derivation_debt.txt");
+
+fn render_debt(debt: &std::collections::BTreeMap<(String, String), usize>) -> String {
+    let total: usize = debt.values().sum();
+    let mut out = format!("# Derivation debt: each place a tier decides an opcode's meaning outside its staged row\n\
+        # (`staged/coverage_tests.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are\n\
+        # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.\n\
+        # total {total}\n");
+    for ((file, token), count) in debt { out.push_str(&format!("{file} {token} {count}\n")); }
+    out
+}
+
+/// Futamura's projections, enforced: every tier's meaning of an opcode is its staged row,
+/// specialized. The debt of hand-written decisions only shrinks, and a new one fails here.
 #[test]
 fn tiers_derive_opcode_meaning_from_the_interpreter() {
-    let allowed: std::collections::BTreeMap<(String, String), usize> = include_str!("hand_semantics.txt").lines()
+    // `QUENCH_DEBT_WRITE=init` records the debt as it stands (the first baseline only).
+    if std::env::var("QUENCH_DEBT_WRITE").as_deref() == Ok("init") {
+        std::fs::write(src_root().join("staged/derivation_debt.txt"), render_debt(&derivation_debt())).unwrap();
+        return;
+    }
+    let allowed: std::collections::BTreeMap<(String, String), usize> = DEBT_FILE.lines()
         .filter(|line| !line.starts_with('#') && !line.is_empty())
         .map(|line| {
             let mut fields = line.split(' ');
-            let (file, op, count) = (fields.next().unwrap(), fields.next().unwrap(), fields.next().unwrap());
-            ((file.to_owned(), op.to_owned()), count.parse().unwrap())
+            let (file, token, count) = (fields.next().unwrap(), fields.next().unwrap(), fields.next().unwrap());
+            ((file.to_owned(), token.to_owned()), count.parse().unwrap())
         })
         .collect();
-    let found = opcode_arms();
-    for ((file, op), count) in &found {
-        let limit = allowed.get(&(file.clone(), op.clone())).copied().unwrap_or(0);
-        assert!(*count <= limit, "{file} names Op::{op} {count} times (allowed {limit}): derive its meaning from the \
-            interpreter (`staged`, a semantic entry, an opcode-table fact) instead");
-    }
-    for ((file, op), limit) in &allowed {
-        let count = found.get(&(file.clone(), op.clone())).copied().unwrap_or(0);
-        assert!(count >= *limit, "{file} now names Op::{op} {count} times: lower its line in \
-            staged/hand_semantics.txt to {count} (or drop it at 0)");
+    let found = derivation_debt();
+    let grew: Vec<String> = found.iter().filter(|(key, count)| **count > allowed.get(*key).copied().unwrap_or(0))
+        .map(|((file, token), count)| format!("{file} {token}: {count} (allowed {})", allowed.get(&(file.clone(), token.clone())).copied().unwrap_or(0)))
+        .collect();
+    assert!(grew.is_empty(), "new hand-written opcode meaning; derive it from the opcode's staged row instead:\n{}", grew.join("\n"));
+    if found != allowed {
+        if std::env::var_os("QUENCH_DEBT_WRITE").is_some() {
+            std::fs::write(src_root().join("staged/derivation_debt.txt"), render_debt(&found)).unwrap();
+        } else {
+            panic!("derivation debt shrank ({} -> {}): rerun with QUENCH_DEBT_WRITE=1 to lower staged/derivation_debt.txt",
+                allowed.values().sum::<usize>(), found.values().sum::<usize>());
+        }
     }
 }
-

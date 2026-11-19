@@ -6,23 +6,11 @@ use quench_runtime::{
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod kernel;
 pub(crate) mod facade;
 pub(crate) mod promise;
 pub(crate) mod recursive;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 use kernel::{EventKind, WatchDescriptor};
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct WatchDescriptor(i32);
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-#[allow(dead_code)] // Backend is not installed on these hosts; preserve their prior fallback.
-#[derive(Clone, Copy)]
-enum EventKind {
-    Change,
-    Rename,
-}
 
 const FIRST_WATCH_ID: u64 = 1;
 const MAX_WATCH_ID: u64 = (1_u64 << f64::MANTISSA_DIGITS) - 1;
@@ -95,13 +83,7 @@ impl Default for State {
     }
 }
 
-fn get(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-) -> Result<RootId, RootedError> {
-    context.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 fn set(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,

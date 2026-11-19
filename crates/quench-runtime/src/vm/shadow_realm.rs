@@ -25,7 +25,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc_object(Self::empty_object(object_prototype));
         for (name, native, length) in [
             ("evaluate", Native::ShadowRealmEvaluate, 1.0),
             ("importValue", Native::ShadowRealmImportValue, 2.0),
@@ -183,9 +183,10 @@ impl<H: Host> Vm<H> {
             "<ShadowRealm>",
             &*self,
             false,
-            crate::bytecode::EvalContext::default(),
+            crate::compile::EvalContext::default(),
             &[],
             &[],
+            None,
         )
         .is_err();
         let prior_global = self.switch_realm_global(realm_global);

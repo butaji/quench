@@ -1,11 +1,9 @@
 use super::{ControlFlowLayout, Function, Instr, WideInstruction};
 
+/// `Function::widened` of a packed instruction not yet validated: `None` where its wide index
+/// is past the wide table.
 pub(super) fn instruction_at(function: &Function, packed: Instr) -> Option<WideInstruction> {
-    if packed.is_wide() {
-        function.wide.get(packed.wide_index()).copied()
-    } else {
-        Some(packed.as_wide())
-    }
+    (!packed.is_wide() || packed.wide_index() < function.wide.len()).then(|| function.widened(packed))
 }
 
 /// Whether every edge into `pc` is the fall-through of the instruction at `pc - 1`: no jump,
@@ -105,7 +103,7 @@ pub(super) fn is_bounded(function: &Function) -> bool {
                     else {
                         return false;
                     };
-                    if entry_instruction.op() != super::Op::Jump {
+                    if !entry_instruction.op().traits().has(super::Traits::UNCONDITIONAL_JUMP) {
                         return false;
                     }
                     work.push(entry);
@@ -170,7 +168,7 @@ fn handler_successors(handler: &super::Handler, successor: &mut impl FnMut(usize
 /// Every instruction's successors, normally or through a handler covering it, listed once
 /// for a pass over the whole function (`Handler::for_each_covering`). `pc + 1` stands for the
 /// function's end after its last instruction.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Default)]
 pub(crate) struct Successors {
     /// Where each pc's successors begin in `targets`, with one entry past the last pc.
     starts: Vec<u32>,
@@ -180,25 +178,39 @@ pub(crate) struct Successors {
 
 impl Successors {
     pub(crate) fn of(function: &Function, instructions: &[WideInstruction]) -> Self {
+        let mut table = Self::default();
+        table.fill(function, instructions.len(), |pc| instructions[pc]);
+        table
+    }
+
+    /// Refills this table with the successors of `function`'s code as it stands, as `of_code`
+    /// computes them, reusing the table's buffers.
+    pub(crate) fn refill(&mut self, function: &Function) {
+        self.fill(function, function.code.len(), |pc| function.instruction_at(pc));
+    }
+
+    /// Clears the table and writes the successors of the `length` instructions `instruction`
+    /// gives, normally or through a handler covering them (`Handler::for_each_covering`).
+    fn fill(&mut self, function: &Function, length: usize, instruction: impl Fn(usize) -> WideInstruction) {
         let handlers = &function.handlers;
-        let mut table = Self {
-            starts: Vec::with_capacity(instructions.len() + 1),
-            targets: Vec::with_capacity(instructions.len()),
-            edges: Vec::with_capacity(instructions.len()),
-        };
-        super::Handler::for_each_covering(handlers, 0..instructions.len(), |pc, covering| {
-            table.starts.push(pc_index(table.targets.len()));
+        self.starts.clear();
+        self.targets.clear();
+        self.edges.clear();
+        self.starts.reserve(length + 1);
+        self.targets.reserve(length);
+        self.edges.reserve(length);
+        super::Handler::for_each_covering(handlers, 0..length, |pc, covering| {
+            self.starts.push(pc_index(self.targets.len()));
             let mut push = |target, edge| {
-                table.targets.push(pc_index(target));
-                table.edges.push(edge);
+                self.targets.push(pc_index(target));
+                self.edges.push(edge);
             };
-            for_each_instruction_successor(pc, instructions[pc], |target| push(target, ControlEdge::Normal));
+            for_each_instruction_successor(pc, instruction(pc), |target| push(target, ControlEdge::Normal));
             for &index in covering {
                 handler_successors(&handlers[index], &mut push);
             }
         });
-        table.starts.push(pc_index(table.targets.len()));
-        table
+        self.starts.push(pc_index(self.targets.len()));
     }
 
     /// This table after dropping the instructions `map` (old pc to new, one entry past the
@@ -220,7 +232,9 @@ impl Successors {
 
     /// The successor table of `function`'s code as it stands.
     pub(crate) fn of_code(function: &Function) -> Self {
-        Self::of(function, &function.instructions().collect::<Vec<_>>())
+        let mut table = Self::default();
+        table.refill(function);
+        table
     }
 
     /// The successors of the instruction at `pc`, with how control reaches each.
@@ -247,4 +261,31 @@ impl Successors {
 
 fn pc_index(pc: usize) -> u32 {
     u32::try_from(pc).expect("a function's pcs fit u32")
+}
+
+impl Function {
+    /// Every control transfer of the function to an instruction at or before its source, as
+    /// (target, source): jumps, branch table entries (which are jumps), and exception and
+    /// `finally` continuations, taken from the last instruction their range covers.
+    pub(crate) fn backward_transfers(&self) -> Vec<(usize, usize)> {
+        // The jumps are the body's back edges, listed by source; the handler edges below are the
+        // transfers `back_edges` does not cover.
+        let mut transfers: Vec<(usize, usize)> = self.back_edges().map(|(source, target)| (target, source)).collect();
+        for handler in self.handlers.iter() {
+            let last = handler.end.saturating_sub(1) as usize;
+            for target in std::iter::once(handler.target).chain(handler.return_target) {
+                if target as usize <= last {
+                    transfers.push((target as usize, last));
+                }
+            }
+        }
+        transfers
+    }
+}
+
+/// Whether the instruction at `pc` may run more than once in one activation. A cycle through
+/// `pc` must leave it for an instruction before it, by a transfer from at or after `pc` to at
+/// or before it, which `backward` (`Function::backward_transfers`) lists.
+pub(crate) fn may_repeat(backward: &[(usize, usize)], pc: usize) -> bool {
+    backward.iter().any(|&(target, source)| target <= pc && pc <= source)
 }

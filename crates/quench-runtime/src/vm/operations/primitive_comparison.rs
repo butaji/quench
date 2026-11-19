@@ -40,7 +40,7 @@ impl<H: Host> Vm<H> {
         if nullish(left) || nullish(right) {
             return Some(nullish(left) && nullish(right));
         }
-        let symbol = |value: Value| matches!(self.heap.get(value), Some(Cell::Symbol(_)));
+        let symbol = |value: Value| self.heap.is_symbol(value);
         if symbol(left) || symbol(right) {
             return Some(left == right);
         }

@@ -2,20 +2,83 @@ use super::*;
 use oxc_ast_visit::{Visit, walk};
 use oxc_syntax::scope::ScopeFlags;
 
-struct IterationClosureFinder(bool);
+/// Finds whether a loop may make a closure that outlives the iteration it captured, so the
+/// loop's bindings need a copy of the environment per iteration (`CloneEnv`). A closure that is
+/// the initial value of a `let` or `const` declared in the loop's body, whose binding is only
+/// ever called (`Function::prototype_unobservable`), and that makes no closure itself, dies with
+/// its iteration in strict code: the binding is the value's only home and is out of scope at the
+/// next iteration, and no legacy `caller` hands it out. It reads the iteration's bindings while
+/// they are current, so it needs no copy.
+struct IterationClosureFinder<'s> {
+    found: bool,
+    /// The closures that may die with their iteration (`Compiler::prototype_unobservable`),
+    /// none in sloppy code.
+    call_only: Option<&'s FxHashSet<u32>>,
+    /// Inside the loop's head, whose bindings each iteration copies: any closure there counts.
+    head: bool,
+}
 
-impl<'a> Visit<'a> for IterationClosureFinder {
+impl<'s> IterationClosureFinder<'s> {
+    fn new(call_only: Option<&'s FxHashSet<u32>>) -> Self {
+        Self { found: false, call_only, head: true }
+    }
+
+    fn body(&mut self, body: &Statement<'_>) {
+        self.head = false;
+        self.visit_statement(body);
+        self.head = true;
+    }
+
+    /// Whether `value`, a declarator's initial value, is a closure that dies with its iteration.
+    fn dies_with_iteration(&self, value: &Expression<'_>) -> bool {
+        let Some(call_only) = self.call_only else { return false };
+        // Its body makes no closure (nor evaluates code that could): visited as a loop's whole
+        // head, any closure inside it counts.
+        let mut inner = IterationClosureFinder::new(None);
+        match value.without_parentheses() {
+            Expression::FunctionExpression(function) if call_only.contains(&function.span.start) => {
+                inner.visit_formal_parameters(&function.params);
+                if let Some(body) = &function.body {
+                    inner.visit_function_body(body);
+                }
+            }
+            Expression::ArrowFunctionExpression(arrow) if call_only.contains(&arrow.span.start) => {
+                inner.visit_formal_parameters(&arrow.params);
+                inner.visit_arrow_function_body(&arrow.body);
+            }
+            _ => return false,
+        }
+        !inner.found
+    }
+}
+
+impl<'a> Visit<'a> for IterationClosureFinder<'_> {
     fn visit_function(&mut self, _: &oxc_ast::ast::Function<'a>, _: ScopeFlags) {
-        self.0 = true;
+        self.found = true;
     }
 
     fn visit_arrow_function_expression(&mut self, _: &oxc_ast::ast::ArrowFunctionExpression<'a>) {
-        self.0 = true;
+        self.found = true;
+    }
+
+    fn visit_class(&mut self, _: &oxc_ast::ast::Class<'a>) {
+        self.found = true;
+    }
+
+    fn visit_variable_declaration(&mut self, it: &oxc_ast::ast::VariableDeclaration<'a>) {
+        let lexical = matches!(it.kind, VariableDeclarationKind::Let | VariableDeclarationKind::Const);
+        for declarator in &it.declarations {
+            let plain = matches!(declarator.id, oxc_ast::ast::BindingPattern::BindingIdentifier(_));
+            match &declarator.init {
+                Some(init) if !self.head && lexical && plain && self.dies_with_iteration(init) => {}
+                _ => self.visit_variable_declarator(declarator),
+            }
+        }
     }
 
     fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
         if super::super::early::is_direct_eval_call(call) {
-            self.0 = true;
+            self.found = true;
         } else {
             walk::walk_call_expression(self, call);
         }
@@ -26,17 +89,41 @@ fn iteration_may_capture_bindings(
     left: &ForStatementLeft<'_>,
     right: &Expression<'_>,
     body: &Statement<'_>,
+    call_only: Option<&FxHashSet<u32>>,
 ) -> bool {
-    let mut finder = IterationClosureFinder(false);
+    let mut finder = IterationClosureFinder::new(call_only);
     if let ForStatementLeft::VariableDeclaration(declaration) = left {
         finder.visit_variable_declaration(declaration);
     }
     finder.visit_expression(right);
-    finder.visit_statement(body);
-    finder.0
+    finder.body(body);
+    finder.found
+}
+
+/// Whether a `for (let ...; test; update) body` loop may make a closure that outlives the
+/// iteration it captured (`IterationClosureFinder`).
+pub(super) fn for_loop_may_capture_bindings(item: &ForStatement<'_>, call_only: Option<&FxHashSet<u32>>) -> bool {
+    let mut finder = IterationClosureFinder::new(call_only);
+    if let Some(init) = &item.init {
+        finder.visit_for_statement_init(init);
+    }
+    if let Some(test) = &item.test {
+        finder.visit_expression(test);
+    }
+    if let Some(update) = &item.update {
+        finder.visit_expression(update);
+    }
+    finder.body(&item.body);
+    finder.found
 }
 
 impl FunctionCompiler<'_, '_> {
+    /// The closures that may die with their iteration (`IterationClosureFinder`): in strict code
+    /// alone, where no legacy `caller` hands one out.
+    pub(super) fn iteration_call_only(&self) -> Option<&FxHashSet<u32>> {
+        self.strict.then_some(&self.owner.prototype_unobservable)
+    }
+
     pub(super) fn close_iterator(&mut self, iterator: Register) -> Register {
         // IteratorClose produces a result even when a synchronous caller
         // discards it. Register zero may hold a promoted parameter/local.
@@ -62,7 +149,7 @@ impl FunctionCompiler<'_, '_> {
         }
         let scoped = self.push_iteration_scope(&item.left);
         let source = self.expression(&item.right);
-        let clone_environment = iteration_may_capture_bindings(&item.left, &item.right, &item.body);
+        let clone_environment = iteration_may_capture_bindings(&item.left, &item.right, &item.body, self.iteration_call_only());
         self.for_iterable(
             &item.left,
             &item.body,
@@ -100,8 +187,9 @@ impl FunctionCompiler<'_, '_> {
         let object = self.expression(&item.right);
         let state = self.reg();
         self.emit(Op::ForInStart, state, object, 0, 0);
-        let clone_environment = iteration_may_capture_bindings(&item.left, &item.right, &item.body);
-        self.for_in_keys(&item.left, &item.body, state, clone_environment, label);
+        let clone_environment = iteration_may_capture_bindings(&item.left, &item.right, &item.body, self.iteration_call_only());
+        let listed = match &item.right { Expression::Identifier(name) => Some(name.name.as_str()), _ => None };
+        self.for_in_keys(&item.left, &item.body, (state, listed), clone_environment, label);
         if scoped {
             self.lexical_scopes.pop();
         }
@@ -114,7 +202,7 @@ impl FunctionCompiler<'_, '_> {
         &mut self,
         left: &ForStatementLeft<'_>,
         body: &Statement<'_>,
-        state: Register,
+        (state, listed): (Register, Option<&str>),
         clone_environment: bool,
         label: Option<Atom>,
     ) {
@@ -125,14 +213,21 @@ impl FunctionCompiler<'_, '_> {
         let key = self.reg();
         let end_edge = self.emit(Op::ForInNext, key, state, 0, 0);
         self.push_control(ControlKind::Loop, label);
-        if clone_environment
+        let cloned = (clone_environment
             && matches!(left, ForStatementLeft::VariableDeclaration(declaration)
-                if declaration.kind != VariableDeclarationKind::Var)
-        {
-            self.clone_lexical_environment();
-        }
+                if declaration.kind != VariableDeclarationKind::Var))
+            .then(|| self.clone_lexical_environment())
+            .flatten();
         self.bind_iteration_left(left, key);
-        self.statement(body);
+        // `o[k]` in the body of `for (k in o)` reads through the loop's state (`Op::GetEnumerated`).
+        let enumeration = listed.zip(iteration_key_name(left)).map(|(object, key)| super::Enumeration {
+            object: object.to_owned(), key: key.to_owned(), state: state_atom });
+        let enumerated = enumeration.is_some();
+        self.enumerations.extend(enumeration);
+        self.iteration_body(body, cloned);
+        if enumerated {
+            self.enumerations.pop();
+        }
         let control = self.controls.pop().unwrap();
         let update = self.code.len() as u32;
         self.patch_edges(&control.continues, update);
@@ -141,6 +236,26 @@ impl FunctionCompiler<'_, '_> {
         self.patch_to(end_edge, end);
         self.patch_edges(&control.breaks, end);
         self.resolve_control_destinations(&control, end, Some(update));
+    }
+
+    /// Whether each value a for-of loop over `left` takes goes only to an array pattern that
+    /// binds names: `const`, `let` or `var` of one plain array pattern of names and holes,
+    /// with no rest. The pattern reads the value and nothing keeps it, so a step may yield the
+    /// one shared entry pair (`Vm::iterator_item_value`); the loop marks its
+    /// `RequireIteratorResult` with that.
+    fn value_only_to_array_pattern(left: &ForStatementLeft<'_>) -> bool {
+        let ForStatementLeft::VariableDeclaration(declaration) = left else {
+            return false;
+        };
+        if super::disposal::disposes(declaration.kind) || declaration.declarations.len() != 1 {
+            return false;
+        }
+        let BindingPattern::ArrayPattern(array) = &declaration.declarations[0].id else {
+            return false;
+        };
+        array.rest.is_none()
+            && !array.elements.is_empty()
+            && array.elements.iter().all(|element| matches!(element, None | Some(BindingPattern::BindingIdentifier(_))))
     }
 
     fn for_iterable(
@@ -189,7 +304,8 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::Await, awaited, result, 0, 0);
             result = awaited;
         }
-        self.emit(Op::RequireIteratorResult, 0, result, 0, 0);
+        let pattern_only = u16::from(!await_values && Self::value_only_to_array_pattern(left));
+        self.emit(Op::RequireIteratorResult, pattern_only, result, 0, 0);
         let done = self.reg();
         let done_atom = self.owner.atom("done");
         let done_cache = self.owner.cache_site();
@@ -234,19 +350,18 @@ impl FunctionCompiler<'_, '_> {
             self.push_disposal_context();
             self.hidden_local("\0quench:for-of-using-error")
         });
-        if clone_environment
+        let cloned = (clone_environment
             && matches!(
                 left,
                 ForStatementLeft::VariableDeclaration(declaration)
                     if declaration.kind != VariableDeclarationKind::Var
-            )
-        {
-            self.clone_lexical_environment();
-        }
+            ))
+            .then(|| self.clone_lexical_environment())
+            .flatten();
         // The iterator cleanup record reads `iterator` and `done` until the body ends.
         self.with_registers_held(|compiler| {
             compiler.bind_iteration_left(left, value);
-            compiler.statement(body);
+            compiler.iteration_body(body, cloned);
         });
         if let Some(error) = disposal_error {
             let end = self.code.len() as u32;
@@ -412,5 +527,21 @@ impl FunctionCompiler<'_, '_> {
                 }
             }
         }
+    }
+}
+
+/// The name a for-in's left side binds each key to, where it is one identifier (`for (k in o)`,
+/// `for (const k in o)`).
+fn iteration_key_name<'s>(left: &'s ForStatementLeft<'_>) -> Option<&'s str> {
+    match left {
+        ForStatementLeft::VariableDeclaration(declaration) => match declaration.declarations.as_slice() {
+            [declarator] => match &declarator.id {
+                BindingPattern::BindingIdentifier(name) => Some(name.name.as_str()),
+                _ => None,
+            },
+            _ => None,
+        },
+        ForStatementLeft::AssignmentTargetIdentifier(name) => Some(name.name.as_str()),
+        _ => None,
     }
 }

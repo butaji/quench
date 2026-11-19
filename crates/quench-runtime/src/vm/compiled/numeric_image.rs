@@ -21,8 +21,8 @@ fn lower_numeric_region(program: &ResidualProgram, function_id: u32) -> Option<N
         helpers: LaneHelpers::Numeric, fields: &[],
         global_reads: &Default::default(), facts: VmFacts::STATIC, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa: &*isa,
-        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
-        plan: lane_region::RegionPlan { entry_bounds: true, entry_ints: lane_region::EntryInts::Observed, coverage: lane_region::Coverage::Full,
+        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], typed_captures: &[], int_captures: &[],
+        plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Full,
             completion: lane_region::Completion::Number, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok()?;
     Some(NumericLowering { params: usize::from(function.params), number_result: region.number_result?, function: region.function, isa })
@@ -59,17 +59,20 @@ impl NumericImage {
         Self::build(lower_numeric_region(program, function_id)?, function_id)
     }
 
-    /// Lowers `function_id` here and compiles it on the code generator's thread: the image
-    /// arrives when the work is done, `None` where the compile declined.
-    pub(in crate::vm) fn start(program: &ResidualProgram, function_id: u32) -> Option<crate::vm::jit_backend::Pending<Option<Self>>> {
-        let lowering = lower_numeric_region(program, function_id)?;
-        Some(crate::vm::jit_backend::run_in_background(move || Self::build(lowering, function_id)))
+    /// Lowers and compiles `function_id` on the code generator's thread, from a copy of its
+    /// program that shares nothing with it (`ResidualProgram::detached`): the lowering reads
+    /// only the program, so the program's thread does no more than copy the function. The image
+    /// arrives when the work is done, `None` where the region does not lower or compile.
+    pub(in crate::vm) fn start(program: &ResidualProgram, function_id: u32) -> Option<crate::vm::jit_backend::OffThread<Option<Self>>> {
+        program.function_get(function_id as usize)?;
+        let detached = program.detached(&[function_id]);
+        Some(crate::vm::jit_backend::OffThread::start((detached, function_id), |(detached, function_id)| Self::build(lower_numeric_region(&detached, function_id)?, function_id)))
     }
 
     fn build(lowering: NumericLowering, function_id: u32) -> Option<Self> {
         let NumericLowering { function, isa, params, number_result } = lowering;
         let dump = native_dump_directory().map(|_| function.to_string());
-        let code = crate::vm::jit_backend::compile_function(function, &*isa, Some(crate::vm::js_compiled::MAX_CODE_BYTES), |compiled, function| {
+        let code = crate::vm::jit_backend::compile_function(function, &*isa, Some(crate::vm::compiled::tier_policy::JS_COMPILED_MAX_CODE_BYTES), |compiled, function| {
             crate::vm::jit_backend::relocatable_code::RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
         }).ok()?;
         if let (Some(directory), Some(clif)) = (native_dump_directory(), dump) {

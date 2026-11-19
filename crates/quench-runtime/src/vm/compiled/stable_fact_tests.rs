@@ -67,6 +67,37 @@ fn a_folded_prototype_value_retires_its_readers_when_it_changes() {
     assert!(invalidation.is_set());
 }
 
+/// The prototype of the object the global `name` holds.
+fn prototype_of(vm: &mut Vm<crate::test_host::TestHost>, name: &str) -> Value {
+    let atom = vm.intern_atom(name);
+    let instance = vm.own_property(vm.realm.globals, atom).unwrap();
+    vm.heap.object(instance).unwrap().proto()
+}
+
+/// A folded prototype value holds the chain it was read through, not every prototype: class setup
+/// elsewhere (a new property on another prototype) leaves the code standing, and a layout change
+/// of a prototype on its chain retires it.
+#[test]
+fn a_folded_prototype_value_survives_other_prototypes_and_retires_at_its_chain() {
+    let (mut vm, _program, method) = compiled_lane_body(
+        "var C = function C(){ this.x = 1; }; C.prototype.k = 5; var c = new C(); \
+         var D = function D(){}; D.prototype.z = 1; var d = new D(); \
+         function read(){ var n = 0; for (var i = 0; i < 5; i++) { n = (n + c.k) | 0; } return n; } \
+         for (var j = 0; j < 4; j++) read();", "read");
+    assert!(!method.stable.chains.is_empty(), "the inherited read holds the chain it read the value through");
+    let invalidation = method.invalidation.clone();
+    let published = vm.programs.publish_lane_method(method, &mut vm.heap, vm.method_cache_atoms.readers()).unwrap();
+    let other = prototype_of(&mut vm, "d");
+    vm.heap.mark_prototype(other);
+    let w = vm.intern_atom("w");
+    vm.set_property(other, w, Value::integer(2)).unwrap();
+    assert!(published.lease().is_some() && !invalidation.is_set(), "another prototype's new property leaves the code");
+    let holder = prototype_of(&mut vm, "c");
+    vm.set_property(holder, w, Value::integer(3)).unwrap();
+    assert!(published.lease().is_none(), "a new property on its chain retires the code");
+    assert!(invalidation.is_set());
+}
+
 /// Stable facts change while compiled bodies hold them: a prototype's value, written by a
 /// callee in the middle of a hot loop that read it as a constant, and a method name a cache
 /// first names after a loop stored that name directly. Each mode computes the same values.

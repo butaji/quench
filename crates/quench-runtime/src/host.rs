@@ -119,6 +119,12 @@ impl ModuleSource {
 pub struct HostExecutionContext(pub u64);
 
 pub trait Host {
+    /// Whether this host's VM runs bodies in the lane (`dispatch_fast`). Every host type
+    /// instantiates the VM, and the lane's generated handlers are most of it, so a test host
+    /// that exercises no lane behaviour answers `false`: its VM derives no lane view and the
+    /// compiler instantiates none of the lane for it (the lib test binary built nine copies).
+    const RUNS_LANE: bool = true;
+
     /// Whether host function `index` (into `functions`) observes the frame stack only by
     /// calling guest code, capturing an error's stack or making a collection due, so a lane
     /// may call it while its frameless activations stay frameless: each of those first makes
@@ -373,7 +379,11 @@ pub trait Host {
     /// Enter the context of a job `capture_job_context` captured as `None`, unless the job
     /// queue has `entered` it for an earlier job. A host that observes the job now answers a
     /// fresh context, which the job enters, observes and releases as a captured one;
-    /// otherwise the job runs, then `end_unobserved_job`.
+    /// otherwise the job runs, then `end_unobserved_job`. A host whose
+    /// `observes_promise_lifecycle` is false should answer `None` once the queue has `entered`
+    /// the context: the VM runs such a queue's consecutive unobserved await jobs in one
+    /// resumption (`Vm::run_job_chain`), where a context answered runs the job as an observed
+    /// one and ends the chain.
     fn enter_unobserved_job(&mut self, _entered: bool) -> Option<HostExecutionContext> {
         None
     }

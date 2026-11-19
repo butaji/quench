@@ -24,6 +24,7 @@
  * Build: cc -O2 -fno-tree-vectorize -fno-unroll-loops -o ops_c ops.c -lm
  * Run:   ./ops_c <opname> <n>   prints "<opname> <result>"
  */
+#define _GNU_SOURCE /* memmem, for the rx_lit twin */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -406,6 +407,68 @@ static double NOINL op_str_charcodeat(long n) {
   return a;
 }
 
+static double NOINL op_str_includes(long n) {
+  int32_t N = (int32_t)n;
+  double a = 0;
+  const char *s = S;
+  OPAQUE_P(s);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    const char *h = s; OPAQUE_P(h);
+    if (strstr(h, "lazy")) a = a + 1.0;
+  }
+  return a;
+}
+
+static double NOINL op_str_slice(long n) {
+  int32_t N = (int32_t)n;
+  double a = 0;
+  const char *s = S;
+  OPAQUE_P(s);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    /* A new five-character string: allocated, copied, its length read. */
+    char *buf = malloc(6);
+    memcpy(buf, s + 4, 5); buf[5] = 0;
+    OPAQUE_P(buf);
+    a = a + (double)strlen(buf);
+    free(buf);
+  }
+  return a;
+}
+
+static double NOINL op_arr_isarray(long n) {
+  int32_t N = (int32_t)n;
+  double a = 0;
+  int32_t arr[3] = {1, 2, 3};
+  const int32_t *p = arr;
+  int32_t kind = 1;
+  OPAQUE_P(p); OPAQUE_I(kind);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    if (kind == 1) a = a + 1.0;
+  }
+  return a;
+}
+
+static double NOINL op_arr_slice(long n) {
+  int32_t N = (int32_t)n;
+  double a = 0;
+  int32_t arr[4] = {1, 2, 3, 4};
+  int32_t *p = arr;
+  OPAQUE_P(p);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    /* A new two-element array: allocated, filled from the source, its length read. */
+    int32_t *out = malloc(2 * sizeof *out);
+    memcpy(out, p, 2 * sizeof *out);
+    OPAQUE_P(out);
+    a = a + 2.0;
+    free(out);
+  }
+  return a;
+}
+
 static double NOINL op_str_index(long n) {
   int32_t N = (int32_t)n;
   double a = 0;
@@ -574,12 +637,27 @@ static double NOINL op_typed_store_f64(long n) {
   return t[7];
 }
 
+static double NOINL op_typed_store_u8c(long n) {
+  int32_t N = (int32_t)n;
+  uint8_t t[256];
+  for (int32_t i = 0; i < 256; i++) t[i] = 0;
+  ESCAPE(t);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    double v = (double)(i & 511) * 0.75 - 64.0;
+    t[i & 255] = v > 0.0 ? (v < 255.0 ? (uint8_t)nearbyint(v) : 255) : 0;
+  }
+  return (double)t[7] + (double)t[200];
+}
+
 /* ---------------- driver ---------------- */
 
 struct pair { int32_t x, y; };
 static int32_t NOINL add_one(int32_t x) { return (int32_t)((uint32_t)x + 1u); }
 struct env { int32_t k; };
 static int32_t NOINL add_k(const struct env *e, int32_t x) { return (int32_t)((uint32_t)x + (uint32_t)e->k); }
+/* A variadic function's rest values as C passes them: a count and the values in place. */
+static int32_t NOINL sum_rest(int32_t count, const int32_t *xs) { return count > 1 ? (int32_t)((uint32_t)xs[0] + (uint32_t)xs[1]) : 0; }
 
 static double NOINL op_field_read(long n) {
   int32_t N = (int32_t)n, a = 0;
@@ -603,6 +681,28 @@ static double NOINL op_call_direct(long n) {
   return a;
 }
 
+static double NOINL op_call_rest(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); int32_t xs[2] = {i, 1}; a = (int32_t)((uint32_t)a + (uint32_t)sum_rest(2, xs)); }
+  return a;
+}
+
+static double NOINL op_call_spread(long n) {
+  int32_t N = (int32_t)n, a = 0, xs[2] = {0, 1};
+  int32_t *p = xs;
+  OPAQUE_P(p);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); p[0] = i; a = (int32_t)((uint32_t)a + (uint32_t)sum_rest(2, p)); }
+  return a;
+}
+
+static int32_t NOINL forward_rest(int32_t count, const int32_t *xs) { return sum_rest(count, xs); }
+
+static double NOINL op_call_rest_forward(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); int32_t xs[2] = {i, 1}; a = (int32_t)((uint32_t)a + (uint32_t)forward_rest(2, xs)); }
+  return a;
+}
+
 static double NOINL op_call_closure(long n) {
   int32_t N = (int32_t)n, a = 0;
   struct env e = {5}, *p = &e;
@@ -620,10 +720,949 @@ static double NOINL op_call_method(long n) {
   return a;
 }
 
+
+/* RegExp twins: RegExp.prototype.test of each ops.js rx_ pattern over RS, as the matcher a C
+ * programmer writes for the pattern (same answer, same subject). */
+static const char RS[] = "The quick brown fox jumps over the lazy dog; contact: john.doe+tag@example.com, price $1234.56, date 2026-11-18, running jumping";
+static int is_word(unsigned char c) { return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
+static int is_space(unsigned char c) { return c == ' ' || (c >= '\t' && c <= '\r'); }
+static int NOINL rx_lit(const char *s, size_t len) { return memmem(s, len, "lazy", 4) != NULL; }
+static int NOINL rx_digits(const char *s, size_t len) {
+  for (size_t i = 0; i < len; i++) if (s[i] >= '0' && s[i] <= '9') return 1;
+  return 0;
+}
+static int NOINL rx_word2(const char *s, size_t len) {
+  /* (\w+)\s(\w+): a word unit, then whitespace, then a word unit. */
+  for (size_t i = 1; i + 1 < len; i++)
+    if (is_space((unsigned char)s[i]) && is_word((unsigned char)s[i - 1]) && is_word((unsigned char)s[i + 1])) return 1;
+  return 0;
+}
+static int email_left(unsigned char c) { return is_word(c) || c == '.' || c == '+' || c == '-'; }
+static int NOINL rx_email(const char *s, size_t len) {
+  /* [\w.+-]+@[\w-]+\.[\w.]+ */
+  for (const char *at = memchr(s, '@', len); at; at = memchr(at + 1, '@', len - (size_t)(at + 1 - s))) {
+    if (at == s || !email_left((unsigned char)at[-1])) continue;
+    size_t j = (size_t)(at - s) + 1, k = j;
+    while (k < len && (is_word((unsigned char)s[k]) || s[k] == '-')) k++;
+    if (k > j && k + 1 < len && s[k] == '.' && (is_word((unsigned char)s[k + 1]) || s[k + 1] == '.')) return 1;
+  }
+  return 0;
+}
+static int NOINL rx_dotstar(const char *s, size_t len) {
+  /* q.*z: a q, then a z before the next line terminator. */
+  for (const char *q = memchr(s, 'q', len); q; q = memchr(q + 1, 'q', len - (size_t)(q + 1 - s))) {
+    for (const char *p = q + 1; p < s + len && *p != '\n' && *p != '\r'; p++) if (*p == 'z') return 1;
+  }
+  return 0;
+}
+static int NOINL rx_ahead(const char *s, size_t len) {
+  /* \w+(?=@): an @ right after a word unit. */
+  for (const char *at = memchr(s, '@', len); at; at = memchr(at + 1, '@', len - (size_t)(at + 1 - s)))
+    if (at > s && is_word((unsigned char)at[-1])) return 1;
+  return 0;
+}
+#define RX_OP(name) \
+  static double NOINL op_##name(long n) { \
+    int32_t N = (int32_t)n, c = 0; const char *s = RS; size_t len = sizeof RS - 1; \
+    for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); OPAQUE_P(s); if (name(s, len)) c++; } \
+    return c; \
+  }
+RX_OP(rx_lit) RX_OP(rx_digits) RX_OP(rx_word2) RX_OP(rx_email) RX_OP(rx_dotstar) RX_OP(rx_ahead)
+/* ---------------- kernels ---------------- */
+
+struct body { double x, y, z, vx, vy, vz, mass; };
+
+static double NOINL op_k_nbody_pair(long n) {
+  int32_t N = (int32_t)n;
+  struct body A = {0, 0, 0, 0, 0, 0, 39.47}, B = {4.84, -1.16, -0.1, 0.6, 2.81, -0.02, 0.037};
+  struct body *a = &A, *b = &B;
+  OPAQUE_P(a); OPAQUE_P(b);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    double dx = a->x - b->x, dy = a->y - b->y, dz = a->z - b->z;
+    double d2 = dx * dx + dy * dy + dz * dz;
+    double mag = 0.01 / (d2 * sqrt(d2));
+    double bm = b->mass * mag, am = a->mass * mag;
+    a->vx -= dx * bm; a->vy -= dy * bm; a->vz -= dz * bm;
+    b->vx += dx * am; b->vy += dy * am; b->vz += dz * am;
+  }
+  return a->vx + b->vz;
+}
+
+struct point { int32_t x, y; };
+
+static double NOINL op_k_struct_sum(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  struct point *pts = malloc(64 * sizeof *pts);
+  for (int32_t i = 0; i < 64; i++) { pts[i].x = i; pts[i].y = i + 1; }
+  ESCAPE(pts);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct point *p = &pts[i & 63];
+    s = (int32_t)((uint32_t)s + (uint32_t)p->x * (uint32_t)p->y);
+  }
+  free(pts);
+  return s;
+}
+
+struct dpoint { double x, y; };
+
+static double NOINL op_k_dist2(long n) {
+  int32_t N = (int32_t)n; double s = 0;
+  struct dpoint *pts = malloc(64 * sizeof *pts);
+  for (int32_t i = 0; i < 64; i++) { pts[i].x = i + 0.5; pts[i].y = i + 0.25; }
+  ESCAPE(pts);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct dpoint *p = &pts[i & 63];
+    s += p->x * p->x + p->y * p->y;
+  }
+  free(pts);
+  return s;
+}
+
+static double NOINL op_k_field_acc(long n) {
+  int32_t N = (int32_t)n;
+  struct dpoint *p = malloc(sizeof *p);
+  p->x = 0.5; p->y = 0.25;
+  ESCAPE(p);
+  double dx = 0.125;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); p->x += dx; }
+  double r = p->x + p->y;
+  free(p);
+  return r;
+}
+
+struct node { int32_t val; struct node *next; };
+
+static double NOINL op_k_list_walk(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  struct node *nodes = malloc(64 * sizeof *nodes), *head = 0;
+  for (int32_t i = 63; i >= 0; i--) { nodes[i].val = i; nodes[i].next = head; head = &nodes[i]; }
+  ESCAPE(nodes);
+  struct node *node = head;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    s = (int32_t)((uint32_t)s + (uint32_t)node->val);
+    node = node->next;
+    if (!node) node = head;
+  }
+  free(nodes);
+  return s;
+}
+
+static double NOINL op_k_vec_local(long n) {
+  int32_t N = (int32_t)n; double s = 0;
+  struct dpoint a = {1.5, 2.5}, b = {0.25, 0.75};
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct dpoint c = {a.x + i, a.y + b.y};
+    s += c.x * b.x + c.y;
+  }
+  return s;
+}
+
+struct state5 { int32_t a, b, c, d, n; };
+
+static double NOINL op_obj_spread(long n) {
+  int32_t N = (int32_t)n;
+  struct state5 *state = malloc(sizeof *state);
+  *state = (struct state5){1, 2, 3, 4, 0};
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct state5 *next = malloc(sizeof *next);
+    *next = *state;
+    next->n = i;
+    ESCAPE(next);
+    free(state);
+    state = next;
+  }
+  double r = state->n + state->a;
+  free(state);
+  return r;
+}
+
+struct triple { int32_t x, y, z; };
+
+static double NOINL op_alloc_literal(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct point *p = malloc(sizeof *p);
+    p->x = i; p->y = 1;
+    ESCAPE(p);
+    s = (int32_t)((uint32_t)s + (uint32_t)p->x + (uint32_t)p->y);
+    free(p);
+  }
+  return s;
+}
+
+struct cell1 { int32_t v; };
+
+static double NOINL op_alloc_literal1(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct cell1 *p = malloc(sizeof *p);
+    p->v = i;
+    ESCAPE(p);
+    s = (int32_t)((uint32_t)s + (uint32_t)p->v);
+    free(p);
+  }
+  return s;
+}
+
+static double NOINL op_alloc_ctor(long n) { return op_alloc_literal(n); }
+
+static double NOINL op_alloc_class(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct triple *p = malloc(sizeof *p);
+    p->x = i; p->y = 1; p->z = 2;
+    ESCAPE(p);
+    s = (int32_t)((uint32_t)s + (uint32_t)p->x + (uint32_t)p->z);
+    free(p);
+  }
+  return s;
+}
+
+struct task { int32_t (*run)(const struct task *, int32_t); int32_t k; };
+static int32_t NOINL task_a(const struct task *t, int32_t x) { return (int32_t)((uint32_t)x + (uint32_t)t->k); }
+static int32_t NOINL task_b(const struct task *t, int32_t x) { return x ^ t->k; }
+
+static double NOINL op_k_dispatch(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  struct task tasks[4] = {{task_a, 3}, {task_b, 5}, {task_a, 7}, {task_b, 9}};
+  struct task *t = tasks;
+  ESCAPE(t);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct task *k = &t[i & 3];
+    a = k->run(k, (int32_t)((uint32_t)a + (uint32_t)i));
+  }
+  return a;
+}
+
+static double NOINL op_k_json(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  char buf[64];
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int len = snprintf(buf, sizeof buf, "{\"id\":%d,\"name\":\"ab\",\"ok\":true}", i & 1023);
+    ESCAPE(buf);
+    const char *id = strstr(buf, "\"id\":");
+    int32_t v = (int32_t)strtol(id + 5, NULL, 10);
+    a = (int32_t)((uint32_t)a + (uint32_t)v + (uint32_t)len);
+  }
+  return a;
+}
+
+/* /o+x/ searched as a compiled matcher would: an 'o', more 'o's, then 'x'. */
+static int NOINL match_o_plus_x(const char *s, size_t len) {
+  for (size_t start = 0; start < len; start++) {
+    if (s[start] != 'o') continue;
+    size_t k = start + 1;
+    while (k < len && s[k] == 'o') k++;
+    if (k < len && s[k] == 'x') return 1;
+  }
+  return 0;
+}
+
+static double NOINL op_k_regexp(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  static const char *words[4] = {"foox", "bar", "ox", "zoooox"};
+  static const size_t lens[4] = {4, 3, 2, 6};
+  const char *const *w = words;
+  OPAQUE_P(w);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    if (match_o_plus_x(w[i & 3], lens[i & 3])) a++;
+  }
+  return a;
+}
+
+static double NOINL op_k_str_build(long n) {
+  int32_t N = (int32_t)n;
+  double a = 0;
+  char *s = malloc(256);
+  size_t len = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    s[len++] = 'k';
+    s[len++] = (char)('0' + (i & 7));
+    ESCAPE(s);
+    if ((i & 63) == 63) { a += (double)len; len = 0; }
+  }
+  free(s);
+  return a + (double)len;
+}
+
+/* ---------------- builtins that run no user code ---------------- */
+#include <time.h>
+static double NOINL op_date_now(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct timespec t; clock_gettime(CLOCK_REALTIME, &t);
+    double ms = (double)t.tv_sec * 1000.0 + (double)(t.tv_nsec / 1000000);
+    a = (int32_t)((uint32_t)a + ((uint32_t)(int64_t)ms & 1u));
+  }
+  return a > -1 ? 1 : 0;
+}
+static int32_t kv_find(const int32_t *arr, int32_t len, int32_t key) { for (int32_t j = 0; j < len; j++) if (arr[j] == key) return j; return -1; }
+static double NOINL op_arr_includes(long n) {
+  int32_t N = (int32_t)n, a = 0, arr[64];
+  for (int32_t j = 0; j < 64; j++) arr[j] = j * 2;
+  ESCAPE(arr);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); if (kv_find(arr, 64, i & 127) >= 0) a++; }
+  return a;
+}
+static double NOINL op_arr_indexof(long n) {
+  int32_t N = (int32_t)n, a = 0, arr[64];
+  for (int32_t j = 0; j < 64; j++) arr[j] = j * 2;
+  ESCAPE(arr);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); a = (int32_t)((uint32_t)a + (uint32_t)kv_find(arr, 64, i & 127)); }
+  return a;
+}
+
+/* ---------------- the twenty C-parity kernels (k01..k20) ---------------- */
+
+static int32_t NOINL kv_fib(int32_t n) { return n < 2 ? n : (int32_t)((uint32_t)kv_fib(n - 1) + (uint32_t)kv_fib(n - 2)); }
+static int32_t NOINL kv_add(int32_t a, int32_t b) { return (int32_t)((uint32_t)a + (uint32_t)b); }
+static int32_t kv_gcd(int32_t a, int32_t b) { while (b != 0) { int32_t t = a % b; a = b; b = t; } return a; }
+struct kv_node { int32_t val; struct kv_node *next; };
+struct kv_rect { int32_t w, h; };
+struct kv_point { double x, y; };
+
+static double NOINL op_k01_sum_or(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)i); }
+  return s;
+}
+static double NOINL op_k02_fib(long n) {
+  int32_t N = (int32_t)n, s = 0, ten = 10; OPAQUE_I(ten);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)kv_fib(ten)); }
+  return s;
+}
+/* Kernel 3's target is the call inlined away: the twin's add is inlined. */
+static inline int32_t kv_add_inline(int32_t a, int32_t b) { return (int32_t)((uint32_t)a + (uint32_t)b); }
+static double NOINL op_k03_call_add(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = kv_add_inline(s, i); }
+  (void)kv_add;
+  return s;
+}
+static double NOINL op_k04_dot(long n) {
+  int32_t N = (int32_t)n; double s = 0;
+  struct kv_point o = {1.5, 2.25}, *p = &o; OPAQUE_P(p);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s += p->x * p->x + p->y * p->y; }
+  return s;
+}
+static double NOINL op_k05_field_add(long n) {
+  int32_t N = (int32_t)n; double dx = 0.25; OPAQUE_D(dx);
+  struct kv_point o = {0.5, 0}, *p = &o; OPAQUE_P(p);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); p->x += dx; }
+  return p->x;
+}
+static double NOINL op_k06_list(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  struct kv_node *head = NULL;
+  for (int32_t j = 15; j >= 0; j--) { struct kv_node *k = malloc(sizeof *k); k->val = j; k->next = head; head = k; }
+  ESCAPE(head);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); for (struct kv_node *p = head; p; p = p->next) s = (int32_t)((uint32_t)s + (uint32_t)p->val); }
+  while (head) { struct kv_node *k = head->next; free(head); head = k; }
+  return s;
+}
+static double NOINL op_k07_area(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  struct kv_rect o = {3, 4}, *r = &o; OPAQUE_P(r);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); s = (int32_t)((uint32_t)s + (uint32_t)r->w * (uint32_t)r->h); }
+  return s;
+}
+static double NOINL op_k08_escape(long n) {
+  int32_t N = (int32_t)n; double s = 0;
+  struct kv_point A = {1.5, 2}, B = {0.25, 3}, *a = &A, *b = &B; OPAQUE_P(a); OPAQUE_P(b);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); double vx = a->x + b->x, vy = a->y + b->y; s += vx * vy; }
+  return s;
+}
+static double NOINL op_k09_reduce(long n) {
+  int32_t N = (int32_t)n, s = 0; double arr[16];
+  for (int32_t j = 0; j < 16; j++) arr[j] = j;
+  ESCAPE(arr);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); double t = 0; for (int32_t j = 0; j < 16; j++) t += arr[j]; s = (int32_t)(uint32_t)(int64_t)((double)s + t); }
+  return s;
+}
+static double NOINL op_k10_f64_sum(long n) {
+  int32_t N = (int32_t)n; double s = 0, a[16];
+  for (int32_t j = 0; j < 16; j++) a[j] = j + 0.5;
+  ESCAPE(a);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); for (int32_t j = 0; j < 16; j++) s += a[j]; }
+  return s;
+}
+static double NOINL op_k11_saxpy(long n) {
+  int32_t N = (int32_t)n; double x[16], y[16], k = 0.5; OPAQUE_D(k);
+  for (int32_t j = 0; j < 16; j++) { x[j] = j; y[j] = 0; }
+  ESCAPE(x); ESCAPE(y);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); for (int32_t j = 0; j < 16; j++) y[j] += k * x[j]; }
+  return y[15];
+}
+static double NOINL op_k12_copy(long n) {
+  int32_t N = (int32_t)n, s = 0, src[16], dst[16];
+  for (int32_t j = 0; j < 16; j++) src[j] = j;
+  ESCAPE(src); ESCAPE(dst);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); src[i & 15] = i;
+    memcpy(dst, src, sizeof dst); ESCAPE(dst);
+    s = (int32_t)((uint32_t)s + (uint32_t)dst[i & 15]);
+  }
+  return s;
+}
+static double NOINL op_k13_matmul(long n) {
+  int32_t N = (int32_t)n; double a[16], b[16], c[16];
+  for (int32_t j = 0; j < 16; j++) { a[j] = j * 0.25; b[j] = 1 - j * 0.125; }
+  ESCAPE(a); ESCAPE(b); ESCAPE(c);
+  for (int32_t r = 0; r < N; r++) {
+    BODY_BARRIER();
+    for (int32_t i = 0; i < 4; i++) for (int32_t j = 0; j < 4; j++) { double t = 0; for (int32_t k = 0; k < 4; k++) t += a[i * 4 + k] * b[k * 4 + j]; c[i * 4 + j] = t; }
+    a[r & 15] = (r & 7) * 0.125;
+  }
+  return c[5];
+}
+static double NOINL op_k14_bsearch(long n) {
+  int32_t N = (int32_t)n, s = 0, a[64];
+  for (int32_t j = 0; j < 64; j++) a[j] = j * 2;
+  ESCAPE(a);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t key = (int32_t)((uint32_t)i * 7u) & 127, lo = 0, hi = 64;
+    while (lo < hi) { int32_t mid = (int32_t)(((uint32_t)lo + (uint32_t)hi) >> 1); if (a[mid] < key) lo = mid + 1; else hi = mid; }
+    s = (int32_t)((uint32_t)s + (uint32_t)lo);
+  }
+  return s;
+}
+static double NOINL op_k15_isort(long n) {
+  int32_t N = (int32_t)n, s = 0, a[8];
+  ESCAPE(a);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    for (int32_t j = 0; j < 8; j++) a[j] = ((j * 5 + i) & 7) * 3;
+    for (int32_t j = 1; j < 8; j++) { int32_t v = a[j], k = j - 1; while (k >= 0 && a[k] > v) { a[k + 1] = a[k]; k--; } a[k + 1] = v; }
+    s = (int32_t)((uint32_t)s + (uint32_t)a[i & 7]);
+  }
+  return s;
+}
+static double NOINL op_k16_sieve(long n) {
+  int32_t N = (int32_t)n, s = 0; uint8_t f[64];
+  ESCAPE(f);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    memset(f, 0, sizeof f); ESCAPE(f);
+    for (int32_t p = 2; p * p < 64; p++) if (f[p] == 0) for (int32_t m = p * p; m < 64; m += p) f[m] = 1;
+    s = (int32_t)((uint32_t)s + f[i & 63]);
+  }
+  return s;
+}
+static double NOINL op_k17_hash(long n) {
+  int32_t N = (int32_t)n, h = 0;
+  const char *str = "abcdefghijklmnop"; size_t len = 16; OPAQUE_P(str); OPAQUE_I(len);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); for (size_t j = 0; j < len; j++) h = (int32_t)((uint32_t)h * 31u + (uint8_t)str[j]); }
+  return h;
+}
+static double NOINL op_k18_math(long n) {
+  int32_t N = (int32_t)n; double s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    double x = i * 0.5 + 0.25;
+    s += sqrt(x) + fabs(x - 100) + floor(x) + (double)(i == 0 ? 32 : __builtin_clz((uint32_t)i)) + (double)((uint32_t)i >> 3);
+  }
+  return s;
+}
+static double NOINL op_k19_gcd(long n) {
+  int32_t N = (int32_t)n, s = 0, b = 360, d = 7; OPAQUE_I(b); OPAQUE_I(d);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); int32_t a = (i & 1023) + 1000; s = (int32_t)((uint32_t)s + (uint32_t)kv_gcd(a, b) + (uint32_t)(a / d)); }
+  return s;
+}
+static double NOINL op_k20_switch(long n) {
+  int32_t N = (int32_t)n, acc = 1; uint8_t code[16];
+  for (int32_t j = 0; j < 16; j++) code[j] = (uint8_t)((j * 7 + 3) & 3);
+  ESCAPE(code);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    for (int32_t pc = 0; pc < 16; pc++) {
+      switch (code[pc]) {
+        case 0: acc = (int32_t)((uint32_t)acc + 1u); break;
+        case 1: acc ^= 0x5a; break;
+        case 2: acc = (int32_t)((uint32_t)acc * 3u); break;
+        case 3: acc >>= 1; break;
+      }
+    }
+  }
+  return acc;
+}
+
+/* Builtin twins (bi_*): what the builtin's body is in C, nothing more. */
+static double NOINL op_bi_dv_get_f64(long n) {
+  int32_t N = (int32_t)n; unsigned char buf[64]; double s = 0;
+  for (int j = 0; j < 8; j++) { double v = j + 0.5; memcpy(buf + j * 8, &v, 8); }
+  ESCAPE(buf);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); size_t at = (size_t)(i & 7) * 8; if (at + 8 > sizeof buf) abort(); double v; memcpy(&v, buf + at, 8); s += v; }
+  return s;
+}
+static double NOINL op_bi_dv_set_f64(long n) {
+  int32_t N = (int32_t)n; unsigned char buf[64] = {0};
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); size_t at = (size_t)(i & 7) * 8; if (at + 8 > sizeof buf) abort(); double v = i; memcpy(buf + at, &v, 8); ESCAPE(buf); }
+  double v; memcpy(&v, buf, 8); return v;
+}
+static double NOINL op_bi_dv_get_u32(long n) {
+  int32_t N = (int32_t)n; unsigned char buf[64]; int32_t a = 0;
+  for (int j = 0; j < 16; j++) { uint32_t v = __builtin_bswap32((uint32_t)(j * 7)); memcpy(buf + j * 4, &v, 4); }
+  ESCAPE(buf);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); size_t at = (size_t)(i & 15) * 4; if (at + 4 > sizeof buf) abort(); uint32_t v; memcpy(&v, buf + at, 4); a = (int32_t)((uint32_t)a + __builtin_bswap32(v)); }
+  return a;
+}
+static double NOINL op_bi_arr_slice(long n) {
+  int32_t N = (int32_t)n, a = 0; double arr[16];
+  for (int j = 0; j < 16; j++) arr[j] = j;
+  ESCAPE(arr);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); size_t len = 12 - 4; double *out = malloc(len * sizeof *out); memcpy(out, arr + 4, len * sizeof *out); ESCAPE(out); a += (int32_t)len; free(out); }
+  return a;
+}
+static double NOINL op_bi_arr_concat(long n) {
+  int32_t N = (int32_t)n, a = 0; double x[4] = {1, 2, 3, 4}, y[4] = {5, 6, 7, 8};
+  ESCAPE(x); ESCAPE(y);
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); double *out = malloc(8 * sizeof *out); memcpy(out, x, sizeof x); memcpy(out + 4, y, sizeof y); ESCAPE(out); a += 8; free(out); }
+  return a;
+}
+static double NOINL op_bi_tmpl(long n) {
+  int32_t N = (int32_t)n, a = 0; const char *p = "ab", *q = "xyz";
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    char *out = malloc(16), digits[12]; size_t len = 0; int d = 0; uint32_t v = (uint32_t)(i & 1023);
+    do { digits[d++] = (char)('0' + v % 10); v /= 10; } while (v);
+    memcpy(out, p, 2); len = 2; out[len++] = '-';
+    while (d) out[len++] = digits[--d];
+    out[len++] = '-'; memcpy(out + len, q, 3); len += 3;
+    ESCAPE(out); a += (int32_t)len; free(out);
+  }
+  return a;
+}
+static int32_t bi_keys[128], bi_vals[128];
+static int bi_probe(int32_t key) { uint32_t h = (uint32_t)key * 2654435769u >> 25; while (bi_keys[h] != key && bi_keys[h] != -1) h = (h + 1) & 127; return (int)h; }
+static double NOINL op_bi_map_get(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  for (int j = 0; j < 128; j++) bi_keys[j] = -1;
+  for (int j = 0; j < 64; j++) { int h = bi_probe(j); bi_keys[h] = j; bi_vals[h] = j * 3; }
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); int h = bi_probe(i & 63); a = (int32_t)((uint32_t)a + (uint32_t)(bi_keys[h] == -1 ? 0 : bi_vals[h])); }
+  return a;
+}
+static double NOINL op_bi_set_has(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  for (int j = 0; j < 128; j++) bi_keys[j] = -1;
+  for (int j = 0; j < 64; j += 2) bi_keys[bi_probe(j)] = j;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); if (bi_keys[bi_probe(i & 63)] != -1) a++; }
+  return a;
+}
+
+/* bi_* twins, batch 2. Fragment: paste after op_bi_set_has in ops.c (uses its includes and macros:
+ * NOINL, BODY_BARRIER, ESCAPE; headers stdint, stdio, stdlib, string). C99, no extra headers. */
+
+static int bia_is_ws(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
+static int bia_cmp_int(const void *x, const void *y) { int32_t p = *(const int32_t *)x, q = *(const int32_t *)y; return (p > q) - (p < q); }
+typedef struct { int32_t a, b, c, d; } bia_obj4;
+
+static double NOINL op_bi_fill(long n) {
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    double *arr = malloc(16 * sizeof *arr);
+    for (int j = 0; j < 16; j++) arr[j] = 0;
+    ESCAPE(arr); a += 16; free(arr);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_join(long n) {
+  static const char *parts[4] = {"a", "bb", "ccc", "dddd"};
+  static const size_t plen[4] = {1, 2, 3, 4};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    char *out = malloc(16); size_t len = 0;
+    for (int k = 0; k < 4; k++) {
+      if (k) out[len++] = '-';
+      memcpy(out + len, parts[k], plen[k]); len += plen[k];
+    }
+    out[len] = '\0'; ESCAPE(out); a += (uint32_t)len; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_from(long n) {
+  static const char *words[4] = {"a", "bb", "ccc", "dddd"};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    const char **out = malloc(4 * sizeof *out);
+    for (int k = 0; k < 4; k++) out[k] = words[k];
+    ESCAPE(out); a += 4; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_upper(long n) {
+  static const char s[] = "hello";
+  size_t len = sizeof s - 1;
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(s);
+    char *out = malloc(len + 1);
+    for (size_t k = 0; k < len; k++) { char c = s[k]; out[k] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c; }
+    out[len] = '\0'; ESCAPE(out); a += (uint32_t)len; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_trim(long n) {
+  static const char s[] = "  abc  ";
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(s);
+    size_t lo = 0, hi = sizeof s - 1;
+    while (lo < hi && bia_is_ws(s[lo])) lo++;
+    while (hi > lo && bia_is_ws(s[hi - 1])) hi--;
+    char *out = malloc(hi - lo + 1);
+    memcpy(out, s + lo, hi - lo); out[hi - lo] = '\0';
+    ESCAPE(out); a += (uint32_t)(hi - lo); free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_pad(long n) {
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    char digs[12]; int nd = 0; unsigned v = (unsigned)(i & 7);
+    do { digs[nd++] = (char)('0' + v % 10); v /= 10; } while (v);
+    char *out = malloc(16); size_t len = 0;
+    while (len + (size_t)nd < 3) out[len++] = '0';
+    while (nd) out[len++] = digs[--nd];
+    out[len] = '\0'; ESCAPE(out); a += (uint32_t)len; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_sindex(long n) {
+  /* Writable text and an escaped needle: strstr of two constants folds away at compile time. */
+  static char s[] = "alpha,beta,gamma,delta";
+  static char needle[] = "gam";
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(s); ESCAPE(needle);
+    const char *hit = strstr(s, needle);
+    a += (uint32_t)(hit ? (int32_t)(hit - s) : -1);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_sslice(long n) {
+  static const char s[] = "alpha,beta,gamma,delta";
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(s);
+    size_t len = 10 - 6;
+    char *out = malloc(len + 1);
+    memcpy(out, s + 6, len); out[len] = '\0';
+    ESCAPE(out); a += (uint32_t)len; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_split(long n) {
+  static const char s[] = "alpha,beta,gamma,delta";
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(s);
+    char *buf = malloc(sizeof s); memcpy(buf, s, sizeof s);
+    char **out = malloc(4 * sizeof *out);
+    int k = 0; out[k++] = buf;
+    for (char *q = buf; *q; q++) if (*q == ',') { *q = '\0'; out[k++] = q + 1; }
+    ESCAPE(buf); ESCAPE(out); a += (uint32_t)k; free(out); free(buf);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_replace(long n) {
+  static const char s[] = "alpha,beta,gamma,delta";
+  static const char rep[] = "B";
+  const char *pat = "beta";
+  size_t slen = sizeof s - 1, plen = 4, rlen = 1;
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(s);
+    const char *hit = strstr(s, pat);
+    size_t at = (size_t)(hit - s);
+    size_t len = slen - plen + rlen;
+    char *out = malloc(len + 1);
+    memcpy(out, s, at); memcpy(out + at, rep, rlen);
+    memcpy(out + at + rlen, s + at + plen, slen - at - plen); out[len] = '\0';
+    ESCAPE(out); a += (uint32_t)len; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_sort_int(long n) {
+  static const int32_t src[16] = {11, 48, 85, 21, 58, 95, 31, 68, 4, 42, 79, 15, 52, 89, 25, 62};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t *arr = malloc(16 * sizeof *arr);
+    memcpy(arr, src, sizeof src);
+    ESCAPE(arr);
+    char keys[16][12];
+    for (int j = 0; j < 16; j++) snprintf(keys[j], sizeof keys[j], "%d", (int)arr[j]);
+    /* insertion sort of (key, value) pairs by decimal text, i.e. JS default sort order */
+    for (int j = 1; j < 16; j++) {
+      char kbuf[12]; int32_t v = arr[j];
+      memcpy(kbuf, keys[j], sizeof kbuf);
+      int k = j - 1;
+      while (k >= 0 && strcmp(keys[k], kbuf) > 0) {
+        memcpy(keys[k + 1], keys[k], sizeof kbuf); arr[k + 1] = arr[k]; k--;
+      }
+      memcpy(keys[k + 1], kbuf, sizeof kbuf); arr[k + 1] = v;
+    }
+    ESCAPE(arr); a += (uint32_t)arr[0]; free(arr);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_sort_cmp(long n) {
+  static const int32_t src[16] = {11, 48, 85, 21, 58, 95, 31, 68, 4, 42, 79, 15, 52, 89, 25, 62};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t *arr = malloc(16 * sizeof *arr);
+    memcpy(arr, src, sizeof src);
+    ESCAPE(arr);
+    qsort(arr, 16, sizeof *arr, bia_cmp_int);
+    ESCAPE(arr); a += (uint32_t)arr[0]; free(arr);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_map(long n) {
+  static const double src[16] = {11, 48, 85, 21, 58, 95, 31, 68, 4, 42, 79, 15, 52, 89, 25, 62};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    double *out = malloc(16 * sizeof *out);
+    for (int j = 0; j < 16; j++) out[j] = src[j] + 1;
+    ESCAPE(out); a += (uint32_t)(int32_t)out[0]; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_parse(long n) {
+  static const char text[] = "{\"a\":1,\"b\":[1,2,3],\"c\":\"xyz\"}";
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(text);
+    const char *p = text + 1; /* past '{' */
+    int av = 0;
+    double *arr = NULL; char *str = NULL;
+    while (*p != '}') {
+      char key = p[1];          /* p[0] is the key's opening quote */
+      p += 4;                   /* skip  "k":  */
+      if (*p == '[') {
+        arr = malloc(3 * sizeof *arr);
+        int k = 0; p++;
+        while (*p != ']') { if (*p >= '0' && *p <= '9') arr[k++] = (double)(*p - '0'); p++; }
+        p++;
+      } else if (*p == '"') {
+        const char *st = ++p;
+        while (*p != '"') p++;
+        size_t len = (size_t)(p - st);
+        str = malloc(len + 1); memcpy(str, st, len); str[len] = '\0';
+        p++;
+      } else {                  /* single-digit number */
+        if (key == 'a') av = *p - '0';
+        p++;
+      }
+      if (*p == ',') p++;
+    }
+    a += (uint32_t)av;
+    ESCAPE(arr); ESCAPE(str); free(arr); free(str);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_keys(long n) {
+  static const char *names[4] = {"a", "b", "c", "d"};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    const char **out = malloc(4 * sizeof *out);
+    for (int k = 0; k < 4; k++) out[k] = names[k];
+    ESCAPE(out); a += 4; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_assign(long n) {
+  static const bia_obj4 o = {1, 2, 3, 4};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    bia_obj4 *out = malloc(sizeof *out);
+    out->a = o.a; out->b = o.b; out->c = o.c; out->d = o.d;
+    ESCAPE(out); a += (uint32_t)out->a; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+
+/* bi_* twins, batch 3: the eleven builtins added to ops.js. Writable statics, not static const. */
+static int bi3_match_abc(const char *t, size_t n, size_t *start) {
+  for (size_t s = 0; s < n; s++) {
+    if (t[s] != 'a') continue;
+    size_t p = s + 1;
+    if (p >= n || t[p] != 'b') continue;
+    while (p < n && t[p] == 'b') p++;
+    if (p < n && t[p] == 'c') { *start = s; return 1; }
+  }
+  return 0;
+}
+
+static double NOINL op_bi_arr_at(long n) {
+  static int32_t arr16[16] = {11, 48, 85, 21, 58, 95, 31, 68, 4, 42, 79, 15, 52, 89, 25, 62};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); ESCAPE(arr16); a = a + (uint32_t)arr16[i & 15]; }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_arr_lastindexof(long n) {
+  static int32_t arr16[16] = {11, 48, 85, 21, 58, 95, 31, 68, 4, 42, 79, 15, 52, 89, 25, 62};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(arr16);
+    int32_t idx = -1;
+    for (int j = 15; j >= 0; j--) if (arr16[j] == 4) { idx = j; break; }
+    a = a + (uint32_t)idx;
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_arr_reverse(long n) {
+  static int32_t arr16[16] = {11, 48, 85, 21, 58, 95, 31, 68, 4, 42, 79, 15, 52, 89, 25, 62};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(arr16);
+    for (int j = 0; j < 8; j++) { int32_t t = arr16[j]; arr16[j] = arr16[15 - j]; arr16[15 - j] = t; }
+    a = a + (uint32_t)arr16[0];
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_num_tofixed(long n) {
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    char buf[32]; double x = (double)i * 0.5;
+    int len = snprintf(buf, sizeof buf, "%.2f", x);
+    ESCAPE(buf); a += (uint32_t)len;
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_num_radix(long n) {
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  static char hex[] = "0123456789abcdef";
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(hex);
+    char digs[8]; int nd = 0; uint32_t v = (uint32_t)(i & 1023);
+    do { digs[nd++] = hex[v & 15]; v >>= 4; } while (v);
+    ESCAPE(digs); a += (uint32_t)nd;
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_getproto(long n) {
+  static struct { const void *proto; } object_proto, o;
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  o.proto = &object_proto;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(&o);
+    a = a + (uint32_t)(o.proto == &object_proto);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_u8_fill(long n) {
+  static uint8_t buf[64];
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  ESCAPE(buf);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    memset(buf, (int)(i & 255), sizeof buf); ESCAPE(buf);
+    a += buf[0];
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_f64_indexof(long n) {
+  static double f64[16];
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int j = 0; j < 16; j++) f64[j] = j * 0.5;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(f64);
+    double needle = (double)(i & 15) * 0.5;
+    int idx = -1;
+    for (int j = 0; j < 16; j++) if (f64[j] == needle) { idx = j; break; }
+    a += (uint32_t)idx;
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_regexp_test(long n) {
+  static char text[] = "xxabbbc";
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(text);
+    size_t start = 0;
+    a += (uint32_t)bi3_match_abc(text, sizeof text - 1, &start);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_regexp_exec(long n) {
+  static char text[] = "xxabbbc";
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(text);
+    size_t *res = malloc(sizeof *res); /* the match array exec allocates */
+    size_t start = 0;
+    if (bi3_match_abc(text, sizeof text - 1, &start)) res[0] = start; else res[0] = 0;
+    ESCAPE(res); a += (uint32_t)res[0]; free(res);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_obj_keys2(long n) {
+  static const char *names[2] = {"a", "b"};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    const char **out = malloc(2 * sizeof *out);
+    for (int k = 0; k < 2; k++) out[k] = names[k];
+    ESCAPE(out); a += 2; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
 typedef double (*opfn)(long);
 static const struct { const char *name; opfn fn; } TABLE[] = {
-  {"field_read", op_field_read}, {"field_store", op_field_store}, {"call_direct", op_call_direct},
-  {"call_closure", op_call_closure}, {"call_method", op_call_method},
+  {"field_read", op_field_read}, {"field_name", op_field_read}, {"field_length", op_field_read}, {"field_store", op_field_store}, {"call_direct", op_call_direct},
+  {"call_closure", op_call_closure}, {"call_rest", op_call_rest}, {"call_spread", op_call_spread}, {"call_rest_forward", op_call_rest_forward}, {"call_method", op_call_method},
   {"empty", op_empty}, {"int_add", op_int_add}, {"int_add_noor", op_int_add_noor},
   {"int_sub", op_int_sub}, {"int_mul", op_int_mul}, {"int_mul_ovf", op_int_mul_ovf},
   {"int_div", op_int_div}, {"int_mod", op_int_mod}, {"int_mod_var", op_int_mod_var},
@@ -638,6 +1677,7 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"math_minmax", op_math_minmax}, {"math_imul", op_math_imul}, {"math_round", op_math_round},
   {"num_to_str", op_num_to_str}, {"str_to_num", op_str_to_num}, {"parse_int", op_parse_int},
   {"str_length", op_str_length}, {"str_charcodeat", op_str_charcodeat},
+  {"str_includes", op_str_includes}, {"str_slice", op_str_slice}, {"arr_isarray", op_arr_isarray}, {"arr_slice", op_arr_slice},
   {"str_index", op_str_index}, {"str_concat", op_str_concat},
   {"str_concat_acc", op_str_concat_acc}, {"str_compare", op_str_compare},
   {"arr_load_int", op_arr_load_int}, {"arr_store_int", op_arr_store_int},
@@ -645,6 +1685,37 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"arr_load_obj", op_arr_load_obj}, {"arr_store_obj", op_arr_store_obj},
   {"arr_length", op_arr_length}, {"arr_push", op_arr_push},
   {"typed_load", op_typed_load}, {"typed_store_f64", op_typed_store_f64},
+  {"rx_lit", op_rx_lit}, {"rx_digits", op_rx_digits}, {"rx_word2", op_rx_word2},
+  {"rx_email", op_rx_email}, {"rx_dotstar", op_rx_dotstar}, {"rx_ahead", op_rx_ahead},
+  {"typed_load", op_typed_load}, {"typed_store_f64", op_typed_store_f64}, {"typed_store_u8c", op_typed_store_u8c},
+  {"k_nbody_pair", op_k_nbody_pair}, {"k_struct_sum", op_k_struct_sum}, {"k_dispatch", op_k_dispatch},
+  {"k_dist2", op_k_dist2}, {"k_field_acc", op_k_field_acc}, {"k_list_walk", op_k_list_walk}, {"k_vec_local", op_k_vec_local},
+  {"obj_spread", op_obj_spread}, {"alloc_literal", op_alloc_literal}, {"alloc_literal1", op_alloc_literal1}, {"alloc_ctor", op_alloc_ctor}, {"alloc_class", op_alloc_class},
+  {"k_json", op_k_json}, {"k_regexp", op_k_regexp}, {"k_str_build", op_k_str_build},
+  {"date_now", op_date_now}, {"arr_includes", op_arr_includes}, {"arr_indexof", op_arr_indexof},
+  {"bi_dv_get_f64", op_bi_dv_get_f64}, {"bi_dv_set_f64", op_bi_dv_set_f64}, {"bi_dv_get_u32", op_bi_dv_get_u32},
+  {"bi_arr_slice", op_bi_arr_slice}, {"bi_arr_concat", op_bi_arr_concat}, {"bi_tmpl", op_bi_tmpl}, {"bi_map_get", op_bi_map_get}, {"bi_set_has", op_bi_set_has},
+  {"bi_fill", op_bi_fill}, {"bi_join", op_bi_join}, {"bi_from", op_bi_from}, {"bi_upper", op_bi_upper}, {"bi_trim", op_bi_trim}, {"bi_pad", op_bi_pad}, {"bi_sindex", op_bi_sindex}, {"bi_sslice", op_bi_sslice}, {"bi_split", op_bi_split}, {"bi_replace", op_bi_replace}, {"bi_sort_int", op_bi_sort_int}, {"bi_sort_cmp", op_bi_sort_cmp}, {"bi_map", op_bi_map}, {"bi_parse", op_bi_parse}, {"bi_keys", op_bi_keys}, {"bi_assign", op_bi_assign},
+  {"k01_sum_or", op_k01_sum_or},
+  {"k02_fib", op_k02_fib},
+  {"k03_call_add", op_k03_call_add},
+  {"k04_dot", op_k04_dot},
+  {"k05_field_add", op_k05_field_add},
+  {"k06_list", op_k06_list},
+  {"k07_area", op_k07_area},
+  {"k08_escape", op_k08_escape},
+  {"k09_reduce", op_k09_reduce},
+  {"k10_f64_sum", op_k10_f64_sum},
+  {"k11_saxpy", op_k11_saxpy},
+  {"k12_copy", op_k12_copy},
+  {"k13_matmul", op_k13_matmul},
+  {"k14_bsearch", op_k14_bsearch},
+  {"k15_isort", op_k15_isort},
+  {"k16_sieve", op_k16_sieve},
+  {"k17_hash", op_k17_hash},
+  {"k18_math", op_k18_math},
+  {"k19_gcd", op_k19_gcd},
+  {"k20_switch", op_k20_switch},
 };
 
 int main(int argc, char **argv) {

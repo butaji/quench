@@ -19,7 +19,7 @@ pub(super) fn owner_bits(builder: &mut FunctionBuilder<'_>, registers: &mut Regi
 pub(super) fn object_table(builder: &mut FunctionBuilder<'_>, entry: &Entry, payload: ir::Value) -> ObjectTable {
     match entry.object_table {
         Some(table) => ObjectTable::Checked(table),
-        None => ObjectTable::Unchecked(emit_js_record_base(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base))),
+        None => ObjectTable::Unchecked(emit_js_record_base(builder, payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base))),
     }
 }
 
@@ -64,19 +64,18 @@ pub(super) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
         return header;
     }
     let mut readable = false;
-    let layouts = Some(emit_js_object_layouts(builder, payload));
     let header = if let Some(record) = entry.records[index] {
-        record.header(builder, layouts, fact)
+        record.header(builder, fact)
     } else {
         let bits = owner_bits(builder, registers, state, entry, owner);
         if read && !fact.is_some_and(|fact| fact.ty.is_direct_object_family()) {
             readable = true;
             let records = object_table_base(builder, entry, payload);
-            let functions = emit_js_record_base(builder, payload, std::mem::offset_of!(JsStepDispatch, function_record_base));
-            ObjectHeader::prove_readable(builder, layouts, bits, records, functions, exit)
+            let functions = emit_js_record_base(builder, payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
+            ObjectHeader::prove_readable(builder, bits, records, functions, exit)
         } else {
             let records = object_table(builder, entry, payload);
-            ObjectHeader::prove(builder, layouts, bits, records, fact, exit)
+            ObjectHeader::prove(builder, bits, records, fact, exit)
         }
     };
     state.proofs.headers[index] = Some(header);

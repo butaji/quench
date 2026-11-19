@@ -6,6 +6,45 @@
 /// An int32 shift count is its low five bits (ECMAScript ToUint32 of the count, modulo 32).
 pub(crate) const WORD32_SHIFT_MASK: u32 = u32::BITS - 1;
 
+/// The parser's binary operator codes the shared rows name (`oxc_ast::ast::BinaryOperator as u32`):
+/// literals, because the stencil build has no parser; `operations.rs` checks each against the parser's.
+pub(crate) const EQUALITY_OPERATOR: u32 = 0;
+pub(crate) const INEQUALITY_OPERATOR: u32 = 1;
+pub(crate) const STRICT_EQUALITY_OPERATOR: u32 = 2;
+pub(crate) const STRICT_INEQUALITY_OPERATOR: u32 = 3;
+/// The `in` operator.
+pub(crate) const IN_OPERATOR: u32 = 20;
+/// The `instanceof` operator.
+pub(crate) const INSTANCEOF_OPERATOR: u32 = 21;
+
+/// Whether an equality operator is strict and whether it is negated; `None` for any other.
+#[inline(always)]
+pub(crate) fn equality_operator(op: u32) -> Option<(bool, bool)> {
+    // The four operators are consecutive from an aligned first, each negation right after
+    // its test and the strict pair after the loose one, so two bits of the offset decide
+    // them, with no table of branches.
+    const NEGATED: u32 = INEQUALITY_OPERATOR - EQUALITY_OPERATOR;
+    const STRICT: u32 = STRICT_EQUALITY_OPERATOR - EQUALITY_OPERATOR;
+    const _: () = assert!(
+        NEGATED == 1
+            && STRICT == 2
+            && STRICT_INEQUALITY_OPERATOR - EQUALITY_OPERATOR == STRICT | NEGATED
+            && EQUALITY_OPERATOR.is_multiple_of(STRICT << 1)
+    );
+    let offset = op.wrapping_sub(EQUALITY_OPERATOR);
+    (offset <= STRICT | NEGATED).then_some((offset & STRICT != 0, offset & NEGATED != 0))
+}
+
+/// The equality operator that is `strict` and `negated`: the inverse of `equality_operator`.
+pub(crate) fn equality_binary_operator(strict: bool, negated: bool) -> u32 {
+    match (strict, negated) {
+        (false, false) => EQUALITY_OPERATOR,
+        (false, true) => INEQUALITY_OPERATOR,
+        (true, false) => STRICT_EQUALITY_OPERATOR,
+        (true, true) => STRICT_INEQUALITY_OPERATOR,
+    }
+}
+
 /// A stage supplies the machine operation for each semantic Number relation.
 /// The relation table below is shared by interpreter values and native emitters.
 pub(crate) trait NumberRelationStage<T> {
@@ -20,7 +59,7 @@ pub(crate) trait NumberRelationStage<T> {
 }
 
 macro_rules! number_relations {
-    ($($relation:ident => [$($operator:ident),+ $(,)?], $stage_method:ident;)+) => {
+    ($($relation:ident => [$($operator:ident $symbol:literal),+ $(,)?], $stage_method:ident;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub(crate) enum NumberRelation { $($relation),+ }
 
@@ -54,12 +93,12 @@ macro_rules! number_relations {
 /// Each relation with the operators that denote it; consumers take the table.
 macro_rules! number_relation_rows {
     ($consumer:ident) => { $consumer! {
-        Equal => [Equality, StrictEquality], equal;
-        NotEqual => [Inequality, StrictInequality], not_equal;
-        LessThan => [LessThan], less_than;
-        LessEqual => [LessEqualThan], less_equal;
-        GreaterThan => [GreaterThan], greater_than;
-        GreaterEqual => [GreaterEqualThan], greater_equal;
+        Equal => [Equality "==", StrictEquality "==="], equal;
+        NotEqual => [Inequality "!=", StrictInequality "!=="], not_equal;
+        LessThan => [LessThan "<"], less_than;
+        LessEqual => [LessEqualThan "<="], less_equal;
+        GreaterThan => [GreaterThan ">"], greater_than;
+        GreaterEqual => [GreaterEqualThan ">="], greater_equal;
     }};
 }
 pub(crate) use number_relation_rows;
@@ -163,7 +202,7 @@ macro_rules! number_unary_rows {
     }};
 }
 pub(crate) use number_unary_rows;
-number_unary_rows!(number_unary);
+self::number_unary_rows!(number_unary);
 
 /// The int32 operations used by JavaScript bitwise expressions. Keeping their
 /// operator mapping and operation selection in one stage lets the interpreter
@@ -180,7 +219,7 @@ pub(crate) trait NumberBitwiseStage<T> {
 }
 
 macro_rules! number_bitwise {
-    ($($operation:ident => $operator:ident, $stage_method:ident;)+) => {
+    ($($operation:ident => $operator:ident, $stage_method:ident, $symbol:literal;)+) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub(crate) enum NumberBitwise { $($operation),+ }
 
@@ -203,12 +242,12 @@ macro_rules! number_bitwise {
 /// Each bitwise operation with the operator that denotes it; consumers take the table.
 macro_rules! number_bitwise_rows {
     ($consumer:ident) => { $consumer! {
-        And => BitwiseAnd, and;
-        Or => BitwiseOR, or;
-        Xor => BitwiseXOR, xor;
-        ShiftLeft => ShiftLeft, shift_left;
-        ShiftRight => ShiftRight, shift_right;
-        ShiftRightUnsigned => ShiftRightZeroFill, shift_right_unsigned;
+        And => BitwiseAnd, and, "&";
+        Or => BitwiseOR, or, "|";
+        Xor => BitwiseXOR, xor, "^";
+        ShiftLeft => ShiftLeft, shift_left, "<<";
+        ShiftRight => ShiftRight, shift_right, ">>";
+        ShiftRightUnsigned => ShiftRightZeroFill, shift_right_unsigned, ">>>";
     }};
 }
 pub(crate) use number_bitwise_rows;
@@ -328,11 +367,6 @@ impl NumberTruthinessStage<f64> for NumberF64Stage {
     }
 }
 
-#[inline(always)]
-pub(crate) fn number_is_truthy(value: f64) -> bool {
-    number_truthiness(&mut NumberF64Stage, value)
-}
-
 pub(crate) struct PartialOrderStage;
 
 impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
@@ -364,13 +398,6 @@ impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
     }
 }
 
-/// `number_remainder` on lane words (each a binary64's bits): the shape a linked body calls
-/// through the helper table, where an address of this process's function cannot be named.
-#[inline]
-pub(crate) extern "C" fn number_remainder_words(_vm: i64, _residual: i64, left: i64, right: i64) -> i64 {
-    number_remainder(f64::from_bits(left as u64), f64::from_bits(right as u64)).to_bits() as i64
-}
-
 /// Number remainder after operand conversion. Also callable by the shared native
 /// emitter: no VM state, allocation, collection, guest effects, or integer traps.
 /// Floating remainder preserves negative zero and the Number NaN/infinity rules.
@@ -390,4 +417,11 @@ pub(crate) extern "C" fn number_remainder(left: f64, right: f64) -> f64 {
         }
     }
     left % right
+}
+
+impl NumberArithmetic {
+    /// Whether the result of two integers is an integer: all but a division.
+    pub(crate) const fn integral(self) -> bool {
+        !matches!(self, Self::Divide)
+    }
 }

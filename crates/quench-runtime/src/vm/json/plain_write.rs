@@ -1,6 +1,11 @@
-//! `JSON.stringify` with no replacer and no gap, for plain data whose serialization runs no
-//! guest code (`Vm::json_stringify_plain`). The writer reads each object's members from a
-//! plan of its (shape, prototype) and keeps the plans between calls (`JsonPlainCache`).
+//! `JSON.stringify`'s one writer (`Vm::json_write_member`): SerializeJSONProperty of each
+//! value, which writes plain data in place (primitives, dense arrays, and ordinary objects by
+//! the member plan of their (shape, prototype), `JsonMember`) and takes the specification's
+//! steps for any other value (`Vm::json_serialize_property`). The steady call
+//! (`Vm::json_stringify_steady`) runs it with no program, stopping at the first value that
+//! needs those steps; the native (`Vm::json_stringify`) tries that call first, and runs the
+//! one writer with its replacer and gap when it declines. The plans are kept between calls
+//! (`JsonPlainCache`).
 
 use super::*;
 
@@ -8,240 +13,385 @@ use super::*;
 /// payload's serialization, bounded so one huge result does not stay resident.
 const JSON_RETAINED_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 
-/// The nesting the plain writer (`Vm::json_write_plain`) recurses through without counting
-/// stack; deeper data takes the general steps, which do. Request and response bodies nest a
-/// few levels.
+/// The nesting the writer recurses through without a stack guard; each deeper container
+/// takes one (`Vm::json_stack_guard`). Request and response bodies nest a few levels.
 const JSON_PLAIN_DEPTH: usize = 64;
-
-/// The plans `JsonPlainWrite::recent_plans` holds.
-const JSON_RECENT_PLANS: usize = 8;
-
-/// The containers being written, inline up to this nesting.
-const JSON_PLAIN_INLINE_ANCESTORS: usize = 16;
-
-/// The state of one plain stringification: no guest code runs during it, so what a shape
-/// and prototype decide (lacking `toJSON`, an object's members) holds for its whole run.
-struct JsonPlainWrite {
-    to_json: Atom,
-    ancestors: smallvec::SmallVec<[Value; JSON_PLAIN_INLINE_ANCESTORS]>,
-    array_lacks_to_json: Option<(u32, Value)>,
-    output: JsonText,
-    /// The members of each ordinary object's (shape, prototype) written so far, or `None`
-    /// when objects of it take the general serializer.
-    object_plans: rustc_hash::FxHashMap<(u32, Value), Option<std::rc::Rc<[JsonMember]>>>,
-    /// Recently used plans by (shape, prototype), one per shape's low bits: a payload's few
-    /// kinds of object recur, nested inside one another, which this answers without hashing.
-    recent_plans: [Option<((u32, Value), std::rc::Rc<[JsonMember]>)>; JSON_RECENT_PLANS],
-    /// The `"key":` text of every planned member: an object's keys recur across the objects
-    /// of a payload, so each shape's are quoted once.
-    key_text: JsonText,
-}
-
-/// One enumerable data member of a planned object: its slot and its `,"key":` text's range in
-/// `JsonPlainWrite::key_text`, whose first byte, the comma, a first written member skips.
-#[derive(Clone, Copy)]
-struct JsonMember {
-    slot: u32,
-    key: (u32, u32),
-}
-
-/// What plain stringifications keep between calls (`Vm::json_plain`): the text buffer, and
-/// the member plans of the (shape, prototype) pairs met, as V8 keeps a map's "fast
-/// serializable" bit. A plan is a fact of a shape and a prototype chain, so it holds while the
-/// collection epoch (shape ids, prototype records) and the prototype layout epoch (a prototype
-/// gaining `toJSON` or an accessor) both stay where they were when it was made.
-#[derive(Default)]
-pub(crate) struct JsonPlainCache {
-    epochs: (u64, u64),
-    /// Boxed so a call moves the state out and back as one pointer.
-    write: Option<Box<JsonPlainWrite>>,
-}
 
 /// Bytes of quoted keys past which the plans are dropped rather than kept: a payload of many
 /// distinct shapes (a data dump) would otherwise keep every key resident.
 const JSON_RETAINED_KEY_BYTES: usize = 1 << 16;
 
-impl JsonPlainWrite {
-    /// Forgets every plan, keeping the atom and the buffers.
-    fn forget_plans(&mut self) {
-        self.array_lacks_to_json = None;
-        self.object_plans.clear();
-        self.recent_plans = Default::default();
-        self.key_text.clear();
-    }
-
-    fn new(to_json: Atom) -> Self {
-        Self {
-            to_json,
-            ancestors: Default::default(),
-            array_lacks_to_json: None,
-            output: JsonText::new(),
-            object_plans: Default::default(),
-            recent_plans: Default::default(),
-            key_text: JsonText::new(),
-        }
-    }
-}
-
-/// `JSON.stringify(value, replacer, space)`'s argument positions.
-const JSON_REPLACER_ARGUMENT: usize = 1;
-const JSON_SPACE_ARGUMENT: usize = 2;
+/// SerializeJSONObject's and SerializeJSONArray's TypeError for a value already being written.
+const JSON_CIRCULAR_MESSAGE: &str = "Converting circular structure to JSON";
 
 impl<H: Host> Vm<H> {
-    /// `JSON.stringify(value)`'s call by the plain writer (`json_stringify_plain`), when it
-    /// passes no replacer and no gap (arguments past those two are not read); `None` otherwise.
+    /// `JSON.stringify(value)`'s steady call, when it passes no replacer and no gap (arguments
+    /// past those two are not read): the one writer with no program (`json_run`), which
+    /// answers where the value is plain data; `None` leaves the call to the native, having
+    /// observed nothing.
     #[inline]
-    pub(in crate::vm) fn json_stringify_plain_call(&mut self, args: &[Value]) -> Option<Value> {
+    pub(in crate::vm) fn json_stringify_steady(&mut self, args: &[Value]) -> Option<Value> {
         let unset = |index: usize| args.get(index).is_none_or(|value| value.is_undefined());
         if !(unset(JSON_REPLACER_ARGUMENT) && unset(JSON_SPACE_ARGUMENT)) {
             return None;
         }
-        self.json_stringify_plain(args.first().copied().unwrap_or(Value::UNDEFINED))
+        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+        self.json_run(None, value, JsonOptions::default()).ok()
     }
 
-    /// JSON.stringify(value) by the plain writer: the string, or `undefined` for an omitted
-    /// value; `None` when the value needs the general steps, having observed nothing.
-    pub(super) fn json_stringify_plain(&mut self, value: Value) -> Option<Value> {
-        let epochs = (self.heap.collection_epoch(), crate::heap::prototype_layout_epoch());
-        let mut plain = match self.json_plain.write.take() {
-            Some(plain) if self.json_plain.epochs == epochs => plain,
-            Some(mut plain) => {
-                plain.forget_plans();
-                plain
+    /// The serialization of `value` under `options` by the one writer: the string, or
+    /// `undefined` for an omitted value. With no program (`p`), it stops at the first value
+    /// that needs the specification's steps.
+    pub(super) fn json_run(
+        &mut self,
+        p: Option<&ResidualProgram>,
+        value: Value,
+        options: JsonOptions,
+    ) -> Result<Value, JsonStop> {
+        let mut writer = self.json_writer(options);
+        let text = self
+            .json_write_root(p, value, &mut writer)
+            .map(|written| written.then(|| JsString::from_str(json_text_str(&writer.output))));
+        self.json_keep_writer(writer);
+        Ok(match text? {
+            Some(text) => self.heap.alloc_string(text),
+            None => Value::UNDEFINED,
+        })
+    }
+
+    /// The epochs a plan is proved under (`JsonPlainCache`).
+    pub(super) fn json_epochs(&self) -> (u64, u64) {
+        (self.heap.collection_epoch(), crate::heap::prototype_layout_epoch())
+    }
+
+    /// The kept writer (`JsonPlainCache`), or a new one, set up for a run under `options`.
+    fn json_writer(&mut self, options: JsonOptions) -> Box<JsonWriter> {
+        let epochs = self.json_epochs();
+        let mut writer = match self.json_plain.write.take() {
+            Some(writer) => writer,
+            None => {
+                let to_json = self.intern_atom("toJSON");
+                let empty = self.intern_atom("");
+                Box::new(JsonWriter::new(to_json, empty, epochs))
             }
-            None => Box::new(JsonPlainWrite::new(self.intern_atom("toJSON"))),
         };
-        let written = self.json_write_plain(value, &mut plain);
-        let text = written
-            .filter(|&written| written)
-            .map(|_| JsString::from_str(json_text_str(&plain.output)));
-        plain.output.clear();
-        plain.ancestors.clear();
-        if plain.output.capacity() > JSON_RETAINED_OUTPUT_BYTES {
-            plain.output = JsonText::new();
-        }
-        if plain.key_text.len() > JSON_RETAINED_KEY_BYTES {
-            plain.forget_plans();
-        }
-        self.json_plain = JsonPlainCache { epochs, write: Some(plain) };
-        match (written, text) {
-            (Some(_), Some(text)) => Some(self.heap.alloc_string(text)),
-            (Some(_), None) => Some(Value::UNDEFINED),
-            (None, _) => None,
-        }
+        writer.prove(epochs);
+        writer.options = options;
+        writer
     }
 
-    /// SerializeJSONProperty of `value` with no replacer and no gap, for plain data whose
-    /// serialization runs no guest code: primitives, dense hole-free arrays and ordinary
-    /// objects of non-dictionary shapes with only data members, none of which a `toJSON`
-    /// reaches. `Some(false)` is an omitted value. `None` leaves the whole stringification to
-    /// the general steps, having observed nothing: a cycle, getter, `toJSON`, function,
-    /// BigInt, boxed primitive, index key, exotic object or nesting beyond
-    /// `JSON_PLAIN_DEPTH`.
-    fn json_write_plain(&self, value: Value, plain: &mut JsonPlainWrite) -> Option<bool> {
-        if let Some(written) = self.json_write_plain_primitive(value, &mut plain.output) {
-            return Some(written);
+    /// Keeps `writer` for the next run, its text and options dropped, bounded so one huge
+    /// result or a payload of many shapes does not stay resident.
+    fn json_keep_writer(&mut self, mut writer: Box<JsonWriter>) {
+        writer.output.clear();
+        writer.ancestors.clear();
+        writer.options = JsonOptions::default();
+        if writer.output.capacity() > JSON_RETAINED_OUTPUT_BYTES {
+            writer.output = JsonText::new();
         }
-        if plain.ancestors.len() == JSON_PLAIN_DEPTH || plain.ancestors.contains(&value) {
-            return None;
+        if writer.key_text.len() > JSON_RETAINED_KEY_BYTES {
+            writer.forget_plans();
         }
-        plain.ancestors.push(value);
-        let written = if let Some(array) = self.heap.array(value) {
-            self.json_write_plain_array(value, array, plain)
-        } else {
-            self.json_write_plain_object(value, plain)
-        };
-        plain.ancestors.pop();
-        written.then_some(true)
+        self.json_plain.write = Some(writer);
     }
 
-    /// `json_write_plain` of a primitive: whether it was written (`false`: omitted), or
-    /// `None` for an object.
-    fn json_write_plain_primitive(&self, value: Value, output: &mut JsonText) -> Option<bool> {
-        if value.is_undefined() {
+    /// SerializeJSONProperty of the root value under the key "" of its wrapper object, which
+    /// is made only for a replacer: only a replacer receives it (as `this`).
+    fn json_write_root(&mut self, p: Option<&ResidualProgram>, value: Value, w: &mut JsonWriter) -> JsonStep {
+        let key = JsonKey::Name(w.empty);
+        if w.options.replacer.is_none() {
+            return self.json_write_member(p, Value::UNDEFINED, key, Some(value), w);
+        }
+        let holder = self.json_object();
+        self.with_call_roots([holder], |vm| {
+            vm.set_property(holder, w.empty, value)?;
+            // Making the wrapper may have collected.
+            w.after_guest_code(vm.json_epochs());
+            vm.json_write_member(p, holder, key, Some(value), w)
+        })
+    }
+
+    /// SerializeJSONProperty(holder, key) of a member whose value `value` was read without
+    /// guest code, or `None` for one [[Get]] must read. With no replacer, a primitive, a plain
+    /// container or an object no `toJSON` reaches is written as it is: the property steps
+    /// would call nothing. Any other member takes them, or stops the steady call.
+    fn json_write_member(
+        &mut self,
+        p: Option<&ResidualProgram>,
+        holder: Value,
+        key: JsonKey,
+        value: Option<Value>,
+        w: &mut JsonWriter,
+    ) -> JsonStep {
+        if let Some(value) = value.filter(|_| w.options.replacer.is_none()) {
+            if let Some(written) = self.json_write_primitive(value, &mut w.output) {
+                return Ok(written);
+            }
+            if let Some(written) = self.json_write_plain_container(p, value, w)? {
+                return Ok(written);
+            }
+            if let Some(p) = p
+                && self.is_object_like(value)
+                && self.json_lacks_to_json(value, w.to_json)
+            {
+                return self.json_serialize_value(p, value, w);
+            }
+        }
+        self.json_serialize_property(p.ok_or(JsonStop::Plain)?, holder, key, value, w)
+    }
+
+    /// SerializeJSONValue of a primitive: whether it was written (`false`: omitted, for
+    /// undefined and symbols), or `None` for an object or BigInt.
+    pub(super) fn json_write_primitive(&self, value: Value, output: &mut JsonText) -> Option<bool> {
+        if value.is_undefined() || value.is_deleted() {
             return Some(false);
         }
         if value.is_null() {
-            output.append_bytes(b"null");
+            output.extend_from_slice(b"null");
         } else if let Some(value) = value.as_bool() {
-            output.append_bytes(if value { b"true" } else { b"false" });
+            output.extend_from_slice(if value { b"true" } else { b"false" });
         } else if let Some(integer) = value.as_int() {
             write_json_integer(integer, output);
         } else if let Some(number) = value.as_number() {
             if number.is_finite() {
                 crate::number_to_string::write(number, output);
             } else {
-                output.append_bytes(b"null");
+                output.extend_from_slice(b"null");
             }
         } else if let Some(text) = self.heap.string(value) {
             write_json_string(text, output);
         } else {
-            return matches!(self.heap.get(value), Some(Cell::Symbol(_))).then_some(false);
+            return self.heap.is_symbol(value).then_some(false);
         }
         Some(true)
     }
 
-    fn json_write_plain_array(&self, value: Value, array: &crate::heap::ArrayObject, plain: &mut JsonPlainWrite) -> bool {
-        if array.has_side_descriptors() {
-            return false;
+    /// SerializeJSONValue of a container read as it is, none of whose own steps runs guest
+    /// code: a dense array (`json_plain_array`) or an ordinary object of a member plan
+    /// (`json_plain_plan`), written whole (`Some(true)`). `None` for any other value.
+    pub(super) fn json_write_plain_container(
+        &mut self,
+        p: Option<&ResidualProgram>,
+        value: Value,
+        w: &mut JsonWriter,
+    ) -> Result<Option<bool>, JsonStop> {
+        match self.json_plain_array(value, w) {
+            Some(true) => return self.json_write_array(p, value, w).map(|()| Some(true)),
+            Some(false) => return Ok(None),
+            None => {}
         }
-        let key = (array.shape(), array.proto());
-        if plain.array_lacks_to_json != Some(key) {
-            if !self.json_lacks_to_json(value, plain.to_json) {
-                return false;
-            }
-            plain.array_lacks_to_json = Some(key);
+        match self.json_plain_plan(value, w) {
+            Some(plan) => self.json_write_object(p, value, Some(plan), w).map(|()| Some(true)),
+            None => Ok(None),
         }
-        let Some(elements) = self.present_dense_elements(value, 0..array.elements().len()) else {
-            return false;
-        };
-        plain.output.push(b'[');
-        for (index, element) in elements.iter().enumerate() {
-            if index != 0 {
-                plain.output.push(b',');
-            }
-            match self.json_write_plain(*element, plain) {
-                Some(true) => {}
-                Some(false) => plain.output.append_bytes(b"null"),
-                None => return false,
-            }
-        }
-        plain.output.push(b']');
-        true
     }
 
-    fn json_write_plain_object(&self, value: Value, plain: &mut JsonPlainWrite) -> bool {
-        let Some(data) = self.heap.object_record(value) else {
-            return false;
-        };
-        // Shape facts decide the plan; these per-object facts do not.
-        if data.is_raw_json() || data.has_side_descriptors() || self.boxed_primitive_data(value).is_some() {
-            return false;
+    /// Whether the array `value` is written as it is: its elements held densely
+    /// (`array_search_elements`), no side-table descriptors, and no `toJSON` along its chain,
+    /// decided once per (shape, prototype) of a run's arrays. `None` for a value that is no
+    /// array.
+    fn json_plain_array(&self, value: Value, w: &mut JsonWriter) -> Option<bool> {
+        let array = self.heap.array(value)?;
+        if array.has_side_descriptors() || self.array_search_elements(value).is_none() {
+            return Some(false);
         }
-        let Some(members) = self.json_plain_members(value, data, plain) else {
-            return false;
-        };
-        plain.output.push(b'{');
-        let mut written = false;
-        for member in members.iter() {
-            // SAFETY: the plan's slots are its shape's, which the object has.
-            let member_value = unsafe { self.heap.property_get_shaped(data, member.slot as usize) };
-            let Some(member_value) = member_value.filter(|value| !value.is_deleted()) else {
-                return false;
+        let key = (array.shape(), array.proto());
+        if w.array_lacks_to_json != Some(key) {
+            if !self.json_lacks_to_json(value, w.to_json) {
+                return Some(false);
+            }
+            w.array_lacks_to_json = Some(key);
+        }
+        Some(true)
+    }
+
+    /// SerializeJSONArray of `array`: its length read once, then each element, read from the
+    /// dense backing where it is present (`json_element`), else by [[Get]].
+    pub(super) fn json_write_array(
+        &mut self,
+        p: Option<&ResidualProgram>,
+        array: Value,
+        w: &mut JsonWriter,
+    ) -> Result<(), JsonStop> {
+        self.json_container(p, array, w, |vm, w| {
+            let dense = vm.array_search_elements(array).map(|elements| elements.len());
+            let length = match dense {
+                Some(length) => length,
+                None => vm.json_array_length(p.ok_or(JsonStop::Plain)?, array, w)?,
             };
+            let proved = dense.map(|_| w.steps);
+            w.output.push(b'[');
+            for index in 0..length {
+                w.begin_member(index);
+                let element = vm.json_element(array, index, proved == Some(w.steps));
+                if !vm.json_write_member(p, array, JsonKey::Index(index), element, w)? {
+                    w.output.extend_from_slice(b"null");
+                }
+            }
+            w.end_container(length, b']');
+            Ok(())
+        })
+    }
+
+    /// LengthOfArrayLike of an array without a dense backing (a Proxy's, or one of sparse
+    /// storage or indexed descriptors), which may run guest code.
+    fn json_array_length(&mut self, p: &ResidualProgram, array: Value, w: &mut JsonWriter) -> Result<usize, JsonStop> {
+        let length = self.array_like_length(p, array)?;
+        w.after_guest_code(self.json_epochs());
+        Ok(length)
+    }
+
+    /// Element `index` of `array` where reading it runs no guest code: a present element of
+    /// its dense backing, which holds as proved while no guest code has run (`proved`).
+    fn json_element(&self, array: Value, index: usize, proved: bool) -> Option<Value> {
+        let elements = if proved {
+            self.heap.array(array).map(|array| array.elements())
+        } else {
+            self.array_search_elements(array)
+        };
+        elements?.get(index).filter(|element| !element.is_deleted())
+    }
+
+    /// SerializeJSONObject of `object`: the members of its plan, or else the keys the
+    /// specification's steps give it (`json_member_keys`), each written by `json_write_member`.
+    pub(super) fn json_write_object(
+        &mut self,
+        p: Option<&ResidualProgram>,
+        object: Value,
+        plan: Option<std::rc::Rc<[JsonMember]>>,
+        w: &mut JsonWriter,
+    ) -> Result<(), JsonStop> {
+        self.json_container(p, object, w, |vm, w| {
+            let members = match plan {
+                Some(plan) => JsonMembers::Planned { plan, steps: w.steps },
+                None => JsonMembers::Keys(vm.json_member_keys(p, object, w)?),
+            };
+            vm.json_write_members(p, object, &members, w)
+        })
+    }
+
+    fn json_write_members(
+        &mut self,
+        p: Option<&ResidualProgram>,
+        object: Value,
+        members: &JsonMembers,
+        w: &mut JsonWriter,
+    ) -> Result<(), JsonStop> {
+        w.output.push(b'{');
+        let mut written = 0;
+        for index in 0..members.len() {
             // The member is written before its value is known; an omitted value takes it back.
-            let start = plain.output.len();
-            let (key_start, key_end) = member.key;
-            let key_start = key_start as usize + usize::from(!written);
-            plain.output.append_bytes(&plain.key_text[key_start..key_end as usize]);
-            match self.json_write_plain(member_value, plain) {
-                Some(true) => written = true,
-                Some(false) => plain.output.truncate(start),
-                None => return false,
+            let start = w.output.len();
+            let (key, value) = self.json_begin_member(object, members, index, written, w);
+            if self.json_write_member(p, object, JsonKey::Name(key), value, w)? {
+                written += 1;
+            } else {
+                w.output.truncate(start);
             }
         }
-        plain.output.push(b'}');
-        true
+        w.end_container(written, b'}');
+        Ok(())
+    }
+
+    /// Writes member `index`'s separator and key (`written` members precede it), and reads
+    /// its value where that runs no guest code: from its planned slot while no guest code has
+    /// run since the plan was read, else by key along plain shapes (`plain_named_get`). `None`
+    /// leaves the read to [[Get]].
+    fn json_begin_member(
+        &self,
+        object: Value,
+        members: &JsonMembers,
+        index: usize,
+        written: usize,
+        w: &mut JsonWriter,
+    ) -> (Atom, Option<Value>) {
+        match members {
+            JsonMembers::Planned { plan, steps } => {
+                let member = plan[index];
+                w.begin_planned_member(member, written);
+                let value = if *steps == w.steps {
+                    self.json_planned_value(object, member.slot)
+                } else {
+                    self.plain_named_get(object, member.atom)
+                };
+                (member.atom, value)
+            }
+            JsonMembers::Keys(keys) => {
+                let key = keys[index];
+                w.begin_member(written);
+                self.write_json_key(key, &mut w.output);
+                w.write_colon();
+                (key, self.plain_named_get(object, key))
+            }
+        }
+    }
+
+    /// The value in `slot` of a planned object, read while no guest code has run since its
+    /// plan was read; `None` where the slot holds none.
+    fn json_planned_value(&self, object: Value, slot: u32) -> Option<Value> {
+        let data = self.heap.object_record(object)?;
+        // SAFETY: the plan's slots are its shape's, which the object keeps while no guest code
+        // runs.
+        unsafe { self.heap.property_get_shaped(data, slot as usize) }.filter(|value| !value.is_deleted())
+    }
+
+    /// Writes the container `value` by `body`: SerializeJSONObject's and SerializeJSONArray's
+    /// cycle test, and a stack guard past `JSON_PLAIN_DEPTH`. Where guest code may run (a
+    /// program), the container is rooted while its members are written.
+    fn json_container(
+        &mut self,
+        p: Option<&ResidualProgram>,
+        value: Value,
+        w: &mut JsonWriter,
+        body: impl FnOnce(&mut Self, &mut JsonWriter) -> Result<(), JsonStop>,
+    ) -> Result<(), JsonStop> {
+        // Every ancestor and `value` is an object, whose SameValue is its identity.
+        if w.ancestors.contains(&value) {
+            return Err(match p {
+                Some(p) => self.type_error(p, JSON_CIRCULAR_MESSAGE.into()).into(),
+                None => JsonStop::Plain,
+            });
+        }
+        let _stack = self.json_stack_guard(p, w.ancestors.len())?;
+        w.ancestors.push(value);
+        let result = match p {
+            Some(_) => self.with_call_roots([value], |vm| body(vm, w)),
+            None => body(self, w),
+        };
+        w.ancestors.pop();
+        result
+    }
+
+    /// The stack guard of a container `depth` levels deep, past `JSON_PLAIN_DEPTH`; its
+    /// exhaustion raises the RangeError, or stops the steady call.
+    fn json_stack_guard(
+        &mut self,
+        p: Option<&ResidualProgram>,
+        depth: usize,
+    ) -> Result<Option<crate::stack::StackGuard>, JsonStop> {
+        if depth < JSON_PLAIN_DEPTH {
+            return Ok(None);
+        }
+        match crate::stack::StackGuard::enter() {
+            Ok(guard) => Ok(Some(guard)),
+            Err(crate::stack::StackExhausted) if p.is_some() => Err(self.stack_exhaustion_error().into()),
+            Err(crate::stack::StackExhausted) => Err(JsonStop::Plain),
+        }
+    }
+
+    /// The member plan of `value`, an ordinary object of non-dictionary shape whose own
+    /// record holds no side-table descriptors, raw JSON or boxed primitive, when no replacer
+    /// property list names its keys (`json_plain_members`).
+    fn json_plain_plan(&self, value: Value, w: &mut JsonWriter) -> Option<std::rc::Rc<[JsonMember]>> {
+        if w.options.property_list.is_some() {
+            return None;
+        }
+        let data = self.heap.object_record(value)?;
+        // Shape facts decide the plan; these per-object facts do not.
+        if data.is_raw_json() || data.has_side_descriptors() || self.boxed_primitive_data(value).is_some() {
+            return None;
+        }
+        self.json_plain_members(value, data, w)
     }
 
     /// The members of `value`'s (shape, prototype), derived on the first object of it: its
@@ -251,40 +401,39 @@ impl<H: Host> Vm<H> {
         &self,
         value: Value,
         data: &crate::heap::Object,
-        plain: &mut JsonPlainWrite,
+        w: &mut JsonWriter,
     ) -> Option<std::rc::Rc<[JsonMember]>> {
         let key = (data.shape(), data.proto());
         let recent = key.0 as usize % JSON_RECENT_PLANS;
-        if let Some((last, plan)) = &plain.recent_plans[recent]
+        if let Some((last, plan)) = &w.recent_plans[recent]
             && *last == key
         {
             return Some(plan.clone());
         }
-        if let Some(plan) = plain.object_plans.get(&key) {
+        if let Some(plan) = w.object_plans.get(&key) {
             if let Some(plan) = plan {
-                plain.recent_plans[recent] = Some((key, plan.clone()));
+                w.recent_plans[recent] = Some((key, plan.clone()));
             }
             return plan.clone();
         }
-        let plan = (!self.shape_may_have_accessors(data.shape())
-            && self.json_lacks_to_json(value, plain.to_json))
-        .then(|| self.shape_enumerable_slots(value))
-        .flatten()
-        .and_then(|slots| {
-            slots
-                .iter()
-                .map(|&(atom, slot)| {
-                    self.plain_named_key(atom).then(|| {
-                        let start = plain.key_text.len() as u32;
-                        plain.key_text.push(b',');
-                        self.write_json_key(atom, &mut plain.key_text);
-                        plain.key_text.push(b':');
-                        JsonMember { slot, key: (start, plain.key_text.len() as u32) }
+        let plan = (!self.shape_may_have_accessors(data.shape()) && self.json_lacks_to_json(value, w.to_json))
+            .then(|| self.shape_enumerable_slots(value))
+            .flatten()
+            .and_then(|slots| {
+                slots
+                    .iter()
+                    .map(|&(atom, slot)| {
+                        self.plain_named_key(atom).then(|| {
+                            let start = w.key_text.len() as u32;
+                            w.key_text.push(b',');
+                            self.write_json_key(atom, &mut w.key_text);
+                            w.key_text.push(b':');
+                            JsonMember { atom, slot, key: (start, w.key_text.len() as u32) }
+                        })
                     })
-                })
-                .collect::<Option<std::rc::Rc<[JsonMember]>>>()
-        });
-        plain.object_plans.insert(key, plan.clone());
+                    .collect::<Option<std::rc::Rc<[JsonMember]>>>()
+            });
+        w.object_plans.insert(key, plan.clone());
         plan
     }
 }
@@ -299,7 +448,7 @@ mod tests {
 
     #[test]
     fn json_stringify_plans_kept_between_calls_follow_prototype_changes() {
-        // The plain writer keeps its (shape, prototype) plans between calls; a prototype that gains or
+        // The writer keeps its (shape, prototype) plans between calls; a prototype that gains or
         // loses `toJSON` afterwards, on any link of the chain, changes the next call's result.
         let source = r#"
 const out = [];

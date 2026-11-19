@@ -144,7 +144,7 @@ fn returned_superinstruction_object_preserves_value() {
       print(value.items[1]); print(value.text);
     "#;
     let program = Engine::specialize(source, "super-return.js").unwrap();
-    assert!(program.disassemble().contains("SuperConstArrayObject2"));
+    assert!(!program.disassemble().contains("SuperConstArrayObject2"));
     assert_eq!(output(source), ["2", "6"]);
 }
 
@@ -482,7 +482,7 @@ fn closure_free_parameter_lists_binding_apart_drop_unobservable_environment_copi
 #[test]
 fn getters_that_make_closures_run_as_environment_activations() {
     // A getter whose body makes closures runs as an environment activation of its read
-    // (`lane_activate_getter`), as its plain call would: its closures see its captures and
+    // (`activate_getter_in_lane`), as its plain call would: its closures see its captures and
     // locals, a closure it returns outlives it, and a throw leaves through the read.
     let source = r#"
 const out = [];
@@ -589,7 +589,7 @@ print(out.join("|"));
 
 #[test]
 fn string_index_sites_read_units_before_array_probes() {
-    // A `GetIndex` site that reads a string tries its unit first (`lane_get_index_string`),
+    // A `GetIndex` that reads a string takes its unit inside the length (`string_element_in_lane`),
     // an ASCII unit's string shared as `charAt`'s is; past the length, or at a key that is
     // no index, the read still finds `String.prototype`'s index property.
     let source = r#"
@@ -683,7 +683,7 @@ print(out.join("|"));
 #[test]
 fn typed_array_length_sites_read_the_intrinsic_getter() {
     // A `length` site that read a typed array's reads the intrinsic getter's geometry first
-    // (`lane_get_length_typed`): an own `length`, a subclass getter, arrays and strings at the
+    // (`TYPED_LENGTH_SITE`): an own `length`, a subclass getter, arrays and strings at the
     // same site, a length-tracking view across a resize and a detached buffer read as before.
     let source = r#"
 const out = [];
@@ -791,7 +791,7 @@ print(out.join(","));
 fn iteration_copies_run_in_environment_activations() {
     // A loop whose block bindings a closure captures copies its environment each iteration
     // (`CloneEnv`); an arrow making such closures still runs as an environment activation
-    // (`lane_clone_window_env`), each closure keeping its iteration's bindings while all
+    // (`clone_environment_of`), each closure keeping its iteration's bindings while all
     // share the function-level ones, as a frame's copies do.
     let source = r#"
 const out = [];
@@ -849,6 +849,88 @@ print(out.join("|"));
         output(source),
         ["105,107,109|105,107,109|105,107,109|2:4|2:4|2:4|10|10|10|21,22,13|big 41|21,22,13|big 41|21,22,13|big 41"]
     );
+}
+
+#[test]
+fn closure_making_functions_with_parameters_in_registers_run_as_environment_activations() {
+    // A function that makes closures and loops keeps the parameters none of its closures
+    // names in registers (`Compiler::promoted_local_plan`'s `parameters_only`), parameter `k`
+    // in register `k` (`Function::parameters_promoted_in_place`). It still runs as an
+    // environment activation (`CallPlan::environment_activation`, one-frame-one-call.md F6),
+    // its call filling those registers: missing arguments are `undefined`, a parameter
+    // written in the loop keeps its register, a throw leaves through the caller, and legacy
+    // reflection sees the values passed.
+    let source = r#"
+"use strict";
+const out = [];
+function scan(list, key) {
+  let total = 0;
+  const seen = [];
+  for (let i = 0; i < list.length; i++) total += list[i][key];
+  const report = () => seen.length + ":" + total;
+  seen.push(total);
+  return report();
+}
+function shift(n, step) { const marks = []; while (n > 0) { n -= step; marks.push(n); } const f = () => marks.join("/"); return f(); }
+function guard(x, limit) { const msg = () => "over"; for (let i = 0; i < 3; i++) if (x > limit) throw new Error(msg()); return x; }
+for (let round = 0; round < 3; round++) {
+  out.push(scan([{ v: 1 }, { v: 2 }, { v: 3 }], "v"), shift(5, 2), shift(4), guard(1, 5));
+  try { guard(5, 1); } catch (e) { out.push(e.message); }
+}
+print(out.join("|"));
+"#;
+    let program = Engine::specialize(source, "parameters-in-registers.js").unwrap();
+    program.compile_released();
+    let scan = &program.functions[1];
+    assert!(scan.instructions().any(|instruction| instruction.op() == crate::bytecode::Op::MakeClosure));
+    assert_eq!(scan.parameters_promoted_in_place(), 2);
+    assert!(scan.call_plan(&program).environment_activation);
+    program.validate().unwrap();
+    assert_eq!(output(source), ["1:6|3/1/-1|NaN|1|over|1:6|3/1/-1|NaN|1|over|1:6|3/1/-1|NaN|1|over"]);
+    let sloppy = "function sl(a, b) { let s = 0; for (let i = 0; i < 2; i++) s += a; const g = () => s; return g() + sl.arguments.length; } \
+        function drive(n) { let s = 0; for (let i = 0; i < 50; i++) s += n === 2 ? sl(i, 1) : sl(i, 1, 2); return s; } print(drive(2) + \",\" + drive(3));";
+    assert_eq!(output(sloppy), ["2550,2600"]);
+}
+
+#[test]
+fn arguments_passed_last_inside_try_statements_keep_their_values() {
+    // A body that passes its `arguments` object on inside a `try` (mobx's action wrappers:
+    // `try { return run(this, arguments) } finally { … }`) keeps its passed values and makes the
+    // object at the pass (`KeptArguments::Passes`), since `arguments_passed_last` traces handler
+    // edges (one-frame-one-call.md F6 (d)). A read of the binding a handler may run after the
+    // pass (`late`) still declines; one before any pass (`early`, whose pass is in its `catch`)
+    // keeps. The expected output is Node's.
+    let source = r#"
+var depth = 0, out = [];
+function wrap() { depth++; try { return run(this, arguments); } finally { depth--; } }
+function late() { try { return run(this, arguments); } catch (e) { return "late:" + arguments.length; } }
+function early() { try { check(arguments.length); } catch (e) { return run(null, arguments); } return "ok"; }
+function run(self, args) { if (args[0] === "boom") throw new Error("boom"); var s = 0; for (var i = 0; i < args.length; i++) s += args[i]; return s; }
+function check(n) { if (n > 2) throw new Error("many"); }
+var total = 0;
+for (var i = 0; i < 300; i++) { total += wrap(i, 1); total += early(1, 2, i); }
+out.push(total, depth, early(1), late(1, 2), late("boom", 2));
+try { wrap("boom"); } catch (e) { out.push(e.message, depth); }
+print(out.join("|"));
+"#;
+    let program = Engine::specialize(source, "arguments-passed-in-try.js").unwrap();
+    program.compile_released();
+    let named = |name: &str| {
+        program
+            .functions
+            .iter()
+            .find(|function| function.name.is_some_and(|atom| program.atoms[atom as usize].to_string() == name))
+            .unwrap_or_else(|| panic!("function {name}"))
+    };
+    let (wrap, late, early) = (named("wrap"), named("late"), named("early"));
+    assert!(!wrap.handlers.is_empty() && !early.handlers.is_empty());
+    assert_eq!(wrap.kept_arguments(), Some(crate::bytecode::KeptArguments::Passes));
+    assert!(wrap.call_plan(&program).keeps_arguments);
+    assert_eq!(late.kept_arguments(), None);
+    assert!(!late.call_plan(&program).keeps_arguments);
+    assert_eq!(early.kept_arguments(), Some(crate::bytecode::KeptArguments::Passes));
+    program.validate().unwrap();
+    assert_eq!(output(source), ["90900|0|ok|3|late:2|boom|0"]);
 }
 
 #[test]
@@ -1088,7 +1170,7 @@ print(out.length + " " + h + " " + out[out.length - 3].slice(0, 60));
 #[test]
 fn nested_reads_past_their_primary_entries_keep_their_values() {
     // A nested `GetField` whose steps miss their primary own entries reads the polymorphic
-    // entries and a string's own `length` (`lane_nested_polymorphic_value`): strings of
+    // entries and a string's own `length` (`nested_polymorphic_value_in_lane`): strings of
     // astral and accented code points, arrays and an object with its own `length`, a middle
     // step over many shapes, an inherited one, then a getter installed on its prototype and
     // a primitive in its place. Node 26 prints the same. A semantics check: the iteration
@@ -1156,7 +1238,7 @@ print(out.join(" "));
 fn forwarding_constructors_keep_their_initializers_constant_fields() {
     // Two closures of one forwarding constructor (`this.initialize.apply(this, arguments)`)
     // whose initializers differ: the plan a forwarded construction records keeps which of
-    // its fields are constants (`lane_record_forwarded_fields`), so C's `this.w = 1` stays 1
+    // its fields are constants (`record_forwarded_fields_in_lane`), so C's `this.w = 1` stays 1
     // beside a defaulted parameter field. In a function, whose loops run in the lane. Node
     // prints the same.
     let source = r#"
@@ -1380,7 +1462,7 @@ print(rounds[0] === rounds[299] ? rounds[0] : "unsteady");
 #[test]
 fn for_of_steps_that_read_done_and_value_in_place_keep_iteration_semantics() {
     // A for-of step over a plain array writes its `done` and `value` registers itself
-    // (`lane_iterator_step_reads`): arrays with holes, growing and shrinking under the loop,
+    // (`iterator_step_reads_miss`): arrays with holes, growing and shrinking under the loop,
     // `break` and `continue`, destructuring, typed arrays and strings, generators, a patched
     // `%ArrayIteratorPrototype%.next`, an own `Symbol.iterator`, a throw out of the body and
     // a binding that outlives the loop. Node 26 prints the same.
@@ -1443,7 +1525,7 @@ Promise.all(runs).then((values) => { print(values.join(" ") + " | " + log.join("
 fn awaits_a_resumed_frame_suspends_from_the_lane_keep_their_order_and_errors() {
     // A resumed async frame whose lane run stops at an `await` suspends without the general
     // loop when the awaited value converts without observing anything
-    // (`Vm::lane_stop_awaits`): native promises and primitives, beside thenables, a `then`
+    // (`Vm::stop_awaits_in_lane`): native promises and primitives, beside thenables, a `then`
     // getter, one that throws into a `try`, a subclass, a patched `constructor`, loops of
     // awaits and an async generator, interleaved with plain reactions. Node 26 prints the
     // same.
@@ -1658,4 +1740,33 @@ fn unicode_regexp_last_index_inside_a_surrogate_pair_starts_at_its_lead() {
 "#;
     let expected = expected.trim().lines().map(str::trim).collect::<Vec<_>>();
     assert_eq!(output(source), expected);
+}
+
+#[test]
+fn array_patterns_read_elements_directly_only_while_no_step_is_observable() {
+    let source = r#"
+      let out = [];
+      function t(name, f) { try { out.push(name + "=" + JSON.stringify(f())); } catch (e) { out.push(name + "!" + e.constructor.name); } }
+      for (let round = 0; round < 3; round++) {
+        t("basic", () => { const [a, b] = [1, 2]; return [a, b]; });
+        t("short", () => { const [a, b, c] = [1, 2]; return [a, b, c]; });
+        t("elision", () => { const [, b] = [1, 2, 3]; return b; });
+        t("self", () => { var a = [1, 2], b; [a, b] = a; return [a, b]; });
+        t("swap", () => { let x = 1, y = 2; [x, y] = [y, x]; return [x, y]; });
+        t("hole", () => { const [a, b] = [1, , 3]; return [a, b]; });
+        t("str", () => { const [a, b] = "hi"; return [a, b]; });
+        t("closeObserved", () => { let log = []; const p = Object.getPrototypeOf([][Symbol.iterator]()); p.return = function () { log.push("ret"); return {}; }; const [a] = [1, 2]; delete p.return; return [a, log]; });
+        t("iterPatched", () => { const save = Array.prototype[Symbol.iterator]; Array.prototype[Symbol.iterator] = function* () { yield 9; }; const [a, b] = [1, 2]; Array.prototype[Symbol.iterator] = save; return [a, b]; });
+        t("constAssign", () => { const c = 1; let r; try { [r, c] = [2, 3]; } catch (e) { return [r, e.constructor.name]; } });
+        t("ownIter", () => { const arr = [1, 2]; arr[Symbol.iterator] = function* () { yield 7; }; const [a, b] = arr; return [a, b]; });
+        t("loop", () => { let a = 0, b = 1; for (let i = 0; i < 10; i++) [a, b] = [b, a + b]; return a; });
+        t("protoReturn", () => { let n = 0; Object.defineProperty(Object.prototype, "return", { get() { n++; return undefined; }, configurable: true }); const [a] = [1, 2]; delete Object.prototype.return; return [a, n]; });
+      }
+      console.log(out.slice(0, 13).join("|"));
+      console.log(String(out.slice(13, 26).join("|") === out.slice(0, 13).join("|") && out.slice(26).join("|") === out.slice(0, 13).join("|")));
+    "#;
+    assert_eq!(output(source), vec![
+        r#"basic=[1,2]|short=[1,2,null]|elision=2|self=[1,2]|swap=[2,1]|hole=[1,null]|str=["h","i"]|closeObserved=[1,["ret"]]|iterPatched=[9,null]|constAssign=[2,"TypeError"]|ownIter=[7,null]|loop=55|protoReturn=[1,1]"#.to_string(),
+        "true".to_string(),
+    ]);
 }

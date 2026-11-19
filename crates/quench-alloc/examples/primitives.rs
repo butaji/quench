@@ -1,5 +1,5 @@
 //! Isolate allocator work before checking an application workload.
-use quench_alloc::{class_of, QuenchAlloc, GRANULE_BYTES, MAX_SMALL_BYTES};
+use quench_alloc::{granule_class_of, QuenchAlloc, GRANULE_BYTES, MAX_SMALL_BYTES};
 use std::{alloc::{GlobalAlloc, Layout}, hint::black_box, time::Instant};
 
 const LIVE_BLOCKS: usize = 256;
@@ -15,7 +15,7 @@ fn classes(rounds: usize) -> (usize, usize) {
     let mut checksum = 0usize;
     for index in 0..rounds {
         let size = black_box(index % MAX_SMALL_BYTES + 1);
-        checksum += black_box(class_of(size).expect("a small size"));
+        checksum += black_box(granule_class_of(size).expect("a small size"));
     }
     (rounds, checksum)
 }

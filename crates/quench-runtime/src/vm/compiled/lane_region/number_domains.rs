@@ -49,30 +49,27 @@ impl Lowering<'_, '_> {
         })
     }
 
-    /// `left % right` into `destination`, both operands Numbers. Operands proved int32 take
-    /// the int32 remainder, as C does; its NaN and `-0` leave at `exit`.
-    pub(super) fn remainder(&mut self, state: &mut State, destination: Register,
+    /// `left % right` into `destination` at `pc`, both operands Numbers. Operands proved int32 take
+    /// the int32 remainder, as C does; its NaN and `-0` leave at `exit`. The guards the facts prove
+    /// redundant are dropped: a dividend no negative makes no `-0`, a sum that only its ToInt32 reads
+    /// ignores the sign of one (`truncated_sum_operand`), and a divisor no zero needs no zero test.
+    pub(super) fn remainder(&mut self, state: &mut State, pc: usize, destination: Register,
         [left, right]: [Operand; 2], exit: ir::Block) {
-        let domain = if self.proved_int(state, [left, right]) && !self.left_here {
+        let int = self.proved_int(state, [left, right]) && !self.left_here;
+        let domain = if int {
             crate::staged::Domain::Int32
         } else {
             crate::staged::Domain::Float64
         };
-        // A linked body names the shared leaf as a helper symbol: the leaf's address is this
-        // process's, which no image may embed (a `%` past int32, so a double, would call a
-        // pointer the runner's process never had). The helper ABI carries lane words.
-        if matches!(domain, crate::staged::Domain::Float64) && self.helpers.links()
-            && let (Some(left), Some(right)) = (self.operand_number(state, left, exit), self.operand_number(state, right, exit))
-        {
-            let left = super::super::object_slots::emit(&mut self.builder).raw_unary(Unary::Bitcast(Lane::I64), left);
-            let right = super::super::object_slots::emit(&mut self.builder).raw_unary(Unary::Bitcast(Lane::I64), right);
-            let word = self.helper_call(LaneHelper::NumberRemainder, &[left, right]);
-            let number = super::super::object_slots::emit(&mut self.builder).raw_unary(Unary::Bitcast(Lane::F64), word);
-            self.set_number(state, destination, number);
-            return;
-        }
+        let (zero, divisor_nonzero) = if int {
+            let sign_unread = self.ranges.non_negative_dividend(pc) || self.truncated_sum_operand(pc, destination);
+            let zero = if sign_unread { crate::staged::NegativeZero::Ignore } else { crate::staged::NegativeZero::Exit };
+            (zero, self.ranges.nonzero_divisor(pc))
+        } else {
+            (crate::staged::NegativeZero::Exit, false)
+        };
         let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Remainder {
-            destination, left, right, domain });
+            destination, left, right, domain, zero, divisor_nonzero });
         self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
     }
 }

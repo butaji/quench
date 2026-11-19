@@ -71,6 +71,86 @@ impl FunctionValues {
     }
 }
 
+/// The hoisted function declarations of each module instance (one `ProgramId`), by function id.
+/// `Vm::instantiate_module_environment` makes each one, and the module body's own declaration of
+/// it (`Op::MakeClosure` at the root) finds it here. Weak, as `FunctionValues` holds closures: the
+/// module environment's binding keeps each one alive while it holds it.
+#[derive(Default)]
+pub(super) struct ModuleFunctions {
+    instances: FxHashMap<ProgramId, FxHashMap<u32, WeakHandle>>,
+}
+
+impl ModuleFunctions {
+    pub(super) fn get(&self, program: ProgramId, id: u32) -> Option<WeakHandle> {
+        self.instances.get(&program)?.get(&id).copied()
+    }
+
+    pub(super) fn contains(&self, program: ProgramId, id: u32) -> bool {
+        self.instances.get(&program).is_some_and(|functions| functions.contains_key(&id))
+    }
+
+    pub(super) fn set(&mut self, program: ProgramId, id: u32, handle: WeakHandle) {
+        self.instances.entry(program).or_default().insert(id, handle);
+    }
+
+    /// Every recorded function of every instance, by its handle.
+    pub(super) fn iter(&self) -> impl Iterator<Item = (ProgramId, u32, WeakHandle)> + '_ {
+        self.instances
+            .iter()
+            .flat_map(|(program, functions)| functions.iter().map(move |(id, handle)| (*program, *id, *handle)))
+    }
+
+    /// Keeps the functions `keep` accepts, and drops an instance left with none.
+    pub(super) fn retain(&mut self, mut keep: impl FnMut(WeakHandle) -> bool) {
+        self.instances.retain(|_, functions| {
+            functions.retain(|_, handle| keep(*handle));
+            !functions.is_empty()
+        });
+    }
+
+    /// Drops the instances of programs the VM reclaimed.
+    pub(super) fn drop_programs(&mut self, reclaimed: &FxHashSet<ProgramId>) {
+        self.instances.retain(|program, _| !reclaimed.contains(program));
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.instances.clear();
+    }
+}
+
+impl<H: Host> Vm<H> {
+    /// The hoisted function `id` of module instance `program`, if its instance made one that is
+    /// still live.
+    pub(super) fn module_function(&self, program: ProgramId, id: u32) -> Option<Value> {
+        self.module_functions.get(program, id).and_then(|handle| self.heap.weak_value(handle))
+    }
+
+    /// Whether module instance `program` made hoisted function `id` at instantiation.
+    pub(super) fn is_module_function(&self, program: ProgramId, id: u32) -> bool {
+        self.module_functions.contains(program, id)
+    }
+
+    /// Whether `Op::MakeClosure` of function `id` in frame `frame` is a module's hoisted
+    /// declaration, which the frame's instance made at instantiation.
+    pub(super) fn is_module_root_hoisted(&self, p: &ResidualProgram, frame: usize, id: u32) -> bool {
+        p.is_module()
+            && self.frames[frame].function == crate::vm::ROOT_FUNCTION_ID
+            && self.is_module_function(self.frames[frame].program, id)
+    }
+
+    /// Records `function`, the hoisted function `id` that module instance `program` made.
+    pub(super) fn record_module_function(&mut self, program: ProgramId, id: u32, function: Value) {
+        let handle = self.heap.weak_handle(function).expect("new closure is live");
+        self.module_functions.set(program, id, handle);
+    }
+
+    /// Drops the module functions' handles a collection freed, before their slots are reused.
+    pub(super) fn prune_module_functions(&mut self) {
+        let heap = &self.heap;
+        self.module_functions.retain(|handle| heap.weak_value(handle).is_some());
+    }
+}
+
 impl std::ops::Deref for FunctionValues {
     type Target = FxHashMap<(ProgramId, u32), Handles>;
     fn deref(&self) -> &Self::Target {

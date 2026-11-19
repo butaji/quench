@@ -1,12 +1,15 @@
 use super::program_store::ProgramId;
 use crate::Value;
 
+mod frame_cold;
 mod frame_record;
 mod generator_record;
+mod suspension_live;
 pub(crate) use frame_record::FrameRecord;
+pub(in crate::vm) use frame_record::extend_this_env_roots;
 #[cfg(test)]
 pub(in crate::vm) use frame_record::{frames_made, note_frame_made};
-pub(crate) use generator_record::{GeneratorRecord, GeneratorState};
+pub(crate) use generator_record::GeneratorRecord;
 
 /// The only state that crosses an activation boundary. The value is kept as a
 /// child of the suspension's owner and is consumed by the resumer according
@@ -15,9 +18,6 @@ pub(crate) use generator_record::{GeneratorRecord, GeneratorState};
 pub(crate) enum Completion {
     GeneratorStart,
     Return(Value),
-    // Current thrown resumes enter the shared frame error boundary directly.
-    #[allow(dead_code)]
-    Throw(Value),
     Yield(Value),
     Await(Value),
 }
@@ -98,8 +98,19 @@ pub(crate) enum CallContext {
 pub(crate) enum CallCompletion {
     Value,
     Constructor(Value),
+    /// [[Construct]] of a derived class constructor pushed in place (`Vm::try_inline_construct`,
+    /// `dispatch_fast::lane_frame_construct`): the frame starts with `this` uninitialized and
+    /// its `super(...)` binds it, so the call yields what `Vm::derived_construct_value` makes
+    /// of the returned value and the frame's `this` as it retires: the returned object, else
+    /// the binding, or the error a missing `super(...)` or a primitive result throws at the call.
+    DerivedConstructor,
     Promise(crate::heap::RootId),
     Generator(super::generator::GeneratorResume),
+    /// An async generator's request a lane ran in place (`Completion::AsyncRequest`), whose
+    /// promise the root keeps: the generator's frame stops at an `await`, a `yield`, a return or
+    /// a throw and the request settles (`Vm::settle_materialized_request`), the call yielding the
+    /// promise.
+    AsyncRequest(crate::heap::RootId),
     /// A lane's array iteration whose callback became this frame: its return steps and
     /// finishes the iteration (`Vm::finish_array_step`), which yields the method's value.
     ArrayStep(Box<super::array_indexed::ArrayStepCall>),
@@ -152,6 +163,16 @@ impl CallCompletion {
 
     #[inline(always)]
     pub(super) fn is_generator(&self) -> bool { matches!(self, Self::Generator(_)) }
+
+    #[inline(always)]
+    pub(super) fn is_async_request(&self) -> bool { matches!(self, Self::AsyncRequest(_)) }
+
+    #[inline(always)]
+    pub(super) fn take_async_request(&mut self) -> Option<crate::heap::RootId> {
+        let Self::AsyncRequest(root) = *self else { return None; };
+        *self = Self::Value;
+        Some(root)
+    }
 
     /// Whether the call's value is made on the general path from what the callee returns:
     /// an async callee's promise settles there, an array step's iteration finishes there.
@@ -276,9 +297,9 @@ impl Continuation {
     /// A lane resumes the frame as an activation over its register file, which stays in this
     /// continuation's record: the frame's address, which its box keeps until the run ends,
     /// and the register that takes the value the run resumes with. Every register is live
-    /// while it runs.
+    /// while it runs: the caller settles them (`FrameRecord::settle_registers`).
+    #[inline(always)]
     pub(crate) fn begin_window(&mut self) -> (*mut FrameRecord, Option<u16>) {
-        self.frame.live_registers = None;
         (&raw mut *self.frame, self.resume_register)
     }
 
@@ -294,7 +315,6 @@ impl Continuation {
         out.extend(match self.completion {
             Completion::GeneratorStart => None,
             Completion::Return(value)
-            | Completion::Throw(value)
             | Completion::Yield(value)
             | Completion::Await(value) => Some(value),
         });
@@ -399,5 +419,28 @@ mod tests {
         assert_eq!((frame.function, frame.pc, frame.with_base), (3, 7, 0));
         assert_eq!(frame.initialized_registers, frame.registers.len());
         assert!(frame.pc_is_resume && !frame.fixed_this);
+    }
+
+    /// A suspension keeps its dead registers' values, untraced, and clears them on resume
+    /// only when a collection ran since it suspended.
+    #[test]
+    fn dead_registers_clear_on_resume_only_after_a_collection() {
+        use crate::compile::liveness::RegisterSet;
+        let suspended = |epoch| {
+            let mut frame = Box::new(super::super::Frame::empty(ProgramId::MAIN, 0));
+            frame.registers = crate::vm::register_file::RegisterFile::from_registers(&[Value::heap(1), Value::heap(2), Value::heap(3)]);
+            let mut continuation = Continuation::suspend(frame, Completion::Await(Value::UNDEFINED), None, Value::UNDEFINED);
+            continuation.frame.suspend_registers((Some(RegisterSet::from(0b101u64)), epoch));
+            continuation
+        };
+        let mut quiet = suspended(4);
+        let roots = quiet.roots();
+        assert!(roots.contains(&Value::heap(1)) && roots.contains(&Value::heap(3)) && !roots.contains(&Value::heap(2)));
+        quiet.frame.settle_registers(4);
+        assert_eq!(&quiet.frame.registers[..], [Value::heap(1), Value::heap(2), Value::heap(3)]);
+        assert!(quiet.frame.live_registers().is_none());
+        let mut collected = suspended(4);
+        collected.frame.settle_registers(5);
+        assert_eq!(&collected.frame.registers[..], [Value::heap(1), Value::UNDEFINED, Value::heap(3)]);
     }
 }

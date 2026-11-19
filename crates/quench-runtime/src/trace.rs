@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 
 /// The names a setting was given, as bits indexed by its enum, with their arguments.
 struct Named {
-    on: u64,
+    on: u32,
     values: Vec<Option<String>>,
 }
 
@@ -28,7 +28,7 @@ fn parse(variable: &str, names: &[&str]) -> Named {
             .map_or((entry, None), |(name, value)| (name, Some(value)));
         match names.iter().position(|known| *known == name) {
             Some(index) => {
-                named.on |= 1u64 << index;
+                named.on |= 1 << index;
                 named.values[index] = value.map(str::to_owned);
             }
             None => eprintln!("Quench: unknown {variable} name `{name}`; known: {}", names.join(",")),
@@ -49,14 +49,14 @@ macro_rules! setting {
             const NAMES: &[&str] = &[$($name,)*];
 
             fn named() -> &'static Named {
-                const _: () = assert!($setting::NAMES.len() <= u64::BITS as usize);
+                const _: () = assert!($setting::NAMES.len() <= u32::BITS as usize);
                 static NAMED: OnceLock<Named> = OnceLock::new();
                 NAMED.get_or_init(|| parse($variable, Self::NAMES))
             }
 
             /// Whether the setting names this.
             pub fn on(self) -> bool {
-                Self::named().on & (1u64 << self as u32) != 0
+                Self::named().on & (1 << self as u32) != 0
             }
 
             /// The argument written after `=` for this name, if any.
@@ -80,7 +80,9 @@ setting! {
         StorageCensus = "storage-census",
         Shapes = "shapes",
         Rewrite = "rewrite",
-        /// Every loaded program's finished bytecode, printed at exit.
+        /// Every loaded program's finished bytecode, printed at exit; `bytecode=lanes` prints
+        /// each function's lane view instead (`Vm::report_lane_plan`), the static input of the
+        /// instruction-count predictor (`quench-gate --only ir-predict`).
         Bytecode = "bytecode",
         JsJit = "js-jit",
         /// BaseJIT region exits by instruction, most frequent first (printed at exit).
@@ -89,10 +91,6 @@ setting! {
         OsrReject = "osr-reject",
         JitPeak = "jit-peak",
         JitDump = "jit-dump",
-        /// The directory each ahead-lowered loop writes its relocatable code into, named by its
-        /// function and the loop's span: what a produced image's loops will run, measured at
-        /// build time (`quench-gate --only aot-instructions`).
-        AheadDump = "ahead-dump",
         /// Per-loop residual counts of each compiled hot loop (`quench-bench --residuals`).
         Residuals = "residuals",
         PerfMap = "perf-map",
@@ -123,11 +121,9 @@ setting! {
     "QUENCH_DEV", Dev {
         /// The memory-first heap policy in place of the default.
         MemoryFirst = "memory-first",
-        /// Array backings take the double element kind (`heap::array_elements::DOUBLE_LEN`):
-        /// for the readers that consume it while compiled tiers do not guard its flag yet.
-        DoubleElements = "double-elements",
-        /// The lane prologue specializes declined functions into frameless lane bodies.
-        JsLaneMethods = "js-lane-methods",
+        /// Array backings never take the double element kind (`heap::array_elements::DOUBLE_LEN`),
+        /// which they otherwise take on their first Number that is no int32.
+        NoDoubleElements = "no-double-elements",
         /// A requested compile runs on the requesting thread and installs at once, as in tests:
         /// instruction counts then see the code a run installs.
         SyncCompile = "sync-compile",
@@ -150,10 +146,6 @@ setting! {
         WasmRootOnly = "wasm-root-only",
         /// Tiering starts at the selected root and promotes hot fallback callees.
         WasmRootFirst = "wasm-root-first",
-        /// Full collections that pass the concurrent-cycle gates (`Heap::concurrent_cycle_refusal`)
-        /// may mark concurrently with the mutator: always (`=on`, or no value), where measured to
-        /// pay (`=adaptive`), or never (`=off`).
-        ConcurrentGc = "concurrent-gc",
         /// Functions of a direct eval's source compile on first call.
         DirectEvalStubs = "direct-eval-stubs",
         /// Old records keep reference counts, and minor collections free the records whose

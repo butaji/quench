@@ -38,23 +38,8 @@ fn matches_dns(host: &str, pattern: &str, wildcards: bool) -> bool {
         && host[0].ends_with(suffix)
 }
 
-fn get(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-) -> Result<RootId, RootedError> {
-    context.get_named_property_rooted(object, name)
-}
-fn put(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-    value: RootId,
-) -> Result<(), RootedError> {
-    let key = context.string_rooted(name);
-    context.define_data_property_rooted(object, key, value, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_get as get;
+use crate::modules::util_shared_vm::named_put as put;
 fn format_error(context: &mut NativeContext<'_, NodeHost>) -> RootedError {
     match context.syntax_error_rooted("Invalid subject alternative name string") {
         Ok(error) => {

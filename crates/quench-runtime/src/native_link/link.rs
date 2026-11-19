@@ -230,10 +230,6 @@ impl NativeSupport {
             command.args(["--cfg", "quench_native_bootstrap"])
                 .env("QUENCH_NATIVE_BOOTSTRAP", bootstrap);
         }
-        if let Some(ahead) = &inputs.ahead {
-            command.args(["--cfg", "quench_native_ahead"])
-                .env("QUENCH_NATIVE_AHEAD", ahead);
-        }
         if self.rust_lto {
             command.args(["-C", "lto=thin"]);
         }
@@ -507,7 +503,7 @@ mod tests {
         for symbol in [
             "<quench_runtime::vm::Vm<Host>>::run_general_loop::<false>",
             "<quench_runtime::vm::Vm<Host>>::step_operation_74",
-            "quench_runtime::vm::dispatch_fast::lane_fields_fit",
+            "quench_runtime::vm::dispatch_fast::fields_fit_in_lane",
         ] {
             assert!(!is_interpreter_symbol(symbol), "{symbol}");
         }
@@ -526,8 +522,8 @@ mod tests {
             assert!(is_compiler_symbol(symbol), "{symbol}");
         }
         for symbol in [
-            "quench_runtime::crate::liveness::register_roots",
-            "quench_runtime::crate::regexp_syntax::validate_pattern_text",
+            "quench_runtime::compile::liveness::register_roots",
+            "quench_runtime::compile::regexp::validate_pattern_text",
             "quench_runtime::compile::program_profile::ProgramFootprint",
             "quench_node::specialize_host_script",
             "<core::ptr::drop_glue<alloc::vec::Vec<u64>>>",

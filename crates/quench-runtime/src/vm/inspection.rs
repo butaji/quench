@@ -7,10 +7,13 @@ fn constructor_name_is_specific(name: &JsString) -> bool {
     !name.units().is_empty() && !name.units().iter().eq("Object".encode_utf16())
 }
 
+/// The `QUENCH_TRACE=bytecode` value that prints lane views in place of the bytecode.
+pub(super) const LANE_PLAN: &str = "lanes";
+
 impl<H: Host> Vm<H> {
     /// Prints every loaded program's finished bytecode when `QUENCH_TRACE=bytecode` is set.
     pub(super) fn report_bytecode(&self) {
-        if !crate::trace::Channel::Bytecode.on() {
+        if !crate::trace::Channel::Bytecode.on() || crate::trace::Channel::Bytecode.value() == Some(LANE_PLAN) {
             return;
         }
         for index in 0..self.programs.len() {
@@ -121,8 +124,8 @@ impl<H: Host> Vm<H> {
                     "Object"
                 }
             }
-            Some(Cell::Map { .. }) => "Map",
-            Some(Cell::Set { .. }) => "Set",
+            _ if self.heap.is_map(value) => "Map",
+            _ if self.heap.is_set(value) => "Set",
             Some(Cell::WeakMap { .. }) => "WeakMap",
             Some(Cell::WeakSet { .. }) => "WeakSet",
             Some(Cell::Date { .. }) => "Date",
