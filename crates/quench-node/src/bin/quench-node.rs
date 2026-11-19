@@ -98,10 +98,7 @@ fn main() -> std::process::ExitCode {
     let result = if let Some(result) = quench_node::qimg::route(&arguments) {
         result
     } else if arguments.first().is_some_and(|argument| argument == "--build-aot") {
-        #[cfg(feature = "aot")]
-        { quench_node::aot::cli::run(arguments.into_iter().skip(1).collect()) }
-        #[cfg(not(feature = "aot"))]
-        { Err("an AOT build requires an aot-enabled quench-node compiler build".into()) }
+        quench_node::aot::cli::run(arguments.into_iter().skip(1).collect())
     } else {
         quench_node::shared_run::run_shared_cli(arguments)
     };

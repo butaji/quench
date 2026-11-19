@@ -7,7 +7,6 @@
 
 use super::{Atom, EvalBinding, EvalBindingLocation, Function};
 use super::{Op, Traits};
-#[cfg(feature = "aot")]
 use super::WideInstruction;
 use std::rc::Rc;
 
@@ -153,7 +152,7 @@ impl Function {
     /// The local slot a store of this function writes: a local store's own, or the slot named
     /// as a by-name store's atom, which a script root keeps for the global var its functions
     /// capture.
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(test)]
     pub(crate) fn stored_slot(&self, instruction: WideInstruction) -> Option<usize> {
         match instruction.op() {
             op if op.traits().has(Traits::LOCAL_SLOT_STORE) => Some(instruction.local_slot()),

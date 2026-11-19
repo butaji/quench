@@ -1,4 +1,3 @@
-#![cfg(feature = "aot")]
 
 use quench_node::aot::SourceManifest;
 use quench_runtime::{HostScriptOptions, NativeJsCompiler, NativeSourceKey, emit_native_module, lower_native_js_module};

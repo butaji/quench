@@ -148,7 +148,6 @@ fn internal_options_esm_exports_match_node() {
     assert_eq!(actual.stderr, expected.stderr);
 }
 
-#[cfg(feature = "aot")]
 #[test]
 #[ignore = "explicit execution-only production SDK qualification"]
 fn internal_options_match_node_without_source_in_native_js_and_ts() {

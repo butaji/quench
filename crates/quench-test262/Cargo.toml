@@ -15,7 +15,8 @@ jit = ["quench-runtime/jit"]
 native-execution = ["quench-runtime/native-execution"]
 # One host ABI per native SDK; regular multi-host builds keep exports in drivers.
 native-sdk = ["native-execution"]
-aot = ["quench-runtime/aot"]
+# Compatibility alias: AOT code is always compiled, so this feature is a no-op.
+aot = []
 profile-aggregate = ["quench-runtime/profile-aggregate"]
 profile-memory = ["quench-runtime/profile-memory"]
 verify-replay = ["quench-runtime/verify-replay"]
@@ -35,7 +36,6 @@ wait-timeout = "0.2.1"
 [[bin]]
 name = "emit-native"
 path = "src/bin/emit-native.rs"
-required-features = ["aot"]
 
 [lints]
 workspace = true

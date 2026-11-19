@@ -558,7 +558,6 @@ mod module_tests {
         assert!(Engine::typescript_has_module_syntax("export interface {").is_none());
     }
 
-    #[cfg(feature = "aot")]
     #[test]
     fn native_module_key_keeps_language_in_its_compile_goal() {
         let source = "export const value: number = 1;";

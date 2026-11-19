@@ -120,7 +120,6 @@ pub(crate) fn install(runtime: &mut Runtime<NodeHost>) {
 pub fn route(arguments: &[String]) -> Option<Result<ExitCode, String>> {
     if let Some(payload) = embedded() { return Some(run_file("this executable", &payload, arguments.iter().cloned())); }
     match arguments {
-        [command, rest @ ..] if command == "compile" && !cfg!(feature = "aot") => Some(compile(rest.to_vec())),
         [image, rest @ ..] if image.ends_with(EXTENSION) => Some(run(image, rest.iter().cloned())),
         _ => None,
     }

@@ -154,7 +154,6 @@ pub use vm::{
     NativeJsOperands, NativeJsOperationEntry, native_js_lane_helpers, native_js_operation_entry, native_js_operation_entry_for,
     native_program::{NativeJsFunctionEntry, NativeJsProgram, NativeJsPublicationCounts, NativeProgramResolver},
 };
-#[cfg(feature = "aot")]
 pub use vm::{
     IsaBaseline, NativeTarget,
     native_object::{
@@ -164,15 +163,12 @@ pub use vm::{
     },
 };
 
-#[cfg(feature = "aot")]
 pub use compile::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, SourceDemands};
 pub use compile::{DynamicFunctionKind, HostScriptOptions, STATIC_MODULE_GOAL, STATIC_TYPESCRIPT_MODULE_GOAL, GLOBAL_SCRIPT_GOAL, GLOBAL_SCRIPT_SOURCE_NAME};
 
 /// Ordinary builds and producers support dynamic compilation and execution.
 /// Execution-only native support requires linked code and archived records.
-pub(crate) const DYNAMIC_EXECUTION_ENABLED: bool = cfg!(any(
-    not(feature = "native-execution"), feature = "jit", feature = "aot"
-));
+pub(crate) const DYNAMIC_EXECUTION_ENABLED: bool = true;
 
 /// Whether this build requires linked native code and archived program facts.
 pub const NATIVE_SUPPORT_IS_EXECUTION_ONLY: bool = !DYNAMIC_EXECUTION_ENABLED;
@@ -184,5 +180,4 @@ mod native_image;
 #[cfg(feature = "native-execution")]
 pub use native_image::NativeImageSupport;
 
-#[cfg(feature = "aot")]
 pub mod native_link;

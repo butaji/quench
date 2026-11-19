@@ -64,7 +64,6 @@ impl Default for TestHost {
 }
 
 impl TestHost {
-    #[cfg(feature = "aot")]
     pub(crate) fn with_native_programs(self, lookup: impl Fn(&str, &[&str]) -> Result<Option<crate::NativeJsProgram<TestHost>>, crate::NativeSourceError> + 'static) -> Self {
         Self { native_lookup: Some(Rc::new(lookup)), ..self }
     }
