@@ -193,7 +193,7 @@ fn shift_right_signed(bits: u128, count: u128, width: u32) -> u128 {
 fn extrema(left: u128, right: u128, width: u32, sign: bool, greater: bool) -> u128 {
     zip(left, right, width, #[inline(always)] |x, y| {
         let (a, b) = (lane_as(x, width, sign), lane_as(y, width, sign));
-        if (if greater { a > b } else { a < b }) { x } else { y }
+        if if greater { a > b } else { a < b } { x } else { y }
     })
 }
 

@@ -22,7 +22,6 @@ use crate::staged::{Access, GlobalBinding, Operation, Region, Stage};
 use crate::staged::machine::{Lane, MachineAccess, MachineScalar, Relation, Unary};
 use crate::vm::global_facts::GlobalRead;
 use super::super::object_slots::emit;
-use super::super::base_region::declared::DeclaredFact;
 
 /// The alias region of the function's entry cell, which a scalar call reads its entry from.
 const CELL: Access = Region::EntryCell.mutable();

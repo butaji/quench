@@ -12,7 +12,7 @@
 
 use crate::bytecode::{FieldLookup, ImmediateLayout, Register, WideInstruction};
 use crate::bytecode::Function;
-use crate::staged::{emit, plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Operation, Resolved};
+use crate::staged::{plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Operation, Resolved};
 use crate::typed_ir::BindingTime;
 use crate::value::Value;
 #[path = "lane_unit/admission.rs"] mod admission;

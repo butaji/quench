@@ -55,7 +55,7 @@
 use super::*;
 use super::call_plan::{self, CallChain, CallForm, CallPart, CallPlan, CallShape, Choice};
 use super::super::{LaneHelper, LaneHelpers};
-use crate::bytecode::{Op, Traits};
+use crate::bytecode::Traits;
 use quench_bjit::HOLES;
 use quench_bjit::call::{self, CallRow};
 
@@ -358,7 +358,6 @@ mod branches;
 use branches::{branching, jump_to};
 #[path = "steps/generic.rs"]
 mod generic;
-pub(super) use generic::{Semantic, generic_row};
 
 #[cfg(test)]
 mod tests;

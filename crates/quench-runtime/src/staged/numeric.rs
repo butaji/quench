@@ -201,39 +201,6 @@ fn constant_int32(number: f64) -> i32 { crate::value::number_to_u32(number) as i
 #[inline(always)]
 fn constant_int32(_number: f64) -> i32 { 0 }
 
-/// The VM's general operation `call` defining `destination` (`callout::calling`). The stencil build
-/// carries no call-outs, so there the row stays unresolved and `call` is never built.
-macro_rules! general_call {
-    ($stage:expr, $frame:expr, $call:expr, $destination:expr) => {{
-        #[cfg(not(stencil_build))]
-        let step = super::callout::calling($stage, $frame, $call, $destination);
-        #[cfg(stencil_build)]
-        let step = { let _ = (&$stage, &$frame); Step::Unresolved };
-        step
-    }};
-}
-
-/// The VM's unary `operator` of the register `source`, defining `destination`, where the frame takes
-/// the general operator in place (`NumericFrame::general_operators`); otherwise the row stays unresolved.
-/// The operator expression is built only where call-outs exist (not in the stencil build).
-macro_rules! general_unary {
-    ($stage:expr, $frame:expr, $operator:expr, ($destination:expr, $source:expr)) => {
-        match $source.register_index() {
-            Some(_value) if $frame.general_operators() =>
-                general_call!($stage, $frame, super::CallOut::Unary { operator: $operator, value: _value }, Some($destination)),
-            _ => Step::Unresolved,
-        }
-    };
-}
-
-/// The VM's general operation `call` (ToNumeric or an update) defining `destination`, where the frame takes
-/// the general operator in place (`NumericFrame::general_operators`); otherwise the row stays unresolved.
-macro_rules! general_update {
-    ($stage:expr, $frame:expr, $call:expr, $destination:expr) => {
-        if $frame.general_operators() { general_call!($stage, $frame, $call, Some($destination)) } else { Step::Unresolved }
-    };
-}
-
 /// Run the Number `operation` on `frame`; its word, or `Unresolved` where it left.
 #[inline(always)]
 pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,

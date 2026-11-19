@@ -12,7 +12,7 @@ use super::base_region::{Known, RealmProof, SymbolSite};
 use super::lane_facts::bind_callees;
 use crate::code_dependencies::{InstanceofFact, Invalidation};
 use crate::vm::global_facts::GlobalTable;
-use crate::bytecode::{Atom, Class, FieldLookup, Register, WideInstruction};
+use crate::bytecode::{Atom, FieldLookup, Register, WideInstruction};
 use super::lane_region::StableFacts;
 use crate::compile::liveness::RegisterMasks;
 use crate::typed_ir::Type;

@@ -165,7 +165,7 @@ pub(crate) mod wasm_access;
 pub(crate) mod wasm_int;
 pub(crate) mod wasm_jump;
 pub(crate) mod wasm_state;
-pub(crate) use wasm_jump::{BranchTable, WasmJump};
+pub(crate) use wasm_jump::BranchTable;
 pub(crate) mod wasm_concrete;
 pub(crate) mod wasm_gc;
 pub(crate) mod wasm_exception;
