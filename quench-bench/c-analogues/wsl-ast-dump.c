@@ -13,6 +13,7 @@
 #include "wsl-parse.h"
 #include "wsl-clone.h"
 #include "wsl-prep.h"
+#include "wsl-names.h"
 
 static uint32_t fnv_bytes(uint32_t h, const char *s, size_t n) {
   for (size_t i = 0; i < n; i++) {
@@ -137,23 +138,33 @@ static void std_parse_once(void) {
 
 static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t statuscap) {
   arena_reset_to(STD_MARK);
+  jmp_buf top;
+  WSL_NH = 0;
+  WSL_HANDLERS[WSL_NH++] = &top;
+  if (setjmp(top) != 0) {
+    WSL_NH = 0;
+    snprintf(status, statuscap, "err:%s: %s", WSL_ERR_CLASS, WSL_ERR_MSG);
+    return -1;
+  }
+  CUR_ORIGIN = i == 0 ? "/internal/stdlib" : "/internal/test";
+  CUR_TEXT = in->text;
+  CUR_LEN = in->len;
+  CUR_LINEOFF = i == 0 ? 27 : 0;
+  CUR_NATIVE = i == 0;
   if (i == 0) {
     prog_clone(&PREP_OUT, &STD_PROG);
   } else {
-    jmp_buf top;
-    WSL_NH = 0;
-    WSL_HANDLERS[WSL_NH++] = &top;
-    if (setjmp(top) != 0) {
-      WSL_NH = 0;
-      snprintf(status, statuscap, "err:%s: %s", WSL_ERR_CLASS, WSL_ERR_MSG);
-      return -1;
-    }
     prog_clone(&PREP_IN, &STD_PROG);
     parse_program(&PREP_IN, "/internal/test", 0, 0, in->text, in->len);
-    WSL_NH = 0;
     program_removed(&PREP_OUT, &PREP_IN);
   }
   fold_program(&PREP_OUT);
+  if (STAGE >= 2) {
+    NameCtx *global = program_global_ctx(&PREP_OUT);
+    names_types(&PREP_OUT, global);
+    names_protocols(&PREP_OUT, global);
+  }
+  WSL_NH = 0;
   buf_str(b, "program\n");
   for (int k = 0; k < PREP_OUT.statements.n; k++) dump_node(b, PREP_OUT.statements.v[k], 1);
   long nodes = -1;
@@ -173,6 +184,7 @@ int main(int argc, char **argv) {
     else root = argv[i];
   }
   collect_inputs(root);
+  REFS_ON = STAGE >= 2;
   if (STAGE >= 1) std_parse_once();
   if (benchIterations > 0) {
     bench_parse(benchIterations);

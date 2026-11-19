@@ -500,6 +500,10 @@ static Ast *mk_var_ref(int origin, const char *name, int anon) {
   Ast *a = ast_new(A_VARIABLEREF, origin);
   a->u.varRef.name = name;
   a->u.varRef.anon = anon;
+  if (anon) {
+    /* VariableRef.wrap(anonVar): an old or new value of a read-modify-write, bound at creation */
+    a->u.varRef.variable = ast_new(A_ANONVAR, origin);
+  }
   return a;
 }
 static const char *tok_string(Tok t) { return arena_strndup(t.text, t.len); }
