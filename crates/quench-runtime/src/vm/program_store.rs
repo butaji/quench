@@ -1406,8 +1406,7 @@ impl ProgramStore {
                         .declarations
                         .descriptor_type(instruction.imm())
                         .is_some(),
-                    crate::bytecode::Class::WasmArrayNewData
-                    | crate::bytecode::Class::WasmArrayNewElem => {
+                    crate::staged::WasmRecordCheck::ArraySegment => {
                         use crate::wasm::gc::ArraySegmentInput;
                         instruction.register_window().count == ArraySegmentInput::COUNT
                             && signatures

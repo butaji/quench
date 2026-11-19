@@ -7773,7 +7773,7 @@ std::arch::global_asm!(
     "jmp 2b",
     "int3",
     ".popsection",
-    entry_stack = const std::mem::offset_of!(CallContext, entry_stack),
+    entry_stack = const std::mem::offset_of!(CallContext, head.entry_stack),
     out_of_bounds = sym GUARD_OUT_OF_BOUNDS_STATUS,
     terminated = const TERMINATED_STATUS as u32,
 );
