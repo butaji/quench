@@ -105,11 +105,11 @@ fn leaf_arm<H: Host>(leaf: LeafForm, argc: u16) -> Handler {
     macro_rules! leaf {
         ($form:ident) => {
             match argc {
-                0 => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | leaf_parameters($form, 0) as u16 }> as Handler,
-                1 => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | leaf_parameters($form, 1) as u16 }> as Handler,
-                2 => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | leaf_parameters($form, 2) as u16 }> as Handler,
-                3 => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | leaf_parameters($form, 3) as u16 }> as Handler,
-                4 => protocol_row::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | leaf_parameters($form, 4) as u16 }> as Handler,
+                0 => protocol_handler::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | leaf_parameters($form, 0) as u16 }>(),
+                1 => protocol_handler::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | leaf_parameters($form, 1) as u16 }>(),
+                2 => protocol_handler::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | leaf_parameters($form, 2) as u16 }>(),
+                3 => protocol_handler::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | leaf_parameters($form, 3) as u16 }>(),
+                4 => protocol_handler::<H, { crate::bytecode::CALL_ROW as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | leaf_parameters($form, 4) as u16 }>(),
                 _ => call_row::<H, { protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>(),
             }
         };

@@ -230,6 +230,7 @@ impl<W, P> Operation<W, P> {
     /// (`Op::staged`). `None` where the opcode has no staged operation, or where its constant or
     /// method site is not available to this tier: the caller then takes its own exact path. The
     /// heap operations are the frame's (`Frame::field_read`); a tier decodes those itself.
+    #[inline(always)]
     pub(crate) fn decode(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
         match instruction.op().staged()? {
             Decoder::Flow => Self::decode_flow(instruction, context),
@@ -264,6 +265,7 @@ impl<W, P> Operation<W, P> {
     /// (its result flags: a return, a `this` write), and those flags. A tier that completes a
     /// record's result itself asks this instead of naming the opcode; `decode` alone stays the
     /// operation with no completion.
+    #[inline(always)]
     pub(crate) fn decode_completed(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Self, crate::bytecode::Register)> {
         let (plain, flags) = Self::completion_split(instruction)?;
         Some((Self::decode(plain, context)?, flags))
@@ -279,6 +281,7 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The record `instruction` is without its completion flags, and those flags: a return, or a `this` write.
+    #[inline(always)]
     fn completion_split(instruction: WideInstruction) -> Option<(WideInstruction, crate::bytecode::Register)> {
         use crate::bytecode::{RETURN_REGISTER, SET_THIS_REGISTER};
         // The returned flags are the completions only: a return, or a `this` write. A numeric local target
@@ -369,6 +372,7 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The property operations of `decode`: a plain named read, a named store and `delete`.
+    #[inline(always)]
     pub(crate) fn decode_property(instruction: WideInstruction) -> Option<Self> {
         match instruction.op() {
             Op::GetField => Self::decode_get_field(instruction),
@@ -383,6 +387,7 @@ impl<W, P> Operation<W, P> {
 
     /// A named read that completes no frame and writes no `this`; a nested lookup's base is the
     /// tier's own (`FieldBase::NESTED`).
+    #[inline(always)]
     fn decode_get_field(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0 { return None; }
         let lookup = instruction.field_lookup()?;
@@ -516,6 +521,7 @@ impl Operation<u64, ()> {
 
     /// The lane's own rows (`Decoder::Lane`): a string-case index over the constants the record names, and an
     /// `await` the lane's frame suspends.
+    #[inline(always)]
     pub(crate) fn decode_lane(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::StringCaseIndex => Self::StringCaseIndex { destination: instruction.result_register(),

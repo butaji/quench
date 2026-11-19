@@ -21,6 +21,7 @@ pub(super) fn is_value_operand(operand: Operand) -> bool {
 impl<W, P> Operation<W, P> {
     /// The `Binary`, `ToPropertyKey` and `JumpBinaryFalse` operations of `decode`; `None` where
     /// an operand is no register or the instruction returns from the frame.
+    #[inline(always)]
     pub(crate) fn decode_generic(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::ToPropertyKey => Self::PropertyKey {
@@ -37,6 +38,7 @@ impl<W, P> Operation<W, P> {
     /// over their two operands, which `Binary` decodes to the same operation (`decode_binary`). A record
     /// whose operator field names another operator is none.
     #[cfg(not(stencil_build))]
+    #[inline(always)]
     fn decode_numeric_arithmetic(instruction: WideInstruction) -> Option<Self> {
         let own = match instruction.op() {
             Op::NumericAdd => oxc_ast::ast::BinaryOperator::Addition,
@@ -50,6 +52,7 @@ impl<W, P> Operation<W, P> {
     /// (`numeric::binary_operation`), equality as its own row, and any other operator the VM's.
     /// Both operands may be registers or program constants; any other operand leaves the record
     /// to the general step.
+    #[inline(always)]
     fn decode_binary(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0 { return None; }
         let destination = instruction.result_register();

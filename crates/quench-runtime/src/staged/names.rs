@@ -76,6 +76,7 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
 impl<W, P> Operation<W, P> {
     /// The name read `instruction` (`LoadName`, or a call's `LoadNameCall`) denotes under the
     /// tier's `proof` of the global it names; `None` for any other opcode.
+    #[inline(always)]
     pub(crate) fn decode_load_name(instruction: WideInstruction, proof: P) -> Option<Self> {
         let receiver = match instruction.op() {
             Op::LoadName => None,

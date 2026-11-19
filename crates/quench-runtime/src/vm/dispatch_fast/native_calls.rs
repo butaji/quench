@@ -16,7 +16,7 @@ macro_rules! builtin_rows {
         }
         /// The protocol row of a Call of builtin row `row` (`native_call_handler`).
         const fn builtin_handler<H: Host>(row: u8) -> Handler {
-            match row { $($row => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | (BUILTIN_KIND | $row) as u16 }> as Handler,)* _ => call_row::<H, { protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>() }
+            match row { $($row => protocol_handler::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | (BUILTIN_KIND | $row) as u16 }>(),)* _ => call_row::<H, { protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>() }
         }
         /// The miss body of builtin row `row` (`leaf_call_miss_of`).
         pub(in crate::vm::dispatch_fast) const fn builtin_miss_of<H: Host>(row: u8) -> Handler {
@@ -40,7 +40,7 @@ macro_rules! math_rows {
             match row { $($row => Native::$native,)* _ => unreachable!() }
         }
         fn math_handler<H: Host>(native: Native) -> Option<Handler> {
-            match native { $(Native::$native => Some(protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | (MATH_KIND | $row) as u16 }> as Handler),)* _ => None }
+            match native { $(Native::$native => Some(protocol_handler::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | (MATH_KIND | $row) as u16 }>()),)* _ => None }
         }
         /// The miss body of Math row `row` (`leaf_call_miss_of`).
         pub(in crate::vm::dispatch_fast) const fn math_miss_of<H: Host>(row: u8) -> Handler {
@@ -222,9 +222,9 @@ pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, 
     match native {
         native if let Some(row) = builtin_row(native) => builtin_handler::<H>(row),
         native if let Some(handler) = math_handler::<H>(native) => handler,
-        native if super::number::math_numbers_inline(native) => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_MATH as u16 }>,
-        native if native.is_array_callback() && result_dead() => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_ARRAY_CALLBACK_DISCARDING as u16 }>,
-        native if native.is_array_callback() => protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_ARRAY_CALLBACK as u16 }>,
+        native if super::number::math_numbers_inline(native) => protocol_handler::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_MATH as u16 }>(),
+        native if native.is_array_callback() && result_dead() => protocol_handler::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_ARRAY_CALLBACK_DISCARDING as u16 }>(),
+        native if native.is_array_callback() => protocol_handler::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::ENTRY | protocol_misses::entry::CALL_ARRAY_CALLBACK as u16 }>(),
         _ => call_row::<H, { protocol_family::NATIVE_CALL | protocol_misses::native_call::NATIVE as u16 }>(),
     }
 }
@@ -286,7 +286,7 @@ script_handler! {
 
 /// The handler of a `Reflect.get` call site (`native_call_miss`'s sibling).
 pub(super) fn reflect_get_call_handler<H: Host>() -> Handler {
-    protocol_row::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | REFLECT_GET_KIND as u16 }> as Handler
+    protocol_handler::<H, { crate::bytecode::Op::Call as u16 }, ACC_NONE, { protocol_family::LEAF_CALL | REFLECT_GET_KIND as u16 }>()
 }
 
 /// `body_native_call_in_lane` of a native that is not in place: the lane's own call of it
