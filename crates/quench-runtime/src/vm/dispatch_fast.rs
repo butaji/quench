@@ -44,14 +44,10 @@ use crate::heap::InlineObjectHeader;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use super::*;
 use crate::bytecode::{RegisterList, Traits};
-use crate::staged::wasm_float::{Float, float_binary, is_float_comparison};
-use crate::staged::ConcreteWasm;
 use crate::bytecode::{
     FieldLayout, FieldStore, Function, ImmediateLayout, ImmediateRole, InstructionField, StoreReceiver, WideInstruction,
 };
-use crate::wasm::float::{
-    F32BinaryOperator, F64BinaryOperator, F64UnaryOperator,
-};
+use crate::wasm::float::F64UnaryOperator;
 use crate::wasm::integer::I32BinaryOperator;
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
 
@@ -1490,38 +1486,6 @@ impl MemoryView {
     unsafe fn extent(self) -> (*mut u8, usize) {
         let length = unsafe { self.reach.get() } + WIDEST_DIRECT_ACCESS as isize;
         (self.bytes, length.max(0) as usize)
-    }
-
-    /// Direct load `load` at `address`, when the access lies within the
-    /// reach; `None` leaves it to the general path, which also decides the
-    /// last bytes before the memory's end exactly.
-    ///
-    /// SAFETY: the view must have been resolved during the current lane run.
-    #[inline(always)]
-    unsafe fn read(self, load: MemoryLoad, address: u64) -> Option<crate::WasmValue> {
-        // Addresses are at most 33 bits, so the signed comparison is exact.
-        if (address as i64) > unsafe { self.reach.get() } as i64 || load.width() > WIDEST_DIRECT_ACCESS {
-            // Off the hot path: the access falls through to its dispatch.
-            std::hint::cold_path();
-            return None;
-        }
-        // SAFETY: the access ends at or before the memory's end.
-        Some(unsafe { load.read_at(self.bytes.add(address as usize)) })
-    }
-
-    /// Direct store `store` of `value` at `address`, as for `read`.
-    ///
-    /// SAFETY: the view must have been resolved during the current lane run.
-    #[inline(always)]
-    unsafe fn write(self, store: MemoryStore, address: u64, value: crate::WasmValue) -> Option<()> {
-        // Addresses are at most 33 bits, so the signed comparison is exact.
-        if (address as i64) > unsafe { self.reach.get() } as i64 || store.width() > WIDEST_DIRECT_ACCESS {
-            std::hint::cold_path();
-            return None;
-        }
-        // SAFETY: the access ends at or before the memory's end.
-        unsafe { store.write_at(self.bytes.add(address as usize), value) };
-        Some(())
     }
 }
 
@@ -7660,11 +7624,12 @@ fn lane_loop_retire<H: Host>(cx: *mut LaneContext<H>, ip: Ip, site: &LoopSite) {
     unsafe { (*ip.cast_mut()).operand = LaneOperand { jump: site.jump }; }
     requicken::<H>(ip, jump_row::<H, JUMP>(true));
     // The site kept the update before the jump from fusing with it (`install_loop_sites`
-    // runs before `fuse_rows`): the plain jump takes the loader's pair fusion now.
+    // runs before `fuse_rows`): the plain jump takes the loader's pair fusion now, with the
+    // `FUSED_TARGET` record where the header's target run holds (`update_fusion`'s `target`).
     if site.backedge > site.header {
         // SAFETY: the record before the backedge is the loop body's, in the same view as the jump.
         let update = unsafe { ip.sub(1) };
-        if let Some(fused) = update_fusion::<H>(unsafe { &*update }, unsafe { &*ip }) {
+        if let Some(fused) = update_fusion::<H>(unsafe { &*update }, unsafe { &*ip }, Some(header)) {
             requicken::<H>(update, fused);
         }
     }
@@ -8260,363 +8225,6 @@ mod wasm_instance;
 use wasm_instance::lane_instance_binding_memory;
 
 
-/// The float operators a lane record runs as one hardware operation or
-/// comparison, by index: the operator is part of the handler, not a
-/// selector it decodes.
-const FLOAT_ADD: u8 = 0;
-const FLOAT_SUBTRACT: u8 = 1;
-const FLOAT_MULTIPLY: u8 = 2;
-const FLOAT_DIVIDE: u8 = 3;
-/// Comparisons, whose result is an i32 truth value.
-const FLOAT_EQUAL: u8 = 4;
-const FLOAT_NOT_EQUAL: u8 = 5;
-const FLOAT_LESS: u8 = 6;
-const FLOAT_GREATER: u8 = 7;
-const FLOAT_LESS_EQUAL: u8 = 8;
-const FLOAT_GREATER_EQUAL: u8 = 9;
-const FLOAT_ARITHMETIC: usize = 10;
-
-/// The arithmetic index of a float binary selector, when it has one.
-fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
-    Some(match op {
-        _ if crate::staged::float_binary64_family(op) => match F64BinaryOperator::from_tag(selector)? {
-            F64BinaryOperator::Add => FLOAT_ADD,
-            F64BinaryOperator::Subtract => FLOAT_SUBTRACT,
-            F64BinaryOperator::Multiply => FLOAT_MULTIPLY,
-            F64BinaryOperator::Divide => FLOAT_DIVIDE,
-            F64BinaryOperator::Equal => FLOAT_EQUAL,
-            F64BinaryOperator::NotEqual => FLOAT_NOT_EQUAL,
-            F64BinaryOperator::Less => FLOAT_LESS,
-            F64BinaryOperator::Greater => FLOAT_GREATER,
-            F64BinaryOperator::LessEqual => FLOAT_LESS_EQUAL,
-            F64BinaryOperator::GreaterEqual => FLOAT_GREATER_EQUAL,
-            _ => return None,
-        },
-        _ if crate::staged::float_binary32_family(op) => match F32BinaryOperator::from_tag(selector)? {
-            F32BinaryOperator::Add => FLOAT_ADD,
-            F32BinaryOperator::Subtract => FLOAT_SUBTRACT,
-            F32BinaryOperator::Multiply => FLOAT_MULTIPLY,
-            F32BinaryOperator::Divide => FLOAT_DIVIDE,
-            F32BinaryOperator::Equal => FLOAT_EQUAL,
-            F32BinaryOperator::NotEqual => FLOAT_NOT_EQUAL,
-            F32BinaryOperator::Less => FLOAT_LESS,
-            F32BinaryOperator::Greater => FLOAT_GREATER,
-            F32BinaryOperator::LessEqual => FLOAT_LESS_EQUAL,
-            F32BinaryOperator::GreaterEqual => FLOAT_GREATER_EQUAL,
-            _ => return None,
-        },
-        _ => return None,
-    })
-}
-
-/// The staged operator of an arithmetic index: the lane's tag names it, the
-/// staged f64 row (`staged::wasm_float::float_binary`) decides it.
-#[inline(always)]
-const fn float_operator(arith: u8) -> F64BinaryOperator {
-    match arith {
-        FLOAT_ADD => F64BinaryOperator::Add,
-        FLOAT_SUBTRACT => F64BinaryOperator::Subtract,
-        FLOAT_MULTIPLY => F64BinaryOperator::Multiply,
-        FLOAT_DIVIDE => F64BinaryOperator::Divide,
-        FLOAT_EQUAL => F64BinaryOperator::Equal,
-        FLOAT_NOT_EQUAL => F64BinaryOperator::NotEqual,
-        FLOAT_LESS => F64BinaryOperator::Less,
-        FLOAT_GREATER => F64BinaryOperator::Greater,
-        FLOAT_LESS_EQUAL => F64BinaryOperator::LessEqual,
-        _ => F64BinaryOperator::GreaterEqual,
-    }
-}
-
-/// The f64 operator `ARITH` over two operands, as `lane_float_arithmetic`
-/// applies it: the hardware result, or a comparison's truth value. The
-/// semantics are the staged row's; this only names the operator.
-#[inline(always)]
-fn f64_operation(arith: u8, left: f64, right: f64) -> Result<f64, bool> {
-    let operator = float_operator(arith);
-    let word = float_binary(&mut ConcreteWasm, operator, Float::F64, left.to_bits(), right.to_bits());
-    if is_float_comparison(operator) {
-        Err(word != 0)
-    } else {
-        Ok(f64::from_bits(word))
-    }
-}
-
-/// The width index of float binary `op` in `FloatArithmetic::HANDLERS`.
-fn float_width_index(op: Op) -> usize {
-    match op.class() {
-        Class::WasmFloatBinary64Raw => 2,
-        Class::WasmFloatBinary64 => 1,
-        _ => 0,
-    }
-}
-
-/// Which operand of the second fused float record the first one's result
-/// is: its left (`b`) or right (`c`) register.
-const FUSED_LEFT: bool = true;
-
-lane_handler! {
-    /// An f64 arithmetic `FIRST` whose result the next record, f64 operator
-    /// `SECOND`, takes as its left (`LEFT`) or right operand: both records
-    /// run here, each result written as its own record writes it (plainly
-    /// when `RAW`, canonicalized otherwise).
-    fn lane_f64_pair<FIRST: u8, SECOND: u8, LEFT: bool, RAW: bool, ACC: u8>(cx, r, ip, i, view) {
-        let first = match f64_operation(
-            FIRST,
-            f64::from_bits(read::<ACC, ACC_B>(r, i.b, view).float_bits64()),
-            f64::from_bits(read::<ACC, ACC_C>(r, i.c, view).float_bits64()),
-        ) {
-            Ok(result) => result,
-            Err(_) => unreachable!("a fused first operator is arithmetic"),
-        };
-        r.set(
-            i.a,
-            if RAW { Value::from_bits(first.to_bits()) } else { Value::from_float_bits64(first.to_bits()) },
-        );
-        let next = following(ip);
-        // SAFETY: the view fuses a float record only with a following one.
-        let second = unsafe { &*next };
-        let (left, right) = if LEFT {
-            (first, f64::from_bits(r.get(second.c).float_bits64()))
-        } else {
-            (f64::from_bits(r.get(second.b).float_bits64()), first)
-        };
-        let value = match f64_operation(SECOND, left, right) {
-            Ok(result) => {
-                if RAW { Value::from_bits(result.to_bits()) } else { Value::from_float_bits64(result.to_bits()) }
-            }
-            Err(truth) => view.integers.encode(i32::from(truth)),
-        };
-        produce!(cx, r, next, second.a, value, view)
-    }
-}
-
-lane_handler! {
-    /// An f64 load whose value the next record, f64 operator `SECOND`,
-    /// takes as its left (`LEFT`) or right operand: both records run here.
-    /// Bits that need a box leave the lane at the load.
-    fn lane_f64_load_pair<SECOND: u8, LEFT: bool>(cx, r, ip, i, view) {
-        // SAFETY: as for `MemoryView::read`.
-        let Some(crate::WasmValue::F64(bits)) = (unsafe { view.memory.read(MemoryLoad::F64Load, lane_address::<ACC_NONE>(r, i, view)) })
-        else {
-            return exit(ip);
-        };
-        let Some(loaded) = Value::from_bits64(bits) else {
-            return exit(ip);
-        };
-        r.set(i.a, loaded);
-        let next = following(ip);
-        // SAFETY: the view fuses a load only with a following record.
-        let second = unsafe { &*next };
-        let first = f64::from_bits(bits);
-        let (left, right) = if LEFT {
-            (first, f64::from_bits(r.get(second.c).float_bits64()))
-        } else {
-            (f64::from_bits(r.get(second.b).float_bits64()), first)
-        };
-        let value = match f64_operation(SECOND, left, right) {
-            Ok(result) => Value::from_float_bits64(result.to_bits()),
-            Err(truth) => view.integers.encode(i32::from(truth)),
-        };
-        produce!(cx, r, next, second.a, value, view)
-    }
-}
-
-lane_handler! {
-    /// An f64 load, the f64 arithmetic `ARITH` taking the loaded value as
-    /// its left (`LEFT`) or right operand, and the f64 store writing the
-    /// arithmetic's result (`mem[x] += v`): three records run here, each
-    /// result written as its own record writes it. An access the general
-    /// path must run exits at its record.
-    fn lane_f64_update<ARITH: u8, LEFT: bool>(cx, r, ip, i, view) {
-        // SAFETY: as for `MemoryView::read`.
-        let Some(crate::WasmValue::F64(bits)) = (unsafe {
-            view.memory.read(MemoryLoad::F64Load, lane_address::<ACC_NONE>(r, i, view))
-        }) else {
-            return exit(ip);
-        };
-        let Some(loaded) = Value::from_bits64(bits) else {
-            return exit(ip);
-        };
-        r.set(i.a, loaded);
-        let operator = following(ip);
-        // SAFETY: the view fuses a load only with a following operator and
-        // store.
-        let o = unsafe { &*operator };
-        let first = f64::from_bits(bits);
-        let (left, right) = if LEFT {
-            (first, f64::from_bits(r.get(o.c).float_bits64()))
-        } else {
-            (f64::from_bits(r.get(o.b).float_bits64()), first)
-        };
-        let Ok(result) = f64_operation(ARITH, left, right) else {
-            unreachable!("a fused update's operator is arithmetic");
-        };
-        let value = Value::from_float_bits64(result.to_bits());
-        r.set(o.a, value);
-        let store = following(operator);
-        // SAFETY: as above.
-        let access = unsafe { &*store };
-        // SAFETY: as for `MemoryView::write`.
-        if unsafe {
-            view.memory.write(
-                MemoryStore::F64Store,
-                lane_address::<ACC_NONE>(r, access, view),
-                crate::WasmValue::F64(value.float_bits64()),
-            )
-        }
-        .is_none()
-        {
-            return exit(store);
-        }
-        next!(cx, r, following(store), view)
-    }
-}
-
-lane_handler! {
-    /// An f64 arithmetic `ARITH` whose result the next record, an f64
-    /// store, writes to memory: both records run here. A store the general
-    /// path must run exits at its record, the result already written.
-    fn lane_f64_store_pair<ARITH: u8, ACC: u8>(cx, r, ip, i, view) {
-        let result = match f64_operation(
-            ARITH,
-            f64::from_bits(read::<ACC, ACC_B>(r, i.b, view).float_bits64()),
-            f64::from_bits(read::<ACC, ACC_C>(r, i.c, view).float_bits64()),
-        ) {
-            Ok(result) => result,
-            Err(_) => unreachable!("a fused store's operator is arithmetic"),
-        };
-        let value = Value::from_float_bits64(result.to_bits());
-        r.set(i.a, value);
-        let next = following(ip);
-        // SAFETY: the view fuses an operator only with a following store.
-        let store = unsafe { &*next };
-        let bits = value.float_bits64();
-        // SAFETY: as for `MemoryView::write`.
-        if unsafe {
-            view.memory.write(
-                MemoryStore::F64Store,
-                lane_address::<ACC_NONE>(r, store, view),
-                crate::WasmValue::F64(bits),
-            )
-        }
-        .is_none()
-        {
-            return exit(next);
-        }
-        next!(cx, r, following(next), view)
-    }
-}
-
-/// The accumulator fields a fused first float record may read: none, its
-/// left operand, or its right operand.
-const FUSED_ACC_FIELDS: [u8; 3] = [ACC_NONE, ACC_B, ACC_C];
-
-macro_rules! float_store_pair_handlers {
-    ($host:ty, $arith:expr) => {
-        [
-            lane_f64_store_pair::<$host, $arith, ACC_NONE> as Handler,
-            lane_f64_store_pair::<$host, $arith, ACC_B> as Handler,
-            lane_f64_store_pair::<$host, $arith, ACC_C> as Handler,
-        ]
-    };
-}
-
-macro_rules! float_load_pair_handlers {
-    ($host:ty; $($second:expr),+) => {
-        [$([
-            lane_f64_load_pair::<$host, $second, false> as Handler,
-            lane_f64_load_pair::<$host, $second, FUSED_LEFT> as Handler,
-        ]),+]
-    };
-}
-
-struct FloatPairs<H>(std::marker::PhantomData<H>);
-
-macro_rules! float_pair_handlers {
-    ($host:ty, $raw:expr) => {
-        [
-            float_pair_handlers!($host, FLOAT_ADD, $raw),
-            float_pair_handlers!($host, FLOAT_SUBTRACT, $raw),
-            float_pair_handlers!($host, FLOAT_MULTIPLY, $raw),
-            float_pair_handlers!($host, FLOAT_DIVIDE, $raw),
-        ]
-    };
-    ($host:ty, $first:expr, $raw:expr) => {
-        [
-            float_pair_handlers!($host, $first, FLOAT_ADD, $raw),
-            float_pair_handlers!($host, $first, FLOAT_SUBTRACT, $raw),
-            float_pair_handlers!($host, $first, FLOAT_MULTIPLY, $raw),
-            float_pair_handlers!($host, $first, FLOAT_DIVIDE, $raw),
-            float_pair_handlers!($host, $first, FLOAT_EQUAL, $raw),
-            float_pair_handlers!($host, $first, FLOAT_NOT_EQUAL, $raw),
-            float_pair_handlers!($host, $first, FLOAT_LESS, $raw),
-            float_pair_handlers!($host, $first, FLOAT_GREATER, $raw),
-            float_pair_handlers!($host, $first, FLOAT_LESS_EQUAL, $raw),
-            float_pair_handlers!($host, $first, FLOAT_GREATER_EQUAL, $raw),
-        ]
-    };
-    ($host:ty, $first:expr, $second:expr, $raw:expr) => {
-        [
-            float_pair_handlers!($host, $first, $second, false, $raw),
-            float_pair_handlers!($host, $first, $second, FUSED_LEFT, $raw),
-        ]
-    };
-    ($host:ty, $first:expr, $second:expr, $left:expr, $raw:expr) => {
-        [
-            lane_f64_pair::<$host, $first, $second, $left, $raw, ACC_NONE> as Handler,
-            lane_f64_pair::<$host, $first, $second, $left, $raw, ACC_B> as Handler,
-            lane_f64_pair::<$host, $first, $second, $left, $raw, ACC_C> as Handler,
-        ]
-    };
-}
-
-/// The f64 arithmetic operators a fused pair can begin with: add,
-/// subtract, multiply and divide, whose results are floats.
-const FLOAT_PAIR_FIRSTS: usize = 4;
-
-impl<H: Host> FloatPairs<H> {
-    /// By first operator, second operator, whether the first result is the
-    /// second's left operand, and the first's accumulator field.
-    const HANDLERS: [[[[Handler; FUSED_ACC_FIELDS.len()]; 2]; FLOAT_ARITHMETIC];
-        FLOAT_PAIR_FIRSTS] = float_pair_handlers!(H, false);
-    /// The same over raw registers (`Class::WasmFloatBinary64Raw`).
-    const RAW_HANDLERS: [[[[Handler; FUSED_ACC_FIELDS.len()]; 2]; FLOAT_ARITHMETIC];
-        FLOAT_PAIR_FIRSTS] = float_pair_handlers!(H, true);
-    /// An f64 load fused with the operator taking its value, by second
-    /// operator and whether the value is its left operand.
-    /// An f64 arithmetic fused with the store of its result, by operator.
-    /// By operator and the operator's accumulator field (none, `b`, `c`).
-    const STORES: [[Handler; FUSED_ACC_FIELDS.len()]; FLOAT_PAIR_FIRSTS] = [
-        float_store_pair_handlers!(H, FLOAT_ADD),
-        float_store_pair_handlers!(H, FLOAT_SUBTRACT),
-        float_store_pair_handlers!(H, FLOAT_MULTIPLY),
-        float_store_pair_handlers!(H, FLOAT_DIVIDE),
-    ];
-    /// An f64 load, arithmetic and store of its result, by operator and
-    /// whether the loaded value is the left operand.
-    const UPDATES: [[Handler; 2]; FLOAT_PAIR_FIRSTS] = [
-        [
-            lane_f64_update::<H, FLOAT_ADD, false>,
-            lane_f64_update::<H, FLOAT_ADD, FUSED_LEFT>,
-        ],
-        [
-            lane_f64_update::<H, FLOAT_SUBTRACT, false>,
-            lane_f64_update::<H, FLOAT_SUBTRACT, FUSED_LEFT>,
-        ],
-        [
-            lane_f64_update::<H, FLOAT_MULTIPLY, false>,
-            lane_f64_update::<H, FLOAT_MULTIPLY, FUSED_LEFT>,
-        ],
-        [
-            lane_f64_update::<H, FLOAT_DIVIDE, false>,
-            lane_f64_update::<H, FLOAT_DIVIDE, FUSED_LEFT>,
-        ],
-    ];
-    const LOADS: [[Handler; 2]; FLOAT_ARITHMETIC] = float_load_pair_handlers!(H;
-        FLOAT_ADD, FLOAT_SUBTRACT, FLOAT_MULTIPLY, FLOAT_DIVIDE, FLOAT_EQUAL,
-        FLOAT_NOT_EQUAL, FLOAT_LESS, FLOAT_GREATER, FLOAT_LESS_EQUAL, FLOAT_GREATER_EQUAL);
-}
-
 lane_handler! {
     /// f64 square root: an arithmetic operator, so a NaN operand matters
     /// only as a NaN (see `float_bits64`), and its result is held in place.
@@ -8624,13 +8232,6 @@ lane_handler! {
         let input = f64::from_bits(read::<ACC, ACC_B>(r, i.b, view).float_bits64());
         produce!(cx, r, ip, i.a, Value::from_float_bits64(input.sqrt().to_bits()), view)
     }
-}
-
-/// The memory32 effective address of a direct access through the function's
-/// memory register.
-#[inline(always)]
-fn lane_address<const ACC: u8>(r: Registers, i: &LaneInstruction, view: Carried) -> u64 {
-    u64::from(read::<ACC, ACC_C>(r, i.c, view).wasm_bits32()) + u64::from(i.imm())
 }
 
 /// The bytes of memory binding `binding` code addresses in place (`MemoryStorage::direct_view`).
@@ -14813,25 +14414,10 @@ fn wasm_lane_handler<H: Host>(instruction: WideInstruction) -> Option<Option<Lan
         // A value row reads the receiver and the captures from the context, which a Wasm view lacks.
         return Some(None);
     }
-    // merge: theirs' `WasmReturn64` arm (`lane_return_wasm64`, a raw i64 return) is not ported; its staged Flow row serves it.
     match op {
         _ if crate::staged::call_family(op) => Some(Some(call)),
         _ if crate::staged::return_family(op) => Some(Some(ret)),
         _ => None,
-    }
-}
-
-lane_handler! {
-    /// `lane_return_wasm` of a raw i64 register: its word is the returned `Value` where no tag
-    /// claims it; one a tag claims leaves the lane, whose general step boxes it.
-    fn lane_return_wasm64<>(cx, r, ip, i, view) {
-        let Some(value) = Value::from_bits64(r.get(i.a).to_bits()) else {
-            return exit(ip);
-        };
-        if let Some(resumed) = lane_complete_wasm_activation(cx, value) {
-            resume!(cx, resumed)
-        }
-        sibling!(lane_return_general::<H>, r, ip, view)
     }
 }
 
@@ -16940,7 +16526,7 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
         return None;
     }
     if jumps_by_row(op) {
-        return Some(LaneHandler { handler: row_jump::<H, OP, BACKWARD, FLAG_UNREAD>, produces: false });
+        return Some(LaneHandler { handler: row_jump::<H, OP, BACKWARD, FLAG_UNREAD, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }>, produces: false });
     }
     if admits_row(op) {
         return Some(LaneHandler { handler: generated_row::<H, OP, ACC, FLAG_UNREAD>, produces: row_produces(op) });
@@ -17800,102 +17386,6 @@ fn derive_lane_view<'live, H: Host>(
             && (serves(records[pc].handler, crate::staged::MOVE_ROW, ACC_NONE) || serves(records[pc].handler, crate::staged::WASM_I32_ADD_IMMEDIATE_ROW, ACC_NONE))
             && jump_direction(records[pc + 1].handler).is_some_and(|backward| !(loop_tier && backward))
     };
-    if wasm {
-        // An f64 arithmetic record whose result the next f64 operator takes
-        // through the accumulator runs with it as one record; pairs tile a
-        // chain from its start.
-        let mut pc = 0;
-        while pc + 1 < records.len() {
-            let instruction = decoded[pc];
-            let next = decoded[pc + 1];
-            let pair = (|| {
-                if !crate::staged::wasm_f64_binary(next.op()) {
-                    return None;
-                }
-                let second = float_arithmetic(next.op(), next.imm())?;
-                let left_of = |records: &[LaneInstruction]| {
-                    [ACC_B, ACC_C]
-                        .into_iter()
-                        .find(|acc| serves(records[pc + 1].handler, next.op() as u16, *acc))
-                        .map(|acc| acc == ACC_B)
-                };
-                if crate::staged::wasm_f64_load(instruction.op()) {
-                    let plain = tables[0][usize::from(ACC_NONE)][crate::staged::WASM_F64_LOAD_ROW as usize]?;
-                    if records[pc].handler != plain.handler as *const () {
-                        return None;
-                    }
-                    let left = left_of(&records)?;
-                    // An arithmetic whose result the record after it stores
-                    // (`mem[x] += v`) joins as well.
-                    let updates =
-                        pc + 2 < records.len() && usize::from(second) < FLOAT_PAIR_FIRSTS && {
-                            let store = decoded[pc + 2];
-                            crate::staged::wasm_f64_store(store.op())
-                                && store.a() == next.a()
-                                && [ACC_NONE, ACC_A]
-                                    .into_iter()
-                                    .any(|acc| serves(records[pc + 2].handler, crate::staged::WASM_F64_STORE_ROW, acc))
-                        };
-                    if updates {
-                        return Some((
-                            FloatPairs::<H>::UPDATES[usize::from(second)][usize::from(left)],
-                            3,
-                        ));
-                    }
-                    return Some((
-                        FloatPairs::<H>::LOADS[usize::from(second)][usize::from(left)],
-                        2,
-                    ));
-                }
-                if !crate::staged::wasm_f64_binary(instruction.op()) {
-                    return None;
-                }
-                let first = float_arithmetic(instruction.op(), instruction.imm())?;
-                if usize::from(first) >= FLOAT_PAIR_FIRSTS {
-                    return None;
-                }
-                let field = FUSED_ACC_FIELDS.iter().position(|acc| {
-                    serves(records[pc].handler, instruction.op() as u16, *acc)
-                })?;
-                let left = left_of(&records)?;
-                Some((
-                    FloatPairs::<H>::HANDLERS[usize::from(first)][usize::from(second)]
-                        [usize::from(left)][field],
-                    2,
-                ))
-            })();
-            // An f64 arithmetic whose result the next record stores, when only
-            // the arithmetic reaches that store.
-            let pair = pair.or_else(|| {
-                let first = float_arithmetic(instruction.op(), instruction.imm())?;
-                // The fused record writes the arithmetic's result itself, so the
-                // store may read it plainly or through the accumulator.
-                let store_runs = [ACC_NONE, ACC_A]
-                    .into_iter()
-                    .any(|acc| serves(records[pc + 1].handler, crate::staged::WASM_F64_STORE_ROW, acc));
-                if !crate::staged::wasm_f64_binary(instruction.op())
-                    || usize::from(first) >= FLOAT_PAIR_FIRSTS
-                    || !crate::staged::wasm_f64_store(next.op())
-                    || next.a() != instruction.a()
-                    || entries.contains(pc + 1)
-                    || !store_runs
-                {
-                    return None;
-                }
-                let field = FUSED_ACC_FIELDS.iter().position(|acc| {
-                    serves(records[pc].handler, instruction.op() as u16, *acc)
-                })?;
-                Some((FloatPairs::<H>::STORES[usize::from(first)][field], 2))
-            });
-            match pair {
-                Some((fused, span)) => {
-                    records[pc].handler = fused as *const ();
-                    pc += span;
-                }
-                None => pc += 1,
-            }
-        }
-    }
     specialize_returning_binaries::<H>(&decoded, constants, &mut records);
     specialize_frame_locals::<H>(function, &mut records);
     specialize_captures::<H>(&mut records);
@@ -17930,19 +17420,34 @@ fn derive_lane_view<'live, H: Host>(
     };
     // Adjacent generated rows the staged pair list names run as one generated record.
     // Wasm records fuse too (a bit-field extraction then its i32 operator).
-    lane_frame::fuse_chains::<H>(&mut records);
+    let mut fused = lane_frame::fuse_chains::<H>(&mut records);
     fuse_target_backedges::<H>(&mut records, loop_tier);
-    lane_frame::fuse_rows::<H>(&mut records, live().map(|masks| &**masks), loop_tier);
+    fused.extend(lane_frame::fuse_rows::<H>(&mut records, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
     // A record reads the accumulator its predecessor produced only when control reaches it
     // from that predecessor running its own handler. A fusion replaces a record's handler, or
     // runs records ahead of it and lands past them, without carrying what the replaced or
     // skipped producers wrote (a fused postfix update skips its `IncDec` row), so a plain
-    // accumulator reader within reach of any fused record reads its operand from the register.
+    // accumulator reader within reach of a changed record reads its operand from the register.
+    // A fused record that ends at the reader's predecessor publishes that predecessor's carry-out
+    // (its last link's `Carried`, `fused_rows`, `chain_rows`), so it does not count as a change
+    // there, as long as the link publishes the register the reader takes. A change that reports no
+    // span (`fuse_target_backedges`) counts as one.
     if !wasm {
         const FUSED_REACH: usize = 6;
         let changed: Vec<bool> = records.iter().zip(&selected).map(|(record, &selected)| record.handler != selected).collect();
+        let mut fused_last: Vec<Option<usize>> = vec![None; records.len()];
+        for (head, last) in fused {
+            fused_last[head] = Some(last);
+        }
         for pc in 1..records.len() {
-            if !changed[pc.saturating_sub(FUSED_REACH)..pc].iter().any(|&changed| changed) {
+            let publishes = produced[pc - 1].is_some() && lane_frame::row_produces(decoded[pc - 1].op());
+            // Whether the change at `head` can leave the reader at `pc` without the carry it expects.
+            let hazard = |head: usize| match fused_last[head] {
+                Some(last) if last + 1 < pc => false,
+                Some(last) if last + 1 == pc => !publishes,
+                _ => true,
+            };
+            if !(pc.saturating_sub(FUSED_REACH)..pc).any(|head| changed[head] && hazard(head)) {
                 continue;
             }
             let op = decoded[pc].op() as u16;
@@ -18053,7 +17558,7 @@ fn holds_no_call_link(op: Op) -> bool {
 /// The handler of a loop site's backward jump: the jump row in the loop's flag (`FLAG_LOOP`), which
 /// takes the jump while the site warms up and leaves any other to `loop_jump_miss`.
 fn loop_jump_row<H: Host>() -> Handler {
-    row_jump::<H, JUMP, true, FLAG_LOOP> as Handler
+    row_jump::<H, JUMP, true, FLAG_LOOP, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }> as Handler
 }
 
 /// Gives each backward `Jump` whose loop the shared compiler admits (`analyze_osr_region`) the
@@ -18334,8 +17839,8 @@ fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut 
 }
 
 /// The `FUSED_ROWS` pairs whose second row is `Jump`, by their index in that table: a row followed
-/// by a backward jump, which `FUSED_TARGET` may fuse with the conditional test at the jump's target.
-/// `(Move, Jump)`, `(StoreLocalPlain, Jump)`, `(WasmI32AddImmediate, Jump)` and `(IncDec, Jump)` are
+/// by a backward jump, which `FUSED_TARGET` may fuse with the target run at the jump's target.
+/// `(StoreLocalPlain, Jump)`, `(Move, Jump)`, `(WasmI32AddImmediate, Jump)` and `(IncDec, Jump)` are
 /// the pairs; the const check below names each one's second row.
 const BACK_EDGE_PAIRS: [usize; 4] = [31, 32, 33, 37];
 const _: () = {
@@ -18346,76 +17851,166 @@ const _: () = {
     }
 };
 
-/// Gives each `FUSED_ROWS` pair in `BACK_EDGE_PAIRS` followed by a backward jump whose target
-/// record holds a conditional test (`staged::FUSED_TARGET_ROWS`, the row `plain_row` names) the
-/// `FUSED_TARGET` record: the pair, the jump, and the test at the target in one dispatch, the
-/// target keeping its own row for every other entry. Runs before `fuse_rows`, so the pair it
-/// claims is not refused by its plain pair. A pair at a hot OSR latch whose first row is a move
-/// or an add of a constant keeps its own record, as `fuse_rows` keeps it.
-///
-/// Subsumes `lane_inc_dec_loop` (an `IncDec` pair whose back edge enters a register test) and
-/// `lane_inc_dec_small_loop` (the same with a constant bound, which the test's own row reads). Not
-/// claimed here: a back edge whose target is a loaded bound (`lane_inc_dec_load_loop`, a chain
-/// target), a back edge whose target is an update (`lane_jump_back_update_small`), and a lone back
-/// jump into a nullish test (`lane_jump_back_nullish`, `specialize_nullish_back_edges`), which is
-/// not a pair.
-fn fuse_target_backedges<H: Host>(records: &mut [LaneInstruction], osr_loop: bool) {
-    macro_rules! test {
-        ($pair:literal, $k:literal) => {
-            (
-                (|handler| plain_row::<H, { crate::staged::FUSED_TARGET_ROWS[$k] }>(handler)) as fn(*const ()) -> bool,
-                lane_frame::fused_rows::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }, true, { crate::staged::FUSED_TARGET }, { crate::staged::FUSED_TARGET_ROWS[$k] }> as Handler,
-            )
-        };
+/// One `FUSED_TARGET` form of a back edge: whether its target run holds (`holds(target, after)`, where
+/// `target` is the target record's handler and `after` gives the handler of the record after it, read
+/// only by a form with a prefix row), and the handler the back edge's record takes for it.
+type TargetForm = (fn(*const (), &dyn Fn() -> *const ()) -> bool, Handler);
+
+/// Whether the target run `PREFIX` then `TEST` holds: the target record runs `PREFIX` (when there is one)
+/// and the record after it is `TEST`. With no prefix, `TEST` is the target record itself.
+fn target_run_holds<H: Host, const PREFIX: u16, const TEST: u16>(target: *const (), after: &dyn Fn() -> *const ()) -> bool {
+    if const { PREFIX == crate::staged::NO_LINK } {
+        lane_frame::plain_row::<H, TEST>(target)
+    } else {
+        lane_frame::plain_row::<H, PREFIX>(target) && lane_frame::plain_row::<H, TEST>(after())
     }
+}
+
+/// The `FUSED_TARGET` form of the pair `(A, B)`, a back edge whose target run is `PREFIX` then `TEST`:
+/// the fused record `fused_rows` makes with that run.
+fn pair_target_form<H: Host, const A: u16, const B: u16, const PREFIX: u16, const TEST: u16>() -> TargetForm {
+    (
+        target_run_holds::<H, PREFIX, TEST> as fn(*const (), &dyn Fn() -> *const ()) -> bool,
+        lane_frame::fused_rows::<H, A, B, true, { crate::staged::FUSED_TARGET }, TEST, PREFIX> as Handler,
+    )
+}
+
+/// The `FUSED_TARGET` form of a lone backward jump whose target run is `PREFIX` then `TEST`: the jump's
+/// record `row_jump` with that run (`target_run`).
+fn lone_target_form<H: Host, const PREFIX: u16, const TEST: u16>() -> TargetForm {
+    (
+        target_run_holds::<H, PREFIX, TEST> as fn(*const (), &dyn Fn() -> *const ()) -> bool,
+        lane_frame::row_jump::<H, JUMP, true, FLAG_UNREAD, PREFIX, TEST> as Handler,
+    )
+}
+
+/// The twelve forms of a back edge's target run, in the order: no prefix, then each
+/// `FUSED_TARGET_PREFIX_ROWS` row; each with each `FUSED_TARGET_ROWS` test. `$form` takes the
+/// leading const arguments (a pair's `A` and `B`), then `PREFIX` and `TEST`.
+macro_rules! target_forms {
+    ($form:ident $(, $arg:tt)*) => {
+        [
+            $form::<H, $($arg,)* { crate::staged::NO_LINK }, { crate::staged::FUSED_TARGET_ROWS[0] }>(),
+            $form::<H, $($arg,)* { crate::staged::NO_LINK }, { crate::staged::FUSED_TARGET_ROWS[1] }>(),
+            $form::<H, $($arg,)* { crate::staged::NO_LINK }, { crate::staged::FUSED_TARGET_ROWS[2] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[0] }, { crate::staged::FUSED_TARGET_ROWS[0] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[0] }, { crate::staged::FUSED_TARGET_ROWS[1] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[0] }, { crate::staged::FUSED_TARGET_ROWS[2] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[1] }, { crate::staged::FUSED_TARGET_ROWS[0] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[1] }, { crate::staged::FUSED_TARGET_ROWS[1] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[1] }, { crate::staged::FUSED_TARGET_ROWS[2] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[2] }, { crate::staged::FUSED_TARGET_ROWS[0] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[2] }, { crate::staged::FUSED_TARGET_ROWS[1] }>(),
+            $form::<H, $($arg,)* { crate::staged::FUSED_TARGET_PREFIX_ROWS[2] }, { crate::staged::FUSED_TARGET_ROWS[2] }>(),
+        ]
+    };
+}
+
+/// The `FUSED_TARGET` forms of the pair `(A, B)`'s back edge.
+fn pair_target_forms<H: Host, const A: u16, const B: u16>() -> [TargetForm; 12] {
+    target_forms!(pair_target_form, A, B)
+}
+
+/// The `FUSED_TARGET` forms of a lone backward jump.
+fn lone_target_forms<H: Host>() -> [TargetForm; 12] {
+    target_forms!(lone_target_form)
+}
+
+/// The handler of the first form of `forms` whose target run holds at `target` (`after` as `target_run_holds`).
+fn target_run_handler(forms: &[TargetForm], target: *const (), after: &dyn Fn() -> *const ()) -> Option<Handler> {
+    forms.iter().find(|(holds, _)| holds(target, after)).map(|(_, handler)| *handler)
+}
+
+/// Gives each backward jump whose target run holds (a test, or a variable read or an update then a test,
+/// at the jump's target: `FUSED_TARGET_ROWS`, `FUSED_TARGET_PREFIX_ROWS`) the `FUSED_TARGET` record, in
+/// one of two places, the target keeping its own row for every other entry:
+/// - a jump after one of `BACK_EDGE_PAIRS`' pairs: the pair's record becomes the pair, the jump and the
+///   target run in one dispatch (`pair_target_forms`);
+/// - a jump with no pair before it: the jump's own record runs the target run (`lone_target_forms`).
+/// Runs after `fuse_chains` and before `fuse_rows`, so the target records are still their own rows, and
+/// a lone jump is not rewritten where `fuse_rows` would fuse the record before it with the jump.
+///
+/// Subsumes `lane_inc_dec_loop` and `lane_inc_dec_small_loop` (an update pair into a register or constant
+/// test), `lane_inc_dec_load_loop` (an update pair into a loaded bound, then its test), `lane_jump_back_nullish`
+/// and `specialize_nullish_back_edges` (a lone back jump into a nullish test), and `lane_jump_back_update_small`
+/// (an update then its test; not its copy-then-test form).
+fn fuse_target_backedges<H: Host>(records: &mut [LaneInstruction], osr_loop: bool) {
     macro_rules! pair {
         ($pair:literal) => {
             (
                 (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }>(handler)) as fn(*const ()) -> bool,
-                [test!($pair, 0), test!($pair, 1), test!($pair, 2)],
+                pair_target_forms::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }>(),
             )
         };
     }
     let pairs = [pair!(31), pair!(32), pair!(33), pair!(37)];
-    const _: () = assert!(BACK_EDGE_PAIRS.len() == 4 && crate::staged::FUSED_TARGET_ROWS.len() == 3);
+    let lone = lone_target_forms::<H>();
     let back = jump_row::<H, JUMP>(true) as *const ();
     let record = std::mem::size_of::<LaneInstruction>() as isize;
-    for pc in 0..records.len().saturating_sub(1) {
-        let (first, second) = (records[pc].handler, records[pc + 1].handler);
-        if second != back {
+    for jump in 0..records.len() {
+        if records[jump].handler != back {
             continue;
         }
-        let Some((_, tests)) = pairs.iter().find(|(a, _)| a(first)) else {
-            continue;
-        };
-        if osr_loop && (plain_row::<H, { crate::staged::MOVE_ROW }>(first) || plain_row::<H, { crate::staged::WASM_I32_ADD_IMMEDIATE_ROW }>(first)) {
-            continue;
-        }
-        // The jump's target record: its distance is in bytes from the jump record, as `take_jump` reads it.
-        let Ok(target) = usize::try_from(pc as isize + 1 + records[pc + 1].jump() / record) else {
+        // The jump's target: its distance is in bytes from the jump record, as `take_jump` reads it.
+        let Ok(target) = usize::try_from(jump as isize + records[jump].jump() / record) else {
             continue;
         };
         let Some(target_handler) = records.get(target).map(|record_at| record_at.handler) else {
             continue;
         };
-        if let Some((_, handler)) = tests.iter().find(|(test, _)| test(target_handler)) {
-            records[pc].handler = *handler as *const ();
+        let after = || records.get(target + 1).map_or(std::ptr::null(), |record_at| record_at.handler);
+        let Some(head) = jump.checked_sub(1) else {
+            // No record before the jump: a lone back jump.
+            if let Some(handler) = target_run_handler(&lone, target_handler, &after) {
+                records[jump].handler = handler as *const ();
+            }
+            continue;
+        };
+        let first = records[head].handler;
+        if let Some((_, forms)) = pairs.iter().find(|(first_row, _)| first_row(first)) {
+            // A move or an add of a constant at a hot OSR latch keeps its own record, as `fuse_rows` keeps it.
+            let latch = osr_loop && (plain_row::<H, { crate::staged::MOVE_ROW }>(first) || plain_row::<H, { crate::staged::WASM_I32_ADD_IMMEDIATE_ROW }>(first));
+            if !latch {
+                if let Some(handler) = target_run_handler(forms, target_handler, &after) {
+                    records[head].handler = handler as *const ();
+                }
+            }
+            continue;
+        }
+        // The window pair (`fuse_rows`' `window_pairs`) whose first row is a window local's stores before a jump: leave its jump.
+        if lane_frame::is_window_row::<H, { crate::staged::FUSED_ROWS[31].0 }>(first) {
+            continue;
+        }
+        if let Some(handler) = target_run_handler(&lone, target_handler, &after) {
+            records[jump].handler = handler as *const ();
         }
     }
 }
 
 /// The handler of the `IncDec` record `update` that the record `jump` follows, where `jump` is an
 /// unconditional jump: the generated pair of `IncDec` and `Jump` (`fused_row`, the `staged::FUSED_ROWS`
-/// entry of that pair, `FUSED_PLAIN`). `None` for any other pair. The loader's `fuse_rows` pass and a
-/// loop site that retires (`lane_loop_retire`) fuse by it, so a declined loop runs what the
-/// interpreter's own does. The jump's target record keeps its own row.
-fn update_fusion<H: Host>(update: &LaneInstruction, jump: &LaneInstruction) -> Option<Handler> {
+/// entry of that pair, `FUSED_PLAIN`). `None` for any other pair. A backward jump whose target run holds
+/// at `target` (a test, or a variable read or an update then a test) takes the pair's `FUSED_TARGET`
+/// record instead (`pair_target_forms`), so the target run runs in the same dispatch. The loader's
+/// `fuse_rows` pass and a loop site that retires (`lane_loop_retire`) fuse by it, so a declined loop runs
+/// what the interpreter's own does. The target record keeps its own row.
+fn update_fusion<H: Host>(update: &LaneInstruction, jump: &LaneInstruction, target: Option<Ip>) -> Option<Handler> {
     update_direction::<H>(update)?;
     let backward = match jump.handler {
         plain if plain == jump_row::<H, JUMP>(true) as *const () => true,
         plain if plain == jump_row::<H, JUMP>(false) as *const () => false,
         _ => return None,
     };
+    if let (true, Some(target)) = (backward, target) {
+        let forms = pair_target_forms::<H, { crate::staged::INC_DEC_ROW }, { crate::staged::JUMP_ROW }>();
+        // SAFETY: a backward jump's target is a validated record of the running view.
+        let target_handler = unsafe { (*target).handler };
+        // A target run's prefix falls through to the record after it, which validation makes a record of the view.
+        let after = || unsafe { (*following(target)).handler };
+        if let Some(handler) = target_run_handler(&forms, target_handler, &after) {
+            return Some(handler);
+        }
+    }
     Some(lane_frame::fused_row::<H, { crate::staged::INC_DEC_ROW }, { crate::staged::JUMP_ROW }, { crate::staged::FUSED_PLAIN }>(backward))
 }
 

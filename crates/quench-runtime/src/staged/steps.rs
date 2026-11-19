@@ -66,10 +66,22 @@ fn keyed_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 fn call_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::Call(CallOperation::Site(site)) => super::invoke::invoke(stage, frame, frame.miss(), site),
-        Operation::Return { source } => super::invoke::ret(stage, frame, source),
+        Operation::Return { source } => return_step(stage, frame, source),
         Operation::Call(operation) => super::protocol::step(stage, frame.miss(), operation),
         Operation::Suspend { kind, destination, value } => super::suspend::suspend(stage, frame, kind, destination, value),
         _ => unreachable!("`step` sends only calls, returns and suspensions"),
+    }
+}
+
+/// `Return` of `source`: a raw record's word completes through `Frame::return_raw`
+/// (`Frame::returns_raw`), any other register through `Frame::ret`. Both leave the function, so
+/// both answer `Step::Control`, or `Step::Unresolved` where the frame does not complete them.
+#[inline(always)]
+fn return_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, source: Register) -> Step<S::Word, F::Control> {
+    if frame.returns_raw() {
+        frame.return_raw(stage, source).map_or(Step::Unresolved, Step::Control)
+    } else {
+        super::invoke::ret(stage, frame, source)
     }
 }
 
@@ -298,6 +310,7 @@ pub(crate) fn step_flow<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fram
         Operation::Jump => Step::Control(frame.jump(stage)),
         Operation::JumpIf { register, taken } => jump_if(stage, frame, register, taken),
         Operation::Move { .. } | Operation::LoadConst { .. } => register_step(stage, frame, operation),
+        Operation::Return { source } => return_step(stage, frame, source),
         _ => Step::Unresolved,
     }
 }

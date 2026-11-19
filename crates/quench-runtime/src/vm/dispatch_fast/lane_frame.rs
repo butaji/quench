@@ -408,6 +408,12 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The VM's entry lookups the running lane makes at the row's site, for a row whose plan takes
     /// one (`PropertyFrame::field_entry`); none elsewhere.
     entries: Option<EntryReads>,
+    /// The lane context and the completion a raw `WasmReturn64` row hands its returned word
+    /// (`lane_complete_wasm_activation`), where the row is one (`returns_raw_row`). `None` otherwise.
+    wasm_return: Option<(*mut (), unsafe fn(*mut (), Value) -> Option<Resumed>)>,
+    /// The row's double result keeps its double bits, not an int32 canonical form (`FUSED_RAW`):
+    /// set only for the producer of a raw pair, whose one reader is the next Number row.
+    raw_result: bool,
 }
 
 /// The VM's entry lookups of the running lane at the row's site `ip`, erased of its host so the
@@ -795,7 +801,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -820,8 +826,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame that may read and write the activation's local slots.
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
-        Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None }
+        Self { this, locals: Some((locals, len)), ..Self::new(registers, view) }
     }
 }
 
@@ -1025,6 +1030,10 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     fn write(&mut self, _stage: &mut Concrete, register: Register, value: u64, fact: Self::Fact) {
         let value = match fact {
             Boxing::Value => Value::from_bits(value),
+            // A raw result stores its double bits as they are: the next Number row of its raw pair
+            // reads them as a double, and nothing else reads the register. A NaN keeps its canonical
+            // form: its raw bits could fall in the boxed values' tag space.
+            Boxing::Double if self.raw_result && !f64::from_bits(value).is_nan() => Value::from_bits(value),
             Boxing::Double => Value::number(f64::from_bits(value)),
         };
         self.registers.set(register, value);
@@ -1401,6 +1410,26 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     fn raw_write(&mut self, _stage: &mut Concrete, register: Register, word: u64) -> Option<u64> {
         self.registers.set(register, Value::from_bits(word));
         Some(word)
+    }
+
+    /// The row of a raw return (`returns_raw_row`) holds the Wasm completion it hands its word to.
+    #[inline(always)]
+    fn returns_raw(&self) -> bool {
+        self.wasm_return.is_some()
+    }
+
+    /// A raw return's word completes the Wasm activation it returns from (`lane_complete_wasm_activation`),
+    /// the word is the returned value where no tag claims it. The resumption
+    /// is held for `generated_row` to take (`Edge::Transfer`). A tag-claimed word, or no Wasm activation to
+    /// return to, leaves the row to its miss.
+    #[inline(always)]
+    fn return_raw(&mut self, stage: &mut Concrete, register: Register) -> Option<Edge> {
+        let (context, complete) = self.wasm_return?;
+        let value = Value::from_bits64(self.raw_read(stage, register)?)?;
+        // SAFETY: the running lane's context, which `row_frame` took the completion from.
+        let resumed = unsafe { complete(context, value) }?;
+        self.transfer = Some(resumed);
+        Some(Edge::Transfer)
     }
 
     /// The VM's load of the global bound in `binding`, where the frame holds the rules (`globals`).
@@ -2039,9 +2068,17 @@ pub(in crate::vm::dispatch_fast) const fn row_produces(op: Op) -> bool {
 }
 
 pub(in crate::vm::dispatch_fast) const fn admits_row(op: Op) -> bool {
-    matches!(op.control_flow_layout(), crate::bytecode::ControlFlowLayout::Fallthrough)
+    (matches!(op.control_flow_layout(), crate::bytecode::ControlFlowLayout::Fallthrough) || returns_raw_row(op))
         && (matches!(op.staged(), Some(crate::bytecode::Decoder::Flow))
             || op.traits().has(crate::bytecode::Traits::ROW_HANDLER))
+}
+
+/// Whether opcode `op` is a raw return's terminal row (`staged::raw_representation` on a `Terminal`
+/// flow): its `Return` completes the Wasm activation through `Frame::return_raw`, so the row runs in the
+/// lane with no hand handler. A JavaScript `Return` is not one: its completion stays `lane_return`.
+pub(in crate::vm::dispatch_fast) const fn returns_raw_row(op: Op) -> bool {
+    matches!(op.control_flow_layout(), crate::bytecode::ControlFlowLayout::Terminal)
+        && crate::staged::raw_representation(op)
 }
 
 /// The window scope `FLAG` reads through (`ScopeReads`), for a row of a window whose names resolve
@@ -2071,6 +2108,11 @@ fn scope_reads<H: Host, const FLAG: u8>(cx: *mut LaneContext<H>, ip: super::Ip, 
 /// the running frame's local slots where the row is a local one (`Decoder::Local`).
 #[inline(always)]
 fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneContext<H>, r: Registers, ip: super::Ip, i: &LaneInstruction, view: Carried) -> LaneFrame<ACC> {
+    if const { returns_raw_row(LaneFields::<OP>::OPCODE) } {
+        // A raw return completes the Wasm activation it returns to (`lane_complete_wasm_activation`).
+        let complete: unsafe fn(*mut (), Value) -> Option<Resumed> = |context, value| super::lane_complete_wasm_activation::<H>(context.cast(), value);
+        return LaneFrame::<ACC> { wasm_return: Some((cx.cast(), complete)), ..LaneFrame::<ACC>::new(r, view) };
+    }
     let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Local)) };
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } {
         // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
@@ -2446,7 +2488,73 @@ pub(in crate::vm::dispatch_fast) const fn jumps_by_row(op: Op) -> bool {
 
 /// Opcode `OP`'s jump row in direction `backward`.
 pub(in crate::vm::dispatch_fast) const fn jump_row<H: Host, const OP: u16>(backward: bool) -> Handler {
-    if backward { row_jump::<H, OP, true, FLAG_UNREAD> } else { row_jump::<H, OP, false, FLAG_UNREAD> }
+    if backward {
+        row_jump::<H, OP, true, FLAG_UNREAD, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }>
+    } else {
+        row_jump::<H, OP, false, FLAG_UNREAD, { crate::staged::NO_LINK }, { crate::staged::NO_LINK }>
+    }
+}
+
+/// A backward jump's target run (`FUSED_TARGET`), run in the jump's record `$ip` once the jump is taken: the
+/// back edge's fuel check (a safepoint at the target, before its run, as `take_jump` makes it), then the
+/// target's prefix row `$prefix` when it is not `NO_LINK` (a value row: its register write and its
+/// accumulator carry on, as a chain's link does), then the conditional test `$test` at the record after the
+/// prefix (or at the target) over its own fields, which continues at the test's taken or fall-through edge.
+/// A miss takes the missing row's own miss at its record, as a fused record's miss does. Every path returns.
+/// `$cx`, `$r`, `$ip` and `$carried` are the handler's own names; `$prefix` and `$test` are its const params.
+macro_rules! target_run {
+    ($cx:ident, $r:ident, $ip:ident, $carried:ident, $prefix:ident, $test:ident) => {{
+        // SAFETY: the view records the distance to a validated jump target.
+        let target: super::Ip = unsafe { $ip.byte_offset((*$ip).jump()) };
+        if script_fuel_out($cx) {
+            return super::safepoint_at::<H>($ip, target, $carried.acc);
+        }
+        let mut at: super::Ip = target;
+        let mut carried: Carried = $carried;
+        if const { $prefix != crate::staged::NO_LINK } {
+            // SAFETY: as the target above.
+            let prefix_i = unsafe { &*at };
+            // The prefix at flag `$flag`: a value row, as `fused_rows`' link `A` runs.
+            macro_rules! prefix_at { ($flag:expr) => {{
+                let fields = LaneFields::<$prefix, { $flag }>(prefix_i);
+                let Some(operation) = row_decode!($prefix, { $flag }, fields) else { sibling!(lane_general_step::<H>, $r, at, carried) };
+                let mut stage = Concrete::new(std::ptr::null());
+                let mut frame = row_frame::<H, $prefix, ACC_NONE, { $flag }>($cx, $r, at, prefix_i, carried);
+                match row_step!(LaneFields::<$prefix>::OPCODE, &mut stage, &mut frame, operation) {
+                    Step::Value(value) => {
+                        if const { !crate::staged::row_writes_result(LaneFields::<$prefix>::OPCODE) } {
+                            $r.set(prefix_i.a, Value::from_bits(value));
+                        }
+                        if const { row_produces(LaneFields::<$prefix>::OPCODE) } {
+                            carried = Carried { acc: Slot::of(Value::from_bits(value)), ..carried };
+                        }
+                        at = following(at);
+                    }
+                    Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, { $flag }>(LaneFields::<$prefix>::OPCODE) }, $r, at, carried),
+                }
+            }}; }
+            if const { LaneFields::<$prefix>::FLAG_ROLE } {
+                if prefix_i.imm() != 0 { prefix_at!(FLAG_SET) } else { prefix_at!(FLAG_CLEAR) }
+            } else {
+                prefix_at!(FLAG_UNREAD)
+            }
+        }
+        // SAFETY: `at` is the target or the record the prefix falls through to, a validated record of the view.
+        let test_i = unsafe { &*at };
+        let fields = LaneFields::<$test, { FLAG_UNREAD }>(test_i);
+        let Some(operation) = row_decode!($test, { FLAG_UNREAD }, fields) else { sibling!(lane_general_step::<H>, $r, at, carried) };
+        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = row_frame::<H, $test, ACC_NONE, FLAG_UNREAD>($cx, $r, at, test_i, carried);
+        match row_step!(LaneFields::<$test>::OPCODE, &mut stage, &mut frame, operation) {
+            Step::Control(Edge::Target) => {
+                // SAFETY: as the read of `test_i` above.
+                let backward_test = unsafe { (*at).jump() } <= 0;
+                resume!($cx, super::take_jump::<H>($cx, $r, at, backward_test, carried, None))
+            }
+            Step::Control(Edge::Following) | Step::Value(_) => next!($cx, $r, following(at), carried),
+            Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG_UNREAD>(LaneFields::<$test>::OPCODE) }, $r, at, carried),
+        }
+    }};
 }
 
 /// Opcode `$op`'s staged operation decoded from `$fields` by its row family's one decoder. Each
@@ -2495,8 +2603,10 @@ lane_handler! {
     /// `generated_row` is: the record's decoder (flow, or generic for a comparison) reads it, the row
     /// steps on `Concrete` over the lane's frame, and its edge picks the continuation. A jump to
     /// its target runs the lane's jump (`take_jump`), whose backward edge (`BACKWARD`, which the
-    /// view fixes per record) is a safepoint.
-    pub(super) fn row_jump<OP: u16, BACKWARD: bool, FLAG: u8>(cx, r, ip, i, view) {
+    /// view fixes per record) is a safepoint. `TEST` (not `NO_LINK`) is a backward jump's `FUSED_TARGET`
+    /// target run: its target's `PREFIX` row (or none) and then the test `TEST`, run in this record
+    /// (`target_run`). Any other `TEST` takes the jump as it always does.
+    pub(super) fn row_jump<OP: u16, BACKWARD: bool, FLAG: u8, PREFIX: u16, TEST: u16>(cx, r, ip, i, view) {
         // A loop site's backward jump (`FLAG_LOOP`) warming up takes its jump here, with the fuel
         // spent here, as the site's body does. Fuel out, or a site past its warm-up, leaves to that
         // body (`loop_jump_miss`), which spends the fuel and decides the site itself.
@@ -2528,7 +2638,13 @@ lane_handler! {
         let carried = if const { LaneFields::<OP>::RESULT_A } { Carried::script_in(cx, view) } else { view };
         let mut frame = row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
-            Step::Control(Edge::Target) => resume!(cx, super::take_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
+            Step::Control(Edge::Target) => {
+                if const { TEST != crate::staged::NO_LINK } {
+                    target_run!(cx, r, ip, carried, PREFIX, TEST)
+                } else {
+                    resume!(cx, super::take_jump::<H>(cx, r, ip, BACKWARD, carried, None))
+                }
+            }
             // A table's entry is the jump record `k` places after the table record (validation places
             // `entries` of them after it), and the lane jumps from that record.
             Step::Control(Edge::Entry(k)) => resume!(cx, super::take_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
@@ -3085,11 +3201,12 @@ lane_handler! {
     /// `BACKWARD` is `B`'s jump direction where `B` is a jump (`jumps_by_row`). A flagged row
     /// reads its flag from its record at run time. `MODE` is the pair's `staged::FUSED_*`:
     /// `FUSED_DEAD_FIRST` skips `A`'s register write (installed only where liveness proves
-    /// `A`'s register dead and `B` does not name it); `FUSED_RAW` runs as `FUSED_PLAIN` here.
-    /// `FUSED_TARGET` (a backward `B` whose target holds the conditional test `TARGET`): the
-    /// back edge's fuel check, then `TARGET`'s row over the target record's own fields, which
-    /// continues at its taken or fall-through edge. Any other mode ignores `TARGET`.
-    pub(super) fn fused_rows<A: u16, B: u16, BACKWARD: bool, MODE: u8, TARGET: u16>(cx, r, ip, i, view) {
+    /// `A`'s register dead and `B` does not name it); `FUSED_RAW` keeps `A`'s double result as its
+    /// bits (`LaneFrame::raw_result`), which `B`, a Number operator, reads as its operand.
+    /// `FUSED_TARGET` (a backward `B` whose target run holds: `PREFIX` (or none) then the test `TEST`):
+    /// the back edge's fuel check and the target run in this record (`target_run`), which continues at
+    /// the test's taken or fall-through edge. Any other mode ignores `PREFIX` and `TEST`.
+    pub(super) fn fused_rows<A: u16, B: u16, BACKWARD: bool, MODE: u8, TEST: u16, PREFIX: u16>(cx, r, ip, i, view) {
         // Row `A` at flag `$flag`: a flagged row (`LaneFields::FLAG_ROLE`) reads its flag here,
         // from the record, rather than requickening (`generated_row`).
         macro_rules! step_a { ($flag:expr) => {{
@@ -3100,6 +3217,7 @@ lane_handler! {
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
             let mut frame = row_frame::<H, A, ACC_NONE, { $flag }>(cx, r, ip, i, view);
+            frame.raw_result = const { MODE == crate::staged::FUSED_RAW };
             match row_step!(LaneFields::<A>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
                     if const { !crate::staged::row_writes_result(LaneFields::<A>::OPCODE) && MODE != crate::staged::FUSED_DEAD_FIRST } {
@@ -3138,33 +3256,7 @@ lane_handler! {
             match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Control(Edge::Target) => {
                     if const { MODE == crate::staged::FUSED_TARGET } {
-                        // The back edge's target holds the test `TARGET`: its fuel check (the jump's
-                        // own, before its target runs), then the test over its own record. The test's
-                        // jump direction is its record's distance, as `take_jump`'s direction is.
-                        let test_ip = unsafe { ip.byte_offset((*ip).jump()) };
-                        if BACKWARD && script_fuel_out(cx) {
-                            return super::safepoint_at::<H>(ip, test_ip, carried.acc);
-                        }
-                        // SAFETY: the view records the distance to a validated jump target.
-                        let test_i = unsafe { &*test_ip };
-                        let fields = LaneFields::<TARGET>(test_i);
-                        let decoded = if const { matches!(LaneFields::<TARGET>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
-                            Operation::decode_generic(crate::staged::Fields::wide(fields))
-                        } else {
-                            Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY)
-                        };
-                        let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, test_ip, carried) };
-                        let mut stage = Concrete::new(std::ptr::null());
-                        let mut frame = row_frame::<H, TARGET, ACC_NONE, FLAG_UNREAD>(cx, r, test_ip, test_i, carried);
-                        match row_step!(LaneFields::<TARGET>::OPCODE, &mut stage, &mut frame, operation) {
-                            Step::Control(Edge::Target) => {
-                                // SAFETY: as the read of `test_i` above.
-                                let backward_test = unsafe { (*test_ip).jump() } <= 0;
-                                resume!(cx, super::take_jump::<H>(cx, r, test_ip, backward_test, carried, None))
-                            }
-                            Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(test_ip), carried),
-                            Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG_UNREAD>(LaneFields::<TARGET>::OPCODE) }, r, test_ip, carried),
-                        }
+                        target_run!(cx, r, ip, carried, PREFIX, TEST)
                     } else {
                         resume!(cx, super::take_jump::<H>(cx, r, ip, BACKWARD, carried, None))
                     }
@@ -3316,7 +3408,7 @@ pub(in crate::vm::dispatch_fast) const fn chain_row<H: Host, const L0: u16, cons
 
 /// Whether `handler` is opcode `OP`'s window row (`FLAG_WINDOW`): a local record of a plain slot in
 /// an environment window's function, which `window_local_handler` gives its row.
-fn is_window_row<H: Host, const OP: u16>(handler: *const ()) -> bool {
+pub(in crate::vm::dispatch_fast) fn is_window_row<H: Host, const OP: u16>(handler: *const ()) -> bool {
     generated_row::<H, OP, ACC_NONE, FLAG_WINDOW> as Handler as *const () == handler
 }
 
@@ -3328,8 +3420,8 @@ const fn chain_index(chain: usize) -> usize { if chain < crate::staged::FUSED_CH
 /// chain wins over the pair at its head; the later records keep their own rows for jumps
 /// into them. A chain whose middle record is a jump target still fuses: the jump enters at
 /// that record's own row.
-pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInstruction]) {
-    if const { crate::staged::FUSED_CHAINS.is_empty() } { return; }
+pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInstruction]) -> Vec<(usize, usize)> {
+    if const { crate::staged::FUSED_CHAINS.is_empty() } { return Vec::new(); }
     macro_rules! link { ($chain:literal, $k:literal) => { crate::staged::FUSED_CHAINS[chain_index($chain)][$k] }; }
     macro_rules! chains {
         ($($chain:literal),*) => {
@@ -3368,17 +3460,20 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
     let window_chains = window_chains!(0, 1);
     let chains = chains!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63);
     const { assert!(crate::staged::FUSED_CHAINS.len() <= 64, "`chains!` covers 64 chains; add indices") };
+    let mut fused_records = Vec::new();
     for pc in 0..records.len() {
         let Some((_, length, backward, row)) = chains.iter().chain(window_chains.iter()).find(|(links, length, _, _)| {
             pc + length <= records.len() && (0..*length).all(|k| links[k](records[pc + k].handler))
         }) else { continue };
         records[pc].handler = row[usize::from(backward(records[pc + length - 1].handler))] as *const ();
+        fused_records.push((pc, pc + length - 1));
     }
+    fused_records
 }
 
 /// Opcode pair `(A, B)`'s fused record handler for `B`'s jump direction `backward`.
 pub(in crate::vm::dispatch_fast) const fn fused_row<H: Host, const A: u16, const B: u16, const MODE: u8>(backward: bool) -> Handler {
-    if backward { fused_rows::<H, A, B, true, MODE, B> } else { fused_rows::<H, A, B, false, MODE, B> }
+    if backward { fused_rows::<H, A, B, true, MODE, B, { crate::staged::NO_LINK }> } else { fused_rows::<H, A, B, false, MODE, B, { crate::staged::NO_LINK }> }
 }
 
 /// Whether `handler` is opcode `OP`'s plain row in any direction: its value row with no
@@ -3404,7 +3499,10 @@ const fn fused_index(pair: usize) -> usize { if pair < crate::staged::FUSED_ROWS
 /// pair's fused record (`fused_rows`); the next record keeps its own row. A `FUSED_DEAD_FIRST`
 /// pair takes its fused record only where `liveness` proves `A`'s result register dead after
 /// the pair and `B` names that register in no operand; otherwise it takes the `FUSED_PLAIN` record.
-pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, osr_loop: bool) {
+/// A `FUSED_RAW` pair takes its raw record only where `raw_results` (no handler in the function) and
+/// `B` reads `A`'s register with `A`'s register dead after it or overwritten by `B`. Returns each fused
+/// record's head and its last record, which `derive_lane_view` reads for the accumulator carry.
+pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, osr_loop: bool, raw_results: bool) -> Vec<(usize, usize)> {
     macro_rules! pairs {
         ($($pair:literal),*) => {
             [$((
@@ -3412,6 +3510,9 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
                 (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }>(handler)) as fn(*const ()) -> bool,
                 jump_row_backward::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }> as fn(*const ()) -> bool,
                 crate::staged::FUSED_ROWS[fused_index($pair)].2,
+                // Both rows are Number operators: a `FUSED_RAW` pair's double result is then only a Number's operand.
+                const { crate::staged::number_operator(LaneFields::<{ crate::staged::FUSED_ROWS[fused_index($pair)].0 }>::OPCODE)
+                    && crate::staged::number_operator(LaneFields::<{ crate::staged::FUSED_ROWS[fused_index($pair)].1 }>::OPCODE) },
                 [fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_ROWS[fused_index($pair)].2 }>(false),
                     fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_ROWS[fused_index($pair)].2 }>(true)],
                 [fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_PLAIN }>(false),
@@ -3435,13 +3536,15 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
     let window_pairs = window_pairs!(31, 34, 35, 63);
     let pairs = pairs!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127);
     const { assert!(crate::staged::FUSED_ROWS.len() <= 128, "`pairs!` covers 128 fused pairs; add indices") };
+    let mut fused_records = Vec::new();
     for pc in 0..records.len().saturating_sub(1) {
         let (first, second) = (records[pc].handler, records[pc + 1].handler);
         if let Some((_, _, backward, window)) = window_pairs.iter().find(|(a, b, _, _)| a(first) && b(second)) {
             records[pc].handler = window[usize::from(backward(second))] as *const ();
+            fused_records.push((pc, pc + 1));
             continue;
         }
-        let Some((_, _, backward, mode, fused, plain)) = pairs.iter().find(|(a, b, _, _, _, _)| a(first) && b(second)) else {
+        let Some((_, _, backward, mode, numbers, fused, plain)) = pairs.iter().find(|(a, b, _, _, _, _, _)| a(first) && b(second)) else {
             continue;
         };
         let direction = usize::from(backward(second));
@@ -3463,13 +3566,25 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
                     .and_then(|masks| masks.get(pc + 2))
                     .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(first.a)))
         };
-        let handler = if *mode == crate::staged::FUSED_DEAD_FIRST && !dead_first {
+        // A `FUSED_RAW` pair keeps `A`'s double result raw only where both rows are Number operators
+        // (`numbers`), `B` reads `A`'s register as an operand, and nothing after the pair reads it
+        // (`B` may write it instead). Its raw bits are then only ever a Number operand. A function with
+        // a handler never does (`raw_results`): a catch may read any register.
+        let raw = raw_results && *mode == crate::staged::FUSED_RAW && *numbers && {
+            let (producer, consumer) = (&records[pc], &records[pc + 1]);
+            let reads = [consumer.b, consumer.c].into_iter().any(|field| Operand(field).register_index() == Some(producer.a));
+            reads && (consumer.a == producer.a
+                || live.and_then(|masks| masks.get(pc + 2)).is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(producer.a))))
+        };
+        let handler = if (*mode == crate::staged::FUSED_DEAD_FIRST && !dead_first) || (*mode == crate::staged::FUSED_RAW && !raw) {
             plain[direction]
         } else {
             fused[direction]
         };
         records[pc].handler = handler as *const ();
+        fused_records.push((pc, pc + 1));
     }
+    fused_records
 }
 
 /// Whether `handler` is opcode `OP`'s backward jump row.

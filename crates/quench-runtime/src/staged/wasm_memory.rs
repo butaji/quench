@@ -413,22 +413,6 @@ impl MemoryLoad {
         let word = load(&mut stage, access, address, 0, false)?;
         Ok(WasmValue::from_bits(access.ty, word))
     }
-
-    /// The value at `at`, unchecked.
-    ///
-    /// # Safety
-    /// `width` bytes from `at` must be readable.
-    #[inline(always)]
-    pub(crate) unsafe fn read_at(self, at: *const u8) -> WasmValue {
-        let Some(access) = Access::of_load(self) else {
-            // SAFETY: the caller keeps the word's bytes readable.
-            return unsafe { self.read_vector_at(at) };
-        };
-        // SAFETY: the caller keeps `width` bytes readable.
-        let memory = unsafe { std::slice::from_raw_parts(at, access.bytes) };
-        let word = ConcreteBytes { memory }.memory_load(access, 0, 0);
-        WasmValue::from_bits(access.ty, word)
-    }
 }
 
 #[cfg(not(stencil_build))]
@@ -450,21 +434,5 @@ impl MemoryStore {
         }
         let mut stage = ConcreteMemory { memory: bytes };
         store(&mut stage, Access::of_store(self), address, 0, value.word(), false)
-    }
-
-    /// Write `value` at `at`, unchecked.
-    ///
-    /// # Safety
-    /// `width` bytes from `at` must be writable.
-    #[inline(always)]
-    pub(crate) unsafe fn write_at(self, at: *mut u8, value: WasmValue) {
-        if self.value_type() == WasmType::V128 {
-            // SAFETY: the caller keeps the word's bytes writable.
-            return unsafe { self.write_vector_at(at, value) };
-        }
-        let access = Access::of_store(self);
-        // SAFETY: the caller keeps `width` bytes writable.
-        let memory = unsafe { std::slice::from_raw_parts_mut(at, access.bytes) };
-        ConcreteMemory { memory }.memory_store(access, 0, 0, value.word());
     }
 }
