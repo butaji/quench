@@ -33,6 +33,10 @@ pub(super) struct LaneBodyHistory {
     /// Whether its next compile is the optimizing one its quick body's entries repaid
     /// (`LaneView::optimize_body`): priced already, it compiles at its next entry.
     optimize: bool,
+    /// The runs its retired bodies made (`EntryCell::evidence` at each retirement): entries of the
+    /// function as the warm-up's are, which a recompile's pricing counts with its own warm-up's
+    /// (Lindy: a function that ran this long runs on), rather than starting again from none.
+    runs: u32,
 }
 
 #[path = "lane_body_audit.rs"]
@@ -174,12 +178,26 @@ impl LaneView {
     fn retire_body(&self, body: &mut LaneBody, next: LaneBody) {
         let body_state = body.tier_state();
         let LaneBody::Specialized { tier_prologue, .. } = body else { unreachable!() };
+        self.credit_runs();
         let event = if matches!(next, LaneBody::Declined) { TierEvent::Decline } else { TierEvent::Demote };
         // SAFETY: as `claim_for_tier`; the prologue's handler runs no more for this entry.
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
         super::super::tier_machine::withdraw(&self.entry, body_state, event);
         self.tier().retired.borrow_mut().push(method);
+    }
+
+    /// Books its current body's runs to its history (`LaneBodyHistory::runs`) as the body goes.
+    fn credit_runs(&self) {
+        let (completions, leaves) = self.entry.evidence();
+        let history = self.tier().history.get();
+        let runs = u32::try_from(completions.saturating_add(leaves)).unwrap_or(u32::MAX);
+        self.tier().history.set(LaneBodyHistory { runs: history.runs.saturating_add(runs), ..history });
+    }
+
+    /// The entries a compile at its warm-up count `entries` is priced at: those and its retired bodies' runs.
+    fn priced_entries(&self, entries: u32) -> u32 {
+        entries.saturating_add(self.tier().history.get().runs)
     }
 
     /// The entries before its next body specializes: the warm-up, doubled per dropped body.
@@ -305,6 +323,8 @@ impl LaneView {
         let body = unsafe { &mut *self.tier().tier_lane.get() };
         let LaneBody::Specialized { tier_prologue, recompiles, stuck, .. } = body else { return };
         if history.callee_recompiles >= self.tiers.lane_body.max_callee_recompiles { return; }
+        self.credit_runs();
+        let history = self.tier().history.get();
         self.tier().history.set(LaneBodyHistory { callee_recompiles: history.callee_recompiles + 1, late_calls: 0, ..history });
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
         let next = LaneBody::Unspecialized { entries: u32::from(self.tiers.lane_body.warmup_entries) - 1, recompiles: *recompiles, stuck: *stuck };
@@ -328,6 +348,7 @@ impl LaneView {
     pub(super) fn drop_body(&self, body: &mut LaneBody) {
         let LaneBody::Specialized { leaves_at, stuck, recompiles, .. } = body else { return };
         let (stuck, recompiles) = (stuck.union(leaves_at.get()), *recompiles);
+        self.credit_runs();
         let history = self.tier().history.get();
         self.tier().history.set(LaneBodyHistory {
             lifetimes: history.lifetimes.saturating_add(1),
@@ -400,7 +421,7 @@ impl LaneView {
                 if !self.attempts_at(entries.saturating_add(1)) { super::super::compiled::base_region::count(super::super::compiled::base_region::Event::BodyRecurrent); }
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
-                (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| entries.saturating_add(1)), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
+                (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| self.priced_entries(entries.saturating_add(1))), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
             }
             LaneBody::Unspecialized { entries, recompiles, stuck } => {
                 let ticks = warm_ticks();
