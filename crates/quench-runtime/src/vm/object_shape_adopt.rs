@@ -84,7 +84,6 @@ impl<H: Host> Vm<H> {
     /// an exotic or frozen object on the chain, and the key `__proto__` (Object.prototype's
     /// accessor) answer `false`. Runs no guest code and cannot throw; `false`, before any effect,
     /// leaves the copy to the general path.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn adopt_source_shape_for_set(&mut self, target: Value, source: Value) -> bool {
         let (Some(source_data), Some(target_data)) = (self.object_data(source), self.object_data(target)) else {
             return false;
