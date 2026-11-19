@@ -3175,7 +3175,13 @@ impl<H: Host> Vm<H> {
 
     /// Whether `value` is the current realm's `native` function: one installed for this realm,
     /// or one every realm shares (`is_shared_native`).
+    /// The shared function itself, the one each realm's prototypes install, answers by its
+    /// identity (`is_shared_native_of`) before any read of the function.
+    #[inline]
     pub(super) fn is_current_realm_native(&self, value: Value, native: Native) -> bool {
+        if self.is_shared_native_of(value, native) {
+            return true;
+        }
         matches!(
             self.heap.function(value),
             Some(FunctionRecord {
@@ -3261,9 +3267,7 @@ impl<H: Host> Vm<H> {
         if element.is_deleted() {
             return None;
         }
-        if let Some(IteratorRecord { index, ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.store_position(index, position + 1);
-        }
+        self.heap.store_iterator_position(iterator, position + 1);
         let value = if kind == IteratorKind::ArrayKeys { Value::number(position as f64) } else { element };
         self.iterator_result(value, false).ok()
     }
@@ -3352,12 +3356,7 @@ impl<H: Host> Vm<H> {
             if index >= length {
                 return Ok(None);
             }
-            if let Some(IteratorRecord {
-                index: next, ext, ..
-            }) = vm.heap.iterator_mut(iterator)
-            {
-                ext.store_position(next, index + 1);
-            }
+            vm.heap.store_iterator_position(iterator, index + 1);
             if kind == IteratorKind::ArrayKeys {
                 return Ok(Some((Value::number(index as f64), None)));
             }
@@ -3423,9 +3422,7 @@ impl<H: Host> Vm<H> {
         if value.is_deleted() {
             return None;
         }
-        if let Some(IteratorRecord { index, ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.store_position(index, position + 1);
-        }
+        self.heap.store_iterator_position(iterator, position + 1);
         Some(Some(value))
     }
 

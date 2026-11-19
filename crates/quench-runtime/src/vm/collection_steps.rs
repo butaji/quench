@@ -42,6 +42,12 @@ impl<H: Host> Vm<H> {
         if position >= units.len() {
             return None;
         }
+        // An ASCII unit is its own code point, whose shared string answers it with no string
+        // built (`Vm::ascii_byte_string`).
+        if let super::wtf16::Units::Ascii(bytes) = units {
+            let byte = bytes[position];
+            return Some(((self.ascii_byte_string(byte), None), position + 1));
+        }
         let pair = units.get(position + 1).is_some_and(|low| crate::unicode::decode_surrogate_pair(units.at(position), low).is_some());
         let after = position + 1 + usize::from(pair);
         let run = super::wtf16::JsString::from_unit_run(units.slice(position..after));
@@ -81,9 +87,7 @@ impl<H: Host> Vm<H> {
         if element.is_deleted() {
             return None;
         }
-        if let Some(IteratorRecord { index, ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.store_position(index, position + 1);
-        }
+        self.heap.store_iterator_position(iterator, position + 1);
         let key = Value::number(position as f64);
         Some(Some(match kind {
             IteratorKind::ArrayKeys => key,
@@ -95,31 +99,37 @@ impl<H: Host> Vm<H> {
     /// runs no guest code: the item's value, the iterator left past it. `None` for an
     /// iterator that is done or has nothing left, whose step the native makes.
     pub(in crate::vm) fn step_collection_value(&mut self, iterator: Value) -> Option<Value> {
-        let IteratorRecord { source, kind, index, done: false, ext, .. } = self.heap.iterator(iterator)? else {
-            return None;
-        };
-        let (source, kind, position) = (*source, *kind, ext.position(*index));
+        let (kind, source, position) = self.live_iterator_position(iterator)?;
         let (item, after) = self.collection_iterator_item(kind, source, position)?;
-        if let Some(IteratorRecord { index, ext, .. }) = self.heap.iterator_mut(iterator) {
-            ext.store_position(index, after);
-        }
+        self.heap.store_iterator_position(iterator, after);
         Some(self.iterator_item_value(item))
     }
 
     /// `step_collection_value` where an iterator with nothing left is done, as the native's
-    /// step leaves it: `Some(None)`. `None` for an iterator that was already done.
+    /// step leaves it: `Some(None)`. `None` for an iterator that was already done. One read
+    /// of the record serves the kind, the source and the position.
     pub(in crate::vm) fn step_collection(&mut self, iterator: Value) -> Option<Option<Value>> {
-        if self.heap.iterator(iterator).is_some_and(|record| matches!(record.kind, IteratorKind::ArrayKeys | IteratorKind::ArrayEntries)) {
+        let (kind, source, position) = self.live_iterator_position(iterator)?;
+        if matches!(kind, IteratorKind::ArrayKeys | IteratorKind::ArrayEntries) {
             return self.step_array_entry(iterator);
         }
-        if let Some(value) = self.step_collection_value(iterator) {
-            return Some(Some(value));
+        if let Some((item, after)) = self.collection_iterator_item(kind, source, position) {
+            self.heap.store_iterator_position(iterator, after);
+            return Some(Some(self.iterator_item_value(item)));
         }
-        match self.heap.iterator_mut(iterator)? {
-            IteratorRecord { done, .. } if !*done => {
-                *done = true;
-                Some(None)
-            }
+        // Nothing is left: the iterator is done, as the native's step leaves it.
+        if let Some(IteratorRecord { done, .. }) = self.heap.iterator_mut(iterator) {
+            *done = true;
+        }
+        Some(None)
+    }
+
+    /// The kind, source and position of `iterator` while it is not done; `None` for a done
+    /// iterator or any other value.
+    #[inline(always)]
+    fn live_iterator_position(&self, iterator: Value) -> Option<(IteratorKind, Value, usize)> {
+        match self.heap.iterator(iterator)? {
+            IteratorRecord { source, kind, index, done: false, ext, .. } => Some((*kind, *source, ext.position(*index))),
             _ => None,
         }
     }

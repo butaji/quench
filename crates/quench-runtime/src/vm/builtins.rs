@@ -636,6 +636,7 @@ impl NativeTable {
         self.functions.clear();
     }
 
+    #[inline(always)]
     fn get(&self, kind: Native) -> Option<Value> {
         self.functions
             .get(kind as usize)
@@ -1124,6 +1125,14 @@ impl<H: Host> Vm<H> {
         let function = self.native_with_realm(kind, Value::NULL, self.natives.realm);
         self.natives.insert(kind, function);
         function
+    }
+
+    /// Whether `value` is the function every realm shares for `native` (`is_shared_native` of
+    /// a function of that native): one comparison with the table's entry, no read of the
+    /// function. The table enters only `native`'s own function under it (`native_value`).
+    #[inline(always)]
+    pub(super) fn is_shared_native_of(&self, value: Value, native: Native) -> bool {
+        self.natives.get(native) == Some(value)
     }
 
     /// Whether `value` is the function every realm shares for its native: one native serves
