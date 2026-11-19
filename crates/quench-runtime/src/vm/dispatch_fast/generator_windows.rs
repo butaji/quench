@@ -231,7 +231,9 @@ pub(super) fn window_environments<H: Host>(
 /// step. The window's registers, and for a generator with locals the environment window after
 /// them, are the record's own, bound as a call binds a fresh one; the frame's receiver and
 /// captures run with it. The registers and record the lane continues at, or `None`, before any
-/// effect, where the lane has no room or no view for it.
+/// effect, where the lane has no room or no view for it. Inlined into each caller, a for-of
+/// step's above all (`lane_resume_generator_step`), so a step makes one call.
+#[inline(always)]
 pub(super) fn lane_resume_generator<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
@@ -310,6 +312,7 @@ struct GeneratorWindow {
 
 /// Pushes `window`'s activation as the lane's innermost, at `depth` below the call record at `ip` of
 /// the running function with registers `r`, and resumes the frame's loops and scope chain as its own.
+#[inline(always)]
 fn push_generator_window<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, (r, ip, depth): (Registers, Ip, usize), window: GeneratorWindow) {
     let (frame, environment) = (window.record, window.environment);
     let activation = generator_activation(cx, r, ip, window);
@@ -328,6 +331,7 @@ fn push_generator_window<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, (r, i
 
 /// The activation of `window`'s generator for the call record at `ip`, made by the running
 /// function with registers `r`.
+#[inline(always)]
 fn generator_activation<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, window: GeneratorWindow) -> Activation {
     Activation {
         native: window.prefix,
