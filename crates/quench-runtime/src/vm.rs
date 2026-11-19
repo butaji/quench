@@ -149,11 +149,7 @@ mod call_printer;
 pub(crate) use call_printer::{freeze_call_sites, freeze_source_call_sites};
 mod call_out;
 mod call_out_calls;
-mod call_out_literals;
-mod call_out_classes;
-mod call_out_values;
-mod call_out_owned;
-mod call_out_wasm;
+mod suspension;
 mod coercion;
 mod collection_intake;
 mod collections;
@@ -1710,6 +1706,12 @@ pub(super) enum StepResult {
         completion: CallCompletion,
     },
     Return(Value),
+    /// A suspension point (`await`, `yield`) that leaves the general loop.
+    Suspend(Suspended),
+}
+/// The facts of one suspension point, shared by `StepResult::Suspend` and
+/// `FrameOutcome::Suspend`: the value handed out and the register that receives the resumption.
+pub(super) enum Suspended {
     Await {
         value: Value,
         destination: Register,
@@ -1727,19 +1729,10 @@ pub(super) enum FrameOutcome {
         this: Value,
     },
     ParameterInitializationComplete,
-    Await {
-        value: Value,
-        destination: Register,
-        /// Boxed so every `FrameOutcome` stays a few words: the common completions move it
-        /// through each call return.
-        frame: Option<Box<Frame>>,
-    },
-    Yield {
-        value: Value,
-        destination: Register,
-        delegated_result: Option<Value>,
-        frame: Option<Box<Frame>>,
-    },
+    /// A suspension, with the activation's frame when the caller retains it. The frame is boxed
+    /// so every `FrameOutcome` stays a few words: the common completions move it through each
+    /// call return.
+    Suspend(Suspended, Option<Box<Frame>>),
 }
 
 impl FrameOutcome {
@@ -1751,8 +1744,8 @@ impl FrameOutcome {
             Self::ParameterInitializationComplete => {
                 Err(JsError("parameter initialization escaped a generator activation".into()))
             }
-            Self::Await { .. } => Err(JsError("await requires async continuation".into())),
-            Self::Yield { .. } => Err(JsError("yield requires generator continuation".into())),
+            Self::Suspend(Suspended::Await { .. }, _) => Err(JsError("await requires async continuation".into())),
+            Self::Suspend(Suspended::Yield { .. }, _) => Err(JsError("yield requires generator continuation".into())),
         }
     }
 }
@@ -1822,7 +1815,7 @@ pub(crate) struct Vm<H> {
     /// VM-wide running-job admission for native microtask checkpoints.
     native_microtask_running: bool,
     /// The async function a microtask drain resumed whose activation the running lane run is
-    /// rooted in (`Vm::resume_job`), else undefined: its `await` of a settled value continues in
+    /// rooted in (`Vm::resume_suspended`), else undefined: its `await` of a settled value continues in
     /// place when no other job is queued (`lane_await`).
     queue_resumed: Value,
     /// Whether the innermost running job queue has entered the host's context for unobserved

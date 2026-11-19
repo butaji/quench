@@ -1,11 +1,11 @@
 use super::activation::{Completion, Continuation};
-use super::promise::{PromiseReaction, PromiseState};
+use super::promise::PromiseState;
 use super::*;
 use crate::heap::{AwaitKind, AwaitRole, AwaitState};
 
 /// What an await reaction resumes with, read from its `AwaitState`.
 #[derive(Clone, Copy, Debug)]
-struct AwaitResume {
+pub(in crate::vm) struct AwaitResume {
     /// The spent state itself, whose reaction is running: the activation's next await
     /// suspends into it again (`Vm::await_again`). `None` for the run of an async generator's
     /// request, which awaits in a state of its own.
@@ -86,41 +86,13 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    /// Settles `promise`, the result of an async call, by the outcome of its first run: a return
-    /// resolves it, an await suspends the frame into a continuation resumed when the awaited value
+    /// Settles `promise`, the result of an async call, by the outcome of its first run, as any
+    /// async activation's stop settles (`Vm::settle_stop`): a return resolves it, an await
+    /// suspends the frame its outcome carries into a continuation resumed when the awaited value
     /// settles.
     fn settle_async_call(&mut self, p: &ResidualProgram, promise: Value, outcome: super::FrameOutcome) -> Result<(), JsError> {
-        match outcome {
-            super::FrameOutcome::Complete(value)
-            | super::FrameOutcome::ConstructComplete { value, .. } => {
-                self.promise_resolve_value(p, promise, value)?
-            }
-            super::FrameOutcome::Await {
-                value,
-                destination,
-                frame: Some(frame),
-            } => {
-                let continuation = self.suspend_activation(
-                    frame,
-                    Completion::Await(value),
-                    Some(destination),
-                    promise,
-                );
-                self.enqueue_async_resume(p, AwaitKind::function(continuation), promise, value)?;
-            }
-            super::FrameOutcome::Await { frame: None, .. } => {
-                return Err(JsError("async frame lost at suspension".into()));
-            }
-            super::FrameOutcome::Yield { .. } => {
-                return Err(JsError("yield is not valid in an async function".into()));
-            }
-            super::FrameOutcome::ParameterInitializationComplete => {
-                return Err(JsError(
-                    "unexpected generator parameter initialization boundary".into(),
-                ));
-            }
-        }
-        Ok(())
+        let resume = AwaitResume { state: None, promise, role: AwaitRole::AsyncFunction, rejected: false };
+        self.settle_stop(p, StopOwner::Async(resume), None, Ok(outcome)).map(drop)
     }
 
     /// Starts the body of an async root, a module with a top-level `await`, as a job over its
@@ -323,8 +295,7 @@ impl<H: Host> Vm<H> {
             && !self.is_object_like(source)
         {
             self.with_call_roots([source, promise, generator.unwrap_or(Value::UNDEFINED)], |vm| {
-                let parent = vm.promise_record(promise).and_then(|record| record.host_context().get());
-                let awaited = vm.promise_object_with_parent(parent)?;
+                let awaited = vm.fresh_derived_promise(promise)?;
                 vm.with_call_roots([awaited], |vm| vm.promise_resolve_value(p, awaited, source))?;
                 Ok(awaited)
             })?
@@ -335,41 +306,17 @@ impl<H: Host> Vm<H> {
         // observation, even though the continuation consumes no result value.
         // The observer read above stands: without one, nothing above ran guest code.
         let next = if observes {
-            self.with_call_roots([source], |vm| {
-                vm.promise_object_with_parent(
-                    vm.promise_record(source).and_then(|record| record.host_context().get()),
-                )
-            })?
+            self.with_call_roots([source], |vm| vm.fresh_derived_promise(source))?
         } else {
             Value::UNDEFINED
         };
-        // Init observers can settle the source reentrantly; read its state only
-        // after creating the reaction's observable resource.
-        // `source` is a Promise, or a primitive standing for the fulfilled one an `await`
-        // never materializes.
-        let (source_state, result) = match self.promise_record(source) {
-            Some(record) => (record.state(), record.result()),
-            None if !self.is_object_like(source) => (PromiseState::Fulfilled, source),
-            None => return Err(JsError("await source is not a Promise".into())),
-        };
-        self.observe_promise_rejection(source);
-        let reaction = PromiseReaction {
-            on_fulfilled: state,
-            on_rejected: state,
-            next,
-            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context().get())).into(),
-        };
-        if source_state == PromiseState::Pending {
-            self.promise_record_mut(source)
-                .expect("await source Promise record exists")
-                .push_reaction(reaction);
-        } else {
-            self.enqueue_promise_reaction(p, reaction, source_state, result);
-        }
-        Ok(())
+        // Init observers can settle the source reentrantly: the reaction reads its state
+        // only once the reaction's observable resource exists.
+        self.attach_promise_reaction(p, source, state, state, next)
     }
 }
 
 mod job_resume;
 mod requests;
 mod settle;
+pub(in crate::vm) use settle::StopOwner;

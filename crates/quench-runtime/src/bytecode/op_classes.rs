@@ -101,7 +101,8 @@ impl Op {
         matches!(self.control_flow_layout(), ControlFlowLayout::Call)
     }
 
-    /// A suspension point: an `await`, or a `yield` of a generator.
+    /// A suspension point: an `await`, a `yield` of a generator, or a delegating `yield*`. The plan
+    /// (`staged::function_plan`) and the function's own suspension scan both ask this.
     pub(crate) const fn suspends(self) -> bool {
         matches!(self, Op::Await | Op::Yield | Op::YieldStar)
     }

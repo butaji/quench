@@ -719,24 +719,15 @@ impl<H: Host> Vm<H> {
                     return Err(error);
                 }
             };
-            let done_atom = self.runtime_atoms.done;
-            let done = match self.get_property(p, step, done_atom) {
-                Ok(done) => self.truthy(done),
+            let item = match self.iterator_result_value(p, step) {
+                Ok(item) => item,
                 Err(error) => {
                     let _ = self.iterator_close(p, iterator);
                     return Err(error);
                 }
             };
-            if done {
+            let Some(value) = item else {
                 return Ok(Value::number(state.finish(exact_sum)));
-            }
-            let value_atom = self.runtime_atoms.value;
-            let value = match self.get_property(p, step, value_atom) {
-                Ok(value) => value,
-                Err(error) => {
-                    let _ = self.iterator_close(p, iterator);
-                    return Err(error);
-                }
             };
             let Some(number) = value.as_number() else {
                 let error = self.type_error(p, "Math.sumPrecise requires Number values".into());

@@ -5287,10 +5287,10 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                     Ok(super::StepResult::Return(_)) => {
                         super::program_store::JsJitCallOutcome::Return
                     }
-                    Ok(super::StepResult::Await { .. }) => {
+                    Ok(super::StepResult::Suspend(super::Suspended::Await { .. })) => {
                         super::program_store::JsJitCallOutcome::Await
                     }
-                    Ok(super::StepResult::Yield { .. }) => {
+                    Ok(super::StepResult::Suspend(super::Suspended::Yield { .. })) => {
                         super::program_store::JsJitCallOutcome::Yield
                     }
                     Err(_) => super::program_store::JsJitCallOutcome::Error,

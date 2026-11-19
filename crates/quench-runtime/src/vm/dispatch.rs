@@ -906,32 +906,9 @@ impl<H: Host> Vm<H> {
                 let value = self.get_async_iterator(p, self.read(f, i.register_b()))?;
                 self.write(f, i.result_register(), value);
             }
-            Op::Await => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        return self.await_miss(p, f, i);
-                    }
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            Op::Yield => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        return self.yield_miss(p, f, i);
-                    }
-                    RowRun::Stop(stop) => return stop,
-                }
-            }
-            Op::YieldStar => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    RowRun::Done(_) => {}
-                    RowRun::Declined => {
-                        return self.yield_star_miss(p, f, i, pc);
-                    }
-                    RowRun::Stop(stop) => return stop,
-                }
+            Op::Await | Op::Yield | Op::YieldStar => {
+                let site = super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc };
+                return self.staged_suspend(p, site, i, pc);
             }
             Op::SetField | Op::SetFieldStrict => {
                 match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {

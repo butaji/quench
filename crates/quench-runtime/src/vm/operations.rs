@@ -755,13 +755,7 @@ impl<H: Host> Vm<H> {
             NativeFamily::Test262Agent => self.call_test262_agent(p, args),
             NativeFamily::BigInt => self.bigint_native(p, native, this, args),
             NativeFamily::Promise => self.call_promise_native(p, native, this, args),
-            NativeFamily::AsyncFromSyncValue => self.async_from_sync_value(args),
-            NativeFamily::AsyncFromSyncValueRejected => self.async_from_sync_value_rejected(p, args),
-            NativeFamily::AsyncGeneratorReturnFulfilled => self.async_generator_return_fulfilled(p, args),
-            NativeFamily::AsyncGeneratorReturnRejected => self.async_generator_return_rejected(p, args),
-            NativeFamily::AsyncGeneratorDelegateReturnStart => {
-                self.async_generator_delegate_return_start(p, args)
-            }
+            NativeFamily::AsyncReaction => self.call_async_reaction_native(p, native, args),
             NativeFamily::ObjectStatic => self.call_object_native(p, native, args),
             NativeFamily::LazyDataProperty => self.lazy_data_property_access(p, this, args),
             NativeFamily::ProxyRevoke => {
@@ -772,6 +766,17 @@ impl<H: Host> Vm<H> {
             }
             NativeFamily::DataView => self.data_view_native(p, native, this, args),
             NativeFamily::Table | NativeFamily::Unresolved => self.call_native_table(p, native, this, args),
+        }
+    }
+
+    /// The reaction natives of async iteration (`NativeFamily::AsyncReaction`), by kind.
+    fn call_async_reaction_native(&mut self, p: &ResidualProgram, native: Native, args: &[Value]) -> Result<Value, JsError> {
+        match native {
+            Native::AsyncFromSyncValue => self.async_from_sync_value(args),
+            Native::AsyncFromSyncValueRejected => self.async_from_sync_value_rejected(p, args),
+            Native::AsyncGeneratorReturnFulfilled => self.async_generator_return_fulfilled(p, args),
+            Native::AsyncGeneratorReturnRejected => self.async_generator_return_rejected(p, args),
+            _ => self.async_generator_delegate_return_start(p, args),
         }
     }
 
@@ -2311,11 +2316,8 @@ pub(super) enum NativeFamily {
     Test262Agent,
     BigInt,
     Promise,
-    AsyncFromSyncValue,
-    AsyncFromSyncValueRejected,
-    AsyncGeneratorReturnFulfilled,
-    AsyncGeneratorReturnRejected,
-    AsyncGeneratorDelegateReturnStart,
+    /// The reaction natives of async-from-sync iteration and async generators' `return`.
+    AsyncReaction,
     ObjectStatic,
     LazyDataProperty,
     ProxyRevoke,
@@ -2376,11 +2378,11 @@ fn native_family(native: Native) -> NativeFamily {
         Native::Test262Agent => return F::Test262Agent,
         _ if native.is_bigint_native() => return F::BigInt,
         _ if native.is_promise_native() => return F::Promise,
-        Native::AsyncFromSyncValue => return F::AsyncFromSyncValue,
-        Native::AsyncFromSyncValueRejected => return F::AsyncFromSyncValueRejected,
-        Native::AsyncGeneratorReturnFulfilled => return F::AsyncGeneratorReturnFulfilled,
-        Native::AsyncGeneratorReturnRejected => return F::AsyncGeneratorReturnRejected,
-        Native::AsyncGeneratorDelegateReturnStart => return F::AsyncGeneratorDelegateReturnStart,
+        Native::AsyncFromSyncValue
+        | Native::AsyncFromSyncValueRejected
+        | Native::AsyncGeneratorReturnFulfilled
+        | Native::AsyncGeneratorReturnRejected
+        | Native::AsyncGeneratorDelegateReturnStart => return F::AsyncReaction,
         _ if native.is_object_static() => return F::ObjectStatic,
         Native::LazyDataProperty => return F::LazyDataProperty,
         Native::ProxyRevoke => return F::ProxyRevoke,

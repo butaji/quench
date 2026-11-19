@@ -575,14 +575,10 @@ impl<H: Host> Vm<H> {
                     "nested constructor completion escaped its activation".into(),
                 ))
             }
-            FrameOutcome::Await {
-                value, destination, ..
-            } => Ok(FrameOutcome::Await {
-                value,
-                destination,
-                frame: Some(frame),
-            }),
-            FrameOutcome::Yield { .. } => {
+            FrameOutcome::Suspend(suspended @ Suspended::Await { .. }, _) => {
+                Ok(FrameOutcome::Suspend(suspended, Some(frame)))
+            }
+            FrameOutcome::Suspend(Suspended::Yield { .. }, _) => {
                 Err(JsError("yield requires generator continuation".into()))
             }
             FrameOutcome::ParameterInitializationComplete => Err(JsError(
@@ -1395,7 +1391,7 @@ impl<H: Host> Vm<H> {
         outcome: &Result<FrameOutcome, JsError>,
     ) {
         match outcome {
-            Ok(FrameOutcome::Await { .. } | FrameOutcome::Yield { .. }) => {
+            Ok(FrameOutcome::Suspend(..)) => {
                 // Without `with` scopes the activation entered, its (empty) list stays.
                 if self.with_stack.len() > frame.with_base {
                     frame.with_objects = self.with_stack.split_off(frame.with_base);
@@ -1635,12 +1631,10 @@ impl<H: Host> Vm<H> {
         let value = if asynchronous { self.lane_promise_resolve(p, self.intrinsic_promise_constructor(), value)? } else { value };
         self.frames[frame].pc = pc + 1;
         self.frames[frame].pc_is_resume = true;
-        Some(FrameOutcome::Yield {
-            value,
-            destination: instruction.result_register(),
-            delegated_result: None,
-            frame: None,
-        })
+        Some(FrameOutcome::Suspend(
+            Suspended::Yield { value, destination: instruction.result_register(), delegated_result: None },
+            None,
+        ))
     }
 
     /// The suspension of an async frame `frame` whose lane run stopped at its `Await` record
@@ -1657,7 +1651,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<FrameOutcome> {
         let instruction = instruction.filter(|instruction| crate::staged::Operation::<u64, ()>::is_await(*instruction))?;
         self.lane_await_value(p, frame, instruction.register_b(), instruction.result_register(), pc)
-            .map(|value| FrameOutcome::Await { value, destination: instruction.result_register(), frame: None })
+            .map(|value| FrameOutcome::Suspend(Suspended::Await { value, destination: instruction.result_register() }, None))
     }
 
     /// `lane_stop_awaits` of the `Await` at `pc` that reads register `awaited` and resumes into
@@ -2605,7 +2599,7 @@ impl<H: Host> Vm<H> {
                     // The replacement frame publishes all callee roots before this back edge.
                     self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
                 }
-                Ok(StepResult::Await { value, destination }) => {
+                Ok(StepResult::Suspend(Suspended::Await { value, destination })) => {
                     // An async call the loop pushed in place (`Vm::try_settling_call`) suspends
                     // here: its frame becomes the continuation its promise's reaction resumes,
                     // and its caller continues with the promise, as `call_user_maybe_async`
@@ -2657,26 +2651,13 @@ impl<H: Host> Vm<H> {
                     debug_assert!(pending_calls.is_empty());
                     self.frames[frame].pc = pc;
                     self.frames[frame].pc_is_resume = true;
-                    return Ok(FrameOutcome::Await {
-                        value,
-                        destination,
-                        frame: None,
-                    });
+                    return Ok(FrameOutcome::Suspend(Suspended::Await { value, destination }, None));
                 }
-                Ok(StepResult::Yield {
-                    value,
-                    destination,
-                    delegated_result,
-                }) => {
+                Ok(StepResult::Suspend(suspended @ Suspended::Yield { .. })) => {
                     debug_assert!(pending_calls.is_empty());
                     self.frames[frame].pc = pc;
                     self.frames[frame].pc_is_resume = true;
-                    return Ok(FrameOutcome::Yield {
-                        value,
-                        destination,
-                        delegated_result,
-                        frame: None,
-                    });
+                    return Ok(FrameOutcome::Suspend(suspended, None));
                 }
                 Err(error) => unwind_at!(instruction_pc as u32, error),
             }

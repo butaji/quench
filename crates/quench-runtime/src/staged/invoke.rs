@@ -109,16 +109,49 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
-    /// Suspend the activation at `kind` with the value of `value`, resuming into `destination`;
-    /// `None` where the frame cannot, leaving the suspension to the interpreter
-    /// (`dispatch_fast::generator_yields`, `Vm::step`).
+    /// Suspend the activation as `suspending` names (`suspend`): the control the step ends in;
+    /// `None` where the frame cannot, leaving the suspension to the interpreter. The interpreter's
+    /// frame suspends by the step result (`Vm::staged_suspend`), the lane's in place
+    /// (`dispatch_fast::lane_frame::lane_suspension`).
     #[inline(always)]
-    fn suspend(&mut self, stage: &mut S, kind: super::Suspension, destination: Register, value: Register) -> Option<Self::Control> {
-        match kind {
-            super::Suspension::Await => self.suspend_await(stage, destination, value),
-            super::Suspension::Yield => self.suspend_yield(stage, value),
-            super::Suspension::YieldStar { iterator } => self.suspend_yield_star(stage, iterator),
-        }
+    fn suspend(&mut self, _stage: &mut S, _suspending: super::Suspending<S::Word>) -> Option<Self::Control> {
+        None
+    }
+
+    /// Whether the running function is async, a fact of the function the frame runs; `None` where
+    /// the frame does not hold it.
+    #[inline(always)]
+    fn asynchronous(&self) -> Option<bool> {
+        None
+    }
+
+    /// Whether `value` is an object (`Vm::is_object_like`), which its heap cell decides; `None`
+    /// where the frame cannot read the heap.
+    #[inline(always)]
+    fn object_like(&mut self, _stage: &mut S, _value: S::Word) -> Option<S::Cond> {
+        None
+    }
+
+    /// PromiseResolve(%Promise%, `value`); `None` where the frame cannot make it, or it raised.
+    #[inline(always)]
+    fn promise_resolve(&mut self, _stage: &mut S, _value: S::Word) -> Option<S::Word> {
+        None
+    }
+
+    /// The word a step of `yield*`'s delegation defines (`delegation`), with the fact the frame
+    /// keeps of it; `None` where the frame cannot make it, or it raised.
+    #[inline(always)]
+    fn delegation(&mut self, _stage: &mut S, _step: super::DelegationStep<S::Word>) -> Option<(S::Word, Self::Fact)> {
+        None
+    }
+
+    /// The `next` step of a sync `yield*`'s delegate (`DelegationStep::Next`) made by the frame in
+    /// place: the control that runs it, whose result arrives in `state` with this instruction run
+    /// again (`delegation`). `None`, before any effect, where the frame calls `next` instead.
+    #[inline(always)]
+    fn delegation_in_place(&mut self, _stage: &mut S, _step: super::DelegationStep<S::Word>, _state: Register)
+        -> Option<Self::Control> {
+        None
     }
 
     /// Make the lane's activations frames, as a native that observes the frame stack needs

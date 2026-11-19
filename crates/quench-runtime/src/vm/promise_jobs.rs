@@ -572,62 +572,6 @@ impl<H: Host> Vm<H> {
         )
     }
 
-    /// `promise.then(resolve, reject)` for `target`'s fresh resolving functions, as a
-    /// thenable job performs it with the intrinsic `then`. The species lookup runs exactly
-    /// as `then` would. Without lifecycle observers the derived promise and both resolving
-    /// functions are unobservable, so `promise`'s settlement can resolve `target` directly
-    /// through a pass-through reaction.
-    pub(super) fn promise_then_resolving(
-        &mut self,
-        p: &ResidualProgram,
-        promise: Value,
-        target: Value,
-    ) -> Result<(), JsError> {
-        let next = self
-            .promise_species_constructor(p, promise)
-            .and_then(|constructor| {
-                if constructor == self.intrinsic_promise_constructor() {
-                    return Ok(None);
-                }
-                let (next, resolve, reject) = self.new_promise_capability(p, constructor)?;
-                self.realm
-                    .promise
-                    .reaction_capabilities
-                    .insert(next, (resolve, reject));
-                Ok(Some(next))
-            });
-        match next {
-            Ok(None) => {
-                if self.host.observes_promise_lifecycle() {
-                    // Keep the otherwise-unobservable Promise returned by
-                    // `then` when the host observes Promise resources. Node's
-                    // async_hooks exposes its init, job boundaries, and
-                    // settlement even though the resolving callbacks return
-                    // no value to JavaScript.
-                    let parent = self.promise_record(promise).and_then(|record| record.host_context().get());
-                    let next = self.with_call_roots([promise, target], |vm| {
-                        vm.promise_object_with_parent(parent)
-                    })?;
-                    let (resolve, reject) = self.promise_resolving_functions(target);
-                    self.perform_promise_then(p, promise, resolve, reject, next);
-                } else {
-                    self.perform_promise_then(p, promise, Value::UNDEFINED, Value::UNDEFINED, target);
-                }
-            }
-            Ok(Some(next)) => {
-                let (resolve, reject) = self.promise_resolving_functions(target);
-                self.perform_promise_then(p, promise, resolve, reject, next);
-            }
-            // `then` threw: the thenable job rejects `target` with the reason.
-            Err(error) => {
-                let (_, reject) = self.promise_resolving_functions(target);
-                let reason = error.thrown_value().unwrap_or(Value::UNDEFINED);
-                self.call_value(p, reject, Value::UNDEFINED, &[reason])?;
-            }
-        }
-        Ok(())
-    }
-
     /// NewPromiseResolveThenableJob's body.
     pub(super) fn run_thenable_job(
         &mut self,

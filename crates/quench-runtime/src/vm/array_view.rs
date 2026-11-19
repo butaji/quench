@@ -92,8 +92,7 @@ impl<H: Host> Vm<H> {
                 break;
             };
             let index = range.start + offset;
-            let hole = elements.get(index).is_some_and(Value::is_deleted);
-            if let Some(settled) = self.settle_stop(array, index, hole, search, mode) {
+            if let Some(settled) = self.settle_search_stop(array, index, slice[offset].is_deleted(), search, mode) {
                 return settled;
             }
             range = if reverse { range.start..index } else { index + 1..range.end };
@@ -115,7 +114,7 @@ impl<H: Host> Vm<H> {
     /// What the walk does at `index`, where it stopped on a match or a hole: a match is found;
     /// a hole a prototype may hold is the generic algorithm's; any other hole is `undefined`
     /// for `includes` and absent for the rest. `None` goes on past the hole.
-    fn settle_stop(&self, array: Value, index: usize, hole: bool, search: Value, mode: Match) -> Option<Search> {
+    fn settle_search_stop(&self, array: Value, index: usize, hole: bool, search: Value, mode: Match) -> Option<Search> {
         if !hole {
             return Some(Search::Found(index));
         }

@@ -1379,21 +1379,23 @@ impl<H: Host> Vm<H> {
         if !self.is_function(next) {
             return Err(self.type_error(p, "iterator next method is not callable".into()));
         }
-        self.with_call_roots([source, next], |vm| {
-            let result = vm.call_value(p, next, source, args)?;
-            vm.with_call_roots([result], |vm| -> Result<Option<Value>, JsError> {
-                if !vm.is_object_like(result) {
-                    return Err(vm.type_error(p, "iterator next result is not an object".into()));
-                }
-                let done_atom = vm.runtime_atoms.done;
-                let done = vm.get_property(p, result, done_atom)?;
-                if vm.truthy(done) {
-                    return Ok(None);
-                }
-                let value_atom = vm.runtime_atoms.value;
-                vm.get_property(p, result, value_atom).map(Some)
-            })
-        })
+        let source = self.heap.root_value(source_root).unwrap_or(source);
+        let next = self.heap.root_value(next_root).unwrap_or(next);
+        let result = match self.call_value(p, next, source, args) {
+            Ok(result) => result,
+            Err(error) => {
+                self.heap.release_root(next_root);
+                self.heap.release_root(source_root);
+                return Err(error);
+            }
+        };
+        let result_root = self.heap.root(result);
+        let result = self.heap.root_value(result_root).unwrap_or(result);
+        let step = self.iterator_result_value(p, result);
+        self.heap.release_root(result_root);
+        self.heap.release_root(next_root);
+        self.heap.release_root(source_root);
+        step
     }
 
     fn mark_iterator_done(&mut self, iterator: Value) {
@@ -2783,10 +2785,10 @@ impl<H: Host> Vm<H> {
                         Value::FALSE
                     },
                 ],
-            ));
-        let fulfilled = self.native_with_env(Native::AsyncFromSyncValue, env);
-        let rejected = self.native_with_env(Native::AsyncFromSyncValueRejected, env);
-        self.promise_then_intrinsic(p, value_promise, fulfilled, rejected)
+            ),
+        });
+        let natives = [Native::AsyncFromSyncValue, Native::AsyncFromSyncValueRejected];
+        self.then_with_natives(p, value_promise, natives, env, super::promise::ThenCapability::Resolving)
     }
 
     pub(super) fn async_from_sync_value(&mut self, args: &[Value]) -> Result<Value, JsError> {

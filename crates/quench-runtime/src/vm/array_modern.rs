@@ -1,4 +1,5 @@
 use super::*;
+use super::promise::ThenCapability;
 use crate::heap::{ArrayFromAsyncAwait, ArrayFromAsyncState};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -572,9 +573,8 @@ impl<H: Host> Vm<H> {
                     .heap
                     .root_value(state_root)
                     .expect("rooted Array.fromAsync continuation remains live");
-                let fulfilled = vm.native_with_env(Native::ArrayFromAsyncFulfilled, state_value);
-                let rejected = vm.native_with_env(Native::ArrayFromAsyncRejected, state_value);
-                vm.promise_then(p, promise, fulfilled, rejected)?;
+                let natives = [Native::ArrayFromAsyncFulfilled, Native::ArrayFromAsyncRejected];
+                vm.then_with_natives(p, promise, natives, state_value, ThenCapability::Species)?;
                 Ok(())
             })
         })();
@@ -624,14 +624,10 @@ impl<H: Host> Vm<H> {
                 if !self.is_object_like(value) {
                     return Err(self.type_error(p, "iterator result is not an object".into()));
                 }
-                let done_atom = self.runtime_atoms.done;
-                let done = self.get_property(p, value, done_atom)?;
-                if self.truthy(done) {
+                let Some(item) = self.iterator_result_value(p, value)? else {
                     self.set_array_from_async_length(p, state.result, state.index)?;
                     return self.promise_resolve_value(p, state.output, state.result);
-                }
-                let value_atom = self.runtime_atoms.value;
-                let item = self.get_property(p, value, value_atom)?;
+                };
                 self.array_from_async_map_or_store(p, state_value, state, item)
             }
             ArrayFromAsyncAwait::ArrayLikeValue => {

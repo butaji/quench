@@ -1,4 +1,5 @@
-//! The interpreter's register frame: `staged` moves and constants over the live file.
+//! The interpreter's register frame: `staged` rows over the live file, a move or constant, a
+//! jump, an allocation, a suspension (`suspends`).
 
 use super::*;
 use super::lane_reads::Reads;
@@ -62,15 +63,8 @@ struct LaneHost {
     define: ElementDefiner,
     delete: PropertyDeleter,
     read_name: NameReader,
-    /// The `typeof` kind of a heap value, as the VM names it (`typeof_kind`), for a staged `typeof` row.
-    type_of: unsafe fn(*mut (), Value) -> Option<crate::staged::value::TypeofKind>,
-    /// The interned `typeof` result string of a name index in `TYPEOF_NAMES` (`typeof_names`).
-    typeof_name: unsafe fn(*mut (), u64) -> Option<Value>,
-    /// SetFunctionName of a function to a program atom through a cache site (`Vm::set_function_name`).
-    set_name: unsafe fn(*mut (), Value, u32, u16) -> Option<()>,
-    /// The values a keeping activation kept (`kept_values`): their count and the register
-    /// that holds the first, past the function's registers.
-    kept_values: KeptValues,
+    /// What an `await`'s source conversion asks (`staged_ops::lane_await_source`).
+    awaits: AwaitSource,
     /// What the by-name load the frame runs resolved its name to, if it runs one.
     name: Option<NameBinding>,
     /// The VM's `is_object_like` of a heap value, for a staged object test (`RequireIteratorResult`).
@@ -380,405 +374,8 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     vectors: Option<WasmVectors>,
     /// The constants, local slots and outer captures the staged row's operands name.
     reads: Reads,
-    /// The window of an environment activation's run, where a window record reads its locals
-    /// (`FLAG_WINDOW`): the register at its base, whose locals follow its environment and slots
-    /// words (`WINDOW_LOCALS`). `None` in a frame's run.
-    window: Option<*mut Value>,
-    /// The plan of the named read the frame runs, as its record holds it (`RecordPlan`).
-    plan: Option<RecordPlan>,
-    /// The object a `GetField` of a local slot reads, where the local holds a plain value
-    /// (`plain_local_operand`); `PropertyFrame::local_base` answers it. `None` otherwise.
-    local_object: Option<u64>,
-    /// The VM's element steps an element row's host path runs at its site, where the row is one
-    /// that accesses an element (`ElementFrame::index_set_host`, `PropertyFrame::index_get_host`).
-    elements: Option<ElementSteps>,
-    /// The VM's geometry and length reads a host read row runs (`GeometrySteps`), where the row is
-    /// one that reads a view's geometry or a length (`TYPED_LENGTH_SITE`, `GEOMETRY_SITE`).
-    geometry: Option<GeometrySteps>,
-    /// The VM's stores and adds a named store row joins to, for a store record (`FieldStores`).
-    stores: Option<FieldStores>,
-    /// The form hint the VM's own-field store left for the store record, which the row writes to
-    /// the record once the store completes (`PropertyFrame::field_store_host`).
-    stored: Option<crate::vm::FieldCache>,
-    /// The element kind a typed element row (`TYPED_SITE`) observed, and the typed array record
-    /// pages the view proof reads (`Heap::typed_view_directory`); none elsewhere.
-    typed: Option<(crate::staged::typed_elements::NativeKind, (*const usize, usize))>,
-    /// The VM's Math calls, for a Math row (`PropertyFrame::math_call`); none elsewhere.
-    math: Option<MathCalls>,
-    /// The VM's entry lookups the running lane makes at the row's site, for a row whose plan takes
-    /// one (`PropertyFrame::field_entry`); none elsewhere.
-    entries: Option<EntryReads>,
-    /// The lane context and the completion a raw `WasmReturn64` row hands its returned word
-    /// (`lane_complete_wasm_activation`), where the row is one (`returns_raw_row`). `None` otherwise.
-    wasm_return: Option<(*mut (), unsafe fn(*mut (), Value) -> Option<Resumed>)>,
-    /// The row's double result keeps its double bits, not an int32 canonical form (`FUSED_RAW`):
-    /// set only for the producer of a raw pair, whose one reader is the next Number row.
-    raw_result: bool,
-}
-
-/// The VM's entry lookups of the running lane at the row's site `ip`, erased of its host so the
-/// frame names no `H`: `field_entry_read` makes the one `kind` names. Runs no guest code.
-#[derive(Clone, Copy)]
-struct EntryReads {
-    context: *mut (),
-    site: Ip,
-    read: fn(*mut (), Ip, Value, crate::staged::property::EntryKind) -> Option<Value>,
-}
-
-impl EntryReads {
-    /// The entry lookups of the running lane's `cx` at the row's site `ip`.
-    #[inline(always)]
-    fn of<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Self {
-        Self { context: cx.cast(), site: ip, read: super::field_entry_read::<H> }
-    }
-}
-
-/// The element steps of the running lane, erased of its host so the frame names no `H`: the
-/// read and the store an element row's host path makes at its site `ip` (`row_index_read`,
-/// `row_index_write`). Neither runs guest code; a refusal leaves to the row's miss.
-#[derive(Clone, Copy)]
-struct ElementSteps {
-    context: *mut (),
-    site: Ip,
-    read: fn(*mut (), Ip, Value, Value) -> Option<Value>,
-    write: fn(*mut (), Ip, Value, Value, Value) -> bool,
-}
-
-impl ElementSteps {
-    /// The element steps of the running lane's `cx` at the row's site `ip`.
-    #[inline(always)]
-    fn of<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Self {
-        Self { context: cx.cast(), site: ip, read: row_index_read::<H>, write: row_index_write::<H> }
-    }
-}
-
-/// The VM's geometry and length reads of the running lane, erased of its host so the frame names
-/// no `H`: the intrinsic geometry getter of a name on a receiver (`lane_geometry_read`), and the
-/// `length` of a receiver that is no array or string (`length_read`). Neither runs guest code; a
-/// refusal leaves to the row's miss.
-#[derive(Clone, Copy)]
-struct GeometrySteps {
-    context: *mut (),
-    geometry: fn(*mut (), Value, u32) -> Option<Value>,
-    length: fn(*mut (), Value) -> Option<Value>,
-}
-
-impl GeometrySteps {
-    /// The geometry steps of the running lane's `cx`.
-    #[inline(always)]
-    fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
-        Self { context: cx.cast(),
-            geometry: |context, base, atom| lane_geometry_read(unsafe { vm(context.cast::<LaneContext<H>>()) }, base, atom),
-            length: |context, base| length_read(unsafe { vm(context.cast::<LaneContext<H>>()) }, base) }
-    }
-}
-
-/// The proof span of an array a proved element row names (`dispatch_fast::proof_span`): the lane
-/// context's bytes, the base register, its value, and whether a store writes it.
-type ElementSpan = unsafe fn(*mut u8, u16, Value, bool) -> Option<(std::ptr::NonNull<Value>, usize)>;
-
-/// The lane context's resolver of a Wasm memory value for a generic memory row: the bytes of the
-/// memory the value names, and whether its index is an i64 (`wasm_memory_of`).
-#[derive(Clone, Copy)]
-struct WasmMemories {
-    context: *mut (),
-    resolve: unsafe fn(*mut (), Value) -> Option<(*mut u8, usize, bool)>,
-}
-
-/// `WasmMemories::resolve`: the bytes of the Wasm memory `value` names, as `direct_memory` gives
-/// them, and whether its index type is i64. `None` where the memory is not addressed directly.
-///
-/// # Safety
-/// `context` is the running lane's context.
-unsafe fn wasm_memory_of<H: Host>(context: *mut (), value: Value) -> Option<(*mut u8, usize, bool)> {
-    let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
-    let (bytes, length) = direct_memory(vm, value)?;
-    let wide = vm.wasm_memory_index_type(value).ok()? == crate::WasmType::I64;
-    Some((bytes, length, wide))
-}
-
-/// The lane context's Wasm global rules for a staged instance-state row: the VM's load of the
-/// global bound in a binding and its store (`wasm_global_load`, `wasm_global_store`).
-#[derive(Clone, Copy)]
-struct WasmGlobals {
-    context: *mut (),
-    load: unsafe fn(*mut (), Value) -> Option<Value>,
-    store: unsafe fn(*mut (), Value, Value) -> bool,
-    /// The running instance's slot a `WasmInstanceBinding` row reads (`wasm_instance_slot`).
-    instance_slot: unsafe fn(*mut (), u32) -> Option<Value>,
-}
-
-/// The lane context's heap callbacks for the vector rows (`Decoder::WasmVector`): the 16 bytes of a
-/// vector cell, and a fresh vector cell of given bytes.
-#[derive(Clone, Copy)]
-struct WasmVectors {
-    context: *mut (),
-    read: unsafe fn(*mut (), Value) -> Option<[u8; 16]>,
-    alloc: unsafe fn(*mut (), [u8; 16]) -> Option<Value>,
-}
-
-/// The running frame's captured environment for a staged environment row: the storage of its
-/// slots, which `read` finds for a read and `write` for a store (it takes the environment's barrier).
-#[derive(Clone, Copy)]
-struct EnvironmentReads {
-    context: *mut (),
-    read: unsafe fn(*mut ()) -> Option<*mut crate::heap::EnvironmentSlots>,
-    write: unsafe fn(*mut (), u16) -> Option<*mut crate::heap::EnvironmentSlots>,
-}
-
-/// The lane context's iterator cleanup stack for an `IteratorCleanupPush`/`Pop` row (`iterator_push_in_lane`,
-/// `iterator_pop_in_lane`), erased of its host so the frame names no `H`.
-#[derive(Clone, Copy)]
-struct IteratorCleanups {
-    context: *mut (),
-    push: unsafe fn(*mut (), Register, Register),
-    pop: unsafe fn(*mut ()) -> bool,
-}
-
-/// A row's global-name store: the lane context and the record's own hint, which the store
-/// writes through (`global_name_store`).
-#[derive(Clone, Copy)]
-struct GlobalStore {
-    cx: *mut (),
-    hint: crate::vm::FieldCache,
-    store: unsafe fn(*mut (), crate::vm::FieldCache, u32, Value) -> bool,
-}
-
-
-/// A named read's plan as a lane record holds it: the ops the record's own-field hint proves
-/// (`staged::ic`), over the object record table the lane bound. The generated row reads it as a
-/// specializer reads the plan its site proved (`PlanSource`), so the record's quickened state is
-/// data the one staged row runs, not a handler written for it.
-#[derive(Clone, Copy)]
-pub(in crate::vm::dispatch_fast) struct RecordPlan {
-    ops: [crate::staged::ic::IcOp<'static>; 2],
-    /// How many of `ops` the plan runs.
-    len: usize,
-    records: u64,
-    /// The heap whose arrays, functions and ordinary builtins a plan any receiver runs
-    /// (`IcOp::Held`) finds the object part of (`Heap::held_other_receiver`); `None` where the
-    /// plan runs over direct objects alone.
-    other: Option<*const crate::heap::Heap>,
-    /// Whether the plan starts from the receiver's word rather than its object record
-    /// (`IcOp::HeldString`).
-    word: bool,
-    /// The store the record's hint proves (`StorePlan::Layout`), or the add it proves
-    /// (`StorePlan::Add`); `None` for a read's plan.
-    store: Option<crate::staged::property::StorePlan<'static>>,
-    /// Whether the plan's receivers are mostly functions (`own_other`): their object part is
-    /// found inline, before any other family.
-    functions: bool,
-    /// A nested read `a.b.c` of two own hops (`FieldPlan::Chain`): each hop's layout and slot,
-    /// the first from the record's hint and the second from its site's entry, and the base the
-    /// first reads (`PropertyFrame::nested_base`). `None` for every other plan.
-    nested: Option<([(u32, u16); 2], crate::bytecode::FieldBase)>,
-    /// A read the frame's host answers (`FieldPlan::Geometry`, `FieldPlan::Length`), which addresses
-    /// no record: the receiver's word is its operand. `None` for every other plan.
-    host: Option<crate::staged::property::FieldPlan<'static>>,
-    /// The VM's entry lookup the plan takes where its ops miss, or alone where `len` is zero
-    /// (`FieldPlan::Entry`, `FieldPlan::Hinted`); `None` for every other plan.
-    entry: Option<crate::staged::property::EntryKind>,
-}
-
-impl RecordPlan {
-    /// The polymorphic read of the record's hint `(layout, slot)`: the own-slot read of the hint, else
-    /// the site's inline or hashed entries through the VM (`EntryKind::Polymorphic`).
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn polymorphic(layout: u32, slot: u16, records: u64) -> Self {
-        Self { entry: Some(crate::staged::property::EntryKind::Polymorphic), ..Self::own(layout, slot, records) }
-    }
-
-    /// A read the VM's entry lookup of `kind` answers alone, over the object records the lane bound.
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn entry(kind: crate::staged::property::EntryKind, records: u64) -> Self {
-        let none = crate::staged::ic::IcOp::GuardLayout(0);
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, functions: false, nested: None,
-            host: None, entry: Some(kind) }
-    }
-
-    /// The private name's read of the record (`FieldPlan::Private`), whose atom the lookup names.
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn private(atom: u32) -> Self {
-        Self::host_read(crate::staged::property::FieldPlan::Private { atom })
-    }
-}
-
-impl RecordPlan {
-    /// The own-slot read of the hint `(layout, slot)`: one compare of the record's layout id,
-    /// whose storage form the site fixed where it fixed one (`own_formed_handler`).
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn own(layout: u32, slot: u16, records: u64) -> Self {
-        use crate::staged::ic::IcOp;
-        let load = IcOp::LoadSlot { slot, form: crate::staged::ic::form_of_layout(layout), storage_len: usize::from(slot) + 1,
-            rep: crate::typed_ir::Representation::Tagged };
-        Self { ops: [IcOp::GuardLayout(layout), load], len: 2, records, other: None, word: false, store: None, functions: false, nested: None, host: None, entry: None }
-    }
-
-    /// `own` of a receiver of any object part (`Heap::held_other_receiver`): a function's record
-    /// takes the same layout compare.
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn own_other(layout: u32, slot: u16, records: u64, heap: *const crate::heap::Heap) -> Self {
-        Self { other: Some(heap), functions: true, ..Self::own(layout, slot, records) }
-    }
-
-    /// The read of one object's own constant (`IcOp::OwnConstant`) from the receiver's word,
-    /// which equals the object's own word (`Vm::own_constant_word_operands`): one compare of the
-    /// register, no record addressed.
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn own_constant(object: u64, watch: u64, value: u64) -> Self {
-        let read = crate::staged::ic::IcOp::OwnConstant { record: object, watch, value };
-        Self { ops: [read, read], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None, host: None, entry: None }
-    }
-
-    /// The `length` of the receiver's word read by `length` (`IcOp::ArrayLength` or
-    /// `IcOp::StringLength`), no record addressed before it.
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn length(length: crate::staged::ic::IcOp<'static>) -> Self {
-        Self { ops: [length, length], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None, host: None, entry: None }
-    }
-
-    /// `own_other` of a layout whose storage form `form` the row's site fixed.
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn own_other_formed(layout: u32, form: u32, slot: u16, records: u64,
-        heap: *const crate::heap::Heap) -> Self {
-        let mut plan = Self::own_other(layout, slot, records, heap);
-        plan.ops[0] = crate::staged::ic::IcOp::GuardFormed { id: layout, form };
-        plan
-    }
-
-    /// The read through a prototype hint whose operands are `guard`, `watch` and `value`
-    /// (`IcOp::Held`).
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn held(guard: u64, watch: u64, value: u64, records: u64,
-        other: Option<*const crate::heap::Heap>) -> Self {
-        use crate::staged::ic::IcOp;
-        let held = IcOp::Held { guard, watch, value };
-        Self { ops: [held, held], len: 1, records, other, word: false, store: None, functions: false, nested: None, host: None, entry: None }
-    }
-}
-
-impl RecordPlan {
-    /// The own-field store of the hint `(layout, slot)`: one compare of the record's layout id,
-    /// whose entry names the storage form (`StorePlan::Layout`); what it refuses is the VM's.
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn own_store(layout: u32, slot: u16, records: u64) -> Self {
-        use crate::staged::ic::IcOp;
-        use crate::staged::property::{StoreJoin, StorePlan};
-        let none = IcOp::GuardLayout(layout);
-        let store = StorePlan::Layout { id: layout, slot, join: StoreJoin::Host };
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: Some(store), functions: false, nested: None, host: None, entry: None }
-    }
-
-    /// The store the hint `(layout, slot)` proves for a tracked (`narrow` false) or narrow store
-    /// (`StorePlan::Hinted`), a refusal leaving to the VM's own-field store.
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn own_hinted(layout: u32, slot: u16, records: u64, narrow: bool) -> Self {
-        use crate::staged::property::{StoreJoin, StorePlan};
-        let store = StorePlan::Hinted { id: layout, slot, narrow, join: StoreJoin::Host };
-        Self { store: Some(store), ..Self::own_store(layout, slot, records) }
-    }
-
-    /// The store the hint `(layout, slot)` and the site's polymorphic entries prove
-    /// (`StorePlan::Polymorphic`).
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn own_polymorphic(layout: u32, slot: u16, records: u64) -> Self {
-        let store = crate::staged::property::StorePlan::Polymorphic { id: layout, slot };
-        Self { store: Some(store), ..Self::own_store(layout, slot, records) }
-    }
-
-    /// The general cached write of a public name (`StorePlan::Host`): the VM's cached store or
-    /// add, which a refusal leaves to the lane's general store.
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn general_store(records: u64) -> Self {
-        Self { store: Some(crate::staged::property::StorePlan::Host), ..Self::own_store(0, 0, records) }
-    }
-
-    /// The adding store of a named store record whose site may add its property (`StorePlan::Add`):
-    /// the VM's proved or cached add completes it (`PropertyFrame::field_add`).
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn own_add() -> Self {
-        Self { store: Some(crate::staged::property::StorePlan::Add), ..Self::own_store(0, 0, 0) }
-    }
-
-    /// The read of a string receiver through a `String.prototype` hint whose operands are
-    /// `watch` and `value` (`IcOp::HeldString`), from the receiver's word.
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn held_string(watch: u64, value: u64) -> Self {
-        use crate::staged::ic::IcOp;
-        let held = IcOp::HeldString { watch, value };
-        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None, host: None, entry: None }
-    }
-
-    /// The read of a number receiver through a `Number.prototype` hint whose operands are `watch`
-    /// and `value` (`IcOp::HeldNumber`), from the receiver's word.
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn held_number(watch: u64, value: u64) -> Self {
-        use crate::staged::ic::IcOp;
-        let held = IcOp::HeldNumber { watch, value };
-        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None, host: None, entry: None }
-    }
-
-    /// The own field a getter's hint returns (`IcOp::GetterOwn`), over the object records the lane
-    /// bound: the receiver's layout `guard`, the watch on its prototype and the slot `slot`.
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn getter(guard: u64, watch: u64, slot: u16, records: u64) -> Self {
-        use crate::staged::ic::IcOp;
-        let read = IcOp::GetterOwn { guard, watch, slot };
-        Self { ops: [read, read], len: 1, records, other: None, word: false, store: None, functions: false, nested: None, host: None, entry: None }
-    }
-}
-
-impl RecordPlan {
-    /// The nested read `a.b.c` of two own hops: `first` the record's hint (the layout and slot
-    /// of the first object), `second` the site's entry for the intermediate object, and `base`
-    /// the base the first hop reads. One layout compare and one slot load per hop.
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn nested(first: (u32, u16), second: (u32, u16), base: crate::bytecode::FieldBase,
-        records: u64) -> Self {
-        let none = crate::staged::ic::IcOp::GuardLayout(first.0);
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, functions: false,
-            nested: Some(([first, second], base)), host: None, entry: None }
-    }
-
-    /// A read the frame's host answers (`plan`, a `FieldPlan::Geometry` or `FieldPlan::Length`):
-    /// no record is addressed, so the plan's operands are the receiver's word alone.
-    #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn host_read(plan: crate::staged::property::FieldPlan<'static>) -> Self {
-        let none = crate::staged::ic::IcOp::GuardShape(0);
-        Self { ops: [none, none], len: 0, records: 0, other: None, word: false, store: None, functions: false, nested: None, host: Some(plan), entry: None }
-    }
-}
-
-/// The plans a lane frame holds: the record's own read, its store, its nested chain, or its host read, or none.
-#[derive(Clone, Copy)]
-pub(in crate::vm::dispatch_fast) struct LanePlans {
-    read: Option<([crate::staged::ic::IcOp<'static>; 2], usize)>,
-    store: Option<crate::staged::property::StorePlan<'static>>,
-    nested: Option<[(u32, u16); 2]>,
-    host: Option<crate::staged::property::FieldPlan<'static>>,
-    entry: Option<crate::staged::property::EntryKind>,
-}
-
-impl crate::staged::property::PlanSource for LanePlans {
-    #[inline(always)]
-    fn field_plan(&self, _lookup: crate::bytecode::FieldLookup) -> Option<crate::staged::property::FieldPlan<'_>> {
-        if let Some(host) = self.host { return Some(host); }
-        use crate::staged::property::FieldPlan;
-        match (self.read.as_ref(), self.entry) {
-            (Some((ops, len)), Some(entry)) if *len > 0 => Some(FieldPlan::Hinted { ops: &ops[..*len], entry }),
-            (_, Some(entry)) => Some(FieldPlan::Entry(entry)),
-            (read, None) => read.map(|(ops, len)| FieldPlan::Ops(&ops[..*len])),
-        }
-    }
-    /// A nested read's two own hops, as the record holds them.
-    #[inline(always)]
-    fn nested_hops(&self) -> Option<[(u32, u16); 2]> { self.nested }
-    #[inline(always)]
-    fn store_plan(&self, _site: u16) -> Option<crate::staged::property::StorePlan<'_>> {
-        // The VM's own-field hit completes what the layout store refuses (`StoreJoin::Host`), and
-        // the VM's adds complete an add record's store (`StorePlan::Add`).
-        self.store
-    }
+    /// How the running activation suspends in place, for a staged suspension row.
+    suspends: Option<LaneSuspends>,
 }
 
 impl<const ACC: u8> LaneFrame<ACC> {
@@ -801,16 +398,14 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false }
+            capture_slots: None, reads: Reads::NONE, suspends: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
     #[inline(always)]
     fn hosted<H: Host>(registers: Registers, view: Carried, cx: *mut LaneContext<H>) -> Self {
-        let host = LaneHost { cx: cx.cast(), allocate: allocation_in_lane::<H>, define: define_element_in_lane::<H>, delete: delete_value_in_lane::<H>,
-            read_name: name_value_in_lane::<H>, type_of: type_of_in_lane::<H>, typeof_name: typeof_string_in_lane::<H>,
-            set_name: set_function_name_in_lane::<H>, kept_values: kept_values::<H>, name: None,
-            object_like: object_like_in_lane::<H> };
+        let host = LaneHost { cx: cx.cast(), allocate: lane_allocation::<H>, delete: lane_delete_value::<H>,
+            read_name: lane_name_value::<H>, awaits: AwaitSource::of::<H>(), name: None };
         Self { host: Some(host), ..Self::new(registers, view) }
     }
 
@@ -826,7 +421,8 @@ impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame that may read and write the activation's local slots.
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
-        Self { this, locals: Some((locals, len)), ..Self::new(registers, view) }
+        Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
+            capture_slots: None, reads: Reads::NONE, suspends: None }
     }
 }
 
@@ -994,8 +590,8 @@ pub(in crate::vm::dispatch_fast) enum Boxing {
 }
 
 impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
-    type Fact = Boxing;
-    type Control = Edge;
+    type Fact = ();
+    type Control = LaneControl;
 
     #[inline(always)]
     fn fact(&self, _register: Register) -> Self::Fact { Boxing::Value }
@@ -1064,13 +660,13 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn branch(&mut self, _stage: &mut Concrete, condition: bool) -> Edge {
-        if condition { Edge::Target } else { Edge::Following }
+    fn branch(&mut self, _stage: &mut Concrete, condition: bool) -> LaneControl {
+        LaneControl::Edge(if condition { Edge::Target } else { Edge::Following })
     }
 
     #[inline(always)]
-    fn jump(&mut self, _stage: &mut Concrete) -> Edge {
-        Edge::Target
+    fn jump(&mut self, _stage: &mut Concrete) -> LaneControl {
+        LaneControl::Edge(Edge::Target)
     }
 
     #[inline(always)]
@@ -1618,8 +1214,6 @@ unsafe fn global_name_store<H: Host>(cx: *mut (), hint: crate::vm::FieldCache, a
     vm.hinted_own_field_store_hit(hint, vm.realm.globals, atom, value)
 }
 
-impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {}
-
 impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     type Plans = LanePlans;
 
@@ -1930,6 +1524,9 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
 #[path = "lane_frame/staged_ops.rs"]
 mod staged_ops;
 pub(super) use staged_ops::*;
+#[path = "lane_frame/suspends.rs"]
+mod suspends;
+pub(super) use suspends::*;
 
 /// A lane record read as the staged decoder's fields (`staged::Fields`), its opcode the
 /// handler's const generic. The lane admits a register-defining record only without result flags

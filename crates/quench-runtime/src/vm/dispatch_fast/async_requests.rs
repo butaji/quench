@@ -80,26 +80,22 @@ fn take_request_promise<H: Host>(vm: &mut Vm<H>) -> Value {
     vm.release_settled_call_root(root)
 }
 
-/// `await` (or, where `yielded`, `yield`) at `ip` of the in-place request's activation, on
-/// registers `r`: the awaited value, converted as an `await`'s source is (`await_source_in_lane`);
-/// the frame suspends back into the generator's record, resuming after this record, the
-/// activation pops, and the caller goes on with the request's promise. A conversion that could
-/// run guest code takes the general path.
+/// `await` (or, where `yielded`, `yield`) of the in-place request's activation on `value`, the
+/// converted value its row suspends on (`lane_frame::lane_suspension`): the frame suspends back
+/// into the generator's record, resuming at `pc` with the value it is resumed with in
+/// `destination`, the activation pops, and the caller goes on with the request's promise.
 #[inline(never)]
-pub(super) fn lane_suspend_request<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction, yielded: bool) -> Resumed {
+pub(super) fn lane_suspend_request<H: Host>(cx: *mut LaneContext<H>, (pc, destination): (usize, crate::bytecode::Register),
+    yielded: bool, value: Value) -> Resumed {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let Some(value) = vm.await_source_in_lane(code, r.get(i.b)) else {
-        return Resumed::Exit(exit(ip));
-    };
+    // The converted value may be a fresh promise, which the safepoints after the run collect.
     note_allocation(vm);
     let depth = vm.lane_stack.activation_count() - 1;
     let activation = *vm.lane_stack.activations().last().expect("a request's activation runs");
     let ActivationKind::Script(script) = activation.kind else { unreachable!("a request runs as a script activation") };
-    // SAFETY: the record lies in the running view.
-    let pc = unsafe { ip.offset_from((*cx).base) } as usize;
-    vm.suspend_request_window(script.callee, (pc + 1, i.a & crate::bytecode::REGISTER_MASK, depth), yielded, value);
+    vm.suspend_request_window(script.callee, (pc, destination, depth), yielded, value);
     vm.lane_stack.pop_activation();
     let (memory, _) = lane_restore_caller(cx, &activation);
     let promise = take_request_promise(vm);

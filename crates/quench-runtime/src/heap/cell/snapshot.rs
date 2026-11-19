@@ -940,10 +940,9 @@ impl EnvironmentScopeRef {
 
 // A suspended generator or iterator helper: its saved activation is plain data, whose program
 // counter names the same instruction of the same function record once restored.
-use crate::vm::activation::{AsyncGeneratorOperation, AsyncGeneratorRequest, CallContext, Completion, GeneratorState};
+use crate::vm::activation::{AsyncGeneratorOperation, AsyncGeneratorRequest, CallContext, Completion};
 
 snapshot_enum!(async_generator_operation: AsyncGeneratorOperation { Next, Return, Throw });
-snapshot_enum!(generator_state: GeneratorState { Suspended, Executing, Completed, AwaitingReturn });
 snapshot_enum!(iterator_zip_mode: IteratorZipMode { Shortest, Longest, Strict });
 
 macro_rules! snap_via_enum {
@@ -961,7 +960,6 @@ macro_rules! snap_via_enum {
 }
 snap_via_enum! {
     AsyncGeneratorOperation => async_generator_operation;
-    GeneratorState => generator_state;
     IteratorZipMode => iterator_zip_mode;
 }
 
