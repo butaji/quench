@@ -24,7 +24,13 @@ mod layout_checks {
     use crate::staged::layout_offsets as L;
     use std::mem::offset_of;
 
-    const _: () = assert!(offset_of!(CallContext, adapter_payload) == L::CALL_CONTEXT_ADAPTER_PAYLOAD);
+    // The stencils' stand-in words for the call context's head and the function record (`layout_offsets::CallContextWords`,
+    // `FunctionRecordWords`) have their runtime fields' sizes and alignments, so their `offset_of!` values are the runtime's.
+    const _: () = assert!(std::mem::size_of::<crate::Value>() == std::mem::size_of::<u64>() && std::mem::align_of::<crate::Value>() == std::mem::align_of::<u64>());
+    const _: () = assert!(std::mem::size_of::<crate::vm::ProgramId>() == std::mem::size_of::<u32>() && std::mem::align_of::<crate::vm::ProgramId>() == std::mem::align_of::<u32>());
+    const _: () = assert!(std::mem::size_of::<Option<super::super::Raised>>() == std::mem::size_of::<[usize; 3]>() && std::mem::align_of::<Option<super::super::Raised>>() == std::mem::align_of::<[usize; 3]>());
+    const _: () = assert!(std::mem::size_of::<crate::heap::Object>() == std::mem::size_of::<crate::staged::record_heads::ObjectHead>() && std::mem::align_of::<crate::heap::Object>() == std::mem::align_of::<crate::staged::record_heads::ObjectHead>());
+    const _: () = assert!(std::mem::size_of::<crate::heap::FunctionKind>() == std::mem::size_of::<[u32; 3]>() && std::mem::align_of::<crate::heap::FunctionKind>() == std::mem::align_of::<[u32; 3]>());
     const _: () = assert!(L::CAPTURE_ADDRESS_PAD == u64::BITS - quench_bjit::shared_words::CAPTURE_ADDRESS_BITS);
 
     // The dispatch record's head is its first field, so the stencil's `JS_STEP_*` offsets (`js_step_head`) are its own.
@@ -62,10 +68,6 @@ mod layout_checks {
     const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.mark_offset == L::NATIVE_OBJECT_LAYOUT.mark_offset);
     const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size == L::NATIVE_OBJECT_LAYOUT.property_value_size);
     const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.property_value_align == L::NATIVE_OBJECT_LAYOUT.property_value_align);
-
-    // NATIVE_FUNCTION_LAYOUT
-    const _: () = assert!(crate::heap::NATIVE_FUNCTION_LAYOUT.record_size == L::NATIVE_FUNCTION_LAYOUT.record_size);
-    const _: () = assert!(crate::heap::NATIVE_FUNCTION_LAYOUT.object_offset == L::NATIVE_FUNCTION_LAYOUT.object_offset);
 
     // NATIVE_ARRAY_LAYOUT
     const _: () = assert!(crate::heap::NATIVE_ARRAY_LAYOUT.record_capacity == L::NATIVE_ARRAY_LAYOUT.record_capacity);
@@ -524,7 +526,7 @@ mod tests {
         use stencil_layout as m;
         use std::mem::offset_of as at;
         let own = vec![
-            ("adapter_payload", at!(CallContext, adapter_payload), m::CALL_CONTEXT_ADAPTER_PAYLOAD),
+            ("adapter_payload", at!(CallContext, head.adapter_payload), m::CALL_CONTEXT_ADAPTER_PAYLOAD),
             ("property_buffer_base", crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT.base, m::PROPERTY_BUFFER_BASE),
             ("activation_kind", crate::vm::dispatch_fast::KIND_OFFSET, m::ACTIVATION_KIND_OFFSET),
             ("cell_entry", at!(super::super::entry_cell::EntryCell, entry), m::CELL_ENTRY_AT),

@@ -89,12 +89,23 @@ codes! { u8;
     /// The Math functions of one Number: the staged `NumberOperation::Math`, a double, the one definition
     /// the native runs (`staged::math::float_unary`): `sqrtsd`, `roundsd` (x86-64-v2 and up), a sign mask in
     /// a register, and `Math.round`'s composition of them, its constants immediates (`machine::constant`).
-    SQRT;
-    FLOOR;
-    CEIL;
-    TRUNC;
-    ABS;
-    ROUND;
+    SQRT,
+    FLOOR,
+    CEIL,
+    TRUNC,
+    ABS,
+    ROUND,
+    /// `Math.min`, `Math.max` of two Numbers (a double: `staged::math::float_extreme`) and `Math.imul` of
+    /// two int32s (`staged::math::int_multiply`).
+    MIN,
+    MAX,
+    IMUL,
+    /// `Math.clz32` of one Number: the leading zero bits of its ToUint32 (`staged::math::leading_zeros`), an int32.
+    CLZ32,
+    /// int32 `+` and `-` the planner proved exact (a range fact of the operands): the staged int32 step
+    /// with `Overflow::Impossible`, so no overflow test. Int operands only; anything else leaves through exit 0.
+    ADD_NO_OVERFLOW,
+    SUB_NO_OVERFLOW,
 }
 /// The first and last of the Math rows.
 pub const MATH_FIRST: u8 = SQRT;

@@ -49,6 +49,7 @@ use cranelift_codegen::entity::{SecondaryMap, packed_option::PackedOption};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use crate::staged::js_step_head::JsStepHead;
+use crate::staged::record_heads::CallContextHead;
 
 /// The staged operation a record decodes to, with no constants or sites resolved: what a
 /// tier's analysis asks of a record instead of naming its opcode (`Operation::decode`).
@@ -1886,62 +1887,9 @@ const COMPILED_STACK_BUDGET: usize = 512 * 1024;
 /// compiled code loads from.
 #[repr(C)]
 pub(super) struct CallContext {
-    stack_limit: usize,
-    interrupt: *const std::sync::atomic::AtomicBool,
-    table: *const usize,
-    vm: *mut (),
-    env: Value,
-    /// The entry trampoline's stack pointer after it saved the caller's
-    /// registers; a guard fault resumes there.
-    entry_stack: usize,
-    /// The guarded memory reservation compiled code may fault in.
-    guard_start: usize,
-    guard_end: usize,
-    /// Per environment slot (the instance's global area), the address of the native slot of the
-    /// global bound there, read and written raw; null for any other binding. Heap cells never
-    /// move, so the addresses outlive callouts.
-    globals: *const *mut u64,
-    /// Per environment slot, the words that publish the table bound there (`TableWords`): the
-    /// table's rows are read in place, its growth rewrites the words.
-    table_words: *const *const crate::heap::TableWords,
-    /// `import_callout` for the VM's host type.
-    callout: usize,
-    /// VM helper for indirect calls, including table checks and invocation.
-    call_reference: usize,
-    /// The artifact containing the currently executing call site. The active
-    /// entry (or its caller) keeps this artifact strongly owned for the callout.
-    compiled: *const CompiledProgram,
+    /// Every field compiled code loads, at its `CallContextHead` offset (`CALL_CONTEXT_ADAPTER_PAYLOAD`).
+    head: CallContextFields,
     // Fields below are the VM's, never read by compiled code.
-    program: ProgramId,
-    /// Number of Wasm-to-host callouts made by this native invocation.
-    import_callouts: *mut u64,
-    /// Number of direct known calls that had to use the VM fallback.
-    known_callouts: *mut u64,
-    /// Number of Wasm indirect-reference callouts made by this native invocation.
-    reference_callouts: *mut u64,
-    /// The bound linear memory whose base and size this call uses.
-    memory: Value,
-    /// Its exact current byte length, refreshed when a callout may grow it.
-    memory_length: u64,
-    /// What a callout that returned `RAISED_STATUS` raised.
-    raised: Option<Raised>,
-    // Diagnostic-only ABI fields are appended so existing repr(C) offsets
-    // used by generated code stay fixed.
-    call_reference_diagnostic: usize,
-    reference_call_sites: *const ReferenceCallSiteDiagnostics,
-    reference_call_site_count: usize,
-    /// The VM's poll page (`ExecutionInterrupt::poll_page`), whose fault ends the call as
-    /// terminated; empty when compiled code checks the flag instead.
-    poll_start: usize,
-    poll_end: usize,
-    /// Diagnostic-only count of direct Emscripten same-memory copies.
-    emscripten_memcpy_fast_path_hits: *mut u64,
-    /// Per-import attribution, present only during opt-in diagnostic runs.
-    import_callout_counts: *const std::cell::Cell<u64>,
-    import_callout_count: usize,
-    /// A stack-owned adapter payload for JS and OSR entries that use this
-    /// module's common native-entry trampoline without Wasm callouts.
-    adapter_payload: *mut (),
     /// Borrowed only during a running entry; a non-reentrant region may prove unique ownership.
     interrupt_owner: *const crate::ExecutionInterrupt,
     /// The record of the instance this context is in (`InstanceContext`), whose words the fields
@@ -1954,6 +1902,22 @@ pub(super) struct CallContext {
     memory_grow: usize,
 }
 
+/// The ABI prefix of a call context, with the runtime's own field types (`staged::record_heads`).
+type CallContextFields = CallContextHead<Value, CompiledProgram, crate::heap::TableWords, ReferenceCallSiteDiagnostics, ProgramId, Option<Raised>>;
+
+impl std::ops::Deref for CallContext {
+    type Target = CallContextFields;
+    fn deref(&self) -> &CallContextFields {
+        &self.head
+    }
+}
+
+impl std::ops::DerefMut for CallContext {
+    fn deref_mut(&mut self) -> &mut CallContextFields {
+        &mut self.head
+    }
+}
+
 impl CallContext {
     fn native_adapter(
         adapter_payload: *mut (),
@@ -1961,35 +1925,37 @@ impl CallContext {
         poll_page: Option<(usize, usize)>,
     ) -> Self {
         let mut context = Self {
-            stack_limit: 0,
-            interrupt: std::ptr::null(),
-            table: std::ptr::null(),
-            vm: std::ptr::null_mut(),
-            env: Value::NULL,
-            entry_stack: 0,
-            guard_start: 0,
-            guard_end: 0,
-            globals: std::ptr::null(),
-            table_words: std::ptr::null(),
-            callout: 0,
-            call_reference: 0,
-            compiled: std::ptr::null(),
-            program: ProgramId::MAIN,
-            import_callouts: std::ptr::null_mut(),
-            known_callouts: std::ptr::null_mut(),
-            reference_callouts: std::ptr::null_mut(),
-            memory: Value::NULL,
-            memory_length: 0,
-            raised: None,
-            call_reference_diagnostic: 0,
-            reference_call_sites: std::ptr::null(),
-            reference_call_site_count: 0,
-            poll_start: 0,
-            poll_end: 0,
-            emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
-            import_callout_counts: std::ptr::null(),
-            import_callout_count: 0,
-            adapter_payload: std::ptr::null_mut(),
+            head: CallContextFields {
+                stack_limit: 0,
+                interrupt: std::ptr::null(),
+                table: std::ptr::null(),
+                vm: std::ptr::null_mut(),
+                env: Value::NULL,
+                entry_stack: 0,
+                guard_start: 0,
+                guard_end: 0,
+                globals: std::ptr::null(),
+                table_words: std::ptr::null(),
+                callout: 0,
+                call_reference: 0,
+                compiled: std::ptr::null(),
+                program: ProgramId::MAIN,
+                import_callouts: std::ptr::null_mut(),
+                known_callouts: std::ptr::null_mut(),
+                reference_callouts: std::ptr::null_mut(),
+                memory: Value::NULL,
+                memory_length: 0,
+                raised: None,
+                call_reference_diagnostic: 0,
+                reference_call_sites: std::ptr::null(),
+                reference_call_site_count: 0,
+                poll_start: 0,
+                poll_end: 0,
+                emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
+                import_callout_counts: std::ptr::null(),
+                import_callout_count: 0,
+                adapter_payload: std::ptr::null_mut(),
+            },
             interrupt_owner: std::ptr::null(),
             instance: std::ptr::null(),
             native_roots: std::ptr::null_mut(),
@@ -2021,35 +1987,37 @@ impl CallContext {
     fn interrupt_only(interrupt: &crate::execution_interrupt::ExecutionInterrupt) -> Self {
         let poll = native_poll_page(interrupt);
         Self {
-            stack_limit: 0,
-            interrupt: interrupt.attention_flag(),
-            table: std::ptr::null(),
-            vm: std::ptr::null_mut(),
-            env: Value::NULL,
-            entry_stack: 0,
-            guard_start: 0,
-            guard_end: 0,
-            globals: std::ptr::null(),
-            table_words: std::ptr::null(),
-            callout: 0,
-            call_reference: 0,
-            compiled: std::ptr::null(),
-            program: ProgramId::MAIN,
-            import_callouts: std::ptr::null_mut(),
-            known_callouts: std::ptr::null_mut(),
-            reference_callouts: std::ptr::null_mut(),
-            memory: Value::NULL,
-            memory_length: 0,
-            raised: None,
-            call_reference_diagnostic: 0,
-            reference_call_sites: std::ptr::null(),
-            reference_call_site_count: 0,
-            poll_start: poll.map_or(0, |(start, _)| start),
-            poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
-            emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
-            import_callout_counts: std::ptr::null(),
-            import_callout_count: 0,
-            adapter_payload: std::ptr::null_mut(),
+            head: CallContextFields {
+                stack_limit: 0,
+                interrupt: interrupt.attention_flag(),
+                table: std::ptr::null(),
+                vm: std::ptr::null_mut(),
+                env: Value::NULL,
+                entry_stack: 0,
+                guard_start: 0,
+                guard_end: 0,
+                globals: std::ptr::null(),
+                table_words: std::ptr::null(),
+                callout: 0,
+                call_reference: 0,
+                compiled: std::ptr::null(),
+                program: ProgramId::MAIN,
+                import_callouts: std::ptr::null_mut(),
+                known_callouts: std::ptr::null_mut(),
+                reference_callouts: std::ptr::null_mut(),
+                memory: Value::NULL,
+                memory_length: 0,
+                raised: None,
+                call_reference_diagnostic: 0,
+                reference_call_sites: std::ptr::null(),
+                reference_call_site_count: 0,
+                poll_start: poll.map_or(0, |(start, _)| start),
+                poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
+                emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
+                import_callout_counts: std::ptr::null(),
+                import_callout_count: 0,
+                adapter_payload: std::ptr::null_mut(),
+            },
             interrupt_owner: interrupt,
             instance: std::ptr::null(),
             native_roots: std::ptr::null_mut(),
@@ -2067,37 +2035,39 @@ impl CallContext {
         let marker = 0u8;
         let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
         Self {
-            stack_limit: self
-                .stack_limit
-                .max(stack_pointer.saturating_sub(COMPILED_STACK_BUDGET)),
-            interrupt: self.interrupt,
-            table: self.table,
-            vm: self.vm,
-            env: self.env,
-            entry_stack: 0,
-            guard_start: self.guard_start,
-            guard_end: self.guard_end,
-            globals: self.globals,
-            table_words: self.table_words,
-            callout: self.callout,
-            call_reference: self.call_reference,
-            compiled: self.compiled,
-            program: self.program,
-            import_callouts: self.import_callouts,
-            known_callouts: self.known_callouts,
-            reference_callouts: self.reference_callouts,
-            memory: self.memory,
-            memory_length: self.memory_length,
-            raised: None,
-            call_reference_diagnostic: self.call_reference_diagnostic,
-            reference_call_sites: self.reference_call_sites,
-            reference_call_site_count: self.reference_call_site_count,
-            poll_start: self.poll_start,
-            poll_end: self.poll_end,
-            emscripten_memcpy_fast_path_hits: self.emscripten_memcpy_fast_path_hits,
-            import_callout_counts: self.import_callout_counts,
-            import_callout_count: self.import_callout_count,
-            adapter_payload: std::ptr::null_mut(),
+            head: CallContextFields {
+                stack_limit: self
+                    .stack_limit
+                    .max(stack_pointer.saturating_sub(COMPILED_STACK_BUDGET)),
+                interrupt: self.interrupt,
+                table: self.table,
+                vm: self.vm,
+                env: self.env,
+                entry_stack: 0,
+                guard_start: self.guard_start,
+                guard_end: self.guard_end,
+                globals: self.globals,
+                table_words: self.table_words,
+                callout: self.callout,
+                call_reference: self.call_reference,
+                compiled: self.compiled,
+                program: self.program,
+                import_callouts: self.import_callouts,
+                known_callouts: self.known_callouts,
+                reference_callouts: self.reference_callouts,
+                memory: self.memory,
+                memory_length: self.memory_length,
+                raised: None,
+                call_reference_diagnostic: self.call_reference_diagnostic,
+                reference_call_sites: self.reference_call_sites,
+                reference_call_site_count: self.reference_call_site_count,
+                poll_start: self.poll_start,
+                poll_end: self.poll_end,
+                emscripten_memcpy_fast_path_hits: self.emscripten_memcpy_fast_path_hits,
+                import_callout_counts: self.import_callout_counts,
+                import_callout_count: self.import_callout_count,
+                adapter_payload: std::ptr::null_mut(),
+            },
             interrupt_owner: self.interrupt_owner,
             instance: self.instance,
             native_roots: self.native_roots,
@@ -2112,18 +2082,18 @@ enum Raised {
     Panic(Box<dyn std::any::Any + Send>),
 }
 
-const CONTEXT_INTERRUPT: i32 = std::mem::offset_of!(CallContext, interrupt) as i32;
-const CONTEXT_STACK_LIMIT: i32 = std::mem::offset_of!(CallContext, stack_limit) as i32;
-const CONTEXT_TABLE: i32 = std::mem::offset_of!(CallContext, table) as i32;
+const CONTEXT_INTERRUPT: i32 = std::mem::offset_of!(CallContext, head.interrupt) as i32;
+const CONTEXT_STACK_LIMIT: i32 = std::mem::offset_of!(CallContext, head.stack_limit) as i32;
+const CONTEXT_TABLE: i32 = std::mem::offset_of!(CallContext, head.table) as i32;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-const CONTEXT_GLOBALS: i32 = std::mem::offset_of!(CallContext, globals) as i32;
-const CONTEXT_TABLE_WORDS: i32 = std::mem::offset_of!(CallContext, table_words) as i32;
-const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, callout) as i32;
-const CONTEXT_CALL_REFERENCE: i32 = std::mem::offset_of!(CallContext, call_reference) as i32;
-const CONTEXT_MEMORY_LENGTH: i32 = std::mem::offset_of!(CallContext, memory_length) as i32;
-const CONTEXT_MEMORY_GROW: i32 = std::mem::offset_of!(CallContext, memory_grow) as i32;
+const CONTEXT_ENTRY_STACK: u8 = std::mem::offset_of!(CallContext, head.entry_stack) as u8;
+const CONTEXT_GLOBALS: i32 = std::mem::offset_of!(CallContext, head.globals) as i32;
+const CONTEXT_TABLE_WORDS: i32 = std::mem::offset_of!(CallContext, head.table_words) as i32;
+const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, head.callout) as i32;
+const CONTEXT_CALL_REFERENCE: i32 = std::mem::offset_of!(CallContext, head.call_reference) as i32;
+const CONTEXT_MEMORY_LENGTH: i32 = std::mem::offset_of!(CallContext, head.memory_length) as i32;
 const CONTEXT_CALL_REFERENCE_DIAGNOSTIC: i32 =
-    std::mem::offset_of!(CallContext, call_reference_diagnostic) as i32;
+    std::mem::offset_of!(CallContext, head.call_reference_diagnostic) as i32;
 const CONTEXT_INSTANCE: i32 = std::mem::offset_of!(CallContext, instance) as i32;
 const CONTEXT_NATIVE_ROOTS: i32 = std::mem::offset_of!(CallContext, native_roots) as i32;
 /// The callout's signature: (context, function index, arguments, result) ->
@@ -5004,7 +4974,7 @@ pub(super) fn native_js_start_pc(builder: &mut FunctionBuilder<'_>, context: ir:
     let pointer = emit_machine::of_in_lane(builder.func.signature.params[0].value_type);
     let mut stage = object_slots::emit(builder);
     let payload = stage.raw_load(pointer, MemFlagsData::trusted(), context,
-        std::mem::offset_of!(CallContext, adapter_payload) as i32);
+        std::mem::offset_of!(CallContext, head.adapter_payload) as i32);
     stage.raw_load(Lane::I64, MemFlagsData::trusted(), payload,
         std::mem::offset_of!(JsStepDispatch, start_pc) as i32)
 }
@@ -6403,7 +6373,7 @@ fn is_leaf(instructions: &[WideInstruction], plan: &Plan, registers: u16) -> boo
 /// Bind the activation's stable interrupt capability. The pointer is invariant;
 /// the byte it addresses remains atomic and must be read at every safepoint.
 fn native_interrupt_pointer(builder: &mut FunctionBuilder<'_>, context: ir::Value, fault_poll: bool) -> ir::Value {
-    let offset = if fault_poll { std::mem::offset_of!(CallContext, poll_start) as i32 }
+    let offset = if fault_poll { std::mem::offset_of!(CallContext, head.poll_start) as i32 }
         else { CONTEXT_INTERRUPT };
     object_slots::emit(builder).raw_load(crate::staged::machine::Lane::I64, invariant(), context, offset)
 }
@@ -9260,35 +9230,37 @@ impl<H: Host> Vm<H> {
             };
             let poll = self.execution_interrupt.poll_page();
             let mut context = CallContext {
-                stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
-                interrupt: self.execution_interrupt.attention_flag(),
-                table: std::ptr::null(),
-                vm: (self as *mut Self).cast(),
-                env,
-                entry_stack: 0,
-                guard_start: 0,
-                guard_end: 0,
-                globals: std::ptr::null(),
-                table_words: std::ptr::null(),
-                callout: import_callout::<H> as Callout as usize,
-                call_reference: reference_callout::<H> as ReferenceCallout as usize,
-                compiled: std::ptr::null(),
-                program,
-                import_callouts: import_callouts_ptr,
-                known_callouts: known_callouts_ptr,
-                reference_callouts: reference_callouts_ptr,
-                memory: Value::UNDEFINED,
-                memory_length: 0,
-                raised: None,
-                call_reference_diagnostic: 0,
-                reference_call_sites: std::ptr::null(),
-                reference_call_site_count: 0,
-                poll_start: poll.map_or(0, |(start, _)| start),
-                poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
-                emscripten_memcpy_fast_path_hits: emscripten_memcpy_fast_path_hits_ptr,
-                import_callout_counts: std::ptr::null(),
-                import_callout_count: 0,
-                adapter_payload: std::ptr::null_mut(),
+                head: CallContextFields {
+                    stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
+                    interrupt: self.execution_interrupt.attention_flag(),
+                    table: std::ptr::null(),
+                    vm: (self as *mut Self).cast(),
+                    env,
+                    entry_stack: 0,
+                    guard_start: 0,
+                    guard_end: 0,
+                    globals: std::ptr::null(),
+                    table_words: std::ptr::null(),
+                    callout: import_callout::<H> as Callout as usize,
+                    call_reference: reference_callout::<H> as ReferenceCallout as usize,
+                    compiled: std::ptr::null(),
+                    program,
+                    import_callouts: import_callouts_ptr,
+                    known_callouts: known_callouts_ptr,
+                    reference_callouts: reference_callouts_ptr,
+                    memory: Value::UNDEFINED,
+                    memory_length: 0,
+                    raised: None,
+                    call_reference_diagnostic: 0,
+                    reference_call_sites: std::ptr::null(),
+                    reference_call_site_count: 0,
+                    poll_start: poll.map_or(0, |(start, _)| start),
+                    poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
+                    emscripten_memcpy_fast_path_hits: emscripten_memcpy_fast_path_hits_ptr,
+                    import_callout_counts: std::ptr::null(),
+                    import_callout_count: 0,
+                    adapter_payload: std::ptr::null_mut(),
+                },
                 interrupt_owner: std::ptr::null(),
                 instance: std::ptr::null(),
                 native_roots: &mut *self.native_roots,
@@ -11065,7 +11037,7 @@ mod tests {
         core.into_builder().finalize(isa.frontend_config());
         cranelift_codegen::verify_function(&native, &*isa).unwrap();
         let owners: Vec<_> = native.layout.block_insts(entry).filter(|&inst| matches!(native.dfg.insts[inst], ir::InstructionData::Load { arg, offset, .. }
-                if arg == activation && i32::from(offset) == std::mem::offset_of!(CallContext, poll_start) as i32)).map(|inst| native.dfg.inst_results(inst)[0]).collect();
+                if arg == activation && i32::from(offset) == std::mem::offset_of!(CallContext, head.poll_start) as i32)).map(|inst| native.dfg.inst_results(inst)[0]).collect();
         assert_eq!(owners.len(), 1, "bind the activation's pointer once before the loop");
         let polls: Vec<_> = native.layout.block_insts(header).filter(|&inst|
             native.dfg.insts[inst].opcode() == ir::Opcode::AtomicLoad).collect();

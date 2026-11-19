@@ -108,6 +108,12 @@ fn products(places: &Places, rows: &mut BTreeSet<Code>) {
     }
 }
 
+/// The int32 `+` and `-` the planner proved exact (`ADD_NO_OVERFLOW`, `SUB_NO_OVERFLOW`): int operands and an int
+/// destination only, always speculating, as no overflow leaves them.
+fn exact_arithmetic(places: &Places, rows: &mut BTreeSet<Code>) {
+    product(rows, &[ADD_NO_OVERFLOW, SUB_NO_OVERFLOW], &places.ints_dst, &places.ints_src, &[true]);
+}
+
 /// Jumps, entry tagging, guards and spills (of a pinned double to a canonical word, of a pinned
 /// int32 back to a tagged int word).
 fn control(places: &Places, rows: &mut BTreeSet<Code>) {
@@ -145,6 +151,7 @@ pub fn library() -> Vec<Code> {
     let mut rows = BTreeSet::new();
     bitwise_over_doubles(&places, &mut rows);
     products(&places, &mut rows);
+    exact_arithmetic(&places, &mut rows);
     control(&places, &mut rows);
     truthiness(&places, &mut rows);
     rows.into_iter().collect()

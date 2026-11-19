@@ -32,7 +32,7 @@ unsafe extern "C" fn trampoline(
         "b {resume}",
         frame = const FRAME_BYTES, pair = const PAIR_BYTES,
         gpr = const GENERAL_BASE, simd = const VECTOR_BASE,
-        saved_stack = const std::mem::offset_of!(CallContext, entry_stack),
+        saved_stack = const std::mem::offset_of!(CallContext, head.entry_stack),
         resume = sym resume,
     );
 }

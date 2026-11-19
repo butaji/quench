@@ -130,10 +130,9 @@ pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits, entry: &[
         let out = after(&rows[k], &held);
         for next in rows[k].successors(k, count, span) {
             let Next::Row(next) = next else { continue };
-            // The first row is the region's entry: nothing is proved there, whatever the back edge holds.
-            if next == 0 {
-                continue;
-            }
+            // The first row is the region's entry, where the entry seed holds. A back edge into it joins like any
+            // other edge: a row since may have reshaped a class-typed receiver the seed proved (`may_reshape`), and
+            // the seed's shape is then no longer held on the next iteration.
             let joined = match &before[next] {
                 None => out.clone(),
                 Some(known) => meet(known, &out),

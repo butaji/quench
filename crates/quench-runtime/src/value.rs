@@ -1,17 +1,7 @@
 use std::fmt;
 
-const TAG_MASK: u64 = 0xffff_0000_0000_0000;
-const PAYLOAD_MASK: u64 = 0x0000_ffff_ffff_ffff;
-pub(crate) const TAG_UNDEFINED: u64 = 0x7ff9_0000_0000_0000;
-pub(crate) const TAG_NULL: u64 = 0x7ffa_0000_0000_0000;
-pub(crate) const TAG_BOOL: u64 = 0x7ffb_0000_0000_0000;
-const TAG_HEAP: u64 = 0x7ffc_0000_0000_0000;
-const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
-/// The high dword of every int32's word (`Registers::int` compares it in memory).
-pub(crate) const INT_TAG_HIGH: u32 = (TAG_INT >> 32) as u32;
-
-pub(crate) const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
-const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
+// The encoding core (tags, handle bits, narrow layout) is one file shared with the stencils.
+pub(crate) use crate::staged::value_encoding::*;
 
 #[cfg(all(test, feature = "bench-primitives"))]
 #[path = "value/encoding_bench.rs"]
