@@ -54,8 +54,15 @@ impl Lowering<'_, '_> {
         // A hoisted array's hole leaves, until the read has left often enough to be widened
         // (`LoopTier::left_at`), whose recompile then takes the VM's read.
         self.hole_leaves = array.is_some() && !self.generic.contains(&pc);
-        let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key })
-            else { unreachable!("an element read yields a value or leaves at its miss edge") };
+        let value = match (array, key.register_index()) {
+            // A base no loop array holds, read by a register key: a string's unit (`string_or_row`).
+            (None, Some(index)) => self.string_or_row(state, (base, index, key), exit),
+            _ => {
+                let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key })
+                    else { unreachable!("an element read yields a value or leaves at its miss edge") };
+                value
+            }
+        };
         if array.is_some_and(|array| matches!(array.views, ElementViews::Typed(_) | ElementViews::Double)) {
             self.set_number(state, destination, value);
         } else {
@@ -67,6 +74,35 @@ impl Lowering<'_, '_> {
             None => {}
         }
         true
+    }
+
+    /// `base[index]` where `base` holds a string: its one-unit string from the ASCII unit table
+    /// (`strings::string_char_at`), joined with the element row otherwise. A string the row does
+    /// not read (a rope, a wide unit, a unit with no string yet, an index outside the string)
+    /// leaves at `exit`, as the row leaves for a value that is no array.
+    fn string_or_row(&mut self, state: &mut State, (base, index, key): (Register, Register, crate::bytecode::Operand),
+        exit: ir::Block) -> ir::Value {
+        let bits = self.tagged(state, base);
+        let is_string = { let mut stage = super::super::object_slots::emit(&mut self.builder); crate::staged::value::is_direct_string(&mut stage, bits) };
+        let (string, row, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
+        self.branch_if(is_string, (string, &[]), (row, &[]));
+        self.builder.switch_to_block(string);
+        let key_word = self.tagged(state, index);
+        let records = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.string_record_base));
+        let table = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, ascii_unit_strings));
+        let character = {
+            let mut stage = super::super::object_slots::emit(&mut self.builder);
+            let units = crate::staged::strings::flat_string(&mut stage, records, bits, exit).expect("the emit stage continues past its guards");
+            crate::staged::strings::string_char_at(&mut stage, units, key_word, table, exit).expect("the emit stage continues past its guards")
+        };
+        let joined = self.builder.append_block_param(join, ir::types::I64);
+        self.goto(join, &[character]);
+        self.builder.switch_to_block(row);
+        let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key })
+            else { unreachable!("an element read yields a value or leaves at its miss edge") };
+        self.goto(join, &[value]);
+        self.builder.switch_to_block(join);
+        joined
     }
 
     /// Whether `array` is a hoisted typed array of a fixed kind whose elements are all int32s.
@@ -90,6 +126,14 @@ impl Lowering<'_, '_> {
         let int = if self.raw_lane(word) == Lane::I64 { self.raw_unary(Unary::Narrow(Lane::I32), word) } else { word };
         self.set_int(state, destination, int);
         true
+    }
+
+    /// Whether the loop's array `array` is a register its entering facts type as a string: such a
+    /// base is no array, so its element reads take the string row and it is no hoisted view.
+    pub(super) fn string_base(&self, array: &LoopArray) -> bool {
+        let super::loop_arrays::ArraySource::Register(register) = array.source else { return false };
+        self.facts.at(array.header).and_then(|types| types.get(usize::from(register)).copied())
+            .is_some_and(|ty| ty.is_subtype(Type::language(crate::ValueType::String)))
     }
 
     /// The view the hoisted `array`'s entering edge proved, which its element rows read and write through.

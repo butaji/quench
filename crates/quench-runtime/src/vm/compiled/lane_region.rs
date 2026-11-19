@@ -1973,6 +1973,8 @@ pub(super) fn lower(
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && matches!(crate::vm::compiled::performed(&instructions[at]), Some(crate::staged::Operation::LoadCapture { .. })))),
         lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
+    let arrays = std::mem::take(&mut lowering.loop_arrays);
+    lowering.loop_arrays = arrays.into_iter().filter(|array| !lowering.string_base(array)).collect();
     lowering.entering = lowering.entering_ranges(entry_pc);
     lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
     lowering.ranges = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);
