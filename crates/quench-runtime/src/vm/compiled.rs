@@ -1403,9 +1403,9 @@ pub(super) struct VmFacts<'a> {
     /// Where an ahead lane body's leaves continue, in its base body (`lane_region::AheadLeaves`);
     /// `None` where a leave returns its exit word.
     pub(super) ahead: Option<lane_region::AheadLeaves<'a>>,
-    /// The whole-program facts of an AOT image (`compile::aot_facts`).
-    // TODO: lane_region reads the call targets and constructor shapes once it proves them there.
-    #[allow(dead_code)]
+    /// The whole-program facts of an AOT image (`compile::aot_facts`): its call targets admit the
+    /// callees the unit inlines (`Lowering::closed_call`) and its Number registers are entry
+    /// entry types (`int_inputs::closed_entry_types`), each a dependency on the image's invalidation word.
     pub(super) closed: Option<&'a crate::compile::aot_facts::AotFacts>,
 }
 

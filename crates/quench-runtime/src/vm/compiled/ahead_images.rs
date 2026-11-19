@@ -28,10 +28,21 @@ pub(crate) fn ahead_program_fingerprint(program: &ResidualProgram) -> u64 {
     hash
 }
 
-/// The unit of `function`'s lane body (`lane_unit::with_budget`, with no extra call budget).
-fn unit_of(program: &ResidualProgram, function: u32) -> Option<lane_unit::Unit> {
+/// The calls the unit of an image's lane body inlines: each call whose target the closed world
+/// proves (`AotFacts::call_target`), bound by its function, which its admission does not compare
+/// (`Lowering::closed_call`), to a callee whose leaves restart the call (`numeric_restartable`).
+fn closed_targets(program: &ResidualProgram, facts: &AotFacts, (caller, pc): (u32, u32)) -> Vec<lane_unit::CallTarget> {
+    let target = facts.function_facts(caller).call_target(pc).filter(|&callee| super::lane_facts::numeric_restartable(program, callee));
+    target.map(|function| lane_unit::CallTarget { callee: lane_unit::CalleeBinding::Function, function }).into_iter().collect()
+}
+
+/// The unit of `function`'s lane body under the closed world's call targets (`lane_unit::unit`, its
+/// default budget); `None` where a frame it inlines would leave by making the callee's activation,
+/// which no base body continues (`leave_targets`).
+fn unit_of(program: &ResidualProgram, function: u32, facts: &AotFacts) -> Option<lane_unit::Unit> {
     let body = program.function_get(function as usize)?;
-    lane_unit::with_budget(program, function, body, 0, &|_, _| Vec::new(), &|callee| program.function_get(callee as usize))
+    let unit = lane_unit::unit(program, function, body, &|caller, pc| closed_targets(program, facts, (caller, pc)), &|callee| program.function_get(callee as usize))?;
+    unit.frames.iter().all(|frame| frame.recovery == lane_unit::CallRecovery::RestartCall).then_some(unit)
 }
 
 /// The code of the lane body `unit` lowers to under `facts` (`LaneHelpers::Ahead`), and whether
@@ -56,21 +67,28 @@ fn lowered_code(program: &ResidualProgram, unit: &lane_unit::Unit, function: u32
 pub(in crate::vm) fn closed_lane_image(program: &ResidualProgram, function: u32, facts: &AotFacts, base: &BaseImage,
     symbols: &mut SymbolTable,
 ) -> Option<LaneImage> {
-    let unit = unit_of(program, function)?;
+    let unit = unit_of(program, function, facts)?;
     let targets = leave_targets(&unit, function, base, symbols);
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { targets: &targets }), closed: Some(facts), ..VmFacts::STATIC };
     let (code, fault_poll) = lowered_code(program, &unit, function, facts)?;
     (!fault_poll).then_some(LaneImage { code, fault_poll: None })
 }
 
-/// Each unit PC's leave target as the base body's `Symbol::BasePc`: a caller record the base body
-/// enters, or an inlined callee's record. The callee's own base entries are not checked here yet.
-// TODO: check the inlined callee's record against that function's base body.
+/// Each unit PC's leave target as the base body's `Symbol::BasePc`, where the base body enters it: a
+/// caller record, or for a PC of an inlined callee the caller's call that inlined it, which restarts
+/// (every frame's recovery is `RestartCall`, `unit_of`: the callee ran no effect before it leaves).
 fn leave_targets(unit: &lane_unit::Unit, function: u32, base: &BaseImage, symbols: &mut SymbolTable) -> Box<[Option<(u32, u32)>]> {
-    unit.origins.iter().map(|origin| match *origin {
-        Origin::Caller(record) => base.pc_offsets.get(record as usize).is_some_and(|at| *at != NO_ENTRY)
-            .then(|| symbols.intern(Symbol::BasePc { function, pc: record })),
-        Origin::Inlined { frame, pc } => Some(symbols.intern(Symbol::BasePc { function: unit.frames[frame].target.function, pc })),
+    let caller_call = |mut frame: usize| {
+        while let Some(parent) = unit.frames[frame].parent { frame = parent; }
+        unit.frames[frame].call
+    };
+    unit.origins.iter().map(|origin| {
+        let record = match *origin {
+            Origin::Caller(record) => record,
+            Origin::Inlined { frame, .. } => caller_call(frame),
+        };
+        base.pc_offsets.get(record as usize).is_some_and(|at| *at != NO_ENTRY)
+            .then(|| symbols.intern(Symbol::BasePc { function, pc: record }))
     }).collect()
 }
 
@@ -81,6 +99,9 @@ pub struct AheadImages {
     known: std::cell::RefCell<Vec<(u32, bool)>>,
     /// The image placed in the loading VM's executable memory; `None` where it did not link.
     linked: Option<LiveImage>,
+    /// The program's closed-world facts, which shaped its lane bodies' units (`unit_of`): the
+    /// compile's, or derived once again from the program where the image was read from a file.
+    facts: std::cell::OnceCell<AotFacts>,
 }
 
 /// The images of each program stored while recording (`start_recording`); the entry may run
@@ -93,11 +114,12 @@ impl AheadImages {
     /// The image of `program`, lowered under its closed-world facts for the baseline ISA.
     pub fn compile(program: &ResidualProgram) -> Result<Self, String> {
         let facts = crate::compile::aot_facts::analyze(program);
-        Ok(Self::of(aot_image::lower(program, &facts, &ImageTarget::default())?))
+        let image = aot_image::lower(program, &facts, &ImageTarget::default())?;
+        Ok(Self { facts: std::cell::OnceCell::from(facts), ..Self::of(image) })
     }
 
     fn of(image: AotImage) -> Self {
-        Self { image, known: Default::default(), linked: None }
+        Self { image, known: Default::default(), linked: None, facts: std::cell::OnceCell::new() }
     }
 
     /// Whether this is the image of `program`, the program numbered `id`; each program is
@@ -161,9 +183,8 @@ impl<H: Host> Vm<H> {
         let images = self.programs.ahead_images(self.active_program, program)?;
         let linked_live: &LiveImage = images.linked.as_ref()?;
         let fault_poll = images.image.functions.get(function as usize)?.lane.as_ref()?.fault_poll.is_some();
+        let unit = unit_of(program, function, images.facts.get_or_init(|| crate::compile::aot_facts::analyze(program)))?;
         let linked = live::link_lane(&images.image, self, linked_live, function)?;
-        let body = program.function_get(function as usize)?;
-        let unit = lane_unit::with_budget(program, function, body, 0, &|_, _| Vec::new(), &|callee| program.function_get(callee as usize))?;
         let region = lane_region::LoweredRegion { number_result: None, function: ir::Function::new(), native: 1,
             fault_poll, hoists_arrays: false, stable: Default::default() };
         let plan = lane_compile::LanePlan { unit, lowered: lane_region::LoweredLane { region, clif: None, scalar: None }, fields: Vec::new(),
