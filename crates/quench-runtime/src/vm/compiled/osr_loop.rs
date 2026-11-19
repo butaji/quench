@@ -1249,6 +1249,8 @@ pub(crate) struct LoopEntry {
     /// An inlining region's callee registers, which leaving at an inlined instruction
     /// writes back here for its activation.
     scratch: [std::mem::MaybeUninit<u64>; MAX_REGION_REGISTERS],
+    /// What the backward-edge counter started at (`set_backedge_budget`), 0 by default.
+    seed: u64,
 }
 
 /// The longest array a region indexes: a negative `i32` index zero-extends past it, so one
@@ -1284,13 +1286,24 @@ impl LoopEntry {
         let mut words = [std::mem::MaybeUninit::uninit(); ENTRY_WORDS];
         // The backward-edge counter is the one leading word native code reads before any push.
         words[ENTRY_BACKEDGE_COUNT].write(0);
-        Self { words, length: ENTRY_CAPTURES, scratch: [std::mem::MaybeUninit::uninit(); MAX_REGION_REGISTERS] }
+        Self { words, length: ENTRY_CAPTURES, scratch: [std::mem::MaybeUninit::uninit(); MAX_REGION_REGISTERS], seed: 0 }
     }
 
     /// Number of taken executions of this region's backward edge in the most recent run.
     pub(crate) fn backedge_count(&self) -> u64 {
         // SAFETY: `new` initializes the counter word.
-        unsafe { self.words[ENTRY_BACKEDGE_COUNT].assume_init() }
+        unsafe { self.words[ENTRY_BACKEDGE_COUNT].assume_init() }.wrapping_sub(self.seed)
+    }
+
+    /// Lets a b-jit region's run take at most `budget` backward edges: the counter starts
+    /// `budget` below zero, and the stencil jump that counts it to zero leaves at the jump
+    /// (`quench-bjit`'s `count_backedge`), so a loop due to move to u-jit leaves its stencil
+    /// code mid-run instead of running it to the loop's end (`LoopTier::promote`). Cranelift
+    /// code counts on past zero; `backedge_count` reads from the seed either way.
+    pub(crate) fn set_backedge_budget(&mut self, budget: u64) {
+        let budget = budget.max(1);
+        self.seed = 0u64.wrapping_sub(budget);
+        self.words[ENTRY_BACKEDGE_COUNT].write(self.seed);
     }
 
     /// The record's words. Native OSR may also update the private first counter word.

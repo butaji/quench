@@ -110,6 +110,15 @@ pub(in crate::vm) fn base_region(tiers: &Tiers, span: u64, taken: u64) -> bool {
     !ultra_ahead_of_base(&tiers.priors, &tiers.loops, span, taken, tiers.priors.compile_ns_per_ir, compile_wall_permille(&tiers.priors))
 }
 
+/// The fewest iterations in all after which a u-jit region of a loop `span` bytecodes long is
+/// ahead of its b-jit region (`ultra_ahead_of_base`), or `None` where it never is.
+pub(in crate::vm) fn promotion_taken(tiers: &Tiers, span: u64) -> Option<u64> {
+    let priors = &tiers.priors;
+    let gain = saved_per_iteration(priors, span).checked_sub(base_saved_per_iteration(priors, span)).filter(|gain| *gain > 0)?;
+    let outlay = outlay_ns(priors, &tiers.loops, span, priors.compile_ns_per_ir, compile_wall_permille(priors)).saturating_sub(priors.region_entry_ns);
+    Some((outlay / gain + 1).saturating_mul(priors.remaining_divisor))
+}
+
 /// Whether a loop running a b-jit region in the default mode moves to a u-jit region after
 /// `taken` iterations in all: where `base_region` no longer picks b-jit for it.
 pub(in crate::vm) fn promotes(tiers: &Tiers, span: u64, taken: u64) -> bool {
@@ -125,6 +134,14 @@ mod tests {
     const COST: u64 = PRIORS.compile_ns_per_ir;
 
     fn required(span: u64, wall: u64) -> u32 { required_taken(&PRIORS, &LOOPS, span, COST, wall) }
+
+    #[test]
+    fn promotion_is_where_u_jit_gets_ahead() {
+        let tiers = super::super::tier_policy::STATIC_ROWS;
+        let at = promotion_taken(tiers, 10).expect("u-jit saves more per iteration");
+        let ahead = |taken| ultra_ahead_of_base(&tiers.priors, &tiers.loops, 10, taken, tiers.priors.compile_ns_per_ir, compile_wall_permille(&tiers.priors));
+        assert!(ahead(at));
+    }
 
     #[test]
     fn a_u_jit_region_gets_ahead_of_a_b_jit_one_with_iterations() {

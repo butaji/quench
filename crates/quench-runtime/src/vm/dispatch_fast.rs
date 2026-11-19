@@ -10619,6 +10619,17 @@ fn lane_loop_run<H: Host>(
             return LoopContinuation::Compiling;
         }
     }
+    // A b-jit region due to move to u-jit starts the u-jit compile and runs on meanwhile
+    // (`LoopTier::promote`); one not yet due runs until the u-jit region would be ahead.
+    if tier.promotion_due() && tier.may_run(site.tiers, unsafe { vm(cx) }.heap.memory_policy()) {
+        let number_arrays = loop_tier::number_arrays(unsafe { vm(cx) }, r, region);
+        let int_entries = loop_tier::int_entries(r, region);
+        let typed_captures = loop_tier::typed_capture_slots(cx);
+        let int_captures = loop_tier::int_capture_slots(cx);
+        lane_loop_compile(cx, r, site, region, &mut tier, &number_arrays, &int_entries, &typed_captures, &int_captures);
+        if !tier.is_published() { return LoopContinuation::Compiling; }
+    }
+    if let Some(budget) = tier.backedge_budget(site.tiers, site.span()) { entry.set_backedge_budget(budget); }
     let publication = Rc::clone(tier.code.as_ref().expect("compiled above"));
     let code = publication.lease().expect("compiled above");
     drop(tier);

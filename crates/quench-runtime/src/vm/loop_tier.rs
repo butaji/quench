@@ -40,6 +40,9 @@ pub(super) struct LoopTier {
     /// picked (`loop_model::base_region`), which moves to u-jit once its iterations repay that
     /// compile (`promote`).
     pub(super) base: bool,
+    /// Whether the site moves from its b-jit region to u-jit (`promote`): the stencil code runs
+    /// until the u-jit region publishes in its place.
+    promoting: bool,
 }
 
 impl LoopTier {
@@ -55,8 +58,23 @@ impl LoopTier {
     pub(super) fn promote(&mut self, tiers: &Tiers, span: u64) {
         if !self.base || self.compilations >= tiers.loops.max_compilations
             || !super::super::compiled::loop_model::promotes(tiers, span, self.iterations) { return; }
+        // The stencil code keeps running while the u-jit region compiles (`promoting`): the
+        // entry that finds it ready publishes it in the stencil code's place.
         self.base = false;
-        if let Some(code) = self.code.take() { code.retire(); }
+        self.promoting = true;
+    }
+
+    /// The backward edges a run of the current code may take before it leaves to move to u-jit
+    /// (`LoopEntry::set_backedge_budget`): for a b-jit region the default mode picked, the
+    /// iterations left until the u-jit region is ahead of it; none otherwise.
+    pub(super) fn backedge_budget(&self, tiers: &Tiers, span: u64) -> Option<u64> {
+        if !self.base || self.compilations >= tiers.loops.max_compilations { return None; }
+        super::super::compiled::loop_model::promotion_taken(tiers, span).map(|at| at.saturating_sub(self.iterations))
+    }
+
+    /// Whether the u-jit region of a promoted site is still to start compiling.
+    pub(super) fn promotion_due(&self) -> bool {
+        self.promoting && self.pending.is_none()
     }
 
     /// Counts an entry the published code's guards declined: past `widen_after_leaves` in a row,
@@ -160,8 +178,9 @@ impl LoopTier {
     /// between looks count down, and a look publishes code that is ready.
     #[inline(always)]
     pub(super) fn awaits_code<H: Host>(&mut self, vm: &mut Vm<H>, site: &LoopSite) -> bool {
-        // A site with published code, or none under way, has nothing to wait for.
-        self.pending.is_some() && self.poll_pending(vm, site)
+        // A site with none under way has nothing to wait for; one with published code (a b-jit
+        // region moving to u-jit) runs it while it looks.
+        self.pending.is_some() && self.poll_pending(vm, site) && !self.is_published()
     }
 
     #[cold]
@@ -185,7 +204,8 @@ impl LoopTier {
                 // A region that lowered no code (it is lowered off the loop's thread) or whose
                 // code failed retires the site, as one declined at the start does.
                 self.compilations = site.tiers.loops.max_compilations;
-                site.entering.set(false);
+                self.promoting = false;
+                if !self.is_published() { site.entering.set(false); }
             }
         }
         if site.diagnostics && self.is_published() {
@@ -201,14 +221,19 @@ impl LoopTier {
         self.wait = 0;
         if self.pending.is_none() {
             self.compilations = site.tiers.loops.max_compilations;
-            // A declined or failed region retires the site now: later entries build no entry record.
-            site.entering.set(false);
+            self.promoting = false;
+            // A declined or failed region retires the site now: later entries build no entry
+            // record. A promoted site keeps entering the stencil code it has.
+            if !self.is_published() { site.entering.set(false); }
         }
         self.awaits_code(vm, site);
     }
 
     /// Publishes `region` while the facts its code names hold (`ProgramStore::publish_region`).
     fn publish<H: Host>(&mut self, vm: &mut Vm<H>, region: super::super::compiled::CompiledOsrRegion) {
+        // A promoted site's stencil code goes as the u-jit region takes its place.
+        if let Some(replaced) = self.code.take() { replaced.retire(); }
+        self.promoting = false;
         self.code = Some(vm.programs.publish_region(region, &mut vm.heap, vm.method_cache_atoms.readers()));
     }
 }
