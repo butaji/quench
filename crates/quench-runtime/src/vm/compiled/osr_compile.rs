@@ -603,7 +603,8 @@ impl PendingOsrRegion {
             dump_native_code(directory, DumpSite::Loop { header }, &memory, &clif);
         }
         Ok(OsrCompile::Done(CompiledOsrRegion { code: memory, entry, facts, crossing, resumes, calls, parked: std::cell::Cell::new(None), made: std::cell::Cell::new(false),
-            region_calls: std::cell::OnceCell::new(), dense: std::cell::Cell::new(Vec::new()) }))
+            region_calls: std::cell::OnceCell::new(), dense: std::cell::Cell::new(Vec::new()),
+            stamp: std::cell::Cell::new(None) }))
     }
 }
 
