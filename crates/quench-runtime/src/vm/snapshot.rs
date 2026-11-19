@@ -135,6 +135,8 @@ impl<H: Host> Vm<H> {
             typeof_names: _,
             closure_templates: _,
             enumerable_keys: _,
+            enumerable_key_lists: _,
+            enumerable_key_value_lists: _,
             capture_walks: _,
             name_atom_memo: _,
             atom_text,
