@@ -65,7 +65,7 @@ impl Access {
     /// constant load folds to its width and sign, so the bytes move as one word, not by memcpy.
     #[cfg(not(stencil_build))]
     #[inline(always)]
-    pub(crate) fn of_load(load: MemoryLoad) -> Option<Self> {
+    pub(crate) const fn of_load(load: MemoryLoad) -> Option<Self> {
         let ty = match load {
             MemoryLoad::I32Load
             | MemoryLoad::I32Load8S
@@ -108,7 +108,7 @@ impl Access {
 
     #[cfg(not(stencil_build))]
     #[inline(always)]
-    pub(crate) fn of_store(store: MemoryStore) -> Self {
+    pub(crate) const fn of_store(store: MemoryStore) -> Self {
         Self {
             ty: store.value_type(),
             bytes: store.width(),
@@ -140,9 +140,11 @@ pub(crate) enum Memory {
 
 #[cfg(not(stencil_build))]
 impl Memory {
-    pub(crate) fn of(op: Op) -> Option<Self> {
-        if let Some(load) = MemoryLoad::from_direct_op(op).and_then(Access::of_load) {
-            return Some(Self::Load(load));
+    pub(crate) const fn of(op: Op) -> Option<Self> {
+        if let Some(load) = MemoryLoad::from_direct_op(op) {
+            if let Some(access) = Access::of_load(load) {
+                return Some(Self::Load(access));
+            }
         }
         if let Some(store) = MemoryStore::from_direct_op(op) {
             return Some(Self::Store(Access::of_store(store)));

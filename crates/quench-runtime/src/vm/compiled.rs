@@ -5675,6 +5675,7 @@ impl<H: Host> Analysis<'_, H> {
             Step::Simd(step) => {
                 self.transfer_simd(function, instruction, state, step, (memory_register, memory_slot))
             }
+            Step::Atomic(_) => None,
         }
     }
 }
@@ -6858,6 +6859,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.simd(pc, instruction, step);
                 true
             }
+            Step::Atomic(_) => unreachable!("the analysis rejects atomic steps"),
         }
     }
 }

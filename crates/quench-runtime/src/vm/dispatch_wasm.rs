@@ -10,6 +10,7 @@ use crate::bytecode::Class;
 use crate::staged::ConcreteWasm;
 use crate::staged::machine::MachineStage as _;
 use crate::staged::wasm::{Width, integer_binary};
+use crate::staged::wasm_atomic::Atomic;
 use crate::staged::wasm_call::Call;
 use crate::staged::wasm_exception::Exception;
 use crate::staged::wasm_flow::Flow;
@@ -50,6 +51,8 @@ impl<H: Host> Vm<H> {
             Some(Step::Gc(_) | Step::Call(Call::IndirectTarget | Call::RefFunc)) => self.wasm_gc_arm(f, i)?,
             Some(Step::Call(Call::Known | Call::Reference)) => unreachable!("the general loop makes calls"),
             Some(Step::Exception(step)) => self.wasm_exception_step(f, i, step)?,
+            Some(Step::Atomic(Atomic::Fence)) => crate::wasm::atomic::fence(),
+            Some(Step::Atomic(Atomic::Access)) => self.wasm_atomic_access(f, i)?,
             None => self.wasm_unlisted_step(f, i)?,
         }
         Ok(StepResult::Continue)
@@ -284,20 +287,13 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    /// The steps no group names: a scalar lane's memory access (a vector access is `Step::Simd`),
-    /// and the atomics, whose fence and access have no step group.
+    /// The steps no group names: a scalar lane's memory access, whose tag selects the width (a
+    /// vector access is `Step::Simd`).
     fn wasm_unlisted_step(&mut self, f: usize, i: WideInstruction) -> Result<(), JsError> {
         match i.op().class() {
             Class::WasmMemoryLoad => self.wasm_tagged_memory_load(f, i),
             Class::WasmMemoryStore => self.wasm_tagged_memory_store(f, i),
-            _ => match i.op() {
-                Op::WasmAtomicFence => {
-                    crate::wasm::atomic::fence();
-                    Ok(())
-                }
-                Op::WasmAtomicAccess => self.wasm_atomic_access(f, i),
-                op => unreachable!("{op:?} is not a Wasm opcode"),
-            },
+            _ => unreachable!("{:?} is not a Wasm opcode", i.op()),
         }
     }
 
@@ -401,14 +397,7 @@ impl<H: Host> Vm<H> {
         pc: &mut usize,
         operation: WasmOperation,
     ) -> Result<(), JsError> {
-        let raw = matches!(
-            i.op().class(),
-            Class::WasmI64BinaryRaw
-                | Class::WasmI64BinaryImmediateRaw
-                | Class::WasmI64UnaryRaw
-                | Class::WasmFloatBinary64Raw
-                | Class::WasmFloatUnary64Raw
-        );
+        let raw = WasmOperation::is_raw(i.op());
         let nan_agnostic = match operation {
             WasmOperation::FloatBinary { operator, .. } => operator.nan_agnostic(),
             WasmOperation::FloatUnary { operator, .. } => operator.nan_agnostic(),

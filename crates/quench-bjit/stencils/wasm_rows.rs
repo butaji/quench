@@ -22,6 +22,8 @@ use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S, hole, hole64, slot};
 
 pub(crate) use crate::wasm_codes::*;
 
+#[path = "wasm_frame.rs"]
+pub(crate) mod wasm_frame;
 #[path = "wasm_rows_memory.rs"]
 mod wasm_rows_memory;
 use wasm_rows_memory::{memory_copy, memory_fill, memory_size};

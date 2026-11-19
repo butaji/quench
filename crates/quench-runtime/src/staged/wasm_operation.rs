@@ -95,85 +95,121 @@ pub(crate) enum WasmOperation {
     },
 }
 
+/// An i32 binary operation, widened to the i64 operator of the same name.
+const fn i32_binary(operator: I32BinaryOperator, form: Form) -> WasmOperation {
+    WasmOperation::Binary {
+        operator: operator.widen(),
+        width: Width::I32,
+        form,
+    }
+}
+
 impl WasmOperation {
+    /// Whether `op` is a raw form: its operands are the registers' words as they are, with no
+    /// tag checks.
+    pub(crate) const fn is_raw(op: Op) -> bool {
+        matches!(
+            op.class(),
+            Class::WasmI64BinaryRaw
+                | Class::WasmI64BinaryImmediateRaw
+                | Class::WasmI64UnaryRaw
+                | Class::WasmFloatBinary64Raw
+                | Class::WasmFloatUnary64Raw
+        )
+    }
+
     /// The integer operation `op` is, with `tag` its operator selector where the opcode takes one.
-    pub(crate) fn of(op: Op, tag: u32) -> Option<Self> {
-        let i32_binary = |operator: I32BinaryOperator, form| Self::Binary {
-            operator: operator.widen(),
-            width: Width::I32,
-            form,
-        };
-        I32BinaryOperator::from_register_op(op)
-            .map(|operator| i32_binary(operator, Form::Register))
-            .or_else(|| {
-                I32BinaryOperator::from_immediate_op(op)
-                    .map(|operator| i32_binary(operator, Form::Immediate))
-            })
-            .or_else(|| {
-                I32BinaryOperator::from_jump_op(op)
-                    .map(|operator| i32_binary(operator, Form::Branch))
-            })
-            .or_else(|| {
-                I32BinaryOperator::from_immediate_jump_op(op)
-                    .map(|operator| i32_binary(operator, Form::BranchImmediate))
-            })
-            .or_else(|| Self::selected(op.class(), tag))
-            .or_else(|| Self::floating(op.class(), tag))
+    pub(crate) const fn of(op: Op, tag: u32) -> Option<Self> {
+        if let Some(operator) = I32BinaryOperator::from_register_op(op) {
+            return Some(i32_binary(operator, Form::Register));
+        }
+        if let Some(operator) = I32BinaryOperator::from_immediate_op(op) {
+            return Some(i32_binary(operator, Form::Immediate));
+        }
+        if let Some(operator) = I32BinaryOperator::from_jump_op(op) {
+            return Some(i32_binary(operator, Form::Branch));
+        }
+        if let Some(operator) = I32BinaryOperator::from_immediate_jump_op(op) {
+            return Some(i32_binary(operator, Form::BranchImmediate));
+        }
+        if let Some(selected) = Self::selected(op.class(), tag) {
+            return Some(selected);
+        }
+        Self::floating(op.class(), tag)
     }
 
     /// The float and conversion operations, whose operator is a selector operand.
-    fn floating(class: Class, tag: u32) -> Option<Self> {
+    const fn floating(class: Class, tag: u32) -> Option<Self> {
         match class {
-            Class::WasmFloatBinary32 => {
-                F32BinaryOperator::from_tag(tag).map(|operator| Self::FloatBinary {
+            Class::WasmFloatBinary32 => match F32BinaryOperator::from_tag(tag) {
+                Some(operator) => Some(Self::FloatBinary {
                     operator: operator.widen(),
                     float: Float::F32,
-                })
-            }
-            Class::WasmFloatBinary64 | Class::WasmFloatBinary64Raw => {
-                FloatBinary::from_tag(tag).map(|operator| Self::FloatBinary {
+                }),
+                None => None,
+            },
+            Class::WasmFloatBinary64 | Class::WasmFloatBinary64Raw => match FloatBinary::from_tag(tag) {
+                Some(operator) => Some(Self::FloatBinary {
                     operator,
                     float: Float::F64,
-                })
-            }
-            Class::WasmFloatUnary32 => {
-                F32UnaryOperator::from_tag(tag).map(|operator| Self::FloatUnary {
+                }),
+                None => None,
+            },
+            Class::WasmFloatUnary32 => match F32UnaryOperator::from_tag(tag) {
+                Some(operator) => Some(Self::FloatUnary {
                     operator: operator.widen(),
                     float: Float::F32,
-                })
-            }
-            Class::WasmFloatUnary64 | Class::WasmFloatUnary64Raw => FloatUnary::from_tag(tag).map(|operator| Self::FloatUnary {
-                operator,
-                float: Float::F64,
-            }),
-            Class::WasmScalarConvert => {
-                ScalarConversionOperator::from_tag(tag).map(|operator| Self::Convert { operator })
-            }
+                }),
+                None => None,
+            },
+            Class::WasmFloatUnary64 | Class::WasmFloatUnary64Raw => match FloatUnary::from_tag(tag) {
+                Some(operator) => Some(Self::FloatUnary {
+                    operator,
+                    float: Float::F64,
+                }),
+                None => None,
+            },
+            Class::WasmScalarConvert => match ScalarConversionOperator::from_tag(tag) {
+                Some(operator) => Some(Self::Convert { operator }),
+                None => None,
+            },
             _ => None,
         }
     }
 
     /// The integer operations whose operator is a selector operand.
-    fn selected(class: Class, tag: u32) -> Option<Self> {
+    const fn selected(class: Class, tag: u32) -> Option<Self> {
         match class {
-            Class::WasmI64Binary | Class::WasmI64BinaryRaw => Binary::from_tag(tag).map(|operator| Self::Binary {
-                operator,
-                width: Width::I64,
-                form: Form::Register,
-            }),
-            Class::WasmI64BinaryImmediate | Class::WasmI64BinaryImmediateRaw => Binary::from_tag(tag).map(|operator| Self::Binary {
-                operator,
-                width: Width::I64,
-                form: Form::Short,
-            }),
-            Class::WasmI64Unary | Class::WasmI64UnaryRaw => Unary::from_tag(tag).map(|operator| Self::Unary {
-                operator,
-                width: Width::I64,
-            }),
-            Class::WasmI32Unary => I32UnaryOperator::from_tag(tag).map(|operator| Self::Unary {
-                operator: operator.widen(),
-                width: Width::I32,
-            }),
+            Class::WasmI64Binary | Class::WasmI64BinaryRaw => match Binary::from_tag(tag) {
+                Some(operator) => Some(Self::Binary {
+                    operator,
+                    width: Width::I64,
+                    form: Form::Register,
+                }),
+                None => None,
+            },
+            Class::WasmI64BinaryImmediate | Class::WasmI64BinaryImmediateRaw => match Binary::from_tag(tag) {
+                Some(operator) => Some(Self::Binary {
+                    operator,
+                    width: Width::I64,
+                    form: Form::Short,
+                }),
+                None => None,
+            },
+            Class::WasmI64Unary | Class::WasmI64UnaryRaw => match Unary::from_tag(tag) {
+                Some(operator) => Some(Self::Unary {
+                    operator,
+                    width: Width::I64,
+                }),
+                None => None,
+            },
+            Class::WasmI32Unary => match I32UnaryOperator::from_tag(tag) {
+                Some(operator) => Some(Self::Unary {
+                    operator: operator.widen(),
+                    width: Width::I32,
+                }),
+                None => None,
+            },
             Class::WasmI32ShiftRightUnsignedAnd => Some(Self::BitField),
             Class::WasmI32AddJump => Some(Self::AddBranch),
             Class::WasmJumpI32NonZero => Some(Self::Test { nonzero: true }),

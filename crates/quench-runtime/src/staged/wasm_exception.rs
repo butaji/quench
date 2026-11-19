@@ -25,7 +25,7 @@ pub(crate) enum Exception {
 
 impl Exception {
     /// The exception operation `op` is, if it is one.
-    pub(crate) fn of(op: Op) -> Option<Self> {
+    pub(crate) const fn of(op: Op) -> Option<Self> {
         Some(match op {
             Op::WasmExceptionNew => Self::New,
             Op::WasmExceptionMatch => Self::Match,

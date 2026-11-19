@@ -1,5 +1,5 @@
 //! The b-jit's vector rows for the operators `wasm_rows_simd.rs` does not cover (kinds `SIMD_MORE_*`,
-//! 60..=69; planned by `vm/compiled/wasm_stitch_simd_more.rs`). Holes and frame layout are
+//! 36..=45; planned by `vm/compiled/wasm_stitch_simd_more.rs`). Holes and frame layout are
 //! `wasm_rows_simd.rs`'s. Semantics are the staged rules on words: integer lanes as `wasm/simd/integer.rs`
 //! and `wasm/simd.rs`, float lanes through `float_binary` and `operate_float_unary`, conversions through
 //! `staged::wasm_float::convert` over `ConstantFree` (no float constant).

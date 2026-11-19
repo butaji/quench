@@ -20,20 +20,6 @@ impl GcFieldAccess {
         (Self::Write, Op::WasmStructSet, Op::WasmArraySet),
     ];
 
-    /// Whether `op` reads a value field (`Read`): `Some(false)` for a struct's, `Some(true)`
-    /// for an array's element, `None` for any other opcode. A lane handler selects its read by
-    /// this table fact rather than naming the opcodes.
-    pub(crate) const fn plain_read(op: Op) -> Option<bool> {
-        let (_, structure, array) = Self::OPS[0];
-        if structure as u16 == op as u16 {
-            Some(false)
-        } else if array as u16 == op as u16 {
-            Some(true)
-        } else {
-            None
-        }
-    }
-
     pub(crate) fn op(self) -> Op {
         Self::OPS
             .iter()
@@ -98,7 +84,7 @@ pub(crate) fn storage_subtype(
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum ArraySegmentKind {
     Data,
     Element,

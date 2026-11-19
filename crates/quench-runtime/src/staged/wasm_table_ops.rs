@@ -47,7 +47,7 @@ impl TableOp {
     ];
 
     /// The operation `op` is, if it is one of these.
-    pub(crate) fn of(op: Op) -> Option<Self> {
+    pub(crate) const fn of(op: Op) -> Option<Self> {
         match op.class() {
             Class::WasmTableSize => Some(Self::Size),
             Class::WasmTableGet => Some(Self::Get),

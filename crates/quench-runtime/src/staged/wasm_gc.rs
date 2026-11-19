@@ -9,7 +9,7 @@ use super::wasm::Width;
 use crate::WasmTrap;
 use crate::WasmTypes;
 use crate::bytecode::Op;
-use crate::wasm::gc::{GcField, GcFieldAccess};
+use crate::wasm::gc::{ArraySegmentKind, GcField, GcFieldAccess};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 use crate::wasm::reference::ReferenceTarget;
 
@@ -248,47 +248,98 @@ pub(crate) enum GcOp {
     Allocating,
 }
 
-/// The one table of the Wasm GC value opcodes the value lane runs, each with its group (`GcOp::of`)
-/// or `None` for a call target (`Call`, which the group does not own). `wasm_gc_table!` hands the
-/// entries to a projector: `wasm_gc_of` makes `GcOp::of`'s match, `wasm_gc_names` the bare
+/// The array constructor's initial contents: `array.new` repeats a value, `array.new_default`
+/// fills defaults, `array.new_fixed` takes a window of values.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ArrayConstruction {
+    Repeated,
+    Default,
+    Fixed,
+}
+
+/// What a Wasm GC value opcode does, with the fields its rule and operands need (`GcStep::of`).
+/// Each step's group is the coarse `GcOp` the tiers match (`GcStep::group`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum GcStep {
+    /// `struct.get`, `struct.get_s`, `struct.get_u`: `signed` is `None` for a plain read, else the
+    /// sign of a packed field's read.
+    StructGet { signed: Option<bool> },
+    /// `struct.set`.
+    StructSet,
+    /// `array.get`, `array.get_s`, `array.get_u`, as `StructGet`.
+    ArrayGet { signed: Option<bool> },
+    /// `array.set`.
+    ArraySet,
+    /// `array.len`.
+    ArrayLen,
+    /// `array.new`, `array.new_default`, `array.new_fixed`.
+    ArrayNew { construction: ArrayConstruction },
+    /// `array.new_data`, `array.new_elem` (`init` false), `array.init_data`, `array.init_elem`
+    /// (`init` true).
+    ArraySegment { kind: ArraySegmentKind, init: bool },
+    /// `array.fill`.
+    ArrayFill,
+    /// `array.copy`.
+    ArrayCopy,
+    /// `struct.new`, `struct.new_default`, `struct.new_desc`, `struct.new_default_desc`.
+    StructNew { default: bool, descriptor: bool },
+    /// `ref.get_desc`.
+    GetDescriptor,
+    /// `ref.test` and `ref.cast` (`cast`), of a reference or of its descriptor (`descriptor`).
+    Test { cast: bool, descriptor: bool },
+    /// `ref.is_null`.
+    IsNull,
+    /// `ref.as_non_null`.
+    AsNonNull,
+    /// `ref.eq`.
+    Equal,
+    /// `ref.i31`.
+    I31,
+    /// The extern conversions (`any.convert_extern`, `extern.convert_any`).
+    ExternConversion,
+}
+
+/// The one table of the Wasm GC value opcodes the value lane runs, each with its step (`GcStep::of`)
+/// or `None` for a call target (`Call`, which the step does not own). `wasm_gc_table!` hands the
+/// entries to a projector: `wasm_gc_step_of` makes `GcStep::of`'s match, `wasm_gc_names` the bare
 /// names the lane's handler table and `wasm_gc_value_ops!` apply their macro to. The list is written
 /// here once; nothing else names these opcodes as a set.
 macro_rules! wasm_gc_table {
     ($projector:ident $extra:ident) => {
         $crate::staged::wasm_gc::$projector! {
             $extra ;
-            WasmStructGet => Some(GcOp::Field),
-            WasmStructGetS => Some(GcOp::Field),
-            WasmStructGetU => Some(GcOp::Field),
-            WasmStructSet => Some(GcOp::Field),
-            WasmArrayGet => Some(GcOp::Field),
-            WasmArrayGetS => Some(GcOp::Field),
-            WasmArrayGetU => Some(GcOp::Field),
-            WasmArraySet => Some(GcOp::Field),
-            WasmArrayLen => Some(GcOp::ArrayLength),
-            WasmRefIsNull => Some(GcOp::Null),
-            WasmRefAsNonNull => Some(GcOp::Null),
-            WasmRefEq => Some(GcOp::Equal),
-            WasmRefTest => Some(GcOp::Test),
-            WasmRefCast => Some(GcOp::Test),
-            WasmI31 => Some(GcOp::Allocating),
-            WasmExternalConversion => Some(GcOp::Allocating),
-            WasmArrayNewData => Some(GcOp::Allocating),
-            WasmArrayNewElem => Some(GcOp::Allocating),
-            WasmArrayInitData => Some(GcOp::Allocating),
-            WasmArrayInitElem => Some(GcOp::Allocating),
-            WasmArrayFill => Some(GcOp::Allocating),
-            WasmArrayCopy => Some(GcOp::Allocating),
-            WasmArrayNew => Some(GcOp::Allocating),
-            WasmArrayNewDefault => Some(GcOp::Allocating),
-            WasmArrayNewFixed => Some(GcOp::Allocating),
-            WasmStructNew => Some(GcOp::Allocating),
-            WasmStructNewDefault => Some(GcOp::Allocating),
-            WasmStructNewDesc => Some(GcOp::Allocating),
-            WasmStructNewDefaultDesc => Some(GcOp::Allocating),
-            WasmRefGetDesc => Some(GcOp::Allocating),
-            WasmDescriptorTest => Some(GcOp::Allocating),
-            WasmDescriptorCast => Some(GcOp::Allocating),
+            WasmStructGet => Some(GcStep::StructGet { signed: None }),
+            WasmStructGetS => Some(GcStep::StructGet { signed: Some(true) }),
+            WasmStructGetU => Some(GcStep::StructGet { signed: Some(false) }),
+            WasmStructSet => Some(GcStep::StructSet),
+            WasmArrayGet => Some(GcStep::ArrayGet { signed: None }),
+            WasmArrayGetS => Some(GcStep::ArrayGet { signed: Some(true) }),
+            WasmArrayGetU => Some(GcStep::ArrayGet { signed: Some(false) }),
+            WasmArraySet => Some(GcStep::ArraySet),
+            WasmArrayLen => Some(GcStep::ArrayLen),
+            WasmRefIsNull => Some(GcStep::IsNull),
+            WasmRefAsNonNull => Some(GcStep::AsNonNull),
+            WasmRefEq => Some(GcStep::Equal),
+            WasmRefTest => Some(GcStep::Test { cast: false, descriptor: false }),
+            WasmRefCast => Some(GcStep::Test { cast: true, descriptor: false }),
+            WasmI31 => Some(GcStep::I31),
+            WasmExternalConversion => Some(GcStep::ExternConversion),
+            WasmArrayNewData => Some(GcStep::ArraySegment { kind: ArraySegmentKind::Data, init: false }),
+            WasmArrayNewElem => Some(GcStep::ArraySegment { kind: ArraySegmentKind::Element, init: false }),
+            WasmArrayInitData => Some(GcStep::ArraySegment { kind: ArraySegmentKind::Data, init: true }),
+            WasmArrayInitElem => Some(GcStep::ArraySegment { kind: ArraySegmentKind::Element, init: true }),
+            WasmArrayFill => Some(GcStep::ArrayFill),
+            WasmArrayCopy => Some(GcStep::ArrayCopy),
+            WasmArrayNew => Some(GcStep::ArrayNew { construction: ArrayConstruction::Repeated }),
+            WasmArrayNewDefault => Some(GcStep::ArrayNew { construction: ArrayConstruction::Default }),
+            WasmArrayNewFixed => Some(GcStep::ArrayNew { construction: ArrayConstruction::Fixed }),
+            WasmStructNew => Some(GcStep::StructNew { default: false, descriptor: false }),
+            WasmStructNewDefault => Some(GcStep::StructNew { default: true, descriptor: false }),
+            WasmStructNewDesc => Some(GcStep::StructNew { default: false, descriptor: true }),
+            WasmStructNewDefaultDesc => Some(GcStep::StructNew { default: true, descriptor: true }),
+            WasmRefGetDesc => Some(GcStep::GetDescriptor),
+            WasmDescriptorTest => Some(GcStep::Test { cast: false, descriptor: true }),
+            WasmDescriptorCast => Some(GcStep::Test { cast: true, descriptor: true }),
             WasmIndirectTarget => None,
             WasmRefFunc => None,
         }
@@ -296,16 +347,16 @@ macro_rules! wasm_gc_table {
 }
 pub(crate) use wasm_gc_table;
 
-/// Projects `wasm_gc_table!`'s entries to the match of `GcOp::of`, over the opcode `$op`.
-macro_rules! wasm_gc_of {
-    ($op:ident ; $($name:ident => $group:expr,)*) => {
+/// Projects `wasm_gc_table!`'s entries to the match of `GcStep::of`, over the opcode `$op`.
+macro_rules! wasm_gc_step_of {
+    ($op:ident ; $($name:ident => $step:expr,)*) => {
         match $op {
-            $(Op::$name => $group,)*
+            $(Op::$name => $step,)*
             _ => None,
         }
     };
 }
-pub(crate) use wasm_gc_of;
+pub(crate) use wasm_gc_step_of;
 
 /// Projects `wasm_gc_table!`'s entries to the bare opcode names, applying `$then!` to them.
 macro_rules! wasm_gc_names {
@@ -324,10 +375,61 @@ macro_rules! wasm_gc_value_ops {
 }
 pub(crate) use wasm_gc_value_ops;
 
+/// The access of a plain or packed read: `signed` as `GcStep::StructGet` and `ArrayGet` carry it.
+const fn read_access(signed: Option<bool>) -> GcFieldAccess {
+    match signed {
+        None => GcFieldAccess::Read,
+        Some(true) => GcFieldAccess::ReadSigned,
+        Some(false) => GcFieldAccess::ReadUnsigned,
+    }
+}
+
+impl GcStep {
+    /// The step of `op`, `None` for an opcode that is no GC value operation (a call target is none).
+    pub(crate) const fn of(op: Op) -> Option<Self> {
+        wasm_gc_table!(wasm_gc_step_of op)
+    }
+
+    /// The group the tiers match: the coarse `GcOp` of this step.
+    pub(crate) const fn group(self) -> GcOp {
+        match self {
+            Self::StructGet { .. } | Self::StructSet | Self::ArrayGet { .. } | Self::ArraySet => GcOp::Field,
+            Self::ArrayLen => GcOp::ArrayLength,
+            Self::IsNull | Self::AsNonNull => GcOp::Null,
+            Self::Equal => GcOp::Equal,
+            Self::Test { descriptor: false, .. } => GcOp::Test,
+            Self::Test { descriptor: true, .. }
+            | Self::ArrayNew { .. }
+            | Self::ArraySegment { .. }
+            | Self::ArrayFill
+            | Self::ArrayCopy
+            | Self::StructNew { .. }
+            | Self::GetDescriptor
+            | Self::I31
+            | Self::ExternConversion => GcOp::Allocating,
+        }
+    }
+
+    /// The aggregate and the access of a field step (`struct.get`/`set`, `array.get`/`set`), `None`
+    /// for any other step.
+    pub(crate) const fn field(self) -> Option<(Aggregate, GcFieldAccess)> {
+        Some(match self {
+            Self::StructGet { signed } => (Aggregate::Struct, read_access(signed)),
+            Self::StructSet => (Aggregate::Struct, GcFieldAccess::Write),
+            Self::ArrayGet { signed } => (Aggregate::Array, read_access(signed)),
+            Self::ArraySet => (Aggregate::Array, GcFieldAccess::Write),
+            _ => return None,
+        })
+    }
+}
+
 impl GcOp {
     /// The group of `op`, `None` for an opcode that is no GC operation (a call target is none).
     pub(crate) const fn of(op: Op) -> Option<Self> {
-        wasm_gc_table!(wasm_gc_of op)
+        match GcStep::of(op) {
+            Some(step) => Some(step.group()),
+            None => None,
+        }
     }
 
     /// Whether the operation can allocate (`Allocating`); the others only read or write cells

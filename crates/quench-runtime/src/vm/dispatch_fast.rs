@@ -48,6 +48,10 @@ use crate::wasm::integer::{
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
 use crate::staged::wasm_flow::Flow as WasmFlow;
 use crate::staged::wasm_instance::Instance;
+use crate::staged::wasm_operation::{Form, WasmOperation};
+use crate::staged::wasm_simd::Simd;
+use crate::staged::wasm_step::Step;
+use crate::staged::wasm::Width;
 
 /// The arithmetic operators the lane decides per operator (`lane_operator`,
 /// `lane_returning_operator`): `$pick!(OPERATOR)` of `$operator`'s, else `None`; or with
@@ -19179,7 +19183,7 @@ fn wasm_lane_handler<H: Host>(op: Op) -> Option<Option<LaneHandler>> {
         Class::Call => Some(Some(call)),
         Class::StoreCapture => Some(None),
         Class::Return => Some(Some(ret)),
-        Class::WasmReturn64 => Some(Some(LaneHandler { handler: lane_return_wasm64::<H>, produces: false })),
+        _ if matches!(Step::of(op, 0), Some(Step::Flow(WasmFlow::Return))) => Some(Some(LaneHandler { handler: lane_return_wasm64::<H>, produces: false })),
         _ => None,
     }
 }
@@ -21254,6 +21258,7 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     let Some(op) = Op::from_index(OP as usize) else {
         return None;
     };
+    let step = Step::of(op, 0);
     if I32BinaryOperator::from_register_op(op).is_some()
         || I32BinaryOperator::from_immediate_op(op).is_some()
     {
@@ -21271,29 +21276,46 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
         match op.class() {
             Class::Move => return LaneHandler::producer(lane_move::<H, ACC>),
             Class::LoadConst => return LaneHandler::producer(lane_load_const::<H>),
-            Class::WasmI32ShiftRightUnsignedAnd => {
+            _ if matches!(step, Some(Step::Numeric(WasmOperation::BitField))) => {
                 return LaneHandler::producer(lane_bit_field::<H, ACC>);
             }
-            _ if matches!(WasmFlow::of(op), Some(WasmFlow::Select)) => {
+            _ if matches!(step, Some(Step::Flow(WasmFlow::Select))) => {
                 return LaneHandler::producer(lane_select::<H, ACC>);
             }
-            Class::WasmI32AddJump => {
+            _ if matches!(step, Some(Step::Numeric(WasmOperation::AddBranch))) => {
                 return LaneHandler::producer(lane_add_jump_nonzero::<H, BACKWARD, ACC>);
             }
-            Class::WasmI32Unary => return LaneHandler::producer(lane_i32_unary::<H, ACC>),
-            Class::WasmFloatBinary32 | Class::WasmFloatBinary64 | Class::WasmFloatBinary64Raw => {
+            _ if matches!(step, Some(Step::Numeric(WasmOperation::Unary { width: Width::I32, .. }))) => {
+                return LaneHandler::producer(lane_i32_unary::<H, ACC>);
+            }
+            _ if matches!(step, Some(Step::Numeric(WasmOperation::FloatBinary { .. }))) => {
                 return LaneHandler::producer(lane_float_binary::<H, OP, ACC>);
             }
-            Class::WasmFloatUnary32 | Class::WasmFloatUnary64 | Class::WasmFloatUnary64Raw => {
+            _ if matches!(step, Some(Step::Numeric(WasmOperation::FloatUnary { .. }))) => {
                 return LaneHandler::producer(lane_float_unary::<H, OP, ACC>);
             }
-            Class::WasmI64Binary => return LaneHandler::producer(lane_i64_binary::<H, false, ACC>),
-            Class::WasmI64BinaryImmediate => return LaneHandler::producer(lane_i64_binary_immediate::<H, false, ACC>),
-            Class::WasmI64Unary => return LaneHandler::producer(lane_i64_unary::<H, false, ACC>),
-            Class::WasmI64BinaryRaw => return LaneHandler::producer(lane_i64_binary::<H, true, ACC>),
-            Class::WasmI64BinaryImmediateRaw => return LaneHandler::producer(lane_i64_binary_immediate::<H, true, ACC>),
-            Class::WasmI64UnaryRaw => return LaneHandler::producer(lane_i64_unary::<H, true, ACC>),
-            Class::WasmScalarConvert => {
+            _ if matches!(step, Some(Step::Numeric(WasmOperation::Binary { width: Width::I64, form: Form::Register, .. }))) => {
+                return LaneHandler::producer(if WasmOperation::is_raw(op) {
+                    lane_i64_binary::<H, true, ACC>
+                } else {
+                    lane_i64_binary::<H, false, ACC>
+                });
+            }
+            _ if matches!(step, Some(Step::Numeric(WasmOperation::Binary { width: Width::I64, form: Form::Short, .. }))) => {
+                return LaneHandler::producer(if WasmOperation::is_raw(op) {
+                    lane_i64_binary_immediate::<H, true, ACC>
+                } else {
+                    lane_i64_binary_immediate::<H, false, ACC>
+                });
+            }
+            _ if matches!(step, Some(Step::Numeric(WasmOperation::Unary { width: Width::I64, .. }))) => {
+                return LaneHandler::producer(if WasmOperation::is_raw(op) {
+                    lane_i64_unary::<H, true, ACC>
+                } else {
+                    lane_i64_unary::<H, false, ACC>
+                });
+            }
+            _ if matches!(step, Some(Step::Numeric(WasmOperation::Convert { .. }))) => {
                 return LaneHandler::producer(lane_scalar_convert::<H, ACC>);
             }
             _ => match other_handler::<H, BACKWARD, ACC>(op) {
@@ -21316,10 +21338,14 @@ const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) 
         Class::Jump => Some(lane_jump_always::<H, BACKWARD>),
         Class::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
         Class::JumpTrue => Some(lane_jump_true::<H, BACKWARD>),
-        Class::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
+        _ if matches!(Step::of(opcode, 0), Some(Step::Flow(WasmFlow::Table))) => Some(lane_branch_table::<H, BACKWARD>),
         _ if opcode.traits().has(crate::bytecode::Traits::LANE_LOOP_EXIT) => Some(for_in_steps::for_in_next_handler::<H, BACKWARD>()),
-        Class::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
-        Class::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
+        _ if matches!(Step::of(opcode, 0), Some(Step::Numeric(WasmOperation::Test { nonzero: false }))) => {
+            Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>)
+        }
+        _ if matches!(Step::of(opcode, 0), Some(Step::Numeric(WasmOperation::Test { nonzero: true }))) => {
+            Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>)
+        }
         _ => wasm_gc_handler::<H>(opcode),
     }
 }
@@ -21387,11 +21413,11 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::StoreCapture => Some(lane_store_capture::<H>),
         _ if matches!(Instance::of(opcode), Some(Instance::Binding)) => Some(lane_instance_binding::<H, false>),
         _ if matches!(Instance::of(opcode), Some(Instance::GlobalGet)) => Some(lane_global_get::<H>),
-        Class::WasmSimd => Some(lane_wasm_simd::<H>),
+        _ if matches!(Step::of(opcode, 0), Some(Step::Simd(Simd::Operator { .. }))) => Some(lane_wasm_simd::<H>),
         Class::WasmMemoryLoad => Some(lane_wasm_memory_load::<H>),
-        Class::WasmMemoryAddress => Some(lane_wasm_memory_address::<H>),
+        _ if matches!(Step::of(opcode, 0), Some(Step::Simd(Simd::Address))) => Some(lane_wasm_memory_address::<H>),
         Class::WasmMemoryStore => Some(lane_wasm_memory_store::<H>),
-        Class::WasmSimdShuffle => Some(lane_wasm_simd_shuffle::<H>),
+        _ if matches!(Step::of(opcode, 0), Some(Step::Simd(Simd::Shuffle))) => Some(lane_wasm_simd_shuffle::<H>),
         _ if matches!(Instance::of(opcode), Some(Instance::GlobalSet)) => Some(lane_global_set::<H>),
         _ if matches!(Instance::of(opcode), Some(Instance::Fill)) => Some(lane_fill_registers::<H>),
         Class::CallKnown => Some(known_call_handler::<H>()),
@@ -21820,7 +21846,7 @@ pub(super) fn memory_register(function: &Function) -> Option<u16> {
         )?;
         instructions()
             .take_while(|instruction| {
-                matches!(instruction.op().class(), Class::WasmFillRegisters | Class::WasmInstanceBinding)
+                matches!(Step::of(instruction.op(), 0), Some(Step::Instance(Instance::Fill | Instance::Binding)))
             })
             .any(|instruction| instruction.op().is_wasm_instance_binding() && instruction.a() == vector)
             .then_some(vector)
@@ -22095,7 +22121,7 @@ fn derive_lane_view<'live, H: Host>(
     // before the fusions below, which then leave each region's first record alone. Only a
     // body with SIMD operators derives the liveness they read.
     let vectors = wasm
-        && decoded.iter().any(|instruction| matches!(instruction.op().class(), Class::WasmSimd | Class::WasmSimdShuffle));
+        && decoded.iter().any(|instruction| matches!(Step::of(instruction.op(), 0), Some(Step::Simd(Simd::Operator { .. } | Simd::Shuffle))));
     let vector_regions: Box<[vector_region::VectorRegion]> = match vectors.then(live).flatten() {
         Some(live) => vector_region::vector_regions(
             &decoded,

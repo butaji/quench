@@ -62,7 +62,7 @@ impl<H: Host> I64Operators<H> {
     /// The same of a constant right operand.
     const IMMEDIATE: [[Handler; ACC_POSITIONS]; I64BinaryOperator::COUNT] = i64_operator_handlers!(lane_i64_operator_immediate, H, false;
         0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26);
-    /// The raw forms of both (`Class::WasmI64BinaryRaw`): no tag checks.
+    /// The raw forms of both (`WasmOperation::is_raw`): no tag checks.
     const RAW: [[Handler; ACC_POSITIONS]; I64BinaryOperator::COUNT] = i64_operator_handlers!(lane_i64_operator, H, true;
         0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26);
     const RAW_IMMEDIATE: [[Handler; ACC_POSITIONS]; I64BinaryOperator::COUNT] = i64_operator_handlers!(lane_i64_operator_immediate, H, true;
@@ -71,11 +71,14 @@ impl<H: Host> I64Operators<H> {
 
 /// The handler of the i64 binary record `op` with operator `selector` and accumulator field `acc`.
 pub(super) fn i64_operator_handler<H: Host>(op: Op, selector: u32, acc: u8) -> Option<Handler> {
-    let table = match op.class() {
-        Class::WasmI64Binary => &I64Operators::<H>::HANDLERS,
-        Class::WasmI64BinaryImmediate => &I64Operators::<H>::IMMEDIATE,
-        Class::WasmI64BinaryRaw => &I64Operators::<H>::RAW,
-        Class::WasmI64BinaryImmediateRaw => &I64Operators::<H>::RAW_IMMEDIATE,
+    let raw = WasmOperation::is_raw(op);
+    let table = match Step::of(op, selector) {
+        Some(Step::Numeric(WasmOperation::Binary { width: Width::I64, form: Form::Register, .. })) => {
+            if raw { &I64Operators::<H>::RAW } else { &I64Operators::<H>::HANDLERS }
+        }
+        Some(Step::Numeric(WasmOperation::Binary { width: Width::I64, form: Form::Short, .. })) => {
+            if raw { &I64Operators::<H>::RAW_IMMEDIATE } else { &I64Operators::<H>::IMMEDIATE }
+        }
         _ => return None,
     };
     let operator = I64BinaryOperator::from_tag(selector)?;
