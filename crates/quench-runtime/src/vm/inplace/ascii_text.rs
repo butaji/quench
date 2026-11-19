@@ -2,7 +2,7 @@
 //! exactly as the spec says with no guest code and no error, or answers `None` so the general
 //! native runs. A result is written once, into its string record.
 use super::super::*;
-use super::super::wtf16::{JsString, Units};
+use super::super::wtf16::{JsString, Units, repeat_ascii_into};
 use std::ops::Range;
 
 /// The longest result a fast path builds; past it the general native decides.
@@ -49,7 +49,7 @@ impl<H: Host> Vm<H> {
                 heap.alloc_ascii_derived([receiver, fill], length, move |out, [text, fill]| pad_into(out, text, fill, at_end))
             }
             AsciiOutcome::Repeated { length } => {
-                heap.alloc_ascii_derived([receiver], length, |out, [text]| repeat_into(out, text))
+                heap.alloc_ascii_derived([receiver], length, |out, [text]| repeat_ascii_into(out, text))
             }
         }
     }
@@ -190,12 +190,5 @@ fn pad_into(out: &mut [u8], text: &[u8], fill: &[u8], at_end: bool) {
     text_out.copy_from_slice(text);
     for (slot, byte) in pad_out.iter_mut().zip(fill.iter().copied().cycle()) {
         *slot = byte;
-    }
-}
-
-/// Writes `bytes` repeated through `out`, whose length is a multiple of the non-empty `bytes`.
-fn repeat_into(out: &mut [u8], bytes: &[u8]) {
-    for chunk in out.chunks_exact_mut(bytes.len()) {
-        chunk.copy_from_slice(bytes);
     }
 }

@@ -525,14 +525,8 @@ mod tests {
             ("function_mark_block_count", at!(JsStepDispatch, function_mark_block_count), m::JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
             ("empty_string", at!(JsStepDispatch, empty_string), m::JS_STEP_EMPTY_STRING),
             ("environment_storage", at!(JsStepDispatch, environment_storage), m::JS_STEP_ENV_STORAGE),
-            ("object_cursor", at!(JsStepDispatch, object_cursor), m::JS_STEP_OBJECT_CURSOR),
-            ("empty_object_layout", at!(JsStepDispatch, empty_object_layout), m::JS_STEP_EMPTY_OBJECT_LAYOUT),
-            ("empty_object_payload", at!(JsStepDispatch, empty_object_payload), m::JS_STEP_EMPTY_OBJECT_PAYLOAD),
-            ("empty_object_proto", at!(JsStepDispatch, empty_object_proto), m::JS_STEP_EMPTY_OBJECT_PROTO),
-            ("array_cursor", at!(JsStepDispatch, array_cursor), m::JS_STEP_ARRAY_CURSOR),
-            ("empty_array_layout", at!(JsStepDispatch, empty_array_layout), m::JS_STEP_EMPTY_ARRAY_LAYOUT),
-            ("empty_array_payload", at!(JsStepDispatch, empty_array_payload), m::JS_STEP_EMPTY_ARRAY_PAYLOAD),
-            ("empty_array_proto", at!(JsStepDispatch, empty_array_proto), m::JS_STEP_EMPTY_ARRAY_PROTO),
+            ("armed_array_proofs", at!(JsStepDispatch, armed_array_proofs), m::JS_STEP_ARMED_ARRAY_PROOFS),
+            ("array_chain_index_free", at!(JsStepDispatch, array_chain_index_free), m::JS_STEP_ARRAY_CHAIN_INDEX_FREE),
         ]
     }
 

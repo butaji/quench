@@ -228,7 +228,10 @@ fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native,
             vm.fast_declined(native, listed)
         }
         Native::ReflectGetPrototypeOf => Some(vm.heap.ordinary_object(*args.first()?)?.proto()),
-        Native::ObjectGetPrototypeOf => vm.plain_object_get_prototype_of(args),
+        Native::ObjectGetPrototypeOf => {
+            let prototype = vm.plain_object_get_prototype_of(args);
+            vm.fast_declined(native, prototype)
+        }
 
         Native::ObjectPrototypeToString => object_to_string_in_place(vm, code, receiver),
         // The registry lookup of a string key, which ToString leaves as it is.

@@ -2,6 +2,8 @@
 //! callbacks' activations in the calling lane, each return stepping the loop
 //! (`begin_array_iteration_in_lane`).
 use super::*;
+use super::super::array_indexed::ArrayIteration;
+use crate::staged::array_iteration::{self as step_rules, Effect, Kind};
 #[cfg(test)]
 mod tests;
 
@@ -9,7 +11,42 @@ mod tests;
 /// array, after a reducer's accumulator (`Native::is_array_reducer`).
 fn array_callback_argument_count(native: Native) -> usize {
     const ELEMENT_INDEX_ARRAY: usize = 3;
-    ELEMENT_INDEX_ARRAY + usize::from(native.is_array_reducer())
+    ELEMENT_INDEX_ARRAY + usize::from(step_rules::takes_accumulator(lane_kind(native)))
+}
+
+/// The step kind of the array callback method an iteration runs. Only the eleven natives
+/// `Native::is_array_callback` names reach a lane iteration.
+#[inline(always)]
+fn lane_kind(native: Native) -> Kind {
+    match native {
+        Native::ArrayForEach => Kind::ForEach,
+        Native::ArrayMap => Kind::Map,
+        Native::ArrayFilter => Kind::Filter,
+        Native::ArrayReduce => Kind::Reduce,
+        Native::ArrayReduceRight => Kind::ReduceRight,
+        Native::ArraySome => Kind::Some,
+        Native::ArrayEvery => Kind::Every,
+        Native::ArrayFind => Kind::Find,
+        Native::ArrayFindIndex => Kind::FindIndex,
+        Native::ArrayFindLast => Kind::FindLast,
+        Native::ArrayFindLastIndex => Kind::FindLastIndex,
+        _ => unreachable!("a lane iteration runs an array callback method"),
+    }
+}
+
+/// The next element of `iteration` (`staged::array_iteration::next_index`), counted as visited;
+/// `None` past its last.
+#[inline(always)]
+fn lane_next_index(iteration: &mut ArrayIteration) -> Option<usize> {
+    let (index, visited) = step_rules::next_index(lane_kind(iteration.native), iteration.visited, iteration.length)?;
+    iteration.visited = visited;
+    Some(index)
+}
+
+/// The method's value once `iteration` visited every element (`staged::array_iteration::completion`).
+#[inline(always)]
+fn lane_completion(iteration: &ArrayIteration) -> Value {
+    step_rules::completion(lane_kind(iteration.native), iteration.result)
 }
 
 /// An array callback method's iteration a lane runs (`begin_array_iteration_in_lane`), one
@@ -41,7 +78,7 @@ impl LaneArrayStep {
 /// `undefined`.
 #[inline(always)]
 fn array_callback_arguments(native: Native, args: &[Value]) -> Option<(Value, Value)> {
-    let this_arg = if native.is_array_reducer() { None } else { args.get(1).copied() };
+    let this_arg = if step_rules::takes_accumulator(lane_kind(native)) { None } else { args.get(1).copied() };
     Some((*args.first()?, this_arg.unwrap_or(Value::UNDEFINED)))
 }
 
@@ -151,9 +188,9 @@ pub(super) fn begin_array_iteration_in_lane<H: Host>(
 ) -> Option<Resumed> {
     let (mut iteration, shape, entry) = array_iteration_setup_in_lane(cx, ip, native, receiver, args)?;
     let vm = unsafe { vm(cx) };
-    let Some(index) = iteration.advance() else {
+    let Some(index) = lane_next_index(&mut iteration) else {
         // SAFETY: `ip` is the call record of the running function's view.
-        return Some(lane_native_complete(cx, ip, unsafe { &*ip }, Some(iteration.completion())));
+        return Some(lane_native_complete(cx, ip, unsafe { &*ip }, Some(lane_completion(&iteration))));
     };
     if let Some(element) = dense_element_in_lane(vm, receiver, index)
         && let Some(window) = admit_prepared_in_lane(cx, &shape.activation, shape.room)
@@ -192,10 +229,10 @@ fn array_iteration_setup_in_lane<H: Host>(
     note_allocation(vm);
     // A reducer without an initial value starts from its first element, which a dense
     // array holds present; anything else leaves the call to the native.
-    if native.is_array_reducer() {
+    if step_rules::takes_accumulator(lane_kind(native)) {
         iteration.result = match args.get(1) {
             Some(initial) => *initial,
-            None => dense_element_in_lane(vm, receiver, iteration.advance()?)?,
+            None => lane_dense_element(vm, receiver, lane_next_index(&mut iteration)?)?,
         };
     }
     Some((iteration, shape, entry))
@@ -214,9 +251,8 @@ pub(super) fn array_object_in_lane<H: Host>(vm: &Vm<H>, receiver: Value) -> Opti
 /// The present element at `index` of `receiver`'s dense storage: an own data property,
 /// which HasProperty finds and Get reads observing nothing.
 #[inline(always)]
-fn dense_element_in_lane<H: Host>(vm: &Vm<H>, receiver: Value, index: usize) -> Option<Value> {
-    let element = array_object_in_lane(vm, receiver)?.elements().get(index)?;
-    (!element.is_deleted()).then_some(element)
+fn lane_dense_element<H: Host>(vm: &Vm<H>, receiver: Value, index: usize) -> Option<Value> {
+    step_rules::present(lane_array_object(vm, receiver)?.elements().get(index)?)
 }
 
 /// The iteration `iteration` of the call at `ip`, whose caller runs, past its last element:
@@ -230,8 +266,8 @@ fn resume_array_iteration_in_lane<H: Host>(
     iteration: super::super::array_indexed::ArrayIteration,
     to_body: bool,
 ) -> Resumed {
-    if iteration.visited == iteration.length {
-        return array_complete_in_lane(cx, ip, to_body, Some(iteration.completion()));
+    if step_rules::exhausted(iteration.visited, iteration.length) {
+        return lane_array_complete(cx, ip, to_body, Some(lane_completion(&iteration)));
     }
     run_array_iteration_from_frame_in_lane(cx, ip, iteration, to_body)
 }
@@ -290,9 +326,9 @@ pub(super) fn body_array_iteration_in_lane<H: Host>(
     let _stack = crate::stack::StackGuard::enter().ok()?;
     let (mut iteration, shape, entry) = array_iteration_setup_in_lane(cx, ip, native, receiver, args)?;
     let vm = unsafe { vm(cx) };
-    let index = iteration.advance()?;
-    let element = dense_element_in_lane(vm, receiver, index)?;
-    let window = admit_prepared_in_lane(cx, &shape.activation, shape.room)?;
+    let index = lane_next_index(&mut iteration)?;
+    let element = lane_dense_element(vm, receiver, index)?;
+    let window = lane_admit_prepared(cx, &shape.activation, shape.room)?;
     // SAFETY: the admission pushed the activation over the window.
     let start = unsafe { enter_array_step_in_lane::<H, false>(cx, &entry, &iteration, element, index, window) };
     vm.lane_stack.steps.push(LaneArrayStep { iteration, element, index, entry, to_body: true });
@@ -308,7 +344,7 @@ pub(super) fn step_array_iteration_in_lane<H: Host>(cx: *mut LaneContext<H>, act
 }
 
 /// The step of the innermost lane iteration whose callback returned `mapped`
-/// (`Vm::fresh_array_step`): the method's value where the step ends it.
+/// (`staged::array_iteration::apply`): the method's value where the step ends it.
 #[inline(always)]
 fn apply_array_step_in_lane<H: Host>(cx: *mut LaneContext<H>, mapped: Value) -> Option<Value> {
     let vm = unsafe { vm(cx) };
@@ -321,7 +357,20 @@ fn apply_array_step_in_lane<H: Host>(cx: *mut LaneContext<H>, mapped: Value) -> 
 /// does not look the entry up again: the step applied to the callback's `mapped`.
 #[inline(always)]
 fn lane_apply_step_value<H: Host>(vm: &mut Vm<H>, step: &mut LaneArrayStep, mapped: Value) -> Option<Value> {
-    let applied = vm.fresh_array_step(&mut step.iteration, step.index, step.element, mapped);
+    let kind = lane_kind(step.iteration.native);
+    let effect = step_rules::apply(kind, step.index, step.element, mapped, &mut step.iteration.kept, || vm.truthy(mapped));
+    let applied = match effect {
+        Effect::Nothing => None,
+        Effect::Store { slot, value } => {
+            vm.store_fresh_array_element(step.iteration.result, slot, value);
+            None
+        }
+        Effect::Accumulate(value) => {
+            step.iteration.result = value;
+            None
+        }
+        Effect::End(value) => Some(value),
+    };
     note_allocation(vm);
     applied
 }
@@ -341,15 +390,15 @@ pub(super) fn step_array_iteration_in_place_in_lane<H: Host>(cx: *mut LaneContex
     // SAFETY: the entry stays in place while the step, which reads no lane stack, runs and
     // the callback's window is filled again.
     let step = unsafe { &mut *step };
-    let applied = if step.iteration.native == Native::ArrayForEach {
-        None
+    let applied = if step_rules::applies_results(lane_kind(step.iteration.native)) {
+        lane_apply_step_value(vm, step, mapped)
     } else {
-        apply_array_step_in_lane(cx, mapped)
+        None
     };
     let depth = vm.lane_stack.activation_count() - 1;
     if applied.is_none()
         && depth < vm.lane_stack.activation_limit.get()
-        && let Some(index) = step.iteration.advance()
+        && let Some(index) = lane_next_index(&mut step.iteration)
     {
         let receiver = step.iteration.receiver;
         if let Some(element) = dense_element_in_lane(vm, receiver, index) {
@@ -411,7 +460,7 @@ unsafe fn enter_array_step_in_lane<H: Host, const AGAIN: bool>(
 ) -> Ip {
     let (index, receiver) = (Value::length(index), iteration.receiver);
     unsafe {
-        if iteration.native.is_array_reducer() {
+        if step_rules::takes_accumulator(lane_kind(iteration.native)) {
             let values = [iteration.result, element, index, receiver];
             if AGAIN { reenter_prepared_values_in_lane(cx, entry, values, window) } else { enter_prepared_values_in_lane(cx, entry, values, window) }
         } else {

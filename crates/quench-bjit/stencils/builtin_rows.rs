@@ -15,9 +15,13 @@
 
 use crate::heap_rows::{payload, word_at};
 use crate::layout::call_record::{CallRecord, REGISTER_BYTES};
-use crate::layout::{JS_STEP_ASCII_UNIT_STRINGS, JS_STEP_STRING_RECORD_BASE};
+use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
+use crate::layout::{
+    JS_STEP_ARMED_ARRAY_PROOFS, JS_STEP_ARRAY_CHAIN_INDEX_FREE, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_ASCII_UNIT_STRINGS,
+    JS_STEP_STRING_RECORD_BASE,
+};
 use crate::stage::StencilStage;
-use crate::staged::{builtins, math, strings};
+use crate::staged::{builtins, elements, math, object, strings};
 use crate::words::{S, hole64};
 use crate::{Row, Value};
 use core::mem::{offset_of, transmute};
@@ -179,6 +183,59 @@ unsafe fn imul(s: &S, record: usize) -> Option<u64> {
     }
 }
 
+/// Whether a lane run's array storage proofs are armed (`heap::array_proofs`). A row cannot retire
+/// them, so a row that shrinks an array's backing misses while any is armed.
+#[inline(always)]
+unsafe fn proofs_armed(s: &S) -> bool {
+    // SAFETY: the payload's word names the thread's armed-proofs word, live for the thread; a
+    // nonzero word is the armed proofs' address.
+    unsafe { word_at(word_at(payload(s), JS_STEP_ARMED_ARRAY_PROOFS) as usize, 0) != 0 }
+}
+
+/// `push(value)` of the dense array receiver (`builtins::array_push_one`): its room is the backing's
+/// capacity word, and its prototype link must be the one the held index-free chain proof covers
+/// (`JS_STEP_ARRAY_CHAIN_INDEX_FREE`), which proves no prototype holds an index. The value must hold
+/// no heap reference, so its store is unlogged. The new length.
+#[inline(always)]
+unsafe fn array_push(s: &S, record: usize) -> Option<u64> {
+    // SAFETY: as `is_callee`, `payload`'s and the receiver's reads; the header is the backing's,
+    // live with its record.
+    unsafe {
+        if !is_callee(s, record) {
+            return None;
+        }
+        let records = word_at(payload(s), JS_STEP_ARRAY_RECORD_BASE);
+        let mut stage = StencilStage::from_hole(0);
+        let backing = elements::array_backing(&mut stage, records, receiver(s, record), ())?;
+        let object = stage.add_imm(backing.record, ARRAY.object_offset as u64);
+        let chain = word_at(payload(s), JS_STEP_ARRAY_CHAIN_INDEX_FREE);
+        if chain == 0 || object::proto_link(&mut stage, object) != chain {
+            return None;
+        }
+        let capacity = ((backing.header as usize + ARRAY.header_capacity_offset) as *const u32).read();
+        let room = u64::from(capacity) & u64::from(ARRAY.capacity_mask);
+        let value = argument(s, record, 0);
+        builtins::unreferenced(&mut stage, value, ())?;
+        builtins::array_push_one(&mut stage, backing, room, value, ())
+    }
+}
+
+/// `pop()` of the dense array receiver (`builtins::array_pop`). A shrink retires the armed array
+/// proofs, which a row cannot, so it misses while any are armed. The removed element.
+#[inline(always)]
+unsafe fn array_pop(s: &S, record: usize) -> Option<u64> {
+    // SAFETY: as `is_callee`, `payload`'s and the receiver's reads.
+    unsafe {
+        if !is_callee(s, record) || proofs_armed(s) {
+            return None;
+        }
+        let records = word_at(payload(s), JS_STEP_ARRAY_RECORD_BASE);
+        let mut stage = StencilStage::from_hole(0);
+        let backing = elements::array_backing(&mut stage, records, receiver(s, record), ())?;
+        builtins::array_pop(&mut stage, backing, ())
+    }
+}
+
 /// One builtin row: its staged body's word is stored and the row continues at TAKEN, or the row
 /// continues at NEXT with nothing written.
 macro_rules! builtin_row {
@@ -217,3 +274,5 @@ builtin_row!(call_builtin_round, |s, record| unary(s, record, math::FloatUnary::
 builtin_row!(call_builtin_max, |s, record| extreme(s, record, true));
 builtin_row!(call_builtin_min, |s, record| extreme(s, record, false));
 builtin_row!(call_builtin_imul, |s, record| imul(s, record));
+builtin_row!(call_builtin_push, |s, record| array_push(s, record));
+builtin_row!(call_builtin_pop, |s, record| array_pop(s, record));

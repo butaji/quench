@@ -220,14 +220,21 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    /// `iterator_close` of an iterator whose `return` is absent along its chain, which ends
-    /// the close with `undefined` before any call (the shapes decide it, as in
-    /// `iterator_close`); `None` for any other, which may call guest code or throw.
-    pub(in crate::vm) fn iterator_close_in_place(&self, iterator: Value) -> Option<Value> {
+    /// The iterator whose `return` a close of `iterator` reads: a Protocol or AsyncFromSync
+    /// record closes its source, so the walk ends at the first other record (or non-record).
+    pub(super) fn iterator_close_target(&self, iterator: Value) -> Value {
         let mut current = iterator;
         while let Some(IteratorRecord { source, kind: IteratorKind::Protocol | IteratorKind::AsyncFromSync, .. }) = self.heap.iterator(current) {
             current = *source;
         }
+        current
+    }
+
+    /// `iterator_close` of an iterator whose `return` is absent along its chain, which ends
+    /// the close with `undefined` before any call (the shapes decide it, as in
+    /// `iterator_close`); `None` for any other, which may call guest code or throw.
+    pub(in crate::vm) fn iterator_close_in_place(&self, iterator: Value) -> Option<Value> {
+        let current = self.iterator_close_target(iterator);
         let key = PropertyKey::string(self.runtime_atoms.iterator_return);
         self.iterator_lacks_property(current, key).then_some(Value::UNDEFINED)
     }
@@ -239,13 +246,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
         self.with_call_roots([iterator], |vm| {
-            if let Some(IteratorRecord {
-                source,
-                kind: IteratorKind::Protocol | IteratorKind::AsyncFromSync,
-                ..
-            }) = vm.heap.iterator(iterator)
-            {
-                return vm.iterator_close(p, *source);
+            let target = vm.iterator_close_target(iterator);
+            if target != iterator {
+                return vm.iterator_close(p, target);
             }
             let atom = vm.runtime_atoms.iterator_return;
             // GetMethod of an absent `return` yields undefined and the close ends (ECMA-262

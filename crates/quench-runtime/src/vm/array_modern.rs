@@ -124,6 +124,11 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        // The plain body (`plain_array_of`) first: this realm's `Array` constructs a plain array of
+        // `args` with no guest code.
+        if let Some(array) = self.plain_array_of(constructor, args) {
+            return Ok(array);
+        }
         let target = if self.is_constructable(constructor) {
             self.construct_value(p, constructor, &[Value::number(args.len() as f64)])?
         } else {

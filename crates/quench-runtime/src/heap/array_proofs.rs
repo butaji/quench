@@ -274,6 +274,14 @@ impl Heap {
 #[thread_local]
 static ARMED_PROOFS: std::cell::Cell<*mut ArrayStorageProofs> = std::cell::Cell::new(std::ptr::null_mut());
 
+/// The address of the thread's armed-proofs word (`ARMED_PROOFS`), which a stencil row reads
+/// through `JsStepDispatch::armed_array_proofs`: the word is null while no lane run's proofs
+/// are armed. The address is stable for the thread's life, so the row sees each arm and
+/// retirement as it happens.
+pub(crate) fn armed_proofs_address() -> usize {
+    ARMED_PROOFS.as_ptr().addr()
+}
+
 /// Retires the armed proofs (`ARMED_PROOFS`): a change that may falsify one is about to
 /// happen, or the lane run that made them enters a nested run or ends. Where no proof is
 /// held this only reads the thread's pointer.

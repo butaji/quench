@@ -276,7 +276,10 @@ pub(super) fn in_place_row_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram
             let listed = vm.plain_enumerable_own_properties(first, crate::vm::object_keys::EnumerableOwnPropertyKind::Key);
             vm.fast_declined(native, listed)
         }
-        Native::ObjectAssign => vm.plain_object_assign(args),
+        Native::ObjectAssign => {
+            let copied = vm.plain_object_assign(args);
+            vm.fast_declined(native, copied)
+        }
         // Each string row's body, folded to it by `pure_string_method_call`'s inlining.
         Native::StringSplit => {
             let parts = vm.pure_string_method_call(code, native, receiver, args);
