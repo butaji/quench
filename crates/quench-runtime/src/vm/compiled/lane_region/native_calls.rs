@@ -92,6 +92,12 @@ impl Inline {
         matches!(self, Self::Builtin(Builtin::Includes | Builtin::IndexOf))
     }
 
+    /// Whether the operation reads a flat string's units at an index (`charCodeAt`): its receiver's
+    /// facts a loop holds (`loop_strings`).
+    const fn reads_string(self) -> bool {
+        matches!(self, Self::Builtin(Builtin::CharCodeAt))
+    }
+
     /// The operation on `numbers`: a Float64 value; `Imul` is lowered by the caller.
     fn emit(self, builder: &mut FunctionBuilder<'_>, numbers: &[ir::Value]) -> ir::Value {
         let mut stage = super::super::object_slots::emit(builder);
@@ -158,6 +164,12 @@ pub(super) fn appends(intrinsics: &Intrinsics, pc: usize) -> bool {
 /// hoisted around the loop that holds the call (`loop_arrays`).
 pub(super) fn searches(intrinsics: &Intrinsics, pc: usize) -> bool {
     intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.searches())
+}
+
+/// Whether the call at `pc` reads a string's units (`reads_string`): its receiver's flat facts are
+/// held around the loop that holds the call (`loop_strings`).
+pub(super) fn reads_string(intrinsics: &Intrinsics, pc: usize) -> bool {
+    intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.reads_string())
 }
 
 /// The calls of `unit` that run inline, by PC: a call's callee register was defined by a field

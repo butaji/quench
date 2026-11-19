@@ -50,11 +50,11 @@ impl Term {
 /// The indices an access reaches over its loop: `base + counter * scale` for the counter in
 /// `low..bound`, where `low` is the counter's least value.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) struct Reach {
-    pub(super) bound: Register,
-    pub(super) low: i64,
-    pub(super) base: Option<Term>,
-    pub(super) scale: Option<Term>,
+pub(super) enum Reach {
+    /// `base + counter * scale` for the counter in `low..bound`.
+    Counted { bound: Register, low: i64, base: Option<Term>, scale: Option<Term> },
+    /// Every index in `0..=ceiling`, whatever the loop does (a mask or a range of the index).
+    Ranged { ceiling: i64 },
 }
 
 /// An access whose indices the entry of the loop at `header` proves within the access's array.
@@ -104,6 +104,7 @@ impl Lowering<'_, '_> {
         // Before the views: a scalar native's allocation reloads the arena the views' bases come from.
         self.hoist_scalar_calls(state, header);
         self.hoist_arrays(state, header, false);
+        self.hoist_strings(state, header);
         self.hoist_stable(state, header);
         self.hoist_receivers(state, header);
         self.hoist_reads(state, header);
@@ -136,20 +137,29 @@ impl Lowering<'_, '_> {
     fn check_reach(&mut self, state: &mut State, array: LoopArray, reach: Reach, exit: ir::Block) {
         let (_, length) = self.hoisted_view(array);
         let length = emit(&mut self.builder).uextend32(length);
-        let bound = self.entry_register(state, reach.bound, exit);
-        let low = self.raw_const(Lane::I64, reach.low);
-        let last = self.raw_binary_imm(Binary::Add, bound, -1);
-        let base = reach.base.map(|term| self.entry_term(state, term, exit));
-        let scale = reach.scale.map(|term| self.entry_term(state, term, exit));
-        let ends = [low, last].map(|counter| self.reach_at(counter, base, scale));
-        let inside = ends.map(|(index, _)| self.raw_compare(Relation::UnsignedLess, index, length));
-        let mut within = self.raw_binary(Binary::And, inside[0], inside[1]);
-        for (_, scaled) in ends.into_iter().filter(|_| scale.is_some()) {
-            let exact = self.within_exact(scaled);
-            within = self.raw_binary(Binary::And, within, exact);
-        }
-        let empty = self.raw_compare(Relation::SignedLessEqual, bound, low);
-        let proved = self.raw_binary(Binary::Or, empty, within);
+        let proved = match reach {
+            Reach::Ranged { ceiling } => {
+                // Every index is at most `ceiling`: within the array when the length exceeds it.
+                let ceiling = self.raw_const(Lane::I64, ceiling);
+                self.raw_compare(Relation::UnsignedLess, ceiling, length)
+            }
+            Reach::Counted { bound, low, base, scale } => {
+                let bound = self.entry_register(state, bound, exit);
+                let low = self.raw_const(Lane::I64, low);
+                let last = self.raw_binary_imm(Binary::Add, bound, -1);
+                let base = base.map(|term| self.entry_term(state, term, exit));
+                let scale = scale.map(|term| self.entry_term(state, term, exit));
+                let ends = [low, last].map(|counter| self.reach_at(counter, base, scale));
+                let inside = ends.map(|(index, _)| self.raw_compare(Relation::UnsignedLess, index, length));
+                let mut within = self.raw_binary(Binary::And, inside[0], inside[1]);
+                for (_, scaled) in ends.into_iter().filter(|_| scale.is_some()) {
+                    let exact = self.within_exact(scaled);
+                    within = self.raw_binary(Binary::And, within, exact);
+                }
+                let empty = self.raw_compare(Relation::SignedLessEqual, bound, low);
+                self.raw_binary(Binary::Or, empty, within)
+            }
+        };
         emit_js_guard(&mut self.builder, proved, exit);
     }
 

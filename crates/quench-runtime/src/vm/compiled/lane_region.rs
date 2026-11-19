@@ -93,6 +93,7 @@ use captures::RootedRead;
 #[path = "lane_region/own_constants.rs"] mod own_constants;
 #[path = "lane_region/number_domains.rs"] mod number_domains;
 #[path = "lane_region/loop_arrays.rs"] mod loop_arrays;
+#[path = "lane_region/loop_strings.rs"] mod loop_strings;
 #[path = "lane_region/call_frames.rs"] mod call_frames;
 #[path = "lane_region/declared.rs"] mod declared;
 use call_frames::{CallSite, Leave, ReturnSite, Site};
@@ -106,6 +107,7 @@ use call_frames::{CallSite, Leave, ReturnSite, Site};
 #[cfg(test)] #[path = "lane_region/element_tests.rs"] mod element_tests;
 #[cfg(test)] #[path = "lane_region/loop_shape_tests.rs"] mod loop_shape_tests;
 use loop_arrays::{ArraySource, LoopArray};
+use loop_strings::{LoopString, StringVariables};
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
 use frame_fields::{FieldFacts, HeldRead, StableHold};
@@ -602,6 +604,10 @@ struct Lowering<'a, 'f> {
     construct_ready: Vec<virtual_objects::ConstructReady>,
     /// Loop-invariant array bases whose views their loop's entry proves (`loop_arrays`).
     loop_arrays: Vec<LoopArray>,
+    /// Loop-invariant strings whose flat facts their loop's entry proves (`loop_strings`).
+    loop_strings: Vec<LoopString>,
+    /// The variables each held string's facts live in, by register (`loop_strings`).
+    string_vars: BTreeMap<Register, StringVariables>,
     /// The shapes loops proved of their invariant receivers on their entering edges (`loop_receivers`).
     loop_shapes: Vec<loop_receivers::LoopShape>,
     /// Whether no operation of the unit may move an array's backing or the array record table
@@ -1870,7 +1876,7 @@ pub(super) fn lower(
         scalar_values: BTreeMap::new(),
         prototype_clear: BTreeMap::new(),
         construct_ready: Vec::new(),
-        loop_arrays: Vec::new(), loop_shapes: Vec::new(), arrays_fixed: false,
+        loop_arrays: Vec::new(), loop_strings: Vec::new(), string_vars: BTreeMap::new(), loop_shapes: Vec::new(), arrays_fixed: false,
         array_vars: BTreeMap::new(),
         views,
         entry_bounds,
@@ -1983,6 +1989,7 @@ pub(super) fn lower(
         lowering.views, typed_captures, &lowering.intrinsics, |pc| coverage.lowered(pc));
     let arrays = std::mem::take(&mut lowering.loop_arrays);
     lowering.loop_arrays = arrays.into_iter().filter(|array| !lowering.string_base(array)).collect();
+    lowering.loop_strings = loop_strings::loop_strings(unit, &loops, &lowering.intrinsics, |pc| coverage.lowered(pc));
     lowering.entering = lowering.entering_ranges(entry_pc);
     lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
     lowering.ranges = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);
@@ -4413,6 +4420,9 @@ impl Lowering<'_, '_> {
     /// after the invariant reads).
     fn length_read(&mut self, state: &mut State, pc: usize, register: Register, read: (Atom, u16), exit: ir::Block,
         entering: Option<usize>) -> ir::Value {
+        if let Some(string) = self.loop_string(pc, Some(register)).filter(|string| entering != Some(string.header)) {
+            return self.held_length(string);
+        }
         let proved = |array: &LoopArray| matches!(array.views, ElementViews::Typed(_))
             && (entering != Some(array.header) || matches!(array.source, ArraySource::Register(_)));
         if let Some(array) = self.loop_array(pc, Some(register)).filter(proved) {

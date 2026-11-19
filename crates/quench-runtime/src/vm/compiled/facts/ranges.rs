@@ -128,6 +128,12 @@ pub(super) fn bitwise(lookup: Lookup<'_>, operation: NumberBitwise, operands: [O
     match operation {
         NumberBitwise::Or if right == zero => left,
         NumberBitwise::Or if left == zero => right,
+        // A non-negative operand clears the bits of the other, so the result is non-negative and at
+        // most the smallest non-negative operand's maximum (`i & 255` lies in 0..=255).
+        NumberBitwise::And if left.min >= 0 || right.min >= 0 => {
+            let ceiling = [left, right].iter().filter(|range| range.min >= 0).map(|range| range.max).min().unwrap_or(0);
+            IntRange::bounds(0, ceiling).unwrap_or(IntRange::FULL)
+        }
         NumberBitwise::And | NumberBitwise::Or | NumberBitwise::Xor => left.bitwise_hull(right),
         NumberBitwise::ShiftRight => left.shift_right(right).unwrap_or(IntRange::FULL),
         NumberBitwise::ShiftRightUnsigned => left.shift_right_unsigned(right).unwrap_or(IntRange::FULL),

@@ -56,7 +56,7 @@ impl Builtin {
 }
 
 /// The row of an Emit stage, which continues past each guard it makes.
-fn continues<T>(row: Option<T>) -> T {
+pub(super) fn continues<T>(row: Option<T>) -> T {
     row.expect("the emit stage continues past its guards")
 }
 
@@ -68,8 +68,16 @@ impl Lowering<'_, '_> {
         let (receiver, result) = (instruction.register_c(), instruction.result_register());
         match builtin {
             Builtin::CharCodeAt => {
-                let code = self.char_code_at(state, receiver, argument, exit);
-                self.set_tagged(state, result, code);
+                // The row answers NaN past the string's end, which leaves at `exit` before the call
+                // changes anything: the result is an int32 wherever the call completes.
+                let code = match self.loop_string(pc, Some(receiver)) {
+                    Some(string) => self.held_char_code_at(state, string, argument, exit),
+                    None => self.char_code_at(state, receiver, argument, exit),
+                };
+                let integer = is_int_tagged(&mut self.builder, code);
+                emit_js_guard(&mut self.builder, integer, exit);
+                let int = self.raw_unary(Unary::Narrow(Lane::I32), code);
+                self.set_int(state, result, int);
             }
             Builtin::CharAt => {
                 let character = self.char_at(state, receiver, argument, exit);

@@ -127,7 +127,7 @@ pub(super) fn call_for_each_once_in_lane<H: Host>(
     if vm.with_scope_entered || vm.own_array_length(receiver) != Some(1) {
         return None;
     }
-    let element = dense_element_in_lane(vm, receiver, 0)?;
+    let element = lane_dense_element(vm, receiver, 0)?;
     let (callback, this_arg) = array_callback_arguments(Native::ArrayForEach, args)?;
     let (shape, entry) = array_callback_activation_in_lane(cx, ip, Native::ArrayForEach, callback, this_arg, Completion::Plain)?;
     let window = admit_prepared_in_lane(cx, &shape.activation, shape.room)?;
@@ -158,7 +158,7 @@ pub(super) fn begin_array_iteration_in_lane<H: Host>(
         // SAFETY: `ip` is the call record of the running function's view.
         return Some(native_complete_in_lane(cx, ip, unsafe { &*ip }, Some(iteration.completion())));
     };
-    if let Some(element) = dense_element_in_lane(vm, receiver, index)
+    if let Some(element) = lane_dense_element(vm, receiver, index)
         && let Some(window) = admit_prepared_in_lane(cx, &shape.activation, shape.room)
     {
         // SAFETY: the admission pushed the activation over the window.
@@ -218,7 +218,7 @@ pub(super) fn array_object_in_lane<H: Host>(vm: &Vm<H>, receiver: Value) -> Opti
 /// which HasProperty finds and Get reads observing nothing.
 #[inline(always)]
 fn lane_dense_element<H: Host>(vm: &Vm<H>, receiver: Value, index: usize) -> Option<Value> {
-    step_rules::present(lane_array_object(vm, receiver)?.elements().get(index)?)
+    step_rules::present(array_object_in_lane(vm, receiver)?.elements().get(index)?)
 }
 
 /// The iteration `iteration` of the call at `ip`, whose caller runs, past its last element:
@@ -233,7 +233,7 @@ fn resume_array_iteration_in_lane<H: Host>(
     to_body: bool,
 ) -> Resumed {
     if step_rules::exhausted(iteration.visited, iteration.length) {
-        return lane_array_complete(cx, ip, to_body, Some(iteration.completion()));
+        return array_complete_in_lane(cx, ip, to_body, Some(iteration.completion()));
     }
     run_array_iteration_from_frame_in_lane(cx, ip, iteration, to_body)
 }
@@ -294,7 +294,7 @@ pub(super) fn body_array_iteration_in_lane<H: Host>(
     let vm = unsafe { vm(cx) };
     let index = iteration.advance()?;
     let element = lane_dense_element(vm, receiver, index)?;
-    let window = lane_admit_prepared(cx, &shape.activation, shape.room)?;
+    let window = admit_prepared_in_lane(cx, &shape.activation, shape.room)?;
     // SAFETY: the admission pushed the activation over the window.
     let start = unsafe { enter_array_step_in_lane::<H, false>(cx, &entry, &iteration, element, index, window) };
     vm.lane_stack.steps.push(LaneArrayStep { iteration, element, index, entry, to_body: true });
@@ -355,7 +355,7 @@ pub(super) fn step_array_iteration_in_place_in_lane<H: Host>(cx: *mut LaneContex
         && let Some(index) = step.iteration.advance()
     {
         let receiver = step.iteration.receiver;
-        if let Some(element) = dense_element_in_lane(vm, receiver, index) {
+        if let Some(element) = lane_dense_element(vm, receiver, index) {
             step.element = element;
             step.index = index;
             // The callback's completed loops close nothing more.

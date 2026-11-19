@@ -282,9 +282,16 @@ pub(in crate::vm::compiled) enum IndexProof {
     /// Non-negative and below `bound`, a register of the access's loop whose value the loop's entry
     /// may compare with the length of the array held in `array` once, instead of every access.
     Versioned { array: Register, bound: Register },
+    /// Non-negative and at most `max` wherever it is accessed (a mask, a range of the index), so the
+    /// loop's entry may compare `max` with the length of the array held in `array` once.
+    Ranged { array: Register, max: i64 },
     /// Tested at the access.
     Check,
 }
+
+/// The highest index a range proof versions: a loop whose array is shorter than its ceiling fails
+/// the entry's comparison and runs interpreted, so a wider ceiling repays no guard.
+const RANGED_CEILING: i64 = 1 << 16;
 
 impl Point {
     /// Whether `instruction` is an element store whose value the point holds a Number of: a store that
@@ -322,12 +329,16 @@ impl Point {
         let non_negative = self.int_range(index).is_some_and(|range| range.min >= 0);
         if !(model.dense)(pc) || !non_negative { return IndexProof::Check; }
         let related = |table: &[Option<Register>]| table.get(usize::from(index)).copied().flatten();
+        let ceiling = self.int_range(index).map(|range| range.max).filter(|max| *max < RANGED_CEILING);
         match (related(&self.relations.below), related(&self.relations.under)) {
             (Some(held), _) if held == array => IndexProof::Proven,
             // Below a bound that is at most the array's length.
             (_, Some(bound)) if self.relations.atmost.get(usize::from(bound)).copied().flatten() == Some(array) => IndexProof::Proven,
             (_, Some(bound)) if bound != array => IndexProof::Versioned { array, bound },
-            _ => IndexProof::Check,
+            _ => match ceiling {
+                Some(max) => IndexProof::Ranged { array, max },
+                None => IndexProof::Check,
+            },
         }
     }
 }

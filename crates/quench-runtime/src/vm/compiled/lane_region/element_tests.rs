@@ -248,6 +248,44 @@ fn a_counted_loop_compares_its_bound_with_the_array_length_once_and_not_per_acce
     assert!(bounds_compares(&function, &body) >= 1, "a bound the loop writes proves nothing: {function}");
 }
 
+/// The region of the innermost loop of `source` over `views`, with the feedback a previous body left:
+/// `left_header` records that the loop's header is one a previous body left at (`generic`), and
+/// `entry_bounds` is false once its entries were declined (`LoopTier::missed_entry`): either way the
+/// loop's entry proves no index.
+fn region_with_feedback(source: &str, views: ElementViews, left_header: bool, entry_bounds: bool) -> ir::Function {
+    let program = crate::Engine::specialize(source, "element-rows.js").unwrap();
+    let unit = super::super::lane_unit::unit(&program, 1, program.function(1), &|_, _| Vec::new(), &|_| None).unwrap();
+    let header = unit.instructions.iter().enumerate().filter_map(|(pc, instruction)|
+        instruction.op().control_flow_layout().jumps().then(|| instruction.jump_target() as usize).filter(|target| *target <= pc))
+        .min().unwrap();
+    let isa = super::super::super::jit_backend::target_isa().unwrap();
+    let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
+    let generic = if left_header { vec![header] } else { Vec::new() };
+    lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
+        &generic, &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[],
+        Coverage::PrefixFrom(header), Completion::Body, views, entry_bounds).expect("a loop region").function
+}
+
+#[test]
+fn a_masked_index_compares_its_mask_with_the_array_length_once_and_not_per_access() {
+    use crate::heap::TypedArrayKind as Kind;
+    // `i & 255` lies in 0..=255 wherever it is read: the entry compares 255 with the length once.
+    let masked = "function sum(a, n) { var s = 0; for (var i = 0; i < n; i++) { s += a[i & 255]; } return s; }";
+    let function = entered_region(masked, ElementViews::Typed(Some(Kind::Float64)), IntRange::NON_NEGATIVE);
+    let body = loop_body(&function);
+    let before: Vec<ir::Inst> = function.layout.blocks().flat_map(|block| function.layout.block_insts(block))
+        .filter(|inst| !body.contains(inst)).collect();
+    assert_eq!(bounds_compares(&function, &body), 0, "the masked accesses carry their proof: {function}");
+    assert!(bounds_compares(&function, &before) >= 1, "the entry compares the mask's ceiling with the length: {function}");
+    // A loop a previous body left at its header, or whose entries were declined, keeps every access's own test.
+    let views = || ElementViews::Typed(Some(Kind::Float64));
+    for (left_header, entry_bounds) in [(true, true), (false, false)] {
+        let function = region_with_feedback(masked, views(), left_header, entry_bounds);
+        let body = loop_body(&function);
+        assert!(bounds_compares(&function, &body) >= 1, "left {left_header}, entry bounds {entry_bounds}: no index is proved: {function}");
+    }
+}
+
 #[test]
 fn a_loop_nest_proves_the_views_of_its_arrays_once_where_their_bases_are_invariant() {
     use crate::heap::TypedArrayKind as Kind;
