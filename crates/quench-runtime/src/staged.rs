@@ -67,6 +67,8 @@ mod spread;
 mod admission;
 mod delete;
 mod operation;
+#[cfg(not(stencil_build))]
+mod operation_decode;
 pub(crate) use operation::Operation;
 
 mod decode;
@@ -175,8 +177,6 @@ pub(crate) use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, wo
 mod register_frame;
 pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, bound_this, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
 
-mod operation;
-pub(crate) use operation::Operation;
 
 mod edge;
 pub(crate) use edge::Edge;

@@ -293,7 +293,7 @@ pub(crate) fn is_return(instruction: WideInstruction) -> bool {
 /// A raise of its operand (`Throw`): the owned step that throws the register.
 pub(crate) fn is_throw(instruction: WideInstruction) -> bool {
     match decoded(instruction) {
-        Some(Operation::Protocol { step: Protocol::Owned(crate::staged::protocol_owned::OwnedVarStep::ThrowValue), .. }) => true,
+        Some(Operation::Throw { .. }) => true,
         Some(_) => false,
         None => instruction.op().is_throw(),
     }
