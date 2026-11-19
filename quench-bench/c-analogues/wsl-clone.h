@@ -136,6 +136,17 @@ static Ast *ast_clone(const Ast *n) {
     c->u.assign.lhs = ast_clone(n->u.assign.lhs);
     c->u.assign.rhs = ast_clone(n->u.assign.rhs);
     break;
+  case A_IDENTITY:
+    c->u.identity.target = ast_clone(n->u.identity.target);
+    break;
+  case A_INTLITERAL:
+  case A_UINTLITERAL:
+    c->u.intLit.preferred = ast_clone(n->u.intLit.preferred);
+    break;
+  case A_FLOATLITERAL:
+  case A_DOUBLELITERAL:
+    c->u.fltLit.preferred = ast_clone(n->u.fltLit.preferred);
+    break;
   case A_RMW:
     c->u.rmw.lValue = ast_clone(n->u.rmw.lValue);
     c->u.rmw.newValueExp = ast_clone(n->u.rmw.newValueExp);

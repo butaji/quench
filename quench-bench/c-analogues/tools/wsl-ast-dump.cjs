@@ -19,6 +19,12 @@ const argv = process.argv.slice(2);
 const root = argv[0] && !argv[0].startsWith("--") ? argv[0] : path.join(__dirname, "..", "..", "jetstream");
 const dumpAt = argv.indexOf("--dump") >= 0 ? +argv[argv.indexOf("--dump") + 1] : -1;
 const benchAt = argv.indexOf("--bench") >= 0 ? +argv[argv.indexOf("--bench") + 1] : 0;
+// --stage N: 0 parses each input (the Stage 1 dump); 1 clones the standard library (or parses a
+// doPrep input into the clone and reduces it), then folds constexprs; 2 adds the NameResolver passes
+// over types and protocols; 3 adds typedef resolution, recursive type checks and the synthesized
+// struct and enum functions; 4 adds the NameResolver pass over functions (the full pre-check state).
+const stage = argv.indexOf("--stage") >= 0 ? +argv[argv.indexOf("--stage") + 1] : 4;
+const refsOn = stage >= 2;
 
 function fnv(str) {
     let h = 0x811c9dc5;
@@ -97,7 +103,9 @@ const f64bits = v => {
 const anonRoles = new Map();
 const S = (label, get) => ({ label, get });
 const K = (label, get) => ({ label, get });
-const LIT = n => n.type.preferredType._name;
+// Each literal kind is its own class made by createLiteral, so the kind is read from the class.
+const LITS = { int: run("IntLiteral"), uint: run("UintLiteral"), double: run("DoubleLiteral"), float: run("FloatLiteral") };
+const LIT = n => Object.keys(LITS).find(k => n instanceof LITS[k]);
 const SPEC = {
     FuncDef: { s: [S("name", n => n._name), S("isCast", n => n._isCast), S("shaderType", n => n._shaderType), S("isRestricted", n => n.isRestricted)],
         k: [K("returnType", n => n._returnType), K("typeParameters", n => n._typeParameters), K("parameters", n => n._parameters), K("body", n => n._body)] },
@@ -147,10 +155,33 @@ const SPEC = {
     LogicalExpression: { s: [S("text", n => n._text)], k: [K("left", n => n._left), K("right", n => n._right)] },
     Assignment: { s: [], k: [K("lhs", n => n._lhs), K("rhs", n => n._rhs)] },
     ReadModifyWriteExpression: { s: [], k: [K("lValue", n => n._lValue), K("newValueExp", n => n.newValueExp), K("resultExp", n => n.resultExp)] },
+    IdentityExpression: { s: [], k: [K("target", n => n._target)] },
+    EnumLiteral: { s: [], k: [] },
     IntLiteral: { s: [S("kind", LIT), S("value", n => n.value)], k: [] },
     UintLiteral: { s: [S("kind", LIT), S("value", n => n.value)], k: [] },
     FloatLiteral: { s: [S("kind", LIT), S("bits", n => f64bits(n.value))], k: [] },
     DoubleLiteral: { s: [S("kind", LIT), S("bits", n => f64bits(n.value))], k: [] },
+};
+// --refs: the references NameResolver sets, appended after each node's own fields (and its
+// children after the node's children). A target is Class@n<index> (native origin) or Class@u<index>.
+const TGT = t => (t === null || t === undefined ? "-" : classOf(t) + "@" + (t.origin.originKind === "native" ? "n" : "u") + t.origin.index);
+const TGTS = l => (l === null || l === undefined ? "-" : "[" + [...l].map(TGT).join(",") + "]");
+const DOT_REFS = { s: [S("getOverloads", n => TGTS(n.possibleGetOverloads)), S("setOverloads", n => TGTS(n.possibleSetOverloads)), S("andOverloads", n => TGTS(n.possibleAndOverloads))], k: [] };
+const LIT_REFS = { s: [S("preferred", n => TGT(n.type.preferredType.type))], k: [] };
+const REFS = {
+    TypeRef: { s: [S("type", n => TGT(n.type))], k: [] },
+    VariableRef: { s: [S("variable", n => TGT(n.variable))], k: [] },
+    CallExpression: { s: [S("overloads", n => TGTS(n.possibleOverloads))], k: [K("returnType", n => n._returnType)] },
+    DotExpression: DOT_REFS,
+    IndexExpression: DOT_REFS,
+    ProtocolRef: { s: [S("protocolDecl", n => TGT(n.protocolDecl))], k: [] },
+    ProtocolFuncDecl: { s: [S("overloads", n => TGTS(n.possibleOverloads))], k: [] },
+    Return: { s: [S("func", n => TGT(n.func))], k: [] },
+    EnumLiteral: { s: [S("member", n => TGT(n.member))], k: [] },
+    IntLiteral: LIT_REFS,
+    UintLiteral: LIT_REFS,
+    FloatLiteral: LIT_REFS,
+    DoubleLiteral: LIT_REFS,
 };
 const classOf = n => (n.constructor.name === "GenericLiteral" ? LITCLASS[LIT(n)] : n.constructor.name);
 const LITCLASS = { int: "IntLiteral", uint: "UintLiteral", double: "DoubleLiteral", float: "FloatLiteral" };
@@ -173,12 +204,35 @@ function dumpProgram(program) {
             anonRoles.set(x.oldValueVar, "old");
             anonRoles.set(x.newValueVar, "new");
         }
-        const scalars = spec.s.map(f => f.label + "=" + scalarText(f.get(x)));
+        const rs = refsOn && REFS[c] ? REFS[c] : { s: [], k: [] };
+        const scalars = [...spec.s, ...rs.s].map(f => f.label + "=" + scalarText(f.get(x)));
         lines.push(indent + c + (scalars.length ? " " + scalars.join(" ") : ""));
-        for (const kid of spec.k) walk(kid.get(x), depth + 1);
+        for (const kid of [...spec.k, ...rs.k]) walk(kid.get(x), depth + 1);
     };
     for (const statement of program._topLevelStatements) walk(statement, 1);
     return lines.join("\n");
+}
+
+// The prepare pipeline (Prepare.js) up to and including name resolution: the standard library is
+// parsed once and cloned per input; doPrep inputs are parsed into the clone and reduced by
+// programWithUnnecessaryThingsRemoved; then constexpr folding and the three NameResolver passes.
+let stdProgramCache = null;
+function resolveInput(input, stage) {
+    if (!stdProgramCache)
+        stdProgramCache = run("(function() { var p = new Program(); parse(p, '/internal/stdlib', 'native', 27, standardLibrary); return p; })()");
+    ctx.__std = stdProgramCache;
+    run("__p = cloneProgram(__std)");
+    if (input.kind !== "stdlib") {
+        ctx.__text = input.text;
+        run("parse(__p, '/internal/test', 'user', 0, __text)");
+        run("__p = programWithUnnecessaryThingsRemoved(__p)");
+    }
+    let code = "foldConstexprs(__p);";
+    if (stage >= 2) code += " __nr = createNameResolver(__p); resolveNamesInTypes(__p, __nr); resolveNamesInProtocols(__p, __nr);";
+    if (stage >= 3) code += " resolveTypeDefsInTypes(__p); resolveTypeDefsInProtocols(__p); checkRecursiveTypes(__p); synthesizeStructAccessors(__p); synthesizeEnumFunctions(__p);";
+    if (stage >= 4) code += " resolveNamesInFunctions(__p, __nr);";
+    run(code);
+    return run("__p");
 }
 
 function lexTokens(text) {
@@ -215,6 +269,10 @@ const rows = inputs.map((input, i) => {
             const toks = lexTokens(input.text);
             dump = toks.join("\n");
             nodes = toks.length;
+        } else if (stage >= 1) {
+            anonRoles.clear();
+            dump = dumpProgram(resolveInput(input, stage));
+            nodes = dump.split("\n").length - 1;
         } else {
             anonRoles.clear();
             dump = dumpProgram(parseInput(input));
@@ -259,8 +317,8 @@ if (benchAt > 0) {
     process.exit(0);
 }
 
-// Lexer totals over every input (the workload of the lexer analogue wsl.c).
-{
+// Lexer totals over every input (stage 0 only) (not in --refs mode) (the workload of the lexer analogue wsl.c).
+if (stage === 0) {
     let chars = 0, tokens = 0, errors = 0;
     inputs.forEach((input, i) => {
         chars += input.text.length;

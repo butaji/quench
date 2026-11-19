@@ -19,7 +19,8 @@ typedef enum {
   A_RETURN, A_IF, A_WHILE, A_DOWHILE, A_FOR, A_BREAK, A_CONTINUE, A_TRAP,
   A_COMMA, A_NULLLITERAL, A_BOOLLITERAL, A_VARIABLEREF, A_CALL, A_DOT, A_INDEX,
   A_DEREF, A_MAKEPTR, A_MAKEARRAYREF, A_LOGICALNOT, A_LOGICAL, A_ASSIGN, A_RMW,
-  A_INTLITERAL, A_UINTLITERAL, A_FLOATLITERAL, A_DOUBLELITERAL
+  A_INTLITERAL, A_UINTLITERAL, A_FLOATLITERAL, A_DOUBLELITERAL,
+  A_IDENTITY, A_ENUMLITERAL
 } AstTag;
 
 typedef struct Ast Ast;
@@ -28,12 +29,14 @@ typedef struct { Ast **v; int n, cap; } AstList;
 struct Ast {
   AstTag tag;
   int origin;                 /* index of the origin token in the source, -1 if none */
+  int native;                 /* 1 if the origin kind is "native" (the standard library), else 0 */
   union {
     /* FuncDef, NativeFunc, ProtocolFuncDecl */
     struct { const char *name; int isCast; const char *shaderType; int isRestricted;
-             Ast *returnType; AstList typeParameters; AstList parameters; Ast *body; } func;
+             Ast *returnType; AstList typeParameters; AstList parameters; Ast *body;
+             int hasOv; AstList ov; } func;   /* ov: possibleOverloads (ProtocolFuncDecl) */
     /* TypeRef */
-    struct { const char *name; AstList typeArguments; } typeRef;
+    struct { const char *name; AstList typeArguments; Ast *type; } typeRef;   /* type: resolved target */
     /* PtrType, ArrayRefType */
     struct { const char *addressSpace; Ast *elementType; } ref;
     /* ArrayType */
@@ -43,7 +46,7 @@ struct Ast {
     /* ConstexprTypeParameter, Field, FuncParameter */
     struct { const char *name; Ast *type; } named;
     /* TypeOrVariableRef, ProtocolRef, EnumMember (value in value) */
-    struct { const char *name; Ast *value; } nameOnly;
+    struct { const char *name; Ast *value; Ast *target; } nameOnly;   /* target: ProtocolRef.protocolDecl */
     /* TypeDef */
     struct { const char *name; AstList typeParameters; Ast *type; } typeDef;
     /* StructType */
@@ -51,7 +54,7 @@ struct Ast {
     /* EnumType */
     struct { const char *name; Ast *baseType; AstList members; } enumType;
     /* ProtocolDecl */
-    struct { const char *name; AstList extends; AstList signatures; } protocolDecl;
+    struct { const char *name; AstList extends; AstList signatures; Ast *typeVariable; } protocolDecl;
     /* NativeType */
     struct { const char *name; AstList typeParameters; } nativeType;
     /* VariableDecl */
@@ -63,7 +66,7 @@ struct Ast {
     /* SwitchCase */
     struct { Ast *value; Ast *body; } switchCase;
     /* Return */
-    struct { Ast *value; } ret;
+    struct { Ast *value; Ast *func; } ret;   /* func: the enclosing top-level statement */
     /* IfStatement */
     struct { Ast *conditional; Ast *body; Ast *elseBody; } ifStmt;
     /* WhileLoop, DoWhileLoop (conditional and body are both set; dump order is per tag) */
@@ -75,13 +78,16 @@ struct Ast {
     /* BoolLiteral */
     struct { int value; } boolLit;
     /* VariableRef; anon: 0 named, 1 old value of a ReadModifyWrite, 2 new value */
-    struct { const char *name; int anon; } varRef;
+    struct { const char *name; int anon; Ast *variable; } varRef;
     /* CallExpression */
-    struct { const char *name; AstList typeArguments; AstList argumentList; } call;
+    struct { const char *name; AstList typeArguments; AstList argumentList;
+             int hasOv; AstList ov; int isCast; Ast *returnType; } call;
     /* DotExpression */
-    struct { const char *fieldName; Ast *base; } dot;
+    struct { const char *fieldName; Ast *base;
+             int hasGet, hasSet, hasAnd; AstList getOv, setOv, andOv; } dot;
     /* IndexExpression */
-    struct { Ast *base; Ast *index; } index;
+    struct { Ast *base; Ast *index;
+             int hasGet, hasSet, hasAnd; AstList getOv, setOv, andOv; } index;
     /* DereferenceExpression */
     struct { Ast *ptr; } deref;
     /* MakePtrExpression, MakeArrayRefExpression */
@@ -94,10 +100,14 @@ struct Ast {
     struct { Ast *lhs; Ast *rhs; } assign;
     /* ReadModifyWriteExpression */
     struct { Ast *lValue; Ast *newValueExp; Ast *resultExp; } rmw;
+    /* IdentityExpression (a rewritten node): target */
+    struct { Ast *target; } identity;
+    /* EnumLiteral */
+    struct { Ast *member; } enumLit;
     /* IntLiteral, UintLiteral */
-    struct { long long value; } intLit;
+    struct { long long value; Ast *preferred; } intLit;   /* preferred: GenericLiteralType.preferredType */
     /* FloatLiteral, DoubleLiteral: value is the double (float literals are rounded to float) */
-    struct { double value; } fltLit;
+    struct { double value; Ast *preferred; } fltLit;
   } u;
 };
 
@@ -107,7 +117,7 @@ static Arena AST_ARENA;
 static void *arena_alloc(size_t n) {
   n = (n + 15) & ~(size_t)15;
   if (!AST_ARENA.base || AST_ARENA.used + n > AST_ARENA.cap) {
-    size_t cap = n > (64u << 20) ? n : (64u << 20);
+    size_t cap = n > (512u << 20) ? n : (512u << 20);
     AST_ARENA.base = malloc(cap);   /* earlier chunks are abandoned; the arena is reset per input */
     if (!AST_ARENA.base) { fprintf(stderr, "out of memory\n"); exit(4); }
     AST_ARENA.used = 0;
@@ -118,6 +128,9 @@ static void *arena_alloc(size_t n) {
   return p;
 }
 static void arena_reset(void) { AST_ARENA.used = 0; }
+/* The arena keeps the standard library below a mark; each input resets to the mark. */
+static size_t arena_mark(void) { return AST_ARENA.used; }
+static void arena_reset_to(size_t m) { AST_ARENA.used = m; }
 static char *arena_strndup(const char *s, int n) {
   char *p = arena_alloc((size_t)n + 1);
   memcpy(p, s, n);
@@ -136,11 +149,14 @@ static void list_push(AstList *l, Ast *n) {
   l->v[l->n++] = n;
 }
 
+/* The origin kind of the nodes being created: set by parse_program for the text it parses. */
+static int AST_ORIGIN_NATIVE = 0;
 static Ast *ast_new(AstTag tag, int origin) {
   Ast *a = arena_alloc(sizeof(Ast));
   memset(a, 0, sizeof *a);
   a->tag = tag;
   a->origin = origin;
+  a->native = AST_ORIGIN_NATIVE;
   return a;
 }
 
@@ -247,6 +263,8 @@ static const char *ast_class_name(const Ast *n) {
   case A_UINTLITERAL: return "UintLiteral";
   case A_FLOATLITERAL: return "FloatLiteral";
   case A_DOUBLELITERAL: return "DoubleLiteral";
+  case A_IDENTITY: return "IdentityExpression";
+  case A_ENUMLITERAL: return "EnumLiteral";
   }
   return "?";
 }
@@ -442,6 +460,13 @@ static void dump_node(Buf *b, const Ast *n, int depth) {
     buf_str(b, "\n");
     dump_child(b, n->u.assign.lhs, depth + 1);
     dump_child(b, n->u.assign.rhs, depth + 1);
+    return;
+  case A_IDENTITY:
+    buf_str(b, "\n");
+    dump_child(b, n->u.identity.target, depth + 1);
+    return;
+  case A_ENUMLITERAL:
+    buf_str(b, "\n");
     return;
   case A_RMW:
     buf_str(b, "\n");

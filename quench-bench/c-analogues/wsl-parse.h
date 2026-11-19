@@ -1263,6 +1263,7 @@ static Ast *parse_restricted_func_def(Parser *P) {
 
 /* ---- top level: parse(program, origin, originKind, lineNumberOffset, text) ---- */
 static void parse_program(Program *prog, const char *origin, int native, int lineOffset, const char *text, int len) {
+  AST_ORIGIN_NATIVE = native;
   Parser P_storage;
   Parser *P = &P_storage;
   memset(P, 0, sizeof *P);

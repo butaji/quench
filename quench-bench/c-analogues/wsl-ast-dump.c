@@ -12,6 +12,7 @@
 #include "wsl-ast.h"
 #include "wsl-parse.h"
 #include "wsl-clone.h"
+#include "wsl-prep.h"
 
 static uint32_t fnv_bytes(uint32_t h, const char *s, size_t n) {
   for (size_t i = 0; i < n; i++) {
@@ -112,17 +113,67 @@ static void bench_parse(int iterations) {
   printf("parsed %ld failed %ld\n", parsed, failed);
 }
 
+/* --stage N (as tools/wsl-ast-dump.cjs): 0 parses each input; 1 clones the standard library (or
+ * parses a doPrep input into the clone and reduces it with programWithUnnecessaryThingsRemoved),
+ * then folds constexprs. The standard library is parsed once and kept below the arena mark. */
+static int STAGE = 0;
+static Program STD_PROG, PREP_IN, PREP_OUT;
+static size_t STD_MARK;
+
+static void std_parse_once(void) {
+  arena_reset();
+  memset(&STD_PROG, 0, sizeof STD_PROG);
+  jmp_buf top;
+  WSL_NH = 0;
+  WSL_HANDLERS[WSL_NH++] = &top;
+  if (setjmp(top) != 0) {
+    fprintf(stderr, "stdlib parse failed: %s: %s\n", WSL_ERR_CLASS, WSL_ERR_MSG);
+    exit(7);
+  }
+  parse_program(&STD_PROG, "/internal/stdlib", 1, 27, INPUTS[0].text, INPUTS[0].len);
+  WSL_NH = 0;
+  STD_MARK = arena_mark();
+}
+
+static long prepare_one(int i, const Input *in, Buf *b, char *status, size_t statuscap) {
+  arena_reset_to(STD_MARK);
+  if (i == 0) {
+    prog_clone(&PREP_OUT, &STD_PROG);
+  } else {
+    jmp_buf top;
+    WSL_NH = 0;
+    WSL_HANDLERS[WSL_NH++] = &top;
+    if (setjmp(top) != 0) {
+      WSL_NH = 0;
+      snprintf(status, statuscap, "err:%s: %s", WSL_ERR_CLASS, WSL_ERR_MSG);
+      return -1;
+    }
+    prog_clone(&PREP_IN, &STD_PROG);
+    parse_program(&PREP_IN, "/internal/test", 0, 0, in->text, in->len);
+    WSL_NH = 0;
+    program_removed(&PREP_OUT, &PREP_IN);
+  }
+  fold_program(&PREP_OUT);
+  buf_str(b, "program\n");
+  for (int k = 0; k < PREP_OUT.statements.n; k++) dump_node(b, PREP_OUT.statements.v[k], 1);
+  long nodes = -1;
+  for (size_t c = 0; c < b->n; c++) if (b->s[c] == '\n') nodes++;
+  return nodes;
+}
+
 int main(int argc, char **argv) {
   const char *root = "../jetstream";
   int dumpAt = -1;
   int benchIterations = 0;
   for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "--clone") == 0) CLONE_FLAG = 1;
+    if (strcmp(argv[i], "--stage") == 0 && i + 1 < argc) STAGE = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--clone") == 0) CLONE_FLAG = 1;
     else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dumpAt = atoi(argv[++i]);
     else if (strcmp(argv[i], "--bench") == 0 && i + 1 < argc) benchIterations = atoi(argv[++i]);
     else root = argv[i];
   }
   collect_inputs(root);
+  if (STAGE >= 1) std_parse_once();
   if (benchIterations > 0) {
     bench_parse(benchIterations);
     return 0;
@@ -138,12 +189,15 @@ int main(int argc, char **argv) {
     char status[700] = "ok";
     Buf b = {0};
     long nodes = 0;
-    arena_reset();
+    if (STAGE == 0) arena_reset();
     if (i > 0 && in->native) {
       /* doLex: the token list (no "program" line) */
       int count = dump_lex_input(in, &b, status, sizeof status);
       nodes = count;
       if (strcmp(status, "ok") != 0) { b.n = 0; nodes = 0; }
+    } else if (STAGE >= 1) {
+      nodes = prepare_one(i, in, &b, status, sizeof status);
+      if (nodes < 0) { b.n = 0; nodes = 0; }
     } else {
       nodes = parse_one(i, in, &b, status, sizeof status);
       if (nodes < 0) { b.n = 0; nodes = 0; }
