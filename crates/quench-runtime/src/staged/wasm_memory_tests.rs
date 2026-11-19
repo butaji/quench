@@ -255,7 +255,7 @@ fn an_access_checks_its_extent_unless_the_guard_covers_it() {
 #[test]
 fn memory_size_shifts_the_length_by_the_page_bits() {
     let mut probe = Probe::default();
-    size(&mut probe);
+    size(&mut probe, WASM_PAGE_BITS);
     assert_eq!(
         probe.log,
         [

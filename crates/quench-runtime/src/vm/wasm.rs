@@ -4179,8 +4179,8 @@ mod tests {
             let stored = vm.decode_wasm_value(Value::integer(23), crate::WasmType::I32).unwrap();
             crate::staged::wasm_memory_bytes::write_memory(
                 &mut vm.wasm_memory_mut(memory).unwrap().0,
-                7,
                 crate::wasm::memory::MemoryStore::I32Store,
+                7,
                 stored,
             )
             .unwrap();
