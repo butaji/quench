@@ -61,6 +61,7 @@ fn stitched(vm: &Vm<crate::SystemHost>, module: &crate::WasmModule, index: usize
     let function = code.function(index);
     let params = function.params as usize;
     let no_callee = |_: usize| None;
+    let no_growth = crate::bitset::BitSet::default();
     let no_global = |_: usize| None;
     let no_indirect = |_: usize| None;
     let no_table = |_: usize| None;
@@ -73,6 +74,7 @@ fn stitched(vm: &Vm<crate::SystemHost>, module: &crate::WasmModule, index: usize
         memory_slot,
         memory_stable: false,
         callee: &no_callee,
+        grows_memory: &no_growth,
         vm_call: 0,
         global: &no_global,
         globals_offset: 0,

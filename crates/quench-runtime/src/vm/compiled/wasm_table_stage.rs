@@ -280,9 +280,11 @@ impl<H: Host> Emitter<'_, '_, H> {
             .map(|(offset, ty)| self.read(window.base + offset as u16, Kind::of(*ty).expect("planned")))
             .collect();
         if native_tail {
-            self.tail_body_values(body, signature, &arguments, (self.base, self.length));
+            let length = self.passed_length();
+            self.tail_body_values(body, signature, &arguments, (self.base, length));
         } else {
-            let (status, bits) = self.call_body_values(body, signature, &arguments, (self.base, self.length));
+            let length = self.passed_length();
+            let (status, bits) = self.call_body_values(body, signature, &arguments, (self.base, length));
             self.goto(done, &[status, bits]);
         }
         self.body.core.builder.set_cold_block(foreign);

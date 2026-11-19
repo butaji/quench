@@ -107,11 +107,21 @@ pub(crate) fn global_area(s: &S) -> usize {
 #[inline(always)]
 pub(crate) unsafe fn reload_memory(s: &mut S, length_at: usize) {
     unsafe {
-        let header = s.frame as *mut usize;
         let length = *((s.ctx + length_at) as *const u64) as usize;
-        *header.add(super::FRAME_LENGTH_WORD) = length;
+        *(s.frame as *mut usize).add(super::FRAME_LENGTH_WORD) = length;
+    }
+    unsafe { restore_memory(s) }
+}
+
+/// After a call that cannot have grown the memory (`CALL_KEEP`): the base and length pins are the
+/// frame header's, which hold the current length (the context's, by every growing call's reload).
+/// The rest is as `reload_memory` leaves it.
+#[inline(always)]
+pub(crate) unsafe fn restore_memory(s: &mut S) {
+    unsafe {
+        let header = s.frame as *const usize;
         s.p[1] = *header.add(super::FRAME_BASE_WORD);
-        s.p[2] = length;
+        s.p[2] = *header.add(super::FRAME_LENGTH_WORD);
     }
     // Wasm rows keep nothing in the other pins (the status pin is written only on a leave), so
     // a call row hands them on as constants: the call need not save them around itself.

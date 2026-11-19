@@ -4,6 +4,7 @@
 mod ancestry;
 mod fingerprint;
 
+use super::gc::ObjectLayout;
 use rustc_hash::FxHashSet;
 use std::rc::Rc;
 use wasmparser::{
@@ -31,6 +32,26 @@ struct Declarations {
     /// The displays' runs, each the canonical indices of a declaration's ancestors from its
     /// root down to itself, so a subtype check reads one entry at the target's depth.
     ancestors: Box<[u32]>,
+    /// Each declaration's object layout, built for the module on first use (`layout`).
+    layouts: Layouts,
+}
+
+/// The module's object layouts, derived from the groups, so they never differ between equal modules.
+#[derive(Debug, Default)]
+struct Layouts(std::cell::OnceCell<Box<[Option<ObjectLayout>]>>);
+
+impl PartialEq for Layouts {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+#[cfg(test)]
+impl WasmTypes {
+    /// A module whose declarations are `types`, each a singleton group, for layout tests.
+    pub(crate) fn singletons_for_test(types: Vec<SubType>) -> Self {
+        Self::of(types.into_iter().map(|ty| vec![ty]).collect())
+    }
 }
 
 impl PartialEq for WasmTypes {
@@ -54,6 +75,12 @@ impl WasmTypes {
     /// final, unshared function groups, just like ordinary function types.
     pub fn from_functions(functions: impl IntoIterator<Item = FuncType>) -> Self {
         Self::of(functions.into_iter().map(|function| vec![SubType::func(function, false)]).collect())
+    }
+
+    /// The payload layout of the struct or array declared at `index`, built once for the module.
+    pub(crate) fn layout(&self, index: u32) -> Option<&ObjectLayout> {
+        let layouts = self.0.layouts.0.get_or_init(|| ObjectLayout::of_module(self));
+        layouts.get(index as usize)?.as_ref()
     }
 
     pub(crate) fn struct_fields(&self, index: u32) -> Option<&[FieldType]> {

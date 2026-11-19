@@ -338,6 +338,9 @@ wasm_row_kinds! {
     // Calls the `WasmEntry` in the cell at address B with the arguments from register A on and the
     // result to D; a trap's status leaves. A `call_` row.
     CALL => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
+    // `CALL` for a callee that cannot grow the memory: the frame's base and length are kept, not
+    // reloaded (`wasm_frame.rs`, `restore_memory`). A `call_` row.
+    CALL_KEEP => [row_family(RowOps::Span(0, 1), W64, &[REGISTER])],
     // `D = A op B` on floats (width `W32` is f32), an `F64BinaryOperator` tag; a comparison leaves
     // an i32 flag.
     FLOAT_BINARY => [

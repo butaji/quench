@@ -44,6 +44,6 @@ pub fn wasm_library() -> Vec<WasmCode> {
 /// The name of a Wasm row's stencil symbol.
 pub fn wasm_name((kind, operator, width, shape): WasmCode) -> String {
     // A row that calls must be named so (`build/checks.rs`).
-    let call = if matches!(kind, CALL | CALL_INDIRECT | CALL_VM | MEMORY_GROW | CALLOUT | GC_ALLOCATE) { "call_" } else { "" };
+    let call = if matches!(kind, CALL | CALL_KEEP | CALL_INDIRECT | CALL_VM | MEMORY_GROW | CALLOUT | GC_ALLOCATE) { "call_" } else { "" };
     format!("{call}w_{kind}_{operator}_{width}_{shape}")
 }

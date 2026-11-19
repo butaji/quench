@@ -80,7 +80,7 @@ pub(crate) unsafe fn call_indirect(mut s: S) -> Out {
         if body != 0 && *((row + TARGET_INSTANCE_AT) as *const usize) == *((s.ctx + CONTEXT_INSTANCE_AT) as *const usize) {
             let result = {
                 let mut stage = CallStage { s: &mut s };
-                call_entry(&mut stage, body, window, destination, CONTEXT_MEMORY_LENGTH_AT)
+                call_entry::<_, true>(&mut stage, body, window, destination, CONTEXT_MEMORY_LENGTH_AT)
             };
             return leave_with(s, result);
         }
