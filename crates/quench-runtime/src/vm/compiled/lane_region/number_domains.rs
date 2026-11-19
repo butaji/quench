@@ -58,6 +58,19 @@ impl Lowering<'_, '_> {
         } else {
             crate::staged::Domain::Float64
         };
+        // A linked body names the shared leaf as a helper symbol: the leaf's address is this
+        // process's, which no image may embed (a `%` past int32, so a double, would call a
+        // pointer the runner's process never had). The helper ABI carries lane words.
+        if matches!(domain, crate::staged::Domain::Float64) && self.helpers.links()
+            && let (Some(left), Some(right)) = (self.operand_number(state, left, exit), self.operand_number(state, right, exit))
+        {
+            let left = super::super::object_slots::emit(&mut self.builder).raw_unary(Unary::Bitcast(Lane::I64), left);
+            let right = super::super::object_slots::emit(&mut self.builder).raw_unary(Unary::Bitcast(Lane::I64), right);
+            let word = self.helper_call(LaneHelper::NumberRemainder, &[left, right]);
+            let number = super::super::object_slots::emit(&mut self.builder).raw_unary(Unary::Bitcast(Lane::F64), word);
+            self.set_number(state, destination, number);
+            return;
+        }
         let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Remainder {
             destination, left, right, domain });
         self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);

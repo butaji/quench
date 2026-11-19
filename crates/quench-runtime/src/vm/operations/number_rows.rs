@@ -364,6 +364,13 @@ impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
     }
 }
 
+/// `number_remainder` on lane words (each a binary64's bits): the shape a linked body calls
+/// through the helper table, where an address of this process's function cannot be named.
+#[inline]
+pub(crate) extern "C" fn number_remainder_words(_vm: i64, _residual: i64, left: i64, right: i64) -> i64 {
+    number_remainder(f64::from_bits(left as u64), f64::from_bits(right as u64)).to_bits() as i64
+}
+
 /// Number remainder after operand conversion. Also callable by the shared native
 /// emitter: no VM state, allocation, collection, guest effects, or integer traps.
 /// Floating remainder preserves negative zero and the Number NaN/infinity rules.

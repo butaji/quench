@@ -977,6 +977,9 @@ lane_helper_inventory! { H;
     AppendRoom => lane_array_append_room::<H>,
     FunctionBinding => lane_function_binding::<H>,
     InterruptOwner => lane_interrupt_owner,
+    /// `%` of two Numbers on their lane words (`number_remainder_words`): no VM state, so linked
+    /// code names it by symbol like every other helper instead of this process's address.
+    NumberRemainder => super::operations::number_remainder_words,
     GlobalGet => lane_global_get::<H>,
     FieldWriteAdmission => lane_field_write_admission::<H>,
     CallBudget => lane_call_budget,
