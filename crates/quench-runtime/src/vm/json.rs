@@ -1120,10 +1120,16 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         });
         let layout = self.builder.layout(parent);
         let (values, keys) = (self.values.len(), self.keys.len());
-        if self.token() == Some(JSON_OBJECT_END) {
-            self.index += 1;
-            let value = self.builder.object(layout, self.keys.drain(keys..), self.values.drain(values..));
-            return Ok(JsonOpened::Value(value));
+        // One read of the next token decides both the empty object and the first key, which
+        // `quoted_key` takes from the quote already read.
+        match self.token() {
+            Some(JSON_OBJECT_END) => {
+                self.index += 1;
+                let value = self.builder.object(layout, self.keys.drain(keys..), self.values.drain(values..));
+                return Ok(JsonOpened::Value(value));
+            }
+            Some(JSON_QUOTE) => {}
+            _ => return Err(self.error(JsonSyntax::ExpectedPropertyNameOrBrace)),
         }
         // The frame holds the layout its keys advance in place: a copy made right after
         // their stores would read them back through memory.
@@ -1131,7 +1137,7 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         let Some(JsonFrame::Object { layout, .. }) = frames.last_mut() else {
             unreachable!("the frame is an object's")
         };
-        self.member_key(layout, JsonSyntax::ExpectedPropertyNameOrBrace)?;
+        self.quoted_key(layout)?;
         Ok(JsonOpened::Container)
     }
 
@@ -1211,6 +1217,12 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
         if self.token() != Some(JSON_QUOTE) {
             return Err(self.error(missing));
         }
+        self.quoted_key(layout)
+    }
+
+    /// `member_key` of a key whose opening quote is the current unit, which the caller read.
+    #[inline(always)]
+    fn quoted_key(&mut self, layout: &mut B::Layout) -> Result<(), JsonParseError> {
         let text = &self.units[self.index + 1..];
         let key = match self.builder.expected_key(layout, |key| T::starts_key(text, key)) {
             Some((key, length)) => {

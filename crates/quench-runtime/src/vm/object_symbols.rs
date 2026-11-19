@@ -399,8 +399,8 @@ impl<H: Host> Vm<H> {
             PropertyCopyKind::Set => self
                 .plain_assign_shapes
                 .get(target_shape, (source_shape, target_proto))
-                .filter(|&(_, proved)| proved == epoch)
-                .map(|(shape, _)| shape),
+                .filter(|entry| entry.proved == epoch)
+                .map(|entry| entry.shape),
         };
         if memoizes && let Some(shape) = memoized {
             let mut values = smallvec::SmallVec::<[Value; PLAIN_COPY_INLINE_PROPERTIES]>::from_elem(Value::UNDEFINED, slots.len());
@@ -483,7 +483,9 @@ impl<H: Host> Vm<H> {
             self.plain_copy_shapes.record(target_shape, source_shape, shape);
             // The target is no prototype, so its adds left the epoch the chain was proved under.
             if kind == PropertyCopyKind::Set && epoch == crate::heap::prototype_layout_epoch() {
-                self.plain_assign_shapes.record(target_shape, (source_shape, target_proto), (shape, epoch));
+                let words = self.plain_copy_words_epoch(source_shape, shape, &slots);
+                let entry = super::shape_memo::PlainAssignShape { shape, proved: epoch, words };
+                self.plain_assign_shapes.record(target_shape, (source_shape, target_proto), entry);
             }
         }
         true
@@ -493,11 +495,24 @@ impl<H: Host> Vm<H> {
     /// adds in order reach (`plain_copy_shapes`).
     pub(super) fn initialize_plain_copy(&mut self, target: Value, shape: u32, values: &[Value], atoms: impl Iterator<Item = Atom>) {
         self.heap.initialize_object_properties(target, shape, values);
+        self.note_plain_copy_atoms(target, atoms);
+    }
+
+    /// Invalidates the method caches that a plain copy's adds of `atoms` to `target` may name.
+    pub(super) fn note_plain_copy_atoms(&mut self, target: Value, atoms: impl Iterator<Item = Atom>) {
         for atom in atoms {
             if self.method_caches_may_name(atom) {
                 self.invalidate_method_caches_for_prototype_add(target, atom);
             }
         }
+    }
+
+    /// The owner epoch under which the source's `slots`, a shape's whole storage in order, encode as
+    /// the words of `shape` (`Heap::slot_encodings_match`); `None` where the slots are not contiguous
+    /// or some slot's encoding differs.
+    fn plain_copy_words_epoch(&self, source_shape: u32, shape: u32, slots: &EnumerableSlots) -> Option<u64> {
+        (slots.contiguous() && self.heap.slot_encodings_match(source_shape, shape, slots.len()))
+            .then(|| self.heap.slot_encoding_epoch())
     }
 
     /// Reads the values of `slots` of `data` into `values`, one per slot in order (`values` holds

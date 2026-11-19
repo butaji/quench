@@ -80,15 +80,23 @@ impl<H: Host> Vm<H> {
         let memoized = self
             .plain_assign_shapes
             .get(target_shape, (source_shape, target_proto))
-            .filter(|&(_, proved)| proved == epoch);
-        let (Some((shape, _)), Some(slots)) = (memoized, self.enumerable_keys.get(source_shape)) else {
+            .filter(|entry| entry.proved == epoch);
+        let (Some(entry), Some(slots)) = (memoized, self.enumerable_keys.get(source_shape)) else {
+            return false;
+        };
+        // The memo's word proof makes the source's contiguous words the target's: one run copy.
+        if entry.words == Some(self.heap.slot_encoding_epoch()) && self.heap.copy_slot_words(target, source, entry.shape) {
+            self.note_plain_copy_atoms(target, slots.iter().map(|&(atom, _)| atom));
+            return true;
+        }
+        let Some(source_data) = self.heap.object_record(source) else {
             return false;
         };
         let mut values = smallvec::SmallVec::<[Value; PLAIN_COPY_INLINE_PROPERTIES]>::from_elem(Value::UNDEFINED, slots.len());
         if !self.read_shaped_values(source_data, &slots, &mut values) {
             return false;
         }
-        self.initialize_plain_copy(target, shape, &values, slots.iter().map(|&(atom, _)| atom));
+        self.initialize_plain_copy(target, entry.shape, &values, slots.iter().map(|&(atom, _)| atom));
         true
     }
 
