@@ -192,6 +192,14 @@ fn emit_entry(builder: &mut FunctionBuilder<'_>, payload: ir::Value, callee: ir:
     entry
 }
 
+/// The function an admitted frameless callee runs: the callee is an admitted user function
+/// (`general_frameless_admit`), so its heap kind names it.
+pub(super) fn admitted_function<H: Host>(vm: &Vm<H>, callee: Value) -> u32 {
+    let Some(crate::heap::FunctionKind::User(_, function)) = vm.heap.function(callee).map(|callee| callee.kind)
+        else { unreachable!("a frameless callee is an admitted user function") };
+    function
+}
+
 /// The chain of the payload's frameless activations, outermost first, followed by `inlined`:
 /// each continues at its callee's call, the innermost at `pc`. Counts the leave against the
 /// innermost frameless function (`MATERIALIZATION_LIMIT`).
@@ -203,15 +211,14 @@ pub(super) fn chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch
     // An admitted callee is a user function of the entry's program; its window follows (`emit_enter`).
     let mut window = vm.frameless.stacks().windows.as_ptr();
     let records: Vec<_> = live.iter().zip(continues).map(|(record, source_pc)| {
-        let Some(crate::heap::FunctionKind::User(_, function)) = vm.heap.function(record.callee).map(|callee| callee.kind)
-            else { unreachable!("a frameless callee is an admitted user function") };
         let registers = window;
-        window = window.wrapping_add(usize::from(program.function(function as usize).registers));
-        ChainFrame { function, source_pc, registers, link: *record }
+        window = window.wrapping_add(usize::from(program.function(admitted_function(vm, record.callee) as usize).registers));
+        ChainFrame { source_pc, registers, link: *record }
     }).collect();
     if let Some(last) = records.last() {
+        let last_function = admitted_function(vm, last.link.callee);
         let epoch = vm.heap.collection_epoch();
-        let (leaves, counted) = vm.frameless.materializations.entry((dispatch.program_id.raw(), last.function)).or_default();
+        let (leaves, counted) = vm.frameless.materializations.entry((dispatch.program_id.raw(), last_function)).or_default();
         if *counted != epoch { (*leaves, *counted) = (0, epoch); }
         *leaves += 1;
         if *leaves == MATERIALIZATION_LIMIT {
@@ -239,7 +246,7 @@ pub(super) fn leave<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch
 #[derive(Clone, Copy)]
 #[cfg(feature = "native-execution")]
 pub(in crate::vm) struct ChainFrame {
-    pub(super) function: u32, pub(super) source_pc: u32, pub(super) registers: *const Value,
+    pub(super) source_pc: u32, pub(super) registers: *const Value,
     /// The link's call record (its PC, where a header holds the call's `Ip`), receiver and callee:
     /// the `ShadowRecord` the native caller wrote, which the header words of the link repeat
     /// (`frame::CONTEXT_CALL`, `CONTEXT_THIS`, `CONTEXT_CALLEE`). Taken whole, not field by field.

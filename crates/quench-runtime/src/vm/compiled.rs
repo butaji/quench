@@ -1098,12 +1098,13 @@ fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usiz
     -> Result<super::dispatch_frame::PendingGeneralCall, (u32, JsError)> {
     let body = program.function(vm.frames[caller].function as usize);
     let call_pc = entry.link.call_pc as u32;
+    let function = frameless::admitted_function(vm, entry.link.callee);
     let instruction = body.widened(body.code[call_pc as usize]);
     // The activation the instruction's step pushes (`Vm::pushed_frame`).
     let (callee, window, receiver, completion) = vm.pushed_frame(caller, instruction, entry.link.callee, entry.link.this);
     let env = vm.heap.function(callee).expect("admitted inline closure").env;
     let passed: *const [Value] = vm.register_window(caller, window);
-    let target = (vm.frames[caller].program, entry.function, env);
+    let target = (vm.frames[caller].program, function, env);
     // SAFETY: the caller's window outlives the callee's setup.
     let pushed = vm.push_in_loop_activation(program, caller, call_pc as usize + 1, target, callee, receiver,
         unsafe { &*passed }, instruction.result_register(), completion).expect("a recovered callee shares its caller's program");
