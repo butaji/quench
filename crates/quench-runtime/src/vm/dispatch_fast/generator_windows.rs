@@ -31,7 +31,7 @@ impl Activation {
     pub(super) fn take_record_bindings(&self) -> Vec<(crate::bytecode::Atom, Value)> {
         let record = self.script().map_or(std::ptr::null_mut(), |script| script.record);
         // SAFETY: a record outlives the activation that runs over it, and nothing else accesses it.
-        unsafe { record.as_mut() }.map(|record| std::mem::take(&mut record.dynamic_bindings)).unwrap_or_default()
+        unsafe { record.as_mut() }.map(FrameRecord::take_dynamic_bindings).unwrap_or_default()
     }
 }
 
@@ -321,7 +321,7 @@ fn push_generator_window<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, (r, i
     unsafe {
         vm.lane_stack.push_generator_activation(activation);
         vm.lane_stack.restore_iterators(depth, &mut (*frame).active_iterators);
-        vm.lane_stack.restore_with_objects(depth, &mut (*frame).with_objects);
+        vm.lane_stack.restore_with_objects(depth, &mut *frame);
         // Only an environment window holds an `arguments` object that rides it.
         if environment {
             vm.record_window_owner(&*(*cx).code, depth);

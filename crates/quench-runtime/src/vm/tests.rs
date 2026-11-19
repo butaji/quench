@@ -7002,7 +7002,7 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
         Some(state) => state.take_function_continuation(),
         _ => panic!("await state"),
     };
-    assert_eq!(take(&mut vm).unwrap().frame.original_arguments, [original]);
+    assert_eq!(take(&mut vm).unwrap().frame.original_arguments(), [original]);
     assert!(take(&mut vm).is_none());
     vm.collect_now(&program);
     assert!(!vm.heap.is_live(live));

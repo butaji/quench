@@ -162,7 +162,7 @@ impl<H: Host> Vm<H> {
         if !frame.suspended_live_at(pc) {
             self.note_suspension_registers(frame, pc);
         }
-        self.lane_stack.take_with_objects(depth, &mut frame.with_objects);
+        self.lane_stack.take_with_objects(depth, frame);
         self.lane_stack.take_iterators(depth, &mut frame.active_iterators);
         frame.suspend_at(pc, self.heap.collection_epoch());
     }
@@ -210,8 +210,8 @@ impl<H: Host> Vm<H> {
         with_objects: impl Iterator<Item = Value>,
     ) {
         frame.close_environment_window();
-        frame.with_objects.extend(with_objects);
         let mut frame = frame.into_frame(self.with_stack.len());
+        frame.with_objects.extend(with_objects);
         frame.active_iterators.extend(iterators);
         self.activate_frame(&mut frame);
         self.frames.push(frame);

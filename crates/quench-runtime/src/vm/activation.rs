@@ -1,6 +1,7 @@
 use super::program_store::ProgramId;
 use crate::Value;
 
+mod frame_cold;
 mod frame_record;
 mod generator_record;
 mod suspension_live;

@@ -5,6 +5,7 @@
 //! has no record, a frame being what holds its dynamic bindings.
 
 use super::CallContext;
+use super::frame_cold::{FrameCold, NO_COLD};
 use super::suspension_live::SuspensionLive;
 use crate::bytecode::Atom;
 use crate::compile::liveness::RegisterSet;
@@ -26,24 +27,20 @@ use crate::Value;
 pub(crate) struct FrameRecord {
     prefix: ShadowFrame,
     pub(in crate::vm) context: CallContext,
-    pub(in crate::vm) reflected_parameters: u16,
-    pub(in crate::vm) original_arguments: Vec<Value>,
+    /// The reflected parameters and kept arguments, dynamic bindings, `with` objects and
+    /// binding site, when the frame holds any (`FrameCold`).
+    cold: Option<Box<FrameCold>>,
     pub(in crate::vm) program: ProgramId,
     pub(in crate::vm) function: u32,
     pub(in crate::vm) pc: usize,
     pub(in crate::vm) env: Value,
     pub(in crate::vm) locals: Vec<Value>,
-    pub(in crate::vm) dynamic_bindings: Vec<(Atom, Value)>,
     pub(in crate::vm) captured: bool,
     /// The register file, with the frame context words below register 0 that a lane window
     /// over it writes (`register_file::FRAME_CONTEXT`). Only its values change while
     /// suspended, never its length, so `WINDOW` stays valid.
     pub(in crate::vm) registers: RegisterFile,
     pub(in crate::vm) active_iterators: Vec<ActiveIterator>,
-    /// The scope stack the frame detached when it suspended: the `with` objects of its
-    /// scope chain, those its closure captured and those it entered, outermost first. While a
-    /// lane activation runs the frame, the chain is the lane stack's (`LaneStack::with_objects`).
-    pub(in crate::vm) with_objects: Vec<Value>,
     /// Whether the registers the last suspension found live (`suspension_live`) are the only
     /// ones the GC traces (`live_registers`): set while suspended, until the frame runs again
     /// (`settle_registers`). The others keep what they held, cleared only on resume after a
@@ -63,9 +60,6 @@ pub(crate) struct FrameRecord {
     /// activation runs the frame (`open_environment_window`): the locals and environment
     /// live there until the run ends (`close_environment_window`).
     environment_window: bool,
-    /// The resume pc of the binding site the direct eval the activation is running was called
-    /// at (`CallerView::binding_site`).
-    pub(in crate::vm) binding_site_pc: Option<u32>,
     /// The record of the generator whose lane window runs the frame, set as the window resumes
     /// it (`Vm::resume_generator_window`) and read as it yields (`Vm::suspend_generator_window`):
     /// a running generator is rooted, and its record boxed, so its yield needs no lookup. Null
@@ -102,6 +96,81 @@ impl FrameRecord {
     /// The suspended receiver.
     pub(in crate::vm) fn this(&self) -> Value {
         Value::from_bits(self.prefix.this)
+    }
+
+    /// Its rarely held state, the empty one where it holds none.
+    #[inline(always)]
+    fn cold(&self) -> &FrameCold {
+        self.cold.as_deref().unwrap_or(&NO_COLD)
+    }
+
+    /// Its rarely held state, boxed now where it held none.
+    fn cold_mut(&mut self) -> &mut FrameCold {
+        self.cold.get_or_insert_with(|| Box::new(FrameCold::EMPTY))
+    }
+
+    /// The arguments it keeps for an `arguments` object or legacy reflection.
+    #[cfg(test)]
+    pub(in crate::vm) fn original_arguments(&self) -> &[Value] {
+        &self.cold().original_arguments
+    }
+
+    /// The dynamic bindings it holds itself (implicit ones, a direct eval's).
+    pub(in crate::vm) fn dynamic_bindings(&self) -> &[(Atom, Value)] {
+        &self.cold().dynamic_bindings
+    }
+
+    /// `dynamic_bindings`, to change.
+    pub(in crate::vm) fn dynamic_bindings_mut(&mut self) -> &mut Vec<(Atom, Value)> {
+        &mut self.cold_mut().dynamic_bindings
+    }
+
+    /// The dynamic bindings it holds itself, taken: an environment takes them over.
+    pub(in crate::vm) fn take_dynamic_bindings(&mut self) -> Vec<(Atom, Value)> {
+        self.cold.as_mut().map(|cold| std::mem::take(&mut cold.dynamic_bindings)).unwrap_or_default()
+    }
+
+    /// The scope stack the frame detached when it suspended: the `with` objects of its
+    /// scope chain, those its closure captured and those it entered, outermost first. While a
+    /// lane activation runs the frame, the chain is the lane stack's (`LaneStack::with_objects`).
+    pub(in crate::vm) fn with_objects(&self) -> &[Value] {
+        &self.cold().with_objects
+    }
+
+    /// `with_objects`, to change.
+    pub(in crate::vm) fn with_objects_mut(&mut self) -> &mut Vec<Value> {
+        &mut self.cold_mut().with_objects
+    }
+
+    /// `with_objects`, to drain, where the frame holds a box for them.
+    pub(in crate::vm) fn held_with_objects_mut(&mut self) -> Option<&mut Vec<Value>> {
+        self.cold.as_mut().map(|cold| &mut cold.with_objects)
+    }
+
+    /// The resume pc of the binding site the direct eval the activation is running was called
+    /// at (`CallerView::binding_site`).
+    pub(in crate::vm) fn binding_site_pc(&self) -> Option<u32> {
+        self.cold().binding_site_pc
+    }
+
+    /// Makes `site` the binding site, returning the one it replaces.
+    pub(in crate::vm) fn replace_binding_site_pc(&mut self, site: Option<u32>) -> Option<u32> {
+        if site.is_none() && self.cold.is_none() {
+            return None;
+        }
+        std::mem::replace(&mut self.cold_mut().binding_site_pc, site)
+    }
+
+    /// A direct eval over the record ended: its binding site and the `with` scopes it entered
+    /// with go, and the box with them where it holds nothing else.
+    pub(in crate::vm) fn end_eval_scope(&mut self) {
+        if let Some(cold) = self.cold.as_mut() {
+            cold.binding_site_pc = None;
+            cold.with_objects.clear();
+            if cold.is_empty() {
+                self.cold = None;
+            }
+        }
     }
 
     /// The value the instruction the frame suspended at evaluates to, which a resume sends: it
@@ -194,25 +263,21 @@ impl FrameRecord {
         let mut record = Self {
             prefix: ShadowFrame { this: this.to_bits(), ..ShadowFrame::EMPTY },
             context: CallContext::Function(callee),
-            reflected_parameters: 0,
-            original_arguments: Vec::new(),
+            cold: None,
             program,
             function,
             pc: 0,
             env,
             locals: Vec::new(),
-            dynamic_bindings: Vec::new(),
             captured: false,
             registers: RegisterFile::new(),
             active_iterators: Vec::new(),
-            with_objects: Vec::new(),
             traces_live: false,
             suspension_live: None,
             suspended_epoch: 0,
             window_plan: None,
             js_jit_skip_entry_once: false,
             environment_window: false,
-            binding_site_pc: None,
             resuming_generator: std::ptr::null_mut(),
         };
         record.bind_window();
@@ -286,8 +351,9 @@ impl FrameRecord {
         }
     }
 
-    /// `frame`'s suspended state, moved: its register file and buffers keep their storage. What
-    /// a run derives for itself (the operation's field and binding site, the capture cache,
+    /// `frame`'s suspended state, moved: its register file and buffers keep their storage, but
+    /// for the rarely held ones that are empty (`FrameCold`), which are freed. What a run derives
+    /// for itself (the operation's field and binding site, the capture cache,
     /// a fixed `this`, the `with` base) is not kept.
     pub(in crate::vm) fn capture(frame: Box<Frame>) -> Box<Self> {
         let Frame {
@@ -298,11 +364,10 @@ impl FrameRecord {
             fixed_this: _, js_jit_skip_entry_once,
         } = *frame;
         let prefix = ShadowFrame { this: this.to_bits(), ..ShadowFrame::EMPTY };
+        let cold = FrameCold { reflected_parameters, original_arguments, dynamic_bindings, with_objects, binding_site_pc: None }.boxed();
         let mut record = Self {
-            prefix, context, reflected_parameters, original_arguments, program, function, pc, env,
-            locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
+            prefix, context, cold, program, function, pc, env, locals, captured, registers, active_iterators,
             traces_live: false, suspended_epoch: 0, suspension_live: None, window_plan: None, js_jit_skip_entry_once, environment_window: false,
-            binding_site_pc: None,
             resuming_generator: std::ptr::null_mut(),
         };
         record.bind_window();
@@ -323,11 +388,11 @@ impl FrameRecord {
     pub(in crate::vm) fn into_buffers(self: Box<Self>, with_base: usize) -> Box<Frame> {
         let this = self.this();
         let Self {
-            prefix: _, context, reflected_parameters, original_arguments, program, function, pc, env,
-            locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
-            traces_live: _, suspended_epoch: _, suspension_live: _, window_plan: _, js_jit_skip_entry_once, environment_window: _, binding_site_pc: _,
+            prefix: _, context, cold, program, function, pc, env, locals, captured, registers, active_iterators,
+            traces_live: _, suspended_epoch: _, suspension_live: _, window_plan: _, js_jit_skip_entry_once, environment_window: _,
             resuming_generator: _,
         } = *self;
+        let FrameCold { reflected_parameters, original_arguments, dynamic_bindings, with_objects, binding_site_pc: _ } = FrameCold::unbox(cold);
         Box::new(Frame {
             context, reflected_parameters, original_arguments, program, function, pc,
             pc_is_resume: true,
@@ -348,12 +413,13 @@ impl FrameRecord {
     /// and registers only the live ones where the suspension knows them (`live_registers`):
     /// each other one would cost the mark a push and a pop to find it names no cell.
     pub(in crate::vm) fn extend_roots(&self, out: &mut Vec<Value>) {
+        let cold = self.cold();
         out.extend(self.context.callee());
-        out.extend_from_slice(&self.original_arguments);
-        out.extend_from_slice(&self.with_objects);
+        out.extend_from_slice(&cold.original_arguments);
+        out.extend_from_slice(&cold.with_objects);
         out.extend([self.env, self.this()]);
         Value::extend_heap_values(out, &self.locals);
-        out.extend(self.dynamic_bindings.iter().map(|(_, value)| *value));
+        out.extend(cold.dynamic_bindings.iter().map(|(_, value)| *value));
         match self.live_registers() {
             Some(live) => out.extend(
                 self.registers.iter().enumerate().filter(|&(register, value)| value.is_heap() && live.contains(register)).map(|(_, &value)| value),
@@ -378,25 +444,21 @@ impl Clone for FrameRecord {
         let mut copy = Self {
             prefix: self.prefix,
             context: self.context,
-            reflected_parameters: self.reflected_parameters,
-            original_arguments: self.original_arguments.clone(),
+            cold: self.cold.as_deref().and_then(|cold| FrameCold { binding_site_pc: None, ..cold.clone() }.boxed()),
             program: self.program,
             function: self.function,
             pc: self.pc,
             env: self.env,
             locals: self.locals.clone(),
-            dynamic_bindings: self.dynamic_bindings.clone(),
             captured: self.captured,
             registers: self.registers.clone(),
             active_iterators: self.active_iterators.clone(),
-            with_objects: self.with_objects.clone(),
             traces_live: self.traces_live,
             suspension_live: self.suspension_live.clone(),
             suspended_epoch: self.suspended_epoch,
             window_plan: None,
             js_jit_skip_entry_once: self.js_jit_skip_entry_once,
             environment_window: false,
-            binding_site_pc: None,
             resuming_generator: std::ptr::null_mut(),
         };
         copy.bind_window();
@@ -408,16 +470,17 @@ impl Clone for FrameRecord {
 /// its registers (`live_registers`) and starts its run anew on resume.
 impl Snap for FrameRecord {
     fn snap(&self, writer: &mut Writer) -> SnapshotResult<()> {
+        let cold = self.cold();
         self.context.snap(writer)?;
-        self.reflected_parameters.snap(writer)?;
-        self.original_arguments.snap(writer)?;
+        cold.reflected_parameters.snap(writer)?;
+        cold.original_arguments.snap(writer)?;
         self.program.snap(writer)?;
         self.function.snap(writer)?;
         self.pc.snap(writer)?;
         self.env.snap(writer)?;
         self.this().snap(writer)?;
         self.locals.snap(writer)?;
-        self.dynamic_bindings.snap(writer)?;
+        cold.dynamic_bindings.snap(writer)?;
         match self.live_registers() {
             Some(live) => {
                 let mut registers = RegisterFile::from_registers(&self.registers);
@@ -427,25 +490,21 @@ impl Snap for FrameRecord {
             None => self.registers.snap(writer)?,
         }
         self.active_iterators.snap(writer)?;
-        self.with_objects.snap(writer)?;
+        cold.with_objects.snap(writer)?;
         self.captured.snap(writer)
     }
 
     fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
+        let context = Snap::unsnap(reader)?;
+        let mut cold = FrameCold { reflected_parameters: Snap::unsnap(reader)?, original_arguments: Snap::unsnap(reader)?, ..FrameCold::EMPTY };
+        let (program, function, pc, env) = (Snap::unsnap(reader)?, Snap::unsnap(reader)?, Snap::unsnap(reader)?, Snap::unsnap(reader)?);
+        let prefix = ShadowFrame { this: Value::unsnap(reader)?.to_bits(), ..ShadowFrame::EMPTY };
+        let locals = Snap::unsnap(reader)?;
+        cold.dynamic_bindings = Snap::unsnap(reader)?;
+        let (registers, active_iterators) = (Snap::unsnap(reader)?, Snap::unsnap(reader)?);
+        cold.with_objects = Snap::unsnap(reader)?;
         let mut record = Self {
-            context: Snap::unsnap(reader)?,
-            reflected_parameters: Snap::unsnap(reader)?,
-            original_arguments: Snap::unsnap(reader)?,
-            program: Snap::unsnap(reader)?,
-            function: Snap::unsnap(reader)?,
-            pc: Snap::unsnap(reader)?,
-            env: Snap::unsnap(reader)?,
-            prefix: ShadowFrame { this: Value::unsnap(reader)?.to_bits(), ..ShadowFrame::EMPTY },
-            locals: Snap::unsnap(reader)?,
-            dynamic_bindings: Snap::unsnap(reader)?,
-            registers: Snap::unsnap(reader)?,
-            active_iterators: Snap::unsnap(reader)?,
-            with_objects: Snap::unsnap(reader)?,
+            prefix, context, cold: cold.boxed(), program, function, pc, env, locals, registers, active_iterators,
             captured: Snap::unsnap(reader)?,
             traces_live: false,
             suspension_live: None,
@@ -453,7 +512,6 @@ impl Snap for FrameRecord {
             window_plan: None,
             js_jit_skip_entry_once: false,
             environment_window: false,
-            binding_site_pc: None,
             resuming_generator: std::ptr::null_mut(),
         };
         record.bind_window();

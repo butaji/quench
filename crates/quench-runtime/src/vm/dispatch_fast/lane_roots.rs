@@ -464,7 +464,7 @@ impl JobWindow {
             let stack = &mut vm(cx).lane_stack;
             stack.push_generator_activation(self.activation);
             stack.restore_iterators(0, &mut (*self.frame).active_iterators);
-            stack.restore_with_objects(0, &mut (*self.frame).with_objects);
+            stack.restore_with_objects(0, &mut *self.frame);
             vm(cx).record_window_owner(&*(*cx).code, 0);
             lane_enter_suspended(cx, &self.entry, self.registers, self.pc)
         }
