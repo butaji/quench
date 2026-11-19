@@ -262,7 +262,7 @@ impl<H: Host> Vm<H> {
         if !self.is_function(callback) {
             return Err(self.type_error(p, "array callback is not callable".into()));
         }
-        if native.is_array_reducer() {
+        if step_rules::takes_accumulator(Kind::of(native)) {
             let mut iteration = ArrayIteration::new(native, this, callback, Value::UNDEFINED, Value::UNDEFINED, false, typed_array, length);
             iteration.result = match args.get(1) {
                 Some(initial) => *initial,
@@ -327,10 +327,7 @@ impl<H: Host> Vm<H> {
         let mut filtered_value_roots = Vec::new();
         let (this, typed_array) = (iteration.receiver, iteration.typed_array);
         let typed_filter = typed_array && iteration.native == Native::ArrayFilter;
-        let finds_holes = matches!(
-            iteration.native,
-            Native::ArrayFind | Native::ArrayFindIndex | Native::ArrayFindLast | Native::ArrayFindLastIndex
-        );
+        let visits_holes = step_rules::visits_holes(Kind::of(iteration.native));
         let outcome = self.with_prepared_callback(iteration.callback, iteration.this_arg, |vm, prepared| {
             while let Some(index) = iteration.advance() {
                 let key = Value::length(index);
@@ -339,7 +336,7 @@ impl<H: Host> Vm<H> {
                 let value = match vm.dense_array_element(this, key) {
                     Some(value) if !typed_array => value,
                     _ => {
-                        if !typed_array && !finds_holes && !vm.has_property(p, this, key)? {
+                        if !typed_array && !visits_holes && !vm.has_property(p, this, key)? {
                             continue;
                         }
                         vm.get_index(p, this, key)?
@@ -386,7 +383,7 @@ impl<H: Host> Vm<H> {
         key: Value,
     ) -> Result<Value, JsError> {
         let this = iteration.receiver;
-        if iteration.native.is_array_reducer() {
+        if step_rules::takes_accumulator(Kind::of(iteration.native)) {
             self.call_prepared(p, prepared, &[iteration.result, value, key, this])
         } else {
             self.call_prepared(p, prepared, &[value, key, this])
@@ -404,56 +401,42 @@ impl<H: Host> Vm<H> {
         value: Value,
         mapped: Value,
     ) -> Result<Option<Value>, JsError> {
-        match iteration.native {
-            Native::ArrayMap if iteration.typed_array => {
-                self.typed_array_set(p, iteration.result, index, mapped)?;
-            }
-            Native::ArrayMap if !iteration.fresh => {
-                self.create_data_property_or_throw(p, iteration.result, index, mapped)?;
-            }
-            Native::ArrayFilter if !iteration.fresh => {
-                if self.truthy(mapped) {
-                    self.create_data_property_or_throw(p, iteration.result, iteration.kept, value)?;
-                    iteration.kept += 1;
+        match self.iteration_effect(iteration, index, value, mapped) {
+            Effect::Store { slot, value: stored } if !iteration.fresh => {
+                if iteration.typed_array {
+                    self.typed_array_set(p, iteration.result, slot, stored)?;
+                } else {
+                    self.create_data_property_or_throw(p, iteration.result, slot, stored)?;
                 }
+                Ok(None)
             }
-            _ => return Ok(self.fresh_array_step(iteration, index, value, mapped)),
-        };
-        Ok(None)
+            effect => Ok(self.apply_fresh_effect(iteration, effect)),
+        }
     }
 
-    /// `array_iteration_apply` of an iteration whose result, if it makes one, ArrayCreate
-    /// made (`fresh_array_iteration`): its store and every answer run no guest code and raise
-    /// nothing.
-    #[inline]
-    pub(super) fn fresh_array_step(
-        &mut self,
-        iteration: &mut ArrayIteration,
-        index: usize,
-        value: Value,
-        mapped: Value,
-    ) -> Option<Value> {
-        match iteration.native {
-            Native::ArrayForEach => None,
-            Native::ArrayMap => {
-                self.store_fresh_array_element(iteration.result, index, mapped);
+    /// The effect of a callback's `mapped` result for `value` at `index` of `iteration`'s step
+    /// (`staged::array_iteration::apply`), which advances a filter's kept count.
+    #[inline(always)]
+    fn iteration_effect(&self, iteration: &mut ArrayIteration, index: usize, value: Value, mapped: Value) -> Effect {
+        step_rules::apply(Kind::of(iteration.native), index, value, mapped, &mut iteration.kept, || self.truthy(mapped))
+    }
+
+    /// Applies `effect` to an iteration whose result, if it makes one, ArrayCreate made
+    /// (`fresh_array_iteration`): its store and every answer run no guest code and raise
+    /// nothing. The answer is the method's value where the step ends it.
+    #[inline(always)]
+    fn apply_fresh_effect(&mut self, iteration: &mut ArrayIteration, effect: Effect) -> Option<Value> {
+        match effect {
+            Effect::Nothing => None,
+            Effect::Store { slot, value } => {
+                self.store_fresh_array_element(iteration.result, slot, value);
                 None
             }
-            Native::ArrayFilter => {
-                if self.truthy(mapped) {
-                    self.store_fresh_array_element(iteration.result, iteration.kept, value);
-                    iteration.kept += 1;
-                }
+            Effect::Accumulate(value) => {
+                iteration.result = value;
                 None
             }
-            Native::ArrayReduce | Native::ArrayReduceRight => {
-                iteration.result = mapped;
-                None
-            }
-            Native::ArraySome => self.truthy(mapped).then_some(Value::TRUE),
-            Native::ArrayEvery => (!self.truthy(mapped)).then_some(Value::FALSE),
-            Native::ArrayFind | Native::ArrayFindLast => self.truthy(mapped).then_some(value),
-            _ => self.truthy(mapped).then(|| Value::number(index as f64)),
+            Effect::End(value) => Some(value),
         }
     }
 
@@ -482,14 +465,6 @@ impl<H: Host> Vm<H> {
             }
         }
         Ok(None)
-    }
-}
-
-impl Native {
-    /// `Array.prototype.reduce` and `reduceRight`: array callback methods whose callback is
-    /// passed the accumulator first and whose second argument is the initial one, not `thisArg`.
-    pub(crate) fn is_array_reducer(self) -> bool {
-        matches!(self, Self::ArrayReduce | Self::ArrayReduceRight)
     }
 }
 
@@ -532,27 +507,41 @@ impl ArrayIteration {
         Self { native, receiver, callback, this_arg, result, fresh, typed_array, visited: 0, length, kept: 0 }
     }
 
-    /// The index of the next element, which it counts as visited; `None` past the last.
+    /// The index of the next element, which it counts as visited; `None` past the last
+    /// (`staged::array_iteration::next_index`).
     pub(super) fn advance(&mut self) -> Option<usize> {
-        if self.visited == self.length {
-            return None;
-        }
-        self.visited += 1;
-        Some(match self.native {
-            Native::ArrayFindLast | Native::ArrayFindLastIndex | Native::ArrayReduceRight => self.length - self.visited,
-            _ => self.visited - 1,
-        })
+        let (index, visited) = step_rules::next_index(Kind::of(self.native), self.visited, self.length)?;
+        self.visited = visited;
+        Some(index)
     }
 
-    /// The method's value once every element was visited without a step ending it.
+    /// The method's value once every element was visited without a step ending it
+    /// (`staged::array_iteration::completion`).
     #[inline(always)]
     pub(super) fn completion(&self) -> Value {
-        match self.native {
-            Native::ArrayMap | Native::ArrayFilter | Native::ArrayReduce | Native::ArrayReduceRight => self.result,
-            Native::ArraySome => Value::FALSE,
-            Native::ArrayEvery => Value::TRUE,
-            Native::ArrayFindIndex | Native::ArrayFindLastIndex => Value::number(-1.0),
-            _ => Value::UNDEFINED,
+        step_rules::completion(Kind::of(self.native), self.result)
+    }
+}
+
+impl Kind {
+    /// The step kind of an array callback method: the one mapping from the runtime's natives
+    /// to the staged step semantics, which the native loop and the lane both read. Only the
+    /// eleven natives `Native::is_array_callback` names reach an iteration.
+    #[inline(always)]
+    pub(crate) fn of(native: Native) -> Self {
+        match native {
+            Native::ArrayForEach => Self::ForEach,
+            Native::ArrayMap => Self::Map,
+            Native::ArrayFilter => Self::Filter,
+            Native::ArrayReduce => Self::Reduce,
+            Native::ArrayReduceRight => Self::ReduceRight,
+            Native::ArraySome => Self::Some,
+            Native::ArrayEvery => Self::Every,
+            Native::ArrayFind => Self::Find,
+            Native::ArrayFindIndex => Self::FindIndex,
+            Native::ArrayFindLast => Self::FindLast,
+            Native::ArrayFindLastIndex => Self::FindLastIndex,
+            _ => unreachable!("an array iteration runs an array callback method"),
         }
     }
 }
@@ -596,7 +585,8 @@ impl<H: Host> Vm<H> {
         mapped: Value,
     ) -> Result<Value, JsError> {
         let ArrayStepCall { mut iteration, element, index, roots } = call;
-        let result = match self.fresh_array_step(&mut iteration, index, element, mapped) {
+        let effect = self.iteration_effect(&mut iteration, index, element, mapped);
+        let result = match self.apply_fresh_effect(&mut iteration, effect) {
             Some(value) => Ok(value),
             None => self.array_iteration_run(p, &mut iteration),
         };

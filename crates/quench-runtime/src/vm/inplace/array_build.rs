@@ -131,7 +131,8 @@ impl<H: Host> Vm<H> {
             return Some(f(&text));
         }
         if let Some(flag) = value.as_bool() {
-            return Some(f(if flag { b"true" } else { b"false" }));
+            let word: &[u8] = if flag { b"true" } else { b"false" };
+            return Some(f(word));
         }
         self.with_join_text(value, f)
     }
