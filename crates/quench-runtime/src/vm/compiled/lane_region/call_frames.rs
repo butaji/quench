@@ -16,7 +16,7 @@ use super::super::super::dispatch_fast::LaneRecoverySpace;
 use super::super::lane_body_abi::body_signature_in_lane;
 use crate::staged::call::admit_room;
 use crate::staged::{Access, Region};
-use crate::staged::{plan_entry, CallEntry, CallFrame, CalleeKind, DirectPlan, Entered, Identity, Invocation, Resolved, Room, Stage};
+use crate::staged::{plan_entry, Arguments, CallEntry, CallFrame, CalleeKind, DirectPlan, Entered, Identity, Invocation, Resolved, Room, Stage};
 use crate::typed_ir::BindingTime;
 
 /// Where a run's completion goes: the block a run leaves at with its status and result word.
@@ -128,6 +128,33 @@ impl EmitFrame<'_> {
         stage.store_u64(DISPATCH, values, 0, top);
     }
 
+    /// Whether the arguments of `site` have the entry types of `callee`'s body (`LaneMethod::entry_param_types`): the
+    /// argument window's register `k` holds a value of parameter `k`'s type (`self.state`), so the body's proven entry,
+    /// which skips those guards, takes them as the caller proved them. A call that does not pass a register window, that
+    /// forwards its arguments, or whose target a forwarder names proves none.
+    fn arguments_proven(&self, site: &Invocation, callee: &DirectCallee) -> bool {
+        let Some(types) = callee.body.as_deref().and_then(|body| body.entry_param_types()) else { return false };
+        let Arguments::Window { first, count } = site.arguments else { return false };
+        if site.forwards || callee.forwarder.is_some() || usize::from(count) < types.len() { return false; }
+        types.iter().enumerate().all(|(index, ty)| self.state.values.get(usize::from(first) + index)
+            .is_some_and(|fact| fact.value.ty.is_subtype(*ty)))
+    }
+
+    /// The entry a direct call enters: the callee's proven entry where the call's arguments are proved to have its
+    /// parameter types (`arguments_proven`) and the cell publishes the very body the call pinned (`DirectCallee::body`,
+    /// `EntryCell::proven_body`), else the cell's entry. A cell that holds no proven entry, or another body's, enters `entry`.
+    fn entry_target(&self, stage: &mut Emit<'_, '_>, callee: &DirectCallee, cell: ir::Value, entry: ir::Value) -> ir::Value {
+        let (true, Some(body)) = (self.proven_arguments.get(), callee.body.as_ref()) else { return entry };
+        let proven = stage.load_u64(ENTRY_CELL, cell, field(std::mem::offset_of!(EntryCell, proven_entry)));
+        let owner = stage.load_u64(ENTRY_CELL, cell, field(std::mem::offset_of!(EntryCell, proven_body)));
+        let pinned = stage.constant(std::rc::Rc::as_ptr(body).addr() as u64);
+        let same_body = stage.sub(owner, pinned);
+        let same_body = stage.eq_imm(same_body, 0_u64);
+        let present = stage.ne_imm(proven, 0_u64);
+        let holds = stage.all(same_body, present);
+        stage.select(holds, proven, entry)
+    }
+
     /// The total frame count a native header is indexed by (one-frame-one-call.md F5): the frames
     /// below the plain headers (`*activation_count`) plus the plain depth, the count before the push.
     fn frame_index(&self, stage: &mut Emit<'_, '_>) -> ir::Value {
@@ -224,7 +251,9 @@ const fn context_at(index: usize) -> i32 { -((index * std::mem::size_of::<u64>()
 
 impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn call_entry(&self, site: &Invocation) -> CallEntry {
+        self.proven_arguments.set(false);
         let Some(CallSite { callee: Some(callee), .. }) = self.call_site() else { return CallEntry::Helper };
+        self.proven_arguments.set(self.arguments_proven(site, callee));
         let kind = if site.constructs() { CalleeKind::Class } else { CalleeKind::Script };
         // A callee register the state already holds as this very function (a Stable binding's
         // read, or an identity an earlier guard proved) needs no check: the identity is folded.
@@ -281,6 +310,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         }
         self.push_native(stage, callee, this, call.registers, room);
         let entry = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, entry)));
+        let entry = self.entry_target(stage, callee, room.cell, entry);
         let signature = body_signature_in_lane(types::I64, stage.builder.func.signature.call_conv);
         let signature = stage.builder.import_signature(signature);
         let captures = address(self.helpers, stage.builder, RelocKind::CaptureWords, callee.target.function,

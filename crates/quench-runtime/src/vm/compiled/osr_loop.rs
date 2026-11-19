@@ -828,13 +828,6 @@ pub(super) fn inlined_returning(instruction: WideInstruction) -> bool {
         && instruction.defined_register().is_some()
 }
 
-/// The ops an inlined callee's instructions may be: those `admit` lowers, its `Return`, and
-/// none that names its function's own state (captures, frame, calls).
-fn inlinable(op: Op) -> bool {
-    op.traits().has(crate::bytecode::Traits::INLINABLE)
-}
-
-
 /// `instruction` with each register `register` renames, a `this` field base made the
 /// `this` register, and a jump target `target` renames; `None` for a field it cannot
 /// rename, or a register with flags.

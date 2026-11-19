@@ -4574,12 +4574,16 @@ lane_handler! {
         };
         let function = code.function(vm.frames[frame].function as usize);
         let instruction = function.widened(function.code[pc]);
+        // A record that returns its result (`RETURN_REGISTER`) completes the frame, which the general path does.
+        if instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
+            return exit(ip);
+        }
         vm.frames[frame].pc = pc;
         vm.frames[frame].pc_is_resume = false;
         let mut next = pc + 1;
         match vm.step(code, frame, instruction, &mut next, false) {
             Ok(StepResult::Continue) => {}
-            Ok(_) => unreachable!("an in-place step only continues"),
+            Ok(other) => unreachable!("an in-place step only continues: {:?} gave {}", instruction.op(), match other { StepResult::Return(_) => "Return", _ => "another result" }),
             Err(error) => {
                 vm.lane_completion.raise(error);
                 return exit(ip);
@@ -9505,17 +9509,6 @@ impl<H: Host> Vm<H> {
         let frame = self.frames.len() - 1;
         self.frames[frame].pc = call_pc + 1;
         self.frames[frame].pc_is_resume = true;
-    }
-
-    /// Running natives, innermost of the first `natives`, that recorded `depth` frames beside
-    /// activations now `added` frames above it: their caller is the innermost of those.
-    fn shift_beside_natives(&mut self, natives: usize, depth: usize, added: usize) {
-        for native in self.realm.promise.active_native[..natives].iter_mut().rev() {
-            if native.frame_depth != depth {
-                break;
-            }
-            native.frame_depth += added;
-        }
     }
 
     /// The lane's exit (`dispatch_in_lane`'s exit record): a running leaf, whose records may

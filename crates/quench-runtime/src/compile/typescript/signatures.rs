@@ -318,6 +318,39 @@ mod tests {
     }
 
     #[test]
+    fn parameter_interfaces_and_aliases_have_the_members_of_their_type_literal() {
+        let source = "interface I { x: number; s: string; o?: boolean }\ntype A = { x: number; s: string; o?: boolean };\n\
+            interface E extends I { y: number }\n\
+            function lit(p: {x: number, s: string, o?: boolean}) {}\n\
+            function fi(p: I) {}\nfunction fa(p: A) {}\nfunction fe(p: E) {}";
+        let declared = declared_of(source, "interfaces.cts");
+        let member_facts = |start: u32| ["x", "s", "o"].map(|name| declared.declared_member(start, 0, name));
+        let lit = source.find("function lit").unwrap() as u32;
+        let expected = [Some(bit(V::Number)), Some(bit(V::String)), Some(bit(V::Boolean) | bit(V::Undefined))];
+        assert_eq!(member_facts(lit), expected);
+        assert_eq!(member_facts(source.find("function fi").unwrap() as u32), expected);
+        assert_eq!(member_facts(source.find("function fa").unwrap() as u32), expected);
+        assert_eq!(member_facts(source.find("function fe").unwrap() as u32), expected);
+        assert_eq!(declared.declared_member(source.find("function fe").unwrap() as u32, 0, "y"), Some(bit(V::Number)));
+    }
+
+    #[test]
+    fn parameter_names_without_local_member_facts_record_nothing() {
+        let source = "interface G<T> { x: T }\ntype P<T> = { x: T };\ninterface Open extends Unknown { x: number }\n\
+            interface Twice { x: number }\ninterface Twice { s: string }\n\
+            function fg(p: G<number>) {}\nfunction fp(p: P<number>) {}\nfunction fo(p: Open) {}\n\
+            function fm(p: Missing) {}\nfunction ft(p: Twice) {}\nfunction fu(p: Missing<number>) {}";
+        let declared = declared_of(source, "nothing.cts");
+        for function in ["fg", "fp", "fo", "fm", "fu"] {
+            let start = source.find(&format!("function {function}")).unwrap() as u32;
+            assert_eq!(declared.declared_member(start, 0, "x"), None, "{function}");
+        }
+        let twice = source.find("function ft").unwrap() as u32;
+        assert_eq!(declared.declared_member(twice, 0, "x"), Some(bit(V::Number)));
+        assert_eq!(declared.declared_member(twice, 0, "s"), Some(bit(V::String)));
+    }
+
+    #[test]
     fn signatures_and_locals_survive_the_binary_round_trip() {
         let source = "function f(this: Window, ...r: string[]): boolean { let x: number = 1; return true }\nlet top: string = \"\";\nclass P { x: number }\nfunction m(p: {x: number}, q: P) {}";
         let program = Engine::specialize_typescript(source, "round.cts").unwrap();

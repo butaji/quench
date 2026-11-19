@@ -44,14 +44,14 @@ fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
         Some(Operation::ForInNext { .. }) => Some(Heap::ForIn),
         Some(Operation::TypeofIndex { .. }) => Some(Heap::TypeofIndex),
         Some(Operation::RequireIteratorResult { .. }) => Some(Heap::Object),
+        Some(Operation::RequireObjectCoercible { .. }) => staged_plain_arm(instruction, numeric::row_names::STAGED_COERCIBLE),
+        Some(Operation::Unary { .. }) => staged_unary_arm(instruction),
+        Some(Operation::TypeofString { .. } | Operation::TypeofTest { .. }) => typeof_arm(instruction.unary_operator()),
         _ => match instruction.op().class() {
             // derivation debt: no staged::Operation for SetFunctionName (the naming is a recorded site, `names`)
             Class::SetFunctionName => names::of(known, instruction).map(names::Name::heap),
-            Class::RequireIteratorResult => Some(Heap::Object),
-            // derivation debt: no staged::Operation for the `typeof` string and `typeof` test operators
-            Class::Unary => staged_unary_arm(instruction).or_else(|| typeof_arm(instruction.unary_operator())),
+            // derivation debt: no staged::Operation for a Binary with a Number constant operand (`Operation::Binary` takes registers only)
             Class::Binary => staged_binary_arm(instruction),
-            Class::RequireObjectCoercible => staged_plain_arm(instruction, numeric::row_names::STAGED_COERCIBLE),
             _ => None,
         },
     }

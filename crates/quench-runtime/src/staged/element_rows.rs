@@ -105,8 +105,8 @@ fn read<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, base:
     match view {
         ElementView::Typed(view) => typed_read(stage, view, index, miss),
         ElementView::Dense(view) => frame.element_probed(stage, miss,
-            |stage, _, absent| read_element(stage, view, index, absent),
-            |stage, frame, miss| {
+            #[inline(always)] |stage, _, absent| read_element(stage, view, index, absent),
+            #[inline(always)] |stage, frame, miss| {
                 let key = frame.key_word(stage, key)?;
                 frame.index_get_host(stage, object, key, miss)
             }),

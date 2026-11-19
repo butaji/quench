@@ -21,7 +21,7 @@ pub(crate) fn require_iterator_result<S: Stage, F: Frame<S>>(stage: &mut S, fram
     let object = value::is_direct_object(stage, word);
     let array = value::is_direct_array(stage, word);
     let record = stage.any(object, array);
-    match stage.choose_leaving(record, |_| Some(word), |stage| frame.object_like(stage, word).map(|()| word)) {
+    match stage.choose_leaving(record, |_| Some(word), #[inline(always)] |stage| frame.object_like(stage, word).map(|()| word)) {
         Some(word) => Step::Value(word),
         None => Step::Unresolved,
     }
