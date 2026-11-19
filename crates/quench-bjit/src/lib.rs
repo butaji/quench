@@ -345,9 +345,6 @@ mod rustc_tests {
 
     /// The routines around a region's rows (`stencils/entry.rs`).
     const ROUTINES: [&str; 4] = ["entry_thunk", "entry_resume", "leave_word", "leave_pop"];
-    /// The routines around a wasm function's rows (`wasm_entry.rs`, x86-64): its entry and the leaves with a word,
-    /// with none, and with a trap's status.
-    const WASM_ROUTINES: [&str; 4] = ["entry_wasm", "leave_wasm_word", "leave_wasm_void", "leave_wasm_trap"];
 
     /// Every row the library names was built, and canonicalizing is idempotent.
     #[test]
@@ -370,7 +367,7 @@ mod rustc_tests {
             assert!(rustc::stencil(&crate::wasm::wasm_name(code)).is_some(), "{code:?}");
         }
         #[cfg(target_arch = "x86_64")]
-        for name in WASM_ROUTINES {
+        for name in crate::wasm::ROUTINES {
             assert!(rustc::stencil(name).is_some(), "{name}");
         }
     }
