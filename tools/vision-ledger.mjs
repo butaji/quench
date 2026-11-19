@@ -488,6 +488,14 @@ function loadExemptions() {
 }
 // An exemption whose reason starts "NEEDS BUILD" keeps the item open but moves it to the stabilization bucket.
 const kindOf = it => MEASURED.has(it.cat) || it.needsBuild ? "measured" : "code";
+// plan-2026-11-19b (stabilization team): the scanner's path owners -> the thread that owns them now.
+const TEAM = {
+  "Derive": "Rows and b-jit", "b-jit": "Rows and b-jit",
+  "Calls and frames": "Calls", "Prove call checks once": "Calls",
+  "Fact store": "Objects", "Builtins": "Library", "Front end": "Startup",
+  "Env, GC and heap memory": "Async and memory", "No-jit": "Async and memory",
+  "Compile pipeline": "u-jit",
+};
 function combine(outDir, statePath, inputs) {
   const all = [];
   for (const f of inputs) all.push(...JSON.parse(fs.readFileSync(f, "utf8")));
@@ -495,6 +503,7 @@ function combine(outDir, statePath, inputs) {
   for (const it of all) if (!byKey.has(it.key)) byKey.set(it.key, it);
   const ex = loadExemptions();
   const exempted = [];
+  for (const it of byKey.values()) it.owner = TEAM[it.owner] || it.owner;
   const items = [...byKey.values()].filter(it => {
     const e = ex.find(e => (e.cat === "*" || e.cat === it.cat) && e.file.test(it.file) && e.sym.test(it.symbol));
     if (e && /^NEEDS BUILD/.test(e.reason)) { it.needsBuild = true; it.detail += ` [${e.reason}]`; return true; }
@@ -562,6 +571,8 @@ function combine(outDir, statePath, inputs) {
   fs.writeFileSync(path.join(outDir, "delta.md"), delta);
   fs.writeFileSync(statePath, JSON.stringify({ stamp, keys: [...nowKeys], code: codeBy }));
   process.stdout.write(delta);
+  // Gate step: VL_GATE=1 fails (exit 3) when any code gap is open.
+  if (process.env.VL_GATE === "1" && codeN > 0) process.exit(3);
 }
 
 // ---------- main ----------
