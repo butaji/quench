@@ -1495,9 +1495,13 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         None
     }
 
+    /// The bytes this space holds committed: every block's metadata, and the records of the
+    /// blocks whose pages are still resident (`dirty`). `return_free_pages` gives a block's
+    /// pages back and clears its `dirty` bit, so the ledger falls with them: the block count
+    /// is a high-water mark that a full collection never lowers.
     pub(super) fn allocated_bytes(&self) -> usize {
-        // The blocks' capacity is reserved address space; only the blocks made are touched.
-        self.blocks.len() * (RECORDS_PER_BLOCK * size_of::<T>() + size_of::<RecordBlock>())
+        let resident_blocks = self.dirty.iter().filter(|&&dirty| dirty).count();
+        self.blocks.len() * size_of::<RecordBlock>() + resident_blocks * RECORDS_PER_BLOCK * size_of::<T>()
     }
 
     /// Keeps the freed `id` from reuse until `release_withheld`, so a Value naming the
