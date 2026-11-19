@@ -5,7 +5,9 @@
 
 use super::wasm::{WasmStage, Width};
 use crate::WasmTrap;
+#[cfg(not(stencil_build))]
 use crate::bytecode::{Class, Op, WideInstruction};
+#[cfg(not(stencil_build))]
 use crate::wasm::CanonicalSignature;
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 

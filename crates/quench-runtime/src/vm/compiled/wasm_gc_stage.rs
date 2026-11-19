@@ -14,7 +14,7 @@ use super::{Analysis, AnalysisState, CallContext, Emitter, Host, JsError, Kind, 
 use crate::bytecode::{Function, Op, WideInstruction};
 use crate::staged::machine::{MachineAccess, MachineFlow, MachineStage};
 use crate::staged::wasm::Width;
-use crate::staged::wasm_gc::{Aggregate, GcOp, WasmGc, array_length, field_read, field_write, non_null, reference_cast};
+use crate::staged::wasm_gc::{Aggregate, GcOp, GcStep, WasmGc, array_length, field_read, field_write, non_null, reference_cast};
 use crate::vm::wasm_gc::stage::HeapStage;
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::gc::{GcField, GcFieldAccess, GcFieldValue};
@@ -252,7 +252,7 @@ pub(super) fn field_kind(field: GcField) -> Option<Kind> {
 /// Whether a field access names a struct's field, whose index its tag holds, rather than an
 /// array element, whose index is a register.
 pub(super) fn structure_access(op: Op) -> bool {
-    matches!(op, Op::WasmStructGet | Op::WasmStructGetS | Op::WasmStructGetU | Op::WasmStructSet)
+    matches!(GcStep::of(op), Some(GcStep::StructGet { .. } | GcStep::StructSet))
 }
 
 /// The registers of a field access, as the interpreter reads them: the reference, the array index
@@ -276,7 +276,7 @@ fn operand(state: &AnalysisState, registers: u16, register: u16, kind: Kind) -> 
 fn transfer_field(registers: u16, instruction: WideInstruction, state: &mut AnalysisState) -> Option<()> {
     let field = GcField::from_tag(instruction.imm())?;
     let scalar = field_kind(field)?;
-    let write = GcFieldAccess::from_op(instruction.op())? == GcFieldAccess::Write;
+    let write = GcStep::of(instruction.op())?.field()?.1 == GcFieldAccess::Write;
     let (reference, index, data) = field_registers(instruction, write, structure_access(instruction.op()));
     operand(state, registers, reference, Kind::Reference)?;
     if let Some(index) = index {
@@ -312,10 +312,10 @@ impl<H: Host> Analysis<'_, H> {
             }
             GcOp::Null => {
                 reference(state, instruction.b())?;
-                if instruction.op() == Op::WasmRefAsNonNull {
+                if GcStep::of(instruction.op()) == Some(GcStep::AsNonNull) {
                     NonNullCheck::from_tag(instruction.imm())?;
                 }
-                let result = if instruction.op() == Op::WasmRefIsNull { Kind::I32 } else { Kind::Reference };
+                let result = if GcStep::of(instruction.op()) == Some(GcStep::IsNull) { Kind::I32 } else { Kind::Reference };
                 state.set(instruction.a(), registers, Slot::Value(result))
             }
             GcOp::Equal => {
@@ -326,7 +326,7 @@ impl<H: Host> Analysis<'_, H> {
             GcOp::Test => {
                 self.vm.programs.wasm_signatures(self.program)?;
                 reference(state, instruction.b())?;
-                let result = if instruction.op() == Op::WasmRefTest { Kind::I32 } else { Kind::Reference };
+                let result = if GcStep::of(instruction.op()) == Some(GcStep::Test { cast: false, descriptor: false }) { Kind::I32 } else { Kind::Reference };
                 state.set(instruction.a(), registers, Slot::Value(result))
             }
             GcOp::Allocating => self.transfer_allocating(function, instruction, state),
@@ -361,7 +361,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// A struct or array access, as `field_read` or `field_write` runs it.
     fn gc_field(&mut self, instruction: WideInstruction) {
         let op = instruction.op();
-        let access = GcFieldAccess::from_op(op).expect("planned field access");
+        let access = GcStep::of(op).and_then(GcStep::field).expect("planned field access").1;
         let field = GcField::from_tag(instruction.imm()).expect("planned field operand");
         let kind = field_kind(field).expect("planned scalar field");
         let write = access == GcFieldAccess::Write;
@@ -398,7 +398,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// `ref.is_null` (a flag) and `ref.as_non_null` (the reference, or its null trap).
     fn gc_null(&mut self, instruction: WideInstruction) {
         let reference = self.read(instruction.b(), Kind::Reference);
-        if instruction.op() == Op::WasmRefIsNull {
+        if GcStep::of(instruction.op()) == Some(GcStep::IsNull) {
             let flag = self.is_null(reference);
             self.write(instruction.a(), Kind::I32, flag);
             return;
@@ -420,7 +420,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             .expect("the analysis admits a reference test only with declarations");
         let reference = self.read(instruction.b(), Kind::Reference);
         let target = ReferenceTarget::validated(instruction.imm());
-        if instruction.op() == Op::WasmRefTest {
+        if GcStep::of(instruction.op()) == Some(GcStep::Test { cast: false, descriptor: false }) {
             let admitted = self.admits(reference, target, declarations);
             let flag = self.convert(Conversion::WrapI64, admitted);
             self.write(instruction.a(), Kind::I32, flag);

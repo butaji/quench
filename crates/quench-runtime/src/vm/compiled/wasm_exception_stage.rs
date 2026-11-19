@@ -18,7 +18,7 @@
 use super::wasm_gc_allocate::operand_value;
 use super::wasm_instance_stage::value_kind;
 use super::{Analysis, AnalysisState, CallContext, Emitter, Host, JsError, Kind, Slot, Value, Vm, finish_callout};
-use crate::bytecode::{Function, Op, WideInstruction};
+use crate::bytecode::{Function, WideInstruction};
 use crate::staged::machine::{MachineAccess as _, MachineFlow as _, MachineScalar as _, MachineStage as _};
 use crate::staged::wasm::Width;
 use crate::staged::wasm_exception::Exception;
@@ -33,7 +33,7 @@ const WORD: usize = size_of::<u64>();
 /// tag is the window's first register, which holds the tag binding (`Slot::Binding`), not a value.
 /// `None` for any other operation.
 pub(super) fn reads(instruction: WideInstruction) -> Option<Vec<u16>> {
-    if instruction.op() != Op::WasmExceptionNew {
+    if Exception::of(instruction.op()) != Some(Exception::New) {
         return None;
     }
     let window = instruction.register_window();

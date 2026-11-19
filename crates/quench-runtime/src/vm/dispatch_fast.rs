@@ -12375,7 +12375,7 @@ lane_handler! {
     /// here, each value written as its own record writes it. An access the general path must
     /// run exits at its record.
     fn lane_load_load<SECOND: u16, ACC: u8>(cx, r, ip, i, view) {
-        let first = const { direct_load(opc::WasmI32Load) };
+        let first = MemoryLoad::I32Load;
         let second = const { direct_load(SECOND) };
         // SAFETY: as for `lane_load`.
         let Some(crate::WasmValue::I32(pointer)) =

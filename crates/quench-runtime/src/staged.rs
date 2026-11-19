@@ -111,6 +111,8 @@ pub(crate) mod wasm_simd;
 pub(crate) mod wasm_simd_concrete;
 pub(crate) mod wasm_step;
 pub(crate) mod wasm_atomic;
+pub(crate) mod wasm_emit;
+pub(crate) mod wasm_emit_data;
 pub(crate) use wasm_concrete::ConcreteWasm;
 #[cfg(test)]
 pub(crate) mod trace;

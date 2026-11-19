@@ -15,6 +15,7 @@ use super::{Analysis, AnalysisState, CallContext, Emitter, Host, JsError, Kind, 
 use crate::bytecode::{Function, Op, WideInstruction};
 use crate::staged::machine::{MachineAccess, MachineStage};
 use crate::staged::wasm::Width;
+use crate::staged::wasm_gc::{ArrayConstruction, GcStep};
 use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::gc::ArraySegmentInput;
 use cranelift_codegen::ir::{self, MemFlagsData};
@@ -31,21 +32,21 @@ const FIELD_BITS: u32 = 16;
 /// allocating step.
 pub(super) fn allocating_reads(instruction: WideInstruction) -> Option<Vec<u16>> {
     let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
-    Some(match instruction.op() {
-        Op::WasmArrayNew => vec![b, c],
-        Op::WasmArrayNewDefault | Op::WasmRefGetDesc | Op::WasmI31 | Op::WasmExternalConversion => vec![b],
-        Op::WasmDescriptorTest | Op::WasmDescriptorCast => vec![b, c],
-        Op::WasmStructNewDefault => Vec::new(),
-        Op::WasmArrayNewFixed | Op::WasmStructNew | Op::WasmStructNewDesc | Op::WasmStructNewDefaultDesc => {
+    Some(match GcStep::of(instruction.op())? {
+        GcStep::ArrayNew { construction: ArrayConstruction::Repeated } => vec![b, c],
+        GcStep::ArrayNew { construction: ArrayConstruction::Default } | GcStep::GetDescriptor | GcStep::I31 | GcStep::ExternConversion => vec![b],
+        GcStep::Test { descriptor: true, .. } => vec![b, c],
+        GcStep::StructNew { default: true, descriptor: false } => Vec::new(),
+        GcStep::ArrayNew { construction: ArrayConstruction::Fixed } | GcStep::StructNew { .. } => {
             let window = instruction.register_window();
             (window.base..window.base + window.count).collect()
         }
-        Op::WasmArrayNewData | Op::WasmArrayNewElem => (b..b + ArraySegmentInput::COUNT).collect(),
-        Op::WasmArrayFill => {
+        GcStep::ArraySegment { init: false, .. } => (b..b + ArraySegmentInput::COUNT).collect(),
+        GcStep::ArrayFill => {
             let (output, _) = instruction.register_pair();
             vec![a, b, c, output]
         }
-        Op::WasmArrayCopy | Op::WasmArrayInitData | Op::WasmArrayInitElem => {
+        GcStep::ArrayCopy | GcStep::ArraySegment { init: true, .. } => {
             let (output, input) = instruction.register_pair();
             vec![a, b, c, output, input]
         }
@@ -55,9 +56,9 @@ pub(super) fn allocating_reads(instruction: WideInstruction) -> Option<Vec<u16>>
 
 /// The kind of the word an allocating step returns; `None` for a step that returns none.
 pub(super) fn allocating_result(op: Op) -> Option<Kind> {
-    match op {
-        Op::WasmArrayFill | Op::WasmArrayCopy | Op::WasmArrayInitData | Op::WasmArrayInitElem => None,
-        Op::WasmDescriptorTest => Some(Kind::I32),
+    match GcStep::of(op) {
+        Some(GcStep::ArrayFill | GcStep::ArrayCopy | GcStep::ArraySegment { init: true, .. }) => None,
+        Some(GcStep::Test { cast: false, descriptor: true }) => Some(Kind::I32),
         _ => Some(Kind::Reference),
     }
 }
@@ -137,7 +138,7 @@ pub(super) fn allocating_bits<H: Host>(
     };
     Ok(match vm.wasm_gc_value_step(program, env, instruction, read)? {
         None => 0,
-        Some(value) if instruction.op() == Op::WasmDescriptorTest => value.as_int().unwrap_or(0) as u32 as u64,
+        Some(value) if GcStep::of(instruction.op()) == Some(GcStep::Test { cast: false, descriptor: true }) => value.as_int().unwrap_or(0) as u32 as u64,
         Some(value) => value.to_bits(),
     })
 }

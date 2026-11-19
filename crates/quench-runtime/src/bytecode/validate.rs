@@ -264,8 +264,10 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
                         .is_some_and(|operator| window.count == operator.input_count()))
                     && (instruction.op() != super::Op::WasmExceptionNew
                         || window.count >= crate::wasm::tag::ExceptionInput::MIN_COUNT)
-                    && crate::wasm::gc::StructConstruction::from_op(instruction.op())
-                        .is_none_or(|mode| window.count >= u16::from(mode.described()))
+                    && crate::staged::wasm_gc::GcStep::of(instruction.op()).is_none_or(|step| match step {
+                        crate::staged::wasm_gc::GcStep::StructNew { descriptor, .. } => window.count >= u16::from(descriptor),
+                        _ => true,
+                    })
                     && register_window_in_bounds(value, u32::from(window.count), bounds.registers)
             }
             FieldLayout::RegisterCount => true, // The associated window base owns the bounds check.
