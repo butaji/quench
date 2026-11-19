@@ -4,10 +4,11 @@
 
 /// The compile weight one shard holds at most, in row units. rustc holds every monomorphized
 /// row of its crate in memory at once, and a row's cost is its kind's (`NUMBER_WEIGHT` and after): a shard of
-/// 4096 number rows peaked near 4.6 GB, 219 typed element rows near 4.3 GB, and 626 other heap rows (weighed
-/// at 2 each) with 88 element rows near 9.6 GB, as did 360 supernodes of an index row (weighed at 2). At this
-/// budget a shard stays near 3 to 5 GB beside the fixed cost of the shared row definitions.
-pub const SHARD_WEIGHT: usize = 3072;
+/// 4096 number rows peaked near 4.6 GB, 219 typed element rows near 4.3 GB, 256 property, site and IC rows
+/// near 3.1 GB, and 626 such rows (weighed at 2 each) with 88 element rows near 9.6 GB, as did 360
+/// supernodes of an index row (weighed at 2). At this budget a shard stays near 2 to 2.5 GB beside the fixed
+/// cost of the shared row definitions, so `MAX_WORKERS` of them fit together.
+pub const SHARD_WEIGHT: usize = 1536;
 
 /// The weights of a row's kind, in units of a number row's cost: a heap row inlines its staged
 /// step (7 to 11 units measured for the property, site, IC and environment rows; the build weighs a
@@ -17,9 +18,10 @@ pub const NUMBER_WEIGHT: usize = 1;
 pub const HEAP_WEIGHT: usize = 8;
 pub const ELEMENT_WEIGHT: usize = 14;
 
-/// Most shard compilations running at once: two shards of `SHARD_WEIGHT` fit a 16 GB machine
-/// beside the linker and the other crates cargo builds in parallel.
-pub const MAX_WORKERS: usize = 2;
+/// Most shard compilations running at once: four shards of `SHARD_WEIGHT` (near 10 GB together) fit a
+/// 16 GB, 4-core machine beside the linker and the other crates cargo builds in parallel. LLVM is about 90%
+/// of a shard's time (`-Z time-passes`), so the shards' codegen is what runs in parallel.
+pub const MAX_WORKERS: usize = 4;
 
 /// `items` in contiguous slices, each as long as its weights (`weight`) fit `SHARD_WEIGHT`, and
 /// at least one item a slice; at least one slice, so the fixed rows always have a home.
