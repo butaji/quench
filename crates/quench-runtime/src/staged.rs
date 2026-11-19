@@ -434,16 +434,35 @@ pub(crate) const FUSED_RAW: u8 = 2;
 /// The mode of a window pair or chain `fuse_rows` installs for a window local's (`FLAG_WINDOW`) first row: both
 /// rows run at the window's flag, reading the window's locals. Not a table mode; `fuse_rows` names it.
 pub(crate) const FUSED_WINDOW: u8 = 3;
-/// `fuse_rows` mode for a backward jump (`B`, the row after `A`) whose target record holds a
-/// conditional test (`jump_target_test`, one of `FUSED_TARGET_ROWS`): the fused record runs
-/// `A`, then the jump, then the target's test over the target's own fields in the same dispatch,
-/// and continues at the test's taken or fall-through edge. The target record keeps its own row
-/// for every other entry. The back edge's fuel check runs before the test, as the jump's own does.
-/// It subsumes `lane_inc_dec_loop` and `lane_inc_dec_small_loop` (an update pair whose back edge
-/// enters a register test or a constant test; `specialize_update_jumps`). A back edge into a loaded
-/// bound (`lane_inc_dec_load_loop`) or into an update, and a lone back jump (`lane_jump_back_nullish`),
-/// are not pairs and are not this mode.
+/// The mode of a backward jump's record whose target run holds (`FUSED_TARGET` forms): the record runs,
+/// in the one dispatch, the back edge's fuel check, then the target run, then continues at the test's
+/// taken or fall-through edge. The target run is an optional prefix row (`FUSED_TARGET_PREFIX_ROWS`,
+/// or none: `NO_LINK`) at the target, then a conditional test (`FUSED_TARGET_ROWS`) at the record
+/// after the prefix (or at the target, with no prefix). The target record keeps its own row for every
+/// other entry. Forms, by what precedes the back jump:
+/// - a `FUSED_ROWS` pair whose second row is the jump (`fuse_target_backedges`): the pair, the jump and
+///   the target run in one record. Subsumes `lane_inc_dec_loop` and `lane_inc_dec_small_loop` (an update
+///   pair into a register or constant test), `lane_inc_dec_load_loop` (an update pair into a loaded bound
+///   then its test), and an update pair into an update then its test;
+/// - a lone back jump with no pair before it (`row_jump`'s target run, `lone_target_form`). Subsumes
+///   `lane_jump_back_nullish` and `specialize_nullish_back_edges` (a nullish test), and
+///   `lane_jump_back_update_small` for an update then a test directly (its copy-then-test variant is not
+///   a form: a `Move` between the update and the test is not a prefix row).
+/// The back edge's fuel check runs before the prefix, as the jump's own does (`take_jump`).
 pub(crate) const FUSED_TARGET: u8 = 4;
+
+/// The rows a back edge's target run may begin with (`FUSED_TARGET`): a plain local or capture read,
+/// or an update, each a value row whose result the test after it reads. A target with no prefix is
+/// the test itself (`NO_LINK`).
+pub(crate) const FUSED_TARGET_PREFIX_ROWS: [u16; 3] = [LOAD_LOCAL_PLAIN_ROW, LOAD_CAPTURE_ROW, INC_DEC_ROW];
+
+const _: () = {
+    let mut k = 0;
+    while k < FUSED_TARGET_PREFIX_ROWS.len() {
+        assert!(target_prefix(row_op(FUSED_TARGET_PREFIX_ROWS[k])), "a FUSED_TARGET_PREFIX_ROWS entry is not a target prefix");
+        k += 1;
+    }
+};
 
 /// The opcode whose row answers an arguments binding's count (`Frame::arguments_length`), which a
 /// tier names to give the row a fact it proved at view time.
@@ -594,6 +613,18 @@ pub(crate) const fn conditional_jump(op: Op) -> bool {
 /// comparison may be the nullish test of `x == null`). Wasm jumps are not admitted.
 pub(crate) const fn jump_target_test(op: Op) -> bool {
     conditional_jump(op)
+}
+
+/// Whether `op` reads a variable's value into a register (a plain local or a capture read), the prefix
+/// a back edge's target run may begin with (`FUSED_TARGET_PREFIX_ROWS`).
+pub(crate) const fn reads_variable(op: Op) -> bool {
+    matches!(op, Op::LoadLocalPlain | Op::LoadCapture)
+}
+
+/// Whether `op` may begin a back edge's target run (`FUSED_TARGET`): a variable read the test after it
+/// reads, or an update the test after it reads (`increments`).
+pub(crate) const fn target_prefix(op: Op) -> bool {
+    reads_variable(op) || increments(op)
 }
 
 /// The conditional tests `FUSED_TARGET` instantiates a fused back edge for. `fuse_target_backedges`
