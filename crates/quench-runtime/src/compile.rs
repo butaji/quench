@@ -1,8 +1,8 @@
 use crate::bytecode::{
     Atom, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, FunctionSlot, Instr,
     LexicalBindingKind, MethodSite, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
-    ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, Register, ResidualProgram,
-    SET_THIS_REGISTER, SourcePosition, Superinstruction, WideInstruction,
+    ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, REGISTER_MOVE, RETURN_OP, Register,
+    ResidualProgram, SET_THIS_REGISTER, SourcePosition, Superinstruction, Traits, WideInstruction, the_op,
 };
 use oxc_allocator::Allocator;
 use replay::SiteTable;
@@ -33,6 +33,24 @@ impl HostScriptOptions {
 /// The most registers a function's promoted locals may take: half of the register domain,
 /// leaving the other half for the temporaries of any one statement.
 const PROMOTED_LOCAL_REGISTER_BUDGET: Register = crate::bytecode::SET_THIS_REGISTER / 2;
+/// The frame-local binding ops and their environment and plain forms, by role.
+const LOCAL_LOAD_OP: Op = the_op(Traits::LOCAL_BINDING_LOAD);
+const LOCAL_STORE_OP: Op = the_op(Traits::LOCAL_BINDING_STORE);
+const ENV_LOAD_OP: Op = the_op(Traits::ENV_LOCAL_LOAD);
+const ENV_STORE_OP: Op = the_op(Traits::ENV_LOCAL_STORE);
+const PLAIN_LOAD_OP: Op = the_op(Traits::PLAIN_LOCAL_LOAD);
+const PLAIN_STORE_OP: Op = the_op(Traits::PLAIN_LOCAL_STORE);
+
+/// The plain form of a frame local's binding load or store, which is the op a plain slot's accesses take.
+fn plain_local_form(op: Op) -> Option<Op> {
+    if op == LOCAL_LOAD_OP {
+        Some(PLAIN_LOAD_OP)
+    } else if op == LOCAL_STORE_OP {
+        Some(PLAIN_STORE_OP)
+    } else {
+        None
+    }
+}
 mod annex_b_targets;
 mod arrow;
 mod ast;
@@ -2328,7 +2346,7 @@ pub(crate) fn lower_settled<'a>(
     if function
         .code
         .iter()
-        .any(|instruction| instruction.op() == Op::StoreLocalPlain)
+        .any(|instruction| instruction.op().traits().has(Traits::PLAIN_LOCAL_STORE))
     {
         let live = liveness::analyze(function, methods, field_sites, superinstructions);
         if !numeric::apply_plain_local_stores(function, live.as_deref()) {
@@ -3365,10 +3383,12 @@ impl<'a> Compiler<'a> {
                     local_atoms: &[Atom],
                     global_var_atoms: &[Atom],
                 ) -> Option<Op> {
-                    let replacement = match op {
-                        Op::LoadLocal => Op::LoadEnvLocal,
-                        Op::StoreLocal => Op::StoreEnvLocal,
-                        _ => return None,
+                    let replacement = if op == LOCAL_LOAD_OP {
+                        ENV_LOAD_OP
+                    } else if op == LOCAL_STORE_OP {
+                        ENV_STORE_OP
+                    } else {
+                        return None;
                     };
                     local_atoms
                         .get(slot())
@@ -3874,10 +3894,12 @@ impl<'a> Compiler<'a> {
         if site != crate::bytecode::SHARED_UNCACHED_SITE {
             return site;
         }
-        let access = match op {
-            Op::GetField if base != crate::bytecode::FieldBase::NESTED => NamedAccess::Load,
-            Op::SetField | Op::SetFieldStrict | Op::SetThisField | Op::SetThisFieldStrict => NamedAccess::Store,
-            _ => return site,
+        let access = if op.traits().has(Traits::FIELD_LEAF) && base != crate::bytecode::FieldBase::NESTED {
+            NamedAccess::Load
+        } else if op.traits().has(Traits::SLOPPY_STORE.union(Traits::STRICT_STORE)) {
+            NamedAccess::Store
+        } else {
+            return site;
         };
         self.name_shared_cache_site(access, imm)
     }
@@ -4267,7 +4289,7 @@ impl<'a> Compiler<'a> {
             let initial = if let Some(directive) = options.directive_completion {
                 function.string_literal(directive)
             } else { function.literal(Constant::Undefined) };
-            function.emit(Op::Move, completion, initial, 0, 0);
+            function.emit(REGISTER_MOVE, completion, initial, 0, 0);
             function.statement_completion = StatementCompletion::Track(completion);
         }
         function.dynamic_eval = dynamic_eval;
@@ -4305,7 +4327,7 @@ impl<'a> Compiler<'a> {
             && !lexical_atoms.contains(&arguments)
         {
             let value = function.reg();
-            function.emit(Op::LoadLocal, value, 0, 0, u32::from(slot));
+            function.emit(LOCAL_LOAD_OP, value, 0, 0, u32::from(slot));
             function.store_atom(arguments, value);
         }
         let parameter_end_pc = function.code.len() as u32;
@@ -4330,7 +4352,7 @@ impl<'a> Compiler<'a> {
                 .register()
                 .unwrap_or_else(|| function.literal(Constant::Undefined))
         };
-        function.emit(Op::Return, result, 0, 0, 0);
+        function.emit(RETURN_OP, result, 0, 0, 0);
         // Block scopes add locals after the function's own were counted (`FunctionCompiler::new`):
         // a frame's local count is 16-bit, so one more would wrap it to an empty frame.
         if function.locals.len() > usize::from(u16::MAX) {
@@ -4339,13 +4361,12 @@ impl<'a> Compiler<'a> {
         let captures_locals = function
             .code
             .iter()
-            .any(|instruction| instruction.op() == Op::MakeClosure)
+            .any(|instruction| instruction.op().traits().has(Traits::MAKES_CLOSURE))
             || function
                 .wide
                 .iter()
-                .any(|instruction| instruction.op() == Op::MakeClosure);
-        let reads_binding =
-            |op: Op| matches!(op, Op::LoadLocal | Op::ArgumentsLength | Op::ArgumentGet);
+                .any(|instruction| instruction.op().traits().has(Traits::MAKES_CLOSURE));
+        let reads_binding = |op: Op| op.traits().has(Traits::FRAME_SLOT_READ);
         let arguments_slot = arguments_slot.filter(|slot| {
             (captures_locals && function.owner.arrows_reach_arguments(id, *slot))
                 || function.dynamic_eval
@@ -4593,7 +4614,7 @@ impl<'a> Compiler<'a> {
         let live = rewrite::live_count(code);
         let binaries = code
             .iter()
-            .filter(|instruction| instruction.op() == Op::Binary)
+            .filter(|instruction| instruction.op().traits().has(Traits::BINARY_RESULT))
             .count();
         if live >= 32 && binaries * 3 >= live {
             DispatchClass::Numeric
@@ -4610,31 +4631,17 @@ impl<'a> Compiler<'a> {
     ) -> crate::bitset::BitSet {
         let plain_slots = function.plain_local_slots_in(superinstructions, flow);
         for instruction in &mut function.code {
-            match instruction.op() {
-                Op::LoadLocal | Op::StoreLocal
-                    if plain_slots.contains(instruction.local_slot()) =>
-                {
-                    instruction.set_op(if instruction.op() == Op::LoadLocal {
-                        Op::LoadLocalPlain
-                    } else {
-                        Op::StoreLocalPlain
-                    });
-                }
-                _ => {}
+            if let Some(plain) = plain_local_form(instruction.op())
+                && plain_slots.contains(instruction.local_slot())
+            {
+                instruction.set_op(plain);
             }
         }
         for instruction in &mut function.wide {
-            match instruction.op() {
-                Op::LoadLocal | Op::StoreLocal
-                    if plain_slots.contains(instruction.local_slot()) =>
-                {
-                    instruction.set_op(if instruction.op() == Op::LoadLocal {
-                        Op::LoadLocalPlain
-                    } else {
-                        Op::StoreLocalPlain
-                    });
-                }
-                _ => {}
+            if let Some(plain) = plain_local_form(instruction.op())
+                && plain_slots.contains(instruction.local_slot())
+            {
+                instruction.set_op(plain);
             }
         }
         plain_slots

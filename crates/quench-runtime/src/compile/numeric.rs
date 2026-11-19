@@ -1,9 +1,12 @@
 use super::liveness::{RegisterSet, register_dead};
 use crate::bytecode::{
-    Function, Instr, NumericLocalStoreTarget, Op, Operand, REGISTER_MASK, specialized_numeric_op,
+    Function, Instr, NumericLocalStoreTarget, Op, Operand, REGISTER_MASK, Traits, the_op, specialized_numeric_op,
 };
 
 use super::rewrite::{LOCAL_READERS, NOP, NUMERIC_INDEX_CONSUMERS, NUMERIC_LOCAL_PRODUCERS, OpSet, next_live, protected_positions};
+
+const LOCAL_BINDING_STORE_OP: Op = the_op(Traits::LOCAL_BINDING_STORE);
+const PLAIN_LOCAL_STORE_OP: Op = the_op(Traits::PLAIN_LOCAL_STORE);
 
 type Rule = fn(&[Instr]) -> Option<NumericLocalStoreTarget>;
 
@@ -24,15 +27,15 @@ struct TripleCompactRule {
 // the `IncDec` update's `BooleanFlag` picks the direction. Both are dataflow, which no row states.
 const RULES: &[Rule] = &[local_inc_store];
 // `binary_local_target` needs the first op's row to admit a numeric local target. The store
-// stays named: `StoreEnvLocal` shares `StoreLocal`'s row fields but stores to an environment slot.
+// takes the binding-store role: `StoreEnvLocal` shares `StoreLocal`'s row fields but stores to an environment slot.
 const NUMERIC_COMPACT_RULES: &[CompactRule] = &[CompactRule {
     first: &NUMERIC_LOCAL_PRODUCERS,
-    second: Op::StoreLocal,
+    second: LOCAL_BINDING_STORE_OP,
     replacement: binary_local_target,
 }];
 const PLAIN_LOCAL_COMPACT_RULES: &[CompactRule] = &[CompactRule {
     first: &NUMERIC_LOCAL_PRODUCERS,
-    second: Op::StoreLocalPlain,
+    second: PLAIN_LOCAL_STORE_OP,
     replacement: binary_local_target,
 }];
 // `local_index_sources` reads two local operands into a `GetIndex`: both sources are local reads,
@@ -62,7 +65,7 @@ pub(super) fn apply(function: &mut Function, live: Option<&[RegisterSet]>) {
         }
     }
     for instruction in &mut function.code {
-        if instruction.op() == Op::Binary
+        if instruction.op().traits().has(Traits::BINARY_RESULT)
             && let Some(op) = specialized_numeric_op(instruction.binary_operator())
         {
             instruction.set_op(op);
@@ -177,11 +180,11 @@ fn local_inc_store(code: &[Instr]) -> Option<NumericLocalStoreTarget> {
     let [load, update, store, ..] = code else {
         return None;
     };
-    (load.op() == Op::LoadLocal
-        && update.op() == Op::IncDec
+    (load.op().traits().has(Traits::LOCAL_BINDING_LOAD)
+        && update.op().traits().has(Traits::INCREMENT_UPDATE)
         && update.register_b() == load.result_register()
         && update.boolean_flag().is_some()
-        && store.op() == Op::StoreLocal
+        && store.op().traits().has(Traits::LOCAL_BINDING_STORE)
         && store.register_a() == update.result_register()
         && store.optional_register_b().is_none()
         && store.local_slot() == load.local_slot())

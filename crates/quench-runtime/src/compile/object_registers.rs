@@ -3,7 +3,7 @@
 //! The residual program itself owns the promoted fields, so interpreter recovery
 //! and native execution see the same registers and need no virtual-object cache.
 use super::liveness::{self, MethodArguments, RegisterSet, register_bit};
-use crate::bytecode::{FieldLookup, FieldSite, Function, Instr, ObjectSite, Op, Superinstruction};
+use crate::bytecode::{FieldLookup, FieldSite, Function, Instr, ObjectSite, REGISTER_MOVE, Superinstruction, Traits};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Aliases {
@@ -53,13 +53,14 @@ pub(super) fn promote(
 /// site's atom order: a pair's two operands, or a literal's register window. `None` for any
 /// other instruction.
 fn literal_values(make: Instr) -> Option<smallvec::SmallVec<[u16; 4]>> {
-    match make.op() {
-        Op::MakeObject2 => Some(smallvec::smallvec![make.b(), make.c()]),
-        Op::MakeObjectLiteral => {
-            let window = make.register_window();
-            Some((window.base..window.base + window.count).collect())
-        }
-        _ => None,
+    let op = make.op();
+    if op.traits().has(Traits::PAIR_LITERAL_MAKE) {
+        Some(smallvec::smallvec![make.b(), make.c()])
+    } else if op.traits().has(Traits::WINDOW_LITERAL_MAKE) {
+        let window = make.register_window();
+        Some((window.base..window.base + window.count).collect())
+    } else {
+        None
     }
 }
 
@@ -90,7 +91,7 @@ fn replacement(
             if pc == allocation {
                 after.may |= register_bit(make.result_register());
                 after.must |= register_bit(make.result_register());
-            } else if instruction.op() == Op::Move {
+            } else if instruction.op() == REGISTER_MOVE {
                 let source = register_bit(instruction.b());
                 let destination = register_bit(instruction.result_register());
                 if before.may & source != 0 { after.may |= destination; }
@@ -135,22 +136,22 @@ fn replacement(
         if pc == allocation {
             if uses != 0 || register_bit(make.result_register()) & observable != 0 { return None; }
             replacements[pc] = Some(values.iter().enumerate()
-                .map(|(index, value)| Instr::new(Op::Move, function.registers + index as u16, *value, 0, 0)).collect());
+                .map(|(index, value)| Instr::new(REGISTER_MOVE, function.registers + index as u16, *value, 0, 0)).collect());
         } else if uses != 0 {
             if uses & !aliases.must != 0 { return None; }
-            replacements[pc] = Some(match instruction.op() {
-                Op::Move if instruction.result_flags() == 0
-                    && register_bit(instruction.result_register()) & observable == 0 => smallvec::SmallVec::new(),
-                Op::GetField if instruction.result_flags() == 0 => {
-                    let FieldLookup::Atom { atom, base, .. } = instruction.field_lookup()? else { return None };
-                    if uses != register_bit(base.register_index()?) { return None; }
-                    smallvec::smallvec![Instr::new(Op::Move, instruction.result_register(), scalar(atom)?, 0, 0)]
-                }
-                Op::SetField | Op::SetFieldStrict => {
-                    if uses != register_bit(instruction.b()) || aliases.may & register_bit(instruction.a()) != 0 { return None; }
-                    smallvec::smallvec![Instr::new(Op::Move, scalar(instruction.imm())?, instruction.a(), 0, 0)]
-                }
-                _ => return None,
+            let op = instruction.op();
+            replacements[pc] = Some(if op == REGISTER_MOVE && instruction.result_flags() == 0
+                && register_bit(instruction.result_register()) & observable == 0 {
+                smallvec::SmallVec::new()
+            } else if op.traits().has(Traits::FIELD_LEAF) && instruction.result_flags() == 0 {
+                let FieldLookup::Atom { atom, base, .. } = instruction.field_lookup()? else { return None };
+                if uses != register_bit(base.register_index()?) { return None; }
+                smallvec::smallvec![Instr::new(REGISTER_MOVE, instruction.result_register(), scalar(atom)?, 0, 0)]
+            } else if op.traits().has(Traits::NAMED_FIELD_WRITE) {
+                if uses != register_bit(instruction.b()) || aliases.may & register_bit(instruction.a()) != 0 { return None; }
+                smallvec::smallvec![Instr::new(REGISTER_MOVE, scalar(instruction.imm())?, instruction.a(), 0, 0)]
+            } else {
+                return None;
             });
         }
     }
@@ -160,6 +161,7 @@ fn replacement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bytecode::Op;
 
     fn check(source: &str, promoted: bool) {
         for generic in [false, true] {

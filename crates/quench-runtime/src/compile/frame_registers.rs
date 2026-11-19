@@ -11,9 +11,23 @@ const ARGUMENTS_NAME: &str = "arguments";
 
 use crate::bytecode::initialization;
 use crate::bytecode::{
-    WITH_ENTER_BINDING, EvalBindingLocation, Function, ImmediateRole, Instr, InstructionField, Op,
-    Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, ThrownValueSlot, WideInstruction,
+    REGISTER_MOVE, WITH_ENTER_BINDING, EvalBindingLocation, Function, ImmediateRole, Instr, InstructionField, Op,
+    Operand, OperandKind, REGISTER_MASK, Register, Superinstruction, ThrownValueSlot, Traits, WideInstruction, the_op,
 };
+
+const LOAD_CONST_OP: Op = the_op(Traits::CONSTANT_LOAD);
+const NOP_OP: Op = the_op(Traits::NO_OP);
+/// The ops that reach a closure's or an environment's slots, which a frame's own accesses do not see.
+const ENVIRONMENT_REACHING: Traits = Traits::MAKES_CLOSURE
+    .union(Traits::ENV_LOCAL_LOAD)
+    .union(Traits::ENV_LOCAL_STORE)
+    .union(Traits::ENVIRONMENT_CLONE);
+
+/// The by-name accesses of an identifier: a name operation whose atom immediate names the identifier.
+/// `NAME_OPERATION` alone also covers operations naming no atom, which the immediate role tells apart.
+fn names_binding(op: Op) -> bool {
+    op.traits().has(Traits::NAME_OPERATION) && op.immediate_role() == ImmediateRole::AtomIndex
+}
 
 /// Forgets `function`'s own name binding slot (`Function::self_binding_slot`) when nothing
 /// can read it: its body reads the name as `LoadCallee`, no instruction or handler names the
@@ -40,7 +54,7 @@ pub(super) fn drop_unread_self_binding<'a>(
         Some(captured) => captured.binary_search(&slot).is_ok(),
         // Without a selective layout a closure or environment access may reach any slot.
         None => function.instructions().any(|instruction| {
-            matches!(instruction.op(), Op::MakeClosure | Op::LoadEnvLocal | Op::StoreEnvLocal | Op::CloneEnv)
+            instruction.op().traits().has(ENVIRONMENT_REACHING)
         }),
     };
     let named = function.instructions().any(|instruction| {
@@ -107,7 +121,7 @@ pub(super) fn promote<'a>(
                         .map(|member| member.as_wide())
                 }),
         )
-        .filter(|instruction| instruction.op() == Op::CloneEnv)
+        .filter(|instruction| instruction.op().traits().has(Traits::ENVIRONMENT_CLONE))
         .map(|instruction| instruction.environment_clone_index());
     let named = function
         .arguments_slot
@@ -145,17 +159,7 @@ pub(super) fn promote<'a>(
             }
             continue;
         }
-        if matches!(
-            instruction.op(),
-            Op::LoadName
-                | Op::LoadNameCall
-                | Op::LoadNameTypeof
-                | Op::ResolveName
-                | Op::LoadResolvedName
-                | Op::DeleteName
-                | Op::StoreName
-                | Op::StoreResolvedName
-        ) {
+        if names_binding(instruction.op()) {
             by_name.push(instruction.atom_index());
         }
         if let Some(target) = instruction.numeric_local_target() {
@@ -165,16 +169,16 @@ pub(super) fn promote<'a>(
             continue;
         }
         let slot = instruction.local_slot();
-        let promotable = match instruction.op() {
-            Op::InitializeTdz => true,
-            // The move keeps the load's result flags.
-            Op::LoadLocalPlain => {
-                instruction.numeric_local_target().is_none()
-                    && instruction.numeric_local_store_target().is_none()
-                    && WideInstruction::new(Op::Move, instruction.a(), 0, 0, 0).result_flags_valid()
-            }
-            Op::StoreLocalPlain => true,
-            _ => false,
+        let op = instruction.op();
+        let promotable = if op.traits().has(Traits::TDZ_INITIALIZE) {
+            true
+        // The move keeps the load's result flags.
+        } else if op.traits().has(Traits::PLAIN_LOCAL_LOAD) {
+            instruction.numeric_local_target().is_none()
+                && instruction.numeric_local_store_target().is_none()
+                && WideInstruction::new(REGISTER_MOVE, instruction.a(), 0, 0, 0).result_flags_valid()
+        } else {
+            op.traits().has(Traits::PLAIN_LOCAL_STORE)
         };
         if !promotable {
             exclude(slot);
@@ -230,8 +234,8 @@ pub(super) fn promote<'a>(
         if let Some(target) = *target
             && !written_first.contains(slot)
         {
-            let load = WideInstruction::new(Op::LoadConst, target, 0, 0, undefined_constant);
-            code.push(encode(load, Instr::new(Op::Nop, 0, 0, 0, 0), &mut function.wide));
+            let load = WideInstruction::new(LOAD_CONST_OP, target, 0, 0, undefined_constant);
+            code.push(encode(load, Instr::new(NOP_OP, 0, 0, 0, 0), &mut function.wide));
         }
     }
     let mut map = vec![0; old.len() + 1];
@@ -242,19 +246,19 @@ pub(super) fn promote<'a>(
             .then(|| register(instruction.local_slot()))
             .flatten();
         match (instruction.op(), promoted) {
-            (Op::InitializeTdz, Some(_)) => continue,
-            (Op::LoadLocalPlain, Some(source)) => {
-                instruction = WideInstruction::new(Op::Move, instruction.a(), source, 0, 0);
+            (op, Some(_)) if op.traits().has(Traits::TDZ_INITIALIZE) => continue,
+            (op, Some(source)) if op.traits().has(Traits::PLAIN_LOCAL_LOAD) => {
+                instruction = WideInstruction::new(REGISTER_MOVE, instruction.a(), source, 0, 0);
             }
-            (Op::StoreLocalPlain, Some(target)) => {
+            (op, Some(target)) if op.traits().has(Traits::PLAIN_LOCAL_STORE) => {
                 let source = instruction.register_a();
                 // A store that also keeps its value in a register becomes two moves.
                 if let Some(copy) = instruction.optional_register_b() {
-                    let store = WideInstruction::new(Op::Move, target, source, 0, 0);
-                    code.push(encode(store, Instr::new(Op::Nop, 0, 0, 0, 0), &mut function.wide));
-                    instruction = WideInstruction::new(Op::Move, copy, source, 0, 0);
+                    let store = WideInstruction::new(REGISTER_MOVE, target, source, 0, 0);
+                    code.push(encode(store, Instr::new(NOP_OP, 0, 0, 0, 0), &mut function.wide));
+                    instruction = WideInstruction::new(REGISTER_MOVE, copy, source, 0, 0);
                 } else {
-                    instruction = WideInstruction::new(Op::Move, target, source, 0, 0);
+                    instruction = WideInstruction::new(REGISTER_MOVE, target, source, 0, 0);
                 }
             }
             _ => {
@@ -329,4 +333,47 @@ fn encode(instruction: WideInstruction, packed: Instr, wide: &mut Vec<WideInstru
         wide.push(instruction);
         Instr::wide(wide.len() - 1).expect("wide table index fits the packed domain")
     })
+}
+
+#[cfg(test)]
+mod role_tests {
+    use super::*;
+
+    /// The catalog's ops, in row order, that a predicate selects.
+    fn selected(predicate: impl Fn(Op) -> bool) -> Vec<Op> {
+        (0..Op::COUNT).filter_map(Op::from_index).filter(|&op| predicate(op)).collect()
+    }
+
+    /// Each role selects exactly the ops its emitters and matches replaced.
+    #[test]
+    fn roles_select_the_ops_they_replaced() {
+        assert_eq!(selected(|op| op.traits().has(Traits::LOCAL_BINDING_LOAD)), [Op::LoadLocal]);
+        assert_eq!(selected(|op| op.traits().has(Traits::LOCAL_BINDING_STORE)), [Op::StoreLocal]);
+        assert_eq!(selected(|op| op.traits().has(Traits::PLAIN_LOCAL_LOAD)), [Op::LoadLocalPlain]);
+        assert_eq!(selected(|op| op.traits().has(Traits::PLAIN_LOCAL_STORE)), [Op::StoreLocalPlain]);
+        assert_eq!(selected(|op| op.traits().has(Traits::INCREMENT_UPDATE)), [Op::IncDec]);
+        assert_eq!(selected(|op| op.traits().has(Traits::BINARY_RESULT)), [Op::Binary]);
+        assert_eq!(selected(|op| op.traits().has(Traits::PAIR_LITERAL_MAKE)), [Op::MakeObject2]);
+        assert_eq!(selected(|op| op.traits().has(Traits::WINDOW_LITERAL_MAKE)), [Op::MakeObjectLiteral]);
+        assert_eq!(selected(|op| op.traits().has(Traits::NAMED_FIELD_WRITE)), [Op::SetField, Op::SetFieldStrict]);
+        assert_eq!(
+            selected(|op| op.traits().has(Traits::FRAME_SLOT_READ)),
+            [Op::LoadLocal, Op::ArgumentsLength, Op::ArgumentGet],
+        );
+        assert_eq!(
+            selected(|op| op.traits().has(ENVIRONMENT_REACHING)),
+            [Op::CloneEnv, Op::LoadEnvLocal, Op::StoreEnvLocal, Op::MakeClosure],
+        );
+        assert_eq!(
+            selected(names_binding),
+            [
+                Op::LoadName, Op::LoadNameCall, Op::LoadNameTypeof, Op::ResolveName,
+                Op::LoadResolvedName, Op::DeleteName, Op::StoreName, Op::StoreResolvedName,
+            ],
+        );
+        assert_eq!(selected(|op| op.traits().has(Traits::CONSTANT_LOAD)), [Op::LoadConst]);
+        assert_eq!(selected(|op| op.traits().has(Traits::NO_OP)), [Op::Nop]);
+        assert_eq!(selected(|op| op.traits().has(Traits::TDZ_INITIALIZE)), [Op::InitializeTdz]);
+        assert_eq!(selected(|op| op.traits().has(Traits::REGISTER_COPY)), [Op::Move]);
+    }
 }

@@ -832,7 +832,7 @@ opcodes!($;
     CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning EnvironmentCloneIndex; class CloneEnv; step Body; traits NAME_OPERATION ENVIRONMENT_CLONE ENVIRONMENT_CAPTURE, @ Register, @ fields(Unused, Unused, Unused),
     Wide => Effect::PURE; layout Scalar; meaning WideInstructionIndex; traits , @ Register, @ fields(WideIndexChunk, WideIndexChunk, WideIndexChunk),
     LoadConst => Effect::PURE; layout Scalar; meaning ConstantIndex; js LoadConst; class LoadConst; staged Flow; step Body; traits LEAF_VALUE INLINABLE PURE_SETUP ACTIVATION_FREE SCALAR_REGION LIFETIME_SAFE REMOVABLE_WHEN_DEAD CONSTANT_LOAD, @ Register, @ fields(ResultRegister, Unused, Unused),
-    LoadLocal => Effect::PURE; layout Scalar; meaning LocalSlot; class LoadLocal; step Body; owned LoadLocal; traits ACTIVATION_FREE FRAME_LOCAL_LOAD RELOCATABLE_LOCAL, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+    LoadLocal => Effect::PURE; layout Scalar; meaning LocalSlot; class LoadLocal; step Body; owned LoadLocal; traits ACTIVATION_FREE FRAME_LOCAL_LOAD RELOCATABLE_LOCAL LOCAL_BINDING_LOAD FRAME_SLOT_READ, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
     StoreLocal => Effect::PURE; layout Scalar; meaning LocalSlot; class StoreLocal; step Body; owned StoreLocal; traits ACTIVATION_FREE FRAME_LOCAL_STORE LOCAL_BINDING_STORE RELOCATABLE_LOCAL LOCAL_SLOT_STORE, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
     StoreVarBinding => CALL_EFFECT; layout Scalar; meaning LocalSlot; class StoreVarBinding; step Body; owned StoreVarBinding; traits NAME_OPERATION BINDING_FORM, @ Register, @ fields(Register, Unused, Unused),
     LoadEnvLocal => Effect::READS_HEAP; layout Scalar; meaning LocalSlot; class LoadEnvLocal; staged Names; step Body; owned LoadLocal; traits ENV_LOCAL_LOAD ENV_LOCAL_ACCESS, @ Register, @ fields(ResultRegister, Unused, Unused),
@@ -859,8 +859,8 @@ opcodes!($;
     StringCaseIndex => Effect::PURE; layout Scalar; meaning ConstantIndex; class StringCaseIndex; step Body, @ Register, @ fields(ResultRegister, ElementCount, Register),
     MakeLiteralTemplate => CALL_EFFECT; layout Scalar; meaning LiteralTemplateIndex; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeObject => CALL_EFFECT; layout Scalar; meaning Unused; js ObjectAllocation; class MakeObject; step Body; traits OBJECT_MAKE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    MakeObject2 => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex; class MakeObject2; step Body; traits RETURNING_OBJECT FRAME_RETURNABLE CONST_ARRAY_OBJECT2_TAIL, @ Returnable, @ fields(ResultRegister, Register, Register),
-    MakeObjectLiteral => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex; class MakeObjectLiteral; step Body; traits RETURNING_OBJECT_LITERAL FRAME_RETURNABLE, @ Returnable, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
+    MakeObject2 => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex; class MakeObject2; step Body; traits RETURNING_OBJECT FRAME_RETURNABLE CONST_ARRAY_OBJECT2_TAIL PAIR_LITERAL_MAKE, @ Returnable, @ fields(ResultRegister, Register, Register),
+    MakeObjectLiteral => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex; class MakeObjectLiteral; step Body; traits RETURNING_OBJECT_LITERAL FRAME_RETURNABLE WINDOW_LITERAL_MAKE, @ Returnable, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     SuperConstArrayObject2 => CALL_EFFECT; layout Scalar; meaning SuperinstructionIndex; class SuperConstArrayObject2; step Body; traits RETURNING_LITERAL FRAME_RETURNABLE FUSED_CONST_ARRAY_OBJECT2, @ Returnable, @ fields(ResultRegister, Unused, Unused),
     GetIterator => READ_THROW; layout Scalar; meaning Unused; class GetIterator; staged Names; step LaneResult, @ Register, @ fields(ResultRegister, Register, Unused),
     GetAsyncIterator => READ_THROW; layout Scalar; meaning Unused; step Body, @ Register, @ fields(ResultRegister, Register, Unused),
@@ -889,16 +889,16 @@ opcodes!($;
     GetIndex => READ_THROW; layout Scalar; meaning Unused; class GetIndex; staged Element; step Body; traits BOXED_RESULT INLINABLE PURE_SETUP ELEMENT_ACCESS LIFETIME_SAFE ELEMENT_LOAD INDEXED_RECEIVER, @ Register, @ fields(ResultRegister, NumericIndexOperand, NumericIndexOperand),
     ToPropertyKey => READ_THROW; layout Scalar; meaning Unused; class ToPropertyKey; staged Generic; step LaneResult; traits PROPERTY_KEY_CONVERT, @ Register, @ fields(ResultRegister, Register, Unused),
     ToNumeric => READ_THROW; layout Scalar; meaning Unused; class ToNumeric; staged Value; traits ROW_HANDLER INLINABLE PURE_SETUP LIFETIME_SAFE, @ Register, @ fields(ResultRegister, Register, Unused),
-    CopyDataProperties => CALL_EFFECT; layout Scalar; meaning Unused; class CopyDataProperties; step Lane; traits , @ Register, @ fields(Register, Register, Register),
+    CopyDataProperties => CALL_EFFECT; layout Scalar; meaning Unused; class CopyDataProperties; step Lane; traits ; traits , @ Register, @ fields(Register, Register, Register),
     MarkPrivateName => WRITE_THROW; layout Scalar; meaning AtomIndex; class MarkPrivateName; step Lane; traits PRIVATE_NAME_MARK INSTANCE_ELEMENT_DEFINE, @ Register, @ fields(Unused, Register, Register),
     DefinePrivateField => WRITE_THROW; layout Scalar; meaning AtomIndex; class DefinePrivateField; step Lane; traits PRIVATE_FIELD_DEFINE INSTANCE_ELEMENT_DEFINE, @ Register, @ fields(Register, Register, Register),
-    SetField => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore; staged Property; step Body; traits INLINABLE SLOPPY_STORE OBJECT_FIELD_STORE, @ Register, @ fields(Register, Register, CacheSiteIndex),
+    SetField => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore; staged Property; step Body; traits INLINABLE SLOPPY_STORE OBJECT_FIELD_STORE NAMED_FIELD_WRITE, @ Register, @ fields(Register, Register, CacheSiteIndex),
     DefineComputedField => WRITE_THROW; layout Scalar; meaning Unused; step Lane; traits COMPUTED_FIELD_DEFINE INSTANCE_ELEMENT_DEFINE, @ Register, @ fields(Register, Register, Register),
     SetThisField => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Property; step Body; traits INLINABLE THIS_FIELD_SINK SLOPPY_STORE THIS_FIELD_STORE, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     SetIndex => WRITE_THROW; layout Scalar; meaning BooleanFlag; class SetIndex; staged Element; step Body; traits INLINABLE ELEMENT_ACCESS LIFETIME_SAFE ELEMENT_STORE INDEXED_RECEIVER, @ Register, @ fields(Register, Register, Register),
     DefineArrayElement => WRITE_THROW; layout Scalar; meaning ArrayIndex; class DefineArrayElement; step Lane, @ Register, @ fields(Register, Register, Unused),
     Binary => READ_THROW; layout Scalar; meaning BinaryOperator; js NumericBinary; class Binary; staged Generic; step Body; value Binary; traits BINARY_RESULT LEAF_BINARY RETURNING_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE CONST_ARRAY_OBJECT2_OPERAND, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
-    IncDec => READ_THROW; layout Scalar; meaning BooleanFlag; class IncDec; staged Value; traits ROW_HANDLER LEAF_VALUE INLINABLE PURE_SETUP SCALAR_REGION LIFETIME_SAFE, @ Register, @ fields(ResultRegister, Register, Unused),
+    IncDec => READ_THROW; layout Scalar; meaning BooleanFlag; class IncDec; staged Value; traits ROW_HANDLER LEAF_VALUE INLINABLE PURE_SETUP SCALAR_REGION LIFETIME_SAFE INCREMENT_UPDATE, @ Register, @ fields(ResultRegister, Register, Unused),
     Unary => READ_THROW; layout Scalar; meaning UnaryOperator; js NumericUnary; class Unary; staged Value; step Body; value Unary; traits LEAF_VALUE RETURNING_UNARY INLINABLE PURE_SETUP ACTIVATION_FREE FRAME_RETURNABLE LIFETIME_SAFE, @ Returnable, @ fields(ResultRegister, Register, Unused),
     // `a` = ToString of each register of the window `b` of `c` registers, concatenated in
     // order: a template literal's string (ECMA-262 13.15.5.1), made at once.
@@ -926,12 +926,12 @@ opcodes!($;
     LoadCachedTemplateObject => Effect::READS_HEAP; layout Scalar; meaning TemplateSiteIndex; step Body; traits TEMPLATE_CACHE_LOAD, @ Register, @ fields(ResultRegister, Unused, Unused),
     DefineField => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldDefinition; class DefineField; step Lane; traits FIELD_DEFINE INSTANCE_ELEMENT_DEFINE, @ Register, @ fields(Register, Register, CacheSiteIndex),
     ValidateClassHeritage => READ_THROW; layout Scalar; meaning Unused; step Body; traits CLASS_HERITAGE_CHECK, @ Register, @ fields(Register, Unused, Unused),
-    SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore; staged Property; step Body; traits STRICT_STORE, @ Register, @ fields(Register, Register, CacheSiteIndex),
+    SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore; staged Property; step Body; traits STRICT_STORE NAMED_FIELD_WRITE, @ Register, @ fields(Register, Register, CacheSiteIndex),
     SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Property; step Body; traits STRICT_STORE THIS_FIELD_STORE, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     // The general loop's fast arms dispatch on these with the opcodes above, so they share
     // one dense range of opcode numbers.
-    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalLoad; class LoadLocalPlain; staged Local; traits ROW_HANDLER ACTIVATION_FREE FRAME_LOCAL_LOAD, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
-    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalStore; class StoreLocalPlain; staged Local; traits ROW_HANDLER ACTIVATION_FREE FRAME_LOCAL_STORE, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
+    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalLoad; class LoadLocalPlain; staged Local; traits ROW_HANDLER ACTIVATION_FREE FRAME_LOCAL_LOAD PLAIN_LOCAL_LOAD, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalStore; class StoreLocalPlain; staged Local; traits ROW_HANDLER ACTIVATION_FREE FRAME_LOCAL_STORE PLAIN_LOCAL_STORE, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
     JumpTrue => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class JumpTrue; staged Flow; traits LEAF_JUMP INLINABLE ACTIVATION_FREE SCALAR_REGION FRAME_ONLY LIFETIME_SAFE JUMPS_ON_TRUE, @ Register, @ fields(Register, Unused, Unused),
     // `Call` whose last window argument the instruction before it loaded from the activation's
     // `arguments` binding (`CallPlan::forwards_arguments`).
@@ -1124,8 +1124,8 @@ opcodes!($;
     // an unmaterialized binding answers from the values its activation kept
     // (`Function::kept_arguments`); any other value is read as `GetField` and
     // `GetIndex` read it.
-    ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot; class ArgumentsLength; staged Names; traits ARGUMENTS_READ, @ Register, @ fields(ResultRegister, Unused, Unused),
-    ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot; class ArgumentGet; traits ARGUMENTS_READ, @ Register, @ fields(ResultRegister, Register, Unused),
+    ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot; class ArgumentsLength; staged Names; traits ARGUMENTS_READ FRAME_SLOT_READ, @ Register, @ fields(ResultRegister, Unused, Unused),
+    ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot; class ArgumentGet; traits ARGUMENTS_READ FRAME_SLOT_READ, @ Register, @ fields(ResultRegister, Register, Unused),
     // `rest.length` and `rest[key]` of a rest parameter read nowhere else (`Function::rest_view`):
     // the values its activation kept past its first `imm` parameters, with no array made.
     // A key other than an index those values hold makes the rest array and reads it.

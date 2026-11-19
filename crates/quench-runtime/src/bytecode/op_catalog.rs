@@ -458,6 +458,31 @@ impl Traits {
     pub(crate) const SUPER_CALL_CHECK: Self = Self(1 << 69);
     /// An op that constructs a value from a callee and a register window or array. Tagged: `Construct`.
     pub(crate) const CONSTRUCTION: Self = Self(1 << 70);
+    /// The op that loads a frame local slot's binding (`LocalSlot`) into its result register: the binding
+    /// form of `FRAME_LOCAL_LOAD`, without its plain form. Tagged: `LoadLocal`.
+    pub(crate) const LOCAL_BINDING_LOAD: Self = Self(1 << 116);
+    /// The op that loads a plain frame local slot (`Function::plain_local_slots`) into its result register,
+    /// the plain form of `LOCAL_BINDING_LOAD`. Tagged: `LoadLocalPlain`.
+    pub(crate) const PLAIN_LOCAL_LOAD: Self = Self(1 << 117);
+    /// The op that stores its register A into a plain frame local slot, the plain form of
+    /// `LOCAL_BINDING_STORE`. Tagged: `StoreLocalPlain`.
+    pub(crate) const PLAIN_LOCAL_STORE: Self = Self(1 << 118);
+    /// The op that steps its register B by one (up or down, by its `BooleanFlag`) into its result register A.
+    /// Tagged: `IncDec`.
+    pub(crate) const INCREMENT_UPDATE: Self = Self(1 << 119);
+    /// The op that allocates a plain object literal from a pair of registers, its two values in its object
+    /// site's atom order. Tagged: `MakeObject2`.
+    pub(crate) const PAIR_LITERAL_MAKE: Self = Self(1 << 120);
+    /// The op that allocates a plain object literal from a window of registers, one value per object-site
+    /// atom in order. Tagged: `MakeObjectLiteral`.
+    pub(crate) const WINDOW_LITERAL_MAKE: Self = Self(1 << 121);
+    /// The op that stores its register A into a named field of the object its register B holds (`obj.x = v`),
+    /// with sloppy or strict semantics. `SetThisField` stores into `this`, so it is not one. Tagged: `SetField`,
+    /// `SetFieldStrict`.
+    pub(crate) const NAMED_FIELD_WRITE: Self = Self(1 << 122);
+    /// An op that reads a frame slot into its result register: a local's binding or an arguments slot,
+    /// the slot its `LocalSlot` immediate names. Tagged: `LoadLocal`, `ArgumentsLength`, `ArgumentGet`.
+    pub(crate) const FRAME_SLOT_READ: Self = Self(1 << 123);
 
     pub(crate) const fn has(self, other: Self) -> bool { self.0 & other.0 != 0 }
     pub(crate) const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
