@@ -114,7 +114,7 @@ impl<H: Host> Vm<H> {
         if !self.direct_eval {
             return Vec::new();
         }
-        (0..crate::compile::AtomPrefix::len(self) as Atom)
+        (0..crate::atom_prefix::AtomPrefix::len(self) as Atom)
             .filter(|atom| {
                 (caller_has_global_variables && self.realm.global_lexical_declarations.contains(atom))
                     || self.direct_eval_binding(*atom).is_some_and(|binding| binding.conflicts_with_var())

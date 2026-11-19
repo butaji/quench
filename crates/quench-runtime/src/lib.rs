@@ -54,6 +54,9 @@ mod compile;
 /// RegExp pattern validation (`new RegExp` semantics): text a program supplies at run time, so
 /// an image with no compiler still validates it.
 mod regexp_syntax;
+/// The host's atom namespace a compilation extends: ids below `len` are the host's, so a
+/// compiled program and its host compare names identically.
+mod atom_prefix;
 /// The phases a compilation passes and the hook a profiler sets: named by the runtime, which
 /// reports them without naming the compiler.
 mod compile_phase;

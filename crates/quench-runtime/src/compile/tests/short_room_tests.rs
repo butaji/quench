@@ -34,7 +34,7 @@ fn a_replay_short_of_reserved_site_room_runs_unrewritten_code_and_later_replays_
 /// Atoms numbered from zero, for programs that run specialized, as a host's do.
 struct SpecializedAtoms;
 
-impl crate::compile::AtomPrefix for SpecializedAtoms {
+impl crate::atom_prefix::AtomPrefix for SpecializedAtoms {
     fn len(&self) -> usize {
         0
     }

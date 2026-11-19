@@ -114,7 +114,7 @@ impl<H: Host> Vm<H> {
 
 /// Programs compiled at run time extend the VM's atoms in place: their prefix ids are the
 /// VM's, read through the shared sequence instead of copied.
-impl<H: Host> crate::compile::AtomPrefix for Vm<H> {
+impl<H: Host> crate::atom_prefix::AtomPrefix for Vm<H> {
     fn len(&self) -> usize {
         self.atom_sequence.len()
     }
@@ -130,7 +130,7 @@ impl<H: Host> crate::compile::AtomPrefix for Vm<H> {
     fn table(&self) -> crate::bytecode::AtomTable {
         crate::bytecode::AtomTable::shared(
             self.atom_sequence.clone(),
-            crate::compile::AtomPrefix::len(self),
+            crate::atom_prefix::AtomPrefix::len(self),
         )
     }
 

@@ -21,10 +21,10 @@ pub(crate) use crate::compile_phase::{CompilePhase, compile_phase_boundary};
 /// The most registers a function's promoted locals may take: half of the register domain,
 /// leaving the other half for the temporaries of any one statement.
 const PROMOTED_LOCAL_REGISTER_BUDGET: Register = crate::bytecode::SET_THIS_REGISTER / 2;
+mod atoms;
 mod annex_b_targets;
 mod arrow;
 mod ast;
-mod atoms;
 #[cfg(feature = "aot")]
 mod native_sources;
 #[cfg(feature = "aot")]
@@ -76,7 +76,7 @@ mod template;
 mod typescript;
 use ast::{FunctionCompiler, StatementCompletion};
 use atoms::CompilerAtoms;
-pub(crate) use atoms::{AtomPrefix, NoAtomPrefix};
+pub(crate) use crate::atom_prefix::{AtomPrefix, NoAtomPrefix};
 
 /// The synthetic method supplies parsing context only; execution uses its body.
 fn eval_method_body<'a, 'b>(
