@@ -20,7 +20,7 @@ name = "number_primitives"
 required-features = ["bench-primitives"]
 
 [features]
-default = ["jit"]
+default = ["jit", "native-execution"]
 jit = []
 native-execution = []
 # Compatibility alias: AOT code is always compiled, so this feature is a no-op.
