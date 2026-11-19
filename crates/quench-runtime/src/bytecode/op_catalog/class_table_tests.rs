@@ -43,6 +43,29 @@ fn role_traits_select_exactly_the_ops_they_replaced() {
     expect(Traits::REST_INDEX_READ, &[Op::RestGet]);
     expect(Traits::REST_LENGTH_READ, &[Op::RestLength]);
     expect(Traits::PLAIN_CALL, &[Op::Call]);
+    expect(
+        Traits::DISTANT_PRODUCER,
+        &[
+            Op::GetIndex,
+            Op::ToNumeric,
+            Op::ToPropertyKey,
+            Op::MakeArray,
+            Op::MakeConstArray,
+            Op::MakeObject,
+            Op::MakeObjectLiteral,
+            Op::MakeLiteralTemplate,
+            Op::CreateRegExpLiteral,
+            Op::LoadCallee,
+            Op::LoadNameTypeof,
+            Op::LoadCachedTemplateObject,
+            Op::StringConcat,
+            Op::ArgumentsLength,
+            Op::ArgumentGet,
+            Op::NumericAdd,
+            Op::NumericMultiply,
+            Op::PrivateIn,
+        ],
+    );
     expect(Traits::I64_BINARY_FAMILY, &[Op::WasmI64Binary, Op::WasmI64BinaryRaw]);
     expect(Traits::I64_BINARY_IMMEDIATE_FAMILY, &[Op::WasmI64BinaryImmediate, Op::WasmI64BinaryImmediateRaw]);
     expect(Traits::I64_UNARY_FAMILY, &[Op::WasmI64Unary, Op::WasmI64UnaryRaw]);

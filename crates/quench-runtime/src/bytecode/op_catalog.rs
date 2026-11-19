@@ -483,6 +483,15 @@ impl Traits {
     /// An op that reads a frame slot into its result register: a local's binding or an arguments slot,
     /// the slot its `LocalSlot` immediate names. Tagged: `LoadLocal`, `ArgumentsLength`, `ArgumentGet`.
     pub(crate) const FRAME_SLOT_READ: Self = Self(1 << 123);
+    /// A value producer whose result register is its A field alone, which reads neither the register it
+    /// writes nor any register it does not name, and whose abrupt completion is caught only by handlers
+    /// that do not read that register. `coalesce_distant_producer_moves` may then write its value straight
+    /// into a later `Move`'s destination, beyond the adjacent `ProducerMove` recipe. Ops that `plain_producer`
+    /// already admits need no tag. Tagged: `GetIndex`, `ToNumeric`, `ToPropertyKey`, `MakeArray`,
+    /// `MakeConstArray`, `MakeObject`, `MakeObjectLiteral`, `MakeLiteralTemplate`, `CreateRegExpLiteral`,
+    /// `LoadCallee`, `LoadNameTypeof`, `LoadCachedTemplateObject`, `StringConcat`, `ArgumentsLength`,
+    /// `ArgumentGet`, `NumericAdd`, `NumericMultiply`, `PrivateIn`.
+    pub(crate) const DISTANT_PRODUCER: Self = Self(1 << 89);
     /// The op that appends an element window to an array under construction. Tagged: `AppendArray`.
     /// The Wasm op that copies one of two registers by a condition. Tagged: `WasmSelect`.
     pub(crate) const WASM_SELECT: Self = Self(1 << 64);

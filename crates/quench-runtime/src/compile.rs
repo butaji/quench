@@ -2243,16 +2243,21 @@ pub(crate) struct LoweringTables<'t> {
     pub(crate) undefined_constant: u32,
 }
 
-/// The largest body whose copies are coalesced though it has no loop: a leaf small enough for
-/// a call entry to recognise by its shape (`capture_append::recognizes`).
-const RECOGNISED_LEAF_INSTRUCTIONS: usize = 16;
+/// The largest loop-free body whose copies are coalesced. This bound is unmeasured: the copy
+/// scans visit at most `copies::SCAN_LIMIT` instructions per `Move`, and the liveness and copy
+/// buffers are reused from `CompileScratch`, so a loop-free body's coalescing grows with its
+/// size rather than with its block lengths. The bound was picked without a measurement and
+/// must be checked on octane-code-load, where a coalescing pass once cost 4.7% of the run.
+/// It covers a leaf small enough for a call entry to recognise by its shape
+/// (`capture_append::recognizes`), which is 16 instructions or fewer.
+const LOOP_FREE_COALESCE_INSTRUCTIONS: usize = 128;
 
 /// Whether coalescing the copies frame-register promotion left repays its cost: a body that
 /// loops runs its instructions many times and its loops' tiers read the coalesced shape, and a
-/// small leaf's call entry recognises it. Any other body mostly runs once (octane-code-load:
-/// coalescing cost 4.7% of the run and saved no instruction on any V8-v7 or JetStream row).
+/// loop-free body up to `LOOP_FREE_COALESCE_INSTRUCTIONS` is coalesced too, since its scans are
+/// bounded (see that constant).
 fn coalescing_repays(function: &BcFunction) -> bool {
-    rewrite::live_count(&function.code) <= RECOGNISED_LEAF_INSTRUCTIONS || function.loops()
+    rewrite::live_count(&function.code) <= LOOP_FREE_COALESCE_INSTRUCTIONS || function.loops()
 }
 
 /// The lowering passes after a function's dispatch class is settled (`settle_dispatch`):
