@@ -112,7 +112,7 @@ mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
-use lane_allocations::{binary_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, lane_new_object, new_object_literal_in_lane, new_object_pair_in_lane, new_regexp_in_lane, new_template_in_lane};
+use lane_allocations::{binary_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, new_regexp_in_lane, new_template_in_lane};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/site_posterior.rs"]
@@ -1044,12 +1044,12 @@ lane_helper_inventory! { H;
     ConstructPlanHolds => constructions::construct_plan_holds_in_lane::<H>,
     /// A construction of the body's own, by the call protocol (`dispatch_fast::body_construct_helper`).
     ConstructCall => super::dispatch_fast::body_construct_helper::<H>,
-    /// A body's uncaught `throw`, stashed for its native callers and the lane (`lane_raise`).
-    Raise => lane_raise::<H>,
+    /// A body's uncaught `throw`, stashed for its native callers and the lane (`compiled_raise`).
+    Raise => compiled_raise::<H>,
     /// The exception a callee left in `Vm::lane_raised`, for a handler of the caller's own (`take_raised_in_lane`).
     TakeRaised => take_raised_in_lane::<H>,
     /// An object literal's and an array literal's allocation.
-    NewObject => lane_new_object::<H>,
+    NewObject => compiled_new_object::<H>,
     NewArray => new_array_in_lane::<H>,
     /// An array literal of program constants (`new_const_array_in_lane`).
     NewConstArray => new_const_array_in_lane::<H>,
@@ -3956,7 +3956,7 @@ pub(super) fn raise_site_parts(site: u64) -> (u32, u32) {
 /// `Vm::lane_raised`, with where it was thrown, for native callers and then the lane to find.
 /// The interpreter's `Throw` makes the same error; its source location is captured only if it
 /// escapes native code (`dispatch_fast::raised_exit_in_lane`).
-unsafe extern "C" fn lane_raise<H: Host>(vm: u64, _residual: u64, value: u64, site: u64) -> u64 {
+unsafe extern "C" fn compiled_raise<H: Host>(vm: u64, _residual: u64, value: u64, site: u64) -> u64 {
     // SAFETY: as `field_get_in_lane`; the message of a value reads no guest code.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
     let value = Value::from_bits(value);
@@ -3966,7 +3966,7 @@ unsafe extern "C" fn lane_raise<H: Host>(vm: u64, _residual: u64, value: u64, si
     0
 }
 
-/// The exception a callee's body raised (`lane_raise`), taken from `Vm::lane_raised` for the
+/// The exception a callee's body raised (`compiled_raise`), taken from `Vm::lane_raised` for the
 /// handler of the caller that catches it.
 unsafe extern "C" fn take_raised_in_lane<H: Host>(vm: u64, _residual: u64) -> u64 {
     // SAFETY: as `field_get_in_lane`.
@@ -4027,7 +4027,7 @@ unsafe extern "C" fn typeof_is_in_lane<H: Host>(vm: u64, _residual: u64, value: 
 /// property arena, whose base and length the dispatch reads again. Zero where neither hits,
 /// or a collection is due, which the body leaves for.
 unsafe extern "C" fn field_add_in_lane<H: Host>(vm: u64, residual: u64, payload: u64, receiver: u64, write: u64, value: u64) -> u64 {
-    // SAFETY: as `lane_new_object`; the residual is the running one.
+    // SAFETY: as `compiled_new_object`; the residual is the running one.
     let (vm, residual, dispatch) = unsafe {
         (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
     };

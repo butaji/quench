@@ -200,7 +200,7 @@ unsafe fn owner_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, record: 
 /// environment), or a call form that is not a plain call or a construction over registers
 /// (`Op::makes_script_call`: the callee runs as it does for any call a helper makes, the body's
 /// activation not pushed, so its result is the step's), made by that step on the running frame as
-/// `lane_general_step` makes it: `LANE_CALL_COMPLETED` with its effects in the frame,
+/// `general_step_in_lane` makes it: `LANE_CALL_COMPLETED` with its effects in the frame,
 /// `LANE_CALL_BRANCHED` where it also took its conditional jump (`ForInNext` past its last key),
 /// or `LANE_CALL_MISSED` where it raised (the error stashed for the general path to raise at the
 /// record, which is how a body's `throw` ends it) or where the record is no such step; nothing ran

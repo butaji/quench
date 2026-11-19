@@ -46,6 +46,6 @@ pub(in crate::vm::dispatch_fast) const fn return_miss_of<H: Host>(parameters: u8
         RETURNING_FIELD_NESTED => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_FIELD_NESTED, L> as Handler),
         RETURNING_FIELD_PRIVATE => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_FIELD_PRIVATE, L> as Handler),
         RETURNING_FIELD_GETTER => leaf_arms!(leaf, |L| returning_miss::<H, RETURNING_FIELD_GETTER, L> as Handler),
-        _ => lane_general_step::<H>,
+        _ => general_step_in_lane::<H>,
     }
 }

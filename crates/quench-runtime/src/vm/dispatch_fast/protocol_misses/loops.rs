@@ -22,6 +22,6 @@ pub(in crate::vm::dispatch_fast) const fn loop_miss_of<H: Host>(parameters: u8) 
         F64_SQRT_B => f64_sqrt_miss::<H, ACC_B> as Handler,
         F64_SQRT_C => f64_sqrt_miss::<H, ACC_C> as Handler,
         F64_SQRT_PAIR => f64_sqrt_miss::<H, ACC_PAIR> as Handler,
-        _ => lane_general_step::<H>,
+        _ => general_step_in_lane::<H>,
     }
 }

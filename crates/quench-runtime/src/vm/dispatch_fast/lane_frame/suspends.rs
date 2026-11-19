@@ -1,9 +1,9 @@
 //! The lane's suspensions as staged rows: `await`, `yield` and `yield*` step their rows
 //! (`staged::suspend`, `staged::delegation`) on a `LaneFrame` whose `LaneSuspends` answers the
-//! effect as a control the handler makes in place (`generator_yields::lane_suspend_at`), and the
+//! effect as a control the handler makes in place (`generator_yields::suspend_at_in_lane`), and the
 //! delegation's steps with what the lane finishes without guest code: the own `done` and `value`
 //! of a plain iterator result (`Vm::own_iterator_result_parts`), ToBoolean of a primitive, and a
-//! delegate generator's step made in place (`generator_windows::lane_delegate_in_place`). Every
+//! delegate generator's step made in place (`generator_windows::delegate_in_place_in_lane`). Every
 //! other step it declines, and the row declines it before any effect, so the record exits at its
 //! exact PC for the general path to make the whole step. The handler chooses how the activation
 //! suspends (`Suspender`) before the row runs, so the frame never declines the effect itself.
@@ -17,11 +17,11 @@ pub(in crate::vm::dispatch_fast) enum LaneControl {
     Edge(Edge),
     Resumed(Resumed),
     /// The row's suspension, which the handler makes in place once the row stops
-    /// (`generator_yields::lane_suspend_at`).
+    /// (`generator_yields::suspend_at_in_lane`).
     Suspend(Suspending<u64>),
 }
 
-/// How the running activation suspends in place (`generator_yields::lane_suspend_at`).
+/// How the running activation suspends in place (`generator_yields::suspend_at_in_lane`).
 #[derive(Clone, Copy)]
 pub(in crate::vm::dispatch_fast) enum Suspender {
     /// A sync generator over its record's register file (`generator_windows::running_generator`).
@@ -80,7 +80,7 @@ impl LaneSuspends {
             ip,
             suspender,
             in_place: |context, r, ip, [delegate, method, input]|
-                super::super::generator_windows::lane_delegate_in_place(context.cast::<LaneContext<H>>(), r, ip, (delegate, method, input)),
+                super::super::generator_windows::delegate_in_place_in_lane(context.cast::<LaneContext<H>>(), r, ip, (delegate, method, input)),
             result_parts: |context, result| unsafe { vm(context.cast::<LaneContext<H>>()) }.own_iterator_result_parts(result),
         }
     }
@@ -129,7 +129,7 @@ pub(in crate::vm::dispatch_fast) fn yield_star_kind(i: &LaneInstruction) -> Susp
 /// goes on, and a row the frame declined, before any effect, exits at the record.
 // Inlined into each handler, so a suspender known there folds the frame and the suspension.
 #[inline(always)]
-pub(in crate::vm::dispatch_fast) fn lane_suspension<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction,
+pub(in crate::vm::dispatch_fast) fn suspension_row_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction,
     (kind, suspender): (Suspension, Suspender)) -> Resumed {
     let mut stage = Concrete::new(std::ptr::null());
     // Only an async activation's conversion resolves promises through the lane's host.
@@ -143,7 +143,7 @@ pub(in crate::vm::dispatch_fast) fn lane_suspension<H: Host>(cx: *mut LaneContex
     match crate::staged::suspension_step(&mut stage, &mut frame, kind, destination, i.b) {
         Step::Value(_) => Resumed::At(r, following(ip), Carried::script(cx)),
         Step::Control(LaneControl::Suspend(suspending)) =>
-            super::super::generator_yields::lane_suspend_at(cx, ip, suspender, suspending),
+            super::super::generator_yields::suspend_at_in_lane(cx, ip, suspender, suspending),
         Step::Control(LaneControl::Resumed(resumed)) => resumed,
         Step::Control(LaneControl::Edge(_)) => unreachable!("a suspension row takes no edge"),
         Step::Unresolved => Resumed::Exit(exit(ip)),

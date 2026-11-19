@@ -20,6 +20,6 @@ pub(in crate::vm::dispatch_fast) const fn construct_miss_of<H: Host>(parameters:
         PLANNED_CONSTRUCT => super::super::planned_construct_miss::<H> as Handler,
         PLANNED_CONSTRUCT_RETURNED => super::super::planned_construct_returned_miss::<H> as Handler,
         SCRIPT_CONSTRUCT_KEEPING => super::super::script_construct_keeping_miss::<H> as Handler,
-        _ => lane_general_step::<H>,
+        _ => general_step_in_lane::<H>,
     }
 }

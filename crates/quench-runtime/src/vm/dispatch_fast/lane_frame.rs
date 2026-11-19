@@ -72,7 +72,7 @@ struct LaneHost {
     /// The values a keeping activation kept (`kept_values`): their count and the register
     /// that holds the first, past the function's registers.
     kept_values: KeptValues,
-    /// What an `await`'s source conversion asks (`staged_ops::lane_await_source`).
+    /// What an `await`'s source conversion asks (`staged_ops::awaited_value_in_lane`).
     awaits: AwaitSource,
     /// What the by-name load the frame runs resolved its name to, if it runs one.
     name: Option<NameBinding>,
@@ -2274,11 +2274,11 @@ pub(in crate::vm::dispatch_fast) const fn row_miss<H: Host, const FLAG: u8>(op: 
         crate::staged::Miss::WalkScopes => super::load_capture_walk_miss::<H>,
         crate::staged::Miss::StoreNameFirst => match FLAG {
             // A window's store the scope does not take leaves to the general step.
-            FLAG_SCOPE => super::lane_exit::<H> as Handler,
+            FLAG_SCOPE => super::exit_lane::<H> as Handler,
             _ => super::store_name_first_miss::<H> as Handler,
         },
         crate::staged::Miss::NameLoad(load) => name_load_miss::<H, FLAG>(load),
-        crate::staged::Miss::General | crate::staged::Miss::CompareChain => lane_general_step::<H>,
+        crate::staged::Miss::General | crate::staged::Miss::CompareChain => general_step_in_lane::<H>,
     }
 }
 
@@ -2310,7 +2310,7 @@ const fn name_miss_kind<H: Host, const FLAG: u8, const KIND: u8>() -> Handler {
     match FLAG {
         FLAG_NAME_GLOBAL | FLAG_NAME_LEXICAL => super::global_name_refresh_miss::<H, KIND, false> as Handler,
         FLAG_NAME_GLOBAL_SCOPED => super::global_name_refresh_miss::<H, KIND, true> as Handler,
-        FLAG_NAME_UNDEFINED | FLAG_NAME_INTRINSIC | FLAG_SCOPE => super::lane_exit::<H> as Handler,
+        FLAG_NAME_UNDEFINED | FLAG_NAME_INTRINSIC | FLAG_SCOPE => super::exit_lane::<H> as Handler,
         FLAG_PROBE => super::probe_handler::<H, KIND>(),
         _ => super::load_name_resolve_miss::<H, KIND> as Handler,
     }
@@ -2406,7 +2406,7 @@ macro_rules! row_step {
 const fn jump_row_miss<H: Host, const BACKWARD: bool>(op: Op) -> Handler {
     match crate::staged::miss(op) {
         crate::staged::Miss::CompareChain => super::binary_false_chain_miss::<H, BACKWARD>,
-        _ => lane_general_step::<H>,
+        _ => general_step_in_lane::<H>,
     }
 }
 
@@ -2441,7 +2441,7 @@ macro_rules! target_prefix_row {
         // The prefix at flag `$flag`.
         macro_rules! prefix_at { ($flag:expr) => {{
             let fields = LaneFields::<$prefix, { $flag }>(prefix_i);
-            let Some(operation) = row_decode!($prefix, { $flag }, fields) else { sibling!(lane_general_step::<H>, $r, $at, $carried) };
+            let Some(operation) = row_decode!($prefix, { $flag }, fields) else { sibling!(general_step_in_lane::<H>, $r, $at, $carried) };
             let mut stage = Concrete::new(std::ptr::null());
             let mut frame = row_frame::<H, $prefix, ACC_NONE, { $flag }>($cx, $r, $at, prefix_i, $carried);
             match row_step!(LaneFields::<$prefix>::OPCODE, &mut stage, &mut frame, operation) {
@@ -2490,7 +2490,7 @@ macro_rules! target_run {
         // SAFETY: `at` is the target or the record the prefix rows fall through to, a validated record of the view.
         let test_i = unsafe { &*at };
         let fields = LaneFields::<$test, { FLAG_UNREAD }>(test_i);
-        let Some(operation) = row_decode!($test, { FLAG_UNREAD }, fields) else { sibling!(lane_general_step::<H>, $r, at, carried) };
+        let Some(operation) = row_decode!($test, { FLAG_UNREAD }, fields) else { sibling!(general_step_in_lane::<H>, $r, at, carried) };
         let mut stage = Concrete::new(std::ptr::null());
         let mut frame = row_frame::<H, $test, ACC_NONE, FLAG_UNREAD>($cx, $r, at, test_i, carried);
         match row_step!(LaneFields::<$test>::OPCODE, &mut stage, &mut frame, operation) {
@@ -2582,7 +2582,7 @@ lane_handler! {
             Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY)
         };
         let Some(operation) = decoded else {
-            sibling!(lane_general_step::<H>, r, ip, view)
+            sibling!(general_step_in_lane::<H>, r, ip, view)
         };
         let mut stage = Concrete::new(std::ptr::null());
         // A loop's exit writes its result register, so no producer's accumulator carries past it.
@@ -2827,7 +2827,7 @@ lane_handler! {
         // `if const`, not `match const`: rustc compiles only a taken `if const` branch, so each
         // instantiation holds its one decoder (a `match` on a constant compiles every arm).
         let decoded = row_decode!(OP, FLAG, fields).map(|operation| if const { FLAG == FLAG_ROOT } { operation.rooted() } else { operation });
-        let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, ip, view) };
+        let Some(operation) = decoded else { sibling!(general_step_in_lane::<H>, r, ip, view) };
         // A row that reads records in place (`Decoder::Names`) or a planned named read may read a slot of the property arena.
         let property_values = if property && !store {
             // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
@@ -3210,7 +3210,7 @@ pub(in crate::vm::dispatch_fast) const fn protocol_miss<H: Host>(miss: u16) -> H
         F::LEAF_CALL => super::leaf_call_miss_of::<H>(F::parameters(miss)),
         F::VECTOR => super::vector_miss_of::<H>(F::parameters(miss)),
         F::GENERATOR => super::generator_miss_of::<H>(F::parameters(miss)),
-        _ => lane_general_step::<H>,
+        _ => general_step_in_lane::<H>,
     }
 }
 

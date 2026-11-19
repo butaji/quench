@@ -75,6 +75,6 @@ pub(in crate::vm::dispatch_fast) const fn script_call_miss_of<H: Host>(parameter
         CROSS_PLAIN_2 => script_call_cross_plain_miss::<H, 2> as Handler,
         CROSS_PLAIN_3 => script_call_cross_plain_miss::<H, 3> as Handler,
         CROSS_PLAIN_4 => script_call_cross_plain_miss::<H, 4> as Handler,
-        _ => lane_general_step::<H>,
+        _ => general_step_in_lane::<H>,
     }
 }

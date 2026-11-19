@@ -330,7 +330,7 @@ fn generator_activation<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
 /// `destination`, and the activation pops. The caller resumes with the step's result: the
 /// iterator result of a yield of `value`, or `passed_on`, a delegate's own result object.
 #[inline(never)]
-pub(super) fn lane_suspend_generator<H: Host>(
+pub(super) fn suspend_generator_in_lane<H: Host>(
     cx: *mut LaneContext<H>,
     pc: usize,
     destination: crate::bytecode::Register,
@@ -401,7 +401,7 @@ fn resume_generated_in_lane<H: Host>(vm: &mut Vm<H>, activation: &Activation, me
 /// result waits in the record's state register for this record, run again
 /// (`Completion::Delegates`, `lane_resume_generated`). `None`, before any effect, where the
 /// delegate is no generator `method` steps, or the lane has no room or view for it.
-pub(super) fn lane_delegate_in_place<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, (delegate, method, input): (Value, Value, Value))
+pub(super) fn delegate_in_place_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, (delegate, method, input): (Value, Value, Value))
     -> Option<Resumed> {
     if !unsafe { vm(cx) }.steps_as_generator(delegate, method) {
         return None;
