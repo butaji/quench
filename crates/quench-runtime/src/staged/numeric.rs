@@ -53,6 +53,10 @@ pub(crate) trait NumericStage: Stage {
         left: Self::Word, right: Self::Word) -> (Self::Word, Self::Cond);
     /// The binary64 remainder of two binary64 words, keeping the dividend's sign.
     fn float_remainder(&mut self, left: Self::Word, right: Self::Word) -> Self::Word;
+    /// The remainder of two binary64 words by the exact integer remainder where both are integral and below 2^53 in magnitude,
+    /// a nonzero divisor and no negative zero: its result, and whether it misses (the operands are none of those, and only the
+    /// interpreter's float remainder answers them). A stage whose words cannot hold a call answers the miss.
+    fn integral_remainder(&mut self, left: Self::Word, right: Self::Word) -> (Self::Word, Self::Cond);
     /// The truncated remainder of two int32 words, `right` nonzero: the dividend's sign, and
     /// `i32::MIN % -1` is zero rather than a trap.
     fn int_remainder(&mut self, left: Self::Word, right: Self::Word) -> Self::Word;
@@ -391,7 +395,13 @@ fn remainder<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     let miss = frame.miss();
     let Some((left, right)) = operands(stage, frame, left, right, domain) else { return Step::Unresolved };
     let (result, fact) = match domain {
-        Domain::Float64 => (stage.float_remainder(left, right), frame.number_fact()),
+        Domain::Float64 => {
+            let (result, miss_cond) = stage.integral_remainder(left, right);
+            if stage.guard_false(miss_cond, miss).is_none() {
+                return Step::Unresolved;
+            }
+            (result, frame.number_fact())
+        }
         Domain::Int32 => {
             let zero_divisor = stage.i32_is_zero(right);
             if stage.guard_false(zero_divisor, miss).is_none() {
@@ -538,6 +548,22 @@ macro_rules! wrapping_int32_arithmetic {
 }
 crate::vm::operations::number_arithmetic_rows!(wrapping_int32_arithmetic);
 
+/// The truncation of a binary64 word to an i64, `i64::MIN` where it is out of range or NaN. `cvttsd2si` (SSE2, the x86-64
+/// baseline) is one instruction with no constant pool, so a stencil may hold it, as it may not a saturating `as`.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn truncate_i64(value: f64) -> i64 {
+    // SAFETY: SSE2 is the x86-64 baseline; the conversion touches no memory.
+    unsafe { core::arch::x86_64::_mm_cvttsd_si64(core::arch::x86_64::_mm_set_sd(value)) }
+}
+
+/// The truncation of a binary64 word to an i64, `i64::MIN` where it is out of range or NaN (the portable form).
+#[cfg(not(target_arch = "x86_64"))]
+#[inline(always)]
+fn truncate_i64(value: f64) -> i64 {
+    if value.is_nan() || value.abs() >= 9.2e18 { i64::MIN } else { value as i64 }
+}
+
 /// The sign bit of a binary64 word.
 const F64_SIGN_BIT: u64 = 1 << (u64::BITS - 1);
 
@@ -578,6 +604,16 @@ impl NumericStage for super::Concrete {
     #[inline(always)]
     fn float_remainder(&mut self, left: u64, right: u64) -> u64 {
         crate::vm::operations::number_remainder(f64::from_bits(left), f64::from_bits(right)).to_bits()
+    }
+    #[inline(always)]
+    fn integral_remainder(&mut self, left: u64, right: u64) -> (u64, bool) {
+        let (x, y) = (f64::from_bits(left), f64::from_bits(right));
+        let (a, b) = (truncate_i64(x), truncate_i64(y));
+        let exact = |value: i64, number: f64| value != i64::MIN && value as f64 == number && value.unsigned_abs() < 1 << 53;
+        if !(exact(a, x) && exact(b, y)) || b == 0 || (a % b == 0 && x.is_sign_negative()) {
+            return (0, true);
+        }
+        (((a % b) as f64).to_bits(), false)
     }
     #[inline(always)]
     fn int_remainder(&mut self, left: u64, right: u64) -> u64 {
