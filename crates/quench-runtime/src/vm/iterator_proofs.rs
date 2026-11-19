@@ -12,12 +12,12 @@ impl<H: Host> Vm<H> {
         let Some(atom) = key.key32() else {
             return false;
         };
-        self.iterator_absence_proof.get() == Some((proto, atom, crate::heap::prototype_layout_epoch()))
+        self.iterator_absence_proof.get().is_some_and(|(held, held_atom, cell)| held == proto && held_atom == atom && cell.holds())
     }
 
     /// `iterator_lacks_property`, proving for the next ask, when the iterator's prototype
-    /// chain lacks `key`, that it does: each link becomes a prototype first, so a later change
-    /// to one advances the epoch and retires the proof.
+    /// chain lacks `key`, that it does: each link becomes a prototype first, and the proof keeps
+    /// the chain's cell, so a later change to one retires it (`Vm::chain_cell`).
     pub(super) fn iterator_lacks_property_proving(&mut self, iterator: Value, key: PropertyKey) -> bool {
         if !self.iterator_lacks_property(iterator, key) {
             return false;
@@ -29,16 +29,17 @@ impl<H: Host> Vm<H> {
         if proto.is_null() || self.iterator_absence_proved(proto, key) {
             return true;
         }
-        let epoch = crate::heap::prototype_layout_epoch();
-        let mut link = proto;
-        while !link.is_null() {
-            self.heap.mark_prototype(link);
-            link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
-        }
-        if crate::heap::prototype_layout_epoch() == epoch {
-            self.iterator_absence_proof.set(Some((proto, atom, epoch)));
-        }
+        self.prove_iterator_absence(proto, atom);
         true
+    }
+
+    /// Holds that the chain from `proto` lacks the key `atom`, which the caller found, under the
+    /// whole chain's cell: marking a link that was no prototype yet changes no layout, so the
+    /// finding holds under the cell made after it.
+    fn prove_iterator_absence(&mut self, proto: Value, atom: u32) {
+        if let Some(cell) = self.chain_cell_to_end(proto) {
+            self.iterator_absence_proof.set(Some((proto, atom, cell)));
+        }
     }
 
     /// `iterator_close` of an iterator whose close the shapes end before any call
@@ -91,15 +92,7 @@ impl<H: Host> Vm<H> {
         if self.plain_property_lookup(proto, key) != Some(None) {
             return false;
         }
-        let epoch = crate::heap::prototype_layout_epoch();
-        let mut link = proto;
-        while !link.is_null() {
-            self.heap.mark_prototype(link);
-            link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
-        }
-        if crate::heap::prototype_layout_epoch() == epoch {
-            self.iterator_absence_proof.set(Some((proto, atom, epoch)));
-        }
+        self.prove_iterator_absence(proto, atom);
         true
     }
 

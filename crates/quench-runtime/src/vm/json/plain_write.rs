@@ -35,6 +35,11 @@ struct JsonPlainWrite {
     /// The `"key":` text of every planned member: an object's keys recur across the objects
     /// of a payload, so each shape's are quoted once.
     key_text: JsonText,
+    /// The prototypes whose chains this run's new plans read (lacking `toJSON`), each once:
+    /// the run's end holds the plans under their subjects (`Vm::hold_json_plans`).
+    chains: Vec<Value>,
+    /// The subjects of every prototype a kept plan's chain holds, each once.
+    subjects: Vec<u32>,
 }
 
 /// One enumerable data member of a planned object: its slot and its `,"key":` text's range in
@@ -48,11 +53,15 @@ struct JsonMember {
 /// What plain stringifications keep between calls (`Vm::json_plain`): the text buffer, and
 /// the member plans of the (shape, prototype) pairs met, as V8 keeps a map's "fast
 /// serializable" bit. A plan is a fact of a shape and a prototype chain, so it holds while the
-/// collection epoch (shape ids, prototype records) and the prototype layout epoch (a prototype
-/// gaining `toJSON` or an accessor) both stay where they were when it was made.
+/// collection epoch (shape ids, prototype records) stays where it was when it was made and
+/// the cell of the prototypes the plans' chains hold does (a prototype gaining `toJSON` or an
+/// accessor retires it); a change to a prototype no plan's chain holds keeps the plans.
 #[derive(Default)]
 pub(crate) struct JsonPlainCache {
-    epochs: (u64, u64),
+    collection_epoch: u64,
+    /// The cell of `JsonPlainWrite::subjects` (`Dependencies::subjects_cell`); `None` before
+    /// any plan is kept.
+    cell: Option<crate::heap::ChainCell>,
     /// Boxed so a call moves the state out and back as one pointer.
     write: Option<Box<JsonPlainWrite>>,
 }
@@ -68,6 +77,15 @@ impl JsonPlainWrite {
         self.object_plans.clear();
         self.recent_plans = Default::default();
         self.key_text.clear();
+        self.chains.clear();
+        self.subjects.clear();
+    }
+
+    /// Notes that a new plan read the chain from `prototype`.
+    fn note_chain(&mut self, prototype: Value) {
+        if !self.chains.contains(&prototype) {
+            self.chains.push(prototype);
+        }
     }
 
     fn new(to_json: Atom) -> Self {
@@ -79,6 +97,8 @@ impl JsonPlainWrite {
             object_plans: Default::default(),
             recent_plans: Default::default(),
             key_text: JsonText::new(),
+            chains: Vec::new(),
+            subjects: Vec::new(),
         }
     }
 }
@@ -102,9 +122,10 @@ impl<H: Host> Vm<H> {
     /// JSON.stringify(value) by the plain writer: the string, or `undefined` for an omitted
     /// value; `None` when the value needs the general steps, having observed nothing.
     pub(super) fn json_stringify_plain(&mut self, value: Value) -> Option<Value> {
-        let epochs = (self.heap.collection_epoch(), crate::heap::prototype_layout_epoch());
+        let collection_epoch = self.heap.collection_epoch();
+        let held = self.json_plain.collection_epoch == collection_epoch && self.json_plain.cell.is_some_and(crate::heap::ChainCell::holds);
         let mut plain = match self.json_plain.write.take() {
-            Some(plain) if self.json_plain.epochs == epochs => plain,
+            Some(plain) if held => plain,
             Some(mut plain) => {
                 plain.forget_plans();
                 plain
@@ -123,12 +144,47 @@ impl<H: Host> Vm<H> {
         if plain.key_text.len() > JSON_RETAINED_KEY_BYTES {
             plain.forget_plans();
         }
-        self.json_plain = JsonPlainCache { epochs, write: Some(plain) };
+        let cell = self.hold_json_plans(&mut plain, held.then_some(self.json_plain.cell).flatten());
+        self.json_plain = JsonPlainCache { collection_epoch, cell, write: Some(plain) };
         match (written, text) {
             (Some(_), Some(text)) => Some(self.heap.alloc_string(text)),
             (Some(_), None) => Some(Value::UNDEFINED),
             (None, _) => None,
         }
+    }
+
+    /// The cell the plans `plain` keeps hold under: `held`, the one they held under at the
+    /// run's start, while no new plan read a prototype it does not cover; else a cell of
+    /// every prototype their chains hold, each marked a prototype first. The run ran no guest
+    /// code, so the chains its plans read are as they were. `None`, with the plans forgotten,
+    /// where a link has no subject.
+    fn hold_json_plans(&mut self, plain: &mut JsonPlainWrite, held: Option<crate::heap::ChainCell>) -> Option<crate::heap::ChainCell> {
+        let mut grew = held.is_none();
+        for prototype in std::mem::take(&mut plain.chains) {
+            let Some(subjects) = self.chain_subjects_to_end(prototype) else {
+                plain.forget_plans();
+                return None;
+            };
+            for subject in subjects {
+                if !plain.subjects.contains(&subject) {
+                    plain.subjects.push(subject);
+                    grew = true;
+                }
+            }
+        }
+        if grew { Some(self.heap.dependencies().subjects_cell(&plain.subjects)) } else { held }
+    }
+
+    /// The subjects of the whole chain from `prototype` (`fact_chain_subjects`), each marked
+    /// a prototype first; `None` past `u8::MAX` links or where one has no subject.
+    fn chain_subjects_to_end(&mut self, prototype: Value) -> Option<smallvec::SmallVec<[u32; crate::heap::INHERITED_FIELD_CACHE_MAX_DEPTH]>> {
+        let mut depth = 0u8;
+        let mut link = prototype;
+        while !link.is_null() {
+            link = self.heap.object(link)?.proto();
+            depth = depth.checked_add(1)?;
+        }
+        self.fact_chain_subjects(prototype, depth)
     }
 
     /// SerializeJSONProperty of `value` with no replacer and no gap, for plain data whose
@@ -191,6 +247,7 @@ impl<H: Host> Vm<H> {
                 return false;
             }
             plain.array_lacks_to_json = Some(key);
+            plain.note_chain(key.1);
         }
         let Some(elements) = self.present_dense_elements(value, 0..array.elements().len()) else {
             return false;
@@ -285,6 +342,7 @@ impl<H: Host> Vm<H> {
                 .collect::<Option<std::rc::Rc<[JsonMember]>>>()
         });
         plain.object_plans.insert(key, plan.clone());
+        plain.note_chain(key.1);
         plan
     }
 }

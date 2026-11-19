@@ -16405,11 +16405,11 @@ fn shared_osr_shape_invalidation_retires_only_dependent_code() {
     assert_eq!(before.currently_compiled_sites, 1);
     assert_eq!(state(&vm, scalar_id).currently_compiled_sites, 1);
 
-    let epoch = crate::heap::prototype_layout_epoch();
+    // A watched prototype's layout change retires its own chain cells and all code holding
+    // prototype values, not the global epoch.
     let mutate_atom = vm.intern_atom("mutatePrototype");
     let mutate = vm.own_property(vm.realm.globals, mutate_atom).unwrap();
     vm.call_value(&program, mutate, Value::UNDEFINED, &[]).unwrap();
-    assert!(crate::heap::prototype_layout_epoch() > epoch);
     let sum_atom = vm.intern_atom("sum");
     let sum = vm.own_property(vm.realm.globals, sum_atom).unwrap();
     let head_atom = vm.intern_atom("nativeOwnHead");
@@ -24538,4 +24538,121 @@ fn learned_receivers_keep_construction_semantics() {
         vm.execute(&rest).unwrap();
         assert_eq!(output.borrow().as_slice(), [expected, "true true abcdf 3001"]);
     }
+}
+
+/// Per-prototype validity (`heap::ChainCell`): a layout change to one prototype retires only
+/// the cells of chains that hold it, so proofs about other prototypes stay proved, while a
+/// change anywhere on a proof's chain (an add, a delete, a redefinition, a freeze, a
+/// `setPrototypeOf` of a link or a write of `__proto__`) retires it.
+#[test]
+fn a_prototype_change_retires_only_the_chains_that_hold_it() {
+    let program = Engine::specialize(r#"
+        class A { m() { return 1; } }
+        class B { m() { return 2; } }
+        class C extends A {}
+        globalThis.a = new A(); globalThis.b = new B(); globalThis.c = new C();
+        const fresh = () => ({});
+        globalThis.addToB = () => { B.prototype.extra = 1; };
+        globalThis.addToC = () => { C.prototype.own = 1; };
+        globalThis.addToA = () => { A.prototype.later = 1; };
+        globalThis.deleteFromB = () => { delete B.prototype.m; };
+        globalThis.defineOnB = () => { Object.defineProperty(B.prototype, 'k', { get() { return 3; } }); };
+        globalThis.freezeB = () => { Object.freeze(B.prototype); };
+        globalThis.relinkB = () => { Object.setPrototypeOf(B.prototype, fresh()); };
+        globalThis.protoWriteC = () => { C.prototype.__proto__ = B.prototype; };
+        globalThis.addToObject = () => { Object.prototype.everywhere = 1; };
+        globalThis.makeUnrelated = () => { const p = { q: 1 }; const o = Object.create(p); p.r = 2; return o; };
+    "#, "prototype-validity-cells.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let global = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        vm.own_property(vm.realm.globals, atom).unwrap()
+    };
+    let call = |vm: &mut Vm<TestHost>, name: &str| {
+        let function = global(vm, name);
+        vm.call_value(&program, function, Value::UNDEFINED, &[]).unwrap();
+    };
+    let prototype = |vm: &mut Vm<TestHost>, name: &str| {
+        let object = global(vm, name);
+        vm.heap.object(object).unwrap().proto()
+    };
+    let (a_proto, b_proto, c_proto) = (prototype(&mut vm, "a"), prototype(&mut vm, "b"), prototype(&mut vm, "c"));
+    let cells = |vm: &mut Vm<TestHost>| {
+        [a_proto, b_proto, c_proto].map(|proto| vm.chain_cell_to_end(proto).expect("an ordinary chain has a cell"))
+    };
+
+    let [a, b, c] = cells(&mut vm);
+    assert_eq!(vm.chain_cell_to_end(a_proto), Some(a), "proofs about one chain share its cell");
+    call(&mut vm, "makeUnrelated");
+    assert!(a.holds() && b.holds() && c.holds(), "prototypes built elsewhere retire nothing");
+    call(&mut vm, "addToB");
+    assert!(a.holds() && c.holds(), "a change to B.prototype keeps the chains without it");
+    assert!(!b.holds(), "a change to B.prototype retires its own chain");
+
+    let [a, b, c] = cells(&mut vm);
+    call(&mut vm, "addToC");
+    assert!(a.holds() && b.holds(), "a change below A.prototype keeps A's chain");
+    assert!(!c.holds());
+
+    let [a, b, c] = cells(&mut vm);
+    call(&mut vm, "addToA");
+    assert!(b.holds(), "a change to A.prototype keeps B's chain");
+    assert!(!a.holds() && !c.holds(), "a change to A.prototype retires every chain through it");
+
+    for change in ["deleteFromB", "defineOnB", "relinkB", "freezeB"] {
+        let [a, b, c] = cells(&mut vm);
+        call(&mut vm, change);
+        assert!(a.holds() && c.holds(), "{change} keeps the chains without B.prototype");
+        assert!(!b.holds(), "{change} retires B.prototype's chain");
+    }
+
+    let [a, b, c] = cells(&mut vm);
+    call(&mut vm, "protoWriteC");
+    assert!(a.holds() && b.holds(), "relinking C.prototype keeps the chains it left and joined");
+    assert!(!c.holds(), "a `__proto__` write retires the chain of the object written");
+
+    let [a, b, c] = cells(&mut vm);
+    call(&mut vm, "addToObject");
+    assert!(!a.holds() && !b.holds() && !c.holds(), "Object.prototype is on every chain");
+
+    let [a, ..] = cells(&mut vm);
+    vm.heap.dependencies_mut().retire_cells();
+    assert!(!a.holds(), "an event no prototype names retires every cell");
+}
+
+/// A proof keyed on a chain's cell (`Vm::iterator_absence_proof`) survives a change to an
+/// unrelated, watched prototype and retires at a change on its chain.
+#[test]
+fn a_proof_survives_an_unrelated_prototype_change() {
+    let program = Engine::specialize(r#"
+        class Other {}
+        globalThis.other = new Other();
+        globalThis.pair = [1, 2];
+        globalThis.growOther = () => { Other.prototype.extra = 1; };
+        globalThis.patchIterator = () => {
+            Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]())).marker = 1;
+        };
+    "#, "prototype-validity-proofs.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let global = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        vm.own_property(vm.realm.globals, atom).unwrap()
+    };
+    let call = |vm: &mut Vm<TestHost>, name: &str| {
+        let function = global(vm, name);
+        vm.call_value(&program, function, Value::UNDEFINED, &[]).unwrap();
+    };
+    let pair = global(&mut vm, "pair");
+    let key = super::property_key::PropertyKey::string(vm.runtime_atoms.iterator_return);
+    let proto = vm.array_iterator_proto;
+    assert!(vm.array_pattern_fits(pair, 1), "an intact pair fits a one-element pattern");
+    assert!(vm.iterator_absence_proved(proto, key), "the fit proves the array iterator lacks `return`");
+    call(&mut vm, "growOther");
+    assert!(vm.iterator_absence_proved(proto, key), "a change off the chain keeps the proof");
+    call(&mut vm, "patchIterator");
+    assert!(!vm.iterator_absence_proved(proto, key), "a change to %IteratorPrototype% retires it");
+    assert!(vm.array_pattern_fits(pair, 1), "and the next fit proves it again");
+    assert!(vm.iterator_absence_proved(proto, key));
 }

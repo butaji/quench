@@ -1,10 +1,10 @@
 //! Proofs that a prototype chain lets a symbol-keyed `[[Set]]` add the key to its receiver.
 //! A symbol-keyed write (`this[kState] = ...`) has no compiler cache site, so a repeated add
-//! through the same chain would walk every prototype each time. A proof records that, under
-//! one `prototype_layout_epoch`, the chain from `prototype` holds no accessor or read-only
-//! property named `key` (`Vm::add_prototype_guard`). Every link was marked a prototype when
-//! the proof was made, so any later change to one advances the epoch and retires it; every
-//! collection advances it too, so a proof never names a reused record.
+//! through the same chain would walk every prototype each time. A proof records that, while
+//! the chain's cell holds (`heap::ChainCell`), the chain from `prototype` holds no accessor or
+//! read-only property named `key` (`Vm::add_prototype_guard`). Every link was marked a
+//! prototype when the proof was made, so a later change to one, or its death, retires the
+//! cell; a change to a prototype off the chain leaves it.
 
 use super::Value;
 
@@ -23,7 +23,7 @@ const SITE_WRITE_WAYS: usize = 2;
 struct SymbolWriteProof {
     prototype: Value,
     key: Value,
-    epoch: u64,
+    cell: crate::heap::ChainCell,
 }
 
 #[derive(Default)]
@@ -39,15 +39,16 @@ pub(super) struct SymbolWriteProofs {
 }
 
 /// What `Vm::set_plain_symbol_property` did for `key` on an extensible receiver of the
-/// non-dictionary `shape` under `epoch`, recorded at the write site `site` (a lane record's
-/// address). Either step is a fact of the shape, key and epoch alone; the site only spreads
-/// the entries.
+/// non-dictionary `shape`, recorded at the write site `site` (a lane record's address), held
+/// while `cell` does: the add's chain proof's, or for a replace, which reads no prototype, the
+/// cell of no chain. Either step is a fact of the shape, key and cell alone; the site only
+/// spreads the entries.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct SiteSymbolWrite {
     site: usize,
     shape: u32,
     key: Value,
-    epoch: u64,
+    cell: crate::heap::ChainCell,
     step: SymbolWriteStep,
 }
 
@@ -67,35 +68,37 @@ impl SymbolWriteProofs {
         super::shape_memo::direct_mapped_index((prototype, key), SYMBOL_WRITE_PROOF_ENTRIES)
     }
 
-    /// Whether a proof for `key` through the chain from `prototype` holds under `epoch`.
+    /// The cell of a proof for `key` through the chain from `prototype`, where one holds.
     #[inline(always)]
-    pub(super) fn holds(&self, prototype: Value, key: Value, epoch: u64) -> bool {
-        self.entries.get(Self::index(prototype, key))
-            == Some(SymbolWriteProof { prototype, key, epoch })
+    pub(super) fn proof_cell(&self, prototype: Value, key: Value) -> Option<crate::heap::ChainCell> {
+        self.entries
+            .get(Self::index(prototype, key))
+            .filter(|proof| proof.prototype == prototype && proof.key == key && proof.cell.holds())
+            .map(|proof| proof.cell)
     }
 
-    pub(super) fn record(&self, prototype: Value, key: Value, epoch: u64) {
-        self.entries.set(Self::index(prototype, key), SymbolWriteProof { prototype, key, epoch });
+    pub(super) fn record(&self, prototype: Value, key: Value, cell: crate::heap::ChainCell) {
+        self.entries.set(Self::index(prototype, key), SymbolWriteProof { prototype, key, cell });
     }
 
-    /// The step site `site` last made writing `key` to a receiver of `shape`, while `epoch`
+    /// The step site `site` last made writing `key` to a receiver of `shape`, while its cell
     /// holds.
     #[inline(always)]
-    pub(super) fn site_step(&self, site: usize, shape: u32, key: Value, epoch: u64) -> Option<SymbolWriteStep> {
+    pub(super) fn site_step(&self, site: usize, shape: u32, key: Value) -> Option<SymbolWriteStep> {
         let first = Self::site_entry(site);
         (first..first + SITE_WRITE_WAYS)
             .filter_map(|index| self.sites.get(index))
-            .find(|write| write.site == site && write.shape == shape && write.key == key && write.epoch == epoch)
+            .find(|write| write.site == site && write.shape == shape && write.key == key && write.cell.holds())
             .map(|write| write.step)
     }
 
     /// Records the step as the site's most recent write, keeping the one before it.
-    pub(super) fn record_site_step(&self, site: usize, shape: u32, key: Value, epoch: u64, step: SymbolWriteStep) {
+    pub(super) fn record_site_step(&self, site: usize, shape: u32, key: Value, cell: crate::heap::ChainCell, step: SymbolWriteStep) {
         let first = Self::site_entry(site);
         if let Some(previous) = self.sites.get(first) {
             self.sites.set(first + 1, previous);
         }
-        self.sites.set(first, SiteSymbolWrite { site, shape, key, epoch, step });
+        self.sites.set(first, SiteSymbolWrite { site, shape, key, cell, step });
     }
 
     /// The first of the `SITE_WRITE_WAYS` entries of lane site `site`.

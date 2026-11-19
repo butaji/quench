@@ -58,19 +58,18 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// `object`'s record and the site's entry for it, while the prototype layout epoch it was
-    /// proved under still holds. An ordinary receiver matches its entry by layout, which holds
-    /// its shape and prototype: a recorded layout is of a shaped receiver outside dictionary
-    /// mode, so a match proves what `shape_property_lookup` would.
+    /// `object`'s record and the site's entry for it, while the cell of the chain it was proved
+    /// over still holds. An ordinary receiver matches its entry by layout, which holds its
+    /// shape and prototype: a recorded layout is of a shaped receiver outside dictionary mode,
+    /// so a match proves what `shape_property_lookup` would.
     fn receiver_entry(&self, object: Value, atom: Atom, site: usize) -> Option<(&Object, &AccessorFieldCache)> {
-        let epoch = crate::heap::prototype_layout_epoch();
         if let Some(receiver) = self.heap.object_record(object) {
             let layout = receiver.layout_id();
-            return Some((receiver, self.site_entry(site, |cache| layout == cache.layout && epoch == cache.epoch)?));
+            return Some((receiver, self.site_entry(site, |cache| layout == cache.layout && cache.cell.holds())?));
         }
         let receiver = self.shape_property_lookup(object, atom)?;
         let (shape, proto) = (receiver.shape(), receiver.proto());
-        Some((receiver, self.site_entry(site, |cache| shape == cache.receiver && proto == cache.prototype && epoch == cache.epoch)?))
+        Some((receiver, self.site_entry(site, |cache| shape == cache.receiver && proto == cache.prototype && cache.cell.holds())?))
     }
 
     /// The newest of the site's entries that `matches`.
@@ -100,7 +99,7 @@ impl<H: Host> Vm<H> {
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         if receiver.shape() != entry.receiver
             || receiver.proto() != entry.prototype
-            || crate::heap::prototype_layout_epoch() != entry.epoch
+            || !entry.cell.holds()
             || self.entry_accessors(entry, receiver)?.0? != getter
         {
             return None;

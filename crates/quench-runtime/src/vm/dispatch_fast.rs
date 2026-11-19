@@ -2255,7 +2255,8 @@ pub(super) struct LaneStack {
     /// Constructors' plans (`lane_initialize_fields`, `lane_planned_receiver`).
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
     /// Per plan, the one dependency its proof is (`watch_construct_plan`): published while
-    /// every object the plan read keeps its values and layout.
+    /// every object the plan read keeps its values and layout, and the chains above them their
+    /// layouts.
     construct_watches: Box<[Option<crate::heap::PrototypeValueWatch>; CONSTRUCT_PLANS]>,
     /// The reads call sites answered (`ReadMemo`), each in the slot its record names
     /// (`CallOperand::memo`).

@@ -797,10 +797,11 @@ struct AccessorFieldCache {
     slot: u16,
     /// Where the holder's shape keeps the accessor at `slot` (`SlotAccessor`): the shape the
     /// entry proves (the receiver's for `OWN_ACCESSOR`, else the prototype holder's, which the
-    /// epoch covers) fixes it.
+    /// cell covers) fixes it.
     slot_accessor: SlotAccessor,
-    /// The `prototype_layout_epoch` the chain was proved under.
-    epoch: u64,
+    /// The validity cell of the chain from `prototype` to `holder` (`Vm::chain_cell`); for an
+    /// own accessor, of no prototype.
+    cell: crate::heap::ChainCell,
     /// The site's next older entry in `Vm::accessor_fields`, or `NO_ACCESSOR_FIELD`.
     next: u32,
     /// The getter whose call a field read of the receiver answers (`answer`), or undefined:
@@ -896,8 +897,8 @@ pub(crate) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeField
 /// prototype chain still has exactly the `prototype_depth` shapes interned at `chain`
 /// (`Vm::field_add_chains`) gains `atom` at `slot` and moves to `target_shape`.
 ///
-/// 40 bytes: proved epoch (8), atom, source and target shapes, chain, proved prototype (20),
-/// layouts (8), slot and depth (3), padded; an inline `[u32; FIELD_ADD_CACHE_MAX_PROTO_DEPTH]`
+/// 48 bytes: proved chain cell (16), atom, source and target shapes, chain, proved prototype
+/// (20), layouts (8), slot and depth (3), padded; an inline `[u32; FIELD_ADD_CACHE_MAX_PROTO_DEPTH]`
 /// made it 72, though recorded adds prove at most a few prototypes and the sites of one
 /// constructor's stores share one chain.
 #[derive(Clone, Copy)]
@@ -912,16 +913,16 @@ struct FieldAddCache {
     prototype_depth: u8,
     /// Where the chain's prototype shapes are interned (`Vm::field_add_chains`).
     chain: u32,
-    /// The `prototype_layout_epoch` under which a walk last proved the chain from
-    /// `proved_prototype`, or `NO_PROVED_EPOCH`; while both hold the chain needs no walk.
-    proved_epoch: u64,
-    /// The receiver's prototype link the proof holds for, compared undecoded; a collection
-    /// advances the epoch, so it never outlives the record it names.
+    /// The cell of the chain from `proved_prototype` a walk last proved (`Vm::chain_cell`), or
+    /// `None`; while it holds the chain needs no walk. A change to another prototype leaves it.
+    proved: Option<crate::heap::ChainCell>,
+    /// The receiver's prototype link the proof holds for, compared undecoded; its death
+    /// retires the cell, so it never outlives the record it names.
     proved_prototype: ProtoLink,
 }
 // Keep the entry compact: a monomorphic add site's set is its first entry, a length and a box.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(size_of::<FieldAddCache>() == 40);
+const _: () = assert!(size_of::<FieldAddCache>() == 48);
 /// The prototype shapes a cached add must find again (`Vm::add_prototype_guard`), nearest
 /// first, before an entry interns them as its chain.
 #[derive(Clone, Copy)]
@@ -935,8 +936,6 @@ impl AddPrototypeGuard {
         &self.shapes[..usize::from(self.depth)]
     }
 }
-/// A `FieldAddCache::proved_epoch` no epoch reaches: the chain is unproven.
-const NO_PROVED_EPOCH: u64 = u64::MAX;
 impl FieldAddCache {
     const EMPTY: Self = Self {
         atom: u32::MAX,
@@ -946,7 +945,7 @@ impl FieldAddCache {
         layouts: [0; 2],
         prototype_depth: 0,
         chain: 0,
-        proved_epoch: NO_PROVED_EPOCH,
+        proved: None,
         proved_prototype: ProtoLink::NULL,
     };
     /// The shape transition the entry caches, as the staged add row takes it.
@@ -954,11 +953,11 @@ impl FieldAddCache {
     fn transition(&self) -> Transition {
         Transition { before: self.source_shape, after: self.target_shape, slot: self.slot, layouts: self.layouts }
     }
-    /// Whether the chain proof (`proved_epoch`, `proved_prototype`) holds for a receiver
-    /// whose prototype `link` names: then the chain needs no walk.
+    /// Whether the chain proof (`proved`, `proved_prototype`) holds for a receiver whose
+    /// prototype `link` names: then the chain needs no walk.
     #[inline(always)]
     fn proof_holds(&self, link: ProtoLink) -> bool {
-        self.proved_epoch == crate::heap::prototype_layout_epoch() && self.proved_prototype == link
+        self.proved_prototype == link && self.proved.is_some_and(crate::heap::ChainCell::holds)
     }
 }
 /// The add transitions one site remembers, oldest first. The first lives in the set and the
@@ -2142,9 +2141,9 @@ pub(crate) struct Vm<H> {
     /// A Set or Map shape with no own `@@iterator` (`Vm::intact_iteration_kind`).
     collection_iteration_shape: Option<u32>,
     array_species_proof: Option<array::ArraySpeciesProof>,
-    /// An array shape no `@@isConcatSpreadable` reaches under a prototype layout epoch
-    /// (`Vm::concat_spreadable_absent`).
-    concat_spreadable_proof: Option<(u32, u64)>,
+    /// An array shape no `@@isConcatSpreadable` reaches, while the cell of `Array.prototype`
+    /// and `Object.prototype` holds (`Vm::concat_spreadable_absent`).
+    concat_spreadable_proof: Option<(u32, crate::heap::ChainCell)>,
     for_in: object_static::ForInMemo,
     /// What `JSON.stringify`'s plain writer keeps between calls: its text buffer, which a
     /// payload's text would otherwise regrow from empty on each call, and its member plans
@@ -2152,8 +2151,8 @@ pub(crate) struct Vm<H> {
     json_plain: json::JsonPlainCache,
     species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
     /// That an iterator prototype's chain lacks a name (`Vm::iterator_lacks_property`): the
-    /// prototype, the name (`PropertyKey::key32`) and the `prototype_layout_epoch` it was proved under.
-    iterator_absence_proof: std::cell::Cell<Option<(Value, u32, u64)>>,
+    /// prototype, the name (`PropertyKey::key32`) and the cell of the chain it was proved over.
+    iterator_absence_proof: std::cell::Cell<Option<(Value, u32, crate::heap::ChainCell)>>,
     /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
     promise_species_proof: std::cell::RefCell<Option<promise::PromiseSpeciesProof>>,
     /// The `then` a resolution read from promises of one layout (`Vm::memoized_resolution_then`).
@@ -2260,13 +2259,14 @@ pub(crate) struct Vm<H> {
     in_presences: [Option<in_presence::InPresence>; in_presence::IN_PRESENCES],
     /// Constructor prototypes (a subclass's parent constructor, `%TypedArray%`) proved to
     /// inherit the native `@@hasInstance` (`Vm::inherits_native_has_instance`), each with the
-    /// prototype-layout epoch its proof holds under: the proof marks every link of the chain
-    /// a prototype, so any change to one, and every collection, retires it. Direct-mapped by
-    /// the holder's cell.
-    instanceof_inheriting_holders: [Option<(Value, u64)>; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
+    /// cell of the chain its proof read (`Vm::chain_cell`): the proof marks every link of the
+    /// chain a prototype, so a change to one, or its death, retires it. Direct-mapped by the
+    /// holder's cell.
+    instanceof_inheriting_holders: [Option<(Value, crate::heap::ChainCell)>; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
     /// Per constructor, direct-mapped by its cell, the link of its `prototype` object while
-    /// a watch on its values and layout holds (`Vm::proved_instanceof`).
-    instanceof_proofs: [(Value, crate::heap::ProtoLink, Option<crate::heap::PrototypeValueWatch>); INSTANCEOF_CONSTRUCTOR_LAYOUTS],
+    /// a watch on its values and layout holds, and the cell of the chain it inherits
+    /// `@@hasInstance` through (`Vm::proved_instanceof`).
+    instanceof_proofs: [(Value, crate::heap::ProtoLink, Option<(crate::heap::PrototypeValueWatch, crate::heap::ChainCell)>); INSTANCEOF_CONSTRUCTOR_LAYOUTS],
     /// The shapes an ordinary closure's own properties step through, without and with a
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.

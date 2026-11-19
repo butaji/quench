@@ -24,7 +24,7 @@ mod cell;
 mod dependencies;
 pub(crate) use dependencies::{
     Dependencies, INHERITED_FIELD_CACHE_MAX_DEPTH, IndexFreeChainProof, InheritedFieldAnswer, InheritedFieldCache, InternedChains,
-    NO_PROVED_LAYOUT, ProofKind, FactStore};
+    NO_PROVED_LAYOUT, ProofKind, FactStore, ChainCell};
 mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
@@ -444,8 +444,9 @@ pub(crate) const ASCII_UNITS: usize = 0x80;
 pub(crate) const UNIT_STRINGS: usize = 0x100;
 
 /// Dead prototype record ids a heap withholds from reuse (`Heap::retire_dead_prototypes`)
-/// before it advances `prototype_layout_epoch` once and frees them all. A withheld id costs one
-/// record's space; each advance retires every cache and proof the VM holds.
+/// before it advances `prototype_layout_epoch` and retires its chain cells once and frees them
+/// all. A withheld id costs one record's space; each advance retires every cache and proof the
+/// VM holds.
 const WITHHELD_PROTOTYPE_IDS: usize = 4096;
 
 #[derive(Default)]
@@ -568,10 +569,11 @@ pub(crate) struct Heap {
     /// mark for life: an allocation with one of them needs no lookup. A collection may free
     /// one and reuse its handle, so each one forgets them.
     marked_prototypes: [Option<Value>; MARKED_PROTOTYPE_WAYS],
-    /// Every object ever marked as a prototype, held weakly: a collection advances
-    /// `prototype_layout_epoch` only when one of them died, since only a dead prototype's
-    /// record can be reused under a proof that names it (`retire_dead_prototypes`). Each is
-    /// held with its subject in the dependency table (`Dependencies::watch`).
+    /// Every object ever marked as a prototype, held weakly: a collection releases the subject
+    /// of each that died, which retires the proofs and cells that read it, and advances
+    /// `prototype_layout_epoch` only when a dead prototype's record may be reused under a proof
+    /// that names it (`retire_dead_prototypes`). Each is held with its subject in the dependency
+    /// table (`Dependencies::watch`).
     prototypes: Vec<(Value, u32)>,
     /// The proofs that rely on prototypes' layouts, each retired when one it read changes.
     dependencies: dependencies::Dependencies,
@@ -2434,8 +2436,11 @@ impl Heap {
         self.prototypes = prototypes;
         let retire = died_unrecorded || withheld > WITHHELD_PROTOTYPE_IDS;
         if retire {
-            // Every proof made under the old epoch retires, so the withheld ids are free again.
+            // Every proof made under the old epoch, and every chain cell, retires, so the
+            // withheld ids are free again: a proof may name a record (a receiver's prototype
+            // link, a holder) its cell's subjects do not.
             advance_prototype_layout_epoch();
+            self.dependencies.retire_cells();
             self.object_records.release_withheld();
         }
     }

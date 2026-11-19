@@ -23,17 +23,18 @@ pub(crate) use await_state::{AwaitKind, AwaitRole, AwaitState};
 pub(crate) use wasm_fields::{TableTarget, TableWords, WasmGcFields, WasmTableElements};
 pub(crate) use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
-pub(crate) use prototype_values::{PrototypeValueWatch, subscribe_prototype_values, watch_prototype_values};
+pub(crate) use prototype_values::{PrototypeValueWatch, hold_prototype_values, subscribe_prototype_values, watch_prototype_values};
 pub(crate) use global_values::{GlobalCell, GlobalFact, GlobalLayoutFact, global_layout_fact, global_value_fact, note_global_shadowed, note_global_write, subscribe_global_layout, subscribe_global_value};
 #[cfg(test)]
 pub(crate) use global_values::new_table;
 
-/// Changes whenever the layout an object used as a prototype offers its inheritors can have
-/// changed: its shape, prototype or integrity changes; a collection frees a prototype, whose
-/// record may then be reused (`Heap::retire_dead_prototypes`); or shape compaction renumbers
-/// the shapes proofs name. A cache that proved a prototype chain under one value
-/// proves it again while the value holds (`FieldAddCache::proved_epoch`). One counter for the
-/// process: a change another heap made only sends caches back to the walk that re-proves them.
+/// Changes at the prototype-layout events no single prototype names: a collection frees a
+/// prototype whose record may then be reused (`Heap::retire_dead_prototypes`), shape
+/// compaction renumbers the shapes proofs name, or a prototype with no subject in a dependency
+/// table (a restored heap's, or a copy's) changes its shape, prototype or integrity. A layout
+/// change of a watched prototype retires only the proofs whose chain holds it (its subject's
+/// `heap::ChainCell`s) and does not advance it. One counter for the process: a change another
+/// heap made only sends caches back to the walk that re-proves them.
 static PROTOTYPE_LAYOUT_EPOCH: AtomicU64 = AtomicU64::new(0);
 
 /// The current `PROTOTYPE_LAYOUT_EPOCH`.
@@ -42,8 +43,10 @@ pub(crate) fn prototype_layout_epoch() -> u64 {
     PROTOTYPE_LAYOUT_EPOCH.load(Ordering::Relaxed)
 }
 
-/// Retires every proof made under the current `PROTOTYPE_LAYOUT_EPOCH`, and all code that
-/// holds a prototype's value as a constant: a layout change moves what a slot holds.
+/// Retires every proof made under the current `PROTOTYPE_LAYOUT_EPOCH`, and all code and
+/// watches that hold a prototype's value as a constant: a layout change moves what a slot
+/// holds. A heap retires its chain cells with it (`Dependencies::retire_cells`) where the
+/// event is its own.
 pub(crate) fn advance_prototype_layout_epoch() {
     PROTOTYPE_LAYOUT_EPOCH.fetch_add(1, Ordering::Relaxed);
     prototype_values::reset();
@@ -2322,12 +2325,26 @@ impl Object {
         self.set_meta((self.meta() & !PROTO_INDEX_BITS) | Self::encode_proto(proto));
     }
 
-    /// A change to what this object offers its inheritors, if it has any.
+    /// A change to what this object offers its inheritors, if it has any, made before it takes
+    /// effect: the watches on its values and all code holding prototype values retire
+    /// (`prototype_values::note_layout_change`), and so do the proofs whose chain holds it,
+    /// through its subject (`ChainCell`). A prototype with no subject (a restored heap's, or a
+    /// copy's) is named by no cell, so the global epoch advances for the proofs still keyed by
+    /// it.
     #[inline(always)]
     fn note_prototype_layout_change(&self) {
         if self.was_used_as_prototype() {
-            advance_prototype_layout_epoch();
+            self.note_watched_layout_change();
+        }
+    }
+
+    #[inline(never)]
+    fn note_watched_layout_change(&self) {
+        prototype_values::note_layout_change(self.exact_shape());
+        if self.watched_subject().is_some() {
             self.retire_watch();
+        } else {
+            advance_prototype_layout_epoch();
         }
     }
 
@@ -3253,7 +3270,7 @@ impl Object {
         self.element_facts().has(ElementFacts::SIDE_DESCRIPTORS)
     }
     /// A prototype's side descriptors can name keys its shape lacks, which retires the
-    /// proofs (`prototype_layout_epoch`) that found them absent.
+    /// proofs (its subject's, `ChainCell`) that found them absent.
     pub(crate) fn mark_side_descriptors(&mut self) {
         self.note_prototype_layout_change();
         self.mark_element_fact(ElementFacts::SIDE_DESCRIPTORS);

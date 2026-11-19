@@ -167,7 +167,7 @@ impl<H: Host> Vm<H> {
         let Some(intrinsics) = self.realm.intrinsics.regexp_intrinsics.get(&self.realm.globals) else {
             return false;
         };
-        let proven = intrinsics.exec_proof.get().is_some_and(|proof| proof.shape == object.shape() && proof.epoch == crate::heap::prototype_layout_epoch());
+        let proven = intrinsics.exec_proof.get().is_some_and(|proof| proof.shape == object.shape() && proof.cell.holds());
         if object.proto() == intrinsics.prototype && proven {
             return true;
         }
@@ -187,11 +187,11 @@ impl<H: Host> Vm<H> {
         if object.proto() != intrinsics.prototype {
             return false;
         }
-        let (shape, epoch) = (object.shape(), crate::heap::prototype_layout_epoch());
-        let proof = match intrinsics.exec_proof.get() {
-            Some(proof) if proof.shape == shape && proof.epoch == epoch => proof,
-            _ => match self.prove_regexp_exec(intrinsics, shape, epoch) {
-                Some(proof) => proof,
+        let shape = object.shape();
+        let exec_slot = match intrinsics.exec_proof.get() {
+            Some(proof) if proof.shape == shape && proof.cell.holds() => proof.exec_slot,
+            _ => match self.prove_regexp_exec(intrinsics, shape) {
+                Some(exec_slot) => exec_slot,
                 None => return false,
             },
         };
@@ -204,8 +204,8 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.object_data(intrinsics.prototype) else {
             return false;
         };
-        let exec = if proof.exec_slot < crate::value_vec::INLINE_PROPERTY_COUNT { data.inline_property(proof.exec_slot) } else { None };
-        let Some(exec) = exec.or_else(|| self.heap.property_get(data, proof.exec_slot)) else {
+        let exec = if exec_slot < crate::value_vec::INLINE_PROPERTY_COUNT { data.inline_property(exec_slot) } else { None };
+        let Some(exec) = exec.or_else(|| self.heap.property_get(data, exec_slot)) else {
             return false;
         };
         if intrinsics.builtin_exec.get() == Some(exec) {

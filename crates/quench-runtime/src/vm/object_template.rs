@@ -74,10 +74,11 @@ pub(crate) struct ObjectTemplate {
     /// The root's slots each copy takes from its arguments, in the order the capture named
     /// their keys.
     parameters: Box<[u32]>,
-    /// The `prototype_layout_epoch` under which the layouts last held, when every guarded
-    /// object is a marked prototype, whose layout changes advance the epoch: while it holds,
-    /// so do they. `None` when one could not be marked, so each copy checks them.
-    layouts_proved: Option<std::cell::Cell<u64>>,
+    /// The cell of the guarded objects (`Dependencies::subjects_cell`) under which the layouts
+    /// last held, when every guarded object is a watched prototype, whose layout changes
+    /// retire it: while it holds, so do they, whatever other prototypes do. `None` when one
+    /// could not be marked, so each copy checks them.
+    layouts_proved: Option<std::cell::Cell<crate::heap::ChainCell>>,
     /// Keeps the graph and every guarded object and probed value alive, so each compares
     /// by identity for the template's lifetime.
     _roots: Box<[RootId]>,
@@ -135,14 +136,11 @@ impl<H: Host> Vm<H> {
             };
             captured.push(TemplateProbe { holder, slot: slot.map(u32::try_from).transpose().ok()?, value });
         }
-        // Marked prototypes advance the epoch on any change to their layout.
+        // Watched prototypes retire their cells on any change to their layout.
         for layout in &layouts {
             self.heap.mark_prototype(layout.object);
         }
-        let marked = layouts
-            .iter()
-            .all(|layout| self.template_layout_object(layout.object).is_some_and(|object| object.was_used_as_prototype()));
-        let layouts_proved = marked.then(|| std::cell::Cell::new(crate::heap::prototype_layout_epoch()));
+        let layouts_proved = self.template_layouts_cell(&layouts).map(std::cell::Cell::new);
         let mut kept = vec![template];
         kept.extend(layouts.iter().map(|layout| layout.object));
         kept.extend(captured.iter().map(|probe| probe.value));
@@ -202,16 +200,34 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The cell of the guarded objects' layouts, where each is a watched prototype; `None`
+    /// where one is not, so each copy checks them.
+    fn template_layouts_cell(&self, layouts: &[TemplateLayout]) -> Option<crate::heap::ChainCell> {
+        let subjects = layouts
+            .iter()
+            .map(|layout| {
+                self.template_layout_object(layout.object)
+                    .filter(|object| object.was_used_as_prototype())
+                    .and_then(crate::heap::Object::watched_subject)
+            })
+            .collect::<Option<SmallVec<[u32; INLINE_COPIES]>>>()?;
+        Some(self.heap.dependencies().subjects_cell(&subjects))
+    }
+
     fn template_reads_hold(&self, template: &ObjectTemplate) -> bool {
-        let epoch = crate::heap::prototype_layout_epoch();
-        let proved = template.layouts_proved.as_ref().is_some_and(|proved| proved.get() == epoch);
+        let proved = template.layouts_proved.as_ref().is_some_and(|proved| proved.get().holds());
         let layouts = proved
             || template.layouts.iter().all(|layout| {
                 self.template_layout_object(layout.object)
                     .is_some_and(|object| object.shape() == layout.shape && object.proto() == layout.prototype)
             });
-        if layouts && let Some(proved) = &template.layouts_proved {
-            proved.set(epoch);
+        // Layouts found again as captured hold under a new cell until the next change.
+        if layouts
+            && !proved
+            && let Some(slot) = &template.layouts_proved
+            && let Some(cell) = self.template_layouts_cell(&template.layouts)
+        {
+            slot.set(cell);
         }
         layouts && template.probes.iter().all(|probe| {
             let Some(slot) = probe.slot else {

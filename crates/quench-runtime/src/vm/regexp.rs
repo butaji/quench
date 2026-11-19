@@ -76,14 +76,15 @@ pub(super) struct RegExpIntrinsics {
 }
 
 /// Where RegExps of one shape, whose prototype is the realm's `%RegExp.prototype%`, find
-/// their `exec` under one `prototype_layout_epoch`: no own `exec`, and the prototype's in a
-/// data slot. The prototype was marked when the proof was made, so a change to its layout
-/// advances the epoch; shape compaction advances it too, so a proof never names a renumbered
-/// shape. The slot's value may change in place, so each use reads it.
+/// their `exec` while `cell` holds: no own `exec`, and the prototype's in a data slot. The
+/// prototype was marked when the proof was made and the cell is its own (`Vm::chain_cell`),
+/// so a change to its layout retires the proof, and another prototype's leaves it; shape
+/// compaction retires every cell, so a proof never names a renumbered shape. The slot's value
+/// may change in place, so each use reads it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct RegExpExecProof {
     pub(super) shape: u32,
-    pub(super) epoch: u64,
+    pub(super) cell: crate::heap::ChainCell,
     exec_slot: usize,
 }
 
@@ -1459,8 +1460,8 @@ impl<H: Host> Vm<H> {
     /// The matcher of `regexp` when `RegExpExec(regexp, …)` resolves to the builtin exec:
     /// a RegExp of this realm with the intrinsic prototype, no own `exec`, and the native
     /// `exec` data property on that prototype. While no guest code runs, that resolution
-    /// cannot change. A proof for the RegExp's shape under the current
-    /// `prototype_layout_epoch` names the slot to read (`RegExpExecProof`).
+    /// cannot change. A proof for the RegExp's shape while the prototype's cell holds names the
+    /// slot to read (`RegExpExecProof`).
     fn regexp_builtin_exec_matcher(&self, regexp: Value) -> Option<Rc<quench_regexp::Regex>> {
         let Some(Cell::RegExp { meta, .. }) = self.heap.get(regexp) else {
             return None;
@@ -1470,11 +1471,11 @@ impl<H: Host> Vm<H> {
     }
 
     /// `regexp_builtin_exec_matcher`'s lookups past its proof, recording where they found
-    /// `exec` while the prototype they read is a marked prototype, so a later change to its
-    /// layout advances the epoch and retires the proof.
+    /// `exec` while the prototype they read is a watched prototype, under its cell, so a later
+    /// change to its layout retires the proof.
     #[cold]
     #[inline(never)]
-    fn prove_regexp_exec(&self, intrinsics: &RegExpIntrinsics, shape: u32, epoch: u64) -> Option<RegExpExecProof> {
+    fn prove_regexp_exec(&self, intrinsics: &RegExpIntrinsics, shape: u32) -> Option<usize> {
         let exec = PropertyKey::string(self.runtime_atoms.regexp_exec);
         if self.property_shape_slot(shape, exec).is_some() {
             return None;
@@ -1484,12 +1485,12 @@ impl<H: Host> Vm<H> {
         if self.slot_attributes(prototype, exec_slot)?.accessor {
             return None;
         }
-        let proof = RegExpExecProof { shape, epoch, exec_slot };
-        // Allocating a RegExp marks its prototype, so the proof is recorded from the first.
-        if prototype.was_used_as_prototype() {
-            intrinsics.exec_proof.set(Some(proof));
+        // Allocating a RegExp marks its prototype, so the proof is recorded from the first; an
+        // unwatched prototype's slot answers this call alone.
+        if let Some(cell) = self.watched_chain_cell(intrinsics.prototype, 1) {
+            intrinsics.exec_proof.set(Some(RegExpExecProof { shape, cell, exec_slot }));
         }
-        Some(proof)
+        Some(exec_slot)
     }
 
     /// `RegExp.prototype[@@split]` steps 19–25 for a sticky `splitter` this call created,

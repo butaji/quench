@@ -12,7 +12,9 @@ mod proxy_set;
 /// (`Vm::has_intrinsic_species_getter`) under one `prototype_layout_epoch`: the shape names
 /// the slot and that the slot holds the getter itself, and shape compaction advances the
 /// epoch, so a proof never names a renumbered shape. The getter may change in place, so each use
-/// reads the slot.
+/// reads the slot. It reads no prototype, so it keeps the global epoch, which only the events
+/// every proof shares advance (a compaction, a collection reusing a prototype's record), rather
+/// than a chain's cell.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct SpeciesSlotProof {
     shape: u32,
@@ -697,6 +699,60 @@ impl<H: Host> Vm<H> {
             link = object.proto();
         }
         Some(subjects)
+    }
+
+    /// The validity cell of the `depth` prototypes from `prototype` (`heap::ChainCell`), each
+    /// marked a prototype first: it holds while none of them changes its layout (shape,
+    /// prototype link, integrity, recorded descriptors) or dies, whatever other prototypes do.
+    /// `None` where one has no subject, so no proof is recorded for that chain.
+    pub(super) fn chain_cell(&mut self, prototype: Value, depth: u8) -> Option<crate::heap::ChainCell> {
+        let subjects = self.fact_chain_subjects(prototype, depth)?;
+        Some(self.heap.dependencies().chain_cell(&subjects))
+    }
+
+    /// `chain_cell` for a proof made without marking: every one of the `depth` links from
+    /// `prototype` must be a watched prototype already; `None` where one is not.
+    pub(super) fn watched_chain_cell(&self, prototype: Value, depth: u8) -> Option<crate::heap::ChainCell> {
+        let mut subjects = smallvec::SmallVec::<[u32; crate::heap::INHERITED_FIELD_CACHE_MAX_DEPTH]>::new();
+        let mut link = prototype;
+        for _ in 0..depth {
+            let object = self.heap.object(link)?;
+            if !object.was_used_as_prototype() {
+                return None;
+            }
+            subjects.push(object.watched_subject()?);
+            link = object.proto();
+        }
+        Some(self.heap.dependencies().chain_cell(&subjects))
+    }
+
+    /// `chain_cell` of the whole chain from `prototype` to its end; `None` past `u8::MAX`
+    /// links or where a link is no object.
+    pub(super) fn chain_cell_to_end(&mut self, prototype: Value) -> Option<crate::heap::ChainCell> {
+        let depth = self.chain_depth(prototype)?;
+        self.chain_cell(prototype, depth)
+    }
+
+    /// The links of the chain from `prototype` to its end; `None` past `u8::MAX` or where a
+    /// link is no object.
+    fn chain_depth(&self, prototype: Value) -> Option<u8> {
+        let mut depth = 0u8;
+        let mut link = prototype;
+        while !link.is_null() {
+            link = self.heap.object(link)?.proto();
+            depth = depth.checked_add(1)?;
+        }
+        Some(depth)
+    }
+
+    /// Makes the data dependency `dependency` retire when a link of the whole chain from
+    /// `start` (itself included) changes its layout or dies, each marked a prototype first
+    /// (`Dependencies::hold_layouts`); `false` where a link has no subject or a table is full.
+    pub(super) fn hold_chain_layouts(&mut self, start: Value, dependency: &std::rc::Rc<dyn crate::code_dependencies::DependentCode>) -> bool {
+        let Some(subjects) = self.chain_depth(start).and_then(|depth| self.fact_chain_subjects(start, depth)) else {
+            return false;
+        };
+        self.heap.dependencies().hold_layouts(&subjects, dependency)
     }
 
     /// Holds fact-table entry `entry` under `subjects`, whose change clears it.
