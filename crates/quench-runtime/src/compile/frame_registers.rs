@@ -252,11 +252,16 @@ pub(super) fn promote<'a>(
             }
             (Op::StoreLocalPlain, Some(target)) => {
                 let source = instruction.register_a();
-                // A store that also keeps its value in a register becomes two moves.
-                if let Some(copy) = instruction.optional_register_b() {
+                // A store that also keeps its value in a register becomes two moves. The copy
+                // reads the local, not the stored value, so the value's register is dead after
+                // the store and its producer can compute straight into the local
+                // (`coalesce_distant_producer_moves`); copy propagation then lets the copy's
+                // reader read the local (`forward_move_sources`). A copy into the stored
+                // value's own register already holds the value and needs no move.
+                if let Some(copy) = instruction.optional_register_b().filter(|&copy| copy != source) {
                     let store = WideInstruction::new(Op::Move, target, source, 0, 0);
                     code.push(encode(store, Instr::new(Op::Nop, 0, 0, 0, 0), &mut function.wide));
-                    instruction = WideInstruction::new(Op::Move, copy, source, 0, 0);
+                    instruction = WideInstruction::new(Op::Move, copy, target, 0, 0);
                 } else {
                     instruction = WideInstruction::new(Op::Move, target, source, 0, 0);
                 }
