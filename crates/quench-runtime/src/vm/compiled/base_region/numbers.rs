@@ -146,11 +146,15 @@ impl EntryReads {
     }
 }
 
-/// Whether the row checks each operand it reads, so it reads no fact an entry guard provides: a numeric stencil
-/// that leaves on any other operand (`leaves_on_other`) with no heap, step, global or checked operand.
+/// Whether the row checks each operand it reads, so it reads no fact an entry guard provides: a bare numeric
+/// row (`Decoded::number`, nothing else set) whose stencil leaves on any other operand (`leaves_on_other`), and
+/// which is no `Concat` variant.
 fn self_checking(row: &Decoded, kinds: Option<&OperandKinds>) -> bool {
-    row.heap.is_none() && row.step.is_none() && row.global.is_none() && !row.checked
-        && leaves_on_other(row.kind) && variant_of(row.kind, kinds) != Variant::Concat
+    let bare = row.heap.is_none() && row.step.is_none() && row.global.is_none() && row.base.is_none() && row.also.is_none()
+        && row.atom.is_none() && row.folded.is_none() && row.instanceof.is_none() && row.lexical.is_none() && row.add.is_none()
+        && row.name.is_none() && row.ic.is_none() && row.declined.is_none() && row.holder.is_none() && !row.class_read
+        && !row.proven && !row.checked && !row.admitted && !row.recheck;
+    bare && leaves_on_other(row.kind) && variant_of(row.kind, kinds) != Variant::Concat
 }
 
 /// The slots of `from` in `into`.
@@ -193,12 +197,14 @@ pub(super) fn entry_reads(span: &Span, decoded: &[Decoded], homes: &Homes, kinds
             }
         }
     }
-    let set = |registers: &mut dyn Iterator<Item = Register>| {
-        let mut held = Held::with_capacity(capacity);
-        for register in registers {
-            held.insert(usize::from(register));
-        }
-        held
-    };
-    EntryReads { numbers: set(&mut span.number_registers().iter().copied()), kept: set(&mut kept.iter().copied()), live }
+    EntryReads { numbers: slots(capacity, span.number_registers().iter().copied()), kept: slots(capacity, kept.iter().copied()), live }
+}
+
+/// The set of the frame slots `registers` name.
+fn slots(capacity: usize, registers: impl Iterator<Item = Register>) -> Held {
+    let mut held = Held::with_capacity(capacity);
+    for register in registers {
+        held.insert(usize::from(register));
+    }
+    held
 }
