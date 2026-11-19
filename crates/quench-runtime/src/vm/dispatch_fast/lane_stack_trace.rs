@@ -178,7 +178,12 @@ mod tests {
     /// calls, a getter, an array callback, a constructor, `Error` called without `new`, a method,
     /// a direct eval, an async function before its first `await`, and `Error.captureStackTrace`
     /// trimmed through a function on the stack, as chai's AssertionError does) is byte-identical
-    /// to the one the first, cold round captured, and the frames are Node's (v22).
+    /// to the one the first, cold round captured, and the frames are Node's (v22). §5.2 adds a
+    /// skipped forwarding constructor's method (`Completion::Forwarder`: two frames), a generator
+    /// stepped by `next()` (a windowed activation), a nested read's getter (its caller's field
+    /// site, `Vm::called_field_source`), defines that raise beside activations (`lane_raise`,
+    /// caught in the lane or not), and an async function after its `await` (a job's root), whose
+    /// traces the jobs compare after the rounds.
     #[test]
     fn lane_stack_captures_match_materialized_traces() {
         let source = r#"
@@ -200,8 +205,27 @@ mod tests {
           var asyncTrace;
           async function settles() { asyncTrace = new Error("async").stack; }
           function viaAsync() { settles(); return asyncTrace; }
+          function Klass() { this.initialize.apply(this, arguments); }
+          Klass.prototype.initialize = function initialize(m) { this.trace = new Error(m).stack; };
+          function viaForwarder() { return new Klass("fw").trace; }
+          function* traces() { for (;;) yield new Error("gen").stack; }
+          var stepped = traces();
+          function viaGenerator() { return stepped.next().value; }
+          var nest = { inner: holder };
+          function viaNestedGetter() { var o = nest; return o.inner.prop; }
+          class Sealing { a = Object.preventExtensions(this); b = 2; }
+          function viaDefine() { try { new Sealing(); } catch (e) { return e.stack; } }
+          class Base { constructor(o) { return o; } }
+          class Stamp extends Base { #x = 1; }
+          function viaPrivate() { var o = {}; new Stamp(o); try { new Stamp(o); } catch (e) { return e.stack; } }
+          function caughtHere() { try { new Sealing(); return "none"; } catch (e) { return e.message; } }
+          function viaCaught() { return caughtHere(); }
+          var jobTraces = [];
+          async function afterAwait() { await null; jobTraces.push(new Error("job").stack); }
           function round() {
-            return [outer(), viaCapture(), viaGetter(), viaCallback(), viaConstructor(), viaCall(), viaMethod(), viaEval(), viaAsync()];
+            afterAwait();
+            return [outer(), viaCapture(), viaGetter(), viaCallback(), viaConstructor(), viaCall(), viaMethod(), viaEval(), viaAsync(),
+              viaForwarder(), viaGenerator(), viaNestedGetter(), viaDefine(), viaPrivate(), viaCaught()];
           }
           function names(trace, n) {
             return trace.split("\n").slice(1, 1 + n).map(function (l) { return l.trim().split(" ")[1]; }).join(",");
@@ -217,11 +241,17 @@ mod tests {
             return names(first[0], 5) + "|" + names(first[1], 3);
           }
           print(run());
+          Promise.resolve().then(function () {
+            for (var j = 1; j < jobTraces.length; j++) {
+              if (jobTraces[j] !== jobTraces[0]) return print("job " + j + "\n" + jobTraces[0] + "\n--\n" + jobTraces[j]);
+            }
+            print(jobTraces.length + " jobs|" + names(jobTraces[0], 1));
+          });
         "#;
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         let program = Engine::specialize(source, "lane-stack-captures.js").unwrap();
         vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), ["inner,middle,outer,round,run|viaCapture,round,run"]);
+        assert_eq!(output.borrow().as_slice(), ["inner,middle,outer,round,run|viaCapture,round,run", "3001 jobs|afterAwait"]);
     }
 }
