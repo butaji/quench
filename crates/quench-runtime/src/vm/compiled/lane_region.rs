@@ -897,8 +897,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
         self.materialize_inlined(state, pc);
         // A caller-frame leave of a body differs from another storing the same registers only
         // by its exit word: one block stores them for all, the word its parameter.
-        if let (Completion::Body, super::lane_unit::Origin::Caller(record)) = (self.completion,
-            self.unit.origins.get(pc).copied().unwrap_or(super::lane_unit::Origin::Caller(self.unit.end))) {
+        let origin = self.unit.origins.get(pc).copied().unwrap_or(super::lane_unit::Origin::Caller(self.unit.end));
+        if let (Completion::Body, super::lane_unit::Origin::Caller(record), None) = (self.completion, origin, self.vm.ahead) {
             let block = self.shared_exit_block(stored);
             let word = self.raw_const(Lane::I64, LaneExit::At(record as usize).word() as i64);
             self.goto(block, &[word]);
@@ -1660,6 +1660,14 @@ pub(super) fn lower_body(
     super::residuals::report_clif(function_id, &region.function);
     let clif = native_dump_directory().map(|_| region.function.to_string());
     Some(LoweredLane { region, clif, scalar })
+}
+
+/// Where an ahead lane body's leaves continue: per unit PC, the `(namespace, key)` of the base
+/// body's `Symbol::BasePc` the origin there names, `None` where the base body enters no record.
+/// Present, a leave tail-jumps to that entry instead of returning its exit word (`exits.rs`).
+#[derive(Clone, Copy)]
+pub(super) struct AheadLeaves<'a> {
+    pub(super) targets: &'a [Option<(u32, u32)>],
 }
 
 /// The position a failed entry contract takes in a lane body's leave set

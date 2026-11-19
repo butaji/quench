@@ -163,13 +163,13 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
         publish_eager_graph(body, isa).ok()
     }
 
-    /// The lane `body`, its per-PC semantic fallback and the trampoline that is the entry.
+    /// The lane `body`, its per-PC semantic fallback and the trampoline that is the entry (which calls only `body`).
     fn lower_trampoline(&mut self, function_id: u32, sites: &[super::specialize::InstructionSite],
         isa: &dyn cranelift_codegen::isa::TargetIsa, body: CodeMemory,
     ) -> Result<Vec<CodeMemory>, String> {
         let (fallback, operands, table) = self.lower_fallback(sites, isa)?;
-        let (mut body_signature, mut fallback_signature) = (None, None);
-        let entry = super::ahead_entry::lower_ahead_entry(super::native_object::NATIVE_FUNCTION_NAMESPACE, function_id, sites.len(), isa,
+        let mut body_signature = None;
+        let entry = super::ahead_entry::lower_ahead_entry(super::native_object::NATIVE_FUNCTION_NAMESPACE, function_id, isa,
             super::ahead_entry::AheadTargets {
                 body: &mut |builder, words| {
                     let signature = *body_signature.get_or_insert_with(|| builder.import_signature(
@@ -178,12 +178,6 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
                     let target = stage.raw_const(of_in_lane(isa.pointer_type()), body.pointer() as usize as i64);
                     let results = stage.call_signature(signature, target, words);
                     (results[0], results[1])
-                },
-                fallback: &mut |builder, [context, pc, result]| {
-                    let signature = *fallback_signature.get_or_insert_with(|| builder.import_signature(native_js_operation_signature(isa)));
-                    let mut stage = emit(builder);
-                    let target = stage.raw_const(of_in_lane(isa.pointer_type()), fallback.pointer() as usize as i64);
-                    stage.call_signature(signature, target, &[context, pc, result, result])[0]
                 },
             })?;
         let entry = publish_eager_graph(entry, isa)?;

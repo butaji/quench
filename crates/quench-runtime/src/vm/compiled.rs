@@ -144,7 +144,7 @@ mod site_posterior;
 #[path = "compiled/entry_cell.rs"] pub(super) mod entry_cell;
 #[path = "compiled/numeric_image.rs"] mod numeric_image; #[cfg(test)] pub(super) use numeric_image::compile_js_typed_numeric_region;
 pub(super) use numeric_image::NumericImage;
-#[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages;
+#[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages; pub(in crate::vm) use ahead_images::closed_lane_image;
 #[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{BodyEntry, BodyReturn};
 pub(super) use lane_body_abi::lane_body_signature;
 #[path = "compiled/lane_facts.rs"]
@@ -1428,6 +1428,13 @@ pub(super) struct VmFacts<'a> {
     /// escapes nowhere (`lane_region::virtual_objects`). The code tests that the plan still
     /// holds where it would construct, so it takes no dependency on it.
     pub(super) construct_plans: Option<&'a dyn Fn(u32, u32) -> Option<ScalarConstructPlan>>,
+    /// Where an ahead lane body's leaves continue, in its base body (`lane_region::AheadLeaves`);
+    /// `None` where a leave returns its exit word.
+    pub(super) ahead: Option<lane_region::AheadLeaves<'a>>,
+    /// The whole-program facts of an AOT image (`compile::aot_facts`).
+    // TODO: lane_region reads the call targets and constructor shapes once it proves them there.
+    #[allow(dead_code)]
+    pub(super) closed: Option<&'a crate::compile::aot_facts::AotFacts>,
 }
 
 /// What offline code holds of the atoms it stores (`VmFacts::held_atoms`): the names method caches
@@ -1443,14 +1450,14 @@ impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None };
+        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, closed: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None }
+            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, closed: None }
     }
 }
 

@@ -89,6 +89,7 @@ impl Lowering<'_, '_> {
             for ExitBlock { stored, block } in std::mem::take(&mut self.exits[pc]) {
                 self.switch_to(block, true);
                 self.store_exit_registers(&stored);
+                if self.vm.ahead.is_some() { self.leave_to_base(pc); continue; }
                 let word = match self.unit.origins.get(pc).copied().unwrap_or(super::lane_unit::Origin::Caller(self.unit.end)) {
                     super::lane_unit::Origin::Caller(record) => LaneExit::At(record as usize).word(),
                     super::lane_unit::Origin::Inlined { frame, pc: record } => {
@@ -99,6 +100,28 @@ impl Lowering<'_, '_> {
                 self.return_at(word);
             }
         }
+    }
+
+    /// Continues the activation at the base body's record this leave's origin names
+    /// (`AheadLeaves`). The stores are written and the entry words are the base body's, so it runs
+    /// on the same Frame; an inlined callee's registers go to the scratch window first.
+    // TODO: materialize the callee's activation (`body_inlined_activation_in_lane`); AOT has no helper for it yet.
+    pub(super) fn leave_to_base(&mut self, pc: usize) {
+        if let Some(super::lane_unit::Origin::Inlined { frame, .. }) = self.unit.origins.get(pc).copied() {
+            self.store_inlined_registers(pc, frame);
+        }
+        let (namespace, key) = self.base_leave(pc);
+        let target = crate::vm::jit_backend::symbol_address(&mut self.builder, namespace, key);
+        let signature = self.builder.func.signature.clone();
+        let signature = self.builder.import_signature(signature);
+        let (this, captures) = self.entry_words;
+        self.builder.ins().return_call_indirect(signature, target, &[self.context, this, captures, self.registers_base]);
+    }
+
+    /// The `(namespace, key)` of the base body's entry the leave at `pc` continues at.
+    fn base_leave(&self, pc: usize) -> (u32, u32) {
+        let leaves = self.vm.ahead.expect("an ahead lowering names its base entries");
+        leaves.targets[pc].expect("a leave continues at a record the base body enters")
     }
 
     /// Each register of `stored` to the lane frame: its tagged bits, or its unboxed view boxed here.

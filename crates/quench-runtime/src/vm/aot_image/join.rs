@@ -22,6 +22,7 @@ pub(crate) fn lower_lane(
     base: &BaseImage,
     symbols: &mut SymbolTable,
 ) -> Result<Option<LaneImage>, String> {
-    let _ = (program, facts, target, id, base, symbols);
-    todo!("lane/base join")
+    // TODO: lower for `target.isa`; the host's ISA until `IsaBaseline` selects the compile target.
+    let _ = target;
+    Ok(super::super::compiled::closed_lane_image(program, id, facts, base, symbols))
 }
