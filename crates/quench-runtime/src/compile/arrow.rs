@@ -93,7 +93,7 @@ impl Compiler<'_> {
         );
         let binds_dynamically = direct_eval.binds_dynamically();
         self.dynamic_binding_scopes += u32::from(binds_dynamically);
-        let declared_parameters = super::typescript::declared_parameters(&value.params, self.checked_parameters.as_deref());
+        let declared_parameters = super::typescript::declared_parameters(&value.params, self.checked_parameters.as_deref(), self.opaque_type_names);
         let mut function = FunctionCompiler::new(
             self,
             locals,

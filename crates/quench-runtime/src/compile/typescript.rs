@@ -4,7 +4,10 @@
 //! (`Function::declared_parameters`).
 
 use oxc_ast::ast::*;
+use oxc_ast_visit::{Visit, walk};
+use oxc_syntax::scope::ScopeFlags;
 
+use crate::bytecode::DeclaredTypes;
 use crate::typed_ir::language_bit;
 use crate::staged::value::language as bits;
 
@@ -23,21 +26,68 @@ pub use checked::{CheckedParameters, ParameterSite};
 pub(super) use checked::register as register_checked_parameters;
 pub(super) use names::{Named, TypeNames};
 
+/// Whether a lazily parsed TypeScript body (`BodyFacts::check`) holds a construct its compilation
+/// rewrites into run-time code, or rejects, and so must be compiled eagerly: a decorator (rejected
+/// at load), an enum or namespace or `import x = …` (lowered by admission, whose folding reads the
+/// whole program's bindings), or a `declare` (which admission removes). Everything else in a body
+/// has the same early errors and free names before admission as after it.
+pub(super) fn needs_admission(program: &Program<'_>) -> bool {
+    struct Finder(bool);
+    impl<'a> Visit<'a> for Finder {
+        fn visit_decorator(&mut self, _: &Decorator<'a>) { self.0 = true; }
+        fn visit_ts_enum_declaration(&mut self, _: &TSEnumDeclaration<'a>) { self.0 = true; }
+        fn visit_ts_module_block(&mut self, _: &TSModuleBlock<'a>) { self.0 = true; }
+        fn visit_ts_import_equals_declaration(&mut self, _: &TSImportEqualsDeclaration<'a>) { self.0 = true; }
+        fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
+            self.0 |= declaration.declare;
+            walk::walk_variable_declaration(self, declaration);
+        }
+        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
+            self.0 |= function.declare;
+            walk::walk_function(self, function, flags);
+        }
+        fn visit_class(&mut self, class: &Class<'a>) {
+            self.0 |= class.declare;
+            walk::walk_class(self, class);
+        }
+    }
+    let mut finder = Finder(false);
+    finder.visit_program(program);
+    finder.0
+}
+
+/// The declared environment of a lazily parsed TypeScript body, collected alone before the body is
+/// released (`BodyFacts::check`), with the source positions it has in the program. Its names are not
+/// the program's (they are in view only at the top level), so every type name reads as unknown
+/// (`TypeNames::opaque`): a name's annotation is then `DECLARED_ANY`, which never claims a type the
+/// program may shadow.
+pub(super) fn collect_released(program: &Program<'_>, declarations: &mut DeclaredTypes) {
+    let names = TypeNames::opaque();
+    fields::collect(program, &names, declarations);
+    signatures::collect(program, &names, declarations);
+}
+
 /// The language types (`crate::typed_ir::Type::language` bits) each formal parameter of
 /// `formals` declares, by argument index; empty where none declares one. An undeclared or
 /// structural type (an interface, a type literal, a generic) is `DECLARED_ANY`, as a
 /// structural type admits primitives too. An optional parameter or one with a default may
 /// enter as `undefined`. A checker's answer for the same parameters (`checked`) narrows each
 /// set further: both are seeds of the same fact, so a value must fit both.
-pub(super) fn declared_parameters(formals: &FormalParameters<'_>, checked: Option<&CheckedParameters>) -> Vec<u16> {
+///
+/// `opaque` reads the names of the annotations as unknown (`collect_released`): the parameters of a
+/// lazily parsed body, whose program's type names are not in view where it compiles.
+pub(super) fn declared_parameters(formals: &FormalParameters<'_>, checked: Option<&CheckedParameters>, opaque: bool) -> Vec<u16> {
     let checked = checked.and_then(|checked| checked.get(formals.span.start))
         .filter(|languages| languages.len() == formals.items.len());
     if checked.is_none() && formals.items.iter().all(|item| item.type_annotation.is_none()) {
         return Vec::new();
     }
     let parameters: Vec<u16> = formals.items.iter().enumerate().map(|(index, item)| {
-        let declared = item.type_annotation.as_ref()
-            .map_or(DECLARED_ANY, |annotation| declared_language(&annotation.type_annotation));
+        let declared = item.type_annotation.as_ref().map_or(DECLARED_ANY, |annotation| if opaque {
+            declared_language_in(&annotation.type_annotation, &TypeNames::opaque())
+        } else {
+            declared_language(&annotation.type_annotation)
+        });
         let checked = checked.map_or(DECLARED_ANY, |languages| languages[index]);
         // A checker answers the family bit (`OBJECT`) only; it admits an exact plain object or array.
         let checked = if checked & bits::OBJECT != 0 { checked | bits::OBJECT_PLAIN | bits::ARRAY } else { checked };
@@ -527,6 +577,37 @@ mod tests {
     #[test]
     fn javascript_parse_goal_still_rejects_type_annotations() {
         assert!(Engine::specialize("const value: number = 1;", "named.cts").is_err());
+    }
+
+    #[test]
+    fn a_rejected_construct_in_a_lazily_parsed_body_fails_at_load() {
+        // A decorator inside a function's body is released with that body; its check finds it,
+        // so the program's load reports it rather than the first call.
+        assert!(Engine::specialize_typescript("function f() { @dec class C {} return C; }\nf();", "lazy-decorator.cts").is_err());
+        assert!(Engine::specialize_typescript("function f() { const g = () => { @dec class D {} }; }", "lazy-arrow.cts").is_err());
+    }
+
+    #[test]
+    fn declared_parameters_of_a_lazily_parsed_function_are_kept() {
+        let source = "function outer() { function inner(a: number, b: string) { return a; } return inner; }\nouter();";
+        let program = Engine::specialize_typescript(source, "lazy-declared.cts").unwrap();
+        let declared = (0..program.functions.len()).filter_map(|index| program.function_get(index))
+            .find(|function| function.name.is_some_and(|atom| program.atoms.get(atom as usize) == Some("inner")))
+            .map(|function| function.declared_parameters().to_vec());
+        use crate::ValueType as V;
+        let bit = |kind: V| crate::typed_ir::Languages::of(kind).bits();
+        assert_eq!(declared.unwrap(), vec![bit(V::Number), bit(V::String)]);
+    }
+
+    #[test]
+    fn lazily_parsed_typed_bodies_run() {
+        let lines = run_typescript(r#"
+            function sum(xs: number[]): number { let t: number = 0; for (const x of xs) t += x; return t; }
+            function outer(k: string): string { const join = (s: string): string => s + k; return join("!"); }
+            function typed(p: { x: number }): number { const local: number = p.x * 2; return local; }
+            console.log(String(sum([1, 2, 3])) + " " + outer("a") + " " + typed({ x: 4 }));
+        "#);
+        assert_eq!(lines, vec!["6 a! 8"]);
     }
 
     fn run_typescript(source: &str) -> Vec<String> {

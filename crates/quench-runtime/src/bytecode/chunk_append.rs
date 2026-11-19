@@ -158,8 +158,9 @@ impl ResidualProgram {
             .map(|id| if self.rewrite_ranges.defers(id) { Settled::UNSETTLED } else { Settled::UNRUN })
             .collect();
         self.rewrite_ranges.kept_pending = true;
+        let typescript = self.source.as_ref().is_some_and(|source| source.typescript);
         self.replay = Some(std::rc::Rc::new(crate::compile::replay::ProgramReplay::for_chunks(
-            self.specialized, room.direct_stubs, room.next_site, &room.name_shared,
+            self.specialized, room.direct_stubs, room.next_site, &room.name_shared, typescript,
         )));
     }
 

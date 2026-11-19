@@ -86,12 +86,13 @@ pub(in crate::compile) fn parse_chunk<'a>(
     delta: u32,
     inherited_strict: bool,
     found: &mut FreeNames,
+    typescript: bool,
 ) -> oxc_parser::ParserReturn<'a> {
     let names = std::cell::RefCell::new(FreeNameCheck::new(found, delta, true));
     let mut skim = |body: oxc_parser::SkimmedBody<'_>| names.borrow_mut().skim(body, text);
     // SAFETY: `skim` lives through the parse, which alone calls it.
     let skim = unsafe { oxc_parser::LazyBodySkim::new(&mut skim) };
-    parse(allocator, text, SourceType::script(), Some(offset + 1), None, Some(skim), inherited_strict, false, crate::compile::annex_b_targets::Recognize::No, None, None)
+    parse(allocator, text, SourceType::script().with_typescript(typescript), Some(offset + 1), None, Some(skim), inherited_strict, false, crate::compile::annex_b_targets::Recognize::No, None, None)
 }
 
 /// The bodies of `program`, a function's text parsed again at `offset`, which the load released

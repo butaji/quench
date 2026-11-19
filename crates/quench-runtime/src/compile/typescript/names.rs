@@ -42,9 +42,17 @@ pub(in crate::compile) struct TypeNames<'a> {
     names: FxHashMap<String, Named<'a>>,
     /// The top-level declarations of each interface name, in source order: two blocks of one name merge.
     interfaces: FxHashMap<String, Vec<&'a TSInterfaceDeclaration<'a>>>,
+    /// Every name denotes nothing this pass knows (`opaque`).
+    opaque: bool,
 }
 
 impl<'a> TypeNames<'a> {
+    /// The names of a program whose own names are not in view: every name denotes nothing this pass
+    /// knows, so every annotation that names a type reads as open.
+    pub(in crate::compile) fn opaque() -> Self {
+        Self { names: FxHashMap::default(), opaque: true }
+    }
+
     /// The names `program` declares at its top level, then every other type-level binding made
     /// unknown: a nested declaration or a type parameter shadows the top-level name it repeats.
     pub(in crate::compile) fn of(program: &'a Program<'a>) -> Self {
@@ -60,6 +68,7 @@ impl<'a> TypeNames<'a> {
 
     /// What `name` denotes in this program, if the program declares it.
     pub(in crate::compile) fn get(&self, name: &str) -> Option<Named<'a>> {
+        if self.opaque { return Some(Named::Unknown); }
         self.names.get(name).copied()
     }
 

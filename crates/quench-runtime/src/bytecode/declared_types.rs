@@ -232,6 +232,38 @@ impl DeclaredTypes {
         self.layouts.push(DeclaredLayout { class_start, names: names.into_boxed_slice() });
     }
 
+    /// Moves `other`'s declarations after these, each kind in its own order.
+    pub(crate) fn append(&mut self, other: DeclaredTypes) {
+        self.declared.extend(other.declared);
+        self.enum_constants.extend(other.enum_constants);
+        self.fields.extend(other.fields);
+        self.signatures.extend(other.signatures);
+        self.locals.extend(other.locals);
+        self.members.extend(other.members);
+        self.parameter_classes.extend(other.parameter_classes);
+        self.parameters.extend(other.parameters);
+        self.layouts.extend(other.layouts);
+    }
+
+    /// The declarations keyed inside `start..end` (a function's source range, its nested functions and
+    /// classes included), with their positions unchanged: what a first-call chunk of that function
+    /// compiles against, as the chunk's positions are the program's. Enum constants are not positional
+    /// and are left out.
+    pub(crate) fn within(&self, start: u32, end: u32) -> DeclaredTypes {
+        let inside = |position: u32| (start..end).contains(&position);
+        DeclaredTypes {
+            declared: self.declared.iter().filter(|entry| inside(entry.start)).cloned().collect(),
+            enum_constants: Vec::new(),
+            fields: self.fields.iter().filter(|field| inside(field.class_start)).cloned().collect(),
+            signatures: self.signatures.iter().filter(|signature| inside(signature.start)).cloned().collect(),
+            locals: self.locals.iter().filter(|local| inside(local.function)).cloned().collect(),
+            members: self.members.iter().filter(|member| inside(member.function)).cloned().collect(),
+            parameter_classes: self.parameter_classes.iter().filter(|entry| inside(entry.function)).copied().collect(),
+            parameters: self.parameters.iter().filter(|entry| inside(entry.function)).copied().collect(),
+            layouts: self.layouts.iter().filter(|layout| inside(layout.class_start)).cloned().collect(),
+        }
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.declared.is_empty() && self.enum_constants.is_empty() && self.fields.is_empty()
             && self.signatures.is_empty() && self.locals.is_empty() && self.members.is_empty() && self.local_members.is_empty()

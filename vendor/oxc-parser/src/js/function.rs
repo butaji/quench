@@ -83,7 +83,6 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// is not about to be called where it is made.
     pub(super) fn lazy_start(&self, start: u32) -> bool {
         self.options.lazy_function_bodies.is_some_and(|from| start >= from)
-            && !self.is_ts
             // A body being recognized is released whole: the bodies inside it are only
             // recognized, and its compilation parses them again.
             && !self.recognizing

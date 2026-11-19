@@ -40,6 +40,10 @@ pub(in crate::compile) struct BodyFacts {
     /// start. A first-call chunk of one takes that verdict instead of checking its text again
     /// (`ProgramReplay::checked_bodies`).
     pub(in crate::compile) checked: Vec<u32>,
+    /// The declarations of the released TypeScript bodies, collected as each was checked, at the
+    /// positions they have in the program (`typescript::collect_released`): the program's declared
+    /// environment takes them, as admission would have collected them from the whole tree.
+    pub(in crate::compile) declared: crate::bytecode::DeclaredTypes,
     /// The functions whose bodies compile as a stream of statement runs (`statement_stream`).
     pub(in crate::compile) streamed: FxHashSet<u32>,
     /// The functions checked without their tree whose bodies may stream, which their
@@ -65,14 +69,28 @@ impl BodyFacts {
     /// generation: an analysis per function between the records code generation keeps left
     /// the heap their holes (JetStream +2-3% max RSS).
     /// False where `stub` and the check needs the body's tree (`LazyBody::stub`).
+    /// A TypeScript body is checked as its source is, before admission (which runs where it compiles,
+    /// `lazy_bodies::parse`): where admission would rewrite or reject a construct in it, the body
+    /// fails the check (`needs_admission`), and the program compiles eagerly, which reports the errors
+    /// at load. Its declarations are collected here, with the program's positions
+    /// (`typescript::collect_released`); a stub has no tree to collect from, so it is parsed whole.
     pub(in crate::compile) fn check(&mut self, oxc_parser::LazyBody { program, call_assignment_targets, in_function, early, stub, functions_inside }: oxc_parser::LazyBody<'_, '_>, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) -> bool {
         if self.failed {
             return true;
         }
+        let typescript = program.source_type.is_typescript();
         if stub {
-            return early.is_some_and(|early| !verify_early() && self.checked_by_parse(program, call_assignment_targets, in_function, early, functions_inside));
+            return !typescript && early.is_some_and(|early| !verify_early() && self.checked_by_parse(program, call_assignment_targets, in_function, early, functions_inside));
         }
-        self.streamed.extend(crate::compile::statement_stream::streamable_start(program));
+        if typescript {
+            if crate::compile::typescript::needs_admission(program) {
+                self.failed = true;
+                return true;
+            }
+            crate::compile::typescript::collect_released(program, &mut self.declared);
+        } else {
+            self.streamed.extend(crate::compile::statement_stream::streamable_start(program));
+        }
         if verify_early() && crate::trace::Dev::EarlyVerify.value() == Some("stat") {
             eprintln!("early-stat: {} {} {} deferred={} at_load={}", if early.is_some() { "sure" } else { "unsure" }, program.span.start, program.span.end - program.span.start, self.call_only_deferred, crate::compile::call_only::compiles_at_load(program, false, false));
         }

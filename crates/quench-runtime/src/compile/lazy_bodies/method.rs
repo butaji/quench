@@ -54,7 +54,7 @@ impl Compiler<'_> {
         let reparsed = reparse(&allocator, &text, own, span.start.wrapping_sub(offset), self.source_type, nesting);
         let again = reparsed.as_ref().ok().and_then(|reparsed| replay::wrapped_class_method(&reparsed.program)).filter(|again| again.value.span == method.value.span && !is_released_method(again));
         let id = match again {
-            Some(again) => self.compile_class_method(again, place.source_span, place.scopes, place.parent, None, None, false, place.home_atom, place.with_depth),
+            Some(again) => self.with_opaque_type_names(|this| this.compile_class_method(again, place.source_span, place.scopes, place.parent, None, None, false, place.home_atom, place.with_depth)),
             None => self.reject_released_method(method, place),
         };
         drop(reparsed);
